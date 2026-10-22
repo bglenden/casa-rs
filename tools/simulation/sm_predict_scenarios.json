@@ -1,0 +1,184 @@
+{
+  "schema_version": 1,
+  "purpose": "simulation Phase 1d (#841): sm scenarios with predict, setvp, setoptions and noise, run by CASA and by casa-rs",
+  "notes": [
+    "Model images are named relative to the oracle's --model-root. They are casa_sm_predict_oracle.py's: alma/ is 256 pixels of 0.05 arcsec centred on 10h -30d, alma-big/ 512 of 0.15 arcsec (past ALMA's primary beam at 230 GHz) centred on (0.0007615435494667714, -0.0001523087098933758) rad; model4 has one plane per channel of the 4-channel 230 GHz band, model1 one plane spanning it.",
+    "The beam is centred on the field, so the setvp scenarios observe a field at or near the model's centre; elsewhere the beam is zero on the model.",
+    "Every window is the models' band: 230 GHz, 4 channels of 15.625 MHz. A window elsewhere maps no channel onto a model plane and predicts zero.",
+    "data: 'model' scenarios compare DATA by normalized RMS; 'noisy' ones compare noisy minus noise-free (their twin) by per-class noise variance, since the draws differ; 'zero' ones check DATA is zero.",
+    "Times and the configuration keep every scenario free of shadowing and elevation flags, whose CASA flags are a recorded divergence."
+  ],
+  "scenarios": [
+    {
+      "name": "predict-xxyy-cube",
+      "data": "model",
+      "config": {"cfg": "alma.cycle10.3.cfg", "mount": "alt-az"},
+      "calls": [
+        {"op": "setspwindow", "spwname": "band6", "freq": "230GHz", "deltafreq": "15.625MHz", "freqresolution": "15.625MHz", "refcode": "TOPO", "nchannels": 4, "stokes": "XX YY"},
+        {"op": "setfeed", "mode": "perfect X Y"},
+        {"op": "setauto", "autocorrwt": 0.0},
+        {"op": "settimes", "integrationtime": "30s", "usehourangle": true, "referencetime": ["UTC", "2026/03/21/00:00:00"]},
+        {"op": "setfield", "sourcename": "target", "sourcedirection": ["J2000", "10h00m00.0", "-30d00m00.0"]},
+        {"op": "observe", "sourcename": "target", "spwname": "band6", "starttime": "-300s", "stoptime": "300s"},
+        {"op": "predict", "imagename": "alma/model4.input.image"}
+      ]
+    },
+    {
+      "name": "predict-xxyy-mfs-vp",
+      "data": "model",
+      "config": {"cfg": "alma.cycle10.3.cfg", "mount": "alt-az"},
+      "calls": [
+        {"op": "setspwindow", "spwname": "band6", "freq": "230GHz", "deltafreq": "15.625MHz", "freqresolution": "15.625MHz", "refcode": "TOPO", "nchannels": 4, "stokes": "XX YY"},
+        {"op": "setfeed", "mode": "perfect X Y"},
+        {"op": "setauto", "autocorrwt": 0.0},
+        {"op": "settimes", "integrationtime": "30s", "usehourangle": true, "referencetime": ["UTC", "2026/03/21/00:00:00"]},
+        {"op": "setfield", "sourcename": "target", "sourcedirection": ["J2000", "0.0007615435494667714rad", "-0.0001523087098933758rad"]},
+        {"op": "observe", "sourcename": "target", "spwname": "band6", "starttime": "-300s", "stoptime": "300s"},
+        {"op": "setvp", "dovp": true, "usedefaultvp": false},
+        {"op": "predict", "imagename": "alma-big/model1.input.image"}
+      ]
+    },
+    {
+      "name": "predict-4corr-cube-vp-autos",
+      "data": "model",
+      "config": {"cfg": "alma.cycle10.3.cfg", "mount": "alt-az"},
+      "calls": [
+        {"op": "setspwindow", "spwname": "band6", "freq": "230GHz", "deltafreq": "15.625MHz", "freqresolution": "15.625MHz", "refcode": "TOPO", "nchannels": 4, "stokes": "XX XY YX YY"},
+        {"op": "setfeed", "mode": "perfect X Y"},
+        {"op": "settimes", "integrationtime": "30s", "usehourangle": true, "referencetime": ["UTC", "2026/03/21/00:00:00"]},
+        {"op": "setfield", "sourcename": "target", "sourcedirection": ["J2000", "0.0007615435494667714rad", "-0.0001523087098933758rad"]},
+        {"op": "observe", "sourcename": "target", "spwname": "band6", "starttime": "-300s", "stoptime": "300s"},
+        {"op": "setvp", "dovp": true},
+        {"op": "predict", "imagename": "alma-big/model4.input.image"}
+      ]
+    },
+    {
+      "name": "predict-rrll-offset-autos",
+      "data": "model",
+      "config": {"cfg": "alma.cycle10.3.cfg", "mount": "alt-az"},
+      "calls": [
+        {"op": "setspwindow", "spwname": "band6", "freq": "230GHz", "deltafreq": "15.625MHz", "freqresolution": "15.625MHz", "refcode": "LSRK", "nchannels": 4, "stokes": "RR LL"},
+        {"op": "setfeed", "mode": "perfect R L"},
+        {"op": "settimes", "integrationtime": "30s", "usehourangle": true, "referencetime": ["UTC", "2026/03/21/00:00:00"]},
+        {"op": "setfield", "sourcename": "offset", "sourcedirection": ["J2000", "10h00m00.1", "-30d00m01.0"]},
+        {"op": "observe", "sourcename": "offset", "spwname": "band6", "starttime": "-300s", "stoptime": "300s"},
+        {"op": "predict", "imagename": ["alma/model1.input.image"]}
+      ]
+    },
+    {
+      "name": "predict-xx-padding",
+      "data": "model",
+      "config": {"cfg": "alma.cycle10.3.cfg", "mount": "alt-az"},
+      "calls": [
+        {"op": "setspwindow", "spwname": "band6", "freq": "230GHz", "deltafreq": "15.625MHz", "freqresolution": "15.625MHz", "refcode": "TOPO", "nchannels": 4, "stokes": "XX"},
+        {"op": "setfeed", "mode": "perfect X Y"},
+        {"op": "setauto", "autocorrwt": 0.0},
+        {"op": "settimes", "integrationtime": "30s", "usehourangle": true, "referencetime": ["UTC", "2026/03/21/00:00:00"]},
+        {"op": "setfield", "sourcename": "target", "sourcedirection": ["J2000", "10h00m00.0", "-30d00m00.0"]},
+        {"op": "observe", "sourcename": "target", "spwname": "band6", "starttime": "-150s", "stoptime": "150s"},
+        {"op": "setoptions", "ftmachine": "ft", "padding": 1.5},
+        {"op": "predict", "imagename": "alma/model4.input.image"}
+      ]
+    },
+    {
+      "name": "predict-two-fields-vp",
+      "data": "model",
+      "config": {"cfg": "alma.cycle10.3.cfg", "mount": "alt-az"},
+      "calls": [
+        {"op": "setspwindow", "spwname": "band6", "freq": "230GHz", "deltafreq": "15.625MHz", "freqresolution": "15.625MHz", "refcode": "TOPO", "nchannels": 4, "stokes": "XX YY"},
+        {"op": "setfeed", "mode": "perfect X Y"},
+        {"op": "setauto", "autocorrwt": 0.0},
+        {"op": "settimes", "integrationtime": "30s", "usehourangle": true, "referencetime": ["UTC", "2026/03/21/00:00:00"]},
+        {"op": "setfield", "sourcename": "centre", "sourcedirection": ["J2000", "0.0007615435494667714rad", "-0.0001523087098933758rad"]},
+        {"op": "setfield", "sourcename": "north", "sourcedirection": ["J2000", "0.0007615435494667714rad", "-0.0000795865874933758rad"]},
+        {"op": "observe", "sourcename": "centre", "spwname": "band6", "starttime": "-300s", "stoptime": "-120s"},
+        {"op": "observe", "sourcename": "north", "spwname": "band6", "starttime": "-90s", "stoptime": "90s"},
+        {"op": "observe", "sourcename": "centre", "spwname": "band6", "starttime": "120s", "stoptime": "300s"},
+        {"op": "setvp", "dovp": true, "usedefaultvp": false},
+        {"op": "predict", "imagename": "alma-big/model1.input.image"}
+      ]
+    },
+    {
+      "name": "predict-incremental-sequence",
+      "data": "model",
+      "config": {"cfg": "alma.cycle10.3.cfg", "mount": "alt-az"},
+      "calls": [
+        {"op": "setspwindow", "spwname": "band6", "freq": "230GHz", "deltafreq": "15.625MHz", "freqresolution": "15.625MHz", "refcode": "TOPO", "nchannels": 4, "stokes": "XX YY"},
+        {"op": "setfeed", "mode": "perfect X Y"},
+        {"op": "setauto", "autocorrwt": 0.0},
+        {"op": "settimes", "integrationtime": "30s", "usehourangle": true, "referencetime": ["UTC", "2026/03/21/00:00:00"]},
+        {"op": "setfield", "sourcename": "target", "sourcedirection": ["J2000", "10h00m00.0", "-30d00m00.0"]},
+        {"op": "observe", "sourcename": "target", "spwname": "band6", "starttime": "-300s", "stoptime": "-60s"},
+        {"op": "predict", "imagename": "alma/model4.input.image"},
+        {"op": "observe", "sourcename": "target", "spwname": "band6", "starttime": "0s", "stoptime": "240s"},
+        {"op": "setvp", "dovp": true, "usedefaultvp": false},
+        {"op": "predict", "imagename": "alma/model1.input.image", "incremental": true}
+      ]
+    },
+    {
+      "name": "predict-replaces-corrupt",
+      "data": "model",
+      "config": {"cfg": "alma.cycle10.3.cfg", "mount": "alt-az"},
+      "calls": [
+        {"op": "setspwindow", "spwname": "band6", "freq": "230GHz", "deltafreq": "15.625MHz", "freqresolution": "15.625MHz", "refcode": "TOPO", "nchannels": 4, "stokes": "XX YY"},
+        {"op": "setfeed", "mode": "perfect X Y"},
+        {"op": "setauto", "autocorrwt": 0.0},
+        {"op": "settimes", "integrationtime": "30s", "usehourangle": true, "referencetime": ["UTC", "2026/03/21/00:00:00"]},
+        {"op": "setfield", "sourcename": "target", "sourcedirection": ["J2000", "10h00m00.0", "-30d00m00.0"]},
+        {"op": "observe", "sourcename": "target", "spwname": "band6", "starttime": "-300s", "stoptime": "-60s"},
+        {"op": "predict", "imagename": "alma/model4.input.image"},
+        {"op": "setnoise", "mode": "simplenoise", "simplenoise": "0.1Jy"},
+        {"op": "corrupt"},
+        {"op": "observe", "sourcename": "target", "spwname": "band6", "starttime": "0s", "stoptime": "240s"},
+        {"op": "predict", "imagename": "alma/model1.input.image"}
+      ]
+    },
+    {
+      "name": "predict-noise",
+      "data": "noisy",
+      "twin": "predict-noise-twin",
+      "noise_variance": 0.01,
+      "config": {"cfg": "alma.cycle10.3.cfg", "mount": "alt-az"},
+      "calls": [
+        {"op": "setspwindow", "spwname": "band6", "freq": "230GHz", "deltafreq": "15.625MHz", "freqresolution": "15.625MHz", "refcode": "TOPO", "nchannels": 4, "stokes": "XX YY"},
+        {"op": "setfeed", "mode": "perfect X Y"},
+        {"op": "settimes", "integrationtime": "30s", "usehourangle": true, "referencetime": ["UTC", "2026/03/21/00:00:00"]},
+        {"op": "setfield", "sourcename": "target", "sourcedirection": ["J2000", "0.0007615435494667714rad", "-0.0001523087098933758rad"]},
+        {"op": "observe", "sourcename": "target", "spwname": "band6", "starttime": "-300s", "stoptime": "300s"},
+        {"op": "setvp", "dovp": true, "usedefaultvp": false},
+        {"op": "predict", "imagename": "alma-big/model4.input.image"},
+        {"op": "setseed", "seed": 4321},
+        {"op": "setnoise", "mode": "simplenoise", "simplenoise": "0.1Jy"},
+        {"op": "corrupt"}
+      ]
+    },
+    {
+      "name": "predict-noise-twin",
+      "data": "model",
+      "config": {"cfg": "alma.cycle10.3.cfg", "mount": "alt-az"},
+      "calls": [
+        {"op": "setspwindow", "spwname": "band6", "freq": "230GHz", "deltafreq": "15.625MHz", "freqresolution": "15.625MHz", "refcode": "TOPO", "nchannels": 4, "stokes": "XX YY"},
+        {"op": "setfeed", "mode": "perfect X Y"},
+        {"op": "settimes", "integrationtime": "30s", "usehourangle": true, "referencetime": ["UTC", "2026/03/21/00:00:00"]},
+        {"op": "setfield", "sourcename": "target", "sourcedirection": ["J2000", "0.0007615435494667714rad", "-0.0001523087098933758rad"]},
+        {"op": "observe", "sourcename": "target", "spwname": "band6", "starttime": "-300s", "stoptime": "300s"},
+        {"op": "setvp", "dovp": true, "usedefaultvp": false},
+        {"op": "predict", "imagename": "alma-big/model4.input.image"}
+      ]
+    },
+    {
+      "name": "predict-before-observe",
+      "data": "zero",
+      "config": {"cfg": "alma.cycle10.3.cfg", "mount": "alt-az"},
+      "calls": [
+        {"op": "setspwindow", "spwname": "band6", "freq": "230GHz", "deltafreq": "15.625MHz", "freqresolution": "15.625MHz", "refcode": "TOPO", "nchannels": 4, "stokes": "XX YY"},
+        {"op": "setfeed", "mode": "perfect X Y"},
+        {"op": "setauto", "autocorrwt": 0.0},
+        {"op": "settimes", "integrationtime": "30s", "usehourangle": true, "referencetime": ["UTC", "2026/03/21/00:00:00"]},
+        {"op": "setfield", "sourcename": "target", "sourcedirection": ["J2000", "10h00m00.0", "-30d00m00.0"]},
+        {"op": "predict", "imagename": "alma/model1.input.image"},
+        {"op": "observe", "sourcename": "target", "spwname": "band6", "starttime": "-60s", "stoptime": "60s"}
+      ]
+    }
+  ]
+}

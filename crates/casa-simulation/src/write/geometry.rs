@@ -31,7 +31,7 @@ pub(crate) struct ArrayGeometry<'a> {
 }
 
 /// One MAIN row's geometry and weights.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub(crate) struct RowGeometry {
     pub(crate) antenna1: usize,
     pub(crate) antenna2: usize,
@@ -71,14 +71,18 @@ impl<'a> ArrayGeometry<'a> {
 
     /// The rows of one integration of `scan` at stored TIME `time_s`, in
     /// CASA's order: antenna 1 ascending, then antenna 2 from antenna 1
-    /// (autocorrelations written) or the next.
+    /// (autocorrelations written) or the next. `rows` holds the scan's
+    /// [`Scan::baseline_count`] rows.
+    ///
+    /// The result depends only on the arguments, so integrations can be
+    /// computed on any thread in any order.
     pub(crate) fn integration_rows(
         &self,
         scan: &Scan,
         time_s: f64,
-        rows: &mut Vec<RowGeometry>,
+        rows: &mut [RowGeometry],
     ) -> SimulatorResult<()> {
-        rows.clear();
+        debug_assert_eq!(rows.len(), scan.baseline_count());
         let count = scan.antenna_count;
         let antennas = &self.antennas[..count];
         let epoch = MEpoch::from_mjd(time_s / 86_400.0, EpochRef::UT1);
@@ -106,33 +110,34 @@ impl<'a> ArrayGeometry<'a> {
             .map(|antenna| antenna.diameter_m)
             .fold(0.0_f64, f64::max);
         let with_autocorrelations = scan.autocorrelation_weight > 0.0;
-        for antenna1 in 0..count {
+        let baselines = (0..count).flat_map(|antenna1| {
             let first = if with_autocorrelations {
                 antenna1
             } else {
                 antenna1 + 1
             };
-            for antenna2 in first..count {
-                let uvw_m = [
-                    antenna_uvw[antenna2][0] - antenna_uvw[antenna1][0],
-                    antenna_uvw[antenna2][1] - antenna_uvw[antenna1][1],
-                    antenna_uvw[antenna2][2] - antenna_uvw[antenna1][2],
-                ];
-                let diameters = antennas[antenna1].diameter_m * antennas[antenna2].diameter_m;
-                let sigma = (largest_diameter * largest_diameter / diameters) as f32;
-                let mut weight = 1.0 / (sigma * sigma);
-                if antenna1 == antenna2 {
-                    weight *= scan.autocorrelation_weight;
-                }
-                rows.push(RowGeometry {
-                    antenna1,
-                    antenna2,
-                    uvw_m,
-                    flagged: false,
-                    sigma,
-                    weight,
-                });
+            (first..count).map(move |antenna2| (antenna1, antenna2))
+        });
+        for (row, (antenna1, antenna2)) in rows.iter_mut().zip(baselines) {
+            let uvw_m = [
+                antenna_uvw[antenna2][0] - antenna_uvw[antenna1][0],
+                antenna_uvw[antenna2][1] - antenna_uvw[antenna1][1],
+                antenna_uvw[antenna2][2] - antenna_uvw[antenna1][2],
+            ];
+            let diameters = antennas[antenna1].diameter_m * antennas[antenna2].diameter_m;
+            let sigma = (largest_diameter * largest_diameter / diameters) as f32;
+            let mut weight = 1.0 / (sigma * sigma);
+            if antenna1 == antenna2 {
+                weight *= scan.autocorrelation_weight;
             }
+            *row = RowGeometry {
+                antenna1,
+                antenna2,
+                uvw_m,
+                flagged: false,
+                sigma,
+                weight,
+            };
         }
         let shadowed = shadowed_antennas(
             count,

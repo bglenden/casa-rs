@@ -27,7 +27,9 @@ Simulator behaviours casa-rs does not follow:
 [a zero integration time](#a-zero-integration-time-adds-rows-without-bound),
 [`readantenna`'s observatory fallback](#simutilreadantenna-averages-a-stale-loop-variable),
 [`readantenna`'s names after blank lines](#simutilreadantenna-names-antennas-after-blank-lines),
-[the measures tool's default frame](#the-measures-tool-converts-with-a-frame-at-mjd-0-and-the-geocentre).
+[the measures tool's default frame](#the-measures-tool-converts-with-a-frame-at-mjd-0-and-the-geocentre),
+[the model `predict` rewrites](#smpredict-rewrites-the-model-image),
+[models the simulator cannot read](#smpredict-accepts-models-the-simulator-cannot-read).
 
 ## AW-projection pairs the partner hand's visibility with the conjugate-baseline cell
 
@@ -576,3 +578,39 @@ these without a warning, so `me.measure(me.direction('J2000', '12h00m00',
 empty and the same call fails with "Cannot convert due to missing frame
 information". casa-rs's tool starts with the empty frame, so such a
 conversion always fails with that message until `doframe` sets the element.
+
+## `sm.predict` rewrites the model image
+
+- Date noted: 2026-10-21
+- Status: CASA behaviour casa-rs does not follow (#841)
+- Affected code: `synthesis/MeasurementEquations/Simulator.cc`
+  (`createSkyEquation`, lines 2319-2344)
+
+`createSkyEquation` opens each model as a `PagedImage<Float>`, gives its
+coordinate system an LSRK spectral conversion and Hz world units ("FTMachine
+only works in Hz and LSRK") and stores it back with `setCoordinateInfo`, so
+predicting rewrites the model's `table.dat`. Later reads of the model,
+including another `predict`, see coordinates the user did not write; the
+CASA oracle (`tools/simulation/casa_sm_observe_oracle.py --model-root`)
+copies the model for every call because of it. casa-rs converts the
+spectral axis to Hz in memory and never writes the model.
+
+## `sm.predict` accepts models the simulator cannot read
+
+- Date noted: 2026-10-21
+- Status: CASA behaviour casa-rs does not follow (#841)
+- Affected code: `casatools/src/tools/simulator/simulator_cmpt.cc`
+  (`predict`, lines 620-629); `synthesis/MeasurementEquations/Simulator.cc`
+  (`createSkyEquation`, lines 2313-2319 and 2568-2572; `predict`, lines
+  2161-2163)
+
+casatools' binding checks each model with `ImageFactory::fromFile`, which
+also opens FITS images and complex-valued CASA images. The simulator then
+reads each model as a `PagedImage<Float>`. A FITS file is not a table, so
+it logs "… is unreadable" and then "No model images found"; a complex image
+throws when opened as Float, which `createSkyEquation` catches ("Caught
+exception: …"). Either way `sm.predict` logs "Failed to create SkyEquation"
+and returns False, and the script continues with DATA not predicted. These outcomes are read from the source
+and were not probed. casa-rs's check opens each model as the simulator reads
+it, so a FITS or complex model raises RuntimeError "Unable to open image …"
+at the call.

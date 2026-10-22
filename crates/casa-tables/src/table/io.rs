@@ -1766,6 +1766,17 @@ impl TableWritePlan<'_> {
                             }
                         }
                     }
+                    ColumnOverride::GeneratedArray(column) => {
+                        for run in column.array_runs().unwrap_or_default() {
+                            if let Some(value) = run.cell() {
+                                super::columns::validate_cell_against_schema_column(
+                                    run.start_row(),
+                                    schema_column,
+                                    Some(value),
+                                )?;
+                            }
+                        }
+                    }
                     ColumnOverride::StreamedScalar(_) | ColumnOverride::Deferred => {}
                 }
             }

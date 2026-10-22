@@ -8,8 +8,9 @@
 //! ```
 //!
 //! `tools/simulation/casa_sm_predict_oracle.py` writes the MeasurementSets
-//! and model images. When the model's tangent point is not the field's
-//! phase centre, each row is rotated to it as CASA's `GridFT` rotates it. The
+//! and model images. Each row is rotated to the model's tangent point as
+//! CASA's `GridFT` rotates it (always, even when the tangent point is the
+//! field's phase centre). The
 //! program prints one JSON object: the normalized RMS of casa-rs against
 //! CASA's DATA, overall and per correlation, the largest difference relative
 //! to CASA's peak, and the prediction time.
@@ -24,7 +25,7 @@ use casa_ms::columns::data_columns::DataColumn;
 use casa_ms::columns::flag_columns::{FlagColumn, FlagRowColumn};
 use casa_ms::columns::main_ids::{antenna1, antenna2};
 use casa_ms::columns::uvw_column::UvwColumn;
-use casa_ms::derived::gridft_uvw_between_j2000_directions;
+use casa_ms::derived::GridFtProjection;
 use casa_simulation::predict::{
     ModelPredictor, PredictOptions, PredictRow, PredictionWorkspace, PrimaryBeam, SkyModel,
 };
@@ -83,8 +84,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let model = SkyModel::open(&model_path)?;
-    let tangent_point_rad = model.centre_rad();
-    let rotate = tangent_point_rad != phase_centre_rad;
+    let projection =
+        GridFtProjection::between_j2000_directions(phase_centre_rad, model.centre_rad());
 
     let started = Instant::now();
     let predictor = ModelPredictor::new(&model, &correlations, phase_centre_rad, &options)?;
@@ -113,12 +114,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         let started = Instant::now();
-        let raw_uvw_m = uvw.get(row)?;
-        let (uvw_m, phase_shift_m) = if rotate {
-            gridft_uvw_between_j2000_directions(raw_uvw_m, phase_centre_rad, tangent_point_rad)?
-        } else {
-            (raw_uvw_m, 0.0)
-        };
+        let (uvw_m, phase_shift_m) = projection.apply(uvw.get(row)?);
         predictor.predict_row(
             &mut workspace,
             &PredictRow {

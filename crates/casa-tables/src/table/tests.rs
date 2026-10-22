@@ -19,6 +19,30 @@ use super::{
     TableError, TableOptions,
 };
 
+/// `schema` as `manager` stores it: IncrementalStMan stores Direct
+/// fixed-shape arrays only, so its fixed-shape arrays become Direct.
+fn schema_for_manager(schema: &TableSchema, manager: DataManagerKind) -> TableSchema {
+    use crate::schema::{ArrayShapeContract, ColumnOptions, ColumnType};
+
+    if manager != DataManagerKind::IncrementalStMan {
+        return schema.clone();
+    }
+    let columns = schema
+        .columns()
+        .iter()
+        .map(|column| match column.column_type() {
+            ColumnType::Array(ArrayShapeContract::Fixed { .. }) => column
+                .clone()
+                .with_options(ColumnOptions {
+                    direct: true,
+                    undefined: column.options().undefined,
+                })
+                .expect("direct fixed-shape array"),
+            _ => column.clone(),
+        });
+    TableSchema::new(columns.collect()).expect("schema")
+}
+
 fn row_with_fixed_arrays(id: i32, data: &[i32], other: &[i32]) -> RecordValue {
     RecordValue::new(vec![
         RecordField::new("id", Value::Scalar(ScalarValue::Int32(id))),
@@ -1616,7 +1640,7 @@ fn lazy_disk_open_reads_cells_without_materializing_rows() {
         DataManagerKind::StandardStMan,
         DataManagerKind::IncrementalStMan,
     ] {
-        let mut table = Table::with_schema(schema.clone());
+        let mut table = Table::with_schema(schema_for_manager(&schema, dm));
         table
             .add_row(RecordValue::new(vec![
                 RecordField::new("id", Value::Scalar(ScalarValue::Int32(42))),
@@ -1666,7 +1690,7 @@ fn prepared_row_reader_reuses_buffer_without_materializing_rows() {
         DataManagerKind::StandardStMan,
         DataManagerKind::IncrementalStMan,
     ] {
-        let mut table = Table::with_schema(schema.clone());
+        let mut table = Table::with_schema(schema_for_manager(&schema, dm));
         table
             .add_row(row_with_fixed_arrays(1, &[7, 9], &[100, 200]))
             .expect("push row 0");
@@ -1747,7 +1771,7 @@ fn prepared_row_writer_reuses_buffer_and_keeps_sparse_updates() {
         DataManagerKind::StandardStMan,
         DataManagerKind::IncrementalStMan,
     ] {
-        let mut table = Table::with_schema(schema.clone());
+        let mut table = Table::with_schema(schema_for_manager(&schema, dm));
         table
             .add_row(row_with_fixed_arrays(1, &[7, 9], &[100, 200]))
             .expect("push row 0");
@@ -1861,7 +1885,7 @@ fn prepared_row_writer_seek_keeps_buffer_unmaterialized_and_direct_writes_cohere
         DataManagerKind::StandardStMan,
         DataManagerKind::IncrementalStMan,
     ] {
-        let mut table = Table::with_schema(schema.clone());
+        let mut table = Table::with_schema(schema_for_manager(&schema, dm));
         table
             .add_row(row_with_fixed_arrays(1, &[1, 2], &[100, 200]))
             .expect("push row 0");
@@ -1955,7 +1979,7 @@ fn prepared_row_reader_sees_pending_and_cached_lazy_updates() {
         DataManagerKind::StandardStMan,
         DataManagerKind::IncrementalStMan,
     ] {
-        let mut table = Table::with_schema(schema.clone());
+        let mut table = Table::with_schema(schema_for_manager(&schema, dm));
         table
             .add_row(row_with_fixed_arrays(1, &[7, 9], &[100, 200]))
             .expect("push row 0");
@@ -2036,7 +2060,7 @@ fn prepared_row_cached_fast_path_rejects_invalid_slot_index() {
         DataManagerKind::StandardStMan,
         DataManagerKind::IncrementalStMan,
     ] {
-        let mut table = Table::with_schema(schema.clone());
+        let mut table = Table::with_schema(schema_for_manager(&schema, dm));
         table
             .add_row(RecordValue::new(vec![
                 RecordField::new("id", Value::Scalar(ScalarValue::Int32(1))),
@@ -2100,7 +2124,7 @@ fn lazy_disk_open_reads_scalar_column_owned_without_materializing_rows() {
         DataManagerKind::StandardStMan,
         DataManagerKind::IncrementalStMan,
     ] {
-        let mut table = Table::with_schema(schema.clone());
+        let mut table = Table::with_schema(schema_for_manager(&schema, dm));
         table
             .add_row(RecordValue::new(vec![
                 RecordField::new("id", Value::Scalar(ScalarValue::Int32(1))),
@@ -2154,7 +2178,7 @@ fn lazy_disk_open_reads_scalar_columns_owned_without_materializing_rows() {
         DataManagerKind::StandardStMan,
         DataManagerKind::IncrementalStMan,
     ] {
-        let mut table = Table::with_schema(schema.clone());
+        let mut table = Table::with_schema(schema_for_manager(&schema, dm));
         table
             .add_row(RecordValue::new(vec![
                 RecordField::new("id", Value::Scalar(ScalarValue::Int32(1))),
@@ -2221,7 +2245,7 @@ fn lazy_disk_open_reads_required_scalar_columns_owned_without_materializing_rows
         DataManagerKind::StandardStMan,
         DataManagerKind::IncrementalStMan,
     ] {
-        let mut table = Table::with_schema(schema.clone());
+        let mut table = Table::with_schema(schema_for_manager(&schema, dm));
         table
             .add_row(RecordValue::new(vec![
                 RecordField::new("id", Value::Scalar(ScalarValue::Int32(1))),
@@ -2281,7 +2305,7 @@ fn lazy_disk_open_mutates_and_partially_saves_without_materializing_rows() {
         DataManagerKind::StandardStMan,
         DataManagerKind::IncrementalStMan,
     ] {
-        let mut table = Table::with_schema(schema.clone());
+        let mut table = Table::with_schema(schema_for_manager(&schema, dm));
         table
             .add_row(RecordValue::new(vec![
                 RecordField::new("id", Value::Scalar(ScalarValue::Int32(1))),
@@ -2539,7 +2563,7 @@ fn selected_row_reads_reuse_open_control_metadata_without_retaining_payloads() {
     .unwrap();
     for dm in [DataManagerKind::StManAipsIO, DataManagerKind::StandardStMan] {
         let root = unique_test_dir(&format!("selected_rows_retained_metadata_{dm:?}"));
-        let mut table = Table::with_schema(schema.clone());
+        let mut table = Table::with_schema(schema_for_manager(&schema, dm));
         for row in 0..6 {
             table
                 .add_row(row_with_fixed_arrays(row, &[row, row + 10], &[0, 1]))
@@ -2847,7 +2871,7 @@ fn lazy_disk_open_reads_selected_fixed_array_cells_without_loading_full_column()
     .expect("schema");
 
     for dm in [DataManagerKind::StManAipsIO, DataManagerKind::StandardStMan] {
-        let mut table = Table::with_schema(schema.clone());
+        let mut table = Table::with_schema(schema_for_manager(&schema, dm));
         for row_idx in 0..6 {
             table
                 .add_row(RecordValue::new(vec![RecordField::new(
@@ -3136,7 +3160,7 @@ fn lazy_disk_open_reads_scalar_cells_with_full_scalar_column_cache() {
         DataManagerKind::StandardStMan,
         DataManagerKind::IncrementalStMan,
     ] {
-        let mut table = Table::with_schema(schema.clone());
+        let mut table = Table::with_schema(schema_for_manager(&schema, dm));
         for (id, scan) in [(1, 10), (2, 20), (3, 30), (4, 40)] {
             table
                 .add_row(RecordValue::new(vec![
@@ -3856,11 +3880,26 @@ fn unique_test_dir(prefix: &str) -> PathBuf {
 
 /// Build a small multi-type table for endian round-trip tests.
 fn build_endian_test_table() -> Table {
+    endian_test_table(false)
+}
+
+/// The endian test table with a Direct array column, which IncrementalStMan
+/// stores in its buckets.
+fn build_direct_endian_test_table() -> Table {
+    endian_test_table(true)
+}
+
+fn endian_test_table(direct_array: bool) -> Table {
     let schema = TableSchema::new(vec![
         ColumnSchema::scalar("i32_col", PrimitiveType::Int32),
         ColumnSchema::scalar("f64_col", PrimitiveType::Float64),
         ColumnSchema::scalar("str_col", PrimitiveType::String),
-        ColumnSchema::array_fixed("arr_col", PrimitiveType::Float32, vec![3]),
+        ColumnSchema::array_fixed("arr_col", PrimitiveType::Float32, vec![3])
+            .with_options(crate::schema::ColumnOptions {
+                direct: direct_array,
+                undefined: false,
+            })
+            .expect("array options"),
     ])
     .expect("schema");
     let mut table = Table::with_schema(schema);
@@ -4650,7 +4689,7 @@ fn fixed_shape_indirect_array_round_trips_through_disk() {
 
 #[test]
 fn ism_le_round_trip() {
-    let table = build_endian_test_table();
+    let table = build_direct_endian_test_table();
     let root = unique_test_dir("ism_le_rt");
     std::fs::create_dir_all(&root).expect("mkdir");
     table
@@ -4667,7 +4706,7 @@ fn ism_le_round_trip() {
 
 #[test]
 fn ism_be_round_trip() {
-    let table = build_endian_test_table();
+    let table = build_direct_endian_test_table();
     let root = unique_test_dir("ism_be_rt");
     std::fs::create_dir_all(&root).expect("mkdir");
     table

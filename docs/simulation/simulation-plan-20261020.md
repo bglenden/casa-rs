@@ -205,8 +205,10 @@ Requirements:
      run therefore requests a start 37 s later, and compares rows at equal
      stored TIME.
 6. **DATA only, unless a later step needs MODEL_DATA.**
-   - MODEL_DATA is created when something needs it, such as
-     `predict(incremental=True)`.
+   - MODEL_DATA is created only when something needs it. Nothing in Phase 1
+     does: `predict(incremental=True)` adds its prediction in the deferred
+     fold (§4), which needs no scratch column, and CASA's final MODEL_DATA
+     is all 1 (Phase 1d decision 5 on #841).
    - CORRECTED_DATA is not written.
    - casa-rs's `imager` falls back from `datacolumn='corrected'` to DATA, as
      CASA's `tclean` does.
@@ -239,9 +241,14 @@ These choices are open to objection.
   prediction, corruption and the write for each chunk.
 - The MS is published at `close`, as ADR-0008 staging requires, so no reader
   can see an intermediate state.
-- **A call that needs data on disk** forces the pending pass. These are a
-  second `predict` or `corrupt` after one has already run, `openfromms` on
-  the output, and `setdata` selections that depend on written rows.
+- **The plan is a fold.** Each `predict` and `corrupt` applies only to the
+  scans observed before it, and a `predict` that is not incremental replaces
+  every step before it. For each scan, DATA is the steps covering it applied
+  in order, so no sequence of `predict` and `corrupt` needs data on disk and
+  `close` stays one pass (Phase 1d decision 4 on #841).
+- **A call that needs data on disk** forces the pending pass. These are
+  `openfromms` on the output and `setdata` selections that depend on written
+  rows (Phase 2).
 - **Corrupting an existing MS** (`openfromms` + `corrupt`) patches it in place
   through the bounded selected-row mutation path (`write_session.rs:541`). The
   chunks are aligned to the DATA tile's channel extent, so each tile is
@@ -283,8 +290,10 @@ These choices are open to objection.
   - default limits;
   - SIGMA and WEIGHT left at their geometric values after `corrupt`;
   - noise scaling: independent real and imaginary draws for
-    cross-correlations, one real draw for autocorrelations, and no noise in
-    the cross-hands of 4-correlation data;
+    cross-correlations, one real draw for autocorrelations, and an
+    independent draw for every correlation, the cross-hands of
+    4-correlation data included (measured on CASA 6.7.6 in Phase 1d; this
+    plan first said the cross-hands get none, #841);
   - fBM normalisation;
   - scan numbering;
   - autocorrelation defaults.

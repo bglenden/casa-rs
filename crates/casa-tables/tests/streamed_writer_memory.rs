@@ -6,7 +6,9 @@
 //! shapes its rows visit. A table save that encodes streamed scalar columns
 //! holds at most the bytes planners reserve for them
 //! ([`streamed_scalar_columns_resident_bytes`]), in StandardStMan and
-//! IncrementalStMan, at a block boundary and across several blocks.
+//! IncrementalStMan, at a block boundary and across several blocks. The
+//! StandardStMan column writer, which writes groups holding strings, holds
+//! the same heap whatever the row count.
 //!
 //! This binary's global allocator counts the live heap; each law compares a
 //! write's peak beyond the heap live before it with the writer's charge. The
@@ -20,9 +22,10 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use casa_tables::{
     ColumnBinding, ColumnOverrides, ColumnSchema, DataManagerKind, EndianFormat,
-    StreamedScalarType, StreamedTiledShapeColumn, StreamedTiledShapeCubeLayout,
-    StreamedTiledShapeValueType, StreamingScalarColumnWriter, StreamingTiledShapeWriter, Table,
-    TableOptions, TableSchema, streamed_scalar_columns_resident_bytes,
+    GeneratedScalarColumn, StreamedScalarType, StreamedTiledShapeColumn,
+    StreamedTiledShapeCubeLayout, StreamedTiledShapeValueType, StreamingScalarColumnWriter,
+    StreamingTiledShapeWriter, Table, TableOptions, TableSchema,
+    streamed_scalar_columns_resident_bytes,
 };
 use casa_types::{PrimitiveType, ScalarValue};
 use num_complex::Complex32;
@@ -420,4 +423,73 @@ fn a_streamed_scalar_save_holds_what_planners_reserve() {
             columns.len()
         );
     }
+}
+
+/// Rows of the smaller column-writer save: about 50 data buckets of 2,048
+/// rows and 50 string buckets.
+const COLUMN_WRITER_ROWS: usize = 100_000;
+
+/// How many times the smaller save's rows the larger save writes: about
+/// 2,400 data buckets and 2,600 string buckets, enough that keeping 24
+/// bytes for each data bucket's index entry, or for each string bucket,
+/// lifts the peak, which the column phase's buckets otherwise set, by more
+/// than [`COLUMN_WRITER_GROWTH_BYTES`].
+const COLUMN_WRITER_SCALE: usize = 50;
+
+/// What the larger column-writer save may hold beyond the smaller.
+const COLUMN_WRITER_GROWTH_BYTES: u64 = 8 * 1024;
+
+/// The heap a StandardStMan save of `rows` rows of a generated Int32 column
+/// and a generated column of strings too long to inline held beyond what was
+/// live before it. The strings go to string buckets, so the group is
+/// written by the column writer.
+fn save_scalar_and_long_strings(path: &Path, rows: usize) -> u64 {
+    let schema = TableSchema::new(vec![
+        ColumnSchema::scalar("ID", PrimitiveType::Int32),
+        ColumnSchema::scalar("NAME", PrimitiveType::String),
+    ])
+    .expect("schema");
+    let mut table = Table::with_schema(schema);
+    let mut overrides = ColumnOverrides::for_row_count(rows);
+    overrides.insert_generated_scalar(
+        "ID",
+        GeneratedScalarColumn::new(rows, |row| Some(ScalarValue::Int32(row as i32))),
+    );
+    overrides.insert_generated_scalar(
+        "NAME",
+        GeneratedScalarColumn::new(rows, |row| {
+            Some(ScalarValue::String(format!("long name {row:07}")))
+        }),
+    );
+    let options = TableOptions::new(path)
+        .with_data_manager(DataManagerKind::StandardStMan)
+        .with_endian_format(EndianFormat::LittleEndian);
+
+    let baseline = LIVE.load(Ordering::Relaxed);
+    PEAK.store(baseline, Ordering::Relaxed);
+    table
+        .prepare_write()
+        .save_with_column_overrides(options, &HashMap::new(), &overrides)
+        .expect("save");
+    PEAK.load(Ordering::Relaxed) - baseline
+}
+
+#[test]
+fn the_ssm_column_writer_holds_the_same_heap_whatever_the_rows() {
+    if !alone("the_ssm_column_writer_holds_the_same_heap_whatever_the_rows") {
+        return;
+    }
+    let root = tempfile::tempdir().expect("tempdir");
+    // A first save settles what the process allocates once.
+    save_scalar_and_long_strings(&root.path().join("settle"), 1000);
+    let rows = COLUMN_WRITER_ROWS;
+    let small = save_scalar_and_long_strings(&root.path().join("small"), rows);
+    let large_rows = rows * COLUMN_WRITER_SCALE;
+    let large = save_scalar_and_long_strings(&root.path().join("large"), large_rows);
+    println!("column writer: {rows} rows held {small} bytes, {large_rows} rows held {large} bytes");
+    assert!(
+        large <= small + COLUMN_WRITER_GROWTH_BYTES,
+        "{large_rows} rows held {large} bytes, {rows} rows {small}: \
+         the writer holds more as rows grow"
+    );
 }

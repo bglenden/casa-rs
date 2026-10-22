@@ -1,22 +1,26 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Scalar column sources for StandardStMan and IncrementalStMan writers.
+//! Column sources for StandardStMan and IncrementalStMan writers.
 //!
 //! A source is a column's values in row order: held in memory, generated, or
 //! streamed from a construction file. The storage-manager writers read a
 //! source a run of rows at a time as encoded cells, so a streamed column of
 //! fixed-width values is decoded in blocks, without a [`ScalarValue`] per
-//! cell. What a save holds for its streamed columns is bounded
+//! cell. Array columns have sources too (see `array_sources`): their
+//! materialized cells or a [`GeneratedArrayColumn`](crate::table::GeneratedArrayColumn).
+//! What a save holds for its streamed columns is bounded
 //! ([`streamed_scalar_columns_resident_bytes`]).
 
+use std::borrow::Cow;
 use std::cell::RefCell;
 use std::fs::File;
 use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::ops::Range;
 use std::path::PathBuf;
 
-use casa_types::ScalarValue;
+use casa_types::{ScalarValue, Value};
 
 use super::StorageError;
+use super::array_sources::GeneratedArraySource;
 use super::data_type::CasacoreDataType;
 use super::incremental_stman::ISM_SCALAR_BUCKET_BYTES_PER_COLUMN;
 use super::standard_stman::DEFAULT_SSM_BUCKET_SIZE;
@@ -81,26 +85,46 @@ pub fn streamed_scalar_columns_resident_bytes(column_count: usize) -> Option<usi
     Some(appending.max(saving))
 }
 
-pub(crate) enum ScalarColumnSource<'a> {
+pub(crate) enum ColumnSource<'a> {
     Materialized(Vec<Option<ScalarValue>>),
     Generated(&'a GeneratedScalarColumn),
     Streamed(RefCell<StreamedScalarColumnReader>),
+    /// The materialized cells of an array column.
+    Cells(&'a [Option<Value>]),
+    /// A generated array column, its cells checked as they are read.
+    GeneratedArray(GeneratedArraySource<'a>),
 }
 
-impl<'a> ScalarColumnSource<'a> {
+impl<'a> ColumnSource<'a> {
     pub(crate) fn value(&self, row: usize) -> Result<Option<ScalarValue>, StorageError> {
         match self {
             Self::Materialized(values) => Ok(values.get(row).cloned().unwrap_or(None)),
             Self::Generated(column) => Ok(column.value(row)),
             Self::Streamed(reader) => reader.borrow_mut().value(row),
+            Self::Cells(_) | Self::GeneratedArray(_) => Err(StorageError::FormatMismatch(
+                "an array column source has no scalar values".to_string(),
+            )),
+        }
+    }
+
+    /// The cell in `row`, `None` when it is undefined.
+    pub(crate) fn cell(&self, row: usize) -> Result<Option<Cow<'a, Value>>, StorageError> {
+        match self {
+            Self::Cells(values) => Ok(values.get(row).and_then(Option::as_ref).map(Cow::Borrowed)),
+            Self::GeneratedArray(source) => source.cell(row),
+            _ => Ok(self
+                .value(row)?
+                .map(|value| Cow::Owned(Value::Scalar(value)))),
         }
     }
 
     pub(crate) fn scalar_runs(&self) -> Option<&'a [GeneratedScalarValueRun]> {
         match self {
-            Self::Materialized(_) => None,
             Self::Generated(column) => column.scalar_runs(),
-            Self::Streamed(_) => None,
+            Self::Materialized(_)
+            | Self::Streamed(_)
+            | Self::Cells(_)
+            | Self::GeneratedArray(_) => None,
         }
     }
 
@@ -271,21 +295,26 @@ impl StreamedScalarColumnReader {
     }
 }
 
-pub(crate) struct ScalarColumnSources<'a> {
+pub(crate) struct ColumnSources<'a> {
     row_count: usize,
-    columns: Vec<ScalarColumnSource<'a>>,
+    columns: Vec<ColumnSource<'a>>,
 }
 
-impl<'a> ScalarColumnSources<'a> {
+impl<'a> ColumnSources<'a> {
     /// Sources holding `columns`, each of `row_count` values.
     pub(crate) fn materialized(row_count: usize, columns: &[&[Option<ScalarValue>]]) -> Self {
         Self {
             row_count,
             columns: columns
                 .iter()
-                .map(|values| ScalarColumnSource::Materialized(values.to_vec()))
+                .map(|values| ColumnSource::Materialized(values.to_vec()))
                 .collect(),
         }
+    }
+
+    /// Sources of `row_count` rows, one per column of the group.
+    pub(super) fn new(row_count: usize, columns: Vec<ColumnSource<'a>>) -> Self {
+        Self { row_count, columns }
     }
 
     pub(crate) fn row_count(&self) -> usize {
@@ -302,6 +331,15 @@ impl<'a> ScalarColumnSources<'a> {
         row: usize,
     ) -> Result<Option<ScalarValue>, StorageError> {
         self.columns[column].value(row)
+    }
+
+    /// The cell of `column` in `row`, `None` when it is undefined.
+    pub(crate) fn cell(
+        &self,
+        column: usize,
+        row: usize,
+    ) -> Result<Option<Cow<'a, Value>>, StorageError> {
+        self.columns[column].cell(row)
     }
 
     pub(crate) fn scalar_runs(&self, column: usize) -> Option<&'a [GeneratedScalarValueRun]> {
@@ -335,15 +373,15 @@ pub(crate) struct EncodedCells {
 
 impl EncodedCells {
     /// Encode `column`'s cells `rows`: in blocks when the source allows,
-    /// otherwise by `encode` on each value.
+    /// otherwise by `encode` on each cell.
     pub(crate) fn fill(
         &mut self,
-        sources: &ScalarColumnSources<'_>,
+        sources: &ColumnSources<'_>,
         column: usize,
         rows: Range<usize>,
         data_type: CasacoreDataType,
         big_endian: bool,
-        encode: impl Fn(Option<&ScalarValue>) -> Vec<u8>,
+        encode: impl Fn(Option<&Value>) -> Vec<u8>,
     ) -> Result<(), StorageError> {
         self.bytes.clear();
         self.ends.clear();
@@ -353,8 +391,8 @@ impl EncodedCells {
             return Ok(());
         }
         for row in rows {
-            let value = sources.value(column, row)?;
-            self.bytes.extend_from_slice(&encode(value.as_ref()));
+            let value = sources.cell(column, row)?;
+            self.bytes.extend_from_slice(&encode(value.as_deref()));
             self.ends.push(self.bytes.len());
         }
         Ok(())
@@ -382,7 +420,7 @@ pub(super) fn scalar_override_columns_for_group<'a>(
     group_col_descs: &[ColumnDescContents],
     column_overrides: &'a ColumnOverrides,
     row_count: usize,
-) -> Result<Option<ScalarColumnSources<'a>>, StorageError> {
+) -> Result<Option<ColumnSources<'a>>, StorageError> {
     let mut columns = Vec::with_capacity(group_col_descs.len());
     for desc in group_col_descs {
         if desc.is_array || desc.is_record() {
@@ -391,36 +429,48 @@ pub(super) fn scalar_override_columns_for_group<'a>(
         let Some(override_value) = column_overrides.get(&desc.col_name) else {
             return Ok(None);
         };
-        match override_value {
-            ColumnOverride::Values(values) => {
-                let mut scalar_values = Vec::with_capacity(values.len());
-                for value in values {
-                    match value {
-                        Some(casa_types::Value::Scalar(value)) => {
-                            scalar_values.push(Some(value.clone()));
-                        }
-                        Some(other) => {
-                            return Err(StorageError::FormatMismatch(format!(
-                                "column override {} expected scalar values, found {:?}",
-                                desc.col_name,
-                                other.kind()
-                            )));
-                        }
-                        None => scalar_values.push(None),
-                    }
-                }
-                columns.push(ScalarColumnSource::Materialized(scalar_values));
-            }
-            ColumnOverride::GeneratedScalar(column) => {
-                columns.push(ScalarColumnSource::Generated(column));
-            }
-            ColumnOverride::StreamedScalar(column) => {
-                columns.push(ScalarColumnSource::Streamed(RefCell::new(
-                    StreamedScalarColumnReader::open(column)?,
-                )));
-            }
-            ColumnOverride::Deferred => return Ok(None),
-        }
+        let Some(source) = scalar_column_source(desc, override_value)? else {
+            return Ok(None);
+        };
+        columns.push(source);
     }
-    Ok(Some(ScalarColumnSources { row_count, columns }))
+    Ok(Some(ColumnSources { row_count, columns }))
+}
+
+/// The source of scalar column `desc` from its override, or `None` for a
+/// deferred column. A generated array override is refused.
+pub(super) fn scalar_column_source<'a>(
+    desc: &ColumnDescContents,
+    override_value: &'a ColumnOverride,
+) -> Result<Option<ColumnSource<'a>>, StorageError> {
+    Ok(Some(match override_value {
+        ColumnOverride::Values(values) => {
+            let mut scalar_values = Vec::with_capacity(values.len());
+            for value in values {
+                match value {
+                    Some(Value::Scalar(value)) => scalar_values.push(Some(value.clone())),
+                    Some(other) => {
+                        return Err(StorageError::FormatMismatch(format!(
+                            "column override {} expected scalar values, found {:?}",
+                            desc.col_name,
+                            other.kind()
+                        )));
+                    }
+                    None => scalar_values.push(None),
+                }
+            }
+            ColumnSource::Materialized(scalar_values)
+        }
+        ColumnOverride::GeneratedScalar(column) => ColumnSource::Generated(column),
+        ColumnOverride::GeneratedArray(_) => {
+            return Err(StorageError::FormatMismatch(format!(
+                "scalar column {} cannot take a generated array override",
+                desc.col_name
+            )));
+        }
+        ColumnOverride::StreamedScalar(column) => {
+            ColumnSource::Streamed(RefCell::new(StreamedScalarColumnReader::open(column)?))
+        }
+        ColumnOverride::Deferred => return Ok(None),
+    }))
 }

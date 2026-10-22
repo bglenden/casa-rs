@@ -229,6 +229,11 @@ pub enum CppTableFixture {
     /// ISM column keywords: 2-row table (flux: Double, id: Int) with per-column
     /// keywords, stored with `IncrementalStMan`. Full CC/CR/RC cross-matrix.
     IsmColumnKeywords,
+    /// ISM element arrays: 3 rows of direct fixed-shape arrays of every
+    /// element type, of shapes \[1\], \[3\] and \[2,3\] (`Float64_1` holds
+    /// `[7.0]` in row 0), stored with `IncrementalStMan`. Full CC/CR/RC
+    /// cross-matrix.
+    IsmElementArrays,
 }
 
 /// Write a table fixture using C++ casacore. Returns an error string on failure.
@@ -419,6 +424,9 @@ pub(crate) fn cpp_table_write_unlocked(
             }
             CppTableFixture::IsmColumnKeywords => {
                 cpp_table_write_ism_column_keywords(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::IsmElementArrays => {
+                cpp_table_write_ism_element_arrays(c_path.as_ptr(), &mut error)
             }
             CppTableFixture::MutationRemovedColumn
             | CppTableFixture::MutationRemovedRows
@@ -630,6 +638,9 @@ pub(crate) fn cpp_table_verify_unlocked(
             }
             CppTableFixture::IsmColumnKeywords => {
                 cpp_table_verify_ism_column_keywords(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::IsmElementArrays => {
+                cpp_table_verify_ism_element_arrays(c_path.as_ptr(), &mut error)
             }
         }
     };

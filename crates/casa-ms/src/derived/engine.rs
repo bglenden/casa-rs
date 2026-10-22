@@ -1240,7 +1240,7 @@ fn uvw_phase_rotation_vector(
 }
 
 #[derive(Debug, Clone, Copy)]
-struct CasaUvwMachine {
+pub(crate) struct CasaUvwMachine {
     uvrot: [[f64; 3]; 3],
     input_plane_projection: [[f64; 3]; 3],
     phrot: [f64; 3],
@@ -1253,7 +1253,7 @@ impl CasaUvwMachine {
     /// reference-frame axis conversion is the identity. The explicit-output
     /// constructor nevertheless executes the rotation even for two identical
     /// directions; CASA's AW gridders depend on the resulting f64 roundoff.
-    fn new(output_direction: &MDirection, input_direction: &MDirection) -> Self {
+    pub(crate) fn new(output_direction: &MDirection, input_direction: &MDirection) -> Self {
         let [input_ra, input_dec] = casa_mvdirection_angles(input_direction);
         let [output_ra, output_dec] = casa_mvdirection_angles(output_direction);
         let rot1 = casa_euler_rotation(&[
@@ -1297,7 +1297,7 @@ impl CasaUvwMachine {
         }
     }
 
-    fn convert_uvw(self, uvw_m: [f64; 3]) -> ([f64; 3], f64) {
+    pub(crate) fn convert_uvw(self, uvw_m: [f64; 3]) -> ([f64; 3], f64) {
         let converted = casa_row_vec3_mul_mat3(uvw_m, self.uvrot);
         let phase_shift_m = casa_dot3(self.phrot, converted);
         (converted, phase_shift_m)

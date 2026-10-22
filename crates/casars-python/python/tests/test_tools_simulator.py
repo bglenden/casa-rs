@@ -14,6 +14,7 @@ import inspect
 import json
 import logging
 from pathlib import Path
+import subprocess
 import sys
 import threading
 import time
@@ -42,11 +43,11 @@ REFERENCE = "UTC 2020/01/01/00:00:00"
 IMPLEMENTED = {
     "open", "close", "done", "name", "type", "summary", "setconfig", "setfeed",
     "setspwindow", "setfield", "settimes", "setlimits", "setauto", "observe",
+    "setseed", "setnoise", "corrupt", "reset", "predict", "setoptions", "setvp",
 }
 NOT_YET_IMPLEMENTED = {
-    "openfromms", "observemany", "setmosaicfield", "setdata", "predict", "setoptions",
-    "setvp", "corrupt", "reset", "setapply", "setgain", "settrop", "setleakage",
-    "setnoise", "setseed",
+    "openfromms", "observemany", "setmosaicfield", "setdata", "setapply", "setgain",
+    "settrop", "setleakage",
 }
 DISABLED_IN_CASA = {"setbandpass", "setpa", "setpointingerror"}
 
@@ -110,17 +111,47 @@ def test_signatures_match_a_live_casa_when_one_is_importable() -> None:
         assert describe(getattr(simulator, name)) == describe(getattr(live, name)), name
 
 
+CONSTRUCTOR = [("memory_budget", None), ("backend", "auto"), ("workers", None)]
+
+
 def test_the_constructor_adds_only_keyword_only_controls() -> None:
     # CASA's constructor takes (*args, **kwargs) and ignores them.
     assert [entry["kind"] for entry in CASA["constructor"]] == ["VAR_POSITIONAL", "VAR_KEYWORD"]
     parameters = inspect.signature(simulator).parameters.values()
     assert [(p.name, p.kind, p.default) for p in parameters] == [
-        ("memory_budget", inspect.Parameter.KEYWORD_ONLY, None)
+        (name, inspect.Parameter.KEYWORD_ONLY, default) for name, default in CONSTRUCTOR
     ]
     with pytest.raises(TypeError):
         simulator(1)  # type: ignore[misc]
-    with pytest.raises(ValueError, match="memory_budget"):
-        simulator(memory_budget=0)
+
+
+@pytest.mark.parametrize(
+    ("controls", "message"),
+    [
+        ({"memory_budget": 0}, "memory_budget must be a positive number of bytes, not 0"),
+        ({"memory_budget": -1}, "memory_budget must be a positive number of bytes, not -1"),
+        ({"workers": 0}, "workers must be a positive number of threads, not 0"),
+        ({"workers": -2}, "workers must be a positive number of threads, not -2"),
+        ({"backend": "gpu"}, "backend must be 'auto', 'cpu' or 'metal', not 'gpu'"),
+        ({"backend": "CPU"}, "backend must be 'auto', 'cpu' or 'metal', not 'CPU'"),
+    ],
+)
+def test_constructor_controls_out_of_range_raise_value_error(
+    controls: dict[str, Any], message: str
+) -> None:
+    with pytest.raises(ValueError) as raised:
+        simulator(**controls)
+    assert str(raised.value) == message
+
+
+def test_the_constructor_takes_each_backend() -> None:
+    assert simulator(backend="auto", workers=1, memory_budget=1 << 30).type() == "Simulator"
+    assert simulator(backend="cpu").type() == "Simulator"
+    # 'metal' needs a device: on a machine without one it raises at once.
+    try:
+        simulator(backend="metal")
+    except RuntimeError as error:
+        assert "Metal device" in str(error)
 
 
 def test_the_bundle_describes_the_class_signatures() -> None:
@@ -147,8 +178,11 @@ def test_the_bundle_describes_the_class_signatures() -> None:
             assert parameter.default == default, (name, parameter.name)
             assert type(parameter.default) is type(default), (name, parameter.name)
     constructor = contract["constructors"][0]["parameters_schema"]["properties"]
-    assert projection["constructor_keyword_only"] == list(constructor) == ["memory_budget"]
-    assert constructor["memory_budget"]["default"] is None
+    # The schema's properties are unordered; the projection carries the order.
+    assert projection["constructor_keyword_only"] == [name for name, _ in CONSTRUCTOR]
+    assert set(constructor) == {name for name, _ in CONSTRUCTOR}
+    for name, default in CONSTRUCTOR:
+        assert constructor[name]["default"] == default, name
     status = bundle["annotations"]["python"]["objects"]["simulator"]["method_status"]
     assert {name for name, value in status.items() if value == "implemented"} == IMPLEMENTED
     assert {name for name, value in status.items() if value == "not_yet_implemented"} == (
@@ -256,6 +290,13 @@ def test_methods_before_open_return_false_and_log_only_setconfig(
         assert sm.setauto() is False
         assert sm.setfeed(mode="perfect R L") is False
         assert sm.setbandpass() is False
+        assert sm.setseed() is False
+        assert sm.setnoise(simplenoise="10 furlong") is False
+        assert sm.corrupt() is False
+        assert sm.reset() is False
+        assert sm.setoptions(ftmachine="mosaic", location="garbage") is False
+        assert sm.setvp(vptable="vp.tab", usedefaultvp=False, parangleinc="10 furlong") is False
+        assert sm.predict() is False
         assert caplog.messages == []
         assert sm.setconfig() is False
         assert caplog.messages == ["The sm tool must be opened first."]
@@ -330,6 +371,8 @@ def test_casa_conversion_failures_log_and_continue(
         (lambda sm: sm.setconfig(x=[0.0, 1.0], y=[0.0], z=[0.0, 1.0]), "Failed AlwaysAssert"),
         (lambda sm: sm.setconfig(referencelocation="NOWHERE"), "Could not understand Position"),
         (lambda sm: sm.oldsetnoise(), "deprecated in CASA"),
+        (lambda sm: sm.setnoise(simplenoise="0.1K"), "Cannot convert K to Jy"),
+        (lambda sm: sm.setnoise(pground="garbage"), "in converting quantity"),
     ],
 )
 @needs_measures
@@ -435,6 +478,209 @@ def test_omitted_arguments_behave_as_casas_defaults(tmp_path: Path) -> None:
     # Hour-angle mode by default: the scan is centred on transit, not on the
     # reference time; 4 antennas without autocorrelations in 3 integrations.
     assert Table.open(tmp_path / "omitted.ms").row_count == 18
+
+
+def noisy(path: Path, seed: int | None, **controls: Any) -> np.ndarray:
+    """DATA of a 300 s session after `setseed(seed)`, 0.1 Jy and one corrupt."""
+    sm = simulator(**controls)
+    sm.open(str(path))
+    configure(sm)
+    assert sm.observe("F", "L", starttime="0s", stoptime="300s")
+    if seed is not None:
+        assert sm.setseed(seed) is True
+    assert sm.setnoise(mode="simplenoise", simplenoise="0.1Jy") is True
+    assert sm.corrupt() is True
+    sm.close()
+    return np.asarray(Table.open(path).get_column("DATA"))
+
+
+@needs_measures
+def test_setnoise_and_corrupt_add_casas_thermal_noise_at_close(tmp_path: Path) -> None:
+    data = noisy(tmp_path / "noisy.ms", 5)
+    main = Table.open(tmp_path / "noisy.ms")
+    # 4 antennas with autocorrelations: 10 rows in each of 30 integrations.
+    assert data.shape == (300, 2, 4)
+    auto = np.asarray(main.get_column("ANTENNA1")) == np.asarray(main.get_column("ANTENNA2"))
+    cross = data[~auto]
+    # Each real and imaginary part has σ² = 0.01, within five standard errors.
+    tolerance = 5 * 0.01 * np.sqrt(2 / cross.size)
+    assert abs(np.var(cross.real) - 0.01) < tolerance
+    assert abs(np.var(cross.imag) - 0.01) < tolerance
+    # Autocorrelations get real noise only.
+    assert np.all(data[auto].imag == 0.0)
+    assert np.var(data[auto].real) > 0.005
+    assert np.array_equal(np.asarray(main.get_column("WEIGHT")), np.ones((300, 2)))
+
+
+@needs_measures
+def test_the_seed_decides_the_draws(tmp_path: Path) -> None:
+    first = noisy(tmp_path / "first.ms", 5)
+    assert np.array_equal(noisy(tmp_path / "again.ms", 5), first)
+    assert not np.array_equal(noisy(tmp_path / "other.ms", 6), first)
+    # CASA's binding keeps a seed's low 32 bits.
+    assert np.array_equal(noisy(tmp_path / "wrapped.ms", 5 + 2**32), first)
+    # Without setseed, CASA's simulator seed 11111, not the binding default.
+    assert np.array_equal(noisy(tmp_path / "default.ms", None), noisy(tmp_path / "s.ms", 11111))
+    assert not np.array_equal(noisy(tmp_path / "unset.ms", None), noisy(tmp_path / "b.ms", 185349251))
+
+
+@needs_measures
+def test_the_controls_do_not_change_what_close_writes(tmp_path: Path) -> None:
+    first = noisy(tmp_path / "default.ms", 5)
+    for name, controls in [
+        ("one.ms", {"workers": 1}),
+        ("four.ms", {"workers": 4, "backend": "cpu"}),
+        ("budget.ms", {"memory_budget": 256 << 20, "workers": 3}),
+    ]:
+        assert np.array_equal(noisy(tmp_path / name, 5, **controls), first), name
+
+
+@needs_measures
+def test_a_budget_too_small_for_close_raises_and_writes_nothing(tmp_path: Path) -> None:
+    sm = simulator(memory_budget=1 << 20)
+    sm.open(str(tmp_path / "small.ms"))
+    configure(sm)
+    assert sm.observe("F", "L", starttime="0s", stoptime="30s")
+    with pytest.raises(RuntimeError, match="MeasurementSet writer needs .* bytes"):
+        sm.close()
+    assert not (tmp_path / "small.ms").exists()
+    assert sm.name() == ""
+
+
+@needs_measures
+def test_setnoise_outcomes_follow_casa(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    sm = opened(tmp_path)
+    configure(sm)
+    with caplog.at_level(logging.ERROR, logger=LOGGER):
+        # Before observe CASA has no rows to size the term on.
+        assert sm.setnoise(simplenoise="0.1Jy") is False
+        assert sm.observe("F", "L", starttime="0s", stoptime="30s")
+        assert sm.setnoise(mode="bogus") is False
+    assert caplog.messages[0].startswith("Caught exception: Error in Simulator::create_corrupt")
+    assert caplog.messages[1:] == ["Caught exception: unsupported mode bogus in setnoise()"]
+    with pytest.raises(NotImplementedError, match="tsys-manual.*Phase 3"):
+        sm.setnoise(mode="tsys-manual")
+    with pytest.raises(NotImplementedError, match="tsys-atm.*Phase 4"):
+        sm.setnoise(mode="tsys-atm")
+    with pytest.raises(NotImplementedError, match="OTF=False"):
+        sm.setnoise(simplenoise="0.1Jy", OTF=False)
+    # None of those added a term; `[]` is 0 Jy.
+    assert sm.setnoise() is True
+    assert sm.reset() is True
+    assert sm.corrupt() is True
+    sm.close()
+    data = np.asarray(Table.open(tmp_path / "x.ms").get_column("DATA"))
+    assert np.all(data == 0)
+
+
+@needs_measures
+def test_corrupt_raises_for_three_correlations(tmp_path: Path) -> None:
+    sm = opened(tmp_path)
+    configure(sm)
+    assert sm.setspwindow(spwname="T", freq="1.4GHz", deltafreq="1MHz", nchannels=4, stokes="XX XY YY")
+    assert sm.observe("F", "T", starttime="0s", stoptime="30s")
+    assert sm.setnoise(simplenoise="0.1Jy") is True
+    with pytest.raises(RuntimeError, match="No such VisVector type"):
+        sm.corrupt()
+    sm.reset()
+    sm.close()
+
+
+def test_predict_opens_its_images_first_even_before_open(tmp_path: Path) -> None:
+    # CASA's binding opens every named image before it asks the simulator,
+    # so a missing or unreadable image raises whether or not a session is
+    # open.
+    with pytest.raises(RuntimeError, match="does not exist"):
+        simulator().predict(imagename=str(tmp_path / "missing.image"))
+    plain = tmp_path / "plain.txt"
+    plain.write_text("x", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="Unable to open image"):
+        simulator().predict(imagename=[str(plain)])
+
+
+@needs_measures
+def test_predict_outcomes_follow_casa(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    sm = opened(tmp_path)
+    configure(sm)
+    assert sm.observe("F", "L", starttime="0s", stoptime="30s")
+    with caplog.at_level(logging.ERROR, logger=LOGGER):
+        assert sm.predict() is False
+        assert sm.predict(imagename=[""]) is False
+    assert caplog.messages == ["Failed to create SkyEquation: No model images found"] * 2
+    with pytest.raises(NotImplementedError, match="complist.*Phase 2"):
+        sm.predict(complist=str(tmp_path / "model.cl"))
+    with pytest.raises(RuntimeError, match="does not exist"):
+        sm.predict(imagename=str(tmp_path / "missing.image"))
+    sm.close()
+    assert np.all(np.asarray(Table.open(tmp_path / "x.ms").get_column("DATA")) == 0)
+
+
+REPO_ROOT = Path(__file__).resolve().parents[4]
+
+
+def sky_model(tmp_path: Path) -> Path:
+    """The one-plane Stokes I model around DIRECTION that the fixture
+    example writes."""
+    root = tmp_path / "fixtures"
+    subprocess.run(
+        ["cargo", "run", "-q", "-p", "casars-python", "--example", "make_python_fixtures", "--",
+         str(root)],
+        cwd=REPO_ROOT,
+        check=True,
+    )
+    return root / "simulator_model.image"
+
+
+@needs_measures
+def test_auto_predicts_on_the_metal_device_as_the_cpu_does(tmp_path: Path) -> None:
+    # 'auto' predicts on the machine's Metal device when it has one, which
+    # agrees with the CPU to 1e-4 of the largest visibility.
+    try:
+        simulator(backend="metal")
+    except RuntimeError as error:
+        pytest.skip(f"no Metal device: {error}")
+    model = sky_model(tmp_path)
+
+    def predicted(name: str, backend: str) -> np.ndarray:
+        sm = simulator(backend=backend)
+        sm.open(str(tmp_path / name))
+        configure(sm)
+        assert sm.observe("F", "L", starttime="0s", stoptime="300s")
+        assert sm.predict(imagename=str(model)) is True
+        sm.close()
+        return np.asarray(Table.open(tmp_path / name).get_column("DATA"))
+
+    cpu = predicted("cpu.ms", "cpu")
+    auto = predicted("auto.ms", "auto")
+    scale = np.abs(cpu).max()
+    assert scale > 0.5
+    difference = np.abs(auto - cpu).max()
+    assert difference <= 1e-4 * scale
+    # The device rounds differently: the CPU's bits would mean it predicted both.
+    assert difference > 0
+
+
+@needs_measures
+def test_setoptions_and_setvp_follow_casa(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    sm = opened(tmp_path)
+    configure(sm)
+    assert sm.setoptions(padding=1.5) is True
+    # CASA keeps a padding of at least 1 and ignores the rest.
+    assert sm.setoptions(padding=0.5) is True
+    with caplog.at_level(logging.ERROR, logger=LOGGER):
+        assert sm.setoptions(location=1.0) is True
+    assert caplog.messages == ["Could not convert location 1 to a Position Measures"]
+    with pytest.raises(NotImplementedError, match="mosaic.*Phase 2"):
+        sm.setoptions(ftmachine="mosaic")
+    with pytest.raises(NotImplementedError, match="gridfunction"):
+        sm.setoptions(gridfunction="BOX")
+    assert sm.setvp() is True
+    assert sm.setvp(dovp=False, parangleinc="5deg") is True
+    with pytest.raises(NotImplementedError, match="vptable"):
+        sm.setvp(usedefaultvp=False, vptable="vp.tab")
+    with pytest.raises(RuntimeError, match="in converting quantity"):
+        sm.setvp(parangleinc="10 furlong")
+    sm.close()
 
 
 @needs_measures

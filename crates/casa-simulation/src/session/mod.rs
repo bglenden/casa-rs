@@ -6,7 +6,19 @@
 //! and the scans `observe` plans. It writes nothing until
 //! [`Simulator::close`], which creates the MeasurementSet in one streamed
 //! pass (plan §4, deferred single-pass execution), so no reader can see an
-//! intermediate state.
+//! intermediate state. The steps that change DATA (`predict`, `corrupt`) are
+//! recorded in a plan of which scans each covers, and applied as `close`
+//! writes each row (`plan`, `prediction`, `corruption`); `predict` prepares
+//! its model's grids when it is called.
+//!
+//! The session runs within its [`SessionResources`]: `predict` admits its
+//! model's grids, and `close` what it holds, against the imaging runtime's
+//! resource policy, and `close` computes each write batch's geometry,
+//! prediction and noise on the runtime's worker team, so the MeasurementSet
+//! is bitwise the same for any budget or worker count. A model is predicted
+//! on the CPU or the host's Metal device ([`SessionResources`]), whose
+//! predictions agree with the CPU's to `1e-4` of the largest; noise is
+//! drawn on the CPU on either.
 //!
 //! The setters keep CASA's semantics, including order-dependent ones:
 //! `setfield` records the reference time and first spectral window in force
@@ -16,18 +28,26 @@
 //! or diverges, as recorded in `docs/CASA (C++) bugs.md`.
 
 pub mod array;
+mod corruption;
 pub mod error;
 mod feeds;
 pub mod fields;
 pub mod observe;
+pub(crate) mod plan;
+pub(crate) mod prediction;
+pub mod resources;
 pub mod spectral;
 #[cfg(test)]
 mod tests;
 
+pub use corruption::{DEFAULT_SEED, NoiseSpec};
+pub use prediction::{PredictSpec, PredictionOptions, VoltagePatternSpec};
+pub use resources::{BackendRequest, ExecutionControls, SessionResources, UnknownBackend};
+
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use casa_ms::MeasurementSetWriteResources;
+use casa_imaging_operator::PaddingFactor;
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::{EpochRef, MEpoch, MeasFrame, MeasuresProvider};
 
@@ -37,37 +57,35 @@ use error::{SimulatorError, SimulatorResult};
 use feeds::Feed;
 use fields::Field;
 use observe::{Observation, ObserveSpec, Scan, StateSpec, Times};
+use plan::{DataPlan, NoiseTerm};
 use spectral::{SpectralWindow, SpectralWindowSpec};
 
-/// Controls CASA's `sm` lacks: the session's measures data, memory and the
-/// clock that stands for "now".
+/// Controls CASA's `sm` lacks: the session's measures data, its resources
+/// and the clock that stands for "now".
 #[derive(Clone)]
 pub struct SimulatorOptions {
     /// Measures data (Earth orientation, observatories).
     pub measures: Arc<dyn MeasuresProvider>,
-    /// The write session's memory and buffers.
-    pub write_resources: MeasurementSetWriteResources,
+    /// The host, memory budget, workers and backend `close` runs with.
+    pub resources: SessionResources,
     /// The time the session opens, UTC: CASA's reference time until
     /// `settimes`.
     pub now: MEpoch,
 }
 
 impl SimulatorOptions {
-    /// The production options: the discovered measures data, a write budget
-    /// from the machine's physical memory (two live batches), and the system
-    /// clock as "now".
+    /// The production options: the discovered measures data, `resources`,
+    /// and the system clock as "now".
     ///
     /// # Errors
     ///
-    /// No measures data was found, or the memory budget could not be read.
-    pub fn from_system() -> SimulatorResult<Self> {
+    /// No measures data was found.
+    pub fn from_system(resources: SessionResources) -> SimulatorResult<Self> {
         let measures = casa_ms::open_measures_runtime()
             .map_err(|error| SimulatorError::raised(format!("measures data: {error}")))?;
-        let write_resources = MeasurementSetWriteResources::from_system_memory(2)
-            .map_err(|error| SimulatorError::raised(format!("memory budget: {error}")))?;
         Ok(Self {
             measures,
-            write_resources,
+            resources,
             now: system_now(),
         })
     }
@@ -108,6 +126,16 @@ pub struct Simulator {
     observations: Vec<Observation>,
     states: Vec<StateSpec>,
     scans: Vec<Scan>,
+    /// The seed of noise terms set from now on (`setseed`).
+    seed: i32,
+    /// The noise terms `setnoise` set, until `reset`.
+    noise_terms: Vec<NoiseTerm>,
+    /// `predict`'s grid padding (`setoptions`).
+    padding: PaddingFactor,
+    /// Whether `predict` applies the primary beam (`setvp(dovp)`).
+    voltage_pattern: bool,
+    /// The DATA steps (`predict`, `corrupt`), applied at `close`.
+    data_plan: DataPlan,
 }
 
 impl Simulator {
@@ -132,6 +160,11 @@ impl Simulator {
             observations: Vec::new(),
             states: Vec::new(),
             scans: Vec::new(),
+            seed: DEFAULT_SEED,
+            noise_terms: Vec::new(),
+            padding: PaddingFactor::SIMULATOR,
+            voltage_pattern: false,
+            data_plan: DataPlan::default(),
         }
     }
 
@@ -486,5 +519,9 @@ impl Simulator {
 
     pub(crate) fn scans(&self) -> &[Scan] {
         &self.scans
+    }
+
+    pub(crate) fn data_plan(&self) -> &DataPlan {
+        &self.data_plan
     }
 }

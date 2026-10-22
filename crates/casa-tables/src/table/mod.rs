@@ -23,6 +23,7 @@ use crate::table::columns::collect_undefined_cells_for_schema;
 use crate::table_impl::TableImpl;
 
 mod columns;
+mod generated_array;
 mod io;
 mod locking;
 mod mutation;
@@ -30,6 +31,7 @@ mod query;
 mod streamed_scalar;
 mod virtual_columns;
 
+pub use generated_array::{GeneratedArrayColumn, GeneratedArrayValueRun};
 pub use streamed_scalar::{
     STREAMING_SCALAR_COLUMN_BUFFER_BYTES, StreamedScalarColumn, StreamedScalarType,
     StreamedScalarValues, StreamingScalarColumnWriter,
@@ -676,33 +678,12 @@ impl GeneratedScalarColumn {
         row_count: usize,
         runs: Vec<GeneratedScalarValueRun>,
     ) -> Result<Self, TableError> {
-        if row_count == 0 {
-            if runs.is_empty() {
-                return Ok(Self {
-                    row_count,
-                    values: GeneratedScalarColumnValues::Runs(Arc::new(runs)),
-                });
-            }
-            return Err(TableError::InvalidGeneratedScalarRuns {
-                message: "generated scalar runs for zero rows must be empty".to_string(),
-            });
-        }
-        if runs.first().map(GeneratedScalarValueRun::start_row) != Some(0) {
-            return Err(TableError::InvalidGeneratedScalarRuns {
-                message: "generated scalar runs must start at row 0".to_string(),
-            });
-        }
-        for pair in runs.windows(2) {
-            if pair[0].start_row >= pair[1].start_row {
-                return Err(TableError::InvalidGeneratedScalarRuns {
-                    message: "generated scalar runs must be strictly increasing".to_string(),
-                });
-            }
-        }
-        if runs.last().is_some_and(|run| run.start_row() >= row_count) {
-            return Err(TableError::InvalidGeneratedScalarRuns {
-                message: format!("generated scalar run starts beyond row count {row_count}"),
-            });
+        if let Some(message) = generated_array::run_starts_problem(
+            "scalar",
+            row_count,
+            runs.iter().map(GeneratedScalarValueRun::start_row),
+        ) {
+            return Err(TableError::InvalidGeneratedScalarRuns { message });
         }
         Ok(Self {
             row_count,
@@ -759,6 +740,9 @@ pub enum ColumnOverride {
     Values(Vec<Option<Value>>),
     /// Scalar values generated on demand by row number.
     GeneratedScalar(GeneratedScalarColumn),
+    /// Array values generated on demand by row number; see
+    /// [`GeneratedArrayColumn`] for the storage managers that write them.
+    GeneratedArray(GeneratedArrayColumn),
     /// Fixed-width scalar values read from a bounded construction source.
     StreamedScalar(StreamedScalarColumn),
     /// The column is written by another path after table metadata is saved.
@@ -774,6 +758,7 @@ impl ColumnOverride {
         match self {
             Self::Values(values) => Some(values.len()),
             Self::GeneratedScalar(column) => Some(column.row_count()),
+            Self::GeneratedArray(column) => Some(column.row_count()),
             Self::StreamedScalar(column) => Some(column.row_count()),
             Self::Deferred => None,
         }
@@ -839,6 +824,16 @@ impl ColumnOverrides {
     ) -> Option<ColumnOverride> {
         self.columns
             .insert(column.into(), ColumnOverride::GeneratedScalar(values))
+    }
+
+    /// Insert a generated array override.
+    pub fn insert_generated_array(
+        &mut self,
+        column: impl Into<String>,
+        values: GeneratedArrayColumn,
+    ) -> Option<ColumnOverride> {
+        self.columns
+            .insert(column.into(), ColumnOverride::GeneratedArray(values))
     }
 
     /// Insert a bounded file-backed scalar construction source.
@@ -1649,6 +1644,9 @@ pub enum TableError {
     /// Generated scalar run starts were malformed.
     #[error("invalid generated scalar runs: {message}")]
     InvalidGeneratedScalarRuns { message: String },
+    /// Generated array run starts were malformed.
+    #[error("invalid generated array runs: {message}")]
+    InvalidGeneratedArrayRuns { message: String },
     /// A [`SchemaError`][crate::schema::SchemaError] was encountered during validation.
     #[error("schema error: {0}")]
     Schema(String),

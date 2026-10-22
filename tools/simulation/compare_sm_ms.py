@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: LGPL-3.0-or-later
-"""Compare casa-rs simulator MSs with CASA's (simulation Phase 1c, #841).
+"""Compare casa-rs simulator MSs with CASA's (simulation Phases 1c and 1d, #841).
 
 Run with CASA's Python, which reads both. For every scenario in the CASA
 oracle's manifest, the comparison opens `<casa>/<name>.ms` and
@@ -11,14 +11,40 @@ oracle's manifest, the comparison opens `<casa>/<name>.ms` and
   non-table keywords, and every column's value type, dimensionality,
   fixed-shape option and keywords (units and MEASINFO);
 - **the cells:** every column, row by row: which cells are defined, their
-  shapes and their values. DATA must also be zero in both. Floats pass
-  within a per-column tolerance, and UVW's largest difference is reported.
+  shapes and their values. Floats pass within a per-column tolerance, and
+  UVW's largest difference is reported.
+- **DATA**: which cells are defined and their shapes, as every column; its
+  values by the scenario's `data` (default `zero`):
+  - `zero` (observe only): DATA is zero in both, and its cells are compared
+    as every column's are.
+  - `model` (predicted, no noise): the normalized RMS of casa-rs against
+    CASA, NRMS = sqrt(sum |casa-rs - CASA|^2 / sum |CASA|^2) over every
+    complex sample of the rows FLAG_ROW leaves unflagged in both MSs (the
+    convention of Phase 1a's `predict_vs_casa`), must be at most
+    `--data-nrms` (1e-3, plan Phase 1 acceptance). It is also reported per
+    correlation and for cross- and autocorrelation rows apart. A
+    correlation with no reference power (the cross-hands of a Stokes I
+    model) is checked by its largest difference instead, which must be at
+    most 1e-6 of CASA's peak; a scenario with no reference power at all
+    fails. Rows flagged in both are reported by their largest value.
+  - `noisy` (predicted and corrupted): the draws differ, so each
+    implementation's noise is its DATA minus its noise-free `twin`
+    scenario's. Per correlation, the variance of the noise's real and
+    imaginary parts on cross-correlations and of its real part on
+    autocorrelations must be the scenario's `noise_variance` within five
+    standard errors in both, the autocorrelations' imaginary noise must be
+    zero, and a two-sample Kolmogorov-Smirnov test compares the two
+    implementations' normalized cross-correlation noise.
+
+  A NaN or infinite DATA or noise sample fails a `model` or `noisy`
+  scenario, as does a statistic that is not a number (#853 review).
 
 Data managers are not compared; the plan lets them differ. A scenario's
 `ignore` entries (`TABLE.COLUMN`) are skipped. The exit status is 1 if any
 scenario differs.
 
-`test_compare_sm_ms.py` tests the cell comparison; it needs only NumPy, as
+`test_compare_sm_ms.py` tests the cell comparison and the DATA statistics'
+refusal of non-finite values; it needs only NumPy, as
 `casatools` is imported only to read tables.
 """
 
@@ -50,6 +76,14 @@ TOLERANCES = {
 DEFAULT_TOLERANCE = 1e-9
 RELATIVE_TOLERANCE = 1e-14
 
+# DATA of predicted scenarios: the plan's Phase 1 acceptance.
+DATA_NRMS = 1e-3
+# A correlation without reference power passes when its largest difference is
+# at most this fraction of CASA's peak.
+ZERO_POWER_FRACTION = 1e-6
+# Noise variances pass within this many standard errors.
+NOISE_STANDARD_ERRORS = 5.0
+
 # Differences that are expected, with the reason. A difference whose key
 # (`TABLE.COLUMN:aspect`) is listed is reported as known and does not fail.
 KNOWN = {
@@ -72,6 +106,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--casars", required=True, help="casa-rs output directory")
     parser.add_argument("--only", nargs="*", help="compare only these scenarios")
     parser.add_argument("--uvw-tolerance-m", type=float, default=TOLERANCES["UVW"])
+    parser.add_argument("--data-nrms", type=float, default=DATA_NRMS, help="largest DATA NRMS of a model scenario")
     parser.add_argument("--json", help="write the report here as JSON")
     parser.add_argument("--verbose", action="store_true", help="also list the known differences")
     return parser.parse_args()
@@ -180,6 +215,18 @@ def data_differences(casa: list, casars: list) -> list[tuple[str, str]]:
     return found
 
 
+def data_cell_differences(casa: list, casars: list) -> list[tuple[str, str]]:
+    """MAIN.DATA's cells compared by definedness and shape only, for
+    scenarios whose values differ by design (predicted or noisy); their
+    values are compared by NRMS or noise statistics instead."""
+    for row, (a, b) in enumerate(zip(casa, casars)):
+        if (a is None) != (b is None):
+            return [("MAIN.DATA:defined", f"MAIN.DATA: row {row} defined {a is not None} against {b is not None}")]
+        if a is not None and np.shape(a) != np.shape(b):
+            return [("MAIN.DATA:shape", f"MAIN.DATA: row {row} shape {np.shape(a)} against {np.shape(b)}")]
+    return []
+
+
 def normalise_keywords(value):
     """Keywords as JSON-comparable values (NumPy arrays become lists)."""
     if isinstance(value, dict):
@@ -191,9 +238,191 @@ def normalise_keywords(value):
     return value
 
 
-def compare_scenario(name: str, casa_ms: str, casars_ms: str, ignore: set[str], uvw_tol: float) -> dict:
+def main_columns(tb, path: str) -> dict:
+    """MAIN's DATA as [row, corr, chan], FLAG_ROW, and which rows are
+    autocorrelations."""
+    tb.open(path)
+    try:
+        data = np.transpose(tb.getcol("DATA"), (2, 0, 1))
+        flag_row = np.asarray(tb.getcol("FLAG_ROW"), dtype=bool)
+        auto = np.asarray(tb.getcol("ANTENNA1")) == np.asarray(tb.getcol("ANTENNA2"))
+    finally:
+        tb.close()
+    return {"data": data.astype(np.complex128), "flag_row": flag_row, "auto": auto}
+
+
+def non_finite(label: str, values: np.ndarray) -> list[str]:
+    """A failure when any of `values` is NaN or infinite (#853 review: a NaN
+    statistic compares false against every limit, so it would pass)."""
+    count = int(values.size - np.count_nonzero(np.isfinite(values)))
+    return [f"{label}: {count} non-finite values"] if count else []
+
+
+def nrms(ours: np.ndarray, casa: np.ndarray) -> float | None:
+    """sqrt(sum |ours - casa|^2 / sum |casa|^2), or None without reference power."""
+    reference = float(np.sum(np.abs(casa) ** 2))
+    if reference == 0.0:
+        return None
+    return float(np.sqrt(np.sum(np.abs(ours - casa) ** 2) / reference))
+
+
+def compare_model_data(casa: dict, ours: dict, limit: float) -> tuple[dict, list[str]]:
+    """The NRMS of casa-rs's DATA against CASA's over rows unflagged in both,
+    and the failures."""
+    if casa["data"].shape != ours["data"].shape:
+        return {}, [f"MAIN.DATA: shape {casa['data'].shape} against {ours['data'].shape}"]
+    failures = non_finite("MAIN.DATA: CASA", casa["data"]) + non_finite(
+        "MAIN.DATA: casa-rs", ours["data"]
+    )
+    if failures:
+        return {}, failures
+    unflagged = ~casa["flag_row"] & ~ours["flag_row"]
+    both_flagged = casa["flag_row"] & ours["flag_row"]
+    a, b = casa["data"][unflagged], ours["data"][unflagged]
+    stats = {
+        "rows_compared": int(unflagged.sum()),
+        "samples_compared": int(a.size),
+        "rows_flagged_in_one": int((casa["flag_row"] ^ ours["flag_row"]).sum()),
+        "rows_flagged_in_both": int(both_flagged.sum()),
+        "nrms": nrms(b, a),
+        "casa_peak": float(np.abs(a).max()) if a.size else 0.0,
+        "max_difference": float(np.abs(b - a).max()) if a.size else 0.0,
+    }
+    if both_flagged.any():
+        stats["flagged_rows_max_abs"] = {
+            "casa": float(np.abs(casa["data"][both_flagged]).max()),
+            "casa-rs": float(np.abs(ours["data"][both_flagged]).max()),
+        }
+    if stats["nrms"] is None:
+        failures.append("MAIN.DATA: CASA's DATA has no power on the rows compared")
+    elif not stats["nrms"] <= limit:
+        failures.append(f"MAIN.DATA: NRMS {stats['nrms']:.3e} over the {limit:g} limit")
+    per_correlation = []
+    for corr in range(a.shape[1]):
+        value = nrms(b[:, corr, :], a[:, corr, :])
+        difference = float(np.abs(b[:, corr, :] - a[:, corr, :]).max()) if a.size else 0.0
+        per_correlation.append({"nrms": value, "max_difference": difference})
+        if value is None and difference > ZERO_POWER_FRACTION * max(stats["casa_peak"], 1e-30):
+            failures.append(
+                f"MAIN.DATA: correlation {corr} has no CASA power and differs by {difference:.3g}"
+            )
+    stats["per_correlation"] = per_correlation
+    auto = casa["auto"][unflagged]
+    stats["cross_nrms"] = nrms(b[~auto], a[~auto])
+    stats["auto_nrms"] = nrms(b[auto], a[auto]) if auto.any() else None
+    return stats, failures
+
+
+def ks_two_sample(x: np.ndarray, y: np.ndarray) -> tuple[float, float]:
+    """The two-sample Kolmogorov-Smirnov statistic and its asymptotic p-value."""
+    x, y = np.sort(x), np.sort(y)
+    values = np.concatenate([x, y])
+    cdf_x = np.searchsorted(x, values, side="right") / x.size
+    cdf_y = np.searchsorted(y, values, side="right") / y.size
+    statistic = float(np.max(np.abs(cdf_x - cdf_y)))
+    effective = np.sqrt(x.size * y.size / (x.size + y.size))
+    lam = (effective + 0.12 + 0.11 / effective) * statistic
+    terms = [2.0 * (-1.0) ** (k - 1) * np.exp(-2.0 * (k * lam) ** 2) for k in range(1, 101)]
+    return statistic, float(min(1.0, max(0.0, sum(terms))))
+
+
+def noise_classes(noise: np.ndarray, auto: np.ndarray, expected: float) -> tuple[dict, list[str]]:
+    """Per-correlation noise variances by class, and their failures."""
+    classes, failures = {}, non_finite("noise", noise)
+    if failures:
+        return classes, failures
+
+    def check(label: str, values: np.ndarray) -> float:
+        variance = float(np.var(values))
+        tolerance = NOISE_STANDARD_ERRORS * expected * np.sqrt(2.0 / max(values.size, 1))
+        if not abs(variance - expected) <= tolerance:
+            failures.append(f"{label}: variance {variance:.5f}, expected {expected:.5f} +- {tolerance:.5f}")
+        return variance
+
+    for corr in range(noise.shape[1]):
+        cross = noise[~auto, corr, :].ravel()
+        autos = noise[auto, corr, :].ravel()
+        entry = {
+            "cross_re_var": check(f"correlation {corr} cross real", cross.real),
+            "cross_im_var": check(f"correlation {corr} cross imaginary", cross.imag),
+            "cross_re_im_corr": float(np.corrcoef(cross.real, cross.imag)[0, 1]),
+            "n_cross": int(cross.size),
+        }
+        if autos.size:
+            entry["auto_re_var"] = check(f"correlation {corr} auto real", autos.real)
+            entry["auto_im_max"] = float(np.abs(autos.imag).max())
+            if not entry["auto_im_max"] == 0.0:
+                failures.append(f"correlation {corr}: autocorrelation imaginary noise {entry['auto_im_max']:.3g}")
+        classes[f"corr{corr}"] = entry
+    return classes, failures
+
+
+def compare_noisy_data(paths: dict, expected: float | None) -> tuple[dict, list[str]]:
+    """Noise statistics of both implementations against their twins."""
     from casatools import table
 
+    tb = table()
+    if expected is None:
+        return {}, ["MAIN.DATA: a noisy scenario needs noise_variance"]
+    stats, failures, normalized = {}, [], {}
+    for side in ("casa", "casa-rs"):
+        noisy = main_columns(tb, paths[side])
+        clean = main_columns(tb, paths[side + "-twin"])
+        if noisy["data"].shape != clean["data"].shape:
+            failures.append(f"{side}: the twin's DATA has another shape")
+            continue
+        noise = noisy["data"] - clean["data"]
+        classes, side_failures = noise_classes(noise, noisy["auto"], expected)
+        classes["flagged_rows"] = int(noisy["flag_row"].sum())
+        stats[side] = classes
+        failures += [f"{side} noise: {failure}" for failure in side_failures]
+        if np.all(np.isfinite(noise)):  # non-finite noise fails above
+            cross = noise[~noisy["auto"]].ravel()
+            normalized[side] = np.concatenate([cross.real, cross.imag]) / np.sqrt(expected)
+    if len(normalized) == 2:
+        statistic, p_value = ks_two_sample(normalized["casa"], normalized["casa-rs"])
+        stats["ks_cross"] = {"statistic": statistic, "p_value": p_value}
+        failures += ks_failures(statistic, p_value)
+    return stats, failures
+
+
+def ks_failures(statistic: float, p_value: float) -> list[str]:
+    """The two-sample KS test's failure: a p-value below 1e-3, or one that is
+    not a number."""
+    if p_value >= 1e-3:
+        return []
+    return [f"noise: two-sample KS p-value {p_value:.2g} (statistic {statistic:.4f})"]
+
+
+def compare_data(tb, scenario: dict, paths: dict, limit: float) -> tuple[dict, list[str]]:
+    """DATA by the scenario's kind: zero, model or noisy."""
+    kind = scenario.get("data") or "zero"
+    if kind == "zero":
+        failures = []
+        for side in ("casa", "casa-rs"):
+            data = main_columns(tb, paths[side])["data"]
+            if np.any(data != 0):
+                failures.append(f"MAIN.DATA: {side} has nonzero data")
+        return {"kind": kind}, failures
+    if kind == "model":
+        stats, failures = compare_model_data(
+            main_columns(tb, paths["casa"]), main_columns(tb, paths["casa-rs"]), limit
+        )
+        return dict(stats, kind=kind), failures
+    if kind == "noisy":
+        stats, failures = compare_noisy_data(paths, scenario.get("noise_variance"))
+        return dict(stats, kind=kind), failures
+    return {"kind": kind}, [f"unknown data kind {kind!r}"]
+
+
+def compare_scenario(
+    scenario: dict, casa_ms: str, casars_ms: str, args: argparse.Namespace, twins: dict | None = None
+) -> dict:
+    from casatools import table
+
+    name = scenario["name"]
+    ignore = set(scenario.get("ignore", []))
+    uvw_tol = args.uvw_tolerance_m
     tb = table()
     report = {"name": name, "differences": [], "known": [], "largest": {}}
 
@@ -246,8 +475,19 @@ def compare_scenario(name: str, casa_ms: str, casars_ms: str, ignore: set[str], 
             values_a = cells(tb, casa_path, column, a["rows"])
             values_b = cells(tb, casars_path, column, b["rows"])
             if label == "MAIN" and column == "DATA":
-                for key, message in data_differences(values_a, values_b):
+                kind = scenario.get("data") or "zero"
+                if kind == "zero":
+                    # Definedness, shapes, values, and zero in both (#848 review).
+                    for key, message in data_differences(values_a, values_b):
+                        differ(key, message)
+                    report["data"] = {"kind": kind}
+                    continue
+                for key, message in data_cell_differences(values_a, values_b):
                     differ(key, message)
+                paths = {"casa": casa_ms, "casa-rs": casars_ms, **(twins or {})}
+                report["data"], failures = compare_data(tb, scenario, paths, args.data_nrms)
+                for failure in failures:
+                    differ("MAIN.DATA:values", failure)
                 continue
             tolerance = uvw_tol if column == "UVW" else TOLERANCES.get(column, DEFAULT_TOLERANCE)
             aspect, largest, note = compare_values(values_a, values_b, tolerance)
@@ -256,6 +496,29 @@ def compare_scenario(name: str, casa_ms: str, casars_ms: str, ignore: set[str], 
             if aspect is not None:
                 differ(f"{qualified}:{aspect}", f"{qualified}: {note}")
     return report
+
+
+def describe_data(data: dict) -> str:
+    """A one-line summary of a scenario's DATA comparison."""
+    kind = data.get("kind")
+    if kind == "model" and data.get("nrms") is not None:
+        auto = data.get("auto_nrms")
+        return (
+            f"; DATA NRMS {data['nrms']:.2e} over {data['samples_compared']} samples"
+            f" (cross {data['cross_nrms']:.2e}" + (f", auto {auto:.2e}" if auto is not None else "") + ")"
+        )
+    if kind == "noisy" and "casa" in data and "casa-rs" in data:
+        variances = lambda side: ", ".join(  # noqa: E731
+            f"{entry['cross_re_var']:.5f}/{entry['cross_im_var']:.5f}"
+            for key, entry in data[side].items()
+            if key.startswith("corr")
+        )
+        ks = data.get("ks_cross", {})
+        return (
+            f"; noise cross re/im variance CASA [{variances('casa')}], casa-rs [{variances('casa-rs')}]"
+            + (f", KS p {ks['p_value']:.2g}" if ks else "")
+        )
+    return ""
 
 
 def main() -> int:
@@ -271,15 +534,21 @@ def main() -> int:
         if not os.path.isdir(casars_ms):
             reports.append({"name": name, "differences": ["casa-rs MS missing"], "known": [], "largest": {}})
             continue
-        reports.append(
-            compare_scenario(name, scenario["ms"], casars_ms, set(scenario.get("ignore", [])), args.uvw_tolerance_m)
-        )
+        twins = None
+        if scenario.get("twin"):
+            twin = next(other for other in manifest["scenarios"] if other["name"] == scenario["twin"])
+            twins = {"casa-twin": twin["ms"], "casa-rs-twin": os.path.join(args.casars, twin["name"] + ".ms")}
+        reports.append(compare_scenario(scenario, scenario["ms"], casars_ms, args, twins))
     failed = 0
     for report in reports:
         uvw = report["largest"].get("MAIN.UVW")
         status = "OK" if not report["differences"] else f"{len(report['differences'])} differences"
         known = f", {len(report['known'])} known" if report["known"] else ""
-        print(f"{report['name']}: {status}{known}" + (f" (UVW within {uvw:.3g} m)" if uvw is not None else ""))
+        print(
+            f"{report['name']}: {status}{known}"
+            + (f" (UVW within {uvw:.3g} m)" if uvw is not None else "")
+            + describe_data(report.get("data", {}))
+        )
         for line in report["differences"][:40]:
             print("   ", line)
         if len(report["differences"]) > 40:

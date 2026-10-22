@@ -19,6 +19,7 @@ casa-coordinates = { path = "../casa-coordinates" }
 casa-images = { path = "../casa-images" }
 casa-imaging-model = { path = "../casa-imaging-model" }
 casa-imaging-operator = { path = "../casa-imaging-operator" }
+casa-imaging-runtime = { path = "../casa-imaging-runtime" }
 casa-ms = { path = "../casa-ms" }
 casa-numerics = { path = "../casa-numerics" }
 casa-tables = { path = "../casa-tables" }
@@ -32,3 +33,4 @@ tracing.workspace = true
 casa-test-support = { path = "../casa-test-support" }
 serde_json = "1"
 tempfile = "3"
+tracing-subscriber.workspace = true

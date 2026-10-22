@@ -4,11 +4,14 @@
 //!
 //! Each row gives every scalar and fixed-shape column a value; a
 //! variable-shape array CASA does not write (OBSERVATION's LOG and SCHEDULE,
-//! SOURCE's POSITION) is left undefined.
+//! SOURCE's POSITION) is left undefined. POINTING, which grows with the
+//! integrations, is generated as the MeasurementSet is saved instead.
 
-use casa_ms::MeasurementSet;
+mod pointing;
+
 use casa_ms::column_def::{ColumnDef, ColumnKind, column_schema};
 use casa_ms::schema::{self, SubtableId};
+use casa_ms::{MeasurementSet, SubtableColumnOverrides};
 use casa_tables::ColumnSchema;
 use casa_tables::table_measures::{MeasureType, TableMeasDesc};
 use casa_types::measures::frequency::FrequencyRef;
@@ -452,30 +455,24 @@ fn write_states(ms: &mut MeasurementSet, session: &Simulator) -> SimulatorResult
     add_rows(ms, SubtableId::State, rows)
 }
 
-/// POINTING: one row per antenna per integration, at the integration's
-/// centre, tracking the scan's phase centre.
-pub(crate) fn write_pointing(ms: &mut MeasurementSet, session: &Simulator) -> SimulatorResult<()> {
-    let mut rows = Vec::new();
-    for scan in session.scans() {
-        let direction = direction_cell(scan.phase_center_rad);
-        for time_s in scan.integration_times_s() {
-            for antenna in 0..scan.antenna_count {
-                rows.push(row(
-                    SubtableId::Pointing,
-                    vec![
-                        ("ANTENNA_ID", scalar_i32(antenna as i32)),
-                        ("DIRECTION", direction.clone()),
-                        ("INTERVAL", scalar_f64(scan.integration_s)),
-                        ("NAME", scalar_string("")),
-                        ("NUM_POLY", scalar_i32(0)),
-                        ("TARGET", direction.clone()),
-                        ("TIME", scalar_f64(time_s)),
-                        ("TIME_ORIGIN", scalar_f64(scan.start_s)),
-                        ("TRACKING", scalar_bool(true)),
-                    ],
-                ));
-            }
-        }
-    }
-    add_rows(ms, SubtableId::Pointing, rows)
+/// The subtables the MeasurementSet's save writes from generated columns:
+/// POINTING, one row per antenna per integration, which is not held as rows
+/// (see [`pointing`]).
+pub(crate) fn subtable_overrides(session: &Simulator) -> SimulatorResult<SubtableColumnOverrides> {
+    let scans = session
+        .scans()
+        .iter()
+        .map(pointing::PointingScan::of)
+        .collect::<Vec<_>>();
+    let pointing = pointing::pointing_overrides(&scans)
+        .map_err(|error| SimulatorError::raised(format!("POINTING columns: {error}")))?;
+    let mut overrides = SubtableColumnOverrides::new();
+    overrides.insert(SubtableId::Pointing, pointing);
+    Ok(overrides)
+}
+
+/// Heap the [`subtable_overrides`] of `session` hold while the save runs:
+/// POINTING's, which grows with the scans.
+pub(crate) fn generated_bytes(session: &Simulator) -> u64 {
+    pointing::overrides_bytes(session.scans())
 }

@@ -1,0 +1,97 @@
+{
+  "schema_version": 1,
+  "purpose": "simulation Phase 1d benchmarks (#841): the plan's section 5 cases, run by CASA's sm and by casa-rs",
+  "notes": [
+    "Cases run in file order: 5 (write-only, then noise-only), 1, 3, 2.",
+    "Case 1 is a 256-plane cube model; case 3 is case 1 with one model plane spanning the band; case 5 is case 1 with observe only.",
+    "Each model is named relative to the oracle's --model-root and is written by make_bench_model.py from the 'models' entry of the same name (casa_sm_predict_oracle.write_model's arguments). Its direction is its case's field centre and its spectral axis is its case's window: a window off the model's band predicts zero.",
+    "Cells spread the visibilities over the uv grid: 0.1 arcsec for ALMA cycle10.3 at 230 GHz, 8 arcsec for VLA-D at 1.4 GHz.",
+    "Times and configurations keep every case free of shadowing and elevation flags."
+  ],
+  "models": {
+    "alma-cube.image": {"ra": "10h00m00.0", "dec": "-30d00m00.0", "freq_ghz": 230.0, "chan_width_mhz": 7.8125, "nchan": 256, "planes": 256, "imsize": 1024, "cell_arcsec": 0.1},
+    "alma-mfs.image": {"ra": "10h00m00.0", "dec": "-30d00m00.0", "freq_ghz": 230.0, "chan_width_mhz": 7.8125, "nchan": 256, "planes": 1, "imsize": 1024, "cell_arcsec": 0.1},
+    "vla-cube.image": {"ra": "13h00m00.0", "dec": "+34d00m00.0", "freq_ghz": 1.4, "chan_width_mhz": 1.0, "nchan": 256, "planes": 256, "imsize": 1024, "cell_arcsec": 8.0}
+  },
+  "scenarios": [
+    {
+      "name": "case5-alma-write",
+      "case": "5 write-only",
+      "config": {"cfg": "alma.cycle10.3.cfg", "mount": "alt-az"},
+      "calls": [
+        {"op": "setspwindow", "spwname": "band6", "freq": "230GHz", "deltafreq": "7.8125MHz", "freqresolution": "7.8125MHz", "refcode": "TOPO", "nchannels": 256, "stokes": "XX YY"},
+        {"op": "setfeed", "mode": "perfect X Y"},
+        {"op": "setauto", "autocorrwt": 0.0},
+        {"op": "settimes", "integrationtime": "10s", "usehourangle": true, "referencetime": ["UTC", "2026/03/21/00:00:00"]},
+        {"op": "setfield", "sourcename": "target", "sourcedirection": ["J2000", "10h00m00.0", "-30d00m00.0"]},
+        {"op": "observe", "sourcename": "target", "spwname": "band6", "starttime": "-1800s", "stoptime": "1800s"}
+      ]
+    },
+    {
+      "name": "case5-alma-noise",
+      "case": "5 noise-only",
+      "config": {"cfg": "alma.cycle10.3.cfg", "mount": "alt-az"},
+      "calls": [
+        {"op": "setspwindow", "spwname": "band6", "freq": "230GHz", "deltafreq": "7.8125MHz", "freqresolution": "7.8125MHz", "refcode": "TOPO", "nchannels": 256, "stokes": "XX YY"},
+        {"op": "setfeed", "mode": "perfect X Y"},
+        {"op": "setauto", "autocorrwt": 0.0},
+        {"op": "settimes", "integrationtime": "10s", "usehourangle": true, "referencetime": ["UTC", "2026/03/21/00:00:00"]},
+        {"op": "setfield", "sourcename": "target", "sourcedirection": ["J2000", "10h00m00.0", "-30d00m00.0"]},
+        {"op": "observe", "sourcename": "target", "spwname": "band6", "starttime": "-1800s", "stoptime": "1800s"},
+        {"op": "setseed", "seed": 11111},
+        {"op": "setnoise", "mode": "simplenoise", "simplenoise": "0.1Jy"},
+        {"op": "corrupt"}
+      ]
+    },
+    {
+      "name": "case1-alma-cube",
+      "case": "1 ALMA cube",
+      "config": {"cfg": "alma.cycle10.3.cfg", "mount": "alt-az"},
+      "calls": [
+        {"op": "setspwindow", "spwname": "band6", "freq": "230GHz", "deltafreq": "7.8125MHz", "freqresolution": "7.8125MHz", "refcode": "TOPO", "nchannels": 256, "stokes": "XX YY"},
+        {"op": "setfeed", "mode": "perfect X Y"},
+        {"op": "setauto", "autocorrwt": 0.0},
+        {"op": "settimes", "integrationtime": "10s", "usehourangle": true, "referencetime": ["UTC", "2026/03/21/00:00:00"]},
+        {"op": "setfield", "sourcename": "target", "sourcedirection": ["J2000", "10h00m00.0", "-30d00m00.0"]},
+        {"op": "observe", "sourcename": "target", "spwname": "band6", "starttime": "-1800s", "stoptime": "1800s"},
+        {"op": "setvp", "dovp": true, "usedefaultvp": false},
+        {"op": "predict", "imagename": "alma-cube.image"},
+        {"op": "setseed", "seed": 11111},
+        {"op": "setnoise", "mode": "simplenoise", "simplenoise": "0.1Jy"},
+        {"op": "corrupt"}
+      ]
+    },
+    {
+      "name": "case3-alma-mfs",
+      "case": "3 ALMA one-plane model",
+      "config": {"cfg": "alma.cycle10.3.cfg", "mount": "alt-az"},
+      "calls": [
+        {"op": "setspwindow", "spwname": "band6", "freq": "230GHz", "deltafreq": "7.8125MHz", "freqresolution": "7.8125MHz", "refcode": "TOPO", "nchannels": 256, "stokes": "XX YY"},
+        {"op": "setfeed", "mode": "perfect X Y"},
+        {"op": "setauto", "autocorrwt": 0.0},
+        {"op": "settimes", "integrationtime": "10s", "usehourangle": true, "referencetime": ["UTC", "2026/03/21/00:00:00"]},
+        {"op": "setfield", "sourcename": "target", "sourcedirection": ["J2000", "10h00m00.0", "-30d00m00.0"]},
+        {"op": "observe", "sourcename": "target", "spwname": "band6", "starttime": "-1800s", "stoptime": "1800s"},
+        {"op": "setvp", "dovp": true, "usedefaultvp": false},
+        {"op": "predict", "imagename": "alma-mfs.image"},
+        {"op": "setseed", "seed": 11111},
+        {"op": "setnoise", "mode": "simplenoise", "simplenoise": "0.1Jy"},
+        {"op": "corrupt"}
+      ]
+    },
+    {
+      "name": "case2-vla-cube",
+      "case": "2 VLA cube",
+      "config": {"cfg": "vla.d.cfg", "mount": "alt-az"},
+      "calls": [
+        {"op": "setspwindow", "spwname": "LBAND", "freq": "1.4GHz", "deltafreq": "1MHz", "freqresolution": "1MHz", "refcode": "TOPO", "nchannels": 256, "stokes": "RR LL"},
+        {"op": "setfeed", "mode": "perfect R L"},
+        {"op": "setauto", "autocorrwt": 0.0},
+        {"op": "settimes", "integrationtime": "10s", "usehourangle": true, "referencetime": ["UTC", "2026/03/21/00:00:00"]},
+        {"op": "setfield", "sourcename": "src", "sourcedirection": ["J2000", "13h00m00.0", "+34d00m00.0"]},
+        {"op": "observe", "sourcename": "src", "spwname": "LBAND", "starttime": "-4500s", "stoptime": "4500s"},
+        {"op": "predict", "imagename": "vla-cube.image"}
+      ]
+    }
+  ]
+}
