@@ -188,12 +188,21 @@ pub struct PlacedRow {
     end: usize,
 }
 
-/// One output or native channel a row's placement predicts: the channel's
-/// slot in the row and the placement's index in the batch.
+/// Consecutive output or native channels of a row that one placement
+/// predicts: the first channel's slot in the row, how many, and the
+/// placement's index in the batch. A row's sources run in slot order.
 #[derive(Clone, Copy, Debug)]
 struct Source {
     slot: u32,
+    count: u32,
     placement: u32,
+}
+
+impl Source {
+    /// The row's slots this source covers.
+    fn slots(self) -> std::ops::Range<usize> {
+        self.slot as usize..(self.slot + self.count) as usize
+    }
 }
 
 /// The largest difference of phase-centre phase, in radians, at which two
@@ -485,10 +494,19 @@ impl SpectralResampler {
                     index
                 }
             };
-            sources.push(Source {
-                slot: u32::try_from(slot).expect("a row's channels fit u32"),
-                placement: placement_index,
-            });
+            let slot = u32::try_from(slot).expect("a row's channels fit u32");
+            match sources[start..].last_mut() {
+                Some(last)
+                    if last.placement == placement_index && last.slot + last.count == slot =>
+                {
+                    last.count += 1;
+                }
+                _ => sources.push(Source {
+                    slot,
+                    count: 1,
+                    placement: placement_index,
+                }),
+            }
         };
         match self.linear_prediction(row) {
             None => {
@@ -600,10 +618,11 @@ impl SpectralResampler {
                     past = middle;
                 }
             }
-            sources.extend((channel..=last).map(|slot| Source {
-                slot: u32::try_from(slot).expect("a row's channels fit u32"),
+            sources.push(Source {
+                slot: u32::try_from(channel).expect("a row's channels fit u32"),
+                count: u32::try_from(last + 1 - channel).expect("a row's channels fit u32"),
                 placement: index,
-            }));
+            });
             length = last + 1 - channel;
             channel = last + 1;
         }
@@ -630,28 +649,47 @@ impl SpectralResampler {
             ..
         } = scratch;
         let native = row.frequencies_hz;
+        let sources = &sources[placed.start..placed.end];
+        // A row without a flag packs no flag bits.
+        let flagged = row.flags.contains(&true);
         let mut term = |channel: usize, low: u32, high: u32, fraction: f32| {
             terms.push(NativeTerm {
                 cell: first_cell + channel as u32,
                 low,
                 high,
                 fraction,
-                flags: flag_bits(row, npol, channel),
+                flags: if flagged {
+                    flag_bits(row, npol, channel)
+                } else {
+                    0
+                },
             });
+        };
+        let Some(axis) = self.linear_prediction(row) else {
+            // Each native channel reads its source's placement, in slot
+            // order; a channel no source covers reads nothing.
+            let mut channel = 0;
+            for source in sources {
+                debug_assert!(source.slot as usize >= channel, "sources run in slot order");
+                for unplaced in channel..source.slot as usize {
+                    term(unplaced, NO_CELL, NO_CELL, 0.0);
+                }
+                for placed in source.slots() {
+                    term(placed, source.placement, source.placement, 0.0);
+                }
+                channel = source.slots().end;
+            }
+            for unplaced in channel..native.len() {
+                term(unplaced, NO_CELL, NO_CELL, 0.0);
+            }
+            return;
         };
         let mut index_slots = |count: usize| {
             slots.clear();
             slots.resize(count, NO_CELL);
-            for source in &sources[placed.start..placed.end] {
-                slots[source.slot as usize] = source.placement;
+            for source in sources {
+                slots[source.slots()].fill(source.placement);
             }
-        };
-        let Some(axis) = self.linear_prediction(row) else {
-            index_slots(native.len());
-            for (channel, &index) in slots.iter().enumerate() {
-                term(channel, index, index, 0.0);
-            }
-            return;
         };
         // `FTMachine::interpolateFrequencyFromgrid`: the output-channel
         // predictions on CASA's image-frequency grid, refined to
