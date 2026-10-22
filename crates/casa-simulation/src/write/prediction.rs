@@ -104,7 +104,7 @@ impl<'s> PredictionStage<'s> {
                 None => {
                     let mut domains = Vec::with_capacity(key.0.len());
                     let mut projections = Vec::with_capacity(key.0.len());
-                    for &step in &key.0 {
+                    for step in key.0.clone() {
                         let prediction = predictions[step];
                         let model = prediction.grids_for(scan.field_id).ok_or_else(|| {
                             SimulatorError::raised(format!(

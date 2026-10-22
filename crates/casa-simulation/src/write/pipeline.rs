@@ -38,6 +38,7 @@ use super::prediction::PredictionStage;
 use crate::corrupt::NoiseApplication;
 use crate::session::error::{SimulatorError, SimulatorResult};
 use crate::session::observe::Scan;
+use crate::session::plan::DataPlan;
 
 /// Jobs per worker a batch's noise is split into, so that workers finishing
 /// early take more.
@@ -77,8 +78,8 @@ pub(super) struct Pipeline<'s> {
     team: &'s WorkerTeam,
     /// The model's prediction, when a `predict` covers any scan.
     prediction: Option<PredictionStage<'s>>,
-    /// Each scan's noise, in the order its steps add it.
-    noise: Vec<Vec<NoiseApplication>>,
+    /// The session's DATA steps, which give each scan's noise.
+    plan: &'s DataPlan,
     correlations: usize,
     samples: usize,
     /// Rows of the integrations in hand: those the last batch left
@@ -96,7 +97,7 @@ impl<'s> Pipeline<'s> {
         scans: &'s [Scan],
         geometry: &'s ArrayGeometry<'s>,
         team: &'s WorkerTeam,
-        (prediction, noise): (Option<PredictionStage<'s>>, Vec<Vec<NoiseApplication>>),
+        (prediction, plan): (Option<PredictionStage<'s>>, &'s DataPlan),
         (correlations, channels): (usize, usize),
     ) -> Self {
         Self {
@@ -104,7 +105,7 @@ impl<'s> Pipeline<'s> {
             geometry,
             team,
             prediction,
-            noise,
+            plan,
             correlations,
             samples: correlations * channels,
             rows: Vec::new(),
@@ -257,7 +258,8 @@ impl<'s> Pipeline<'s> {
         for (scan, start, count) in self.segments(rows) {
             let (segment, after) = rest.split_at_mut(count * self.samples);
             rest = after;
-            if self.noise[scan].is_empty() {
+            let noise = self.plan.noise_for_scan(scan);
+            if noise.is_empty() {
                 continue;
             }
             for (index, cells) in segment.chunks_mut(job_rows * self.samples).enumerate() {
@@ -266,7 +268,7 @@ impl<'s> Pipeline<'s> {
                     first_row: first_row + start as u64,
                     cells,
                     rows: &self.rows[start..],
-                    noise: &self.noise[scan],
+                    noise,
                 }));
             }
         }

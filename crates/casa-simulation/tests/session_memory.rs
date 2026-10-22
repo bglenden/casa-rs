@@ -28,6 +28,13 @@
 //! and FFT plans, tracing's callsites) is out of every measurement, and to
 //! read the pass's batches.
 //!
+//! A second law interleaves scans and corruptions (#853 review): the n-th
+//! of N one-integration scans is corrupted by the n-th and every later
+//! `corrupt`, so `close` adds N(N+1)/2 noise applications. What `close`
+//! holds beyond the session it closes stays within its admission and the
+//! allowance, and twice the scans hold no more than a little more: the
+//! applications are read where the plan keeps them, not copied per scan.
+//!
 //! This binary's global allocator counts the live heap; the counters are
 //! the process's, so each law runs alone in a process of its own
 //! ([`alone`]).
@@ -255,11 +262,16 @@ fn write_model(path: &Path, channels: usize) {
 }
 
 fn scan(integrations: usize) -> ObserveSpec {
+    scan_from(0, integrations)
+}
+
+/// `integrations` integrations from integration `first`.
+fn scan_from(first: usize, integrations: usize) -> ObserveSpec {
     ObserveSpec {
         source: "target".to_string(),
         spectral_window: "band6".to_string(),
-        start_s: 0.0,
-        stop_s: 10.0 * integrations as f64,
+        start_s: 10.0 * first as f64,
+        stop_s: 10.0 * (first + integrations) as f64,
         add_observation: false,
         state: StateSpec {
             sig: true,
@@ -345,11 +357,42 @@ const CASES: [Case; 5] = [
 /// Run `case`'s session from `sm.open` through `close`, writing `ms` and
 /// predicting `model`.
 fn simulate(case: Case, ms: &Path, model: &Path, measures: &Arc<dyn MeasuresProvider>) {
+    let mut sm = configured(ms, measures, case.budget, case.channels);
+    sm.observe(&scan(case.integrations)).expect("observe");
+    sm.set_vp(&VoltagePatternSpec::default()).expect("setvp");
+    sm.predict(&PredictSpec {
+        images: vec![model.to_path_buf()],
+        component_list: None,
+        incremental: false,
+    })
+    .expect("predict");
+    sm.set_noise(&noise()).expect("setnoise");
+    sm.corrupt().expect("corrupt");
+    sm.close().expect("close");
+}
+
+/// 0.1 Jy of simple noise.
+fn noise() -> NoiseSpec {
+    NoiseSpec {
+        mode: "simplenoise".to_string(),
+        simple_noise_jy: 0.1,
+        on_the_fly: true,
+    }
+}
+
+/// A session writing `ms` within `budget`, with its antennas, a window of
+/// `channels` channels, the field and the times set.
+fn configured(
+    ms: &Path,
+    measures: &Arc<dyn MeasuresProvider>,
+    budget: u64,
+    channels: usize,
+) -> Simulator {
     let mut sm = Simulator::open(
         ms,
         SimulatorOptions {
             measures: Arc::clone(measures),
-            resources: resources(case.budget),
+            resources: resources(budget),
             now: MEpoch::from_mjd(REFERENCE_MJD, EpochRef::UTC),
         },
     );
@@ -379,7 +422,7 @@ fn simulate(case: Case, ms: &Path, model: &Path, measures: &Arc<dyn MeasuresProv
         channel_width_hz: CHANNEL_HZ,
         resolution_hz: CHANNEL_HZ,
         frame: FrequencyRef::TOPO,
-        channel_count: case.channels,
+        channel_count: channels,
         stokes: "XX YY".to_string(),
     })
     .expect("setspwindow");
@@ -392,22 +435,7 @@ fn simulate(case: Case, ms: &Path, model: &Path, measures: &Arc<dyn MeasuresProv
     .expect("setfield");
     sm.set_times(10.0, false, MEpoch::from_mjd(REFERENCE_MJD, EpochRef::UTC))
         .expect("settimes");
-    sm.observe(&scan(case.integrations)).expect("observe");
-    sm.set_vp(&VoltagePatternSpec::default()).expect("setvp");
-    sm.predict(&PredictSpec {
-        images: vec![model.to_path_buf()],
-        component_list: None,
-        incremental: false,
-    })
-    .expect("predict");
-    sm.set_noise(&NoiseSpec {
-        mode: "simplenoise".to_string(),
-        simple_noise_jy: 0.1,
-        on_the_fly: true,
-    })
-    .expect("setnoise");
-    sm.corrupt().expect("corrupt");
-    sm.close().expect("close");
+    sm
 }
 
 /// What a case's measured sessions held.
@@ -555,4 +583,134 @@ fn a_session_holds_its_admission_and_no_more_for_more_rows() {
             few_case.name
         );
     }
+}
+
+/// Scans of the interleaved law's cases: twice the scans give `close` four
+/// times the noise applications to add (the old copy of each scan's
+/// applications held 12 bytes each: 1.5 MB, then 6 MB).
+const INTERLEAVED_SCANS: [usize; 2] = [500, 1_000];
+
+/// What `close` may hold beyond its admission for twice the interleaved
+/// scans, beside one write batch. The session's own per-scan state is live
+/// before `close`, and what `close` keeps per scan (POINTING's runs) is
+/// admitted.
+const SCANS_ALLOWANCE_BYTES: u64 = 64 * 1024;
+
+/// What a measured `close` held: its heap peak beyond what the session held
+/// before it, and the most its reservations held at once.
+#[derive(Debug, Clone, Copy)]
+struct Closed {
+    heap: u64,
+    admitted: u64,
+}
+
+impl Closed {
+    /// The heap beyond the admission.
+    fn unadmitted(self) -> i64 {
+        self.heap as i64 - self.admitted as i64
+    }
+}
+
+/// `scans` one-integration scans, each followed by a `corrupt`, written to
+/// `ms` and closed; the pass's summary when `summary`.
+fn close_interleaved(
+    scans: usize,
+    ms: &Path,
+    measures: &Arc<dyn MeasuresProvider>,
+    summary: bool,
+) -> (Closed, Option<PassSummary>) {
+    let mut sm = configured(ms, measures, BUDGET_32, 32);
+    for scan in 0..scans {
+        sm.observe(&scan_from(scan, 1)).expect("observe");
+        if scan == 0 {
+            // `setnoise` needs rows to corrupt.
+            sm.set_noise(&noise()).expect("setnoise");
+        }
+        sm.corrupt().expect("corrupt");
+    }
+    let reserved = reserved_memory();
+    let baseline = LIVE.load(Ordering::Relaxed);
+    PEAK.store(baseline, Ordering::Relaxed);
+    let window = ReservationWindow::open();
+    let pass = if summary {
+        capture(|| sm.close().expect("close")).1
+    } else {
+        sm.close().expect("close");
+        None
+    };
+    let closed = Closed {
+        heap: PEAK.load(Ordering::Relaxed) - baseline,
+        admitted: window.close() - reserved,
+    };
+    drop(window);
+    std::fs::remove_dir_all(ms).expect("remove the run");
+    (closed, pass)
+}
+
+/// Run `scans` interleaved scans [`MEASURED_RUNS`] times, asserting that
+/// each `close` held at most its admission and the allowance; the least
+/// heap and the most admitted.
+fn measure_interleaved(scans: usize, ms: &Path, measures: &Arc<dyn MeasuresProvider>) -> Closed {
+    let mut held = Closed {
+        heap: u64::MAX,
+        admitted: 0,
+    };
+    for _ in 0..MEASURED_RUNS {
+        let (run, _) = close_interleaved(scans, ms, measures, false);
+        println!(
+            "{scans} interleaved scans: close held {} bytes, admitted {}",
+            run.heap, run.admitted
+        );
+        assert!(
+            run.heap <= run.admitted + ALLOWANCE_BYTES,
+            "{scans} interleaved scans: close held {} bytes, beyond the {} admitted and the \
+             allowance",
+            run.heap,
+            run.admitted
+        );
+        held.heap = held.heap.min(run.heap);
+        held.admitted = held.admitted.max(run.admitted);
+    }
+    held
+}
+
+#[test]
+fn closing_interleaved_corruptions_holds_its_admission_and_no_more_for_more_scans() {
+    if !alone("closing_interleaved_corruptions_holds_its_admission_and_no_more_for_more_scans") {
+        return;
+    }
+    let resources = resources(BUDGET_32);
+    charge_process_caches(resources.host(), resources.policy()).expect("the process caches");
+    let measures = casa_test_support::deterministic_measures_provider();
+    let root = tempfile::tempdir().expect("temporary directory");
+    let ms = root.path().join("interleaved.ms");
+    let [few_pass, many_pass] = INTERLEAVED_SCANS.map(|scans| {
+        close_interleaved(scans, &ms, &measures, true)
+            .1
+            .expect("the pass's summary")
+    });
+    let [few, many] = INTERLEAVED_SCANS.map(|scans| measure_interleaved(scans, &ms, &measures));
+    assert_eq!(
+        few_pass.batch_rows, many_pass.batch_rows,
+        "the interleaved cases write batches alike"
+    );
+    let samples = 2 * 32_u64;
+    let batch = many_pass.batch_rows * (samples * size_of::<Complex32>() as u64 + 1 + 24 + 4 + 4);
+    let allowance = (SCANS_ALLOWANCE_BYTES + batch) as i64;
+    println!(
+        "{} - {} interleaved scans: {} bytes more heap, {} more admitted (allowed {allowance} \
+         beyond it)",
+        INTERLEAVED_SCANS[1],
+        INTERLEAVED_SCANS[0],
+        many.heap as i64 - few.heap as i64,
+        many.admitted as i64 - few.admitted as i64
+    );
+    assert!(
+        many.unadmitted() <= few.unadmitted() + allowance,
+        "{} interleaved scans: close held {} bytes beyond its admission, against {} for {}",
+        INTERLEAVED_SCANS[1],
+        many.unadmitted(),
+        few.unadmitted(),
+        INTERLEAVED_SCANS[0]
+    );
 }

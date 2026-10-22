@@ -15,7 +15,15 @@
 //! covering the scan and the noise of the corruptions covering it. The fold
 //! applies each step to the running DATA (`D ← step(D)`), so multiplicative
 //! gains (`D ← G(D)`) slot in as further [`DataStep`] variants.
+//!
+//! Scans are only ever added, so each step covers at least the scans of the
+//! one before it, and the steps covering a scan are the last ones taken.
+//! Every corruption's applications are kept end to end in one list, so a
+//! scan's noise is the end of that list: `close` reads it where it is, and
+//! N interleaved scans and corruptions keep N lists' worth, not N²
+//! (#853 review).
 
+use std::ops::Range;
 use std::sync::Arc;
 
 use super::prediction::Prediction;
@@ -46,8 +54,9 @@ pub(crate) enum DataStep {
     },
     /// `corrupt`: add each application's noise.
     Corrupt {
-        /// One per noise term, in the order the terms were set.
-        applications: Vec<NoiseApplication>,
+        /// Its applications, one per noise term in the order the terms
+        /// were set, as their range of the plan's noise.
+        applications: Range<usize>,
         /// The step covers scans `0..scans`.
         scans: usize,
     },
@@ -66,45 +75,81 @@ impl DataStep {
 #[derive(Debug, Clone, Default)]
 pub(crate) struct DataPlan {
     steps: Vec<DataStep>,
+    /// Every corruption's applications, in the order they were taken.
+    noise: Vec<NoiseApplication>,
 }
 
 impl DataPlan {
-    /// Record a step after those already taken.
-    pub(crate) fn push(&mut self, step: DataStep) {
+    /// Record a `predict` of `prediction` covering scans `0..scans`, after
+    /// the steps already taken.
+    pub(crate) fn predict(&mut self, prediction: Arc<Prediction>, scans: usize) {
+        self.push(DataStep::Predict { prediction, scans });
+    }
+
+    /// Record a `corrupt` adding `applications` to scans `0..scans`, after
+    /// the steps already taken.
+    pub(crate) fn corrupt(
+        &mut self,
+        applications: impl IntoIterator<Item = NoiseApplication>,
+        scans: usize,
+    ) {
+        let start = self.noise.len();
+        self.noise.extend(applications);
+        self.push(DataStep::Corrupt {
+            applications: start..self.noise.len(),
+            scans,
+        });
+    }
+
+    fn push(&mut self, step: DataStep) {
+        debug_assert!(
+            self.steps
+                .last()
+                .is_none_or(|last| last.scans() <= step.scans()),
+            "a step covers at least the scans of the one before it"
+        );
         self.steps.push(step);
     }
 
     /// Forget every step: a replacing `predict` overwrites what they did.
     pub(crate) fn clear(&mut self) {
         self.steps.clear();
+        self.noise.clear();
     }
 
-    /// The steps covering scan `scan`, in the order they were taken.
-    pub(crate) fn steps_for_scan(&self, scan: usize) -> impl Iterator<Item = &DataStep> {
-        self.steps.iter().filter(move |step| step.scans() > scan)
+    /// The steps covering scan `scan`, in the order they were taken: the
+    /// last ones.
+    pub(crate) fn steps_for_scan(&self, scan: usize) -> &[DataStep] {
+        let first = self.steps.partition_point(|step| step.scans() <= scan);
+        &self.steps[first..]
     }
 
     /// The noise to add to scan `scan`'s rows, in the order it was asked
-    /// for: the fold of its corruptions, all of which add.
-    pub(crate) fn noise_for_scan(&self, scan: usize) -> Vec<NoiseApplication> {
-        self.steps_for_scan(scan)
-            .flat_map(|step| match step {
-                DataStep::Corrupt { applications, .. } => applications.as_slice(),
-                DataStep::Predict { .. } => &[],
+    /// for: the applications of its corruptions, all of which add, which
+    /// are the last ones taken.
+    pub(crate) fn noise_for_scan(&self, scan: usize) -> &[NoiseApplication] {
+        let start = self
+            .steps_for_scan(scan)
+            .iter()
+            .find_map(|step| match step {
+                DataStep::Corrupt { applications, .. } => Some(applications.start),
+                DataStep::Predict { .. } => None,
             })
-            .copied()
-            .collect()
+            .unwrap_or(self.noise.len());
+        &self.noise[start..]
     }
 
     /// The predict steps covering scan `scan`, as indices of
     /// [`Self::predictions`], in the order they were taken: their
-    /// predictions add.
-    pub(crate) fn predictions_for_scan(&self, scan: usize) -> Vec<usize> {
-        self.predictions()
-            .enumerate()
-            .filter(|(_, (_, scans))| *scans > scan)
-            .map(|(index, _)| index)
-            .collect()
+    /// predictions add. They are the last ones.
+    pub(crate) fn predictions_for_scan(&self, scan: usize) -> Range<usize> {
+        let all = self.predictions().count();
+        let covering = self
+            .steps_for_scan(scan)
+            .iter()
+            .filter(|step| matches!(step, DataStep::Predict { .. }))
+            .count();
+        all - covering..all
     }
 
     /// Every predict step's prepared model and the scans it covers, in the
@@ -132,23 +177,33 @@ mod tests {
     #[test]
     fn a_step_covers_only_the_scans_observed_before_it() {
         let mut plan = DataPlan::default();
-        plan.push(DataStep::Corrupt {
-            applications: vec![noise(1, 0)],
-            scans: 1,
-        });
-        plan.push(DataStep::Corrupt {
-            applications: vec![noise(1, 1), noise(2, 0)],
-            scans: 3,
-        });
+        plan.corrupt([noise(1, 0)], 1);
+        plan.corrupt([noise(1, 1), noise(2, 0)], 3);
         assert_eq!(
             plan.noise_for_scan(0),
-            vec![noise(1, 0), noise(1, 1), noise(2, 0)]
+            [noise(1, 0), noise(1, 1), noise(2, 0)]
         );
-        assert_eq!(plan.noise_for_scan(2), vec![noise(1, 1), noise(2, 0)]);
-        assert_eq!(plan.noise_for_scan(3), Vec::new());
-        assert_eq!(plan.steps_for_scan(1).count(), 1);
+        assert_eq!(plan.noise_for_scan(2), [noise(1, 1), noise(2, 0)]);
+        assert_eq!(plan.noise_for_scan(3), []);
+        assert_eq!(plan.steps_for_scan(1).len(), 1);
         assert!(plan.predictions_for_scan(0).is_empty());
         plan.clear();
-        assert_eq!(plan.noise_for_scan(0), Vec::new());
+        assert_eq!(plan.noise_for_scan(0), []);
+    }
+
+    #[test]
+    fn interleaved_corruptions_share_their_applications() {
+        let mut plan = DataPlan::default();
+        for scans in 1..=4 {
+            plan.corrupt([noise(1, scans as u32 - 1)], scans);
+        }
+        for scan in 0..4 {
+            let expected = (scan as u32..4).map(|ordinal| noise(1, ordinal));
+            assert!(plan.noise_for_scan(scan).iter().copied().eq(expected));
+        }
+        // Each scan's noise is the end of the one list.
+        let all = plan.noise_for_scan(0).as_ptr_range();
+        assert_eq!(plan.noise_for_scan(3).as_ptr_range().end, all.end);
+        assert_eq!(plan.noise_for_scan(4), []);
     }
 }

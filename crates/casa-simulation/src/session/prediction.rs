@@ -33,7 +33,6 @@ use casa_imaging_runtime::{Demand, Reservation, admit, charge_process_caches, fr
 
 use super::Simulator;
 use super::error::{SimulatorError, SimulatorResult};
-use super::plan::DataStep;
 use crate::predict::{BeamPattern, ModelOperator, PredictError, PrimaryBeam, SkyModel};
 
 /// The phase a model's grids are admitted as.
@@ -343,10 +342,8 @@ impl Simulator {
             // Every step so far covers a prefix of the scans this one covers.
             self.data_plan.clear();
         }
-        self.data_plan.push(DataStep::Predict {
-            prediction: Arc::new(prediction),
-            scans: self.scans.len(),
-        });
+        self.data_plan
+            .predict(Arc::new(prediction), self.scans.len());
         Ok(())
     }
 

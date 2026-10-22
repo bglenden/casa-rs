@@ -470,3 +470,9 @@ pub(crate) fn subtable_overrides(session: &Simulator) -> SimulatorResult<Subtabl
     overrides.insert(SubtableId::Pointing, pointing);
     Ok(overrides)
 }
+
+/// Heap the [`subtable_overrides`] of `session` hold while the save runs:
+/// POINTING's, which grows with the scans.
+pub(crate) fn generated_bytes(session: &Simulator) -> u64 {
+    pointing::overrides_bytes(session.scans())
+}

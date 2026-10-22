@@ -144,6 +144,7 @@ fn main_shape(session: &Simulator, (correlations, channels): (usize, usize)) -> 
             .map(|scan| scan.antenna_count)
             .max()
             .unwrap_or(0),
+        generated_bytes: subtables::generated_bytes(session),
     }
 }
 
@@ -182,14 +183,11 @@ fn write_main<'s>(
     let team = WorkerTeam::new(admission.cores.streaming_workers)
         .map_err(|error| SimulatorError::raised(format!("the worker team: {error}")))?;
     let scans = session.scans();
-    let noise = (0..scans.len())
-        .map(|scan| session.data_plan().noise_for_scan(scan))
-        .collect();
     let mut pipeline = Pipeline::new(
         scans,
         &geometry,
         &team,
-        (prediction, noise),
+        (prediction, session.data_plan()),
         (shape.correlations, shape.channels),
     );
     let integrations = scans

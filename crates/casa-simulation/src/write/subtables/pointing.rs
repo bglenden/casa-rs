@@ -74,9 +74,10 @@ struct Layout {
 
 impl Layout {
     fn new(scans: &[PointingScan]) -> (Self, usize) {
+        let with_rows = scans.iter().filter(|scan| scan.rows() > 0).count();
         let mut layout = Self {
-            scans: Vec::new(),
-            first_rows: Vec::new(),
+            scans: Vec::with_capacity(with_rows),
+            first_rows: Vec::with_capacity(with_rows),
         };
         let mut rows = 0;
         for scan in scans.iter().filter(|scan| scan.rows() > 0) {
@@ -151,6 +152,24 @@ fn direction(direction_rad: [f64; 2]) -> ArrayValue {
     ArrayValue::Float64(
         ArrayD::from_shape_vec(vec![2, 1], direction_rad.to_vec()).expect("shape matches values"),
     )
+}
+
+/// Heap the POINTING overrides of `scans` hold while the save runs, which
+/// grows with the scans, not the rows: the scans as collected for
+/// [`pointing_overrides`], and for each scan with rows its place in the
+/// layout and its runs of DIRECTION and TARGET (each a `[2, 1]` cell) and
+/// of INTERVAL and TIME_ORIGIN.
+pub(super) fn overrides_bytes(scans: &[Scan]) -> u64 {
+    let with_rows = scans
+        .iter()
+        .filter(|scan| PointingScan::of(scan).rows() > 0)
+        .count();
+    let per_scan = size_of::<PointingScan>();
+    let per_scan_with_rows = size_of::<PointingScan>()
+        + size_of::<usize>()
+        + 2 * (size_of::<GeneratedArrayValueRun>() + 2 * size_of::<f64>())
+        + 2 * size_of::<GeneratedScalarValueRun>();
+    (scans.len() * per_scan + with_rows * per_scan_with_rows) as u64
 }
 
 /// The POINTING columns of `scans` as generated overrides, for a save.

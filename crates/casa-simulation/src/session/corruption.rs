@@ -16,7 +16,7 @@
 
 use super::Simulator;
 use super::error::{SimulatorError, SimulatorResult};
-use super::plan::{DataStep, NoiseTerm};
+use super::plan::NoiseTerm;
 use crate::corrupt::{MAXIMUM_APPLICATIONS, NoiseApplication};
 
 /// CASA's `Simulator` seed until `setseed` (`seed_p(11111)`). The Python
@@ -121,23 +121,16 @@ impl Simulator {
             )));
         }
         tracing::info!("Doing visibility corruption.");
-        let applications = self
-            .noise_terms
-            .iter_mut()
-            .map(|term| {
-                let application = NoiseApplication {
-                    seed: term.seed,
-                    sigma_jy: term.sigma_jy,
-                    ordinal: term.applications,
-                };
-                term.applications += 1;
-                application
-            })
-            .collect();
-        self.data_plan.push(DataStep::Corrupt {
-            applications,
-            scans: self.scans.len(),
+        let applications = self.noise_terms.iter_mut().map(|term| {
+            let application = NoiseApplication {
+                seed: term.seed,
+                sigma_jy: term.sigma_jy,
+                ordinal: term.applications,
+            };
+            term.applications += 1;
+            application
         });
+        self.data_plan.corrupt(applications, self.scans.len());
         Ok(())
     }
 

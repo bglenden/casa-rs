@@ -5,9 +5,11 @@
 //!
 //! In order:
 //! 1. **The writer.** The MeasurementSet write plan is sized from half of
-//!    what the policy leaves free, and its resident bytes are admitted. Its
-//!    batches are tile bands of about [`casa_ms::TARGET_BATCH_BYTES`], so
-//!    the budget is a ceiling that only a small budget reaches.
+//!    what the policy leaves free, and its resident bytes are admitted with
+//!    the subtable columns its save generates (POINTING's runs, a few
+//!    hundred bytes a scan). Its batches are tile bands of about
+//!    [`casa_ms::TARGET_BATCH_BYTES`], so the budget is a ceiling that only
+//!    a small budget reaches.
 //! 2. **The pipeline.** The batch being filled, the geometry of the
 //!    integrations it spans, each worker's scratch and, when the session
 //!    predicts, the predictor, its block of native rows and (on Metal) the
@@ -57,6 +59,9 @@ pub(super) struct MainShape<'a> {
     pub(super) largest_integration: usize,
     /// Antennas of the session's largest scan.
     pub(super) antennas: usize,
+    /// Heap of the subtable columns the save generates (POINTING's), which
+    /// grows with the scans.
+    pub(super) generated_bytes: u64,
 }
 
 /// What `close` was admitted: the write plan, the workers that fit, and the
@@ -95,7 +100,7 @@ pub(super) fn admit_main_write(
         policy,
         &Demand {
             phase: WRITER_PHASE,
-            memory: plan.maximum_resident_bytes() as u64,
+            memory: plan.maximum_resident_bytes() as u64 + shape.generated_bytes,
         },
     )
     .map_err(SimulatorError::admission)?;
@@ -225,6 +230,7 @@ mod tests {
             telescope: "ALMA",
             largest_integration: 1_000,
             antennas: 44,
+            generated_bytes: 0,
         }
     }
 
