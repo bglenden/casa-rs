@@ -18,6 +18,12 @@
 //! Both are accurate to a few units in the last place of `f64` (the tests
 //! compare them with `std` over 2²⁰ words), far below the `f32` the
 //! visibilities are stored in.
+//!
+//! Nothing here branches on the words: the octant and the mantissa range
+//! pick values by selection and sign flips. Applied lane by lane to several
+//! draws ([`super::NoiseApplication::add_to_row`] takes eight channels at a
+//! time), the same operations run in vector registers, each lane rounding
+//! exactly as a draw made alone.
 
 use std::f64::consts::{FRAC_PI_4, LN_2, SQRT_2};
 
@@ -26,12 +32,20 @@ const WORD_SCALE: f64 = 1.0 / 4_294_967_296.0;
 /// Words per octant of the angle: 2²⁹.
 const OCTANT_WORDS: u32 = 1 << 29;
 
-/// Two independent standard normals from two uniform words.
-#[inline(always)]
+/// Two independent standard normals from two uniform words. The noise path
+/// computes the same products from [`radius`] and [`sin_cos_turn`] in two
+/// passes over a batch of lanes.
+#[cfg(test)]
 pub(super) fn box_muller(first: u32, second: u32) -> (f64, f64) {
-    let radius = (-2.0 * ln_uniform(first)).sqrt();
+    let radius = radius(first);
     let (sin, cos) = sin_cos_turn(second);
     (radius * cos, radius * sin)
+}
+
+/// Box–Muller's radius `√(−2 ln u₁)` from the first word.
+#[inline(always)]
+pub(super) fn radius(word: u32) -> f64 {
+    (-2.0 * ln_uniform(word)).sqrt()
 }
 
 /// `ln((w + 1)·2⁻³²)`.
@@ -71,8 +85,16 @@ fn ln_uniform(word: u32) -> f64 {
 /// nearer quadrant axis is `x` in [0, π/4], taken exactly from the low bits;
 /// the Taylor series of `sin x` to x¹⁵ and `cos x` to x¹⁶ are accurate to
 /// rounding there. The octant then swaps and negates them.
+///
+/// The octant's bits are three reflections. In an odd octant `x` is measured
+/// back from the next quadrant axis, which swaps sine and cosine; an odd
+/// quadrant (θ advanced by π/2) swaps them again, so they end swapped when
+/// exactly one of the two holds. The sine is negative in octants 4 to 7
+/// (θ ≥ π) and the cosine in octants 2 to 5 (π/2 ≤ θ < 3π/2). Each sign is
+/// applied by flipping the sign bit, which is what IEEE-754 negation does,
+/// zeros included.
 #[inline(always)]
-fn sin_cos_turn(word: u32) -> (f64, f64) {
+pub(super) fn sin_cos_turn(word: u32) -> (f64, f64) {
     let octant = word >> 29;
     let within = word & (OCTANT_WORDS - 1);
     let odd = octant & 1 == 1;
@@ -98,14 +120,19 @@ fn sin_cos_turn(word: u32) -> (f64, f64) {
                             + x2 * (1.0 / 479_001_600.0
                                 + x2 * (-1.0 / 87_178_291_200.0
                                     + x2 * (1.0 / 20_922_789_888_000.0))))))));
-    // The angle within the quadrant, and its sine and cosine.
-    let (sin, cos) = if odd { (cos, sin) } else { (sin, cos) };
-    match octant >> 1 {
-        0 => (sin, cos),
-        1 => (cos, -sin),
-        2 => (-sin, -cos),
-        _ => (-cos, sin),
-    }
+    let swapped = (octant ^ (octant >> 1)) & 1 == 1;
+    let (sin, cos) = if swapped { (cos, sin) } else { (sin, cos) };
+    (
+        negate_if(sin, octant >> 2 == 1),
+        negate_if(cos, (octant + 2) >> 2 == 1),
+    )
+}
+
+/// `−x` when `negate`, else `x`, bit for bit: the sign bit flipped, as IEEE-754
+/// negation flips it.
+#[inline(always)]
+fn negate_if(x: f64, negate: bool) -> f64 {
+    f64::from_bits(x.to_bits() ^ (u64::from(negate) << 63))
 }
 
 #[cfg(test)]

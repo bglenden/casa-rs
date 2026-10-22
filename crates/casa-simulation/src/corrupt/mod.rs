@@ -40,16 +40,35 @@
 //! the logarithm, sine and cosine evaluated on the words ([`normal`]), so
 //! they are also bitwise the same on every platform. The largest draw is
 //! √(64 ln 2) ≈ 6.66σ, one in about 4·10⁹ beyond that in an exact normal.
+//!
+//! # Drawing channels together
+//!
+//! A row's draws are made [`LANES`] channels at a time: the counters of one
+//! correlation pair in consecutive channels differ only in their channel
+//! word, so the generator and Box–Muller run on all of them in step, in
+//! vector registers. Every lane performs exactly the operations of a draw
+//! made alone, in the same order and with nothing fused, so the batching
+//! changes the speed and not one bit of the noise; the tests check this
+//! against the one-draw-at-a-time code it replaced ([`oracle`]).
 
 mod normal;
+#[cfg(test)]
+mod oracle;
 mod philox;
 #[cfg(test)]
 mod tests;
 
 use num_complex::Complex32;
 
+#[cfg(test)]
 use normal::box_muller;
 use philox::Key;
+
+/// Channels drawn together. On an Apple M2, eight lanes (four 128-bit
+/// registers per `f64` value) ran fastest of 4 to 32 (#855): fewer leave the
+/// polynomials' latency exposed, more spill their coefficients and running
+/// sums out of the 32 vector registers.
+const LANES: usize = 8;
 
 /// The top byte of the key's second word names what the stream is for, so
 /// later corruptions (gains, fBM screens) draw from streams disjoint from
@@ -85,6 +104,13 @@ impl NoiseApplication {
     /// Add this application's noise to the cell of MAIN row `row`:
     /// `correlations × channels` samples, correlation fastest. An
     /// autocorrelation row gets real draws only.
+    ///
+    /// Each draw of the counter (row, channel, pair) gives four words: the
+    /// first two make correlation `2·pair`'s (real, imaginary) normals, the
+    /// last two correlation `2·pair + 1`'s, when the row has it. The draws
+    /// are made [`LANES`] channels at a time; a last, partial batch draws
+    /// the full width and keeps the channels the cell has. Samples past the
+    /// last whole channel are left alone.
     pub(crate) fn add_to_row(
         &self,
         row: u64,
@@ -96,27 +122,138 @@ impl NoiseApplication {
         if self.sigma_jy == 0.0 || correlations == 0 {
             return;
         }
-        let sigma = f64::from(self.sigma_jy);
-        let key = self.key();
-        for (channel, samples) in cell.chunks_exact_mut(correlations).enumerate() {
-            for (pair, slots) in samples.chunks_mut(2).enumerate() {
-                let words = philox::philox4x32_10(counter(row, channel, pair), key);
-                for (slot, sample) in slots.iter_mut().enumerate() {
-                    let (re, im) = box_muller(words[2 * slot], words[2 * slot + 1]);
-                    sample.re += (re * sigma) as f32;
-                    if !autocorrelation {
-                        sample.im += (im * sigma) as f32;
+        // The common cross-correlation shapes, each compiled with its
+        // correlation count fixed so that the additions into the cell
+        // vectorise; every arm runs the same code.
+        match (correlations, autocorrelation) {
+            (1, false) => self.add_batches(row, 1, false, cell),
+            (2, false) => self.add_batches(row, 2, false, cell),
+            (4, false) => self.add_batches(row, 4, false, cell),
+            _ => self.add_batches(row, correlations, autocorrelation, cell),
+        }
+    }
+
+    /// [`Self::add_to_row`] in batches of [`LANES`] channels, and a last,
+    /// partial batch.
+    #[inline(always)]
+    fn add_batches(
+        &self,
+        row: u64,
+        correlations: usize,
+        autocorrelation: bool,
+        cell: &mut [Complex32],
+    ) {
+        let batch = Batch {
+            key: self.key(),
+            sigma: f64::from(self.sigma_jy),
+            row,
+            correlations,
+            autocorrelation,
+        };
+        let channels = cell.len() / correlations;
+        let mut batches = cell[..channels * correlations].chunks_exact_mut(LANES * correlations);
+        for (index, samples) in (&mut batches).enumerate() {
+            batch.add(index * LANES, samples, LANES);
+        }
+        let tail = batches.into_remainder();
+        if !tail.is_empty() {
+            batch.add_partial(channels - channels % LANES, tail, channels % LANES);
+        }
+    }
+}
+
+/// What every batch of one row's noise shares.
+struct Batch {
+    /// The application's stream key.
+    key: Key,
+    /// σ of each draw, Jy, widened from CASA's `Float`.
+    sigma: f64,
+    /// The MAIN row.
+    row: u64,
+    /// Correlations per channel.
+    correlations: usize,
+    /// An autocorrelation row, which gets real draws only.
+    autocorrelation: bool,
+}
+
+impl Batch {
+    /// Add the noise of the `lanes` channels from `first`, at most
+    /// [`LANES`], to their `samples`: the draws of each correlation pair in
+    /// all the channels, then the additions, both correlations of the pair
+    /// together.
+    #[inline(always)]
+    fn add(&self, first: usize, samples: &mut [Complex32], lanes: usize) {
+        let correlations = self.correlations;
+        for pair in 0..correlations.div_ceil(2) {
+            let words = philox::philox4x32_10_lanes(counters(self.row, first, pair), self.key);
+            let both = correlations - 2 * pair >= 2;
+            let [re0, im0] = scaled_draws(&words[0], &words[1], self.sigma);
+            let [re1, im1] = if both {
+                scaled_draws(&words[2], &words[3], self.sigma)
+            } else {
+                [[0.0; LANES]; 2]
+            };
+            for lane in 0..lanes {
+                let at = lane * correlations + 2 * pair;
+                samples[at].re += re0[lane];
+                if both {
+                    samples[at + 1].re += re1[lane];
+                }
+                if !self.autocorrelation {
+                    samples[at].im += im0[lane];
+                    if both {
+                        samples[at + 1].im += im1[lane];
                     }
                 }
             }
         }
     }
+
+    /// [`Self::add`] for a row's last, partial batch: one copy for every
+    /// shape, since it runs at most once a row.
+    #[inline(never)]
+    fn add_partial(&self, first: usize, samples: &mut [Complex32], lanes: usize) {
+        self.add(first, samples, lanes);
+    }
 }
 
-/// The counter of a draw: the MAIN row (two words), the channel, and the
-/// correlation pair (correlations 0 and 1 are pair 0, 2 and 3 pair 1).
-fn counter(row: u64, channel: usize, pair: usize) -> philox::Counter {
-    [row as u32, (row >> 32) as u32, channel as u32, pair as u32]
+/// The counters of one correlation pair's draws in the [`LANES`] channels
+/// from `first`: the MAIN row (two words), the channel, and the correlation
+/// pair (correlations 0 and 1 are pair 0, 2 and 3 pair 1).
+fn counters(row: u64, first: usize, pair: usize) -> philox::Lanes<LANES> {
+    [
+        [row as u32; LANES],
+        [(row >> 32) as u32; LANES],
+        std::array::from_fn(|lane| (first + lane) as u32),
+        [pair as u32; LANES],
+    ]
+}
+
+/// The real and imaginary noise of `LANES` samples from their two words
+/// each: σ times the Box–Muller pair, in `f64`, rounded to single
+/// precision as CASA rounds `Complex(r·amp, i·amp)`.
+///
+/// Each lane computes Box–Muller's products, `r·cos θ` and `r·sin θ`, as a
+/// draw made alone does, but in two passes, the radii and then the angles:
+/// each pass's polynomial coefficients and running sums then fit the
+/// vector registers together, which keeps more lanes' arithmetic in flight.
+#[inline(always)]
+fn scaled_draws<const LANES: usize>(
+    first: &[u32; LANES],
+    second: &[u32; LANES],
+    sigma: f64,
+) -> [[f32; LANES]; 2] {
+    let mut radii = [0.0; LANES];
+    for (radius, &word) in radii.iter_mut().zip(first) {
+        *radius = normal::radius(word);
+    }
+    let mut draws = [[0.0; LANES]; 2];
+    for lane in 0..LANES {
+        let (sin, cos) = normal::sin_cos_turn(second[lane]);
+        draws[0][lane] = ((radii[lane] * cos) * sigma) as f32;
+        draws[1][lane] = ((radii[lane] * sin) * sigma) as f32;
+    }
+    draws
 }
 
 /// The four standard normals of one draw, slot 0's (real, imaginary) then
@@ -128,7 +265,8 @@ fn standard_normals(
     channel: usize,
     pair: usize,
 ) -> [f64; 4] {
-    let words = philox::philox4x32_10(counter(row, channel, pair), application.key());
+    let counter = [row as u32, (row >> 32) as u32, channel as u32, pair as u32];
+    let words = philox::philox4x32_10(counter, application.key());
     let (a, b) = box_muller(words[0], words[1]);
     let (c, d) = box_muller(words[2], words[3]);
     [a, b, c, d]

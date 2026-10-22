@@ -1,11 +1,16 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! The quality of the noise draws, and how a noise application fills a cell.
+//! The quality of the noise draws, how a noise application fills a cell,
+//! and that the batched path draws bit for bit what the one-draw-at-a-time
+//! [`oracle`] draws.
 //!
 //! Every statistic is over 2¹⁸ draws and must lie within five standard
 //! errors of its value for independent standard normals; the KS distance
 //! must be below the 0.1 % critical value. The draws are deterministic, so a
 //! pass is permanent; the margins are those of an honest test, not tuned to
 //! these draws.
+
+use std::hint::black_box;
+use std::time::Instant;
 
 use num_complex::Complex32;
 
@@ -249,6 +254,173 @@ fn an_autocorrelation_gets_real_draws_only() {
     }
 }
 
+/// Words where Box–Muller's rounding is delicate: the ends of the range
+/// (u = 1 gives a radius of −0), every octant boundary and its neighbours
+/// (a zero sine or cosine, whose sign the octant sets), and the halfway
+/// word.
+fn edge_words() -> Vec<u32> {
+    let mut words = vec![0, 1, 2, u32::MAX, u32::MAX - 1, 1 << 31];
+    for octant in 0..8_u32 {
+        let start = octant << 29;
+        words.extend([start, start.wrapping_sub(1), start + 1]);
+    }
+    words
+}
+
+/// Every pair of edge words, then pairs spread over the whole range.
+fn word_pairs() -> Vec<(u32, u32)> {
+    let edges = edge_words();
+    let spread = (0..1_u32 << 14).map(|index| {
+        let mixed = index.wrapping_mul(0x9E37_79B9);
+        (mixed ^ (index >> 3), mixed.rotate_left(13) ^ index)
+    });
+    edges
+        .iter()
+        .flat_map(|&first| edges.iter().map(move |&second| (first, second)))
+        .chain(spread)
+        .collect()
+}
+
+#[test]
+fn the_normals_match_the_scalar_oracle_bit_for_bit() {
+    for (first, second) in word_pairs() {
+        let (re, im) = box_muller(first, second);
+        let (expected_re, expected_im) = oracle::box_muller(first, second);
+        assert_eq!(
+            (re.to_bits(), im.to_bits()),
+            (expected_re.to_bits(), expected_im.to_bits()),
+            "words {first:#x}, {second:#x}: ({re}, {im}) against ({expected_re}, {expected_im})"
+        );
+    }
+}
+
+#[test]
+fn every_lane_draws_as_the_scalar_oracle_does() {
+    let pairs = word_pairs();
+    for sigma in [1.0, f64::from(0.1_f32), f64::from(3.7e-3_f32)] {
+        // Each shift of the windows puts every pair in every lane.
+        for shift in 0..LANES {
+            for window in pairs[shift..].as_chunks::<LANES>().0 {
+                let [re, im] = scaled_draws(
+                    &window.map(|pair| pair.0),
+                    &window.map(|pair| pair.1),
+                    sigma,
+                );
+                for (lane, &(a, b)) in window.iter().enumerate() {
+                    let (expected_re, expected_im) = oracle::box_muller(a, b);
+                    assert_eq!(re[lane].to_bits(), ((expected_re * sigma) as f32).to_bits());
+                    assert_eq!(im[lane].to_bits(), ((expected_im * sigma) as f32).to_bits());
+                }
+            }
+        }
+    }
+}
+
+/// A cell of `samples` samples holding varied values, signed zeros among
+/// them, so that a missing, doubled or misplaced addition shows.
+fn varied_cell(samples: usize, salt: u64) -> Vec<Complex32> {
+    const VALUES: [f32; 8] = [0.0, -0.0, 1.5, -2.25, 1e-8, -3.0e4, 0.1, -0.0];
+    (0..samples)
+        .map(|index| {
+            let pick = (index as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ salt;
+            Complex32::new(
+                VALUES[(pick % 8) as usize],
+                VALUES[((pick >> 8) % 8) as usize],
+            )
+        })
+        .collect()
+}
+
+/// Seeds, ordinals and σ, zero among them, for the cell comparison.
+fn oracle_applications() -> Vec<NoiseApplication> {
+    let seeds = [0, 1, 11_111, -11_111, i32::MAX, i32::MIN];
+    let ordinals = [0, 1, 7, MAXIMUM_APPLICATIONS - 1];
+    let sigmas = [1.0, 0.1, 3.7e-3, 0.0, 2.5e3, f32::MIN_POSITIVE];
+    seeds
+        .iter()
+        .enumerate()
+        .flat_map(|(index, &seed)| {
+            ordinals.iter().map(move |&ordinal| NoiseApplication {
+                seed,
+                sigma_jy: sigmas[(index + ordinal as usize) % sigmas.len()],
+                ordinal,
+            })
+        })
+        .collect()
+}
+
+/// The batched path and the oracle on one cell of `channels` channels of
+/// `correlations`, plus `extra` samples past the last whole channel.
+fn assert_matches_oracle(
+    noise: &NoiseApplication,
+    row: u64,
+    autocorrelation: bool,
+    correlations: usize,
+    channels: usize,
+    extra: usize,
+) {
+    let start = varied_cell(channels * correlations + extra, row ^ channels as u64);
+    let mut batched = start.clone();
+    let mut expected = start;
+    noise.add_to_row(row, autocorrelation, correlations, &mut batched);
+    oracle::add_to_row(noise, row, autocorrelation, correlations, &mut expected);
+    for (index, (found, wanted)) in batched.iter().zip(&expected).enumerate() {
+        assert_eq!(
+            (found.re.to_bits(), found.im.to_bits()),
+            (wanted.re.to_bits(), wanted.im.to_bits()),
+            "{noise:?}, row {row}, autocorrelation {autocorrelation}, \
+             {correlations} correlations, {channels} channels, sample {index}"
+        );
+    }
+}
+
+#[test]
+fn the_batched_path_matches_the_scalar_oracle_bit_for_bit() {
+    let applications = oracle_applications();
+    let rows = [
+        0,
+        1,
+        17,
+        999,
+        (1 << 32) - 1,
+        1 << 32,
+        (1 << 32) + 5,
+        (1 << 40) + 3,
+        u64::MAX,
+    ];
+    let channel_counts = [0, 1, 2, 3, 7, 8, 9, 15, 16, 17, 31, 33, 64, 101];
+    let mut case = 0;
+    for &row in &rows {
+        for &channels in &channel_counts {
+            for correlations in 1..=4 {
+                for autocorrelation in [false, true] {
+                    // Three applications per cell, rotating through them all.
+                    for offset in 0..3 {
+                        let noise = &applications[(case + 7 * offset) % applications.len()];
+                        let extra = (case + offset) % correlations;
+                        assert_matches_oracle(
+                            noise,
+                            row,
+                            autocorrelation,
+                            correlations,
+                            channels,
+                            extra,
+                        );
+                    }
+                    case += 1;
+                }
+            }
+        }
+    }
+    // Many consecutive rows across the 2³² boundary, the production shapes.
+    let noise = application(11_111, 2);
+    for row in (1 << 32) - 600..(1 << 32) + 600 {
+        assert_matches_oracle(&noise, row, row % 37 == 0, 2, 37, 0);
+        assert_matches_oracle(&noise, row, false, 4, 13, 0);
+        assert_matches_oracle(&noise, row, false, 1, 19, 0);
+    }
+}
+
 #[test]
 fn zero_sigma_leaves_the_cell_unchanged() {
     let noise = NoiseApplication {
@@ -264,4 +436,48 @@ fn zero_sigma_leaves_the_cell_unchanged() {
             .iter()
             .all(|s| s.re.to_bits() == start.re.to_bits() && s.im == start.im)
     );
+}
+
+/// Not a check: the time per complex sample of the batched path and of the
+/// oracle, alternately, on one thread. The first shape is the sustained
+/// run's (#855: cross-correlation rows of 4096 channels and two
+/// correlations). Run it optimised:
+/// `cargo test --release -p casa-simulation --lib -- --ignored --nocapture noise_timing`.
+#[test]
+#[ignore = "timing, not a check; run with --release"]
+fn noise_timing() {
+    const CHANNELS: usize = 4096;
+    /// Complex samples per timed pass.
+    const SAMPLES: usize = 1 << 26;
+    let noise = NoiseApplication {
+        seed: 11_111,
+        sigma_jy: 0.1,
+        ordinal: 0,
+    };
+    for (correlations, autocorrelation) in [(2, false), (4, false), (1, false), (2, true)] {
+        let mut samples = vec![Complex32::new(0.0, 0.0); CHANNELS * correlations];
+        let rows = (SAMPLES / samples.len()) as u64;
+        let rows = (1 << 32) - rows / 2..(1 << 32) + rows / 2;
+        let per_pass = ((rows.end - rows.start) as usize * samples.len()) as f64;
+        for run in 1..=3 {
+            for batched in [false, true] {
+                let start = Instant::now();
+                for row in rows.clone() {
+                    let (noise, row) = (black_box(&noise), black_box(row));
+                    let cell = black_box(&mut samples);
+                    if batched {
+                        noise.add_to_row(row, autocorrelation, correlations, cell);
+                    } else {
+                        oracle::add_to_row(noise, row, autocorrelation, correlations, cell);
+                    }
+                }
+                let nanoseconds = start.elapsed().as_secs_f64() * 1e9 / per_pass;
+                let path = if batched { "batched" } else { "scalar oracle" };
+                println!(
+                    "{correlations} correlations, autocorrelation {autocorrelation}, \
+                     run {run}, {path}: {nanoseconds:.3} ns per complex sample"
+                );
+            }
+        }
+    }
 }
