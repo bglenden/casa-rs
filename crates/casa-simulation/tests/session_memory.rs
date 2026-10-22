@@ -14,9 +14,8 @@
 //! integration at a time into the batch; POINTING is generated as it is
 //! saved).
 //!
-//! Each batch is predicted as one block into model cells of its own while
-//! its noise is added (#855), and the law checks that it is, so those cells
-//! are held to the admission too.
+//! Each batch is predicted as one block (#855), and the law checks that it
+//! is, so the largest block is held to the admission.
 //!
 //! The write batch is the writer's: it holds one batch or two, and keeps one
 //! it has written for the producer, with how it keeps pace, all within its
@@ -546,10 +545,10 @@ fn a_session_holds_its_admission_and_no_more_for_more_rows() {
             "{}: the rows are written in several batches: {pass:?}",
             case.name
         );
-        assert!(
-            pass.block_rows == pass.batch_rows && pass.beside_rows == pass.batch_rows,
-            "{}: a batch is predicted as one block beside its noise, so the law holds \
-             the model's cells to the admission: {pass:?}",
+        assert_eq!(
+            pass.block_rows, pass.batch_rows,
+            "{}: a batch is predicted as one block, so the law holds the largest to the \
+             admission: {pass:?}",
             case.name
         );
         assert!(

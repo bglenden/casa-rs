@@ -24,12 +24,9 @@
 //! On Metal the device adds the noise of the rows it predicts as it
 //! predicts them, before their model is copied out
 //! ([`super::prediction`]), and step 3 adds noise only to the rows no
-//! `predict` covers. On the CPU, when the session both predicts and
-//! corrupts and the budget holds a second batch of cells
-//! ([`super::resources`]), steps 2 and 3 run together instead: the model is
-//! predicted into that buffer while the noise is added to the zeroed DATA,
-//! and then the model is added to DATA. DATA is the same sum either way,
-//! the model and noise added in another order.
+//! `predict` covers. (Predicting a batch into cells of its own while its
+//! noise was added, then adding the two, was measured on the CPU and
+//! deleted: no faster on either test host, and 8% more CPU, #855.)
 //!
 //! The draws and, on the CPU, the predictions depend on no worker, batch or
 //! block, so on the CPU the MeasurementSet is bitwise the same for any
@@ -53,11 +50,11 @@ use crate::session::error::{SimulatorError, SimulatorResult};
 use crate::session::observe::Scan;
 use crate::session::plan::DataPlan;
 
-/// Jobs per worker a batch's noise, or its model's addition, is split into,
-/// so that workers finishing early take more.
+/// Jobs per worker a batch's noise is split into, so that workers
+/// finishing early take more.
 const NOISE_JOBS_PER_WORKER: usize = 4;
 
-/// The fewest rows of one noise or addition job.
+/// The fewest rows of one noise job.
 const MINIMUM_NOISE_JOB_ROWS: usize = 16;
 
 /// One integration a batch computes the geometry of.
@@ -79,10 +76,6 @@ pub(super) struct StageTimes {
     pub(super) predict: Duration,
     /// Noise, the per-row columns and the scalar columns.
     pub(super) cells: Duration,
-    /// Predicting the model beside the noise and the columns.
-    pub(super) together: Duration,
-    /// Adding the model predicted beside the noise to DATA.
-    pub(super) model_add: Duration,
     /// Waiting for the writer to take a batch.
     pub(super) send: Duration,
     pub(super) batches: usize,
@@ -111,26 +104,19 @@ pub(super) struct Pipeline<'s> {
     rows: Rows<'s>,
     /// The model's prediction, when a `predict` covers any scan.
     prediction: Option<PredictionStage<'s>>,
-    /// The model of a batch predicted beside its noise; without capacity
-    /// when prediction and noise run one after the other.
-    model: Vec<Complex32>,
     pub(super) times: StageTimes,
 }
 
 impl<'s> Pipeline<'s> {
     /// The pipeline for `scans`, predicting with `prediction` and adding
-    /// the noise of `plan`, on cells of `(correlations, channels)`; with
-    /// `beside_rows` rows of model cells, a batch of at most that many rows
-    /// is predicted beside its noise.
+    /// the noise of `plan`, on cells of `(correlations, channels)`.
     pub(super) fn new(
         scans: &'s [Scan],
         geometry: &'s ArrayGeometry<'s>,
         team: &'s WorkerTeam,
         (prediction, plan): (Option<PredictionStage<'s>>, &'s DataPlan),
         (correlations, channels): (usize, usize),
-        beside_rows: usize,
     ) -> Self {
-        let samples = correlations * channels;
         Self {
             rows: Rows {
                 scans,
@@ -138,13 +124,12 @@ impl<'s> Pipeline<'s> {
                 team,
                 plan,
                 correlations,
-                samples,
+                samples: correlations * channels,
                 rows: Vec::new(),
                 carried_scan: 0,
                 integrations: Vec::new(),
             },
             prediction,
-            model: Vec::with_capacity(beside_rows * samples),
             times: StageTimes::default(),
         }
     }
@@ -179,33 +164,29 @@ impl<'s> Pipeline<'s> {
             self.times.zero += started.elapsed();
             let runs = self.rows.segments(rows);
             let first = first_row as u64;
-            if self.beside(&runs, rows) {
-                self.predict_beside_fill(writer, &mut batch, first, rows, &runs)?;
-            } else {
-                let started = Instant::now();
-                if let Some(stage) = &mut self.prediction {
-                    let rows = &self.rows;
-                    stage.predict(
-                        rows.team,
-                        (rows.scans, &rows.rows),
-                        &runs,
-                        first,
-                        &mut batch.data,
-                        |scan| rows.plan.noise_for_scan(scan),
-                    )?;
-                }
-                self.times.predict += started.elapsed();
-                let started = Instant::now();
-                // A run the stage predicted on the device has its noise.
-                let prediction = &self.prediction;
-                let noised = |scan| {
-                    prediction
-                        .as_ref()
-                        .is_some_and(|stage| stage.noises_on_device() && stage.predicts(scan))
-                };
-                self.rows.fill(writer, &mut batch, (first, rows), &noised)?;
-                self.times.cells += started.elapsed();
+            let started = Instant::now();
+            if let Some(stage) = &mut self.prediction {
+                let rows = &self.rows;
+                stage.predict(
+                    rows.team,
+                    (rows.scans, &rows.rows),
+                    &runs,
+                    first,
+                    &mut batch.data,
+                    |scan| rows.plan.noise_for_scan(scan),
+                )?;
             }
+            self.times.predict += started.elapsed();
+            let started = Instant::now();
+            // A run the stage predicted on the device has its noise.
+            let prediction = &self.prediction;
+            let noised = |scan| {
+                prediction
+                    .as_ref()
+                    .is_some_and(|stage| stage.noises_on_device() && stage.predicts(scan))
+            };
+            self.rows.fill(writer, &mut batch, (first, rows), &noised)?;
+            self.times.cells += started.elapsed();
             let started = Instant::now();
             writer.send(batch)?;
             self.times.send += started.elapsed();
@@ -213,68 +194,6 @@ impl<'s> Pipeline<'s> {
             self.rows.carry(rows);
             first_row += rows;
         }
-        Ok(())
-    }
-
-    /// Whether the batch's `rows` rows, in `runs`, are predicted beside
-    /// their noise: the stage adds no noise of its own, the model buffer
-    /// holds them, and the batch has rows predicted and rows with noise.
-    fn beside(&self, runs: &[(usize, usize, usize)], rows: usize) -> bool {
-        let Some(stage) = &self.prediction else {
-            return false;
-        };
-        !stage.noises_on_device()
-            && rows * self.rows.samples <= self.model.capacity()
-            && runs.iter().any(|&(scan, ..)| stage.predicts(scan))
-            && runs
-                .iter()
-                .any(|&(scan, ..)| !self.rows.plan.noise_for_scan(scan).is_empty())
-    }
-
-    /// Predict the batch's model into the model buffer while its noise and
-    /// columns are filled, then add the model to DATA.
-    fn predict_beside_fill(
-        &mut self,
-        writer: &mut MainWriter,
-        batch: &mut VisibilityColumns,
-        first_row: u64,
-        rows: usize,
-        runs: &[(usize, usize, usize)],
-    ) -> SimulatorResult<()> {
-        let Self {
-            rows: state,
-            prediction,
-            model,
-            times,
-        } = self;
-        let Some(stage) = prediction else {
-            unreachable!("predicted beside the noise only when the session predicts");
-        };
-        let started = Instant::now();
-        // Every cell of a predicted run is written; the others are not read.
-        model.resize(rows * state.samples, Complex32::new(0.0, 0.0));
-        let state = &*state;
-        // The stage adds no noise beside it (`beside`).
-        let (filled, predicted) = state.team.join(
-            || state.fill(writer, batch, (first_row, rows), &|_| false),
-            || {
-                let none: &[NoiseApplication] = &[];
-                stage.predict(
-                    state.team,
-                    (state.scans, &state.rows),
-                    runs,
-                    first_row,
-                    model,
-                    |_| none,
-                )
-            },
-        );
-        filled?;
-        predicted?;
-        times.together += started.elapsed();
-        let started = Instant::now();
-        state.add_model(stage, runs, model, &mut batch.data)?;
-        times.model_add += started.elapsed();
         Ok(())
     }
 }
@@ -352,7 +271,7 @@ impl Rows<'_> {
         })
     }
 
-    /// Rows of one noise or addition job for a batch of `rows` rows.
+    /// Rows of one noise job for a batch of `rows` rows.
     fn job_rows(&self, rows: usize) -> usize {
         rows.div_ceil(self.team.workers() * NOISE_JOBS_PER_WORKER)
             .max(MINIMUM_NOISE_JOB_ROWS)
@@ -386,35 +305,6 @@ impl Rows<'_> {
                 }));
             }
         }
-    }
-
-    /// Add `model`, the batch's predicted cells, to `data` on the runs of
-    /// `runs` that `stage` predicts, in jobs on the team.
-    fn add_model(
-        &self,
-        stage: &PredictionStage<'_>,
-        runs: &[(usize, usize, usize)],
-        model: &[Complex32],
-        data: &mut [Complex32],
-    ) -> SimulatorResult<()> {
-        let rows = runs.iter().map(|&(_, _, count)| count).sum();
-        let cells = self.job_rows(rows) * self.samples;
-        let mut jobs = Vec::new();
-        let (mut data, mut model) = (data, model);
-        for &(scan, _, count) in runs {
-            let (run, rest) = data.split_at_mut(count * self.samples);
-            let (predicted, after) = model.split_at(count * self.samples);
-            (data, model) = (rest, after);
-            if stage.predicts(scan) {
-                jobs.extend(run.chunks_mut(cells).zip(predicted.chunks(cells)));
-            }
-        }
-        self.team.for_each_mut(&mut jobs, |_, (data, model)| {
-            for (sample, model) in data.iter_mut().zip(model.iter()) {
-                *sample += *model;
-            }
-            Ok::<_, SimulatorError>(())
-        })
     }
 
     /// The batch's first `rows` rows as runs of one scan: (scan, first row,

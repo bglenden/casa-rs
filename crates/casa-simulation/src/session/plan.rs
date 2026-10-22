@@ -139,11 +139,6 @@ impl DataPlan {
         &self.noise[start..]
     }
 
-    /// Whether any `corrupt` step adds noise.
-    pub(crate) fn corrupts(&self) -> bool {
-        !self.noise.is_empty()
-    }
-
     /// The predict steps covering scan `scan`, as indices of
     /// [`Self::predictions`], in the order they were taken: their
     /// predictions add. They are the last ones.

@@ -306,8 +306,6 @@ fn metal_adds_the_hosts_noise_to_the_model_on_the_device() {
     let (noise, _) = predicted_and_corrupted(&path("noise.ms"), None, true, BackendRequest::Cpu);
     assert_eq!(both_pass.backend, "Metal", "the pass predicted on Metal");
     assert!(both_pass.batches > 1, "{both_pass:?}");
-    // The device adds the noise as it predicts, so nothing runs beside.
-    assert_eq!(both_pass.beside_rows, 0, "{both_pass:?}");
     assert_eq!(both_pass.block_rows, model_pass.block_rows, "{both_pass:?}");
     assert_eq!(both.len(), model_only.len(), "rows");
     assert_eq!(both.len(), noise.len(), "rows");

@@ -13,12 +13,9 @@
 //! 2. **The pipeline.** The batch being filled, the geometry of the
 //!    integrations it spans, each worker's scratch and, when the session
 //!    predicts, the predictor, its block of native rows and (on Metal) the
-//!    device copies of the model grids. A block is the whole batch, and a
-//!    session that also corrupts and predicts on the CPU has a second batch
-//!    of cells to predict into beside the noise (on Metal the device adds
-//!    the noise), when that fits with the policy's streaming workers;
-//!    otherwise blocks are small, prediction and noise run one after the
-//!    other, and as many workers as fit what is then free are admitted
+//!    device copies of the model grids. A block is the whole batch when
+//!    that fits with the policy's streaming workers; otherwise blocks are
+//!    small, and as many workers as fit what is then free are admitted
 //!    (#737's rule: workers shrink first). With one worker that does not
 //!    fit, `close` is refused.
 //!
@@ -68,8 +65,6 @@ pub(super) struct MainShape<'a> {
     /// Heap of the subtable columns the save generates (POINTING's), which
     /// grows with the scans.
     pub(super) generated_bytes: u64,
-    /// Whether any `corrupt` step adds noise.
-    pub(super) corrupts: bool,
 }
 
 /// What `close` was admitted: the write plan, the workers that fit, and the
@@ -83,9 +78,6 @@ pub(super) struct MainAdmission {
     /// Rows of a prediction block: the write batch's, or fewer when the
     /// budget is small.
     pub(super) block_rows: usize,
-    /// Rows of the model cells a batch is predicted into beside its noise;
-    /// zero when the two run one after the other.
-    pub(super) beside_rows: usize,
     pub(super) reservation: Reservation,
 }
 
@@ -122,38 +114,29 @@ pub(super) fn admit_main_write(
         .close_cores(prediction.is_some_and(|stage| stage.backend() == BackendChoice::Metal));
     let free = free_memory(host, policy);
     let batch_rows = plan.batch_rows();
-    let demand = |cores: CoreAllocation, block_rows: usize, beside_rows: usize| {
+    let demand = |cores: CoreAllocation, block_rows: usize| {
         pipeline_bytes(shape, batch_rows, cores)
-            + model_bytes(shape, beside_rows)
             + prediction.map_or(0, |stage| stage.bytes(block_rows, cores.streaming_workers))
     };
-    // A batch predicted as one block, and beside its noise when the session
-    // corrupts, when that fits with the policy's workers; else small blocks
-    // one after the noise, and the workers shrink first (#737).
-    let beside_rows = if prediction.is_some_and(|stage| !stage.noises_on_device()) && shape.corrupts
-    {
-        batch_rows
-    } else {
-        0
-    };
-    let (cores, block_rows, beside_rows) = if demand(policy_cores, batch_rows, beside_rows) <= free
-    {
-        (policy_cores, batch_rows, beside_rows)
+    // A batch predicted as one block when that fits with the policy's
+    // workers; else small blocks, and the workers shrink first (#737).
+    let (cores, block_rows) = if demand(policy_cores, batch_rows) <= free {
+        (policy_cores, batch_rows)
     } else {
         let small = prediction.map_or(batch_rows, |stage| stage.small_block_rows(batch_rows));
         let cores = (1..=policy_cores.streaming_workers)
             .rev()
             .map(|workers| policy_cores.at_most(workers))
-            .find(|cores| demand(*cores, small, 0) <= free)
+            .find(|cores| demand(*cores, small) <= free)
             .unwrap_or_else(|| policy_cores.at_most(1));
-        (cores, small, 0)
+        (cores, small)
     };
     let pipeline = admit(
         host,
         policy,
         &Demand {
             phase: PIPELINE_PHASE,
-            memory: demand(cores, block_rows, beside_rows),
+            memory: demand(cores, block_rows),
         },
     )
     .map_err(SimulatorError::admission)?;
@@ -163,7 +146,6 @@ pub(super) fn admit_main_write(
         cores,
         policy_cores,
         block_rows,
-        beside_rows,
         reservation,
     })
 }
@@ -244,12 +226,6 @@ pub(super) fn pipeline_bytes(
     batch + geometry + integrations + scalars + workers
 }
 
-/// Bytes of the model cells of `rows` rows, which a batch is predicted into
-/// beside its noise.
-pub(super) fn model_bytes(shape: &MainShape<'_>, rows: usize) -> u64 {
-    (rows * shape.correlations * shape.channels * size_of::<Complex32>()) as u64
-}
-
 fn to_usize(bytes: u64) -> usize {
     usize::try_from(bytes).unwrap_or(usize::MAX)
 }
@@ -270,7 +246,6 @@ mod tests {
             largest_integration: 1_000,
             antennas: 44,
             generated_bytes: 0,
-            corrupts: false,
         }
     }
 
