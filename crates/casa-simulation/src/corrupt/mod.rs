@@ -14,9 +14,22 @@
 //!   included, each with its own draw;
 //! - whatever the flags: flagged rows and samples get noise too.
 //!
-//! WEIGHT and SIGMA are left as observed. A draw is made in double precision,
-//! scaled by σ held as a `Float`, and rounded to single precision before it
-//! is added, as `ANoiseCorruptor::simPar` computes `Complex(r·amp, i·amp)`.
+//! WEIGHT and SIGMA are left as observed. CASA's `ANoiseCorruptor::simPar`
+//! draws in double precision and rounds `Complex(r·amp, i·amp)`, σ held as
+//! a `Float`, to the single precision DATA is stored in. casa-rs draws in
+//! single precision instead, and scales by σ in it too, for speed: a vector
+//! register holds four lanes rather than two and the series are about half
+//! as long. On an Apple M2 core that nearly halves the noise's cost, from
+//! 6.2 to 3.2 ns per complex sample of two-correlation rows, the generator's
+//! 1.2 ns included (#855).
+//!
+//! The difference is below what the stored `f32` resolves. A standard
+//! normal is within 6·2⁻²⁴ of the double-precision draw of the same words,
+//! relatively: the largest over 2³³ draws is 5.18·2⁻²⁴, and 56 % of them
+//! are that draw rounded to `f32`. Scaling by σ, as `(r·σ)·cos θ` rather
+//! than `(r·cos θ)·σ`, adds one rounding ([`normal`] gives the bounds and
+//! where they come from). Against noise of standard deviation σ, the
+//! difference is of order 10⁻⁷σ.
 //!
 //! # Where the draws come from
 //!
@@ -36,10 +49,11 @@
 //! The result depends only on (seed, ordinal, row, channel, correlation), so
 //! it is bitwise the same for any batch size, worker count or backend.
 //!
-//! Normals come from Box–Muller on a pair of 32-bit words, in `f64`, with
+//! Normals come from Box–Muller on a pair of 32-bit words, in `f32`, with
 //! the logarithm, sine and cosine evaluated on the words ([`normal`]), so
 //! they are also bitwise the same on every platform. The largest draw is
-//! √(64 ln 2) ≈ 6.66σ, one in about 4·10⁹ beyond that in an exact normal.
+//! √(64 ln 2) ≈ 6.66σ (6.660437σ, that value rounded to `f32`), one in
+//! about 4·10⁹ beyond that in an exact normal.
 //!
 //! # Drawing channels together
 //!
@@ -49,7 +63,10 @@
 //! vector registers. Every lane performs exactly the operations of a draw
 //! made alone, in the same order and with nothing fused, so the batching
 //! changes the speed and not one bit of the noise; the tests check this
-//! against the one-draw-at-a-time code it replaced ([`oracle`]).
+//! against the same draws made one at a time, check both against the
+//! double-precision code the draws replaced (the tests' `oracle`) within
+//! the bound above, and hold a few draws and one cell to known bits, so
+//! that a platform that rounds differently fails.
 
 mod normal;
 #[cfg(test)]
@@ -64,11 +81,14 @@ use num_complex::Complex32;
 use normal::box_muller;
 use philox::Key;
 
-/// Channels drawn together. On an Apple M2, eight lanes (four 128-bit
-/// registers per `f64` value) ran fastest of 4 to 32 (#855): fewer leave the
-/// polynomials' latency exposed, more spill their coefficients and running
-/// sums out of the 32 vector registers.
-const LANES: usize = 8;
+/// Channels drawn together. On an Apple M2, sixteen lanes (four 128-bit
+/// registers per `f32` value) ran 12–15 % faster than eight and 8–17 %
+/// faster than thirty-two (#855): fewer leave the latency of the
+/// polynomials, the division and the square root exposed; more spill
+/// Philox's words and the polynomials' coefficients and running sums out of
+/// the 32 vector registers. For the double-precision draws before them,
+/// eight lanes, also four registers per value, were fastest.
+const LANES: usize = 16;
 
 /// The top byte of the key's second word names what the stream is for, so
 /// later corruptions (gains, fBM screens) draw from streams disjoint from
@@ -145,7 +165,7 @@ impl NoiseApplication {
     ) {
         let batch = Batch {
             key: self.key(),
-            sigma: f64::from(self.sigma_jy),
+            sigma: self.sigma_jy,
             row,
             correlations,
             autocorrelation,
@@ -166,8 +186,8 @@ impl NoiseApplication {
 struct Batch {
     /// The application's stream key.
     key: Key,
-    /// σ of each draw, Jy, widened from CASA's `Float`.
-    sigma: f64,
+    /// σ of each draw, Jy, held as CASA's `Float`.
+    sigma: f32,
     /// The MAIN row.
     row: u64,
     /// Correlations per channel.
@@ -230,28 +250,30 @@ fn counters(row: u64, first: usize, pair: usize) -> philox::Lanes<LANES> {
 }
 
 /// The real and imaginary noise of `LANES` samples from their two words
-/// each: σ times the Box–Muller pair, in `f64`, rounded to single
-/// precision as CASA rounds `Complex(r·amp, i·amp)`.
+/// each: Box–Muller's `(r·σ)·cos θ` and `(r·σ)·sin θ`, in `f32`. Scaling
+/// the radius once saves a multiplication per sample over scaling each
+/// normal, with the same number of roundings.
 ///
-/// Each lane computes Box–Muller's products, `r·cos θ` and `r·sin θ`, as a
-/// draw made alone does, but in two passes, the radii and then the angles:
-/// each pass's polynomial coefficients and running sums then fit the
-/// vector registers together, which keeps more lanes' arithmetic in flight.
+/// Each lane computes the products as a draw made alone does (the tests'
+/// `normal::scaled_draw`), but in two passes, the radii and then the
+/// angles: each pass's polynomial coefficients and running sums then fit
+/// the vector registers together, which keeps more lanes' arithmetic in
+/// flight.
 #[inline(always)]
 fn scaled_draws<const LANES: usize>(
     first: &[u32; LANES],
     second: &[u32; LANES],
-    sigma: f64,
+    sigma: f32,
 ) -> [[f32; LANES]; 2] {
     let mut radii = [0.0; LANES];
     for (radius, &word) in radii.iter_mut().zip(first) {
-        *radius = normal::radius(word);
+        *radius = normal::radius(word) * sigma;
     }
     let mut draws = [[0.0; LANES]; 2];
     for lane in 0..LANES {
         let (sin, cos) = normal::sin_cos_turn(second[lane]);
-        draws[0][lane] = ((radii[lane] * cos) * sigma) as f32;
-        draws[1][lane] = ((radii[lane] * sin) * sigma) as f32;
+        draws[0][lane] = radii[lane] * cos;
+        draws[1][lane] = radii[lane] * sin;
     }
     draws
 }
@@ -264,7 +286,7 @@ fn standard_normals(
     row: u64,
     channel: usize,
     pair: usize,
-) -> [f64; 4] {
+) -> [f32; 4] {
     let counter = [row as u32, (row >> 32) as u32, channel as u32, pair as u32];
     let words = philox::philox4x32_10(counter, application.key());
     let (a, b) = box_muller(words[0], words[1]);

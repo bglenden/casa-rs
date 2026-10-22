@@ -1,13 +1,16 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! The noise path as it was before draws were batched across channels
-//! (#855): one Philox counter and one Box–Muller pair at a time, copied
-//! unchanged from commit `0cf4a8994a`.
+//! The noise path as it was before draws were batched across channels and
+//! made in single precision (#855): one Philox counter and one Box–Muller
+//! pair at a time, in `f64`, copied from commit `0cf4a8994a`. Since then
+//! [`radius`], [`sin_cos_turn`] and [`standard_normals`] are exposed to the
+//! tests, and the tests that held the logarithm, sine and cosine to `std`
+//! live here.
 //!
-//! It is the oracle the batched [`NoiseApplication::add_to_row`] must match
-//! bit for bit, and it calls nothing the batched path uses, so a change to
-//! the generator, the logarithm, the sine and cosine or the key that alters
-//! a single draw fails the comparison. Changing the draws is a science
-//! change; this file changes only with one.
+//! It is the reference the single-precision [`NoiseApplication::add_to_row`]
+//! must stay within the bounds of [`super::normal`] of, and it calls nothing
+//! the noise path uses, so a change to the generator or the key, or one that
+//! moves a draw by more than those bounds, fails the comparison. Changing
+//! the draws is a science change; this file changes only with one.
 
 use std::f64::consts::{FRAC_PI_4, LN_2, SQRT_2};
 
@@ -75,9 +78,15 @@ const OCTANT_WORDS: u32 = 1 << 29;
 /// Two independent standard normals from two uniform words.
 #[inline(always)]
 pub(super) fn box_muller(first: u32, second: u32) -> (f64, f64) {
-    let radius = (-2.0 * ln_uniform(first)).sqrt();
+    let radius = radius(first);
     let (sin, cos) = sin_cos_turn(second);
     (radius * cos, radius * sin)
+}
+
+/// Box–Muller's radius `√(−2 ln u₁)` from the first word.
+#[inline(always)]
+pub(super) fn radius(word: u32) -> f64 {
+    (-2.0 * ln_uniform(word)).sqrt()
 }
 
 /// `ln((w + 1)·2⁻³²)`.
@@ -118,7 +127,7 @@ fn ln_uniform(word: u32) -> f64 {
 /// the Taylor series of `sin x` to x¹⁵ and `cos x` to x¹⁶ are accurate to
 /// rounding there. The octant then swaps and negates them.
 #[inline(always)]
-fn sin_cos_turn(word: u32) -> (f64, f64) {
+pub(super) fn sin_cos_turn(word: u32) -> (f64, f64) {
     let octant = word >> 29;
     let within = word & (OCTANT_WORDS - 1);
     let odd = octant & 1 == 1;
@@ -170,6 +179,20 @@ fn counter(row: u64, channel: usize, pair: usize) -> Counter {
     [row as u32, (row >> 32) as u32, channel as u32, pair as u32]
 }
 
+/// The four standard normals of the draw of (row, channel, pair): slot 0's
+/// (real, imaginary) then slot 1's.
+pub(super) fn standard_normals(
+    application: &NoiseApplication,
+    row: u64,
+    channel: usize,
+    pair: usize,
+) -> [f64; 4] {
+    let words = philox4x32_10(counter(row, channel, pair), key(application));
+    let (a, b) = box_muller(words[0], words[1]);
+    let (c, d) = box_muller(words[2], words[3]);
+    [a, b, c, d]
+}
+
 /// `application`'s noise added to the cell of MAIN row `row`, one draw at a
 /// time: `NoiseApplication::add_to_row` as it was.
 pub(super) fn add_to_row(
@@ -196,5 +219,66 @@ pub(super) fn add_to_row(
                 }
             }
         }
+    }
+}
+
+/// The oracle's logarithm, sine and cosine against `std`, so that the
+/// single-precision draws are measured against the right values; the
+/// tests the double-precision draws had before #855 moved them here.
+mod tests {
+    use super::*;
+
+    /// 2²⁰ words spread over the whole range, and the edges.
+    fn words() -> impl Iterator<Item = u32> {
+        (0..1_u32 << 20)
+            .map(|index| index.wrapping_mul(0x9E37_79B9) ^ (index >> 7))
+            .chain([
+                0,
+                1,
+                u32::MAX,
+                u32::MAX - 1,
+                1 << 31,
+                OCTANT_WORDS - 1,
+                OCTANT_WORDS,
+                OCTANT_WORDS + 1,
+                7 * OCTANT_WORDS,
+            ])
+    }
+
+    #[test]
+    fn the_logarithm_agrees_with_std() {
+        for word in words() {
+            let expected = ((f64::from(word) + 1.0) * WORD_SCALE).ln();
+            let found = ln_uniform(word);
+            if expected == 0.0 {
+                assert_eq!(found, 0.0, "word {word:#x}");
+            } else {
+                let relative = ((found - expected) / expected).abs();
+                assert!(
+                    relative < 2e-15,
+                    "word {word:#x}: {found} against {expected}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_sine_and_cosine_agree_with_std() {
+        for word in words() {
+            let (sin, cos) = (std::f64::consts::TAU * f64::from(word) * WORD_SCALE).sin_cos();
+            let (found_sin, found_cos) = sin_cos_turn(word);
+            assert!(
+                (found_sin - sin).abs() < 1e-15 && (found_cos - cos).abs() < 1e-15,
+                "word {word:#x}: ({found_sin}, {found_cos}) against ({sin}, {cos})"
+            );
+        }
+    }
+
+    #[test]
+    fn the_radius_is_zero_at_u_one_and_bounded_at_the_smallest_u() {
+        assert_eq!(box_muller(u32::MAX, 0), (0.0, 0.0));
+        let (largest, zero) = box_muller(0, 0);
+        assert_eq!(zero, 0.0);
+        assert!((largest - (64.0 * LN_2).sqrt()).abs() < 1e-14);
     }
 }

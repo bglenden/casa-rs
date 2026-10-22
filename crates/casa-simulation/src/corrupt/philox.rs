@@ -258,14 +258,16 @@ mod tests {
         }
     }
 
-    /// One lane alone, a group of four, the noise path's eight, and seven:
-    /// one group of four (vector lanes on NEON) and three one at a time.
+    /// One lane alone, a group of four, eight, the noise path's
+    /// [`LANES`](crate::corrupt::LANES), and seven: one group of four
+    /// (vector lanes on NEON) and three one at a time.
     #[test]
     fn random123_known_answers_in_every_lane() {
         assert_known_answers::<1>();
         assert_known_answers::<4>();
         assert_known_answers::<7>();
         assert_known_answers::<8>();
+        assert_known_answers::<{ crate::corrupt::LANES }>();
         for vector in KAT.iter().filter(|vector| vector.rounds == 10) {
             assert_eq!(philox4x32_10(vector.counter, vector.key), vector.expected);
         }
