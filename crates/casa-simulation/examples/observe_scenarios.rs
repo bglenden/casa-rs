@@ -341,14 +341,19 @@ fn main() {
             other => panic!("unknown argument {other}"),
         }
     }
-    // The pass summary `close` reports: workers, bytes and stage times.
+    // The pass summary `close` reports (workers, bytes and stage times), and
+    // each Metal predictor's dispatches and device time.
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::fmt::layer()
                 .with_ansi(false)
                 .with_writer(std::io::stderr),
         )
-        .with(Targets::new().with_target("casa_simulation::write", tracing::Level::INFO))
+        .with(
+            Targets::new()
+                .with_target("casa_simulation::write", tracing::Level::INFO)
+                .with_target("casa_imaging::metal_stage_timing", tracing::Level::INFO),
+        )
         .init();
     let resources = SessionResources::from_controls(&controls).expect("session resources");
     println!(

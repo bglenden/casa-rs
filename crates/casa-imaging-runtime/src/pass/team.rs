@@ -92,6 +92,22 @@ impl WorkerTeam {
         }
     }
 
+    /// Run `first` and `second` at once on the team and return both results:
+    /// parallel work inside either ([`Self::for_each_mut`]) shares the
+    /// team's threads with the other, so one's jobs fill the threads the
+    /// other leaves idle (the simulator's noise while the device predicts).
+    /// A team of one runs `first`, then `second`, on the caller.
+    pub fn join<A: Send, B: Send>(
+        &self,
+        first: impl FnOnce() -> A + Send,
+        second: impl FnOnce() -> B + Send,
+    ) -> (A, B) {
+        match &self.pool {
+            None => (first(), second()),
+            Some(pool) => pool.install(|| rayon::join(first, second)),
+        }
+    }
+
     /// Run `operation` on every item, one item per job, and join. Items are
     /// independent; the first error in item order is returned.
     pub fn for_each_mut<T: Send, E: Send>(

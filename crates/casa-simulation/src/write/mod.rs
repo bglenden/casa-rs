@@ -145,6 +145,7 @@ fn main_shape(session: &Simulator, (correlations, channels): (usize, usize)) -> 
             .max()
             .unwrap_or(0),
         generated_bytes: subtables::generated_bytes(session),
+        corrupts: session.data_plan().corrupts(),
     }
 }
 
@@ -168,7 +169,7 @@ fn write_main<'s>(
     let started = Instant::now();
     let batch_rows = admission.plan.batch_rows().max(1);
     if let Some(stage) = &mut prediction {
-        stage.start(batch_rows, admission.cores.streaming_workers);
+        stage.start(admission.block_rows, admission.cores.streaming_workers);
     }
     let backend = prediction.as_ref().map_or_else(
         || session.options().resources.resolved_backend(false),
@@ -189,6 +190,7 @@ fn write_main<'s>(
         &team,
         (prediction, session.data_plan()),
         (shape.correlations, shape.channels),
+        admission.beside_rows,
     );
     let integrations = scans
         .iter()
@@ -204,6 +206,7 @@ fn write_main<'s>(
     tracing::info!(
         rows = shape.rows,
         batch_rows,
+        block_rows = admission.block_rows,
         batches = times.batches,
         workers = admission.cores.streaming_workers,
         policy_workers = admission.policy_cores.streaming_workers,
@@ -214,6 +217,9 @@ fn write_main<'s>(
         zero_s = times.zero.as_secs_f64(),
         predict_s = times.predict.as_secs_f64(),
         cells_s = times.cells.as_secs_f64(),
+        beside_rows = admission.beside_rows,
+        together_s = times.together.as_secs_f64(),
+        model_add_s = times.model_add.as_secs_f64(),
         send_wait_s = times.send.as_secs_f64(),
         setup_s = setup.as_secs_f64(),
         finish_s = finish.as_secs_f64(),

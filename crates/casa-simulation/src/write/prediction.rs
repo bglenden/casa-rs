@@ -9,8 +9,10 @@
 //! [`GridFtProjection`] as CASA's `GridFT` rotates it. Scans with the same
 //! steps and field share a segment, and one predictor serves a segment; it
 //! is rebuilt when the batches reach a scan of another segment. A run of a
-//! segment's rows is predicted in blocks of at most a fixed number of rows,
-//! straight into the batch's DATA, which a scan no step covers leaves zero.
+//! segment's rows is predicted in blocks, straight into the batch's DATA,
+//! which a scan no step covers leaves zero: a block is the whole write
+//! batch when the budget allows, else about [`SMALL_BLOCK_BYTES`] of native
+//! rows.
 //!
 //! The rows are as `observe` writes them: the row flag is FLAG_ROW, every
 //! sample is unflagged with unit weight, and an autocorrelation predicts the
@@ -34,9 +36,18 @@ use crate::session::Simulator;
 use crate::session::error::{SimulatorError, SimulatorResult};
 use crate::session::observe::Scan;
 
-/// Bytes of the native rows of one prediction block, about: blocks of more
-/// rows gain nothing, as the predictor's chunks are smaller still.
-const BLOCK_BYTES: u64 = 16 << 20;
+/// Bytes of the native rows of one prediction block, about, when the budget
+/// cannot hold a whole write batch's ([`super::resources`]). A block ends
+/// with the device's work drained and its predictions copied out, so on
+/// Metal a batch predicted as one block ran 1.5× faster than in blocks of
+/// this size (#855: 1,092-row batches of 4,096 channels, about 120 rows a
+/// small block).
+const SMALL_BLOCK_BYTES: u64 = 16 << 20;
+
+/// The Metal backend's stage-timing target: with it enabled at `INFO`, each
+/// Metal predictor logs its dispatches, the host's preparation and the
+/// device's time when it drops.
+const METAL_STAGE_TIMING: &str = "casa_imaging::metal_stage_timing";
 
 /// The scans with the same predict steps and field: the domains a
 /// predictor sums and each row's rotation to each domain's tangent point.
@@ -164,6 +175,11 @@ impl<'s> PredictionStage<'s> {
         self.backend
     }
 
+    /// Whether a step predicts scan `scan`'s rows.
+    pub(super) fn predicts(&self, scan: usize) -> bool {
+        self.scan_segments[scan].is_some()
+    }
+
     /// The most domains a segment sums.
     fn largest_domains(&self) -> usize {
         self.segments
@@ -183,22 +199,22 @@ impl<'s> PredictionStage<'s> {
         }
     }
 
-    /// Rows of a block for write batches of `batch_rows` rows: as many as
-    /// [`BLOCK_BYTES`] holds, at most a batch and at least one.
-    fn block_rows(&self, batch_rows: usize) -> usize {
+    /// Rows of a small block for write batches of `batch_rows` rows: as
+    /// many as [`SMALL_BLOCK_BYTES`] holds, at most a batch and at least
+    /// one.
+    pub(super) fn small_block_rows(&self, batch_rows: usize) -> usize {
         let row = self.block_shape(1, self.largest_domains()).bytes().max(1);
-        usize::try_from(BLOCK_BYTES / row)
+        usize::try_from(SMALL_BLOCK_BYTES / row)
             .unwrap_or(usize::MAX)
             .clamp(1, batch_rows.max(1))
     }
 
-    /// Bytes the stage holds while `close` writes batches of `batch_rows`
-    /// rows with `workers` workers: the predictor of the segment that needs
-    /// most ([`BlockPredictor::bytes`]), one block of native rows and each
-    /// row's projections, and on Metal the device copy of every model grid
+    /// Bytes the stage holds while `close` predicts blocks of `rows` rows
+    /// with `workers` workers: the predictor of the segment that needs most
+    /// ([`BlockPredictor::bytes`]), one block of native rows and each row's
+    /// projections, and on Metal the device copy of every model grid
     /// ([`casa_imaging_operator::PreparedModelGrids::device_copy`]).
-    pub(super) fn bytes(&self, batch_rows: usize, workers: usize) -> u64 {
-        let rows = self.block_rows(batch_rows);
+    pub(super) fn bytes(&self, rows: usize, workers: usize) -> u64 {
         let predictor = self
             .segments
             .iter()
@@ -222,10 +238,10 @@ impl<'s> PredictionStage<'s> {
         predictor + block + projections + device
     }
 
-    /// Allocate the block for write batches of `batch_rows` rows, predicted
-    /// with `workers` workers, as [`Self::bytes`] charged it.
-    pub(super) fn start(&mut self, batch_rows: usize, workers: usize) {
-        self.block_rows = self.block_rows(batch_rows);
+    /// Allocate the block of `rows` rows, predicted with `workers` workers,
+    /// as [`Self::bytes`] charged it.
+    pub(super) fn start(&mut self, rows: usize, workers: usize) {
+        self.block_rows = rows.max(1);
         self.workers = workers.max(1);
         let domains = self.largest_domains();
         self.block = NativeBlock::with_capacity(self.block_shape(self.block_rows, domains));
@@ -295,7 +311,7 @@ impl<'s> PredictionStage<'s> {
             self.backend,
             self.block_shape(self.block_rows, domains.len()),
             self.workers,
-            false,
+            tracing::enabled!(target: METAL_STAGE_TIMING, tracing::Level::INFO),
         )
         .map_err(|error| SimulatorError::raised(format!("the predictor: {error}")))?;
         self.predictor = Some((segment, predictor));
