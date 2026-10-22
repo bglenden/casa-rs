@@ -68,6 +68,7 @@
 //! few draws and one cell to known bits, so that a platform that rounds
 //! differently fails.
 
+mod metal;
 mod normal;
 #[cfg(test)]
 mod oracle;
@@ -77,6 +78,7 @@ mod tests;
 
 use num_complex::Complex32;
 
+pub use metal::{METAL_KERNEL, MetalNoiseParams, MetalNoiseRow, MetalNoiseTerm, metal_source};
 pub use normal::{box_muller, scaled_draw};
 pub use philox::philox4x32_10;
 

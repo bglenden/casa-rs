@@ -26,10 +26,10 @@ pub(crate) type Key = [u32; 2];
 pub(crate) type Lanes<const LANES: usize> = [[u32; LANES]; 4];
 
 /// `PHILOX_M4x32_0` and `PHILOX_M4x32_1`.
-const MULTIPLIERS: [u32; 2] = [0xD251_1F53, 0xCD9E_8D57];
+pub(super) const MULTIPLIERS: [u32; 2] = [0xD251_1F53, 0xCD9E_8D57];
 /// `PHILOX_W32_0` and `PHILOX_W32_1`: the golden ratio and √3 − 1 as 32-bit
 /// fractions.
-const WEYL: [u32; 2] = [0x9E37_79B9, 0xBB67_AE85];
+pub(super) const WEYL: [u32; 2] = [0x9E37_79B9, 0xBB67_AE85];
 
 /// The high and low words of `a × b`.
 #[inline(always)]

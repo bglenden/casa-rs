@@ -72,21 +72,21 @@
 use std::f64::consts::{FRAC_PI_4, LN_2};
 
 /// 2⁻³², a 32-bit word's scale to [0, 1); a power of two, exact in `f32`.
-const WORD_SCALE: f32 = 1.0 / 4_294_967_296.0;
+pub(super) const WORD_SCALE: f32 = 1.0 / 4_294_967_296.0;
 /// Words per octant of the angle: 2²⁹.
-const OCTANT_WORDS: u32 = 1 << 29;
+pub(super) const OCTANT_WORDS: u32 = 1 << 29;
 /// ⌈√½·2³²⌉: a word normalised to [2³¹, 2³²) at or above this, read as a
 /// fraction of 2³², is in [√½, 1).
-const SQRT_HALF_WORD: u32 = 3_037_000_500;
+pub(super) const SQRT_HALF_WORD: u32 = 3_037_000_500;
 /// ln 2 to 17 significant bits, so that `k·LN_2_HIGH` is exact for any
 /// exponent `k` below 2⁷ in magnitude (fdlibm's `ln2_hi`).
-const LN_2_HIGH: f32 = f32::from_bits(0x3F31_7180);
+pub(super) const LN_2_HIGH: f32 = f32::from_bits(0x3F31_7180);
 /// The rest of ln 2.
-const LN_2_LOW: f32 = (LN_2 - LN_2_HIGH as f64) as f32;
+pub(super) const LN_2_LOW: f32 = (LN_2 - LN_2_HIGH as f64) as f32;
 
 /// The Taylor coefficients of `atanh`'s series in `ln(1 + f) = 2 atanh s`,
 /// beyond the first: `2/3, 2/5, 2/7, 2/9`.
-const ATANH: [f32; 4] = [2.0 / 3.0, 2.0 / 5.0, 2.0 / 7.0, 2.0 / 9.0];
+pub(super) const ATANH: [f32; 4] = [2.0 / 3.0, 2.0 / 5.0, 2.0 / 7.0, 2.0 / 9.0];
 
 /// `(π/4)ᵏ/k!`, rounded to `f32`: the magnitude of the coefficient of `tᵏ`
 /// in the Taylor series of `sin(πt/4)` (k odd) or `cos(πt/4)` (k even).
@@ -101,7 +101,7 @@ const fn turn_coefficient(k: u32) -> f32 {
 }
 
 /// `sin(πt/4)/t` in powers of t², to t⁸: the Taylor series to t⁹.
-const SINE: [f32; 5] = [
+pub(super) const SINE: [f32; 5] = [
     turn_coefficient(1),
     -turn_coefficient(3),
     turn_coefficient(5),
@@ -109,7 +109,7 @@ const SINE: [f32; 5] = [
     turn_coefficient(9),
 ];
 /// `cos(πt/4)` in powers of t², from t² to t¹⁰: the Taylor series to t¹⁰.
-const COSINE: [f32; 5] = [
+pub(super) const COSINE: [f32; 5] = [
     -turn_coefficient(2),
     turn_coefficient(4),
     -turn_coefficient(6),
