@@ -72,7 +72,9 @@ enum GeneratedArrayColumnValues {
 ///
 /// Only StandardStMan and IncrementalStMan write generated array columns,
 /// and every column of the data-manager group must then be overridden.
-/// IncrementalStMan stores fixed-shape arrays only. Run values are checked
+/// IncrementalStMan stores Direct fixed-shape arrays only: casacore keeps
+/// other arrays in an `ISMIndColumn`'s `table.fNi` file, which casa-rs does
+/// not write. Run values are checked
 /// against the column's schema when the save starts; a per-row closure's
 /// cells are checked against the column's type and shape as they are
 /// written.

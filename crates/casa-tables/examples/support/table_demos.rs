@@ -18,8 +18,8 @@ use casa_types::{
 use ndarray::{Array, IxDyn, ShapeBuilder};
 
 use casa_tables::{
-    ColumnSchema, ColumnsIndex, DataManagerKind, EndianFormat, RowRange, Table, TableError,
-    TableOptions, TableSchema,
+    ColumnOptions, ColumnSchema, ColumnsIndex, DataManagerKind, EndianFormat, RowRange, Table,
+    TableError, TableOptions, TableSchema,
 };
 
 /// Run the full table demo (Rust equivalent of C++ `tTable`).
@@ -86,6 +86,13 @@ pub fn run_ttable_like_demo() -> Result<String, TableError> {
 /// Follows the same column names and value formulas as C++ `tTable.cc`
 /// function `a()` so that output is directly comparable.
 fn build_demo_table() -> Result<Table, TableError> {
+    build_demo_table_with(false)
+}
+
+/// The demo table, with `arr1` Direct as `tTable.cc` declares it when
+/// `direct_arr1` is set: IncrementalStMan stores Direct fixed-shape arrays
+/// only.
+fn build_demo_table_with(direct_arr1: bool) -> Result<Table, TableError> {
     // C++ (tTable.cc):
     //   TableDesc td("", "1", TableDesc::Scratch);
     //   td.comment() = "A test of class Table";
@@ -102,7 +109,12 @@ fn build_demo_table() -> Result<Table, TableError> {
         ColumnSchema::scalar("ag", PrimitiveType::Complex64),
         ColumnSchema::scalar("ae", PrimitiveType::Float32),
         ColumnSchema::scalar("af", PrimitiveType::String),
-        ColumnSchema::array_fixed("arr1", PrimitiveType::Float32, vec![2, 3, 4]),
+        ColumnSchema::array_fixed("arr1", PrimitiveType::Float32, vec![2, 3, 4]).with_options(
+            ColumnOptions {
+                direct: direct_arr1,
+                undefined: false,
+            },
+        )?,
     ])?;
 
     // C++ (tTable.cc):
@@ -177,7 +189,7 @@ fn round_trip(
 ) -> Result<(), TableError> {
     appendln(out, &format!("--- {label} round-trip (10 rows) ---"));
 
-    let table = build_demo_table()?;
+    let table = build_demo_table_with(dm_kind == DataManagerKind::IncrementalStMan)?;
 
     // Save to a temp directory.
     let dir = temp_dir(&format!("tTable_demo_{label}"));

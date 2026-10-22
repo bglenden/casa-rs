@@ -217,6 +217,16 @@ pub enum StorageError {
     /// The data manager type is not recognised or not yet implemented.
     #[error("unsupported data manager: {0}")]
     UnsupportedDataManager(String),
+    /// A fixed-shape array column bound to IncrementalStMan without the
+    /// Direct option. casacore stores such a column as an `ISMIndColumn`,
+    /// its cells in the `table.fNi` array file, which casa-rs does not
+    /// write.
+    #[error(
+        "IncrementalStMan array column {0} is not Direct: casacore stores it as an \
+         ISMIndColumn in table.fNi, which casa-rs does not write; make the column \
+         Direct or bind it to another data manager"
+    )]
+    IsmIndirectArrayColumn(String),
     /// An underlying I/O error.
     #[error("i/o error: {0}")]
     Io(#[from] std::io::Error),

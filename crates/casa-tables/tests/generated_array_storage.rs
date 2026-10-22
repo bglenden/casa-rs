@@ -5,9 +5,13 @@
 //! per-row closures or runs, without one row in memory, must be byte for
 //! byte the table saved from row records: StandardStMan with scalars,
 //! strings, direct and indirect fixed-shape arrays and variable-shape arrays
-//! with undefined cells, and IncrementalStMan with scalars and fixed-shape
-//! arrays, in either byte order and across bucket boundaries. Saves that
-//! cannot be written from generated cells are refused.
+//! with undefined cells, and IncrementalStMan with scalars and Direct
+//! fixed-shape arrays, in either byte order and across bucket boundaries.
+//! IncrementalStMan keeps the values of fixed-shape arrays of every element
+//! type, of one element and more, whether written from rows or generated,
+//! and refuses arrays without the Direct option, which casacore keeps in
+//! an array file. Saves that cannot be written from generated cells are
+//! refused.
 
 use std::collections::HashMap;
 use std::fs;
@@ -18,8 +22,10 @@ use casa_tables::{
     GeneratedArrayColumn, GeneratedArrayValueRun, GeneratedScalarColumn, GeneratedScalarValueRun,
     Table, TableError, TableOptions, TableSchema,
 };
-use casa_types::{ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
-use ndarray::ArrayD;
+use casa_types::{
+    ArrayValue, Complex32, Complex64, PrimitiveType, RecordField, RecordValue, ScalarValue, Value,
+};
+use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 
 /// Rows spanning several buckets of either manager.
 const ROWS: usize = 2_345;
@@ -206,7 +212,15 @@ fn standard_columns() -> Vec<Column> {
     ]
 }
 
-/// IncrementalStMan columns: scalars and fixed-shape arrays.
+/// A Direct fixed-shape array column, which IncrementalStMan stores in its
+/// buckets as casacore's `ISMColumn` does.
+fn direct_array(name: &str, data_type: PrimitiveType, shape: Vec<usize>) -> ColumnSchema {
+    ColumnSchema::array_fixed(name, data_type, shape)
+        .with_options(direct())
+        .expect("direct")
+}
+
+/// IncrementalStMan columns: scalars and Direct fixed-shape arrays.
 fn incremental_columns() -> Vec<Column> {
     vec![
         Column {
@@ -230,7 +244,7 @@ fn incremental_columns() -> Vec<Column> {
             runs: true,
         },
         Column {
-            schema: || ColumnSchema::array_fixed("DIRECTION", PrimitiveType::Float64, vec![2, 1]),
+            schema: || direct_array("DIRECTION", PrimitiveType::Float64, vec![2, 1]),
             cell: |row| {
                 Some(Value::Array(ArrayValue::Float64(array(
                     &[2, 1],
@@ -240,7 +254,7 @@ fn incremental_columns() -> Vec<Column> {
             runs: true,
         },
         Column {
-            schema: || ColumnSchema::array_fixed("CORR", PrimitiveType::Int32, vec![4]),
+            schema: || direct_array("CORR", PrimitiveType::Int32, vec![4]),
             cell: |row| {
                 let base = (row % 3) as i32;
                 Some(Value::Array(ArrayValue::Int32(array(
@@ -251,7 +265,7 @@ fn incremental_columns() -> Vec<Column> {
             runs: false,
         },
         Column {
-            schema: || ColumnSchema::array_fixed("FLAGS", PrimitiveType::Bool, vec![3]),
+            schema: || direct_array("FLAGS", PrimitiveType::Bool, vec![3]),
             cell: |row| {
                 Some(Value::Array(ArrayValue::Bool(array(
                     &[3],
@@ -261,7 +275,7 @@ fn incremental_columns() -> Vec<Column> {
             runs: true,
         },
         Column {
-            schema: || ColumnSchema::array_fixed("RECEPTORS", PrimitiveType::String, vec![2]),
+            schema: || direct_array("RECEPTORS", PrimitiveType::String, vec![2]),
             cell: |row| {
                 Some(Value::Array(ArrayValue::String(array(
                     &[2],
@@ -271,6 +285,103 @@ fn incremental_columns() -> Vec<Column> {
             runs: true,
         },
     ]
+}
+
+/// The schema of an every-type column: a direct fixed-shape array of
+/// `data_type`, named after its type and shape (`Float64_2x3`).
+fn element_schema(data_type: PrimitiveType, shape: &[usize]) -> ColumnSchema {
+    let shape_name = shape
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join("x");
+    direct_array(
+        &format!("{data_type:?}_{shape_name}"),
+        data_type,
+        shape.to_vec(),
+    )
+}
+
+/// Cell `row` of an every-type column: element `index`, in storage
+/// (Fortran) order, holds `7 + 10 run + index` in the column's type, so
+/// `Float64_1` starts at `[7.0]`; Bool elements alternate and strings name
+/// their run and element.
+fn element_cell(data_type: PrimitiveType, shape: &[usize], row: usize) -> Option<Value> {
+    fn fortran<T>(shape: &[usize], values: impl Iterator<Item = T>) -> ArrayD<T> {
+        ArrayD::from_shape_vec(IxDyn(shape).f(), values.collect()).expect("shape matches")
+    }
+    let run = run(row);
+    let elements = 0..shape.iter().product::<usize>();
+    let base = move |index: usize| 7 + 10 * run + index;
+    let array = match data_type {
+        PrimitiveType::Bool => ArrayValue::Bool(fortran(
+            shape,
+            elements.map(|i| (run + i).is_multiple_of(2)),
+        )),
+        PrimitiveType::UInt8 => ArrayValue::UInt8(fortran(shape, elements.map(|i| base(i) as u8))),
+        PrimitiveType::Int16 => {
+            ArrayValue::Int16(fortran(shape, elements.map(|i| -(base(i) as i16))))
+        }
+        PrimitiveType::UInt16 => {
+            ArrayValue::UInt16(fortran(shape, elements.map(|i| u16::MAX - base(i) as u16)))
+        }
+        PrimitiveType::Int32 => {
+            ArrayValue::Int32(fortran(shape, elements.map(|i| -1000 * base(i) as i32)))
+        }
+        PrimitiveType::UInt32 => {
+            ArrayValue::UInt32(fortran(shape, elements.map(|i| u32::MAX - base(i) as u32)))
+        }
+        PrimitiveType::Int64 => {
+            ArrayValue::Int64(fortran(shape, elements.map(|i| -((base(i) as i64) << 40))))
+        }
+        PrimitiveType::Float32 => {
+            ArrayValue::Float32(fortran(shape, elements.map(|i| base(i) as f32 + 0.25)))
+        }
+        PrimitiveType::Float64 => {
+            ArrayValue::Float64(fortran(shape, elements.map(|i| base(i) as f64)))
+        }
+        PrimitiveType::Complex32 => ArrayValue::Complex32(fortran(
+            shape,
+            elements.map(|i| Complex32::new(base(i) as f32, -0.5)),
+        )),
+        PrimitiveType::Complex64 => ArrayValue::Complex64(fortran(
+            shape,
+            elements.map(|i| Complex64::new(base(i) as f64, 0.125)),
+        )),
+        PrimitiveType::String => {
+            ArrayValue::String(fortran(shape, elements.map(|i| format!("r{run}e{i}"))))
+        }
+    };
+    Some(Value::Array(array))
+}
+
+/// The every-type column of `$data_type` and `$shape`.
+macro_rules! element_column {
+    ($data_type:expr, $shape:expr) => {
+        Column {
+            schema: || element_schema($data_type, &$shape),
+            cell: |row| element_cell($data_type, &$shape, row),
+            runs: true,
+        }
+    };
+}
+
+/// Every-type columns: arrays of one element, of three and of 2 × 3, of
+/// each element type.
+fn element_columns() -> Vec<Column> {
+    macro_rules! shapes {
+        ($($data_type:ident),*) => {
+            vec![$(
+                element_column!(PrimitiveType::$data_type, [1]),
+                element_column!(PrimitiveType::$data_type, [3]),
+                element_column!(PrimitiveType::$data_type, [2, 3]),
+            )*]
+        };
+    }
+    shapes!(
+        Bool, UInt8, Int16, UInt16, Int32, UInt32, Int64, Float32, Float64, Complex32, Complex64,
+        String
+    )
 }
 
 fn schema(columns: &[Column]) -> TableSchema {
@@ -548,6 +659,32 @@ fn generated_incremental_columns_write_the_files_of_materialized_cells() {
     }
 }
 
+#[test]
+fn incremental_arrays_of_every_element_type_keep_their_values() {
+    let root = tempfile::tempdir().expect("tempdir");
+    let columns = element_columns();
+    let manager = DataManagerKind::IncrementalStMan;
+    for rows in [20, ROWS] {
+        for endian in [EndianFormat::LittleEndian, EndianFormat::BigEndian] {
+            let case = format!("every element type, {rows} rows {endian:?}");
+            let from_rows = root.path().join(format!("types-{rows}-{endian:?}-rows"));
+            save_rows(&from_rows, &columns, rows, manager, endian);
+            assert_cells(&from_rows, &columns, rows, &case);
+            for generated in [Generated::PerRow, Generated::Runs] {
+                let path = root
+                    .path()
+                    .join(format!("types-{rows}-{endian:?}-{}", generated as u8));
+                save_generated(&path, &columns, rows, manager, endian, generated);
+                assert_cells(&path, &columns, rows, &case);
+                if rows <= 20 {
+                    // In one bucket, the row writer agrees.
+                    assert_same_files(&from_rows, &path, &case);
+                }
+            }
+        }
+    }
+}
+
 fn pointing_table() -> Table {
     Table::with_schema(
         TableSchema::new(vec![
@@ -678,6 +815,79 @@ fn saves_generated_cells_cannot_take_are_refused() {
         ),
         Err(TableError::PrimitiveTypeMismatch { row_index: 0, .. })
     ));
+}
+
+/// IncrementalStMan refuses a fixed-shape array column without the Direct
+/// option, which casacore keeps as an `ISMIndColumn` in `table.fNi`,
+/// whether the column is generated or written from rows.
+#[test]
+fn incremental_saves_refuse_arrays_that_are_not_direct() {
+    let root = tempfile::tempdir().expect("tempdir");
+    let rows = 4;
+    let schema = TableSchema::new(vec![
+        ColumnSchema::scalar("ANTENNA_ID", PrimitiveType::Int32),
+        ColumnSchema::array_fixed("DIRECTION", PrimitiveType::Float64, vec![2, 1]),
+    ])
+    .expect("schema");
+    let cell = |row: usize| ArrayValue::Float64(array(&[2, 1], vec![row as f64, 0.5]));
+    let options = |name: &str| {
+        TableOptions::new(root.path().join(name))
+            .with_data_manager(DataManagerKind::IncrementalStMan)
+    };
+    let expected = "IncrementalStMan array column DIRECTION is not Direct: \
+                    casacore stores it as an ISMIndColumn in table.fNi";
+
+    let mut overrides = ColumnOverrides::for_row_count(rows);
+    overrides.insert_generated_scalar(
+        "ANTENNA_ID",
+        GeneratedScalarColumn::new(rows, |row| Some(ScalarValue::Int32(row as i32))),
+    );
+    overrides.insert_generated_array(
+        "DIRECTION",
+        GeneratedArrayColumn::new(rows, move |row| Some(cell(row))),
+    );
+    let message = refusal(
+        Table::with_schema(schema.clone())
+            .prepare_write()
+            .save_with_column_overrides(options("generated"), &HashMap::new(), &overrides),
+    );
+    assert!(message.contains(expected), "{message}");
+
+    let mut table = Table::with_schema(schema);
+    for row in 0..rows {
+        table
+            .add_row(RecordValue::new(vec![
+                RecordField::new("ANTENNA_ID", Value::Scalar(ScalarValue::Int32(row as i32))),
+                RecordField::new("DIRECTION", Value::Array(cell(row))),
+            ]))
+            .expect("add row");
+    }
+    let message = refusal(table.save(options("rows")));
+    assert!(message.contains(expected), "{message}");
+
+    // A variable-shape array, which the row writer's buckets held only the
+    // first element of.
+    let mut table = Table::with_schema(
+        TableSchema::new(vec![ColumnSchema::array_variable(
+            "DIRECTION",
+            PrimitiveType::Float64,
+            Some(2),
+        )])
+        .expect("schema"),
+    );
+    for row in 0..rows {
+        table
+            .add_row(RecordValue::new(vec![RecordField::new(
+                "DIRECTION",
+                Value::Array(cell(row)),
+            )]))
+            .expect("add row");
+    }
+    let message = refusal(table.save(options("variable")));
+    assert!(
+        message.contains("IncrementalStMan does not write variable-shape array column DIRECTION"),
+        "{message}"
+    );
 }
 
 #[test]

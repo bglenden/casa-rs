@@ -1,16 +1,21 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 #![cfg(feature = "cpp-interop-tests")]
 
-use casa_tables::{ColumnOptions, ColumnSchema, TableSchema};
-use casa_test_support::CppTableFixture;
+use std::collections::HashMap;
+
+use casa_tables::{
+    ColumnOptions, ColumnOverrides, ColumnSchema, DataManagerKind, EndianFormat,
+    GeneratedArrayColumn, GeneratedArrayValueRun, Table, TableOptions, TableSchema,
+};
 use casa_test_support::table_interop::{
     ManagerKind, TableFixture, run_endian_cross_matrix, run_full_cross_matrix,
     run_table_cross_matrix,
 };
+use casa_test_support::{CppTableFixture, TableOracle};
 use casa_types::{
     ArrayValue, Complex32, Complex64, PrimitiveType, RecordField, RecordValue, ScalarValue, Value,
 };
-use ndarray::ShapeBuilder;
+use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 
 fn ism_scalar_primitives_fixture() -> TableFixture {
     let schema = TableSchema::new(vec![
@@ -103,20 +108,6 @@ fn ism_slowly_changing_fixture() -> TableFixture {
 
 fn assert_matrix_results(results: &[casa_test_support::table_interop::MatrixCellResult]) {
     for result in results {
-        assert!(
-            result.passed,
-            "[IncrementalStMan] {}: {}",
-            result.label,
-            result.error.as_deref().unwrap_or("unknown error")
-        );
-    }
-}
-
-fn assert_supported_matrix_results(
-    results: &[casa_test_support::table_interop::MatrixCellResult],
-    supported: impl Fn(&str) -> bool,
-) {
-    for result in results.iter().filter(|result| supported(result.label)) {
         assert!(
             result.passed,
             "[IncrementalStMan] {}: {}",
@@ -574,19 +565,19 @@ fn ism_complex_scalars_endian_cross_matrix() {
 #[test]
 fn ism_typed_arrays_cross_matrix() {
     let fixture = ism_typed_arrays_fixture();
-    assert_supported_matrix_results(
-        &run_full_cross_matrix(&fixture, ManagerKind::IncrementalStMan),
-        |label| label != "RC",
-    );
+    assert_matrix_results(&run_full_cross_matrix(
+        &fixture,
+        ManagerKind::IncrementalStMan,
+    ));
 }
 
 #[test]
 fn ism_complex_arrays_cross_matrix() {
     let fixture = ism_complex_arrays_fixture();
-    assert_supported_matrix_results(
-        &run_full_cross_matrix(&fixture, ManagerKind::IncrementalStMan),
-        |label| label != "RC",
-    );
+    assert_matrix_results(&run_full_cross_matrix(
+        &fixture,
+        ManagerKind::IncrementalStMan,
+    ));
 }
 
 #[test]
@@ -612,19 +603,19 @@ fn ism_all_numeric_scalars_endian_cross_matrix() {
 #[test]
 fn ism_typed_arrays_endian_cross_matrix() {
     let fixture = ism_typed_arrays_fixture();
-    assert_supported_matrix_results(
-        &run_endian_cross_matrix(&fixture, ManagerKind::IncrementalStMan),
-        |label| !label.starts_with("RC-"),
-    );
+    assert_matrix_results(&run_endian_cross_matrix(
+        &fixture,
+        ManagerKind::IncrementalStMan,
+    ));
 }
 
 #[test]
 fn ism_complex_arrays_endian_cross_matrix() {
     let fixture = ism_complex_arrays_fixture();
-    assert_supported_matrix_results(
-        &run_endian_cross_matrix(&fixture, ManagerKind::IncrementalStMan),
-        |label| !label.starts_with("RC-"),
-    );
+    assert_matrix_results(&run_endian_cross_matrix(
+        &fixture,
+        ManagerKind::IncrementalStMan,
+    ));
 }
 
 #[test]
@@ -634,4 +625,203 @@ fn ism_column_keywords_endian_cross_matrix() {
         &fixture,
         ManagerKind::IncrementalStMan,
     ));
+}
+
+// --- Every element type in fixed-shape arrays of one element and more ---
+
+/// The element types of the every-type fixture.
+const ELEMENT_TYPES: [PrimitiveType; 12] = [
+    PrimitiveType::Bool,
+    PrimitiveType::UInt8,
+    PrimitiveType::Int16,
+    PrimitiveType::UInt16,
+    PrimitiveType::Int32,
+    PrimitiveType::UInt32,
+    PrimitiveType::Int64,
+    PrimitiveType::Float32,
+    PrimitiveType::Float64,
+    PrimitiveType::Complex32,
+    PrimitiveType::Complex64,
+    PrimitiveType::String,
+];
+
+/// The cell shapes of the every-type fixture, with the names its columns
+/// take.
+const ELEMENT_SHAPES: [(&str, &[usize]); 3] = [("1", &[1]), ("3", &[3]), ("2x3", &[2, 3])];
+
+/// Rows of the every-type fixture.
+const ELEMENT_ROWS: usize = 3;
+
+/// The every-type columns, by name (`Float64_2x3`), element type and shape.
+fn element_columns() -> Vec<(String, PrimitiveType, &'static [usize])> {
+    ELEMENT_TYPES
+        .into_iter()
+        .flat_map(|data_type| {
+            ELEMENT_SHAPES
+                .into_iter()
+                .map(move |(name, shape)| (format!("{data_type:?}_{name}"), data_type, shape))
+        })
+        .collect()
+}
+
+/// Cell `row` of an every-type column, as `casacore_cpp_table_ism.cpp`
+/// makes it: element `index`, in storage (Fortran) order, is made from
+/// `7 + 10 row + index`, so `Float64_1` holds `[7.0]` in row 0.
+fn element_array(data_type: PrimitiveType, shape: &[usize], row: usize) -> ArrayValue {
+    fn fortran<T>(shape: &[usize], values: impl Iterator<Item = T>) -> ArrayD<T> {
+        ArrayD::from_shape_vec(IxDyn(shape).f(), values.collect()).expect("shape matches")
+    }
+    let elements = 0..shape.iter().product::<usize>();
+    let base = move |index: usize| (7 + 10 * row + index) as i64;
+    match data_type {
+        PrimitiveType::Bool => ArrayValue::Bool(fortran(
+            shape,
+            elements.map(|i| (row + i).is_multiple_of(2)),
+        )),
+        PrimitiveType::UInt8 => ArrayValue::UInt8(fortran(shape, elements.map(|i| base(i) as u8))),
+        PrimitiveType::Int16 => {
+            ArrayValue::Int16(fortran(shape, elements.map(|i| -base(i) as i16)))
+        }
+        PrimitiveType::UInt16 => {
+            ArrayValue::UInt16(fortran(shape, elements.map(|i| (65_535 - base(i)) as u16)))
+        }
+        PrimitiveType::Int32 => {
+            ArrayValue::Int32(fortran(shape, elements.map(|i| (-1000 * base(i)) as i32)))
+        }
+        PrimitiveType::UInt32 => ArrayValue::UInt32(fortran(
+            shape,
+            elements.map(|i| (4_294_967_295 - base(i)) as u32),
+        )),
+        PrimitiveType::Int64 => {
+            ArrayValue::Int64(fortran(shape, elements.map(|i| -(base(i) << 40))))
+        }
+        PrimitiveType::Float32 => {
+            ArrayValue::Float32(fortran(shape, elements.map(|i| base(i) as f32 + 0.25)))
+        }
+        PrimitiveType::Float64 => {
+            ArrayValue::Float64(fortran(shape, elements.map(|i| base(i) as f64)))
+        }
+        PrimitiveType::Complex32 => ArrayValue::Complex32(fortran(
+            shape,
+            elements.map(|i| Complex32::new(base(i) as f32, -0.5)),
+        )),
+        PrimitiveType::Complex64 => ArrayValue::Complex64(fortran(
+            shape,
+            elements.map(|i| Complex64::new(base(i) as f64, 0.125)),
+        )),
+        PrimitiveType::String => {
+            ArrayValue::String(fortran(shape, elements.map(|i| format!("r{row}e{i}"))))
+        }
+    }
+}
+
+fn ism_element_arrays_fixture() -> TableFixture {
+    let direct = ColumnOptions {
+        direct: true,
+        undefined: false,
+    };
+    let columns = element_columns();
+    let schema = TableSchema::new(
+        columns
+            .iter()
+            .map(|(name, data_type, shape)| {
+                ColumnSchema::array_fixed(name.as_str(), *data_type, shape.to_vec())
+                    .with_options(direct)
+                    .expect("direct fixed array column")
+            })
+            .collect(),
+    )
+    .expect("schema");
+    let rows = (0..ELEMENT_ROWS)
+        .map(|row| {
+            RecordValue::new(
+                columns
+                    .iter()
+                    .map(|(name, data_type, shape)| {
+                        RecordField::new(
+                            name.as_str(),
+                            Value::Array(element_array(*data_type, shape, row)),
+                        )
+                    })
+                    .collect(),
+            )
+        })
+        .collect();
+    TableFixture {
+        schema,
+        rows,
+        table_keywords: RecordValue::default(),
+        column_keywords: vec![],
+        cpp_fixture: Some(CppTableFixture::IsmElementArrays),
+        tile_shape: None,
+        column_bindings: Vec::new(),
+    }
+}
+
+#[test]
+fn ism_element_arrays_cross_matrix() {
+    let fixture = ism_element_arrays_fixture();
+    assert_matrix_results(&run_full_cross_matrix(
+        &fixture,
+        ManagerKind::IncrementalStMan,
+    ));
+}
+
+#[test]
+fn ism_element_arrays_endian_cross_matrix() {
+    let fixture = ism_element_arrays_fixture();
+    assert_matrix_results(&run_endian_cross_matrix(
+        &fixture,
+        ManagerKind::IncrementalStMan,
+    ));
+}
+
+/// The every-type table saved from generated array columns, per-row
+/// closures or runs, reads in casacore as it does from row records.
+#[test]
+fn ism_element_arrays_generated_save_reads_in_cpp() {
+    if !casa_test_support::casacore_oracle_available() {
+        eprintln!("skipping: C++ backend unavailable");
+        return;
+    }
+    let schema = ism_element_arrays_fixture().schema;
+    let dir = tempfile::tempdir().expect("tempdir");
+    for endian in [EndianFormat::BigEndian, EndianFormat::LittleEndian] {
+        for runs in [false, true] {
+            let path = dir.path().join(format!("{endian:?}-runs-{runs}"));
+            let mut overrides = ColumnOverrides::for_row_count(ELEMENT_ROWS);
+            for (name, data_type, shape) in element_columns() {
+                let column = if runs {
+                    let runs = (0..ELEMENT_ROWS)
+                        .map(|row| {
+                            GeneratedArrayValueRun::new(
+                                row,
+                                Some(element_array(data_type, shape, row)),
+                            )
+                        })
+                        .collect();
+                    GeneratedArrayColumn::from_array_runs(ELEMENT_ROWS, runs).expect("runs")
+                } else {
+                    GeneratedArrayColumn::new(ELEMENT_ROWS, move |row| {
+                        Some(element_array(data_type, shape, row))
+                    })
+                };
+                overrides.insert_generated_array(name, column);
+            }
+            Table::with_schema(schema.clone())
+                .prepare_write()
+                .save_with_column_overrides(
+                    TableOptions::new(&path)
+                        .with_data_manager(DataManagerKind::IncrementalStMan)
+                        .with_endian_format(endian),
+                    &HashMap::new(),
+                    &overrides,
+                )
+                .expect("save generated");
+            if let Err(error) = TableOracle::table_verify(CppTableFixture::IsmElementArrays, &path)
+            {
+                panic!("{endian:?}, runs {runs}: C++ verify failed: {error}");
+            }
+        }
+    }
 }

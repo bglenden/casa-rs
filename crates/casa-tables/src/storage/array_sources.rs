@@ -6,13 +6,15 @@
 //! sources, a cell at a time, by the StandardStMan or IncrementalStMan
 //! group writer, so its rows are never materialized as records. That needs
 //! every column of the group overridden; other storage managers, and
-//! IncrementalStMan's variable-shape arrays, refuse the override.
+//! IncrementalStMan's variable-shape arrays and fixed-shape arrays without
+//! the Direct option, refuse the override.
 
 use std::borrow::Cow;
 
 use casa_types::{PrimitiveType, Value};
 
 use super::StorageError;
+use super::incremental_stman::refuse_ism_indirect_fixed_arrays;
 use super::scalar_sources::{ColumnSource, ColumnSources, scalar_column_source};
 use super::table_control::ColumnDescContents;
 use crate::table::{ColumnOverride, ColumnOverrides, DataManagerKind, GeneratedArrayColumn};
@@ -87,7 +89,9 @@ impl<'a> GeneratedArraySource<'a> {
 /// The group's storage manager is not StandardStMan or IncrementalStMan; a
 /// column of the group has no override, is deferred or is a record column;
 /// an override does not fit its column; or an IncrementalStMan column has
-/// variable-shape arrays, which its writer does not store.
+/// arrays casacore keeps in its `table.fNi` array file, which its writer
+/// does not store: variable-shape arrays, and fixed-shape arrays without the
+/// Direct option ([`StorageError::IsmIndirectArrayColumn`]).
 pub(super) fn generated_array_group_sources<'a>(
     dm_kind: DataManagerKind,
     group_col_descs: &[ColumnDescContents],
@@ -132,6 +136,9 @@ pub(super) fn generated_array_group_sources<'a>(
                 "IncrementalStMan does not write variable-shape array column {}",
                 desc.col_name
             ));
+        }
+        if dm_kind == DataManagerKind::IncrementalStMan {
+            refuse_ism_indirect_fixed_arrays(std::slice::from_ref(desc))?;
         }
         let source = if desc.is_array {
             match override_value {

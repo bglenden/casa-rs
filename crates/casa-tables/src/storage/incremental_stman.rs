@@ -29,9 +29,6 @@ use casa_types::ScalarValue;
 use super::canonical::{
     read_f32_be, read_f32_le, read_f64_be, read_f64_le, read_i16_be, read_i16_le, read_i32_be,
     read_i32_le, read_i64_be, read_i64_le, read_u16_be, read_u16_le, read_u32_be, read_u32_le,
-    write_f32_be, write_f32_le, write_f64_be, write_f64_le, write_i16_be, write_i16_le,
-    write_i32_be, write_i32_le, write_i64_be, write_i64_le, write_u16_be, write_u16_le,
-    write_u32_be, write_u32_le,
 };
 use super::data_type::CasacoreDataType;
 use super::scalar_sources::SCALAR_BLOCK_CELLS;
@@ -41,6 +38,10 @@ use super::stman_array_file::StManArrayFileReader;
 use super::table_control::ColumnDescContents;
 use super::{ColumnSources, EncodedCells, RequiredScalarColumnData, StorageError};
 use crate::table::GeneratedScalarValueRun;
+
+mod cells;
+
+use cells::{decode_array_cell, encode_cell, flatten_array_cells};
 
 const ISM_HEADER_SIZE: u64 = 512;
 
@@ -479,166 +480,6 @@ fn read_ism_string(
     Ok(strings)
 }
 
-/// Read a fixed-shape array value from the ISM data area at the given offset.
-fn read_array_at(
-    data: &[u8],
-    offset: usize,
-    dt: CasacoreDataType,
-    nrelem: usize,
-    shape: &[i32],
-    big_endian: bool,
-) -> Result<casa_types::Value, StorageError> {
-    use casa_types::{ArrayValue, Value};
-    use ndarray::{ArrayD, IxDyn, ShapeBuilder};
-
-    let d = &data[offset..];
-    let shape_usize: Vec<usize> = shape.iter().map(|&s| s as usize).collect();
-
-    let arr_val = match dt {
-        CasacoreDataType::TpBool => {
-            // C++ ISM stores bools bit-packed (1 bit per element).
-            let v: Vec<bool> = (0..nrelem)
-                .map(|i| {
-                    let byte_idx = i / 8;
-                    let bit_idx = i % 8;
-                    (d[byte_idx] >> bit_idx) & 1 != 0
-                })
-                .collect();
-            ArrayValue::Bool(
-                ArrayD::from_shape_vec(IxDyn(&shape_usize).f(), v)
-                    .map_err(|e| StorageError::FormatMismatch(format!("array shape: {e}")))?,
-            )
-        }
-        CasacoreDataType::TpUChar => {
-            let v: Vec<u8> = d[..nrelem].to_vec();
-            ArrayValue::UInt8(
-                ArrayD::from_shape_vec(IxDyn(&shape_usize).f(), v)
-                    .map_err(|e| StorageError::FormatMismatch(format!("array shape: {e}")))?,
-            )
-        }
-        CasacoreDataType::TpShort => {
-            let v: Vec<i16> = (0..nrelem)
-                .map(|i| {
-                    if big_endian {
-                        read_i16_be(&d[i * 2..])
-                    } else {
-                        read_i16_le(&d[i * 2..])
-                    }
-                })
-                .collect();
-            ArrayValue::Int16(
-                ArrayD::from_shape_vec(IxDyn(&shape_usize).f(), v)
-                    .map_err(|e| StorageError::FormatMismatch(format!("array shape: {e}")))?,
-            )
-        }
-        CasacoreDataType::TpInt => {
-            let v: Vec<i32> = (0..nrelem)
-                .map(|i| {
-                    if big_endian {
-                        read_i32_be(&d[i * 4..])
-                    } else {
-                        read_i32_le(&d[i * 4..])
-                    }
-                })
-                .collect();
-            ArrayValue::Int32(
-                ArrayD::from_shape_vec(IxDyn(&shape_usize).f(), v)
-                    .map_err(|e| StorageError::FormatMismatch(format!("array shape: {e}")))?,
-            )
-        }
-        CasacoreDataType::TpFloat => {
-            let v: Vec<f32> = (0..nrelem)
-                .map(|i| {
-                    if big_endian {
-                        read_f32_be(&d[i * 4..])
-                    } else {
-                        read_f32_le(&d[i * 4..])
-                    }
-                })
-                .collect();
-            ArrayValue::Float32(
-                ArrayD::from_shape_vec(IxDyn(&shape_usize).f(), v)
-                    .map_err(|e| StorageError::FormatMismatch(format!("array shape: {e}")))?,
-            )
-        }
-        CasacoreDataType::TpDouble => {
-            let v: Vec<f64> = (0..nrelem)
-                .map(|i| {
-                    if big_endian {
-                        read_f64_be(&d[i * 8..])
-                    } else {
-                        read_f64_le(&d[i * 8..])
-                    }
-                })
-                .collect();
-            ArrayValue::Float64(
-                ArrayD::from_shape_vec(IxDyn(&shape_usize).f(), v)
-                    .map_err(|e| StorageError::FormatMismatch(format!("array shape: {e}")))?,
-            )
-        }
-        CasacoreDataType::TpInt64 => {
-            let v: Vec<i64> = (0..nrelem)
-                .map(|i| {
-                    if big_endian {
-                        read_i64_be(&d[i * 8..])
-                    } else {
-                        read_i64_le(&d[i * 8..])
-                    }
-                })
-                .collect();
-            ArrayValue::Int64(
-                ArrayD::from_shape_vec(IxDyn(&shape_usize).f(), v)
-                    .map_err(|e| StorageError::FormatMismatch(format!("array shape: {e}")))?,
-            )
-        }
-        CasacoreDataType::TpComplex => {
-            let v: Vec<casa_types::Complex32> = (0..nrelem)
-                .map(|i| {
-                    let (re, im) = if big_endian {
-                        (read_f32_be(&d[i * 8..]), read_f32_be(&d[i * 8 + 4..]))
-                    } else {
-                        (read_f32_le(&d[i * 8..]), read_f32_le(&d[i * 8 + 4..]))
-                    };
-                    casa_types::Complex32::new(re, im)
-                })
-                .collect();
-            ArrayValue::Complex32(
-                ArrayD::from_shape_vec(IxDyn(&shape_usize).f(), v)
-                    .map_err(|e| StorageError::FormatMismatch(format!("array shape: {e}")))?,
-            )
-        }
-        CasacoreDataType::TpDComplex => {
-            let v: Vec<casa_types::Complex64> = (0..nrelem)
-                .map(|i| {
-                    let (re, im) = if big_endian {
-                        (read_f64_be(&d[i * 16..]), read_f64_be(&d[i * 16 + 8..]))
-                    } else {
-                        (read_f64_le(&d[i * 16..]), read_f64_le(&d[i * 16 + 8..]))
-                    };
-                    casa_types::Complex64::new(re, im)
-                })
-                .collect();
-            ArrayValue::Complex64(
-                ArrayD::from_shape_vec(IxDyn(&shape_usize).f(), v)
-                    .map_err(|e| StorageError::FormatMismatch(format!("array shape: {e}")))?,
-            )
-        }
-        CasacoreDataType::TpString => {
-            let strings = read_ism_string(d, nrelem, big_endian)?;
-            ArrayValue::String(
-                ArrayD::from_shape_vec(IxDyn(&shape_usize).f(), strings)
-                    .map_err(|e| StorageError::FormatMismatch(format!("array shape: {e}")))?,
-            )
-        }
-        _ => {
-            return Err(StorageError::FormatMismatch(format!(
-                "unsupported ISM array type: {dt:?}"
-            )));
-        }
-    };
-    Ok(Value::Array(arr_val))
-}
-
 // ---------------------------------------------------------------------------
 // Read entry point
 // ---------------------------------------------------------------------------
@@ -782,7 +623,13 @@ pub(crate) fn read_ism_file_columns(
                         .push(value);
                 } else {
                     let value = if is_direct_fixed_array {
-                        read_array_at(&bucket.data, data_offset, dt, nrelem, &col_desc.shape, be)?
+                        decode_array_cell(
+                            &bucket.data[data_offset..],
+                            dt,
+                            nrelem,
+                            &col_desc.shape,
+                            be,
+                        )?
                     } else {
                         read_scalar_at(&bucket.data, data_offset, dt, be)?
                     };
@@ -795,7 +642,7 @@ pub(crate) fn read_ism_file_columns(
     // Convert per-column results into the shared storage-layer form.
     let mut result = Vec::with_capacity(ncol);
     for (col_idx, &(_, col_desc)) in col_descs.iter().enumerate() {
-        let (dt, _nrelem, is_direct_fixed_array, is_indirect_array) = col_info[col_idx];
+        let (dt, nrelem, is_direct_fixed_array, is_indirect_array) = col_info[col_idx];
         if is_indirect_array {
             result.push((
                 col_desc.col_name.clone(),
@@ -808,7 +655,7 @@ pub(crate) fn read_ism_file_columns(
         } else {
             let values = &flat_columns[col_idx];
             let raw = if is_direct_fixed_array {
-                values_to_column_raw_array(values, dt, col_desc)?
+                flatten_array_cells(values, dt, nrelem)?
             } else {
                 values_to_column_raw_scalar(values, dt)?
             };
@@ -1587,563 +1434,9 @@ fn values_to_column_raw_scalar(
     }
 }
 
-/// Convert array values into column-major ColumnRawData (flattened in Fortran order).
-fn values_to_column_raw_array(
-    values: &[casa_types::Value],
-    dt: CasacoreDataType,
-    col_desc: &ColumnDescContents,
-) -> Result<ColumnRawData, StorageError> {
-    use casa_types::{ArrayValue, Value};
-
-    let nrelem: usize = col_desc.shape.iter().map(|&s| s as usize).product();
-
-    match dt {
-        CasacoreDataType::TpFloat => {
-            let mut flat = Vec::with_capacity(values.len() * nrelem);
-            for v in values {
-                if let Value::Array(ArrayValue::Float32(arr)) = v {
-                    flat.extend(arr.t().iter());
-                } else {
-                    flat.extend(std::iter::repeat_n(0.0f32, nrelem));
-                }
-            }
-            Ok(ColumnRawData::Float32(flat))
-        }
-        CasacoreDataType::TpDouble => {
-            let mut flat = Vec::with_capacity(values.len() * nrelem);
-            for v in values {
-                if let Value::Array(ArrayValue::Float64(arr)) = v {
-                    flat.extend(arr.t().iter());
-                } else {
-                    flat.extend(std::iter::repeat_n(0.0f64, nrelem));
-                }
-            }
-            Ok(ColumnRawData::Float64(flat))
-        }
-        CasacoreDataType::TpInt => {
-            let mut flat = Vec::with_capacity(values.len() * nrelem);
-            for v in values {
-                if let Value::Array(ArrayValue::Int32(arr)) = v {
-                    flat.extend(arr.t().iter());
-                } else {
-                    flat.extend(std::iter::repeat_n(0i32, nrelem));
-                }
-            }
-            Ok(ColumnRawData::Int32(flat))
-        }
-        CasacoreDataType::TpComplex => {
-            let mut flat = Vec::with_capacity(values.len() * nrelem);
-            for v in values {
-                if let Value::Array(ArrayValue::Complex32(arr)) = v {
-                    flat.extend(arr.t().iter());
-                } else {
-                    flat.extend(std::iter::repeat_n(
-                        casa_types::Complex32::new(0.0, 0.0),
-                        nrelem,
-                    ));
-                }
-            }
-            Ok(ColumnRawData::Complex32(flat))
-        }
-        CasacoreDataType::TpDComplex => {
-            let mut flat = Vec::with_capacity(values.len() * nrelem);
-            for v in values {
-                if let Value::Array(ArrayValue::Complex64(arr)) = v {
-                    flat.extend(arr.t().iter());
-                } else {
-                    flat.extend(std::iter::repeat_n(
-                        casa_types::Complex64::new(0.0, 0.0),
-                        nrelem,
-                    ));
-                }
-            }
-            Ok(ColumnRawData::Complex64(flat))
-        }
-        CasacoreDataType::TpBool => {
-            let mut flat = Vec::with_capacity(values.len() * nrelem);
-            for v in values {
-                if let Value::Array(ArrayValue::Bool(arr)) = v {
-                    flat.extend(arr.t().iter());
-                } else {
-                    flat.extend(std::iter::repeat_n(false, nrelem));
-                }
-            }
-            Ok(ColumnRawData::Bool(flat))
-        }
-        CasacoreDataType::TpUChar => {
-            let mut flat = Vec::with_capacity(values.len() * nrelem);
-            for v in values {
-                if let Value::Array(ArrayValue::UInt8(arr)) = v {
-                    flat.extend(arr.t().iter());
-                } else {
-                    flat.extend(std::iter::repeat_n(0u8, nrelem));
-                }
-            }
-            Ok(ColumnRawData::UInt8(flat))
-        }
-        CasacoreDataType::TpShort => {
-            let mut flat = Vec::with_capacity(values.len() * nrelem);
-            for v in values {
-                if let Value::Array(ArrayValue::Int16(arr)) = v {
-                    flat.extend(arr.t().iter());
-                } else {
-                    flat.extend(std::iter::repeat_n(0i16, nrelem));
-                }
-            }
-            Ok(ColumnRawData::Int16(flat))
-        }
-        CasacoreDataType::TpInt64 => {
-            let mut flat = Vec::with_capacity(values.len() * nrelem);
-            for v in values {
-                if let Value::Array(ArrayValue::Int64(arr)) = v {
-                    flat.extend(arr.t().iter());
-                } else {
-                    flat.extend(std::iter::repeat_n(0i64, nrelem));
-                }
-            }
-            Ok(ColumnRawData::Int64(flat))
-        }
-        CasacoreDataType::TpString => {
-            let mut flat = Vec::with_capacity(values.len() * nrelem);
-            for v in values {
-                if let Value::Array(ArrayValue::String(arr)) = v {
-                    flat.extend(arr.t().iter().cloned());
-                } else {
-                    flat.extend(std::iter::repeat_n(String::new(), nrelem));
-                }
-            }
-            Ok(ColumnRawData::String(flat))
-        }
-        _ => Err(StorageError::FormatMismatch(format!(
-            "unsupported ISM array type: {dt:?}"
-        ))),
-    }
-}
-
 // ===========================================================================
 // ISM Write Path
 // ===========================================================================
-
-/// Encode a single scalar or array value into ISM canonical bytes.
-fn encode_value_bytes(
-    value: Option<&casa_types::Value>,
-    dt: CasacoreDataType,
-    nrelem: usize,
-    big_endian: bool,
-) -> Vec<u8> {
-    use casa_types::{ArrayValue, ScalarValue, Value};
-
-    if dt == CasacoreDataType::TpString {
-        return encode_string_value(value, nrelem, big_endian);
-    }
-
-    // Bool is bit-packed (1 bit per element), matching C++ canonical conversion.
-    if dt == CasacoreDataType::TpBool {
-        let total = nrelem.div_ceil(8);
-        let mut buf = vec![0u8; total];
-        if nrelem == 1 {
-            let v = match value {
-                Some(Value::Scalar(ScalarValue::Bool(b))) => *b,
-                _ => false,
-            };
-            if v {
-                buf[0] = 1;
-            }
-        } else if let Some(Value::Array(ArrayValue::Bool(arr))) = value {
-            for (i, &v) in arr.t().iter().enumerate().take(nrelem) {
-                if v {
-                    buf[i / 8] |= 1 << (i % 8);
-                }
-            }
-        }
-        return buf;
-    }
-
-    let elem_size = ism_element_size(dt);
-    let total = elem_size * nrelem;
-    let mut buf = vec![0u8; total];
-
-    match dt {
-        CasacoreDataType::TpUChar => {
-            let v = match value {
-                Some(Value::Scalar(ScalarValue::UInt8(v))) => *v,
-                _ => 0,
-            };
-            buf[0] = v;
-        }
-        CasacoreDataType::TpShort => {
-            let v = match value {
-                Some(Value::Scalar(ScalarValue::Int16(v))) => *v,
-                _ => 0,
-            };
-            if big_endian {
-                write_i16_be(&mut buf, v);
-            } else {
-                write_i16_le(&mut buf, v);
-            }
-        }
-        CasacoreDataType::TpUShort => {
-            let v = match value {
-                Some(Value::Scalar(ScalarValue::UInt16(v))) => *v,
-                _ => 0,
-            };
-            if big_endian {
-                write_u16_be(&mut buf, v);
-            } else {
-                write_u16_le(&mut buf, v);
-            }
-        }
-        CasacoreDataType::TpInt => {
-            if nrelem == 1 {
-                let v = match value {
-                    Some(Value::Scalar(ScalarValue::Int32(v))) => *v,
-                    _ => 0,
-                };
-                if big_endian {
-                    write_i32_be(&mut buf, v);
-                } else {
-                    write_i32_le(&mut buf, v);
-                }
-            } else if let Some(Value::Array(ArrayValue::Int32(arr))) = value {
-                for (i, &v) in arr.t().iter().enumerate().take(nrelem) {
-                    if big_endian {
-                        write_i32_be(&mut buf[i * 4..], v);
-                    } else {
-                        write_i32_le(&mut buf[i * 4..], v);
-                    }
-                }
-            }
-        }
-        CasacoreDataType::TpUInt => {
-            let v = match value {
-                Some(Value::Scalar(ScalarValue::UInt32(v))) => *v,
-                _ => 0,
-            };
-            if big_endian {
-                write_u32_be(&mut buf, v);
-            } else {
-                write_u32_le(&mut buf, v);
-            }
-        }
-        CasacoreDataType::TpFloat => {
-            if nrelem == 1 {
-                let v = match value {
-                    Some(Value::Scalar(ScalarValue::Float32(v))) => *v,
-                    _ => 0.0,
-                };
-                if big_endian {
-                    write_f32_be(&mut buf, v);
-                } else {
-                    write_f32_le(&mut buf, v);
-                }
-            } else if let Some(Value::Array(ArrayValue::Float32(arr))) = value {
-                for (i, &v) in arr.t().iter().enumerate().take(nrelem) {
-                    if big_endian {
-                        write_f32_be(&mut buf[i * 4..], v);
-                    } else {
-                        write_f32_le(&mut buf[i * 4..], v);
-                    }
-                }
-            }
-        }
-        CasacoreDataType::TpDouble => {
-            if nrelem == 1 {
-                let v = match value {
-                    Some(Value::Scalar(ScalarValue::Float64(v))) => *v,
-                    _ => 0.0,
-                };
-                if big_endian {
-                    write_f64_be(&mut buf, v);
-                } else {
-                    write_f64_le(&mut buf, v);
-                }
-            } else if let Some(Value::Array(ArrayValue::Float64(arr))) = value {
-                for (i, &v) in arr.t().iter().enumerate().take(nrelem) {
-                    if big_endian {
-                        write_f64_be(&mut buf[i * 8..], v);
-                    } else {
-                        write_f64_le(&mut buf[i * 8..], v);
-                    }
-                }
-            }
-        }
-        CasacoreDataType::TpInt64 => {
-            let v = match value {
-                Some(Value::Scalar(ScalarValue::Int64(v))) => *v,
-                _ => 0,
-            };
-            if big_endian {
-                write_i64_be(&mut buf, v);
-            } else {
-                write_i64_le(&mut buf, v);
-            }
-        }
-        CasacoreDataType::TpComplex => {
-            if nrelem == 1 {
-                let (re, im) = match value {
-                    Some(Value::Scalar(ScalarValue::Complex32(c))) => (c.re, c.im),
-                    _ => (0.0, 0.0),
-                };
-                if big_endian {
-                    write_f32_be(&mut buf, re);
-                    write_f32_be(&mut buf[4..], im);
-                } else {
-                    write_f32_le(&mut buf, re);
-                    write_f32_le(&mut buf[4..], im);
-                }
-            } else if let Some(Value::Array(ArrayValue::Complex32(arr))) = value {
-                for (i, c) in arr.t().iter().enumerate().take(nrelem) {
-                    if big_endian {
-                        write_f32_be(&mut buf[i * 8..], c.re);
-                        write_f32_be(&mut buf[i * 8 + 4..], c.im);
-                    } else {
-                        write_f32_le(&mut buf[i * 8..], c.re);
-                        write_f32_le(&mut buf[i * 8 + 4..], c.im);
-                    }
-                }
-            }
-        }
-        CasacoreDataType::TpDComplex => {
-            if nrelem == 1 {
-                let (re, im) = match value {
-                    Some(Value::Scalar(ScalarValue::Complex64(c))) => (c.re, c.im),
-                    _ => (0.0, 0.0),
-                };
-                if big_endian {
-                    write_f64_be(&mut buf, re);
-                    write_f64_be(&mut buf[8..], im);
-                } else {
-                    write_f64_le(&mut buf, re);
-                    write_f64_le(&mut buf[8..], im);
-                }
-            } else if let Some(Value::Array(ArrayValue::Complex64(arr))) = value {
-                for (i, c) in arr.t().iter().enumerate().take(nrelem) {
-                    if big_endian {
-                        write_f64_be(&mut buf[i * 16..], c.re);
-                        write_f64_be(&mut buf[i * 16 + 8..], c.im);
-                    } else {
-                        write_f64_le(&mut buf[i * 16..], c.re);
-                        write_f64_le(&mut buf[i * 16 + 8..], c.im);
-                    }
-                }
-            }
-        }
-        _ => {}
-    }
-    buf
-}
-
-fn encode_scalar_column_value_bytes(
-    value: Option<&casa_types::ScalarValue>,
-    dt: CasacoreDataType,
-    nrelem: usize,
-    big_endian: bool,
-) -> Vec<u8> {
-    use casa_types::ScalarValue;
-
-    if nrelem != 1 {
-        let value = value.cloned().map(casa_types::Value::Scalar);
-        return encode_value_bytes(value.as_ref(), dt, nrelem, big_endian);
-    }
-
-    if dt == CasacoreDataType::TpString {
-        let string = match value {
-            Some(ScalarValue::String(value)) => value.as_str(),
-            _ => "",
-        };
-        let total_length = (4 + string.len()) as u32;
-        let mut buf = Vec::with_capacity(total_length as usize);
-        if big_endian {
-            buf.extend_from_slice(&total_length.to_be_bytes());
-        } else {
-            buf.extend_from_slice(&total_length.to_le_bytes());
-        }
-        buf.extend_from_slice(string.as_bytes());
-        return buf;
-    }
-
-    if dt == CasacoreDataType::TpBool {
-        return vec![match value {
-            Some(ScalarValue::Bool(true)) => 1,
-            _ => 0,
-        }];
-    }
-
-    let elem_size = ism_element_size(dt);
-    let mut buf = vec![0u8; elem_size];
-    match dt {
-        CasacoreDataType::TpUChar => {
-            if let Some(ScalarValue::UInt8(value)) = value {
-                buf[0] = *value;
-            }
-        }
-        CasacoreDataType::TpShort => {
-            let value = match value {
-                Some(ScalarValue::Int16(value)) => *value,
-                _ => 0,
-            };
-            if big_endian {
-                write_i16_be(&mut buf, value);
-            } else {
-                write_i16_le(&mut buf, value);
-            }
-        }
-        CasacoreDataType::TpUShort => {
-            let value = match value {
-                Some(ScalarValue::UInt16(value)) => *value,
-                _ => 0,
-            };
-            if big_endian {
-                write_u16_be(&mut buf, value);
-            } else {
-                write_u16_le(&mut buf, value);
-            }
-        }
-        CasacoreDataType::TpInt => {
-            let value = match value {
-                Some(ScalarValue::Int32(value)) => *value,
-                _ => 0,
-            };
-            if big_endian {
-                write_i32_be(&mut buf, value);
-            } else {
-                write_i32_le(&mut buf, value);
-            }
-        }
-        CasacoreDataType::TpUInt => {
-            let value = match value {
-                Some(ScalarValue::UInt32(value)) => *value,
-                _ => 0,
-            };
-            if big_endian {
-                write_u32_be(&mut buf, value);
-            } else {
-                write_u32_le(&mut buf, value);
-            }
-        }
-        CasacoreDataType::TpFloat => {
-            let value = match value {
-                Some(ScalarValue::Float32(value)) => *value,
-                _ => 0.0,
-            };
-            if big_endian {
-                write_f32_be(&mut buf, value);
-            } else {
-                write_f32_le(&mut buf, value);
-            }
-        }
-        CasacoreDataType::TpDouble => {
-            let value = match value {
-                Some(ScalarValue::Float64(value)) => *value,
-                _ => 0.0,
-            };
-            if big_endian {
-                write_f64_be(&mut buf, value);
-            } else {
-                write_f64_le(&mut buf, value);
-            }
-        }
-        CasacoreDataType::TpInt64 => {
-            let value = match value {
-                Some(ScalarValue::Int64(value)) => *value,
-                _ => 0,
-            };
-            if big_endian {
-                write_i64_be(&mut buf, value);
-            } else {
-                write_i64_le(&mut buf, value);
-            }
-        }
-        CasacoreDataType::TpComplex => {
-            let (re, im) = match value {
-                Some(ScalarValue::Complex32(value)) => (value.re, value.im),
-                _ => (0.0, 0.0),
-            };
-            if big_endian {
-                write_f32_be(&mut buf, re);
-                write_f32_be(&mut buf[4..], im);
-            } else {
-                write_f32_le(&mut buf, re);
-                write_f32_le(&mut buf[4..], im);
-            }
-        }
-        CasacoreDataType::TpDComplex => {
-            let (re, im) = match value {
-                Some(ScalarValue::Complex64(value)) => (value.re, value.im),
-                _ => (0.0, 0.0),
-            };
-            if big_endian {
-                write_f64_be(&mut buf, re);
-                write_f64_be(&mut buf[8..], im);
-            } else {
-                write_f64_le(&mut buf, re);
-                write_f64_le(&mut buf[8..], im);
-            }
-        }
-        _ => {}
-    }
-    buf
-}
-
-/// Encode string value(s) in ISM format (C++ `ISMColumn::fromString`):
-///
-/// Scalar (nrelem == 1): `[u32: total_length] [string_bytes]`
-///   where total_length = 4 + string.len().
-///
-/// Array (nrelem > 1): `[u32: total_length] [per-string: [u32: str_len] [str_data]] ...`
-///   where total_length includes itself.
-fn encode_string_value(
-    value: Option<&casa_types::Value>,
-    nrelem: usize,
-    big_endian: bool,
-) -> Vec<u8> {
-    use casa_types::{ArrayValue, ScalarValue, Value};
-
-    let strings: Vec<String> = if nrelem == 1 {
-        match value {
-            Some(Value::Scalar(ScalarValue::String(s))) => vec![s.clone()],
-            _ => vec![String::new()],
-        }
-    } else {
-        match value {
-            Some(Value::Array(ArrayValue::String(arr))) => arr.iter().cloned().collect(),
-            _ => vec![String::new(); nrelem],
-        }
-    };
-
-    if nrelem == 1 {
-        // Scalar: total_length = 4 + string.len() (no per-string length prefix)
-        let s = &strings[0];
-        let total_length = (4 + s.len()) as u32;
-        let mut buf = Vec::with_capacity(total_length as usize);
-        if big_endian {
-            buf.extend_from_slice(&total_length.to_be_bytes());
-        } else {
-            buf.extend_from_slice(&total_length.to_le_bytes());
-        }
-        buf.extend_from_slice(s.as_bytes());
-        buf
-    } else {
-        // Array: total_length + per-string [length] [data]
-        let total_length: usize = 4 + strings.iter().map(|s| 4 + s.len()).sum::<usize>();
-        let mut buf = Vec::with_capacity(total_length);
-        if big_endian {
-            buf.extend_from_slice(&(total_length as u32).to_be_bytes());
-        } else {
-            buf.extend_from_slice(&(total_length as u32).to_le_bytes());
-        }
-        for s in &strings {
-            let len = s.len() as u32;
-            if big_endian {
-                buf.extend_from_slice(&len.to_be_bytes());
-            } else {
-                buf.extend_from_slice(&len.to_le_bytes());
-            }
-            buf.extend_from_slice(s.as_bytes());
-        }
-        buf
-    }
-}
 
 /// Write an ISM data file and return the DM data blob for table.dat.
 pub(crate) fn write_ism_file(
@@ -2198,10 +1491,27 @@ pub(crate) fn write_ism_file_scalar_columns(
     write_ism_file_column_sources(file_path, col_descs, &column_sources, big_endian)
 }
 
+/// Refuse a fixed-shape array column without the Direct option, which
+/// casacore stores as an `ISMIndColumn`, its cells in the `table.fNi` array
+/// file; the IncrementalStMan writers store fixed-shape arrays in the
+/// buckets, as casacore's `ISMColumn` stores Direct ones.
+pub(crate) fn refuse_ism_indirect_fixed_arrays(
+    col_descs: &[ColumnDescContents],
+) -> Result<(), StorageError> {
+    match col_descs
+        .iter()
+        .find(|desc| desc.is_array && !desc.shape.is_empty() && desc.option & 1 == 0)
+    {
+        Some(desc) => Err(StorageError::IsmIndirectArrayColumn(desc.col_name.clone())),
+        None => Ok(()),
+    }
+}
+
 /// Each column's element type and element count, and the bucket size, of
-/// an IncrementalStMan file of scalars and fixed-shape arrays, sized as the
-/// row writer sizes its buckets. Variable-shape arrays, which casacore
-/// keeps in an indirect array file, and record columns are refused.
+/// an IncrementalStMan file of scalars and Direct fixed-shape arrays, sized
+/// as the row writer sizes its buckets. Arrays that casacore keeps in an
+/// indirect array file (variable-shape ones and those without the Direct
+/// option) and record columns are refused.
 fn ism_source_layout(
     col_descs: &[ColumnDescContents],
 ) -> Result<(Vec<(CasacoreDataType, usize)>, u32), StorageError> {
@@ -2214,6 +1524,7 @@ fn ism_source_layout(
             col_desc.col_name
         )));
     }
+    refuse_ism_indirect_fixed_arrays(col_descs)?;
     let col_info: Vec<(CasacoreDataType, usize)> = col_descs
         .iter()
         .map(|c| {
@@ -2368,15 +1679,7 @@ pub(crate) fn write_ism_file_column_sources(
                     block.clone(),
                     dt,
                     big_endian,
-                    |value| match value {
-                        Some(casa_types::Value::Scalar(scalar)) => {
-                            encode_scalar_column_value_bytes(Some(scalar), dt, nrelem, big_endian)
-                        }
-                        None if !col_descs[col_idx].is_array => {
-                            encode_scalar_column_value_bytes(None, dt, nrelem, big_endian)
-                        }
-                        array => encode_value_bytes(array, dt, nrelem, big_endian),
-                    },
+                    |value| encode_cell(value.into(), dt, nrelem, big_endian),
                 )?;
             }
             for row_idx in block {
@@ -2513,8 +1816,8 @@ fn write_ism_file_scalar_run_columns(
                 )));
             }
             let (dt, nrelem) = col_info[col_idx];
-            current_values.push(encode_scalar_column_value_bytes(
-                first_run.value(),
+            current_values.push(encode_cell(
+                first_run.value().into(),
                 dt,
                 nrelem,
                 big_endian,
@@ -2550,8 +1853,7 @@ fn write_ism_file_scalar_run_columns(
                 {
                     let run = &scalar_runs[col_idx][idx];
                     let (dt, nrelem) = col_info[col_idx];
-                    let encoded =
-                        encode_scalar_column_value_bytes(run.value(), dt, nrelem, big_endian);
+                    let encoded = encode_cell(run.value().into(), dt, nrelem, big_endian);
                     extra_entries[col_idx] = true;
                     changed.push((col_idx, encoded));
                 }
@@ -2686,6 +1988,19 @@ fn write_ism_file_impl(
     field_indices: Option<&[usize]>,
     big_endian: bool,
 ) -> Result<Vec<u8>, StorageError> {
+    // casacore keeps variable-shape arrays in table.fNi too (ISMIndColumn);
+    // the buckets would hold only their first element.
+    if let Some(desc) = col_descs
+        .iter()
+        .find(|desc| desc.is_array && desc.shape.is_empty())
+    {
+        return Err(StorageError::FormatMismatch(format!(
+            "IncrementalStMan does not write variable-shape array column {}: casacore stores it \
+             as an ISMIndColumn in table.fNi, which casa-rs does not write",
+            desc.col_name
+        )));
+    }
+    refuse_ism_indirect_fixed_arrays(col_descs)?;
     let nrrow = rows.len();
     let ncol = col_descs.len();
 
@@ -2759,7 +2074,7 @@ fn write_ism_file_impl(
             for (col_idx, col_desc) in col_descs.iter().enumerate() {
                 let (dt, nrelem) = col_info[col_idx];
                 let value = row_value_for_column(row, field_indices, col_idx, col_desc);
-                let encoded = encode_value_bytes(value, dt, nrelem, big_endian);
+                let encoded = encode_cell(value.into(), dt, nrelem, big_endian);
                 if rel_row == 0 || encoded != last_values[col_idx] {
                     new_data_estimate += encoded.len();
                 }
@@ -2786,7 +2101,7 @@ fn write_ism_file_impl(
                     let (dt, nrelem) = col_info[col_idx];
                     let bytes = if last_values[col_idx].is_empty() {
                         let value = row_value_for_column(row, field_indices, col_idx, col_desc);
-                        encode_value_bytes(value, dt, nrelem, big_endian)
+                        encode_cell(value.into(), dt, nrelem, big_endian)
                     } else {
                         last_values[col_idx].clone()
                     };
@@ -2801,7 +2116,7 @@ fn write_ism_file_impl(
                 for (col_idx, col_desc) in col_descs.iter().enumerate() {
                     let (dt, nrelem) = col_info[col_idx];
                     let value = row_value_for_column(row, field_indices, col_idx, col_desc);
-                    let encoded = encode_value_bytes(value, dt, nrelem, big_endian);
+                    let encoded = encode_cell(value.into(), dt, nrelem, big_endian);
                     // The carried-over value was already written at row 0.
                     // If current row differs from carried-over, we need to update.
                     if encoded != last_values[col_idx] {
@@ -2822,7 +2137,7 @@ fn write_ism_file_impl(
             for (col_idx, col_desc) in col_descs.iter().enumerate() {
                 let (dt, nrelem) = col_info[col_idx];
                 let value = row_value_for_column(row, field_indices, col_idx, col_desc);
-                let encoded = encode_value_bytes(value, dt, nrelem, big_endian);
+                let encoded = encode_cell(value.into(), dt, nrelem, big_endian);
 
                 if rel_row == 0 || encoded != last_values[col_idx] {
                     let offset = current.data.len() as u32;
@@ -3178,11 +2493,12 @@ fn build_ism_scalar_bucket_for_row_range(
         let rel_row = (row_idx - row_start) as u32;
         for col_idx in 0..ncol {
             let (dt, nrelem) = col_info[col_idx];
-            let temp_value = scalar_columns[col_idx][row_idx]
-                .as_ref()
-                .cloned()
-                .map(casa_types::Value::Scalar);
-            let encoded = encode_value_bytes(temp_value.as_ref(), dt, nrelem, big_endian);
+            let encoded = encode_cell(
+                scalar_columns[col_idx][row_idx].as_ref().into(),
+                dt,
+                nrelem,
+                big_endian,
+            );
             if rel_row == 0 || encoded != last_values[col_idx] {
                 let offset = data.len() as u32;
                 data.extend_from_slice(&encoded);
@@ -3469,6 +2785,7 @@ fn serialize_ism_dm_blob(name: &str) -> Result<Vec<u8>, StorageError> {
 
 #[cfg(test)]
 mod tests {
+    use super::super::canonical::write_i32_be;
     use super::*;
 
     #[test]
@@ -3567,9 +2884,8 @@ mod tests {
     #[test]
     fn string_encoding_round_trip() {
         for big_endian in [true, false] {
-            let val =
-                casa_types::Value::Scalar(casa_types::ScalarValue::String("hello".to_string()));
-            let encoded = encode_string_value(Some(&val), 1, big_endian);
+            let val = ScalarValue::String("hello".to_string());
+            let encoded = encode_cell(Some(&val).into(), CasacoreDataType::TpString, 1, big_endian);
             let decoded = read_ism_string(&encoded, 1, big_endian).unwrap();
             assert_eq!(decoded, vec!["hello"]);
         }
@@ -3578,8 +2894,8 @@ mod tests {
     #[test]
     fn string_encoding_empty() {
         for big_endian in [true, false] {
-            let val = casa_types::Value::Scalar(casa_types::ScalarValue::String(String::new()));
-            let encoded = encode_string_value(Some(&val), 1, big_endian);
+            let val = ScalarValue::String(String::new());
+            let encoded = encode_cell(Some(&val).into(), CasacoreDataType::TpString, 1, big_endian);
             let decoded = read_ism_string(&encoded, 1, big_endian).unwrap();
             assert_eq!(decoded, vec![""]);
         }
@@ -3588,12 +2904,20 @@ mod tests {
     #[test]
     fn bool_encoding_round_trip() {
         for big_endian in [true, false] {
-            let val_true = casa_types::Value::Scalar(casa_types::ScalarValue::Bool(true));
-            let val_false = casa_types::Value::Scalar(casa_types::ScalarValue::Bool(false));
-            let enc_true =
-                encode_value_bytes(Some(&val_true), CasacoreDataType::TpBool, 1, big_endian);
-            let enc_false =
-                encode_value_bytes(Some(&val_false), CasacoreDataType::TpBool, 1, big_endian);
+            let val_true = ScalarValue::Bool(true);
+            let val_false = ScalarValue::Bool(false);
+            let enc_true = encode_cell(
+                Some(&val_true).into(),
+                CasacoreDataType::TpBool,
+                1,
+                big_endian,
+            );
+            let enc_false = encode_cell(
+                Some(&val_false).into(),
+                CasacoreDataType::TpBool,
+                1,
+                big_endian,
+            );
             assert_eq!(enc_true.len(), 1);
             assert_eq!(enc_false.len(), 1);
             assert_eq!(enc_true[0], 1);
