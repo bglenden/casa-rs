@@ -61,6 +61,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ceiling-gib", type=float, help="dd size (default twice RAM plus 8 GiB)")
     parser.add_argument("--rest-s", type=float, default=60.0)
     parser.add_argument("--purged", action="store_true", help="`sudo purge` ran before this")
+    parser.add_argument("--note", default="", help="conditions of the run, recorded with it")
     parser.add_argument("--only", nargs="*", help="run only these steps")
     parser.add_argument("--nas-dir", help="where the results are copied")
     return parser.parse_args()
@@ -143,6 +144,7 @@ class Sustained:
             "ram_bytes": self.ram,
             "volume": subprocess.run(["df", "-h", self.out], capture_output=True, text=True).stdout,
             "purged": args.purged,
+            "note": args.note,
             "channels": args.channels,
             "hours": args.hours,
             "started": now(),
@@ -259,7 +261,7 @@ def gib(value) -> str:
 
 def markdown(results: dict) -> str:
     rates = [c["rate_bytes_per_s"] for c in results["ceilings"] if c.get("rate_bytes_per_s")]
-    ceiling = min(rates) if rates else None
+    ceiling = max(rates) if rates else None
     lines = [
         "# Sustained MAIN-table rate against the volume's ceiling (#841)",
         "",
@@ -267,9 +269,11 @@ def markdown(results: dict) -> str:
         f"page cache purged first: {'yes' if results['purged'] else 'no'}",
         f"- Binary `{results['binary']}` (SHA-256 `{results['binary_sha256']}`)",
         f"- {results['channels']} channels over each case's band, {results['hours']} h of hour angle",
+        f"- Conditions: {results.get('note') or '-'}",
         "- Ceiling: dd of zeros in 8 MiB blocks plus sync. Case rate: MS bytes / (close's"
         " written-in + sync); process rate: MS bytes / (process wall + sync). The fraction"
-        " uses the lower ceiling.",
+        " uses the higher ceiling, the stricter test (a drive busy reclaiming deleted"
+        " blocks can measure far below its ceiling).",
         "",
         "| step | GiB | dd or close s | sync s | wall s | rate | process rate | fraction of ceiling | target | load before |",
         "|---|---|---|---|---|---|---|---|---|---|",
