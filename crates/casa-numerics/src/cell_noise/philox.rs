@@ -166,9 +166,23 @@ pub(crate) fn philox4x32_10_lanes<const LANES: usize>(
     philox4x32_lanes::<10, LANES>(counters, key)
 }
 
-/// Philox4x32-10 of one counter.
-#[cfg(test)]
-pub(crate) fn philox4x32_10(counter: Counter, key: Key) -> Counter {
+/// Philox4x32-10 of one 128-bit `counter` under the 64-bit `key`: the four
+/// words of one draw.
+///
+/// Philox4x32 (Salmon, Moraes, Dror and Shaw, "Parallel random numbers: as
+/// easy as 1, 2, 3", SC11) is ten rounds, as Random123's `philox4x32_10`,
+/// of `(c₀, c₁, c₂, c₃) → (hi(M₁c₂) ⊕ c₁ ⊕ k₀, lo(M₁c₂), hi(M₀c₀) ⊕ c₃ ⊕ k₁,
+/// lo(M₀c₀))`, with `M₀ = 0xD2511F53` and `M₁ = 0xCD9E8D57`, the key
+/// bumped by the Weyl constants `(0x9E3779B9, 0xBB67AE85)` before every
+/// round after the first. It keeps no state: the words are a pure function
+/// of the counter and the key, matching Random123's known answers.
+///
+/// This is the draw [`CellNoise::add_to_row`](super::CellNoise::add_to_row)
+/// makes for each correlation pair, sixteen channels at a time; one counter
+/// at a time it is the reference other implementations of the same noise
+/// (another batch width, a GPU kernel) are compared with, bit for bit.
+#[must_use]
+pub fn philox4x32_10(counter: [u32; 4], key: [u32; 2]) -> [u32; 4] {
     let words = philox4x32_10_lanes(counter.map(|word| [word]), key);
     words.map(|[word]| word)
 }
@@ -259,7 +273,7 @@ mod tests {
     }
 
     /// One lane alone, a group of four, eight, the noise path's
-    /// [`LANES`](crate::corrupt::LANES), and seven: one group of four
+    /// [`LANES`](crate::cell_noise::LANES), and seven: one group of four
     /// (vector lanes on NEON) and three one at a time.
     #[test]
     fn random123_known_answers_in_every_lane() {
@@ -267,7 +281,7 @@ mod tests {
         assert_known_answers::<4>();
         assert_known_answers::<7>();
         assert_known_answers::<8>();
-        assert_known_answers::<{ crate::corrupt::LANES }>();
+        assert_known_answers::<{ crate::cell_noise::LANES }>();
         for vector in KAT.iter().filter(|vector| vector.rounds == 10) {
             assert_eq!(philox4x32_10(vector.counter, vector.key), vector.expected);
         }
