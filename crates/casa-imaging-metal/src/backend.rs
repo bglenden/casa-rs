@@ -317,6 +317,14 @@ impl<'cf> MetalBackend<'cf> {
         ))
     }
 
+    /// Samples of this backend's native predictions that shared the gather
+    /// of the sample before them ([`records::distinct_predictions`]), over
+    /// its life.
+    #[must_use]
+    pub fn shared_samples(&self) -> u64 {
+        self.usage.shared
+    }
+
     /// Bytes this backend holds for its kernel copies now: the device
     /// arenas and table buffer, and the host's table records, norm tables
     /// and their map. At most [`crate::kernel_bytes`] of its set, whose
