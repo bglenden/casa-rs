@@ -41,9 +41,18 @@ use super::table_control::ColumnDescContents;
 use super::{ColumnSources, RequiredScalarColumnData, StorageError};
 
 mod column_writer;
+mod index;
+mod string_buckets;
+
+use string_buckets::StringBuckets;
 
 const SSM_HEADER_SIZE: u64 = 512;
 pub(super) const DEFAULT_SSM_BUCKET_SIZE: u32 = 32768;
+
+/// File offset of bucket `bucket` of a file of `bucket_bytes`-byte buckets.
+fn bucket_offset(bucket: usize, bucket_bytes: usize) -> u64 {
+    SSM_HEADER_SIZE + (bucket * bucket_bytes) as u64
+}
 
 type SparseScalarCell = (usize, Option<ScalarValue>);
 type SparseScalarColumn = Option<Vec<SparseScalarCell>>;
@@ -1470,7 +1479,7 @@ pub(crate) fn save_ssm_file_scalar_columns_sparse_rows_in_place(
 
     for (bucket_nr, mutations) in mutations_by_bucket {
         let mut bucket = read_bucket(&mut file, &header, bucket_nr)?;
-        let mut unused_string_buckets = Vec::new();
+        let mut unused_string_buckets = StringBuckets::default();
         for (col_idx, row_in_bucket, scalar) in mutations {
             let value = scalar.map(Value::Scalar);
             write_cell_to_bucket(
@@ -2255,7 +2264,7 @@ fn write_ssm_file_in_memory(
         .collect();
 
     // String handling: collect long strings into string buckets
-    let mut string_buckets: Vec<Vec<u8>> = Vec::new();
+    let mut string_buckets = StringBuckets::default();
 
     for (col_idx, col_desc) in col_descs.iter().enumerate() {
         let is_indirect = is_ssm_indirect(col_desc);
@@ -2472,7 +2481,7 @@ fn write_ssm_file_in_memory(
     }
 
     // String buckets
-    for sb in &string_buckets {
+    for sb in string_buckets.held() {
         file.write_all(sb)?;
     }
 
@@ -2502,12 +2511,12 @@ fn write_ssm_file_in_memory(
     Ok(dm_blob)
 }
 
-/// Write fixed-width scalar sources with one resident SSM bucket.
+/// Write fixed-width scalar sources with one resident SSM bucket: the data
+/// buckets in row order, then the streamed index ([`index`]).
 ///
-/// The general SSM writer also supports strings and indirect arrays and builds
-/// their shared auxiliary buckets in memory. High-volume generated/file-backed
-/// scalar groups need neither feature, so they can be emitted directly in
-/// row/bucket order without retaining the table payload.
+/// Fixed-width scalar groups have no string buckets or array file, so,
+/// unlike the column writer, they are written a whole data bucket at a
+/// time, each column a block of cells at a time where its source allows.
 fn write_ssm_fixed_scalar_sources_streaming(
     file_path: &Path,
     col_descs: &[ColumnDescContents],
@@ -2533,46 +2542,11 @@ fn write_ssm_fixed_scalar_sources_streaming(
     } else {
         nrrow.div_ceil(rows_per_bucket as usize)
     };
-    let mut last_row = Vec::with_capacity(nr_data_buckets);
-    let mut bucket_number = Vec::with_capacity(nr_data_buckets);
-    for index in 0..nr_data_buckets {
-        let end_row = ((index + 1) * rows_per_bucket as usize - 1).min(nrrow - 1);
-        last_row.push(end_row as u64);
-        bucket_number.push(index as u32);
-    }
-    let index_data = serialize_ssm_index(
-        nr_data_buckets as u32,
-        rows_per_bucket,
-        ncol as i32,
-        &last_row,
-        &bucket_number,
-        big_endian,
-    )?;
-    let chain_overhead = 8usize;
-    let data_per_index_bucket = bucket_size as usize - chain_overhead;
-    let nr_idx_buckets = if index_data.is_empty() {
-        0
-    } else {
-        index_data.len().div_ceil(data_per_index_bucket)
-    };
-    let first_idx_bucket = nr_data_buckets as i32;
-    let header = serialize_ssm_header(
-        bucket_size,
-        (nr_data_buckets + nr_idx_buckets) as u32,
-        0,
-        -1,
-        nr_idx_buckets as u32,
-        first_idx_bucket,
-        0,
-        -1,
-        index_data.len() as u32,
-        1,
-        big_endian,
-    )?;
 
     let mut file = File::create(file_path)?;
-    file.write_all(&header)?;
-    let mut unused_string_buckets = Vec::new();
+    // The header, written once the index is.
+    file.write_all(&[0u8; SSM_HEADER_SIZE as usize])?;
+    let mut unused_string_buckets = StringBuckets::default();
     // One block of encoded cells, at most 8 bytes each, whichever column
     // fills it.
     let widest_cell = col_sizes_bits
@@ -2642,22 +2616,18 @@ fn write_ssm_fixed_scalar_sources_streaming(
         file.write_all(&bucket)?;
     }
 
-    let mut remaining = &index_data[..];
-    for index in 0..nr_idx_buckets {
-        let mut bucket = vec![0u8; bucket_size as usize];
-        bucket[0..4].copy_from_slice(&0i32.to_be_bytes());
-        let next = if index + 1 < nr_idx_buckets {
-            first_idx_bucket + index as i32 + 1
-        } else {
-            -1
-        };
-        bucket[4..8].copy_from_slice(&next.to_be_bytes());
-        let chunk = remaining.len().min(data_per_index_bucket);
-        bucket[chain_overhead..chain_overhead + chunk].copy_from_slice(&remaining[..chunk]);
-        remaining = &remaining[chunk..];
-        file.write_all(&bucket)?;
-    }
-
+    index::write_index_and_header(
+        &mut file,
+        index::IndexLayout {
+            nrrow,
+            ncol,
+            rows_per_bucket,
+            bucket_size,
+            nr_data_buckets,
+            nr_string_buckets: 0,
+        },
+        big_endian,
+    )?;
     serialize_ssm_dm_blob("SSM", &column_offsets, ncol)
 }
 
@@ -2792,7 +2762,7 @@ fn write_cell_to_bucket(
     data_type: CasacoreDataType,
     nrelem: usize,
     value: Option<&casa_types::Value>,
-    string_buckets: &mut Vec<Vec<u8>>,
+    string_buckets: &mut StringBuckets,
     string_bucket_base: usize,
     bucket_size: usize,
     big_endian: bool,
@@ -2861,8 +2831,7 @@ fn write_cell_to_bucket(
                         write_i32_le(&mut bucket[ref_offset + 8..], len);
                     }
                 } else {
-                    let (sb_nr, sb_offset) =
-                        allocate_string_in_bucket(string_buckets, s.as_bytes(), bucket_size);
+                    let (sb_nr, sb_offset) = string_buckets.allocate(s.as_bytes(), bucket_size);
                     let abs_bucket = (string_bucket_base + sb_nr) as i32;
                     if big_endian {
                         write_i32_be(&mut bucket[ref_offset..], abs_bucket);
@@ -2916,8 +2885,7 @@ fn write_cell_to_bucket(
                 if block.is_empty() {
                     // All empty strings — leave reference as zeroes
                 } else {
-                    let (sb_nr, sb_offset) =
-                        allocate_string_in_bucket(string_buckets, &block, bucket_size);
+                    let (sb_nr, sb_offset) = string_buckets.allocate(&block, bucket_size);
                     let abs_bucket = (string_bucket_base + sb_nr) as i32;
                     let total = block.len() as i32;
                     if big_endian {
@@ -3182,46 +3150,6 @@ fn write_complex_canonical(
     }
 }
 
-/// Allocate space for a string in string buckets. Returns (bucket_nr, offset).
-fn allocate_string_in_bucket(
-    string_buckets: &mut Vec<Vec<u8>>,
-    data: &[u8],
-    bucket_size: usize,
-) -> (usize, usize) {
-    // String bucket layout: 4 canonical (BE) ints (freeLink, usedLength, nDeleted, nextBucket) + data
-    let header_size = 16;
-    let data_capacity = bucket_size - header_size;
-
-    // Try to fit in the last bucket
-    if let Some(last) = string_buckets.last_mut() {
-        let used_len = i32::from_be_bytes([last[4], last[5], last[6], last[7]]) as usize;
-        if used_len + data.len() <= data_capacity {
-            let offset = used_len;
-            last[header_size + offset..header_size + offset + data.len()].copy_from_slice(data);
-            let new_used = (used_len + data.len()) as i32;
-            last[4..8].copy_from_slice(&new_used.to_be_bytes());
-            return (string_buckets.len() - 1, offset);
-        }
-    }
-
-    // Allocate a new string bucket
-    let mut bucket = vec![0u8; bucket_size];
-    // freeLink = -1
-    bucket[0..4].copy_from_slice(&(-1i32).to_be_bytes());
-    // usedLength = data.len()
-    bucket[4..8].copy_from_slice(&(data.len() as i32).to_be_bytes());
-    // nDeleted = 0
-    bucket[8..12].copy_from_slice(&0i32.to_be_bytes());
-    // nextBucket = -1 (will be updated if chaining needed)
-    bucket[12..16].copy_from_slice(&(-1i32).to_be_bytes());
-    // Write data
-    bucket[header_size..header_size + data.len()].copy_from_slice(data);
-
-    let bucket_nr = string_buckets.len();
-    string_buckets.push(bucket);
-    (bucket_nr, 0)
-}
-
 /// Serialize the SSM header into a 512-byte buffer.
 ///
 /// The AipsIO framing byte order matches the table's endian setting:
@@ -3272,7 +3200,10 @@ fn serialize_ssm_header(
     Ok(header)
 }
 
-/// Serialize SSMIndex to bytes using the table's byte order for AipsIO framing.
+/// Serialize SSMIndex to bytes using the table's byte order for AipsIO
+/// framing: the index the in-memory writer stores, against which the
+/// streamed index ([`index`]) is checked.
+#[cfg(test)]
 fn serialize_ssm_index(
     n_used: u32,
     rows_per_bucket: u32,

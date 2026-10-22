@@ -7,10 +7,12 @@
 //! appended to the array file (`table.fNi`) and long strings to the string
 //! buckets in that column-major order. Each column's slice of a data bucket
 //! is written at its place in the file as soon as it is full, and each
-//! string bucket once the next one starts, so the writer holds one slice,
-//! one string bucket and the array file's buffer whatever the row count.
-//! The file is laid out as casacore's `SSMBase` reads it: the 512-byte
-//! header, the data buckets, the string buckets, then the index buckets.
+//! string bucket once the next one starts; the index is generated as it is
+//! streamed into its buckets ([`super::index`]). So the writer holds one
+//! slice, one string bucket, one index bucket and the array file's buffer
+//! whatever the row count. The file is laid out as casacore's `SSMBase`
+//! reads it: the 512-byte header, the data buckets, the string buckets,
+//! then the index buckets.
 
 use std::borrow::Cow;
 use std::fs::File;
@@ -20,11 +22,12 @@ use std::path::{Path, PathBuf};
 use casa_types::{ArrayValue, RecordValue, Value};
 use ndarray::{ArrayD, IxDyn};
 
+use super::index::{IndexLayout, write_index_and_header};
 use super::{
-    CasacoreDataType, ColumnDescContents, ColumnSources, SSM_HEADER_SIZE, StManArrayFileWriter,
-    StorageError, canonical_element_size, is_ssm_fixed_string, is_ssm_indirect,
-    is_ssm_variable_string, new_ssm_bucket_layout, serialize_ssm_dm_blob, serialize_ssm_header,
-    serialize_ssm_index, ssm_cell_element_count, write_cell_to_bucket, write_i64_be, write_i64_le,
+    CasacoreDataType, ColumnDescContents, ColumnSources, StManArrayFileWriter, StorageError,
+    StringBuckets, bucket_offset, canonical_element_size, is_ssm_fixed_string, is_ssm_indirect,
+    is_ssm_variable_string, new_ssm_bucket_layout, serialize_ssm_dm_blob, ssm_cell_element_count,
+    write_cell_to_bucket, write_i64_be, write_i64_le,
 };
 
 /// The cells a StandardStMan file is written from, by column and row.
@@ -114,46 +117,23 @@ fn column_bits(col_descs: &[ColumnDescContents]) -> Vec<usize> {
         .collect()
 }
 
-/// The string buckets, written to the file as each is finished.
-///
-/// String data is only ever appended to the last bucket, so the ones before
-/// it are final; they are written at their place after the data buckets
-/// and their memory released, leaving empty placeholders that keep the
-/// bucket numbers.
-struct StringBuckets {
-    buckets: Vec<Vec<u8>>,
-    written: usize,
+/// Write the finished string buckets, and with `all` the open one too, at
+/// their places from bucket `first_bucket` on, and release them.
+fn write_string_buckets(
+    strings: &mut StringBuckets,
+    file: &mut File,
     first_bucket: usize,
     bucket_bytes: usize,
-}
-
-impl StringBuckets {
-    /// Write the finished buckets, and with `all` the last one too.
-    fn write(&mut self, file: &mut File, all: bool) -> Result<(), StorageError> {
-        let end = if all {
-            self.buckets.len()
-        } else {
-            self.buckets.len().saturating_sub(1)
-        };
-        if self.written >= end {
-            return Ok(());
-        }
+    all: bool,
+) -> Result<(), StorageError> {
+    strings.release(all, |number, bucket| {
         file.seek(SeekFrom::Start(bucket_offset(
-            self.first_bucket + self.written,
-            self.bucket_bytes,
+            first_bucket + number,
+            bucket_bytes,
         )))?;
-        for bucket in &mut self.buckets[self.written..end] {
-            file.write_all(bucket)?;
-            *bucket = Vec::new();
-        }
-        self.written = end;
+        file.write_all(bucket)?;
         Ok(())
-    }
-}
-
-/// File offset of bucket `bucket`.
-fn bucket_offset(bucket: usize, bucket_bytes: usize) -> u64 {
-    SSM_HEADER_SIZE + (bucket * bucket_bytes) as u64
+    })
 }
 
 /// Write a StandardStMan data file from `cells`, column by column, and
@@ -195,12 +175,7 @@ pub(super) fn write_ssm_file_columns(
     let nr_data_buckets = nrrow.div_ceil(bucket_rows);
 
     let mut file = File::create(file_path)?;
-    let mut strings = StringBuckets {
-        buckets: Vec::new(),
-        written: 0,
-        first_bucket: nr_data_buckets,
-        bucket_bytes,
-    };
+    let mut strings = StringBuckets::default();
     let mut slice = Vec::new();
     for (column, desc) in col_descs.iter().enumerate() {
         let indirect = is_ssm_indirect(desc);
@@ -236,12 +211,18 @@ pub(super) fn write_ssm_file_columns(
                         desc.data_type,
                         nrelem,
                         value.as_deref(),
-                        &mut strings.buckets,
+                        &mut strings,
                         nr_data_buckets,
                         bucket_bytes,
                         big_endian,
                     );
-                    strings.write(&mut file, false)?;
+                    write_string_buckets(
+                        &mut strings,
+                        &mut file,
+                        nr_data_buckets,
+                        bucket_bytes,
+                        false,
+                    )?;
                 }
             }
             file.seek(SeekFrom::Start(
@@ -250,11 +231,11 @@ pub(super) fn write_ssm_file_columns(
             file.write_all(&slice)?;
         }
     }
-    strings.write(&mut file, true)?;
+    write_string_buckets(&mut strings, &mut file, nr_data_buckets, bucket_bytes, true)?;
     if let Some(writer) = array_writer.as_mut() {
         writer.finish()?;
     }
-    let nr_string_buckets = strings.buckets.len();
+    let nr_string_buckets = strings.len();
     write_index_and_header(
         &mut file,
         IndexLayout {
@@ -301,93 +282,6 @@ fn write_indirect_cell(
         ))),
         _ => Ok(0),
     }
-}
-
-/// What the index and header of a StandardStMan file describe.
-struct IndexLayout {
-    nrrow: usize,
-    ncol: usize,
-    rows_per_bucket: u32,
-    bucket_size: u32,
-    nr_data_buckets: usize,
-    nr_string_buckets: usize,
-}
-
-/// Write the index buckets after the data and string buckets, then the
-/// header, and size the file to its buckets.
-fn write_index_and_header(
-    file: &mut File,
-    layout: IndexLayout,
-    big_endian: bool,
-) -> Result<(), StorageError> {
-    let IndexLayout {
-        nrrow,
-        ncol,
-        rows_per_bucket,
-        bucket_size,
-        nr_data_buckets,
-        nr_string_buckets,
-    } = layout;
-    let bucket_bytes = bucket_size as usize;
-    let bucket_rows = rows_per_bucket as usize;
-    let last_row = (0..nr_data_buckets)
-        .map(|bucket| (((bucket + 1) * bucket_rows - 1).min(nrrow - 1)) as u64)
-        .collect::<Vec<_>>();
-    let bucket_number = (0..nr_data_buckets as u32).collect::<Vec<_>>();
-    let index_data = serialize_ssm_index(
-        nr_data_buckets as u32,
-        rows_per_bucket,
-        ncol as i32,
-        &last_row,
-        &bucket_number,
-        big_endian,
-    )?;
-    // Each index bucket starts with a check number and the next bucket.
-    let chain_overhead = 8usize;
-    let data_per_index_bucket = bucket_bytes - chain_overhead;
-    let nr_idx_buckets = index_data.len().div_ceil(data_per_index_bucket);
-    let first_string_bucket = if nr_string_buckets > 0 {
-        nr_data_buckets as i32
-    } else {
-        -1
-    };
-    let first_idx_bucket = nr_data_buckets + nr_string_buckets;
-    let nr_buckets = first_idx_bucket + nr_idx_buckets;
-    let header = serialize_ssm_header(
-        bucket_size,
-        nr_buckets as u32,
-        0,
-        -1,
-        nr_idx_buckets as u32,
-        first_idx_bucket as i32,
-        0,
-        first_string_bucket,
-        index_data.len() as u32,
-        1,
-        big_endian,
-    )?;
-
-    file.seek(SeekFrom::Start(bucket_offset(
-        first_idx_bucket,
-        bucket_bytes,
-    )))?;
-    let mut bucket = vec![0u8; bucket_bytes];
-    for (index, chunk) in index_data.chunks(data_per_index_bucket).enumerate() {
-        bucket.fill(0);
-        let next = if index + 1 < nr_idx_buckets {
-            (first_idx_bucket + index + 1) as i32
-        } else {
-            -1
-        };
-        bucket[4..8].copy_from_slice(&next.to_be_bytes());
-        bucket[chain_overhead..chain_overhead + chunk.len()].copy_from_slice(chunk);
-        file.write_all(&bucket)?;
-    }
-    file.seek(SeekFrom::Start(0))?;
-    file.write_all(&header)?;
-    // Bucket bytes no column or string wrote are zero.
-    file.set_len(bucket_offset(nr_buckets, bucket_bytes))?;
-    Ok(())
 }
 
 #[cfg(test)]
@@ -594,6 +488,52 @@ mod tests {
                     "{name} differs, {rows} rows, big_endian {big_endian}"
                 );
             }
+        }
+    }
+
+    /// The writer of fixed-width scalar groups, which streams its index
+    /// as the column writer does, writes the in-memory writer's bytes too.
+    #[test]
+    fn the_fixed_scalar_writer_writes_the_in_memory_writers_bytes() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let col_descs = schema_columns()
+            .iter()
+            .filter(|schema| ["I32", "F64", "FLAG", "C32"].contains(&schema.name()))
+            .map(ColumnDescContents::from_column_schema)
+            .collect::<Vec<_>>();
+        for (rows, big_endian) in [(0, false), (5, true), (20_000, false), (20_000, true)] {
+            let records = (0..rows).map(row).collect::<Vec<_>>();
+            let columns = col_descs
+                .iter()
+                .map(|desc| {
+                    records
+                        .iter()
+                        .map(|record| match record.get(&desc.col_name) {
+                            Some(Value::Scalar(scalar)) => Some(scalar.clone()),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>();
+            let columns = columns.iter().map(Vec::as_slice).collect::<Vec<_>>();
+            let reference = root.path().join(format!("reference-{rows}-{big_endian}"));
+            let streamed = root.path().join(format!("streamed-{rows}-{big_endian}"));
+            let reference_blob = super::super::write_ssm_file_in_memory(
+                &reference, &col_descs, &records, None, None, big_endian,
+            )
+            .expect("in-memory writer");
+            let streamed_blob = super::super::write_ssm_fixed_scalar_sources_streaming(
+                &streamed,
+                &col_descs,
+                &ColumnSources::materialized(rows, &columns),
+                big_endian,
+            )
+            .expect("fixed scalar writer");
+            assert_eq!(reference_blob, streamed_blob, "DM blob, {rows} rows");
+            assert!(
+                std::fs::read(&reference).unwrap() == std::fs::read(&streamed).unwrap(),
+                "{rows} rows, big_endian {big_endian}: files differ"
+            );
         }
     }
 }
