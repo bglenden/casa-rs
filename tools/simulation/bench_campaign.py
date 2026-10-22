@@ -10,8 +10,9 @@ For each scenario of the case file (`bench_scenarios.json`), in file order:
    `/usr/bin/time -l`, recording its in-process total and per-call seconds
    from the manifest, then delete its MS and model copies;
 3. replay that manifest with casa-rs's `observe_scenarios` example: Metal
-   (backend auto), CPU at the default workers, CPU with one worker, Metal
-   again, each under `/usr/bin/time -l`, deleting each MS once it is sized.
+   (backend auto), CPU at the default workers, CPU with one worker, CPU and
+   Metal with every thread, Metal again, each under `/usr/bin/time -l`,
+   deleting each MS once it is sized.
 
 A rest precedes every timed run, and each run records the load averages
 before and after it. After every run a line is appended to `runs.jsonl` and
@@ -44,10 +45,17 @@ import time
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
 
+THREADS = os.cpu_count() or 1
+
+# The default policy (Balanced: the performance cores) on Metal and the CPU,
+# one worker, and every thread (as today's simulator, `bench_old_simulator.py`,
+# uses them).
 VARIANTS = [
     ("metal-1", ["--backend", "auto"]),
     ("cpu", ["--backend", "cpu"]),
     ("cpu-w1", ["--backend", "cpu", "--workers", "1"]),
+    (f"cpu-w{THREADS}", ["--backend", "cpu", "--workers", str(THREADS)]),
+    (f"metal-w{THREADS}", ["--backend", "auto", "--workers", str(THREADS)]),
     ("metal-2", ["--backend", "auto"]),
 ]
 

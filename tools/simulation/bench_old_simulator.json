@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "purpose": "simulation Phase 1d no-regression benchmark (#841): the bench_scenarios.json cases run by today's simulator, the casa-ms simobserve binary at e73ae19af2, for comparison with the casa-simulation session",
+  "old_commit": "e73ae19af2",
+  "binary": "cargo build --release -p casa-ms --bin simobserve, at old_commit, with PKG_CONFIG_PATH on the NEON FFTW prefix",
+  "invocation": "simobserve --json-run <request.json>, the request being {\"kind\": \"run\", \"request\": SimobserveRunTaskRequest}; the plain CLI cannot set the antennas, the field direction or the start time",
+  "translation": {
+    "setconfig": "antennas from the CASA manifest's resolved setconfig (simutil.readantenna of the same .cfg): name = antname, station = padname, position_m = ITRF x/y/z, dish_diameter_m = dishdiameter; telescope_name = telescopename",
+    "setspwindow": "one spectral window: start_frequency_hz = freq (the first channel's centre, as the new session's CHAN_FREQ), channel_width_hz = deltafreq, channel_count = nchannels; stokes gives polarization_setup (X/Y tokens linear, R/L circular; correlation_count = the token count)",
+    "setfeed": "implied by the polarization basis",
+    "setauto": "autocorrwt 0 only: the old interferometric mode writes cross-correlation rows only",
+    "settimes, setfield, observe": "integration_seconds = integrationtime; start_time_mjd_seconds = referencetime + the usehourangle offset (minus the field's hour angle at the reference epoch from the first antenna, by CASA's measures, as observe::hour_angle_offset_s) + observe's starttime + the 37 s TIME shift observe_scenarios applies by default; duration_seconds = stoptime - starttime; allow_below_elevation_limit = true, so the samples are start + (i + 1/2) integration, as the new session writes them; field_name and phase_center_rad (RA in [0, 2 pi)) from setfield",
+    "predict": "predict_model = true with model {kind: fits_image, path: the ia.tofits export of the same CASA image}; model_peak_jy_per_pixel unset, so no rescaling (the plain CLI's 3e-5 Jy/pixel default does not apply)",
+    "setvp": "not expressible: the old binary always applies its own primary beam to an image model (see the per-case differences)",
+    "setseed, setnoise(simplenoise), corrupt": "corruption {seed, noise {mode: simplenoise, simplenoise_jy}}",
+    "no predict": "predict_model = false: DATA is zero before any noise"
+  },
+  "notes": [
+    "Both simulators write the same 22 MAIN columns (DATA, with no MODEL_DATA or CORRECTED_DATA, which CASA's sm adds for its 4.4 GiB) and the same 1,483,291,192 MAIN bytes for the ALMA cases; the first TIME agrees to the microsecond (checked against one new-session run of case5-alma-write at db2f4e10b1).",
+    "The old binary's worker policy is its default, auto: the channel-prediction and corruption workers are available_parallelism (8 on bg-mac-mini), time samples are processed in order, and a background writer streams the MAIN arrays. The new session runs its own default (3 streaming workers beside the writer on bg-mac-mini). Neither is tuned.",
+    "Skipping the old transit search (allow_below_elevation_limit) avoids about 8,616 elevation evaluations, a small saving for the old binary: the conservative direction for the no-regression comparison. Its per-row elevation (20 degree default limit) and shadowing flags are still computed; no row is flagged in any case.",
+    "The old binary labels the window LSRK and has no TOPO frame or separate frequency resolution (resolution equals the width in every case).",
+    "The model FITS is read once (cat to /dev/null) before each run's rest, so the old binary reads a warm page cache, as the new session does in the campaign right after the CASA oracle has copied the image.",
+    "The old binary reads the whole FITS file into memory and keeps every plane; the new session reads the CASA image."
+  ],
+  "cases": {
+    "case5-alma-write": {
+      "differences": [
+        "None in the workload: geometry, flags and zero DATA for 325,080 rows of 2 x 256 values."
+      ]
+    },
+    "case5-alma-noise": {
+      "differences": [
+        "Noise: both add independent N(0, 0.1 Jy) draws to the real and imaginary part of every value; the old draws each value from a hash-seeded generator (row_noise_seed), the new from Philox keyed on (seed, ordinal, row, channel, correlation). Same seed number (11111), different streams."
+      ]
+    },
+    "case1-alma-cube": {
+      "differences": [
+        "Prediction: the old binary FFTs one 1.3-padded grid per channel up front (256 grids) and degrids each row serially per channel with its spheroidal kernel (support 3), no w-term; the new uses the imaging operator's prediction.",
+        "Beam: setvp(dovp=True) in the new session; the old applies its own ALMA power pattern (Airy, 10.7 m dish, 0.75 m blockage, one beam for the array) to each channel's plane before the FFT.",
+        "Noise as case5-alma-noise."
+      ]
+    },
+    "case3-alma-mfs": {
+      "differences": [
+        "One model plane over 256 channels: the old binary still builds 256 per-channel grids from the one plane (the beam changes with frequency), the same work as for a cube apart from the FITS read.",
+        "Beam and noise as case1-alma-cube."
+      ]
+    },
+    "case2-vla-cube": {
+      "differences": [
+        "Beam: the new session has no setvp, so it applies no beam; the old binary cannot turn its beam off and applies its VLA power pattern (CASA's VLA Q-band Airy table form, scaled by frequency) to every channel's plane. The pattern is zero beyond 0.8564 deg GHz (37 arcmin at 1.4 GHz, 31 arcmin at 1.655 GHz, against the image's 68 arcmin half-width), so two Bessel J1 calls are made for roughly 16-23% of the pixels, about 50 million evaluations over the 256 channels. This is work the new session does not do. Measured: the old report's residual (total minus its listed stages: chiefly the beam and the 256 FFTs) is 2.61-2.64 s here against 2.13-2.26 s for the ALMA cases with their cached Airy table, so the VLA beam costs the old binary about 0.4-0.5 s of wall.",
+        "Prediction as case1-alma-cube; no noise."
+      ]
+    }
+  }
+}
