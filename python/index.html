@@ -725,9 +725,14 @@
   CASA's methods, parameter order and defaults, so a CASA script changes only
   its imports (ADR-0019): <code>simulator</code> (CASA's <code>sm</code>), <code>measures</code> (<code>me</code>) and
   <code>quanta</code> (<code>qa</code>). Methods casa-rs does not implement yet raise
-  <code>NotImplementedError</code>. <code>casars.simutil</code> provides <code>readantenna</code> of CASA's
-  <code>simutil</code> helper class (<code>casatasks.private.simutil</code>), which is not a tool;
-  <code>from casars import simutil</code> is its public import.</li>
+  <code>NotImplementedError</code>. A tool's constructor takes only casa-rs's controls,
+  keyword-only: <code>simulator(*, memory_budget=None, backend='auto',
+  workers=None)</code> caps the memory <code>close</code> holds (bytes), names the device to
+  predict on (<code>'auto'</code>, <code>'cpu'</code> or <code>'metal'</code>) and the threads to keep busy;
+  <code>None</code> takes the machine's balanced share, and the MeasurementSet written
+  is the same whatever the controls. <code>casars.simutil</code> provides <code>readantenna</code>
+  of CASA's <code>simutil</code> helper class (<code>casatasks.private.simutil</code>), which is
+  not a tool; <code>from casars import simutil</code> is its public import.</li>
 <li><code>casars.parameters</code> is the accepted common API for typed task profiles
   described by ADR-0006 and the current-only option in ADR-0012.</li>
 </ul>

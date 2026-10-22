@@ -1124,8 +1124,10 @@ and run them dramatically faster:</p>
      run therefore requests a start 37 s later, and compares rows at equal
      stored TIME.</li>
 <li><strong>DATA only, unless a later step needs MODEL_DATA.</strong></li>
-<li>MODEL_DATA is created when something needs it, such as
-     <code>predict(incremental=True)</code>.</li>
+<li>MODEL_DATA is created only when something needs it. Nothing in Phase 1
+     does: <code>predict(incremental=True)</code> adds its prediction in the deferred
+     fold (§4), which needs no scratch column, and CASA's final MODEL_DATA
+     is all 1 (Phase 1d decision 5 on #841).</li>
 <li>CORRECTED_DATA is not written.</li>
 <li>casa-rs's <code>imager</code> falls back from <code>datacolumn='corrected'</code> to DATA, as
      CASA's <code>tclean</code> does.</li>
@@ -1158,9 +1160,14 @@ and run them dramatically faster:</p>
   prediction, corruption and the write for each chunk.</li>
 <li>The MS is published at <code>close</code>, as ADR-0008 staging requires, so no reader
   can see an intermediate state.</li>
-<li><strong>A call that needs data on disk</strong> forces the pending pass. These are a
-  second <code>predict</code> or <code>corrupt</code> after one has already run, <code>openfromms</code> on
-  the output, and <code>setdata</code> selections that depend on written rows.</li>
+<li><strong>The plan is a fold.</strong> Each <code>predict</code> and <code>corrupt</code> applies only to the
+  scans observed before it, and a <code>predict</code> that is not incremental replaces
+  every step before it. For each scan, DATA is the steps covering it applied
+  in order, so no sequence of <code>predict</code> and <code>corrupt</code> needs data on disk and
+  <code>close</code> stays one pass (Phase 1d decision 4 on #841).</li>
+<li><strong>A call that needs data on disk</strong> forces the pending pass. These are
+  <code>openfromms</code> on the output and <code>setdata</code> selections that depend on written
+  rows (Phase 2).</li>
 <li><strong>Corrupting an existing MS</strong> (<code>openfromms</code> + <code>corrupt</code>) patches it in place
   through the bounded selected-row mutation path (<code>write_session.rs:541</code>). The
   chunks are aligned to the DATA tile's channel extent, so each tile is
@@ -1205,8 +1212,10 @@ and run them dramatically faster:</p>
 <li>default limits;</li>
 <li>SIGMA and WEIGHT left at their geometric values after <code>corrupt</code>;</li>
 <li>noise scaling: independent real and imaginary draws for
-    cross-correlations, one real draw for autocorrelations, and no noise in
-    the cross-hands of 4-correlation data;</li>
+    cross-correlations, one real draw for autocorrelations, and an
+    independent draw for every correlation, the cross-hands of
+    4-correlation data included (measured on CASA 6.7.6 in Phase 1d; this
+    plan first said the cross-hands get none, #841);</li>
 <li>fBM normalisation;</li>
 <li>scan numbering;</li>
 <li>autocorrelation defaults.</li>

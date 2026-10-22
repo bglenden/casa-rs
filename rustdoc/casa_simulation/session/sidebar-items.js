@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["array","error","fields","observe","spectral"],"struct":["Simulator","SimulatorOptions"]};
+window.SIDEBAR_ITEMS = {"constant":["DEFAULT_SEED"],"mod":["array","error","fields","observe","resources","spectral"],"struct":["NoiseSpec","PredictSpec","PredictionOptions","Simulator","SimulatorOptions","VoltagePatternSpec"]};

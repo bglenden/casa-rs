@@ -1070,6 +1070,28 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#smpredict-rewrites-the-model-image" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        sm.predict rewrites the model image
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#smpredict-accepts-models-the-simulator-cannot-read" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        sm.predict accepts models the simulator cannot read
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1114,7 +1136,9 @@ Simulator behaviours casa-rs does not follow:
 <a href="#a-zero-integration-time-adds-rows-without-bound">a zero integration time</a>,
 <a href="#simutilreadantenna-averages-a-stale-loop-variable"><code>readantenna</code>'s observatory fallback</a>,
 <a href="#simutilreadantenna-names-antennas-after-blank-lines"><code>readantenna</code>'s names after blank lines</a>,
-<a href="#the-measures-tool-converts-with-a-frame-at-mjd-0-and-the-geocentre">the measures tool's default frame</a>.</p>
+<a href="#the-measures-tool-converts-with-a-frame-at-mjd-0-and-the-geocentre">the measures tool's default frame</a>,
+<a href="#smpredict-rewrites-the-model-image">the model <code>predict</code> rewrites</a>,
+<a href="#smpredict-accepts-models-the-simulator-cannot-read">models the simulator cannot read</a>.</p>
 <h2 id="aw-projection-pairs-the-partner-hands-visibility-with-the-conjugate-baseline-cell">AW-projection pairs the partner hand's visibility with the conjugate-baseline cell<a class="headerlink" href="#aw-projection-pairs-the-partner-hands-visibility-with-the-conjugate-baseline-cell" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-10-09</li>
@@ -1608,6 +1632,40 @@ these without a warning, so <code>me.measure(me.direction('J2000', '12h00m00',
 empty and the same call fails with "Cannot convert due to missing frame
 information". casa-rs's tool starts with the empty frame, so such a
 conversion always fails with that message until <code>doframe</code> sets the element.</p>
+<h2 id="smpredict-rewrites-the-model-image"><code>sm.predict</code> rewrites the model image<a class="headerlink" href="#smpredict-rewrites-the-model-image" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-10-21</li>
+<li>Status: CASA behaviour casa-rs does not follow (#841)</li>
+<li>Affected code: <code>synthesis/MeasurementEquations/Simulator.cc</code>
+  (<code>createSkyEquation</code>, lines 2319-2344)</li>
+</ul>
+<p><code>createSkyEquation</code> opens each model as a <code>PagedImage&lt;Float&gt;</code>, gives its
+coordinate system an LSRK spectral conversion and Hz world units ("FTMachine
+only works in Hz and LSRK") and stores it back with <code>setCoordinateInfo</code>, so
+predicting rewrites the model's <code>table.dat</code>. Later reads of the model,
+including another <code>predict</code>, see coordinates the user did not write; the
+CASA oracle (<code>tools/simulation/casa_sm_observe_oracle.py --model-root</code>)
+copies the model for every call because of it. casa-rs converts the
+spectral axis to Hz in memory and never writes the model.</p>
+<h2 id="smpredict-accepts-models-the-simulator-cannot-read"><code>sm.predict</code> accepts models the simulator cannot read<a class="headerlink" href="#smpredict-accepts-models-the-simulator-cannot-read" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-10-21</li>
+<li>Status: CASA behaviour casa-rs does not follow (#841)</li>
+<li>Affected code: <code>casatools/src/tools/simulator/simulator_cmpt.cc</code>
+  (<code>predict</code>, lines 620-629); <code>synthesis/MeasurementEquations/Simulator.cc</code>
+  (<code>createSkyEquation</code>, lines 2313-2319 and 2568-2572; <code>predict</code>, lines
+  2161-2163)</li>
+</ul>
+<p>casatools' binding checks each model with <code>ImageFactory::fromFile</code>, which
+also opens FITS images and complex-valued CASA images. The simulator then
+reads each model as a <code>PagedImage&lt;Float&gt;</code>. A FITS file is not a table, so
+it logs "… is unreadable" and then "No model images found"; a complex image
+throws when opened as Float, which <code>createSkyEquation</code> catches ("Caught
+exception: …"). Either way <code>sm.predict</code> logs "Failed to create SkyEquation"
+and returns False, and the script continues with DATA not predicted. These outcomes are read from the source
+and were not probed. casa-rs's check opens each model as the simulator reads
+it, so a FITS or complex model raises RuntimeError "Unable to open image …"
+at the call.</p>
 
 
 

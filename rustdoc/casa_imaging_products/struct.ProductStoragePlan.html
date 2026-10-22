@@ -9,7 +9,7 @@
 </div></details><details class="toggle method-toggle" open><summary><section id="method.maximum_channels" class="method"><a class="src rightside" href="../src/casa_imaging_products/storage.rs.html#52-54">Source</a><h4 class="code-header">pub const fn <a href="#method.maximum_channels" class="fn">maximum_channels</a>(self) -&gt; <a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.usize.html">usize</a></h4></section></summary><div class="docblock"><p>Return the selected maximum number of resident output channels.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.layout" class="method"><a class="src rightside" href="../src/casa_imaging_products/storage.rs.html#61-80">Source</a><h4 class="code-header">pub fn <a href="#method.layout" class="fn">layout</a>(
     self,
-    axes: &amp;ProductAxes,
+    axes: &amp;<a class="struct" href="../casa_imaging_model/product_list/struct.ProductAxes.html" title="struct casa_imaging_model::product_list::ProductAxes">ProductAxes</a>,
 ) -&gt; <a class="enum" href="https://doc.rust-lang.org/1.99.1/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;<a class="struct" href="struct.ProductWindowLayout.html" title="struct casa_imaging_products::ProductWindowLayout">ProductWindowLayout</a>, <a class="enum" href="enum.ProductsError.html" title="enum casa_imaging_products::ProductsError">ProductsError</a>&gt;</h4></section></summary><div class="docblock"><p>Bind the selected window to one member’s exact storage axes.</p>
 <h5 id="errors-1"><a class="doc-anchor" href="#errors-1">§</a>Errors</h5>
 <p>The member’s value count overflows.</p>

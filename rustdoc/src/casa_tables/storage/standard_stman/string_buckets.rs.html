@@ -1,0 +1,115 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `crates/casa-tables/src/storage/standard_stman/string_buckets.rs`."><title>string_buckets.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../../static.files/rustdoc-0c87338a.css"><meta name="rustdoc-vars" data-root-path="../../../../" data-static-root-path="../../../../static.files/" data-current-crate="casa_tables" data-themes="" data-resource-suffix="" data-rustdoc-version="1.99.1 (58cf8f9c3 2026-10-13)" data-channel="1.99.1" data-search-js="search-cf4fc35e.js" data-stringdex-js="stringdex-b5109af9.js" data-settings-js="settings-170eb4bf.js" ><script src="../../../../static.files/storage-41dd4d93.js"></script><script defer src="../../../../static.files/src-script-813739b1.js"></script><script defer src="../../../../src-files.js"></script><script defer src="../../../../static.files/main-417ebf0a.js"></script><noscript><link rel="stylesheet" href="../../../../static.files/noscript-9f56287d.css"></noscript><link rel="alternate icon" type="image/png" href="../../../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><h1><div class="sub-heading">casa_tables/storage/standard_stman/</div>string_buckets.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-3"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// SPDX-License-Identifier: LGPL-3.0-or-later
+<a href=#2 id=2 data-nosnippet>2</a></span><span class="doccomment">//! The string buckets of a StandardStMan file being written: where long
+<a href=#3 id=3 data-nosnippet>3</a>//! scalar strings and string arrays are stored (casacore's `SSMStringHandler`).
+<a href=#4 id=4 data-nosnippet>4</a>
+<a href=#5 id=5 data-nosnippet>5</a></span><span class="kw">use </span><span class="kw">super</span>::StorageError;
+<a href=#6 id=6 data-nosnippet>6</a>
+<a href=#7 id=7 data-nosnippet>7</a><span class="doccomment">/// Bytes of a string bucket's header: four canonical (big-endian) ints,
+<a href=#8 id=8 data-nosnippet>8</a>/// the free link, the used length, the deleted count and the next bucket.
+<a href=#9 id=9 data-nosnippet>9</a></span><span class="kw">const </span>HEADER_BYTES: usize = <span class="number">16</span>;
+<a href=#10 id=10 data-nosnippet>10</a>
+<a href=#11 id=11 data-nosnippet>11</a><span class="doccomment">/// String buckets as they are filled.
+<a href=#12 id=12 data-nosnippet>12</a>///
+<a href=#13 id=13 data-nosnippet>13</a>/// Strings are only ever appended to the last bucket, so the ones before it
+<a href=#14 id=14 data-nosnippet>14</a>/// are final. A writer that streams its file writes them out as the next
+<a href=#15 id=15 data-nosnippet>15</a>/// one starts and releases them ([`Self::release`]), holding one bucket
+<a href=#16 id=16 data-nosnippet>16</a>/// whatever the row count; a writer that assembles the file in memory keeps
+<a href=#17 id=17 data-nosnippet>17</a>/// them all. Bucket numbers count the released buckets too.
+<a href=#18 id=18 data-nosnippet>18</a></span><span class="attr">#[derive(Debug, Default)]
+<a href=#19 id=19 data-nosnippet>19</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>StringBuckets {
+<a href=#20 id=20 data-nosnippet>20</a>    <span class="doccomment">/// Buckets written out and dropped.
+<a href=#21 id=21 data-nosnippet>21</a>    </span>released: usize,
+<a href=#22 id=22 data-nosnippet>22</a>    <span class="doccomment">/// Buckets still held, numbered from `released`; the last one is open.
+<a href=#23 id=23 data-nosnippet>23</a>    </span>held: Vec&lt;Vec&lt;u8&gt;&gt;,
+<a href=#24 id=24 data-nosnippet>24</a>}
+<a href=#25 id=25 data-nosnippet>25</a>
+<a href=#26 id=26 data-nosnippet>26</a><span class="kw">impl </span>StringBuckets {
+<a href=#27 id=27 data-nosnippet>27</a>    <span class="doccomment">/// Buckets made so far, released or held.
+<a href=#28 id=28 data-nosnippet>28</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>len(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
+<a href=#29 id=29 data-nosnippet>29</a>        <span class="self">self</span>.released + <span class="self">self</span>.held.len()
+<a href=#30 id=30 data-nosnippet>30</a>    }
+<a href=#31 id=31 data-nosnippet>31</a>
+<a href=#32 id=32 data-nosnippet>32</a>    <span class="doccomment">/// The buckets still held, numbered from the count of released ones.
+<a href=#33 id=33 data-nosnippet>33</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>held(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>[Vec&lt;u8&gt;] {
+<a href=#34 id=34 data-nosnippet>34</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.held
+<a href=#35 id=35 data-nosnippet>35</a>    }
+<a href=#36 id=36 data-nosnippet>36</a>
+<a href=#37 id=37 data-nosnippet>37</a>    <span class="doccomment">/// Store `data` in the open bucket, or in a new one of `bucket_size`
+<a href=#38 id=38 data-nosnippet>38</a>    /// bytes when it does not fit, and return the bucket's number and the
+<a href=#39 id=39 data-nosnippet>39</a>    /// offset of `data` in its data area.
+<a href=#40 id=40 data-nosnippet>40</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>allocate(<span class="kw-2">&amp;mut </span><span class="self">self</span>, data: <span class="kw-2">&amp;</span>[u8], bucket_size: usize) -&gt; (usize, usize) {
+<a href=#41 id=41 data-nosnippet>41</a>        <span class="kw">let </span>capacity = bucket_size - HEADER_BYTES;
+<a href=#42 id=42 data-nosnippet>42</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(open) = <span class="self">self</span>.held.last_mut() {
+<a href=#43 id=43 data-nosnippet>43</a>            <span class="kw">let </span>used = i32::from_be_bytes([open[<span class="number">4</span>], open[<span class="number">5</span>], open[<span class="number">6</span>], open[<span class="number">7</span>]]) <span class="kw">as </span>usize;
+<a href=#44 id=44 data-nosnippet>44</a>            <span class="kw">if </span>used + data.len() &lt;= capacity {
+<a href=#45 id=45 data-nosnippet>45</a>                open[HEADER_BYTES + used..HEADER_BYTES + used + data.len()].copy_from_slice(data);
+<a href=#46 id=46 data-nosnippet>46</a>                open[<span class="number">4</span>..<span class="number">8</span>].copy_from_slice(<span class="kw-2">&amp;</span>((used + data.len()) <span class="kw">as </span>i32).to_be_bytes());
+<a href=#47 id=47 data-nosnippet>47</a>                <span class="kw">return </span>(<span class="self">self</span>.len() - <span class="number">1</span>, used);
+<a href=#48 id=48 data-nosnippet>48</a>            }
+<a href=#49 id=49 data-nosnippet>49</a>        }
+<a href=#50 id=50 data-nosnippet>50</a>        <span class="kw">let </span><span class="kw-2">mut </span>bucket = <span class="macro">vec!</span>[<span class="number">0u8</span>; bucket_size];
+<a href=#51 id=51 data-nosnippet>51</a>        <span class="comment">// No free link; the data's length; nothing deleted; no next bucket.
+<a href=#52 id=52 data-nosnippet>52</a>        </span>bucket[<span class="number">0</span>..<span class="number">4</span>].copy_from_slice(<span class="kw-2">&amp;</span>(-<span class="number">1i32</span>).to_be_bytes());
+<a href=#53 id=53 data-nosnippet>53</a>        bucket[<span class="number">4</span>..<span class="number">8</span>].copy_from_slice(<span class="kw-2">&amp;</span>(data.len() <span class="kw">as </span>i32).to_be_bytes());
+<a href=#54 id=54 data-nosnippet>54</a>        bucket[<span class="number">8</span>..<span class="number">12</span>].copy_from_slice(<span class="kw-2">&amp;</span><span class="number">0i32</span>.to_be_bytes());
+<a href=#55 id=55 data-nosnippet>55</a>        bucket[<span class="number">12</span>..<span class="number">16</span>].copy_from_slice(<span class="kw-2">&amp;</span>(-<span class="number">1i32</span>).to_be_bytes());
+<a href=#56 id=56 data-nosnippet>56</a>        bucket[HEADER_BYTES..HEADER_BYTES + data.len()].copy_from_slice(data);
+<a href=#57 id=57 data-nosnippet>57</a>        <span class="self">self</span>.held.push(bucket);
+<a href=#58 id=58 data-nosnippet>58</a>        (<span class="self">self</span>.len() - <span class="number">1</span>, <span class="number">0</span>)
+<a href=#59 id=59 data-nosnippet>59</a>    }
+<a href=#60 id=60 data-nosnippet>60</a>
+<a href=#61 id=61 data-nosnippet>61</a>    <span class="doccomment">/// Pass each finished bucket, and with `all` the open one too, to
+<a href=#62 id=62 data-nosnippet>62</a>    /// `write` with its number, in order, then drop them.
+<a href=#63 id=63 data-nosnippet>63</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>release(
+<a href=#64 id=64 data-nosnippet>64</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+<a href=#65 id=65 data-nosnippet>65</a>        all: bool,
+<a href=#66 id=66 data-nosnippet>66</a>        <span class="kw-2">mut </span>write: <span class="kw">impl </span>FnMut(usize, <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Result</span>&lt;(), StorageError&gt;,
+<a href=#67 id=67 data-nosnippet>67</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), StorageError&gt; {
+<a href=#68 id=68 data-nosnippet>68</a>        <span class="kw">let </span>finished = <span class="kw">if </span>all {
+<a href=#69 id=69 data-nosnippet>69</a>            <span class="self">self</span>.held.len()
+<a href=#70 id=70 data-nosnippet>70</a>        } <span class="kw">else </span>{
+<a href=#71 id=71 data-nosnippet>71</a>            <span class="self">self</span>.held.len().saturating_sub(<span class="number">1</span>)
+<a href=#72 id=72 data-nosnippet>72</a>        };
+<a href=#73 id=73 data-nosnippet>73</a>        <span class="kw">for </span>(index, bucket) <span class="kw">in </span><span class="self">self</span>.held.drain(..finished).enumerate() {
+<a href=#74 id=74 data-nosnippet>74</a>            write(<span class="self">self</span>.released + index, <span class="kw-2">&amp;</span>bucket)<span class="question-mark">?</span>;
+<a href=#75 id=75 data-nosnippet>75</a>        }
+<a href=#76 id=76 data-nosnippet>76</a>        <span class="self">self</span>.released += finished;
+<a href=#77 id=77 data-nosnippet>77</a>        <span class="prelude-val">Ok</span>(())
+<a href=#78 id=78 data-nosnippet>78</a>    }
+<a href=#79 id=79 data-nosnippet>79</a>}
+<a href=#80 id=80 data-nosnippet>80</a>
+<a href=#81 id=81 data-nosnippet>81</a><span class="attr">#[cfg(test)]
+<a href=#82 id=82 data-nosnippet>82</a></span><span class="kw">mod </span>tests {
+<a href=#83 id=83 data-nosnippet>83</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+<a href=#84 id=84 data-nosnippet>84</a>
+<a href=#85 id=85 data-nosnippet>85</a>    <span class="attr">#[test]
+<a href=#86 id=86 data-nosnippet>86</a>    </span><span class="kw">fn </span>released_buckets_keep_their_numbers() {
+<a href=#87 id=87 data-nosnippet>87</a>        <span class="kw">let </span>bucket_size = HEADER_BYTES + <span class="number">8</span>;
+<a href=#88 id=88 data-nosnippet>88</a>        <span class="kw">let </span><span class="kw-2">mut </span>kept = StringBuckets::default();
+<a href=#89 id=89 data-nosnippet>89</a>        <span class="kw">let </span><span class="kw-2">mut </span>streamed = StringBuckets::default();
+<a href=#90 id=90 data-nosnippet>90</a>        <span class="kw">let </span><span class="kw-2">mut </span>written = Vec::new();
+<a href=#91 id=91 data-nosnippet>91</a>        <span class="kw">for </span>string <span class="kw">in </span>[<span class="kw-2">&amp;</span><span class="string">b"abcde"</span>[..], <span class="string">b"fgh"</span>, <span class="string">b"ijklmn"</span>, <span class="string">b"op"</span>, <span class="string">b"qrstuvwx"</span>] {
+<a href=#92 id=92 data-nosnippet>92</a>            <span class="kw">let </span>place = kept.allocate(string, bucket_size);
+<a href=#93 id=93 data-nosnippet>93</a>            <span class="macro">assert_eq!</span>(streamed.allocate(string, bucket_size), place);
+<a href=#94 id=94 data-nosnippet>94</a>            streamed
+<a href=#95 id=95 data-nosnippet>95</a>                .release(<span class="bool-val">false</span>, |number, bucket| {
+<a href=#96 id=96 data-nosnippet>96</a>                    written.push((number, bucket.to_vec()));
+<a href=#97 id=97 data-nosnippet>97</a>                    <span class="prelude-val">Ok</span>(())
+<a href=#98 id=98 data-nosnippet>98</a>                })
+<a href=#99 id=99 data-nosnippet>99</a>                .unwrap();
+<a href=#100 id=100 data-nosnippet>100</a>            <span class="macro">assert!</span>(streamed.held().len() &lt;= <span class="number">1</span>);
+<a href=#101 id=101 data-nosnippet>101</a>        }
+<a href=#102 id=102 data-nosnippet>102</a>        streamed
+<a href=#103 id=103 data-nosnippet>103</a>            .release(<span class="bool-val">true</span>, |number, bucket| {
+<a href=#104 id=104 data-nosnippet>104</a>                written.push((number, bucket.to_vec()));
+<a href=#105 id=105 data-nosnippet>105</a>                <span class="prelude-val">Ok</span>(())
+<a href=#106 id=106 data-nosnippet>106</a>            })
+<a href=#107 id=107 data-nosnippet>107</a>            .unwrap();
+<a href=#108 id=108 data-nosnippet>108</a>        <span class="macro">assert_eq!</span>(kept.len(), <span class="number">3</span>);
+<a href=#109 id=109 data-nosnippet>109</a>        <span class="macro">assert_eq!</span>(streamed.len(), <span class="number">3</span>);
+<a href=#110 id=110 data-nosnippet>110</a>        <span class="macro">assert!</span>(streamed.held().is_empty());
+<a href=#111 id=111 data-nosnippet>111</a>        <span class="kw">let </span>expected = kept.held().iter().cloned().enumerate().collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#112 id=112 data-nosnippet>112</a>        <span class="macro">assert_eq!</span>(written, expected);
+<a href=#113 id=113 data-nosnippet>113</a>    }
+<a href=#114 id=114 data-nosnippet>114</a>}
+</code></pre></div></section></main></body></html>

@@ -1,0 +1,136 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `crates/casa-simulation/src/corrupt/mod.rs`."><title>mod.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-0c87338a.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="casa_simulation" data-themes="" data-resource-suffix="" data-rustdoc-version="1.99.1 (58cf8f9c3 2026-10-13)" data-channel="1.99.1" data-search-js="search-cf4fc35e.js" data-stringdex-js="stringdex-b5109af9.js" data-settings-js="settings-170eb4bf.js" ><script src="../../../static.files/storage-41dd4d93.js"></script><script defer src="../../../static.files/src-script-813739b1.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-417ebf0a.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-9f56287d.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><h1><div class="sub-heading">casa_simulation/corrupt/</div>mod.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-3"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// SPDX-License-Identifier: LGPL-3.0-or-later
+<a href=#2 id=2 data-nosnippet>2</a></span><span class="doccomment">//! Visibility corruption: thermal noise, CASA's `ANoise` term
+<a href=#3 id=3 data-nosnippet>3</a>//! (`sm.setnoise(mode='simplenoise')` then `sm.corrupt()`).
+<a href=#4 id=4 data-nosnippet>4</a>//!
+<a href=#5 id=5 data-nosnippet>5</a>//! # What CASA adds
+<a href=#6 id=6 data-nosnippet>6</a>//!
+<a href=#7 id=7 data-nosnippet>7</a>//! Measured against CASA 6.7.6 (simulation Phase 1d probes, #841), each
+<a href=#8 id=8 data-nosnippet>8</a>//! `corrupt` adds, for every noise term, to every DATA sample:
+<a href=#9 id=9 data-nosnippet>9</a>//! - on a cross-correlation row, independent real and imaginary draws, each
+<a href=#10 id=10 data-nosnippet>10</a>//!   N(0, σ²), where σ is the term's `simplenoise` in Jy;
+<a href=#11 id=11 data-nosnippet>11</a>//! - on an autocorrelation row, a real draw only: the imaginary part is
+<a href=#12 id=12 data-nosnippet>12</a>//!   unchanged;
+<a href=#13 id=13 data-nosnippet>13</a>//! - in every correlation, the cross-hands of four-correlation data
+<a href=#14 id=14 data-nosnippet>14</a>//!   included, each with its own draw;
+<a href=#15 id=15 data-nosnippet>15</a>//! - whatever the flags: flagged rows and samples get noise too.
+<a href=#16 id=16 data-nosnippet>16</a>//!
+<a href=#17 id=17 data-nosnippet>17</a>//! WEIGHT and SIGMA are left as observed. A draw is made in double precision,
+<a href=#18 id=18 data-nosnippet>18</a>//! scaled by σ held as a `Float`, and rounded to single precision before it
+<a href=#19 id=19 data-nosnippet>19</a>//! is added, as `ANoiseCorruptor::simPar` computes `Complex(r·amp, i·amp)`.
+<a href=#20 id=20 data-nosnippet>20</a>//!
+<a href=#21 id=21 data-nosnippet>21</a>//! # Where the draws come from
+<a href=#22 id=22 data-nosnippet>22</a>//!
+<a href=#23 id=23 data-nosnippet>23</a>//! CASA draws from one `MLCG` stream per term, in the order its visibility
+<a href=#24 id=24 data-nosnippet>24</a>//! iterator visits rows, channels and correlations, and the stream carries on
+<a href=#25 id=25 data-nosnippet>25</a>//! across `corrupt` calls. casa-rs keys each draw instead
+<a href=#26 id=26 data-nosnippet>26</a>//! ([`philox`], Philox4x32-10): the key is the term's seed and its
+<a href=#27 id=27 data-nosnippet>27</a>//! application ordinal (how many `corrupt` calls the term had seen before),
+<a href=#28 id=28 data-nosnippet>28</a>//! and the counter is the absolute MAIN row, the channel and the
+<a href=#29 id=29 data-nosnippet>29</a>//! correlation pair. The two are statistically equivalent, not bit-identical
+<a href=#30 id=30 data-nosnippet>30</a>//! (plan, "Random numbers"), and they share the structure scripts see:
+<a href=#31 id=31 data-nosnippet>31</a>//! - two terms with the same seed draw the same values in the same
+<a href=#32 id=32 data-nosnippet>32</a>//!   `corrupt`, so their noise adds coherently (variance 4σ² for two);
+<a href=#33 id=33 data-nosnippet>33</a>//! - one term applied twice draws independent values (variance 2σ²);
+<a href=#34 id=34 data-nosnippet>34</a>//! - a different seed draws different values.
+<a href=#35 id=35 data-nosnippet>35</a>//!
+<a href=#36 id=36 data-nosnippet>36</a>//! The result depends only on (seed, ordinal, row, channel, correlation), so
+<a href=#37 id=37 data-nosnippet>37</a>//! it is bitwise the same for any batch size, worker count or backend.
+<a href=#38 id=38 data-nosnippet>38</a>//!
+<a href=#39 id=39 data-nosnippet>39</a>//! Normals come from Box–Muller on a pair of 32-bit words, in `f64`, with
+<a href=#40 id=40 data-nosnippet>40</a>//! the logarithm, sine and cosine evaluated on the words ([`normal`]), so
+<a href=#41 id=41 data-nosnippet>41</a>//! they are also bitwise the same on every platform. The largest draw is
+<a href=#42 id=42 data-nosnippet>42</a>//! √(64 ln 2) ≈ 6.66σ, one in about 4·10⁹ beyond that in an exact normal.
+<a href=#43 id=43 data-nosnippet>43</a>
+<a href=#44 id=44 data-nosnippet>44</a></span><span class="kw">mod </span>normal;
+<a href=#45 id=45 data-nosnippet>45</a><span class="kw">mod </span>philox;
+<a href=#46 id=46 data-nosnippet>46</a><span class="attr">#[cfg(test)]
+<a href=#47 id=47 data-nosnippet>47</a></span><span class="kw">mod </span>tests;
+<a href=#48 id=48 data-nosnippet>48</a>
+<a href=#49 id=49 data-nosnippet>49</a><span class="kw">use </span>num_complex::Complex32;
+<a href=#50 id=50 data-nosnippet>50</a>
+<a href=#51 id=51 data-nosnippet>51</a><span class="kw">use </span>normal::box_muller;
+<a href=#52 id=52 data-nosnippet>52</a><span class="kw">use </span>philox::Key;
+<a href=#53 id=53 data-nosnippet>53</a>
+<a href=#54 id=54 data-nosnippet>54</a><span class="doccomment">/// The top byte of the key's second word names what the stream is for, so
+<a href=#55 id=55 data-nosnippet>55</a>/// later corruptions (gains, fBM screens) draw from streams disjoint from
+<a href=#56 id=56 data-nosnippet>56</a>/// thermal noise under the same seed.
+<a href=#57 id=57 data-nosnippet>57</a></span><span class="kw">const </span>PURPOSE_THERMAL_NOISE: u32 = <span class="number">0x01</span>;
+<a href=#58 id=58 data-nosnippet>58</a>
+<a href=#59 id=59 data-nosnippet>59</a><span class="doccomment">/// Application ordinals share the key word with the purpose byte, so a term
+<a href=#60 id=60 data-nosnippet>60</a>/// can be applied at most this many times.
+<a href=#61 id=61 data-nosnippet>61</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>MAXIMUM_APPLICATIONS: u32 = <span class="number">1 </span>&lt;&lt; <span class="number">24</span>;
+<a href=#62 id=62 data-nosnippet>62</a>
+<a href=#63 id=63 data-nosnippet>63</a><span class="doccomment">/// One application of a noise term: the noise one `corrupt` adds for one
+<a href=#64 id=64 data-nosnippet>64</a>/// `setnoise` term.
+<a href=#65 id=65 data-nosnippet>65</a></span><span class="attr">#[derive(Debug, Clone, Copy, PartialEq)]
+<a href=#66 id=66 data-nosnippet>66</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>NoiseApplication {
+<a href=#67 id=67 data-nosnippet>67</a>    <span class="doccomment">/// The seed in force when the term was set (`sm.setseed`).
+<a href=#68 id=68 data-nosnippet>68</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) seed: i32,
+<a href=#69 id=69 data-nosnippet>69</a>    <span class="doccomment">/// σ of each real and imaginary draw, Jy, held as CASA holds it.
+<a href=#70 id=70 data-nosnippet>70</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) sigma_jy: f32,
+<a href=#71 id=71 data-nosnippet>71</a>    <span class="doccomment">/// How many times the term had been applied before; below
+<a href=#72 id=72 data-nosnippet>72</a>    /// [`MAXIMUM_APPLICATIONS`].
+<a href=#73 id=73 data-nosnippet>73</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) ordinal: u32,
+<a href=#74 id=74 data-nosnippet>74</a>}
+<a href=#75 id=75 data-nosnippet>75</a>
+<a href=#76 id=76 data-nosnippet>76</a><span class="kw">impl </span>NoiseApplication {
+<a href=#77 id=77 data-nosnippet>77</a>    <span class="kw">fn </span>key(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Key {
+<a href=#78 id=78 data-nosnippet>78</a>        <span class="macro">debug_assert!</span>(<span class="self">self</span>.ordinal &lt; MAXIMUM_APPLICATIONS);
+<a href=#79 id=79 data-nosnippet>79</a>        [
+<a href=#80 id=80 data-nosnippet>80</a>            <span class="self">self</span>.seed <span class="kw">as </span>u32,
+<a href=#81 id=81 data-nosnippet>81</a>            (PURPOSE_THERMAL_NOISE &lt;&lt; <span class="number">24</span>) | <span class="self">self</span>.ordinal,
+<a href=#82 id=82 data-nosnippet>82</a>        ]
+<a href=#83 id=83 data-nosnippet>83</a>    }
+<a href=#84 id=84 data-nosnippet>84</a>
+<a href=#85 id=85 data-nosnippet>85</a>    <span class="doccomment">/// Add this application's noise to the cell of MAIN row `row`:
+<a href=#86 id=86 data-nosnippet>86</a>    /// `correlations × channels` samples, correlation fastest. An
+<a href=#87 id=87 data-nosnippet>87</a>    /// autocorrelation row gets real draws only.
+<a href=#88 id=88 data-nosnippet>88</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>add_to_row(
+<a href=#89 id=89 data-nosnippet>89</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#90 id=90 data-nosnippet>90</a>        row: u64,
+<a href=#91 id=91 data-nosnippet>91</a>        autocorrelation: bool,
+<a href=#92 id=92 data-nosnippet>92</a>        correlations: usize,
+<a href=#93 id=93 data-nosnippet>93</a>        cell: <span class="kw-2">&amp;mut </span>[Complex32],
+<a href=#94 id=94 data-nosnippet>94</a>    ) {
+<a href=#95 id=95 data-nosnippet>95</a>        <span class="comment">// Adding σ·N with σ = 0 changes nothing but the sign of a zero.
+<a href=#96 id=96 data-nosnippet>96</a>        </span><span class="kw">if </span><span class="self">self</span>.sigma_jy == <span class="number">0.0 </span>|| correlations == <span class="number">0 </span>{
+<a href=#97 id=97 data-nosnippet>97</a>            <span class="kw">return</span>;
+<a href=#98 id=98 data-nosnippet>98</a>        }
+<a href=#99 id=99 data-nosnippet>99</a>        <span class="kw">let </span>sigma = f64::from(<span class="self">self</span>.sigma_jy);
+<a href=#100 id=100 data-nosnippet>100</a>        <span class="kw">let </span>key = <span class="self">self</span>.key();
+<a href=#101 id=101 data-nosnippet>101</a>        <span class="kw">for </span>(channel, samples) <span class="kw">in </span>cell.chunks_exact_mut(correlations).enumerate() {
+<a href=#102 id=102 data-nosnippet>102</a>            <span class="kw">for </span>(pair, slots) <span class="kw">in </span>samples.chunks_mut(<span class="number">2</span>).enumerate() {
+<a href=#103 id=103 data-nosnippet>103</a>                <span class="kw">let </span>words = philox::philox4x32_10(counter(row, channel, pair), key);
+<a href=#104 id=104 data-nosnippet>104</a>                <span class="kw">for </span>(slot, sample) <span class="kw">in </span>slots.iter_mut().enumerate() {
+<a href=#105 id=105 data-nosnippet>105</a>                    <span class="kw">let </span>(re, im) = box_muller(words[<span class="number">2 </span>* slot], words[<span class="number">2 </span>* slot + <span class="number">1</span>]);
+<a href=#106 id=106 data-nosnippet>106</a>                    sample.re += (re * sigma) <span class="kw">as </span>f32;
+<a href=#107 id=107 data-nosnippet>107</a>                    <span class="kw">if </span>!autocorrelation {
+<a href=#108 id=108 data-nosnippet>108</a>                        sample.im += (im * sigma) <span class="kw">as </span>f32;
+<a href=#109 id=109 data-nosnippet>109</a>                    }
+<a href=#110 id=110 data-nosnippet>110</a>                }
+<a href=#111 id=111 data-nosnippet>111</a>            }
+<a href=#112 id=112 data-nosnippet>112</a>        }
+<a href=#113 id=113 data-nosnippet>113</a>    }
+<a href=#114 id=114 data-nosnippet>114</a>}
+<a href=#115 id=115 data-nosnippet>115</a>
+<a href=#116 id=116 data-nosnippet>116</a><span class="doccomment">/// The counter of a draw: the MAIN row (two words), the channel, and the
+<a href=#117 id=117 data-nosnippet>117</a>/// correlation pair (correlations 0 and 1 are pair 0, 2 and 3 pair 1).
+<a href=#118 id=118 data-nosnippet>118</a></span><span class="kw">fn </span>counter(row: u64, channel: usize, pair: usize) -&gt; philox::Counter {
+<a href=#119 id=119 data-nosnippet>119</a>    [row <span class="kw">as </span>u32, (row &gt;&gt; <span class="number">32</span>) <span class="kw">as </span>u32, channel <span class="kw">as </span>u32, pair <span class="kw">as </span>u32]
+<a href=#120 id=120 data-nosnippet>120</a>}
+<a href=#121 id=121 data-nosnippet>121</a>
+<a href=#122 id=122 data-nosnippet>122</a><span class="doccomment">/// The four standard normals of one draw, slot 0's (real, imaginary) then
+<a href=#123 id=123 data-nosnippet>123</a>/// slot 1's, as [`NoiseApplication::add_to_row`] uses them.
+<a href=#124 id=124 data-nosnippet>124</a></span><span class="attr">#[cfg(test)]
+<a href=#125 id=125 data-nosnippet>125</a></span><span class="kw">fn </span>standard_normals(
+<a href=#126 id=126 data-nosnippet>126</a>    application: <span class="kw-2">&amp;</span>NoiseApplication,
+<a href=#127 id=127 data-nosnippet>127</a>    row: u64,
+<a href=#128 id=128 data-nosnippet>128</a>    channel: usize,
+<a href=#129 id=129 data-nosnippet>129</a>    pair: usize,
+<a href=#130 id=130 data-nosnippet>130</a>) -&gt; [f64; <span class="number">4</span>] {
+<a href=#131 id=131 data-nosnippet>131</a>    <span class="kw">let </span>words = philox::philox4x32_10(counter(row, channel, pair), application.key());
+<a href=#132 id=132 data-nosnippet>132</a>    <span class="kw">let </span>(a, b) = box_muller(words[<span class="number">0</span>], words[<span class="number">1</span>]);
+<a href=#133 id=133 data-nosnippet>133</a>    <span class="kw">let </span>(c, d) = box_muller(words[<span class="number">2</span>], words[<span class="number">3</span>]);
+<a href=#134 id=134 data-nosnippet>134</a>    [a, b, c, d]
+<a href=#135 id=135 data-nosnippet>135</a>}
+</code></pre></div></section></main></body></html>
