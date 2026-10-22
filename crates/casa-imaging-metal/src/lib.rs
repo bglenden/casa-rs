@@ -117,16 +117,11 @@ pub fn device_bytes() -> u64 {
     }
 }
 
-/// The memory a backend holds for a native-prediction batch of `samples`
-/// samples of `npol` polarizations: the predictions in device memory and,
-/// on the host, the samples that share none and each sample's index among
-/// them (`records::distinct_predictions`).
+/// The device memory a backend's predictions of a native-prediction batch
+/// of `samples` samples of `npol` polarizations hold.
 #[must_use]
 pub const fn batch_bytes(npol: usize, samples: usize) -> u64 {
-    (samples
-        * (npol * size_of::<num_complex::Complex32>()
-            + size_of::<casa_imaging_operator::Placement>()
-            + size_of::<u32>())) as u64
+    (samples * npol * size_of::<num_complex::Complex32>()) as u64
 }
 
 /// Whether this host has a Metal device the backend can use: Metal 3 with

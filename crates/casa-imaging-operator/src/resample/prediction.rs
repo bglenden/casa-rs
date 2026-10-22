@@ -12,9 +12,10 @@ use super::{RowPlacing, locate_sample};
 use crate::backend::{GridBackend, PreparedModelGrids, Work};
 use crate::convolution::ConvolutionFunctionSet;
 use crate::error::OperatorError;
+use crate::geometry::CellLocation;
 use crate::native::{NO_CELL, NativeTarget, NativeTerm, interpolate_terms};
 use crate::operator::MeasurementOperator;
-use crate::sample::{Placement, SampleBlock};
+use crate::sample::{CfKey, Placement, SampleBlock};
 
 /// Reusable buffers for predicting a batch of rows; one per row chunk.
 ///
@@ -32,8 +33,9 @@ pub struct PredictionScratch {
     placements: Vec<Placement>,
     npol: usize,
     predicted: Vec<Complex32>,
-    /// The output or native channel each placement predicts.
-    sources: Vec<usize>,
+    /// The output or native channels the placements predict, row by row:
+    /// several share a placement that reads the same taps.
+    sources: Vec<Source>,
     /// While one row's terms are formed, the batch index of the placement
     /// at each of its output or native channels.
     slots: Vec<u32>,
@@ -61,9 +63,16 @@ impl PredictionScratch {
     /// Bytes [`Self::with_capacity`] allocates.
     #[must_use]
     pub const fn bytes(npol: usize, samples: usize, slots: usize, terms: usize) -> u64 {
-        (samples * (size_of::<Placement>() + npol * size_of::<Complex32>() + size_of::<usize>())
+        (samples * (size_of::<Placement>() + npol * size_of::<Complex32>() + size_of::<Source>())
             + slots * size_of::<u32>()
             + terms * size_of::<NativeTerm>()) as u64
+    }
+
+    /// Samples placed since [`Self::begin`]: one per run of a row's
+    /// channels that read the same taps ([`SpectralResampler::place_prediction`]).
+    #[must_use]
+    pub fn samples(&self) -> usize {
+        self.placements.len()
     }
 
     /// Bytes the scratch's buffers hold now, from their capacities.
@@ -71,7 +80,7 @@ impl PredictionScratch {
     pub fn capacity_bytes(&self) -> u64 {
         (self.placements.capacity() * size_of::<Placement>()
             + self.predicted.capacity() * size_of::<Complex32>()
-            + self.sources.capacity() * size_of::<usize>()
+            + self.sources.capacity() * size_of::<Source>()
             + self.slots.capacity() * size_of::<u32>()
             + self.terms.capacity() * size_of::<NativeTerm>()) as u64
     }
@@ -171,11 +180,62 @@ impl PredictionScratch {
 }
 
 /// One row's degridded samples within a [`PredictionScratch`] batch, from
-/// [`SpectralResampler::place_prediction`].
+/// [`SpectralResampler::place_prediction`]: the range of its channels'
+/// sources.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PlacedRow {
     start: usize,
     end: usize,
+}
+
+/// One output or native channel a row's placement predicts: the channel's
+/// slot in the row and the placement's index in the batch.
+#[derive(Clone, Copy, Debug)]
+struct Source {
+    slot: u32,
+    placement: u32,
+}
+
+/// The largest difference of phase-centre phase, in radians, at which two
+/// samples that read the same taps of the same model share one placement:
+/// 2⁻³⁰, 64 times below the resolution of an `f32` unit phasor (2⁻²⁴), so a
+/// shared prediction differs from the sample's own by less than its
+/// rounding. A row whose phase centre is shifted has phases that change
+/// with every channel by far more, and shares nothing.
+const SHARED_PHASE_RAD: f64 = 1.0 / (1u64 << 30) as f64;
+
+/// What a backend's degrid of a placement reads beside its phasor: its
+/// kernel cell and location on the grid, its plane, its signs of w, its
+/// pointing gradient and, for a model of several terms, its Taylor
+/// variable.
+#[derive(Clone, Copy, PartialEq)]
+struct Gathered {
+    cf: CfKey,
+    location: CellLocation,
+    plane: u32,
+    w_positive: bool,
+    prediction_w_positive: bool,
+    gradient: [u32; 2],
+    spectral: u32,
+}
+
+impl Gathered {
+    /// What `placement`, at `location`, reads for a model of `terms` terms.
+    fn of(placement: &Placement, location: CellLocation, terms: usize) -> Self {
+        Self {
+            cf: placement.cf,
+            location,
+            plane: placement.plane,
+            w_positive: placement.w > 0.0,
+            prediction_w_positive: placement.prediction_w_positive,
+            gradient: placement.gradient.map(f32::to_bits),
+            spectral: if terms > 1 {
+                placement.spectral.to_bits()
+            } else {
+                0
+            },
+        }
+    }
 }
 
 /// The output channels CASA degrids for one row under linear mapping
@@ -341,6 +401,16 @@ impl SpectralResampler {
     /// autocorrelation unless the resampler is
     /// [`Self::predicting_autocorrelations`].
     ///
+    /// A sample that reads the same taps of the same model as the row's
+    /// sample before it ([`Gathered`]), at a phase-centre phase within
+    /// [`SHARED_PHASE_RAD`] of the first of their run, is not placed again:
+    /// its channel reads that sample's prediction. A row's neighbouring
+    /// channels sit a small fraction of a cell apart in uv, so they mostly
+    /// share their kernel's fine offset, and a backend's degrid of a fine
+    /// offset is the same for every sample at it, as CASA's gather reads
+    /// the nearest one: an ALMA row of 4096 channels across 2 GHz placed
+    /// one sample in 45 (#855).
+    ///
     /// # Errors
     ///
     /// A row inconsistent with `operator`.
@@ -358,18 +428,22 @@ impl SpectralResampler {
             sources,
             ..
         } = scratch;
-        let start = placements.len();
+        let start = sources.len();
         if row.row_flag || (!self.autocorrelations && is_autocorrelation(row)) {
             return Ok(PlacedRow { start, end: start });
         }
         let native = row.frequencies_hz;
         let prepared = model.layout().planes();
+        let terms = self.basis.data_terms();
         let mut placing = RowPlacing::new(operator.cf(), operator.geometry(), row);
-        let mut place = |plane: u32, frequency_hz: f64, source: usize| {
+        // The run of samples the last placement serves: what they read, the
+        // first one's phase, and its batch index.
+        let mut run: Option<(Gathered, f64, u32)> = None;
+        let mut place = |plane: u32, frequency_hz: f64, slot: usize| {
             if !prepared.contains(plane) {
                 return;
             }
-            if let Some((placement, _)) = locate_sample(
+            let Some((placement, location)) = locate_sample(
                 operator.cf(),
                 operator.geometry(),
                 self.basis,
@@ -377,10 +451,27 @@ impl SpectralResampler {
                 plane,
                 frequency_hz,
                 &mut placing,
-            ) {
-                placements.push(placement);
-                sources.push(source);
-            }
+            ) else {
+                return;
+            };
+            let gathered = Gathered::of(&placement, location, terms);
+            let placement_index = match run {
+                Some((first, phase, index))
+                    if first == gathered && (placement.phase - phase).abs() <= SHARED_PHASE_RAD =>
+                {
+                    index
+                }
+                _ => {
+                    let index = u32::try_from(placements.len()).expect("a batch fits u32 indices");
+                    placements.push(placement);
+                    run = Some((gathered, placement.phase, index));
+                    index
+                }
+            };
+            sources.push(Source {
+                slot: u32::try_from(slot).expect("a row's channels fit u32"),
+                placement: placement_index,
+            });
         };
         match self.linear_prediction(row) {
             None => {
@@ -406,7 +497,7 @@ impl SpectralResampler {
         }
         Ok(PlacedRow {
             start,
-            end: placements.len(),
+            end: sources.len(),
         })
     }
 
@@ -443,8 +534,8 @@ impl SpectralResampler {
         let mut index_slots = |count: usize| {
             slots.clear();
             slots.resize(count, NO_CELL);
-            for (index, source) in sources[placed.start..placed.end].iter().enumerate() {
-                slots[*source] = (placed.start + index) as u32;
+            for source in &sources[placed.start..placed.end] {
+                slots[source.slot as usize] = source.placement;
             }
         };
         let Some(axis) = self.linear_prediction(row) else {

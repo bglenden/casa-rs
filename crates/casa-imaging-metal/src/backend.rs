@@ -6,9 +6,9 @@ use std::ops::Range;
 
 use casa_imaging_operator::{
     AccumulatorLayout, CellHold, CfKey, ConvolutionFunctionSet, DeviceCells, DeviceFailure,
-    DeviceNativeCells, GridAccumulator, GridBackend, GridScalar, GridStorage, Mode, NO_CELL,
-    NativeModel, NativeSource, NativeTarget, NativeTerm, OperatorError, Placement,
-    PreparedModelGrids, SampleBlock, TapLayout, Tile, Work,
+    DeviceNativeCells, GridAccumulator, GridBackend, GridScalar, GridStorage, Mode, NativeModel,
+    NativeSource, NativeTarget, NativeTerm, OperatorError, PreparedModelGrids, SampleBlock,
+    TapLayout, Tile, Work,
 };
 use num_complex::{Complex32, Complex64};
 use objc2::rc::Retained;
@@ -20,8 +20,8 @@ use objc2_metal::{
 
 use crate::device::{Buffer, Device, Pipeline};
 use crate::records::{
-    self, KnownTable, KnownTables, MAX_POLS, MAX_TERMS, Params, SampleRecord, TableRecord,
-    TapsKind, Targets, permutation_stride, prepare,
+    KnownTable, KnownTables, MAX_POLS, MAX_TERMS, Params, SampleRecord, TableRecord, TapsKind,
+    Targets, permutation_stride, prepare,
 };
 use crate::{MAX_SUB, RING, SPLIT};
 
@@ -74,10 +74,6 @@ pub struct MetalBackend<'cf> {
     /// The predictions of a [`Work::PredictNative`] batch, which stay on
     /// the device for the native model.
     batch: Buffer,
-    /// A native prediction's distinct samples, and each sample's index
-    /// among them ([`records::distinct_predictions`]).
-    distinct: Vec<Placement>,
-    batch_of: Vec<u32>,
 }
 
 /// What a backend was asked to dispatch over its life, logged once when it
@@ -91,9 +87,6 @@ struct Usage {
     applies: u64,
     samples: u64,
     predicted: u64,
-    /// Samples of native predictions that shared another's prediction
-    /// ([`records::distinct_predictions`]), not among `samples`.
-    shared: u64,
     sub_blocks: u64,
     prepare: std::time::Duration,
     wait: std::time::Duration,
@@ -244,8 +237,6 @@ impl<'cf> MetalBackend<'cf> {
             stage_timing,
             defer_grid: false,
             batch: device.buffer(0)?,
-            distinct: Vec::new(),
-            batch_of: Vec::new(),
         })
     }
 
@@ -315,14 +306,6 @@ impl<'cf> MetalBackend<'cf> {
             layout,
             GridStorage::Device(cells),
         ))
-    }
-
-    /// Samples of this backend's native predictions that shared the gather
-    /// of the sample before them ([`records::distinct_predictions`]), over
-    /// its life.
-    #[must_use]
-    pub fn shared_samples(&self) -> u64 {
-        self.usage.shared
     }
 
     /// Bytes this backend holds for its kernel copies now: the device
@@ -935,7 +918,6 @@ impl Drop for MetalBackend<'_> {
             applies,
             samples,
             predicted,
-            shared,
             sub_blocks,
             prepare,
             wait,
@@ -950,7 +932,6 @@ impl Drop for MetalBackend<'_> {
                 applies,
                 samples,
                 predicted,
-                shared,
                 sub_blocks,
                 kernel_cells = self.tables.len(),
                 prepare_seconds = prepare.as_secs_f64(),
@@ -1120,12 +1101,11 @@ impl MetalBackend<'_> {
         )
     }
 
-    /// [`Work::PredictNative`]: predict the batch's distinct samples
-    /// ([`records::distinct_predictions`]) into the backend's batch buffer,
-    /// then form the model at each term's cell from the prediction its
-    /// samples share, leaving both running: device work that reads the
-    /// cells later runs after them (one queue, tracked buffers), and their
-    /// slots are retired on reuse or by [`Self::complete`].
+    /// [`Work::PredictNative`]: predict the batch into the backend's batch
+    /// buffer, then form the model at each term's cell, leaving both
+    /// running: device work that reads the cells later runs after them
+    /// (one queue, tracked buffers), and their slots are retired on reuse
+    /// or by [`Self::complete`].
     fn predict_native(
         &mut self,
         block: &SampleBlock<'_>,
@@ -1151,19 +1131,21 @@ impl MetalBackend<'_> {
             model: Some(grids.layout()),
         };
         let mut params = self.params(block, &targets, false);
-        let (mut distinct, mut batch_of) = (
-            std::mem::take(&mut self.distinct),
-            std::mem::take(&mut self.batch_of),
-        );
-        let predicted = if block.is_empty() {
-            distinct.clear();
-            batch_of.clear();
-            Ok(())
-        } else {
-            self.predict_distinct(block, grids, &targets, params, &mut distinct, &mut batch_of)
-        };
-        (self.distinct, self.batch_of) = (distinct, batch_of);
-        predicted?;
+        if !block.is_empty() {
+            let buffer = self.model_copy(grids)?;
+            self.run(
+                Kernel::PredictNative,
+                std::slice::from_ref(block),
+                &targets,
+                None,
+                None,
+                Some(buffer),
+                None,
+                Readback::None,
+                true,
+                params,
+            )?;
+        }
         params.add = u32::from(add);
         for part in terms.chunks(MAX_SUB) {
             let slot = self.next;
@@ -1174,26 +1156,10 @@ impl MetalBackend<'_> {
             if ring_slot.sources.bytes < size_of_val(part) {
                 ring_slot.sources = self.device.buffer(size_of_val(part))?;
             }
-            // Each term reads the prediction its samples share.
-            let shared = |index: u32| {
-                if index == NO_CELL {
-                    index
-                } else {
-                    self.batch_of[index as usize]
-                }
-            };
-            for (target, term) in ring_slot
+            ring_slot
                 .sources
                 .slice_mut::<NativeTerm>(part.len())
-                .iter_mut()
-                .zip(part)
-            {
-                *target = NativeTerm {
-                    low: shared(term.low),
-                    high: shared(term.high),
-                    ..*term
-                };
-            }
+                .copy_from_slice(part);
             self.usage.prepare += started.elapsed();
             self.usage.sub_blocks += 1;
             self.commit(
@@ -1208,49 +1174,6 @@ impl MetalBackend<'_> {
             self.ring[slot].reads_back = false;
         }
         Ok(())
-    }
-
-    /// Predict the distinct samples of `block` into the batch buffer, with
-    /// `distinct` and `batch_of` as their scratch.
-    fn predict_distinct(
-        &mut self,
-        block: &SampleBlock<'_>,
-        grids: &PreparedModelGrids,
-        targets: &Targets<'_>,
-        params: Params,
-        distinct: &mut Vec<Placement>,
-        batch_of: &mut Vec<u32>,
-    ) -> Result<(), OperatorError> {
-        let buffer = self.model_copy(grids)?;
-        self.learn(block, 0..block.len(), TapsKind::Imaging)?;
-        records::distinct_predictions(
-            &self.known,
-            block,
-            targets.geometry(),
-            params.term_count,
-            distinct,
-            batch_of,
-        );
-        self.usage.shared += (block.len() - distinct.len()) as u64;
-        let distinct = SampleBlock {
-            placements: distinct,
-            values: &[],
-            weights: &[],
-            sources: &[],
-            npol: block.npol,
-        };
-        self.run(
-            Kernel::PredictNative,
-            std::slice::from_ref(&distinct),
-            targets,
-            None,
-            None,
-            Some(buffer),
-            None,
-            Readback::None,
-            true,
-            params,
-        )
     }
 
     /// [`Work::NativeResidualGrid`]: spread each sample's values less the
