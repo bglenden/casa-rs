@@ -352,7 +352,8 @@ fn main() {
         .with(
             Targets::new()
                 .with_target("casa_simulation::write", tracing::Level::INFO)
-                .with_target("casa_imaging::metal_stage_timing", tracing::Level::INFO),
+                .with_target("casa_imaging::metal_stage_timing", tracing::Level::INFO)
+                .with_target("casa_tables::streamed_tiled_write", tracing::Level::DEBUG),
         )
         .init();
     let resources = SessionResources::from_controls(&controls).expect("session resources");
