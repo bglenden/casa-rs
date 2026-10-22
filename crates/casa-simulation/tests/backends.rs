@@ -18,8 +18,12 @@
 //! 4 correlations exactly zero, as the CPU does, and the pass reports that
 //! it predicted on Metal.
 //!
-//! Noise is drawn on the host, so a session that only corrupts writes the
-//! same MeasurementSet whatever backend it asks for.
+//! A session that only corrupts writes the same MeasurementSet whatever
+//! backend it asks for: rows Metal does not predict get the host's noise.
+//! Rows it predicts get their noise on the device, added to the model there
+//! (#855), with the host's draws: with one noise term, a Metal session
+//! that predicts and corrupts writes, bit for bit, the sum of the Metal
+//! session that only predicts and the CPU session that only corrupts.
 //!
 //! On a host without a Metal device the Metal comparisons print `skipped:
 //! no Metal device` and pass: run them outside command sandboxes on Apple
@@ -249,4 +253,88 @@ fn noise_is_the_same_whatever_backend_is_asked_for() {
             "metal writes the CPU's MeasurementSet"
         );
     }
+}
+
+/// A session of 4 linear correlations with `backend` that observes a scan
+/// of several write batches, predicts `model` into it when given one and
+/// corrupts it with one noise term when `corrupt`, then observes a scan it
+/// neither predicts nor corrupts; MAIN read back with the pass's summary.
+fn predicted_and_corrupted(
+    path: &Path,
+    model: Option<&Path>,
+    corrupt: bool,
+    backend: BackendRequest,
+) -> (Vec<Row>, PassSummary) {
+    let mut sm = session_with_channels(path, "ALMA", "XX XY YX YY", CHANNELS, resources(backend));
+    let long_s = 10.0 * LONG_SCAN_INTEGRATIONS as f64;
+    sm.observe(&scan("target", 0.0, long_s)).expect("observe");
+    if let Some(model) = model {
+        sm.set_vp(&VoltagePatternSpec::default()).expect("setvp");
+        sm.predict(&predict_spec(model, false)).expect("predict");
+    }
+    if corrupt {
+        sm.set_noise(&NoiseSpec {
+            mode: "simplenoise".to_string(),
+            simple_noise_jy: 0.1,
+            on_the_fly: true,
+        })
+        .expect("setnoise");
+        sm.corrupt().expect("corrupt");
+    }
+    sm.observe(&scan("offset", long_s, long_s + 500.0))
+        .expect("observe");
+    let ((), summary) = capture(|| sm.close().expect("close"));
+    (read_main(path).0, summary.expect("the pass's summary"))
+}
+
+#[test]
+fn metal_adds_the_hosts_noise_to_the_model_on_the_device() {
+    if !metal_device() {
+        return;
+    }
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let path = |name: &str| directory.path().join(name);
+    let model = cube(directory.path());
+    let (both, both_pass) =
+        predicted_and_corrupted(&path("both.ms"), Some(&model), true, BackendRequest::Metal);
+    let (model_only, model_pass) = predicted_and_corrupted(
+        &path("model.ms"),
+        Some(&model),
+        false,
+        BackendRequest::Metal,
+    );
+    let (noise, _) = predicted_and_corrupted(&path("noise.ms"), None, true, BackendRequest::Cpu);
+    assert_eq!(both_pass.backend, "Metal", "the pass predicted on Metal");
+    assert!(both_pass.batches > 1, "{both_pass:?}");
+    // The device adds the noise as it predicts, so nothing runs beside.
+    assert_eq!(both_pass.beside_rows, 0, "{both_pass:?}");
+    assert_eq!(both_pass.block_rows, model_pass.block_rows, "{both_pass:?}");
+    assert_eq!(both.len(), model_only.len(), "rows");
+    assert_eq!(both.len(), noise.len(), "rows");
+    let mut predicted = 0;
+    for (index, ((both, model), noise)) in both.iter().zip(&model_only).zip(&noise).enumerate() {
+        predicted += usize::from(model.data.iter().any(|sample| !zero(sample)));
+        for (sample, ((found, model), noise)) in both
+            .data
+            .iter()
+            .zip(&model.data)
+            .zip(&noise.data)
+            .enumerate()
+        {
+            // One term rounds once on either side: (model + noise).
+            let expected = model + noise;
+            assert!(
+                found.re.to_bits() == expected.re.to_bits()
+                    && found.im.to_bits() == expected.im.to_bits(),
+                "row {index}, sample {sample}: {found} against model {model} + noise {noise}"
+            );
+        }
+    }
+    assert!(predicted > 0, "the model reaches the rows");
+    assert!(
+        noise
+            .iter()
+            .any(|row| row.data.iter().any(|sample| !zero(sample))),
+        "the noise reaches the rows"
+    );
 }

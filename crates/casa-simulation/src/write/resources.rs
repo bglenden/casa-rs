@@ -14,12 +14,13 @@
 //!    integrations it spans, each worker's scratch and, when the session
 //!    predicts, the predictor, its block of native rows and (on Metal) the
 //!    device copies of the model grids. A block is the whole batch, and a
-//!    session that also corrupts has a second batch of cells to predict
-//!    into beside the noise, when that fits with the policy's streaming
-//!    workers; otherwise blocks are small, prediction and noise run one
-//!    after the other, and as many workers as fit what is then free are
-//!    admitted (#737's rule: workers shrink first). With one worker that
-//!    does not fit, `close` is refused.
+//!    session that also corrupts and predicts on the CPU has a second batch
+//!    of cells to predict into beside the noise (on Metal the device adds
+//!    the noise), when that fits with the policy's streaming workers;
+//!    otherwise blocks are small, prediction and noise run one after the
+//!    other, and as many workers as fit what is then free are admitted
+//!    (#737's rule: workers shrink first). With one worker that does not
+//!    fit, `close` is refused.
 //!
 //! The model grids themselves were admitted by `predict`, and are held.
 //! A refusal is a typed [`Admission`] carried by the session error.
@@ -129,7 +130,8 @@ pub(super) fn admit_main_write(
     // A batch predicted as one block, and beside its noise when the session
     // corrupts, when that fits with the policy's workers; else small blocks
     // one after the noise, and the workers shrink first (#737).
-    let beside_rows = if prediction.is_some() && shape.corrupts {
+    let beside_rows = if prediction.is_some_and(|stage| !stage.noises_on_device()) && shape.corrupts
+    {
         batch_rows
     } else {
         0

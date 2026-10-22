@@ -21,12 +21,15 @@
 //! 4. **Send.** The writer's thread writes the batch while the next one is
 //!    computed.
 //!
-//! When the session both predicts and corrupts and the budget holds a
-//! second batch of cells ([`super::resources`]), steps 2 and 3 run together
-//! instead: the model is predicted into that buffer while the noise is
-//! added to the zeroed DATA, and then the model is added to DATA. On Metal
-//! the noise then fills the workers the device leaves idle (#855). DATA is
-//! the same sum, the model and noise added in another order.
+//! On Metal the device adds the noise of the rows it predicts as it
+//! predicts them, before their model is copied out
+//! ([`super::prediction`]), and step 3 adds noise only to the rows no
+//! `predict` covers. On the CPU, when the session both predicts and
+//! corrupts and the budget holds a second batch of cells
+//! ([`super::resources`]), steps 2 and 3 run together instead: the model is
+//! predicted into that buffer while the noise is added to the zeroed DATA,
+//! and then the model is added to DATA. DATA is the same sum either way,
+//! the model and noise added in another order.
 //!
 //! The draws and, on the CPU, the predictions depend on no worker, batch or
 //! block, so on the CPU the MeasurementSet is bitwise the same for any
@@ -184,16 +187,23 @@ impl<'s> Pipeline<'s> {
                     let rows = &self.rows;
                     stage.predict(
                         rows.team,
-                        rows.scans,
-                        &rows.rows,
+                        (rows.scans, &rows.rows),
                         &runs,
                         first,
                         &mut batch.data,
+                        |scan| rows.plan.noise_for_scan(scan),
                     )?;
                 }
                 self.times.predict += started.elapsed();
                 let started = Instant::now();
-                self.rows.fill(writer, &mut batch, first, rows)?;
+                // A run the stage predicted on the device has its noise.
+                let prediction = &self.prediction;
+                let noised = |scan| {
+                    prediction
+                        .as_ref()
+                        .is_some_and(|stage| stage.noises_on_device() && stage.predicts(scan))
+                };
+                self.rows.fill(writer, &mut batch, (first, rows), &noised)?;
                 self.times.cells += started.elapsed();
             }
             let started = Instant::now();
@@ -207,13 +217,14 @@ impl<'s> Pipeline<'s> {
     }
 
     /// Whether the batch's `rows` rows, in `runs`, are predicted beside
-    /// their noise: the model buffer holds them, and the batch has rows
-    /// predicted and rows with noise.
+    /// their noise: the stage adds no noise of its own, the model buffer
+    /// holds them, and the batch has rows predicted and rows with noise.
     fn beside(&self, runs: &[(usize, usize, usize)], rows: usize) -> bool {
         let Some(stage) = &self.prediction else {
             return false;
         };
-        rows * self.rows.samples <= self.model.capacity()
+        !stage.noises_on_device()
+            && rows * self.rows.samples <= self.model.capacity()
             && runs.iter().any(|&(scan, ..)| stage.predicts(scan))
             && runs
                 .iter()
@@ -243,9 +254,20 @@ impl<'s> Pipeline<'s> {
         // Every cell of a predicted run is written; the others are not read.
         model.resize(rows * state.samples, Complex32::new(0.0, 0.0));
         let state = &*state;
+        // The stage adds no noise beside it (`beside`).
         let (filled, predicted) = state.team.join(
-            || state.fill(writer, batch, first_row, rows),
-            || stage.predict(state.team, state.scans, &state.rows, runs, first_row, model),
+            || state.fill(writer, batch, (first_row, rows), &|_| false),
+            || {
+                let none: &[NoiseApplication] = &[];
+                stage.predict(
+                    state.team,
+                    (state.scans, &state.rows),
+                    runs,
+                    first_row,
+                    model,
+                    |_| none,
+                )
+            },
         );
         filled?;
         predicted?;
@@ -294,14 +316,15 @@ impl Rows<'_> {
     }
 
     /// Fill the batch's `rows` rows, the first of which is MAIN row
-    /// `first_row`: the noise of DATA, the per-row columns, and the scalar
-    /// columns of the integrations computed for the batch.
+    /// `first_row`: the noise of DATA but for the scans `noised` already
+    /// has, the per-row columns, and the scalar columns of the integrations
+    /// computed for the batch.
     fn fill(
         &self,
         writer: &mut MainWriter,
         batch: &mut VisibilityColumns,
-        first_row: u64,
-        rows: usize,
+        (first_row, rows): (u64, usize),
+        noised: &dyn Fn(usize) -> bool,
     ) -> SimulatorResult<()> {
         let VisibilityColumns {
             data,
@@ -317,7 +340,7 @@ impl Rows<'_> {
             weight,
             sigma,
         })];
-        self.noise_jobs(first_row, data, rows, &mut jobs);
+        self.noise_jobs((first_row, rows), data, noised, &mut jobs);
         let (scans, integrations, geometry) = (self.scans, &self.integrations, &self.rows);
         let (correlations, samples) = (self.correlations, self.samples);
         self.team.for_each_mut(&mut jobs, |_, job| match job {
@@ -336,12 +359,12 @@ impl Rows<'_> {
     }
 
     /// Split the batch's `rows` rows of `data` into noise jobs, runs of one
-    /// scan with noise.
+    /// scan with noise that `noised` does not already have.
     fn noise_jobs<'a>(
         &'a self,
-        first_row: u64,
+        (first_row, rows): (u64, usize),
         data: &'a mut [Complex32],
-        rows: usize,
+        noised: &dyn Fn(usize) -> bool,
         jobs: &mut Vec<BatchJob<'a>>,
     ) {
         let job_rows = self.job_rows(rows);
@@ -350,7 +373,7 @@ impl Rows<'_> {
             let (segment, after) = rest.split_at_mut(count * self.samples);
             rest = after;
             let noise = self.plan.noise_for_scan(scan);
-            if noise.is_empty() {
+            if noise.is_empty() || noised(scan) {
                 continue;
             }
             for (index, cells) in segment.chunks_mut(job_rows * self.samples).enumerate() {

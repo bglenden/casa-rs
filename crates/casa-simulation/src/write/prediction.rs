@@ -14,6 +14,11 @@
 //! batch when the budget allows, else about [`SMALL_BLOCK_BYTES`] of native
 //! rows.
 //!
+//! On Metal the stage also corrupts the rows it predicts: the device adds
+//! their scans' noise to the model in its memory, with the draws of
+//! `casa_numerics::cell_noise`, before the model is copied into DATA, so
+//! the host makes no pass of its own over those cells (#855).
+//!
 //! The rows are as `observe` writes them: the row flag is FLAG_ROW, every
 //! sample is unflagged with unit weight, and an autocorrelation predicts the
 //! model's zero spacing (`GridFT`'s `usezero`). On the CPU a row's
@@ -25,13 +30,14 @@ use std::convert::Infallible;
 
 use casa_imaging_operator::{RowContext, RowSpectrum};
 use casa_imaging_runtime::pass::{
-    BackendChoice, BlockPredictor, BlockShape, DomainProjection, NativeBlock, NativeRowHeader,
-    PredictionDomain, RowAddress, WorkerTeam,
+    BackendChoice, BlockPredictor, BlockShape, DeviceNoise, DomainProjection, MetalNoiseRow,
+    MetalNoiseTerm, NativeBlock, NativeRowHeader, PredictionDomain, RowAddress, WorkerTeam,
 };
 use casa_ms::derived::GridFtProjection;
 use casa_types::Complex32;
 
 use super::geometry::RowGeometry;
+use crate::corrupt::NoiseApplication;
 use crate::session::Simulator;
 use crate::session::error::{SimulatorError, SimulatorResult};
 use crate::session::observe::Scan;
@@ -74,6 +80,10 @@ pub(super) struct PredictionStage<'s> {
     block: NativeBlock,
     /// Time spent filling blocks of native rows.
     fill_time: std::time::Duration,
+    /// A run's noise terms and its block's rows, as the device reads them
+    /// when the stage [`Self::noises_on_device`].
+    noise_terms: Vec<MetalNoiseTerm>,
+    noise_rows: Vec<MetalNoiseRow>,
     projections: Vec<DomainProjection>,
     /// The predictor of the segment last predicted.
     predictor: Option<(usize, BlockPredictor<'s>)>,
@@ -154,6 +164,10 @@ impl<'s> PredictionStage<'s> {
             .iter()
             .map(|prediction| prediction.grid_bytes())
             .sum();
+        let noise_terms = (0..session.scans().len())
+            .map(|scan| plan.noise_for_scan(scan).len())
+            .max()
+            .unwrap_or(0);
         Ok(Some(Self {
             backend,
             correlations,
@@ -166,6 +180,8 @@ impl<'s> PredictionStage<'s> {
             workers: 0,
             block: NativeBlock::default(),
             fill_time: std::time::Duration::ZERO,
+            noise_terms: Vec::with_capacity(noise_terms),
+            noise_rows: Vec::new(),
             projections: Vec::new(),
             predictor: None,
             channel_indices: (0..channels as u32).collect(),
@@ -222,7 +238,9 @@ impl<'s> PredictionStage<'s> {
     /// with `workers` workers: the predictor of the segment that needs most
     /// ([`BlockPredictor::bytes`]), one block of native rows and each row's
     /// projections, and on Metal the device copy of every model grid
-    /// ([`casa_imaging_operator::PreparedModelGrids::device_copy`]).
+    /// ([`casa_imaging_operator::PreparedModelGrids::device_copy`]) and a
+    /// block's noise rows and the most noise terms of a scan, here and in
+    /// the predictor ([`BlockPredictor::noise_bytes`]).
     pub(super) fn bytes(&self, rows: usize, workers: usize) -> u64 {
         let predictor = self
             .segments
@@ -238,13 +256,20 @@ impl<'s> PredictionStage<'s> {
             .max()
             .unwrap_or(0);
         let domains = self.largest_domains();
-        let block = self.block_shape(rows, domains).bytes();
+        let shape = self.block_shape(rows, domains);
         let projections = (domains * size_of::<DomainProjection>()) as u64;
+        let terms = self.noise_terms.capacity();
         let device = match self.backend {
             BackendChoice::Cpu => 0,
-            BackendChoice::Metal => self.grid_bytes,
+            BackendChoice::Metal => {
+                // The noise's rows and terms here, and the predictor's copy.
+                let noise = rows * size_of::<MetalNoiseRow>() + terms * size_of::<MetalNoiseTerm>();
+                self.grid_bytes
+                    + noise as u64
+                    + BlockPredictor::noise_bytes(self.backend, shape, terms)
+            }
         };
-        predictor + block + projections + device
+        predictor + shape.bytes() + projections + device
     }
 
     /// Allocate the block of `rows` rows, predicted with `workers` workers,
@@ -255,20 +280,32 @@ impl<'s> PredictionStage<'s> {
         let domains = self.largest_domains();
         self.block = NativeBlock::with_capacity(self.block_shape(self.block_rows, domains));
         self.projections = Vec::with_capacity(domains);
+        if self.noises_on_device() {
+            self.noise_rows = Vec::with_capacity(self.block_rows);
+        }
+    }
+
+    /// Whether the stage adds a predicted row's noise itself, on the
+    /// device, as it predicts the row ([`Self::predict`]): on Metal, where
+    /// the model is formed in device memory.
+    pub(super) fn noises_on_device(&self) -> bool {
+        self.backend == BackendChoice::Metal
     }
 
     /// Predict each run of `runs`, (scan, first row, rows) of `rows`, into
     /// `data` (`correlations × channels` samples a row, the rows of `rows`
     /// from the first); the batch's first row is MAIN row `first_row`. Runs
-    /// of scans no step covers are left as they are.
-    pub(super) fn predict(
+    /// of scans no step covers are left as they are. When the stage
+    /// [`Self::noises_on_device`], a predicted run also gets its scan's
+    /// noise, `noise(scan)`, on the device before it is copied out.
+    pub(super) fn predict<'n>(
         &mut self,
         team: &WorkerTeam,
-        scans: &[Scan],
-        rows: &[RowGeometry],
+        (scans, rows): (&[Scan], &[RowGeometry]),
         runs: &[(usize, usize, usize)],
         first_row: u64,
         data: &mut [Complex32],
+        noise: impl Fn(usize) -> &'n [NoiseApplication],
     ) -> SimulatorResult<()> {
         let samples = self.correlations * self.channels;
         for &(scan, start, count) in runs {
@@ -276,6 +313,17 @@ impl<'s> PredictionStage<'s> {
                 continue;
             };
             self.select(segment)?;
+            self.noise_terms.clear();
+            if self.noises_on_device() {
+                self.noise_terms
+                    .extend(noise(scan).iter().map(|application| {
+                        let noise = application.noise();
+                        MetalNoiseTerm {
+                            key: noise.key(),
+                            sigma: noise.sigma(),
+                        }
+                    }));
+            }
             let scan = &scans[scan];
             let end = start + count;
             let mut block_start = start;
@@ -292,13 +340,27 @@ impl<'s> PredictionStage<'s> {
                 let Some((_, predictor)) = &mut self.predictor else {
                     unreachable!("selected above");
                 };
-                predictor
-                    .predict_into(
-                        &self.block,
-                        team,
-                        &mut data[block_start * samples..block_end * samples],
-                    )
-                    .map_err(|error| SimulatorError::raised(format!("predict: {error}")))?;
+                let out = &mut data[block_start * samples..block_end * samples];
+                let predicted = if self.noise_terms.is_empty() {
+                    predictor.predict_into(&self.block, team, out)
+                } else {
+                    self.noise_rows.clear();
+                    self.noise_rows.extend(
+                        rows[block_start..block_end]
+                            .iter()
+                            .zip(first_row + block_start as u64..)
+                            .map(|(row, number)| MetalNoiseRow {
+                                row: [number as u32, (number >> 32) as u32],
+                                autocorrelation: u32::from(row.antenna1 == row.antenna2),
+                            }),
+                    );
+                    let noise = DeviceNoise {
+                        rows: &self.noise_rows,
+                        terms: &self.noise_terms,
+                    };
+                    predictor.predict_into_with_noise(&self.block, team, out, noise)
+                };
+                predicted.map_err(|error| SimulatorError::raised(format!("predict: {error}")))?;
                 block_start = block_end;
             }
         }
