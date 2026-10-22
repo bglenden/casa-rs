@@ -275,6 +275,12 @@ fn degridded_channels(axis: SpectralAxis, native: &[f64]) -> Option<std::ops::Ra
     Some(first as u32..=maximum as u32)
 }
 
+/// Whether `frequencies_hz` strictly increase or strictly decrease.
+fn monotonic(frequencies_hz: &[f64]) -> bool {
+    frequencies_hz.windows(2).all(|pair| pair[0] < pair[1])
+        || frequencies_hz.windows(2).all(|pair| pair[0] > pair[1])
+}
+
 /// Bit `p` set for each flagged correlation `p` of `channel`.
 fn flag_bits(row: &NativeRow<'_>, npol: usize, channel: usize) -> u32 {
     row.flags[channel * npol..(channel + 1) * npol]
@@ -436,6 +442,17 @@ impl SpectralResampler {
         let prepared = model.layout().planes();
         let terms = self.basis.data_terms();
         let mut placing = RowPlacing::new(operator.cf(), operator.geometry(), row);
+        if matches!(self.sampling, Sampling::Direct | Sampling::Nearest(_))
+            && terms == 1
+            && placing.uniform.is_some()
+            && monotonic(native)
+        {
+            self.place_runs(operator, model, row, &mut placing, placements, sources);
+            return Ok(PlacedRow {
+                start,
+                end: sources.len(),
+            });
+        }
         // The run of samples the last placement serves: what they read, the
         // first one's phase, and its batch index.
         let mut run: Option<(Gathered, f64, u32)> = None;
@@ -499,6 +516,97 @@ impl SpectralResampler {
             start,
             end: sources.len(),
         })
+    }
+
+    /// [`Self::place_prediction`] of `row`'s channels under direct or
+    /// nearest sampling with one kernel cell and one term, in the runs the
+    /// channel-by-channel placement finds, placing each run's first
+    /// channel. A channel's plane, its location on the grid and its
+    /// phase-centre phase move monotonically with its frequency, which
+    /// `row`'s channels order, so once a channel reads other taps than its
+    /// run's first, or its phase has moved past [`SHARED_PHASE_RAD`], every
+    /// later one does too. A run's end is then found by locating a few
+    /// channels rather than each: from the last run's length, then doubling
+    /// and halving.
+    fn place_runs(
+        &self,
+        operator: &MeasurementOperator,
+        model: &PreparedModelGrids,
+        row: &NativeRow<'_>,
+        placing: &mut RowPlacing,
+        placements: &mut Vec<Placement>,
+        sources: &mut Vec<Source>,
+    ) {
+        let native = row.frequencies_hz;
+        let channels = native.len();
+        let prepared = model.layout().planes();
+        let mut locate = |channel: usize| {
+            let plane = match self.sampling {
+                Sampling::Direct => Some(0),
+                Sampling::Nearest(axis) | Sampling::Linear(axis) => {
+                    axis.nearest_channel(native[channel])
+                }
+            }
+            .filter(|plane| prepared.contains(*plane))?;
+            locate_sample(
+                operator.cf(),
+                operator.geometry(),
+                self.basis,
+                row,
+                plane,
+                native[channel],
+                placing,
+            )
+        };
+        let (mut channel, mut length) = (0, 1);
+        while channel < channels {
+            let Some((placement, location)) = locate(channel) else {
+                channel += 1;
+                continue;
+            };
+            let (gathered, phase) = (Gathered::of(&placement, location, 1), placement.phase);
+            let index = u32::try_from(placements.len()).expect("a batch fits u32 indices");
+            placements.push(placement);
+            let mut shares = |probe: usize| {
+                locate(probe).is_some_and(|(placement, location)| {
+                    Gathered::of(&placement, location, 1) == gathered
+                        && (placement.phase - phase).abs() <= SHARED_PHASE_RAD
+                })
+            };
+            // The last channel known to share, and the first known not to.
+            let (mut last, mut past) = (channel, channels);
+            let expected = channel + length - 1;
+            if expected > channel && expected < channels {
+                if shares(expected) {
+                    last = expected;
+                } else {
+                    past = expected;
+                }
+            }
+            let mut step = 1;
+            while past == channels && last + step < channels {
+                if shares(last + step) {
+                    last += step;
+                    step *= 2;
+                } else {
+                    past = last + step;
+                }
+            }
+            while past - last > 1 {
+                let middle = last + (past - last) / 2;
+                if shares(middle) {
+                    last = middle;
+                } else {
+                    past = middle;
+                }
+            }
+            sources.extend((channel..=last).map(|slot| Source {
+                slot: u32::try_from(slot).expect("a row's channels fit u32"),
+                placement: index,
+            }));
+            length = last + 1 - channel;
+            channel = last + 1;
+        }
     }
 
     /// Add `row`'s native terms to the batch `scratch` began: one per native
