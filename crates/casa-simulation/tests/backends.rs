@@ -117,7 +117,8 @@ fn predicted(
     (read_main(path).0, summary.expect("the pass's summary"))
 }
 
-/// `max |metal − cpu| / max |cpu|` over every sample of every row.
+/// `max |metal − cpu| / max |cpu|` over every sample of every row, all of
+/// which must be finite: `f32::max` drops a NaN (#853 review).
 fn relative_difference(metal: &[Row], cpu: &[Row]) -> f32 {
     let samples = |rows: &[Row]| {
         rows.iter()
@@ -126,6 +127,12 @@ fn relative_difference(metal: &[Row], cpu: &[Row]) -> f32 {
     };
     let (metal, cpu) = (samples(metal), samples(cpu));
     assert_eq!(metal.len(), cpu.len(), "the same samples");
+    for (backend, samples) in [("Metal", &metal), ("CPU", &cpu)] {
+        assert!(
+            samples.iter().all(|value| value.is_finite()),
+            "every {backend} sample is finite"
+        );
+    }
     let scale = cpu
         .iter()
         .fold(0.0_f32, |peak, value| peak.max(value.norm()));

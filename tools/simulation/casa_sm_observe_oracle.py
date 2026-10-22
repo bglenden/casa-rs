@@ -19,7 +19,9 @@ it raised.
 `predict` names its model images relative to `--model-root`. CASA's predict
 rewrites the image it reads (its spectral units and frame, in `table.dat`), so
 CASA predicts from a copy in `<out>/`, and the manifest records the pristine
-image for casa-rs. A scenario's `data` (`zero`, `model` or `noisy`), `twin`
+image for casa-rs. The copies are made, and every call's arguments resolved,
+before the scenario's clock starts at `open`, so its `seconds` (and each
+call's) time only CASA's `sm` work. A scenario's `data` (`zero`, `model` or `noisy`), `twin`
 (the noise-free scenario a noisy one is compared with) and `noise_variance`
 (the variance its noise should have, Jy²) are copied to the manifest for
 `compare_sm_ms.py`.
@@ -169,14 +171,11 @@ def run_scenario(scenario: dict, args: argparse.Namespace) -> dict:
     me = measures()
     qa = quanta()
     ms = os.path.join(args.out, scenario["name"] + ".ms")
-    sm = simulator()
-    calls = []
-    started = time.perf_counter()
-    returned = sm.open(ms)
-    calls.append({"op": "open", "resolved": {"ms": ms}, "returned": bool(returned)})
+    # The inputs are resolved, and the models CASA predicts from copied,
+    # before the clock starts (#853 review: a cube's copy is about 1 GiB of
+    # work casa-rs does not do).
     config = resolve_config(scenario["config"], args, me)
-    returned = sm.setconfig(**config["kwargs"])
-    calls.append({"op": "setconfig", "resolved": config["resolved"], "returned": bool(returned)})
+    resolved_calls = []
     for number, call in enumerate(scenario["calls"]):
         op, kwargs, resolved = resolve_call(call, me, qa)
         if op == "predict":
@@ -184,6 +183,15 @@ def run_scenario(scenario: dict, args: argparse.Namespace) -> dict:
             kwargs["imagename"], resolved["imagename"] = model_images(
                 kwargs.get("imagename", []), args, prefix
             )
+        resolved_calls.append((op, kwargs, resolved))
+    sm = simulator()
+    calls = []
+    started = time.perf_counter()
+    returned = sm.open(ms)
+    calls.append({"op": "open", "resolved": {"ms": ms}, "returned": bool(returned)})
+    returned = sm.setconfig(**config["kwargs"])
+    calls.append({"op": "setconfig", "resolved": config["resolved"], "returned": bool(returned)})
+    for op, kwargs, resolved in resolved_calls:
         call_started = time.perf_counter()
         record = {"op": op, "resolved": resolved}
         try:

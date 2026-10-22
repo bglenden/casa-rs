@@ -17,13 +17,22 @@ A rest precedes every timed run, and each run records the load averages
 before and after it. After every run a line is appended to `runs.jsonl` and
 `results.json` and `results.md` are rewritten from it; after every case the
 summary (results, logs and CASA manifests, no MSs) is copied to `--nas-dir`
-when that is given. A failing run is recorded and the campaign moves on.
+when that is given. The header records the checkout's commit, whether its
+tracked files are clean, and the binary's SHA-256.
+
+A benchmark times completed work: CASA's run counts only if every call
+returned `True` (the oracle records a `False` or an exception and carries
+on, and the casa-rs replay agrees with whatever CASA did), so a case with
+any other outcome is not replayed and gets no multiple (#853 review). A
+failing run is recorded and the campaign moves on; it exits 1 if any case
+failed.
 """
 
 from __future__ import annotations
 
 import argparse
 import datetime
+import hashlib
 import json
 import os
 import re
@@ -139,6 +148,38 @@ def rest(seconds: float) -> None:
         time.sleep(seconds)
 
 
+def failed_calls(entry: dict) -> list[str]:
+    """The calls of a CASA manifest entry that did not return `True`."""
+    failures = []
+    for call in entry["calls"]:
+        if "raised" in call:
+            failures.append(f"{call['op']} raised {call['raised']}")
+        elif call.get("returned") is not True:
+            failures.append(f"{call['op']} returned {call.get('returned')}")
+    return failures
+
+
+def add_multiples(cases: dict) -> None:
+    """Each successful casa-rs run's CASA multiple, against a CASA run whose
+    every call returned `True`."""
+    for case in cases.values():
+        casa = case["casa"] or {}
+        casa_total = casa.get("casa_total_s")
+        if casa.get("exit") != 0 or casa.get("failed_calls") or not casa_total:
+            continue
+        for run in case["casa_rs"].values():
+            if run.get("wall_s") and run["exit"] == 0:
+                run["casa_multiple_wall"] = casa_total / run["wall_s"]
+
+
+def sha256(path: str) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for block in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
 def model_names(scenario: dict) -> list[str]:
     names = []
     for call in scenario["calls"]:
@@ -161,14 +202,22 @@ class Campaign:
         commit = subprocess.run(
             ["git", "-C", REPO, "rev-parse", "HEAD"], capture_output=True, text=True
         ).stdout.strip()
+        changed = subprocess.run(
+            ["git", "-C", REPO, "status", "--porcelain", "--untracked-files=no"],
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
         binary = os.path.abspath(args.bin)
+        self.failures: list[str] = []
         self.header = {
             "schema_version": 1,
             "purpose": "simulation Phase 1d benchmarks (#841): CASA sm against casa-rs",
             "host": socket.gethostname(),
             "commit": commit,
+            "checkout_clean": not changed,
             "cases_file": os.path.abspath(args.cases),
             "binary": binary,
+            "binary_sha256": sha256(binary),
             "binary_mtime": datetime.datetime.fromtimestamp(os.path.getmtime(binary))
             .astimezone()
             .isoformat(timespec="seconds"),
@@ -209,6 +258,8 @@ class Campaign:
         )
         run.update(case=scenario["name"], kind="models", models=missing)
         self.record(run)
+        if run["exit"] != 0:
+            self.failures.append(f"{scenario['name']}: model generation exit {run['exit']}")
         return run["exit"] == 0
 
     def run_casa(self, scenario: dict) -> str | None:
@@ -246,12 +297,19 @@ class Campaign:
                 if "seconds" in call
             ]
             run["ms_bytes"] = du_bytes(entry["ms"])
+            run["failed_calls"] = failed_calls(entry)
         for item in os.listdir(casa_out) if os.path.isdir(casa_out) else []:
             if item.endswith(".ms") or item.endswith(".image"):
                 shutil.rmtree(os.path.join(casa_out, item), ignore_errors=True)
         self.record(run)
         log(f"{name}: CASA exit {run['exit']}, total {run.get('casa_total_s')} s")
-        return manifest_path if manifest else None
+        if manifest is None:
+            self.failures.append(f"{name}: CASA exit {run['exit']}, no manifest")
+            return None
+        if run["failed_calls"]:
+            self.failures.append(f"{name}: CASA calls failed: {'; '.join(run['failed_calls'])}")
+            return None
+        return manifest_path
 
     def run_casa_rs(self, scenario: dict, manifest_path: str) -> None:
         name = scenario["name"]
@@ -276,6 +334,8 @@ class Campaign:
             run["ms_bytes"] = du_bytes(os.path.join(rs_out, f"{name}.ms"))
             shutil.rmtree(rs_out, ignore_errors=True)
             self.record(run)
+            if run["exit"] != 0:
+                self.failures.append(f"{name}: casa-rs {variant} exit {run['exit']}")
             log(
                 f"{name}: casa-rs {variant} exit {run['exit']}, wall {run.get('wall_s')} s, "
                 f"user {run.get('user_s')} s"
@@ -305,12 +365,8 @@ class Campaign:
                 case["models"] = run
             else:
                 case["casa_rs"][run["variant"]] = run
-        for case in cases.values():
-            casa_total = (case["casa"] or {}).get("casa_total_s")
-            for run in case["casa_rs"].values():
-                if casa_total and run.get("wall_s") and run["exit"] == 0:
-                    run["casa_multiple_wall"] = casa_total / run["wall_s"]
-        results = dict(self.header, updated=now(), cases=cases)
+        add_multiples(cases)
+        results = dict(self.header, updated=now(), cases=cases, failures=self.failures)
         with open(os.path.join(self.out, "results.json"), "w", encoding="utf-8") as handle:
             json.dump(results, handle, indent=2)
             handle.write("\n")
@@ -328,11 +384,14 @@ class Campaign:
                 continue
             manifest_path = self.run_casa(scenario)
             if manifest_path is None:
-                log(f"{name}: CASA failed; skipping casa-rs (no manifest)")
+                log(f"{name}: CASA failed; skipping casa-rs")
             else:
                 self.run_casa_rs(scenario, manifest_path)
             self.copy_to_nas()
-        log("campaign done")
+        for failure in self.failures:
+            log(f"failed: {failure}")
+        log(f"campaign done, {len(self.failures)} failures")
+        self.write_results()
         self.copy_to_nas()
 
 
@@ -353,13 +412,17 @@ def markdown(results: dict, cases_file: dict) -> str:
     lines = [
         "# Simulation Phase 1d benchmarks (#841)",
         "",
-        f"- Host `{results['host']}`, commit `{results['commit']}`, nice {results['nice']}",
-        f"- Binary `{results['binary']}` (built {results['binary_mtime']})",
+        f"- Host `{results['host']}`, commit `{results['commit']}`"
+        f" ({'clean' if results.get('checkout_clean') else 'with changes'}), nice {results['nice']}",
+        f"- Binary `{results['binary']}` (built {results['binary_mtime']}, "
+        f"SHA-256 `{results.get('binary_sha256')}`)",
         f"- Started {results['started']}, updated {results['updated']}; rest {results['rest_s']} s before each run",
         "- CASA total is the oracle's in-process time from `open` through `close` (no Python start-up).",
-        "  The multiple is CASA total / casa-rs process wall.",
+        "  The multiple is CASA total / casa-rs process wall, for cases whose every CASA call returned True.",
         "",
     ]
+    if results.get("failures"):
+        lines += ["## Failures", ""] + [f"- {failure}" for failure in results["failures"]] + [""]
     for name, case in results["cases"].items():
         lines += [f"## {name} ({labels.get(name, '')})", ""]
         casa = case["casa"]
@@ -373,8 +436,10 @@ def markdown(results: dict, cases_file: dict) -> str:
                 f"peak RSS {gib(casa.get('max_rss_bytes'))} GiB; MS {gib(casa.get('ms_bytes'))} GiB",
                 f"- CASA per call: {calls}",
                 f"- CASA load before/after: {casa['load_before']} / {casa['load_after']}",
-                "",
             ]
+            if casa.get("failed_calls"):
+                lines.append(f"- CASA calls that did not return True: {'; '.join(casa['failed_calls'])}")
+            lines.append("")
         if case["casa_rs"]:
             lines += [
                 "| variant | backend | exit | wall s | user s | sys s | peak RSS GiB | written in s | "
@@ -414,8 +479,9 @@ def markdown(results: dict, cases_file: dict) -> str:
 
 
 def main() -> int:
-    Campaign(parse_args()).run()
-    return 0
+    campaign = Campaign(parse_args())
+    campaign.run()
+    return 1 if campaign.failures else 0
 
 
 if __name__ == "__main__":

@@ -36,11 +36,15 @@ oracle's manifest, the comparison opens `<casa>/<name>.ms` and
     zero, and a two-sample Kolmogorov-Smirnov test compares the two
     implementations' normalized cross-correlation noise.
 
+  A NaN or infinite DATA or noise sample fails a `model` or `noisy`
+  scenario, as does a statistic that is not a number (#853 review).
+
 Data managers are not compared; the plan lets them differ. A scenario's
 `ignore` entries (`TABLE.COLUMN`) are skipped. The exit status is 1 if any
 scenario differs.
 
-`test_compare_sm_ms.py` tests the cell comparison; it needs only NumPy, as
+`test_compare_sm_ms.py` tests the cell comparison and the DATA statistics'
+refusal of non-finite values; it needs only NumPy, as
 `casatools` is imported only to read tables.
 """
 
@@ -247,6 +251,13 @@ def main_columns(tb, path: str) -> dict:
     return {"data": data.astype(np.complex128), "flag_row": flag_row, "auto": auto}
 
 
+def non_finite(label: str, values: np.ndarray) -> list[str]:
+    """A failure when any of `values` is NaN or infinite (#853 review: a NaN
+    statistic compares false against every limit, so it would pass)."""
+    count = int(values.size - np.count_nonzero(np.isfinite(values)))
+    return [f"{label}: {count} non-finite values"] if count else []
+
+
 def nrms(ours: np.ndarray, casa: np.ndarray) -> float | None:
     """sqrt(sum |ours - casa|^2 / sum |casa|^2), or None without reference power."""
     reference = float(np.sum(np.abs(casa) ** 2))
@@ -258,9 +269,13 @@ def nrms(ours: np.ndarray, casa: np.ndarray) -> float | None:
 def compare_model_data(casa: dict, ours: dict, limit: float) -> tuple[dict, list[str]]:
     """The NRMS of casa-rs's DATA against CASA's over rows unflagged in both,
     and the failures."""
-    failures = []
     if casa["data"].shape != ours["data"].shape:
         return {}, [f"MAIN.DATA: shape {casa['data'].shape} against {ours['data'].shape}"]
+    failures = non_finite("MAIN.DATA: CASA", casa["data"]) + non_finite(
+        "MAIN.DATA: casa-rs", ours["data"]
+    )
+    if failures:
+        return {}, failures
     unflagged = ~casa["flag_row"] & ~ours["flag_row"]
     both_flagged = casa["flag_row"] & ours["flag_row"]
     a, b = casa["data"][unflagged], ours["data"][unflagged]
@@ -280,7 +295,7 @@ def compare_model_data(casa: dict, ours: dict, limit: float) -> tuple[dict, list
         }
     if stats["nrms"] is None:
         failures.append("MAIN.DATA: CASA's DATA has no power on the rows compared")
-    elif stats["nrms"] > limit:
+    elif not stats["nrms"] <= limit:
         failures.append(f"MAIN.DATA: NRMS {stats['nrms']:.3e} over the {limit:g} limit")
     per_correlation = []
     for corr in range(a.shape[1]):
@@ -313,12 +328,14 @@ def ks_two_sample(x: np.ndarray, y: np.ndarray) -> tuple[float, float]:
 
 def noise_classes(noise: np.ndarray, auto: np.ndarray, expected: float) -> tuple[dict, list[str]]:
     """Per-correlation noise variances by class, and their failures."""
-    classes, failures = {}, []
+    classes, failures = {}, non_finite("noise", noise)
+    if failures:
+        return classes, failures
 
     def check(label: str, values: np.ndarray) -> float:
         variance = float(np.var(values))
         tolerance = NOISE_STANDARD_ERRORS * expected * np.sqrt(2.0 / max(values.size, 1))
-        if abs(variance - expected) > tolerance:
+        if not abs(variance - expected) <= tolerance:
             failures.append(f"{label}: variance {variance:.5f}, expected {expected:.5f} +- {tolerance:.5f}")
         return variance
 
@@ -334,7 +351,7 @@ def noise_classes(noise: np.ndarray, auto: np.ndarray, expected: float) -> tuple
         if autos.size:
             entry["auto_re_var"] = check(f"correlation {corr} auto real", autos.real)
             entry["auto_im_max"] = float(np.abs(autos.imag).max())
-            if entry["auto_im_max"] != 0.0:
+            if not entry["auto_im_max"] == 0.0:
                 failures.append(f"correlation {corr}: autocorrelation imaginary noise {entry['auto_im_max']:.3g}")
         classes[f"corr{corr}"] = entry
     return classes, failures
@@ -359,14 +376,22 @@ def compare_noisy_data(paths: dict, expected: float | None) -> tuple[dict, list[
         classes["flagged_rows"] = int(noisy["flag_row"].sum())
         stats[side] = classes
         failures += [f"{side} noise: {failure}" for failure in side_failures]
-        cross = noise[~noisy["auto"]].ravel()
-        normalized[side] = np.concatenate([cross.real, cross.imag]) / np.sqrt(expected)
+        if np.all(np.isfinite(noise)):  # non-finite noise fails above
+            cross = noise[~noisy["auto"]].ravel()
+            normalized[side] = np.concatenate([cross.real, cross.imag]) / np.sqrt(expected)
     if len(normalized) == 2:
         statistic, p_value = ks_two_sample(normalized["casa"], normalized["casa-rs"])
         stats["ks_cross"] = {"statistic": statistic, "p_value": p_value}
-        if p_value < 1e-3:
-            failures.append(f"noise: two-sample KS p-value {p_value:.2g} (statistic {statistic:.4f})")
+        failures += ks_failures(statistic, p_value)
     return stats, failures
+
+
+def ks_failures(statistic: float, p_value: float) -> list[str]:
+    """The two-sample KS test's failure: a p-value below 1e-3, or one that is
+    not a number."""
+    if p_value >= 1e-3:
+        return []
+    return [f"noise: two-sample KS p-value {p_value:.2g} (statistic {statistic:.4f})"]
 
 
 def compare_data(tb, scenario: dict, paths: dict, limit: float) -> tuple[dict, list[str]]:
