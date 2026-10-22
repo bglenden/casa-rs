@@ -417,8 +417,10 @@ impl SpectralResampler {
     /// [`Self::predicting_autocorrelations`].
     ///
     /// A sample that reads the same taps of the same model as the row's
-    /// sample before it ([`Gathered`]), at a phase-centre phase within
-    /// [`SHARED_PHASE_RAD`] of the first of their run, is not placed again:
+    /// sample before it (the same kernel cell, location, plane, signs of w
+    /// and pointing gradient, and Taylor variable for a model of several
+    /// terms), at a phase-centre phase within 2⁻³⁰ rad of the first of
+    /// their run, is not placed again:
     /// its channel reads that sample's prediction. A row's neighbouring
     /// channels sit a small fraction of a cell apart in uv, so they mostly
     /// share their kernel's fine offset, and a backend's degrid of a fine
