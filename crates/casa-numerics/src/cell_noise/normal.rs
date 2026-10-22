@@ -65,9 +65,9 @@
 //!
 //! Nothing here branches on the words: the octant and the mantissa range
 //! pick values by selection and sign flips. Applied lane by lane to several
-//! draws ([`super::NoiseApplication::add_to_row`] takes [`super::LANES`]
-//! channels at a time), the same operations run in vector registers, each
-//! lane rounding exactly as a draw made alone.
+//! draws ([`super::CellNoise::add_to_row`] takes [`super::LANES`] channels
+//! at a time), the same operations run in vector registers, each lane
+//! rounding exactly as a draw made alone.
 
 use std::f64::consts::{FRAC_PI_4, LN_2};
 
@@ -117,21 +117,42 @@ const COSINE: [f32; 5] = [
     -turn_coefficient(10),
 ];
 
-/// Two independent standard normals from two uniform words, `r·cos θ` and
-/// `r·sin θ`. The noise path computes the same products, scaled by σ, from
-/// [`radius`] and [`sin_cos_turn`] in two passes over a batch of lanes.
-#[cfg(test)]
-pub(super) fn box_muller(first: u32, second: u32) -> (f32, f32) {
+/// Two independent standard normals from two uniform 32-bit words:
+/// `(r·cos θ, r·sin θ)` with `r = √(−2 ln u₁)`, `u₁ = (first + 1)·2⁻³²` in
+/// (0, 1], and `θ = 2π·second·2⁻³²`.
+///
+/// Evaluated in `f32` on the words themselves: the logarithm splits `u₁`
+/// into exponent and mantissa with integer operations and sums a short
+/// `atanh` series, and the angle's octant is the word's top three bits, so
+/// the sine and cosine need only short polynomials on [0, π/4] and no range
+/// reduction. Only correctly rounded IEEE-754 operations are used, none
+/// fused, so the result is bitwise the same on every platform. Each normal
+/// is within 6·2⁻²⁴ of the double-precision Box–Muller of the same words,
+/// relatively. `first = u32::MAX` (u₁ = 1) gives a radius of −0, and
+/// `first = 0` the largest, `√(64 ln 2)` correctly rounded.
+///
+/// The noise [`CellNoise::add_to_row`](super::CellNoise::add_to_row) adds
+/// is these normals scaled by σ, as [`scaled_draw`] computes them.
+#[must_use]
+pub fn box_muller(first: u32, second: u32) -> (f32, f32) {
     let radius = radius(first);
     let (sin, cos) = sin_cos_turn(second);
     (radius * cos, radius * sin)
 }
 
 /// The real and imaginary noise of one sample from its two words, one draw
-/// at a time: `(r·σ)·cos θ` and `(r·σ)·sin θ`, as the noise path computes
-/// them lane by lane.
-#[cfg(test)]
-pub(super) fn scaled_draw(first: u32, second: u32, sigma: f32) -> (f32, f32) {
+/// at a time: `(r·σ)·cos θ` and `(r·σ)·sin θ`, with `r` and `θ` as in
+/// [`box_muller`].
+///
+/// Scaling the radius before the products saves a multiplication per
+/// sample over scaling each normal, with the same number of roundings; the
+/// result can differ from σ times [`box_muller`]'s normal in its last bits.
+/// [`CellNoise::add_to_row`](super::CellNoise::add_to_row) computes exactly
+/// these products, lane by lane, so a draw made here is bit for bit the
+/// noise it adds to the sample (to a zero sample; to any other, the sum
+/// rounds once more).
+#[must_use]
+pub fn scaled_draw(first: u32, second: u32, sigma: f32) -> (f32, f32) {
     let scaled = radius(first) * sigma;
     let (sin, cos) = sin_cos_turn(second);
     (scaled * cos, scaled * sin)
@@ -272,7 +293,7 @@ pub(super) fn ulp(x: f32) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::corrupt::oracle;
+    use crate::cell_noise::oracle;
 
     /// Words where the arithmetic is delicate: u₁ = 1 and its neighbours,
     /// every power of two and its neighbours (where the exponent steps), the
@@ -469,7 +490,7 @@ mod tests {
     /// Every one of the 2³² words, and the 2³² normal pairs of each with its
     /// [`partner`], on all cores: the errors the module docs quote. Run it
     /// optimised:
-    /// `cargo test --release -p casa-simulation --lib -- --ignored --nocapture every_word`.
+    /// `cargo test --release -p casa-numerics --lib -- --ignored --nocapture every_word`.
     #[test]
     #[ignore = "2³² words; run with --release"]
     fn every_word_is_within_the_bounds() {

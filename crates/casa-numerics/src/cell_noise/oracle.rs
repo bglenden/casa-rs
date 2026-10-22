@@ -3,20 +3,24 @@
 //! made in single precision (#855): one Philox counter and one Box–Muller
 //! pair at a time, in `f64`, copied from commit `0cf4a8994a`. Since then
 //! [`radius`], [`sin_cos_turn`] and [`standard_normals`] are exposed to the
-//! tests, and the tests that held the logarithm, sine and cosine to `std`
-//! live here.
+//! tests, the tests that held the logarithm, sine and cosine to `std` live
+//! here, and, since the generator moved from casa-simulation to
+//! casa-numerics (#855), it takes the stream's key and σ from a
+//! [`CellNoise`] rather than forming the key from a seed and an ordinal.
 //!
-//! It is the reference the single-precision [`NoiseApplication::add_to_row`]
-//! must stay within the bounds of [`super::normal`] of, and it calls nothing
-//! the noise path uses, so a change to the generator or the key, or one that
-//! moves a draw by more than those bounds, fails the comparison. Changing
-//! the draws is a science change; this file changes only with one.
+//! It is the reference the single-precision [`CellNoise::add_to_row`] must
+//! stay within the bounds of [`super::normal`] of, and it calls nothing the
+//! noise path uses but the key and σ accessors, so a change to the
+//! generator or the counters, or one that moves a draw by more than those
+//! bounds, fails the comparison. How a caller forms its keys is the
+//! caller's to pin (casa-simulation holds cells of its own to known bits).
+//! Changing the draws is a science change; this file changes only with one.
 
 use std::f64::consts::{FRAC_PI_4, LN_2, SQRT_2};
 
 use num_complex::Complex32;
 
-use super::{MAXIMUM_APPLICATIONS, NoiseApplication, PURPOSE_THERMAL_NOISE};
+use super::CellNoise;
 
 /// Philox's 128-bit counter.
 type Counter = [u32; 4];
@@ -163,17 +167,7 @@ pub(super) fn sin_cos_turn(word: u32) -> (f64, f64) {
     }
 }
 
-/// The stream key of `application`: its seed, and its ordinal under the
-/// thermal-noise purpose byte.
-fn key(application: &NoiseApplication) -> Key {
-    debug_assert!(application.ordinal < MAXIMUM_APPLICATIONS);
-    [
-        application.seed as u32,
-        (PURPOSE_THERMAL_NOISE << 24) | application.ordinal,
-    ]
-}
-
-/// The counter of a draw: the MAIN row (two words), the channel, and the
+/// The counter of a draw: the row (two words), the channel, and the
 /// correlation pair (correlations 0 and 1 are pair 0, 2 and 3 pair 1).
 fn counter(row: u64, channel: usize, pair: usize) -> Counter {
     [row as u32, (row >> 32) as u32, channel as u32, pair as u32]
@@ -182,32 +176,32 @@ fn counter(row: u64, channel: usize, pair: usize) -> Counter {
 /// The four standard normals of the draw of (row, channel, pair): slot 0's
 /// (real, imaginary) then slot 1's.
 pub(super) fn standard_normals(
-    application: &NoiseApplication,
+    noise: &CellNoise,
     row: u64,
     channel: usize,
     pair: usize,
 ) -> [f64; 4] {
-    let words = philox4x32_10(counter(row, channel, pair), key(application));
+    let words = philox4x32_10(counter(row, channel, pair), noise.key());
     let (a, b) = box_muller(words[0], words[1]);
     let (c, d) = box_muller(words[2], words[3]);
     [a, b, c, d]
 }
 
-/// `application`'s noise added to the cell of MAIN row `row`, one draw at a
-/// time: `NoiseApplication::add_to_row` as it was.
+/// `noise` added to the cell of row `row`, one draw at a time:
+/// `add_to_row` as it was.
 pub(super) fn add_to_row(
-    application: &NoiseApplication,
+    noise: &CellNoise,
     row: u64,
     autocorrelation: bool,
     correlations: usize,
     cell: &mut [Complex32],
 ) {
     // Adding σ·N with σ = 0 changes nothing but the sign of a zero.
-    if application.sigma_jy == 0.0 || correlations == 0 {
+    if noise.sigma() == 0.0 || correlations == 0 {
         return;
     }
-    let sigma = f64::from(application.sigma_jy);
-    let key = key(application);
+    let sigma = f64::from(noise.sigma());
+    let key = noise.key();
     for (channel, samples) in cell.chunks_exact_mut(correlations).enumerate() {
         for (pair, slots) in samples.chunks_mut(2).enumerate() {
             let words = philox4x32_10(counter(row, channel, pair), key);
