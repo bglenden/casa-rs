@@ -12,7 +12,7 @@ use casa_imaging_operator::{
     AiryDish, Basis, CellHold, CfKey, ConvolutionFunctionSet, CpuBackend, GridBackend,
     GridGeometry, GridPadding, GridPrecision, ImageExtent, KernelNormalisation,
     MOSAIC_OVERSAMPLING, MeasurementOperator, Mode, ModeSet, ModelImages, ModelPlane,
-    ModelPrescale, MosaicPb, MosaicWindow, OperatorError, Placement, PlaneRange,
+    ModelPrescale, MosaicPb, MosaicRules, MosaicWindow, OperatorError, Placement, PlaneRange,
     PolarizationRouting, RowContext, SampleBuffer, Work, pair_plane,
 };
 use casa_numerics::AnnularApertureVoltageTable;
@@ -72,7 +72,15 @@ fn routing() -> PolarizationRouting {
 }
 
 fn mosaic(geometry: &GridGeometry, dishes: &[AiryDish], windows: &[MosaicWindow]) -> MosaicPb {
-    MosaicPb::new(geometry, &routing(), FREQUENCY_HZ, dishes, windows).expect("mosaic set")
+    MosaicPb::new(
+        MosaicRules::Tclean,
+        geometry,
+        &routing(),
+        FREQUENCY_HZ,
+        dishes,
+        windows,
+    )
+    .expect("mosaic set")
 }
 
 fn single_window_mosaic(geometry: &GridGeometry) -> MosaicPb {
@@ -230,6 +238,7 @@ fn too_small_a_screen_is_a_typed_error_not_a_panic() {
         .expect("geometry");
         let dishes = [AiryDish::casa_alma(12.0, &geometry)];
         let result = MosaicPb::new(
+            MosaicRules::Tclean,
             &geometry,
             &routing(),
             5.0e10,
@@ -306,6 +315,128 @@ fn keys_follow_the_pair_plane_and_the_window_cells() {
     assert_eq!(set.normalisation(), KernelNormalisation::UnitSum);
     assert!(set.pointing_ramp());
     assert!(set.resident_bytes() > 0);
+}
+
+/// Each pair's half support under `rules`, in pair-plane order.
+fn pair_supports(
+    rules: MosaicRules,
+    geometry: &GridGeometry,
+    frequency_hz: f64,
+    dishes: &[AiryDish],
+) -> Vec<u16> {
+    let windows = [MosaicWindow {
+        spectral_window: 0,
+        window_frequencies_hz: vec![frequency_hz],
+        channel_width_hz: 1.28e8,
+        selected_frequencies_hz: vec![frequency_hz],
+    }];
+    let set = MosaicPb::new(rules, geometry, &routing(), frequency_hz, dishes, &windows)
+        .expect("mosaic set");
+    (0..(dishes.len() * (dishes.len() + 1) / 2) as u16)
+        .map(|group| set.half_support(CfKey { group, cube: 0 }))
+        .collect()
+}
+
+/// CASA 6.7.6 logs "convolution function support" `[6, 6, 6]` for
+/// `sm.predict` and `[7, 6, 6]` for `tclean(gridder='mosaic')` on the #875
+/// probe (320² cells of 0.3″ at 230 GHz, ALMA 12 m and ACA 7 m). On 4.1″
+/// cells at 100 GHz the 7 m class alone finds six taps, yet the simulator
+/// grids every pair of the heterogeneous set with the widest pair's seven:
+/// both sets share one screen, since every simulator dish has a 150″
+/// radius. The simulator's screen has no least size.
+#[test]
+fn the_simulator_rules_find_casa_v1_supports() {
+    let square = |side: usize, cell_arcsec: f64| {
+        let cell = (cell_arcsec / 3600.0_f64).to_radians();
+        GridGeometry::new(
+            ImageExtent {
+                shape: [side, side],
+                increment_rad: [-cell, cell],
+                reference_pixel: [side / 2, side / 2],
+            },
+            GridPadding::None,
+        )
+        .expect("geometry")
+    };
+    let simulator = [
+        AiryDish::casa_alma_simulator(12.0),
+        AiryDish::casa_alma_simulator(7.0),
+    ];
+    let probe = square(320, 0.3);
+    assert_eq!(
+        pair_supports(MosaicRules::Simulator, &probe, 230.0e9, &simulator),
+        [6, 6, 6]
+    );
+    assert_eq!(
+        pair_supports(MosaicRules::Tclean, &probe, 230.0e9, &dishes(&probe)),
+        [7, 6, 6]
+    );
+    let coarse = square(IMAGE, 4.125);
+    assert_eq!(
+        pair_supports(
+            MosaicRules::Simulator,
+            &coarse,
+            FREQUENCY_HZ,
+            &simulator[1..]
+        ),
+        [6]
+    );
+    assert_eq!(
+        pair_supports(MosaicRules::Simulator, &coarse, FREQUENCY_HZ, &simulator),
+        [7, 7, 7]
+    );
+    // A 1,024-cell image: the beams span 72 pixels, under tclean's floor
+    // of a tenth of the image, so the screens are 80 and 96 pixels
+    // (`nextLargerEven(73) = 80`, `nextLargerEven(103) = 108`, `/16·16`).
+    let wide = square(1024, 4.125);
+    let screen = |rules| {
+        let windows = [window(0, vec![FREQUENCY_HZ], FREQUENCY_HZ)];
+        MosaicPb::new(rules, &wide, &routing(), FREQUENCY_HZ, &simulator, &windows)
+            .expect("mosaic set")
+            .screen_size()
+    };
+    assert_eq!(screen(MosaicRules::Simulator), 80);
+    assert_eq!(screen(MosaicRules::Tclean), 96);
+}
+
+/// The simulator's `findUsefulChannels`: four 15.625 MHz channels at
+/// 230 GHz span less than half its 1.15 GHz tolerance, so they share one
+/// cell at the first channel; eight channels 0.3 GHz apart from 98 GHz span
+/// 2.1 GHz, `lround(2.1/0.5005) = 4` cells 0.6 GHz apart from 98 GHz.
+#[test]
+fn the_simulator_rules_take_v1s_frequency_cells() {
+    let geometry = geometry();
+    let dishes = [
+        AiryDish::casa_alma_simulator(12.0),
+        AiryDish::casa_alma_simulator(7.0),
+    ];
+    let four = (0..4)
+        .map(|k| 230.0e9 + 15.625e6 * f64::from(k))
+        .collect::<Vec<_>>();
+    let eight = (0..8)
+        .map(|k| 98.0e9 + 0.3e9 * f64::from(k))
+        .collect::<Vec<_>>();
+    let windows = [window(0, four.clone(), four[3]), window(1, eight, 101.0e9)];
+    let set = MosaicPb::new(
+        MosaicRules::Simulator,
+        &geometry,
+        &routing(),
+        FREQUENCY_HZ,
+        &dishes,
+        &windows,
+    )
+    .expect("mosaic set");
+    assert_eq!(set.frequency_cells(0), Some(&[230.0e9][..]));
+    let cells = set.frequency_cells(1).expect("window 1");
+    assert_eq!(cells.len(), 4);
+    for (cell, expected) in cells.iter().zip([98.0e9, 98.6e9, 99.2e9, 99.8e9]) {
+        assert!((cell - expected).abs() < 1.0, "{cells:?}");
+    }
+    // Window 0's one cell, then window 1's from cube 1: 98.95 GHz is 0.35
+    // GHz from 98.6 GHz and 0.25 GHz from 99.2 GHz, so it takes cell 2.
+    assert_eq!(set.key(&context([0, 1], 0), four[2], 0.0).cube, 0);
+    assert_eq!(set.key(&context([0, 1], 1), 98.95e9, 0.0).cube, 3);
+    assert_eq!(set.key(&context([0, 1], 1), 100.0e9, 0.0).cube, 4);
 }
 
 #[test]

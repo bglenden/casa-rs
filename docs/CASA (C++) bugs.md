@@ -10,7 +10,8 @@ CASA behaviours casa-rs follows for parity:
 [exact peak comparisons](#peak-searches-let-rounding-choose-between-equal-pixels),
 [multi-term weight normalization](#the-multi-term-weight-normalization-override-is-never-called),
 [the Airy beam's blockage term](#the-airy-beams-blockage-term-uses-the-inverse-length-ratio),
-[the EVLA's 11052 MHz fit](#the-evlas-beam-table-has-no-11052-mhz-fit).
+[the EVLA's 11052 MHz fit](#the-evlas-beam-table-has-no-11052-mhz-fit),
+[the simulator's and tclean's two mosaic machines](#the-simulators-mosaic-machine-is-not-tcleans).
 CASA behaviours casa-rs does not follow:
 [odd-size scale convolutions](#multiscale-and-multi-term-scale-convolutions-shift-by-a-pixel-on-odd-image-sizes),
 [MatrixCleaner's step residual](#matrixcleaners-step-residual-forgets-earlier-steps),
@@ -34,7 +35,8 @@ Simulator behaviours casa-rs does not follow:
 [`setmosaicfield`'s off-centre grid](#setmosaicfield-sits-its-grid-off-the-field-centre),
 [`observemany`'s rows before an unknown field](#observemany-adds-rows-before-it-looks-up-later-fields),
 [W projection without planes](#smpredict-through-wprojectft-without-planes-crashes-the-simulator),
-[total power in cross-correlations](#sdgrid-predicts-total-power-into-cross-correlations-with-no-positive-uvw).
+[total power in cross-correlations](#sdgrid-predicts-total-power-into-cross-correlations-with-no-positive-uvw),
+[`close` after a mosaic predict](#smclose-aborts-the-process-after-a-mosaic-predict).
 Measures behaviours casa-rs follows for parity:
 [IAU 1980 sidereal time and obliquities under IAU 2000](#iau-2000-keeps-the-iau-1980-sidereal-time-and-ecliptic-obliquities).
 Measures behaviours casa-rs does not follow:
@@ -977,3 +979,67 @@ those near 11052 MHz take a neighbour's. The coefficients differ by about 1%
 in the linear term, which moves the beam by a few 1e-3 at its half power.
 casa-rs's table (`casa_numerics::EvlaPowerPattern`, shared by the
 simulator and imaging) is CASA's map as built.
+
+## `sm.close()` aborts the process after a mosaic predict
+
+- Date noted: 2026-10-23
+- Status: CASA bug; casa-rs does not follow it (#841 Phase 2)
+- Affected code: `synthesis/MeasurementEquations/Simulator.cc` (`close`,
+  after `createSkyEquation` built `MosaicFTNew` with `HetArrayConvFunc`)
+
+After `setoptions(ftmachine='mosaic')` and a `predict` that returns True,
+CASA 6.7.6's `sm.close()` kills the Python process: libc++abi prints "Pure
+virtual function called!" and raises SIGABRT (exit 134 from a shell).
+simobserve's own sequence (`setvp`, `setoptions(ftmachine='mosaic')`,
+`predict`, `close`) aborts the same way. It was not traced to the
+destructor that makes the call. DATA is complete on disk when it happens:
+a rerun whose abort was turned into a quiet exit wrote the same DATA, UVW,
+FLAG and TIME bit for bit, and those MeasurementSets agree with casa-rs's
+to a few 1e-7 normalized RMS. casa-rs's `close` returns normally. The CASA
+oracle (`tools/simulation/casa_sm_observe_oracle.py`) runs such scenarios
+(`close_aborts`) in a child process, accepts the abort only when every
+`predict` returned True, and records `close` as aborted.
+
+## The simulator's mosaic machine is not tclean's
+
+- Date noted: 2026-10-23
+- Status: CASA behaviour casa-rs follows for parity, per machine (#841
+  Phase 2, #875)
+- Affected code: `synthesis/TransformMachines/HetArrayConvFunc.cc`,
+  `SimplePBConvFunc.cc` and `MosaicFT.cc` (the simulator's, through
+  `MosaicFTNew`) against their `synthesis/TransformMachines2/` namesakes
+  (tclean's)
+
+`sm.predict` after `setoptions(ftmachine='mosaic')` degrids through the
+earlier heterogeneous-array machine, and `tclean(gridder='mosaic')` through
+the later one. They differ in:
+- the dish's support radius: 150″ at 100 GHz for every ALMA and ACA dish in
+  the simulator; in tclean, `max(150″, fov/5)` for a 12 m dish and
+  `max(300″, fov/3)` for any other;
+- the screen's least size: none in the simulator, a tenth of the image in
+  tclean;
+- the frequency cells (`findUsefulChannels`): from the selected channels
+  alone in the simulator, `lround(span / 0.5 % of the top)` cells matched in
+  `Float`; stepping down from the window's top frequency in tclean;
+- the support search: in the simulator, inwards from the lattice's edge
+  along the row and the column one cell off its centre, the radius found
+  widened by √2; in tclean, outwards from the weight plane's peak;
+- the support a row is gridded with: the widest pair's of the window in the
+  simulator, each pair's own in tclean;
+- the channel frequencies: the window's own in the simulator; tclean
+  converts them to the image's frame (LSRK).
+
+On the #875 probe (six 12 m and six 7 m ALMA antennas over three fields at
+230 GHz) CASA logs supports `[6, 6, 6]` for the simulator and `[7, 6, 6]`
+for tclean, and the two machines' predictions of one model differ by
+4.5–5.6e-3 normalized RMS per dish-pair class on a TOPO MeasurementSet and
+1.9–2.4e-3 on an LSRK one. casa-rs's mosaic set takes either machine's
+rules (`casa_imaging_operator::MosaicRules`): imaging follows tclean's, the
+simulator its own.
+
+Both machines reproject rows through `FTMachine::girarUVW`, whose new u and
+v take no share of w, where `GridFT`'s `rotateUVW` applies the full
+rotation. At offsets of 10–17″ the two differ by a few 1e-4 cells, which
+flips the fine offset of a sample near a rounding boundary; with the
+mosaic's ten offsets a cell, such a sample moved by up to 10% (#841: 33 of
+4,752 rows, until the simulator took `girarUVW` too).

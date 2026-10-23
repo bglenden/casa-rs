@@ -541,11 +541,11 @@ fn setvp_setoptions_and_the_session_refuse_what_casa_rs_lacks() {
     }));
     assert_eq!(outcome, CasaOutcome::NotYetImplemented);
     let (outcome, message) = refusal(vla.set_options(&PredictionOptions {
-        ftmachine: "mosaic".to_string(),
+        ftmachine: "both".to_string(),
         ..PredictionOptions::default()
     }));
     assert_eq!(outcome, CasaOutcome::NotYetImplemented);
-    assert!(message.contains("Phase 2"), "{message}");
+    assert!(message.contains("#841"), "{message}");
     // SDGrid's Gaussian kernels.
     for grid_function in ["GAUSS", "GJINC"] {
         let (outcome, message) = refusal(vla.set_options(&PredictionOptions {

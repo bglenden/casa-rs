@@ -21,8 +21,8 @@ use casa_imaging_model::{
 };
 use casa_imaging_operator::{
     AiryDish, AwCatalog, AwIndexing, CellHold, CfKey, ConvolutionFunctionSet, GridGeometry,
-    GridPadding, ImageExtent, MosaicPb, MosaicWindow, PaddingFactor, PolarizationRouting,
-    Spheroidal, WPlaneCount, WPlanes,
+    GridPadding, ImageExtent, MosaicPb, MosaicRules, MosaicWindow, PaddingFactor,
+    PolarizationRouting, Spheroidal, WPlaneCount, WPlanes,
 };
 
 #[global_allocator]
@@ -250,9 +250,13 @@ fn mosaic_stages_hold_at_most_what_they_state() {
     }
     let routing = routing();
     let geometry = geometry(64, 2.0e-5, GridPadding::None);
-    let dishes = [
+    let tclean = [
         AiryDish::casa_alma(12.0, &geometry),
         AiryDish::casa_alma(7.0, &geometry),
+    ];
+    let simulator = [
+        AiryDish::casa_alma_simulator(12.0),
+        AiryDish::casa_alma_simulator(7.0),
     ];
     let window = |spectral_window, selected: Vec<f64>, top: f64| MosaicWindow {
         spectral_window,
@@ -264,16 +268,23 @@ fn mosaic_stages_hold_at_most_what_they_state() {
         .map(|channel| 98.0e9 + 0.25e9 * f64::from(channel))
         .collect::<Vec<_>>();
     let windows = [window(0, vec![1.0e11], 1.0e11), window(1, eight, 101.0e9)];
-    for dishes in [&dishes[..1], &dishes[..]] {
-        let label = format!("{} dish classes", dishes.len());
-        let stated =
-            MosaicPb::screens_bytes(&geometry, 1.0e11, dishes, &windows).expect("screens bytes");
+    let cases = [
+        (MosaicRules::Tclean, &tclean[..1]),
+        (MosaicRules::Tclean, &tclean[..]),
+        (MosaicRules::Simulator, &simulator[..]),
+    ];
+    for (rules, dishes) in cases {
+        let label = format!("{rules:?}, {} dish classes", dishes.len());
+        let stated = MosaicPb::screens_bytes(rules, &geometry, 1.0e11, dishes, &windows)
+            .expect("screens bytes");
+        let screens = || {
+            MosaicPb::screens(rules, &geometry, &routing, 1.0e11, dishes, &windows)
+                .expect("screens")
+        };
         // FFTW's plan for the screen joins the process's plan cache, which
         // keeps it; plan it before measuring.
-        drop(MosaicPb::screens(&geometry, &routing, 1.0e11, dishes, &windows).expect("screens"));
-        let (peak, left, screens) = measure(|| {
-            MosaicPb::screens(&geometry, &routing, 1.0e11, dishes, &windows).expect("screens")
-        });
+        drop(screens());
+        let (peak, left, screens) = measure(screens);
         assert!(
             peak <= stated,
             "{label}: screens held {peak}, stated {stated}"

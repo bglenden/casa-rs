@@ -16,7 +16,8 @@
 //!
 //! Beside the tolerance, Metal leaves flagged rows and the cross-hands of
 //! 4 correlations exactly zero, as the CPU does, and the pass reports that
-//! it predicted on Metal.
+//! it predicted on Metal. Through the mosaic machine, a session of 12 m and
+//! 7 m dishes on two fields predicts within the same tolerance.
 //!
 //! A session that only corrupts writes the same MeasurementSet whatever
 //! backend it asks for: rows Metal does not predict get the host's noise.
@@ -38,11 +39,15 @@ mod predict_support;
 use std::path::Path;
 
 use casa_imaging_runtime::{HostResources, ResourcePolicy};
-use casa_simulation::{BackendRequest, NoiseSpec, SessionResources, Simulator, VoltagePatternSpec};
+use casa_simulation::{
+    BackendRequest, NoiseSpec, PredictionOptions, SessionResources, Simulator, VoltagePatternSpec,
+};
 use casa_test_support::ms_digest::measurement_set_manifest;
 use num_complex::Complex32;
 use pass_summary::{PassSummary, capture};
-use predict_support::{N, Row, predict_spec, read_main, scan, session_with_channels, write_model};
+use predict_support::{
+    N, Row, predict_spec, read_main, scan, session_with_channels, session_with_dishes, write_model,
+};
 
 /// The T0 Metal law's tolerance, relative to the CPU's largest sample.
 const TOLERANCE: f32 = 1.0e-4;
@@ -220,6 +225,57 @@ fn metal_predicts_the_cpus_data_within_the_t0_tolerance() {
             }
         }
     }
+}
+
+/// The mosaic session of 12 m and 7 m dishes in turn, its scans on the
+/// model's centre and on the `offset` field (a pointing ramp), predicted
+/// through the mosaic machine with `backend`: MAIN and the pass's summary.
+fn predicted_mosaic(path: &Path, model: &Path, backend: BackendRequest) -> (Vec<Row>, PassSummary) {
+    let dishes = [12.0, 7.0, 12.0, 7.0, 12.0, 7.0, 12.0, 7.0];
+    let mut sm = session_with_dishes(path, "ALMA", "XX YY", CHANNELS, &dishes, resources(backend));
+    sm.observe(&scan("target", 0.0, 600.0)).expect("observe");
+    sm.observe(&scan("offset", 600.0, 1200.0)).expect("observe");
+    sm.set_options(&PredictionOptions {
+        ftmachine: "mosaic".to_string(),
+        ..PredictionOptions::default()
+    })
+    .expect("setoptions");
+    sm.predict(&predict_spec(model, false)).expect("predict");
+    let ((), summary) = capture(|| sm.close().expect("close"));
+    (read_main(path).0, summary.expect("the pass's summary"))
+}
+
+/// Metal predicts through the mosaic machine's dish-pair cells and their
+/// pointing ramps as the CPU does, to the T0 tolerance (#841 Phase 2).
+#[test]
+fn metal_predicts_the_cpus_mosaic_within_the_t0_tolerance() {
+    if !metal_device() {
+        return;
+    }
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let model = cube(directory.path());
+    let (cpu, cpu_pass) = predicted_mosaic(
+        &directory.path().join("cpu.ms"),
+        &model,
+        BackendRequest::Cpu,
+    );
+    let (metal, metal_pass) = predicted_mosaic(
+        &directory.path().join("metal.ms"),
+        &model,
+        BackendRequest::Metal,
+    );
+    assert_eq!(cpu_pass.backend, "Cpu");
+    assert_eq!(metal_pass.backend, "Metal", "the pass predicted on Metal");
+    let ratio = relative_difference(&metal, &cpu);
+    println!(
+        "mosaic: max |metal - cpu| / max |cpu| = {ratio:.3e} over {} rows",
+        metal.len()
+    );
+    assert!(
+        ratio <= TOLERANCE,
+        "max |metal - cpu| is {ratio:e} of max |cpu|"
+    );
+    assert!(ratio > 0.0, "Metal predicted the CPU's bits");
 }
 
 /// A session of 4 linear correlations, corrupted and never predicted.

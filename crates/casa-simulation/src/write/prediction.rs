@@ -5,9 +5,11 @@
 //!
 //! A scan's rows are predicted from every `predict` step covering it, their
 //! predictions summed (one [`PredictionDomain`] per step, as CASA's mappers
-//! sum their degrids), each row rotated to each step's tangent point by
-//! [`GridFtProjection`] as CASA's `GridFT` rotates it. Scans with the same
-//! steps and field share a segment, and one predictor serves a segment; it
+//! sum their degrids), each row reprojected to each step's tangent point by
+//! [`GridFtProjection`] as CASA's FTMachine does (`MosaicFTNew`'s
+//! `girarUVW`, the others' `rotateUVW`), and through the mosaic machine
+//! pointed by its kernels' phase ramp. Scans with the same steps, field and
+//! phase centre share a segment, and one predictor serves a segment; it
 //! is rebuilt when the batches reach a scan of another segment. A run of a
 //! segment's rows is predicted in blocks, straight into the batch's DATA,
 //! which a scan no step covers leaves zero: a block is the whole write
@@ -38,6 +40,7 @@ use casa_types::Complex32;
 
 use super::geometry::RowGeometry;
 use crate::corrupt::NoiseApplication;
+use crate::predict::FtMachine;
 use crate::session::Simulator;
 use crate::session::error::{SimulatorError, SimulatorResult};
 use crate::session::observe::Scan;
@@ -55,11 +58,13 @@ const SMALL_BLOCK_BYTES: u64 = 16 << 20;
 /// device's time when it drops.
 const METAL_STAGE_TIMING: &str = "casa_imaging::metal_stage_timing";
 
-/// The scans with the same predict steps and field: the domains a
-/// predictor sums and each row's rotation to each domain's tangent point.
+/// The scans with the same predict steps, field and phase centre: the
+/// domains a predictor sums, each row's rotation to each domain's tangent
+/// point, and the pointing offset each domain's kernels ramp by.
 struct Segment<'s> {
     domains: Vec<PredictionDomain<'s>>,
     projections: Vec<GridFtProjection>,
+    pointing_offsets: Vec<[f64; 2]>,
 }
 
 /// The prediction stage's state across batches.
@@ -72,6 +77,9 @@ pub(super) struct PredictionStage<'s> {
     scan_segments: Vec<Option<usize>>,
     /// Each spectral window's channel frequencies.
     frequencies: Vec<Vec<f64>>,
+    /// Each antenna's dish class, which keys the mosaic machine's kernels
+    /// (the other machines ignore it); empty without a mosaic step.
+    antenna_types: Vec<u8>,
     /// Bytes of every model grid the steps hold, which a device copies.
     grid_bytes: u64,
     /// Rows of a block, once started.
@@ -149,6 +157,7 @@ impl<'s> PredictionStage<'s> {
                 None => {
                     let mut domains = Vec::with_capacity(key.0.len());
                     let mut projections = Vec::with_capacity(key.0.len());
+                    let mut pointing_offsets = Vec::with_capacity(key.0.len());
                     for step in key.0.clone() {
                         let prediction = predictions[step];
                         let model = prediction.grids_for(scan.field_id).ok_or_else(|| {
@@ -162,14 +171,22 @@ impl<'s> PredictionStage<'s> {
                             resampler: &prediction.model.resampler,
                             model,
                         });
-                        projections.push(GridFtProjection::between_j2000_directions(
-                            scan.phase_center_rad,
-                            prediction.tangent_rad,
-                        ));
+                        // `MosaicFT` reprojects through `girarUVW`, the
+                        // others through `rotateUVW`.
+                        let project = match prediction.model.machine() {
+                            FtMachine::Mosaic => GridFtProjection::mosaic_between_j2000_directions,
+                            FtMachine::Grid(_) | FtMachine::WProject(_) => {
+                                GridFtProjection::between_j2000_directions
+                            }
+                        };
+                        projections.push(project(scan.phase_center_rad, prediction.tangent_rad));
+                        pointing_offsets
+                            .push(prediction.pointing_offset_rad(scan.phase_center_rad));
                     }
                     segments.push(Segment {
                         domains,
                         projections,
+                        pointing_offsets,
                     });
                     keys.insert(key, segments.len() - 1);
                     segments.len() - 1
@@ -186,6 +203,14 @@ impl<'s> PredictionStage<'s> {
             .iter()
             .map(|prediction| prediction.grid_bytes())
             .sum();
+        // A mosaic step classes the antennas of its time in first-seen
+        // order, so a later step's classes extend an earlier one's.
+        let antenna_types = predictions
+            .iter()
+            .map(|prediction| prediction.antenna_types())
+            .max_by_key(|types| types.len())
+            .unwrap_or_default()
+            .to_vec();
         let most_terms = (0..session.scans().len())
             .map(|scan| plan.noise_for_scan(scan).len())
             .max()
@@ -197,6 +222,7 @@ impl<'s> PredictionStage<'s> {
             segments,
             scan_segments,
             frequencies,
+            antenna_types,
             grid_bytes,
             block_rows: 0,
             workers: 0,
@@ -440,24 +466,37 @@ impl<'s> PredictionStage<'s> {
             &self.correlation_indices,
             &self.frequencies[scan.spectral_window_id],
         );
+        let antenna_type = |antenna: usize| {
+            // A mosaic step classed every antenna of the scans it covers.
+            debug_assert!(
+                self.antenna_types.is_empty() || antenna < self.antenna_types.len(),
+                "antenna {antenna} has no dish class"
+            );
+            self.antenna_types.get(antenna).copied().unwrap_or(0)
+        };
         for (offset, row) in rows.iter().enumerate() {
             self.projections.clear();
-            self.projections
-                .extend(segment.projections.iter().map(|projection| {
-                    let (uvw_m, phase_shift_m) = projection.apply(row.uvw_m);
-                    DomainProjection {
-                        uvw_m,
-                        phase_shift_m,
-                        pointing_offset_rad: [0.0; 2],
-                    }
-                }));
+            self.projections.extend(
+                segment
+                    .projections
+                    .iter()
+                    .zip(&segment.pointing_offsets)
+                    .map(|(projection, pointing_offset_rad)| {
+                        let (uvw_m, phase_shift_m) = projection.apply(row.uvw_m);
+                        DomainProjection {
+                            uvw_m,
+                            phase_shift_m,
+                            pointing_offset_rad: *pointing_offset_rad,
+                        }
+                    }),
+            );
             let header = NativeRowHeader {
                 row_flag: row.flagged,
                 context: RowContext {
                     original_uvw_m: Some(row.uvw_m),
                     time_s: 0.0,
                     antennas: [row.antenna1 as u32, row.antenna2 as u32],
-                    antenna_types: [0, 0],
+                    antenna_types: [antenna_type(row.antenna1), antenna_type(row.antenna2)],
                     parallactic_angle_rad: [0.0, 0.0],
                     field: scan.field_id as u32,
                     spectral_window: scan.spectral_window_id as u32,

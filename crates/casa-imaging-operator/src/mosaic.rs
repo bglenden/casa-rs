@@ -39,6 +39,38 @@ const LANCZOS_A: i64 = 3;
 /// dish-class support radius, in GHz.
 const DISH_REFERENCE_GHZ: f64 = 100.0;
 
+/// Which of CASA's two heterogeneous-array mosaic machines a set follows.
+/// They build the same crops, normalisation and resampling, and differ in
+/// the screen's least size, in the frequency cells, in how the support is
+/// found and gridded and, through [`AiryDish`], in the 7 m dish's radius.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MosaicRules {
+    /// tclean's `gridder='mosaic'`: `TransformMachines2/HetArrayConvFunc`
+    /// (imaging).
+    #[default]
+    Tclean,
+    /// The simulator's `setoptions(ftmachine='mosaic')`: the earlier
+    /// `TransformMachines/HetArrayConvFunc`, which `Simulator::
+    /// createSkyEquation` builds. Its screen has no least size beside the
+    /// beams'; its frequency cells come from the selected channels alone;
+    /// its support search walks the weight plane inwards from the edge,
+    /// along the row and the column one cell off its centre, and widens the
+    /// radius it finds by √2; and its `MosaicFT` grids every row of a
+    /// window with the widest pair's support.
+    Simulator,
+}
+
+impl MosaicRules {
+    /// Taps on each side of a pair of `support` in a window whose widest
+    /// pair has `window_support`.
+    const fn taps(self, support: usize, window_support: usize) -> usize {
+        match self {
+            Self::Tclean => support,
+            Self::Simulator => window_support,
+        }
+    }
+}
+
 /// One dish class of the heterogeneous array: the annular Airy aperture
 /// `HetArrayConvFunc::findAntennaSizes` builds per distinct dish diameter.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -79,9 +111,27 @@ impl AiryDish {
         }
     }
 
-    /// `HetArrayConvFunc::findAntennaSizes` for any other telescope: the
-    /// dish diameter itself, ALMA's blockage ratio `d/12 · 0.75` and a
-    /// 150″ radius.
+    /// The simulator's `HetArrayConvFunc::findAntennaSizes`
+    /// ([`MosaicRules::Simulator`]) for an ALMA or ACA MeasurementSet: the
+    /// apertures of [`Self::casa_alma`], with a 150″ radius at 100 GHz for
+    /// every dish.
+    #[must_use]
+    pub fn casa_alma_simulator(dish_diameter_m: f64) -> Self {
+        let (aperture_m, blockage_m) = if (dish_diameter_m - 12.0).abs() < 0.5 {
+            (10.7, 0.75)
+        } else {
+            (6.25, 0.75)
+        };
+        Self {
+            aperture_m,
+            blockage_m,
+            max_radius_arcsec: 150.0,
+        }
+    }
+
+    /// `HetArrayConvFunc::findAntennaSizes` for any other telescope, in
+    /// either machine: the dish diameter itself, ALMA's blockage ratio
+    /// `d/12 · 0.75` and a 150″ radius.
     #[must_use]
     pub fn casa_airy(dish_diameter_m: f64) -> Self {
         Self {
@@ -140,18 +190,24 @@ struct FrequencyCells {
     /// `tol/2`, else the nearest); `None` is the identity branch, where a
     /// channel's own frequency is a cell.
     tolerance_hz: Option<f64>,
+    /// Whether the `tol/2` test is made in `Float`, as the simulator's
+    /// machine makes it.
+    single_precision: bool,
     /// Index of the window's first cell in the set's flat cell list.
     first: usize,
 }
 
-impl FrequencyCells {
-    /// `SimplePBConvFunc::findUsefulChannels` (the `Vector<Int>& chanMap`
-    /// overload): cells every `tol = max(0.5 % of the window's top
-    /// frequency, half the selected spacing)` stepping down from the
-    /// window's top frequency, the identity when the cell count reaches the
-    /// selected channel count less one, a single cell at the bottom
-    /// frequency when no cell fits.
-    fn new(window: &MosaicWindow, first: usize) -> Result<Self, OperatorError> {
+/// A window's selected frequencies, their least and greatest, and their
+/// spacing (CASA's `origwidth`, `1e12` for one channel).
+struct SelectedSpan<'w> {
+    selected: &'w [f64],
+    min_freq: f64,
+    max_freq: f64,
+    original_width: f64,
+}
+
+impl<'w> SelectedSpan<'w> {
+    fn new(window: &'w MosaicWindow) -> Result<Self, OperatorError> {
         let selected = &window.selected_frequencies_hz;
         if selected.is_empty()
             || window.window_frequencies_hz.is_empty()
@@ -171,6 +227,48 @@ impl FrequencyCells {
         } else {
             (max_freq - min_freq) / (selected.len() - 1) as f64
         };
+        Ok(Self {
+            selected,
+            min_freq,
+            max_freq,
+            original_width,
+        })
+    }
+}
+
+impl FrequencyCells {
+    /// The window's cells as `rules`' machine finds them.
+    fn new(rules: MosaicRules, window: &MosaicWindow, first: usize) -> Result<Self, OperatorError> {
+        match rules {
+            MosaicRules::Tclean => Self::tclean(window, first),
+            MosaicRules::Simulator => Self::simulator(window, first),
+        }
+    }
+
+    /// The identity branch: every selected channel its own cell.
+    fn identity(window: &MosaicWindow, first: usize) -> Self {
+        Self {
+            spectral_window: window.spectral_window,
+            frequencies_hz: window.selected_frequencies_hz.clone(),
+            tolerance_hz: None,
+            single_precision: false,
+            first,
+        }
+    }
+
+    /// `SimplePBConvFunc::findUsefulChannels` (`TransformMachines2/`, the
+    /// `Vector<Int>& chanMap` overload): cells every `tol = max(0.5 % of
+    /// the window's top frequency, half the selected spacing)` stepping
+    /// down from the window's top frequency, the identity when the cell
+    /// count reaches the selected channel count less one, a single cell at
+    /// the bottom frequency when no cell fits.
+    fn tclean(window: &MosaicWindow, first: usize) -> Result<Self, OperatorError> {
+        let SelectedSpan {
+            selected,
+            min_freq,
+            max_freq,
+            original_width,
+        } = SelectedSpan::new(window)?;
         let window_top = window
             .window_frequencies_hz
             .iter()
@@ -203,12 +301,7 @@ impl FrequencyCells {
             bottom = min_freq;
         }
         let frequencies_hz = if cells + 1 >= selected.len() {
-            return Ok(Self {
-                spectral_window: window.spectral_window,
-                frequencies_hz: selected.clone(),
-                tolerance_hz: None,
-                first,
-            });
+            return Ok(Self::identity(window, first));
         } else if cells == 0 {
             vec![bottom]
         } else {
@@ -218,6 +311,46 @@ impl FrequencyCells {
             spectral_window: window.spectral_window,
             frequencies_hz,
             tolerance_hz: Some(tol),
+            single_precision: false,
+            first,
+        })
+    }
+
+    /// The simulator's `SimplePBConvFunc::findUsefulChannels`
+    /// (`TransformMachines/`): `lround(span / tol)` cells, at most one a
+    /// channel, with `tol` 0.5 % of the top selected frequency; the
+    /// identity when that reaches the channel count less one, and one cell
+    /// at the first selected frequency when it is zero. Otherwise the cells
+    /// are `(span + spacing)/n` apart from half that above a spacing below
+    /// the bottom, and a frequency takes the first within half of it, in
+    /// `Float`. (CASA leaves a frequency with none unmapped; the cells
+    /// cover the selected span, so none is.)
+    fn simulator(window: &MosaicWindow, first: usize) -> Result<Self, OperatorError> {
+        let SelectedSpan {
+            selected,
+            min_freq,
+            max_freq,
+            original_width,
+        } = SelectedSpan::new(window)?;
+        let tol = max_freq * 0.5 / 100.0;
+        let cells = (((max_freq - min_freq) / tol).round() as usize).min(selected.len());
+        if cells + 1 >= selected.len() {
+            return Ok(Self::identity(window, first));
+        }
+        let (frequencies_hz, tol) = if cells == 0 {
+            (vec![selected[0]], tol.max(original_width))
+        } else {
+            let tol = (max_freq - min_freq + original_width) / cells as f64;
+            let cells = (0..cells)
+                .map(|k| min_freq - original_width + tol / 2.0 + tol * k as f64)
+                .collect();
+            (cells, tol)
+        };
+        Ok(Self {
+            spectral_window: window.spectral_window,
+            frequencies_hz,
+            tolerance_hz: Some(tol),
+            single_precision: true,
             first,
         })
     }
@@ -234,12 +367,20 @@ impl FrequencyCells {
                 })
                 .0
         };
+        let within = |cell: &f64, tol: f64| {
+            let difference = (freq_hz - cell).abs();
+            if self.single_precision {
+                difference as f32 <= (tol / 2.0) as f32
+            } else {
+                difference <= tol / 2.0
+            }
+        };
         match self.tolerance_hz {
             None => nearest(),
             Some(tol) => self
                 .frequencies_hz
                 .iter()
-                .position(|cell| (freq_hz - cell).abs() <= tol / 2.0)
+                .position(|cell| within(cell, tol))
                 .unwrap_or_else(nearest),
         }
     }
@@ -273,6 +414,7 @@ struct MosaicLayout {
 
 impl MosaicLayout {
     fn new(
+        rules: MosaicRules,
         geometry: &GridGeometry,
         image_frequency_hz: f64,
         dishes: &[AiryDish],
@@ -296,8 +438,12 @@ impl MosaicLayout {
         let image = geometry.image();
         let [nx, ny] = image.shape;
         let increment = image.increment_rad;
-        // `findConvFunction`: the screen size from the widest dish class.
-        let mut support = nx.max(ny) / 10;
+        // `findConvFunction`: the screen size from the widest dish class,
+        // at least a tenth of the image in tclean's machine.
+        let mut support = match rules {
+            MosaicRules::Tclean => nx.max(ny) / 10,
+            MosaicRules::Simulator => 0,
+        };
         for dish in dishes {
             support = support.max(dish.support_pixels(increment[0], image_frequency_hz));
         }
@@ -317,7 +463,7 @@ impl MosaicLayout {
         let mut cells = Vec::with_capacity(windows.len());
         let mut cell_count = 0;
         for window in windows {
-            let frequency_cells = FrequencyCells::new(window, cell_count)?;
+            let frequency_cells = FrequencyCells::new(rules, window, cell_count)?;
             cell_count += frequency_cells.frequencies_hz.len();
             cells.push(frequency_cells);
         }
@@ -335,9 +481,9 @@ impl MosaicLayout {
 }
 
 impl MosaicPb {
-    /// Build the cells for `geometry`'s image (which is the grid: the
-    /// mosaic set grids without padding), `dishes` in CASA's dish-class
-    /// order and the selected `windows`: [`Self::screens`], then
+    /// Build the cells under `rules` for `geometry`'s image (which is the
+    /// grid: the mosaic set grids without padding), `dishes` in CASA's
+    /// dish-class order and the selected `windows`: [`Self::screens`], then
     /// [`MosaicScreens::finish`]. `image_frequency_hz` is the image's
     /// frequency at spectral pixel 0, which sizes the screen
     /// (`PBMath1D::support`).
@@ -346,13 +492,22 @@ impl MosaicPb {
     ///
     /// As those two stages.
     pub fn new(
+        rules: MosaicRules,
         geometry: &GridGeometry,
         polarization: &PolarizationRouting,
         image_frequency_hz: f64,
         dishes: &[AiryDish],
         windows: &[MosaicWindow],
     ) -> Result<Self, OperatorError> {
-        Self::screens(geometry, polarization, image_frequency_hz, dishes, windows)?.finish()
+        Self::screens(
+            rules,
+            geometry,
+            polarization,
+            image_frequency_hz,
+            dishes,
+            windows,
+        )?
+        .finish()
     }
 
     /// Bytes [`Self::screens`] holds at most for the same arguments: each
@@ -364,12 +519,13 @@ impl MosaicPb {
     ///
     /// As [`Self::screens`] refuses the arguments, before it allocates.
     pub fn screens_bytes(
+        rules: MosaicRules,
         geometry: &GridGeometry,
         image_frequency_hz: f64,
         dishes: &[AiryDish],
         windows: &[MosaicWindow],
     ) -> Result<u64, OperatorError> {
-        let layout = MosaicLayout::new(geometry, image_frequency_hz, dishes, windows)?;
+        let layout = MosaicLayout::new(rules, geometry, image_frequency_hz, dishes, windows)?;
         let conv = layout.conv_size;
         let lattice = conv / 4;
         let pairs = pair_planes(dishes.len());
@@ -391,7 +547,8 @@ impl MosaicPb {
 
     /// The first stage of building the cells: every dish pair's beam
     /// products transformed on the screen at every beam frequency, cropped
-    /// to their lattices, with each window's support.
+    /// to their lattices, with each window's support, the screen sized and
+    /// the supports found as `rules`' machine does.
     /// [`MosaicScreens::kernel_bytes`] then says what the cells cropped from
     /// them hold before [`MosaicScreens::finish`] builds them.
     ///
@@ -401,6 +558,7 @@ impl MosaicPb {
     /// screen too small to hold a cell, a failed FFT plan or a zero
     /// support.
     pub fn screens(
+        rules: MosaicRules,
         geometry: &GridGeometry,
         polarization: &PolarizationRouting,
         image_frequency_hz: f64,
@@ -411,7 +569,7 @@ impl MosaicPb {
             conv_size,
             cells,
             cell_count,
-        } = MosaicLayout::new(geometry, image_frequency_hz, dishes, windows)?;
+        } = MosaicLayout::new(rules, geometry, image_frequency_hz, dishes, windows)?;
         let image = geometry.image();
         let [nx, ny] = image.shape;
         let increment = image.increment_rad;
@@ -449,13 +607,19 @@ impl MosaicPb {
                         )?);
                     }
                     let last = lattices.last().expect("a window has a cell");
-                    let support = weight_plane_support(&last.weight, lattice)?;
+                    let support = match rules {
+                        MosaicRules::Tclean => weight_plane_support(&last.weight, lattice)?,
+                        MosaicRules::Simulator => {
+                            simulator_weight_plane_support(&last.weight, lattice)?
+                        }
+                    };
                     window_support[window_index] = window_support[window_index].max(support);
                     screened.push((window_index, support, lattices));
                 }
             }
         }
         Ok(MosaicScreens {
+            rules,
             dishes: dishes.len(),
             windows: cells,
             cell_count,
@@ -498,6 +662,7 @@ fn frequency_cell_bytes(windows: &Vec<FrequencyCells>) -> u64 {
 /// cut and resampled ([`MosaicPb::screens`], [`Self::finish`]).
 #[derive(Debug)]
 pub struct MosaicScreens {
+    rules: MosaicRules,
     dishes: usize,
     windows: Vec<FrequencyCells>,
     cell_count: usize,
@@ -544,8 +709,11 @@ impl MosaicScreens {
         let cells = self
             .screened
             .iter()
-            .map(|(_, support, lattices)| {
-                let half = u16::try_from(*support).expect("support fits u16");
+            .map(|(window_index, support, lattices)| {
+                let taps = self
+                    .rules
+                    .taps(*support, self.window_support[*window_index]);
+                let half = u16::try_from(taps).expect("support fits u16");
                 2 * lattices.len() as u64 * dense_cell_bytes(1, MOSAIC_OVERSAMPLING, [half, half])
             })
             .sum::<u64>();
@@ -577,6 +745,7 @@ impl MosaicScreens {
     /// convolution-function integral.
     pub fn finish(self) -> Result<MosaicPb, OperatorError> {
         let Self {
+            rules,
             dishes,
             windows: cells,
             cell_count,
@@ -590,12 +759,14 @@ impl MosaicScreens {
         let planes = pair_planes(dishes);
         // `findConvFunction` crops every pair of a window to the widest
         // pair's `2(support + 2)`; each pair is normalised over its own
-        // support.
+        // support. tclean grids each pair with its own support; the
+        // simulator's `MosaicFT` grids every row with the widest.
         let mut imaging = Vec::with_capacity(planes * cell_count);
         let mut weight = Vec::with_capacity(planes * cell_count);
         let max_half_support = window_support.iter().copied().max().unwrap_or(0);
         for (window_index, support, lattices) in &screened {
             let crop = (2 * (window_support[*window_index] + 2)).min(lattice);
+            let taps = rules.taps(*support, window_support[*window_index]);
             // `interpLanczos` zeroes within three input pixels of the edge, so
             // a crop under seven pixels resamples to nothing.
             if crop < 2 * LANCZOS_A as usize + 1 {
@@ -605,7 +776,7 @@ impl MosaicScreens {
             }
             for lattice_pair in lattices {
                 let (imaging_cell, weight_cell) =
-                    finish_pair(lattice_pair, lattice, *support, crop)?;
+                    finish_pair(lattice_pair, lattice, *support, crop, taps)?;
                 imaging.push(imaging_cell);
                 weight.push(weight_cell);
             }
@@ -918,14 +1089,83 @@ fn weight_plane_support(plane: &[Complex32], side: usize) -> Result<usize, Opera
     Ok(support)
 }
 
-/// `supportAndNormalizeLatt`'s normalisation, `findConvFunction`'s crop to
-/// `2(support + 2)` and the Lanczos resample to [`MOSAIC_OVERSAMPLING`],
-/// then the dense cells of `support` taps on each side of the centre.
+/// The simulator's `HetArrayConvFunc::supportAndNormalizeLatt`
+/// (`TransformMachines/`, [`MosaicRules::Simulator`]) at screen sampling 1:
+/// walking in from `side/2 − 2` towards the centre, the first offset `t`
+/// where the weight plane exceeds the cut level at `(c − t − 1, c − 1)` or
+/// `(c − 1, c − t − 1)`, with `c = side/2`, is widened to `⌊√(2t²)⌋`; no
+/// such offset takes the same fallbacks as tclean's search. At least five,
+/// plus one, and capped below half the lattice.
+fn simulator_weight_plane_support(
+    plane: &[Complex32],
+    side: usize,
+) -> Result<usize, OperatorError> {
+    let sampling = 1_usize;
+    let (mut max_abs, mut min_abs) = (f32::NEG_INFINITY, f32::INFINITY);
+    for value in plane.iter().map(|value| value.norm()) {
+        max_abs = max_abs.max(value);
+        min_abs = min_abs.min(value);
+    }
+    let cut = SUPPORT_CUT_LEVEL * max_abs;
+    let centre = side / 2;
+    let mut found = false;
+    let mut trial = 0_usize;
+    if centre >= 2 {
+        for candidate in (1..=centre - 2).rev() {
+            let along_x = plane[(centre - 1) * side + centre - candidate - 1].norm();
+            let along_y = plane[(centre - candidate - 1) * side + centre - 1].norm();
+            if along_x > cut || along_y > cut {
+                found = true;
+                // `Int(sqrt(2.0*Float(trial*trial)))`, in double precision.
+                trial = (2.0 * f64::from((candidate * candidate) as f32)).sqrt() as usize;
+                break;
+            }
+        }
+    }
+    let fallback =
+        (side / 2)
+            .checked_sub(4 * sampling)
+            .ok_or(OperatorError::ConvolutionFunction {
+                reason: "the mosaic screen is too small for its beam support",
+            })?;
+    let floor = || {
+        if 10 * sampling < side {
+            5 * sampling
+        } else {
+            fallback
+        }
+    };
+    if !found {
+        if max_abs - min_abs > cut {
+            found = true;
+        }
+        trial = floor();
+    }
+    if !found {
+        return Err(OperatorError::ConvolutionFunction {
+            reason: "the mosaic weight convolution function has no support",
+        });
+    }
+    if trial < 5 * sampling {
+        trial = floor();
+    }
+    let mut support = (0.5 + trial as f64 / sampling as f64) as usize + 1;
+    if support * sampling >= side / 2 {
+        support = side / 2 / sampling - 1;
+    }
+    Ok(support)
+}
+
+/// `supportAndNormalizeLatt`'s normalisation over `support`,
+/// `findConvFunction`'s crop to `crop` and the Lanczos resample to
+/// [`MOSAIC_OVERSAMPLING`], then the dense cells of `taps` taps on each side
+/// of the centre.
 fn finish_pair(
     lattices: &PairLattices,
     side: usize,
     support: usize,
     crop: usize,
+    taps: usize,
 ) -> Result<(DenseCell, DenseCell), OperatorError> {
     let cell = |plane: &[Complex32]| -> Result<DenseCell, OperatorError> {
         let integral = block_sum_re(plane, side, support);
@@ -950,7 +1190,7 @@ fn finish_pair(
             centre: [out_side / 2; 2],
             sampling: MOSAIC_OVERSAMPLING,
         };
-        let half = u16::try_from(support).expect("support fits u16");
+        let half = u16::try_from(taps).expect("support fits u16");
         Ok(dense_cell(&[plane], [half, half]))
     };
     Ok((cell(&lattices.imaging)?, cell(&lattices.weight)?))
@@ -1053,7 +1293,8 @@ mod tests {
 
     #[test]
     fn a_single_selected_channel_is_its_own_cell() {
-        let cells = FrequencyCells::new(&window(vec![100.0e9], 101.0e9, 1.0e6), 4).expect("cells");
+        let cells =
+            FrequencyCells::tclean(&window(vec![100.0e9], 101.0e9, 1.0e6), 4).expect("cells");
         assert_eq!(cells.frequencies_hz, vec![100.0e9]);
         assert_eq!(cells.tolerance_hz, None);
         assert_eq!(cells.first, 4);
@@ -1069,7 +1310,7 @@ mod tests {
         let selected = (0..8)
             .map(|k| 98.0e9 + k as f64 * 0.3e9)
             .collect::<Vec<_>>();
-        let cells = FrequencyCells::new(&window(selected, 101.0e9, 1.0e6), 0).expect("cells");
+        let cells = FrequencyCells::tclean(&window(selected, 101.0e9, 1.0e6), 0).expect("cells");
         let tol = 101.0e9 * 0.005;
         let top = 101.0e9 - tol; // 100.495 > 100.1, step again:
         let top = top - tol; // 99.99 ≤ 100.1
@@ -1100,7 +1341,7 @@ mod tests {
         let selected = (0..16)
             .map(|k| 230.002e9 + k as f64 * 2.0e6)
             .collect::<Vec<_>>();
-        let cells = FrequencyCells::new(&window(selected, 230.51e9, 2.0e6), 0).expect("cells");
+        let cells = FrequencyCells::tclean(&window(selected, 230.51e9, 2.0e6), 0).expect("cells");
         let tol = 230.51e9 * 0.005;
         assert_eq!(cells.tolerance_hz, Some(tol));
         assert_eq!(cells.frequencies_hz.len(), 1);
@@ -1116,7 +1357,7 @@ mod tests {
         // 101.5 down past 100 … reaches ≥ 2 cells = channels − 1 → identity.
         let selected = vec![100.0e9, 101.0e9, 102.0e9];
         let cells =
-            FrequencyCells::new(&window(selected.clone(), 102.0e9, 1.0e6), 0).expect("cells");
+            FrequencyCells::tclean(&window(selected.clone(), 102.0e9, 1.0e6), 0).expect("cells");
         assert_eq!(cells.frequencies_hz, selected);
         assert_eq!(cells.tolerance_hz, None);
         assert_eq!(cells.cell_of(101.2e9), 1);

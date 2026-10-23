@@ -13,6 +13,7 @@
 //! |---|---|
 //! | the `sm` tool's session (`open`, the setters, `observe`, `close`) | [`session::Simulator`] |
 //! | `sm.predict` with `GridFT` or `WProjectFT` (`setoptions(ftmachine='ft' or 'wproject')`) | [`Simulator::predict`], [`Simulator::set_options`], [`predict::FtMachine`]; one row at a time, [`predict::ModelPredictor`] |
+//! | `sm.predict` with `MosaicFTNew` for ALMA and ACA (`setoptions(ftmachine='mosaic')`) | [`Simulator::predict`], [`predict::FtMachine::Mosaic`] |
 //! | the model image `sm.predict` reads | [`predict::SkyModel`] |
 //! | `sm.setvp(dovp=True)` with an Airy voltage pattern | [`Simulator::set_vp`], [`predict::PrimaryBeam`] |
 //! | `sm.setseed`, `sm.setnoise(mode='simplenoise')`, `sm.corrupt`, `sm.reset` | [`Simulator::set_seed`], [`Simulator::set_noise`], [`Simulator::corrupt`], [`Simulator::reset`] |

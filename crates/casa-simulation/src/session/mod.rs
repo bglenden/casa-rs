@@ -32,6 +32,7 @@ mod corruption;
 pub mod error;
 mod feeds;
 pub mod fields;
+mod mosaic;
 pub mod observe;
 pub(crate) mod plan;
 pub(crate) mod prediction;
@@ -137,6 +138,9 @@ pub struct Simulator {
     /// `setoptions(ftmachine='wproject', wprojplanes=…)`: the planes
     /// `predict` projects through, as given, or `None` for `GridFT`.
     w_projection_planes: Option<i64>,
+    /// `setoptions(ftmachine='mosaic')`: `predict` degrids a model image
+    /// through `MosaicFTNew`.
+    mosaic: bool,
     /// `setoptions(ftmachine='sd', gridfunction=…)`: the kernel `predict`
     /// samples total power with, or `None` for an interferometric
     /// FTMachine.
@@ -176,6 +180,7 @@ impl Simulator {
             noise_terms: Vec::new(),
             padding: PaddingFactor::SIMULATOR,
             w_projection_planes: None,
+            mosaic: false,
             single_dish: None,
             voltage_pattern: false,
             squint: false,

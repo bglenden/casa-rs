@@ -59,10 +59,19 @@
 //! formed them, and `close` holds no more beyond its admission for twice
 //! the components.
 //!
+//! Two more laws, in `session_memory/mosaic.rs`, predict through the
+//! simulator's mosaic machine (#841 Phase 2) for 12 m and 7 m dishes:
+//! `predict` holds no more than it is admitted while it builds every dish
+//! pair's beams on their screens, and keeps what its reservations keep (the
+//! cells, one set of grids, and a pointing for each phase centre), however
+//! many pointings it keeps.
+//!
 //! This binary's global allocator counts the live heap; the counters are
 //! the process's, so each law runs alone in a process of its own
 //! ([`alone`]).
 
+#[path = "session_memory/mosaic.rs"]
+mod mosaic;
 mod pass_summary;
 
 use std::alloc::{GlobalAlloc, Layout, System};
@@ -418,13 +427,25 @@ fn noise() -> NoiseSpec {
     }
 }
 
-/// A session writing `ms` within `budget`, with its antennas, a window of
-/// `channels` channels, the field and the times set.
+/// A session writing `ms` within `budget`, with its 12 m antennas, a window
+/// of `channels` channels, the field and the times set.
 fn configured(
     ms: &Path,
     measures: &Arc<dyn MeasuresProvider>,
     budget: u64,
     channels: usize,
+) -> Simulator {
+    configured_with_dishes(ms, measures, budget, channels, &[12.0])
+}
+
+/// [`configured`] with antennas of the diameters `dishes`: one for every
+/// antenna, or one each.
+fn configured_with_dishes(
+    ms: &Path,
+    measures: &Arc<dyn MeasuresProvider>,
+    budget: u64,
+    channels: usize,
+    dishes: &[f64],
 ) -> Simulator {
     let mut sm = Simulator::open(
         ms,
@@ -446,7 +467,7 @@ fn configured(
         x: along(0, 50.0),
         y: along(1, -15.0),
         z: along(2, 30.0),
-        dish_diameter: vec![12.0],
+        dish_diameter: dishes.to_vec(),
         offset: vec![0.0],
         mount: vec!["alt-az".to_string()],
         antenna_names: vec!["DA".to_string()],
@@ -861,14 +882,39 @@ const BUDGET_W: u64 = BUDGET_32 + (32 << 20);
 /// [`W_PLANES`] planes: what `predict` held and kept. The session is closed
 /// and `ms` deleted after.
 fn predict_w(ms: &Path, model: &Path, measures: &Arc<dyn MeasuresProvider>) -> Predicted {
-    let mut sm = configured(ms, measures, BUDGET_W, 32);
-    sm.observe(&scan(1)).expect("observe");
-    sm.set_options(&PredictionOptions {
+    let options = PredictionOptions {
         ftmachine: "wproject".to_string(),
         w_planes: W_PLANES,
         ..PredictionOptions::default()
+    };
+    predict_through(&options, (ms, model, measures), BUDGET_W, &[12.0])
+}
+
+/// A one-integration scan of antennas of `dishes` predicted from `model`
+/// within `budget` through the FTMachine `options` choose: what `predict`
+/// held and kept. The session is closed and `ms` deleted after.
+fn predict_through(
+    options: &PredictionOptions,
+    (ms, model, measures): (&Path, &Path, &Arc<dyn MeasuresProvider>),
+    budget: u64,
+    dishes: &[f64],
+) -> Predicted {
+    predict_after(options, (ms, model, measures), budget, dishes, |sm| {
+        sm.observe(&scan(1)).expect("observe");
     })
-    .expect("setoptions");
+}
+
+/// [`predict_through`] after `observe` sets the session's fields and scans.
+fn predict_after(
+    options: &PredictionOptions,
+    (ms, model, measures): (&Path, &Path, &Arc<dyn MeasuresProvider>),
+    budget: u64,
+    dishes: &[f64],
+    observe: impl FnOnce(&mut Simulator),
+) -> Predicted {
+    let mut sm = configured_with_dishes(ms, measures, budget, 32, dishes);
+    observe(&mut sm);
+    sm.set_options(options).expect("setoptions");
     let reserved = reserved_memory();
     let baseline = LIVE.load(Ordering::Relaxed);
     PEAK.store(baseline, Ordering::Relaxed);
