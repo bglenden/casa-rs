@@ -12661,7 +12661,7 @@
 <a href=#12661 id=12661 data-nosnippet>12661</a>}
 <a href=#12662 id=12662 data-nosnippet>12662</a>
 <a href=#12663 id=12663 data-nosnippet>12663</a><span class="doccomment">/// Compute C-order (row-major) strides for a given shape.
-<a href=#12664 id=12664 data-nosnippet>12664</a>/// stride[last] = 1, stride[i] = product of shape[i+1..].
+<a href=#12664 id=12664 data-nosnippet>12664</a>/// `stride[last] = 1`, `stride[i]` = product of `shape[i+1..]`.
 <a href=#12665 id=12665 data-nosnippet>12665</a></span><span class="kw">fn </span>c_order_strides(shape: <span class="kw-2">&amp;</span>[usize]) -&gt; Vec&lt;usize&gt; {
 <a href=#12666 id=12666 data-nosnippet>12666</a>    <span class="kw">let </span>ndim = shape.len();
 <a href=#12667 id=12667 data-nosnippet>12667</a>    <span class="kw">let </span><span class="kw-2">mut </span>strides = <span class="macro">vec!</span>[<span class="number">1usize</span>; ndim];
@@ -12672,7 +12672,7 @@
 <a href=#12672 id=12672 data-nosnippet>12672</a>}
 <a href=#12673 id=12673 data-nosnippet>12673</a>
 <a href=#12674 id=12674 data-nosnippet>12674</a><span class="doccomment">/// Compute Fortran-order (column-major) strides for a given shape.
-<a href=#12675 id=12675 data-nosnippet>12675</a>/// stride[0] = 1, stride[i] = product of shape[0..i].
+<a href=#12675 id=12675 data-nosnippet>12675</a>/// `stride[0] = 1`, `stride[i]` = product of `shape[0..i]`.
 <a href=#12676 id=12676 data-nosnippet>12676</a></span><span class="kw">fn </span>fortran_order_strides(shape: <span class="kw-2">&amp;</span>[usize]) -&gt; Vec&lt;usize&gt; {
 <a href=#12677 id=12677 data-nosnippet>12677</a>    <span class="kw">let </span>ndim = shape.len();
 <a href=#12678 id=12678 data-nosnippet>12678</a>    <span class="kw">let </span><span class="kw-2">mut </span>strides = <span class="macro">vec!</span>[<span class="number">1usize</span>; ndim];

@@ -1044,7 +1044,7 @@
 <a href=#1044 id=1044 data-nosnippet>1044</a>        <span class="prelude-val">Ok</span>(elements)
 <a href=#1045 id=1045 data-nosnippet>1045</a>    }
 <a href=#1046 id=1046 data-nosnippet>1046</a>
-<a href=#1047 id=1047 data-nosnippet>1047</a>    <span class="doccomment">/// Parse a single IN set element: either a value or a range (start:end[:step]).
+<a href=#1047 id=1047 data-nosnippet>1047</a>    <span class="doccomment">/// Parse a single IN set element: either a value or a range (`start:end[:step]`).
 <a href=#1048 id=1048 data-nosnippet>1048</a>    </span><span class="kw">fn </span>parse_in_set_element(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;InSetElement, TaqlError&gt; {
 <a href=#1049 id=1049 data-nosnippet>1049</a>        <span class="comment">// Check for leading colon (open-start range)
 <a href=#1050 id=1050 data-nosnippet>1050</a>        </span><span class="kw">if </span><span class="self">self</span>.lexer.peek() == <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>Token::Colon) {
@@ -1108,7 +1108,7 @@
 <a href=#1108 id=1108 data-nosnippet>1108</a>        <span class="prelude-val">Ok</span>(elements)
 <a href=#1109 id=1109 data-nosnippet>1109</a>    }
 <a href=#1110 id=1110 data-nosnippet>1110</a>
-<a href=#1111 id=1111 data-nosnippet>1111</a>    <span class="doccomment">/// Parse a single index element: value or slice (start:end[:step]).
+<a href=#1111 id=1111 data-nosnippet>1111</a>    <span class="doccomment">/// Parse a single index element: value or slice (`start:end[:step]`).
 <a href=#1112 id=1112 data-nosnippet>1112</a>    </span><span class="kw">fn </span>parse_index_element(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;IndexElement, TaqlError&gt; {
 <a href=#1113 id=1113 data-nosnippet>1113</a>        <span class="comment">// Check for leading colon (open-start slice)
 <a href=#1114 id=1114 data-nosnippet>1114</a>        </span><span class="kw">if </span><span class="self">self</span>.lexer.peek() == <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>Token::Colon) {
