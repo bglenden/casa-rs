@@ -98,3 +98,138 @@ fn cpp_relocks_main_after_failed_column_installations() {
     assert_eq!(persisted_table_shape(&ms_path).columns, columns + 1);
     assert_cpp_relocks(&ms_path);
 }
+
+/// What CASA 6.7.6's simulator leaves after a mosaic predict (#880): a
+/// `TiledShapeStMan` table whose storage manager and sync data hold four
+/// rows while `table.dat` gives one. Made from two casa-rs saves of the
+/// same schema: the four-row table publishes its rows, then takes the
+/// one-row table's `table.dat`.
+fn stale_tiled_table(root: &std::path::Path) -> std::path::PathBuf {
+    use casa_tables::{ColumnSchema, DataManagerKind, Table, TableOptions, TableSchema};
+    let save = |path: &std::path::Path, rows: usize| {
+        let schema = TableSchema::new(vec![ColumnSchema::array_variable(
+            "DATA",
+            casa_types::PrimitiveType::Complex32,
+            Some(2),
+        )])
+        .expect("schema");
+        let mut table = Table::with_schema(schema);
+        for row in 0..rows {
+            table.add_row(stale_row(row as f32)).expect("append a row");
+        }
+        table
+            .save(TableOptions::new(path).with_data_manager(DataManagerKind::TiledShapeStMan))
+            .expect("save the tiled table");
+    };
+    let table = root.join("stale.tab");
+    let one_row = root.join("one_row.tab");
+    save(&table, 4);
+    save(&one_row, 1);
+    let mut lock = casa_tables::TableWriteLock::acquire(&table, 1).expect("write lock");
+    lock.record_write();
+    lock.release().expect("publish four rows");
+    std::fs::copy(one_row.join("table.dat"), table.join("table.dat"))
+        .expect("take the one-row table.dat");
+    assert_eq!(persisted_table_shape(&table).rows, 1);
+    assert_eq!(published_table_sync(&table).expect("sync").shape.rows, 4);
+    table
+}
+
+fn stale_row(value: f32) -> casa_types::RecordValue {
+    let cell = ndarray::ArrayD::from_shape_vec(
+        vec![2, 2],
+        vec![casa_types::Complex32::new(value, 0.0); 4],
+    )
+    .expect("2x2 cell");
+    casa_types::RecordValue::new(vec![casa_types::RecordField::new(
+        "DATA",
+        casa_types::Value::Array(casa_types::ArrayValue::Complex32(cell)),
+    )])
+}
+
+/// C++ opens and locks `table` with four rows.
+#[track_caller]
+fn assert_cpp_relocks_four_rows(table: &std::path::Path, case: &str) {
+    let (rows, _) = TableOracle::lock_read_relock(table)
+        .unwrap_or_else(|error| panic!("{case}: C++ refuses the table: {error}"));
+    assert_eq!(rows, 4, "{case}");
+}
+
+/// C++ opens the stale table as CASA does, and still opens it with all its
+/// rows after casa-rs writes a row in place, holds the write lock and writes
+/// nothing, refuses a partial save of a handle holding an unsaved row, or
+/// saves only the keywords of such a handle. Each once left a row count in
+/// `table.dat` or the sync data that the storage manager does not hold.
+#[test]
+fn cpp_relocks_a_stale_table_after_casa_rs_writes_it() {
+    use casa_tables::{Table, TableOptions, TableWriteLock};
+    if !casacore_oracle_available() {
+        eprintln!("skipping: C++ casacore not available");
+        return;
+    }
+    let dir = tempfile::tempdir().expect("tempdir");
+    let fresh = |case: &str| {
+        let root = dir.path().join(case);
+        std::fs::create_dir(&root).expect("case directory");
+        stale_tiled_table(&root)
+    };
+
+    let table = fresh("as-left");
+    assert_cpp_relocks_four_rows(&table, "as CASA left it");
+
+    let table = fresh("row-written");
+    let mut handle = Table::open(TableOptions::new(&table)).expect("open");
+    {
+        let mut prepared = handle
+            .row_accessor_mut()
+            .prepare(&["DATA"])
+            .expect("prepare DATA");
+        prepared.seek(2).expect("row 2");
+        prepared
+            .set_value_at(0, stale_row(20.0).get("DATA").expect("cell").clone())
+            .expect("set row 2");
+    }
+    let mut lock = TableWriteLock::acquire(&table, 1).expect("write lock");
+    lock.record_write();
+    handle
+        .prepare_write()
+        .save_selected_rows(&["DATA"], &[2])
+        .expect("write row 2 in place");
+    lock.release().expect("publish");
+    assert_cpp_relocks_four_rows(&table, "a row written in place");
+
+    let table = fresh("nothing-written");
+    let mut lock = TableWriteLock::acquire(&table, 1).expect("write lock");
+    lock.record_write();
+    lock.release().expect("publish");
+    assert_cpp_relocks_four_rows(&table, "a write lock that wrote nothing");
+
+    let table = fresh("refused");
+    let mut handle = Table::open(TableOptions::new(&table)).expect("open");
+    handle
+        .add_row(stale_row(9.0))
+        .expect("append an unsaved row");
+    let mut lock = TableWriteLock::acquire(&table, 1).expect("write lock");
+    lock.record_write();
+    assert!(
+        handle
+            .prepare_write()
+            .save_selected_rows(&["DATA"], &[2])
+            .is_err()
+    );
+    lock.release().expect("publish");
+    assert_cpp_relocks_four_rows(&table, "a refused partial save");
+
+    let table = fresh("keywords");
+    let mut handle = Table::open(TableOptions::new(&table)).expect("open");
+    handle
+        .add_row(stale_row(9.0))
+        .expect("append an unsaved row");
+    let mut lock = TableWriteLock::acquire(&table, 1).expect("write lock");
+    lock.record_write();
+    handle
+        .save_metadata_only(TableOptions::new(&table))
+        .expect("save the keywords");
+    lock.release().expect("publish");
+    assert_cpp_relocks_four_rows(&table, "a keyword save");
+}

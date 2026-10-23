@@ -19,6 +19,9 @@ use super::{
     TableError, TableOptions,
 };
 
+#[cfg(unix)]
+mod stale_rows;
+
 /// `schema` as `manager` stores it: IncrementalStMan stores Direct
 /// fixed-shape arrays only, so its fixed-shape arrays become Direct.
 fn schema_for_manager(schema: &TableSchema, manager: DataManagerKind) -> TableSchema {
