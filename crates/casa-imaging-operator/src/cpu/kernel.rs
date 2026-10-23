@@ -305,7 +305,7 @@ fn dense_tile(
 
 /// The index of the tile of Mueller plane `mueller` at the sample's fine
 /// offset among a dense cell's tiles, and of its sum among the cell's
-/// norms ([`crate::convolution::dense_norms`]).
+/// norms ([`DenseCell::new`](crate::convolution::DenseCell::new) sums them).
 fn dense_tile_index(
     oversampling: u16,
     mueller_planes: u8,

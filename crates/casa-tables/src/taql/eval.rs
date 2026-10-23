@@ -970,7 +970,7 @@ fn to_zero_based(idx: i64, len: usize, style: ast::IndexStyle) -> Result<usize, 
     Ok(actual as usize)
 }
 
-/// Resolve a slice (start:end[:step]) to a Vec of 0-based indices.
+/// Resolve a slice (`start:end[:step]`) to a Vec of 0-based indices.
 fn resolve_slice(
     start: Option<i64>,
     end: Option<i64>,
