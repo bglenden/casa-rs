@@ -31,7 +31,7 @@ use super::canonical::{
     read_i32_le, read_i64_be, read_i64_le, read_u16_be, read_u16_le, read_u32_be, read_u32_le,
 };
 use super::data_type::CasacoreDataType;
-use super::scalar_sources::SCALAR_BLOCK_CELLS;
+use super::scalar_sources::{ColumnSource, RowFields, SCALAR_BLOCK_CELLS};
 use super::stman_aipsio::ColumnRawData;
 use super::stman_aipsio::scalar_value_is_default;
 use super::stman_array_file::StManArrayFileReader;
@@ -489,6 +489,14 @@ pub(crate) enum IsmColumnResult {
     Indirect(Vec<Option<casa_types::Value>>),
 }
 
+/// Whether casacore stores the array column `desc` as an `ISMIndColumn`:
+/// every array column without the Direct option, of fixed shape or not
+/// (`ArrayColumnData::createDataManagerColumn`). Its bucket values are the
+/// offsets of its cells in the `table.fNi` array file, 0 for no array.
+fn is_ism_indirect_array(desc: &ColumnDescContents) -> bool {
+    desc.is_array && desc.option & 1 == 0
+}
+
 pub(crate) fn read_ism_file(
     file_path: &Path,
     dm_blob: &[u8],
@@ -523,18 +531,20 @@ pub(crate) fn read_ism_file_columns(
             } else {
                 1
             };
+            let indirect = is_ism_indirect_array(c);
             Ok((
                 scalar_dt,
                 nrelem,
-                c.is_array && c.nrdim > 0 && !c.shape.is_empty(),
-                c.is_array && (c.option & 1) == 0 && c.shape.is_empty(),
+                c.is_array && !indirect && !c.shape.is_empty(),
+                indirect,
             ))
         })
         .collect::<Result<_, StorageError>>()?;
 
-    let mut array_reader = if col_descs.iter().any(|(_, col_desc)| {
-        col_desc.is_array && (col_desc.option & 1) == 0 && col_desc.shape.is_empty()
-    }) {
+    let mut array_reader = if col_descs
+        .iter()
+        .any(|(_, col_desc)| is_ism_indirect_array(col_desc))
+    {
         let array_path = PathBuf::from(format!("{}i", file_path.display()));
         if !array_path.is_file() {
             return Err(StorageError::MissingDataFile(array_path));
@@ -550,10 +560,7 @@ pub(crate) fn read_ism_file_columns(
         (0..ncol).map(|_| Vec::with_capacity(nrrow)).collect();
     let mut indirect_columns: Vec<Option<Vec<Option<casa_types::Value>>>> = col_descs
         .iter()
-        .map(|(_, col_desc)| {
-            (col_desc.is_array && (col_desc.option & 1) == 0 && col_desc.shape.is_empty())
-                .then(|| Vec::with_capacity(nrrow))
-        })
+        .map(|(_, col_desc)| is_ism_indirect_array(col_desc).then(|| Vec::with_capacity(nrrow)))
         .collect();
 
     // Iterate over bucket intervals from the ISMIndex
@@ -1508,10 +1515,11 @@ pub(crate) fn refuse_ism_indirect_fixed_arrays(
 }
 
 /// Each column's element type and element count, and the bucket size, of
-/// an IncrementalStMan file of scalars and Direct fixed-shape arrays, sized
-/// as the row writer sizes its buckets. Arrays that casacore keeps in an
-/// indirect array file (variable-shape ones and those without the Direct
-/// option) and record columns are refused.
+/// an IncrementalStMan file of scalars and Direct fixed-shape arrays: room
+/// for [`ISM_BUCKET_TARGET_ROWS`] rows of every value and its index entry,
+/// a string counted as 12 bytes. Arrays that casacore keeps in an indirect
+/// array file (variable-shape ones and those without the Direct option)
+/// and record columns are refused.
 fn ism_source_layout(
     col_descs: &[ColumnDescContents],
 ) -> Result<(Vec<(CasacoreDataType, usize)>, u32), StorageError> {
@@ -1556,8 +1564,10 @@ fn ism_source_layout(
 }
 
 /// Write an IncrementalStMan file from column sources, a block of cells at
-/// a time: scalars and fixed-shape arrays, stored in the buckets as the row
-/// writer stores them (see [`ism_source_layout`]).
+/// a time: scalars and fixed-shape arrays, in buckets of
+/// [`ism_source_layout`]'s size. A bucket starts with each column's value
+/// at its first row and then holds each value that changes; a row whose
+/// values do not fit an empty bucket is refused.
 pub(crate) fn write_ism_file_column_sources(
     file_path: &Path,
     col_descs: &[ColumnDescContents],
@@ -1949,38 +1959,15 @@ fn write_ism_file_scalar_run_columns(
     serialize_ism_dm_blob("ISM")
 }
 
-fn row_value_at_index<'a>(
-    row: &'a casa_types::RecordValue,
-    field_index: usize,
-    field_name: &str,
-) -> Option<&'a casa_types::Value> {
-    if let Some(field) = row.fields().get(field_index)
-        && field.name == field_name
-    {
-        return Some(&field.value);
-    }
-    row.fields()
-        .iter()
-        .find(|field| field.name == field_name)
-        .map(|field| &field.value)
-}
-
-fn row_value_for_column<'a>(
-    row: &'a casa_types::RecordValue,
-    field_indices: Option<&[usize]>,
-    col_idx: usize,
-    col_desc: &ColumnDescContents,
-) -> Option<&'a casa_types::Value> {
-    if let Some(indices) = field_indices {
-        row_value_at_index(row, indices[col_idx], &col_desc.col_name)
-    } else {
-        row.fields()
-            .iter()
-            .find(|f| f.name == col_desc.col_name)
-            .map(|f| &f.value)
-    }
-}
-
+/// Write an IncrementalStMan file from row records, through the
+/// column-source writer, each column a source of its rows' fields.
+///
+/// The two writers once differed: at a bucket's first row this one wrote a
+/// copy of every column's previous value as well as the changed ones, and
+/// a bucket too small for both lost the tail of its data to its index
+/// (#852, ISM bucket layouts). Sharing one writer gives row records the
+/// buckets casacore's `ISMBucket` writes when a bucket starts: each
+/// column's value at that row, once.
 fn write_ism_file_impl(
     file_path: &Path,
     col_descs: &[ColumnDescContents],
@@ -2000,237 +1987,20 @@ fn write_ism_file_impl(
             desc.col_name
         )));
     }
-    refuse_ism_indirect_fixed_arrays(col_descs)?;
-    let nrrow = rows.len();
-    let ncol = col_descs.len();
-
-    // Pre-compute column info
-    let col_info: Vec<(CasacoreDataType, usize)> = col_descs
+    let columns = col_descs
         .iter()
-        .map(|c| {
-            let dt = CasacoreDataType::from_primitive_type(c.require_primitive_type()?, false);
-            let nrelem = if c.is_array && !c.shape.is_empty() {
-                c.shape.iter().map(|&s| s as usize).product()
-            } else {
-                1
-            };
-            Ok((dt, nrelem))
+        .enumerate()
+        .map(|(col_idx, desc)| {
+            let field_index = field_indices.map(|indices| indices[col_idx]);
+            ColumnSource::RowFields(RowFields::new(rows, field_index, &desc.col_name))
         })
-        .collect::<Result<_, StorageError>>()?;
-
-    // Compute fixed bytes per row for bucket sizing
-    let fixed_bytes_per_row: usize = col_info
-        .iter()
-        .map(|&(dt, nrelem)| {
-            if dt == CasacoreDataType::TpBool {
-                nrelem.div_ceil(8) // bit-packed
-            } else {
-                let elem = ism_element_size(dt);
-                if elem > 0 {
-                    elem * nrelem
-                } else {
-                    // String: estimate 12 bytes per string value
-                    nrelem * 12
-                }
-            }
-        })
-        .sum();
-
-    // Target ~32 rows per bucket, plus overhead for per-column index
-    // Index overhead per row: ncol * (4 + 4) bytes worst case (row_nr + offset per entry)
-    let index_overhead_per_row = ncol * 8;
-    let bytes_per_row = fixed_bytes_per_row + index_overhead_per_row;
-    let bucket_size = if bytes_per_row == 0 {
-        128u32
-    } else {
-        let target = (bytes_per_row * 32 + 4) as u32; // +4 for index_offset field
-        target.clamp(128, 327680)
-    };
-
-    // Build buckets with delta compression
-    struct BucketBuilder {
-        data: Vec<u8>,
-        col_indices: Vec<(Vec<u32>, Vec<u32>)>, // (row_nrs, offsets) per column
-    }
-
-    let mut buckets: Vec<BucketBuilder> = Vec::new();
-    let mut bucket_start_rows: Vec<usize> = Vec::new();
-    let mut last_values: Vec<Vec<u8>> = vec![Vec::new(); ncol];
-
-    if nrrow > 0 {
-        // Start first bucket
-        let mut current = BucketBuilder {
-            data: Vec::new(),
-            col_indices: (0..ncol).map(|_| (Vec::new(), Vec::new())).collect(),
-        };
-        bucket_start_rows.push(0);
-
-        for (row_idx, row) in rows.iter().enumerate().take(nrrow) {
-            let rel_row = (row_idx - *bucket_start_rows.last().unwrap()) as u32;
-
-            // Check if adding this row would overflow the bucket
-            // Estimate: current data size + worst-case new data + index size
-            let mut new_data_estimate = 0usize;
-            for (col_idx, col_desc) in col_descs.iter().enumerate() {
-                let (dt, nrelem) = col_info[col_idx];
-                let value = row_value_for_column(row, field_indices, col_idx, col_desc);
-                let encoded = encode_cell(value.into(), dt, nrelem, big_endian);
-                if rel_row == 0 || encoded != last_values[col_idx] {
-                    new_data_estimate += encoded.len();
-                }
-            }
-
-            let current_index_size: usize = current
-                .col_indices
-                .iter()
-                .map(|(rn, _)| 4 + (rn.len() + 1) * 4 + (rn.len() + 1) * 4)
-                .sum();
-            let total_estimate =
-                4 + current.data.len() + new_data_estimate + current_index_size + ncol * 12;
-
-            if rel_row > 0 && total_estimate > bucket_size as usize {
-                // Finalize current bucket and start a new one
-                buckets.push(current);
-                current = BucketBuilder {
-                    data: Vec::new(),
-                    col_indices: (0..ncol).map(|_| (Vec::new(), Vec::new())).collect(),
-                };
-                bucket_start_rows.push(row_idx);
-                // Carry over last values as first entries in new bucket
-                for (col_idx, col_desc) in col_descs.iter().enumerate() {
-                    let (dt, nrelem) = col_info[col_idx];
-                    let bytes = if last_values[col_idx].is_empty() {
-                        let value = row_value_for_column(row, field_indices, col_idx, col_desc);
-                        encode_cell(value.into(), dt, nrelem, big_endian)
-                    } else {
-                        last_values[col_idx].clone()
-                    };
-                    let offset = current.data.len() as u32;
-                    current.data.extend_from_slice(&bytes);
-                    current.col_indices[col_idx].0.push(0); // row 0
-                    current.col_indices[col_idx].1.push(offset);
-                }
-                // Now process the current row as rel_row 0
-                // but we already wrote carried-over values, so check if current
-                // row differs from carried-over
-                for (col_idx, col_desc) in col_descs.iter().enumerate() {
-                    let (dt, nrelem) = col_info[col_idx];
-                    let value = row_value_for_column(row, field_indices, col_idx, col_desc);
-                    let encoded = encode_cell(value.into(), dt, nrelem, big_endian);
-                    // The carried-over value was already written at row 0.
-                    // If current row differs from carried-over, we need to update.
-                    if encoded != last_values[col_idx] {
-                        let offset = current.data.len() as u32;
-                        current.data.extend_from_slice(&encoded);
-                        // Row 0 already has an entry from carry-over.
-                        // Replace it since the actual row 0 value is different.
-                        let idx = &mut current.col_indices[col_idx];
-                        idx.0[0] = 0;
-                        idx.1[0] = offset;
-                        last_values[col_idx] = encoded;
-                    }
-                }
-                continue;
-            }
-
-            // Add this row's data to current bucket
-            for (col_idx, col_desc) in col_descs.iter().enumerate() {
-                let (dt, nrelem) = col_info[col_idx];
-                let value = row_value_for_column(row, field_indices, col_idx, col_desc);
-                let encoded = encode_cell(value.into(), dt, nrelem, big_endian);
-
-                if rel_row == 0 || encoded != last_values[col_idx] {
-                    let offset = current.data.len() as u32;
-                    current.data.extend_from_slice(&encoded);
-                    current.col_indices[col_idx].0.push(rel_row);
-                    current.col_indices[col_idx].1.push(offset);
-                    last_values[col_idx] = encoded;
-                }
-            }
-        }
-        // Finalize last bucket
-        buckets.push(current);
-    }
-
-    // Serialize buckets
-    let nr_buckets = buckets.len();
-    let mut raw_buckets: Vec<Vec<u8>> = Vec::with_capacity(nr_buckets);
-
-    for bucket in &buckets {
-        let mut raw = vec![0u8; bucket_size as usize];
-
-        // Write data area starting at byte 4
-        let data_len = bucket.data.len().min(bucket_size as usize - 4);
-        raw[4..4 + data_len].copy_from_slice(&bucket.data[..data_len]);
-
-        // Build and write per-column index
-        let mut index_area = Vec::new();
-        for (row_nrs, offsets) in &bucket.col_indices {
-            let n = row_nrs.len() as u32;
-            if big_endian {
-                index_area.extend_from_slice(&n.to_be_bytes());
-                for &r in row_nrs {
-                    index_area.extend_from_slice(&r.to_be_bytes());
-                }
-                for &o in offsets {
-                    index_area.extend_from_slice(&o.to_be_bytes());
-                }
-            } else {
-                index_area.extend_from_slice(&n.to_le_bytes());
-                for &r in row_nrs {
-                    index_area.extend_from_slice(&r.to_le_bytes());
-                }
-                for &o in offsets {
-                    index_area.extend_from_slice(&o.to_le_bytes());
-                }
-            }
-        }
-
-        // index_offset = position where per-column index starts
-        let index_start = bucket_size as usize - index_area.len();
-        let index_offset = index_start as u32;
-
-        // Write index_offset at byte 0
-        if big_endian {
-            raw[0..4].copy_from_slice(&index_offset.to_be_bytes());
-        } else {
-            raw[0..4].copy_from_slice(&index_offset.to_le_bytes());
-        }
-
-        // Write per-column index at the end of bucket
-        if index_start + index_area.len() <= raw.len() {
-            raw[index_start..index_start + index_area.len()].copy_from_slice(&index_area);
-        }
-
-        raw_buckets.push(raw);
-    }
-
-    // Build ISMIndex
-    let mut ism_rows: Vec<u64> = Vec::with_capacity(nr_buckets + 1);
-    let mut ism_bucket_nrs: Vec<u32> = Vec::with_capacity(nr_buckets);
-    for (i, &start) in bucket_start_rows.iter().enumerate() {
-        ism_rows.push(start as u64);
-        ism_bucket_nrs.push(i as u32);
-    }
-    ism_rows.push(nrrow as u64); // sentinel
-
-    let index_data = serialize_ism_index(&ism_rows, &ism_bucket_nrs, big_endian)?;
-
-    // Write header
-    let header_buf = serialize_ism_header(bucket_size, nr_buckets as u32, big_endian)?;
-
-    // Assemble the file
-    let mut file = File::create(file_path)?;
-    file.write_all(&header_buf)?;
-    for raw in &raw_buckets {
-        file.write_all(raw)?;
-    }
-    file.write_all(&index_data)?;
-
-    // Generate the DM data blob
-    let dm_blob = serialize_ism_dm_blob("ISM")?;
-
-    Ok(dm_blob)
+        .collect();
+    write_ism_file_column_sources(
+        file_path,
+        col_descs,
+        &ColumnSources::new(rows.len(), columns),
+        big_endian,
+    )
 }
 
 pub(crate) fn save_ism_file_scalar_columns_rows_in_place(

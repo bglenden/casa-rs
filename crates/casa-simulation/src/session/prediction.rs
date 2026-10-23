@@ -28,8 +28,8 @@ use std::sync::Arc;
 
 use casa_imaging_model::CorrelationType;
 use casa_imaging_operator::{
-    ConvolutionFunctionSet, GridPrecision, OperatorError, PaddingFactor, PreparedModelGrids,
-    Spheroidal, WPlaneCount, WPlanes,
+    ConvolutionFunctionSet, GridPrecision, MAX_W_PLANES, OperatorError, PaddingFactor,
+    PreparedModelGrids, Spheroidal, WPlaneCount, WPlanes,
 };
 use casa_imaging_runtime::pass::WorkerTeam;
 use casa_imaging_runtime::{Demand, Reservation, admit, charge_process_caches, free_memory};
@@ -282,8 +282,8 @@ impl Simulator {
     /// - CASA's `False`: `WProjectFT` with one plane, whose convolution
     ///   function CASA's `WPConvFunc` cannot normalise.
     /// - Raised: `WProjectFT` with no planes or fewer, where CASA's
-    ///   simulator crashes (`docs/CASA (C++) bugs.md`), or more planes than
-    ///   fit `u32`.
+    ///   simulator crashes (`docs/CASA (C++) bugs.md`), or more than
+    ///   casa-rs's [`MAX_W_PLANES`] (65,536).
     /// - Not yet implemented: `WProjectFT` on the Metal backend.
     fn ft_machine(&self) -> SimulatorResult<FtMachine> {
         let Some(planes) = self.w_projection_planes else {
@@ -298,9 +298,15 @@ impl Simulator {
                 "Caught exception: Convolution function integral is not positive",
             )),
             _ => {
-                let planes = u32::try_from(planes).map_err(|_| {
-                    SimulatorError::raised(format!("wprojplanes={planes} is too many planes"))
-                })?;
+                let planes = u32::try_from(planes)
+                    .ok()
+                    .filter(|&planes| planes as usize <= MAX_W_PLANES)
+                    .ok_or_else(|| {
+                        SimulatorError::raised(format!(
+                            "setoptions(ftmachine='wproject', wprojplanes={planes}): casa-rs \
+                             builds at most 65,536 W planes"
+                        ))
+                    })?;
                 if self.options.resources.backend() == BackendRequest::Metal {
                     return Err(SimulatorError::not_yet_implemented(
                         "predict with setoptions(ftmachine='wproject') on the Metal backend is \
@@ -356,7 +362,8 @@ impl Simulator {
     ///   J2000, direction–Stokes–spectral axes), a near-field distance on the
     ///   last field, scans whose windows differ in correlations, or
     ///   `setvp(dovp=True)` for a telescope without an Airy default pattern
-    ///   (VLA and EVLA among them).
+    ///   (VLA and EVLA among them) or for pointings `observemany` moved off
+    ///   their fields.
     /// - CASA's `False`: no model image ("No model images found"), or no
     ///   rows observed yet.
     /// - Raised: a scan of 3 correlations ("No such VisVector type"), or
@@ -414,6 +421,9 @@ impl Simulator {
         }
         let correlations = self.predicted_correlations()?;
         let beam = self.voltage_pattern_beam()?;
+        if beam.is_some() {
+            self.check_pointings_on_fields()?;
+        }
         if let Some(kernel) = self.single_dish {
             return self.predict_single_dish(&model, kernel, beam, spec.incremental);
         }
@@ -489,6 +499,26 @@ impl Simulator {
             .map_or(self.telescope.as_str(), |observation| {
                 observation.telescope.as_str()
             })
+    }
+
+    /// That every scan points at its field, as a primary beam centred on
+    /// each field needs. CASA centres the beam on each pointing's direction
+    /// (from POINTING), which casa-rs does not yet do for the pointings
+    /// `observemany` moves off their field.
+    fn check_pointings_on_fields(&self) -> SimulatorResult<()> {
+        let moved = self
+            .scans
+            .iter()
+            .find(|scan| scan.phase_center_rad != self.fields[scan.field_id].direction_rad);
+        match moved {
+            Some(scan) => Err(SimulatorError::not_yet_implemented(format!(
+                "predict with setvp(dovp=True) for scan {} pointed away from its field {} is \
+                 not yet implemented in casa-rs (simulation Phase 2); pointings at their \
+                 fields' centres are",
+                scan.scan_number, self.fields[scan.field_id].name
+            ))),
+            None => Ok(()),
+        }
     }
 
     /// The fields of the scans observed so far, each once, in the order

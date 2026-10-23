@@ -117,6 +117,31 @@
         {"op": "settimes", "integrationtime": "10s", "usehourangle": true, "referencetime": ["UTC", "2026/03/21/00:00:00"]},
         {"op": "observe", "sourcename": "target", "spwname": "band6", "starttime": "-150s", "stoptime": "150s"}
       ]
+    },
+    {
+      "name": "alma-observemany-pointings",
+      "config": {"cfg": "alma.cycle10.3.cfg", "mount": "alt-az"},
+      "calls": [
+        {"op": "setspwindow", "spwname": "band6", "freq": "230GHz", "deltafreq": "62.5MHz", "freqresolution": "62.5MHz", "refcode": "LSRK", "nchannels": 4, "stokes": "XX YY"},
+        {"op": "setfeed", "mode": "perfect X Y"},
+        {"op": "setauto", "autocorrwt": 0.0},
+        {"op": "settimes", "integrationtime": "10s", "usehourangle": true, "referencetime": ["UTC", "2026/03/21/00:00:00"]},
+        {"op": "setfield", "sourcename": "mos_a", "sourcedirection": ["J2000", "10h00m00.0", "-30d00m00.0"]},
+        {"op": "setfield", "sourcename": "mos_b", "sourcedirection": ["J2000", "10h00m04.0", "-30d00m00.0"]},
+        {"op": "observemany", "sourcenames": ["mos_a", "mos_a", "mos_a", "mos_b", "mos_a"], "spwname": "band6", "starttimes": ["-600s", "-560s", "-520s", "-480s", "-440s"], "stoptimes": ["-560s", "-520s", "-480s", "-440s", "-400s"], "directions": ["", "J2000 10h00m02.0 -30d00m20.0", "", "", ""]},
+        {"op": "observe", "sourcename": "mos_b", "spwname": "band6", "starttime": "-380s", "stoptime": "-340s"}
+      ]
+    },
+    {
+      "name": "vla-observemany-one-direction",
+      "config": {"cfg": "vla.d.cfg", "mount": "alt-az"},
+      "calls": [
+        {"op": "setspwindow", "spwname": "LBAND", "freq": "1.4GHz", "deltafreq": "2MHz", "freqresolution": "2MHz", "refcode": "TOPO", "nchannels": 4, "stokes": "RR LL"},
+        {"op": "setfeed", "mode": "perfect R L"},
+        {"op": "settimes", "integrationtime": "30s", "usehourangle": false, "referencetime": ["UTC", "2026/03/21/04:00:00"]},
+        {"op": "setfield", "sourcename": "src", "sourcedirection": ["J2000", "13h00m00.0", "+34d00m00.0"]},
+        {"op": "observemany", "sourcenames": ["src", "src", "src"], "spwname": "LBAND", "starttimes": ["0s", "150s", "300s"], "stoptimes": ["120s", "270s", "390s"], "directions": ["J2000 13h00m20.0 +34d05m00.0"], "add_observation": true}
+      ]
     }
   ]
 }

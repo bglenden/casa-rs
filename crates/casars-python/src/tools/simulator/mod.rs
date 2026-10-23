@@ -42,7 +42,7 @@ use pyo3::exceptions::{PyNotImplementedError, PyResourceWarning, PyRuntimeError}
 use pyo3::prelude::*;
 use pyo3::sync::MutexExt;
 
-use crate::convert::{DoubleList, StringList, Variant};
+use crate::convert::{DoubleList, IntList, StringList, Variant};
 use crate::tools::{LogLine, emit};
 
 /// The Python logger CASA's `sm` messages go to.
@@ -418,72 +418,113 @@ impl PySimulator {
         stubs::not_yet_implemented("openfromms")
     }
 
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables, clippy::too_many_arguments)]
+    /// Plan several pointings: a scan for each run of pointings of one
+    /// field, each pointing's phase centre its direction where one is given.
+    #[allow(clippy::too_many_arguments, reason = "CASA's observemany signature")]
     #[pyo3(
         signature = (
-            sourcenames = None, spwname = None, starttimes = None, stoptimes = None,
-            directions = None, add_observation = None, state_sig = None, state_ref = None,
-            state_cal = None, state_load = None, state_sub_scan = None, state_obs_mode = None,
-            observer = None, project = None
+            sourcenames = StringList::of(&[]), spwname = "", starttimes = StringList::of(&["0s"]),
+            stoptimes = StringList::of(&["3600s"]), directions = StringList::of(&[""]),
+            add_observation = false, state_sig = true, state_ref = false, state_cal = 0.0,
+            state_load = 0.0, state_sub_scan = 0, state_obs_mode = "OBSERVE_TARGET#ON_SOURCE",
+            observer = "CASA simulator", project = "CASA simulation"
         ),
         text_signature = "($self, sourcenames=[], spwname='', starttimes=['0s'], stoptimes=['3600s'], directions=[''], add_observation=False, state_sig=True, state_ref=False, state_cal=0.0, state_load=0.0, state_sub_scan=0, state_obs_mode='OBSERVE_TARGET#ON_SOURCE', observer='CASA simulator', project='CASA simulation')"
     )]
     fn observemany(
         &self,
-        sourcenames: Option<&Bound<'_, PyAny>>,
-        spwname: Option<&Bound<'_, PyAny>>,
-        starttimes: Option<&Bound<'_, PyAny>>,
-        stoptimes: Option<&Bound<'_, PyAny>>,
-        directions: Option<&Bound<'_, PyAny>>,
-        add_observation: Option<&Bound<'_, PyAny>>,
-        state_sig: Option<&Bound<'_, PyAny>>,
-        state_ref: Option<&Bound<'_, PyAny>>,
-        state_cal: Option<&Bound<'_, PyAny>>,
-        state_load: Option<&Bound<'_, PyAny>>,
-        state_sub_scan: Option<&Bound<'_, PyAny>>,
-        state_obs_mode: Option<&Bound<'_, PyAny>>,
-        observer: Option<&Bound<'_, PyAny>>,
-        project: Option<&Bound<'_, PyAny>>,
+        py: Python<'_>,
+        sourcenames: StringList,
+        spwname: &str,
+        starttimes: StringList,
+        stoptimes: StringList,
+        directions: StringList,
+        add_observation: bool,
+        state_sig: bool,
+        state_ref: bool,
+        state_cal: f64,
+        state_load: f64,
+        state_sub_scan: i64,
+        state_obs_mode: &str,
+        observer: &str,
+        project: &str,
     ) -> PyResult<bool> {
-        stubs::not_yet_implemented("observemany")
+        let request = setup::ObserveManyRequest {
+            sources: sourcenames.0,
+            spectral_window: spwname,
+            starts: starttimes.0,
+            stops: stoptimes.0,
+            directions: directions.0,
+            add_observation,
+            state: setup::StateRequest {
+                sig: state_sig,
+                reference: state_ref,
+                cal: state_cal,
+                load: state_load,
+                sub_scan: state_sub_scan,
+                obs_mode: state_obs_mode,
+            },
+            observer,
+            project,
+        };
+        setup::observemany(self, py, &request)
     }
 
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables, clippy::too_many_arguments)]
+    /// Add an `xmosp × ymosp` grid of fields, `mosspacing` apart, centred on
+    /// `fieldcenter`; casa-rs centres the grid where CASA's sits off its
+    /// centre (`docs/CASA (C++) bugs.md`).
+    #[allow(clippy::too_many_arguments, reason = "CASA's setmosaicfield signature")]
     #[pyo3(
         signature = (
-            sourcename = None, calcode = None, fieldcenter = None, xmosp = None, ymosp = None,
-            mosspacing = None, distance = None
+            sourcename = "SOURCE", calcode = "", fieldcenter = Variant::Empty, xmosp = 1,
+            ymosp = 1, mosspacing = Variant::Empty, distance = Variant::Empty
         ),
         text_signature = "($self, sourcename='SOURCE', calcode='', fieldcenter=[], xmosp=1, ymosp=1, mosspacing=[], distance=[])"
     )]
     fn setmosaicfield(
         &self,
-        sourcename: Option<&Bound<'_, PyAny>>,
-        calcode: Option<&Bound<'_, PyAny>>,
-        fieldcenter: Option<&Bound<'_, PyAny>>,
-        xmosp: Option<&Bound<'_, PyAny>>,
-        ymosp: Option<&Bound<'_, PyAny>>,
-        mosspacing: Option<&Bound<'_, PyAny>>,
-        distance: Option<&Bound<'_, PyAny>>,
+        py: Python<'_>,
+        sourcename: &str,
+        calcode: &str,
+        fieldcenter: Variant,
+        xmosp: i64,
+        ymosp: i64,
+        mosspacing: Variant,
+        distance: Variant,
     ) -> PyResult<bool> {
-        stubs::not_yet_implemented("setmosaicfield")
+        let request = setup::MosaicRequest {
+            name: sourcename,
+            calcode,
+            centre: fieldcenter,
+            counts: (xmosp, ymosp),
+            spacing: mosspacing,
+            distance,
+        };
+        setup::setmosaicfield(self, py, &request)
     }
 
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
+    /// Select the rows the next `predict` and `corrupt` act on, until the
+    /// next `observe`. casa-rs takes a selection that keeps every row
+    /// observed so far (`simobserve`'s); one that keeps fewer, or a TaQL
+    /// `msselect`, raises `NotImplementedError`.
     #[pyo3(
-        signature = (spwid = None, fieldid = None, msselect = None),
+        signature = (spwid = IntList::of(&[0]), fieldid = IntList::of(&[0]), msselect = ""),
         text_signature = "($self, spwid=[0], fieldid=[0], msselect='')"
     )]
     fn setdata(
         &self,
-        spwid: Option<&Bound<'_, PyAny>>,
-        fieldid: Option<&Bound<'_, PyAny>>,
-        msselect: Option<&Bound<'_, PyAny>>,
+        py: Python<'_>,
+        spwid: IntList,
+        fieldid: IntList,
+        msselect: &str,
     ) -> PyResult<bool> {
-        stubs::not_yet_implemented("setdata")
+        let result = self.on_session(py, |session, lines| {
+            outcome(
+                session.simulator.set_data(&spwid.0, &fieldid.0, msselect),
+                lines,
+            )
+        })?;
+        Ok(result.unwrap_or(false))
     }
 
     /// Predict the model image into the rows observed so far, replacing
