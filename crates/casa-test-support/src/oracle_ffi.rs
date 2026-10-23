@@ -564,6 +564,34 @@ unsafe extern "C" {
         path: *const std::ffi::c_char,
         out_error: *mut *mut std::ffi::c_char,
     ) -> i32;
+    pub(crate) fn cpp_table_write_ssm_element_arrays(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    pub(crate) fn cpp_table_verify_ssm_element_arrays(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    pub(crate) fn cpp_table_write_ism_indirect_arrays(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    pub(crate) fn cpp_table_write_ism_indirect_arrays_big_endian(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    pub(crate) fn cpp_table_verify_ism_indirect_arrays(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    pub(crate) fn cpp_table_write_ism_bucket_starts(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    pub(crate) fn cpp_table_verify_ism_bucket_starts(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
 
     pub(crate) fn cpp_vararray_bench_write_read(
         path: *const std::ffi::c_char,

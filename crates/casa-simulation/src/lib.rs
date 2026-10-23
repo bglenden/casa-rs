@@ -33,7 +33,7 @@ mod write;
 
 pub use session::array::{ArrayConfig, CoordinateSystem};
 pub use session::error::{CasaOutcome, SimulatorError, SimulatorResult};
-pub use session::observe::{ObserveSpec, StateSpec};
+pub use session::observe::{ObserveManySpec, ObserveSpec, Pointing, StateSpec};
 pub use session::spectral::SpectralWindowSpec;
 pub use session::{
     BackendRequest, DEFAULT_SEED, ExecutionControls, NoiseSpec, PredictSpec, PredictionOptions,
