@@ -135,7 +135,9 @@ impl ConcatTable {
             let other = table.schema().ok_or_else(|| TableError::SchemaMismatch {
                 message: format!("table {i} has no schema"),
             })?;
-            if *other != schema {
+            // The column descriptions must agree; the descriptions' names and
+            // versions (`TableDescHeader`) may differ, as casacore allows.
+            if other.columns() != schema.columns() {
                 return Err(TableError::SchemaMismatch {
                     message: format!(
                         "table {i} schema differs from table 0 ({} columns vs {})",

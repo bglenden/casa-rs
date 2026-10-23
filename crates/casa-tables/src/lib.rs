@@ -268,7 +268,8 @@ pub use lock::table_holder;
 pub use lock::{ExternalLockSync, LockMode, LockOptions, LockType, TableHolder, TableWriteLock};
 pub use ref_table::{RefTable, RefTableMut};
 pub use schema::{
-    ArrayShapeContract, ColumnOptions, ColumnSchema, ColumnType, SchemaError, TableSchema,
+    ArrayShapeContract, ColumnOptions, ColumnSchema, ColumnType, SchemaError, TableDescHeader,
+    TableSchema,
 };
 pub use sorting::{TableGroup, TableIterator};
 pub use storage::{
