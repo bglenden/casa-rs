@@ -1093,6 +1093,39 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#setmosaicfield-sits-its-grid-off-the-field-centre" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        setmosaicfield sits its grid off the field centre
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#observemany-pads-one-name-with-empty-ones" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        observemany pads one name with empty ones
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#observemany-adds-rows-before-it-looks-up-later-fields" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        observemany adds rows before it looks up later fields
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#smpredict-through-wprojectft-without-planes-crashes-the-simulator" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1150,7 +1183,11 @@ Simulator behaviours casa-rs does not follow:
 <a href="#the-measures-tool-converts-with-a-frame-at-mjd-0-and-the-geocentre">the measures tool's default frame</a>,
 <a href="#smpredict-rewrites-the-model-image">the model <code>predict</code> rewrites</a>,
 <a href="#smpredict-accepts-models-the-simulator-cannot-read">models the simulator cannot read</a>,
-<a href="#smpredict-through-wprojectft-without-planes-crashes-the-simulator">W projection without planes</a>.</p>
+<a href="#setmosaicfield-sits-its-grid-off-the-field-centre"><code>setmosaicfield</code>'s off-centre grid</a>,
+<a href="#observemany-adds-rows-before-it-looks-up-later-fields"><code>observemany</code>'s rows before an unknown field</a>,
+<a href="#smpredict-through-wprojectft-without-planes-crashes-the-simulator">W projection without planes</a>.
+Simulator behaviours casa-rs follows:
+<a href="#observemany-pads-one-name-with-empty-ones"><code>observemany</code>'s padded single name</a>.</p>
 <h2 id="aw-projection-pairs-the-partner-hands-visibility-with-the-conjugate-baseline-cell">AW-projection pairs the partner hand's visibility with the conjugate-baseline cell<a class="headerlink" href="#aw-projection-pairs-the-partner-hands-visibility-with-the-conjugate-baseline-cell" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-10-09</li>
@@ -1678,6 +1715,62 @@ and returns False, and the script continues with DATA not predicted. These outco
 and were not probed. casa-rs's check opens each model as the simulator reads
 it, so a FITS or complex model raises RuntimeError "Unable to open image …"
 at the call.</p>
+<h2 id="setmosaicfield-sits-its-grid-off-the-field-centre"><code>setmosaicfield</code> sits its grid off the field centre<a class="headerlink" href="#setmosaicfield-sits-its-grid-off-the-field-centre" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-10-23</li>
+<li>Status: CASA bug; casa-rs does not follow it (#841 Phase 2, plan §4
+  "Diverged and recorded")</li>
+<li>Affected code: <code>synthesis/MeasurementEquations/Simulator.cc</code>
+  (<code>setmosaicfield</code>, lines 849-901)</li>
+</ul>
+<p><code>setmosaicfield</code> tests for an odd count with <code>(nx/2)!=floor(nx/2)</code> on
+integers. That is always false, so every grid takes the even-count offsets.
+Those offsets, <code>(i − ceil(nx/2)) − 0.5</code> spacings in right ascension and
+<code>(j − ceil(ny/2.0)) − 0.5</code> in declination, count <code>i</code> and <code>j</code> from zero where
+one was meant.</p>
+<p>Measured with CASA 6.7.6 at 1′ spacing:
+- <strong>3 × 3:</strong> right ascension offsets −1.5, −0.5 and +0.5 spacings;
+  declination offsets −2.5, −1.5 and −0.5.
+- <strong>2 × 2:</strong> −1.5 and −0.5 spacings on both axes.</p>
+<p>A centred grid would be at −1, 0 and +1, and at ±0.5.</p>
+<p>Over a pole, CASA also sets the right ascension to <code>|π − α|</code>, where crossing
+the pole adds π.</p>
+<p>casa-rs centres every grid: offsets <code>(i − (n − 1)/2)</code> spacings, right
+ascension divided by the centre's cos δ. It crosses a pole as the sphere
+does. The fields keep CASA's names, <code>{sourcename}_{k}</code>, numbered down each
+column and then across.</p>
+<h2 id="observemany-pads-one-name-with-empty-ones"><code>observemany</code> pads one name with empty ones<a class="headerlink" href="#observemany-pads-one-name-with-empty-ones" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-10-23</li>
+<li>Status: CASA bug; casa-rs follows its outcome (#841 Phase 2)</li>
+<li>Affected code: <code>casatools/src/tools/simulator/simulator_cmpt.cc</code>
+  (<code>observemany</code>, lines 318-326)</li>
+</ul>
+<p>casatools means one source name, or one direction, to stand for every
+pointing. It grows the list with <code>Vector&lt;String&gt;::resize(nptg, true)</code>, which
+keeps the existing elements and default-constructs the rest, so the new
+entries are empty strings, not copies. With one name and several pointings,
+pointing 1's field is <code>""</code>. <code>NewMSSimulator::observe</code> raises "Field 1:  not
+yet defined", and <code>sm.observemany</code> logs it and returns False (measured with
+CASA 6.7.6). With one direction, the later pointings have none, and each
+keeps the previous pointing's phase centre while the field stays the same.</p>
+<p><code>casars.tools.simulator</code> pads the lists the same way, so it returns the same
+False, and moves only the first pointing. Unlike CASA, it adds no rows
+before refusing (next entry).</p>
+<h2 id="observemany-adds-rows-before-it-looks-up-later-fields"><code>observemany</code> adds rows before it looks up later fields<a class="headerlink" href="#observemany-adds-rows-before-it-looks-up-later-fields" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-10-23</li>
+<li>Status: CASA bug; casa-rs does not follow it (#841 Phase 2)</li>
+<li>Affected code: <code>ms/MSOper/NewMSSimulator.cc</code> (<code>observe</code>, the vector
+  form)</li>
+</ul>
+<p><code>observe</code> adds every pointing's MAIN rows (<code>ms_p-&gt;addRow(nNewRows)</code>) before
+its pointing loop. It looks up the first pointing's field before that, but
+each later field only when the loop reaches it. A later field that is not
+defined raises with the rows already added: their FIELD_ID, TIME and UVW are
+unwritten, and the call returns False. casa-rs looks up every pointing's
+field before it plans anything, so the same call returns False with the
+same message and leaves no rows.</p>
 <h2 id="smpredict-through-wprojectft-without-planes-crashes-the-simulator"><code>sm.predict</code> through <code>WProjectFT</code> without planes crashes the simulator<a class="headerlink" href="#smpredict-through-wprojectft-without-planes-crashes-the-simulator" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-10-23</li>

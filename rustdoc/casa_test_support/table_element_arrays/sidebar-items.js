@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["ELEMENT_ROWS","ELEMENT_SHAPES","ELEMENT_TYPES"],"enum":["ElementStorage"],"fn":["element_array","element_arrays_fixture","element_arrays_schema","element_columns","save_generated_element_arrays"],"struct":["ElementColumn"]};

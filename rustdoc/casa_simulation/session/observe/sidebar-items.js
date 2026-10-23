@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":["ObserveSpec","StateSpec"]};
+window.SIDEBAR_ITEMS = {"struct":["ObserveManySpec","ObserveSpec","Pointing","StateSpec"]};

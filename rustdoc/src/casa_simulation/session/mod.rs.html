@@ -56,7 +56,7 @@
 <a href=#56 id=56 data-nosnippet>56</a><span class="kw">use </span>error::{SimulatorError, SimulatorResult};
 <a href=#57 id=57 data-nosnippet>57</a><span class="kw">use </span>feeds::Feed;
 <a href=#58 id=58 data-nosnippet>58</a><span class="kw">use </span>fields::Field;
-<a href=#59 id=59 data-nosnippet>59</a><span class="kw">use </span>observe::{Observation, ObserveSpec, Scan, StateSpec, Times};
+<a href=#59 id=59 data-nosnippet>59</a><span class="kw">use </span>observe::{Observation, ObserveManySpec, ObserveSpec, Scan, StateSpec, Times};
 <a href=#60 id=60 data-nosnippet>60</a><span class="kw">use </span>plan::{DataPlan, NoiseTerm};
 <a href=#61 id=61 data-nosnippet>61</a><span class="kw">use </span>spectral::{SpectralWindow, SpectralWindowSpec};
 <a href=#62 id=62 data-nosnippet>62</a>
@@ -257,276 +257,284 @@
 <a href=#257 id=257 data-nosnippet>257</a>        <span class="kw">if </span>name.is_empty() {
 <a href=#258 id=258 data-nosnippet>258</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(SimulatorError::refused(<span class="string">"must provide a source name"</span>));
 <a href=#259 id=259 data-nosnippet>259</a>        }
-<a href=#260 id=260 data-nosnippet>260</a>        <span class="kw">let </span>j2000 = <span class="kw">if </span>direction.refer() == DirectionRef::J2000 {
-<a href=#261 id=261 data-nosnippet>261</a>            direction.clone()
-<a href=#262 id=262 data-nosnippet>262</a>        } <span class="kw">else </span>{
-<a href=#263 id=263 data-nosnippet>263</a>            <span class="kw">let </span>frame = MeasFrame::new().with_measures(<span class="self">self</span>.options.measures.clone());
-<a href=#264 id=264 data-nosnippet>264</a>            direction
-<a href=#265 id=265 data-nosnippet>265</a>                .convert_to(DirectionRef::J2000, <span class="kw-2">&amp;</span>frame)
-<a href=#266 id=266 data-nosnippet>266</a>                .map_err(|error| {
-<a href=#267 id=267 data-nosnippet>267</a>                    SimulatorError::raised(<span class="macro">format!</span>(
-<a href=#268 id=268 data-nosnippet>268</a>                        <span class="string">"Could not convert source direction to a J2000 Direction Measure: {error}"
-<a href=#269 id=269 data-nosnippet>269</a>                    </span>))
-<a href=#270 id=270 data-nosnippet>270</a>                })<span class="question-mark">?
-<a href=#271 id=271 data-nosnippet>271</a>        </span>};
-<a href=#272 id=272 data-nosnippet>272</a>        <span class="kw">let </span>(ra, dec) = j2000.as_angles();
-<a href=#273 id=273 data-nosnippet>273</a>        <span class="comment">// casacore's MVDirection longitude is in (−π, π].
-<a href=#274 id=274 data-nosnippet>274</a>        </span><span class="kw">let </span>ra = ra.sin().atan2(ra.cos());
-<a href=#275 id=275 data-nosnippet>275</a>        <span class="self">self</span>.fields.push(Field {
-<a href=#276 id=276 data-nosnippet>276</a>            name: name.to_string(),
-<a href=#277 id=277 data-nosnippet>277</a>            code: calcode.to_string(),
-<a href=#278 id=278 data-nosnippet>278</a>            direction_rad: [ra, dec],
-<a href=#279 id=279 data-nosnippet>279</a>            distance_m,
-<a href=#280 id=280 data-nosnippet>280</a>            source_time_s: <span class="self">self</span>.times.reference_utc_s(),
-<a href=#281 id=281 data-nosnippet>281</a>            rest_frequency_hz: <span class="self">self
-<a href=#282 id=282 data-nosnippet>282</a>                </span>.spectral_windows
-<a href=#283 id=283 data-nosnippet>283</a>                .first()
-<a href=#284 id=284 data-nosnippet>284</a>                .map(|window| window.start_frequency_hz),
-<a href=#285 id=285 data-nosnippet>285</a>        });
-<a href=#286 id=286 data-nosnippet>286</a>        <span class="prelude-val">Ok</span>(())
-<a href=#287 id=287 data-nosnippet>287</a>    }
-<a href=#288 id=288 data-nosnippet>288</a>
-<a href=#289 id=289 data-nosnippet>289</a>    <span class="doccomment">/// `sm.settimes(integrationtime, usehourangle, referencetime)`.
+<a href=#260 id=260 data-nosnippet>260</a>        <span class="kw">let </span>direction_rad = <span class="self">self</span>.j2000_rad(direction, <span class="string">"source direction"</span>)<span class="question-mark">?</span>;
+<a href=#261 id=261 data-nosnippet>261</a>        <span class="self">self</span>.fields.push(Field {
+<a href=#262 id=262 data-nosnippet>262</a>            name: name.to_string(),
+<a href=#263 id=263 data-nosnippet>263</a>            code: calcode.to_string(),
+<a href=#264 id=264 data-nosnippet>264</a>            direction_rad,
+<a href=#265 id=265 data-nosnippet>265</a>            distance_m,
+<a href=#266 id=266 data-nosnippet>266</a>            source_time_s: <span class="self">self</span>.times.reference_utc_s(),
+<a href=#267 id=267 data-nosnippet>267</a>            rest_frequency_hz: <span class="self">self
+<a href=#268 id=268 data-nosnippet>268</a>                </span>.spectral_windows
+<a href=#269 id=269 data-nosnippet>269</a>                .first()
+<a href=#270 id=270 data-nosnippet>270</a>                .map(|window| window.start_frequency_hz),
+<a href=#271 id=271 data-nosnippet>271</a>        });
+<a href=#272 id=272 data-nosnippet>272</a>        <span class="prelude-val">Ok</span>(())
+<a href=#273 id=273 data-nosnippet>273</a>    }
+<a href=#274 id=274 data-nosnippet>274</a>
+<a href=#275 id=275 data-nosnippet>275</a>    <span class="doccomment">/// `sm.setmosaicfield(sourcename, calcode, fieldcenter, xmosp, ymosp,
+<a href=#276 id=276 data-nosnippet>276</a>    /// mosspacing, distance)`: add an `nx × ny` grid of fields, named
+<a href=#277 id=277 data-nosnippet>277</a>    /// `{name}_{k}` with `k` counting down each column (y fastest) and then
+<a href=#278 id=278 data-nosnippet>278</a>    /// across, `spacing_rad` apart in latitude and in longitude at the
+<a href=#279 id=279 data-nosnippet>279</a>    /// centre's latitude, centred on `centre` and in its frame.
+<a href=#280 id=280 data-nosnippet>280</a>    ///
+<a href=#281 id=281 data-nosnippet>281</a>    /// **Divergence** (plan §4, `docs/CASA (C++) bugs.md`).
+<a href=#282 id=282 data-nosnippet>282</a>    /// - CASA tests an odd count as `nx/2 != floor(nx/2)` in integer
+<a href=#283 id=283 data-nosnippet>283</a>    ///   arithmetic, so every grid takes its even-count offsets. Those count
+<a href=#284 id=284 data-nosnippet>284</a>    ///   from zero where one was meant, so CASA's grids sit off their centre.
+<a href=#285 id=285 data-nosnippet>285</a>    /// - Over a pole, CASA sets the longitude to `|π − α|`, where crossing
+<a href=#286 id=286 data-nosnippet>286</a>    ///   the pole moves it by π.
+<a href=#287 id=287 data-nosnippet>287</a>    ///
+<a href=#288 id=288 data-nosnippet>288</a>    /// casa-rs centres each grid on `centre`: offsets `(i − (n − 1)/2)` times
+<a href=#289 id=289 data-nosnippet>289</a>    /// the spacing. It crosses a pole as the sphere does.
 <a href=#290 id=290 data-nosnippet>290</a>    ///
-<a href=#291 id=291 data-nosnippet>291</a>    /// A reference epoch in another time scale is converted to UTC, which
-<a href=#292 id=292 data-nosnippet>292</a>    /// the session works in.
-<a href=#293 id=293 data-nosnippet>293</a>    ///
-<a href=#294 id=294 data-nosnippet>294</a>    /// # Errors
-<a href=#295 id=295 data-nosnippet>295</a>    ///
-<a href=#296 id=296 data-nosnippet>296</a>    /// A negative integration time (CASA's assertion raises), or a
-<a href=#297 id=297 data-nosnippet>297</a>    /// reference epoch that does not convert to UTC.
-<a href=#298 id=298 data-nosnippet>298</a>    </span><span class="kw">pub fn </span>set_times(
-<a href=#299 id=299 data-nosnippet>299</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-<a href=#300 id=300 data-nosnippet>300</a>        integration_s: f64,
-<a href=#301 id=301 data-nosnippet>301</a>        use_hour_angle: bool,
-<a href=#302 id=302 data-nosnippet>302</a>        reference: MEpoch,
-<a href=#303 id=303 data-nosnippet>303</a>    ) -&gt; SimulatorResult&lt;()&gt; {
-<a href=#304 id=304 data-nosnippet>304</a>        <span class="kw">if </span>integration_s &lt; <span class="number">0.0 </span>{
-<a href=#305 id=305 data-nosnippet>305</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(SimulatorError::raised(
-<a href=#306 id=306 data-nosnippet>306</a>                <span class="string">"Failed AlwaysAssert qIntTime.getValue(\"s\")&gt;=0"</span>,
-<a href=#307 id=307 data-nosnippet>307</a>            ));
-<a href=#308 id=308 data-nosnippet>308</a>        }
-<a href=#309 id=309 data-nosnippet>309</a>        <span class="kw">let </span>reference = <span class="kw">if </span>reference.refer() == EpochRef::UTC {
-<a href=#310 id=310 data-nosnippet>310</a>            reference
-<a href=#311 id=311 data-nosnippet>311</a>        } <span class="kw">else </span>{
-<a href=#312 id=312 data-nosnippet>312</a>            <span class="kw">let </span>frame = MeasFrame::new().with_measures(<span class="self">self</span>.options.measures.clone());
-<a href=#313 id=313 data-nosnippet>313</a>            reference
-<a href=#314 id=314 data-nosnippet>314</a>                .convert_to(EpochRef::UTC, <span class="kw-2">&amp;</span>frame)
-<a href=#315 id=315 data-nosnippet>315</a>                .map_err(|error| {
-<a href=#316 id=316 data-nosnippet>316</a>                    SimulatorError::raised(<span class="macro">format!</span>(
-<a href=#317 id=317 data-nosnippet>317</a>                        <span class="string">"Could not convert the {} reference time to UTC: {error}"</span>,
-<a href=#318 id=318 data-nosnippet>318</a>                        reference.refer()
-<a href=#319 id=319 data-nosnippet>319</a>                    ))
-<a href=#320 id=320 data-nosnippet>320</a>                })<span class="question-mark">?
-<a href=#321 id=321 data-nosnippet>321</a>        </span>};
-<a href=#322 id=322 data-nosnippet>322</a>        <span class="macro">tracing::info!</span>(<span class="string">"Times"</span>);
-<a href=#323 id=323 data-nosnippet>323</a>        <span class="macro">tracing::info!</span>(<span class="string">"     Integration time {integration_s}s"</span>);
-<a href=#324 id=324 data-nosnippet>324</a>        <span class="kw">if </span>use_hour_angle {
-<a href=#325 id=325 data-nosnippet>325</a>            <span class="macro">tracing::info!</span>(<span class="string">"     Times will be interpreted as hour angles for first source"</span>);
-<a href=#326 id=326 data-nosnippet>326</a>        }
-<a href=#327 id=327 data-nosnippet>327</a>        <span class="self">self</span>.times = Times {
-<a href=#328 id=328 data-nosnippet>328</a>            integration_s,
-<a href=#329 id=329 data-nosnippet>329</a>            use_hour_angle,
-<a href=#330 id=330 data-nosnippet>330</a>            reference,
-<a href=#331 id=331 data-nosnippet>331</a>            set: <span class="bool-val">true</span>,
-<a href=#332 id=332 data-nosnippet>332</a>            hour_angle_offset_s: <span class="prelude-val">None</span>,
-<a href=#333 id=333 data-nosnippet>333</a>        };
-<a href=#334 id=334 data-nosnippet>334</a>        <span class="prelude-val">Ok</span>(())
-<a href=#335 id=335 data-nosnippet>335</a>    }
-<a href=#336 id=336 data-nosnippet>336</a>
-<a href=#337 id=337 data-nosnippet>337</a>    <span class="doccomment">/// `sm.setlimits(shadowlimit, elevationlimit)`.
-<a href=#338 id=338 data-nosnippet>338</a>    </span><span class="kw">pub fn </span>set_limits(<span class="kw-2">&amp;mut </span><span class="self">self</span>, shadow_fraction_limit: f64, elevation_limit_rad: f64) {
-<a href=#339 id=339 data-nosnippet>339</a>        <span class="self">self</span>.shadow_fraction_limit = shadow_fraction_limit;
-<a href=#340 id=340 data-nosnippet>340</a>        <span class="self">self</span>.elevation_limit_rad = elevation_limit_rad;
-<a href=#341 id=341 data-nosnippet>341</a>    }
-<a href=#342 id=342 data-nosnippet>342</a>
-<a href=#343 id=343 data-nosnippet>343</a>    <span class="doccomment">/// `sm.setauto(autocorrwt)`: autocorrelation rows are written when the
-<a href=#344 id=344 data-nosnippet>344</a>    /// weight is positive, with WEIGHT multiplied by it.
-<a href=#345 id=345 data-nosnippet>345</a>    </span><span class="kw">pub fn </span>set_auto(<span class="kw-2">&amp;mut </span><span class="self">self</span>, autocorrelation_weight: f32) {
-<a href=#346 id=346 data-nosnippet>346</a>        <span class="self">self</span>.autocorrelation_weight = autocorrelation_weight;
-<a href=#347 id=347 data-nosnippet>347</a>    }
-<a href=#348 id=348 data-nosnippet>348</a>
-<a href=#349 id=349 data-nosnippet>349</a>    <span class="doccomment">/// `sm.observe(...)`: plan one scan.
-<a href=#350 id=350 data-nosnippet>350</a>    ///
-<a href=#351 id=351 data-nosnippet>351</a>    /// # Errors
-<a href=#352 id=352 data-nosnippet>352</a>    ///
-<a href=#353 id=353 data-nosnippet>353</a>    /// No antennas, spectral window or field, or none of the given names
-<a href=#354 id=354 data-nosnippet>354</a>    /// (CASA logs the error and returns `False`).
-<a href=#355 id=355 data-nosnippet>355</a>    </span><span class="kw">pub fn </span>observe(<span class="kw-2">&amp;mut </span><span class="self">self</span>, spec: <span class="kw-2">&amp;</span>ObserveSpec) -&gt; SimulatorResult&lt;()&gt; {
-<a href=#356 id=356 data-nosnippet>356</a>        <span class="self">self</span>.plan_scan(spec)
-<a href=#357 id=357 data-nosnippet>357</a>    }
-<a href=#358 id=358 data-nosnippet>358</a>
-<a href=#359 id=359 data-nosnippet>359</a>    <span class="doccomment">/// `sm.close()` / `sm.done()`: write the MeasurementSet.
-<a href=#360 id=360 data-nosnippet>360</a>    ///
-<a href=#361 id=361 data-nosnippet>361</a>    /// # Errors
-<a href=#362 id=362 data-nosnippet>362</a>    ///
-<a href=#363 id=363 data-nosnippet>363</a>    /// A failure to create or write the MeasurementSet.
-<a href=#364 id=364 data-nosnippet>364</a>    </span><span class="kw">pub fn </span>close(<span class="self">self</span>) -&gt; SimulatorResult&lt;()&gt; {
-<a href=#365 id=365 data-nosnippet>365</a>        write::write_measurement_set(<span class="kw-2">&amp;</span><span class="self">self</span>)
-<a href=#366 id=366 data-nosnippet>366</a>    }
-<a href=#367 id=367 data-nosnippet>367</a>
-<a href=#368 id=368 data-nosnippet>368</a>    <span class="doccomment">/// The `observe` bookkeeping; see [`observe`](self::observe).
-<a href=#369 id=369 data-nosnippet>369</a>    </span><span class="kw">fn </span>plan_scan(<span class="kw-2">&amp;mut </span><span class="self">self</span>, spec: <span class="kw-2">&amp;</span>ObserveSpec) -&gt; SimulatorResult&lt;()&gt; {
-<a href=#370 id=370 data-nosnippet>370</a>        <span class="kw">if </span><span class="self">self</span>.antennas.is_empty() {
-<a href=#371 id=371 data-nosnippet>371</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(SimulatorError::refused(
-<a href=#372 id=372 data-nosnippet>372</a>                <span class="string">"Antenna information not yet defined"</span>,
-<a href=#373 id=373 data-nosnippet>373</a>            ));
-<a href=#374 id=374 data-nosnippet>374</a>        }
-<a href=#375 id=375 data-nosnippet>375</a>        <span class="kw">if </span>!<span class="self">self</span>.feeds_set &amp;&amp; <span class="self">self</span>.feeds.is_empty() {
-<a href=#376 id=376 data-nosnippet>376</a>            <span class="macro">tracing::warn!</span>(<span class="string">"Feeds have not been set - using default perfect R L"</span>);
-<a href=#377 id=377 data-nosnippet>377</a>            <span class="self">self</span>.feeds = feeds::perfect_feeds(<span class="string">"perfect R L"</span>, <span class="self">self</span>.antennas.len());
-<a href=#378 id=378 data-nosnippet>378</a>        }
-<a href=#379 id=379 data-nosnippet>379</a>        <span class="kw">if </span>!<span class="self">self</span>.times.set {
-<a href=#380 id=380 data-nosnippet>380</a>            <span class="macro">tracing::warn!</span>(<span class="string">"Times have not been set - using defaults"</span>);
-<a href=#381 id=381 data-nosnippet>381</a>            <span class="macro">tracing::warn!</span>(<span class="string">"     Times will be interpreted as hour angles for first source"</span>);
-<a href=#382 id=382 data-nosnippet>382</a>        }
-<a href=#383 id=383 data-nosnippet>383</a>        <span class="kw">if </span><span class="self">self</span>.feeds.len() != <span class="self">self</span>.antennas.len() {
-<a href=#384 id=384 data-nosnippet>384</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(SimulatorError::refused(
-<a href=#385 id=385 data-nosnippet>385</a>                <span class="string">"Feed table format is incompatible with existing code of NewMSSimulator::observe"</span>,
-<a href=#386 id=386 data-nosnippet>386</a>            ));
-<a href=#387 id=387 data-nosnippet>387</a>        }
-<a href=#388 id=388 data-nosnippet>388</a>        <span class="kw">if </span><span class="self">self</span>.spectral_windows.is_empty() {
-<a href=#389 id=389 data-nosnippet>389</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(SimulatorError::refused(
-<a href=#390 id=390 data-nosnippet>390</a>                <span class="string">"Spectral window information not yet defined"</span>,
-<a href=#391 id=391 data-nosnippet>391</a>            ));
-<a href=#392 id=392 data-nosnippet>392</a>        }
-<a href=#393 id=393 data-nosnippet>393</a>        <span class="kw">let </span>spectral_window_id = <span class="self">self
-<a href=#394 id=394 data-nosnippet>394</a>            </span>.spectral_windows
-<a href=#395 id=395 data-nosnippet>395</a>            .iter()
-<a href=#396 id=396 data-nosnippet>396</a>            .position(|window| window.name == spec.spectral_window)
-<a href=#397 id=397 data-nosnippet>397</a>            .ok_or_else(|| {
-<a href=#398 id=398 data-nosnippet>398</a>                SimulatorError::refused(<span class="macro">format!</span>(
-<a href=#399 id=399 data-nosnippet>399</a>                    <span class="string">"Spectral window named {} not yet defined"</span>,
-<a href=#400 id=400 data-nosnippet>400</a>                    spec.spectral_window
-<a href=#401 id=401 data-nosnippet>401</a>                ))
-<a href=#402 id=402 data-nosnippet>402</a>            })<span class="question-mark">?</span>;
-<a href=#403 id=403 data-nosnippet>403</a>        <span class="kw">if </span><span class="self">self</span>.fields.is_empty() {
-<a href=#404 id=404 data-nosnippet>404</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(SimulatorError::refused(<span class="string">"Field information not yet defined"</span>));
-<a href=#405 id=405 data-nosnippet>405</a>        }
-<a href=#406 id=406 data-nosnippet>406</a>        <span class="kw">let </span>field_id = <span class="self">self
-<a href=#407 id=407 data-nosnippet>407</a>            </span>.fields
-<a href=#408 id=408 data-nosnippet>408</a>            .iter()
-<a href=#409 id=409 data-nosnippet>409</a>            .position(|field| field.name == spec.source)
-<a href=#410 id=410 data-nosnippet>410</a>            .ok_or_else(|| {
-<a href=#411 id=411 data-nosnippet>411</a>                SimulatorError::refused(<span class="macro">format!</span>(<span class="string">"Field named {} not yet defined"</span>, spec.source))
-<a href=#412 id=412 data-nosnippet>412</a>            })<span class="question-mark">?</span>;
-<a href=#413 id=413 data-nosnippet>413</a>        <span class="kw">let </span>field = <span class="kw-2">&amp;</span><span class="self">self</span>.fields[field_id];
-<a href=#414 id=414 data-nosnippet>414</a>        <span class="macro">tracing::info!</span>(<span class="string">"First source: {} @ {:?}"</span>, field.name, field.direction_rad);
-<a href=#415 id=415 data-nosnippet>415</a>
-<a href=#416 id=416 data-nosnippet>416</a>        <span class="kw">let </span>integration_s = <span class="self">self</span>.times.integration_s;
-<a href=#417 id=417 data-nosnippet>417</a>        <span class="kw">if </span>integration_s &lt;= <span class="number">0.0 </span>{
-<a href=#418 id=418 data-nosnippet>418</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(SimulatorError::refused(
-<a href=#419 id=419 data-nosnippet>419</a>                <span class="string">"observe: the integration time must be positive"</span>,
-<a href=#420 id=420 data-nosnippet>420</a>            ));
-<a href=#421 id=421 data-nosnippet>421</a>        }
-<a href=#422 id=422 data-nosnippet>422</a>        <span class="kw">if </span><span class="self">self</span>.times.use_hour_angle &amp;&amp; <span class="self">self</span>.times.hour_angle_offset_s.is_none() {
-<a href=#423 id=423 data-nosnippet>423</a>            <span class="self">self</span>.times.hour_angle_offset_s = <span class="prelude-val">Some</span>(observe::hour_angle_offset_s(
-<a href=#424 id=424 data-nosnippet>424</a>                field.direction_rad,
-<a href=#425 id=425 data-nosnippet>425</a>                <span class="kw-2">&amp;</span><span class="self">self</span>.times.reference,
-<a href=#426 id=426 data-nosnippet>426</a>                <span class="self">self</span>.antennas[<span class="number">0</span>].position_itrf_m,
-<a href=#427 id=427 data-nosnippet>427</a>                <span class="self">self</span>.options.measures.clone(),
-<a href=#428 id=428 data-nosnippet>428</a>            )<span class="question-mark">?</span>);
-<a href=#429 id=429 data-nosnippet>429</a>        }
-<a href=#430 id=430 data-nosnippet>430</a>        <span class="kw">let </span>offset_s = <span class="kw">if </span><span class="self">self</span>.times.use_hour_angle {
-<a href=#431 id=431 data-nosnippet>431</a>            <span class="self">self</span>.times.hour_angle_offset_s.unwrap_or(<span class="number">0.0</span>)
-<a href=#432 id=432 data-nosnippet>432</a>        } <span class="kw">else </span>{
-<a href=#433 id=433 data-nosnippet>433</a>            <span class="number">0.0
-<a href=#434 id=434 data-nosnippet>434</a>        </span>};
-<a href=#435 id=435 data-nosnippet>435</a>        <span class="kw">let </span>reference_s = <span class="self">self</span>.times.reference_utc_s();
-<a href=#436 id=436 data-nosnippet>436</a>        <span class="kw">let </span>start_s = spec.start_s + reference_s + offset_s;
-<a href=#437 id=437 data-nosnippet>437</a>        <span class="kw">let </span>stop_s = spec.stop_s + reference_s + offset_s;
-<a href=#438 id=438 data-nosnippet>438</a>        <span class="macro">tracing::info!</span>(<span class="string">"Full time range: {start_s} -- {stop_s} UTC with int = {integration_s}"</span>);
-<a href=#439 id=439 data-nosnippet>439</a>        <span class="kw">let </span>integration_count = observe::integration_count(start_s, stop_s, integration_s);
-<a href=#440 id=440 data-nosnippet>440</a>
-<a href=#441 id=441 data-nosnippet>441</a>        <span class="kw">let </span>observation_id = <span class="kw">if </span>spec.add_observation || <span class="self">self</span>.observations.is_empty() {
-<a href=#442 id=442 data-nosnippet>442</a>            <span class="self">self</span>.observations.push(Observation {
-<a href=#443 id=443 data-nosnippet>443</a>                telescope: <span class="self">self</span>.telescope.clone(),
-<a href=#444 id=444 data-nosnippet>444</a>                time_range_s: [start_s, stop_s],
-<a href=#445 id=445 data-nosnippet>445</a>                observer: spec.observer.clone(),
-<a href=#446 id=446 data-nosnippet>446</a>                project: spec.project.clone(),
-<a href=#447 id=447 data-nosnippet>447</a>            });
-<a href=#448 id=448 data-nosnippet>448</a>            <span class="comment">// One more than the largest OBSERVATION_ID in MAIN so far.
-<a href=#449 id=449 data-nosnippet>449</a>            </span><span class="self">self</span>.scans
-<a href=#450 id=450 data-nosnippet>450</a>                .iter()
-<a href=#451 id=451 data-nosnippet>451</a>                .map(|scan| scan.observation_id)
-<a href=#452 id=452 data-nosnippet>452</a>                .max()
-<a href=#453 id=453 data-nosnippet>453</a>                .map_or(<span class="number">0</span>, |largest| largest + <span class="number">1</span>)
-<a href=#454 id=454 data-nosnippet>454</a>        } <span class="kw">else </span>{
-<a href=#455 id=455 data-nosnippet>455</a>            <span class="number">0
-<a href=#456 id=456 data-nosnippet>456</a>        </span>};
-<a href=#457 id=457 data-nosnippet>457</a>        <span class="kw">let </span>state_id = <span class="kw">match </span><span class="self">self</span>.states.iter().rposition(|state| <span class="kw-2">*</span>state == spec.state) {
-<a href=#458 id=458 data-nosnippet>458</a>            <span class="prelude-val">Some</span>(existing) =&gt; existing,
-<a href=#459 id=459 data-nosnippet>459</a>            <span class="prelude-val">None </span>=&gt; {
-<a href=#460 id=460 data-nosnippet>460</a>                <span class="self">self</span>.states.push(spec.state.clone());
-<a href=#461 id=461 data-nosnippet>461</a>                <span class="self">self</span>.states.len() - <span class="number">1
-<a href=#462 id=462 data-nosnippet>462</a>            </span>}
-<a href=#463 id=463 data-nosnippet>463</a>        };
-<a href=#464 id=464 data-nosnippet>464</a>        <span class="kw">let </span>scan_number = <span class="self">self</span>.scans.last().map_or(<span class="number">0</span>, |scan| scan.scan_number) + <span class="number">1</span>;
-<a href=#465 id=465 data-nosnippet>465</a>        <span class="kw">let </span>scan = Scan {
-<a href=#466 id=466 data-nosnippet>466</a>            scan_number,
-<a href=#467 id=467 data-nosnippet>467</a>            field_id,
-<a href=#468 id=468 data-nosnippet>468</a>            spectral_window_id,
-<a href=#469 id=469 data-nosnippet>469</a>            start_s,
-<a href=#470 id=470 data-nosnippet>470</a>            integration_s,
-<a href=#471 id=471 data-nosnippet>471</a>            integration_count,
-<a href=#472 id=472 data-nosnippet>472</a>            observation_id,
-<a href=#473 id=473 data-nosnippet>473</a>            state_id,
-<a href=#474 id=474 data-nosnippet>474</a>            antenna_count: <span class="self">self</span>.antennas.len(),
-<a href=#475 id=475 data-nosnippet>475</a>            phase_center_rad: field.direction_rad,
-<a href=#476 id=476 data-nosnippet>476</a>            autocorrelation_weight: <span class="self">self</span>.autocorrelation_weight,
-<a href=#477 id=477 data-nosnippet>477</a>            elevation_limit_rad: <span class="self">self</span>.elevation_limit_rad,
-<a href=#478 id=478 data-nosnippet>478</a>            shadow_fraction_limit: <span class="self">self</span>.shadow_fraction_limit,
-<a href=#479 id=479 data-nosnippet>479</a>        };
-<a href=#480 id=480 data-nosnippet>480</a>        <span class="macro">tracing::info!</span>(
-<a href=#481 id=481 data-nosnippet>481</a>            <span class="string">"Calculating a total of {} integrations"</span>,
-<a href=#482 id=482 data-nosnippet>482</a>            scan.integration_count
-<a href=#483 id=483 data-nosnippet>483</a>        );
-<a href=#484 id=484 data-nosnippet>484</a>        <span class="self">self</span>.scans.push(scan);
-<a href=#485 id=485 data-nosnippet>485</a>        <span class="prelude-val">Ok</span>(())
-<a href=#486 id=486 data-nosnippet>486</a>    }
-<a href=#487 id=487 data-nosnippet>487</a>
-<a href=#488 id=488 data-nosnippet>488</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>path(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>Path {
-<a href=#489 id=489 data-nosnippet>489</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.path
-<a href=#490 id=490 data-nosnippet>490</a>    }
-<a href=#491 id=491 data-nosnippet>491</a>
-<a href=#492 id=492 data-nosnippet>492</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>options(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>SimulatorOptions {
-<a href=#493 id=493 data-nosnippet>493</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.options
+<a href=#291 id=291 data-nosnippet>291</a>    /// # Errors
+<a href=#292 id=292 data-nosnippet>292</a>    ///
+<a href=#293 id=293 data-nosnippet>293</a>    /// As [`set_field`](Self::set_field), for any of the fields.
+<a href=#294 id=294 data-nosnippet>294</a>    </span><span class="kw">pub fn </span>set_mosaic_field(
+<a href=#295 id=295 data-nosnippet>295</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+<a href=#296 id=296 data-nosnippet>296</a>        name: <span class="kw-2">&amp;</span>str,
+<a href=#297 id=297 data-nosnippet>297</a>        calcode: <span class="kw-2">&amp;</span>str,
+<a href=#298 id=298 data-nosnippet>298</a>        centre: <span class="kw-2">&amp;</span>MDirection,
+<a href=#299 id=299 data-nosnippet>299</a>        (nx, ny): (usize, usize),
+<a href=#300 id=300 data-nosnippet>300</a>        spacing_rad: f64,
+<a href=#301 id=301 data-nosnippet>301</a>        distance_m: f64,
+<a href=#302 id=302 data-nosnippet>302</a>    ) -&gt; SimulatorResult&lt;()&gt; {
+<a href=#303 id=303 data-nosnippet>303</a>        <span class="kw">use </span>std::f64::consts::{FRAC_PI_2, PI, TAU};
+<a href=#304 id=304 data-nosnippet>304</a>        <span class="kw">let </span>(ra0, dec0) = centre.as_angles();
+<a href=#305 id=305 data-nosnippet>305</a>        <span class="kw">let </span>offset = |index: usize, count: usize| index <span class="kw">as </span>f64 - (count <span class="kw">as </span>f64 - <span class="number">1.0</span>) / <span class="number">2.0</span>;
+<a href=#306 id=306 data-nosnippet>306</a>        <span class="kw">let </span><span class="kw-2">mut </span>k = <span class="number">0</span>;
+<a href=#307 id=307 data-nosnippet>307</a>        <span class="kw">for </span>i <span class="kw">in </span><span class="number">0</span>..nx {
+<a href=#308 id=308 data-nosnippet>308</a>            <span class="kw">for </span>j <span class="kw">in </span><span class="number">0</span>..ny {
+<a href=#309 id=309 data-nosnippet>309</a>                <span class="kw">let </span><span class="kw-2">mut </span>ra = ra0 + offset(i, nx) * spacing_rad / dec0.cos();
+<a href=#310 id=310 data-nosnippet>310</a>                <span class="kw">let </span><span class="kw-2">mut </span>dec = dec0 + offset(j, ny) * spacing_rad;
+<a href=#311 id=311 data-nosnippet>311</a>                <span class="kw">if </span>ra &gt; TAU {
+<a href=#312 id=312 data-nosnippet>312</a>                    ra -= TAU;
+<a href=#313 id=313 data-nosnippet>313</a>                }
+<a href=#314 id=314 data-nosnippet>314</a>                <span class="kw">if </span>dec.abs() &gt; FRAC_PI_2 {
+<a href=#315 id=315 data-nosnippet>315</a>                    dec = dec.signum() * (PI - dec.abs());
+<a href=#316 id=316 data-nosnippet>316</a>                    ra = (ra + PI).rem_euclid(TAU);
+<a href=#317 id=317 data-nosnippet>317</a>                }
+<a href=#318 id=318 data-nosnippet>318</a>                <span class="kw">let </span>direction = MDirection::from_angles(ra, dec, centre.refer());
+<a href=#319 id=319 data-nosnippet>319</a>                <span class="self">self</span>.set_field(<span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"{name}_{k}"</span>), <span class="kw-2">&amp;</span>direction, calcode, distance_m)<span class="question-mark">?</span>;
+<a href=#320 id=320 data-nosnippet>320</a>                k += <span class="number">1</span>;
+<a href=#321 id=321 data-nosnippet>321</a>            }
+<a href=#322 id=322 data-nosnippet>322</a>        }
+<a href=#323 id=323 data-nosnippet>323</a>        <span class="prelude-val">Ok</span>(())
+<a href=#324 id=324 data-nosnippet>324</a>    }
+<a href=#325 id=325 data-nosnippet>325</a>
+<a href=#326 id=326 data-nosnippet>326</a>    <span class="doccomment">/// `sm.settimes(integrationtime, usehourangle, referencetime)`.
+<a href=#327 id=327 data-nosnippet>327</a>    ///
+<a href=#328 id=328 data-nosnippet>328</a>    /// A reference epoch in another time scale is converted to UTC, which
+<a href=#329 id=329 data-nosnippet>329</a>    /// the session works in.
+<a href=#330 id=330 data-nosnippet>330</a>    ///
+<a href=#331 id=331 data-nosnippet>331</a>    /// # Errors
+<a href=#332 id=332 data-nosnippet>332</a>    ///
+<a href=#333 id=333 data-nosnippet>333</a>    /// A negative integration time (CASA's assertion raises), or a
+<a href=#334 id=334 data-nosnippet>334</a>    /// reference epoch that does not convert to UTC.
+<a href=#335 id=335 data-nosnippet>335</a>    </span><span class="kw">pub fn </span>set_times(
+<a href=#336 id=336 data-nosnippet>336</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+<a href=#337 id=337 data-nosnippet>337</a>        integration_s: f64,
+<a href=#338 id=338 data-nosnippet>338</a>        use_hour_angle: bool,
+<a href=#339 id=339 data-nosnippet>339</a>        reference: MEpoch,
+<a href=#340 id=340 data-nosnippet>340</a>    ) -&gt; SimulatorResult&lt;()&gt; {
+<a href=#341 id=341 data-nosnippet>341</a>        <span class="kw">if </span>integration_s &lt; <span class="number">0.0 </span>{
+<a href=#342 id=342 data-nosnippet>342</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(SimulatorError::raised(
+<a href=#343 id=343 data-nosnippet>343</a>                <span class="string">"Failed AlwaysAssert qIntTime.getValue(\"s\")&gt;=0"</span>,
+<a href=#344 id=344 data-nosnippet>344</a>            ));
+<a href=#345 id=345 data-nosnippet>345</a>        }
+<a href=#346 id=346 data-nosnippet>346</a>        <span class="kw">let </span>reference = <span class="kw">if </span>reference.refer() == EpochRef::UTC {
+<a href=#347 id=347 data-nosnippet>347</a>            reference
+<a href=#348 id=348 data-nosnippet>348</a>        } <span class="kw">else </span>{
+<a href=#349 id=349 data-nosnippet>349</a>            <span class="kw">let </span>frame = MeasFrame::new().with_measures(<span class="self">self</span>.options.measures.clone());
+<a href=#350 id=350 data-nosnippet>350</a>            reference
+<a href=#351 id=351 data-nosnippet>351</a>                .convert_to(EpochRef::UTC, <span class="kw-2">&amp;</span>frame)
+<a href=#352 id=352 data-nosnippet>352</a>                .map_err(|error| {
+<a href=#353 id=353 data-nosnippet>353</a>                    SimulatorError::raised(<span class="macro">format!</span>(
+<a href=#354 id=354 data-nosnippet>354</a>                        <span class="string">"Could not convert the {} reference time to UTC: {error}"</span>,
+<a href=#355 id=355 data-nosnippet>355</a>                        reference.refer()
+<a href=#356 id=356 data-nosnippet>356</a>                    ))
+<a href=#357 id=357 data-nosnippet>357</a>                })<span class="question-mark">?
+<a href=#358 id=358 data-nosnippet>358</a>        </span>};
+<a href=#359 id=359 data-nosnippet>359</a>        <span class="macro">tracing::info!</span>(<span class="string">"Times"</span>);
+<a href=#360 id=360 data-nosnippet>360</a>        <span class="macro">tracing::info!</span>(<span class="string">"     Integration time {integration_s}s"</span>);
+<a href=#361 id=361 data-nosnippet>361</a>        <span class="kw">if </span>use_hour_angle {
+<a href=#362 id=362 data-nosnippet>362</a>            <span class="macro">tracing::info!</span>(<span class="string">"     Times will be interpreted as hour angles for first source"</span>);
+<a href=#363 id=363 data-nosnippet>363</a>        }
+<a href=#364 id=364 data-nosnippet>364</a>        <span class="self">self</span>.times = Times {
+<a href=#365 id=365 data-nosnippet>365</a>            integration_s,
+<a href=#366 id=366 data-nosnippet>366</a>            use_hour_angle,
+<a href=#367 id=367 data-nosnippet>367</a>            reference,
+<a href=#368 id=368 data-nosnippet>368</a>            set: <span class="bool-val">true</span>,
+<a href=#369 id=369 data-nosnippet>369</a>            hour_angle_offset_s: <span class="prelude-val">None</span>,
+<a href=#370 id=370 data-nosnippet>370</a>        };
+<a href=#371 id=371 data-nosnippet>371</a>        <span class="prelude-val">Ok</span>(())
+<a href=#372 id=372 data-nosnippet>372</a>    }
+<a href=#373 id=373 data-nosnippet>373</a>
+<a href=#374 id=374 data-nosnippet>374</a>    <span class="doccomment">/// `sm.setlimits(shadowlimit, elevationlimit)`.
+<a href=#375 id=375 data-nosnippet>375</a>    </span><span class="kw">pub fn </span>set_limits(<span class="kw-2">&amp;mut </span><span class="self">self</span>, shadow_fraction_limit: f64, elevation_limit_rad: f64) {
+<a href=#376 id=376 data-nosnippet>376</a>        <span class="self">self</span>.shadow_fraction_limit = shadow_fraction_limit;
+<a href=#377 id=377 data-nosnippet>377</a>        <span class="self">self</span>.elevation_limit_rad = elevation_limit_rad;
+<a href=#378 id=378 data-nosnippet>378</a>    }
+<a href=#379 id=379 data-nosnippet>379</a>
+<a href=#380 id=380 data-nosnippet>380</a>    <span class="doccomment">/// `sm.setauto(autocorrwt)`: autocorrelation rows are written when the
+<a href=#381 id=381 data-nosnippet>381</a>    /// weight is positive, with WEIGHT multiplied by it.
+<a href=#382 id=382 data-nosnippet>382</a>    </span><span class="kw">pub fn </span>set_auto(<span class="kw-2">&amp;mut </span><span class="self">self</span>, autocorrelation_weight: f32) {
+<a href=#383 id=383 data-nosnippet>383</a>        <span class="self">self</span>.autocorrelation_weight = autocorrelation_weight;
+<a href=#384 id=384 data-nosnippet>384</a>    }
+<a href=#385 id=385 data-nosnippet>385</a>
+<a href=#386 id=386 data-nosnippet>386</a>    <span class="doccomment">/// `sm.observe(...)`: plan one scan, as `observemany` plans one pointing
+<a href=#387 id=387 data-nosnippet>387</a>    /// with no direction.
+<a href=#388 id=388 data-nosnippet>388</a>    ///
+<a href=#389 id=389 data-nosnippet>389</a>    /// # Errors
+<a href=#390 id=390 data-nosnippet>390</a>    ///
+<a href=#391 id=391 data-nosnippet>391</a>    /// No antennas, spectral window or field, or none of the given names
+<a href=#392 id=392 data-nosnippet>392</a>    /// (CASA logs the error and returns `False`).
+<a href=#393 id=393 data-nosnippet>393</a>    </span><span class="kw">pub fn </span>observe(<span class="kw-2">&amp;mut </span><span class="self">self</span>, spec: <span class="kw-2">&amp;</span>ObserveSpec) -&gt; SimulatorResult&lt;()&gt; {
+<a href=#394 id=394 data-nosnippet>394</a>        <span class="self">self</span>.plan_pointings(<span class="kw-2">&amp;</span>ObserveManySpec::from(spec))
+<a href=#395 id=395 data-nosnippet>395</a>    }
+<a href=#396 id=396 data-nosnippet>396</a>
+<a href=#397 id=397 data-nosnippet>397</a>    <span class="doccomment">/// `sm.observemany(...)`: plan `spec`'s pointings in order, a scan for
+<a href=#398 id=398 data-nosnippet>398</a>    /// each run of pointings of one field, each pointing's phase centre its
+<a href=#399 id=399 data-nosnippet>399</a>    /// direction where given ([`Pointing`](observe::Pointing)).
+<a href=#400 id=400 data-nosnippet>400</a>    ///
+<a href=#401 id=401 data-nosnippet>401</a>    /// # Errors
+<a href=#402 id=402 data-nosnippet>402</a>    ///
+<a href=#403 id=403 data-nosnippet>403</a>    /// As [`observe`](Self::observe), for any pointing's field; no
+<a href=#404 id=404 data-nosnippet>404</a>    /// pointings; or a direction that cannot be converted to J2000 without
+<a href=#405 id=405 data-nosnippet>405</a>    /// an epoch and position.
+<a href=#406 id=406 data-nosnippet>406</a>    </span><span class="kw">pub fn </span>observe_many(<span class="kw-2">&amp;mut </span><span class="self">self</span>, spec: <span class="kw-2">&amp;</span>ObserveManySpec) -&gt; SimulatorResult&lt;()&gt; {
+<a href=#407 id=407 data-nosnippet>407</a>        <span class="self">self</span>.plan_pointings(spec)
+<a href=#408 id=408 data-nosnippet>408</a>    }
+<a href=#409 id=409 data-nosnippet>409</a>
+<a href=#410 id=410 data-nosnippet>410</a>    <span class="doccomment">/// `sm.setdata(spwid, fieldid, msselect)`: select the rows the next
+<a href=#411 id=411 data-nosnippet>411</a>    /// `predict` and `corrupt` act on, until the next `observe`, which drops
+<a href=#412 id=412 data-nosnippet>412</a>    /// CASA's selection.
+<a href=#413 id=413 data-nosnippet>413</a>    ///
+<a href=#414 id=414 data-nosnippet>414</a>    /// CASA's selection works on the rows observed so far:
+<a href=#415 id=415 data-nosnippet>415</a>    /// - their FIELD_ID must be among `field_ids`, when there are any;
+<a href=#416 id=416 data-nosnippet>416</a>    /// - their DATA_DESC_ID must be one of the windows `spectral_window_ids`
+<a href=#417 id=417 data-nosnippet>417</a>    ///   names, when it names any (casa-rs's data description `w` is
+<a href=#418 id=418 data-nosnippet>418</a>    ///   window `w`);
+<a href=#419 id=419 data-nosnippet>419</a>    /// - then the TaQL `msselect` applies;
+<a href=#420 id=420 data-nosnippet>420</a>    /// - a selection that keeps no row reverts to every row, with a warning.
+<a href=#421 id=421 data-nosnippet>421</a>    ///
+<a href=#422 id=422 data-nosnippet>422</a>    /// casa-rs takes a selection that keeps every row, as `simobserve`'s
+<a href=#423 id=423 data-nosnippet>423</a>    /// `setdata(fieldid=range(nfld))` does. The following steps then act on
+<a href=#424 id=424 data-nosnippet>424</a>    /// every row observed so far, as without `setdata`.
+<a href=#425 id=425 data-nosnippet>425</a>    ///
+<a href=#426 id=426 data-nosnippet>426</a>    /// # Errors
+<a href=#427 id=427 data-nosnippet>427</a>    ///
+<a href=#428 id=428 data-nosnippet>428</a>    /// Not yet implemented: a selection that keeps some but not all of the
+<a href=#429 id=429 data-nosnippet>429</a>    /// rows, or a non-blank `msselect`.
+<a href=#430 id=430 data-nosnippet>430</a>    </span><span class="kw">pub fn </span>set_data(
+<a href=#431 id=431 data-nosnippet>431</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+<a href=#432 id=432 data-nosnippet>432</a>        spectral_window_ids: <span class="kw-2">&amp;</span>[i64],
+<a href=#433 id=433 data-nosnippet>433</a>        field_ids: <span class="kw-2">&amp;</span>[i64],
+<a href=#434 id=434 data-nosnippet>434</a>        ms_select: <span class="kw-2">&amp;</span>str,
+<a href=#435 id=435 data-nosnippet>435</a>    ) -&gt; SimulatorResult&lt;()&gt; {
+<a href=#436 id=436 data-nosnippet>436</a>        <span class="macro">tracing::info!</span>(<span class="string">"Selecting data"</span>);
+<a href=#437 id=437 data-nosnippet>437</a>        <span class="kw">if </span>!ms_select.trim().is_empty() {
+<a href=#438 id=438 data-nosnippet>438</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(SimulatorError::not_yet_implemented(<span class="macro">format!</span>(
+<a href=#439 id=439 data-nosnippet>439</a>                <span class="string">"setdata(msselect='{ms_select}') is not yet implemented in casa-rs (#841)"
+<a href=#440 id=440 data-nosnippet>440</a>            </span>)));
+<a href=#441 id=441 data-nosnippet>441</a>        }
+<a href=#442 id=442 data-nosnippet>442</a>        <span class="kw">let </span>windows: Vec&lt;usize&gt; = (<span class="number">0</span>..<span class="self">self</span>.spectral_windows.len())
+<a href=#443 id=443 data-nosnippet>443</a>            .filter(|window| spectral_window_ids.contains(<span class="kw-2">&amp;</span>(<span class="kw-2">*</span>window <span class="kw">as </span>i64)))
+<a href=#444 id=444 data-nosnippet>444</a>            .collect();
+<a href=#445 id=445 data-nosnippet>445</a>        <span class="kw">if </span>field_ids.is_empty() &amp;&amp; windows.is_empty() {
+<a href=#446 id=446 data-nosnippet>446</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(());
+<a href=#447 id=447 data-nosnippet>447</a>        }
+<a href=#448 id=448 data-nosnippet>448</a>        <span class="kw">let </span>selected = |scan: <span class="kw-2">&amp;</span>Scan| {
+<a href=#449 id=449 data-nosnippet>449</a>            (field_ids.is_empty() || field_ids.contains(<span class="kw-2">&amp;</span>(scan.field_id <span class="kw">as </span>i64)))
+<a href=#450 id=450 data-nosnippet>450</a>                &amp;&amp; (windows.is_empty() || windows.contains(<span class="kw-2">&amp;</span>scan.spectral_window_id))
+<a href=#451 id=451 data-nosnippet>451</a>        };
+<a href=#452 id=452 data-nosnippet>452</a>        <span class="kw">let </span>kept = <span class="self">self</span>.scans.iter().filter(|scan| selected(scan)).count();
+<a href=#453 id=453 data-nosnippet>453</a>        <span class="kw">if </span>kept == <span class="number">0 </span>{
+<a href=#454 id=454 data-nosnippet>454</a>            <span class="macro">tracing::warn!</span>(<span class="string">"Selection is empty: reverting to original MeasurementSet"</span>);
+<a href=#455 id=455 data-nosnippet>455</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(());
+<a href=#456 id=456 data-nosnippet>456</a>        }
+<a href=#457 id=457 data-nosnippet>457</a>        <span class="kw">if </span>kept == <span class="self">self</span>.scans.len() {
+<a href=#458 id=458 data-nosnippet>458</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(());
+<a href=#459 id=459 data-nosnippet>459</a>        }
+<a href=#460 id=460 data-nosnippet>460</a>        <span class="prelude-val">Err</span>(SimulatorError::not_yet_implemented(<span class="macro">format!</span>(
+<a href=#461 id=461 data-nosnippet>461</a>            <span class="string">"setdata selecting {kept} of the {} scans observed so far is not yet implemented in \
+<a href=#462 id=462 data-nosnippet>462</a>             casa-rs (simulation Phase 2); a selection of them all is"</span>,
+<a href=#463 id=463 data-nosnippet>463</a>            <span class="self">self</span>.scans.len()
+<a href=#464 id=464 data-nosnippet>464</a>        )))
+<a href=#465 id=465 data-nosnippet>465</a>    }
+<a href=#466 id=466 data-nosnippet>466</a>
+<a href=#467 id=467 data-nosnippet>467</a>    <span class="doccomment">/// `sm.close()` / `sm.done()`: write the MeasurementSet.
+<a href=#468 id=468 data-nosnippet>468</a>    ///
+<a href=#469 id=469 data-nosnippet>469</a>    /// # Errors
+<a href=#470 id=470 data-nosnippet>470</a>    ///
+<a href=#471 id=471 data-nosnippet>471</a>    /// A failure to create or write the MeasurementSet.
+<a href=#472 id=472 data-nosnippet>472</a>    </span><span class="kw">pub fn </span>close(<span class="self">self</span>) -&gt; SimulatorResult&lt;()&gt; {
+<a href=#473 id=473 data-nosnippet>473</a>        write::write_measurement_set(<span class="kw-2">&amp;</span><span class="self">self</span>)
+<a href=#474 id=474 data-nosnippet>474</a>    }
+<a href=#475 id=475 data-nosnippet>475</a>
+<a href=#476 id=476 data-nosnippet>476</a>    <span class="doccomment">/// `direction` in J2000, as `[ra, dec]` radians with the longitude in
+<a href=#477 id=477 data-nosnippet>477</a>    /// (−π, π] as casacore's `MVDirection` keeps it; `what` names it in the
+<a href=#478 id=478 data-nosnippet>478</a>    /// error.
+<a href=#479 id=479 data-nosnippet>479</a>    </span><span class="kw">fn </span>j2000_rad(<span class="kw-2">&amp;</span><span class="self">self</span>, direction: <span class="kw-2">&amp;</span>MDirection, what: <span class="kw-2">&amp;</span>str) -&gt; SimulatorResult&lt;[f64; <span class="number">2</span>]&gt; {
+<a href=#480 id=480 data-nosnippet>480</a>        <span class="kw">let </span>j2000 = <span class="kw">if </span>direction.refer() == DirectionRef::J2000 {
+<a href=#481 id=481 data-nosnippet>481</a>            direction.clone()
+<a href=#482 id=482 data-nosnippet>482</a>        } <span class="kw">else </span>{
+<a href=#483 id=483 data-nosnippet>483</a>            <span class="kw">let </span>frame = MeasFrame::new().with_measures(<span class="self">self</span>.options.measures.clone());
+<a href=#484 id=484 data-nosnippet>484</a>            direction
+<a href=#485 id=485 data-nosnippet>485</a>                .convert_to(DirectionRef::J2000, <span class="kw-2">&amp;</span>frame)
+<a href=#486 id=486 data-nosnippet>486</a>                .map_err(|error| {
+<a href=#487 id=487 data-nosnippet>487</a>                    SimulatorError::raised(<span class="macro">format!</span>(
+<a href=#488 id=488 data-nosnippet>488</a>                        <span class="string">"Could not convert {what} to a J2000 Direction Measure: {error}"
+<a href=#489 id=489 data-nosnippet>489</a>                    </span>))
+<a href=#490 id=490 data-nosnippet>490</a>                })<span class="question-mark">?
+<a href=#491 id=491 data-nosnippet>491</a>        </span>};
+<a href=#492 id=492 data-nosnippet>492</a>        <span class="kw">let </span>(ra, dec) = j2000.as_angles();
+<a href=#493 id=493 data-nosnippet>493</a>        <span class="prelude-val">Ok</span>([ra.sin().atan2(ra.cos()), dec])
 <a href=#494 id=494 data-nosnippet>494</a>    }
 <a href=#495 id=495 data-nosnippet>495</a>
-<a href=#496 id=496 data-nosnippet>496</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>telescope(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>str {
-<a href=#497 id=497 data-nosnippet>497</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.telescope
+<a href=#496 id=496 data-nosnippet>496</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>path(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>Path {
+<a href=#497 id=497 data-nosnippet>497</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.path
 <a href=#498 id=498 data-nosnippet>498</a>    }
 <a href=#499 id=499 data-nosnippet>499</a>
-<a href=#500 id=500 data-nosnippet>500</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>antennas(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>[Antenna] {
-<a href=#501 id=501 data-nosnippet>501</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.antennas
+<a href=#500 id=500 data-nosnippet>500</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>options(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>SimulatorOptions {
+<a href=#501 id=501 data-nosnippet>501</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.options
 <a href=#502 id=502 data-nosnippet>502</a>    }
 <a href=#503 id=503 data-nosnippet>503</a>
-<a href=#504 id=504 data-nosnippet>504</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>feeds(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>[Feed] {
-<a href=#505 id=505 data-nosnippet>505</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.feeds
+<a href=#504 id=504 data-nosnippet>504</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>telescope(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>str {
+<a href=#505 id=505 data-nosnippet>505</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.telescope
 <a href=#506 id=506 data-nosnippet>506</a>    }
 <a href=#507 id=507 data-nosnippet>507</a>
-<a href=#508 id=508 data-nosnippet>508</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>spectral_windows(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>[SpectralWindow] {
-<a href=#509 id=509 data-nosnippet>509</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.spectral_windows
+<a href=#508 id=508 data-nosnippet>508</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>antennas(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>[Antenna] {
+<a href=#509 id=509 data-nosnippet>509</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.antennas
 <a href=#510 id=510 data-nosnippet>510</a>    }
 <a href=#511 id=511 data-nosnippet>511</a>
-<a href=#512 id=512 data-nosnippet>512</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>fields(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>[Field] {
-<a href=#513 id=513 data-nosnippet>513</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.fields
+<a href=#512 id=512 data-nosnippet>512</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>feeds(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>[Feed] {
+<a href=#513 id=513 data-nosnippet>513</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.feeds
 <a href=#514 id=514 data-nosnippet>514</a>    }
 <a href=#515 id=515 data-nosnippet>515</a>
-<a href=#516 id=516 data-nosnippet>516</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>observations(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>[Observation] {
-<a href=#517 id=517 data-nosnippet>517</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.observations
+<a href=#516 id=516 data-nosnippet>516</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>spectral_windows(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>[SpectralWindow] {
+<a href=#517 id=517 data-nosnippet>517</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.spectral_windows
 <a href=#518 id=518 data-nosnippet>518</a>    }
 <a href=#519 id=519 data-nosnippet>519</a>
-<a href=#520 id=520 data-nosnippet>520</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>states(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>[StateSpec] {
-<a href=#521 id=521 data-nosnippet>521</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.states
+<a href=#520 id=520 data-nosnippet>520</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>fields(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>[Field] {
+<a href=#521 id=521 data-nosnippet>521</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.fields
 <a href=#522 id=522 data-nosnippet>522</a>    }
 <a href=#523 id=523 data-nosnippet>523</a>
-<a href=#524 id=524 data-nosnippet>524</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>scans(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>[Scan] {
-<a href=#525 id=525 data-nosnippet>525</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.scans
+<a href=#524 id=524 data-nosnippet>524</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>observations(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>[Observation] {
+<a href=#525 id=525 data-nosnippet>525</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.observations
 <a href=#526 id=526 data-nosnippet>526</a>    }
 <a href=#527 id=527 data-nosnippet>527</a>
-<a href=#528 id=528 data-nosnippet>528</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>data_plan(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>DataPlan {
-<a href=#529 id=529 data-nosnippet>529</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.data_plan
+<a href=#528 id=528 data-nosnippet>528</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>states(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>[StateSpec] {
+<a href=#529 id=529 data-nosnippet>529</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.states
 <a href=#530 id=530 data-nosnippet>530</a>    }
-<a href=#531 id=531 data-nosnippet>531</a>}
+<a href=#531 id=531 data-nosnippet>531</a>
+<a href=#532 id=532 data-nosnippet>532</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>scans(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>[Scan] {
+<a href=#533 id=533 data-nosnippet>533</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.scans
+<a href=#534 id=534 data-nosnippet>534</a>    }
+<a href=#535 id=535 data-nosnippet>535</a>
+<a href=#536 id=536 data-nosnippet>536</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>data_plan(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>DataPlan {
+<a href=#537 id=537 data-nosnippet>537</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.data_plan
+<a href=#538 id=538 data-nosnippet>538</a>    }
+<a href=#539 id=539 data-nosnippet>539</a>}
 </code></pre></div></section></main></body></html>
