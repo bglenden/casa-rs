@@ -42,9 +42,10 @@ fn multiply_high_low(a: u32, b: u32) -> (u32, u32) {
 ///
 /// Each lane's step is the scalar round's, `(c₀, c₁, c₂, c₃) →
 /// (hi(M₁c₂) ⊕ c₁ ⊕ k₀, lo(M₁c₂), hi(M₀c₀) ⊕ c₃ ⊕ k₁, lo(M₀c₀))`. With
-/// NEON, whole groups of four lanes take the step in vector registers
-/// ([`neon`]) and any remaining lanes take it one at a time; elsewhere every
-/// lane does. Integer arithmetic is exact, so the two give the same words.
+/// NEON, whole groups of four lanes take the step in vector registers (the
+/// `neon` module, compiled for aarch64 only) and any remaining lanes take it
+/// one at a time; elsewhere every lane does. Integer arithmetic is exact, so
+/// the two give the same words.
 #[inline(always)]
 fn round<const LANES: usize>(counters: &Lanes<LANES>, key: Key) -> Lanes<LANES> {
     let mut next = [[0; LANES]; 4];
