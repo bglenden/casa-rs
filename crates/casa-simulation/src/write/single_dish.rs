@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! The total-power predictions in a write batch: after the model images
 //! are degridded into DATA, each `predict` after `setoptions(ftmachine='sd')`
-//! covering a row's scan adds its field's samples to the row, if it is an
+//! covering a row's scan adds its pointing's samples to the row, if it is an
 //! unflagged autocorrelation ([`crate::predict::SingleDishPrediction`]).
 
 use num_complex::Complex32;
@@ -20,9 +20,9 @@ pub(super) fn add_single_dish(
     (data, samples): (&mut [Complex32], usize),
 ) {
     for &(scan, start, count) in runs {
-        let (field, window) = (scans[scan].field_id, scans[scan].spectral_window_id);
+        let window = scans[scan].spectral_window_id;
         for prediction in plan.single_dish_for_scan(scan) {
-            let values = prediction.samples(field, window);
+            let values = prediction.samples(scan, window);
             for row in start..start + count {
                 let geometry = &rows[row];
                 // `SDGrid::get` predicts no row it flags, nor (here) a

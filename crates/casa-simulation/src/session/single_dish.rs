@@ -3,9 +3,11 @@
 //! from the model in the image plane as CASA's `SDGrid` samples it
 //! (`crate::predict` documents the sampling).
 //!
-//! The model is sampled when `predict` is called, at each observed field's
-//! pointing, one sample per field, window, channel and correlation; `close`
-//! adds them to the autocorrelations of the scans the step covers. The
+//! The model is sampled when `predict` is called, at each distinct pointing
+//! of the scans observed so far (a scan's phase centre, which `observemany`
+//! can move off its field), one sample per pointing, window, channel and
+//! correlation; `close` adds each scan's pointing's samples to the
+//! autocorrelations of the scans the step covers. The
 //! `PB` kernel is the default pattern of OBSERVATION row 0's telescope,
 //! whatever `setvp` says; `setvp(dovp=True)` also applies that pattern to
 //! the model first, as CASA's `SkyEquation` does.
@@ -17,7 +19,8 @@ use casa_imaging_runtime::{Demand, admit};
 use super::Simulator;
 use super::error::{SimulatorError, SimulatorResult};
 use crate::predict::{
-    PrimaryBeam, SingleDishKernel, SingleDishPrediction, SingleDishWindow, SkyModel,
+    PrimaryBeam, SingleDishKernel, SingleDishPointings, SingleDishPrediction, SingleDishWindow,
+    SkyModel,
 };
 
 /// The phase a total-power prediction is admitted as.
@@ -59,18 +62,15 @@ impl Simulator {
                 correlations: window.correlations.clone(),
             })
             .collect();
-        // A scan is pointed at its field's direction (the POINTING table
-        // casa-rs writes).
-        let fields: Vec<(usize, [f64; 2])> = self
-            .observed_fields()
-            .into_iter()
-            .map(|field| (field, self.fields[field].direction_rad))
-            .collect();
+        // A scan is pointed at its phase centre (the POINTING table casa-rs
+        // writes).
+        let pointings =
+            SingleDishPointings::of_scans(self.scans.iter().map(|scan| scan.phase_center_rad));
         let (kernel_pattern, voltage_pattern) = (
             kernel_beam.map(PrimaryBeam::pattern),
             beam.map(PrimaryBeam::pattern),
         );
-        let held = SingleDishPrediction::bytes(&windows, &fields);
+        let held = SingleDishPrediction::bytes(&windows, &pointings);
         let resources = &self.options.resources;
         let mut reservation = admit(
             resources.host(),
@@ -78,23 +78,28 @@ impl Simulator {
             &Demand {
                 phase: SINGLE_DISH_PHASE,
                 memory: held
-                    + SingleDishPrediction::preparation_bytes(model, kernel_pattern.as_ref()),
+                    + SingleDishPrediction::preparation_bytes(
+                        model,
+                        kernel_pattern.as_ref(),
+                        (&windows, &pointings),
+                    ),
             },
         )
         .map_err(SimulatorError::admission)?;
         let preparation = reservation.split(reservation.memory() - held);
+        let count = pointings.directions_rad.len();
         let prediction = SingleDishPrediction::new(
             model,
             kernel,
             (kernel_pattern.as_ref(), voltage_pattern.as_ref()),
-            (&windows, &fields),
+            (&windows, pointings),
             reservation,
         )
         .map_err(|error| SimulatorError::raised(format!("Caught exception: {error}")))?;
         drop(preparation);
         tracing::info!(
             ?kernel,
-            fields = fields.len(),
+            pointings = count,
             "sampled the model for total power"
         );
         if !incremental {

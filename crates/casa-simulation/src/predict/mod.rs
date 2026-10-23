@@ -48,7 +48,7 @@ pub(crate) use beam::BeamPattern;
 pub use beam::PrimaryBeam;
 pub use model::SkyModel;
 pub use single_dish::SingleDishKernel;
-pub(crate) use single_dish::{SingleDishPrediction, SingleDishWindow};
+pub(crate) use single_dish::{SingleDishPointings, SingleDishPrediction, SingleDishWindow};
 
 use casa_coordinates::CoordinateError;
 use casa_images::ImageError;

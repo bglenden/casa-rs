@@ -996,11 +996,48 @@ fn predict_single_dish(model: &Path, measures: &Arc<dyn MeasuresProvider>) -> Pr
     predicted
 }
 
+/// A model of `planes` planes, one per channel of the law's window, with
+/// [`write_model`]'s points in every plane.
+fn write_cube(path: &Path, planes: usize) {
+    let mut coordinates = ImageCoordinates::new();
+    coordinates.add_coordinate(DirectionCoordinate::new(
+        DirectionRef::J2000,
+        Projection::new(ProjectionType::SIN),
+        CENTRE_RAD,
+        [-CELL_RAD, CELL_RAD],
+        [(PIXELS / 2) as f64, (PIXELS / 2) as f64],
+    ));
+    coordinates.add_coordinate(StokesCoordinate::new(vec![StokesType::I]));
+    coordinates.add_coordinate(SpectralCoordinate::new(
+        FrequencyRef::LSRK,
+        FREQUENCY_HZ,
+        CHANNEL_HZ,
+        0.0,
+        FREQUENCY_HZ,
+    ));
+    let shape = vec![PIXELS, PIXELS, 1, planes];
+    let mut image =
+        PagedImage::<f32>::create(shape.clone(), coordinates, path).expect("create model");
+    let mut pixels = ArrayD::zeros(IxDyn(&shape));
+    for plane in 0..planes {
+        for (x, y, flux) in [(32, 32, 1.0_f32), (41, 28, 0.5), (12, 50, 0.25)] {
+            pixels[IxDyn(&[x, y, 0, plane])] = flux;
+        }
+    }
+    image.put_slice(&pixels, &[0, 0, 0, 0]).expect("pixels");
+    image.set_units("Jy/pixel").expect("units");
+    image.save().expect("save model");
+}
+
 /// `predict` through `SDGrid` admits its samples and its preparation (the
-/// kernel, as tabulated and as kept, and the model plane read) before it
-/// forms them (this PR, #841 Phase 2): while it runs, the heap stays within
-/// that admission and the allowance; after it, what the session keeps (the
-/// 1,000 fields' 5.1 MB of samples) is what its reservation keeps.
+/// kernel, as tabulated and as kept, the plane read and each pointing's
+/// scratch) before it forms them (this PR, #841 Phase 2): while it runs,
+/// the heap stays within that admission and the allowance; after it, what
+/// the session keeps (the 1,000 pointings' 5.1 MB of samples) is what its
+/// reservation keeps. Both a one-plane model and a cube of a plane per
+/// channel are predicted (#874 review): a cube's samples were first held
+/// as a plane × pointing matrix, uncharged, and its read caches tiles
+/// across every plane (here 8 MiB for a 5 MiB cube), now charged.
 #[test]
 fn a_total_power_predict_keeps_what_it_charges() {
     if !alone("a_total_power_predict_keeps_what_it_charges") {
@@ -1010,15 +1047,28 @@ fn a_total_power_predict_keeps_what_it_charges() {
     charge_process_caches(resources.host(), resources.policy()).expect("the process caches");
     let measures = casa_test_support::deterministic_measures_provider();
     let root = tempfile::tempdir().expect("temporary directory");
-    let model = root.path().join("model.image");
-    write_model(&model, SINGLE_DISH_CHANNELS);
+    let plane = root.path().join("model.image");
+    write_model(&plane, SINGLE_DISH_CHANNELS);
+    let cube = root.path().join("cube.image");
+    write_cube(&cube, SINGLE_DISH_CHANNELS);
+    for model in [plane, cube] {
+        total_power_holds_its_admission(&model, &measures);
+    }
+}
+
+/// The total-power law for `model`.
+fn total_power_holds_its_admission(model: &Path, measures: &Arc<dyn MeasuresProvider>) {
     // Once unmeasured: state a process keeps once it has predicted.
-    predict_single_dish(&model, &measures);
+    predict_single_dish(model, measures);
     for _ in 0..MEASURED_RUNS {
-        let Predicted { during, kept } = predict_single_dish(&model, &measures);
+        let Predicted { during, kept } = predict_single_dish(model, measures);
         println!(
-            "SD predict: held {} bytes against {} admitted; kept {} against {} charged",
-            during.heap, during.admitted, kept.heap, kept.admitted
+            "SD predict of {}: held {} bytes against {} admitted; kept {} against {} charged",
+            model.display(),
+            during.heap,
+            during.admitted,
+            kept.heap,
+            kept.admitted
         );
         assert!(
             kept.admitted >= (SINGLE_DISH_FIELDS * SINGLE_DISH_CHANNELS * 2 * 8) as u64,

@@ -25,13 +25,24 @@ const DEC_DEG: f64 = -30.0;
 /// A model of `PIXELS` 1″ pixels at 230 GHz with `points` (pixel offsets
 /// from the centre and flux) in planes of 7.8125 MHz.
 fn model(dir: &Path, name: &str, points: &[(isize, isize, f32, usize)], planes: usize) -> SkyModel {
+    model_of(dir, name, (points, planes), 1.0)
+}
+
+/// [`model`] with pixels of `cell_arcsec`.
+fn model_of(
+    dir: &Path,
+    name: &str,
+    (points, planes): (&[(isize, isize, f32, usize)], usize),
+    cell_arcsec: f64,
+) -> SkyModel {
+    let cell_rad = CELL_RAD * cell_arcsec;
     let path = dir.join(name);
     let mut coordinates = CoordinateSystem::new();
     coordinates.add_coordinate(DirectionCoordinate::new(
         DirectionRef::J2000,
         Projection::new(ProjectionType::SIN),
         [RA_DEG.to_radians(), DEC_DEG.to_radians()],
-        [-CELL_RAD, CELL_RAD],
+        [-cell_rad, cell_rad],
         [(PIXELS / 2) as f64, (PIXELS / 2) as f64],
     ));
     coordinates.add_coordinate(StokesCoordinate::new(vec![StokesType::I]));
@@ -84,23 +95,26 @@ fn sampled(
     offsets: &[(f64, f64)],
 ) -> Vec<f32> {
     let pattern = PrimaryBeam::ALMA.pattern();
-    let fields: Vec<(usize, [f64; 2])> = offsets
-        .iter()
-        .enumerate()
-        .map(|(field, &(east, north))| (field, offset(east, north)))
-        .collect();
+    // One scan at each pointing.
+    let pointings = SingleDishPointings::of_scans(
+        offsets
+            .iter()
+            .map(|&(east, north)| offset(east, north))
+            .collect::<Vec<_>>()
+            .into_iter(),
+    );
     let windows = [window(1, vec![9, 12])];
     let prediction = SingleDishPrediction::new(
         model,
         kernel,
         (Some(&pattern), voltage_pattern.then_some(&pattern)),
-        (&windows, &fields),
+        (&windows, pointings),
         Reservation::none(),
     )
     .expect("prepared");
     (0..offsets.len())
-        .map(|field| {
-            let samples = prediction.samples(field, 0);
+        .map(|scan| {
+            let samples = prediction.samples(scan, 0);
             assert_eq!(samples[0], samples[1], "XX and YY carry Stokes I");
             samples[0].re
         })
@@ -144,6 +158,20 @@ fn a_pb_kernel_weights_the_model_by_the_power_pattern_at_the_pointing() {
     // The beam applied first as well, as CASA's SkyEquation applies it.
     let twice = sampled(&point, SingleDishKernel::Pb, true, &offsets[..3]);
     assert_close(&twice, &[1.0, 0.836_658_6, 0.454_755], 1.0e-5);
+}
+
+/// The PB kernel's support comes from every sample counted before the cut,
+/// though the last is dropped: with 28″ pixels the count is 100, a support
+/// of one pixel, and a point one pixel from a pointing 0.4 pixel off centre
+/// contributes. CASA 6.7.6 predicts 0.29592791 Jy (#874 review); a support
+/// taken from the 99 samples kept predicted nothing.
+#[test]
+fn the_pb_support_counts_the_sample_casa_drops() {
+    let dir = tempfile::tempdir().expect("dir");
+    let point = model_of(dir.path(), "coarse.image", (&[(1, 0, 1.0, 0)], 1), 28.0);
+    // +x is west: the pointing is 0.4 pixel towards the point.
+    let actual = sampled(&point, SingleDishKernel::Pb, false, &[(-0.4 * 28.0, 0.0)]);
+    assert_close(&actual, &[0.295_927_9], 1.0e-6);
 }
 
 #[test]
@@ -207,11 +235,14 @@ fn channels_take_their_planes_and_cross_hands_take_none() {
     );
     let pattern = PrimaryBeam::ALMA.pattern();
     let windows = [window(4, vec![9, 10, 11, 12])];
+    // Two scans at one pointing share its samples.
+    let pointings = SingleDishPointings::of_scans([offset(0.0, 0.0), offset(0.0, 0.0)].into_iter());
+    assert_eq!(pointings.directions_rad.len(), 1);
     let prediction = SingleDishPrediction::new(
         &cube,
         SingleDishKernel::Pb,
         (Some(&pattern), None),
-        (&windows, &[(0, offset(0.0, 0.0))]),
+        (&windows, pointings),
         Reservation::none(),
     )
     .expect("prepared");
@@ -227,9 +258,10 @@ fn channels_take_their_planes_and_cross_hands_take_none() {
             1.0, 0.0, 0.0, 1.0, 2.0, 0.0, 0.0, 2.0, 3.0, 0.0, 0.0, 3.0, 0.0, 0.0, 0.0, 0.0
         ]
     );
+    assert_eq!(prediction.samples(1, 0), prediction.samples(0, 0));
     assert!(
-        prediction.samples(1, 0).is_empty(),
-        "an unprepared field has none"
+        prediction.samples(2, 0).is_empty(),
+        "an unprepared scan has none"
     );
 }
 
