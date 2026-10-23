@@ -19,6 +19,10 @@
 //!    itself wrote;
 //! 3. CASA opens it for update and closes it, so `writeTable` rewrites it in
 //!    place, and casa-rs reads the rewrite back unchanged.
+//!
+//! A fourth list holds a limb-darkened disk without an exponent: CASA reads
+//! it (step 2), but is not asked to rewrite it, since its writer aborts on
+//! such a disk.
 
 mod common;
 
@@ -256,6 +260,36 @@ fn casa_reads_rewrites_and_casa_rs_reads_back() {
     check_round_trip(&python, &from_casa, scratch.path(), "fixture");
     check_round_trip(&python, &constructed_list(), scratch.path(), "constructed");
     check_round_trip(&python, &ComponentList::new(), scratch.path(), "empty");
+
+    // A limb-darkened disk without an exponent, which CASA cannot write
+    // (docs/CASA (C++) bugs.md): casa-rs leaves its Optional_Parameters cell
+    // undefined, so every cell of that TiledCellStMan column is, and CASA
+    // reads the disk with no optional parameters. CASA is not asked to
+    // rewrite it, since its writer aborts on such a disk.
+    let mut exponentless = constructed_list();
+    exponentless
+        .get_mut(2)
+        .expect("limb-darkened disk")
+        .set_optional_parameters(Vec::new());
+    let written = scratch.path().join("exponentless.cl");
+    exponentless.write_table(&written).expect("casa-rs writes");
+    let document = dump(&python, &written);
+    assert_matches_casa(
+        &exponentless,
+        &document,
+        "CASA reading an exponent-less disk",
+    );
+    assert!(
+        document["cells"]["Optional_Parameters"]
+            .as_array()
+            .expect("Optional_Parameters cells")
+            .iter()
+            .all(Value::is_null),
+        "every Optional_Parameters cell is undefined"
+    );
+    println!(
+        "exponentless: CASA read the limb-darkened disk with every Optional_Parameters cell undefined"
+    );
 }
 
 #[test]
