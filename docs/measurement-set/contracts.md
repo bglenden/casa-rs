@@ -1,6 +1,6 @@
 # Intermediate observation contracts
 
-Status: draft revision 3; incorporates review input, not accepted or frozen
+Status: draft revision 4; incorporates review input, not accepted or frozen
 Truth class: design proposal
 Date: 2026-10-23
 
@@ -20,12 +20,12 @@ does not require reading visibility payloads for a flags-only request.
 | Rule | Required behavior |
 | --- | --- |
 | C1: source independence | No physical row IDs, Zarr keys, storage managers, or MS-version branches in numerical processing loops. |
-| C2: faithful values | Guaranteed canonical coordinate units or explicitly requested units at binding; explicit frames/precision, native flag and weight semantics, full data-group association, ordered baselines. No silent scientific transform. |
+| C2: faithful values | Coordinates and references are native casa-rs Measures types/views, directly accepted by its conversion APIs. Guaranteed canonical coordinate units or explicitly requested units at binding; explicit frames/precision, native flag and weight semantics, full data-group association, ordered baselines. No silent scientific transform. |
 | C3: layout independence | Separate sample topology, memory layout, scientific grouping, and storage chunking. |
 | C4: bounded ownership | Every live payload, index, decode buffer, cache, packed copy and queue is admitted; borrowed views cannot outlive/refill their storage. Independent work can retire separately; shared storage stays live until its last use completes. |
 | C5: invertible updates | Sample-preserving reorder/selection retains a checked inverse source map; reduction does not. Shared variables have explicit mutation scope. |
 | C6: honest guarantees | Unknown acquisition occupancy is representable; unsupported profiles/layouts and non-atomic writes are explicit. |
-| C7: bulk execution | Bind numeric kind, layout and context outside scalar loops; no required per-sample allocation, virtual call, or coordinate reconstruction. |
+| C7: bulk execution | Bind numeric kind, layout and context outside scalar loops; native Measures plans prepare shared scientific context once and apply to arrays. No required per-sample allocation, virtual call, coordinate reconstruction, or per-channel conversion setup/provider lookup. |
 
 ## 2. Topology and identity
 
@@ -95,7 +95,7 @@ observed upstream behavior from the proposed preservation contract.
 enum SampleTopology<'a> {
     Irregular { samples: SampleCoordinates<'a> },
     TimeBaseline {
-        times: EpochAxis<'a>,
+        times: EpochView<'a>, // native Measures view, retaining split precision
         baselines: &'a [OrderedBaseline],
         occupancy: OccupancyView<'a>,
     },
@@ -210,18 +210,120 @@ processing; any schema-defined legacy default must be identified by the profile.
 
 Unit normalization does not perform a reference-frame or time-scale conversion.
 Hz in TOPO and Hz in LSRK remain distinct; UTC does not become TAI by expressing
-time in seconds. Explicit scientific transforms use the existing measures engine
-and declared context/provider (epoch, position, direction, leap-second/EOP data
-as needed). Reuse/refactor existing `casa-types` measures/quanta foundations;
-the exact raw-type dependency arrangement remains an M1 design decision, not
-permission for a second incompatible measures system. The no-workspace-dependency
-goal for the proposed base crate must be reconciled with that ownership.
+time in seconds. Explicit scientific transforms use casa-rs Measures and its
+declared context/provider (epoch, position, direction, leap-second/EOP data as
+needed). The owner requires direct Measures types and efficient bulk conversion,
+and authorizes substantial Measures refactoring to achieve them. The earlier
+zero-workspace-dependency goal for `casa-observation` is superseded by this
+requirement; see [proposed ownership](architecture.md#3-proposed-ownership).
 
 Computational normalization leaves persistent units/metadata unchanged. Same-store
 patches convert back to the destination's declared units with representability,
 scope and precision checks; source-free creation uses its output profile. Reading
 or inspecting a dataset does not rewrite its units or introduce rounding into
 untouched persistent values.
+
+### Shared Measures types and bulk conversion
+
+**One semantic type system:** the batch's frequencies, directions, positions,
+epochs, durations, UVW references, units, and frame identifiers are owned by
+casa-rs Measures/quanta. Extend or rework those APIs to accept borrowed arrays
+with shared or indexed reference metadata directly. `FrequencyView`, `EpochView`,
+`DirectionView` and analogous names in this proposal denote native Measures
+views, not observation-specific wrappers that must be converted to Measures.
+The current `MFrequency`/`FrequencyRef`, `MEpoch`/`EpochRef`/`MjdHighPrec`,
+`MDirection`/`DirectionRef`, `MPosition`/`PositionRef`, `MeasFrame` and `UvwFrame`
+are starting points; their existing shape and internal interfaces are not
+compatibility constraints. Coordinate representation changes such as angles
+versus direction cosines remain real operations within the one Measures system.
+Observation-specific entity IDs and axis associations remain in the catalogue.
+
+The I/O boundary decodes MSv2 MEASINFO/QuantumUnits or MSv4 measure attributes
+into these native references once at their valid scope. Persistent codes,
+strings, unknown metadata and original units stay available to the writer for
+faithful encoding. There is no subsequent MS-measure → computation-measure type
+translation. Scalar APIs and bulk APIs use the same reference semantics and
+scientific algorithms. Avoid a `Vec<MFrequency>` or a fully populated
+`MeasFrame` per channel: use numeric buffers plus checked shared/indexed
+metadata. Split-precision epoch arrays and vector-coordinate views must remain
+directly usable without collapsing them into an f64 MJD or allocating scalar
+objects. A scalar accessor can construct a small value on the stack if needed.
+
+**Prepare, then apply:** Measures owns the conversion route and its bulk
+execution, including these three scopes:
+
+| Scope | Work |
+| --- | --- |
+| Bind once for a conversion request | Validate source/destination references and units, choose the route and scientific/interpolation policy, bind the prepared Measures provider and output representation. |
+| Prepare each required scientific context | Resolve epochs/time scales, source and destination observer positions/directions, source velocity where needed, Earth motion/EOP and model parameters; derive reusable coefficients. |
+| Apply to a numeric slice | Run typed arithmetic into a supplied reusable output buffer, or an explicitly supported in-place view; no route search, frame construction, provider I/O/lookup, mutex acquisition or allocation per channel. Preserve required value validity checks. |
+
+For LSRK↔TOPO at a fixed context, the expensive work is independent of channel
+frequency. The bulk kernel can apply prepared Doppler factors across the axis.
+Preserve the accepted hop arithmetic/rounding when needed; collapsing all hops
+to a single multiplication is an optimization to validate, not a precondition.
+Frequency-to-velocity conventions and other nonlinear measures need their own
+prepared operations rather than assuming every transform is a scale.
+
+```rust
+// Proposed Measures API sketch, not existing method names.
+// input and output are native Measures array/buffer types.
+let mut transform = FrequencyTransform::bind(
+    input.reference(), FrequencyRef::TOPO, policy, measures_provider,
+)?;
+for group in bounded_context_groups {
+    let prepared = transform.prepare(group.source_frame(), group.target_frame())?;
+    let topo = prepared.apply_into(group.frequency_view(), &mut output)?;
+    consume(topo); // a FrequencyView<Hertz> carrying the destination reference
+}
+```
+
+Source and destination contexts are distinct inputs where required, for example
+a moving observation and a fixed image reference epoch. Reference-enum equality
+alone does not establish an identity transform when the relevant physical
+contexts differ. Missing essential context or unsupported frames fail binding
+or preparation; nonfinite values, range errors and partial-output behavior have
+an explicit policy, never a silently valid result.
+
+**Reuse only where valid:** a prepared transform is tied to every input that
+affects it: references/units, relevant epochs, directions, positions, model and
+provider state, source velocity, and interpolation policy. Context changes
+invalidate or advance that state. Do not reuse one Doppler factor throughout
+an observation merely because it fits in one batch. Identical contexts across
+baselines/correlations can share an axis or transform. Time-varying output can
+use bounded context-by-channel views; never require a full
+time×baseline×channel×correlation frequency array. Context grouping and caches
+must themselves be bounded, without indexing the entire observation first.
+Approximate reuse over a time/direction interval requires an explicit science
+tolerance and validation against the declared reference computation.
+
+**Work-unit ownership:** prepared coefficients are immutable and shareable;
+output and mutable conversion scratch follow the admitted work unit. No global
+conversion lock, hidden worker pool, or mandatory per-thread copy of an entire
+coordinate array. Existing CASA-compatible ordered interpolation has state:
+preserve its declared sequence across batch boundaries. Prepare that state in
+the required order and hand immutable prepared transforms to workers, with a
+bounded queue; completion order must not redefine the interpolation anchors.
+Any independent-context mode is an explicit scientific policy and tested
+against its own scalar/oracle semantics, not an accidental consequence of
+resetting a converter per worker.
+
+The existing MS-specific prepared-factor code moves into the Measures engine;
+storage and imaging do not maintain competing routes. Processing planners
+request scientific transformations explicitly. An adapter may execute a bound
+Measures plan while filling a batch to avoid extra passes, but cannot invent a
+different conversion or perform an undeclared frame change on open. Returned
+views carry the resulting Measures reference. Frequency-coordinate conversion
+alone does not regrid visibilities; interpolation/resampling remains an
+explicit scientific operation. Shared units and this bulk contract also apply
+to direction, epoch and position transformations where their mathematics allows
+reuse; UVW conversion retains its explicit phase centre and baseline convention.
+
+Current mechanisms and duplication are pinned in the
+[Measures source map](README.md#source-map-for-external-reviewers). M1's
+`measures-bulk` packet must prove direct use by consumers, scalar/bulk/CASA
+agreement, bounded independent work and measured performance against both the
+current scalar converter and the already-prepared production path.
 
 ### Layouts and scalar precision
 
@@ -398,10 +500,11 @@ correlation dependence must not become duplicated per-element objects. Preserve:
 - Data-group-specific field/source/phase-centre context, moving-source/ephemeris
   dependencies, and each antenna's pointing. Phase centre is not pointing.
 
-Reference-frame conversion and projected UVW belong to the scientific geometry
-owner. Bind reusable transforms once at their valid scope; compute genuinely
+Measures owns the reference-frame mathematics and reusable UVW transforms;
+the scientific geometry owner chooses their context and requested projection.
+Bind reusable transforms once at their valid scope; compute genuinely
 time-dependent quantities at the required cadence. Do not reproduce that engine
-inside both storage adapters.
+inside either storage adapter or an imaging-specific Measures implementation.
 
 ### Flags and weights
 

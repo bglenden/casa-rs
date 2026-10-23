@@ -1,6 +1,6 @@
 # MeasurementSet implementation plan
 
-Status: draft revision 3; owner iteration pending, no final design approval
+Status: draft revision 4; owner iteration pending, no final design approval
 Truth class: design proposal
 Date: 2026-10-23
 Design inputs: [architecture](architecture.md), [draft contracts](contracts.md)
@@ -69,6 +69,12 @@ baseline evidence; no speculative mass refactor.
   Expand the [conversion fidelity table](architecture.md#conversion-fidelity)
   to the complete accepted input schema; distinguish preserved effective values
   from lost native roles/provenance and define each rejection/loss policy.
+- Inventory Measures types, coordinate/frame translation layers and existing
+  prepared conversion fast paths. Pin scalar and ordered CASA-compatible
+  behavior, provider/model state and scientific tolerances. Baseline both the
+  scalar converter and the prepared production LSRK↔TOPO path, separating
+  route binding, context preparation and arithmetic; do not credit removal of
+  per-channel work that the current consumer already avoids.
 - Define a **blocking** comparison harness for selected bulk reads, selected
   writes, representative production imaging/calibration, and flagdata tfcrop
   and rflag. Record peak live bytes and bytes per selected sample for flagging,
@@ -88,13 +94,19 @@ downloaded merely to approve this documentation proposal.
 adapter pieces against a reviewed sketch. Do not delegate unresolved core
 semantics to implementation agents.
 
-**Deliverables:** minimal `casa-observation` crate and proposed dependency-policy
+**Deliverables:** minimal `casa-observation` crate using authoritative Measures
+types, a native Measures bulk-conversion API and proposed dependency-policy
 update; rustdoc/examples; one reusable v2 read path and one real local MSv4
 read/decode path; bounded addressed-write trial for each; production-kernel
 integration probes and source-free creation, not a synthetic array API
-demonstration alone. One shared raw-primitive representation must compile through
-all consumers; the proposed `casa-imaging-model → casa-observation` edge and
-primitive/error ownership are an explicit prerequisite decision.
+demonstration alone. The same native Measures types/views must compile through
+MS read, Measures conversion, calibration, imaging and creation without
+conversion into another domain type. Rework Measures and remove duplicate
+coordinate types; do not add a permanent translation layer. Proposed edges are
+`casa-observation → casa-types` and `casa-imaging-model → {casa-observation,
+casa-types}`; confirm the resulting graph and error/provider ownership before
+parallel migration. The owner's refactoring authorization does not freeze the
+specific API sketch or waive the milestone evidence.
 
 Exercise all of the following before declaring the contract stable enough for
 parallel migration:
@@ -116,6 +128,8 @@ parallel migration:
    unknown instrumental units must not acquire an invented flux calibration.
    Confirm unit changes do not silently change spectral frames or time scales,
    and supported epoch formats retain split precision under independent oracles.
+   The `measures-bulk` packet below is a prerequisite for accepting this direct
+   coordinate interface, not a later optional optimization.
 2. Gain and bandpass accumulation consume split scientific groups, including
    multi-SPW rules, empty groups, reordered correlations and a group larger than
    the allowed resident data. Confirm grouping is independent of batch size.
@@ -206,6 +220,47 @@ parallel migration:
    separately from process-failure atomicity. Do not claim power-loss guarantees
    from a process-kill test.
 
+### M1 Measures bulk-conversion trial
+
+Implement the [shared Measures contract](contracts.md#shared-measures-types-and-bulk-conversion)
+through a real consumer, including the existing spectral selection or imaging
+frequency-coordinate path. The trial must demonstrate all of the following:
+
+- Native borrowed frequency/direction/epoch/position views and reference enums
+  pass directly from the MS adapter to Measures and consumers. Validate shared
+  and indexed metadata without per-value measure objects or loss of split
+  epoch precision. Include a direction or epoch bulk conversion as well as
+  frequency, so the design is not a frequency-only MS helper under a new name.
+- Bind LSRK↔TOPO once, prepare fixed-context coefficients once, apply to many
+  frequencies in a supplied reusable buffer. Cover identity and explicit unit
+  changes, channel centres/edges, noncontiguous admitted views, moving epochs,
+  mosaics with changing direction, and a fixed destination image epoch distinct
+  from source epochs. Equal reference enums with different relevant contexts
+  must not silently take the identity path. Error tests cover missing context,
+  unsupported references, invalid values and declared partial-output behavior.
+- Compare fixed-context and ordered bulk results to the appropriate scalar
+  policy and independent CASA/casacore oracle using identical provider data and
+  models. Preserve existing accepted interpolation behavior, absolute Hz and
+  relative frequency/velocity tolerances, split precision and affected science
+  outputs. Exercise both sides of interpolation refresh/leap-second boundaries
+  and explicit provider/context changes. Do not relax established narrow-channel
+  or coordinate checks on the strength of an image-only NRMS comparison.
+- Split the same ordered input across batches/windows and workers with delayed
+  completion. Ordered context preparation keeps its state and anchors; prepared
+  immutable transforms can be shared while work retires independently. Prove
+  bounded scratch/cache/queue residency, with no global hot-loop lock or hidden
+  worker pool. Frame/reference/context changes prevent stale coefficient reuse.
+- Measure W1 and admitted parallel execution over small and large channel axes
+  and fixed/varying contexts. Report binding and preparation costs separately
+  from apply throughput, provider calls, route searches, allocations/copies,
+  synchronization and peak retained bytes. Work scales with required contexts
+  plus converted values, not repeated preparation per channel/baseline/product.
+  Include current scalar, current prepared production, and new bulk paths,
+  using equal scientific policies and work. Show a useful gain where setup
+  dominates and preserve the existing fast path within measured noise; quantify
+  the actual consumer effect separately from microbenchmark gains. A loop over
+  scalar conversions does not satisfy the bulk acceptance requirement.
+
 ### M1 exit checklist and packet ownership
 
 These are planned fixture/packet names, not commands claimed to exist today.
@@ -217,6 +272,7 @@ a stronger agent/person. The lead integrates shared API decisions.
 | Packet / fixture family | Accountable owner | Independent gate |
 | --- | --- | --- |
 | `layout-precision` | Contract + imaging owners | One raw primitive type, sample/channel layouts, factorable axes, guaranteed/requested units and inverse write scaling, actual operator science and input narrowing. |
+| `measures-bulk` | Measures + contract + imaging/calibration owners | Direct native Measures views, consolidation of duplicate types/routes, prepare/apply work counts, ordered interpolation and independent workers, scalar/CASA science, performance versus scalar and existing prepared production paths. |
 | `group-lifecycle` | Calibration owner | Interleaved SPWs/late samples, admitted concurrent state, proven closure, sequential comparison, solve→caltable→reopen→apply. |
 | `work-unit-lifetimes` | Contract + runtime + imaging owners | Unequal worker/group completion, safe handoff and reuse, shared-allocation pinning, bounded copies/queues/cancellation, cube visibility versus minor-cycle state. |
 | `native-role-updates` | Storage + calibration owners | Broadcast/group aliases, undefined fallback, full/partial unit counts, bit semantics, mixed-owner MODEL_DATA and conflict rejection. |

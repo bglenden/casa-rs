@@ -1,13 +1,15 @@
 # Native observation I/O for MSv2 and MSv4
 
-Status: proposed; MSv2/MSv4 scope confirmed, detailed D1–D6 decisions await review
+Status: proposed; scope and native Measures requirements confirmed, detailed D1–D6 decisions await review
 Truth class: design proposal
 Date: 2026-10-23
 Companion documents: [contracts](contracts.md), [implementation plan](implementation-plan.md)
 
-Draft revision 3 incorporates Pro and Fable's reviews and owner discussion of
+Draft revision 4 incorporates Pro and Fable's reviews and owner discussion of
 independent lifetimes, guaranteed units, the `VisibilityBatch` name and explicit
-access-pattern negotiation from processing planners to adapters.
+access-pattern negotiation from processing planners to adapters. Native Measures
+types and bulk conversion are now owner requirements; this changes the proposed
+type ownership and adds a prerequisite Measures trial to M1.
 Recommendations below remain open
 for owner iteration; no review response constitutes acceptance or finalization.
 
@@ -144,28 +146,48 @@ The proposed dependency direction is:
 
 | Owner | Responsibilities | Dependencies and exclusions |
 | --- | --- | --- |
-| New `casa-observation`, policy layer `science` | Shared raw primitives (epoch/time scale, direction/frame, spectral coordinates, ordered baseline), array/batch views, access requirements, source/sink traits, capabilities and errors | No workspace dependencies, filesystem, task runtime, or scientific projection engine. Reuse small Rust numeric crates. |
-| `casa-imaging-model`, policy layer `science` | Compiled imaging geometry and scientific problem definitions | Proposed explicit dependency on `casa-observation` for raw primitives; no dependency on storage, execution or a device. |
+| `casa-types::measures` / `quanta` | Canonical coordinate/reference/unit types, scalar and borrowed bulk views, prepared conversion routes and kernels | Existing numerical foundations and injected Measures provider; no dependency on MS, observation contracts, imaging, storage discovery or task execution. Rework the Measures APIs as needed. |
+| New `casa-observation`, policy layer `science` | Observation catalogue identities, ordered antenna/feed pairs, topology, payload/coordinate association, batches, access requirements and source/sink contracts | Uses `casa-types` Measures/quanta types directly; no duplicate measure vocabulary, filesystem, task runtime or independent frame-conversion engine. |
+| `casa-imaging-model`, policy layer `science` | Compiled imaging geometry and scientific problem definitions | Proposed dependencies on `casa-observation` and `casa-types` for their shared contracts/Measures types; no dependency on storage, execution or a device. |
 | `casa-ms` | Dataset lifecycle, catalogue access, backend dispatch, source binding, bounded fill/update/create adapters | `casa-observation`, existing storage/measures facilities, and pinned `zarrs`. Initial adapters can be modules; no new storage crate is required merely for symmetry. |
 | `casa-tables` | Existing generic casacore table and storage-manager machinery | Retains its table API and persistent compatibility. It does not depend on observation or imaging contracts. |
 | Imaging/calibration and other domain owners | Request layouts, evaluate geometry, solve/project/reduce, apply scientific transforms | Consume `casa-observation`; no table/Zarr addressing in their numerical loops. |
 | Existing execution owners | Resource admission, worker teams, cancellation, pass lifecycle | Continue to govern I/O/decode/packing work; no independent backend worker pool or scheduler. |
 
-The proposed canonical owner of raw `Epoch`, `SkyDirection`/frame and related
-coordinate primitives is `casa-observation`. `casa-imaging-model` imports them
-and retains compiled projections and imaging geometry. This deliberately changes
-its present zero-workspace-dependency rule; it does not create duplicate epoch
-conventions or make calibration depend on imaging. Separate primitive validation
-from imaging-specific compile errors when moving types. The shared epoch must
-retain source split precision, not just copy today's f64-MJD representation.
-Frame conversion algorithms keep their existing scientific owner; storage only
-decodes/encodes declared units and epochs through shared conversions.
+The owner requires the MS interfaces to use casa-rs Measures types directly,
+including their reference frames, and authorizes substantial Measures API
+reworking for natural bulk operation. This supersedes the earlier proposal to
+place independent coordinate primitives in a dependency-free `casa-observation`.
+The preferred implementation home is the existing `casa-types` Measures/quanta
+foundation, extended with native array views and prepared bulk conversions.
+`casa-observation` may re-export those exact types; it does not define another
+`Epoch`, frequency-frame enum or direction type that needs conversion to them.
+Imaging's duplicate raw coordinate types are consolidated into Measures while
+imaging retains its compiled projections and geometry. Preserve split epoch
+precision and distinguish Measures errors from imaging compile errors.
+
+The initial proposed dependency chain is
+`casa-imaging-model → casa-observation → casa-types → casa-values`, with a direct
+model-to-`casa-types` edge for Measures use. A later justified crate extraction
+must move the one authoritative type/engine definition and its consumers
+together; it cannot introduce a parallel MS-specific representation. No new
+crate extraction is required merely to keep the old dependency-free ideal.
 
 Existing `SelectedObservationRunRow` must not simply be renamed and moved: it
-mixes physical row/DDI identities with imaging projection. Factor raw types into
-the base contract and retain derived types with their owner. M1 compiles one
-primitive representation through read, calibration, imaging and creation and
-tests precision roundtrips. No separate geometry implementation is introduced.
+mixes physical row/DDI identities with imaging projection. Factor observation
+identity into the catalogue, use native Measures views for coordinates and
+retain derived imaging types with their owner. M1 passes the same Measures
+types through read, conversion, calibration, imaging and creation, without
+boundary translation or per-value object construction.
+
+Bulk conversion is a Measures responsibility: bind the route once, prepare
+context-dependent coefficients once at their valid scope, then apply to many
+values in reusable buffers. Consolidate the existing
+`PreparedFrequencyFrameConversion` in `casa-ms` and the stateful
+`MFrequencyConverter` into this shared capability without losing their distinct
+scientific policies. Preserve CASA-compatible ordered interpolation where
+required; preparation order and worker completion order are separate. Details
+are in [shared Measures types and bulk conversion](contracts.md#shared-measures-types-and-bulk-conversion).
 
 New dependency edges from `casa-imaging-model`, `casa-ms`, calibration, imaging operator/runtime, and
 affected applications to `casa-observation` require a reviewed update of
@@ -176,9 +198,12 @@ execution DAG, runtime migration matrix, receipt system, plan hash, or replay
 store. One source binding may be revisited each major cycle without caching the
 whole visibility dataset.
 
-The policy delta must register `casa-observation` in `science` with no workspace
-dependencies, change the model's exact dependency list to include that base,
-and enumerate each actual consumer edge. The checker already permits same-layer
+The policy delta must register `casa-observation` in `science` with its explicit
+`casa-types` dependency, change the model's exact dependency list to include
+`casa-observation` and `casa-types`, and enumerate each actual consumer edge.
+Audit the resulting transitive graph and Measures provider boundary; neither
+the contract nor the pure model may gain table/file I/O through this change.
+The checker already permits same-layer
 edges; do not broadly relax its layer rules. This and the corresponding
 ADR-0016 raw-type ownership amendment are proposed for owner review, not applied
 to the accepted policy in this documentation PR.

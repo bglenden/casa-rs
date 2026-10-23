@@ -1,6 +1,6 @@
 # MeasurementSet architecture review
 
-Status: draft revision 3; owner iteration pending, not implementation authorization
+Status: draft revision 4; owner iteration pending, not implementation authorization
 Truth class: design proposal
 Date: 2026-10-23
 Repository baseline: `221ec71545fe36a758ab0869e7512349b5db7c0e`
@@ -14,7 +14,7 @@ and measured performance remain acceptance requirements.
 ## Reading order
 
 For a guided introduction, open the standalone [HTML walkthrough](walkthrough.html)
-in a browser (download the file when reading on GitHub). It builds the revision 3
+in a browser (download the file when reading on GitHub). It builds the revision 4
 proposal in twelve steps, with interactive layout/completion examples, review
 questions, and links to the exact draft sources. It works offline; optional notes
 stay in the browser and can be exported. The Markdown contracts below remain the
@@ -43,16 +43,21 @@ Step 04 now expands the nested data group into a
 [concrete numeric batch](contracts.md#concrete-batch-example), with selectable
 visibility/flag/weight elements and explicit
 [autocorrelation scalar semantics](contracts.md#autocorrelations-and-real-valued-data).
+The owner also requires [native Measures types and bulk conversion](contracts.md#shared-measures-types-and-bulk-conversion),
+authorizing substantial Measures refactoring. The revised ownership keeps those
+types and conversions in the Measures foundation, directly used by the batch.
 The documents and PR remain provisional: neither addressing a comment nor an
-agent recommendation finalizes the design. Only the MSv2 + MSv4 scope and MSv3
-deferral have been confirmed by the owner.
+agent recommendation finalizes the design. The MSv2 + MSv4 scope, MSv3 deferral,
+and this Measures requirement are owner directions; they do not approve the
+remaining contracts or authorize the broad implementation before review.
 
 ## Decisions for the owner and independent reviewers
 
 1. **D1 — Shared representation:** approve irregular and rectangular topology,
    typed array views, explicit numeric precision, and separate presence,
    validity, flags, weights, and coordinate context. Guarantee canonical coordinate
-   units by default and bind explicit unit requests before computation. Reject a universal
+   units by default and bind explicit unit requests before computation. Use native
+   Measures types/views and prepared bulk transformations directly. Reject a universal
    per-physical-MS-row object interface or a universal dense cube. Factored
    coordinates can accompany the same sample-major values without a transpose.
 2. **D2 — Algorithm-led access:** approve hard layout/grouping requirements
@@ -65,9 +70,11 @@ deferral have been confirmed by the owner.
    and bulk patches. The proposed local v4 profile replaces individual objects
    atomically; it does not promise a dataset transaction or power-loss durability.
 4. **D4 — Boundaries:** approve a small shared `casa-observation` contract crate,
-   as the raw science base, with `casa-imaging-model` depending on it; keep
-   projected geometry in imaging and storage adapters under `casa-ms`. This is
-   an explicit proposed amendment of the model's current dependency rule.
+   using the authoritative Measures/quanta types in `casa-types`, with
+   `casa-imaging-model` depending on both; keep compiled geometry in imaging and
+   storage adapters under `casa-ms`. Consolidate MS-specific conversion helpers
+   into Measures. This supersedes a dependency-free observation base and is an
+   explicit proposed amendment of the model's current dependency rule.
    Keep one existing execution/resource owner.
 5. **D5 — Support scope:** approve native local MSv4 read/create/update first,
    no Python on the processing path, preservation of existing MSv2 support,
@@ -130,6 +137,8 @@ PRs must update the baseline and link the changed production entrypoints.
 | How do current arrays and requests work? | [selected_observation_buffer.rs](https://github.com/bglenden/casa-rs/blob/221ec71545fe36a758ab0869e7512349b5db7c0e/crates/casa-ms/src/selected_observation_buffer.rs): `SelectedObservationBufferRequest`, `SelectedObservationNumericColumns`, buffer capacity and read footprint. |
 | Where are physical rows and current buffer limits bound? | [visibility_buffer.rs](https://github.com/bglenden/casa-rs/blob/221ec71545fe36a758ab0869e7512349b5db7c0e/crates/casa-ms/src/visibility_buffer.rs), [selected_observation/access.rs](https://github.com/bglenden/casa-rs/blob/221ec71545fe36a758ab0869e7512349b5db7c0e/crates/casa-ms/src/selected_observation/access.rs), and [content_plan.rs](https://github.com/bglenden/casa-rs/blob/221ec71545fe36a758ab0869e7512349b5db7c0e/crates/casa-ms/src/selected_observation/content_plan.rs). |
 | What is raw metadata versus imaging projection today? | [selected_observation_sample.rs](https://github.com/bglenden/casa-rs/blob/221ec71545fe36a758ab0869e7512349b5db7c0e/crates/casa-imaging-model/src/selected_observation_sample.rs): `SelectedObservationRunRow`; [operator sample.rs](https://github.com/bglenden/casa-rs/blob/221ec71545fe36a758ab0869e7512349b5db7c0e/crates/casa-imaging-operator/src/sample.rs): `SampleBlock`. |
+| What Measures types and bulk mechanisms already exist? | [Measures modules](https://github.com/bglenden/casa-rs/tree/221ec71545fe36a758ab0869e7512349b5db7c0e/crates/casa-types/src/measures); [MFrequencyConverter](https://github.com/bglenden/casa-rs/blob/221ec71545fe36a758ab0869e7512349b5db7c0e/crates/casa-types/src/measures/frequency.rs#L201) retains ordered aberration/dUT1 state but its scalar `convert_hz` still finds a route and prepares frames; [MeasFrame and its cache](https://github.com/bglenden/casa-rs/blob/221ec71545fe36a758ab0869e7512349b5db7c0e/crates/casa-types/src/measures/frame.rs#L99); [UvwFrame](https://github.com/bglenden/casa-rs/blob/221ec71545fe36a758ab0869e7512349b5db7c0e/crates/casa-types/src/measures/baseline.rs#L30) prepares geometry for many baselines. |
+| Which duplicate Measures interfaces should be consolidated? | [Imaging frequency/epoch types](https://github.com/bglenden/casa-rs/blob/221ec71545fe36a758ab0869e7512349b5db7c0e/crates/casa-imaging-model/src/geometry.rs#L678), [frame-enum translation](https://github.com/bglenden/casa-rs/blob/221ec71545fe36a758ab0869e7512349b5db7c0e/crates/casa-ms/src/selected_observation/spectral_evaluation.rs#L642), and [MS-specific prepared frequency factors](https://github.com/bglenden/casa-rs/blob/221ec71545fe36a758ab0869e7512349b5db7c0e/crates/casa-ms/src/spectral_selection.rs#L1815). Preserve the [ordered spectral-envelope behavior](https://github.com/bglenden/casa-rs/blob/221ec71545fe36a758ab0869e7512349b5db7c0e/crates/casa-ms/src/selected_observation/spectral_evaluation.rs#L122), rather than benchmarking only against a repeated scalar conversion the production path already avoids. |
 | Who owns imaging source execution and resources? | [runtime source_access.rs](https://github.com/bglenden/casa-rs/blob/221ec71545fe36a758ab0869e7512349b5db7c0e/crates/casa-imaging-runtime/src/source_access.rs), [runtime pass](https://github.com/bglenden/casa-rs/tree/221ec71545fe36a758ab0869e7512349b5db7c0e/crates/casa-imaging-runtime/src/pass), and [application source.rs](https://github.com/bglenden/casa-rs/blob/221ec71545fe36a758ab0869e7512349b5db7c0e/crates/casa-imaging-application/src/imaging/source.rs). |
 | What does calibration currently assume? | [session.rs](https://github.com/bglenden/casa-rs/blob/221ec71545fe36a758ab0869e7512349b5db7c0e/crates/casa-calibration/src/session.rs), [solve/grouping.rs](https://github.com/bglenden/casa-rs/blob/221ec71545fe36a758ab0869e7512349b5db7c0e/crates/casa-calibration/src/solve/grouping.rs), and [execute.rs](https://github.com/bglenden/casa-rs/blob/221ec71545fe36a758ab0869e7512349b5db7c0e/crates/casa-calibration/src/execute.rs). |
 | What write performance/semantics must survive? | [visibility_write.rs](https://github.com/bglenden/casa-rs/blob/221ec71545fe36a758ab0869e7512349b5db7c0e/crates/casa-ms/src/observation_owner/visibility_write.rs), [write_session.rs](https://github.com/bglenden/casa-rs/blob/221ec71545fe36a758ab0869e7512349b5db7c0e/crates/casa-ms/src/write_session.rs), [flagging.rs](https://github.com/bglenden/casa-rs/blob/221ec71545fe36a758ab0869e7512349b5db7c0e/crates/casa-ms/src/flagging.rs). |
