@@ -76,14 +76,18 @@
 //! (aberration plus precession/nutation)
 //!
 //! **Epoch + position** (need both):
-//! APP ↔ HADEC (sidereal time), HADEC ↔ AZEL, HADEC ↔ AZELGEO
+//! APP ↔ TOPO (unchanged for a sky direction), TOPO ↔ HADEC (diurnal
+//! aberration, polar motion and sidereal time), HADEC ↔ AZEL,
+//! HADEC ↔ AZELGEO, HADEC ↔ ITRF
 //!
 //! # Routes that differ from casacore's
 //!
-//! casacore converts B1950 to and from APP directly, with its B1950
-//! precession, nutation and aberration; casa-rs goes through J2000, which
-//! differs by 2.5–4.9″ (2026-10-22). casa-rs has no BMEAN, BTRUE or
-//! B1950_VLA frame.
+//! Every route between the frames here follows casacore's routing table
+//! (`MCDirection::ToRef_p`), except that casacore converts B1950 to and from
+//! APP directly, with its B1950 precession, nutation and aberration, and so
+//! B1950 to and from TOPO, HADEC, the AZEL frames and ITRF. casa-rs goes
+//! through J2000, which differs by 2.5–4.9″ (2026-10-22). casa-rs has no
+//! BMEAN, BTRUE or B1950_VLA frame.
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, VecDeque};
@@ -154,9 +158,10 @@ pub enum DirectionRef {
     AZELGEO,
     /// Azimuth / elevation (geodetic latitude, S through W).
     AZELSWGEO,
-    /// International Terrestrial Reference Frame direction. Deferred.
+    /// International Terrestrial Reference Frame direction.
     ITRF,
-    /// Topocentric direction. Deferred.
+    /// Topocentric apparent right ascension and declination. For a sky
+    /// direction, which has no distance, it equals APP, as in casacore.
     TOPO,
 }
 
@@ -1428,12 +1433,13 @@ const ROUTING_EDGES: &[(DirectionRef, DirectionRef)] = &[
     (DirectionRef::HADEC, DirectionRef::AZELGEO),
     (DirectionRef::AZEL, DirectionRef::AZELSW),
     (DirectionRef::AZELGEO, DirectionRef::AZELSWGEO),
-    (DirectionRef::APP, DirectionRef::HADEC),
+    // casacore reaches HADEC from APP through TOPO.
+    (DirectionRef::APP, DirectionRef::TOPO),
+    (DirectionRef::TOPO, DirectionRef::HADEC),
     (DirectionRef::J2000, DirectionRef::B1950),
     // casacore converts between GALACTIC and B1950 directly, not via J2000.
     (DirectionRef::GALACTIC, DirectionRef::B1950),
     (DirectionRef::HADEC, DirectionRef::ITRF),
-    (DirectionRef::HADEC, DirectionRef::TOPO),
 ];
 
 /// Maps a DirectionRef to a unique index for BFS.
@@ -1747,10 +1753,14 @@ fn apply_hop(
         // APP → JTRUE (inverse aberration — iterative)
         (APP, JTRUE) => remove_annual_aberration(cosines, frame, ctx),
 
-        // APP → HADEC (sidereal time + diurnal aberration + polar motion)
-        (APP, HADEC) => apparent_to_hadec(cosines, frame, ctx),
-        // HADEC → APP (inverse of above)
-        (HADEC, APP) => hadec_to_apparent(cosines, frame, ctx),
+        // APP ↔ TOPO: casacore's `applyAPPtoTOPO` shifts only a direction
+        // with a distance (a planet's), so a sky direction is unchanged.
+        (APP, TOPO) | (TOPO, APP) => Ok(cosines),
+
+        // TOPO → HADEC (diurnal aberration + polar motion + sidereal time)
+        (TOPO, HADEC) => topocentric_to_hadec(cosines, frame, ctx),
+        // HADEC → TOPO (inverse of above)
+        (HADEC, TOPO) => hadec_to_topocentric(cosines, frame, ctx),
 
         // HADEC ↔ AZEL (horizon coordinates using geocentric latitude)
         // C++ casacore uses geocentric latitude for AZEL (MeasMath::applyHADECtoAZEL
@@ -1826,13 +1836,6 @@ fn apply_hop(
             Ok([x, y, z])
         }
 
-        // ----- TOPO (diurnal aberration) -----
-
-        // HADEC → TOPO: apply diurnal aberration
-        // Diurnal aberration is very small (~0.3" max) and is due to the
-        // observer's velocity from Earth rotation.
-        (HADEC, TOPO) | (TOPO, HADEC) => hadec_topo_diurnal_aberration(cosines, from, frame, ctx),
-
         _ => Err(MeasureError::NotYetImplemented {
             route: format!("{from} → {to}"),
         }),
@@ -1897,14 +1900,12 @@ fn remove_annual_aberration(
     Ok(pnat)
 }
 
-/// APP → HADEC hop (sidereal time + diurnal aberration + polar motion).
-///
-/// Matches C++ casacore's TOPO→HADEC path (APP→TOPO is a no-op for
-/// unit-vector directions). The steps are:
+/// TOPO → HADEC hop (diurnal aberration + polar motion + sidereal time),
+/// casacore's `MeasMath::applyTOPOtoHADEC`. The steps are:
 ///   1. Diurnal aberration: add v/c in zenith direction, renormalize
 ///   2. Polar motion + LAST rotation via Euler R = Ry(xp)×Rx(yp)×Rz(LAST)
 ///   3. Apply R^T and negate y to get (HA, Dec)
-fn apparent_to_hadec(
+fn topocentric_to_hadec(
     cosines: [f64; 3],
     frame: &MeasFrame,
     ctx: &ConvCtx,
@@ -1935,8 +1936,8 @@ fn apparent_to_hadec(
     Ok([result[0], -result[1], result[2]])
 }
 
-/// HADEC → APP hop: the inverse of [`apparent_to_hadec`].
-fn hadec_to_apparent(
+/// HADEC → TOPO hop: the inverse of [`topocentric_to_hadec`].
+fn hadec_to_topocentric(
     cosines: [f64; 3],
     frame: &MeasFrame,
     ctx: &ConvCtx,
@@ -1964,64 +1965,6 @@ fn hadec_to_apparent(
     ];
     let (_, unit) = sofars::vm::pn(&unshifted);
     Ok(unit)
-}
-
-/// HADEC ↔ TOPO hop: add (from HADEC) or subtract (from TOPO) the
-/// first-order diurnal aberration of the observatory's rotation velocity.
-fn hadec_topo_diurnal_aberration(
-    cosines: [f64; 3],
-    from: DirectionRef,
-    frame: &MeasFrame,
-    ctx: &ConvCtx,
-) -> Result<[f64; 3], MeasureError> {
-    // Diurnal aberration is small enough that we can use the simplified
-    // formula. For now, treat TOPO ≈ HADEC (identity), which is accurate
-    // to ~0.3 arcsec. This matches the precision of most casacore uses.
-    // A full implementation would need the observatory velocity vector
-    // projected onto the sky plane.
-    let pos = frame.position().ok_or(MeasureError::MissingFrameData {
-        what: "position (for diurnal aberration)",
-    })?;
-    let itrf = pos.as_itrf();
-    const OMEGA: f64 = 7.292_115e-5; // Earth angular velocity rad/s
-    // Observatory velocity in ITRF
-    let v_itrf = [-OMEGA * itrf[1], OMEGA * itrf[0], 0.0];
-
-    // Get GAST for rotation to equatorial (dispatches on IAU model)
-    let gast = get_gast(frame, ctx)?;
-    let lon = get_longitude(frame)?;
-    let last = gast + lon;
-
-    // Rotate velocity from ITRF to HADEC frame
-    let mut r = [[0.0; 3]; 3];
-    sofars::vm::ir(&mut r);
-    sofars::vm::rz(-last, &mut r);
-    let mut v_hadec = [0.0; 3];
-    sofars::vm::rxp(&r, &v_itrf, &mut v_hadec);
-
-    // Speed of light
-    const C: f64 = 299_792_458.0;
-
-    // Diurnal aberration: Δp = v/c - (p·v/c)p (first order)
-    let pdotv = sofars::vm::pdp(&cosines, &v_hadec) / C;
-
-    if from == DirectionRef::HADEC {
-        // HADEC → TOPO: add aberration
-        let mut result = [0.0; 3];
-        for k in 0..3 {
-            result[k] = cosines[k] + v_hadec[k] / C - pdotv * cosines[k];
-        }
-        let (_, unit) = sofars::vm::pn(&result);
-        Ok(unit)
-    } else {
-        // TOPO → HADEC: subtract aberration
-        let mut result = [0.0; 3];
-        for k in 0..3 {
-            result[k] = cosines[k] - v_hadec[k] / C + pdotv * cosines[k];
-        }
-        let (_, unit) = sofars::vm::pn(&result);
-        Ok(unit)
-    }
 }
 
 // ---------------------------------------------------------------------------

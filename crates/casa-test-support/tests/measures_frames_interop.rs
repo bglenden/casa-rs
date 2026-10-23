@@ -188,6 +188,19 @@ fn ecliptics_of_date_match_casacore() {
     assert_routes(&iau2000_routes, &epochs, IauModel::Iau2006_2000A);
 }
 
+/// TOPO is APP for a sky direction, as casacore's APP-to-TOPO shifts only a
+/// direction with a distance. casa-rs once put an hour angle there.
+#[test]
+fn topocentric_matches_casacore() {
+    use DirectionRef::*;
+    let epochs = EPOCHS_MJD.map(Some);
+    assert_routes(
+        &[(J2000, TOPO), (APP, TOPO)],
+        &epochs,
+        IauModel::Iau1976_1980,
+    );
+}
+
 /// casacore's full value for one epoch conversion at the VLA.
 fn casacore_epoch(mjd: f64, from: EpochRef, to: EpochRef, model: IauModel) -> f64 {
     match model {
