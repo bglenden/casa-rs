@@ -303,7 +303,7 @@ fn a_write_lock_that_rewrote_nothing_keeps_the_published_rows() {
 
 /// A full save that removes rows under the write lock rewrites `table.dat`,
 /// and its fewer rows are published: keeping the rows published before
-/// applies only when the file was not rewritten.
+/// applies only when the file's bytes are unchanged.
 #[test]
 fn a_full_save_that_removes_rows_publishes_fewer() {
     let directory = tempfile::tempdir().expect("tempdir");

@@ -205,9 +205,9 @@ impl TableWriteLock {
     /// as persisted, not an in-memory handle: casacore takes a reopened
     /// table's row count from the sync data and asserts that its
     /// per-data-manager counters match the table's data managers. They are
-    /// read from the table's `table.dat` when this writer rewrote it; when
-    /// the file is as it was when the lock was taken, the row count published
-    /// before is kept, since the file can trail it (#880).
+    /// read from the table's `table.dat` when this writer changed its bytes;
+    /// when the file is as it was when the lock was taken, the row count
+    /// published before is kept, since the file can trail it (#880).
     ///
     /// # Errors
     ///
@@ -288,15 +288,15 @@ fn table_dat_unchanged(table_dir: &Path, before: &[u8]) -> bool {
 /// table's write lock. Returns the published sync data.
 ///
 /// `table_dat_before` is `table.dat` as it was before the write. A write
-/// that rewrote the file publishes the counts it gives, which may be fewer
-/// rows than before, as casacore's full `putFile` flushes `table.dat` before
-/// it publishes. A write that left the file as it was (one that wrote only
-/// data, or stopped before it reached the file, or wrote nothing) keeps the
-/// row count published before, as casacore's data-only `putFile` publishes
-/// the count it took from the sync data without rewriting the file. The
-/// file can trail that count (#880), and publishing the file's would then
-/// announce fewer rows than the storage managers hold, which casacore
-/// refuses.
+/// that changed the file's bytes publishes the counts it gives, which may be
+/// fewer rows than before, as casacore's full `putFile` flushes `table.dat`
+/// before it publishes. A write that left the file's bytes as they were (one
+/// that wrote only data, stopped before it reached the file, wrote nothing,
+/// or wrote the file back unchanged) keeps the row count published before,
+/// as casacore's data-only `putFile` publishes the count it holds without
+/// rewriting the file. The file can trail that count (#880), and publishing
+/// the file's would then announce fewer rows than the storage managers hold,
+/// which casacore refuses.
 #[cfg(unix)]
 pub(crate) fn publish_persisted_write(
     lock_file: &LockFile,
