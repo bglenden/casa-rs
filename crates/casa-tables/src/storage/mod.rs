@@ -3,6 +3,7 @@
 
 mod array_sources;
 pub(crate) mod canonical;
+mod cell_elements;
 pub(crate) mod data_type;
 pub(crate) mod incremental_stman;
 mod scalar_sources;
@@ -51,7 +52,6 @@ use crate::table::{
 use crate::table_path::add_directory_for_link;
 
 use self::array_sources::generated_array_group_sources;
-use self::data_type::CasacoreDataType;
 use self::incremental_stman::{
     IsmColumnResult, read_ism_file, read_ism_file_columns, read_ism_required_scalar_columns_rows,
     read_ism_required_scalar_columns_rows_reusing, read_ism_scalar_column,
@@ -3592,7 +3592,10 @@ impl CompositeStorage {
             )));
         }
 
-        // Extract referenced rows.
+        // Extract referenced rows. Whether the view uses a subset of the
+        // columns is judged by the parent's columns: a row leaves out the
+        // fields of its undefined cells, so its fields can number fewer.
+        let parent_columns = parent.schema.as_ref().map(|schema| schema.columns().len());
         let mut rows = Vec::with_capacity(ref_dat.row_map.len());
         let mut undefined_cells = Vec::with_capacity(ref_dat.row_map.len());
         for &parent_row in &ref_dat.row_map {
@@ -3604,7 +3607,9 @@ impl CompositeStorage {
                 )));
             }
             // Apply column projection if the view uses a subset of columns.
-            if ref_dat.column_names.len() < parent.rows[idx].fields().len() {
+            if ref_dat.column_names.len()
+                < parent_columns.unwrap_or_else(|| parent.rows[idx].fields().len())
+            {
                 let mut projected = RecordValue::default();
                 let mut projected_undefined = HashSet::new();
                 for view_col in &ref_dat.column_names {
@@ -5079,17 +5084,10 @@ fn load_stman_aipsio_columns(
                                 v.clone()
                             }
                         }
-                        // Undefined cell: empty record or 0-D empty array.
                         Some(None) | None => {
-                            if col_desc.is_record() {
-                                Value::Record(RecordValue::default())
-                            } else {
-                                let dt = CasacoreDataType::from_primitive_type(
-                                    col_desc.require_primitive_type()?,
-                                    false,
-                                );
-                                undefined_cells[row_idx].insert(col_desc.col_name.clone());
-                                make_undefined_array(dt, col_desc.nrdim.max(0) as usize)
+                            match undefined_indirect_cell(col_desc, &mut undefined_cells[row_idx]) {
+                                Some(value) => value,
+                                None => continue,
                             }
                         }
                     };
@@ -5141,15 +5139,9 @@ fn load_ssm_columns(
                     let value = match per_row.get(row_idx) {
                         Some(Some(v)) => v.clone(),
                         Some(None) | None => {
-                            if col_desc.is_record() {
-                                Value::Record(RecordValue::default())
-                            } else {
-                                let dt = CasacoreDataType::from_primitive_type(
-                                    col_desc.require_primitive_type()?,
-                                    false,
-                                );
-                                undefined_cells[row_idx].insert(col_desc.col_name.clone());
-                                make_undefined_array(dt, col_desc.nrdim.max(0) as usize)
+                            match undefined_indirect_cell(col_desc, &mut undefined_cells[row_idx]) {
+                                Some(value) => value,
+                                None => continue,
                             }
                         }
                     };
@@ -5201,12 +5193,10 @@ fn load_ism_columns(
                     let value = match per_row.get(row_idx) {
                         Some(Some(value)) => value.clone(),
                         Some(None) | None => {
-                            let dt = CasacoreDataType::from_primitive_type(
-                                col_desc.require_primitive_type()?,
-                                false,
-                            );
-                            undefined_cells[row_idx].insert(col_desc.col_name.clone());
-                            make_undefined_array(dt, col_desc.nrdim.max(0) as usize)
+                            match undefined_indirect_cell(col_desc, &mut undefined_cells[row_idx]) {
+                                Some(value) => value,
+                                None => continue,
+                            }
                         }
                     };
                     row.push(RecordField::new(col_name.clone(), value));
@@ -5218,36 +5208,25 @@ fn load_ism_columns(
     Ok(())
 }
 
-/// Create a Value representing an undefined variable-shape array cell.
+/// What a row record holds for an undefined indirect cell of `col_desc`: an
+/// empty record for a record column, and nothing for an array column, its
+/// cell marked in `undefined`.
 ///
-/// For ndim > 0, returns a zero-sized array with `ndim` dimensions (all sizes 0).
-/// For ndim == 0, returns a 0-D empty array.
-pub(crate) fn make_undefined_array(dt: CasacoreDataType, ndim: usize) -> casa_types::Value {
-    use casa_types::{ArrayValue, Value};
-    use ndarray::{ArrayD, IxDyn};
-
-    let shape = vec![0usize; ndim];
-    let s = IxDyn(&shape);
-    let av = match dt {
-        CasacoreDataType::TpBool => ArrayValue::Bool(ArrayD::default(s)),
-        CasacoreDataType::TpUChar => ArrayValue::UInt8(ArrayD::default(s)),
-        CasacoreDataType::TpShort => ArrayValue::Int16(ArrayD::default(s)),
-        CasacoreDataType::TpUShort => ArrayValue::UInt16(ArrayD::default(s)),
-        CasacoreDataType::TpInt => ArrayValue::Int32(ArrayD::default(s)),
-        CasacoreDataType::TpUInt => ArrayValue::UInt32(ArrayD::default(s)),
-        CasacoreDataType::TpInt64 => ArrayValue::Int64(ArrayD::default(s)),
-        CasacoreDataType::TpFloat => ArrayValue::Float32(ArrayD::default(s)),
-        CasacoreDataType::TpDouble => ArrayValue::Float64(ArrayD::default(s)),
-        CasacoreDataType::TpComplex => {
-            ArrayValue::Complex32(ArrayD::from_elem(s, casa_types::Complex32::new(0.0, 0.0)))
-        }
-        CasacoreDataType::TpDComplex => {
-            ArrayValue::Complex64(ArrayD::from_elem(s, casa_types::Complex64::new(0.0, 0.0)))
-        }
-        CasacoreDataType::TpString => ArrayValue::String(ArrayD::from_elem(s, String::new())),
-        _ => ArrayValue::Float32(ArrayD::default(s)),
-    };
-    Value::Array(av)
+/// casacore has no array to give for such a cell: `ArrayColumn::get`
+/// throws "no array in row" (`SSMIndColumn::getShape` and its kin). A row
+/// record without the field is casa-rs's undefined cell, as in a table
+/// built from rows: a cell read returns `None` (or a missing-cell error)
+/// and `is_cell_defined` `false`, never a placeholder array (#852,
+/// undefined indirect cells).
+pub(crate) fn undefined_indirect_cell(
+    col_desc: &table_control::ColumnDescContents,
+    undefined: &mut HashSet<String>,
+) -> Option<Value> {
+    if col_desc.is_record() {
+        return Some(Value::Record(RecordValue::default()));
+    }
+    undefined.insert(col_desc.col_name.clone());
+    None
 }
 
 fn apply_physical_dm_descriptor_group(

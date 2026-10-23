@@ -34,6 +34,7 @@ fn main() {
     build.file("src/cpp/casacore_cpp_table_ssm.cpp");
     build.file("src/cpp/casacore_cpp_table_misc.cpp");
     build.file("src/cpp/casacore_cpp_table_ism.cpp");
+    build.file("src/cpp/casacore_cpp_table_element_arrays.cpp");
     build.file("src/cpp/casacore_cpp_table_tiled.cpp");
     build.file("src/cpp/casacore_cpp_table_tiled_data.cpp");
     build.file("src/cpp/casacore_cpp_table_tiled_order.cpp");
