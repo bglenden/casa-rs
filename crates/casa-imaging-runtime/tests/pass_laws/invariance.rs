@@ -18,9 +18,9 @@ use casa_imaging_runtime::pass::{
 use num_complex::Complex32;
 
 use crate::fixture::{
-    CHANNELS, FIRST_HZ, IMAGE, INCREMENT_RAD, Rows, Run, WIDTH_HZ, nearest_cube, operator,
-    panicking_weights_operator, planes, run, sparse_model, test_kernels_operator, try_run,
-    try_run_on, window_of, worst_relative,
+    CHANNELS, FIRST_HZ, IMAGE, INCREMENT_RAD, Rows, Run, WIDTH_HZ, keyed_weight_groups,
+    keyed_weights_operator, nearest_cube, operator, panicking_weights_operator, planes, run,
+    sparse_model, test_kernels_operator, try_run, try_run_on, window_of, worst_relative,
 };
 
 #[test]
@@ -58,6 +58,110 @@ fn plane_partition_is_bitwise_invariant_across_workers_and_waves_in_f64() {
             .iter()
             .all(|content| *content == SampleContent::Visibilities)
     );
+}
+
+/// The groups an owner's weight table holds before it grids them
+/// (`WEIGHT_GROUPS`, #787), which the pass keeps to itself.
+const WEIGHT_TABLE_GROUPS: usize = 1 << 14;
+
+/// f32's unit roundoff, 2^-24: the most rounding to f32 moves a value,
+/// relative to it.
+const F32_ROUNDING: f64 = f32::EPSILON as f64 / 2.0;
+
+/// f64's own rounding over the sums and transforms of a pass of the cube
+/// below, about 10^5 samples a plane: far below f32's.
+const F64_SLACK: f64 = 1.0e-10;
+
+/// #792 review (Astra), #810: on a weighted cube whose weight tables fill,
+/// one owner holding every plane, three owners, and waves of one and two
+/// planes grid the same weight images and weight `sumwt` to the rounding
+/// of their summed groups, and the same data and PSF bit for bit. The
+/// keyed kernels give each row's samples a cell from its w; every plane
+/// has more groups than a table holds, thousands of them gathering rows
+/// far apart, so each owner and wave cuts their sums into other batches.
+///
+/// The tolerance is the arithmetic's, not the probe's (Astra saw 1.1e-7):
+/// - every cell lends the spheroidal's real taps at the uv origin, so a
+///   plane's weight grid is its groups' summed weights times one stamp;
+/// - a group's f32 weights sum in f64 exactly, and each batch rounds its
+///   partial sum to f32 once, within 2^-24 of it: the weights are
+///   positive, so a plane's total and its weight `sumwt` are within 2^-24
+///   of the exact ones however the batches split them, and two runs agree
+///   within 2^-23;
+/// - the weight images are one linear map of those totals, each rounded to
+///   f32 once more, so two agree within 2^-22 of their peak.
+///
+/// Data and PSF do not pass through the table.
+#[test]
+fn weighted_cube_weight_images_agree_across_owners_and_waves_to_the_rounding_of_their_sums() {
+    const CELLS: u16 = 12_000;
+    let cube = keyed_weights_operator(Basis::ChannelLocal { planes: 3 }, CELLS);
+    let resampler = nearest_cube();
+    let mut rows = Rows::random(40_000, 67, cube.geometry());
+    for (plane, (groups, gathered)) in keyed_weight_groups(&rows, CELLS).into_iter().enumerate() {
+        assert!(
+            groups > WEIGHT_TABLE_GROUPS && gathered > groups / 3,
+            "plane {plane}: {groups} groups fill a table, {gathered} of them gather several rows"
+        );
+    }
+    let pass = |workers, residency| Run {
+        workers,
+        residency,
+        modes: ModeSet::ALL,
+        ..Run::initial()
+    };
+    let reference = run(
+        &[planes(&cube, &resampler, 1)],
+        &mut rows,
+        &pass(1, Residency::All),
+    );
+    for (workers, residency) in [
+        (3, Residency::All),
+        (1, Residency::Waves { planes_per_wave: 1 }),
+        (3, Residency::Waves { planes_per_wave: 1 }),
+        (1, Residency::Waves { planes_per_wave: 2 }),
+        (2, Residency::Waves { planes_per_wave: 2 }),
+    ] {
+        let images = run(
+            &[planes(&cube, &resampler, workers)],
+            &mut rows,
+            &pass(workers, residency),
+        );
+        for (plane, (ours, theirs)) in images[0]
+            .planes
+            .iter()
+            .zip(&reference[0].planes)
+            .enumerate()
+        {
+            let label = format!("{workers} owners, {residency:?}, plane {plane}");
+            assert_eq!(ours.data, theirs.data, "{label}: data");
+            assert_eq!(ours.psf, theirs.psf, "{label}: PSF");
+            let terms = ours.data.len() + ours.psf.len();
+            assert_eq!(ours.sumwt[..terms], theirs.sumwt[..terms], "{label}");
+            assert!(!theirs.weight.is_empty(), "{label}: a weight image");
+            for (image, against) in ours.weight.iter().zip(&theirs.weight) {
+                let peak = against
+                    .iter()
+                    .fold(0.0_f64, |m, v| m.max(f64::from(v.abs())));
+                assert!(peak > 0.0, "{label}: a weight image");
+                let worst = image
+                    .iter()
+                    .zip(against)
+                    .map(|(a, b)| f64::from(a - b).abs() / peak)
+                    .fold(0.0, f64::max);
+                assert!(
+                    worst <= 4.0 * F32_ROUNDING + F64_SLACK,
+                    "{label}: weight image {worst:e}"
+                );
+            }
+            for (sum, against) in ours.sumwt[terms..].iter().zip(&theirs.sumwt[terms..]) {
+                assert!(
+                    (sum - against).abs() <= (2.0 * F32_ROUNDING + F64_SLACK) * against.abs(),
+                    "{label}: weight sumwt {sum} against {against}"
+                );
+            }
+        }
+    }
 }
 
 #[test]

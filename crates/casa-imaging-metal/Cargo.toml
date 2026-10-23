@@ -12,6 +12,7 @@ workspace = true
 
 [dependencies]
 casa-imaging-operator = { path = "../casa-imaging-operator" }
+casa-numerics = { path = "../casa-numerics" }
 num-complex.workspace = true
 
 [target.'cfg(all(target_os = "macos", not(coverage)))'.dependencies]

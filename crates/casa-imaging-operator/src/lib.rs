@@ -91,7 +91,7 @@ pub use weighting::{
     BandwidthTaper, DensityCellRule, DensityGrid, DensityGridShape, DensityUv, RobustFactors,
     Taper, WeightingGeneration, build_density_grid,
 };
-pub use wplanes::{WPlaneCount, WPlanes, WScreens};
+pub use wplanes::{MAX_W_PLANES, WPlaneCount, WPlanes, WScreens};
 
 /// The C heap FFTW keeps for the plans the process caches
 /// ([`casa_fft::PLAN_CACHE_BYTES`]), which every transform of the operator

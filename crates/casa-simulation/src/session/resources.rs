@@ -10,7 +10,9 @@
 //! 3), [`ExecutionControls`]:
 //! - with neither a memory budget nor a worker count, the session takes the
 //!   balanced policy: three quarters of the host's free memory and of its
-//!   threads, at most its performance cores;
+//!   threads, at most its performance cores, except that a `close` that
+//!   predicts on Metal streams on every thread but the writer's
+//!   ([`SessionResources::close_cores`]);
 //! - with either, an explicit policy whose other half is the balanced
 //!   policy's on the host.
 //!
@@ -23,16 +25,18 @@
 //! The backend is where a session predicts its model
 //! ([`SessionResources::prediction_backend`]); noise never runs on a device,
 //! so a session that predicts nothing writes the same MeasurementSet
-//! whatever the request. Every kernel set a session predicts with is the
-//! standard `GridFT` one, which the imaging runtime's Metal laws and the
-//! simulator's own (`tests/backends.rs`) cover, so `Auto` takes the host's
-//! Metal device whenever there is one.
+//! whatever the request. Metal predicts through the standard `GridFT`
+//! kernel set, which the imaging runtime's Metal laws and the simulator's
+//! own (`tests/backends.rs`) cover, so `Auto` takes the host's Metal device
+//! whenever there is one, except for a session that projects w
+//! (`setoptions(ftmachine='wproject')`): `close` predicts that on the CPU,
+//! and `predict` refuses it on an explicit `Metal`.
 
 use std::num::NonZeroUsize;
 use std::str::FromStr;
 
 use casa_imaging_runtime::pass::BackendChoice;
-use casa_imaging_runtime::{CoreAllocation, HostResources, ResourcePolicy};
+use casa_imaging_runtime::{CoreAllocation, HostResources, ResourcePolicy, STREAM_PRODUCERS};
 
 use super::error::{SimulatorError, SimulatorResult};
 
@@ -182,6 +186,28 @@ impl SessionResources {
         self.policy.cores(&self.host)
     }
 
+    /// The workers `close` runs when it predicts on Metal (`metal`) or
+    /// not: the policy's ([`Self::cores`]), except that under the balanced
+    /// policy a `close` that predicts on Metal streams on every thread but
+    /// the writer's, efficiency cores included (owner, #855). The device
+    /// degrids; what is left for the host, placing the samples and adding
+    /// the noise, gains from the efficiency cores where the CPU's own
+    /// degridding does not (#659): at 4096 channels on an M4, nine
+    /// streaming workers closed in 55.8 s against 70.0 s for three.
+    #[must_use]
+    pub fn close_cores(&self, metal: bool) -> CoreAllocation {
+        match self.policy {
+            ResourcePolicy::Balanced if metal => {
+                let streaming_workers = self.host.threads.saturating_sub(STREAM_PRODUCERS).max(1);
+                CoreAllocation {
+                    workers: self.policy.workers(&self.host).max(streaming_workers),
+                    streaming_workers,
+                }
+            }
+            _ => self.cores(),
+        }
+    }
+
     /// The backend a session runs on: `Auto` takes Metal only where the
     /// host has a device and the session predicts a model.
     #[must_use]
@@ -285,6 +311,31 @@ mod tests {
         )
         .expect("resources");
         assert_eq!(one.cores().streaming_workers, 1);
+    }
+
+    #[test]
+    fn a_metal_close_streams_on_every_thread_but_the_writers_under_the_balanced_policy() {
+        let balanced =
+            SessionResources::pinned(HOST, ResourcePolicy::Balanced, BackendRequest::Cpu)
+                .expect("resources");
+        assert_eq!(
+            balanced.close_cores(true),
+            CoreAllocation {
+                workers: 9,
+                streaming_workers: 9,
+            }
+        );
+        assert_eq!(balanced.close_cores(false), balanced.cores());
+        let explicit = SessionResources::pinned(
+            HOST,
+            ResourcePolicy::Explicit {
+                workers: 4,
+                memory: 1 << 30,
+            },
+            BackendRequest::Cpu,
+        )
+        .expect("resources");
+        assert_eq!(explicit.close_cores(true), explicit.cores());
     }
 
     #[test]

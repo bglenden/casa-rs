@@ -1,4 +1,7 @@
 target/
+# A worktree's `target` is often a symlink to a shared build directory,
+# which `target/` (directories only) does not match (#809).
+/target
 target-clippy/
 dist/
 .native/

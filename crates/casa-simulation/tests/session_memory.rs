@@ -14,6 +14,9 @@
 //! integration at a time into the batch; POINTING is generated as it is
 //! saved).
 //!
+//! Each batch is predicted as one block (#855), and the law checks that it
+//! is, so the largest block is held to the admission.
+//!
 //! The write batch is the writer's: it holds one batch or two, and keeps one
 //! it has written for the producer, with how it keeps pace, all within its
 //! plan, so a longer write may peak with one more. The least of three
@@ -34,6 +37,16 @@
 //! holds beyond the session it closes stays within its admission and the
 //! allowance, and twice the scans hold no more than a little more: the
 //! applications are read where the plan keeps them, not copied per scan.
+//!
+//! A third law corrupts one predicted scan 4,096 and then 65,536 times
+//! (#856 review): sixteen times the applications hold no more beyond the
+//! admission than a little, so what the prediction stage keeps per noise
+//! term is charged where it is kept (on Metal only, for the device).
+//!
+//! A fourth law predicts through `WProjectFT` (#841 Phase 2): `predict`
+//! holds no more than it is admitted while it builds the planes on their
+//! screens, and what it keeps after (the kernels and the grids) is what its
+//! reservations keep.
 //!
 //! This binary's global allocator counts the live heap; the counters are
 //! the process's, so each law runs alone in a process of its own
@@ -57,8 +70,8 @@ use casa_imaging_runtime::{
 };
 use casa_simulation::{
     ArrayConfig, BackendRequest, CoordinateSystem, NoiseSpec, ObserveSpec, PredictSpec,
-    SessionResources, Simulator, SimulatorOptions, SpectralWindowSpec, StateSpec,
-    VoltagePatternSpec,
+    PredictionOptions, SessionResources, Simulator, SimulatorOptions, SpectralWindowSpec,
+    StateSpec, VoltagePatternSpec,
 };
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::frequency::FrequencyRef;
@@ -542,6 +555,12 @@ fn a_session_holds_its_admission_and_no_more_for_more_rows() {
             "{}: the rows are written in several batches: {pass:?}",
             case.name
         );
+        assert_eq!(
+            pass.block_rows, pass.batch_rows,
+            "{}: a batch is predicted as one block, so the law holds the largest to the \
+             admission: {pass:?}",
+            case.name
+        );
         assert!(
             session.most <= session.admitted + ALLOWANCE_BYTES,
             "{}: the heap grew {} bytes, beyond the {} admitted and the allowance",
@@ -628,6 +647,13 @@ fn close_interleaved(
         }
         sm.corrupt().expect("corrupt");
     }
+    measured_close(sm, ms, summary)
+}
+
+/// Close `sm`, which writes `ms`, measuring what `close` holds beyond the
+/// session and what it was admitted, then delete `ms`; the pass's summary
+/// when `summary`.
+fn measured_close(sm: Simulator, ms: &Path, summary: bool) -> (Closed, Option<PassSummary>) {
     let reserved = reserved_memory();
     let baseline = LIVE.load(Ordering::Relaxed);
     PEAK.store(baseline, Ordering::Relaxed);
@@ -713,4 +739,192 @@ fn closing_interleaved_corruptions_holds_its_admission_and_no_more_for_more_scan
         few.unadmitted(),
         INTERLEAVED_SCANS[0]
     );
+}
+
+/// Noise applications of the repeated-corruption law's cases: one predicted
+/// scan corrupted this many times. The prediction stage once allocated a
+/// term for each, 12 bytes, on the CPU too, where it charged none (#856
+/// review: 768 KiB at 65,536, beyond the allowance).
+const REPEATED_APPLICATIONS: [usize; 2] = [4_096, 65_536];
+
+/// A one-integration scan predicted from `model` and corrupted
+/// `applications` times, written to `ms` and closed: what `close` held.
+fn close_repeated(
+    applications: usize,
+    ms: &Path,
+    model: &Path,
+    measures: &Arc<dyn MeasuresProvider>,
+) -> Closed {
+    let mut sm = configured(ms, measures, BUDGET_32, 32);
+    sm.observe(&scan(1)).expect("observe");
+    sm.set_vp(&VoltagePatternSpec::default()).expect("setvp");
+    sm.predict(&PredictSpec {
+        images: vec![model.to_path_buf()],
+        component_list: None,
+        incremental: false,
+    })
+    .expect("predict");
+    sm.set_noise(&noise()).expect("setnoise");
+    for _ in 0..applications {
+        sm.corrupt().expect("corrupt");
+    }
+    measured_close(sm, ms, false).0
+}
+
+#[test]
+fn a_predicting_close_holds_its_admission_however_often_its_scan_is_corrupted() {
+    if !alone("a_predicting_close_holds_its_admission_however_often_its_scan_is_corrupted") {
+        return;
+    }
+    let resources = resources(BUDGET_32);
+    charge_process_caches(resources.host(), resources.policy()).expect("the process caches");
+    let measures = casa_test_support::deterministic_measures_provider();
+    let root = tempfile::tempdir().expect("temporary directory");
+    let model = root.path().join("model.image");
+    write_model(&model, 32);
+    let ms = root.path().join("repeated.ms");
+    for applications in REPEATED_APPLICATIONS {
+        close_repeated(applications, &ms, &model, &measures);
+    }
+    let [few, many] = REPEATED_APPLICATIONS.map(|applications| {
+        let mut held = Closed {
+            heap: u64::MAX,
+            admitted: 0,
+        };
+        for _ in 0..MEASURED_RUNS {
+            let run = close_repeated(applications, &ms, &model, &measures);
+            println!(
+                "{applications} applications: close held {} bytes, admitted {}",
+                run.heap, run.admitted
+            );
+            assert!(
+                run.heap <= run.admitted + ALLOWANCE_BYTES,
+                "{applications} applications: close held {} bytes, beyond the {} admitted and \
+                 the allowance",
+                run.heap,
+                run.admitted
+            );
+            held.heap = held.heap.min(run.heap);
+            held.admitted = held.admitted.max(run.admitted);
+        }
+        held
+    });
+    println!(
+        "{} - {} applications: {} bytes more beyond the admission",
+        REPEATED_APPLICATIONS[1],
+        REPEATED_APPLICATIONS[0],
+        many.unadmitted() - few.unadmitted()
+    );
+    assert!(
+        many.unadmitted() <= few.unadmitted() + SCANS_ALLOWANCE_BYTES as i64,
+        "{} applications: close held {} bytes beyond its admission, against {} for {}",
+        REPEATED_APPLICATIONS[1],
+        many.unadmitted(),
+        few.unadmitted(),
+        REPEATED_APPLICATIONS[0]
+    );
+}
+
+/// The W-projection law's planes.
+const W_PLANES: i64 = 128;
+
+/// The W-projection law's session budget: the 32-channel cases' and room
+/// for the planes beside `close`'s writer.
+const BUDGET_W: u64 = BUDGET_32 + (32 << 20);
+
+/// What a `predict` held while it ran and kept after, beyond what was live
+/// before it, and what was admitted.
+#[derive(Debug, Clone, Copy)]
+struct Predicted {
+    /// The heap's peak during `predict`, and the most its reservations held.
+    during: Closed,
+    /// The heap left live after `predict`, and what its reservations keep.
+    kept: Closed,
+}
+
+/// A one-integration scan predicted from `model` through `WProjectFT` with
+/// [`W_PLANES`] planes: what `predict` held and kept. The session is closed
+/// and `ms` deleted after.
+fn predict_w(ms: &Path, model: &Path, measures: &Arc<dyn MeasuresProvider>) -> Predicted {
+    let mut sm = configured(ms, measures, BUDGET_W, 32);
+    sm.observe(&scan(1)).expect("observe");
+    sm.set_options(&PredictionOptions {
+        ftmachine: "wproject".to_string(),
+        w_planes: W_PLANES,
+        ..PredictionOptions::default()
+    })
+    .expect("setoptions");
+    let reserved = reserved_memory();
+    let baseline = LIVE.load(Ordering::Relaxed);
+    PEAK.store(baseline, Ordering::Relaxed);
+    let window = ReservationWindow::open();
+    sm.predict(&PredictSpec {
+        images: vec![model.to_path_buf()],
+        component_list: None,
+        incremental: false,
+    })
+    .expect("predict");
+    let predicted = Predicted {
+        during: Closed {
+            heap: PEAK.load(Ordering::Relaxed) - baseline,
+            admitted: window.close() - reserved,
+        },
+        kept: Closed {
+            heap: LIVE.load(Ordering::Relaxed).saturating_sub(baseline),
+            admitted: reserved_memory() - reserved,
+        },
+    };
+    drop(window);
+    sm.close().expect("close");
+    std::fs::remove_dir_all(ms).expect("remove the run");
+    predicted
+}
+
+/// `predict` through `WProjectFT` builds its planes on screens and keeps the
+/// kernels cropped from them (this PR, #841 Phase 2): while it runs, the
+/// heap stays within the most its reservations held (the screens, then the
+/// kernels, then the model's grids and their preparation) and the
+/// allowance; after it, what the session keeps (the kernels and the grids)
+/// is what its reservations keep, within the allowance either way. The
+/// 128 planes keep about 2.1 MB of kernels, built on about 1.4 MB of
+/// screens: a predict that kept the kernels uncharged held 2.18 MB against
+/// 33 KB charged, and one that kept the screens' charge would be as far
+/// apart the other way.
+#[test]
+fn a_w_projection_predict_holds_its_admission_and_keeps_what_it_charges() {
+    if !alone("a_w_projection_predict_holds_its_admission_and_keeps_what_it_charges") {
+        return;
+    }
+    let resources = resources(BUDGET_32);
+    charge_process_caches(resources.host(), resources.policy()).expect("the process caches");
+    let measures = casa_test_support::deterministic_measures_provider();
+    let root = tempfile::tempdir().expect("temporary directory");
+    let model = root.path().join("model.image");
+    write_model(&model, 32);
+    let ms = root.path().join("w.ms");
+    // Once unmeasured: state a process keeps once it has predicted.
+    predict_w(&ms, &model, &measures);
+    for _ in 0..MEASURED_RUNS {
+        let Predicted { during, kept } = predict_w(&ms, &model, &measures);
+        println!(
+            "W predict: held {} bytes against {} admitted; kept {} against {} charged",
+            during.heap, during.admitted, kept.heap, kept.admitted
+        );
+        assert!(
+            kept.admitted > 2 * ALLOWANCE_BYTES,
+            "the kernels and grids are charged: {kept:?}"
+        );
+        assert!(
+            during.heap <= during.admitted + ALLOWANCE_BYTES,
+            "predict held {} bytes, beyond the {} admitted and the allowance",
+            during.heap,
+            during.admitted
+        );
+        assert!(
+            kept.unadmitted().unsigned_abs() <= ALLOWANCE_BYTES,
+            "predict keeps {} bytes against the {} its reservations keep",
+            kept.heap,
+            kept.admitted
+        );
+    }
 }
