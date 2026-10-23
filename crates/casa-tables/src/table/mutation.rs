@@ -11,12 +11,13 @@ impl Table {
 
     /// Copies all rows from `source` into this table.
     ///
-    /// Both tables must share the same schema (same column names and types).
-    /// Rows are appended after any existing rows.
+    /// Both tables must have the same column descriptions (names, types and
+    /// options); their description headers ([`TableSchema::header`]) may
+    /// differ. Rows are appended after any existing rows.
     ///
     /// # Errors
     ///
-    /// - [`TableError::SchemaColumnUnknown`] if schemas are incompatible
+    /// - [`TableError::SchemaMismatch`] if the column descriptions differ
     ///
     /// # C++ equivalent
     ///
@@ -32,11 +33,12 @@ impl Table {
     /// Copies selected rows from `source` into this table.
     ///
     /// `row_indices` specifies which source rows to copy, in order.
-    /// Both tables must share the same schema.
+    /// Both tables must have the same column descriptions, as for
+    /// [`copy_rows`](Table::copy_rows).
     ///
     /// # Errors
     ///
-    /// - [`TableError::SchemaColumnUnknown`] if schemas are incompatible
+    /// - [`TableError::SchemaMismatch`] if the column descriptions differ
     /// - [`TableError::RowOutOfBounds`] if a row index exceeds source row count
     ///
     /// # C++ equivalent
@@ -116,12 +118,16 @@ impl Table {
     }
 
     /// Validates that `source` has a compatible schema with `self`.
+    ///
+    /// The column descriptions must agree; the descriptions' names, versions
+    /// and comments (`TableDescHeader`) may differ, as `TableCopy::copyRows`
+    /// never compares them.
     fn validate_schema_compat(&self, source: &Table) -> Result<(), TableError> {
         let self_schema = self.schema();
         let src_schema = source.schema();
         match (self_schema, src_schema) {
             (Some(s), Some(o)) => {
-                if s != o {
+                if s.columns() != o.columns() {
                     return Err(TableError::SchemaMismatch {
                         message: format!("expected {s:?}, found {o:?}"),
                     });

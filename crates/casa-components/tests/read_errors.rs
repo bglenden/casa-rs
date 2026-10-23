@@ -6,15 +6,25 @@ mod common;
 
 use casa_components::{ComponentError, ComponentList, ComponentListError};
 use casa_tables::{DataManagerKind, Table, TableOptions};
-use casa_types::{ScalarValue, Value};
+use casa_types::{ArrayValue, ScalarValue, Value};
 use common::{copy_table, fixture_dir};
 
-/// The fixture with one cell or column changed, saved as a new table.
+/// The old-format fixture with one cell or column changed, saved as a new
+/// table.
 fn altered_fixture(
     scratch: &std::path::Path,
     alter: impl FnOnce(&mut Table),
 ) -> std::path::PathBuf {
-    let source = copy_table(&fixture_dir().join("old_format.cl"), scratch);
+    altered(scratch, "old_format.cl", alter)
+}
+
+/// Fixture `name` with one cell or column changed, saved as a new table.
+fn altered(
+    scratch: &std::path::Path,
+    name: &str,
+    alter: impl FnOnce(&mut Table),
+) -> std::path::PathBuf {
+    let source = copy_table(&fixture_dir().join(name), scratch);
     let mut table = Table::open(TableOptions::new(&source)).expect("open");
     alter(&mut table);
     let altered = scratch.join("altered.cl");
@@ -66,6 +76,27 @@ fn unknown_names_are_refused_as_casa_refuses_them() {
         set_string(table, 1, "Shape", "gaus")
     });
     assert!(ComponentList::read_table(&altered).is_ok());
+}
+
+#[test]
+fn spectral_errors_must_match_the_parameters() {
+    // `readTable` reads `Spectral_Error` into the parameters' vector, which
+    // `ArrayColumn::get` resizes only when it is empty, so CASA refuses a
+    // power-log polynomial (row 5) with two errors for three coefficients,
+    // although the polynomial's own `setErrors` would resize them.
+    let scratch = tempfile::tempdir().expect("scratch");
+    let altered = altered(scratch.path(), "components.cl", |table| {
+        table
+            .cell_accessor_mut(5, "Spectral_Error")
+            .expect("cell")
+            .set(Value::Array(ArrayValue::from_f64_vec(vec![0.05, 0.01])))
+            .expect("set");
+    });
+    let error = ComponentList::read_table(&altered).expect_err("two errors, three coefficients");
+    assert!(
+        matches!(&error, ComponentListError::Cell { row: 5, column, .. } if column == "Spectral_Error"),
+        "{error}"
+    );
 }
 
 #[test]

@@ -61,7 +61,10 @@ pub struct ColumnOptions {
     /// records included (`BaseColumnDesc`'s constructor refuses it only for
     /// `TpOther`), and CASA uses it that way: a `ComponentList` declares its
     /// variable-shape `Optional_Parameters` column `Undefined`. The flag is
-    /// therefore accepted on every column type and persisted as written.
+    /// therefore accepted on every column type and persisted as written. It
+    /// leaves record cells defined, as casacore's
+    /// `ScalarRecordColumnData::isDefined` does: a record never written reads
+    /// as an empty one.
     /// Cf. C++ `ColumnDesc::Undefined`.
     pub undefined: bool,
 }
