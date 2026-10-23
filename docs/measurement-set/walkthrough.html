@@ -186,7 +186,7 @@
 <div class="shell">
   <aside aria-label="Walkthrough navigation">
     <div class="brand">casa-rs<span style="color:var(--teal)">.</span></div>
-    <span class="badge">Design draft · revision 3</span>
+    <span class="badge">Design draft · revision 4</span>
     <div class="sidebar-title">From storage<br>to science</div>
     <p class="sidebar-copy">A guided review of the shared observation interface. One idea at a time.</p>
     <nav aria-label="Steps">
@@ -205,7 +205,7 @@
         <li><a href="#review"><span class="num">12</span> Decide, prove, then build</a></li>
       </ol>
     </nav>
-    <div class="sidebar-bottom">Based on draft <code>abcc5ac0</code><br>23 October 2026<br><a href="https://github.com/bglenden/casa-rs/pull/878">PR #878 · design discussion</a></div>
+    <div class="sidebar-bottom">Based on draft <code>4efbeb85</code><br>23 October 2026<br><a href="https://github.com/bglenden/casa-rs/pull/878">PR #878 · design discussion</a></div>
   </aside>
   <main id="content">
     <div class="toolbar js-only">
@@ -249,7 +249,7 @@
       </div>
       <div class="note">This is a walkthrough of a proposal. The shared API is not implemented or frozen. MSv2 + MSv4 is the agreed scope; MSv3 and XRADIO image persistence are deferred.</div>
       <div class="pause"><div class="eyebrow">Pause here · D2 / D4</div><p>Does this put the storage–science boundary in the right place, with enough access-pattern information flowing back to the adapter?</p></div>
-      <p class="source">Read: <a href="https://github.com/bglenden/casa-rs/blob/abcc5ac0e773f7ad81f1909317c602c63aedbd98/docs/measurement-set/architecture.md#1-outcome-and-boundaries">Architecture §1</a>.</p>
+      <p class="source">Read: <a href="https://github.com/bglenden/casa-rs/blob/4efbeb85e1365855c46284e6ed14f1c21a0edb54/docs/measurement-set/architecture.md#1-outcome-and-boundaries">Architecture §1</a>.</p>
     </section>
 
     <section class="step" id="units" data-title="Separate the concepts" aria-labelledby="title-units">
@@ -269,7 +269,7 @@
       <p>This separation lets MSv4 use larger native aggregation without making every kernel use a large scratch buffer. A <strong>data group</strong>, introduced next, is another concept: it associates the arrays that describe one visibility product.</p>
       <p><strong>Visibility batch</strong> is the provisional name for the common intermediate. “Observation block” has an observatory meaning; “chunk” is reserved here for physical storage. The batch can contain only requested metadata/flags when visibility values are unnecessary.</p>
       <div class="pause"><div class="eyebrow">Pause here · D2</div><p>Is this vocabulary clear enough to use consistently? In particular, a scientific group and a cooperating worker group have different purposes.</p></div>
-      <p class="source">Read: <a href="https://github.com/bglenden/casa-rs/blob/abcc5ac0e773f7ad81f1909317c602c63aedbd98/docs/measurement-set/architecture.md#2-the-important-distinctions">Architecture §2</a>.</p>
+      <p class="source">Read: <a href="https://github.com/bglenden/casa-rs/blob/4efbeb85e1365855c46284e6ed14f1c21a0edb54/docs/measurement-set/architecture.md#2-the-important-distinctions">Architecture §2</a>.</p>
     </section>
 
     <section class="step" id="catalogue" data-title="Describe the observation" aria-labelledby="title-catalogue">
@@ -306,7 +306,7 @@
       </details>
       <details><summary>Identity needs care when calibration is saved and reopened</summary><p>Catalogue handles belong to an opened observation. They are not permanent MS row numbers. Calibration owns the binding to antenna/SPW/field identities in a persisted caltable. Reopening and changing catalogue enumeration must not change which solutions apply.</p></details>
       <div class="pause"><div class="eyebrow">Pause here · D1</div><p>Does the catalogue expose enough scientific context without leaking table row IDs or Zarr paths into algorithms?</p></div>
-      <p class="source">Read: <a href="https://github.com/bglenden/casa-rs/blob/abcc5ac0e773f7ad81f1909317c602c63aedbd98/docs/measurement-set/contracts.md#2-topology-and-identity">Contracts §2</a> and <a href="https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/src/xradio/measurement_set/schema.py">pinned XRADIO schema</a>.</p>
+      <p class="source">Read: <a href="https://github.com/bglenden/casa-rs/blob/4efbeb85e1365855c46284e6ed14f1c21a0edb54/docs/measurement-set/contracts.md#2-topology-and-identity">Contracts §2</a> and <a href="https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/src/xradio/measurement_set/schema.py">pinned XRADIO schema</a>.</p>
     </section>
 
     <section class="step" id="block" data-title="Build the shared batch" aria-labelledby="title-block">
@@ -369,17 +369,31 @@ VisibilityBatch {
         <p class="caption">Requested roles only. A flags-only operation need not read visibility values. Missing required roles fail binding.</p>
       </div>
       <p>Metadata declares which axes it depends on. A constant frequency frame, per-time epoch, or per-correlation row weight should not become one allocated object per visibility.</p>
+      <h2 id="native-measures">The coordinates are native casa-rs Measures</h2>
+      <p>The batch exposes Measures' own frequency, direction, epoch, position and reference types. The frequency numbers above belong to a native Measures array view carrying <code>FrequencyRef::TOPO</code>; the epoch uses <code>EpochRef::TAI</code> and split precision. Measures conversion functions accept those views directly. There is no second set of “MS measures” to translate before computation.</p>
+      <p>We will extend or rework <code>casa-types::measures</code> and quanta to support this naturally. Array views share reference metadata and borrow numeric buffers; they do not require one full measure/frame object per value. MSv2/MSv4 metadata is decoded into those types at the I/O boundary, with the original encoding retained where needed for faithful writes.</p>
+      <div class="diagram" id="measures-bulk-flow">
+        <h3>Bulk LSRK → TOPO frequency conversion</h3>
+        <div class="flow">
+          <div class="box"><b>Bind the route</b><small>Source/destination references, units, scientific policy and provider</small></div><span class="arrow" aria-hidden="true">→</span>
+          <div class="box accent"><b>Prepare the context</b><small>Epochs, directions, observer positions → reusable Doppler factors</small></div><span class="arrow" aria-hidden="true">→</span>
+          <div class="box"><b>Convert the slice</b><small>Typed arithmetic across many frequencies into reusable output storage</small></div>
+        </div>
+        <p class="caption">For 4096 channels sharing a context: prepare once, apply to 4096 values. Baselines and correlations sharing that context can reuse the converted axis. This is the proposed work pattern, not a measured speedup.</p>
+      </div>
+      <details id="measures-bulk-details"><summary>What can be reused, and how workers share it</summary><p>Preparation resolves the expensive Earth-motion, time-scale and direction work. The apply loop performs no route search, frame construction, provider lookup, allocation or mutex acquisition per channel. Source and destination contexts can differ, such as when mapping an observation to a fixed image reference epoch. Changing an epoch, direction, observer or scientific model can require new coefficients; one factor is not assumed valid for a whole observation.</p><p>Prepared transforms are immutable and shareable. Mutable conversion state and output buffers belong to admitted work units. Existing CASA-compatible interpolation depends on preparation order: retain that sequence across batches, then let workers finish applying prepared transforms independently. Bound retained context state and queues; do not materialize frequencies for every time × baseline × channel × correlation.</p><p>Current code already has an ordered <code>MFrequencyConverter</code>, a reusable <code>UvwFrame</code>, and prepared frequency factors inside <code>casa-ms</code>. Consolidate these in Measures. The M1 trial must preserve science and measure the new path against both scalar conversion and the existing prepared production path. Converting coordinates does not itself regrid the visibility values.</p></details>
+      <p class="source">Read: <a href="https://github.com/bglenden/casa-rs/blob/4efbeb85e1365855c46284e6ed14f1c21a0edb54/docs/measurement-set/contracts.md#shared-measures-types-and-bulk-conversion">native Measures and bulk-conversion contract</a>, <a href="https://github.com/bglenden/casa-rs/blob/4efbeb85e1365855c46284e6ed14f1c21a0edb54/docs/measurement-set/implementation-plan.md#m1-measures-bulk-conversion-trial">M1 Measures trial</a>, and <a href="https://github.com/bglenden/casa-rs/blob/4efbeb85e1365855c46284e6ed14f1c21a0edb54/docs/measurement-set/README.md#source-map-for-external-reviewers">pinned existing Measures source map</a>.</p>
       <h2>Should autocorrelations be real?</h2>
       <p><strong>The same-receptor power products are real in the ideal measurement:</strong> <code>XX = ⟨Eₓ Eₓ*⟩ = ⟨|Eₓ|²⟩</code>, and similarly YY (or RR/LL), for the same antenna and feed. But <code>XY = ⟨Eₓ Eᵧ*⟩</code> can be complex, with <code>YX = conjugate(XY)</code> ideally. The example's auto row therefore has real XX/YY and complex XY/YX.</p>
       <p>MSv2 <code>DATA</code> and MSv4 <code>VISIBILITY</code> use complex arrays, so auto and cross baselines can share one array and one typed loop. MSv2 also has real <code>FLOAT_DATA</code>; MSv4 has a separate real <code>SPECTRUM</code> array for single-dish data. The batch preserves the supplied scalar type and values. Antenna equality alone cannot authorize discarding imaginary parts or changing dtype.</p>
       <details><summary>Storage type, physical meaning, and the initial support scope</summary><p>The ideal auto correlation matrix is Hermitian; different feeds/signals or stored processing results require their own interpretation. Reading does not force supplied data to satisfy ideal reality or conjugate symmetry. Selecting only real self-products from a complex array could support an explicitly requested real projection, but its imaginary-value handling and write semantics would need a defined policy.</p><p>The shared real-valued variants cover supported legacy FLOAT_DATA. XRADIO SpectrumXds uses [time, antenna, frequency, polarization] and remains outside the initial MSv4 VisibilityXds profile. This explanation does not expand that implementation scope.</p><p class="source">Sources: <a href="https://github.com/casacore/casacore/blob/a1399b6b99907bd14021920a089403a93c10aba1/ms/MeasurementSets/MSMainEnums.h#L176">MSv2 DATA/FLOAT_DATA definitions</a>, <a href="https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/src/xradio/measurement_set/schema.py#L1020">MSv4 complex VISIBILITY</a>, and <a href="https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/src/xradio/measurement_set/schema.py#L1001">real SPECTRUM</a>.</p></details>
       <h2>Known units at the numerical boundary</h2>
       <p>The proposed default views guarantee <strong>Hz for frequency, m for distances, rad for angles, and s for durations</strong>. Epochs retain explicit origin/representation, time scale, and split precision. A caller can request another compatible unit at binding; the result guarantees that choice. A <code>frequency_hz()</code> accessor cannot return MHz.</p>
-      <details><summary>Canonical units, explicit conversions, and the MSv4 convention</summary><p>Unit syntax and scaling are resolved once at the appropriate metadata scope. Shared axes are converted once where possible; other scaling can be fused with fill/decode/packing. Already-canonical views need no unit-conversion pass. Frames remain separate: Hz in TOPO is not Hz in LSRK, and seconds do not imply UTC or TAI.</p><p>The pinned MSv4 schema constrains the main coordinate quantities to Hz, m, s and rad. Visibility units are a string defaulting to Jy. We propose Jy for established flux-density data, rather than converting everything to SI base units; instrumental data cannot acquire a flux calibration through unit conversion. Declared inverse-variance weights and matching sigma must scale consistently with amplitude units.</p><p>Computation does not rewrite persistent unit metadata. Updates convert back to the destination's units under scope and precision checks.</p><p>Sources: <a href="https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/src/xradio/schema/measures.py#L56">coordinate units</a>, <a href="https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/src/xradio/measurement_set/schema.py#L1035">visibility units</a>, and <a href="https://github.com/bglenden/casa-rs/blob/abcc5ac0e773f7ad81f1909317c602c63aedbd98/docs/measurement-set/contracts.md#units-and-measure-references">proposed unit contract</a>.</p></details>
+      <details><summary>Canonical units, explicit conversions, and the MSv4 convention</summary><p>Unit syntax and scaling are resolved once at the appropriate metadata scope. Shared axes are converted once where possible; other scaling can be fused with fill/decode/packing. Already-canonical views need no unit-conversion pass. Frames remain separate: Hz in TOPO is not Hz in LSRK, and seconds do not imply UTC or TAI.</p><p>The pinned MSv4 schema constrains the main coordinate quantities to Hz, m, s and rad. Visibility units are a string defaulting to Jy. We propose Jy for established flux-density data, rather than converting everything to SI base units; instrumental data cannot acquire a flux calibration through unit conversion. Declared inverse-variance weights and matching sigma must scale consistently with amplitude units.</p><p>Computation does not rewrite persistent unit metadata. Updates convert back to the destination's units under scope and precision checks.</p><p>Sources: <a href="https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/src/xradio/schema/measures.py#L56">coordinate units</a>, <a href="https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/src/xradio/measurement_set/schema.py#L1035">visibility units</a>, and <a href="https://github.com/bglenden/casa-rs/blob/4efbeb85e1365855c46284e6ed14f1c21a0edb54/docs/measurement-set/contracts.md#units-and-measure-references">proposed unit contract</a>.</p></details>
       <div class="note amber"><strong>Three facts stay separate:</strong> selection, whether an acquisition is known to exist, and whether its requested values are usable. NaN padding or a false flag does not prove an acquisition occurred.</div>
       <details><summary>Precision is an explicit request</summary><p>Native precision, lossless widening, and approved narrowing are different policies. The initial imaging binding requests complex64 input (<code>Complex&lt;f32&gt;</code>); narrowing complex128 requires scientific approval. Grid precision does not authorize input conversion.</p></details>
       <div class="pause"><div class="eyebrow">Pause here · D1</div><p>Are these the right contents for the shared structure? Which facts should every consumer be able to rely on without rechecking them per value?</p></div>
-      <p class="source">Read: <a href="https://github.com/bglenden/casa-rs/blob/7f86a605bd38df9ccb8e39b0b599b08a33b5c9d8/docs/measurement-set/contracts.md#concrete-batch-example">concrete batch contract</a> and <a href="https://github.com/bglenden/casa-rs/blob/7f86a605bd38df9ccb8e39b0b599b08a33b5c9d8/docs/measurement-set/contracts.md#autocorrelations-and-real-valued-data">autocorrelation scalar semantics</a>.</p>
+      <p class="source">Read: <a href="https://github.com/bglenden/casa-rs/blob/4efbeb85e1365855c46284e6ed14f1c21a0edb54/docs/measurement-set/contracts.md#concrete-batch-example">concrete batch contract</a> and <a href="https://github.com/bglenden/casa-rs/blob/4efbeb85e1365855c46284e6ed14f1c21a0edb54/docs/measurement-set/contracts.md#autocorrelations-and-real-valued-data">autocorrelation scalar semantics</a>.</p>
     </section>
 
     <section class="step" id="layout" data-title="Choose a memory layout" aria-labelledby="title-layout">
@@ -400,7 +414,7 @@ VisibilityBatch {
       <p>Checked strides determine whether a view is possible. Transposes, sparse gathers, type conversion, and decompression can require accounted buffers. The interface does not promise universal zero-copy access.</p>
       <details><summary>What factoring saves, and what it cannot save</summary><p>Time and baseline coordinate entries can scale as O(T+B). UVW and other truly sample-dependent data still scale with the samples. A rectangular view has one slot per time/baseline pair; duplicate acquisitions cannot be silently averaged or overwritten to make them fit.</p></details>
       <div class="pause"><div class="eyebrow">Pause here · D1</div><p>Are two explicit layouts, checked strides, and separate topology sufficient for the first real imaging and calibration kernels?</p></div>
-      <p class="source">Read: <a href="https://github.com/bglenden/casa-rs/blob/abcc5ac0e773f7ad81f1909317c602c63aedbd98/docs/measurement-set/contracts.md#3-numeric-arrays-metadata-and-data-groups">Contracts §3</a>. M1 must test the actual kernels before these choices stabilize.</p>
+      <p class="source">Read: <a href="https://github.com/bglenden/casa-rs/blob/4efbeb85e1365855c46284e6ed14f1c21a0edb54/docs/measurement-set/contracts.md#3-numeric-arrays-metadata-and-data-groups">Contracts §3</a>. M1 must test the actual kernels before these choices stabilize.</p>
     </section>
 
     <section class="step" id="request" data-title="Negotiate access" aria-labelledby="title-request">
@@ -426,7 +440,7 @@ VisibilityBatch {
       <p>The budget includes payloads, decoded chunks, codec scratch, packed copies, indexes, caches, queued writes, and consumer state that are alive together. A backend cannot make a minimum decode buffer disappear by promising smaller compute windows.</p>
       <div class="note amber">Chunk geometry still matters. Reading a narrow channel window from a full-band compressed chunk may decode the full band repeatedly. Larger aggregation alone does not fix this; creation policies and admitted traversal choices must be measured.</div>
       <div class="pause"><div class="eyebrow">Pause here · D2</div><p>Does the request give the algorithm enough control while leaving the adapter room to use larger native MSv4 operations?</p></div>
-      <p class="source">Read: <a href="https://github.com/bglenden/casa-rs/blob/abcc5ac0e773f7ad81f1909317c602c63aedbd98/docs/measurement-set/contracts.md#4-access-requests-and-scientific-groups">Contracts §4</a> and <a href="https://github.com/bglenden/casa-rs/blob/abcc5ac0e773f7ad81f1909317c602c63aedbd98/docs/measurement-set/architecture.md#4-access-is-negotiated-once-then-executed-in-bulk">Architecture §4</a>.</p>
+      <p class="source">Read: <a href="https://github.com/bglenden/casa-rs/blob/4efbeb85e1365855c46284e6ed14f1c21a0edb54/docs/measurement-set/contracts.md#4-access-requests-and-scientific-groups">Contracts §4</a> and <a href="https://github.com/bglenden/casa-rs/blob/4efbeb85e1365855c46284e6ed14f1c21a0edb54/docs/measurement-set/architecture.md#4-access-is-negotiated-once-then-executed-in-bulk">Architecture §4</a>.</p>
     </section>
 
     <section class="step" id="groups" data-title="Accumulate a solve" aria-labelledby="title-groups">
@@ -445,7 +459,7 @@ VisibilityBatch {
       <p>Closing a group needs a proven traversal frontier or end-of-stream. Seeing a later timestamp in an unordered stream is insufficient. A later <code>GroupEnd</code> can close input when the final payload could not carry that proof; completion is signaled exactly once.</p>
       <details><summary>What if a solve needs every sample at once?</summary><p>It must declare that requirement. It either fits within admission, uses an explicitly supported equivalent bounded strategy, or fails. Storage does not secretly build a whole-observation replay cache. Iterative revisits are explicit bounded passes.</p></details>
       <div class="pause"><div class="eyebrow">Pause here · D2</div><p>Do these grouping and completion rules fit gain and bandpass solving, including multi-SPW rules and late samples?</p></div>
-      <p class="source">Read: <a href="https://github.com/bglenden/casa-rs/blob/abcc5ac0e773f7ad81f1909317c602c63aedbd98/docs/measurement-set/contracts.md#4-access-requests-and-scientific-groups">Contracts §4</a>.</p>
+      <p class="source">Read: <a href="https://github.com/bglenden/casa-rs/blob/4efbeb85e1365855c46284e6ed14f1c21a0edb54/docs/measurement-set/contracts.md#4-access-requests-and-scientific-groups">Contracts §4</a>.</p>
     </section>
 
     <section class="step" id="workers" data-title="Finish at different rates" aria-labelledby="title-workers">
@@ -471,7 +485,7 @@ VisibilityBatch {
       <p>Visibility batches belong to gridding/prediction passes. Model, residual, mask, and solver state belong to imaging. A channel needing more minor-cycle iterations should not keep its input visibility batch alive. A completed channel can release scratch and free workers for other admitted work; required image state survives for later major cycles and products.</p>
       <div class="note">Scientific coupling and major-cycle/stopping rules may still require joins. The shared representation itself adds no global “all channels must finish” barrier.</div>
       <div class="pause"><div class="eyebrow">Pause here · D3</div><p>Does this separate the lifetimes you had in mind: input batches, work-group state, and reusable thread-local scratch?</p></div>
-      <p class="source">Read: <a href="https://github.com/bglenden/casa-rs/blob/abcc5ac0e773f7ad81f1909317c602c63aedbd98/docs/measurement-set/contracts.md#independent-work-unit-lifetimes">Independent work-unit lifetimes</a>. M1 must prove safe handoff, independent progress, pinning, cancellation, and bounded queues.</p>
+      <p class="source">Read: <a href="https://github.com/bglenden/casa-rs/blob/4efbeb85e1365855c46284e6ed14f1c21a0edb54/docs/measurement-set/contracts.md#independent-work-unit-lifetimes">Independent work-unit lifetimes</a>. M1 must prove safe handoff, independent progress, pinning, cancellation, and bounded queues.</p>
     </section>
 
     <section class="step" id="updates" data-title="Write changes back" aria-labelledby="title-updates">
@@ -489,7 +503,7 @@ VisibilityBatch {
       <p>The same care applies to data groups sharing variables and integer flags carrying multiple reasons. Updates preserve unselected values and unknown flag bits. The sink coalesces physical writes within bounded flush windows.</p>
       <details><summary>Locks and failures are part of the contract</summary><p>Plan read/write ownership before traversal, including destination-column creation. Original-input semantics need disjoint native regions or a proven read-before-write order. MSv2 retains ordinary casacore locks and partial-failure behavior.</p><p>The proposed local MSv4 profile replaces each encoded object atomically on supported filesystems. Failure may still leave some objects updated and others unchanged. This does not provide a dataset transaction, concurrent-reader snapshot, cross-process XRADIO lock protocol, or an automatic power-loss guarantee.</p></details>
       <div class="pause"><div class="eyebrow">Pause here · D3</div><p>Are explicit per-role patches and mutation scopes the right write interface? Is the proposed per-object MSv4 failure guarantee sufficient?</p></div>
-      <p class="source">Read: <a href="https://github.com/bglenden/casa-rs/blob/abcc5ac0e773f7ad81f1909317c602c63aedbd98/docs/measurement-set/contracts.md#7-updates-and-creation">Contracts §7</a>.</p>
+      <p class="source">Read: <a href="https://github.com/bglenden/casa-rs/blob/4efbeb85e1365855c46284e6ed14f1c21a0edb54/docs/measurement-set/contracts.md#7-updates-and-creation">Contracts §7</a>.</p>
     </section>
 
     <section class="step" id="creation" data-title="Create and interoperate" aria-labelledby="title-creation">
@@ -512,25 +526,26 @@ VisibilityBatch {
       </tbody></table></div>
       <p>These are examples from a longer loss table. Arbitrary MSv2 → MSv4 → MSv2 exact-row roundtrips are not promised.</p>
       <div class="pause"><div class="eyebrow">Pause here · D5</div><p>Are source-free creation and explicit conversion-loss policies strong enough to protect persistent interoperability?</p></div>
-      <p class="source">Read: <a href="https://github.com/bglenden/casa-rs/blob/abcc5ac0e773f7ad81f1909317c602c63aedbd98/docs/measurement-set/architecture.md#conversion-fidelity">Conversion fidelity table</a> and <a href="https://github.com/bglenden/casa-rs/blob/abcc5ac0e773f7ad81f1909317c602c63aedbd98/docs/measurement-set/contracts.md#7-updates-and-creation">creation contract</a>.</p>
+      <p class="source">Read: <a href="https://github.com/bglenden/casa-rs/blob/4efbeb85e1365855c46284e6ed14f1c21a0edb54/docs/measurement-set/architecture.md#conversion-fidelity">Conversion fidelity table</a> and <a href="https://github.com/bglenden/casa-rs/blob/4efbeb85e1365855c46284e6ed14f1c21a0edb54/docs/measurement-set/contracts.md#7-updates-and-creation">creation contract</a>.</p>
     </section>
 
     <section class="step" id="rust" data-title="Place the Rust pieces" aria-labelledby="title-rust">
       <div class="eyebrow">11 · Implementation boundaries</div>
       <h1 id="title-rust" tabindex="-1">A small shared contract.<br>Specialized owners around it.</h1>
-      <p class="lead">The proposed <code>casa-observation</code> crate holds raw scientific primitives and observation contracts. Storage adapters and scientific engines depend on it.</p>
+      <p class="lead">Measures owns the coordinate types and conversion engine. The proposed <code>casa-observation</code> crate uses those types directly in the shared observation contracts.</p>
       <div class="table-scroll"><table><thead><tr><th>Owner</th><th>Responsibility</th></tr></thead><tbody>
-        <tr><td><code>casa-observation</code><br><span class="tiny">Proposed new crate</span></td><td>Epochs/frames, directions, spectral coordinates, ordered baselines; batch/array views; access and source/sink contracts. No workspace dependencies or execution runtime.</td></tr>
+        <tr><td><code>casa-types::measures</code> and quanta</td><td>Authoritative coordinate/reference/unit types, scalar and bulk views, prepared frame conversions, and UVW transforms. Rework their APIs for direct array use.</td></tr>
+        <tr><td><code>casa-observation</code><br><span class="tiny">Proposed new crate</span></td><td>Catalogue identities, antenna/feed pairs, topology, batch views, access and source/sink contracts. Depends on casa-types; uses its Measures types directly. No storage or execution runtime.</td></tr>
         <tr><td><code>casa-ms</code></td><td>MSv2/MSv4 adapters, schema/catalogue mapping, retained storage bindings, decode/pack, and persistence.</td></tr>
-        <tr><td>Imaging and calibration owners</td><td>Geometry projection, scientific transformations, gridding, solving, and their own admitted working state.</td></tr>
+        <tr><td>Imaging and calibration owners</td><td>Use the shared Measures types; select transformations and context, compile imaging geometry, grid and solve. Retain their own admitted working state.</td></tr>
         <tr><td>Existing execution/resource owners</td><td>Worker teams, memory admission, cancellation, and pass lifecycle. Backend decode uses that admitted executor.</td></tr>
       </tbody></table></div>
       <div class="diagram"><div class="flow"><div class="box"><b>XRADIO conventions</b><small>Schema + metadata + dimensions</small></div><span class="arrow" aria-hidden="true">→</span><div class="box accent"><b>Native MSv4 adapter</b><small>Rust schema mapping over Zarr storage/codecs</small></div><span class="arrow" aria-hidden="true">→</span><div class="box"><b>Shared observation API</b><small>No Python runtime dependency</small></div></div><p class="caption">Xarray and Dask are ecosystem tools, not required runtime layers for this reader/writer.</p></div>
       <p><code>zarrs</code> is a candidate for Zarr access. M0/M1 must pin and audit the complete dependency graph: codecs, filesystem behavior, retained per-key state, concurrency, and replacement semantics. Generic Zarr support alone is not full XRADIO interoperability.</p>
-      <div class="note amber">Moving shared raw primitives changes the current dependency rule for <code>casa-imaging-model</code>. This is an explicit proposed ADR/policy amendment; the accepted architecture has not already been changed.</div>
+      <div class="note amber">The owner requires native Measures types and bulk conversion. This supersedes the earlier dependency-free observation-base proposal. The proposed model dependencies become <code>casa-observation</code> and <code>casa-types</code>; accepted ADR/policy files have not been changed by this design PR.</div>
       <details><summary>Scope of the initial MSv4 profile</summary><p>Local interferometric <code>VisibilityXds</code>, XRADIO schema 4.0.1 and Zarr v3. Read, create, update, codecs, and structural capabilities are tracked separately. Other schema versions, Zarr v2, remote mutation, and antenna-axis spectra need their own evidence.</p><p>Production orchestration and science are Rust. Native codec dependencies are compatible with this goal; optional Python tooling can prepare data and serve as an interoperability oracle.</p></details>
-      <div class="pause"><div class="eyebrow">Pause here · D4</div><p>Is the new raw-science contract crate the right long-term home for these primitives and interfaces?</p></div>
-      <p class="source">Read: <a href="https://github.com/bglenden/casa-rs/blob/abcc5ac0e773f7ad81f1909317c602c63aedbd98/docs/measurement-set/architecture.md#3-proposed-ownership">Proposed ownership</a>, <a href="https://github.com/bglenden/casa-rs/blob/abcc5ac0e773f7ad81f1909317c602c63aedbd98/docs/measurement-set/architecture.md#7-reference-baseline">pinned technology references</a>, and <a href="https://zarr-specs.readthedocs.io/en/latest/v3/core/index.html">Zarr v3 specification</a>.</p>
+      <div class="pause"><div class="eyebrow">Pause here · D4</div><p>Does this place Measures, observation contracts and compiled imaging geometry with the right owners?</p></div>
+      <p class="source">Read: <a href="https://github.com/bglenden/casa-rs/blob/4efbeb85e1365855c46284e6ed14f1c21a0edb54/docs/measurement-set/architecture.md#3-proposed-ownership">Proposed ownership</a>, <a href="https://github.com/bglenden/casa-rs/blob/4efbeb85e1365855c46284e6ed14f1c21a0edb54/docs/measurement-set/architecture.md#7-reference-baseline">pinned technology references</a>, and <a href="https://zarr-specs.readthedocs.io/en/latest/v3/core/index.html">Zarr v3 specification</a>.</p>
     </section>
 
     <section class="step" id="review" data-title="Decide, prove, then build" aria-labelledby="title-review">
@@ -543,7 +558,7 @@ VisibilityBatch {
         <div class="card"><div class="decision-tag">D1 · REPRESENTATION</div><h3>Are the batch's meanings right?</h3><p>Typed arrays, two topologies, separate presence/validity, coordinates, and group associations.</p></div>
         <div class="card"><div class="decision-tag">D2 · ACCESS</div><h3>Do algorithms have enough control?</h3><p>Hard layout/grouping requirements, fragments, closure, and larger native aggregation.</p></div>
         <div class="card"><div class="decision-tag">D3 · OWNERSHIP &amp; WRITES</div><h3>Are lifetimes and mutation precise?</h3><p>Independent retirement, shared-allocation pinning, inverse maps, aliases, and failure boundaries.</p></div>
-        <div class="card"><div class="decision-tag">D4 · BOUNDARIES</div><h3>Do types live with the right owner?</h3><p>Shared raw primitives, storage adapters, scientific geometry, and one resource authority.</p></div>
+        <div class="card"><div class="decision-tag">D4 · BOUNDARIES</div><h3>Do types live with the right owner?</h3><p>One Measures type system and bulk engine, shared observation contracts, compiled imaging geometry, and one resource authority.</p></div>
         <div class="card"><div class="decision-tag">D5 · SUPPORT</div><h3>Is the persistent contract clear?</h3><p>MSv2 + MSv4 scope agreed; detailed profiles, creation, and conversion policies remain proposed.</p></div>
         <div class="card"><div class="decision-tag">D6 · SEQUENCE</div><h3>What must pass before freezing?</h3><p>M1 evidence before fan-out, independent milestone review, and deliberate later API changes.</p></div>
       </div>
@@ -554,12 +569,12 @@ VisibilityBatch {
       <h2>Review sources</h2>
       <ul>
         <li><a href="https://github.com/bglenden/casa-rs/pull/878">Draft PR #878</a> — discussion and Pro/Fable review responses.</li>
-        <li><a href="https://github.com/bglenden/casa-rs/blob/abcc5ac0e773f7ad81f1909317c602c63aedbd98/docs/measurement-set/README.md">Revision 3 review guide</a> — decisions and pinned casa-rs source map.</li>
-        <li><a href="https://github.com/bglenden/casa-rs/blob/abcc5ac0e773f7ad81f1909317c602c63aedbd98/docs/measurement-set/contracts.md">Intermediate contracts</a> — full semantic proposal behind this explanation.</li>
-        <li><a href="https://github.com/bglenden/casa-rs/blob/abcc5ac0e773f7ad81f1909317c602c63aedbd98/docs/measurement-set/implementation-plan.md">Implementation plan</a> — M0–M5, evidence packets, and change control.</li>
-        <li><a href="https://github.com/bglenden/casa-rs/blob/abcc5ac0e773f7ad81f1909317c602c63aedbd98/docs/measurement-set/architecture.md#7-reference-baseline">Primary references</a> — pinned XRADIO, Zarr, casacore, and Rust dependency evidence.</li>
+        <li><a href="https://github.com/bglenden/casa-rs/blob/4efbeb85e1365855c46284e6ed14f1c21a0edb54/docs/measurement-set/README.md">Revision 4 review guide</a> — decisions and pinned casa-rs source map.</li>
+        <li><a href="https://github.com/bglenden/casa-rs/blob/4efbeb85e1365855c46284e6ed14f1c21a0edb54/docs/measurement-set/contracts.md">Intermediate contracts</a> — full semantic proposal behind this explanation.</li>
+        <li><a href="https://github.com/bglenden/casa-rs/blob/4efbeb85e1365855c46284e6ed14f1c21a0edb54/docs/measurement-set/implementation-plan.md">Implementation plan</a> — M0–M5, evidence packets, and change control.</li>
+        <li><a href="https://github.com/bglenden/casa-rs/blob/4efbeb85e1365855c46284e6ed14f1c21a0edb54/docs/measurement-set/architecture.md#7-reference-baseline">Primary references</a> — pinned XRADIO, Zarr, casacore, and Rust dependency evidence.</li>
       </ul>
-      <p class="source">This standalone explanation follows draft <code>abcc5ac0</code>, with later mosaic evidence in step 3 and a concrete numeric batch and autocorrelation explanation from <code>7f86a605</code> in step 4. The linked proposal governs if the explanation omits detail. Examples are illustrative; no implementation or benchmark result is claimed.</p>
+      <p class="source">This standalone explanation follows draft revision 4, <code>4efbeb85</code>, including native Measures types, prepared bulk conversions, mosaic evidence and the concrete numeric batch. The linked proposal governs if the explanation omits detail. Examples are illustrative; no implementation or benchmark result is claimed.</p>
     </section>
 
     <details class="notes js-only" id="notes-panel">
@@ -678,8 +693,8 @@ VisibilityBatch {
 
   const components = {
     values: ['Typed visibility values', 'In the example, groups[0].values lends the 16 Complex<f32> numbers above with shape [2, 2, 4] and element strides [8, 4, 1]. Select the typed loop once per batch.'],
-    coordinates: ['Coordinates with declared axes', 'The example shares one MJD 60000 TAI epoch and two TOPO frequency coordinates. Its two baseline pairs and UVW vectors associate each sample with geometry; the field catalogue supplies phase centre A.'],
-    units: ['Guaranteed units; explicit references', 'Canonical processing coordinates use Hz, m, rad and s. Alternative compatible units are requested at binding and guaranteed by the returned view. Frames, epoch origins and time scales remain explicit; unit scaling does not perform those scientific transformations.'],
+    coordinates: ['Native Measures views with declared axes', 'The example shares one split-precision MJD 60000 TAI epoch and two TOPO frequencies in Measures-native views. Measures accepts them directly. Its two baseline pairs and UVW vectors associate samples with geometry; the field catalogue supplies phase centre A.'],
+    units: ['Measures units and reference types', 'Canonical views use Hz, m, rad and s with the Measures system’s reference enums and epoch representations. Compatible unit requests bind once. Bulk frame conversion prepares context once, then operates on numeric slices; unit scaling alone does not change frames.'],
     flags: ['Native flags and separate validity', 'The example has 16 booleans; only [sample 1, channel 1, XX] is true. The 4+3i value stays in its buffer but is excluded by the illustrated consumer. Native bitmasks/reasons and row/category flags also remain representable without losing their meaning.'],
     weights: ['Weights with native broadcast semantics', 'The example stores eight weights, four per sample. weight[1, XX] = 16 applies to both channels without two stored copies. Channel-dependent weights and fallback provenance remain explicit when requested.'],
     addresses: ['Optional role-specific inverse maps', 'Reordering or selecting samples preserves checked provenance for the selected writable role. A row-weight scalar has a different address domain from a visibility array; reductions do not retain an invented inverse.']
