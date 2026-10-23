@@ -255,13 +255,21 @@ fn setvp_setoptions_and_the_session_refuse_what_casa_rs_lacks() {
         ..VoltagePatternSpec::default()
     }));
     assert_eq!(outcome, CasaOutcome::NotYetImplemented);
-    for ftmachine in ["mosaic", "SD"] {
+    let (outcome, message) = refusal(vla.set_options(&PredictionOptions {
+        ftmachine: "mosaic".to_string(),
+        ..PredictionOptions::default()
+    }));
+    assert_eq!(outcome, CasaOutcome::NotYetImplemented);
+    assert!(message.contains("Phase 2"), "{message}");
+    // SDGrid's Gaussian kernels.
+    for grid_function in ["GAUSS", "GJINC"] {
         let (outcome, message) = refusal(vla.set_options(&PredictionOptions {
-            ftmachine: ftmachine.to_string(),
+            ftmachine: "SD".to_string(),
+            grid_function: grid_function.to_string(),
             ..PredictionOptions::default()
         }));
-        assert_eq!(outcome, CasaOutcome::NotYetImplemented, "{ftmachine}");
-        assert!(message.contains("Phase 2"), "{message}");
+        assert_eq!(outcome, CasaOutcome::NotYetImplemented, "{grid_function}");
+        assert!(message.contains("'PB', 'BOX' and 'SF' are"), "{message}");
     }
     let (outcome, _) = refusal(vla.set_options(&PredictionOptions {
         grid_function: "BOX".to_string(),

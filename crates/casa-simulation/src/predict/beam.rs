@@ -112,6 +112,26 @@ impl BeamPattern {
             voltage * voltage
         })
     }
+
+    /// The power pattern `offset_rad` along an image's x axis from its
+    /// centre, at `frequency_hz`, with [`Self::power_plane`]'s arithmetic
+    /// (`SDGrid::findPBAsConvFunction` applies the beam to a one-row
+    /// image).
+    pub(super) fn power_on_axis(&self, offset_rad: f64, frequency_hz: f64) -> f32 {
+        let ghz = frequency_hz / 1.0e9;
+        let l_deg = offset_rad.to_degrees() as f32;
+        let radius_deg = (l_deg * l_deg).sqrt();
+        let radius = (f64::from(radius_deg) * 60.0 * ghz) as f32;
+        let voltage = self.table.evaluate(f64::from(radius));
+        voltage * voltage
+    }
+
+    /// `PBMath1D::support`: the pattern's diameter in pixels of
+    /// `increment_x_rad` at `frequency_hz`, rounded down.
+    pub(super) fn support_pixels(&self, increment_x_rad: f64, frequency_hz: f64) -> usize {
+        let radius_rad = (self.table.maximum_radius() / 60.0).to_radians();
+        (radius_rad / increment_x_rad.abs() * 2.0 * 1.0e9 / frequency_hz).floor() as usize
+    }
 }
 
 #[cfg(test)]

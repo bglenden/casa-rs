@@ -48,6 +48,11 @@
 //! screens, and what it keeps after (the kernels and the grids) is what its
 //! reservations keep.
 //!
+//! A fifth law predicts total power (`setoptions(ftmachine='sd')`, #841
+//! Phase 2): `predict` holds no more than it is admitted while it tabulates
+//! the kernel and reads the model, and keeps what its reservation keeps, the
+//! fields' samples.
+//!
 //! This binary's global allocator counts the live heap; the counters are
 //! the process's, so each law runs alone in a process of its own
 //! ([`alone`]).
@@ -923,6 +928,111 @@ fn a_w_projection_predict_holds_its_admission_and_keeps_what_it_charges() {
         assert!(
             kept.unadmitted().unsigned_abs() <= ALLOWANCE_BYTES,
             "predict keeps {} bytes against the {} its reservations keep",
+            kept.heap,
+            kept.admitted
+        );
+    }
+}
+
+/// Fields of the total-power law, each observed for one integration.
+const SINGLE_DISH_FIELDS: usize = 1_000;
+
+/// Channels of the total-power law: each field keeps 5,120 bytes of
+/// samples in XX and YY.
+const SINGLE_DISH_CHANNELS: usize = 320;
+
+/// [`SINGLE_DISH_FIELDS`] one-integration scans of their own fields,
+/// predicted from `model` through `SDGrid` with the `PB` kernel: what
+/// `predict` held and kept. The session is dropped unwritten.
+fn predict_single_dish(model: &Path, measures: &Arc<dyn MeasuresProvider>) -> Predicted {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let mut sm = configured(
+        &directory.path().join("sd.ms"),
+        measures,
+        BUDGET_320,
+        SINGLE_DISH_CHANNELS,
+    );
+    for field in 0..SINGLE_DISH_FIELDS {
+        let name = format!("f{field}");
+        let direction = MDirection::from_angles(
+            CENTRE_RAD[0] + 1.0e-7 * field as f64,
+            CENTRE_RAD[1],
+            DirectionRef::J2000,
+        );
+        sm.set_field(&name, &direction, "", 0.0).expect("setfield");
+        sm.observe(&ObserveSpec {
+            source: name,
+            ..scan_from(field, 1)
+        })
+        .expect("observe");
+    }
+    sm.set_options(&PredictionOptions {
+        ftmachine: "sd".to_string(),
+        grid_function: "PB".to_string(),
+        ..PredictionOptions::default()
+    })
+    .expect("setoptions");
+    let reserved = reserved_memory();
+    let baseline = LIVE.load(Ordering::Relaxed);
+    PEAK.store(baseline, Ordering::Relaxed);
+    let window = ReservationWindow::open();
+    sm.predict(&PredictSpec {
+        images: vec![model.to_path_buf()],
+        component_list: None,
+        incremental: false,
+    })
+    .expect("predict");
+    let predicted = Predicted {
+        during: Closed {
+            heap: PEAK.load(Ordering::Relaxed) - baseline,
+            admitted: window.close() - reserved,
+        },
+        kept: Closed {
+            heap: LIVE.load(Ordering::Relaxed).saturating_sub(baseline),
+            admitted: reserved_memory() - reserved,
+        },
+    };
+    drop(window);
+    predicted
+}
+
+/// `predict` through `SDGrid` admits its samples and its preparation (the
+/// kernel, as tabulated and as kept, and the model plane read) before it
+/// forms them (this PR, #841 Phase 2): while it runs, the heap stays within
+/// that admission and the allowance; after it, what the session keeps (the
+/// 1,000 fields' 5.1 MB of samples) is what its reservation keeps.
+#[test]
+fn a_total_power_predict_keeps_what_it_charges() {
+    if !alone("a_total_power_predict_keeps_what_it_charges") {
+        return;
+    }
+    let resources = resources(BUDGET_320);
+    charge_process_caches(resources.host(), resources.policy()).expect("the process caches");
+    let measures = casa_test_support::deterministic_measures_provider();
+    let root = tempfile::tempdir().expect("temporary directory");
+    let model = root.path().join("model.image");
+    write_model(&model, SINGLE_DISH_CHANNELS);
+    // Once unmeasured: state a process keeps once it has predicted.
+    predict_single_dish(&model, &measures);
+    for _ in 0..MEASURED_RUNS {
+        let Predicted { during, kept } = predict_single_dish(&model, &measures);
+        println!(
+            "SD predict: held {} bytes against {} admitted; kept {} against {} charged",
+            during.heap, during.admitted, kept.heap, kept.admitted
+        );
+        assert!(
+            kept.admitted >= (SINGLE_DISH_FIELDS * SINGLE_DISH_CHANNELS * 2 * 8) as u64,
+            "the samples are charged: {kept:?}"
+        );
+        assert!(
+            during.heap <= during.admitted + ALLOWANCE_BYTES,
+            "predict held {} bytes, beyond the {} admitted and the allowance",
+            during.heap,
+            during.admitted
+        );
+        assert!(
+            kept.unadmitted().unsigned_abs() <= ALLOWANCE_BYTES,
+            "predict keeps {} bytes against the {} its reservation keeps",
             kept.heap,
             kept.admitted
         );

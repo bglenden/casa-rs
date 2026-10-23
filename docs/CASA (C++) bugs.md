@@ -30,7 +30,8 @@ Simulator behaviours casa-rs does not follow:
 [the measures tool's default frame](#the-measures-tool-converts-with-a-frame-at-mjd-0-and-the-geocentre),
 [the model `predict` rewrites](#smpredict-rewrites-the-model-image),
 [models the simulator cannot read](#smpredict-accepts-models-the-simulator-cannot-read),
-[W projection without planes](#smpredict-through-wprojectft-without-planes-crashes-the-simulator).
+[W projection without planes](#smpredict-through-wprojectft-without-planes-crashes-the-simulator),
+[total power in cross-correlations](#sdgrid-predicts-total-power-into-cross-correlations-with-no-positive-uvw).
 
 ## AW-projection pairs the partner hand's visibility with the conjugate-baseline cell
 
@@ -643,3 +644,19 @@ What casa-rs follows of the same machine:
 - Autocorrelations predict zero, since the machine is built with `usezero`
   off.
 - Rows beyond the largest w the planes reach (`0.25/|cell|`) predict zero.
+
+## `SDGrid` predicts total power into cross-correlations with no positive uvw
+
+- Date noted: 2026-10-23
+- Status: CASA behaviour casa-rs does not follow (#841)
+- Affected code: `synthesis/MeasurementComponents/SDGrid.cc` (`get`, the
+  `rowFlags` loop)
+
+`sm.predict` after `setoptions(ftmachine='sd')` samples the model at each
+row's pointing. `SDGrid::get` leaves out a row whose uvw has a positive
+component (`max(uvw) > 0`), which is meant to keep the cross-correlations of
+a single-dish predict at zero. A cross-correlation whose u, v and w are all
+zero or negative passes that test and is given the pointing's total power as
+if it were one dish's autocorrelation. Read from the source; a probe with two
+antennas saw only rows with a positive component. casa-rs predicts total
+power into autocorrelations only.

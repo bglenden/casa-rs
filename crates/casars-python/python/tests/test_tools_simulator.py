@@ -703,6 +703,39 @@ def test_wproject_predicts_and_refuses_as_casa_does(
 
 
 @needs_measures
+def test_total_power_samples_the_model_at_the_pointing(tmp_path: Path) -> None:
+    # setoptions(ftmachine='sd') samples the model in the image plane, as
+    # CASA's SDGrid does: the autocorrelations carry it and the
+    # cross-correlations nothing. BOX takes the pixel nearest the pointing,
+    # the fixture's 1 Jy point; PB needs the telescope's pattern, and VLA's
+    # is not yet in casa-rs.
+    model = sky_model(tmp_path)
+    sm = simulator()
+    sm.open(str(tmp_path / "sd.ms"))
+    configure(sm)
+    assert sm.observe("F", "L", starttime="0s", stoptime="60s")
+    assert sm.setoptions(ftmachine="sd", gridfunction="BOX") is True
+    assert sm.predict(imagename=str(model)) is True
+    sm.close()
+    table = Table.open(tmp_path / "sd.ms")
+    data = np.asarray(table.get_column("DATA"))
+    autos = np.asarray(table.get_column("ANTENNA1")) == np.asarray(table.get_column("ANTENNA2"))
+    assert autos.any() and (~autos).any()
+    assert np.all(data[autos] == 1.0)
+    assert np.all(data[~autos] == 0)
+
+    sm = opened(tmp_path)
+    configure(sm)
+    assert sm.observe("F", "L", starttime="0s", stoptime="30s")
+    with pytest.raises(NotImplementedError, match="gridfunction='GAUSS'"):
+        sm.setoptions(ftmachine="sd", gridfunction="GAUSS")
+    assert sm.setoptions(ftmachine="sd", gridfunction="PB") is True
+    with pytest.raises(NotImplementedError, match="telescope VLA"):
+        sm.predict(imagename=str(model))
+    sm.close()
+
+
+@needs_measures
 def test_setoptions_and_setvp_follow_casa(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     sm = opened(tmp_path)
     configure(sm)
