@@ -185,3 +185,40 @@ fn undefined_array_cells_read_back_as_no_value() {
         assert_reads(&reopened, &format!("{case}, saved again"));
     }
 }
+
+/// A saved view of some of a stored table's columns holds only its columns
+/// in a row with an undefined cell. That row has fewer fields than the
+/// table has columns, which once skipped the view's projection, so row 0's
+/// view of DATA and ID held the unselected FLAGS (#867 review).
+#[test]
+fn a_saved_column_view_of_a_row_with_an_undefined_cell_holds_only_its_columns() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let parent_path = dir.path().join("parent");
+    save(&table(), &parent_path, STORAGES[1]);
+    let parent = Table::open(TableOptions::new(&parent_path)).expect("open");
+    let view_path = dir.path().join("view");
+    parent
+        .select_columns(&["DATA", "ID"])
+        .expect("select")
+        .save(TableOptions::new(&view_path))
+        .expect("save the view");
+    let view = Table::open(TableOptions::new(&view_path)).expect("reopen the view");
+    for (row, record) in view.rows().expect("rows").iter().enumerate() {
+        assert!(
+            record.get("FLAGS").is_none(),
+            "row {row}: the unselected FLAGS"
+        );
+        for column in ["DATA", "ID"] {
+            assert_eq!(
+                record.get(column),
+                cell(column, row).as_ref(),
+                "row {row}: {column}"
+            );
+        }
+    }
+    assert_eq!(
+        view.cell_accessor(0, "DATA").expect("cell").is_defined(),
+        Ok(false),
+        "row 0's DATA stays undefined"
+    );
+}

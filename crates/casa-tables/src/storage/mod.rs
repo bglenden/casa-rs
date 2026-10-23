@@ -3592,7 +3592,10 @@ impl CompositeStorage {
             )));
         }
 
-        // Extract referenced rows.
+        // Extract referenced rows. Whether the view uses a subset of the
+        // columns is judged by the parent's columns: a row leaves out the
+        // fields of its undefined cells, so its fields can number fewer.
+        let parent_columns = parent.schema.as_ref().map(|schema| schema.columns().len());
         let mut rows = Vec::with_capacity(ref_dat.row_map.len());
         let mut undefined_cells = Vec::with_capacity(ref_dat.row_map.len());
         for &parent_row in &ref_dat.row_map {
@@ -3604,7 +3607,9 @@ impl CompositeStorage {
                 )));
             }
             // Apply column projection if the view uses a subset of columns.
-            if ref_dat.column_names.len() < parent.rows[idx].fields().len() {
+            if ref_dat.column_names.len()
+                < parent_columns.unwrap_or_else(|| parent.rows[idx].fields().len())
+            {
                 let mut projected = RecordValue::default();
                 let mut projected_undefined = HashSet::new();
                 for view_col in &ref_dat.column_names {
