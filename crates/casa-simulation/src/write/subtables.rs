@@ -264,7 +264,7 @@ fn write_spectral_windows(ms: &mut MeasurementSet, session: &Simulator) -> Simul
                 ("NAME", scalar_string(&window.name)),
                 ("NET_SIDEBAND", scalar_i32(1)),
                 ("NUM_CHAN", scalar_i32(channels as i32)),
-                ("REF_FREQUENCY", scalar_f64(window.start_frequency_hz)),
+                ("REF_FREQUENCY", scalar_f64(window.reference_frequency_hz)),
                 ("RESOLUTION", f64_array(&[channels], widths)),
                 (
                     "TOTAL_BANDWIDTH",

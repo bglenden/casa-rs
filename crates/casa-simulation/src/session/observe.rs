@@ -220,6 +220,14 @@ impl Scan {
             ScanRows::OnDisk(_) => None,
         }
     }
+
+    /// The scan's MAIN rows on disk, `None` for planned rows.
+    pub(crate) fn on_disk(&self) -> Option<std::ops::Range<usize>> {
+        match &self.rows {
+            ScanRows::OnDisk(rows) => Some(rows.clone()),
+            ScanRows::Planned(_) => None,
+        }
+    }
 }
 
 impl PlannedRows {

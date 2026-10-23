@@ -46,7 +46,7 @@ use casa_types::Complex32;
 use super::MainWriter;
 use super::components::add_components;
 use super::geometry::{ArrayGeometry, RowGeometry};
-use super::prediction::PredictionStage;
+use super::prediction::{PredictionStage, device_noise};
 use crate::corrupt::NoiseApplication;
 use crate::session::error::{SimulatorError, SimulatorResult};
 use crate::session::observe::{PlannedScan, Scan};
@@ -57,7 +57,7 @@ use crate::session::plan::DataPlan;
 const NOISE_JOBS_PER_WORKER: usize = 4;
 
 /// The fewest rows of one noise job.
-const MINIMUM_NOISE_JOB_ROWS: usize = 16;
+pub(super) const MINIMUM_NOISE_JOB_ROWS: usize = 16;
 
 /// One integration a batch computes the geometry of.
 #[derive(Debug, Clone, Copy)]
@@ -179,7 +179,7 @@ impl<'s> Pipeline<'s> {
                     &runs,
                     first,
                     &mut batch.data,
-                    |scan| rows.plan.noise_for_scan(scan),
+                    |scan| device_noise(rows.plan, scan, false),
                 )?;
             }
             if self.rows.plan.predicts_components() {
@@ -206,9 +206,9 @@ impl<'s> Pipeline<'s> {
             // A run the stage predicted on the device has its noise.
             let (prediction, plan) = (&self.prediction, self.rows.plan);
             let noised = |scan| {
-                prediction.as_ref().is_some_and(|stage| {
-                    stage.predicts(scan) && stage.noises_on_device(plan.noise_for_scan(scan))
-                })
+                prediction
+                    .as_ref()
+                    .is_some_and(|stage| stage.noised(scan, device_noise(plan, scan, false)))
             };
             self.rows.fill(writer, &mut batch, (first, rows), &noised)?;
             self.times.cells += started.elapsed();
@@ -411,15 +411,23 @@ pub(super) fn noise_jobs<'a>(
     let job_rows = batch_rows
         .div_ceil(team.workers() * NOISE_JOBS_PER_WORKER)
         .max(MINIMUM_NOISE_JOB_ROWS);
-    let mut jobs = Vec::new();
+    let noised_here = |scan| !plan.noise_for_scan(scan).is_empty() && !noised(scan);
+    // As many jobs as there are, at most a run's plus one every
+    // `MINIMUM_NOISE_JOB_ROWS` rows (the patch's admission).
+    let mut jobs = Vec::with_capacity(
+        runs.iter()
+            .filter(|&&(scan, _, _)| noised_here(scan))
+            .map(|&(_, _, count)| count.div_ceil(job_rows))
+            .sum(),
+    );
     let mut rest = data;
     for &(scan, start, count) in runs {
         let (segment, after) = std::mem::take(&mut rest).split_at_mut(count * samples);
         rest = after;
-        let noise = plan.noise_for_scan(scan);
-        if noise.is_empty() || noised(scan) {
+        if !noised_here(scan) {
             continue;
         }
+        let noise = plan.noise_for_scan(scan);
         for (index, cells) in segment.chunks_mut(job_rows * samples).enumerate() {
             let start = start + index * job_rows;
             jobs.push(NoiseJob {

@@ -33,7 +33,6 @@
 //! sessions' steps, bit for bit; an incremental `predict` adds to the DATA
 //! on disk rather than within the predictor, which rounds apart.
 
-use std::ops::Range;
 use std::time::Instant;
 
 use casa_imaging_runtime::pass::{BackendChoice, WorkerTeam};
@@ -54,15 +53,15 @@ use casa_tables::{
 use casa_types::{ArrayValue, Complex32};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 
-use super::components::add_components;
+use super::components::{self, add_components};
 use super::geometry::RowGeometry;
-use super::pipeline::noise_jobs;
-use super::prediction::PredictionStage;
+use super::pipeline::{MINIMUM_NOISE_JOB_ROWS, NoiseJob, noise_jobs};
+use super::prediction::{PredictionStage, device_noise};
 use super::{cell_shape, write_error};
 use crate::session::SessionResources;
 use crate::session::Simulator;
 use crate::session::error::{SimulatorError, SimulatorResult};
-use crate::session::observe::ScanRows;
+use crate::session::observe::Scan;
 
 /// The patch writer's phase, as an admission refusal names it.
 const WRITER_PHASE: &str = "the simulator's MeasurementSet patch";
@@ -74,6 +73,7 @@ const PIPELINE_PHASE: &str = "the simulator's reads, prediction and noise for th
 #[derive(Debug, Clone, Copy)]
 struct PatchShape {
     rows: usize,
+    scans: usize,
     correlations: usize,
     channels: usize,
     /// Whether the fold starts from the DATA on disk.
@@ -110,6 +110,11 @@ pub(crate) fn patch_measurement_set(session: &Simulator) -> SimulatorResult<()> 
         tracing::info!("No DATA step after openfromms: the MeasurementSet is unchanged");
         return Ok(());
     }
+    if session.scans().iter().any(|scan| scan.on_disk().is_none()) {
+        return Err(SimulatorError::raised(
+            "a scan observed after openfromms cannot be patched",
+        ));
+    }
     let Some((correlations, channels)) = cell_shape(session)? else {
         return Ok(());
     };
@@ -130,6 +135,7 @@ pub(crate) fn patch_measurement_set(session: &Simulator) -> SimulatorResult<()> 
     }
     let shape = PatchShape {
         rows: session.scans().iter().map(|scan| scan.row_count()).sum(),
+        scans: session.scans().len(),
         correlations,
         channels,
         reads_data: !plan.replaced(),
@@ -151,16 +157,17 @@ pub(crate) fn patch_measurement_set(session: &Simulator) -> SimulatorResult<()> 
     }
     let team = WorkerTeam::new(admission.cores.streaming_workers)
         .map_err(|error| SimulatorError::raised(format!("the worker team: {error}")))?;
-    let ranges = disk_ranges(session)?;
+    let batch_rows = admission.plan.batch_rows().max(1);
     let mut patch = Patch {
         session,
         shape,
         columns: &columns,
         team: &team,
         prediction,
-        ranges: &ranges,
         reader: BatchReader::default(),
         data: Vec::new(),
+        // As many runs as a batch can have, as admitted.
+        runs: Vec::with_capacity(most_runs(shape.scans, batch_rows)),
         cursor: 0,
         batches: 0,
     };
@@ -201,19 +208,14 @@ pub(crate) fn patch_measurement_set(session: &Simulator) -> SimulatorResult<()> 
     Ok(())
 }
 
-/// The scans' MAIN rows, in MAIN order.
-fn disk_ranges(session: &Simulator) -> SimulatorResult<Vec<Range<usize>>> {
-    session
-        .scans()
-        .iter()
-        .map(|scan| match &scan.rows {
-            ScanRows::OnDisk(rows) => Ok(rows.clone()),
-            ScanRows::Planned(_) => Err(SimulatorError::raised(
-                "a scan observed after openfromms cannot be patched",
-            )),
-        })
-        .collect()
+/// The most runs of one scan a batch of `batch_rows` rows of `scans` scans
+/// has: one a row at most, as when each row is a scan of its own.
+fn most_runs(scans: usize, batch_rows: usize) -> usize {
+    scans.min(batch_rows).max(1)
 }
+
+/// A batch's run of one scan: (scan, first row in the batch, rows).
+type Run = (usize, usize, usize);
 
 /// The patch's state across batches.
 struct Patch<'s> {
@@ -222,10 +224,11 @@ struct Patch<'s> {
     columns: &'s [&'static str],
     team: &'s WorkerTeam,
     prediction: Option<PredictionStage<'s>>,
-    ranges: &'s [Range<usize>],
     reader: BatchReader,
     /// The batch's new DATA, `[row][channel][correlation]`.
     data: Vec<Complex32>,
+    /// The batch's runs.
+    runs: Vec<Run>,
     /// The first scan the next batch can reach.
     cursor: usize,
     batches: usize,
@@ -250,18 +253,21 @@ impl Patch<'_> {
             .read(ms, &rows, (self.session.antennas().len(), self.shape))?;
         self.data.clear();
         self.data.resize(count * samples, Complex32::new(0.0, 0.0));
-        let runs = self.runs(first, count);
+        self.find_runs(first, count);
+        let runs = &self.runs;
         let (session, team) = (self.session, self.team);
         let (scans, plan) = (session.scans(), session.data_plan());
         let geometry = &self.reader.geometry;
+        // The noise follows the DATA read from disk.
+        let reads_data = self.shape.reads_data;
         if let Some(stage) = &mut self.prediction {
             stage.predict(
                 team,
                 (scans, geometry),
-                &runs,
+                runs,
                 first as u64,
                 &mut self.data,
-                |scan| plan.noise_for_scan(scan),
+                |scan| device_noise(plan, scan, reads_data),
             )?;
         }
         if plan.predicts_components() {
@@ -269,7 +275,7 @@ impl Patch<'_> {
                 team,
                 (scans, geometry),
                 plan,
-                &runs,
+                runs,
                 (&mut self.data, samples),
             )?;
         }
@@ -277,24 +283,24 @@ impl Patch<'_> {
             super::single_dish::add_single_dish(
                 (scans, geometry),
                 plan,
-                &runs,
+                runs,
                 (&mut self.data, samples),
             );
         }
-        if self.shape.reads_data {
+        if reads_data {
             for (value, stored) in self.data.iter_mut().zip(&self.reader.data) {
                 *value += *stored;
             }
         }
         let prediction = &self.prediction;
         let noised = |scan| {
-            prediction.as_ref().is_some_and(|stage| {
-                stage.predicts(scan) && stage.noises_on_device(plan.noise_for_scan(scan))
-            })
+            prediction
+                .as_ref()
+                .is_some_and(|stage| stage.noised(scan, device_noise(plan, scan, reads_data)))
         };
         let mut jobs = noise_jobs(
             (plan, team),
-            (geometry, &runs),
+            (geometry, runs),
             (first as u64, &mut self.data),
             samples,
             &noised,
@@ -308,26 +314,27 @@ impl Patch<'_> {
         Ok(self.mutation(rows))
     }
 
-    /// The batch's runs of one scan from MAIN row `first`, `count` rows:
-    /// (scan, first row in the batch, rows).
-    fn runs(&mut self, first: usize, count: usize) -> Vec<(usize, usize, usize)> {
+    /// The batch's runs of one scan from MAIN row `first`, `count` rows,
+    /// into `self.runs`. The scans' rows follow one another in MAIN order.
+    fn find_runs(&mut self, first: usize, count: usize) {
         let end = first + count;
-        while self
-            .ranges
+        let scans = self.session.scans();
+        let rows = |scan: &Scan| scan.on_disk().expect("checked before the patch started");
+        while scans
             .get(self.cursor)
-            .is_some_and(|range| range.end <= first)
+            .is_some_and(|scan| rows(scan).end <= first)
         {
             self.cursor += 1;
         }
-        let mut runs = Vec::new();
-        for (scan, range) in self.ranges.iter().enumerate().skip(self.cursor) {
+        self.runs.clear();
+        for (index, scan) in scans.iter().enumerate().skip(self.cursor) {
+            let range = rows(scan);
             if range.start >= end {
                 break;
             }
             let (start, stop) = (range.start.max(first), range.end.min(end));
-            runs.push((scan, start - first, stop - start));
+            self.runs.push((index, start - first, stop - start));
         }
-        runs
     }
 
     /// The mutation writing the batch's DATA and scratch columns.
@@ -656,7 +663,8 @@ const READ_CELL_COPIES: u64 = 1;
 /// rows writing `columns` columns: the columns read (ANTENNA1, ANTENNA2,
 /// FLAG_ROW, UVW, and DATA when the fold starts from it, or FLAG while it
 /// is checked) and their staging, the rows' geometry, the new DATA, the
-/// mutation's copies of the cells written, and the tiled managers' I/O.
+/// mutation's copies of the cells written, the tiled managers' I/O, and
+/// the batch's runs and jobs.
 fn pipeline_bytes(shape: &PatchShape, columns: usize, batch_rows: usize) -> u64 {
     let samples = shape.samples() as u64;
     let cell = samples * size_of::<Complex32>() as u64;
@@ -664,5 +672,19 @@ fn pipeline_bytes(shape: &PatchShape, columns: usize, batch_rows: usize) -> u64 
     let read = staged * if shape.reads_data { cell } else { 0 }.max(samples);
     let written = columns as u64 * MUTATION_CELL_COPIES * (cell + size_of::<ArrayValue>() as u64);
     let row = 4 + 4 + 1 + staged * 3 * 8 + read + size_of::<RowGeometry>() as u64 + cell + written;
-    batch_rows as u64 * row + TILED_IO_BYTES
+    batch_rows as u64 * row + TILED_IO_BYTES + run_bytes(shape.scans, batch_rows)
+}
+
+/// Bytes of a batch's runs, and of the noise and component-list jobs they
+/// split into, for batches of `batch_rows` rows of `scans` scans: a run of
+/// each scan the batch reaches, which may be one a row (#886 review), and
+/// of each kind a job a run and one more every [`MINIMUM_NOISE_JOB_ROWS`]
+/// and [`components::JOB_ROWS`] rows.
+fn run_bytes(scans: usize, batch_rows: usize) -> u64 {
+    let runs = most_runs(scans, batch_rows);
+    let noise_jobs = runs + batch_rows / MINIMUM_NOISE_JOB_ROWS;
+    let component_jobs = runs + batch_rows / components::JOB_ROWS;
+    (runs * size_of::<Run>()
+        + noise_jobs * size_of::<NoiseJob<'static>>()
+        + component_jobs * components::JOB_BYTES) as u64
 }

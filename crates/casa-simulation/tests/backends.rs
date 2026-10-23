@@ -29,6 +29,12 @@
 //! host then draws as the device would flush them, and a σ of zero leaves
 //! the model as it is.
 //!
+//! The noise comes last on Metal as on the CPU (#886 review): after the
+//! component lists' visibilities, which the host adds, and after the DATA
+//! on disk that a patch after `openfromms` adds. The device then leaves
+//! the noise to the host, so a large value cancelled after it cannot round
+//! it away.
+//!
 //! On a host without a Metal device the Metal comparisons print `skipped:
 //! no Metal device` and pass: run them outside command sandboxes on Apple
 //! silicon (`TESTING.md`).
@@ -40,13 +46,16 @@ use std::path::Path;
 
 use casa_imaging_runtime::{HostResources, ResourcePolicy};
 use casa_simulation::{
-    BackendRequest, NoiseSpec, PredictionOptions, SessionResources, Simulator, VoltagePatternSpec,
+    BackendRequest, NoiseSpec, PredictSpec, PredictionOptions, SessionResources, Simulator,
+    SimulatorOptions, VoltagePatternSpec,
 };
 use casa_test_support::ms_digest::measurement_set_manifest;
+use casa_types::measures::{EpochRef, MEpoch};
 use num_complex::Complex32;
 use pass_summary::{PassSummary, capture};
 use predict_support::{
-    N, Row, predict_spec, read_main, scan, session_with_channels, session_with_dishes, write_model,
+    CENTRE_RAD, N, REFERENCE_MJD, Row, bits, data, predict_spec, read_main, scan,
+    session_with_channels, session_with_dishes, write_model, write_point_list,
 };
 
 /// The T0 Metal law's tolerance, relative to the CPU's largest sample.
@@ -412,4 +421,167 @@ fn metal_adds_the_hosts_noise_to_the_model_on_the_device() {
             assert!(subnormal > 0, "σ {sigma}: some noise is subnormal");
         }
     }
+}
+
+/// A flux whose samples' unit in the last place, 8 Jy, rounds away noise
+/// of [`CANCELLED_NOISE_JY`] added to it.
+const CANCELLED_JY: f32 = 1.0e8;
+
+/// σ of the noise-order laws' noise, Jy.
+const CANCELLED_NOISE_JY: f64 = 0.25;
+
+/// `sm.setnoise(simplenoise=σ)` of [`CANCELLED_NOISE_JY`], then
+/// `sm.corrupt()`.
+fn corrupt_cancelled(sm: &mut Simulator) {
+    sm.set_noise(&NoiseSpec {
+        mode: "simplenoise".to_string(),
+        simple_noise_jy: CANCELLED_NOISE_JY,
+        on_the_fly: true,
+    })
+    .expect("setnoise");
+    sm.corrupt().expect("corrupt");
+}
+
+/// The mean power of the real parts of `a − b`'s samples, Jy².
+fn real_power(a: &[Row], b: Option<&[Row]>) -> f64 {
+    let (mut power, mut samples) = (0.0, 0_usize);
+    for (index, row) in a.iter().enumerate() {
+        for (sample, value) in row.data.iter().enumerate() {
+            let other = b.map_or(0.0, |b| b[index].data[sample].re);
+            power += f64::from(value.re - other).powi(2);
+            samples += 1;
+        }
+    }
+    power / samples as f64
+}
+
+/// That `power`, the real noise power of a run, is σ² of the noise-order
+/// laws' noise, to a tenth.
+fn assert_noise_power(power: f64, what: &str) {
+    let expected = CANCELLED_NOISE_JY * CANCELLED_NOISE_JY;
+    assert!(
+        (power - expected).abs() < 0.1 * expected,
+        "{what}: real noise power {power}, against σ² {expected}"
+    );
+}
+
+/// On Metal the noise follows the component lists' visibilities, which the
+/// host adds after the device predicts the image: an image of −1e8 Jy and
+/// a list of +1e8 Jy at its centre, corrupted, write the sum of their
+/// prediction and the CPU's noise, bit for bit. Added on the device before
+/// the list, the noise rounded away entirely; added after, it keeps what
+/// the samples of the image's and the list's difference can hold.
+#[test]
+fn metal_adds_the_noise_after_the_component_lists() {
+    if !metal_device() {
+        return;
+    }
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let image = write_model(
+        directory.path(),
+        "minus.image",
+        &[vec![(N / 2, N / 2, -CANCELLED_JY)]],
+    );
+    let list = directory.path().join("plus.cl");
+    write_point_list(&list, CENTRE_RAD, f64::from(CANCELLED_JY));
+    let run = |name: &str, backend, predict: bool, noise: bool| {
+        let path = directory.path().join(name);
+        let mut sm = session_with_channels(&path, "ALMA", "XX YY", CHANNELS, resources(backend));
+        sm.observe(&scan("target", 0.0, 600.0)).expect("observe");
+        if predict {
+            sm.predict(&PredictSpec {
+                images: vec![image.clone()],
+                component_list: Some(list.clone()),
+                incremental: false,
+            })
+            .expect("predict");
+        }
+        if noise {
+            corrupt_cancelled(&mut sm);
+        }
+        let ((), summary) = capture(|| sm.close().expect("close"));
+        (read_main(&path).0, summary.expect("the pass's summary"))
+    };
+    let (both, both_pass) = run("both.ms", BackendRequest::Metal, true, true);
+    let (model, model_pass) = run("model.ms", BackendRequest::Metal, true, false);
+    let (noise, _) = run("noise.ms", BackendRequest::Cpu, false, true);
+    assert_eq!(both_pass.backend, "Metal", "the pass predicted on Metal");
+    assert_eq!(both_pass.block_rows, model_pass.block_rows);
+    for (index, ((both, model), noise)) in both.iter().zip(&model).zip(&noise).enumerate() {
+        for (sample, ((found, model), noise)) in both
+            .data
+            .iter()
+            .zip(&model.data)
+            .zip(&noise.data)
+            .enumerate()
+        {
+            let expected = model + noise;
+            assert!(
+                found.re.to_bits() == expected.re.to_bits()
+                    && found.im.to_bits() == expected.im.to_bits(),
+                "row {index}, sample {sample}: {found} against model {model} + noise {noise}"
+            );
+        }
+    }
+    let power = real_power(&both, Some(&model));
+    assert!(power > 0.0, "the noise rounded away");
+}
+
+/// On Metal, as on the CPU, the noise of a patch after `openfromms`
+/// follows the DATA it reads from disk (#886 review): a prediction of
+/// +1e8 Jy added to one of −1e8 Jy closed before, and corrupted, writes
+/// what closing the prediction and then corrupting in a third session
+/// writes, bit for bit, keeping the noise. Added on the device before the
+/// DATA on disk, it rounded away.
+#[test]
+fn metal_adds_the_noise_after_the_data_on_disk() {
+    if !metal_device() {
+        return;
+    }
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let model =
+        |name: &str, flux: f32| write_model(directory.path(), name, &[vec![(N / 2, N / 2, flux)]]);
+    let (minus, plus) = (
+        model("minus.image", -CANCELLED_JY),
+        model("plus.image", CANCELLED_JY),
+    );
+    let observed = |name: &str| {
+        let path = directory.path().join(name);
+        let backend = resources(BackendRequest::Metal);
+        let mut sm = session_with_channels(&path, "ALMA", "XX YY", CHANNELS, backend);
+        sm.observe(&scan("target", 0.0, 600.0)).expect("observe");
+        sm.predict(&predict_spec(&minus, false)).expect("predict");
+        sm.close().expect("close");
+        path
+    };
+    let reopened = |path: &Path| {
+        let options = SimulatorOptions {
+            measures: casa_test_support::deterministic_measures_provider(),
+            resources: resources(BackendRequest::Metal),
+            now: MEpoch::from_mjd(REFERENCE_MJD, EpochRef::UTC),
+        };
+        Simulator::open_from_ms(path, options).expect("openfromms")
+    };
+    let add = |sm: &mut Simulator| sm.predict(&predict_spec(&plus, true)).expect("predict");
+    let one = observed("one.ms");
+    let mut sm = reopened(&one);
+    add(&mut sm);
+    corrupt_cancelled(&mut sm);
+    let ((), pass) = capture(|| sm.close().expect("close"));
+    assert_eq!(
+        pass.expect("the patch's summary").backend,
+        "Some(Metal)",
+        "the patch predicted on Metal"
+    );
+    let two = observed("two.ms");
+    let mut sm = reopened(&two);
+    add(&mut sm);
+    sm.close().expect("close");
+    let sum = read_main(&two).0;
+    let mut sm = reopened(&two);
+    corrupt_cancelled(&mut sm);
+    sm.close().expect("close");
+    let (one, two) = (read_main(&one).0, read_main(&two).0);
+    assert_eq!(bits(&data(&one)), bits(&data(&two)));
+    assert_noise_power(real_power(&one, Some(&sum)), "the reopened prediction");
 }

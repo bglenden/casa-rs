@@ -16,10 +16,13 @@ use std::path::Path;
 use casa_simulation::{
     CasaOutcome, NoiseSpec, PredictionOptions, Simulator, SimulatorOptions, SimulatorResult,
 };
+use casa_tables::{Table, TableOptions};
 use casa_types::measures::{EpochRef, MEpoch};
+use casa_types::{ArrayValue, ScalarValue, Value};
+use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 use predict_support::{
     CHANNELS, REFERENCE_MJD, bits, data, extended_model, predict_spec, read_main, resources, scan,
-    session, session_with_dishes,
+    session, session_with_dishes, write_point_list,
 };
 
 /// The options [`session`] opens with.
@@ -132,19 +135,22 @@ fn a_predict_after_openfromms_replaces_or_adds_to_the_data_on_disk() {
         &predict(false),
         &predict(true),
     );
+    let nrms = normalized_rms(&two, &one);
+    assert!(nrms < 1e-6, "NRMS {nrms}");
+}
+
+/// The RMS of `found − expected`'s DATA over the RMS of `expected`'s,
+/// which must have power.
+fn normalized_rms(found: &[predict_support::Row], expected: &[predict_support::Row]) -> f64 {
     let (mut difference, mut norm) = (0.0_f64, 0.0_f64);
-    for (a, b) in one.iter().zip(&two) {
-        for (x, y) in a.data.iter().zip(&b.data) {
+    for (found, expected) in found.iter().zip(expected) {
+        for (x, y) in found.data.iter().zip(&expected.data) {
             difference += f64::from((x - y).norm_sqr());
-            norm += f64::from(x.norm_sqr());
+            norm += f64::from(y.norm_sqr());
         }
     }
-    assert!(norm > 0.0);
-    assert!(
-        (difference / norm).sqrt() < 1e-6,
-        "NRMS {}",
-        (difference / norm).sqrt()
-    );
+    assert!(norm > 0.0, "the expected DATA has power");
+    (difference / norm).sqrt()
 }
 
 /// The `wproject` machine, and the heterogeneous mosaic machine, predict
@@ -213,6 +219,188 @@ fn openfromms_refuses_additions_and_writes_nothing_without_a_step() {
     assert_eq!(missing.outcome(), CasaOutcome::Raises);
 }
 
+/// The session holds the MeasurementSet `openfromms` opened by its
+/// absolute path, as CASA's simulator holds its table and names it: `close`
+/// patches that MeasurementSet whatever the working directory is by then
+/// (#886 review).
+#[test]
+fn openfromms_holds_the_measurement_set_by_its_absolute_path() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let path = directory.path().join("observed.ms");
+    observed(&path).close().expect("close");
+    // `path` from the working directory, which the tests share and so keep.
+    let here = std::env::current_dir().expect("the working directory");
+    let relative = std::iter::repeat_n("..", here.components().count() - 1)
+        .collect::<std::path::PathBuf>()
+        .join(path.strip_prefix("/").expect("an absolute path"));
+    assert!(relative.is_relative());
+    let mut sm = Simulator::open_from_ms(&relative, options()).expect("openfromms");
+    assert!(sm.name().is_absolute(), "{}", sm.name().display());
+    assert_eq!(
+        std::fs::canonicalize(sm.name()).expect("the session's MeasurementSet"),
+        std::fs::canonicalize(&path).expect("the MeasurementSet")
+    );
+    corrupt(&mut sm).expect("corrupt");
+    sm.close().expect("close");
+    assert!(
+        read_main(&path)
+            .0
+            .iter()
+            .any(|row| row.data.iter().any(|value| value.norm() > 0.0)),
+        "the opened MeasurementSet is patched"
+    );
+}
+
+/// Rewrite `path`'s `subtable` with `rewrite(table, row)` for each row, and
+/// save it.
+fn rewrite_subtable(path: &Path, subtable: &str, rewrite: &dyn Fn(&mut Table, usize)) {
+    let mut table = Table::open(TableOptions::new(path.join(subtable))).expect(subtable);
+    for row in 0..table.row_count() {
+        rewrite(&mut table, row);
+    }
+    table.flush().expect("save the subtable");
+}
+
+/// Set `table`'s `column` of row `row` to `value`.
+fn set_cell(table: &mut Table, row: usize, column: &str, value: Value) {
+    table
+        .cell_accessor_mut(row, column)
+        .and_then(|mut cell| cell.set(value))
+        .expect(column);
+}
+
+/// A POINTING row is matched to the scans by the times casacore's
+/// `MSPointingColumns::pointingIndex` takes it as valid for (#886 review):
+/// within half its INTERVAL of its TIME; with INTERVAL 0, within half the
+/// gap to its antenna's next row at another TIME, or at every time when
+/// there is none; with a negative INTERVAL, at every time. A beam is refused
+/// when a row pointing away from the field is valid during the scan, which
+/// has two integrations, at `t1` and 10 s later.
+#[test]
+fn pointing_rows_apply_for_the_times_casacore_takes_them_as_valid() {
+    use casa_simulation::{PredictSpec, VoltagePatternSpec};
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let point = &directory.path().join("point.cl");
+    write_point_list(point, predict_support::CENTRE_RAD, 1.0);
+    let away = Value::Array(ArrayValue::Float64(
+        ArrayD::from_shape_vec(
+            IxDyn(&[2, 1]).f(),
+            vec![
+                predict_support::CENTRE_RAD[0] + 1.0e-5,
+                predict_support::CENTRE_RAD[1],
+            ],
+        )
+        .expect("a direction"),
+    ));
+    // The first integration's rows of each antenna point away, at `t1` and
+    // `offset_s` with `interval_s`; when `both`, the second's too, at the
+    // same time.
+    let refused = |name: &str, offset_s: f64, interval_s: f64, both: bool| {
+        let path = directory.path().join(name);
+        let mut sm = session(&path, "ALMA", "XX YY", resources(2, 2 << 30));
+        sm.observe(&scan("target", 0.0, 20.0)).expect("observe");
+        sm.close().expect("close");
+        let time = |table: &Table, row| match table
+            .column_accessor("TIME")
+            .and_then(|column| column.scalar_cell(row).cloned())
+        {
+            Ok(ScalarValue::Float64(time_s)) => time_s,
+            other => panic!("POINTING TIME: {other:?}"),
+        };
+        let first = Table::open(TableOptions::new(path.join("POINTING"))).expect("POINTING");
+        let t1 = (0..first.row_count())
+            .map(|row| time(&first, row))
+            .fold(f64::INFINITY, f64::min);
+        drop(first);
+        rewrite_subtable(&path, "POINTING", &|table, row| {
+            if time(table, row) == t1 || both {
+                let scalar = |value| Value::Scalar(ScalarValue::Float64(value));
+                set_cell(table, row, "TIME", scalar(t1 + offset_s));
+                set_cell(table, row, "INTERVAL", scalar(interval_s));
+                set_cell(table, row, "DIRECTION", away.clone());
+            }
+        });
+        let mut sm = Simulator::open_from_ms(&path, options()).expect("openfromms");
+        sm.set_vp(&VoltagePatternSpec::default()).expect("setvp");
+        match sm.predict(&PredictSpec {
+            images: Vec::new(),
+            component_list: Some(point.clone()),
+            incremental: false,
+        }) {
+            Ok(()) => false,
+            Err(refused) => {
+                assert_eq!(refused.outcome(), CasaOutcome::NotYetImplemented);
+                assert!(
+                    refused.message().contains("POINTING points scan"),
+                    "{refused}"
+                );
+                true
+            }
+        }
+    };
+    // Valid from t1 − 6 s to t1 + 4 s, and to t1 − 1 s.
+    assert!(refused("covering.ms", -1.0, 10.0, false));
+    assert!(!refused("before.ms", -6.0, 10.0, false));
+    // INTERVAL 0: the next row, at t1 + 10 s, bounds the row to half the
+    // gap: from t1 − 17 s to t1 + 1 s, and to t1 − 1 s.
+    assert!(refused("bounded-covering.ms", -8.0, 0.0, false));
+    assert!(!refused("bounded-before.ms", -12.0, 0.0, false));
+    // Every row of an antenna at one time with INTERVAL 0, and a negative
+    // INTERVAL: valid at every time.
+    assert!(refused("unbounded.ms", -100.0, 0.0, true));
+    assert!(refused("negative.ms", -100.0, -1.0, false));
+}
+
+/// Spectral window 0's REF_FREQUENCY picks the VLA's beam after
+/// `openfromms`, as `VPSkyJones` picks it, whatever the channels are (#886
+/// review). With the channels' 230 GHz, outside the VLA's bands, it is
+/// VLA_NVSS, as in the session that observed; set to 40 GHz, in the Q band,
+/// the VLA's common pattern predicts other DATA for a source off the axis.
+#[test]
+fn the_reference_frequency_picks_the_beam_after_openfromms() {
+    use casa_simulation::{PredictSpec, VoltagePatternSpec};
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let list = &directory.path().join("off-axis.cl");
+    let centre = predict_support::CENTRE_RAD;
+    write_point_list(list, [centre[0], centre[1] + 2.0e-5], 1.0);
+    let vla = |path: &Path| {
+        let mut sm = session(path, "VLA", "RR LL", resources(2, 2 << 30));
+        sm.observe(&scan("target", 0.0, 60.0)).expect("observe");
+        sm
+    };
+    let predict = move |sm: &mut Simulator| {
+        sm.set_vp(&VoltagePatternSpec {
+            do_squint: false,
+            ..VoltagePatternSpec::default()
+        })?;
+        sm.predict(&PredictSpec {
+            images: Vec::new(),
+            component_list: Some(list.clone()),
+            incremental: false,
+        })
+    };
+    let (one, two) = two_stage(directory.path(), &vla, &nothing, &predict);
+    assert_eq!(bits(&data(&one)), bits(&data(&two)));
+    let q_band = directory.path().join("q-band.ms");
+    vla(&q_band).close().expect("close");
+    rewrite_subtable(&q_band, "SPECTRAL_WINDOW", &|table, row| {
+        set_cell(
+            table,
+            row,
+            "REF_FREQUENCY",
+            Value::Scalar(ScalarValue::Float64(40.0e9)),
+        );
+    });
+    let mut sm = Simulator::open_from_ms(&q_band, options()).expect("openfromms");
+    predict(&mut sm).expect("predict");
+    sm.close().expect("close");
+    let nrms = normalized_rms(&read_main(&q_band).0, &one);
+    assert!(
+        nrms > 1e-4,
+        "the Q band's pattern predicts other DATA: NRMS {nrms}"
+    );
+}
+
 fn write_points(path: &Path) {
     use casa_components::{
         ComponentList, ComponentShape, Flux, SkyComponent, SpectralKind, SpectralModel,
@@ -278,29 +466,6 @@ fn components_under_the_beam_and_total_power_predict_after_openfromms_as_before(
     assert_eq!(bits(&data(&one)), bits(&data(&two)));
 }
 
-/// A point source at `direction`, 1 Jy.
-fn write_point(path: &Path, direction: [f64; 2]) {
-    use casa_components::{
-        ComponentList, ComponentShape, Flux, SkyComponent, SpectralKind, SpectralModel,
-    };
-    use casa_types::measures::direction::{DirectionRef, MDirection};
-    use casa_types::measures::frequency::{FrequencyRef, MFrequency};
-    let mut list = ComponentList::new();
-    list.push(SkyComponent::new(
-        Flux::stokes_jy(1.0, 0.0, 0.0, 0.0),
-        ComponentShape::point(MDirection::from_angles(
-            direction[0],
-            direction[1],
-            DirectionRef::J2000,
-        )),
-        SpectralModel::new(
-            MFrequency::new(predict_support::FREQUENCY_HZ, FrequencyRef::LSRK),
-            SpectralKind::Constant,
-        ),
-    ));
-    list.write_table(path).expect("write the list");
-}
-
 /// A pointing `observemany` moved off its field keeps its field's FIELD
 /// row, and after `openfromms` it is phased there, as CASA's `VisBuffer`
 /// phases it: a source at the field's direction predicts zero phase in
@@ -316,7 +481,7 @@ fn a_moved_pointing_is_phased_on_its_field_after_openfromms() {
     use casa_types::measures::direction::{DirectionRef, MDirection};
     let directory = tempfile::tempdir().expect("temporary directory");
     let point = &directory.path().join("point.cl");
-    write_point(point, predict_support::CENTRE_RAD);
+    write_point_list(point, predict_support::CENTRE_RAD, 1.0);
     let moved = |path: &Path| {
         let mut sm = session(path, "ALMA", "XX YY", resources(2, 2 << 30));
         let base = scan("target", 0.0, 20.0);
@@ -433,7 +598,6 @@ fn add_scratch_columns(path: &Path) {
 fn read_column(path: &Path, column: &str) -> Vec<Vec<casa_types::Complex32>> {
     use casa_ms::MeasurementSet;
     use casa_ms::columns::data_columns::DataColumn;
-    use casa_types::ArrayValue;
     let ms = MeasurementSet::open(path).expect("open");
     let main = ms.main_table();
     let cells = match column {
@@ -524,7 +688,6 @@ fn a_partly_flagged_row_is_refused_before_anything_is_written() {
         MeasurementSetMutationColumnValues, MeasurementSetWriteColumnPlan, MeasurementSetWritePlan,
         MeasurementSetWriteResources, MeasurementSetWriteSession,
     };
-    use ndarray::{ArrayD, IxDyn, ShapeBuilder};
     let directory = tempfile::tempdir().expect("temporary directory");
     let model = &extended_model(directory.path(), "model.image");
     let path = directory.path().join("flagged.ms");
@@ -561,12 +724,10 @@ fn a_partly_flagged_row_is_refused_before_anything_is_written() {
                 row_indices: vec![3],
                 columns: vec![MeasurementSetMutationColumnBatch {
                     name: "FLAG".to_string(),
-                    values: MeasurementSetMutationColumnValues::Arrays(vec![
-                        casa_types::ArrayValue::Bool(
-                            ArrayD::from_shape_vec(IxDyn(&[2, CHANNELS]).f(), flags)
-                                .expect("FLAG cell"),
-                        ),
-                    ]),
+                    values: MeasurementSetMutationColumnValues::Arrays(vec![ArrayValue::Bool(
+                        ArrayD::from_shape_vec(IxDyn(&[2, CHANNELS]).f(), flags)
+                            .expect("FLAG cell"),
+                    )]),
                 }],
             },
         )

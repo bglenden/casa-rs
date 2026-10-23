@@ -118,7 +118,12 @@ const _: () = {
 
 /// A simulator session writing one new MeasurementSet.
 pub struct Simulator {
-    path: PathBuf,
+    /// The path given, which `name` reports.
+    name: PathBuf,
+    /// That path made absolute when the session was opened: the
+    /// MeasurementSet `close` writes, whatever the working directory is by
+    /// then, as CASA's simulator holds the table it opened.
+    destination: PathBuf,
     options: SimulatorOptions,
     telescope: String,
     antennas: Vec<Antenna>,
@@ -167,8 +172,11 @@ impl Simulator {
     /// there, at [`close`](Self::close).
     pub fn open(path: impl AsRef<Path>, options: SimulatorOptions) -> Self {
         let times = Times::defaults(options.now.clone());
+        let path = path.as_ref().to_path_buf();
         Self {
-            path: path.as_ref().to_path_buf(),
+            // Without a working directory a relative path stays as given.
+            destination: std::path::absolute(&path).unwrap_or_else(|_| path.clone()),
+            name: path,
             options,
             // NewMSSimulator's telescope until setconfig.
             telescope: "Unknown".to_string(),
@@ -197,9 +205,11 @@ impl Simulator {
         }
     }
 
-    /// `sm.name()`: the MeasurementSet's path, as given to `open`.
+    /// `sm.name()`: the MeasurementSet's path, as given to `open`; after
+    /// `openfromms`, the absolute path, as CASA's `Table::tableName` gives
+    /// it.
     pub fn name(&self) -> &Path {
-        &self.path
+        &self.name
     }
 
     /// The number of scans: those `observe` has planned, or the runs of
@@ -298,7 +308,7 @@ impl Simulator {
             rest_frequency_hz: self
                 .spectral_windows
                 .first()
-                .map(|window| window.start_frequency_hz),
+                .map(|window| window.reference_frequency_hz),
         });
         Ok(())
     }
@@ -532,8 +542,9 @@ impl Simulator {
         Ok([ra.sin().atan2(ra.cos()), dec])
     }
 
+    /// The absolute path of the MeasurementSet `close` writes.
     pub(crate) fn path(&self) -> &Path {
-        &self.path
+        &self.destination
     }
 
     pub(crate) fn options(&self) -> &SimulatorOptions {

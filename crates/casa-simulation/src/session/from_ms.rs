@@ -31,6 +31,7 @@
 //! (`setconfig`, `setfeed`, `setspwindow`, `setfield`, `setmosaicfield`,
 //! `observe`, `observemany`) is not yet implemented.
 
+use std::collections::HashMap;
 use std::path::Path;
 
 use casa_ms::MeasurementSet;
@@ -64,8 +65,8 @@ pub(crate) struct OpenedMs {
     /// `corrupt` set to DATA. casa-rs keeps the scratch columns there are
     /// in step with DATA and creates none (plan decision 6).
     pub(crate) corrected_data: bool,
-    /// Each scan's first and last TIME, seconds: a POINTING row in that
-    /// span points the scan.
+    /// Each scan's first and last TIME, seconds: a POINTING row valid
+    /// during that span points the scan.
     pub(crate) scan_times_s: Vec<[f64; 2]>,
 }
 
@@ -87,11 +88,17 @@ impl Simulator {
         path: impl AsRef<Path>,
         options: SimulatorOptions,
     ) -> SimulatorResult<Self> {
-        let path = path.as_ref();
-        let ms = MeasurementSet::open(path).map_err(|error| {
-            SimulatorError::raised(format!("Exception Reported: {}: {error}", path.display()))
-        })?;
-        let mut session = Self::open(path, options);
+        let raised = |error: &dyn std::fmt::Display| {
+            SimulatorError::raised(format!(
+                "Exception Reported: {}: {error}",
+                path.as_ref().display()
+            ))
+        };
+        // The session holds the MeasurementSet it read: `close` and the
+        // POINTING reads find it whatever the working directory is by then.
+        let path = std::path::absolute(path.as_ref()).map_err(|error| raised(&error))?;
+        let ms = MeasurementSet::open(&path).map_err(|error| raised(&error))?;
+        let mut session = Self::open(&path, options);
         session.antennas = read_antennas(&ms)?;
         session.observations = read_observations(&ms)?;
         session.spectral_windows = read_windows(&ms)?;
@@ -144,7 +151,7 @@ impl Simulator {
         let Some(opened) = &self.opened else {
             return Ok(());
         };
-        match pointing_away_from_phase_centre(&self.path, &self.scans, &opened.scan_times_s)? {
+        match pointing_away_from_phase_centre(self.path(), &self.scans, &opened.scan_times_s)? {
             Some(scan) => Err(SimulatorError::not_yet_implemented(format!(
                 "{what} on a MeasurementSet whose POINTING points scan {} away from its \
                  field's PHASE_DIR is not yet implemented in casa-rs (#841)",
@@ -269,6 +276,7 @@ fn read_window(
         channel_count: frequencies.len(),
         start_frequency_hz,
         channel_width_hz,
+        reference_frequency_hz: windows.ref_frequency(row).map_err(&error)?,
         frame,
         correlations,
     };
@@ -424,9 +432,16 @@ fn index(value: i32, count: usize, row: usize, column: &str) -> SimulatorResult<
         })
 }
 
-/// The first scan a POINTING row within its time span points away from
-/// its phase centre, `None` when every row points at the scans covering
-/// its TIME; without POINTING rows CASA points at the fields.
+/// The first scan a POINTING row valid within its time span points away
+/// from its phase centre, `None` when every row points at the scans it is
+/// valid for; without POINTING rows CASA points at the fields.
+///
+/// A row is valid for the times casacore's `MSPointingColumns::
+/// pointingIndex` finds it at, which CASA's `VisBuffer` reads each row's
+/// pointing with ([`Validity`]). A scan's span is from its first to its
+/// last TIME, so a row valid between two of its integrations counts too:
+/// that refuses what CASA might not use, rather than predicting a scan at
+/// a pointing it does not have.
 fn pointing_away_from_phase_centre(
     path: &Path,
     scans: &[Scan],
@@ -439,30 +454,35 @@ fn pointing_away_from_phase_centre(
         return Ok(None);
     }
     let pointing = Table::open(TableOptions::new(&pointing_path)).map_err(error)?;
-    // The scans by start, with the latest end so far, to find those covering
-    // a time.
-    let mut by_start: Vec<usize> = (0..scans.len()).collect();
-    by_start.sort_by(|&a, &b| times_s[a][0].total_cmp(&times_s[b][0]));
-    let mut latest_end = Vec::with_capacity(by_start.len());
-    for &scan in &by_start {
-        let end = latest_end
-            .last()
-            .map_or(f64::NEG_INFINITY, |&end: &f64| end);
-        latest_end.push(end.max(times_s[scan][1]));
-    }
-    let (mut times, mut rows) = (Vec::new(), Vec::new());
+    let by_time = ScansByTime::new(times_s);
+    let mut validity = Validity::default();
+    let (mut antennas, mut times, mut intervals, mut rows) =
+        (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    let mut valid = Vec::new();
     let count = pointing.row_count();
     for first in (0..count).step_by(SCAN_READ_ROWS) {
         rows.clear();
         rows.extend(first..count.min(first + SCAN_READ_ROWS));
+        antennas.clear();
         times.clear();
+        intervals.clear();
         pointing
             .required_scalar_columns_for_rows_into(
                 &rows,
-                &mut [RequiredScalarColumnDestination::new(
-                    "TIME",
-                    RequiredScalarColumnValuesMut::Float64(&mut times),
-                )],
+                &mut [
+                    RequiredScalarColumnDestination::new(
+                        "ANTENNA_ID",
+                        RequiredScalarColumnValuesMut::Int32(&mut antennas),
+                    ),
+                    RequiredScalarColumnDestination::new(
+                        "TIME",
+                        RequiredScalarColumnValuesMut::Float64(&mut times),
+                    ),
+                    RequiredScalarColumnDestination::new(
+                        "INTERVAL",
+                        RequiredScalarColumnValuesMut::Float64(&mut intervals),
+                    ),
+                ],
             )
             .map_err(error)?;
         // Cell by cell, which every data manager serves: CASA keeps
@@ -471,33 +491,161 @@ fn pointing_away_from_phase_centre(
             .column_accessor("DIRECTION")
             .and_then(|column| column.array_cells_owned_uncached(&rows))
             .map_err(error)?;
-        for (&time_s, direction) in times.iter().zip(&directions) {
-            // DIRECTION's first polynomial term.
-            let direction = match direction {
-                Some(ArrayValue::Float64(direction))
-                    if direction.ndim() == 2
-                        && direction.shape()[0] == 2
-                        && direction.shape()[1] > 0 =>
-                {
-                    [direction[[0, 0]], direction[[1, 0]]]
-                }
-                _ => continue,
-            };
-            let started = by_start.partition_point(|&scan| times_s[scan][0] <= time_s);
-            for position in (0..started).rev() {
-                if latest_end[position] < time_s {
-                    break;
-                }
-                let scan = by_start[position];
-                if times_s[scan][1] >= time_s
-                    && separation_rad(scans[scan].phase_center_rad, direction) >= SAME_DIRECTION_RAD
-                {
-                    return Ok(Some(scan));
-                }
+        for (((&antenna, &time_s), &interval_s), direction) in
+            antennas.iter().zip(&times).zip(&intervals).zip(&directions)
+        {
+            let direction = fixed_direction(direction.as_ref());
+            validity.push((antenna, time_s, interval_s), direction, &mut valid);
+            if let Some(scan) = by_time.away(&mut valid, scans) {
+                return Ok(Some(scan));
             }
         }
     }
-    Ok(None)
+    validity.finish(&mut valid);
+    Ok(by_time.away(&mut valid, scans))
+}
+
+/// A POINTING row's DIRECTION, as (longitude, latitude), radians: its
+/// first polynomial term, `None` when a later term moves it or the cell is
+/// not a direction, which no scan's phase centre matches.
+fn fixed_direction(cell: Option<&ArrayValue>) -> Option<[f64; 2]> {
+    match cell {
+        Some(ArrayValue::Float64(direction))
+            if direction.ndim() == 2 && direction.shape()[0] == 2 && direction.shape()[1] > 0 =>
+        {
+            let moves = direction
+                .indexed_iter()
+                .any(|(index, &term)| index[1] > 0 && term != 0.0);
+            (!moves).then(|| [direction[[0, 0]], direction[[1, 0]]])
+        }
+        _ => None,
+    }
+}
+
+/// A POINTING row's direction ([`fixed_direction`]) and the times it is
+/// valid for, seconds.
+type ValidPointing = (Option<[f64; 2]>, [f64; 2]);
+
+/// The times POINTING rows are valid for, found in table order as
+/// casacore's `MSPointingColumns::pointingIndex` finds them. A row is
+/// valid within half its INTERVAL of its TIME; with INTERVAL 0, within half
+/// the gap to its antenna's next row at another TIME, else to its previous
+/// one, else at every time; and with a negative INTERVAL at every time.
+#[derive(Debug, Default)]
+struct Validity {
+    antennas: HashMap<i32, AntennaPointings>,
+}
+
+/// One antenna's rows so far.
+#[derive(Debug)]
+struct AntennaPointings {
+    /// The TIME of its last row.
+    last_s: f64,
+    /// The TIME of its last row at another TIME before that.
+    earlier_s: Option<f64>,
+    /// The directions of its rows of INTERVAL 0 at `last_s`, which the next
+    /// row at another TIME bounds.
+    waiting: Vec<Option<[f64; 2]>>,
+}
+
+impl Validity {
+    /// Take the next row, of `antenna` at `time_s` with `interval_s`,
+    /// pointing at `direction`: onto `valid` go the rows whose times are
+    /// now known.
+    fn push(
+        &mut self,
+        (antenna, time_s, interval_s): (i32, f64, f64),
+        direction: Option<[f64; 2]>,
+        valid: &mut Vec<ValidPointing>,
+    ) {
+        let rows = self
+            .antennas
+            .entry(antenna)
+            .or_insert_with(|| AntennaPointings {
+                last_s: time_s,
+                earlier_s: None,
+                waiting: Vec::new(),
+            });
+        if rows.last_s != time_s {
+            let half = (time_s - rows.last_s).abs() / 2.0;
+            let span = [rows.last_s - half, rows.last_s + half];
+            valid.extend(rows.waiting.drain(..).map(|direction| (direction, span)));
+            rows.earlier_s = Some(rows.last_s);
+            rows.last_s = time_s;
+        }
+        if interval_s == 0.0 {
+            rows.waiting.push(direction);
+        } else if interval_s > 0.0 {
+            let half = interval_s / 2.0;
+            valid.push((direction, [time_s - half, time_s + half]));
+        } else {
+            valid.push((direction, [f64::NEG_INFINITY, f64::INFINITY]));
+        }
+    }
+
+    /// Onto `valid` go the rows of INTERVAL 0 no later row bounds: by the
+    /// antenna's earlier TIME, else at every time.
+    fn finish(&mut self, valid: &mut Vec<ValidPointing>) {
+        for rows in self.antennas.values_mut() {
+            let span = rows
+                .earlier_s
+                .map_or([f64::NEG_INFINITY, f64::INFINITY], |earlier| {
+                    let half = (rows.last_s - earlier).abs() / 2.0;
+                    [rows.last_s - half, rows.last_s + half]
+                });
+            valid.extend(rows.waiting.drain(..).map(|direction| (direction, span)));
+        }
+    }
+}
+
+/// The scans by their first TIME, with the latest last TIME so far, to
+/// find those a span of time overlaps.
+struct ScansByTime<'t> {
+    times_s: &'t [[f64; 2]],
+    by_start: Vec<usize>,
+    latest_end: Vec<f64>,
+}
+
+impl<'t> ScansByTime<'t> {
+    fn new(times_s: &'t [[f64; 2]]) -> Self {
+        let mut by_start: Vec<usize> = (0..times_s.len()).collect();
+        by_start.sort_by(|&a, &b| times_s[a][0].total_cmp(&times_s[b][0]));
+        let mut latest_end = Vec::with_capacity(by_start.len());
+        for &scan in &by_start {
+            let end = latest_end
+                .last()
+                .map_or(f64::NEG_INFINITY, |&end: &f64| end);
+            latest_end.push(end.max(times_s[scan][1]));
+        }
+        Self {
+            times_s,
+            by_start,
+            latest_end,
+        }
+    }
+
+    /// The first scan of `scans` a row of `valid`, which this empties, is
+    /// valid during and points away from.
+    fn away(&self, valid: &mut Vec<ValidPointing>, scans: &[Scan]) -> Option<usize> {
+        for (direction, [from_s, to_s]) in valid.drain(..) {
+            let started = self
+                .by_start
+                .partition_point(|&scan| self.times_s[scan][0] <= to_s);
+            for position in (0..started).rev() {
+                if self.latest_end[position] < from_s {
+                    break;
+                }
+                let scan = self.by_start[position];
+                let away = direction.is_none_or(|direction| {
+                    separation_rad(scans[scan].phase_center_rad, direction) >= SAME_DIRECTION_RAD
+                });
+                if self.times_s[scan][1] >= from_s && away {
+                    return Some(scan);
+                }
+            }
+        }
+        None
+    }
 }
 
 /// The angle between two directions given as (longitude, latitude),
