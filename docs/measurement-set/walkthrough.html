@@ -93,6 +93,12 @@
     .controls button { font-size: 13px; }
     .component { border: 1px solid #b7cec3; border-radius: 10px; padding: 18px; background: var(--tint); min-height: 112px; }
     .component p { font-size: 14px; margin-bottom: 0; }
+    .payload-table { min-width: 580px; }
+    .payload-table td[data-value] { font-family: var(--mono); white-space: nowrap; }
+    .payload-table td.selected-value { outline: 2px solid var(--teal); outline-offset: -2px; background: var(--tint); }
+    .flag-label { display: block; color: var(--amber); font-size: 11px; }
+    .payload-controls label { display: grid; gap: 5px; font-size: 12px; }
+    .payload-controls select { max-width: 100%; font: inherit; padding: 8px; }
     .matrix { display: grid; gap: 5px; margin: 15px 0; }
     .cell { text-align: center; padding: 9px 3px; border-radius: 5px; background: var(--blue-tint); color: var(--blue); font: 11px var(--mono); }
     .matrix-head { text-align: center; color: var(--muted); font: 10px var(--mono); padding: 5px 2px; }
@@ -306,31 +312,74 @@
     <section class="step" id="block" data-title="Build the shared batch" aria-labelledby="title-block">
       <div class="eyebrow">04 · The central intermediate structure</div>
       <h1 id="title-block" tabindex="-1">A batch is arrays plus their meaning.</h1>
-      <p class="lead">A <code>VisibilityBatch</code> lends typed array views and the metadata needed to interpret them. The memory backing those views has an explicit owner.</p>
+      <p class="lead">A <code>VisibilityBatch</code> exposes the actual visibility, flag, weight and coordinate buffers used for computation. The source has read and decoded the requested payload before delivering the batch; accessing an element does not trigger storage I/O.</p>
+      <h2>A concrete batch: two samples, two channels, four correlations</h2>
+      <p>This illustrative batch has one time and two ordered baselines. Sample 0 is antenna 0 with itself; sample 1 is antenna 0 with antenna 1. Both use feed 0. The correlation order is <code>[XX, XY, YX, YY]</code>. These are invented numbers for explanation, not a converted observation.</p>
+      <pre><code>time: MJD 60000 TAI + 0 s (split epoch)
+frequency_hz: [1_000_000_000, 1_001_000_000]  // TOPO
+field: A; phase centre: (1.0, 0.5) rad, ICRS
+uvw_m: [[0, 0, 0], [100, -40, 20]]          // per sample
+// UVW refers to this phase centre and the declared baseline convention.</code></pre>
+      <p><strong><code>groups[0].values</code></strong> is a borrowed view of 16 complex numbers: <code>Complex&lt;f32&gt;</code>, in Jy, shape <code>[sample=2, channel=2, correlation=4]</code>. Each number has an f32 real part and an f32 imaginary part, so this payload occupies 128 bytes.</p>
+      <div class="table-scroll"><table class="payload-table" id="batch-values"><caption>Visibility values in Jy; correlation is the innermost axis</caption><thead><tr><th>Sample</th><th>Channel</th><th>XX</th><th>XY</th><th>YX</th><th>YY</th></tr></thead><tbody>
+        <tr><th>0 · auto 0–0</th><td>0</td><td id="v-0-0-0" data-value="10+0i">10+0i</td><td id="v-0-0-1" data-value="1+2i">1+2i</td><td id="v-0-0-2" data-value="1-2i">1-2i</td><td id="v-0-0-3" data-value="8+0i">8+0i</td></tr>
+        <tr><th>0 · auto 0–0</th><td>1</td><td id="v-0-1-0" data-value="12+0i">12+0i</td><td id="v-0-1-1" data-value="0.5+1i">0.5+1i</td><td id="v-0-1-2" data-value="0.5-1i">0.5-1i</td><td id="v-0-1-3" data-value="9+0i">9+0i</td></tr>
+        <tr><th>1 · cross 0–1</th><td>0</td><td id="v-1-0-0" data-value="3+4i">3+4i</td><td id="v-1-0-1" data-value="0.2-0.1i">0.2-0.1i</td><td id="v-1-0-2" data-value="-0.3+0.4i">-0.3+0.4i</td><td id="v-1-0-3" data-value="2-1i">2-1i</td></tr>
+        <tr><th>1 · cross 0–1</th><td>1</td><td id="v-1-1-0" data-value="4+3i" data-flag="true">4+3i<span class="flag-label">flagged</span></td><td id="v-1-1-1" data-value="0.1+0.2i">0.1+0.2i</td><td id="v-1-1-2" data-value="0.5-0.2i">0.5-0.2i</td><td id="v-1-1-3" data-value="1+2i">1+2i</td></tr>
+      </tbody></table></div>
+      <p><strong><code>groups[0].flags</code></strong> is a separate boolean array with the same shape. Only <code>flags[1, 1, XX]</code> is true; its stored visibility remains <code>4+3i</code>. All other flags and both row flags are false. Both acquisitions are known present and selected, and every value is finite.</p>
+      <p><strong><code>groups[0].weights</code></strong> contains eight f32 numbers with shape <code>[sample=2, correlation=4]</code>. In this example they are declared inverse-variance weights in Jy⁻². Each applies to both channels through a checked broadcast view, without duplicating its storage.</p>
+      <div class="table-scroll"><table id="batch-weights"><caption>Stored weights, shared across the two channels</caption><thead><tr><th>Sample</th><th>XX</th><th>XY</th><th>YX</th><th>YY</th></tr></thead><tbody>
+        <tr><th>0</th><td id="w-0-0">4</td><td id="w-0-1">2</td><td id="w-0-2">2</td><td id="w-0-3">4</td></tr>
+        <tr><th>1</th><td id="w-1-0">16</td><td id="w-1-1">8</td><td id="w-1-2">8</td><td id="w-1-3">16</td></tr>
+      </tbody></table></div>
+      <div class="diagram" id="batch-element-inspector">
+        <h3>Read one element as a computation would</h3>
+        <div class="js-only"><div class="controls payload-controls">
+          <label>Sample<select id="payload-sample"><option value="0" data-baseline="0–0" data-uvw="0, 0, 0">0 · auto 0–0</option><option value="1" data-baseline="0–1" data-uvw="100, -40, 20" selected>1 · cross 0–1</option></select></label>
+          <label>Channel<select id="payload-channel"><option value="0" data-hz="1,000,000,000">0 · 1 GHz</option><option value="1" data-hz="1,001,000,000">1 · 1.001 GHz</option></select></label>
+          <label>Correlation<select id="payload-correlation"><option value="0">XX</option><option value="1">XY</option><option value="2">YX</option><option value="3">YY</option></select></label>
+        </div></div>
+        <p id="payload-readout" aria-live="polite">values[1, 0, XX] = 3+4i Jy; flag = false; weight[1, XX] = 16 Jy⁻². This element is included by the example's flag/validity policy.</p>
+        <p id="payload-coordinate">Baseline 0–1; frequency 1,000,000,000 Hz (TOPO); UVW (100, -40, 20) m; field A at MJD 60000 TAI.</p>
+        <p id="payload-offset" class="caption">Contiguous element strides: [8, 4, 1]. Flat visibility/flag index = 1×8 + 0×4 + 0 = 8. Native weight index = 1×4 + 0 = 4.</p>
+      </div>
+      <p>The batch lends these buffers for its lifetime. A numerical loop reads typed array elements directly; no catalogue lookup or per-value type dispatch is needed. Other requested data groups expose their own associated arrays. A flags-only request can omit visibility values entirely.</p>
+      <h2>Where those buffers sit in the structure</h2>
       <div class="diagram">
         <div class="controls" role="group" aria-label="Inspect a batch component">
           <button data-component="values" aria-pressed="true">Values</button><button data-component="coordinates" aria-pressed="false">Coordinates</button><button data-component="units" aria-pressed="false">Units &amp; frames</button><button data-component="flags" aria-pressed="false">Flags &amp; validity</button><button data-component="weights" aria-pressed="false">Weights</button><button data-component="addresses" aria-pressed="false">Update maps</button>
         </div>
-        <div class="component" id="component-detail" aria-live="polite"><h3>Typed visibility values</h3><p>Complex32/64 or supported real values, with checked dimensions, axis labels, and strides. Bind the type once, then run a typed numerical loop.</p></div>
+        <div class="component" id="component-detail" aria-live="polite"><h3>Typed visibility values</h3><p>In the example, groups[0].values lends the 16 Complex&lt;f32&gt; numbers above with shape [2, 2, 4] and element strides [8, 4, 1]. Select the typed loop once per batch.</p></div>
         <pre><code>// Semantic sketch, not a finished Rust API.
 VisibilityBatch {
     context,       // compatible spectral/correlation context
     topology,      // irregular samples or factored time × baseline
     coordinates,   // epochs, frequencies, baseline/field context
-    groups,        // requested values, flags, weights, UVW
+    groups: [DataGroupView {
+        values,    // view of the 16 complex numbers above
+        flags,     // view of 16 booleans, one true
+        weights,   // view of 8 f32 weights, broadcast over channel
+        uvw,       // view of two 3-vectors in metres
+        field_and_source, associations,
+    }],
     grouping,      // scientific-group ranges or index views
     update_maps,   // optional, role-specific write provenance
 }</code></pre>
         <p class="caption">Requested roles only. A flags-only operation need not read visibility values. Missing required roles fail binding.</p>
       </div>
       <p>Metadata declares which axes it depends on. A constant frequency frame, per-time epoch, or per-correlation row weight should not become one allocated object per visibility.</p>
+      <h2>Should autocorrelations be real?</h2>
+      <p><strong>The same-receptor power products are real in the ideal measurement:</strong> <code>XX = ⟨Eₓ Eₓ*⟩ = ⟨|Eₓ|²⟩</code>, and similarly YY (or RR/LL), for the same antenna and feed. But <code>XY = ⟨Eₓ Eᵧ*⟩</code> can be complex, with <code>YX = conjugate(XY)</code> ideally. The example's auto row therefore has real XX/YY and complex XY/YX.</p>
+      <p>MSv2 <code>DATA</code> and MSv4 <code>VISIBILITY</code> use complex arrays, so auto and cross baselines can share one array and one typed loop. MSv2 also has real <code>FLOAT_DATA</code>; MSv4 has a separate real <code>SPECTRUM</code> array for single-dish data. The batch preserves the supplied scalar type and values. Antenna equality alone cannot authorize discarding imaginary parts or changing dtype.</p>
+      <details><summary>Storage type, physical meaning, and the initial support scope</summary><p>The ideal auto correlation matrix is Hermitian; different feeds/signals or stored processing results require their own interpretation. Reading does not force supplied data to satisfy ideal reality or conjugate symmetry. Selecting only real self-products from a complex array could support an explicitly requested real projection, but its imaginary-value handling and write semantics would need a defined policy.</p><p>The shared real-valued variants cover supported legacy FLOAT_DATA. XRADIO SpectrumXds uses [time, antenna, frequency, polarization] and remains outside the initial MSv4 VisibilityXds profile. This explanation does not expand that implementation scope.</p><p class="source">Sources: <a href="https://github.com/casacore/casacore/blob/a1399b6b99907bd14021920a089403a93c10aba1/ms/MeasurementSets/MSMainEnums.h#L176">MSv2 DATA/FLOAT_DATA definitions</a>, <a href="https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/src/xradio/measurement_set/schema.py#L1020">MSv4 complex VISIBILITY</a>, and <a href="https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/src/xradio/measurement_set/schema.py#L1001">real SPECTRUM</a>.</p></details>
       <h2>Known units at the numerical boundary</h2>
       <p>The proposed default views guarantee <strong>Hz for frequency, m for distances, rad for angles, and s for durations</strong>. Epochs retain explicit origin/representation, time scale, and split precision. A caller can request another compatible unit at binding; the result guarantees that choice. A <code>frequency_hz()</code> accessor cannot return MHz.</p>
       <details><summary>Canonical units, explicit conversions, and the MSv4 convention</summary><p>Unit syntax and scaling are resolved once at the appropriate metadata scope. Shared axes are converted once where possible; other scaling can be fused with fill/decode/packing. Already-canonical views need no unit-conversion pass. Frames remain separate: Hz in TOPO is not Hz in LSRK, and seconds do not imply UTC or TAI.</p><p>The pinned MSv4 schema constrains the main coordinate quantities to Hz, m, s and rad. Visibility units are a string defaulting to Jy. We propose Jy for established flux-density data, rather than converting everything to SI base units; instrumental data cannot acquire a flux calibration through unit conversion. Declared inverse-variance weights and matching sigma must scale consistently with amplitude units.</p><p>Computation does not rewrite persistent unit metadata. Updates convert back to the destination's units under scope and precision checks.</p><p>Sources: <a href="https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/src/xradio/schema/measures.py#L56">coordinate units</a>, <a href="https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/src/xradio/measurement_set/schema.py#L1035">visibility units</a>, and <a href="https://github.com/bglenden/casa-rs/blob/abcc5ac0e773f7ad81f1909317c602c63aedbd98/docs/measurement-set/contracts.md#units-and-measure-references">proposed unit contract</a>.</p></details>
       <div class="note amber"><strong>Three facts stay separate:</strong> selection, whether an acquisition is known to exist, and whether its requested values are usable. NaN padding or a false flag does not prove an acquisition occurred.</div>
       <details><summary>Precision is an explicit request</summary><p>Native precision, lossless widening, and approved narrowing are different policies. The initial imaging binding requests complex64 input (<code>Complex&lt;f32&gt;</code>); narrowing complex128 requires scientific approval. Grid precision does not authorize input conversion.</p></details>
       <div class="pause"><div class="eyebrow">Pause here · D1</div><p>Are these the right contents for the shared structure? Which facts should every consumer be able to rely on without rechecking them per value?</p></div>
-      <p class="source">Read: <a href="https://github.com/bglenden/casa-rs/blob/abcc5ac0e773f7ad81f1909317c602c63aedbd98/docs/measurement-set/contracts.md#3-numeric-arrays-metadata-and-data-groups">Contracts §3</a>.</p>
+      <p class="source">Read: <a href="https://github.com/bglenden/casa-rs/blob/7f86a605bd38df9ccb8e39b0b599b08a33b5c9d8/docs/measurement-set/contracts.md#concrete-batch-example">concrete batch contract</a> and <a href="https://github.com/bglenden/casa-rs/blob/7f86a605bd38df9ccb8e39b0b599b08a33b5c9d8/docs/measurement-set/contracts.md#autocorrelations-and-real-valued-data">autocorrelation scalar semantics</a>.</p>
     </section>
 
     <section class="step" id="layout" data-title="Choose a memory layout" aria-labelledby="title-layout">
@@ -505,12 +554,12 @@ VisibilityBatch {
       <h2>Review sources</h2>
       <ul>
         <li><a href="https://github.com/bglenden/casa-rs/pull/878">Draft PR #878</a> — discussion and Pro/Fable review responses.</li>
-        <li><a href="https://github.com/bglenden/casa-rs/blob/abcc5ac0e773f7ad81f1909317c602c63aedbd98/docs/measurement-set/README.md">Revision 2 review guide</a> — decisions and pinned casa-rs source map.</li>
+        <li><a href="https://github.com/bglenden/casa-rs/blob/abcc5ac0e773f7ad81f1909317c602c63aedbd98/docs/measurement-set/README.md">Revision 3 review guide</a> — decisions and pinned casa-rs source map.</li>
         <li><a href="https://github.com/bglenden/casa-rs/blob/abcc5ac0e773f7ad81f1909317c602c63aedbd98/docs/measurement-set/contracts.md">Intermediate contracts</a> — full semantic proposal behind this explanation.</li>
         <li><a href="https://github.com/bglenden/casa-rs/blob/abcc5ac0e773f7ad81f1909317c602c63aedbd98/docs/measurement-set/implementation-plan.md">Implementation plan</a> — M0–M5, evidence packets, and change control.</li>
         <li><a href="https://github.com/bglenden/casa-rs/blob/abcc5ac0e773f7ad81f1909317c602c63aedbd98/docs/measurement-set/architecture.md#7-reference-baseline">Primary references</a> — pinned XRADIO, Zarr, casacore, and Rust dependency evidence.</li>
       </ul>
-      <p class="source">This standalone explanation follows draft <code>abcc5ac0</code>, with later source-checked mosaic schema, converter, and upstream-test evidence in step 3. The linked proposal governs if the explanation omits detail. Examples are illustrative; no implementation or benchmark result is claimed.</p>
+      <p class="source">This standalone explanation follows draft <code>abcc5ac0</code>, with later mosaic evidence in step 3 and a concrete numeric batch and autocorrelation explanation from <code>7f86a605</code> in step 4. The linked proposal governs if the explanation omits detail. Examples are illustrative; no implementation or benchmark result is claimed.</p>
     </section>
 
     <details class="notes js-only" id="notes-panel">
@@ -628,11 +677,11 @@ VisibilityBatch {
   });
 
   const components = {
-    values: ['Typed visibility values', 'Complex32/64 or supported real values, with checked dimensions, axis labels, and strides. Bind the type once, then run a typed numerical loop.'],
-    coordinates: ['Coordinates with declared axes', 'Epoch/time scale, ordered antenna/feed pairs, frequency/frame, UVW, and group-specific field/source context. Keep genuinely per-sample quantities; factor repeated time and baseline axes when possible.'],
+    values: ['Typed visibility values', 'In the example, groups[0].values lends the 16 Complex<f32> numbers above with shape [2, 2, 4] and element strides [8, 4, 1]. Select the typed loop once per batch.'],
+    coordinates: ['Coordinates with declared axes', 'The example shares one MJD 60000 TAI epoch and two TOPO frequency coordinates. Its two baseline pairs and UVW vectors associate each sample with geometry; the field catalogue supplies phase centre A.'],
     units: ['Guaranteed units; explicit references', 'Canonical processing coordinates use Hz, m, rad and s. Alternative compatible units are requested at binding and guaranteed by the returned view. Frames, epoch origins and time scales remain explicit; unit scaling does not perform those scientific transformations.'],
-    flags: ['Native flags and separate validity', 'Retain boolean or bitmask flags, reasons, and requested legacy row/category flags. Selection, acquisition occupancy, and computational validity are distinct. Preserve unknown bits on writes.'],
-    weights: ['Weights with native broadcast semantics', 'A row/correlation weight may apply across channels without being copied into every element. Channel-dependent weights, undefined-cell fallback, units, and provenance remain explicit.'],
+    flags: ['Native flags and separate validity', 'The example has 16 booleans; only [sample 1, channel 1, XX] is true. The 4+3i value stays in its buffer but is excluded by the illustrated consumer. Native bitmasks/reasons and row/category flags also remain representable without losing their meaning.'],
+    weights: ['Weights with native broadcast semantics', 'The example stores eight weights, four per sample. weight[1, XX] = 16 applies to both channels without two stored copies. Channel-dependent weights and fallback provenance remain explicit when requested.'],
     addresses: ['Optional role-specific inverse maps', 'Reordering or selecting samples preserves checked provenance for the selected writable role. A row-weight scalar has a different address domain from a visibility array; reductions do not retain an invented inverse.']
   };
   document.querySelectorAll('[data-component]').forEach(button => button.addEventListener('click', () => {
@@ -642,6 +691,30 @@ VisibilityBatch {
     panel.querySelector('h3').textContent = title;
     panel.querySelector('p').textContent = description;
   }));
+
+  function inspectPayload() {
+    const sample = document.getElementById('payload-sample');
+    const channel = document.getElementById('payload-channel');
+    const correlation = document.getElementById('payload-correlation');
+    const s = Number(sample.value), c = Number(channel.value), p = Number(correlation.value);
+    const label = correlation.selectedOptions[0].textContent;
+    const cell = document.getElementById(`v-${s}-${c}-${p}`);
+    const flag = cell.dataset.flag === 'true';
+    const weight = document.getElementById(`w-${s}-${p}`).textContent;
+    document.querySelectorAll('#batch-values .selected-value').forEach(item => item.classList.remove('selected-value'));
+    cell.classList.add('selected-value');
+    document.getElementById('payload-readout').textContent =
+      `values[${s}, ${c}, ${label}] = ${cell.dataset.value} Jy; flag = ${flag}; weight[${s}, ${label}] = ${weight} Jy⁻². ` +
+      (flag ? 'Excluded by the example’s flag policy; the stored visibility is unchanged.' : 'Included by the example’s flag/validity policy.');
+    const baseline = sample.selectedOptions[0];
+    document.getElementById('payload-coordinate').textContent =
+      `Baseline ${baseline.dataset.baseline}; frequency ${channel.selectedOptions[0].dataset.hz} Hz (TOPO); UVW (${baseline.dataset.uvw}) m; field A at MJD 60000 TAI.`;
+    document.getElementById('payload-offset').textContent =
+      `Contiguous element strides: [8, 4, 1]. Flat visibility/flag index = ${s}×8 + ${c}×4 + ${p} = ${s*8+c*4+p}. Native weight index = ${s}×4 + ${p} = ${s*4+p}.`;
+  }
+  ['payload-sample', 'payload-channel', 'payload-correlation'].forEach(id =>
+    document.getElementById(id).addEventListener('change', inspectPayload));
+  inspectPayload();
 
   function drawLayout(layout) {
     const sampleMajor = layout === 'sample';
