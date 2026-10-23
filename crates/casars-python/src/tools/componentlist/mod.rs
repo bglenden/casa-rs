@@ -12,16 +12,17 @@
 //!
 //! CASA's outcomes are kept ([`ops`] for the table, `add` for
 //! `addcomponent`): what CASA raises is a `RuntimeError` with CASA's
-//! message, and what it logs and carries on from (a shape `setshape` cannot
-//! make, `torecord` of an empty list, `close`) is logged on the Python
+//! message, and what it logs and carries on from (a shape `setshape`
+//! refuses, `torecord` of an empty list, `close`) is logged on the Python
 //! logger `casars.tools.componentlist`, CASA's SEVERE at ERROR and its WARN
 //! at WARNING. Records are casacore's (`casa_components` `to_record`), as
-//! `dict`s with NumPy arrays.
+//! `dict`s with NumPy arrays. As in CASA, `addcomponent` stores the flux as
+//! Stokes whatever `polarization` says.
 //!
 //! Divergences, recorded in `docs/CASA (C++) bugs.md`: `addcomponent` keeps
-//! the flux's polarisation and double precision (`add`), and records give a
-//! shape's axes in arcmin and degrees, as CASA gives a component read from a
-//! table, where CASA gives one it built in the units it was given.
+//! the flux's double precision (`add`), and records give a shape's axes in
+//! arcmin and degrees, as CASA gives a component read from a table, where
+//! CASA gives one it built in the units it was given.
 
 mod add;
 mod ops;
@@ -69,19 +70,22 @@ impl PyComponentList {
 }
 
 impl Drop for PyComponentList {
-    /// CASA's destructor writes a list attached for update; a failure is a
-    /// `RuntimeWarning`, as nothing can raise here.
+    /// CASA's destructor writes a list attached for update. The write runs
+    /// with the GIL released, as every method's does (ADR-0019), since it
+    /// may wait for a lock another process holds; a failure is a
+    /// `RuntimeWarning`, raised once the GIL is held again, as nothing can
+    /// raise here.
     fn drop(&mut self) {
         let state = self.state.get_mut().unwrap_or_else(PoisonError::into_inner);
-        if let Err(message) = state.release() {
-            Python::attach(|py| {
+        Python::attach(|py| {
+            if let Err(message) = py.detach(|| state.release()) {
                 let category = py.get_type::<PyRuntimeWarning>();
                 let message = CString::new(message).unwrap_or_default();
                 if let Err(error) = PyErr::warn(py, category.as_any(), &message, 1) {
                     error.write_unraisable(py, None);
                 }
-            });
-        }
+            }
+        });
     }
 }
 

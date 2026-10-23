@@ -67,9 +67,15 @@ pub(crate) fn epoch(value: &Variant) -> ConvertResult<Option<MEpoch>> {
         }
         Variant::Empty => Ok(Some(MEpoch::from_mjd(0.0, EpochRef::UTC))),
         Variant::Number(days) => Ok(Some(MEpoch::from_mjd(*days, EpochRef::UTC))),
-        Variant::Bool(_) | Variant::Numbers(_) | Variant::Array { .. } | Variant::Other(_) => Err(
-            ConvertError::Type(format!("cannot convert {} to an epoch", value.describe())),
-        ),
+        Variant::Bool(_)
+        | Variant::Numbers(_)
+        | Variant::Complex(_)
+        | Variant::Complexes(_)
+        | Variant::Array { .. }
+        | Variant::Other(_) => Err(ConvertError::Type(format!(
+            "cannot convert {} to an epoch",
+            value.describe()
+        ))),
     }
 }
 
@@ -157,7 +163,10 @@ pub(crate) fn frequency_reference(code: &str) -> ConvertResult<FrequencyRef> {
 /// CASA's `casaMFrequency`: a frequency record, or a quantity record
 /// (LSRK); `"frame value"`; `"value"` (LSRK); or a number of Hz (LSRK). An
 /// unknown frame is LSRK, as CASA defaults it (CASA prints a warning to
-/// stderr; this one is returned). `""` is CASA's `false`.
+/// stderr; this one is returned), and the two tokens are read again as one,
+/// so that a spaced quantity (`"1.4 GHz"`) keeps its value; when they do
+/// not read as one, the second token's value stands (`"foo 1.4GHz"`). `""`
+/// is CASA's `false`.
 pub(crate) fn frequency(value: &Variant) -> ConvertResult<(Option<MFrequency>, Option<String>)> {
     match value {
         Variant::Record(record) => {
@@ -166,10 +175,11 @@ pub(crate) fn frequency(value: &Variant) -> ConvertResult<(Option<MFrequency>, O
         Variant::Text(_) | Variant::Texts(_) => match tokens(value).as_slice() {
             [frame, text] => {
                 let quantity = read_value(text)?;
-                let (refer, warning) = match FREQUENCY_CODES.resolve(frame) {
-                    Some(code) => (frequency_frame(code)?, None),
+                let (refer, quantity, warning) = match FREQUENCY_CODES.resolve(frame) {
+                    Some(code) => (frequency_frame(code)?, quantity, None),
                     None => (
                         FrequencyRef::LSRK,
+                        Quantity::read(&format!("{frame}{text}")).unwrap_or(quantity),
                         Some(
                             "Could not understand frequency frame..defaulting to LSRK".to_string(),
                         ),
@@ -186,12 +196,15 @@ pub(crate) fn frequency(value: &Variant) -> ConvertResult<(Option<MFrequency>, O
         },
         Variant::Number(hz) => Ok((Some(MFrequency::new(*hz, FrequencyRef::LSRK)), None)),
         Variant::Empty => Ok((Some(MFrequency::new(0.0, FrequencyRef::LSRK)), None)),
-        Variant::Bool(_) | Variant::Numbers(_) | Variant::Array { .. } | Variant::Other(_) => {
-            Err(ConvertError::Type(format!(
-                "cannot convert {} to a frequency",
-                value.describe()
-            )))
-        }
+        Variant::Bool(_)
+        | Variant::Numbers(_)
+        | Variant::Complex(_)
+        | Variant::Complexes(_)
+        | Variant::Array { .. }
+        | Variant::Other(_) => Err(ConvertError::Type(format!(
+            "cannot convert {} to a frequency",
+            value.describe()
+        ))),
     }
 }
 

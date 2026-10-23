@@ -4,20 +4,24 @@
 //! `setflux`, the direction, `setshape`, `setspectrum`, `setfreq` and
 //! `setfreqframe`, in that order).
 //!
-//! What a setter raises is raised (and the component is not added); what
-//! `setshape` refuses it logs, leaving the component a point, as CASA's
-//! does.
+//! What a setter raises is raised and the component is not added, as CASA's
+//! `addcomponent` removes the component it began. `setshape` raises what
+//! reading its axes or constructing the shape raises (an axis that does not
+//! read, axes that are not positive or not ordered, a Gaussian's position
+//! angle outside ±2π). It refuses, logging and leaving the component a
+//! point, a shape name it does not know, a limb-darkened disk and an axis
+//! that is not an angle.
 //!
-//! Divergences, recorded in `docs/CASA (C++) bugs.md`:
-//! - **The flux keeps its polarisation.** CASA's `setflux` stores four values
-//!   through `FluxRep::setValue(Vector<Double>)`, which resets the
-//!   representation to Stokes, so `polarization='circular'` with
-//!   `[RR, RL, LR, LL]` is stored as I, Q, U, V. casa-rs stores the values in
-//!   the representation given.
-//! - **The flux keeps double precision.** CASA's `setflux` reads the values
-//!   into a single-precision `Vector<Complex>` (0.1 is stored as
-//!   0.10000000149011612); casa-rs keeps the values given.
+//! As CASA's does, `setflux` stores the flux's values as Stokes whatever
+//! `polarization` says (a CASA bug casa-rs follows, recorded in
+//! `docs/CASA (C++) bugs.md`), and takes the real parts of complex values.
+//!
+//! Divergence, recorded in `docs/CASA (C++) bugs.md`: **the flux keeps
+//! double precision.** CASA's `setflux` reads the values into a
+//! single-precision `Vector<Complex>` (0.1 is stored as
+//! 0.10000000149011612); casa-rs keeps the values given.
 
+use std::f64::consts::PI;
 use std::sync::Arc;
 
 use casa_components::{
@@ -29,7 +33,7 @@ use casa_types::measures::direction::MDirection;
 use casa_types::quanta::{Dimension, UnitDim};
 use num_complex::Complex64;
 
-use crate::convert::{ConvertError, ConvertResult, Variant, measures, quantity};
+use crate::convert::{ConvertError, ConvertResult, Variant, complex_values, measures, quantity};
 use crate::tools::LogLine;
 
 /// The direction `addcomponent` takes for `dir=[]`.
@@ -37,6 +41,9 @@ const DEFAULT_DIRECTION: &str = "J2000 00h00m00.0 90d00m00";
 
 /// The frequency `addcomponent` takes for `freq=[]`.
 const DEFAULT_FREQUENCY: &str = "LSRK 1.420GHz";
+
+/// The axes of `GaussianShape`'s default Gaussian, one arcminute, rad.
+const DEFAULT_GAUSSIAN_AXIS: f64 = PI / 10_800.0;
 
 /// `addcomponent`'s arguments.
 #[derive(Debug, Clone)]
@@ -70,7 +77,7 @@ impl AddComponent {
         };
         let direction = measures::direction(&dir, measures)?
             .ok_or_else(|| ConvertError::runtime("Could not interpret direction parameter"))?;
-        let shape = match self.shape(direction.clone()) {
+        let shape = match self.shape(direction.clone())? {
             Ok(shape) => shape,
             Err(message) => {
                 lines.push(LogLine::error(message));
@@ -90,59 +97,130 @@ impl AddComponent {
         Ok(SkyComponent::new(flux, shape, spectrum).with_label(self.label.clone()))
     }
 
-    /// `setshape`'s shape at `direction`, or the message it logs when it
-    /// leaves the shape unchanged.
-    fn shape(&self, direction: MDirection) -> Result<ComponentShape, String> {
+    /// `setshape`'s shape at `direction`: `Ok(Err(message))` when it refuses
+    /// the shape, logging `message` and leaving the shape unchanged, and an
+    /// error for what it raises.
+    fn shape(&self, direction: MDirection) -> ConvertResult<Result<ComponentShape, String>> {
         let unchanged = "Shape not changed.";
-        let shape = ShapeType::parse_casa(&self.shape).map_err(|_| {
-            format!(
+        let Ok(shape) = ShapeType::parse_casa(&self.shape) else {
+            return Ok(Err(format!(
                 "Could not translate the shape type to a known value. Known types are: Point, \
                  Gaussian, Disk. {unchanged}"
-            )
-        })?;
-        let axes = || {
-            let angle = |value: &Variant, name: &str| {
-                let quantity = quantity(value).map_err(|error| error.to_string())?;
-                if quantity.unit().val().dim == UnitDim::basis(Dimension::Angle) {
-                    Ok(quantity.get_si_value())
-                } else {
-                    Err(format!("The {name} field does not have angular units"))
-                }
-            };
-            let axes = Ellipse::new(
-                angle(&self.majoraxis, "majoraxis")?,
-                angle(&self.minoraxis, "minoraxis")?,
-                angle(&self.positionangle, "positionangle")?,
-            )
-            .map_err(|error| error.to_string())?;
-            Ok::<_, String>(axes)
+            )));
         };
-        let parsed = |reason: String| {
-            format!("Could not parse the shape parameters. The error was: {reason} {unchanged}")
-        };
-        let kind = match shape {
-            ShapeType::Point => return Ok(ComponentShape::point(direction)),
-            ShapeType::Gaussian => ShapeKind::Gaussian {
-                axes: axes().map_err(parsed)?,
-                errors: EllipseErrors::default(),
-            },
-            ShapeType::Disk => ShapeKind::Disk {
-                axes: axes().map_err(parsed)?,
-                errors: EllipseErrors::default(),
-            },
+        match shape {
+            ShapeType::Point => return Ok(Ok(ComponentShape::point(direction))),
             ShapeType::LimbDarkenedDisk => {
-                return Err(format!(
+                return Ok(Err(format!(
                     "Limbdarkeneddisk is not implemented yet. {unchanged}"
-                ));
+                )));
             }
+            ShapeType::Gaussian | ShapeType::Disk => {}
+        }
+        // `casaQuantity` reads all three, raising for one it cannot read,
+        // before the shape's `fromRecord` refuses one that is not an angle.
+        let quantities = [
+            ("majoraxis", quantity(&self.majoraxis)?),
+            ("minoraxis", quantity(&self.minoraxis)?),
+            ("positionangle", quantity(&self.positionangle)?),
+        ];
+        let mut radians = [0.0; 3];
+        for ((name, quantity), radian) in quantities.iter().zip(&mut radians) {
+            if quantity.unit().val().dim != UnitDim::basis(Dimension::Angle) {
+                return Ok(Err(format!(
+                    "Could not parse the shape parameters. The error was: The {name} field does \
+                     not have angular units {unchanged}"
+                )));
+            }
+            *radian = quantity.get_si_value();
+        }
+        let [major, minor, position_angle] = radians;
+        if let Some(message) = constructor_error(shape, major, minor, position_angle) {
+            return Err(ConvertError::runtime(message));
+        }
+        let raised =
+            |error: casa_components::ComponentError| ConvertError::runtime(error.to_string());
+        let axes = Ellipse::new(major, minor, position_angle).map_err(raised)?;
+        let errors = EllipseErrors::default();
+        let kind = if shape == ShapeType::Gaussian {
+            ShapeKind::Gaussian { axes, errors }
+        } else {
+            ShapeKind::Disk { axes, errors }
         };
-        ComponentShape::new(direction, kind).map_err(|error| parsed(error.to_string()))
+        ComponentShape::new(direction, kind).map(Ok).map_err(raised)
     }
 }
 
+/// What casacore raises making a Gaussian or a disk with these axes and
+/// position angle (rad), or `None` when it makes it.
+///
+/// `GaussianShape` sets the axes through `Gaussian2DParam::setWidth` on its
+/// default one-arcminute circle, which sets the major axis first only when
+/// it is longer than an arcminute, so that order decides which axis is
+/// reported; then `setPA` refuses an angle outside ±2π. `DiskShape` asserts
+/// its axes, taking two within 1e-17 rad as equal, and takes any angle.
+fn constructor_error(
+    shape: ShapeType,
+    major: f64,
+    minor: f64,
+    position_angle: f64,
+) -> Option<&'static str> {
+    if shape == ShapeType::Disk {
+        let minor = if (major - minor).abs() < 1e-17 {
+            major
+        } else {
+            minor
+        };
+        let asserted = major > 0.0 && minor > 0.0 && major >= minor;
+        return (!asserted).then_some(
+            "Failed AlwaysAssert _majorAxis > 0 && _minorAxis > 0 && _majorAxis >=_minorAxis",
+        );
+    }
+    let set_major = |width: f64, minor_axis: f64| {
+        if width <= 0.0 {
+            Some("Gaussian2DParam<T>::setMajorAxis(const T &width) - width must be positive")
+        } else if width < minor_axis {
+            Some(
+                "Gaussian2DParam<T>::setMajorAxis(const T &width) - major axis is smaller than \
+                 minor axis",
+            )
+        } else {
+            None
+        }
+    };
+    let set_minor = |width: f64, major_axis: f64| {
+        if width <= 0.0 {
+            Some("Gaussian2DParam<T>::setMinorAxis(const T &width) - width must be positive")
+        } else if width > major_axis {
+            Some(
+                "Gaussian2DParam<T>::setMinorAxis(const T &width) - minor axis is greater than \
+                 major axis",
+            )
+        } else {
+            None
+        }
+    };
+    let widths = if major.abs() > DEFAULT_GAUSSIAN_AXIS {
+        set_major(major, DEFAULT_GAUSSIAN_AXIS).or_else(|| set_minor(minor, major))
+    } else {
+        set_minor(minor, DEFAULT_GAUSSIAN_AXIS).or_else(|| set_major(major, minor))
+    };
+    widths.or_else(|| {
+        (position_angle.abs() > 2.0 * PI).then_some(
+            "Gaussian2DParam<T>::setPA(const T &pa) - PA must be in radians and between -2pi \
+             and 2pi",
+        )
+    })
+}
+
 /// `setflux`'s flux: one value (Stokes I) or four, in `unit` (a flux
-/// density) and `polarization`'s representation, checked in CASA's order
-/// (the representation, the unit, then the values) with its messages.
+/// density), checked in CASA's order (the representation, the unit, then
+/// the values) with its messages.
+///
+/// `polarization` must name a representation, and one value needs Stokes,
+/// but the values are stored as Stokes whatever it names, as CASA's
+/// `FluxRep::setValue` stores them. Complex values (a `complex`, or a
+/// sequence with one) give their real parts, as CASA's setter takes them.
 fn flux(value: &Variant, unit: &str, polarization: &str) -> ConvertResult<Flux> {
     let polarisation = Polarisation::parse_casa(polarization).map_err(|_| {
         ConvertError::runtime(
@@ -150,20 +228,21 @@ fn flux(value: &Variant, unit: &str, polarization: &str) -> ConvertResult<Flux> 
         )
     })?;
     let unchanged = "Flux not changed on any components";
-    let mut flux = Flux::new([Complex64::new(0.0, 0.0); 4], unit, polarisation).map_err(|_| {
-        ConvertError::runtime(format!(
-            "The flux units must have the same dimensions as the Jansky\n{unchanged}"
-        ))
-    })?;
+    let mut flux =
+        Flux::new([Complex64::new(0.0, 0.0); 4], unit, Polarisation::Stokes).map_err(|_| {
+            ConvertError::runtime(format!(
+                "The flux units must have the same dimensions as the Jansky\n{unchanged}"
+            ))
+        })?;
     let values: Vec<f64> = match value {
         Variant::Empty => vec![0.0; 4],
-        Variant::Number(number) => vec![*number],
-        Variant::Numbers(numbers) => numbers.clone(),
-        _ => {
-            return Err(ConvertError::runtime(
-                "Could not understand the type of flux value variable",
-            ));
-        }
+        other => complex_values(other)
+            .ok_or_else(|| {
+                ConvertError::runtime("Could not understand the type of flux value variable")
+            })?
+            .iter()
+            .map(|value| value.re)
+            .collect(),
     };
     let values = match (values.as_slice(), polarisation) {
         ([i], Polarisation::Stokes) => [*i, 0.0, 0.0, 0.0],

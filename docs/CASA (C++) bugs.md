@@ -32,10 +32,10 @@ Simulator behaviours casa-rs does not follow:
 [models the simulator cannot read](#smpredict-accepts-models-the-simulator-cannot-read).
 Component-list behaviours casa-rs does not follow:
 [a limb-darkened disk without an exponent](#writing-a-limb-darkened-disk-without-an-exponent-aborts-casa),
-[`addcomponent`'s polarization](#claddcomponent-stores-four-flux-values-as-stokes),
 [`addcomponent`'s single-precision flux](#claddcomponent-stores-the-flux-in-single-precision),
 [the `cl` tool's record units](#the-cl-tool-records-a-shapes-axes-in-the-units-it-was-given).
 Component-list behaviours casa-rs follows:
+[`addcomponent`'s polarization](#claddcomponent-stores-four-flux-values-as-stokes),
 [a shape `addcomponent` cannot make](#claddcomponent-keeps-a-point-for-a-shape-it-cannot-make).
 
 ## AW-projection pairs the partner hand's visibility with the conjugate-baseline cell
@@ -643,7 +643,7 @@ it reads every other row the column does not describe.
 ## `cl.addcomponent` stores four flux values as Stokes
 
 - Date noted: 2026-10-23
-- Status: CASA bug casa-rs does not follow (#841)
+- Status: CASA bug; casa-rs follows it (#841, owner decision 2026-10-23)
 - Affected code: `casatools/src/tools/componentlist/componentlist_cmpt.cc`
   (`setflux`, lines 831-930); `components/ComponentModels/Flux.tcc`
   (`FluxRep::setValue(const Vector<T>&)`, lines 363-368)
@@ -654,9 +654,9 @@ it reads every other row the column does not describe.
 Stokes. So `cl.addcomponent(flux=[1, 0.1, 0.2, 0.9],
 polarization='circular')` stores I = 1, Q = 0.1, U = 0.2, V = 0.9 rather than
 RR, RL, LR and LL (probed with CASA 6.7.6 for 'Circular', 'circular',
-'CIRCULAR' and 'linear'; an unknown name raises). casa-rs stores the values in
-the representation given, so the list holds what the script describes; CASA
-reads such a list back correctly.
+'CIRCULAR' and 'linear'). `polarization` still has effects: an unknown name
+raises, and one value with a representation other than Stokes raises. casa-rs
+does the same, so a script gets the list CASA would give it.
 
 ## `cl.addcomponent` stores the flux in single precision
 
@@ -695,9 +695,20 @@ same, and the table is the same either way.
 
 `addcomponent` adds a point and then calls `setshape`, ignoring what it
 returns. `setshape` logs SEVERE and returns False for a shape name it does
-not know, for a limb-darkened disk ("not implemented yet"), and for axes it
-cannot read (none given, not angles, or a minor axis longer than the major),
-so the component stays a point at the given direction and `addcomponent`
-returns True (probed with CASA 6.7.6). casa-rs does the same and logs the
-message at ERROR. Scripts that misspell a shape name therefore get points, as
-they do in CASA.
+not know, for a limb-darkened disk ("not implemented yet"), and for an axis
+that is not an angle (none given, a number, or another unit), so the
+component stays a point at the given direction and `addcomponent` returns
+True (probed with CASA 6.7.6). casa-rs does the same and logs the message at
+ERROR. Scripts that misspell a shape name therefore get points, as they do in
+CASA.
+
+What `setshape` raises, `addcomponent` raises too, after removing the
+component it began: an axis that does not read as a quantity (`'garbage'`, a
+complex number), and what the shape's constructor raises, such as a
+Gaussian's position angle outside ±2π (`Gaussian2DParam::setPA`) or axes that
+are not positive. A minor axis longer than the major raises as well:
+`TwoSidedShape::fromRecord` (`TwoSidedShape.cc`, lines 229-263) means to
+refuse it, but compares the minor axis with itself (`near(minorAxisInRad,
+minorAxisInRad)`, line 249), so the check never fires and the constructor
+raises instead. casa-rs raises in each case with casacore's message, and adds
+nothing.

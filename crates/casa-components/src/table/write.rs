@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Writing a component list as CASA's `createTable` and `writeTable` do.
+//! Writing a component list as CASA's `createTable` and `writeTable` do: a
+//! new table is staged and published complete, and an existing one is
+//! rewritten in place under its write lock (ADR-0008).
 
 use std::collections::HashMap;
 use std::fs;
@@ -7,7 +9,9 @@ use std::path::{Path, PathBuf};
 
 use casa_tables::table_measures::{MeasureType, TableMeasDesc};
 use casa_tables::table_quantum::TableQuantumDesc;
-use casa_tables::{ColumnBinding, DataManagerKind, Table, TableError, TableInfo, TableOptions};
+use casa_tables::{
+    ColumnBinding, DataManagerKind, Table, TableError, TableInfo, TableOptions, TableWriteLock,
+};
 use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 
 use super::measures::casacore_angles;
@@ -37,38 +41,42 @@ pub(crate) fn write_component_list(
 }
 
 /// Rewrite the component-list table at `path` with `list`, as CASA's
-/// `writeTable` rewrites a list it has open for update: the new table is
-/// staged beside `path` and swapped in, and the old one is removed only once
-/// the new one is in place.
+/// `writeTable` rewrites a list it has open for update: in place, under
+/// casacore's write lock on the table (ADR-0008). The lock is waited for
+/// while another process holds it, and the table keeps its directory and
+/// `table.lock`, so a process holding it open re-reads it when the write is
+/// announced. A table that does not exist is created, as a new one is.
 pub(crate) fn rewrite_component_list(
     list: &ComponentList,
     path: &Path,
 ) -> Result<(), ComponentListError> {
-    let staging = staged(list, path)?;
-    let replaced = staging.with_extension("replaced");
-    let publish_error = |reason: String| ComponentListError::Publish {
+    if !path.exists() {
+        return write_component_list(list, path);
+    }
+    let table_error = |source| ComponentListError::Table {
         path: path.to_path_buf(),
-        reason,
+        source,
     };
-    if path.exists() {
-        fs::rename(path, &replaced).map_err(|error| {
-            let _ = fs::remove_dir_all(&staging);
-            publish_error(format!("cannot move the old table aside: {error}"))
-        })?;
-    }
-    if let Err(error) = fs::rename(&staging, path) {
-        let _ = fs::rename(&replaced, path);
-        let _ = fs::remove_dir_all(&staging);
-        return Err(publish_error(format!(
-            "cannot publish {}: {error}",
-            staging.display()
-        )));
-    }
-    if replaced.exists() {
-        fs::remove_dir_all(&replaced)
-            .map_err(|error| publish_error(format!("cannot remove the old table: {error}")))?;
-    }
-    Ok(())
+    // Built first, so that a component CASA could not write is refused
+    // before the table is locked or touched.
+    let table = build_table(list, path)?;
+    let mut lock = lock_existing(path).map_err(table_error)?;
+    lock.record_write();
+    let saved = save(&table, path, has_limb_darkened_disk(list));
+    let released = lock.release();
+    saved.and(released).map_err(table_error)
+}
+
+/// casacore's write lock on the existing table at `path`, waited for while
+/// another process holds it, as `writeTable`'s `AutoLocking` waits.
+///
+/// [`TableWriteLock`] refuses a lock it had to wait for when another process
+/// wrote the table meanwhile, because a writer that read the table first
+/// would overwrite that write with stale rows. A list's rewrite replaces
+/// every row from memory, as CASA's does after it re-reads the table, so the
+/// refusal is answered by taking the lock again.
+fn lock_existing(path: &Path) -> Result<TableWriteLock, TableError> {
+    TableWriteLock::acquire(path, 0).or_else(|_| TableWriteLock::acquire(path, 0))
 }
 
 /// `list` built and saved as a table in a staging directory beside `path`.

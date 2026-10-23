@@ -3,13 +3,19 @@
 //! Python: CASA's `componentlist` over a [`ComponentList`].
 //!
 //! The list is attached to a table by `open` or `rename`, as CASA's is:
+//! - the table is named by its absolute path, resolved against the working
+//!   directory when the list is attached (casacore's `Path::absoluteName`),
+//!   so a later change of directory does not move it;
 //! - `rename` of a list not attached creates the table and writes the list
 //!   at once (CASA's `createTable`), refusing a table that exists; of an
 //!   attached list it moves the table, whose contents are written later;
 //! - an attached list opened for update (`open(nomodify=False)`) or renamed
 //!   is rewritten when it is released: by `close`, `done`, an `open` that
-//!   replaces it, or the tool's deletion (CASA's `ComponentList` destructor),
-//!   even when nothing changed;
+//!   replaces it (before the replacement is read, which may be the same
+//!   table), or the tool's deletion (CASA's `ComponentList` destructor), even
+//!   when nothing changed. The rewrite waits for a write lock another
+//!   process holds on the table, as casacore's does
+//!   ([`ComponentList::rewrite_table`]);
 //! - a list opened read-only (`nomodify=True`) is never written, though it
 //!   can be changed in memory.
 
@@ -17,6 +23,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use casa_components::{ComponentList, ComponentListError, SkyComponent};
+use casa_tables::{Table, TableOptions};
 use casa_types::measures::MeasuresProvider;
 use casa_types::{RecordValue, Value};
 
@@ -75,27 +82,32 @@ impl State {
         }
     }
 
-    /// `open(filename, nomodify)`.
+    /// `open(filename, nomodify)`: as CASA's, the table is checked to be a
+    /// component list, then the list it replaces is released (and written),
+    /// and only then is the table read, so that reopening the list's own
+    /// table reads what the release wrote.
     pub(crate) fn open(&mut self, filename: &str, nomodify: bool) -> ConvertResult<bool> {
         let not_a_list = || {
             ConvertError::runtime(format!(
                 "{filename} is non existant or is not a componentlist table"
             ))
         };
-        let path = Path::new(filename);
-        if filename.is_empty() || !path.join("table.dat").is_file() {
+        if filename.is_empty() {
             return Err(not_a_list());
         }
-        let list = ComponentList::read_table(path).map_err(|error| match error {
+        let path = absolute(filename)?;
+        if !is_component_list(&path) {
+            return Err(not_a_list());
+        }
+        self.release().map_err(ConvertError::runtime)?;
+        self.list = ComponentList::read_table(&path).map_err(|error| match error {
             ComponentListError::Table { .. } | ComponentListError::MissingColumn { .. } => {
                 not_a_list()
             }
             other => ConvertError::runtime(other.to_string()),
         })?;
-        self.release().map_err(ConvertError::runtime)?;
-        self.list = list;
         self.table = Some(Attached {
-            path: path.to_path_buf(),
+            path,
             writable: !nomodify,
         });
         Ok(true)
@@ -103,48 +115,48 @@ impl State {
 
     /// `rename(filename)`.
     pub(crate) fn rename(&mut self, filename: &str) -> ConvertResult<bool> {
-        let path = PathBuf::from(filename);
         match &self.table {
-            _ if filename.is_empty() && self.table.is_none() => Ok(true),
-            Some(_) if filename.is_empty() => Err(ConvertError::runtime(
-                "componentlist.rename('') of a list attached to a table (which CASA deletes) \
-                 is not yet implemented in casa-rs",
-            )),
+            None if filename.is_empty() => return Ok(true),
+            Some(_) if filename.is_empty() => {
+                return Err(ConvertError::runtime(
+                    "componentlist.rename('') of a list attached to a table (which CASA \
+                     deletes) is not yet implemented in casa-rs",
+                ));
+            }
             Some(Attached {
                 writable: false, ..
-            }) => Err(ConvertError::runtime(
-                "Failed AlwaysAssert itsROFlag == false",
-            )),
-            _ if path.exists() => Err(ConvertError::runtime(format!(
-                "Table {filename} already exists"
-            ))),
-            Some(Attached {
-                path: current,
-                writable: true,
             }) => {
+                return Err(ConvertError::runtime(
+                    "Failed AlwaysAssert itsROFlag == false",
+                ));
+            }
+            _ => {}
+        }
+        let path = absolute(filename)?;
+        if path.exists() {
+            return Err(ConvertError::runtime(format!(
+                "Table {filename} already exists"
+            )));
+        }
+        match &self.table {
+            Some(Attached { path: current, .. }) => {
                 std::fs::rename(current, &path).map_err(|error| {
                     ConvertError::runtime(format!(
                         "cannot rename {} to {filename}: {error}",
                         current.display()
                     ))
                 })?;
-                self.table = Some(Attached {
-                    path,
-                    writable: true,
-                });
-                Ok(true)
             }
-            None => {
-                self.list
-                    .write_table(&path)
-                    .map_err(|error| ConvertError::runtime(error.to_string()))?;
-                self.table = Some(Attached {
-                    path,
-                    writable: true,
-                });
-                Ok(true)
-            }
+            None => self
+                .list
+                .write_table(&path)
+                .map_err(|error| ConvertError::runtime(error.to_string()))?,
         }
+        self.table = Some(Attached {
+            path,
+            writable: true,
+        });
+        Ok(true)
     }
 
     /// `done()`: release the list and start an empty one.
@@ -218,6 +230,25 @@ impl State {
             _ => unreachable!("a shape's record holds its direction"),
         }
     }
+}
+
+/// `filename` made absolute against the working directory, as casacore's
+/// `Path::absoluteName` makes the name a list is attached to. (casacore
+/// also expands `~` and environment variables, which this does not.)
+fn absolute(filename: &str) -> ConvertResult<PathBuf> {
+    std::path::absolute(filename)
+        .map_err(|error| ConvertError::runtime(format!("cannot resolve {filename}: {error}")))
+}
+
+/// Whether `path` is a table with a `Shape_Parameters` column, the test
+/// CASA's `open` makes before it releases the current list.
+fn is_component_list(path: &Path) -> bool {
+    path.join("table.dat").is_file()
+        && Table::open_metadata_only(TableOptions::new(path)).is_ok_and(|table| {
+            table
+                .schema()
+                .is_some_and(|schema| schema.contains_column("Shape_Parameters"))
+        })
 }
 
 /// A record for Python, or the error CASA reports when it cannot form one.

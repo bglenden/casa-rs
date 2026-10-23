@@ -18,7 +18,9 @@
 //!    column description and keyword must match those of the table CASA
 //!    itself wrote;
 //! 3. CASA opens it for update and closes it, so `writeTable` rewrites it in
-//!    place, and casa-rs reads the rewrite back unchanged.
+//!    place, and casa-rs reads the rewrite back unchanged;
+//! 4. casa-rs rewrites CASA's table in place (`rewrite_table`, under its
+//!    write lock), and CASA reads every component and cell back.
 //!
 //! A fourth list holds a limb-darkened disk without an exponent: CASA reads
 //! it (step 2), but is not asked to rewrite it, since its writer aborts on
@@ -241,8 +243,18 @@ fn check_round_trip(python: &Path, list: &ComponentList, scratch: &Path, name: &
         &reread,
         &format!("{name}: CASA's rewrite read back by casa-rs"),
     );
+
+    list.rewrite_table(&rewritten)
+        .expect("casa-rs rewrites CASA's table");
+    let document = dump(python, &rewritten);
+    assert_matches_casa(
+        list,
+        &document,
+        &format!("CASA reading casa-rs's rewrite of {name}"),
+    );
     println!(
-        "{name}: {} components; CASA read every field and cell, and casa-rs read CASA's rewrite back unchanged",
+        "{name}: {} components; CASA read every field and cell, casa-rs read CASA's rewrite back \
+         unchanged, and CASA read casa-rs's rewrite of it",
         list.len()
     );
 }

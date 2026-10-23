@@ -6,19 +6,23 @@ and with the object-surface bundle. Behaviour is compared with what CASA
 6.7.6 returned for a fixed script (`data/casa_componentlist_tool.json`,
 written by `tools/simulation/componentlist_oracle.py tool`): each
 `addcomponent` call's outcome and the list's length after it, then the
-records and accessors of every component.
+records and accessors of every component. The script's complex arguments are
+stored as `{"complex": [re, im]}`.
 
 Records are compared as quantities: CASA gives a shape it built in memory in
 the units it was given, and casa-rs gives every shape in arcmin and degrees,
 as CASA gives one read from a table. CASA's `setflux` holds flux values in
-single precision, so they are compared to 1e-7. One call diverges by
-design: CASA stores `polarization='circular'` values as Stokes, and casa-rs
-keeps them circular.
+single precision, so they are compared to 1e-7. As in CASA, `addcomponent`
+stores its four flux values as Stokes whatever `polarization` says.
 
 When to write the table follows CASA as probed (2026-10-23): `rename`
 writes at once; later changes reach the table at `close`, `done`, a
-replacing `open` or the tool's deletion; `open(nomodify=False)` then `close`
-rewrites; a list opened with `nomodify=True` is never written.
+replacing `open` (before the replacement is read) or the tool's deletion;
+`open(nomodify=False)` then `close` rewrites; a list opened with
+`nomodify=True` is never written. The table is the one named when the list
+was attached, whatever the working directory is later, and it is rewritten
+in place under casacore's write lock, waiting for another process that holds
+it.
 """
 
 from __future__ import annotations
@@ -28,6 +32,10 @@ import json
 import logging
 import math
 import os
+import subprocess
+import sys
+import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -55,9 +63,6 @@ IMPLEMENTED = {
     "torecord",
 }
 NOT_YET_IMPLEMENTED = set(CASA["methods"]) - IMPLEMENTED
-
-#: The script call whose flux CASA stores as Stokes and casa-rs keeps circular.
-CIRCULAR_CALL = 3
 
 #: Radians, hertz or janskys in each unit the records use.
 SI = {
@@ -98,19 +103,31 @@ def test_methods_casa_rs_does_not_implement_yet_raise() -> None:
         cl.fromrecord({})
 
 
+def untagged(value: Any) -> Any:
+    """A script argument with its `{"complex": [re, im]}` values complex."""
+    if isinstance(value, dict):
+        if set(value) == {"complex"}:
+            return complex(*value["complex"])
+        return {key: untagged(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [untagged(item) for item in value]
+    return value
+
+
 def replay() -> componentlist:
     """CASA's script, replayed with casars, each call checked against CASA."""
     cl = componentlist()
     for number, call in enumerate(TOOL["calls"]):
+        kwargs = untagged(call["kwargs"])
         if "raised" in call:
             with pytest.raises(RuntimeError) as raised:
-                cl.addcomponent(**call["kwargs"])
+                cl.addcomponent(**kwargs)
             # CASA's first line, which carries its log prefix or its source
             # location.
             first = str(raised.value).split("\n", 1)[0].rstrip(".")
             assert first in call["raised"], (number, str(raised.value))
         else:
-            assert cl.addcomponent(**call["kwargs"]) == call["returned"], number
+            assert cl.addcomponent(**kwargs) == call["returned"], number
         assert cl.length() == call["length"], number
     return cl
 
@@ -118,11 +135,12 @@ def replay() -> componentlist:
 def test_addcomponent_follows_casa_call_by_call(caplog: pytest.LogCaptureFixture) -> None:
     with caplog.at_level(logging.WARNING, logger=LOGGER):
         replay()
-    # `setshape`'s refusals are CASA's SEVERE messages, logged and survived.
+    # `setshape`'s refusals are CASA's SEVERE messages, logged and survived;
+    # what its shape constructors raise is raised.
     errors = [record.getMessage() for record in caplog.records if record.levelno == logging.ERROR]
     assert errors[0].startswith("Could not translate the shape type to a known value.")
     assert any(error.startswith("Limbdarkeneddisk is not implemented yet.") for error in errors)
-    assert len(errors) == 4
+    assert len(errors) == 5
 
 
 def si(value: Any) -> Any:
@@ -165,14 +183,6 @@ def test_records_and_accessors_are_casas() -> None:
         for accessor, outcome in casa.items():
             found = si(getattr(cl, accessor)(index))
             expected = si(outcome["returned"])
-            if index == CIRCULAR_CALL and accessor == "getcomponent":
-                # casa-rs keeps the circular values CASA stores as Stokes.
-                assert found["flux"]["polarisation"] == "Circular"
-                assert found["flux"]["value"] == [[1.0, 0.0], [0.1, 0.0], [0.2, 0.0], [0.9, 0.0]]
-                found["flux"] = expected["flux"]
-            elif index == CIRCULAR_CALL and accessor == "getfluxvalue":
-                assert found == [1.0, 0.1, 0.2, 0.9]
-                found = expected
             assert_same(found, expected, f"component {index} {accessor}",
                         flux=accessor == "getfluxvalue")
     record = si(cl.torecord())
@@ -279,6 +289,66 @@ def test_an_open_releases_the_list_it_replaces(tmp_path: Path) -> None:
     assert cl.length() == 1
 
 
+def test_an_open_of_its_own_table_writes_the_list_before_reading_it(tmp_path: Path) -> None:
+    # CASA deletes (and so writes) the list an `open` replaces before it
+    # reads the replacement, which may be the same table (CASA 6.7.6 keeps
+    # both components here).
+    path = tmp_path / "list.cl"
+    cl = componentlist()
+    add_point(cl, 1.0)
+    cl.rename(str(path))
+    add_point(cl, 2.0)
+    assert cl.open(str(path)) is True
+    assert cl.length() == 2
+    add_point(cl, 3.0)
+    alias = tmp_path / "alias.cl"
+    alias.symlink_to(path)
+    assert cl.open(str(alias)) is True
+    assert cl.length() == 3
+    cl.close(log=False)
+    assert fluxes(path) == [1.0, 2.0, 3.0]
+
+
+def test_a_list_keeps_its_table_when_the_working_directory_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # CASA resolves the table's absolute name when the list is attached, by
+    # `open` or `rename`; `close` writes that table (CASA 6.7.6).
+    first, second = tmp_path / "A", tmp_path / "B"
+    for directory, flux in ((first, 1.0), (second, 9.0)):
+        directory.mkdir()
+        cl = componentlist()
+        add_point(cl, flux)
+        cl.rename(str(directory / "list.cl"))
+        cl.done()
+    cl = componentlist()
+    monkeypatch.chdir(first)
+    cl.open("list.cl")
+    add_point(cl, 2.0)
+    monkeypatch.chdir(second)
+    cl.close(log=False)
+    assert fluxes(first / "list.cl") == [1.0, 2.0]
+    assert fluxes(second / "list.cl") == [9.0]
+    # A list not attached, renamed to a relative name.
+    monkeypatch.chdir(first)
+    add_point(cl, 3.0)
+    cl.rename("renamed.cl")
+    add_point(cl, 4.0)
+    monkeypatch.chdir(second)
+    cl.close(log=False)
+    assert fluxes(first / "renamed.cl") == [3.0, 4.0]
+    assert not (second / "renamed.cl").exists()
+    # An attached list, moved to a relative name.
+    monkeypatch.chdir(first)
+    cl.open("list.cl")
+    cl.rename("moved.cl")
+    add_point(cl, 5.0)
+    monkeypatch.chdir(second)
+    cl.close(log=False)
+    assert fluxes(first / "moved.cl") == [1.0, 2.0, 5.0]
+    assert not (second / "moved.cl").exists()
+
+
 def test_a_dropped_tool_writes_its_list(tmp_path: Path) -> None:
     path = tmp_path / "list.cl"
     cl = componentlist()
@@ -288,6 +358,91 @@ def test_a_dropped_tool_writes_its_list(tmp_path: Path) -> None:
     del cl
     gc.collect()
     assert fluxes(path) == [1.0, 2.0]
+
+
+#: Another process holding casacore's write lock on a table (an `fcntl`
+#: write lock on byte 0 of its `table.lock`) for `argv[2]` seconds.
+HOLD_THE_WRITE_LOCK = """
+import fcntl, os, sys, time
+descriptor = os.open(sys.argv[1], os.O_RDWR)
+fcntl.lockf(descriptor, fcntl.LOCK_EX, 1, 0)
+print("held", flush=True)
+time.sleep(float(sys.argv[2]))
+"""
+
+
+def test_a_dropped_tool_waits_for_the_write_lock_without_the_gil(tmp_path: Path) -> None:
+    # ADR-0019: the deletion writes the list with the GIL released, so other
+    # threads run while it waits for a lock another process holds.
+    path = tmp_path / "list.cl"
+    cl = componentlist()
+    add_point(cl, 1.0)
+    cl.rename(str(path))
+    add_point(cl, 2.0)
+    # Reading the table opens it with locking, which makes its `table.lock`.
+    assert fluxes(path) == [1.0]
+    holder = subprocess.Popen(
+        [sys.executable, "-c", HOLD_THE_WRITE_LOCK, str(path / "table.lock"), "2"],
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    assert holder.stdout is not None and holder.stdout.readline() == "held\n"
+    tools = [cl]
+    del cl
+    dropped = threading.Event()
+
+    def drop() -> None:
+        tools.clear()  # the last reference: the tool is deleted here
+        dropped.set()
+
+    thread = threading.Thread(target=drop)
+    started = time.monotonic()
+    thread.start()
+    time.sleep(0.2)
+    woke = time.monotonic() - started
+    waiting = not dropped.is_set()
+    thread.join()
+    assert holder.wait() == 0
+    # Holding the GIL, the deletion would keep this thread asleep until the
+    # holder exits, by when the deletion is done.
+    assert woke < 1.0, f"the deletion held the GIL while it waited ({woke:.2f} s)"
+    assert waiting, "the deletion did not wait for the write lock"
+    assert fluxes(path) == [1.0, 2.0]
+
+
+def test_a_spaced_frequency_keeps_its_value() -> None:
+    # CASA's casaMFrequency reads "1.4 GHz" as an unknown frame "1.4" and
+    # then the two tokens again as one: 1.4 GHz in LSRK (CASA 6.7.6).
+    cl = componentlist()
+    assert cl.addcomponent(flux=1, freq="1.4 GHz") is True
+    frequency = cl.getspectrum(0)["frequency"]
+    assert frequency["refer"] == "LSRK"
+    assert si(frequency["m0"])["si"] == pytest.approx(1.4e9, rel=1e-12)
+
+
+def test_a_shape_casa_cannot_construct_raises_and_adds_nothing() -> None:
+    # CASA's setshape rethrows what the shape's constructor raises, and
+    # addcomponent removes the component it began (CASA 6.7.6).
+    cl = componentlist()
+    add_point(cl, 1.0)
+    with pytest.raises(RuntimeError, match="PA must be in radians and between -2pi and 2pi"):
+        cl.addcomponent(flux=1.0, shape="gaussian", majoraxis="2arcsec", minoraxis="1arcsec",
+                        positionangle="400deg")
+    assert cl.length() == 1
+
+
+def test_complex_fluxes_keep_their_real_parts() -> None:
+    # CASA's setflux takes the real parts of complex values (CASA 6.7.6).
+    cl = componentlist()
+    for flux, expected in [
+        ([1 + 0j, 0.1 + 0.2j, 0j, 0.5j], [1.0, 0.1, 0.0, 0.0]),
+        (2 + 3j, [2.0, 0.0, 0.0, 0.0]),
+        (np.array([1 + 1j, 0, 0, 0]), [1.0, 0.0, 0.0, 0.0]),
+        (np.array([3 + 1j]), [3.0, 0.0, 0.0, 0.0]),
+        ([1, 0.1j, 0, 0], [1.0, 0.0, 0.0, 0.0]),
+    ]:
+        assert cl.addcomponent(flux=flux) is True
+        assert cl.getfluxvalue(cl.length() - 1).tolist() == pytest.approx(expected), flux
 
 
 def test_open_refuses_what_is_not_a_component_list(tmp_path: Path) -> None:

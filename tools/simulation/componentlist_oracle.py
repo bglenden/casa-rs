@@ -35,8 +35,9 @@ Four subcommands:
     after it; then `torecord`, and for every component `getcomponent`,
     `getspectrum`, `getrefdir`, `getfluxvalue`, `getfluxunit`, `getlabel`,
     `shapetype` and `spectrumtype`; and the outcomes of the edge cases in
-    `TOOL_EDGES`. `casars.tools.componentlist`'s tests replay the same
-    script (`crates/casars-python/python/tests/data/casa_componentlist_tool.json`).
+    `TOOL_EDGES`. Complex arguments are recorded as `{"complex": [re, im]}`.
+    `casars.tools.componentlist`'s tests replay the same script
+    (`crates/casars-python/python/tests/data/casa_componentlist_tool.json`).
 
 A JSON record holds `components` (each `getcomponent(i)`), `cells` (column
 name to a list with one entry per row: the cell, or null when it is
@@ -416,6 +417,23 @@ TOOL_CALLS = [
     {"flux": 2.0, "dir": "GALACTIC 120deg 2deg", "freq": 1.4e9, "label": "a number as freq"},
     {"freq": "BARY 5GHz"},
     {"shape": "disk", "majoraxis": "1arcsec", "minoraxis": "2arcsec"},
+    # Added for the review of PR #873: spaced frequencies, shapes whose
+    # constructors raise, axes that do not read, and complex fluxes.
+    {"flux": 1.0, "freq": "1.4 GHz", "label": "a spaced frequency"},
+    {"flux": 1.0, "freq": "foo 1.4GHz"},
+    {"shape": "gaussian", "majoraxis": "2arcsec", "minoraxis": "1arcsec", "positionangle": "400deg"},
+    {"shape": "gaussian", "majoraxis": "30arcsec", "minoraxis": "2arcmin", "positionangle": "0deg"},
+    {"shape": "gaussian", "majoraxis": "1arcsec", "minoraxis": "2arcsec", "positionangle": "0deg"},
+    {"shape": "gaussian", "majoraxis": "2arcsec", "minoraxis": "0arcsec", "positionangle": "0deg"},
+    {"shape": "disk", "majoraxis": "1arcsec", "minoraxis": "2arcsec", "positionangle": "0deg"},
+    {"shape": "gaussian", "majoraxis": "2Jy", "minoraxis": "1arcsec", "positionangle": "garbage"},
+    {"shape": "gaussian", "majoraxis": 1j, "minoraxis": "1arcsec", "positionangle": "0deg"},
+    {"shape": "gaussian", "majoraxis": "2Jy", "minoraxis": "1arcsec", "positionangle": "0deg"},
+    {"flux": [1 + 0j, 0.1 + 0.2j, 0j, 0.5j], "label": "complex values"},
+    {"flux": 2 + 3j},
+    {"flux": [1, 0.1j, 0, 0]},
+    {"flux": [1 + 1j, 0.1, 0.2, 0.9], "polarization": "linear"},
+    {"flux": 1 + 1j, "polarization": "circular"},
 ]
 
 TOOL_ACCESSORS = ("getcomponent", "getspectrum", "getrefdir", "getfluxvalue", "getfluxunit",
@@ -430,12 +448,24 @@ def outcome(call):
         return {"raised": str(error).split("\n", 1)[0]}
 
 
+def tagged(value):
+    """A script argument for JSON, with each complex number as
+    `{"complex": [re, im]}` so that it reads back as complex."""
+    if isinstance(value, complex):
+        return {"complex": [value.real, value.imag]}
+    if isinstance(value, dict):
+        return {key: tagged(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [tagged(item) for item in value]
+    return value
+
+
 def tool(json_path):
     cl = componentlist()
     calls = []
     for kwargs in TOOL_CALLS:
         result = outcome(lambda: cl.addcomponent(**kwargs))
-        calls.append(dict(result, kwargs=kwargs, length=cl.length()))
+        calls.append(dict(result, kwargs=tagged(kwargs), length=cl.length()))
     components = []
     for index in range(cl.length()):
         components.append({name: outcome(lambda: getattr(cl, name)(index)) for name in TOOL_ACCESSORS})

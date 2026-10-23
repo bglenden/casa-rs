@@ -82,6 +82,11 @@ impl CasaValue {
             Variant::Text(text) | Variant::Other(text) => Self::Text(text.clone()),
             Variant::Texts(texts) => Self::Texts(texts.clone()),
             Variant::Numbers(numbers) => Self::floats(numbers.clone()),
+            Variant::Complex(value) => Self::Complex(*value),
+            Variant::Complexes(values) => Self::Complexes {
+                shape: vec![values.len()],
+                values: values.clone(),
+            },
             Variant::Array { shape, values } => Self::Floats {
                 shape: shape.clone(),
                 values: values.clone(),
