@@ -167,20 +167,26 @@ fn plane_index_is_casa_nint_of_the_root_and_rows_past_the_last_plane_are_dropped
 
 #[test]
 fn the_screen_is_the_padded_image_stepped_to_the_strict_even_composite_for_several_planes() {
-    // `WPConvFunc::findConvFunction`: `convSize = max(Int(1.2 nx), Int(1.2 ny))`
+    // `WPConvFunc::findConvFunction`: `convSize = max(Int(p nx), Int(p ny))`
+    // for the grid's padding `p` (tclean's 1.2, the simulator tool's 1)
     // and, for `wConvSize > 1` only, `CompositeNumber::nextLargerEven`,
     // which returns the first even composite strictly above its argument
-    // (1440 → 1458, 120 → 128, 76 → 80); one plane keeps the raw padded
-    // size. CASA transforms an odd raw size as is; the plane FFT here takes
-    // even sides, so 121 becomes 122 (recorded deviation, #652 record 43).
+    // (1440 → 1458, 120 → 128, 76 → 80, 512 → 540); one plane keeps the raw
+    // padded size. CASA transforms an odd raw size as is; the plane FFT here
+    // takes even sides, so 121 becomes 122 (recorded deviation, #652 record
+    // 43).
     let polarization = PolarizationRouting::compile(&XX_YY, &STOKES_I).expect("routing");
-    for (image, planes, expected) in [
-        (64, 8, 80),
-        (64, 1, 76),
-        (100, 2, 128),
-        (100, 1, 120),
-        (101, 1, 122),
-        (1200, 2, 1458),
+    let (tclean, simulator) = (PaddingFactor::TCLEAN, PaddingFactor::SIMULATOR_WPROJECT);
+    for (image, padding, planes, expected) in [
+        (64, tclean, 8, 80),
+        (64, tclean, 1, 76),
+        (100, tclean, 2, 128),
+        (100, tclean, 1, 120),
+        (101, tclean, 1, 122),
+        (1200, tclean, 2, 1458),
+        (64, simulator, 8, 72),
+        (512, simulator, 32, 540),
+        (512, simulator, 1, 512),
     ] {
         let geometry = GridGeometry::new(
             ImageExtent {
@@ -188,17 +194,34 @@ fn the_screen_is_the_padded_image_stepped_to_the_strict_even_composite_for_sever
                 increment_rad: [-WIDE_INCREMENT_RAD, WIDE_INCREMENT_RAD],
                 reference_pixel: [image / 2, image / 2],
             },
-            GridPadding::CasaComposite(PaddingFactor::TCLEAN),
+            GridPadding::CasaComposite(padding),
         )
         .expect("geometry");
+        if padding == simulator {
+            // `FTMachine`'s `nextLargerEven(Int(n − 0.5))`: an even
+            // composite image is its own grid.
+            assert_eq!(geometry.grid_shape(), [image, image], "{image} pixels");
+        }
         let set =
             WPlanes::new(&geometry, &polarization, WPlaneCount::Fixed(planes)).expect("planes");
         assert_eq!(
             set.screen_size(),
             expected,
-            "{image} pixels, {planes} planes"
+            "{image} pixels padded by {}, {planes} planes",
+            padding.get()
         );
     }
+    // Projection needs CASA's padded grid, whose factor sizes the screen.
+    let unpadded = GridGeometry::new(
+        ImageExtent {
+            shape: [64, 64],
+            increment_rad: [-WIDE_INCREMENT_RAD, WIDE_INCREMENT_RAD],
+            reference_pixel: [32, 32],
+        },
+        GridPadding::None,
+    )
+    .expect("geometry");
+    assert!(WPlanes::new(&unpadded, &polarization, WPlaneCount::Fixed(8)).is_err());
 }
 
 #[test]

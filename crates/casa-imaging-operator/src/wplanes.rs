@@ -11,7 +11,7 @@ use crate::convolution::{
 use crate::dense::{dense_cell_from_quadrant, dense_cell_from_quadrant_bytes};
 use crate::error::OperatorError;
 use crate::fft::PlaneFft;
-use crate::geometry::{GridGeometry, next_larger_even_composite};
+use crate::geometry::{GridGeometry, GridPadding, next_larger_even_composite};
 use crate::polarization::PolarizationRouting;
 use crate::sample::CfKey;
 use crate::spheroidal::grdsf;
@@ -19,8 +19,6 @@ use crate::spheroidal::grdsf;
 /// CASA `WPConvFunc`: fine offsets per cell when there is more than one
 /// plane (`convSampling_p = 4`).
 const W_OVERSAMPLING: u16 = 4;
-/// CASA `WProjectFT` grid padding (`padding_p`, tclean's 1.2).
-const PADDING: f64 = 1.2;
 /// `WPConvFunc`: a plane's support reaches the last fine pixel whose
 /// modulus exceeds this fraction of the peak-normalised plane.
 const SUPPORT_THRESHOLD: f64 = 1.0e-3;
@@ -59,18 +57,27 @@ pub struct WPlanes {
 
 /// What sizes a W-projection set before it is built
 /// (`WPConvFunc::findConvFunction`): the plane count, the largest `|w|` the
-/// planes reach, the side of the screen they are transformed on and its
-/// oversampling.
+/// planes reach, the grid's padding factor, the side of the screen they are
+/// transformed on and its oversampling.
 #[derive(Clone, Copy, Debug)]
 struct WLayout {
     planes: usize,
     max_uvw: f64,
+    padding: f32,
     conv_size: usize,
     sampling: u16,
 }
 
 impl WLayout {
     fn new(geometry: &GridGeometry, count: WPlaneCount) -> Result<Self, OperatorError> {
+        // `WProjectFT` pads its grid and its screens by one factor,
+        // `padding_p`: tclean's 1.2, the simulator tool's 1.0.
+        let GridPadding::CasaComposite(padding) = geometry.padding() else {
+            return Err(OperatorError::ConvolutionFunction {
+                reason: "W projection needs a CASA-padded grid",
+            });
+        };
+        let padding = padding.get();
         let image = geometry.image();
         let [nx, ny] = image.shape;
         let increment = image.increment_rad;
@@ -108,8 +115,9 @@ impl WLayout {
         // asks for the composite above `Int(1.2 n − 0.5)`. One plane keeps
         // the raw padded size; CASA transforms it odd as well, while the
         // plane FFT here swaps quadrants of even sides only, so an odd raw
-        // size (101 → 121) takes the next even one (#652, record 43).
-        let padded = ((nx as f64 * PADDING) as usize).max((ny as f64 * PADDING) as usize);
+        // size (101 → 121) takes the next even one (#652, record 43). The
+        // product is CASA's `Int · Float`, in single precision.
+        let padded = ((nx as f32 * padding) as usize).max((ny as f32 * padding) as usize);
         let conv_size = if planes > 1 {
             next_larger_even_composite(padded + 1)
         } else {
@@ -118,6 +126,7 @@ impl WLayout {
         Ok(Self {
             planes,
             max_uvw,
+            padding,
             conv_size,
             sampling,
         })
@@ -187,6 +196,7 @@ impl WPlanes {
         let WLayout {
             planes,
             max_uvw,
+            padding,
             conv_size,
             sampling,
         } = layout;
@@ -196,10 +206,11 @@ impl WPlanes {
         // `wScale = Float((wConvSize-1)*(wConvSize-1))/maxUVW`.
         let w_scale = f64::from(((planes - 1) * (planes - 1)) as f32) / max_uvw;
         let inner = conv_size / usize::from(sampling);
-        // The screen's sky sampling: `incr · convSampling · padding·n/convSize`.
+        // The screen's sky sampling: `incr · convSampling · padding·n/convSize`,
+        // with `padding·n` CASA's `Float` product.
         let screen_increment = [
-            increment[0] * f64::from(sampling) * PADDING * nx as f64 / conv_size as f64,
-            increment[1] * f64::from(sampling) * PADDING * ny as f64 / conv_size as f64,
+            increment[0] * f64::from(sampling) * f64::from(padding * nx as f32) / conv_size as f64,
+            increment[1] * f64::from(sampling) * f64::from(padding * ny as f32) / conv_size as f64,
         ];
         let quadrant_side = layout.quadrant_side();
         let correction_axis = |len: usize| {
