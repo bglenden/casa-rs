@@ -180,7 +180,8 @@ retain derived imaging types with their owner. M1 passes the same Measures
 types through read, conversion, calibration, imaging and creation, without
 boundary translation or per-value object construction.
 
-Bulk conversion is a Measures responsibility: bind the route once, prepare
+Bulk conversion is a system-wide Measures/quanta responsibility covering all
+supported families and future additions; LSRK↔TOPO is one example. Bind the route once, prepare
 context-dependent coefficients once at their valid scope, then apply to many
 values in reusable buffers. Consolidate the existing
 `PreparedFrequencyFrameConversion` in `casa-ms` and the stateful

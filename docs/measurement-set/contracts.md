@@ -25,7 +25,7 @@ does not require reading visibility payloads for a flags-only request.
 | C4: bounded ownership | Every live payload, index, decode buffer, cache, packed copy and queue is admitted; borrowed views cannot outlive/refill their storage. Independent work can retire separately; shared storage stays live until its last use completes. |
 | C5: invertible updates | Sample-preserving reorder/selection retains a checked inverse source map; reduction does not. Shared variables have explicit mutation scope. |
 | C6: honest guarantees | Unknown acquisition occupancy is representable; unsupported profiles/layouts and non-atomic writes are explicit. |
-| C7: bulk execution | Bind numeric kind, layout and context outside scalar loops; native Measures plans prepare shared scientific context once and apply to arrays. No required per-sample allocation, virtual call, coordinate reconstruction, or per-channel conversion setup/provider lookup. |
+| C7: bulk execution | Bulk conversion is a requirement across Measures and quanta, including future measure families. Bind numeric kind, layout and invariant context outside scalar loops; use native array views and family-specific kernels. No required per-value object allocation, virtual dispatch, coordinate reconstruction or repeated invariant setup/provider lookup. |
 
 ## 2. Topology and identity
 
@@ -225,6 +225,24 @@ untouched persistent values.
 
 ### Shared Measures types and bulk conversion
 
+**System-wide requirement:** all supported Measures families must offer natural,
+efficient bulk operations. LSRK↔TOPO is one non-exhaustive example. Frequency
+conversion plus one other family is not sufficient acceptance of this design.
+The same contract applies to present and future scalar/vector measures and
+compatible quanta conversions, while each retains its own mathematics and
+scientific accuracy requirements. This does not assert support for currently
+unsupported reference-frame routes.
+
+| Family / illustrative operation | Reusable work and value-dependent work |
+| --- | --- |
+| Directions: celestial, terrestrial or horizon references | Prepare common epoch/site/model terms; transform direction arrays, retaining required per-direction nonlinear aberration, deflection or refraction work. |
+| Epochs and time scales | Reuse route/provider state and operate on split-precision arrays; evaluate varying EOP/relativistic terms and leap-second boundaries at their required scope. A whole array need not share one offset. |
+| Positions and spatial vectors | Bind units, reference and ellipsoid/model; apply Cartesian/geodetic and vector operations in bulk, retaining necessary per-position nonlinear work. |
+| Baselines and UVW | Reuse epoch/phase-centre geometry for many vectors; preserve ordered-baseline and tangent-basis conventions and changing contexts. |
+| Frequencies, radial velocities and Doppler conventions | Reuse valid context-dependent terms; apply spectral reference and convention transforms, including nonlinear relations and explicit rest-frequency/source-velocity context. LSRK↔TOPO is one route. |
+| Earth-magnetic and other supported vector measures | Reuse relevant frame/model state for bulk vector conversions; supply genuinely position/time-dependent inputs at their proper scope. |
+| Quanta/unit conversions | Bind dimensional compatibility and scaling once, then apply to numeric arrays; retain any additional semantics of the quantity. |
+
 **One semantic type system:** the batch's frequencies, directions, positions,
 epochs, durations, UVW references, units, and frame identifiers are owned by
 casa-rs Measures/quanta. Extend or rework those APIs to accept borrowed arrays
@@ -244,7 +262,7 @@ strings, unknown metadata and original units stay available to the writer for
 faithful encoding. There is no subsequent MS-measure → computation-measure type
 translation. Scalar APIs and bulk APIs use the same reference semantics and
 scientific algorithms. Avoid a `Vec<MFrequency>` or a fully populated
-`MeasFrame` per channel: use numeric buffers plus checked shared/indexed
+`MeasFrame` per element: use numeric buffers plus checked shared/indexed
 metadata. Split-precision epoch arrays and vector-coordinate views must remain
 directly usable without collapsing them into an f64 MJD or allocating scalar
 objects. A scalar accessor can construct a small value on the stack if needed.
@@ -255,10 +273,18 @@ execution, including these three scopes:
 | Scope | Work |
 | --- | --- |
 | Bind once for a conversion request | Validate source/destination references and units, choose the route and scientific/interpolation policy, bind the prepared Measures provider and output representation. |
-| Prepare each required scientific context | Resolve epochs/time scales, source and destination observer positions/directions, source velocity where needed, Earth motion/EOP and model parameters; derive reusable coefficients. |
-| Apply to a numeric slice | Run typed arithmetic into a supplied reusable output buffer, or an explicitly supported in-place view; no route search, frame construction, provider I/O/lookup, mutex acquisition or allocation per channel. Preserve required value validity checks. |
+| Prepare each required scientific context | Resolve relevant source/destination context and model data, in bounded batches when they vary; derive reusable factors, matrices, interpolation data or other family-specific state. |
+| Apply to a numeric slice | Run the family's typed arithmetic into a supplied reusable output buffer, or an explicitly supported in-place view. Avoid repeated invariant route/frame/provider setup, per-value allocation and locking. Retain required per-value mathematics and validity checks. |
 
-For LSRK↔TOPO at a fixed context, the expensive work is independent of channel
+Varying input coordinates can themselves require different context evaluations.
+Bulk preparation must support that dependence without pretending one matrix,
+offset or factor fits every value. Keep required auxiliary data bounded and
+available to the numeric kernel; optimize repeated work, not away the science.
+The shared protocol permits specialized typed scalar/vector kernels, nonlinear
+and iterative operations, and per-element error/validity policies. It does not
+require a universal matrix transform or a generic tensor engine.
+
+For example, for LSRK↔TOPO at a fixed context, the expensive work is independent of channel
 frequency. The bulk kernel can apply prepared Doppler factors across the axis.
 Preserve the accepted hop arithmetic/rounding when needed; collapsing all hops
 to a single multiplication is an optimization to validate, not a precondition.
@@ -266,15 +292,13 @@ Frequency-to-velocity conventions and other nonlinear measures need their own
 prepared operations rather than assuming every transform is a scale.
 
 ```rust
-// Proposed Measures API sketch, not existing method names.
-// input and output are native Measures array/buffer types.
-let mut transform = FrequencyTransform::bind(
-    input.reference(), FrequencyRef::TOPO, policy, measures_provider,
-)?;
+// Proposed protocol, not existing method names or one universal transform type.
+// Bind a family-specific direction/epoch/position/frequency/... transform.
+// Input and output are that family's native Measures array/buffer types.
 for group in bounded_context_groups {
     let prepared = transform.prepare(group.source_frame(), group.target_frame())?;
-    let topo = prepared.apply_into(group.frequency_view(), &mut output)?;
-    consume(topo); // a FrequencyView<Hertz> carrying the destination reference
+    let converted = prepared.apply_into(group.measure_view(), &mut output)?;
+    consume(converted); // carries the resulting Measures reference and units
 }
 ```
 
@@ -315,15 +339,15 @@ Measures plan while filling a batch to avoid extra passes, but cannot invent a
 different conversion or perform an undeclared frame change on open. Returned
 views carry the resulting Measures reference. Frequency-coordinate conversion
 alone does not regrid visibilities; interpolation/resampling remains an
-explicit scientific operation. Shared units and this bulk contract also apply
-to direction, epoch and position transformations where their mathematics allows
-reuse; UVW conversion retains its explicit phase centre and baseline convention.
+explicit scientific operation. Other families likewise retain their meaning;
+the system-wide requirement is bulk execution with appropriate reuse, including
+when substantial value-dependent work remains.
 
 Current mechanisms and duplication are pinned in the
 [Measures source map](README.md#source-map-for-external-reviewers). M1's
 `measures-bulk` packet must prove direct use by consumers, scalar/bulk/CASA
 agreement, bounded independent work and measured performance against both the
-current scalar converter and the already-prepared production path.
+current scalar and already-prepared production paths for the affected families.
 
 ### Layouts and scalar precision
 

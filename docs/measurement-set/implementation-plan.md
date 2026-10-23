@@ -72,9 +72,11 @@ baseline evidence; no speculative mass refactor.
 - Inventory Measures types, coordinate/frame translation layers and existing
   prepared conversion fast paths. Pin scalar and ordered CASA-compatible
   behavior, provider/model state and scientific tolerances. Baseline both the
-  scalar converter and the prepared production LSRK↔TOPO path, separating
-  route binding, context preparation and arithmetic; do not credit removal of
-  per-channel work that the current consumer already avoids.
+  scalar and any prepared production paths across all supported measure families,
+  including directions, epochs, positions, baselines/UVW, spectral/radial-velocity/
+  Doppler measures, magnetic vectors and units. Separate route binding, context
+  preparation and value-dependent work; do not credit removal of repeated work
+  that the current consumer already avoids. LSRK↔TOPO is one benchmark case.
 - Define a **blocking** comparison harness for selected bulk reads, selected
   writes, representative production imaging/calibration, and flagdata tfcrop
   and rflag. Record peak live bytes and bytes per selected sample for flagging,
@@ -223,15 +225,28 @@ parallel migration:
 ### M1 Measures bulk-conversion trial
 
 Implement the [shared Measures contract](contracts.md#shared-measures-types-and-bulk-conversion)
-through a real consumer, including the existing spectral selection or imaging
-frequency-coordinate path. The trial must demonstrate all of the following:
+across the Measures system. M0 supplies the complete family/route inventory;
+M1 requires representative executable bulk cases for every currently supported
+family in the contract's table, including directions, epochs, positions,
+baselines/UVW, frequency, radial velocity, Doppler, magnetic vectors and units.
+Frequency plus one other family does not satisfy this gate. Exercise real
+consumers of spectral and non-spectral transformations. The matrix is not
+exhaustive: newly added families must satisfy the same bulk contract. Existing
+route/science coverage remains binding; unsupported routes stay explicit.
+The trial must demonstrate all of the following:
 
 - Native borrowed frequency/direction/epoch/position views and reference enums
   pass directly from the MS adapter to Measures and consumers. Validate shared
   and indexed metadata without per-value measure objects or loss of split
-  epoch precision. Include a direction or epoch bulk conversion as well as
-  frequency, so the design is not a frequency-only MS helper under a new name.
-- Bind LSRK↔TOPO once, prepare fixed-context coefficients once, apply to many
+  epoch precision. Include vector-coordinate and scalar-array paths, affine
+  and nonlinear conversions, and homogeneous as well as varying contexts.
+- Reuse prepared state at its valid scope for each family. Test directions over
+  multiple epochs/sites, epoch arrays crossing leap-second/EOP boundaries,
+  Cartesian/geodetic position arrays, baseline/UVW arrays with changing phase
+  centres, Doppler/radial-velocity convention and reference changes, magnetic
+  vector frames, and compatible unit arrays. Preserve necessary per-value
+  nonlinear/iterative calculations; do not assume all transforms are scales.
+- As one spectral example, bind LSRK↔TOPO once, prepare fixed-context coefficients once, apply to many
   frequencies in a supplied reusable buffer. Cover identity and explicit unit
   changes, channel centres/edges, noncontiguous admitted views, moving epochs,
   mosaics with changing direction, and a fixed destination image epoch distinct
@@ -240,8 +255,9 @@ frequency-coordinate path. The trial must demonstrate all of the following:
   unsupported references, invalid values and declared partial-output behavior.
 - Compare fixed-context and ordered bulk results to the appropriate scalar
   policy and independent CASA/casacore oracle using identical provider data and
-  models. Preserve existing accepted interpolation behavior, absolute Hz and
-  relative frequency/velocity tolerances, split precision and affected science
+  models. Preserve existing accepted interpolation behavior and family-specific
+  angular, time, distance, frequency, velocity and field-strength tolerances,
+  dimensionless convention checks, split precision and affected science
   outputs. Exercise both sides of interpolation refresh/leap-second boundaries
   and explicit provider/context changes. Do not relax established narrow-channel
   or coordinate checks on the strength of an image-only NRMS comparison.
@@ -250,12 +266,13 @@ frequency-coordinate path. The trial must demonstrate all of the following:
   immutable transforms can be shared while work retires independently. Prove
   bounded scratch/cache/queue residency, with no global hot-loop lock or hidden
   worker pool. Frame/reference/context changes prevent stale coefficient reuse.
-- Measure W1 and admitted parallel execution over small and large channel axes
+- Measure W1 and admitted parallel execution over small and large scalar/vector arrays
   and fixed/varying contexts. Report binding and preparation costs separately
   from apply throughput, provider calls, route searches, allocations/copies,
   synchronization and peak retained bytes. Work scales with required contexts
-  plus converted values, not repeated preparation per channel/baseline/product.
-  Include current scalar, current prepared production, and new bulk paths,
+  plus required value-dependent work, without repeating invariant preparation
+  per element. Include current scalar, existing prepared production where
+  available, and new bulk paths for each family,
   using equal scientific policies and work. Show a useful gain where setup
   dominates and preserve the existing fast path within measured noise; quantify
   the actual consumer effect separately from microbenchmark gains. A loop over
@@ -272,7 +289,7 @@ a stronger agent/person. The lead integrates shared API decisions.
 | Packet / fixture family | Accountable owner | Independent gate |
 | --- | --- | --- |
 | `layout-precision` | Contract + imaging owners | One raw primitive type, sample/channel layouts, factorable axes, guaranteed/requested units and inverse write scaling, actual operator science and input narrowing. |
-| `measures-bulk` | Measures + contract + imaging/calibration owners | Direct native Measures views, consolidation of duplicate types/routes, prepare/apply work counts, ordered interpolation and independent workers, scalar/CASA science, performance versus scalar and existing prepared production paths. |
+| `measures-bulk` | Measures + contract + imaging/calibration owners | System-wide family coverage, direct native views, consolidation of duplicate types/routes, prepare/apply and necessary value-dependent work, ordered interpolation and independent workers, family-specific scalar/CASA science and performance baselines. |
 | `group-lifecycle` | Calibration owner | Interleaved SPWs/late samples, admitted concurrent state, proven closure, sequential comparison, solve→caltable→reopen→apply. |
 | `work-unit-lifetimes` | Contract + runtime + imaging owners | Unequal worker/group completion, safe handoff and reuse, shared-allocation pinning, bounded copies/queues/cancellation, cube visibility versus minor-cycle state. |
 | `native-role-updates` | Storage + calibration owners | Broadcast/group aliases, undefined fallback, full/partial unit counts, bit semantics, mixed-owner MODEL_DATA and conflict rejection. |

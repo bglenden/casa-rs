@@ -46,6 +46,9 @@ visibility/flag/weight elements and explicit
 The owner also requires [native Measures types and bulk conversion](contracts.md#shared-measures-types-and-bulk-conversion),
 authorizing substantial Measures refactoring. The revised ownership keeps those
 types and conversions in the Measures foundation, directly used by the batch.
+Bulk operation applies across all supported Measures/quanta families and future
+additions. LSRK↔TOPO is a non-exhaustive example; the M1 gate requires a family
+coverage matrix, including scalar/vector and nonlinear operations.
 The documents and PR remain provisional: neither addressing a comment nor an
 agent recommendation finalizes the design. The MSv2 + MSv4 scope, MSv3 deferral,
 and this Measures requirement are owner directions; they do not approve the
