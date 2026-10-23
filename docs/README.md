@@ -53,6 +53,11 @@ Canonical active planning and work status live in GitHub issues and pull
 requests. The active simulation programme (#841) follows
 [`simulation/simulation-plan-20261020.md`](simulation/simulation-plan-20261020.md).
 
+The proposed [MeasurementSet architecture and implementation plan](measurement-set/README.md)
+covers shared native observation contracts for MSv2 and XRADIO MSv4, with MSv3
+deferred pending a concrete need. It is a design under review, not a statement
+of implemented format support.
+
 ## Documentation conventions
 
 This directory should contain stable reference material, not temporary PR-only

@@ -1,0 +1,109 @@
+# MeasurementSet architecture review
+
+Status: proposed; design review, not implementation authorization
+Truth class: design proposal
+Date: 2026-10-23
+Repository baseline: `221ec71545fe36a758ab0869e7512349b5db7c0e`
+
+This proposal gives MSv2 and XRADIO MSv4
+one native Rust observation interface. Algorithms request scientific grouping
+and memory layout; each backend realizes that request with bounded I/O. Existing
+Rust interfaces may change completely. Persistent interoperability, science,
+and measured performance remain acceptance requirements.
+
+## Reading order
+
+| Document | Review focus |
+| --- | --- |
+| [Architecture](architecture.md) | Boundaries, decisions, format scope, and alternatives; start here for the overall design. |
+| [Intermediate contracts](contracts.md) | The arrays and metadata shared by storage, imaging, calibration, and flagging; the principal design review. |
+| [Implementation plan](implementation-plan.md) | Sequenced work packets, evidence, agent responsibilities, and change control. |
+
+Everything needed to review the proposal is committed here or linked to public
+sources. Review does not require access to the author's execution environment.
+The Rust sketches describe contracts; they are not implemented or compilable
+library APIs yet. No performance or format-interoperability experiment is
+claimed by this documentation PR.
+
+## Decisions for the owner and independent reviewers
+
+1. **D1 — Shared representation:** approve irregular and rectangular topology,
+   typed array views, explicit numeric precision, and separate presence,
+   validity, flags, weights, and coordinate context. Reject a universal
+   row-shaped buffer or a universal dense cube.
+2. **D2 — Algorithm-led access:** approve hard layout/grouping requirements
+   with bounded fragments, and backend choice of chunk aggregation within those
+   requirements. Calibration grouping does not require a whole solve in memory.
+3. **D3 — Ownership and writes:** approve reusable borrowed blocks, opaque
+   session-local inverse mappings, alias-aware bulk patches, and truthful
+   backend-specific failure guarantees.
+4. **D4 — Boundaries:** approve a small shared `casa-observation` contract crate,
+   storage adapters under `casa-ms`, and the explicit dependency-policy changes
+   described in the architecture. Keep one existing execution/resource owner.
+5. **D5 — Support scope:** approve native local MSv4 read/create/update first,
+   no Python on the processing path, preservation of existing MSv2 support,
+   with MSv3 deferred until concrete datasets justify a named profile.
+   Object-store mutation and XRADIO
+   image persistence require later, explicit work.
+6. **D6 — Sequence and stability:** approve an early executable contract trial
+   across imaging, calibration, and writes before broad migration. Freeze
+   semantics after that trial, with reviewed changes still possible.
+
+Approval can accept some decisions and request changes to others. The owner
+confirmed the MSv2 + MSv4 scope and deferral of MSv3 on 2026-10-23. The detailed
+contracts and other decisions remain proposed. MSv3 is a beta specification
+with producer-specific variants; no generic MSv3 interoperability is promised.
+The interface should accommodate a future adapter without making it a
+completion dependency now.
+
+## GitHub review protocol
+
+Keep the proposal PR in **draft** while the owner and independent reviewers,
+including Anthropic Fable, review it. Leave findings on the relevant Markdown
+lines using GitHub's normal review process. Each finding should identify the
+violated invariant or concrete counterexample, the consequence, and a proposed
+resolution when known. Use blocking findings for correctness, unsupported
+claims, unbounded memory, performance regressions, or irreversible information
+loss; distinguish those from editorial preferences.
+
+The author responds in the PR and updates these documents. Resolve a finding
+only when its resolution is in the diff or the owner explicitly accepts the
+tradeoff. Record accepted D1–D6 decisions in the PR; absence of a comment is not
+approval. Architecture and implementation-plan approval are separate from
+passing documentation checks. The accepted ADRs remain binding until their
+explicit amendments are reviewed; this proposal changes none of them.
+
+Implementation PRs link the accepted design revision and their work issue.
+Milestone reviewers receive exact commands, fixture provenance, and compact
+results in GitHub, including failures and skips. Large data need not live in
+Git, but fixture recipes, small legal fixtures, environment requirements, and
+numerical summaries must not exist only in a private filesystem. The
+[implementation plan](implementation-plan.md#10-review-and-change-control)
+specifies how the cheaper implementers and stronger reviewers work together.
+
+## Source map for external reviewers
+
+The following casa-rs links are pinned to the inspected baseline
+`221ec71545fe36a758ab0869e7512349b5db7c0e`. Use the PR's **Files changed** view
+for the proposed documents and normal repository browsing for context. Search
+the named symbols in these files when line numbers have moved. Implementation
+PRs must update the baseline and link the changed production entrypoints.
+
+| Question | Source to inspect |
+| --- | --- |
+| How do current arrays and requests work? | [selected_observation_buffer.rs](https://github.com/bglenden/casa-rs/blob/221ec71545fe36a758ab0869e7512349b5db7c0e/crates/casa-ms/src/selected_observation_buffer.rs): `SelectedObservationBufferRequest`, `SelectedObservationNumericColumns`, buffer capacity and read footprint. |
+| Where are physical rows and current buffer limits bound? | [visibility_buffer.rs](https://github.com/bglenden/casa-rs/blob/221ec71545fe36a758ab0869e7512349b5db7c0e/crates/casa-ms/src/visibility_buffer.rs), [selected_observation/access.rs](https://github.com/bglenden/casa-rs/blob/221ec71545fe36a758ab0869e7512349b5db7c0e/crates/casa-ms/src/selected_observation/access.rs), and [content_plan.rs](https://github.com/bglenden/casa-rs/blob/221ec71545fe36a758ab0869e7512349b5db7c0e/crates/casa-ms/src/selected_observation/content_plan.rs). |
+| What is raw metadata versus imaging projection today? | [selected_observation_sample.rs](https://github.com/bglenden/casa-rs/blob/221ec71545fe36a758ab0869e7512349b5db7c0e/crates/casa-imaging-model/src/selected_observation_sample.rs): `SelectedObservationRunRow`; [operator sample.rs](https://github.com/bglenden/casa-rs/blob/221ec71545fe36a758ab0869e7512349b5db7c0e/crates/casa-imaging-operator/src/sample.rs): `SampleBlock`. |
+| Who owns imaging source execution and resources? | [runtime source_access.rs](https://github.com/bglenden/casa-rs/blob/221ec71545fe36a758ab0869e7512349b5db7c0e/crates/casa-imaging-runtime/src/source_access.rs), [runtime pass](https://github.com/bglenden/casa-rs/tree/221ec71545fe36a758ab0869e7512349b5db7c0e/crates/casa-imaging-runtime/src/pass), and [application source.rs](https://github.com/bglenden/casa-rs/blob/221ec71545fe36a758ab0869e7512349b5db7c0e/crates/casa-imaging-application/src/imaging/source.rs). |
+| What does calibration currently assume? | [session.rs](https://github.com/bglenden/casa-rs/blob/221ec71545fe36a758ab0869e7512349b5db7c0e/crates/casa-calibration/src/session.rs), [solve/grouping.rs](https://github.com/bglenden/casa-rs/blob/221ec71545fe36a758ab0869e7512349b5db7c0e/crates/casa-calibration/src/solve/grouping.rs), and [execute.rs](https://github.com/bglenden/casa-rs/blob/221ec71545fe36a758ab0869e7512349b5db7c0e/crates/casa-calibration/src/execute.rs). |
+| What write performance/semantics must survive? | [visibility_write.rs](https://github.com/bglenden/casa-rs/blob/221ec71545fe36a758ab0869e7512349b5db7c0e/crates/casa-ms/src/observation_owner/visibility_write.rs), [write_session.rs](https://github.com/bglenden/casa-rs/blob/221ec71545fe36a758ab0869e7512349b5db7c0e/crates/casa-ms/src/write_session.rs), [flagging.rs](https://github.com/bglenden/casa-rs/blob/221ec71545fe36a758ab0869e7512349b5db7c0e/crates/casa-ms/src/flagging.rs). |
+| Which producer paths also need migration? | [simulation write pipeline](https://github.com/bglenden/casa-rs/tree/221ec71545fe36a758ab0869e7512349b5db7c0e/crates/casa-simulation/src/write) and [casa-vla](https://github.com/bglenden/casa-rs/tree/221ec71545fe36a758ab0869e7512349b5db7c0e/crates/casa-vla). |
+| What existing architectural constraints bind the proposal? | [ADR-0008](../adr/0008-casacore-storage-and-bounded-measurementset-writes.md), [ADR-0009](../adr/0009-mathematical-imaging-architecture.md), [ADR-0015](../adr/0015-run-local-imaging-ownership-without-content-attestation.md), [ADR-0016](../adr/0016-imaging-foundation.md), [dependency policy](../../resources/imaging-architecture/dependency-policy.json). These relative links resolve in the PR branch. |
+| What counts as validation? | [TESTING.md](../../TESTING.md), [performance skill](../../.agents/skills/casa-rs-imaging-performance/SKILL.md), [representative science matrix](../../resources/imaging-architecture/representative-science-matrix.json). |
+| What defines MSv4 and its stack? | [Architecture reference baseline](architecture.md#7-reference-baseline): pinned XRADIO schema, group definitions, padding, conversion and Zarr configuration; Zarr specification, Xarray conventions, and Rust library links. |
+
+For a focused independent review, read the proposed contracts alongside the
+existing buffer/write APIs and the pinned XRADIO schema. Check whether any real
+source data would lose meaning, whether an algorithm must know the storage
+format, whether promised writes are implementable with bounded memory, and
+whether the milestone evidence can actually disprove the performance claims.
