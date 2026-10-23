@@ -234,6 +234,44 @@ pub enum CppTableFixture {
     /// `[7.0]` in row 0), stored with `IncrementalStMan`. Full CC/CR/RC
     /// cross-matrix.
     IsmElementArrays,
+    /// SSM element arrays: the arrays of `IsmElementArrays`, once stored
+    /// directly and once indirectly in `table.f0i` (columns `Float64_1` and
+    /// `Float64_1_ind`), stored with `StandardStMan`. Full CC/CR/RC
+    /// cross-matrix.
+    SsmElementArrays,
+}
+
+/// A C++ fixture entry point: it writes or verifies the table at a path and
+/// returns nonzero, with an error message, on failure.
+#[cfg(has_casacore_cpp)]
+type CppFixtureEntry =
+    unsafe extern "C" fn(*const std::ffi::c_char, *mut *mut std::ffi::c_char) -> i32;
+
+/// The C++ writer and verifier of a storage-manager cell fixture.
+#[cfg(has_casacore_cpp)]
+struct CellFixtureEntries {
+    write: CppFixtureEntry,
+    verify: CppFixtureEntry,
+}
+
+/// The entry points of the storage-manager cell fixtures (every element
+/// type, indirect arrays, bucket boundaries), which the fixture matches of
+/// [`cpp_table_write_unlocked`] and [`cpp_table_verify_unlocked`] leave to
+/// this table.
+#[cfg(has_casacore_cpp)]
+fn cell_fixture_entries(fixture: CppTableFixture) -> Result<CellFixtureEntries, String> {
+    let (write, verify): (CppFixtureEntry, CppFixtureEntry) = match fixture {
+        CppTableFixture::IsmElementArrays => (
+            cpp_table_write_ism_element_arrays,
+            cpp_table_verify_ism_element_arrays,
+        ),
+        CppTableFixture::SsmElementArrays => (
+            cpp_table_write_ssm_element_arrays,
+            cpp_table_verify_ssm_element_arrays,
+        ),
+        other => return Err(format!("{other:?} has no C++ write and verify")),
+    };
+    Ok(CellFixtureEntries { write, verify })
 }
 
 /// Write a table fixture using C++ casacore. Returns an error string on failure.
@@ -425,14 +463,12 @@ pub(crate) fn cpp_table_write_unlocked(
             CppTableFixture::IsmColumnKeywords => {
                 cpp_table_write_ism_column_keywords(c_path.as_ptr(), &mut error)
             }
-            CppTableFixture::IsmElementArrays => {
-                cpp_table_write_ism_element_arrays(c_path.as_ptr(), &mut error)
-            }
             CppTableFixture::MutationRemovedColumn
             | CppTableFixture::MutationRemovedRows
             | CppTableFixture::MutationAddedColumn => {
                 return Err("mutation fixtures are verify-only (no C++ write)".to_string());
             }
+            fixture => (cell_fixture_entries(fixture)?.write)(c_path.as_ptr(), &mut error),
         }
     };
 
@@ -639,9 +675,7 @@ pub(crate) fn cpp_table_verify_unlocked(
             CppTableFixture::IsmColumnKeywords => {
                 cpp_table_verify_ism_column_keywords(c_path.as_ptr(), &mut error)
             }
-            CppTableFixture::IsmElementArrays => {
-                cpp_table_verify_ism_element_arrays(c_path.as_ptr(), &mut error)
-            }
+            fixture => (cell_fixture_entries(fixture)?.verify)(c_path.as_ptr(), &mut error),
         }
     };
 

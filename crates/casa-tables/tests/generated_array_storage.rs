@@ -7,11 +7,11 @@
 //! strings, direct and indirect fixed-shape arrays and variable-shape arrays
 //! with undefined cells, and IncrementalStMan with scalars and Direct
 //! fixed-shape arrays, in either byte order and across bucket boundaries.
-//! IncrementalStMan keeps the values of fixed-shape arrays of every element
-//! type, of one element and more, whether written from rows or generated,
-//! and refuses arrays without the Direct option, which casacore keeps in
-//! an array file. Saves that cannot be written from generated cells are
-//! refused.
+//! StandardStMan and IncrementalStMan keep the values of direct fixed-shape
+//! arrays of every element type, of one element and more, whether written
+//! from rows or generated. IncrementalStMan refuses arrays without the
+//! Direct option, which casacore keeps in an array file. Saves that cannot
+//! be written from generated cells are refused.
 
 use std::collections::HashMap;
 use std::fs;
@@ -661,12 +661,26 @@ fn generated_incremental_columns_write_the_files_of_materialized_cells() {
 
 #[test]
 fn incremental_arrays_of_every_element_type_keep_their_values() {
+    assert_every_element_type_kept(DataManagerKind::IncrementalStMan);
+}
+
+/// StandardStMan packs a direct Bool array's bits from bit `row * nrelem`
+/// of its column's area; it once wrote them, and Int16 arrays and every
+/// one-element array, as zeros (#852, the direct-array data loss).
+#[test]
+fn standard_arrays_of_every_element_type_keep_their_values() {
+    assert_every_element_type_kept(DataManagerKind::StandardStMan);
+}
+
+/// The every-type columns saved with `manager` from rows and generated
+/// cells hold every cell as given, and the row writer writes the files of
+/// the generated save where the two lay buckets out alike.
+fn assert_every_element_type_kept(manager: DataManagerKind) {
     let root = tempfile::tempdir().expect("tempdir");
     let columns = element_columns();
-    let manager = DataManagerKind::IncrementalStMan;
     for rows in [20, ROWS] {
         for endian in [EndianFormat::LittleEndian, EndianFormat::BigEndian] {
-            let case = format!("every element type, {rows} rows {endian:?}");
+            let case = format!("{manager:?}, every element type, {rows} rows {endian:?}");
             let from_rows = root.path().join(format!("types-{rows}-{endian:?}-rows"));
             save_rows(&from_rows, &columns, rows, manager, endian);
             assert_cells(&from_rows, &columns, rows, &case);
@@ -676,8 +690,9 @@ fn incremental_arrays_of_every_element_type_keep_their_values() {
                     .join(format!("types-{rows}-{endian:?}-{}", generated as u8));
                 save_generated(&path, &columns, rows, manager, endian, generated);
                 assert_cells(&path, &columns, rows, &case);
-                if rows <= 20 {
-                    // In one bucket, the row writer agrees.
+                // StandardStMan's writers lay out every table alike;
+                // IncrementalStMan's in one bucket.
+                if manager == DataManagerKind::StandardStMan || rows <= 20 {
                     assert_same_files(&from_rows, &path, &case);
                 }
             }

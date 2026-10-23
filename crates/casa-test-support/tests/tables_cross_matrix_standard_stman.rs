@@ -1,7 +1,12 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 #![cfg(feature = "cpp-interop-tests")]
 
-use casa_tables::{ColumnOptions, ColumnSchema, Table, TableOptions, TableSchema};
+use casa_tables::{
+    ColumnOptions, ColumnSchema, DataManagerKind, EndianFormat, Table, TableOptions, TableSchema,
+};
+use casa_test_support::table_element_arrays::{
+    ElementStorage, element_arrays_fixture, save_generated_element_arrays,
+};
 use casa_test_support::table_interop::{
     ManagerKind, TableFixture, run_endian_cross_matrix, run_full_cross_matrix,
     run_table_cross_matrix,
@@ -822,6 +827,61 @@ fn ssm_column_keywords_endian_cross_matrix() {
         &fixture,
         ManagerKind::StandardStMan,
     ));
+}
+
+// --- Every element type in fixed-shape arrays, stored directly and not ---
+
+/// The storages of the every-type StandardStMan fixture: each array in the
+/// buckets and in `table.f0i`.
+const SSM_ELEMENT_STORAGES: [ElementStorage; 2] =
+    [ElementStorage::Direct, ElementStorage::Indirect];
+
+fn ssm_element_arrays_fixture() -> TableFixture {
+    element_arrays_fixture(&SSM_ELEMENT_STORAGES, CppTableFixture::SsmElementArrays)
+}
+
+#[test]
+fn ssm_element_arrays_cross_matrix() {
+    let fixture = ssm_element_arrays_fixture();
+    assert_matrix_results(&run_full_cross_matrix(&fixture, ManagerKind::StandardStMan));
+}
+
+#[test]
+fn ssm_element_arrays_endian_cross_matrix() {
+    let fixture = ssm_element_arrays_fixture();
+    assert_matrix_results(&run_endian_cross_matrix(
+        &fixture,
+        ManagerKind::StandardStMan,
+    ));
+}
+
+/// The every-type table saved from generated array columns, per-row
+/// closures or runs, which StandardStMan writes from its column sources,
+/// reads in casacore as it does from row records.
+#[test]
+fn ssm_element_arrays_generated_save_reads_in_cpp() {
+    if !casa_test_support::casacore_oracle_available() {
+        eprintln!("skipping: C++ backend unavailable");
+        return;
+    }
+    let dir = tempfile::tempdir().expect("tempdir");
+    for endian in [EndianFormat::BigEndian, EndianFormat::LittleEndian] {
+        for runs in [false, true] {
+            let path = dir.path().join(format!("{endian:?}-runs-{runs}"));
+            save_generated_element_arrays(
+                &path,
+                &SSM_ELEMENT_STORAGES,
+                DataManagerKind::StandardStMan,
+                endian,
+                runs,
+            )
+            .expect("save generated");
+            if let Err(error) = TableOracle::table_verify(CppTableFixture::SsmElementArrays, &path)
+            {
+                panic!("{endian:?}, runs {runs}: C++ verify failed: {error}");
+            }
+        }
+    }
 }
 
 // --- Post-mutation RR + RC tests ---
