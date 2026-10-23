@@ -36,8 +36,7 @@ use std::path::Path;
 use casa_ms::MeasurementSet;
 use casa_ms::derived::engine::raw_field_phase_direction;
 use casa_tables::{
-    RequiredScalarColumnDestination, RequiredScalarColumnValuesMut, SelectedArray2DCellsMut, Table,
-    TableOptions,
+    RequiredScalarColumnDestination, RequiredScalarColumnValuesMut, Table, TableOptions,
 };
 use casa_types::ArrayValue;
 use casa_types::measures::frequency::FrequencyRef;
@@ -451,7 +450,7 @@ fn pointing_away_from_phase_centre(
             .map_or(f64::NEG_INFINITY, |&end: &f64| end);
         latest_end.push(end.max(times_s[scan][1]));
     }
-    let (mut times, mut directions, mut rows) = (Vec::new(), Vec::new(), Vec::new());
+    let (mut times, mut rows) = (Vec::new(), Vec::new());
     let count = pointing.row_count();
     for first in (0..count).step_by(SCAN_READ_ROWS) {
         rows.clear();
@@ -466,20 +465,24 @@ fn pointing_away_from_phase_centre(
                 )],
             )
             .map_err(error)?;
-        directions.clear();
-        // DIRECTION's first polynomial term: one "channel", so `[row][2]`.
-        pointing
+        // Cell by cell, which every data manager serves: CASA keeps
+        // DIRECTION in a StandardStMan.
+        let directions = pointing
             .column_accessor("DIRECTION")
-            .and_then(|column| {
-                column.fill_array_cells_2d_channel_range_typed_uncached(
-                    &rows,
-                    0,
-                    1,
-                    SelectedArray2DCellsMut::Float64(&mut directions),
-                )
-            })
+            .and_then(|column| column.array_cells_owned_uncached(&rows))
             .map_err(error)?;
-        for (&time_s, &direction) in times.iter().zip(directions.as_chunks::<2>().0) {
+        for (&time_s, direction) in times.iter().zip(&directions) {
+            // DIRECTION's first polynomial term.
+            let direction = match direction {
+                Some(ArrayValue::Float64(direction))
+                    if direction.ndim() == 2
+                        && direction.shape()[0] == 2
+                        && direction.shape()[1] > 0 =>
+                {
+                    [direction[[0, 0]], direction[[1, 0]]]
+                }
+                _ => continue,
+            };
             let started = by_start.partition_point(|&scan| times_s[scan][0] <= time_s);
             for position in (0..started).rev() {
                 if latest_end[position] < time_s {

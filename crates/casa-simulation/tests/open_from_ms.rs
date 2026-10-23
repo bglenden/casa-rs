@@ -383,3 +383,202 @@ fn a_moved_pointing_is_phased_on_its_field_after_openfromms() {
         "{refused}"
     );
 }
+
+/// Install MODEL_DATA and CORRECTED_DATA in `path`'s MAIN as copies of
+/// DATA, as CASA's `VisSet` adds its scratch columns.
+fn add_scratch_columns(path: &Path) {
+    use casa_ms::{
+        MeasurementSet, MeasurementSetColumnStorage, MeasurementSetColumnWriteMode,
+        MeasurementSetWriteColumnPlan, MeasurementSetWritePlan, MeasurementSetWriteResources,
+        MeasurementSetWriteSession,
+    };
+    let mut ms = MeasurementSet::open(path).expect("open");
+    let columns = ["MODEL_DATA", "CORRECTED_DATA"];
+    for name in columns {
+        ms.main_table_mut()
+            .add_column(
+                casa_tables::ColumnSchema::array_variable(
+                    name,
+                    casa_types::PrimitiveType::Complex32,
+                    Some(2),
+                ),
+                None,
+            )
+            .expect("add the column to the schema");
+    }
+    let plan = MeasurementSetWritePlan::selected_row_mutation(
+        vec![0],
+        columns
+            .iter()
+            .map(|name| MeasurementSetWriteColumnPlan {
+                name: (*name).to_string(),
+                bytes_per_row: 512,
+                mode: MeasurementSetColumnWriteMode::Create,
+                storage_manager: MeasurementSetColumnStorage::TiledShape,
+                tile_shape: None,
+                create_source_column: Some("DATA".to_string()),
+            })
+            .collect(),
+        MeasurementSetWriteResources {
+            available_bytes: 1024,
+            maximum_live_batches: 1,
+            tiled_column_buffer_bytes: 0,
+        },
+    )
+    .expect("plan");
+    drop(MeasurementSetWriteSession::start_selected_row_mutation(&mut ms, plan).expect("install"));
+}
+
+/// MAIN's `column` of `path`, each cell `[channel][correlation]`.
+fn read_column(path: &Path, column: &str) -> Vec<Vec<casa_types::Complex32>> {
+    use casa_ms::MeasurementSet;
+    use casa_ms::columns::data_columns::DataColumn;
+    use casa_types::ArrayValue;
+    let ms = MeasurementSet::open(path).expect("open");
+    let main = ms.main_table();
+    let cells = match column {
+        "MODEL_DATA" => DataColumn::model_data(main),
+        "CORRECTED_DATA" => DataColumn::corrected_data(main),
+        _ => DataColumn::data(main),
+    }
+    .expect("the column");
+    (0..ms.row_count())
+        .map(|row| {
+            let ArrayValue::Complex32(cell) = cells.get(row).expect("a cell") else {
+                panic!("{column} is not Complex32");
+            };
+            cell.t().iter().copied().collect()
+        })
+        .collect()
+}
+
+/// MODEL_DATA and CORRECTED_DATA, where MAIN has them, are left as CASA's
+/// steps leave them: CORRECTED_DATA the new DATA after any step, MODEL_DATA
+/// 1 after a `predict` and as it was after a `corrupt`. A MeasurementSet
+/// without them gets none.
+#[test]
+fn the_scratch_columns_follow_data_and_none_is_created() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let model = &extended_model(directory.path(), "model.image");
+    let reopened = |name: &str, steps: &dyn Fn(&mut Simulator) -> SimulatorResult<()>| {
+        let path = directory.path().join(name);
+        let mut sm = observed(&path);
+        sm.predict(&predict_spec(model, false)).expect("predict");
+        sm.close().expect("close");
+        add_scratch_columns(&path);
+        let mut sm = Simulator::open_from_ms(&path, options()).expect("openfromms");
+        steps(&mut sm).expect("steps");
+        sm.close().expect("close");
+        path
+    };
+    let predicted = reopened("predicted.ms", &|sm| {
+        sm.predict(&predict_spec(model, false))?;
+        corrupt(sm)
+    });
+    let data = read_column(&predicted, "DATA");
+    assert_eq!(
+        bits(&read_column(&predicted, "CORRECTED_DATA")),
+        bits(&data)
+    );
+    let one = casa_types::Complex32::new(1.0, 0.0);
+    assert!(
+        read_column(&predicted, "MODEL_DATA")
+            .iter()
+            .flatten()
+            .all(|value| *value == one)
+    );
+
+    let corrupted = reopened("corrupted.ms", &corrupt);
+    let data = read_column(&corrupted, "DATA");
+    assert_eq!(
+        bits(&read_column(&corrupted, "CORRECTED_DATA")),
+        bits(&data)
+    );
+    // MODEL_DATA is still the copy of the DATA predicted before.
+    let predicted_first = directory.path().join("first.ms");
+    let mut sm = observed(&predicted_first);
+    sm.predict(&predict_spec(model, false)).expect("predict");
+    sm.close().expect("close");
+    assert_eq!(
+        bits(&read_column(&corrupted, "MODEL_DATA")),
+        bits(&read_column(&predicted_first, "DATA"))
+    );
+
+    let path = directory.path().join("bare.ms");
+    observed(&path).close().expect("close");
+    let mut sm = Simulator::open_from_ms(&path, options()).expect("openfromms");
+    corrupt(&mut sm).expect("corrupt");
+    sm.close().expect("close");
+    let ms = casa_ms::MeasurementSet::open(&path).expect("open");
+    let schema = ms.main_table().schema().expect("schema");
+    assert!(!schema.contains_column("MODEL_DATA") && !schema.contains_column("CORRECTED_DATA"));
+}
+
+/// A row with a flagged sample but no FLAG_ROW is refused before anything
+/// is written: the MeasurementSet is left as it was.
+#[test]
+fn a_partly_flagged_row_is_refused_before_anything_is_written() {
+    use casa_ms::{
+        MeasurementSet, MeasurementSetColumnStorage, MeasurementSetColumnWriteMode,
+        MeasurementSetMutationBatch, MeasurementSetMutationColumnBatch,
+        MeasurementSetMutationColumnValues, MeasurementSetWriteColumnPlan, MeasurementSetWritePlan,
+        MeasurementSetWriteResources, MeasurementSetWriteSession,
+    };
+    use ndarray::{ArrayD, IxDyn, ShapeBuilder};
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let model = &extended_model(directory.path(), "model.image");
+    let path = directory.path().join("flagged.ms");
+    let mut sm = observed(&path);
+    sm.predict(&predict_spec(model, false)).expect("predict");
+    sm.close().expect("close");
+    // Flag one sample of row 3, not the row.
+    let mut ms = MeasurementSet::open(&path).expect("open");
+    let plan = MeasurementSetWritePlan::selected_row_mutation(
+        vec![3],
+        vec![MeasurementSetWriteColumnPlan {
+            name: "FLAG".to_string(),
+            bytes_per_row: 2 * CHANNELS,
+            mode: MeasurementSetColumnWriteMode::Replace,
+            storage_manager: MeasurementSetColumnStorage::Persisted,
+            tile_shape: None,
+            create_source_column: None,
+        }],
+        MeasurementSetWriteResources {
+            available_bytes: 1024,
+            maximum_live_batches: 1,
+            tiled_column_buffer_bytes: 0,
+        },
+    )
+    .expect("plan");
+    let mut session =
+        MeasurementSetWriteSession::start_selected_row_mutation(&mut ms, plan).expect("start");
+    let mut flags = vec![false; 2 * CHANNELS];
+    flags[1] = true;
+    session
+        .write_mutation_batch(
+            &mut ms,
+            MeasurementSetMutationBatch {
+                row_indices: vec![3],
+                columns: vec![MeasurementSetMutationColumnBatch {
+                    name: "FLAG".to_string(),
+                    values: MeasurementSetMutationColumnValues::Arrays(vec![
+                        casa_types::ArrayValue::Bool(
+                            ArrayD::from_shape_vec(IxDyn(&[2, CHANNELS]).f(), flags)
+                                .expect("FLAG cell"),
+                        ),
+                    ]),
+                }],
+            },
+        )
+        .expect("flag a sample");
+    session.finish_mutation().expect("finish");
+    drop(ms);
+
+    let before = read_column(&path, "DATA");
+    let mut sm = Simulator::open_from_ms(&path, options()).expect("openfromms");
+    corrupt(&mut sm).expect("corrupt");
+    let refused = sm.close().expect_err("refused at close");
+    assert_eq!(refused.outcome(), CasaOutcome::NotYetImplemented);
+    assert!(refused.message().contains("MAIN row 3"), "{refused}");
+    assert_eq!(bits(&read_column(&path, "DATA")), bits(&before));
+}

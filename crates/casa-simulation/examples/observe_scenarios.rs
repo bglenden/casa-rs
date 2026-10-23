@@ -15,7 +15,11 @@
 //!
 //! Scenarios may also call `setseed`, `setnoise` (`simplenoise` in Jy),
 //! `corrupt`, `reset`, `setoptions`, `setvp` and `predict` (Phase 1d;
-//! `tools/simulation/sm_predict_scenarios.json`). Each of those must end as
+//! `tools/simulation/sm_predict_scenarios.json`), and, in two stages,
+//! `close` and then `openfromms` (Phase 2;
+//! `tools/simulation/sm_openfromms_scenarios.json`): the first stage is
+//! closed, and its MS, or a copy of CASA's when the scenario's
+//! `openfromms_ms` is `casa`, reopened. Each of those must end as
 //! CASA's did: `True`, `False`, or raised, as the manifest records; a call
 //! that does not stops the run. `--simplenoise-jy` adds a `setnoise` and a
 //! `corrupt` after every scenario's own calls, with the seed of `--seed`
@@ -293,6 +297,23 @@ fn expect_casas_outcome(entry: &Value, result: SimulatorResult<()>) {
     assert!(agree, "{op}: CASA {casa}, casa-rs {ours}");
 }
 
+/// Replace the directory `to` with a copy of `from`.
+fn replace_with_copy(from: &Path, to: &Path) {
+    if to.exists() {
+        std::fs::remove_dir_all(to).expect("remove the first stage");
+    }
+    std::fs::create_dir_all(to).expect("the copy's directory");
+    for entry in std::fs::read_dir(from).expect("read CASA's first stage") {
+        let entry = entry.expect("an entry");
+        let target = to.join(entry.file_name());
+        if entry.file_type().expect("its type").is_dir() {
+            replace_with_copy(&entry.path(), &target);
+        } else {
+            std::fs::copy(entry.path(), &target).expect("copy a file");
+        }
+    }
+}
+
 fn run_scenario(
     scenario: &Value,
     out: &Path,
@@ -306,12 +327,42 @@ fn run_scenario(
         resources,
         now: now_utc(),
     };
-    let mut session = Simulator::open(out.join(format!("{name}.ms")), options);
-    for entry in scenario["calls"].as_array().expect("calls") {
+    let path = out.join(format!("{name}.ms"));
+    let mut session = Some(Simulator::open(&path, options.clone()));
+    let calls = scenario["calls"].as_array().expect("calls");
+    for (index, entry) in calls.iter().enumerate() {
         let call = &entry["resolved"];
-        match entry["op"].as_str().expect("op") {
-            "open" | "close" => {}
-            "setconfig" => set_config(&mut session, call),
+        let op = entry["op"].as_str().expect("op");
+        match op {
+            // The last call is the final close, made below.
+            "open" => continue,
+            "close" if index + 1 == calls.len() => continue,
+            "close" => {
+                let first = session.take().expect("an open session");
+                first.close().expect("close the first stage");
+                continue;
+            }
+            "openfromms" => {
+                if scenario["openfromms_ms"] == "casa" {
+                    let stage_one = calls[index - 1]["resolved"]["stage1"]
+                        .as_str()
+                        .expect("CASA's first stage");
+                    replace_with_copy(Path::new(stage_one), &path);
+                }
+                match Simulator::open_from_ms(&path, options.clone()) {
+                    Ok(opened) => {
+                        expect_casas_outcome(entry, Ok(()));
+                        session = Some(opened);
+                    }
+                    Err(error) => expect_casas_outcome(entry, Err(error)),
+                }
+                continue;
+            }
+            _ => {}
+        }
+        let session = session.as_mut().expect("an open session");
+        match op {
+            "setconfig" => set_config(session, call),
             "setspwindow" => session
                 .set_spectral_window(&SpectralWindowSpec {
                     name: text(call, "spwname", "XBAND").to_string(),
@@ -348,18 +399,19 @@ fn run_scenario(
                     )
                     .expect("setfield");
             }
-            "observe" => observe(&mut session, call, shift_s),
-            "observemany" => expect_casas_outcome(entry, observe_many(&mut session, call, shift_s)),
+            "observe" => observe(session, call, shift_s),
+            "observemany" => expect_casas_outcome(entry, observe_many(session, call, shift_s)),
             "setseed" => session.set_seed(number(call, "seed") as i32),
-            "setnoise" => expect_casas_outcome(entry, set_noise(&mut session, call)),
+            "setnoise" => expect_casas_outcome(entry, set_noise(session, call)),
             "corrupt" => expect_casas_outcome(entry, session.corrupt()),
             "reset" => session.reset(),
-            "setoptions" => expect_casas_outcome(entry, set_options(&mut session, call)),
-            "setvp" => expect_casas_outcome(entry, set_vp(&mut session, call)),
-            "predict" => expect_casas_outcome(entry, predict(&mut session, call)),
+            "setoptions" => expect_casas_outcome(entry, set_options(session, call)),
+            "setvp" => expect_casas_outcome(entry, set_vp(session, call)),
+            "predict" => expect_casas_outcome(entry, predict(session, call)),
             other => panic!("unsupported call {other}"),
         }
     }
+    let mut session = session.expect("an open session");
     if let Some(extra) = extra_noise {
         if let Some(seed) = extra.seed {
             session.set_seed(seed);
