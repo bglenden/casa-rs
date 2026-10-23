@@ -238,8 +238,9 @@ existing no-cache I/O path and does not require this Linux-specific setup.
 - Release/tag-only CI-like coverage: `scripts/run-coverage.sh --ci-like`
 - GitHub Actions reproduction: `scripts/ci-local.sh pr` for pull-request jobs or `scripts/ci-local.sh tag` for version-tag jobs
 - GitHub PR CI: lint/test, editable Python package (including the generated
-  UniFFI binding check), performance-tool tests, and strict docs (rustdoc with
-  broken and private intra-doc links denied, then MkDocs). The required checks
+  UniFFI binding check), performance-tool tests, and strict docs (rustdoc
+  built twice, public and with `--document-private-items`, with broken and
+  private intra-doc links denied in both, then MkDocs). The required checks
   are `lint_test`, `python_package` and `docs`
 - GitHub tag CI: lint/test, editable Python package and performance-tool checks plus smoke,
   suite-install, and CI-like coverage

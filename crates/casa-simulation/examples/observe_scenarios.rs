@@ -341,19 +341,26 @@ fn main() {
             other => panic!("unknown argument {other}"),
         }
     }
-    // The pass summary `close` reports: workers, bytes and stage times.
+    // The pass summary `close` reports (workers, bytes and stage times), and
+    // each Metal predictor's dispatches and device time.
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::fmt::layer()
                 .with_ansi(false)
                 .with_writer(std::io::stderr),
         )
-        .with(Targets::new().with_target("casa_simulation::write", tracing::Level::INFO))
+        .with(
+            Targets::new()
+                .with_target("casa_simulation::write", tracing::Level::INFO)
+                .with_target("casa_imaging::metal_stage_timing", tracing::Level::INFO)
+                .with_target("casa_tables::streamed_tiled_write", tracing::Level::DEBUG),
+        )
         .init();
     let resources = SessionResources::from_controls(&controls).expect("session resources");
     println!(
-        "workers: {} streaming beside the writer ({:?})",
-        resources.cores().streaming_workers,
+        "workers: {} streaming beside the writer, {} when close predicts on Metal ({:?})",
+        resources.close_cores(false).streaming_workers,
+        resources.close_cores(true).streaming_workers,
         resources.policy()
     );
     let extra_noise = sigma_jy.map(|sigma_jy| ExtraNoise { sigma_jy, seed });
