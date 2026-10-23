@@ -39,6 +39,10 @@ that avoids observatory terminology.
 The [mosaic converter evidence](architecture.md#converter-evidence-for-mosaics)
 traces actual XRADIO field mapping and upstream VLA/ALMA/VLASS tests, including
 the consistency assumption that casa-rs must validate before a v4 write.
+Step 04 now expands the nested data group into a
+[concrete numeric batch](contracts.md#concrete-batch-example), with selectable
+visibility/flag/weight elements and explicit
+[autocorrelation scalar semantics](contracts.md#autocorrelations-and-real-valued-data).
 The documents and PR remain provisional: neither addressing a comment nor an
 agent recommendation finalizes the design. Only the MSv2 + MSv4 scope and MSv3
 deferral have been confirmed by the owner.

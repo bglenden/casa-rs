@@ -133,6 +133,13 @@ parallel migration:
 3. Flags-only read, undefined WEIGHT_SPECTRUM fallback, FLOAT_DATA where already
    supported, typed c32/c64 dispatch, f16 weight widening, bit flags/categories,
    row flags, and native weight broadcast all have explicit tests.
+   Include a mixed auto/cross batch with all four polarization products: preserve
+   real parallel-hand auto values in complex storage and nonzero imaginary XY/YX
+   auto values without per-element dtype dispatch. Preserve supplied departures
+   from ideal reality/Hermitian symmetry; no silent imaginary-part removal.
+   Contrast supported real FLOAT_DATA without extending the initial v4 profile
+   to SpectrumXds. Delivered payload views require no backend read/decode on
+   element access; count those operations separately from consumer arithmetic.
 4. Reorder/gather selected values and bulk-write them back through inverse maps.
    Include duplicate reads/conflicting writes, group aliases, unknown flag bits,
    narrow-channel updates, distinct UVW/field contexts, unselected sentinel data,

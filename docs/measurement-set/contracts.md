@@ -271,6 +271,61 @@ struct DataGroupView<'a> {
 }
 ```
 
+These are views of the **actual numeric buffers used for computation**. Before
+delivery, the source completes the requested read/decode/packing needed by that
+batch. Accessing a visibility, flag or weight through a delivered view does not
+perform backend I/O or decode a chunk. Buffers may belong to the caller or the
+session; the batch's borrow keeps them valid until the consumer releases it.
+The nested `groups` field supplies the payload arrays, not just their catalogue
+descriptions. Dispatch on type/layout happens outside the numerical loop.
+
+### Concrete batch example
+
+Illustrative values, not an observed dataset or a finalized constructor API:
+one time, two ordered baselines, two channels, four correlations. The
+sample-major values and boolean flags each have shape `[2, 2, 4]` and element
+strides `[8, 4, 1]`; flattening uses `i = s*8 + c*4 + p`. `Complex32` above
+means `Complex<f32>` (64 bits total), not a 32-bit complex scalar.
+
+```text
+time = MJD 60000 TAI + 0 s (split epoch representation)
+baselines = [(antenna 0/feed 0, antenna 0/feed 0),
+             (antenna 0/feed 0, antenna 1/feed 0)]
+frequency_hz = [1_000_000_000, 1_001_000_000]  // TOPO
+correlations = [XX, XY, YX, YY]
+field(time) = A; phase_centre(A) = (1.0, 0.5) rad, ICRS
+uvw_m[sample, uvw] = [[0, 0, 0], [100, -40, 20]]
+// UVW is referred to that phase centre with the declared baseline convention.
+
+groups[0].values[sample, channel, correlation] = Complex<f32>, Jy
+  sample 0, channel 0: [10+0i,  1+2i,       1-2i,       8+0i]
+  sample 0, channel 1: [12+0i,  0.5+1i,     0.5-1i,     9+0i]
+  sample 1, channel 0: [ 3+4i,  0.2-0.1i,  -0.3+0.4i,   2-1i]
+  sample 1, channel 1: [ 4+3i,  0.1+0.2i,   0.5-0.2i,   1+2i]
+
+groups[0].flags[sample, channel, correlation] = bool
+  sample 0, channel 0: [false, false, false, false]
+  sample 0, channel 1: [false, false, false, false]
+  sample 1, channel 0: [false, false, false, false]
+  sample 1, channel 1: [ true, false, false, false]
+
+groups[0].weights[sample, correlation] = f32
+  sample 0: [ 4, 2, 2,  4]
+  sample 1: [16, 8, 8, 16]
+// Declared inverse-variance weights in Jy^-2 for this example;
+// broadcast across channel, without expanding the eight stored numbers.
+```
+
+Both acquisitions are known present; all values are finite, both samples are
+selected, and row flags are false. The illustrative consumer excludes flagged
+elements. At `(sample=1, channel=0, correlation=XX)` it reads `3+4i`, flag=false,
+weight=16, frequency=1 GHz and UVW=(100,-40,20) m. The XX value at channel 1
+remains `4+3i` in the buffer but is excluded by its flag. Data are not replaced
+by zero to express exclusion. Different data groups have their own bound array
+associations; this example shows only one requested group.
+
+### Role presence and precision policy
+
 Options mean a role was not requested; a missing required role is a bind error.
 Native absence/undefined cells require their own validity representation, not
 an empty slice that can be mistaken for a valid all-zero array. Data-group
@@ -296,6 +351,36 @@ single-dish algorithms or XRADIO spectra are implemented by this programme.
 Existing LAG_DATA and other optional v2 columns retain their current generic
 preservation/transform capabilities; they are not silently reinterpreted as
 frequency visibilities to fit this enum.
+
+### Autocorrelations and real-valued data
+
+For the same antenna, feed and receptor, the ideal self-product
+`XX = <E_X conjugate(E_X)> = <|E_X|^2>` is real and nonnegative; likewise YY
+(or RR/LL). But an antenna's full polarization correlation matrix also includes
+`XY = <E_X conjugate(E_Y)>`, which can be complex. Ideally `YX = conjugate(XY)`.
+Products of different feeds/signals likewise need not be real merely because
+the antenna IDs match. Stored or processed data are preserved as supplied;
+opening must not enforce ideal reality/Hermitian symmetry by changing values.
+
+MSv2 [`DATA` is complex and `FLOAT_DATA` is real](https://github.com/casacore/casacore/blob/a1399b6b99907bd14021920a089403a93c10aba1/ms/MeasurementSets/MSMainEnums.h#L176).
+Autocorrelations stored in DATA retain its complex element type, including the
+real-valued parallel hands. In the pinned MSv4 schema,
+[`VISIBILITY` is complex64/complex128](https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/src/xradio/measurement_set/schema.py#L1020),
+whereas [`SPECTRUM` is real](https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/src/xradio/measurement_set/schema.py#L1001)
+with `[time, antenna_name, frequency, polarization]` dimensions. The latter is
+a separate single-dish representation, outside the initial v4 VisibilityXds
+profile; it is not a per-baseline float subtype inside VISIBILITY.
+
+Preserve the scalar kind of each selected data variable, subject to the explicit
+precision/conversion request. Do not infer a real dtype from `antenna1 == antenna2`
+or introduce a per-element real/complex variant. If a consumer requests only
+real self-products from complex storage, any real projection requires a defined
+policy for imaginary components and writable provenance; it is not an implicit
+lossless conversion. Normal mixed auto/cross visibility batches use a homogeneous
+complex array and one typed numerical loop. Real legacy FLOAT_DATA can use the
+existing real variants under the supported v2 profile.
+
+### Coordinate dependencies
 
 Metadata has declared axis dependencies and checked broadcast views. Constants,
 per-time, per-baseline, per-sample, and scientifically required channel or
