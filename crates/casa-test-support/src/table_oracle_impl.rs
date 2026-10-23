@@ -247,6 +247,11 @@ pub enum CppTableFixture {
     IsmIndirectArrays,
     /// `IsmIndirectArrays` in a big-endian table.
     IsmIndirectArraysBigEndian,
+    /// ISM bucket starts: TIME (Double, `4e9 + row`) and NAME (String,
+    /// `r<row>:` and 600 copies of the row's letter), 8 rows, stored with
+    /// `IncrementalStMan`. In casa-rs's buckets a value changes at every
+    /// bucket's first row. Full CC/CR/RC cross-matrix.
+    IsmBucketStarts,
 }
 
 /// A C++ fixture entry point: it writes or verifies the table at a path and
@@ -284,6 +289,10 @@ fn cell_fixture_entries(fixture: CppTableFixture) -> Result<CellFixtureEntries, 
         CppTableFixture::IsmIndirectArraysBigEndian => (
             cpp_table_write_ism_indirect_arrays_big_endian,
             cpp_table_verify_ism_indirect_arrays,
+        ),
+        CppTableFixture::IsmBucketStarts => (
+            cpp_table_write_ism_bucket_starts,
+            cpp_table_verify_ism_bucket_starts,
         ),
         other => return Err(format!("{other:?} has no C++ write and verify")),
     };

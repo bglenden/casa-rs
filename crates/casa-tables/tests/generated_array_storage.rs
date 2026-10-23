@@ -585,9 +585,6 @@ fn generated_standard_columns_write_the_files_of_row_records() {
 ///
 /// A group holding a generated array column is written from its column
 /// sources, so this is the column-source writer's materialized write.
-/// IncrementalStMan's row writer, which writes groups of row records, lays
-/// buckets out differently once a value changes at a bucket's first row (it
-/// keeps a copy of the previous value there), for scalars as for arrays.
 fn save_values(
     path: &Path,
     columns: &[Column],
@@ -649,14 +646,81 @@ fn generated_incremental_columns_write_the_files_of_materialized_cells() {
                 save_values(&reference, &columns, rows, manager, endian, kept);
                 assert_same_files(&reference, &generated, &case);
             }
-            if rows <= 20 {
-                // In one bucket, the row writer agrees.
-                let rows_path = root.path().join(format!("{rows}-{endian:?}-rows"));
-                save_rows(&rows_path, &columns, rows, manager, endian);
-                assert_same_files(&rows_path, &generated, &case);
-            }
+            // Row records write the same buckets, across bucket boundaries
+            // too: a bucket starts with each column's value at its first
+            // row, once (#852, ISM bucket layouts).
+            let rows_path = root.path().join(format!("{rows}-{endian:?}-rows"));
+            save_rows(&rows_path, &columns, rows, manager, endian);
+            assert_same_files(&rows_path, &generated, &case);
         }
     }
+}
+
+/// IncrementalStMan columns whose values each fill about half a bucket:
+/// buckets are sized for 12-byte strings, so in a table of TIME and these
+/// NAMEs a bucket starts at every row, with changed values.
+fn long_string_columns() -> Vec<Column> {
+    vec![
+        Column {
+            schema: || ColumnSchema::scalar("TIME", PrimitiveType::Float64),
+            cell: |row| Some(Value::Scalar(ScalarValue::Float64(4.0e9 + row as f64))),
+            runs: false,
+        },
+        Column {
+            schema: || ColumnSchema::scalar("NAME", PrimitiveType::String),
+            cell: |row| {
+                let letter = char::from(b'a' + (row % 26) as u8);
+                Some(Value::Scalar(ScalarValue::String(format!(
+                    "r{row}:{}",
+                    String::from(letter).repeat(600)
+                ))))
+            },
+            runs: false,
+        },
+    ]
+}
+
+/// Values that change at a bucket's first row keep their values from row
+/// records as from generated cells. The row writer once wrote the previous
+/// row's values there too, overflowed the bucket and lost the tail of its
+/// data to the bucket index (#852, ISM bucket layouts).
+#[test]
+fn incremental_values_that_change_at_a_bucket_start_keep_their_values() {
+    let root = tempfile::tempdir().expect("tempdir");
+    let columns = long_string_columns();
+    let manager = DataManagerKind::IncrementalStMan;
+    for endian in [EndianFormat::LittleEndian, EndianFormat::BigEndian] {
+        let case = format!("long strings {endian:?}");
+        let from_rows = root.path().join(format!("long-{endian:?}-rows"));
+        save_rows(&from_rows, &columns, 8, manager, endian);
+        assert_cells(&from_rows, &columns, 8, &case);
+        let generated = root.path().join(format!("long-{endian:?}-generated"));
+        save_generated(&generated, &columns, 8, manager, endian, Generated::PerRow);
+        assert_same_files(&from_rows, &generated, &case);
+    }
+}
+
+/// A row whose values cannot fit one bucket is refused rather than written
+/// over the bucket index.
+#[test]
+fn incremental_rows_larger_than_a_bucket_are_refused() {
+    let root = tempfile::tempdir().expect("tempdir");
+    let mut table = Table::with_schema(
+        TableSchema::new(vec![ColumnSchema::scalar("NAME", PrimitiveType::String)])
+            .expect("schema"),
+    );
+    table
+        .add_row(RecordValue::new(vec![RecordField::new(
+            "NAME",
+            Value::Scalar(ScalarValue::String("x".repeat(2000))),
+        )]))
+        .expect("add row");
+    let message = refusal(table.save(options(
+        &root.path().join("too-long"),
+        DataManagerKind::IncrementalStMan,
+        EndianFormat::LittleEndian,
+    )));
+    assert!(message.contains("exceeds planned bucket size"), "{message}");
 }
 
 #[test]
@@ -674,7 +738,7 @@ fn standard_arrays_of_every_element_type_keep_their_values() {
 
 /// The every-type columns saved with `manager` from rows and generated
 /// cells hold every cell as given, and the row writer writes the files of
-/// the generated save where the two lay buckets out alike.
+/// the generated save.
 fn assert_every_element_type_kept(manager: DataManagerKind) {
     let root = tempfile::tempdir().expect("tempdir");
     let columns = element_columns();
@@ -690,11 +754,7 @@ fn assert_every_element_type_kept(manager: DataManagerKind) {
                     .join(format!("types-{rows}-{endian:?}-{}", generated as u8));
                 save_generated(&path, &columns, rows, manager, endian, generated);
                 assert_cells(&path, &columns, rows, &case);
-                // StandardStMan's writers lay out every table alike;
-                // IncrementalStMan's in one bucket.
-                if manager == DataManagerKind::StandardStMan || rows <= 20 {
-                    assert_same_files(&from_rows, &path, &case);
-                }
+                assert_same_files(&from_rows, &path, &case);
             }
         }
     }

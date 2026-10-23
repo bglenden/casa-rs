@@ -1,7 +1,7 @@
 // IncrementalStMan fixtures: ism_scalar_primitives, ism_slowly_changing,
 // ism_complex_scalars, ism_typed_arrays, ism_complex_arrays,
-// ism_column_keywords. ism_element_arrays is in
-// casacore_cpp_table_element_arrays.cpp.
+// ism_column_keywords, ism_bucket_starts. ism_element_arrays and
+// ism_indirect_arrays are in casacore_cpp_table_element_arrays.cpp.
 #include "casacore_cpp_common.h"
 #include <casacore/tables/DataMan/IncrementalStMan.h>
 
@@ -422,6 +422,67 @@ int32_t cpp_table_verify_ism_column_keywords(const char* path, char** out_error)
         return 0;
     } catch (const std::exception& e) { *out_error = make_error(e.what()); return -1;
     } catch (...) { *out_error = make_error("unknown exception in verify_ism_column_keywords"); return -1; }
+}
+
+} // extern "C"
+
+// ===== ISM bucket_starts fixture =====
+// TIME (Double, 4e9 + row) and NAME (String: "r<row>:" and 600 copies of
+// the row's letter), in 8 rows. casa-rs sizes IncrementalStMan buckets for
+// strings of 12 bytes, so in its tables each NAME fills about half a bucket
+// and a bucket starts at every row: values change at a bucket's first row.
+// The Rust fixture is in tables_cross_matrix_incremental_stman.rs.
+
+namespace {
+
+const casacore::uInt kBucketStartRows = 8;
+
+casacore::String bucketStartName(casacore::uInt row) {
+    return "r" + std::to_string(row) + ":" + std::string(600, char('a' + row % 26));
+}
+
+} // namespace
+
+extern "C" {
+
+int32_t cpp_table_write_ism_bucket_starts(const char* path, char** out_error) {
+    try {
+        casacore::TableDesc td("", casacore::TableDesc::Scratch);
+        td.addColumn(casacore::ScalarColumnDesc<casacore::Double>("TIME"));
+        td.addColumn(casacore::ScalarColumnDesc<casacore::String>("NAME"));
+        casacore::SetupNewTable setup(path, td, casacore::Table::New);
+        casacore::IncrementalStMan stman;
+        setup.bindAll(stman);
+        casacore::Table table(setup, kBucketStartRows);
+        casacore::ScalarColumn<casacore::Double> time(table, "TIME");
+        casacore::ScalarColumn<casacore::String> name(table, "NAME");
+        for (casacore::uInt row = 0; row < kBucketStartRows; ++row) {
+            time.put(row, 4.0e9 + row);
+            name.put(row, bucketStartName(row));
+        }
+        table.flush();
+        return 0;
+    } catch (const std::exception& e) { *out_error = make_error(e.what()); return -1;
+    } catch (...) { *out_error = make_error("unknown exception in write_ism_bucket_starts"); return -1; }
+}
+
+int32_t cpp_table_verify_ism_bucket_starts(const char* path, char** out_error) {
+    try {
+        casacore::Table table(path, casacore::Table::Old);
+        if (table.nrow() != kBucketStartRows)
+            throw std::runtime_error("expected 8 rows, got " + std::to_string(table.nrow()));
+        casacore::ScalarColumn<casacore::Double> time(table, "TIME");
+        casacore::ScalarColumn<casacore::String> name(table, "NAME");
+        for (casacore::uInt row = 0; row < kBucketStartRows; ++row) {
+            if (time(row) != 4.0e9 + row)
+                throw std::runtime_error("TIME mismatch at row " + std::to_string(row));
+            if (name(row) != bucketStartName(row))
+                throw std::runtime_error("NAME mismatch at row " + std::to_string(row) +
+                                         ": " + std::string(name(row)).substr(0, 40));
+        }
+        return 0;
+    } catch (const std::exception& e) { *out_error = make_error(e.what()); return -1;
+    } catch (...) { *out_error = make_error("unknown exception in verify_ism_bucket_starts"); return -1; }
 }
 
 } // extern "C"

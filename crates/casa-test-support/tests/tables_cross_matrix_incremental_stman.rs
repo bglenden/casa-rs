@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 #![cfg(feature = "cpp-interop-tests")]
 
+use std::collections::HashMap;
+
 use casa_tables::{
-    ColumnOptions, ColumnSchema, DataManagerKind, EndianFormat, Table, TableOptions, TableSchema,
+    ColumnOptions, ColumnOverrides, ColumnSchema, DataManagerKind, EndianFormat,
+    GeneratedScalarColumn, Table, TableOptions, TableSchema,
 };
 use casa_test_support::table_element_arrays::{
     ElementStorage, element_arrays_fixture, save_generated_element_arrays,
@@ -731,4 +734,110 @@ fn ism_indirect_arrays_are_refused_on_save() {
         message.contains("as an ISMIndColumn in table.fNi"),
         "{message}"
     );
+}
+
+// --- Values that change at a bucket's first row ---
+
+/// Rows of the bucket-starts fixture.
+const BUCKET_START_ROWS: usize = 8;
+
+/// The NAME of `row` in the bucket-starts fixture: `r<row>:` and 600 copies
+/// of the row's letter.
+fn bucket_start_name(row: usize) -> String {
+    let letter = char::from(b'a' + (row % 26) as u8);
+    format!("r{row}:{}", String::from(letter).repeat(600))
+}
+
+/// TIME and NAME change in every row, and casa-rs's buckets, sized for
+/// 12-byte strings, hold one NAME each, so a value changes at the first row
+/// of every bucket. The row writer once kept a copy of the previous row's
+/// values there too, overflowed the bucket and lost the tail of the data
+/// to the bucket index (#852, ISM bucket layouts).
+fn ism_bucket_starts_fixture() -> TableFixture {
+    let schema = TableSchema::new(vec![
+        ColumnSchema::scalar("TIME", PrimitiveType::Float64),
+        ColumnSchema::scalar("NAME", PrimitiveType::String),
+    ])
+    .expect("schema");
+    let rows = (0..BUCKET_START_ROWS)
+        .map(|row| {
+            RecordValue::new(vec![
+                RecordField::new(
+                    "TIME",
+                    Value::Scalar(ScalarValue::Float64(4.0e9 + row as f64)),
+                ),
+                RecordField::new(
+                    "NAME",
+                    Value::Scalar(ScalarValue::String(bucket_start_name(row))),
+                ),
+            ])
+        })
+        .collect();
+    TableFixture {
+        schema,
+        rows,
+        table_keywords: RecordValue::default(),
+        column_keywords: vec![],
+        cpp_fixture: Some(CppTableFixture::IsmBucketStarts),
+        tile_shape: None,
+        column_bindings: Vec::new(),
+    }
+}
+
+#[test]
+fn ism_bucket_starts_cross_matrix() {
+    let fixture = ism_bucket_starts_fixture();
+    assert_matrix_results(&run_full_cross_matrix(
+        &fixture,
+        ManagerKind::IncrementalStMan,
+    ));
+}
+
+#[test]
+fn ism_bucket_starts_endian_cross_matrix() {
+    let fixture = ism_bucket_starts_fixture();
+    assert_matrix_results(&run_endian_cross_matrix(
+        &fixture,
+        ManagerKind::IncrementalStMan,
+    ));
+}
+
+/// The table saved from generated columns, which the column-source writer
+/// writes, reads in casacore too.
+#[test]
+fn ism_bucket_starts_generated_save_reads_in_cpp() {
+    if !casa_test_support::casacore_oracle_available() {
+        eprintln!("skipping: C++ backend unavailable");
+        return;
+    }
+    let dir = tempfile::tempdir().expect("tempdir");
+    for endian in [EndianFormat::BigEndian, EndianFormat::LittleEndian] {
+        let path = dir.path().join(format!("{endian:?}"));
+        let mut overrides = ColumnOverrides::for_row_count(BUCKET_START_ROWS);
+        overrides.insert_generated_scalar(
+            "TIME",
+            GeneratedScalarColumn::new(BUCKET_START_ROWS, |row| {
+                Some(ScalarValue::Float64(4.0e9 + row as f64))
+            }),
+        );
+        overrides.insert_generated_scalar(
+            "NAME",
+            GeneratedScalarColumn::new(BUCKET_START_ROWS, |row| {
+                Some(ScalarValue::String(bucket_start_name(row)))
+            }),
+        );
+        Table::with_schema(ism_bucket_starts_fixture().schema)
+            .prepare_write()
+            .save_with_column_overrides(
+                TableOptions::new(&path)
+                    .with_data_manager(DataManagerKind::IncrementalStMan)
+                    .with_endian_format(endian),
+                &HashMap::new(),
+                &overrides,
+            )
+            .expect("save generated");
+        if let Err(error) = TableOracle::table_verify(CppTableFixture::IsmBucketStarts, &path) {
+            panic!("{endian:?}: C++ verify failed: {error}");
+        }
+    }
 }
