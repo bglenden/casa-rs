@@ -101,6 +101,7 @@ impl Table {
             endian_format: options.endian_format,
             flushed_generation: table.inner.generation(),
             unpublished_write: std::sync::atomic::AtomicBool::new(false),
+            table_dat_before_write: std::sync::OnceLock::new(),
         });
 
         Ok(table)
@@ -295,16 +296,19 @@ impl Table {
         // the table as persisted, as casacore's putFile does.
         let state = self.lock_state.as_mut().expect("lock_state present");
         if state.lock_file.has_lock(LockType::Write) && state.has_unpublished_write() {
-            state.sync_data =
-                publish_persisted_write(&state.lock_file, &state.path).map_err(|e| {
-                    TableError::LockIo {
-                        path: state.path.display().to_string(),
-                        message: e.to_string(),
-                    }
-                })?;
+            state.sync_data = publish_persisted_write(
+                &state.lock_file,
+                &state.path,
+                state.table_dat_before_write.get().map(Vec::as_slice),
+            )
+            .map_err(|e| TableError::LockIo {
+                path: state.path.display().to_string(),
+                message: e.to_string(),
+            })?;
             state
                 .unpublished_write
                 .store(false, std::sync::atomic::Ordering::Relaxed);
+            state.table_dat_before_write.take();
         }
 
         state.lock_file.release().map_err(|e| TableError::LockIo {
@@ -398,10 +402,15 @@ impl Table {
         let Some(state) = self.lock_state.as_ref() else {
             return;
         };
-        if state.lock_file.has_lock(LockType::Write) && same_directory(&state.path, path) {
-            state
+        if state.lock_file.has_lock(LockType::Write)
+            && same_directory(&state.path, path)
+            && !state
                 .unpublished_write
-                .store(true, std::sync::atomic::Ordering::Relaxed);
+                .swap(true, std::sync::atomic::Ordering::Relaxed)
+            && let Ok(table_dat) =
+                std::fs::read(state.path.join(crate::storage::TABLE_CONTROL_FILE))
+        {
+            let _ = state.table_dat_before_write.set(table_dat);
         }
     }
 
@@ -518,8 +527,7 @@ impl Table {
 
 /// Whether `a` and `b` name the same directory: the same path, or two
 /// spellings of one existing directory.
-#[cfg(unix)]
-fn same_directory(a: &Path, b: &Path) -> bool {
+pub(super) fn same_directory(a: &Path, b: &Path) -> bool {
     a == b
         || matches!(
             (std::fs::canonicalize(a), std::fs::canonicalize(b)),

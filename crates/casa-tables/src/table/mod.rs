@@ -27,6 +27,7 @@ mod generated_array;
 mod io;
 mod locking;
 mod mutation;
+mod persisted_rows;
 mod query;
 mod streamed_scalar;
 mod virtual_columns;
@@ -1809,6 +1810,11 @@ struct LockState {
     /// told that the disk changed. It is atomic because `Table::flush` and
     /// `Table::save` write through a shared borrow.
     unpublished_write: std::sync::atomic::AtomicBool,
+    /// `table.dat` as it was before the unpublished write started, read when
+    /// `unpublished_write` is set and dropped once the write is published.
+    /// The publication compares the file with it (#880): a write that left
+    /// the file as it was keeps the row count published before.
+    table_dat_before_write: std::sync::OnceLock<Vec<u8>>,
 }
 
 #[cfg(unix)]
@@ -2297,7 +2303,11 @@ impl Drop for Table {
                     && state.lock_file.has_lock(LockType::Write)
                     && state.has_unpublished_write()
                 {
-                    let _ = publish_persisted_write(&state.lock_file, &state.path);
+                    let _ = publish_persisted_write(
+                        &state.lock_file,
+                        &state.path,
+                        state.table_dat_before_write.get().map(Vec::as_slice),
+                    );
                 }
             }
         }

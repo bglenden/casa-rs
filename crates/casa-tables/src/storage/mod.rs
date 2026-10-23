@@ -1092,6 +1092,10 @@ impl CompositeStorage {
         Ok(snapshot)
     }
 
+    /// Rewrite the keywords in `table_path`'s `table.dat` and its
+    /// `table.info`, keeping the data-manager layout on disk. The snapshot's
+    /// `row_count` is the count the table's sync data publishes, which the
+    /// file's row counts are raised to (#880); its rows are not written.
     pub(crate) fn save_metadata_only(
         &self,
         table_path: &Path,
