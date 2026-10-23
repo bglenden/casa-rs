@@ -15,6 +15,7 @@ members = [
     "crates/casa-numerics",
     "crates/casa-fft",
     "crates/casa-calibration",
+    "crates/casa-components",
     "crates/casa-measures-tools",
     "crates/casa-tables",
     "crates/casa-lattices",

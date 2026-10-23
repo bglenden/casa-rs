@@ -30,12 +30,6 @@ pub enum SchemaError {
     #[error("column \"{0}\" uses Direct but is not FixedShape array")]
     DirectRequiresFixedShape(String),
 
-    /// The `undefined` option was set on a non-scalar column.
-    ///
-    /// Cf. C++ `ColumnDesc::Undefined`, which is only meaningful for scalar columns.
-    #[error("column \"{0}\" uses Undefined but is not scalar")]
-    UndefinedOnlyForScalar(String),
-
     /// A column with the given name does not exist in the schema.
     ///
     /// Returned by [`TableSchema::remove_column`] and [`TableSchema::rename_column`]
@@ -61,8 +55,13 @@ pub struct ColumnOptions {
 
     /// Allow cells in this column to be left in an undefined (empty) state.
     ///
-    /// Only valid for [`ColumnType::Scalar`] columns; setting this on an array
-    /// or record column returns [`SchemaError::UndefinedOnlyForScalar`].
+    /// casacore gives the flag a meaning only for scalar columns: a scalar
+    /// cell equal to the column's default value reads as undefined. It
+    /// accepts the flag on every column of a standard data type, arrays and
+    /// records included (`BaseColumnDesc`'s constructor refuses it only for
+    /// `TpOther`), and CASA uses it that way: a `ComponentList` declares its
+    /// variable-shape `Optional_Parameters` column `Undefined`. The flag is
+    /// therefore accepted on every column type and persisted as written.
     /// Cf. C++ `ColumnDesc::Undefined`.
     pub undefined: bool,
 }
@@ -206,8 +205,7 @@ impl ColumnSchema {
     /// Attach additional storage/behaviour options to this column.
     ///
     /// Validates the combination of options against the column kind and returns
-    /// [`SchemaError::DirectRequiresFixedShape`] or
-    /// [`SchemaError::UndefinedOnlyForScalar`] if the options are incompatible.
+    /// [`SchemaError::DirectRequiresFixedShape`] if the options are incompatible.
     /// On success returns `self` with the options applied, enabling builder-style
     /// construction.
     pub fn with_options(mut self, options: ColumnOptions) -> Result<Self, SchemaError> {
@@ -289,9 +287,6 @@ impl ColumnSchema {
         {
             return Err(SchemaError::DirectRequiresFixedShape(self.name.clone()));
         }
-        if self.options.undefined && !matches!(self.column_type, ColumnType::Scalar) {
-            return Err(SchemaError::UndefinedOnlyForScalar(self.name.clone()));
-        }
         Ok(())
     }
 }
@@ -305,7 +300,8 @@ impl ColumnSchema {
 ///
 /// From the C++ docs: "A table description consists of: name, version, comment,
 /// a set of column descriptions, and a keyword set." This Rust type covers the
-/// column-description portion; keywords are handled separately.
+/// name, version and comment (its [`TableDescHeader`]) and the column
+/// descriptions; keywords are handled separately.
 ///
 /// # Example
 ///
@@ -323,9 +319,48 @@ impl ColumnSchema {
 pub struct TableSchema {
     columns: Vec<ColumnSchema>,
     column_lookup: HashMap<String, usize>,
+    header: TableDescHeader,
+}
+
+/// The name, version and comment heading a casacore table description.
+///
+/// C++ `TableDesc` carries them in front of its column descriptions, and
+/// `table.dat` stores them for every table. Producers name their
+/// descriptions: CASA's component lists are `ComponentListDescription`,
+/// version `4`, with the comment "A description of a component list".
+/// casacore does not interpret them when it opens a table; they are kept so
+/// that a table re-saved by casa-rs describes itself as casacore wrote it.
+/// All three are empty for a schema built in Rust until
+/// [`TableSchema::with_header`] sets them.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct TableDescHeader {
+    /// The description's name, C++ `TableDesc::getType()`.
+    pub name: String,
+    /// The description's version string, C++ `TableDesc::version()`.
+    pub version: String,
+    /// The description's comment, C++ `TableDesc::comment()`.
+    pub comment: String,
 }
 
 impl TableSchema {
+    /// Return this schema with its table-description header replaced.
+    ///
+    /// Cf. the C++ `TableDesc(name, version, option)` constructor and
+    /// `TableDesc::comment()`.
+    pub fn with_header(mut self, header: TableDescHeader) -> Self {
+        self.header = header;
+        self
+    }
+
+    /// The table description's name, version and comment.
+    ///
+    /// A table opened from disk reports what its `table.dat` holds; a schema
+    /// built in Rust reports empty strings unless [`Self::with_header`] set
+    /// them.
+    pub fn header(&self) -> &TableDescHeader {
+        &self.header
+    }
+
     /// Construct a `TableSchema` from an ordered list of column descriptions.
     ///
     /// Validates each [`ColumnSchema`]'s options (see [`ColumnSchema::with_options`])
@@ -345,6 +380,7 @@ impl TableSchema {
         Ok(Self {
             columns,
             column_lookup,
+            header: TableDescHeader::default(),
         })
     }
 
@@ -389,7 +425,10 @@ impl TableSchema {
         for name in self.column_lookup.keys() {
             bytes = bytes.checked_add(name.capacity())?;
         }
-        Some(bytes)
+        bytes
+            .checked_add(self.header.name.capacity())?
+            .checked_add(self.header.version.capacity())?
+            .checked_add(self.header.comment.capacity())
     }
 
     /// Add a column to the schema.
@@ -501,15 +540,26 @@ mod tests {
     }
 
     #[test]
-    fn undefined_only_applies_to_scalar_columns() {
-        let column = ColumnSchema::record("meta").with_options(ColumnOptions {
+    fn undefined_is_accepted_on_every_column_kind_as_casacore_accepts_it() {
+        // casacore refuses `Undefined` only for `TpOther` columns
+        // (BaseColDesc.cc), and CASA's ComponentList declares a
+        // variable-shape Double array with it (`Optional_Parameters`).
+        let undefined = ColumnOptions {
             direct: false,
             undefined: true,
-        });
-        assert_eq!(
-            column,
-            Err(SchemaError::UndefinedOnlyForScalar("meta".to_string()))
-        );
+        };
+        for column in [
+            ColumnSchema::scalar("flag", PrimitiveType::Int32),
+            ColumnSchema::array_variable("Optional_Parameters", PrimitiveType::Float64, Some(1)),
+            ColumnSchema::array_fixed("fixed", PrimitiveType::Float64, vec![2]),
+            ColumnSchema::record("meta"),
+        ] {
+            let name = column.name().to_string();
+            let column = column
+                .with_options(undefined)
+                .unwrap_or_else(|error| panic!("{name}: {error}"));
+            assert!(column.options().undefined, "{name}");
+        }
     }
 
     #[test]

@@ -1,0 +1,33 @@
+[package]
+name = "casa-components"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "CASA component lists (sky components, shapes, spectra) and their casacore tables"
+repository.workspace = true
+
+[features]
+default = []
+cpp-interop-tests = ["casa-test-support/cpp-interop-tests"]
+
+[lints]
+workspace = true
+
+[dependencies]
+casa-tables = { path = "../casa-tables" }
+casa-types = { path = "../casa-types" }
+ndarray.workspace = true
+num-complex.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+casa-test-support = { path = "../casa-test-support" }
+# The tests compare stored doubles exactly with CASA's JSON dumps, which needs
+# correctly rounded float parsing.
+serde_json = { version = "1", features = ["float_roundtrip"] }
+tempfile = "3"
+
+[[test]]
+name = "casacore_cpp_interop"
+required-features = ["cpp-interop-tests"]
