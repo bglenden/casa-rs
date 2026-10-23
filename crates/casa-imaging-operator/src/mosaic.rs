@@ -41,8 +41,8 @@ const DISH_REFERENCE_GHZ: f64 = 100.0;
 
 /// Which of CASA's two heterogeneous-array mosaic machines a set follows.
 /// They build the same crops, normalisation and resampling, and differ in
-/// the screen's least size, in how the support is found and gridded and,
-/// through [`AiryDish`], in the 7 m dish's radius.
+/// the screen's least size, in the frequency cells, in how the support is
+/// found and gridded and, through [`AiryDish`], in the 7 m dish's radius.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum MosaicRules {
     /// tclean's `gridder='mosaic'`: `TransformMachines2/HetArrayConvFunc`
@@ -52,10 +52,11 @@ pub enum MosaicRules {
     /// The simulator's `setoptions(ftmachine='mosaic')`: the earlier
     /// `TransformMachines/HetArrayConvFunc`, which `Simulator::
     /// createSkyEquation` builds. Its screen has no least size beside the
-    /// beams'; its support search walks the weight plane inwards from the
-    /// edge, along the row and the column one cell off its centre, and
-    /// widens the radius it finds by √2; and its `MosaicFT` grids every row
-    /// of a window with the widest pair's support.
+    /// beams'; its frequency cells come from the selected channels alone;
+    /// its support search walks the weight plane inwards from the edge,
+    /// along the row and the column one cell off its centre, and widens the
+    /// radius it finds by √2; and its `MosaicFT` grids every row of a
+    /// window with the widest pair's support.
     Simulator,
 }
 
@@ -189,18 +190,24 @@ struct FrequencyCells {
     /// `tol/2`, else the nearest); `None` is the identity branch, where a
     /// channel's own frequency is a cell.
     tolerance_hz: Option<f64>,
+    /// Whether the `tol/2` test is made in `Float`, as the simulator's
+    /// machine makes it.
+    single_precision: bool,
     /// Index of the window's first cell in the set's flat cell list.
     first: usize,
 }
 
-impl FrequencyCells {
-    /// `SimplePBConvFunc::findUsefulChannels` (the `Vector<Int>& chanMap`
-    /// overload): cells every `tol = max(0.5 % of the window's top
-    /// frequency, half the selected spacing)` stepping down from the
-    /// window's top frequency, the identity when the cell count reaches the
-    /// selected channel count less one, a single cell at the bottom
-    /// frequency when no cell fits.
-    fn new(window: &MosaicWindow, first: usize) -> Result<Self, OperatorError> {
+/// A window's selected frequencies, their least and greatest, and their
+/// spacing (CASA's `origwidth`, `1e12` for one channel).
+struct SelectedSpan<'w> {
+    selected: &'w [f64],
+    min_freq: f64,
+    max_freq: f64,
+    original_width: f64,
+}
+
+impl<'w> SelectedSpan<'w> {
+    fn new(window: &'w MosaicWindow) -> Result<Self, OperatorError> {
         let selected = &window.selected_frequencies_hz;
         if selected.is_empty()
             || window.window_frequencies_hz.is_empty()
@@ -220,6 +227,48 @@ impl FrequencyCells {
         } else {
             (max_freq - min_freq) / (selected.len() - 1) as f64
         };
+        Ok(Self {
+            selected,
+            min_freq,
+            max_freq,
+            original_width,
+        })
+    }
+}
+
+impl FrequencyCells {
+    /// The window's cells as `rules`' machine finds them.
+    fn new(rules: MosaicRules, window: &MosaicWindow, first: usize) -> Result<Self, OperatorError> {
+        match rules {
+            MosaicRules::Tclean => Self::tclean(window, first),
+            MosaicRules::Simulator => Self::simulator(window, first),
+        }
+    }
+
+    /// The identity branch: every selected channel its own cell.
+    fn identity(window: &MosaicWindow, first: usize) -> Self {
+        Self {
+            spectral_window: window.spectral_window,
+            frequencies_hz: window.selected_frequencies_hz.clone(),
+            tolerance_hz: None,
+            single_precision: false,
+            first,
+        }
+    }
+
+    /// `SimplePBConvFunc::findUsefulChannels` (`TransformMachines2/`, the
+    /// `Vector<Int>& chanMap` overload): cells every `tol = max(0.5 % of
+    /// the window's top frequency, half the selected spacing)` stepping
+    /// down from the window's top frequency, the identity when the cell
+    /// count reaches the selected channel count less one, a single cell at
+    /// the bottom frequency when no cell fits.
+    fn tclean(window: &MosaicWindow, first: usize) -> Result<Self, OperatorError> {
+        let SelectedSpan {
+            selected,
+            min_freq,
+            max_freq,
+            original_width,
+        } = SelectedSpan::new(window)?;
         let window_top = window
             .window_frequencies_hz
             .iter()
@@ -252,12 +301,7 @@ impl FrequencyCells {
             bottom = min_freq;
         }
         let frequencies_hz = if cells + 1 >= selected.len() {
-            return Ok(Self {
-                spectral_window: window.spectral_window,
-                frequencies_hz: selected.clone(),
-                tolerance_hz: None,
-                first,
-            });
+            return Ok(Self::identity(window, first));
         } else if cells == 0 {
             vec![bottom]
         } else {
@@ -267,6 +311,46 @@ impl FrequencyCells {
             spectral_window: window.spectral_window,
             frequencies_hz,
             tolerance_hz: Some(tol),
+            single_precision: false,
+            first,
+        })
+    }
+
+    /// The simulator's `SimplePBConvFunc::findUsefulChannels`
+    /// (`TransformMachines/`): `lround(span / tol)` cells, at most one a
+    /// channel, with `tol` 0.5 % of the top selected frequency; the
+    /// identity when that reaches the channel count less one, and one cell
+    /// at the first selected frequency when it is zero. Otherwise the cells
+    /// are `(span + spacing)/n` apart from half that above a spacing below
+    /// the bottom, and a frequency takes the first within half of it, in
+    /// `Float`. (CASA leaves a frequency with none unmapped; the cells
+    /// cover the selected span, so none is.)
+    fn simulator(window: &MosaicWindow, first: usize) -> Result<Self, OperatorError> {
+        let SelectedSpan {
+            selected,
+            min_freq,
+            max_freq,
+            original_width,
+        } = SelectedSpan::new(window)?;
+        let tol = max_freq * 0.5 / 100.0;
+        let cells = (((max_freq - min_freq) / tol).round() as usize).min(selected.len());
+        if cells + 1 >= selected.len() {
+            return Ok(Self::identity(window, first));
+        }
+        let (frequencies_hz, tol) = if cells == 0 {
+            (vec![selected[0]], tol.max(original_width))
+        } else {
+            let tol = (max_freq - min_freq + original_width) / cells as f64;
+            let cells = (0..cells)
+                .map(|k| min_freq - original_width + tol / 2.0 + tol * k as f64)
+                .collect();
+            (cells, tol)
+        };
+        Ok(Self {
+            spectral_window: window.spectral_window,
+            frequencies_hz,
+            tolerance_hz: Some(tol),
+            single_precision: true,
             first,
         })
     }
@@ -283,12 +367,20 @@ impl FrequencyCells {
                 })
                 .0
         };
+        let within = |cell: &f64, tol: f64| {
+            let difference = (freq_hz - cell).abs();
+            if self.single_precision {
+                difference as f32 <= (tol / 2.0) as f32
+            } else {
+                difference <= tol / 2.0
+            }
+        };
         match self.tolerance_hz {
             None => nearest(),
             Some(tol) => self
                 .frequencies_hz
                 .iter()
-                .position(|cell| (freq_hz - cell).abs() <= tol / 2.0)
+                .position(|cell| within(cell, tol))
                 .unwrap_or_else(nearest),
         }
     }
@@ -371,7 +463,7 @@ impl MosaicLayout {
         let mut cells = Vec::with_capacity(windows.len());
         let mut cell_count = 0;
         for window in windows {
-            let frequency_cells = FrequencyCells::new(window, cell_count)?;
+            let frequency_cells = FrequencyCells::new(rules, window, cell_count)?;
             cell_count += frequency_cells.frequencies_hz.len();
             cells.push(frequency_cells);
         }
@@ -1201,7 +1293,8 @@ mod tests {
 
     #[test]
     fn a_single_selected_channel_is_its_own_cell() {
-        let cells = FrequencyCells::new(&window(vec![100.0e9], 101.0e9, 1.0e6), 4).expect("cells");
+        let cells =
+            FrequencyCells::tclean(&window(vec![100.0e9], 101.0e9, 1.0e6), 4).expect("cells");
         assert_eq!(cells.frequencies_hz, vec![100.0e9]);
         assert_eq!(cells.tolerance_hz, None);
         assert_eq!(cells.first, 4);
@@ -1217,7 +1310,7 @@ mod tests {
         let selected = (0..8)
             .map(|k| 98.0e9 + k as f64 * 0.3e9)
             .collect::<Vec<_>>();
-        let cells = FrequencyCells::new(&window(selected, 101.0e9, 1.0e6), 0).expect("cells");
+        let cells = FrequencyCells::tclean(&window(selected, 101.0e9, 1.0e6), 0).expect("cells");
         let tol = 101.0e9 * 0.005;
         let top = 101.0e9 - tol; // 100.495 > 100.1, step again:
         let top = top - tol; // 99.99 ≤ 100.1
@@ -1248,7 +1341,7 @@ mod tests {
         let selected = (0..16)
             .map(|k| 230.002e9 + k as f64 * 2.0e6)
             .collect::<Vec<_>>();
-        let cells = FrequencyCells::new(&window(selected, 230.51e9, 2.0e6), 0).expect("cells");
+        let cells = FrequencyCells::tclean(&window(selected, 230.51e9, 2.0e6), 0).expect("cells");
         let tol = 230.51e9 * 0.005;
         assert_eq!(cells.tolerance_hz, Some(tol));
         assert_eq!(cells.frequencies_hz.len(), 1);
@@ -1264,7 +1357,7 @@ mod tests {
         // 101.5 down past 100 … reaches ≥ 2 cells = channels − 1 → identity.
         let selected = vec![100.0e9, 101.0e9, 102.0e9];
         let cells =
-            FrequencyCells::new(&window(selected.clone(), 102.0e9, 1.0e6), 0).expect("cells");
+            FrequencyCells::tclean(&window(selected.clone(), 102.0e9, 1.0e6), 0).expect("cells");
         assert_eq!(cells.frequencies_hz, selected);
         assert_eq!(cells.tolerance_hz, None);
         assert_eq!(cells.cell_of(101.2e9), 1);

@@ -399,6 +399,46 @@ fn the_simulator_rules_find_casa_v1_supports() {
     assert_eq!(screen(MosaicRules::Tclean), 96);
 }
 
+/// The simulator's `findUsefulChannels`: four 15.625 MHz channels at
+/// 230 GHz span less than half its 1.15 GHz tolerance, so they share one
+/// cell at the first channel; eight channels 0.3 GHz apart from 98 GHz span
+/// 2.1 GHz, `lround(2.1/0.5005) = 4` cells 0.6 GHz apart from 98 GHz.
+#[test]
+fn the_simulator_rules_take_v1s_frequency_cells() {
+    let geometry = geometry();
+    let dishes = [
+        AiryDish::casa_alma_simulator(12.0),
+        AiryDish::casa_alma_simulator(7.0),
+    ];
+    let four = (0..4)
+        .map(|k| 230.0e9 + 15.625e6 * f64::from(k))
+        .collect::<Vec<_>>();
+    let eight = (0..8)
+        .map(|k| 98.0e9 + 0.3e9 * f64::from(k))
+        .collect::<Vec<_>>();
+    let windows = [window(0, four.clone(), four[3]), window(1, eight, 101.0e9)];
+    let set = MosaicPb::new(
+        MosaicRules::Simulator,
+        &geometry,
+        &routing(),
+        FREQUENCY_HZ,
+        &dishes,
+        &windows,
+    )
+    .expect("mosaic set");
+    assert_eq!(set.frequency_cells(0), Some(&[230.0e9][..]));
+    let cells = set.frequency_cells(1).expect("window 1");
+    assert_eq!(cells.len(), 4);
+    for (cell, expected) in cells.iter().zip([98.0e9, 98.6e9, 99.2e9, 99.8e9]) {
+        assert!((cell - expected).abs() < 1.0, "{cells:?}");
+    }
+    // Window 0's one cell, then window 1's from cube 1: 98.95 GHz is 0.35
+    // GHz from 98.6 GHz and 0.25 GHz from 99.2 GHz, so it takes cell 2.
+    assert_eq!(set.key(&context([0, 1], 0), four[2], 0.0).cube, 0);
+    assert_eq!(set.key(&context([0, 1], 1), 98.95e9, 0.0).cube, 3);
+    assert_eq!(set.key(&context([0, 1], 1), 100.0e9, 0.0).cube, 4);
+}
+
 #[test]
 fn the_weight_image_is_the_beam_power_at_the_pointing() {
     let mut rng = Rng::new(83);
