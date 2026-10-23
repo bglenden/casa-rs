@@ -12,8 +12,12 @@
 //! fast math off, so additions, multiplications, the division and the
 //! square root are IEEE-754's, and the source turns off the fusing of a
 //! product and a sum into one rounding (`#pragma METAL fp contract(off)`),
-//! which Metal does by default and the host never does. Draws then agree
-//! with the host's to the bit (the backend's law checks whole cells).
+//! which Metal does by default and the host never does. A term of σ = 0 adds
+//! nothing, as the host's returns at once, so a cell's signed zero stays.
+//! Draws then agree with the host's to the bit, for every term
+//! [`metal_draws_exactly`] admits (the backend's law checks whole cells).
+//! The one difference left is the device's: it flushes subnormal `f32`
+//! values to zero, which only a σ below [`METAL_EXACT_SIGMA`] can make.
 //!
 //! Every name carries the `cell_noise_` prefix, so the source can be
 //! concatenated with a backend's own. The pragma holds to the end of the
@@ -24,6 +28,31 @@ use super::normal::{
     ATANH, COSINE, LN_2_HIGH, LN_2_LOW, OCTANT_WORDS, SINE, SQRT_HALF_WORD, WORD_SCALE,
 };
 use super::philox::{MULTIPLIERS, WEYL};
+
+/// The smallest nonzero |σ| whose draws a Metal device makes bit for bit as
+/// the host does: 2⁻⁴⁰, about 9·10⁻¹³.
+///
+/// The device flushes subnormal `f32` values to zero; the host keeps them.
+/// No intermediate of a draw is subnormal whatever σ is: the logarithm's
+/// series and the octant's polynomials are exactly zero or at least about
+/// 2⁻⁹⁸ (the logarithm's correction at u nearest 1). A draw itself,
+/// `r·σ·sin θ` or `r·σ·cos θ`, is zero or at least
+/// `r_min·s_min·|σ|`, where `r_min` ≈ 2.2·10⁻⁵ is the smallest nonzero
+/// radius (u = 1 − 2⁻³²) and `s_min` ≈ 1.5·10⁻⁹ the smallest nonzero sine
+/// (one step of 2⁻²⁹ of an octant): 3·10⁻¹⁴·|σ|. From |σ| ≥ 2⁻⁵⁵ every
+/// nonzero draw is at least 2⁻¹⁰⁰. A sum of it and a normal cell then has
+/// both addends' units in the last place at least 2⁻¹²⁴, or the cell far
+/// below the draw, so it is zero or normal. 2⁻⁴⁰ leaves a margin of 2¹⁵.
+/// Any physical noise is many orders of magnitude above it.
+pub const METAL_EXACT_SIGMA: f32 = 1.0 / (1_u64 << 40) as f32;
+
+/// Whether a term of σ `sigma` draws on a Metal device exactly as on the
+/// host: σ = 0 (no draws), or |σ| at least [`METAL_EXACT_SIGMA`]. A NaN
+/// draws NaN on both, but is not admitted.
+#[must_use]
+pub fn metal_draws_exactly(sigma: f32) -> bool {
+    sigma == 0.0 || sigma.abs() >= METAL_EXACT_SIGMA
+}
 
 /// One noise term as the kernel reads it: its stream key and σ.
 #[repr(C)]
@@ -178,6 +207,9 @@ kernel void {kernel}(device float2 *cells [[buffer(0)]],
     uint4 counter = uint4(row.row_low, row.row_high, channel, pair);
     for (uint term = 0; term < p.terms; ++term) {{
         cell_noise_term t = terms[term];
+        if (t.sigma == 0.0f) {{
+            continue;
+        }}
         uint4 words = cell_noise_philox(counter, uint2(t.key0, t.key1));
         float scaled0 = cell_noise_radius(words.x) * t.sigma;
         float2 sc0 = cell_noise_sin_cos(words.y);

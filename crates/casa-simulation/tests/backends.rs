@@ -23,7 +23,10 @@
 //! Rows it predicts get their noise on the device, added to the model there
 //! (#855), with the host's draws: with one noise term, a Metal session
 //! that predicts and corrupts writes, bit for bit, the sum of the Metal
-//! session that only predicts and the CPU session that only corrupts.
+//! session that only predicts and the CPU session that only corrupts. That
+//! holds too for a σ so small that some draws are subnormal, which the
+//! host then draws as the device would flush them, and a σ of zero leaves
+//! the model as it is.
 //!
 //! On a host without a Metal device the Metal comparisons print `skipped:
 //! no Metal device` and pass: run them outside command sandboxes on Apple
@@ -257,12 +260,13 @@ fn noise_is_the_same_whatever_backend_is_asked_for() {
 
 /// A session of 4 linear correlations with `backend` that observes a scan
 /// of several write batches, predicts `model` into it when given one and
-/// corrupts it with one noise term when `corrupt`, then observes a scan it
-/// neither predicts nor corrupts; MAIN read back with the pass's summary.
+/// corrupts it with one noise term of σ `noise_jy` when given one, then
+/// observes a scan it neither predicts nor corrupts; MAIN read back with the
+/// pass's summary.
 fn predicted_and_corrupted(
     path: &Path,
     model: Option<&Path>,
-    corrupt: bool,
+    noise_jy: Option<f64>,
     backend: BackendRequest,
 ) -> (Vec<Row>, PassSummary) {
     let mut sm = session_with_channels(path, "ALMA", "XX XY YX YY", CHANNELS, resources(backend));
@@ -272,10 +276,10 @@ fn predicted_and_corrupted(
         sm.set_vp(&VoltagePatternSpec::default()).expect("setvp");
         sm.predict(&predict_spec(model, false)).expect("predict");
     }
-    if corrupt {
+    if let Some(simple_noise_jy) = noise_jy {
         sm.set_noise(&NoiseSpec {
             mode: "simplenoise".to_string(),
-            simple_noise_jy: 0.1,
+            simple_noise_jy,
             on_the_fly: true,
         })
         .expect("setnoise");
@@ -295,44 +299,61 @@ fn metal_adds_the_hosts_noise_to_the_model_on_the_device() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let path = |name: &str| directory.path().join(name);
     let model = cube(directory.path());
-    let (both, both_pass) =
-        predicted_and_corrupted(&path("both.ms"), Some(&model), true, BackendRequest::Metal);
-    let (model_only, model_pass) = predicted_and_corrupted(
-        &path("model.ms"),
-        Some(&model),
-        false,
-        BackendRequest::Metal,
-    );
-    let (noise, _) = predicted_and_corrupted(&path("noise.ms"), None, true, BackendRequest::Cpu);
-    assert_eq!(both_pass.backend, "Metal", "the pass predicted on Metal");
-    assert!(both_pass.batches > 1, "{both_pass:?}");
-    assert_eq!(both_pass.block_rows, model_pass.block_rows, "{both_pass:?}");
-    assert_eq!(both.len(), model_only.len(), "rows");
-    assert_eq!(both.len(), noise.len(), "rows");
-    let mut predicted = 0;
-    for (index, ((both, model), noise)) in both.iter().zip(&model_only).zip(&noise).enumerate() {
-        predicted += usize::from(model.data.iter().any(|sample| !zero(sample)));
-        for (sample, ((found, model), noise)) in both
-            .data
-            .iter()
-            .zip(&model.data)
-            .zip(&noise.data)
-            .enumerate()
+    let (model_only, model_pass) =
+        predicted_and_corrupted(&path("model.ms"), Some(&model), None, BackendRequest::Metal);
+    // A σ the device draws exactly; one whose draws are partly subnormal,
+    // which the device would flush, so the host draws it (#856 review); and
+    // σ = 0, which adds nothing on either side, signed zeros included.
+    for sigma in [0.1, 1.0e-36, 0.0] {
+        let (both, both_pass) = predicted_and_corrupted(
+            &path("both.ms"),
+            Some(&model),
+            Some(sigma),
+            BackendRequest::Metal,
+        );
+        let (noise, _) =
+            predicted_and_corrupted(&path("noise.ms"), None, Some(sigma), BackendRequest::Cpu);
+        for ms in ["both.ms", "noise.ms"] {
+            std::fs::remove_dir_all(path(ms)).expect("remove the run");
+        }
+        assert_eq!(
+            both_pass.backend, "Metal",
+            "σ {sigma}: the pass predicted on Metal"
+        );
+        assert!(both_pass.batches > 1, "σ {sigma}: {both_pass:?}");
+        assert_eq!(both_pass.block_rows, model_pass.block_rows, "σ {sigma}");
+        assert_eq!(both.len(), model_only.len(), "σ {sigma}: rows");
+        assert_eq!(both.len(), noise.len(), "σ {sigma}: rows");
+        let (mut predicted, mut subnormal) = (0, 0);
+        for (index, ((both, model), noise)) in both.iter().zip(&model_only).zip(&noise).enumerate()
         {
-            // One term rounds once on either side: (model + noise).
-            let expected = model + noise;
-            assert!(
-                found.re.to_bits() == expected.re.to_bits()
-                    && found.im.to_bits() == expected.im.to_bits(),
-                "row {index}, sample {sample}: {found} against model {model} + noise {noise}"
-            );
+            predicted += usize::from(model.data.iter().any(|sample| !zero(sample)));
+            for (sample, ((found, model), noise)) in both
+                .data
+                .iter()
+                .zip(&model.data)
+                .zip(&noise.data)
+                .enumerate()
+            {
+                // One term rounds once on either side: (model + noise); a
+                // term of σ = 0 is skipped, leaving the model as it is.
+                let expected = if sigma == 0.0 { *model } else { model + noise };
+                subnormal += usize::from(found.re.is_subnormal() || found.im.is_subnormal());
+                assert!(
+                    found.re.to_bits() == expected.re.to_bits()
+                        && found.im.to_bits() == expected.im.to_bits(),
+                    "σ {sigma}, row {index}, sample {sample}: {found} against model {model} + \
+                     noise {noise}"
+                );
+            }
+        }
+        assert!(predicted > 0, "σ {sigma}: the model reaches the rows");
+        let noisy = noise
+            .iter()
+            .any(|row| row.data.iter().any(|sample| !zero(sample)));
+        assert_eq!(noisy, sigma != 0.0, "σ {sigma}: the noise reaches the rows");
+        if sigma == 1.0e-36 {
+            assert!(subnormal > 0, "σ {sigma}: some noise is subnormal");
         }
     }
-    assert!(predicted > 0, "the model reaches the rows");
-    assert!(
-        noise
-            .iter()
-            .any(|row| row.data.iter().any(|sample| !zero(sample))),
-        "the noise reaches the rows"
-    );
 }

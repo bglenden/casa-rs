@@ -78,7 +78,10 @@ mod tests;
 
 use num_complex::Complex32;
 
-pub use metal::{METAL_KERNEL, MetalNoiseParams, MetalNoiseRow, MetalNoiseTerm, metal_source};
+pub use metal::{
+    METAL_EXACT_SIGMA, METAL_KERNEL, MetalNoiseParams, MetalNoiseRow, MetalNoiseTerm,
+    metal_draws_exactly, metal_source,
+};
 pub use normal::{box_muller, scaled_draw};
 pub use philox::philox4x32_10;
 

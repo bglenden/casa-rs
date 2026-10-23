@@ -33,6 +33,7 @@ use casa_imaging_runtime::pass::{
     MetalNoiseTerm, NativeBlock, NativeRowHeader, PredictionDomain, RowAddress, WorkerTeam,
 };
 use casa_ms::derived::GridFtProjection;
+use casa_numerics::cell_noise::metal_draws_exactly;
 use casa_types::Complex32;
 
 use super::geometry::RowGeometry;
@@ -80,9 +81,13 @@ pub(super) struct PredictionStage<'s> {
     /// Time spent filling blocks of native rows.
     fill_time: std::time::Duration,
     /// A run's noise terms and its block's rows, as the device reads them
-    /// when the stage [`Self::noises_on_device`].
+    /// when the stage [`Self::noises_on_device`]; allocated on Metal only
+    /// ([`Self::start`]).
     noise_terms: Vec<MetalNoiseTerm>,
     noise_rows: Vec<MetalNoiseRow>,
+    /// The most noise applications of one scan: the terms the device holds
+    /// at most.
+    most_terms: usize,
     projections: Vec<DomainProjection>,
     /// The predictor of the segment last predicted.
     predictor: Option<(usize, BlockPredictor<'s>)>,
@@ -163,7 +168,7 @@ impl<'s> PredictionStage<'s> {
             .iter()
             .map(|prediction| prediction.grid_bytes())
             .sum();
-        let noise_terms = (0..session.scans().len())
+        let most_terms = (0..session.scans().len())
             .map(|scan| plan.noise_for_scan(scan).len())
             .max()
             .unwrap_or(0);
@@ -179,8 +184,9 @@ impl<'s> PredictionStage<'s> {
             workers: 0,
             block: NativeBlock::default(),
             fill_time: std::time::Duration::ZERO,
-            noise_terms: Vec::with_capacity(noise_terms),
+            noise_terms: Vec::new(),
             noise_rows: Vec::new(),
+            most_terms,
             projections: Vec::new(),
             predictor: None,
             channel_indices: (0..channels as u32).collect(),
@@ -261,7 +267,7 @@ impl<'s> PredictionStage<'s> {
         let domains = self.largest_domains();
         let shape = self.block_shape(rows, domains);
         let projections = (domains * size_of::<DomainProjection>()) as u64;
-        let terms = self.noise_terms.capacity();
+        let terms = self.most_terms;
         let device = match self.backend {
             BackendChoice::Cpu => 0,
             BackendChoice::Metal => {
@@ -283,16 +289,23 @@ impl<'s> PredictionStage<'s> {
         let domains = self.largest_domains();
         self.block = NativeBlock::shared_with_capacity(self.block_shape(self.block_rows, domains));
         self.projections = Vec::with_capacity(domains);
-        if self.noises_on_device() {
+        if self.backend == BackendChoice::Metal {
             self.noise_rows = Vec::with_capacity(self.block_rows);
+            self.noise_terms = Vec::with_capacity(self.most_terms);
         }
     }
 
-    /// Whether the stage adds a predicted row's noise itself, on the
-    /// device, as it predicts the row ([`Self::predict`]): on Metal, where
-    /// the model is formed in device memory.
-    pub(super) fn noises_on_device(&self) -> bool {
+    /// Whether the stage adds `noise`, a predicted run's, itself, on the
+    /// device, as it predicts the run ([`Self::predict`]). That happens on
+    /// Metal, where the model is formed in device memory, when every term
+    /// draws there exactly as on the host
+    /// ([`casa_numerics::cell_noise::metal_draws_exactly`]); otherwise the
+    /// host adds it after.
+    pub(super) fn noises_on_device(&self, noise: &[NoiseApplication]) -> bool {
         self.backend == BackendChoice::Metal
+            && noise
+                .iter()
+                .all(|application| metal_draws_exactly(application.noise().sigma()))
     }
 
     /// Predict each run of `runs`, (scan, first row, rows) of `rows`, into
@@ -317,15 +330,18 @@ impl<'s> PredictionStage<'s> {
             };
             self.select(segment)?;
             self.noise_terms.clear();
-            if self.noises_on_device() {
-                self.noise_terms
-                    .extend(noise(scan).iter().map(|application| {
-                        let noise = application.noise();
-                        MetalNoiseTerm {
+            if self.noises_on_device(noise(scan)) {
+                // A term of σ = 0 adds nothing on either side.
+                self.noise_terms.extend(
+                    noise(scan)
+                        .iter()
+                        .map(NoiseApplication::noise)
+                        .filter(|noise| noise.sigma() != 0.0)
+                        .map(|noise| MetalNoiseTerm {
                             key: noise.key(),
                             sigma: noise.sigma(),
-                        }
-                    }));
+                        }),
+                );
             }
             let scan = &scans[scan];
             let end = start + count;

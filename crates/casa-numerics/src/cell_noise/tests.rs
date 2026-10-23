@@ -673,6 +673,44 @@ fn zero_sigma_leaves_the_cell_unchanged() {
     );
 }
 
+/// The bounds [`METAL_EXACT_SIGMA`] rests on, from the host's own draws:
+/// the smallest nonzero radius (u nearest 1) and the smallest nonzero octant
+/// sine or cosine (one step from an axis, in each octant), and that a draw
+/// of the smallest admitted σ from both, rounded as the kernel rounds it, is
+/// at least 2⁻¹⁰⁰, far above the subnormals a device flushes.
+#[test]
+fn a_draw_of_the_smallest_exact_sigma_is_normal() {
+    let r_min = normal::radius(u32::MAX - 1);
+    assert_eq!(normal::radius(u32::MAX), 0.0, "u = 1 draws a zero radius");
+    assert!(r_min > 2.0e-5, "the smallest nonzero radius is {r_min}");
+    let mut s_min = f32::INFINITY;
+    for octant in 0..8_u32 {
+        for within in [1, (1 << 29) - 1] {
+            let (sin, cos) = normal::sin_cos_turn(octant << 29 | within);
+            for value in [sin.abs(), cos.abs()] {
+                if value > 0.0 {
+                    s_min = s_min.min(value);
+                }
+            }
+        }
+    }
+    assert!(s_min > 1.0e-9, "the smallest nonzero sine is {s_min}");
+    let draw = (r_min * METAL_EXACT_SIGMA) * s_min;
+    assert!(draw >= 2.0_f32.powi(-100), "the smallest draw is {draw:e}");
+    for sigma in [
+        0.0,
+        METAL_EXACT_SIGMA,
+        -METAL_EXACT_SIGMA,
+        1.0,
+        f32::INFINITY,
+    ] {
+        assert!(metal_draws_exactly(sigma), "σ {sigma:e}");
+    }
+    for sigma in [METAL_EXACT_SIGMA / 2.0, 1.0e-38, -1.0e-30, f32::NAN] {
+        assert!(!metal_draws_exactly(sigma), "σ {sigma:e}");
+    }
+}
+
 /// The noise of three channels of four correlations of row 2³² + 5, under
 /// the key `[11111, 0x0100_0003]` (casa-simulation's seed 11111, ordinal 3)
 /// and σ = 0.1, bit for bit, (real, imaginary) by channel then correlation,

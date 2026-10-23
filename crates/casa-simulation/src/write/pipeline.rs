@@ -179,11 +179,11 @@ impl<'s> Pipeline<'s> {
             self.times.predict += started.elapsed();
             let started = Instant::now();
             // A run the stage predicted on the device has its noise.
-            let prediction = &self.prediction;
+            let (prediction, plan) = (&self.prediction, self.rows.plan);
             let noised = |scan| {
-                prediction
-                    .as_ref()
-                    .is_some_and(|stage| stage.noises_on_device() && stage.predicts(scan))
+                prediction.as_ref().is_some_and(|stage| {
+                    stage.predicts(scan) && stage.noises_on_device(plan.noise_for_scan(scan))
+                })
             };
             self.rows.fill(writer, &mut batch, (first, rows), &noised)?;
             self.times.cells += started.elapsed();

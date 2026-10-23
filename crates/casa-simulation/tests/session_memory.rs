@@ -38,6 +38,11 @@
 //! allowance, and twice the scans hold no more than a little more: the
 //! applications are read where the plan keeps them, not copied per scan.
 //!
+//! A third law corrupts one predicted scan 4,096 and then 65,536 times
+//! (#856 review): sixteen times the applications hold no more beyond the
+//! admission than a little, so what the prediction stage keeps per noise
+//! term is charged where it is kept (on Metal only, for the device).
+//!
 //! This binary's global allocator counts the live heap; the counters are
 //! the process's, so each law runs alone in a process of its own
 //! ([`alone`]).
@@ -637,6 +642,13 @@ fn close_interleaved(
         }
         sm.corrupt().expect("corrupt");
     }
+    measured_close(sm, ms, summary)
+}
+
+/// Close `sm`, which writes `ms`, measuring what `close` holds beyond the
+/// session and what it was admitted, then delete `ms`; the pass's summary
+/// when `summary`.
+fn measured_close(sm: Simulator, ms: &Path, summary: bool) -> (Closed, Option<PassSummary>) {
     let reserved = reserved_memory();
     let baseline = LIVE.load(Ordering::Relaxed);
     PEAK.store(baseline, Ordering::Relaxed);
@@ -721,5 +733,89 @@ fn closing_interleaved_corruptions_holds_its_admission_and_no_more_for_more_scan
         many.unadmitted(),
         few.unadmitted(),
         INTERLEAVED_SCANS[0]
+    );
+}
+
+/// Noise applications of the repeated-corruption law's cases: one predicted
+/// scan corrupted this many times. The prediction stage once allocated a
+/// term for each, 12 bytes, on the CPU too, where it charged none (#856
+/// review: 768 KiB at 65,536, beyond the allowance).
+const REPEATED_APPLICATIONS: [usize; 2] = [4_096, 65_536];
+
+/// A one-integration scan predicted from `model` and corrupted
+/// `applications` times, written to `ms` and closed: what `close` held.
+fn close_repeated(
+    applications: usize,
+    ms: &Path,
+    model: &Path,
+    measures: &Arc<dyn MeasuresProvider>,
+) -> Closed {
+    let mut sm = configured(ms, measures, BUDGET_32, 32);
+    sm.observe(&scan(1)).expect("observe");
+    sm.set_vp(&VoltagePatternSpec::default()).expect("setvp");
+    sm.predict(&PredictSpec {
+        images: vec![model.to_path_buf()],
+        component_list: None,
+        incremental: false,
+    })
+    .expect("predict");
+    sm.set_noise(&noise()).expect("setnoise");
+    for _ in 0..applications {
+        sm.corrupt().expect("corrupt");
+    }
+    measured_close(sm, ms, false).0
+}
+
+#[test]
+fn a_predicting_close_holds_its_admission_however_often_its_scan_is_corrupted() {
+    if !alone("a_predicting_close_holds_its_admission_however_often_its_scan_is_corrupted") {
+        return;
+    }
+    let resources = resources(BUDGET_32);
+    charge_process_caches(resources.host(), resources.policy()).expect("the process caches");
+    let measures = casa_test_support::deterministic_measures_provider();
+    let root = tempfile::tempdir().expect("temporary directory");
+    let model = root.path().join("model.image");
+    write_model(&model, 32);
+    let ms = root.path().join("repeated.ms");
+    for applications in REPEATED_APPLICATIONS {
+        close_repeated(applications, &ms, &model, &measures);
+    }
+    let [few, many] = REPEATED_APPLICATIONS.map(|applications| {
+        let mut held = Closed {
+            heap: u64::MAX,
+            admitted: 0,
+        };
+        for _ in 0..MEASURED_RUNS {
+            let run = close_repeated(applications, &ms, &model, &measures);
+            println!(
+                "{applications} applications: close held {} bytes, admitted {}",
+                run.heap, run.admitted
+            );
+            assert!(
+                run.heap <= run.admitted + ALLOWANCE_BYTES,
+                "{applications} applications: close held {} bytes, beyond the {} admitted and \
+                 the allowance",
+                run.heap,
+                run.admitted
+            );
+            held.heap = held.heap.min(run.heap);
+            held.admitted = held.admitted.max(run.admitted);
+        }
+        held
+    });
+    println!(
+        "{} - {} applications: {} bytes more beyond the admission",
+        REPEATED_APPLICATIONS[1],
+        REPEATED_APPLICATIONS[0],
+        many.unadmitted() - few.unadmitted()
+    );
+    assert!(
+        many.unadmitted() <= few.unadmitted() + SCANS_ALLOWANCE_BYTES as i64,
+        "{} applications: close held {} bytes beyond its admission, against {} for {}",
+        REPEATED_APPLICATIONS[1],
+        many.unadmitted(),
+        few.unadmitted(),
+        REPEATED_APPLICATIONS[0]
     );
 }
