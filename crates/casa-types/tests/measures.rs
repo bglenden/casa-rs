@@ -242,18 +242,14 @@ fn ut1_without_dut1_is_error() {
 
 #[test]
 fn ut1_to_gmst1() {
-    // UT1 → GMST1 requires dUT1 (for the UT1→UTC→TAI→TT chain inside gmst06).
-    let vla = MPosition::new_itrf(-1601185.4, -5041977.5, 3554875.9);
+    // UT1 → GMST1 needs no frame data: casacore's IAU 1982 GMST of UT1.
     let ut1 = MEpoch::from_mjd(J2000_MJD, EpochRef::UT1);
-    let frame = MeasFrame::new()
-        .with_dut1(0.3)
-        .with_position(vla)
-        .with_measures(test_measures());
-
-    let gmst = ut1.convert_to(EpochRef::GMST1, &frame).unwrap();
-    // GMST should be a fractional-day value — check it's in [0, 1)
+    let gmst = ut1.convert_to(EpochRef::GMST1, &MeasFrame::new()).unwrap();
+    // casacore counts sidereal days: UT1 51544.5 is GMST1 58257.779 (#850).
+    assert_eq!(gmst.value().day(), 58_257.0);
+    let expected_frac = 0.5 + 24_110.548_41 / SECONDS_PER_DAY;
     assert!(
-        gmst.value().frac() >= 0.0 && gmst.value().frac() < 1.0,
+        (gmst.value().frac() - expected_frac).abs() < 1e-15,
         "GMST frac = {}",
         gmst.value().frac()
     );
