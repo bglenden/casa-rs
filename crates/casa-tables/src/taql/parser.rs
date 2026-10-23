@@ -1044,7 +1044,7 @@ impl<'src> Parser<'src> {
         Ok(elements)
     }
 
-    /// Parse a single IN set element: either a value or a range (start:end[:step]).
+    /// Parse a single IN set element: either a value or a range (`start:end[:step]`).
     fn parse_in_set_element(&mut self) -> Result<InSetElement, TaqlError> {
         // Check for leading colon (open-start range)
         if self.lexer.peek() == Some(&Token::Colon) {
@@ -1108,7 +1108,7 @@ impl<'src> Parser<'src> {
         Ok(elements)
     }
 
-    /// Parse a single index element: value or slice (start:end[:step]).
+    /// Parse a single index element: value or slice (`start:end[:step]`).
     fn parse_index_element(&mut self) -> Result<IndexElement, TaqlError> {
         // Check for leading colon (open-start slice)
         if self.lexer.peek() == Some(&Token::Colon) {

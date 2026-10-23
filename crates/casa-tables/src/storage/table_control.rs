@@ -61,7 +61,7 @@ pub(crate) struct RefTableDatContents {
     pub parent_nrrow: u64,
     /// True if row numbers are in ascending order.
     pub row_order: bool,
-    /// Maps RefTable row i → parent row row_map[i].
+    /// Maps RefTable row `i` → parent row `row_map[i]`.
     pub row_map: Vec<u64>,
 }
 

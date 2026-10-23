@@ -21,10 +21,20 @@
 //! 4. **Send.** The writer's thread writes the batch while the next one is
 //!    computed.
 //!
-//! No result depends on which worker computes what or where batches split,
-//! so the MeasurementSet is bitwise the same for any worker count or memory
-//! budget. An integration that straddles two batches is computed once: its
-//! unwritten rows open the next batch.
+//! On Metal the device adds the noise of the rows it predicts as it
+//! predicts them, before their model is copied out
+//! ([`super::prediction`]), and step 3 adds noise only to the rows no
+//! `predict` covers. (Predicting a batch into cells of its own while its
+//! noise was added, then adding the two, was measured on the CPU and
+//! deleted: no faster on either test host, and 8% more CPU, #855.)
+//!
+//! The draws and, on the CPU, the predictions depend on no worker, batch or
+//! block, so on the CPU the MeasurementSet is bitwise the same for any
+//! worker count or memory budget. Metal's predictions agree with the CPU's
+//! to the device's `f32` arithmetic, and how rows are split among its
+//! command buffers changes their rounding, so on Metal it is the same to
+//! that rounding (about 1e-7 relative). An integration that straddles two
+//! batches is computed once: its unwritten rows open the next batch.
 
 use std::time::{Duration, Instant};
 
@@ -40,8 +50,8 @@ use crate::session::error::{SimulatorError, SimulatorResult};
 use crate::session::observe::Scan;
 use crate::session::plan::DataPlan;
 
-/// Jobs per worker a batch's noise is split into, so that workers finishing
-/// early take more.
+/// Jobs per worker a batch's noise is split into, so that workers
+/// finishing early take more.
 const NOISE_JOBS_PER_WORKER: usize = 4;
 
 /// The fewest rows of one noise job.
@@ -71,13 +81,11 @@ pub(super) struct StageTimes {
     pub(super) batches: usize,
 }
 
-/// The pipeline's state across batches.
-pub(super) struct Pipeline<'s> {
+/// The rows of the batch in hand and what fills their cells and columns.
+struct Rows<'s> {
     scans: &'s [Scan],
     geometry: &'s ArrayGeometry<'s>,
     team: &'s WorkerTeam,
-    /// The model's prediction, when a `predict` covers any scan.
-    prediction: Option<PredictionStage<'s>>,
     /// The session's DATA steps, which give each scan's noise.
     plan: &'s DataPlan,
     correlations: usize,
@@ -89,10 +97,19 @@ pub(super) struct Pipeline<'s> {
     carried_scan: usize,
     /// The integrations computed for this batch.
     integrations: Vec<Integration>,
+}
+
+/// The pipeline's state across batches.
+pub(super) struct Pipeline<'s> {
+    rows: Rows<'s>,
+    /// The model's prediction, when a `predict` covers any scan.
+    prediction: Option<PredictionStage<'s>>,
     pub(super) times: StageTimes,
 }
 
 impl<'s> Pipeline<'s> {
+    /// The pipeline for `scans`, predicting with `prediction` and adding
+    /// the noise of `plan`, on cells of `(correlations, channels)`.
     pub(super) fn new(
         scans: &'s [Scan],
         geometry: &'s ArrayGeometry<'s>,
@@ -101,18 +118,27 @@ impl<'s> Pipeline<'s> {
         (correlations, channels): (usize, usize),
     ) -> Self {
         Self {
-            scans,
-            geometry,
-            team,
+            rows: Rows {
+                scans,
+                geometry,
+                team,
+                plan,
+                correlations,
+                samples: correlations * channels,
+                rows: Vec::new(),
+                carried_scan: 0,
+                integrations: Vec::new(),
+            },
             prediction,
-            plan,
-            correlations,
-            samples: correlations * channels,
-            rows: Vec::new(),
-            carried_scan: 0,
-            integrations: Vec::new(),
             times: StageTimes::default(),
         }
+    }
+
+    /// Time the prediction spent filling blocks of native rows.
+    pub(super) fn block_fill_time(&self) -> Duration {
+        self.prediction
+            .as_ref()
+            .map_or(Duration::ZERO, PredictionStage::fill_time)
     }
 
     /// Write every row of the scans: `next` yields each integration with
@@ -128,30 +154,51 @@ impl<'s> Pipeline<'s> {
         while first_row < row_count {
             let rows = batch_rows.min(row_count - first_row);
             let started = Instant::now();
-            self.compute_geometry(&mut next, rows)?;
+            self.rows.compute_geometry(&mut next, rows)?;
             self.times.geometry += started.elapsed();
             let started = Instant::now();
             let mut batch = writer.visibility_columns();
             batch
                 .data
-                .resize(rows * self.samples, Complex32::new(0.0, 0.0));
+                .resize(rows * self.rows.samples, Complex32::new(0.0, 0.0));
             self.times.zero += started.elapsed();
+            let runs = self.rows.segments(rows);
+            let first = first_row as u64;
             let started = Instant::now();
-            self.predict(&mut batch.data, first_row as u64, rows)?;
+            if let Some(stage) = &mut self.prediction {
+                let rows = &self.rows;
+                stage.predict(
+                    rows.team,
+                    (rows.scans, &rows.rows),
+                    &runs,
+                    first,
+                    &mut batch.data,
+                    |scan| rows.plan.noise_for_scan(scan),
+                )?;
+            }
             self.times.predict += started.elapsed();
             let started = Instant::now();
-            self.fill(writer, &mut batch, first_row as u64, rows)?;
+            // A run the stage predicted on the device has its noise.
+            let (prediction, plan) = (&self.prediction, self.rows.plan);
+            let noised = |scan| {
+                prediction.as_ref().is_some_and(|stage| {
+                    stage.predicts(scan) && stage.noises_on_device(plan.noise_for_scan(scan))
+                })
+            };
+            self.rows.fill(writer, &mut batch, (first, rows), &noised)?;
             self.times.cells += started.elapsed();
             let started = Instant::now();
             writer.send(batch)?;
             self.times.send += started.elapsed();
             self.times.batches += 1;
-            self.carry(rows);
+            self.rows.carry(rows);
             first_row += rows;
         }
         Ok(())
     }
+}
 
+impl Rows<'_> {
     /// Compute the integrations the next `rows` rows reach beyond those
     /// carried.
     fn compute_geometry(
@@ -187,34 +234,16 @@ impl<'s> Pipeline<'s> {
         })
     }
 
-    /// Predict the model into the batch's `rows` rows of `data` (zero), the
-    /// first of which is MAIN row `first_row`.
-    fn predict(
-        &mut self,
-        data: &mut [Complex32],
-        first_row: u64,
-        rows: usize,
-    ) -> SimulatorResult<()> {
-        if self.prediction.is_none() {
-            return Ok(());
-        }
-        let runs = self.segments(rows);
-        let Some(stage) = &mut self.prediction else {
-            return Ok(());
-        };
-        stage.predict(self.team, self.scans, &self.rows, &runs, first_row, data)
-    }
-
     /// Fill the batch's `rows` rows, the first of which is MAIN row
-    /// `first_row`: the noise of DATA (already holding the model), the
-    /// per-row columns, and the scalar columns of the integrations computed
-    /// for the batch.
+    /// `first_row`: the noise of DATA but for the scans `noised` already
+    /// has, the per-row columns, and the scalar columns of the integrations
+    /// computed for the batch.
     fn fill(
         &self,
         writer: &mut MainWriter,
         batch: &mut VisibilityColumns,
-        first_row: u64,
-        rows: usize,
+        (first_row, rows): (u64, usize),
+        noised: &dyn Fn(usize) -> bool,
     ) -> SimulatorResult<()> {
         let VisibilityColumns {
             data,
@@ -230,7 +259,7 @@ impl<'s> Pipeline<'s> {
             weight,
             sigma,
         })];
-        self.noise_jobs(first_row, data, rows, &mut jobs);
+        self.noise_jobs((first_row, rows), data, noised, &mut jobs);
         let (scans, integrations, geometry) = (self.scans, &self.integrations, &self.rows);
         let (correlations, samples) = (self.correlations, self.samples);
         self.team.for_each_mut(&mut jobs, |_, job| match job {
@@ -242,24 +271,28 @@ impl<'s> Pipeline<'s> {
         })
     }
 
+    /// Rows of one noise job for a batch of `rows` rows.
+    fn job_rows(&self, rows: usize) -> usize {
+        rows.div_ceil(self.team.workers() * NOISE_JOBS_PER_WORKER)
+            .max(MINIMUM_NOISE_JOB_ROWS)
+    }
+
     /// Split the batch's `rows` rows of `data` into noise jobs, runs of one
-    /// scan with noise.
+    /// scan with noise that `noised` does not already have.
     fn noise_jobs<'a>(
         &'a self,
-        first_row: u64,
+        (first_row, rows): (u64, usize),
         data: &'a mut [Complex32],
-        rows: usize,
+        noised: &dyn Fn(usize) -> bool,
         jobs: &mut Vec<BatchJob<'a>>,
     ) {
-        let job_rows = rows
-            .div_ceil(self.team.workers() * NOISE_JOBS_PER_WORKER)
-            .max(MINIMUM_NOISE_JOB_ROWS);
+        let job_rows = self.job_rows(rows);
         let mut rest = data;
         for (scan, start, count) in self.segments(rows) {
             let (segment, after) = rest.split_at_mut(count * self.samples);
             rest = after;
             let noise = self.plan.noise_for_scan(scan);
-            if noise.is_empty() {
+            if noise.is_empty() || noised(scan) {
                 continue;
             }
             for (index, cells) in segment.chunks_mut(job_rows * self.samples).enumerate() {

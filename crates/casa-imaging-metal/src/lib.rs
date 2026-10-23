@@ -37,6 +37,8 @@ use casa_imaging_operator::ConvolutionFunctionSet;
 
 #[cfg(all(target_os = "macos", not(coverage)))]
 pub use backend::MetalBackend;
+/// The rows and noise terms [`MetalBackend::add_cell_noise`] reads.
+pub use casa_numerics::cell_noise::{MetalNoiseRow, MetalNoiseTerm};
 #[cfg(not(all(target_os = "macos", not(coverage))))]
 pub use unavailable::MetalBackend;
 
@@ -122,6 +124,22 @@ pub fn device_bytes() -> u64 {
 #[must_use]
 pub const fn batch_bytes(npol: usize, samples: usize) -> u64 {
     (samples * npol * size_of::<num_complex::Complex32>()) as u64
+}
+
+/// The most device memory a backend holds for cell noise
+/// (`MetalBackend::add_cell_noise`) of at most `rows` rows and `terms`
+/// terms: the two buffers it copies them to, made at its first noise and
+/// grown to the largest, each at least a buffer's 16 bytes. A backend that
+/// adds no noise holds none.
+#[must_use]
+pub const fn noise_bytes(rows: usize, terms: usize) -> u64 {
+    (buffer_bytes(rows * size_of::<MetalNoiseRow>())
+        + buffer_bytes(terms * size_of::<MetalNoiseTerm>())) as u64
+}
+
+/// The bytes of a device buffer made for `bytes`: at least 16.
+const fn buffer_bytes(bytes: usize) -> usize {
+    if bytes > 16 { bytes } else { 16 }
 }
 
 /// Whether this host has a Metal device the backend can use: Metal 3 with

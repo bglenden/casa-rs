@@ -14,42 +14,47 @@
 //!   included, each with its own draw;
 //! - whatever the flags: flagged rows and samples get noise too.
 //!
-//! WEIGHT and SIGMA are left as observed. A draw is made in double precision,
-//! scaled by σ held as a `Float`, and rounded to single precision before it
-//! is added, as `ANoiseCorruptor::simPar` computes `Complex(r·amp, i·amp)`.
+//! WEIGHT and SIGMA are left as observed. CASA's `ANoiseCorruptor::simPar`
+//! draws in double precision and rounds `Complex(r·amp, i·amp)`, σ held as
+//! a `Float`, to the single precision DATA is stored in. casa-rs draws in
+//! single precision instead, and scales by σ in it too, for speed: a vector
+//! register holds four lanes rather than two and the series are about half
+//! as long. On an Apple M2 core that nearly halves the noise's cost, from
+//! 6.2 to 3.2 ns per complex sample of two-correlation rows, the generator's
+//! 1.2 ns included (#855). The difference is below what the stored `f32`
+//! resolves: against noise of standard deviation σ it is of order 10⁻⁷σ
+//! ([`casa_numerics::cell_noise`] gives the bounds and where they come
+//! from).
 //!
 //! # Where the draws come from
 //!
 //! CASA draws from one `MLCG` stream per term, in the order its visibility
 //! iterator visits rows, channels and correlations, and the stream carries on
-//! across `corrupt` calls. casa-rs keys each draw instead
-//! ([`philox`], Philox4x32-10): the key is the term's seed and its
-//! application ordinal (how many `corrupt` calls the term had seen before),
-//! and the counter is the absolute MAIN row, the channel and the
-//! correlation pair. The two are statistically equivalent, not bit-identical
-//! (plan, "Random numbers"), and they share the structure scripts see:
+//! across `corrupt` calls. casa-rs keys each draw instead: the draws come
+//! from [`casa_numerics::cell_noise`] (Philox4x32-10 and Box–Muller in
+//! `f32`), whose counter is the absolute MAIN row, the channel and the
+//! correlation pair, and whose 64-bit key names the stream. This module
+//! forms the key ([`NoiseApplication`]): its first word is the term's seed
+//! (`sm.setseed`, as its 32 bits), and its second the purpose byte
+//! [`PURPOSE_THERMAL_NOISE`] above the term's application ordinal (how many
+//! `corrupt` calls the term had seen before). The two schemes are
+//! statistically equivalent, not bit-identical (plan, "Random numbers"), and
+//! they share the structure scripts see:
 //! - two terms with the same seed draw the same values in the same
 //!   `corrupt`, so their noise adds coherently (variance 4σ² for two);
 //! - one term applied twice draws independent values (variance 2σ²);
 //! - a different seed draws different values.
 //!
 //! The result depends only on (seed, ordinal, row, channel, correlation), so
-//! it is bitwise the same for any batch size, worker count or backend.
-//!
-//! Normals come from Box–Muller on a pair of 32-bit words, in `f64`, with
-//! the logarithm, sine and cosine evaluated on the words ([`normal`]), so
-//! they are also bitwise the same on every platform. The largest draw is
-//! √(64 ln 2) ≈ 6.66σ, one in about 4·10⁹ beyond that in an exact normal.
+//! it is bitwise the same for any batch size, worker count, backend or
+//! platform; the tests hold a few cells to the bits they had before the
+//! generator moved to casa-numerics (#855).
 
-mod normal;
-mod philox;
 #[cfg(test)]
 mod tests;
 
+use casa_numerics::cell_noise::CellNoise;
 use num_complex::Complex32;
-
-use normal::box_muller;
-use philox::Key;
 
 /// The top byte of the key's second word names what the stream is for, so
 /// later corruptions (gains, fBM screens) draw from streams disjoint from
@@ -74,7 +79,9 @@ pub(crate) struct NoiseApplication {
 }
 
 impl NoiseApplication {
-    fn key(&self) -> Key {
+    /// The stream key: the seed's 32 bits (two's complement), then the
+    /// thermal-noise purpose byte above the ordinal.
+    fn key(&self) -> [u32; 2] {
         debug_assert!(self.ordinal < MAXIMUM_APPLICATIONS);
         [
             self.seed as u32,
@@ -82,9 +89,15 @@ impl NoiseApplication {
         ]
     }
 
+    /// This application's noise: σ = `sigma_jy` under [`Self::key`].
+    pub(crate) fn noise(&self) -> CellNoise {
+        CellNoise::new(self.key(), self.sigma_jy)
+    }
+
     /// Add this application's noise to the cell of MAIN row `row`:
     /// `correlations × channels` samples, correlation fastest. An
-    /// autocorrelation row gets real draws only.
+    /// autocorrelation row gets real draws only; samples past the last
+    /// whole channel are left alone ([`CellNoise::add_to_row`]).
     pub(crate) fn add_to_row(
         &self,
         row: u64,
@@ -92,44 +105,7 @@ impl NoiseApplication {
         correlations: usize,
         cell: &mut [Complex32],
     ) {
-        // Adding σ·N with σ = 0 changes nothing but the sign of a zero.
-        if self.sigma_jy == 0.0 || correlations == 0 {
-            return;
-        }
-        let sigma = f64::from(self.sigma_jy);
-        let key = self.key();
-        for (channel, samples) in cell.chunks_exact_mut(correlations).enumerate() {
-            for (pair, slots) in samples.chunks_mut(2).enumerate() {
-                let words = philox::philox4x32_10(counter(row, channel, pair), key);
-                for (slot, sample) in slots.iter_mut().enumerate() {
-                    let (re, im) = box_muller(words[2 * slot], words[2 * slot + 1]);
-                    sample.re += (re * sigma) as f32;
-                    if !autocorrelation {
-                        sample.im += (im * sigma) as f32;
-                    }
-                }
-            }
-        }
+        self.noise()
+            .add_to_row(row, autocorrelation, correlations, cell);
     }
-}
-
-/// The counter of a draw: the MAIN row (two words), the channel, and the
-/// correlation pair (correlations 0 and 1 are pair 0, 2 and 3 pair 1).
-fn counter(row: u64, channel: usize, pair: usize) -> philox::Counter {
-    [row as u32, (row >> 32) as u32, channel as u32, pair as u32]
-}
-
-/// The four standard normals of one draw, slot 0's (real, imaginary) then
-/// slot 1's, as [`NoiseApplication::add_to_row`] uses them.
-#[cfg(test)]
-fn standard_normals(
-    application: &NoiseApplication,
-    row: u64,
-    channel: usize,
-    pair: usize,
-) -> [f64; 4] {
-    let words = philox::philox4x32_10(counter(row, channel, pair), application.key());
-    let (a, b) = box_muller(words[0], words[1]);
-    let (c, d) = box_muller(words[2], words[3]);
-    [a, b, c, d]
 }

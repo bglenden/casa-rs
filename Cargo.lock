@@ -315,6 +315,7 @@ version = "0.27.0"
 dependencies = [
  "casa-imaging-model",
  "casa-imaging-operator",
+ "casa-numerics",
  "ndarray",
  "num-complex",
  "objc2",
@@ -484,6 +485,7 @@ version = "0.27.0"
 dependencies = [
  "libm",
  "nalgebra",
+ "num-complex",
 ]
 
 [[package]]
