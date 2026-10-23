@@ -35,7 +35,7 @@
 <a href=#35 id=35 data-nosnippet>35</a>///
 <a href=#36 id=36 data-nosnippet>36</a>/// [`ComponentError::Spectrum`] for a tabular spectrum whose reference
 <a href=#37 id=37 data-nosnippet>37</a>/// frequency CASA could not express in its tabulation frame.
-<a href=#38 id=38 data-nosnippet>38</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>spectral_record(model: <span class="kw-2">&amp;</span>SpectralModel) -&gt; <span class="prelude-ty">Result</span>&lt;RecordValue, ComponentError&gt; {
+<a href=#38 id=38 data-nosnippet>38</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>spectral_record(model: <span class="kw-2">&amp;</span>SpectralModel) -&gt; <span class="prelude-ty">Result</span>&lt;RecordValue, ComponentError&gt; {
 <a href=#39 id=39 data-nosnippet>39</a>    <span class="kw">let </span>reference = model.reference_frequency();
 <a href=#40 id=40 data-nosnippet>40</a>    <span class="kw">let </span><span class="kw-2">mut </span>fields = <span class="macro">vec!</span>[
 <a href=#41 id=41 data-nosnippet>41</a>        field(<span class="string">"type"</span>, string(model.spectral_type().casa_name())),

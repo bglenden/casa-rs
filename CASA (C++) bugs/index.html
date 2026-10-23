@@ -1148,6 +1148,50 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#claddcomponent-stores-four-flux-values-as-stokes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        cl.addcomponent stores four flux values as Stokes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#claddcomponent-stores-the-flux-in-single-precision" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        cl.addcomponent stores the flux in single precision
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-cl-tool-records-a-shapes-axes-in-the-units-it-was-given" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The cl tool records a shape's axes in the units it was given
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#claddcomponent-keeps-a-point-for-a-shape-it-cannot-make" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        cl.addcomponent keeps a point for a shape it cannot make
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#setmosaicfield-sits-its-grid-off-the-field-centre" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1185,6 +1229,17 @@
     <span class="md-ellipsis">
       
         sm.predict through WProjectFT without planes crashes the simulator
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sdgrid-predicts-total-power-into-cross-correlations-with-no-positive-uvw" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SDGrid predicts total power into cross-correlations with no positive uvw
       
     </span>
   </a>
@@ -1252,7 +1307,8 @@ Simulator behaviours casa-rs does not follow:
 <a href="#smpredict-accepts-models-the-simulator-cannot-read">models the simulator cannot read</a>,
 <a href="#setmosaicfield-sits-its-grid-off-the-field-centre"><code>setmosaicfield</code>'s off-centre grid</a>,
 <a href="#observemany-adds-rows-before-it-looks-up-later-fields"><code>observemany</code>'s rows before an unknown field</a>,
-<a href="#smpredict-through-wprojectft-without-planes-crashes-the-simulator">W projection without planes</a>.
+<a href="#smpredict-through-wprojectft-without-planes-crashes-the-simulator">W projection without planes</a>,
+<a href="#sdgrid-predicts-total-power-into-cross-correlations-with-no-positive-uvw">total power in cross-correlations</a>.
 Measures behaviours casa-rs follows for parity:
 <a href="#iau-2000-keeps-the-iau-1980-sidereal-time-and-ecliptic-obliquities">IAU 1980 sidereal time and obliquities under IAU 2000</a>.
 Measures behaviours casa-rs does not follow:
@@ -1262,7 +1318,12 @@ Measures behaviours casa-rs does not follow:
 Simulator behaviours casa-rs follows:
 <a href="#observemany-pads-one-name-with-empty-ones"><code>observemany</code>'s padded single name</a>.
 Component-list behaviours casa-rs does not follow:
-<a href="#writing-a-limb-darkened-disk-without-an-exponent-aborts-casa">a limb-darkened disk without an exponent</a>.</p>
+<a href="#writing-a-limb-darkened-disk-without-an-exponent-aborts-casa">a limb-darkened disk without an exponent</a>,
+<a href="#claddcomponent-stores-the-flux-in-single-precision"><code>addcomponent</code>'s single-precision flux</a>,
+<a href="#the-cl-tool-records-a-shapes-axes-in-the-units-it-was-given">the <code>cl</code> tool's record units</a>.
+Component-list behaviours casa-rs follows:
+<a href="#claddcomponent-stores-four-flux-values-as-stokes"><code>addcomponent</code>'s polarization</a>,
+<a href="#claddcomponent-keeps-a-point-for-a-shape-it-cannot-make">a shape <code>addcomponent</code> cannot make</a>.</p>
 <h2 id="aw-projection-pairs-the-partner-hands-visibility-with-the-conjugate-baseline-cell">AW-projection pairs the partner hand's visibility with the conjugate-baseline cell<a class="headerlink" href="#aw-projection-pairs-the-partner-hands-visibility-with-the-conjugate-baseline-cell" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-10-09</li>
@@ -1873,6 +1934,74 @@ and <code>rename</code> succeed, <code>close</code> aborts). Had the empty vecto
 <code>readTable</code> would read its first element out of bounds. casa-rs leaves the
 cell undefined, which CASA reads as the shape's default exponent of 0.05, as
 it reads every other row the column does not describe.</p>
+<h2 id="claddcomponent-stores-four-flux-values-as-stokes"><code>cl.addcomponent</code> stores four flux values as Stokes<a class="headerlink" href="#claddcomponent-stores-four-flux-values-as-stokes" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-10-23</li>
+<li>Status: CASA bug; casa-rs follows it (#841, owner decision 2026-10-23)</li>
+<li>Affected code: <code>casatools/src/tools/componentlist/componentlist_cmpt.cc</code>
+  (<code>setflux</code>, lines 831-930); <code>components/ComponentModels/Flux.tcc</code>
+  (<code>FluxRep::setValue(const Vector&lt;T&gt;&amp;)</code>, lines 363-368)</li>
+</ul>
+<p><code>setflux</code>, which <code>addcomponent</code> calls, sets the flux's representation from
+<code>polarization</code> and then stores four values with
+<code>FluxRep::setValue(Vector&lt;Double&gt;)</code>, which resets the representation to
+Stokes. So <code>cl.addcomponent(flux=[1, 0.1, 0.2, 0.9],
+polarization='circular')</code> stores I = 1, Q = 0.1, U = 0.2, V = 0.9 rather than
+RR, RL, LR and LL (probed with CASA 6.7.6 for 'Circular', 'circular',
+'CIRCULAR' and 'linear'). <code>polarization</code> still has effects: an unknown name
+raises, and one value with a representation other than Stokes raises. casa-rs
+does the same, so a script gets the list CASA would give it.</p>
+<h2 id="claddcomponent-stores-the-flux-in-single-precision"><code>cl.addcomponent</code> stores the flux in single precision<a class="headerlink" href="#claddcomponent-stores-the-flux-in-single-precision" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-10-23</li>
+<li>Status: CASA behaviour casa-rs does not follow (#841)</li>
+<li>Affected code: <code>casatools/src/tools/componentlist/componentlist_cmpt.cc</code>
+  (<code>setflux</code>, lines 858-870)</li>
+</ul>
+<p><code>setflux</code> reads the values into a <code>Vector&lt;Complex&gt;</code> (single precision) before
+storing them as doubles, so <code>flux=0.1</code> is stored as 0.10000000149011612
+(probed with CASA 6.7.6). casa-rs keeps the values given; they differ from
+CASA's by at most one single-precision rounding, 6e-8 relative.</p>
+<h2 id="the-cl-tool-records-a-shapes-axes-in-the-units-it-was-given">The <code>cl</code> tool records a shape's axes in the units it was given<a class="headerlink" href="#the-cl-tool-records-a-shapes-axes-in-the-units-it-was-given" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-10-23</li>
+<li>Status: CASA behaviour casa-rs does not follow (#841)</li>
+<li>Affected code: <code>components/ComponentModels/TwoSidedShape.cc</code> (<code>toRecord</code>,
+  lines 265-330)</li>
+</ul>
+<p><code>TwoSidedShape</code> remembers the units its axes were set in, and its record
+gives them in those units: a Gaussian made by <code>addcomponent</code> with
+<code>majoraxis='1arcsec'</code> records <code>{'unit': 'arcsec', 'value': 1.0}</code>. A shape
+read from a table has the units <code>readTable</code> sets: arcmin for the axes and
+degrees for the position angle, with the errors in radians. casa-rs holds
+radians and records every shape as CASA records one read from a table
+(<code>{'unit': 'arcmin', 'value': 0.016666666666666666}</code>); the quantities are the
+same, and the table is the same either way.</p>
+<h2 id="claddcomponent-keeps-a-point-for-a-shape-it-cannot-make"><code>cl.addcomponent</code> keeps a point for a shape it cannot make<a class="headerlink" href="#claddcomponent-keeps-a-point-for-a-shape-it-cannot-make" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-10-23</li>
+<li>Status: CASA behaviour casa-rs follows (#841)</li>
+<li>Affected code: <code>casatools/src/tools/componentlist/componentlist_cmpt.cc</code>
+  (<code>addcomponent</code>, lines 453-526; <code>setshape</code>, lines 1285-1386)</li>
+</ul>
+<p><code>addcomponent</code> adds a point and then calls <code>setshape</code>, ignoring what it
+returns. <code>setshape</code> logs SEVERE and returns False for a shape name it does
+not know, for a limb-darkened disk ("not implemented yet"), and for an axis
+that is not an angle (none given, a number, or another unit), so the
+component stays a point at the given direction and <code>addcomponent</code> returns
+True (probed with CASA 6.7.6). casa-rs does the same and logs the message at
+ERROR. Scripts that misspell a shape name therefore get points, as they do in
+CASA.</p>
+<p>What <code>setshape</code> raises, <code>addcomponent</code> raises too, after removing the
+component it began: an axis that does not read as a quantity (<code>'garbage'</code>, a
+complex number), and what the shape's constructor raises, such as a
+Gaussian's position angle outside ±2π (<code>Gaussian2DParam::setPA</code>) or axes that
+are not positive. A minor axis longer than the major raises as well:
+<code>TwoSidedShape::fromRecord</code> (<code>TwoSidedShape.cc</code>, lines 229-263) means to
+refuse it, but compares the minor axis with itself (<code>near(minorAxisInRad,
+minorAxisInRad)</code>, line 249), so the check never fires and the constructor
+raises instead. casa-rs raises in each case with casacore's message, and adds
+nothing.</p>
 <h2 id="setmosaicfield-sits-its-grid-off-the-field-centre"><code>setmosaicfield</code> sits its grid off the field centre<a class="headerlink" href="#setmosaicfield-sits-its-grid-off-the-field-centre" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-10-23</li>
@@ -1955,6 +2084,21 @@ planes").</p>
 - Autocorrelations predict zero, since the machine is built with <code>usezero</code>
   off.
 - Rows beyond the largest w the planes reach (<code>0.25/|cell|</code>) predict zero.</p>
+<h2 id="sdgrid-predicts-total-power-into-cross-correlations-with-no-positive-uvw"><code>SDGrid</code> predicts total power into cross-correlations with no positive uvw<a class="headerlink" href="#sdgrid-predicts-total-power-into-cross-correlations-with-no-positive-uvw" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-10-23</li>
+<li>Status: CASA behaviour casa-rs does not follow (#841)</li>
+<li>Affected code: <code>synthesis/MeasurementComponents/SDGrid.cc</code> (<code>get</code>, the
+  <code>rowFlags</code> loop)</li>
+</ul>
+<p><code>sm.predict</code> after <code>setoptions(ftmachine='sd')</code> samples the model at each
+row's pointing. <code>SDGrid::get</code> leaves out a row whose uvw has a positive
+component (<code>max(uvw) &gt; 0</code>), which is meant to keep the cross-correlations of
+a single-dish predict at zero. A cross-correlation whose u, v and w are all
+zero or negative passes that test and is given the pointing's total power as
+if it were one dish's autocorrelation. Read from the source; a probe with two
+antennas saw only rows with a positive component. casa-rs predicts total
+power into autocorrelations only.</p>
 <h2 id="the-evlas-beam-table-has-no-11052-mhz-fit">The EVLA's beam table has no 11052 MHz fit<a class="headerlink" href="#the-evlas-beam-table-has-no-11052-mhz-fit" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-10-23</li>

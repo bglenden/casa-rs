@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["FtMachine","PredictError","PrimaryBeam"],"struct":["ModelPredictor","PredictOptions","PredictRow","PredictionWorkspace","SkyModel"]};
+window.SIDEBAR_ITEMS = {"enum":["FtMachine","PredictError","PrimaryBeam","SingleDishKernel"],"struct":["ModelPredictor","PredictOptions","PredictRow","PredictionWorkspace","SkyModel"]};
