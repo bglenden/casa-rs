@@ -595,6 +595,395 @@ mod tests {
         );
     }
 
+    /// f32's unit roundoff, 2^-24: the most rounding to f32 moves a value,
+    /// relative to it.
+    const F32_ROUNDING: f64 = f32::EPSILON as f64 / 2.0;
+
+    /// The 64² grid, without padding, of the AW-routed laws.
+    fn aw_geometry() -> casa_imaging_operator::GridGeometry {
+        use casa_imaging_operator::{GridGeometry, GridPadding, ImageExtent};
+        GridGeometry::new(
+            ImageExtent {
+                shape: [64, 64],
+                increment_rad: [-2.0e-5, 2.0e-5],
+                reference_pixel: [32, 32],
+            },
+            GridPadding::None,
+        )
+        .expect("geometry")
+    }
+
+    /// A kernel set routed as AW routes four linear correlations (#810, for
+    /// #653's AW rows). `AWVisResampler` grids correlation `e` (XX, XY, YX
+    /// and YY are AW's elements 0, 5, 10 and 15, here the cells' Mueller
+    /// planes 0 to 3) through its own plane for w > 0 and through its
+    /// partner's, 15 − e (XX ↔ YY, XY ↔ YX), otherwise, reading the
+    /// visibility of that plane's hand. Each key lends one dense cell of
+    /// complex taps as its imaging and its weight taps, normalised as AW's
+    /// (`KernelSum`), with AW's pointing ramp.
+    struct AwRouted {
+        cells: Vec<casa_imaging_operator::DenseCell>,
+        mueller: casa_imaging_operator::MuellerRouting,
+        correction: casa_imaging_operator::ImageCorrection,
+    }
+
+    /// Taps per axis and fine offsets per cell of [`AwRouted`]'s cells.
+    const AW_SUPPORT: u16 = 5;
+    const AW_OVERSAMPLING: u16 = 4;
+
+    impl AwRouted {
+        /// `keys` cells of random complex taps, from `seed`.
+        fn new(keys: usize, mut seed: u64) -> Self {
+            use casa_imaging_operator::{DenseCell, ImageCorrection};
+            let mut signed = move || {
+                seed ^= seed << 13;
+                seed ^= seed >> 7;
+                seed ^= seed << 17;
+                ((seed >> 11) as f64 / (1_u64 << 53) as f64 * 2.0 - 1.0) as f32
+            };
+            let fine = usize::from(AW_OVERSAMPLING) + 1;
+            let taps = fine * fine * 4 * usize::from(AW_SUPPORT).pow(2);
+            let cells = (0..keys)
+                .map(|_| {
+                    DenseCell::new(
+                        (0..taps)
+                            .map(|_| Complex32::new(signed(), signed()))
+                            .collect(),
+                        [AW_SUPPORT; 2],
+                        AW_OVERSAMPLING,
+                        4,
+                    )
+                })
+                .collect();
+            let [nx, ny] = aw_geometry().grid_shape();
+            Self {
+                cells,
+                mueller: aw_routing(),
+                correction: ImageCorrection::new(vec![1.0; nx], vec![1.0; ny]),
+            }
+        }
+
+        /// These kernels with every tap replaced by its modulus: gridding a
+        /// sample with them, without its ramp and at the magnitude of its
+        /// spectral factor, adds `|W · s^t · tap|` to each cell.
+        fn magnitudes(&self) -> Self {
+            use casa_imaging_operator::DenseCell;
+            Self {
+                cells: self
+                    .cells
+                    .iter()
+                    .map(|cell| {
+                        DenseCell::new(
+                            cell.data()
+                                .iter()
+                                .map(|tap| Complex32::new(tap.norm(), 0.0))
+                                .collect(),
+                            cell.support(),
+                            cell.oversampling(),
+                            cell.mueller_planes(),
+                        )
+                    })
+                    .collect(),
+                mueller: self.mueller.clone(),
+                correction: self.correction.clone(),
+            }
+        }
+    }
+
+    /// AW's routes for XX, XY, YX and YY ([`AwRouted`]): for w > 0 grid
+    /// correlation `g` takes visibility `g` through plane `g`; otherwise it
+    /// takes its partner `3 − g` through plane `3 − g`. The forward tables
+    /// swap the signs (`GridToData`) and read the grid of the plane's hand.
+    fn aw_routing() -> casa_imaging_operator::MuellerRouting {
+        let table = |route: fn(usize, usize) -> Option<usize>| -> Vec<Vec<Option<u8>>> {
+            (0..4)
+                .map(|grid| {
+                    (0..4)
+                        .map(|vis| route(grid, vis).map(|plane| plane as u8))
+                        .collect()
+                })
+                .collect()
+        };
+        casa_imaging_operator::MuellerRouting {
+            adjoint: [
+                table(|grid, vis| (vis == 3 - grid).then_some(3 - grid)),
+                table(|grid, vis| (vis == grid).then_some(grid)),
+            ],
+            forward: [
+                table(|grid, vis| (vis == grid).then_some(grid)),
+                table(|grid, vis| (vis == 3 - grid).then_some(grid)),
+            ],
+        }
+    }
+
+    impl casa_imaging_operator::ConvolutionFunctionSet for AwRouted {
+        fn key(&self, _: &casa_imaging_operator::RowContext, _: f64, _: f64) -> CfKey {
+            CfKey::default()
+        }
+
+        fn taps<'s>(
+            &'s self,
+            key: CfKey,
+            _: &'s mut casa_imaging_operator::CellHold,
+        ) -> casa_imaging_operator::TapLayout<'s> {
+            self.cells[usize::from(key.group)].layout()
+        }
+
+        fn max_half_support(&self) -> [u16; 2] {
+            [AW_SUPPORT / 2; 2]
+        }
+
+        fn weight_taps<'s>(
+            &'s self,
+            key: CfKey,
+            hold: &'s mut casa_imaging_operator::CellHold,
+        ) -> Option<casa_imaging_operator::TapLayout<'s>> {
+            Some(self.taps(key, hold))
+        }
+
+        fn mueller(&self) -> &casa_imaging_operator::MuellerRouting {
+            &self.mueller
+        }
+
+        fn image_correction(&self) -> &casa_imaging_operator::ImageCorrection {
+            &self.correction
+        }
+
+        fn normalisation(&self) -> casa_imaging_operator::KernelNormalisation {
+            casa_imaging_operator::KernelNormalisation::KernelSum
+        }
+
+        fn pointing_ramp(&self) -> bool {
+            true
+        }
+
+        /// Each cell, lent as the imaging and as the weight taps.
+        fn tap_footprint(&self) -> casa_imaging_operator::TapFootprint {
+            casa_imaging_operator::TapFootprint::of(
+                self.cells
+                    .iter()
+                    .flat_map(|cell| [cell.layout(), cell.layout()]),
+            )
+        }
+    }
+
+    /// The four linear correlations, imaged as themselves, on a two-term
+    /// Taylor basis with `kernels`, gridding in f64.
+    fn aw_routed_operator(kernels: AwRouted) -> casa_imaging_operator::MeasurementOperator {
+        use casa_imaging_model::{CorrelationType, PolarizationCoordinate};
+        use casa_imaging_operator::{
+            Basis, GridPrecision, MeasurementOperator, PolarizationRouting,
+        };
+        let routing = PolarizationRouting::compile(
+            &[
+                CorrelationType::LinearXx,
+                CorrelationType::LinearXy,
+                CorrelationType::LinearYx,
+                CorrelationType::LinearYy,
+            ],
+            &[
+                PolarizationCoordinate::LinearXx,
+                PolarizationCoordinate::LinearXy,
+                PolarizationCoordinate::LinearYx,
+                PolarizationCoordinate::LinearYy,
+            ],
+        )
+        .expect("routing");
+        MeasurementOperator::new(
+            aw_geometry(),
+            Basis::Taylor {
+                terms: 2,
+                reference_hz: 1.0e11,
+            },
+            routing,
+            Box::new(kernels),
+            GridPrecision::F64,
+        )
+    }
+
+    /// `samples` weight placements over `keys` cells, three pointing
+    /// gradients, three spectral factors and both signs of w, in random
+    /// order, each with random weights on XX, YX and YY and none on XY.
+    fn aw_routed_samples(
+        operator: &casa_imaging_operator::MeasurementOperator,
+        keys: u16,
+        samples: usize,
+    ) -> SampleBuffer {
+        let gradients = [[0.0, 0.0], [0.6, -0.2], [-0.3, 0.9]].map(|offset: [f64; 2]| {
+            operator
+                .geometry()
+                .pointing_gradient([offset[0] * 1.0e-4, offset[1] * 1.0e-4])
+        });
+        let spectral = [-0.01_f32, 0.0, 0.02];
+        let mut state = 0x2545_f491_4f6c_dd1d_u64;
+        let mut next = || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        let mut buffer = SampleBuffer::with_capacity(4, samples);
+        for _ in 0..samples {
+            let draw = next();
+            // Fractions of 2^-16, so a group's sum of a thousand needs more
+            // bits than f32 keeps.
+            let weight = |shift: u32| 0.5 + ((draw >> shift) & 0xffff) as f32 / 65536.0;
+            buffer.push(
+                Placement {
+                    u: 0.0,
+                    v: 0.0,
+                    w: if draw & 1 == 0 { 25.0 } else { -25.0 },
+                    prediction_w_positive: true,
+                    phase: 0.0,
+                    plane: 0,
+                    spectral: spectral[(draw >> 1) as usize % 3],
+                    cf: CfKey {
+                        group: u16::try_from((draw >> 3) % u64::from(keys)).expect("a key"),
+                        cube: 0,
+                    },
+                    gradient: gradients[(draw >> 7) as usize % 3],
+                },
+                &[Complex32::default(); 4],
+                &[weight(16), 0.0, weight(32), weight(48)],
+            );
+        }
+        buffer
+    }
+
+    /// `samples` as `map` changes each placement.
+    fn mapped(samples: &SampleBuffer, map: impl Fn(Placement) -> Placement) -> SampleBuffer {
+        let block = samples.block();
+        let mut out = SampleBuffer::with_capacity(block.npol, block.len());
+        for (index, placement) in block.placements.iter().enumerate() {
+            out.push(
+                map(*placement),
+                block.values_of(index),
+                block.weights_of(index),
+            );
+        }
+        out
+    }
+
+    /// The weight blocks, cell by cell, and the weight `sumwt` that
+    /// `samples` grid on `operator`'s f64 accumulator: one sample at a time
+    /// (`capacity` `None`), or summed by contribution in a table of
+    /// `capacity` groups, with the grids that table made.
+    fn weight_grids(
+        operator: &casa_imaging_operator::MeasurementOperator,
+        samples: &SampleBuffer,
+        capacity: Option<usize>,
+    ) -> (Vec<num_complex::Complex64>, Vec<f64>, u64) {
+        use casa_imaging_operator::{CpuBackend, GridBackend, Mode, ModeSet, PlaneRange, Work};
+        let mut acc = operator.accumulator(PlaneRange::single(0), None, ModeSet::ALL);
+        let mut backend = CpuBackend::new();
+        let cf = operator.cf();
+        let mut grid = |block: &SampleBlock<'_>| {
+            backend.apply(
+                block,
+                cf,
+                Work::Grid {
+                    mode: Mode::Weight,
+                    acc: &mut acc,
+                },
+            )
+        };
+        let grids = match capacity {
+            None => {
+                grid(&samples.block()).expect("grid");
+                0
+            }
+            Some(capacity) => {
+                let mut sums = WeightSums::new(samples.block().npol, capacity);
+                sums.add(&samples.block(), &mut grid).expect("add");
+                sums.flush(&mut grid).expect("flush");
+                sums.totals()[2]
+            }
+        };
+        let layout = acc.layout();
+        let terms = layout.term_range(Mode::Weight).expect("weight terms");
+        let mut cells = Vec::new();
+        let mut sumwt = Vec::new();
+        for pol in 0..layout.pols() {
+            for term in terms.clone() {
+                cells.extend_from_slice(acc.block::<f64>(0, pol, term));
+                sumwt.push(acc.sumwt_at(0, pol, term));
+            }
+        }
+        (cells, sumwt, grids)
+    }
+
+    /// #792 review (Astra), #810, for #653's AW rows: under AW's routing
+    /// ([`AwRouted`]) summing the weight image by contribution grids what
+    /// gridding each sample grids, to the rounding of each group's sum to
+    /// f32. The routes change with the sign of w and cross the hands, the
+    /// cells are complex and dense with four Mueller planes, XY weighs
+    /// nothing in either route that reads it, and the samples carry ramps
+    /// and Taylor terms: in a table that grids once, and in one of seven
+    /// groups that fills and grids every few samples.
+    ///
+    /// The bound is the arithmetic's, cell by cell (Astra's probes saw
+    /// 6.7e-9 of the peak). A group's weights sum in f64 and each grid of
+    /// the group rounds its partial sum to f32, within 2^-24 of it; the
+    /// weights are positive, so a cell's summed value is within 2^-24 of
+    /// `Σ |W · s^t · tap|` of the one gridded sample by sample, and a
+    /// weight `sumwt` within 2^-24 of `Σ W · |s|^t · |N|`, both besides
+    /// f64's own rounding over the samples.
+    #[test]
+    fn summed_weights_grid_what_each_sample_grids_under_aw_routing() {
+        const KEYS: u16 = 3;
+        const SAMPLES: usize = 60_000;
+        let kernels = AwRouted::new(usize::from(KEYS), 0x9e37_79b9_7f4a_7c15);
+        let magnitude_operator = aw_routed_operator(kernels.magnitudes());
+        let operator = aw_routed_operator(kernels);
+        let samples = aw_routed_samples(&operator, KEYS, SAMPLES);
+        let (each, each_sumwt, _) = weight_grids(&operator, &samples, None);
+        let unsigned = |placement: Placement| Placement {
+            spectral: placement.spectral.abs(),
+            ..placement
+        };
+        let (magnitudes, _, _) = weight_grids(
+            &magnitude_operator,
+            &mapped(&samples, |placement| Placement {
+                gradient: [0.0, 0.0],
+                ..unsigned(placement)
+            }),
+            None,
+        );
+        let (_, sumwt_magnitudes, _) = weight_grids(&operator, &mapped(&samples, unsigned), None);
+        let rounding = F32_ROUNDING + 4.0 * SAMPLES as f64 * f64::EPSILON;
+        let block = each.len() / each_sumwt.len();
+        for (index, cells) in each.chunks(block).enumerate() {
+            assert!(
+                cells.iter().any(|cell| cell.norm() > 0.0),
+                "weight block {index} has weight"
+            );
+        }
+        for capacity in [WEIGHT_GROUPS, 7] {
+            let (summed, summed_sumwt, grids) = weight_grids(&operator, &samples, Some(capacity));
+            assert!(
+                capacity == WEIGHT_GROUPS || grids > 1,
+                "a table of {capacity} groups fills"
+            );
+            for (index, ((summed, each), magnitude)) in
+                summed.iter().zip(&each).zip(&magnitudes).enumerate()
+            {
+                assert!(
+                    (summed - each).norm() <= rounding * magnitude.re,
+                    "{capacity} groups, cell {index}: {summed} against {each}, \
+                     magnitude {magnitude}"
+                );
+            }
+            for ((summed, each), magnitude) in
+                summed_sumwt.iter().zip(&each_sumwt).zip(&sumwt_magnitudes)
+            {
+                assert!(
+                    (summed - each).abs() <= rounding * magnitude,
+                    "{capacity} groups, sumwt: {summed} against {each}, magnitude {magnitude}"
+                );
+            }
+        }
+    }
+
     /// A table holds at most [`WeightSums::bytes`].
     #[test]
     fn a_table_holds_at_most_its_bytes() {
