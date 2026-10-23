@@ -425,9 +425,11 @@ a persistent update.
 
 ### Using ndarray
 
-**Proposed implementation starting point:** use `ndarray` for numerical arrays
+**Owner-agreed direction:** use `ndarray` for numerical arrays
 and borrowed views, with thin domain types carrying checked axis/layout
 semantics, native Measures metadata, flag/weight meaning and update provenance.
+This agreement selects the array library; concrete owner/view APIs and the
+overall design remain open for iteration and the M1 evidence requirements apply.
 There is no architectural reason to build a competing general array library.
 The workspace already declares `ndarray = "0.17"` and locks 0.17.2;
 [`casa-values::ArrayValue`](https://github.com/bglenden/casa-rs/blob/221ec71545fe36a758ab0869e7512349b5db7c0e/crates/casa-values/src/lib.rs#L336)

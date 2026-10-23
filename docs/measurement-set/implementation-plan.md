@@ -116,8 +116,9 @@ parallel migration:
 1. The same imaging operator consumes compatible selections from irregular v2
    and factored v4 coordinates, with sample-major and channel-major layouts.
    Compare results and count copies, calls, allocations and peak memory.
-   Start with `ndarray` numerical views under thin domain types. Prove compatible
-   whole-array and sliced views borrow the existing allocation without copying,
+   Use `ndarray` numerical views under thin domain types, as agreed with the
+   owner. Prove compatible whole-array and sliced views borrow the existing
+   allocation without copying,
    and reuse capacity across fills. Check fixed-rank access, admitted strides,
    read-only broadcasts and safe worker handoff with actual kernels. Compare
    with existing production paths; record each required pack/owned copy and

@@ -10,6 +10,8 @@ independent lifetimes, guaranteed units, the `VisibilityBatch` name and explicit
 access-pattern negotiation from processing planners to adapters. Native Measures
 types and bulk conversion are now owner requirements; this changes the proposed
 type ownership and adds a prerequisite Measures trial to M1.
+The owner also agrees to `ndarray` numerical arrays/views under thin domain
+types; concrete ownership APIs remain subject to M1 evidence and review.
 Recommendations below remain open
 for owner iteration; no review response constitutes acceptance or finalization.
 

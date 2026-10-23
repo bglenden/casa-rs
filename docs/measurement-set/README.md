@@ -46,7 +46,7 @@ visibility/flag/weight elements and explicit
 It distinguishes [buffer ownership from array views](contracts.md#buffer-ownership-and-array-views):
 the batch carries actual numerical data, and a borrowed view provides direct
 access without copying. [Using `ndarray`](contracts.md#using-ndarray) is the
-proposed starting point, with thin scientific types and M1 checks for buffer
+owner-agreed direction, with thin scientific types and M1 checks for buffer
 reuse, ownership transfer and performance; concrete types remain open for review.
 The owner also requires [native Measures types and bulk conversion](contracts.md#shared-measures-types-and-bulk-conversion),
 authorizing substantial Measures refactoring. The revised ownership keeps those
@@ -56,8 +56,8 @@ additions. LSRK↔TOPO is a non-exhaustive example; the M1 gate requires a famil
 coverage matrix, including scalar/vector and nonlinear operations.
 The documents and PR remain provisional: neither addressing a comment nor an
 agent recommendation finalizes the design. The MSv2 + MSv4 scope, MSv3 deferral,
-and this Measures requirement are owner directions; they do not approve the
-remaining contracts or authorize the broad implementation before review.
+Measures requirement and use of `ndarray` are owner directions; they do not
+approve the remaining contracts or authorize broad implementation before review.
 
 ## Decisions for the owner and independent reviewers
 
