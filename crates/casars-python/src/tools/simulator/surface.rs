@@ -162,7 +162,7 @@ const METHODS: &[Method] = &[
         Implemented,
     ),
     method("observe", &OBSERVE, Implemented),
-    method("observemany", &OBSERVEMANY, NotYetImplemented),
+    method("observemany", &OBSERVEMANY, Implemented),
     method(
         "setlimits",
         &[
@@ -208,7 +208,7 @@ const METHODS: &[Method] = &[
             param("mosspacing", K::Quantity, Empty),
             param("distance", K::Quantity, Empty),
         ],
-        NotYetImplemented,
+        Implemented,
     ),
     method(
         "setspwindow",
