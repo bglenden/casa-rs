@@ -2,7 +2,7 @@
 //! `sm.settimes`, `sm.observe` and `sm.observemany`: the schedule of scans.
 //!
 //! `observe` records a scan, and `observemany` a run of pointings, each
-//! pointing a [`Scan`] of its own; the session writes every scan's rows at
+//! pointing a scan of its own; the session writes every scan's rows at
 //! `close`. The bookkeeping follows `NewMSSimulator::observe`, whose
 //! one-source form is `observemany` with one pointing and no direction:
 //! - scan numbers continue from the last scan, and a run of pointings of one
