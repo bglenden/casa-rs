@@ -34,6 +34,7 @@ use casa_imaging_runtime::{Demand, Reservation, admit, charge_process_caches, fr
 
 use super::Simulator;
 use super::error::{SimulatorError, SimulatorResult};
+use super::resources::SessionResources;
 use crate::predict::{
     BeamPattern, ComponentPrediction, ComponentRefusal, ComponentTargets, ComponentWindow,
     ModelOperator, PredictError, PrimaryBeam, SkyModel,
@@ -281,16 +282,19 @@ impl Simulator {
     /// - Raised, as casatools' binding raises before predicting: a named
     ///   image that does not exist or does not open
     ///   ([`PredictSpec::check_images`]).
-    /// - Not yet implemented: a component list, more than one image, a
-    ///   model layout CASA reads and casa-rs does not (other than Stokes I,
-    ///   J2000, direction–Stokes–spectral axes), a near-field distance on the
+    /// - Not yet implemented: more than one image, a model layout CASA reads
+    ///   and casa-rs does not (other than Stokes I, J2000,
+    ///   direction–Stokes–spectral axes), a component casa-rs does not
+    ///   predict (a direction not in J2000, or a flux, spectrum or shape
+    ///   casa-components does not evaluate), a near-field distance on the
     ///   last field, scans whose windows differ in correlations, or
     ///   `setvp(dovp=True)` for a telescope without an Airy default pattern
     ///   (VLA and EVLA among them).
     /// - CASA's `False`: no model image ("No model images found"), or no
     ///   rows observed yet.
     /// - Raised: a scan of 3 correlations ("No such VisVector type"), or
-    ///   model grids that do not fit the session's memory budget
+    ///   model grids, or a component list's read or preparation, that do not
+    ///   fit the session's memory budget
     ///   ([`SimulatorError::admission_refused`]).
     pub fn predict(&mut self, spec: &PredictSpec) -> SimulatorResult<()> {
         spec.check_images()?;
@@ -332,7 +336,9 @@ impl Simulator {
             )));
         }
         // `createSkyEquation` reads the component list before the images.
-        let list = list.map(read_component_list).transpose()?;
+        let list = list
+            .map(|path| read_component_list(path, &self.options.resources))
+            .transpose()?;
         let model = images
             .first()
             .map(|path| SkyModel::open(path).map_err(model_error))
@@ -346,7 +352,7 @@ impl Simulator {
         let correlations = self.predicted_correlations()?;
         let beam = self.voltage_pattern_beam()?;
         let components = list
-            .map(|(path, list)| self.prepare_components(&path, list, beam))
+            .map(|(path, list, held)| self.prepare_components(&path, (list, held), beam))
             .transpose()?;
         let prediction = match model {
             Some(model) => {
@@ -375,11 +381,12 @@ impl Simulator {
     /// `list` prepared for the session's windows, with `beam` per observed
     /// field, and admitted. The admission is made when the list has been
     /// read: what the prediction will hold, known from the list's length,
-    /// and the list itself, which is released when the list is dropped here.
+    /// and its preparation's scratch. The list's own share of the read's
+    /// admission, `held_list`, is released when the list is dropped here.
     fn prepare_components(
         &self,
         path: &Path,
-        list: ComponentList,
+        (list, held_list): (ComponentList, Reservation),
         beam: Option<PrimaryBeam>,
     ) -> SimulatorResult<ComponentPrediction> {
         if self
@@ -416,17 +423,17 @@ impl Simulator {
             beam: pattern.as_ref(),
         };
         let resources = &self.options.resources;
-        let read = list.bytes();
+        let preparation = ComponentTargets::preparation_bytes(list.len());
         let mut reservation = admit(
             resources.host(),
             resources.policy(),
             &Demand {
                 phase: COMPONENTS_PHASE,
-                memory: targets.bytes(list.len()) + read,
+                memory: targets.bytes(list.len()) + preparation,
             },
         )
         .map_err(SimulatorError::admission)?;
-        let held_list = reservation.split(read);
+        let held_preparation = reservation.split(preparation);
         let prediction = ComponentPrediction::new(&list, targets, reservation).map_err(
             |ComponentRefusal::NotYetImplemented(reason)| {
                 SimulatorError::not_yet_implemented(format!(
@@ -435,6 +442,7 @@ impl Simulator {
                 ))
             },
         )?;
+        drop(held_preparation);
         tracing::info!(
             components = list.len(),
             bytes = prediction.bytes(),
@@ -595,17 +603,34 @@ impl Simulator {
 /// The component list at `path`, as `createSkyEquation` reads it: CASA's
 /// `False` when the path is not a readable table ("ComponentList … not
 /// readable"), and when the table is not a component list CASA reads
-/// (`ComponentList`'s constructor throws, and `predict` catches it).
-fn read_component_list(path: &Path) -> SimulatorResult<(PathBuf, ComponentList)> {
+/// (`ComponentList`'s constructor throws, and `predict` catches it). The
+/// read is admitted within `resources` before it starts; once the list is
+/// formed, the list's share of that admission is returned with it and the
+/// rest released.
+fn read_component_list(
+    path: &Path,
+    resources: &SessionResources,
+) -> SimulatorResult<(PathBuf, ComponentList, Reservation)> {
     if !path.join("table.dat").is_file() {
         return Err(SimulatorError::refused(format!(
             "Failed to create SkyEquation: ComponentList {} not readable",
             path.display()
         )));
     }
-    let list = ComponentList::read_table(path)
-        .map_err(|error| SimulatorError::refused(format!("Caught exception: {error}")))?;
-    Ok((path.to_path_buf(), list))
+    let refused = |error| SimulatorError::refused(format!("Caught exception: {error}"));
+    let reading_bytes = ComponentList::read_table_bytes(path).map_err(refused)?;
+    let mut reading = admit(
+        resources.host(),
+        resources.policy(),
+        &Demand {
+            phase: COMPONENTS_PHASE,
+            memory: reading_bytes,
+        },
+    )
+    .map_err(SimulatorError::admission)?;
+    let list = ComponentList::read_table(path).map_err(refused)?;
+    let held = reading.split(list.bytes().min(reading_bytes));
+    Ok((path.to_path_buf(), list, held))
 }
 
 /// A model that cannot be read or prepared, as CASA reports it: a layout

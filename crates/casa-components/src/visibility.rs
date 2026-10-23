@@ -206,9 +206,17 @@ fn tabular_stokes(
             frequencies.len()
         )));
     }
-    // `binarySearchBrackets`, then the bracketing pair, or the end pair.
+    // `binarySearchBrackets`, which takes the tabulation in either order,
+    // then the bracketing pair, or the end pair.
+    let ascending = frequencies[0] <= frequencies[frequencies.len() - 1];
     let upper = frequencies
-        .partition_point(|frequency| *frequency < frequency_hz)
+        .partition_point(|frequency| {
+            if ascending {
+                *frequency < frequency_hz
+            } else {
+                *frequency > frequency_hz
+            }
+        })
         .clamp(1, frequencies.len() - 1);
     let (x1, x2) = (frequencies[upper - 1], frequencies[upper]);
     let fraction = (frequency_hz - x1) / (x2 - x1);

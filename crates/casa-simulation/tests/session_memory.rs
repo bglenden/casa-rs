@@ -58,7 +58,7 @@ mod pass_summary;
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 
 use casa_components::{
     ComponentList, ComponentShape, Ellipse, EllipseErrors, Flux, ShapeKind, SkyComponent,
@@ -93,10 +93,20 @@ struct CountingHeap;
 
 static LIVE: AtomicU64 = AtomicU64::new(0);
 static PEAK: AtomicU64 = AtomicU64::new(0);
+/// The most the live bytes exceeded what the process's reservations held,
+/// at any allocation: a heap within its admission at every moment, not only
+/// at the two peaks.
+static EXCESS: AtomicI64 = AtomicI64::new(i64::MIN);
 
 fn grow(bytes: u64) {
     let live = LIVE.fetch_add(bytes, Ordering::Relaxed) + bytes;
     PEAK.fetch_max(live, Ordering::Relaxed);
+    EXCESS.fetch_max(live as i64 - reserved_memory() as i64, Ordering::Relaxed);
+}
+
+/// What the live bytes exceed the reservations by now.
+fn excess_now() -> i64 {
+    LIVE.load(Ordering::Relaxed) as i64 - reserved_memory() as i64
 }
 
 // SAFETY: forwards to `System` with the caller's arguments and adds atomic
@@ -830,12 +840,14 @@ fn a_predicting_close_holds_its_admission_however_often_its_scan_is_corrupted() 
     );
 }
 
-/// The component law's lists, of this many components.
-const LISTED_COMPONENTS: [usize; 2] = [128, 256];
+/// The component law's cases: lists of this many components, observed in
+/// this many channels. In the second, many components in one channel, a
+/// temporary of 16 bytes a component would show beyond the allowance.
+const COMPONENT_CASES: [([usize; 2], usize); 2] = [([128, 256], 320), ([1_024, 8_192], 1)];
 
-/// The component law's channels. Each component's fluxes in XX and YY take
-/// 10,240 bytes, and its beam's powers 1,280.
-const COMPONENT_CHANNELS: usize = 320;
+/// A component's charge in each channel: its fluxes in XX and YY, and its
+/// beam's power.
+const COMPONENT_CHANNEL_BYTES: usize = 2 * 16 + 4;
 
 /// Write a list of `count` components around [`CENTRE_RAD`] to `path`:
 /// points and Gaussians 2″ apart, with spectral indices.
@@ -880,26 +892,31 @@ fn write_components(path: &Path, count: usize) {
 struct Predicted {
     /// The heap's peak during `predict`, and the most its reservations held.
     during: Closed,
+    /// The most the heap grew beyond its reservations' growth at any moment
+    /// of `predict`, bytes.
+    beyond: i64,
     /// The heap left live after `predict`, and what its reservations keep.
     kept: Closed,
 }
 
-/// A 20-integration scan predicted from the list at `list` under the
-/// default voltage pattern within `budget`, written to `ms` and closed: what
-/// `predict` held and kept, and what `close` held.
+/// A 20-integration scan of `channels` channels predicted from the list at
+/// `list` under the default voltage pattern within `budget`, written to
+/// `ms` and closed: what `predict` held and kept, and what `close` held.
 fn predict_components(
     ms: &Path,
-    list: &Path,
+    (list, channels): (&Path, usize),
     measures: &Arc<dyn MeasuresProvider>,
     budget: u64,
 ) -> (Predicted, Closed) {
-    let mut sm = configured(ms, measures, budget, COMPONENT_CHANNELS);
+    let mut sm = configured(ms, measures, budget, channels);
     sm.observe(&scan(20)).expect("observe");
     sm.set_vp(&VoltagePatternSpec::default()).expect("setvp");
     let reserved = reserved_memory();
     let baseline = LIVE.load(Ordering::Relaxed);
     PEAK.store(baseline, Ordering::Relaxed);
     let window = ReservationWindow::open();
+    let before = excess_now();
+    EXCESS.store(before, Ordering::Relaxed);
     sm.predict(&PredictSpec {
         images: Vec::new(),
         component_list: Some(list.to_path_buf()),
@@ -911,6 +928,7 @@ fn predict_components(
             heap: PEAK.load(Ordering::Relaxed) - baseline,
             admitted: window.close() - reserved,
         },
+        beyond: EXCESS.load(Ordering::Relaxed) - before,
         kept: Closed {
             heap: LIVE.load(Ordering::Relaxed).saturating_sub(baseline),
             admitted: reserved_memory() - reserved,
@@ -928,7 +946,9 @@ fn predict_components(
 /// its reservation keeps. `close` adds the components into each batch in
 /// place, so it too holds no more beyond its admission for twice the
 /// components. Each list's budget is the base's and its charge, so that
-/// `close` finds the same memory free and its writer batches alike.
+/// `close` finds the same memory free and its writer batches alike. The
+/// case of many components in one channel holds the preparation's
+/// temporary directions to their charge (#872 review).
 #[test]
 fn predicting_components_keeps_what_it_charges_and_close_holds_its_admission() {
     if !alone("predicting_components_keeps_what_it_charges_and_close_holds_its_admission") {
@@ -938,16 +958,29 @@ fn predicting_components_keeps_what_it_charges_and_close_holds_its_admission() {
     charge_process_caches(resources.host(), resources.policy()).expect("the process caches");
     let measures = casa_test_support::deterministic_measures_provider();
     let root = tempfile::tempdir().expect("temporary directory");
-    let ms = root.path().join("components.ms");
-    let lists = LISTED_COMPONENTS.map(|count| {
-        let path = root.path().join(format!("{count}.cl"));
+    for (counts, channels) in COMPONENT_CASES {
+        components_hold_their_admission(root.path(), &measures, counts, channels);
+    }
+}
+
+/// The component law for lists of `counts` components observed in
+/// `channels` channels.
+fn components_hold_their_admission(
+    root: &Path,
+    measures: &Arc<dyn MeasuresProvider>,
+    counts: [usize; 2],
+    channels: usize,
+) {
+    let ms = root.join(format!("components-{channels}.ms"));
+    let lists = counts.map(|count| {
+        let path = root.join(format!("{count}.cl"));
         write_components(&path, count);
         path
     });
     // Once unmeasured: state a process keeps once it has predicted, and
     // each list's charge.
     let charges = lists.each_ref().map(|list| {
-        predict_components(&ms, list, &measures, BUDGET_320)
+        predict_components(&ms, (list, channels), measures, BUDGET_320)
             .0
             .kept
             .admitted
@@ -956,15 +989,27 @@ fn predicting_components_keeps_what_it_charges_and_close_holds_its_admission() {
         heap: u64::MAX,
         admitted: 0,
     };
-    let [few, many] = [0, 1].map(|case| {
-        let count = LISTED_COMPONENTS[case];
-        let (mut predicts, mut closes) = (least(), least());
+    let [(few, few_beyond), (many, many_beyond)] = [0, 1].map(|case| {
+        let count = counts[case];
+        let (mut predicts, mut closes, mut least_beyond) = (least(), least(), i64::MAX);
         for _ in 0..MEASURED_RUNS {
-            let (Predicted { during, kept }, closed) =
-                predict_components(&ms, &lists[case], &measures, BUDGET_320 + charges[case]);
+            let (
+                Predicted {
+                    during,
+                    beyond,
+                    kept,
+                },
+                closed,
+            ) = predict_components(
+                &ms,
+                (&lists[case], channels),
+                measures,
+                BUDGET_320 + charges[case],
+            );
             println!(
-                "{count} components: predict held {} bytes against {} admitted and kept {} \
-                 against {} charged; close held {} against {}",
+                "{count} components in {channels} channels: predict held {} bytes against {} \
+                 admitted, {beyond} at most beyond its reservations, and kept {} against {} \
+                 charged; close held {} against {}",
                 during.heap,
                 during.admitted,
                 kept.heap,
@@ -973,7 +1018,13 @@ fn predicting_components_keeps_what_it_charges_and_close_holds_its_admission() {
                 closed.admitted
             );
             assert!(
-                kept.admitted >= count as u64 * (10_240 + 1_280),
+                beyond <= ALLOWANCE_BYTES as i64,
+                "{count} components: predict held {beyond} bytes beyond its reservations at one \
+                 moment"
+            );
+            least_beyond = least_beyond.min(beyond);
+            assert!(
+                kept.admitted >= (count * channels * COMPONENT_CHANNEL_BYTES) as u64,
                 "{count} components: the fluxes and powers are charged: {kept:?}"
             );
             assert!(
@@ -1001,23 +1052,39 @@ fn predicting_components_keeps_what_it_charges_and_close_holds_its_admission() {
             closes.heap = closes.heap.min(closed.heap);
             closes.admitted = closes.admitted.max(closed.admitted);
         }
-        [predicts, closes]
+        ([predicts, closes], least_beyond)
     });
+    println!(
+        "{} - {} components in {channels} channels: predict held {} bytes more beyond its \
+         reservations at one moment",
+        counts[1],
+        counts[0],
+        many_beyond - few_beyond
+    );
+    assert!(
+        many_beyond <= few_beyond + SCANS_ALLOWANCE_BYTES as i64,
+        "{} components in {channels} channels: predict held {many_beyond} bytes beyond its \
+         reservations at one moment, against {few_beyond} for {}",
+        counts[1],
+        counts[0]
+    );
     for (step, call) in ["predict", "close"].into_iter().enumerate() {
         let (few, many) = (few[step], many[step]);
         println!(
-            "{} - {} components: {call} held {} bytes more beyond its admission",
-            LISTED_COMPONENTS[1],
-            LISTED_COMPONENTS[0],
+            "{} - {} components in {channels} channels: {call} held {} bytes more beyond its \
+             admission",
+            counts[1],
+            counts[0],
             many.unadmitted() - few.unadmitted()
         );
         assert!(
             many.unadmitted() <= few.unadmitted() + SCANS_ALLOWANCE_BYTES as i64,
-            "{} components: {call} held {} bytes beyond its admission, against {} for {}",
-            LISTED_COMPONENTS[1],
+            "{} components in {channels} channels: {call} held {} bytes beyond its admission, \
+             against {} for {}",
+            counts[1],
             many.unadmitted(),
             few.unadmitted(),
-            LISTED_COMPONENTS[0]
+            counts[0]
         );
     }
 }

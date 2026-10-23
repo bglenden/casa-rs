@@ -235,6 +235,36 @@ fn a_tabular_spectrum_interpolates_and_extrapolates_linearly_in_its_own_frame() 
 }
 
 #[test]
+fn a_descending_tabulation_interpolates_between_the_same_pairs() {
+    let at = |frequencies: Vec<f64>, stokes_i: Vec<f64>, nu: f64| {
+        let table = TabularSpectrum::new(
+            FrequencyRef::LSRK,
+            frequencies,
+            stokes_i.into_iter().map(|i| [i, 0.0, 0.0, 0.0]).collect(),
+        )
+        .expect("table");
+        SpectralModel::new(
+            MFrequency::new(GHZ_230, FrequencyRef::LSRK),
+            SpectralKind::Tabular(table),
+        )
+        .sample_stokes(nu, [1.0; 4])
+        .expect("sample")[0]
+    };
+    // casacore 3.7.1's `InterpolateArray1D::linear` gives 6.5 (#872 review).
+    close(
+        at(vec![3.0e9, 2.0e9, 1.0e9], vec![9.0, 4.0, 1.0], 2.5e9),
+        6.5,
+        "between",
+    );
+    let descending = |nu| at(vec![240.0e9, 230.0e9, 220.0e9], vec![4.0, 2.0, 1.0], nu);
+    close(descending(225.0e9), 1.5, "between, low pair");
+    close(descending(230.0e9), 2.0, "a knot");
+    close(descending(240.0e9), 4.0, "the first knot");
+    close(descending(245.0e9), 5.0, "extrapolated above");
+    close(descending(210.0e9), 0.0, "extrapolated below");
+}
+
+#[test]
 fn a_components_visibility_is_its_sampled_flux_times_its_shape() {
     let gaussian = ShapeKind::Gaussian {
         axes: Ellipse::new(1.0 * ARCSEC, 0.5 * ARCSEC, 0.4).expect("axes"),

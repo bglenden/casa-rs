@@ -109,6 +109,12 @@ impl ComponentTargets<'_> {
             + field_slots * size_of::<Option<FieldTerms>>()
             + self.fields.len() * per_field) as u64
     }
+
+    /// Bytes [`ComponentPrediction::new`] holds only while it prepares
+    /// `components` components: their J2000 directions.
+    pub(crate) fn preparation_bytes(components: usize) -> u64 {
+        (components * size_of::<[f64; 2]>()) as u64
+    }
 }
 
 /// A component list prepared for prediction into a session's windows.

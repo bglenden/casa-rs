@@ -44,6 +44,21 @@ impl ComponentList {
         table::read_component_list(path.as_ref())
     }
 
+    /// The most [`Self::read_table`] holds while it reads the list at
+    /// `path`, bytes, known from the table's description before it reads:
+    /// casa-tables loads every row at the first row's read, some 9.5 KB a
+    /// row beside the columns' bytes on disk for the lists casa-components
+    /// writes, and the list is formed beside them. A memory budget admits
+    /// this before the read.
+    ///
+    /// # Errors
+    ///
+    /// [`ComponentListError::Table`] when the table's description cannot be
+    /// read.
+    pub fn read_table_bytes(path: impl AsRef<Path>) -> Result<u64, ComponentListError> {
+        table::read_bytes(path.as_ref())
+    }
+
     /// Write this list as a new CASA component-list table, as CASA's
     /// `ComponentList::rename` (`createTable`) and `writeTable` do.
     ///
