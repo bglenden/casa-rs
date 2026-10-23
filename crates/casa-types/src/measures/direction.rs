@@ -86,8 +86,8 @@
 //! (`MCDirection::ToRef_p`), except that casacore converts B1950 to and from
 //! APP directly, with its B1950 precession, nutation and aberration, and so
 //! B1950 to and from TOPO, HADEC, the AZEL frames and ITRF. casa-rs goes
-//! through J2000, which differs by 2.5–4.9″ (2026-10-22). casa-rs has no
-//! BMEAN, BTRUE or B1950_VLA frame.
+//! through J2000, which differs by 2.5–4.9″ (2026-10-22, #863). casa-rs has
+//! no BMEAN, BTRUE or B1950_VLA frame.
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, VecDeque};
