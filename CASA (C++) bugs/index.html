@@ -1148,6 +1148,39 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#a-negative-component-turns-positive-under-the-primary-beam" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A negative component turns positive under the primary beam
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#a-single-spectral-index-is-read-past-its-end" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A single spectral index is read past its end
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-primary-beams-component-spectrum-labels-topocentric-samples-lsrk" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The primary beam's component spectrum labels topocentric samples LSRK
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#claddcomponent-stores-four-flux-values-as-stokes" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1319,6 +1352,9 @@ Simulator behaviours casa-rs follows:
 <a href="#observemany-pads-one-name-with-empty-ones"><code>observemany</code>'s padded single name</a>.
 Component-list behaviours casa-rs does not follow:
 <a href="#writing-a-limb-darkened-disk-without-an-exponent-aborts-casa">a limb-darkened disk without an exponent</a>,
+<a href="#a-negative-component-turns-positive-under-the-primary-beam">a negative component under the primary beam</a>,
+<a href="#a-single-spectral-index-is-read-past-its-end">a single spectral index</a>,
+<a href="#the-primary-beams-component-spectrum-labels-topocentric-samples-lsrk">the beam's component spectrum frame</a>,
 <a href="#claddcomponent-stores-the-flux-in-single-precision"><code>addcomponent</code>'s single-precision flux</a>,
 <a href="#the-cl-tool-records-a-shapes-axes-in-the-units-it-was-given">the <code>cl</code> tool's record units</a>.
 Component-list behaviours casa-rs follows:
@@ -1934,6 +1970,57 @@ and <code>rename</code> succeed, <code>close</code> aborts). Had the empty vecto
 <code>readTable</code> would read its first element out of bounds. casa-rs leaves the
 cell undefined, which CASA reads as the shape's default exponent of 0.05, as
 it reads every other row the column does not describe.</p>
+<h2 id="a-negative-component-turns-positive-under-the-primary-beam">A negative component turns positive under the primary beam<a class="headerlink" href="#a-negative-component-turns-positive-under-the-primary-beam" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-10-23</li>
+<li>Status: CASA bug casa-rs does not follow (#841)</li>
+<li>Affected code: <code>casatools/src/code/synthesis/TransformMachines/BeamSkyJones.cc</code>
+  (<code>apply(SkyComponent&amp;, …)</code>, lines 488-511)</li>
+</ul>
+<p>With <code>sm.setvp(dovp=True)</code>, <code>SkyEquation::applySkyJones</code> applies the beam to
+each component with <code>fullspectral</code> set. That path multiplies the beam-applied
+flux, which keeps the component's sign, by a per-channel factor of the
+spectrum's sample over <code>abs(flux)</code>, which carries the sign again, so a
+negative flux comes out positive. Probed with CASA 6.7.6: a −0.4 Jy point
+20 arcsec from the pointing centre predicts −0.4 Jy without the beam and
++0.4 Jy times the beam with it. casa-rs keeps the sign;
+<code>sm_components_scenarios.json</code> keeps negative components away from the beam.</p>
+<h2 id="a-single-spectral-index-is-read-past-its-end">A single spectral index is read past its end<a class="headerlink" href="#a-single-spectral-index-is-read-past-its-end" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-10-23</li>
+<li>Status: CASA bug casa-rs does not follow (#841)</li>
+<li>Affected code: <code>casatools/src/code/components/ComponentModels/SpectralIndex.cc</code>
+  (<code>sampleStokes</code>, lines 138-146 and 213-237);
+  <code>components/ComponentModels/SkyCompRep.cc</code> (<code>visibility</code>, line 314)</li>
+</ul>
+<p><code>cl.addcomponent(spectrumtype="spectral index", index=α)</code> stores one index.
+The per-frequency <code>sampleStokes</code> scales only I by it and leaves Q, U and V
+alone; the matrix <code>sampleStokes</code>, which <code>SkyCompRep::visibility</code> and so
+every component prediction uses, has no one-index branch and reads indices
+1 to 3 out of bounds. For an unpolarised component the out-of-bounds factors
+multiply zeros. Read from the source and not probed: a polarised component
+with a single index predicts Q, U and V scaled by whatever follows the
+vector. casa-rs reads a single index as <code>[α, 0, 0, 0]</code>, so the fractional
+polarisation is constant, as the matrix sampler's comments describe;
+<code>sm_components_scenarios.json</code> gives its polarised components no index.</p>
+<h2 id="the-primary-beams-component-spectrum-labels-topocentric-samples-lsrk">The primary beam's component spectrum labels topocentric samples LSRK<a class="headerlink" href="#the-primary-beams-component-spectrum-labels-topocentric-samples-lsrk" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-10-23</li>
+<li>Status: CASA behaviour casa-rs does not follow (#841)</li>
+<li>Affected code: <code>casatools/src/code/synthesis/TransformMachines/BeamSkyJones.cc</code>
+  (<code>apply(SkyComponent&amp;, …)</code>, lines 494-529);
+  <code>components/ComponentModels/SkyCompRep.cc</code> (<code>visibility</code>, lines 303-314)</li>
+</ul>
+<p>The full-spectral beam path evaluates the beam and the spectrum at each
+channel's topocentric frequency, stores the products in a <code>TabularSpectrum</code>
+at the channels' LSRK frequencies, and labels it LSRK. <code>SkyCompRep::visibility</code>
+then looks the table up at the topocentric frequencies, which it takes to be
+in the component's frame, so each channel reads the table shifted by the
+observatory's velocity, up to about 1e-4 of the frequency. casa-rs evaluates
+the beam and the spectrum at each channel's own frequency. With the beam,
+<code>sm_components_scenarios.json</code> agrees with CASA to 7e-5 and 1e-4 normalized
+RMS, against 1.3e-5 or better without it: consistent in size with this
+shift, though the shift was not isolated.</p>
 <h2 id="claddcomponent-stores-four-flux-values-as-stokes"><code>cl.addcomponent</code> stores four flux values as Stokes<a class="headerlink" href="#claddcomponent-stores-four-flux-values-as-stokes" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-10-23</li>
