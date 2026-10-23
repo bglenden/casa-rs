@@ -1291,11 +1291,18 @@ today's, within 5%. Any trade-off is recorded and needs owner approval.</p>
 <li><strong>Where it runs.</strong> Sustained runs go on GLENDENNING, the 1 TB NVMe external
   drive (about 3 GB/s). The internal disk has 72 GB free and must stay above
   40 GB.</li>
-<li><strong>Fast regression check.</strong> The 1 GiB internal-disk case stays as a quick
+<li><strong>Phase 1's record (owner decision, 2026-10-22).</strong> The indicative runs at
+  #855's final head stand as Phase 1's acceptance; there is no purged,
+  repeated rerun. That record is <code>sustained-20261022-d6ab21e2de</code> on the NAS:</li>
+<li>the page cache was not purged;</li>
+<li>each case ran once, between two ceiling runs;</li>
+<li>the dataset was 81.6 GiB against 32 GiB of RAM.</li>
+</ul>
+<p>It met both targets with a wide margin: 104% write-only and 100% with Metal.
+- <strong>Fast regression check.</strong> The 1 GiB internal-disk case stays as a quick
   check, labelled cache-resident. A 4 GB <code>dd</code> on the internal disk measured
   about 2 GB/s on 2026-10-20, but that file is smaller than RAM and so went
-  partly through the page cache.</li>
-</ul>
+  partly through the page cache.</p>
 <h3 id="benchmark-cases">Benchmark cases<a class="headerlink" href="#benchmark-cases" title="Permanent link">&para;</a></h3>
 <ol>
 <li><strong>ALMA:</strong> about 43 antennas, 1 h of 10 s integrations, 256 channels and a

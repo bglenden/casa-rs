@@ -1,0 +1,76 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Counter-based Gaussian noise for visibility cells: σ times a standard normal added to every real and imaginary part of a cell, each draw a pure function of a stream key and the sample’s place in the data."><title>casa_numerics::cell_noise - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-0c87338a.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="casa_numerics" data-themes="" data-resource-suffix="" data-rustdoc-version="1.99.1 (58cf8f9c3 2026-10-13)" data-channel="1.99.1" data-search-js="search-cf4fc35e.js" data-stringdex-js="stringdex-b5109af9.js" data-settings-js="settings-170eb4bf.js" ><script src="../../static.files/storage-41dd4d93.js"></script><script defer src="../sidebar-items.js"></script><script defer src="../../static.files/main-417ebf0a.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-9f56287d.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc mod"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><rustdoc-topbar><h2><a href="#">Module cell_noise</a></h2></rustdoc-topbar><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../../casa_numerics/index.html">casa_<wbr>numerics</a><span class="version">0.27.0</span></h2></div><div class="sidebar-elems"><section id="rustdoc-toc"><h2 class="location"><a href="#">Module cell_<wbr>noise</a></h2><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#a-draw" title="A draw">A draw</a></li><li><a href="#accuracy" title="Accuracy">Accuracy</a></li><li><a href="#drawing-channels-together" title="Drawing channels together">Drawing channels together</a></li></ul><h3><a href="#structs">Module Items</a></h3><ul class="block"><li><a href="#structs" title="Structs">Structs</a></li><li><a href="#constants" title="Constants">Constants</a></li><li><a href="#functions" title="Functions">Functions</a></li></ul></section><div id="rustdoc-modnav"><h2 class="in-crate"><a href="../index.html">In crate casa_<wbr>numerics</a></h2></div></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><div class="width-limiter"><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><div class="rustdoc-breadcrumbs"><a href="../index.html">casa_numerics</a></div><h1>Module <span>cell_<wbr>noise</span>&nbsp;<button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../src/casa_numerics/cell_noise/mod.rs.html#2-311">Source</a> </span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Counter-based Gaussian noise for visibility cells: σ times a standard
+normal added to every real and imaginary part of a cell, each draw a
+pure function of a stream key and the sample’s place in the data.</p>
+<h2 id="a-draw"><a class="doc-anchor" href="#a-draw">§</a>A draw</h2>
+<p>A draw is Philox4x32-10 (<a href="fn.philox4x32_10.html" title="fn casa_numerics::cell_noise::philox4x32_10"><code>philox4x32_10</code></a>; Salmon, Moraes, Dror and
+Shaw, SC11) of a 128-bit counter under a 64-bit key: four 32-bit words.
+The counter is the row (its low word, then its high word), the channel
+and the correlation pair (correlations 0 and 1 are pair 0, 2 and 3
+pair 1). Words 0 and 1 make correlation <code>2·pair</code>’s (real, imaginary)
+normals, words 2 and 3 correlation <code>2·pair + 1</code>’s. The key names the
+stream and belongs to the caller: casa-simulation, for one, keys thermal
+noise by the term’s seed and how many times the term has been applied.
+Distinct keys give independent streams, and one key the same values
+every time.</p>
+<p>Philox keeps no state, so the noise of a sample depends only on (key,
+row, channel, correlation): it is bitwise the same in any order, for any
+batch size, on any number of workers and on any backend that computes
+the same arithmetic.</p>
+<p>Normals come from Box–Muller on a pair of words (<a href="fn.box_muller.html" title="fn casa_numerics::cell_noise::box_muller"><code>box_muller</code></a>): with
+<code>u₁ = (w₀ + 1)·2⁻³²</code> in (0, 1] and <code>θ = 2π·w₁·2⁻³²</code>, the pair
+<code>√(−2 ln u₁)·(cos θ, sin θ)</code> is two independent standard normals. They are
+computed in <code>f32</code>, with the logarithm, sine and cosine evaluated on the
+words themselves rather than by the platform’s <code>libm</code>: only IEEE-754
+additions, multiplications, one division and a square root, all
+correctly rounded and none fused, so a draw is bitwise the same on every
+platform. The noise added is <code>(r·σ)·cos θ</code> and <code>(r·σ)·sin θ</code>
+(<a href="fn.scaled_draw.html" title="fn casa_numerics::cell_noise::scaled_draw"><code>scaled_draw</code></a>): scaling the radius once saves a multiplication per
+sample over scaling each normal, with the same number of roundings.</p>
+<h2 id="accuracy"><a class="doc-anchor" href="#accuracy">§</a>Accuracy</h2>
+<p>The draws replace the double-precision draws the same words gave before
+(#855; the tests keep that code as an oracle). With <code>ε = 2⁻²⁴</code>, the unit
+roundoff of <code>f32</code>, the largest errors against it over all 2³² words are
+2.003ε for the radius and 2.892ε for the sine and the cosine, relatively.
+The radius depends on the first word only and the angle on the second
+only, so a standard normal, rounded once more, is within
+<code>2.003ε + 2.892ε + ε &lt; 6ε</code> of the double-precision normal, relatively,
+for every pair of words. Over 2³³ normals the largest error is 5.18ε, and
+56 % of them are the double-precision normal rounded to <code>f32</code>. Scaling
+by σ, as <code>(r·σ)·cos θ</code> rather than <code>(r·cos θ)·σ</code>, adds one rounding.
+Against noise of standard deviation σ the difference is of order 10⁻⁷σ,
+below what an <code>f32</code> visibility resolves.</p>
+<p>Each bound is relative down to the smallest values, because each part is
+computed from exact integers where precision matters: near u₁ = 1 the
+logarithm takes <code>1 − u₁</code> as an integer, and the angle within its octant
+is taken from the word’s low bits. The largest draw is <code>√(64 ln 2)</code>
+≈ 6.66 standard deviations (6.660437, that value correctly rounded to
+<code>f32</code>, at <code>w₀ = 0</code>); an exact normal exceeds it about once in 4·10⁹.</p>
+<h2 id="drawing-channels-together"><a class="doc-anchor" href="#drawing-channels-together">§</a>Drawing channels together</h2>
+<p>A row’s draws are made sixteen channels at a time: the counters of one
+correlation pair in consecutive channels differ only in their channel
+word, so the generator and Box–Muller run on all of them in step, in
+vector registers (Philox’s multiplies with NEON intrinsics on aarch64).
+Every lane performs exactly the operations of a draw made alone, in the
+same order and with nothing fused, so the batching changes the speed and
+not one bit of the noise. The tests check this against the same draws
+made one at a time (<a href="fn.philox4x32_10.html" title="fn casa_numerics::cell_noise::philox4x32_10"><code>philox4x32_10</code></a> and <a href="fn.scaled_draw.html" title="fn casa_numerics::cell_noise::scaled_draw"><code>scaled_draw</code></a>), check both
+against the double-precision oracle within the bounds above, and hold a
+few draws and one cell to known bits, so that a platform that rounds
+differently fails.</p>
+</div></details><h2 id="structs" class="section-header">Structs<a href="#structs" class="anchor">§</a></h2><dl class="item-table"><dt><a class="struct" href="struct.CellNoise.html" title="struct casa_numerics::cell_noise::CellNoise">Cell<wbr>Noise</a></dt><dd>Gaussian noise of standard deviation σ for the cells of one stream: a
+64-bit Philox key and σ.</dd><dt><a class="struct" href="struct.MetalNoiseParams.html" title="struct casa_numerics::cell_noise::MetalNoiseParams">Metal<wbr>Noise<wbr>Params</a></dt><dd>The kernel’s constants: the cells’ shape and the terms’ count.</dd><dt><a class="struct" href="struct.MetalNoiseRow.html" title="struct casa_numerics::cell_noise::MetalNoiseRow">Metal<wbr>Noise<wbr>Row</a></dt><dd>One row of cells as the kernel reads it: its row number (the counter’s
+first two words) and whether it is an autocorrelation, which gets real
+draws only.</dd><dt><a class="struct" href="struct.MetalNoiseTerm.html" title="struct casa_numerics::cell_noise::MetalNoiseTerm">Metal<wbr>Noise<wbr>Term</a></dt><dd>One noise term as the kernel reads it: its stream key and σ.</dd></dl><h2 id="constants" class="section-header">Constants<a href="#constants" class="anchor">§</a></h2><dl class="item-table"><dt><a class="constant" href="constant.METAL_EXACT_SIGMA.html" title="constant casa_numerics::cell_noise::METAL_EXACT_SIGMA">METAL_<wbr>EXACT_<wbr>SIGMA</a></dt><dd>The smallest nonzero |σ| whose draws a Metal device makes bit for bit as
+the host does: 2⁻⁴⁰, about 9·10⁻¹³.</dd><dt><a class="constant" href="constant.METAL_KERNEL.html" title="constant casa_numerics::cell_noise::METAL_KERNEL">METAL_<wbr>KERNEL</a></dt><dd>The kernel’s name.</dd></dl><h2 id="functions" class="section-header">Functions<a href="#functions" class="anchor">§</a></h2><dl class="item-table"><dt><a class="fn" href="fn.box_muller.html" title="fn casa_numerics::cell_noise::box_muller">box_<wbr>muller</a></dt><dd>Two independent standard normals from two uniform 32-bit words:
+<code>(r·cos θ, r·sin θ)</code> with <code>r = √(−2 ln u₁)</code>, <code>u₁ = (first + 1)·2⁻³²</code> in
+(0, 1], and <code>θ = 2π·second·2⁻³²</code>.</dd><dt><a class="fn" href="fn.metal_draws_exactly.html" title="fn casa_numerics::cell_noise::metal_draws_exactly">metal_<wbr>draws_<wbr>exactly</a></dt><dd>Whether a term of σ <code>sigma</code> draws on a Metal device exactly as on the
+host: σ = 0 (no draws), or |σ| at least <a href="constant.METAL_EXACT_SIGMA.html" title="constant casa_numerics::cell_noise::METAL_EXACT_SIGMA"><code>METAL_EXACT_SIGMA</code></a>. A NaN
+draws NaN on both, but is not admitted.</dd><dt><a class="fn" href="fn.metal_source.html" title="fn casa_numerics::cell_noise::metal_source">metal_<wbr>source</a></dt><dd>The Metal source of <code>cell_noise_add</code>: one thread per (row, channel,
+correlation pair) of <code>params.rows × params.channels</code> cells of
+<code>params.correlations</code> correlations, interleaved complex <code>f32</code>, row by
+row, channel then correlation fastest. Buffers: 0 the cells (read and
+written), 1 the rows (<a href="struct.MetalNoiseRow.html" title="struct casa_numerics::cell_noise::MetalNoiseRow"><code>MetalNoiseRow</code></a>), 2 the terms
+(<a href="struct.MetalNoiseTerm.html" title="struct casa_numerics::cell_noise::MetalNoiseTerm"><code>MetalNoiseTerm</code></a>), 3 the params (<a href="struct.MetalNoiseParams.html" title="struct casa_numerics::cell_noise::MetalNoiseParams"><code>MetalNoiseParams</code></a>).</dd><dt><a class="fn" href="fn.philox4x32_10.html" title="fn casa_numerics::cell_noise::philox4x32_10">philox4x32_<wbr>10</a></dt><dd>Philox4x32-10 of one 128-bit <code>counter</code> under the 64-bit <code>key</code>: the four
+words of one draw.</dd><dt><a class="fn" href="fn.scaled_draw.html" title="fn casa_numerics::cell_noise::scaled_draw">scaled_<wbr>draw</a></dt><dd>The real and imaginary noise of one sample from its two words, one draw
+at a time: <code>(r·σ)·cos θ</code> and <code>(r·σ)·sin θ</code>, with <code>r</code> and <code>θ</code> as in
+<a href="fn.box_muller.html" title="fn casa_numerics::cell_noise::box_muller"><code>box_muller</code></a>.</dd></dl></section></div></main></body></html>

@@ -37,104 +37,122 @@
 <a href=#37 id=37 data-nosnippet>37</a>
 <a href=#38 id=38 data-nosnippet>38</a><span class="attr">#[cfg(all(target_os = <span class="string">"macos"</span>, not(coverage)))]
 <a href=#39 id=39 data-nosnippet>39</a></span><span class="kw">pub use </span>backend::MetalBackend;
-<a href=#40 id=40 data-nosnippet>40</a><span class="attr">#[cfg(not(all(target_os = <span class="string">"macos"</span>, not(coverage))))]
-<a href=#41 id=41 data-nosnippet>41</a></span><span class="kw">pub use </span>unavailable::MetalBackend;
-<a href=#42 id=42 data-nosnippet>42</a>
-<a href=#43 id=43 data-nosnippet>43</a><span class="doccomment">/// The `tracing` target of the event a backend made with stage timing logs
-<a href=#44 id=44 data-nosnippet>44</a>/// when it drops: its dispatches, samples and sub-blocks, the kernel cells
-<a href=#45 id=45 data-nosnippet>45</a>/// it uploaded, the host's preparation time and its waits for the device,
-<a href=#46 id=46 data-nosnippet>46</a>/// and the device's time on its commands (summed, and the span from the
-<a href=#47 id=47 data-nosnippet>47</a>/// first start to the last end). A pass also logs, once per wave, its
-<a href=#48 id=48 data-nosnippet>48</a>/// source stream: the producer's fill time and the pass's waits for it.
-<a href=#49 id=49 data-nosnippet>49</a></span><span class="kw">pub const </span>METAL_STAGE_TIMING: <span class="kw-2">&amp;</span>str = <span class="string">"casa_imaging::metal_stage_timing"</span>;
-<a href=#50 id=50 data-nosnippet>50</a>
-<a href=#51 id=51 data-nosnippet>51</a><span class="doccomment">/// Ring slots of one backend: the host prepares one while the device runs
-<a href=#52 id=52 data-nosnippet>52</a>/// the others. Twice the sub-blocks of one apply ([`SPLIT`]), so that an
-<a href=#53 id=53 data-nosnippet>53</a>/// apply whose grid work is left in flight
-<a href=#54 id=54 data-nosnippet>54</a>/// (`MetalBackend::with_deferred_grid_completion`) seldom waits for the apply
-<a href=#55 id=55 data-nosnippet>55</a>/// before it.
-<a href=#56 id=56 data-nosnippet>56</a></span><span class="kw">const </span>RING: usize = <span class="number">2 </span>* SPLIT;
-<a href=#57 id=57 data-nosnippet>57</a><span class="doccomment">/// Sub-blocks one apply is split into, so the host prepares one while the
-<a href=#58 id=58 data-nosnippet>58</a>/// device runs another.
-<a href=#59 id=59 data-nosnippet>59</a></span><span class="kw">const </span>SPLIT: usize = <span class="number">3</span>;
-<a href=#60 id=60 data-nosnippet>60</a><span class="doccomment">/// The most samples in one ring sub-block.
-<a href=#61 id=61 data-nosnippet>61</a></span><span class="kw">const </span>MAX_SUB: usize = <span class="number">32_768</span>;
-<a href=#62 id=62 data-nosnippet>62</a><span class="doccomment">/// Device bytes per sample of a ring slot: the record, its native endpoints
-<a href=#63 id=63 data-nosnippet>63</a>/// (or a native term), and per visibility polarization a value, a weight,
-<a href=#64 id=64 data-nosnippet>64</a>/// an inverse norm and an output.
-<a href=#65 id=65 data-nosnippet>65</a></span><span class="kw">const </span>SAMPLE_BYTES: usize = <span class="number">40</span>;
-<a href=#66 id=66 data-nosnippet>66</a><span class="kw">const </span>SOURCE_BYTES: usize = <span class="number">24</span>;
-<a href=#67 id=67 data-nosnippet>67</a><span class="kw">const </span>POLARIZATION_BYTES: usize = <span class="number">8 </span>+ <span class="number">4 </span>+ <span class="number">8 </span>+ <span class="number">8</span>;
-<a href=#68 id=68 data-nosnippet>68</a>
-<a href=#69 id=69 data-nosnippet>69</a><span class="doccomment">/// The most device memory one backend's ring holds for blocks of `npol`
-<a href=#70 id=70 data-nosnippet>70</a>/// visibility polarizations; its kernel copies add [`kernel_bytes`], and a
-<a href=#71 id=71 data-nosnippet>71</a>/// native prediction its batch ([`batch_bytes`]).
-<a href=#72 id=72 data-nosnippet>72</a></span><span class="attr">#[must_use]
-<a href=#73 id=73 data-nosnippet>73</a></span><span class="kw">pub const fn </span>ring_bytes(npol: usize) -&gt; u64 {
-<a href=#74 id=74 data-nosnippet>74</a>    (RING * MAX_SUB * (SAMPLE_BYTES + SOURCE_BYTES + npol * POLARIZATION_BYTES)) <span class="kw">as </span>u64
-<a href=#75 id=75 data-nosnippet>75</a>}
-<a href=#76 id=76 data-nosnippet>76</a>
-<a href=#77 id=77 data-nosnippet>77</a><span class="doccomment">/// Device bytes of one kernel table record (`records::TableRecord`).
-<a href=#78 id=78 data-nosnippet>78</a></span><span class="kw">const </span>TABLE_RECORD_BYTES: u64 = <span class="number">16</span>;
-<a href=#79 id=79 data-nosnippet>79</a><span class="doccomment">/// Host bytes a backend keeps per kernel cell beside its norms: its table
-<a href=#80 id=80 data-nosnippet>80</a>/// record, its `KnownTable` and their map entry, at the map's load factor
-<a href=#81 id=81 data-nosnippet>81</a>/// and growth.
-<a href=#82 id=82 data-nosnippet>82</a></span><span class="kw">const </span>HOST_TABLE_BYTES: u64 = <span class="number">256</span>;
-<a href=#83 id=83 data-nosnippet>83</a><span class="doccomment">/// Host and device bytes a backend keeps for its kernel copies before it
-<a href=#84 id=84 data-nosnippet>84</a>/// meets a cell: its empty arenas and table buffer (16 bytes each) and its
-<a href=#85 id=85 data-nosnippet>85</a>/// map's first allocation.
-<a href=#86 id=86 data-nosnippet>86</a></span><span class="kw">const </span>KERNEL_BASE_BYTES: u64 = <span class="number">1024</span>;
-<a href=#87 id=87 data-nosnippet>87</a>
-<a href=#88 id=88 data-nosnippet>88</a><span class="doccomment">/// The most memory one backend holds for its copies of `cf`'s kernel
-<a href=#89 id=89 data-nosnippet>89</a>/// cells, which a pass admits for every backend it makes (#793 review):
-<a href=#90 id=90 data-nosnippet>90</a>/// the taps of every cell the set can lend, in a device arena reserved
-<a href=#91 id=91 data-nosnippet>91</a>/// whole from the set's footprint at the first upload, so it never grows
-<a href=#92 id=92 data-nosnippet>92</a>/// past them; a device table record per cell; and the host's norm tables
-<a href=#93 id=93 data-nosnippet>93</a>/// and table map ([`ConvolutionFunctionSet::tap_footprint`]). A backend
-<a href=#94 id=94 data-nosnippet>94</a>/// that meets only some cells holds less; `MetalBackend::kernel_bytes_held`
-<a href=#95 id=95 data-nosnippet>95</a>/// says how much.
-<a href=#96 id=96 data-nosnippet>96</a></span><span class="attr">#[must_use]
-<a href=#97 id=97 data-nosnippet>97</a></span><span class="kw">pub fn </span>kernel_bytes(cf: <span class="kw-2">&amp;</span><span class="kw">dyn </span>ConvolutionFunctionSet) -&gt; u64 {
-<a href=#98 id=98 data-nosnippet>98</a>    <span class="kw">let </span>footprint = cf.tap_footprint();
-<a href=#99 id=99 data-nosnippet>99</a>    footprint.tap_bytes
-<a href=#100 id=100 data-nosnippet>100</a>        + footprint.norm_bytes
-<a href=#101 id=101 data-nosnippet>101</a>        + footprint.cells <span class="kw">as </span>u64 * (TABLE_RECORD_BYTES + HOST_TABLE_BYTES)
-<a href=#102 id=102 data-nosnippet>102</a>        + KERNEL_BASE_BYTES
-<a href=#103 id=103 data-nosnippet>103</a>}
-<a href=#104 id=104 data-nosnippet>104</a>
-<a href=#105 id=105 data-nosnippet>105</a><span class="doccomment">/// Bytes of every device buffer this crate holds now: kernel copies, rings,
-<a href=#106 id=106 data-nosnippet>106</a>/// accumulators, model copies and native cells of every live backend. Zero
-<a href=#107 id=107 data-nosnippet>107</a>/// on a host without Metal.
-<a href=#108 id=108 data-nosnippet>108</a></span><span class="attr">#[must_use]
-<a href=#109 id=109 data-nosnippet>109</a></span><span class="kw">pub fn </span>device_bytes() -&gt; u64 {
-<a href=#110 id=110 data-nosnippet>110</a>    <span class="attr">#[cfg(all(target_os = <span class="string">"macos"</span>, not(coverage)))]
-<a href=#111 id=111 data-nosnippet>111</a>    </span>{
-<a href=#112 id=112 data-nosnippet>112</a>        device::live_bytes()
-<a href=#113 id=113 data-nosnippet>113</a>    }
-<a href=#114 id=114 data-nosnippet>114</a>    <span class="attr">#[cfg(not(all(target_os = <span class="string">"macos"</span>, not(coverage))))]
-<a href=#115 id=115 data-nosnippet>115</a>    </span>{
-<a href=#116 id=116 data-nosnippet>116</a>        <span class="number">0
-<a href=#117 id=117 data-nosnippet>117</a>    </span>}
-<a href=#118 id=118 data-nosnippet>118</a>}
-<a href=#119 id=119 data-nosnippet>119</a>
-<a href=#120 id=120 data-nosnippet>120</a><span class="doccomment">/// The device memory a backend's predictions of a native-prediction batch
-<a href=#121 id=121 data-nosnippet>121</a>/// of `samples` samples of `npol` polarizations hold.
-<a href=#122 id=122 data-nosnippet>122</a></span><span class="attr">#[must_use]
-<a href=#123 id=123 data-nosnippet>123</a></span><span class="kw">pub const fn </span>batch_bytes(npol: usize, samples: usize) -&gt; u64 {
-<a href=#124 id=124 data-nosnippet>124</a>    (samples * npol * size_of::&lt;num_complex::Complex32&gt;()) <span class="kw">as </span>u64
-<a href=#125 id=125 data-nosnippet>125</a>}
-<a href=#126 id=126 data-nosnippet>126</a>
-<a href=#127 id=127 data-nosnippet>127</a><span class="doccomment">/// Whether this host has a Metal device the backend can use: Metal 3 with
-<a href=#128 id=128 data-nosnippet>128</a>/// memory shared with the host.
-<a href=#129 id=129 data-nosnippet>129</a></span><span class="attr">#[must_use]
-<a href=#130 id=130 data-nosnippet>130</a></span><span class="kw">pub fn </span>available() -&gt; bool {
-<a href=#131 id=131 data-nosnippet>131</a>    <span class="attr">#[cfg(all(target_os = <span class="string">"macos"</span>, not(coverage)))]
-<a href=#132 id=132 data-nosnippet>132</a>    </span>{
-<a href=#133 id=133 data-nosnippet>133</a>        device::Device::present()
-<a href=#134 id=134 data-nosnippet>134</a>    }
-<a href=#135 id=135 data-nosnippet>135</a>    <span class="attr">#[cfg(not(all(target_os = <span class="string">"macos"</span>, not(coverage))))]
-<a href=#136 id=136 data-nosnippet>136</a>    </span>{
-<a href=#137 id=137 data-nosnippet>137</a>        <span class="bool-val">false
-<a href=#138 id=138 data-nosnippet>138</a>    </span>}
-<a href=#139 id=139 data-nosnippet>139</a>}
+<a href=#40 id=40 data-nosnippet>40</a><span class="doccomment">/// The rows and noise terms [`MetalBackend::add_cell_noise`] reads.
+<a href=#41 id=41 data-nosnippet>41</a></span><span class="kw">pub use </span>casa_numerics::cell_noise::{MetalNoiseRow, MetalNoiseTerm};
+<a href=#42 id=42 data-nosnippet>42</a><span class="attr">#[cfg(not(all(target_os = <span class="string">"macos"</span>, not(coverage))))]
+<a href=#43 id=43 data-nosnippet>43</a></span><span class="kw">pub use </span>unavailable::MetalBackend;
+<a href=#44 id=44 data-nosnippet>44</a>
+<a href=#45 id=45 data-nosnippet>45</a><span class="doccomment">/// The `tracing` target of the event a backend made with stage timing logs
+<a href=#46 id=46 data-nosnippet>46</a>/// when it drops: its dispatches, samples and sub-blocks, the kernel cells
+<a href=#47 id=47 data-nosnippet>47</a>/// it uploaded, the host's preparation time and its waits for the device,
+<a href=#48 id=48 data-nosnippet>48</a>/// and the device's time on its commands (summed, and the span from the
+<a href=#49 id=49 data-nosnippet>49</a>/// first start to the last end). A pass also logs, once per wave, its
+<a href=#50 id=50 data-nosnippet>50</a>/// source stream: the producer's fill time and the pass's waits for it.
+<a href=#51 id=51 data-nosnippet>51</a></span><span class="kw">pub const </span>METAL_STAGE_TIMING: <span class="kw-2">&amp;</span>str = <span class="string">"casa_imaging::metal_stage_timing"</span>;
+<a href=#52 id=52 data-nosnippet>52</a>
+<a href=#53 id=53 data-nosnippet>53</a><span class="doccomment">/// Ring slots of one backend: the host prepares one while the device runs
+<a href=#54 id=54 data-nosnippet>54</a>/// the others. Twice the sub-blocks of one apply ([`SPLIT`]), so that an
+<a href=#55 id=55 data-nosnippet>55</a>/// apply whose grid work is left in flight
+<a href=#56 id=56 data-nosnippet>56</a>/// (`MetalBackend::with_deferred_grid_completion`) seldom waits for the apply
+<a href=#57 id=57 data-nosnippet>57</a>/// before it.
+<a href=#58 id=58 data-nosnippet>58</a></span><span class="kw">const </span>RING: usize = <span class="number">2 </span>* SPLIT;
+<a href=#59 id=59 data-nosnippet>59</a><span class="doccomment">/// Sub-blocks one apply is split into, so the host prepares one while the
+<a href=#60 id=60 data-nosnippet>60</a>/// device runs another.
+<a href=#61 id=61 data-nosnippet>61</a></span><span class="kw">const </span>SPLIT: usize = <span class="number">3</span>;
+<a href=#62 id=62 data-nosnippet>62</a><span class="doccomment">/// The most samples in one ring sub-block.
+<a href=#63 id=63 data-nosnippet>63</a></span><span class="kw">const </span>MAX_SUB: usize = <span class="number">32_768</span>;
+<a href=#64 id=64 data-nosnippet>64</a><span class="doccomment">/// Device bytes per sample of a ring slot: the record, its native endpoints
+<a href=#65 id=65 data-nosnippet>65</a>/// (or a native term), and per visibility polarization a value, a weight,
+<a href=#66 id=66 data-nosnippet>66</a>/// an inverse norm and an output.
+<a href=#67 id=67 data-nosnippet>67</a></span><span class="kw">const </span>SAMPLE_BYTES: usize = <span class="number">40</span>;
+<a href=#68 id=68 data-nosnippet>68</a><span class="kw">const </span>SOURCE_BYTES: usize = <span class="number">24</span>;
+<a href=#69 id=69 data-nosnippet>69</a><span class="kw">const </span>POLARIZATION_BYTES: usize = <span class="number">8 </span>+ <span class="number">4 </span>+ <span class="number">8 </span>+ <span class="number">8</span>;
+<a href=#70 id=70 data-nosnippet>70</a>
+<a href=#71 id=71 data-nosnippet>71</a><span class="doccomment">/// The most device memory one backend's ring holds for blocks of `npol`
+<a href=#72 id=72 data-nosnippet>72</a>/// visibility polarizations; its kernel copies add [`kernel_bytes`], and a
+<a href=#73 id=73 data-nosnippet>73</a>/// native prediction its batch ([`batch_bytes`]).
+<a href=#74 id=74 data-nosnippet>74</a></span><span class="attr">#[must_use]
+<a href=#75 id=75 data-nosnippet>75</a></span><span class="kw">pub const fn </span>ring_bytes(npol: usize) -&gt; u64 {
+<a href=#76 id=76 data-nosnippet>76</a>    (RING * MAX_SUB * (SAMPLE_BYTES + SOURCE_BYTES + npol * POLARIZATION_BYTES)) <span class="kw">as </span>u64
+<a href=#77 id=77 data-nosnippet>77</a>}
+<a href=#78 id=78 data-nosnippet>78</a>
+<a href=#79 id=79 data-nosnippet>79</a><span class="doccomment">/// Device bytes of one kernel table record (`records::TableRecord`).
+<a href=#80 id=80 data-nosnippet>80</a></span><span class="kw">const </span>TABLE_RECORD_BYTES: u64 = <span class="number">16</span>;
+<a href=#81 id=81 data-nosnippet>81</a><span class="doccomment">/// Host bytes a backend keeps per kernel cell beside its norms: its table
+<a href=#82 id=82 data-nosnippet>82</a>/// record, its `KnownTable` and their map entry, at the map's load factor
+<a href=#83 id=83 data-nosnippet>83</a>/// and growth.
+<a href=#84 id=84 data-nosnippet>84</a></span><span class="kw">const </span>HOST_TABLE_BYTES: u64 = <span class="number">256</span>;
+<a href=#85 id=85 data-nosnippet>85</a><span class="doccomment">/// Host and device bytes a backend keeps for its kernel copies before it
+<a href=#86 id=86 data-nosnippet>86</a>/// meets a cell: its empty arenas and table buffer (16 bytes each) and its
+<a href=#87 id=87 data-nosnippet>87</a>/// map's first allocation.
+<a href=#88 id=88 data-nosnippet>88</a></span><span class="kw">const </span>KERNEL_BASE_BYTES: u64 = <span class="number">1024</span>;
+<a href=#89 id=89 data-nosnippet>89</a>
+<a href=#90 id=90 data-nosnippet>90</a><span class="doccomment">/// The most memory one backend holds for its copies of `cf`'s kernel
+<a href=#91 id=91 data-nosnippet>91</a>/// cells, which a pass admits for every backend it makes (#793 review):
+<a href=#92 id=92 data-nosnippet>92</a>/// the taps of every cell the set can lend, in a device arena reserved
+<a href=#93 id=93 data-nosnippet>93</a>/// whole from the set's footprint at the first upload, so it never grows
+<a href=#94 id=94 data-nosnippet>94</a>/// past them; a device table record per cell; and the host's norm tables
+<a href=#95 id=95 data-nosnippet>95</a>/// and table map ([`ConvolutionFunctionSet::tap_footprint`]). A backend
+<a href=#96 id=96 data-nosnippet>96</a>/// that meets only some cells holds less; `MetalBackend::kernel_bytes_held`
+<a href=#97 id=97 data-nosnippet>97</a>/// says how much.
+<a href=#98 id=98 data-nosnippet>98</a></span><span class="attr">#[must_use]
+<a href=#99 id=99 data-nosnippet>99</a></span><span class="kw">pub fn </span>kernel_bytes(cf: <span class="kw-2">&amp;</span><span class="kw">dyn </span>ConvolutionFunctionSet) -&gt; u64 {
+<a href=#100 id=100 data-nosnippet>100</a>    <span class="kw">let </span>footprint = cf.tap_footprint();
+<a href=#101 id=101 data-nosnippet>101</a>    footprint.tap_bytes
+<a href=#102 id=102 data-nosnippet>102</a>        + footprint.norm_bytes
+<a href=#103 id=103 data-nosnippet>103</a>        + footprint.cells <span class="kw">as </span>u64 * (TABLE_RECORD_BYTES + HOST_TABLE_BYTES)
+<a href=#104 id=104 data-nosnippet>104</a>        + KERNEL_BASE_BYTES
+<a href=#105 id=105 data-nosnippet>105</a>}
+<a href=#106 id=106 data-nosnippet>106</a>
+<a href=#107 id=107 data-nosnippet>107</a><span class="doccomment">/// Bytes of every device buffer this crate holds now: kernel copies, rings,
+<a href=#108 id=108 data-nosnippet>108</a>/// accumulators, model copies and native cells of every live backend. Zero
+<a href=#109 id=109 data-nosnippet>109</a>/// on a host without Metal.
+<a href=#110 id=110 data-nosnippet>110</a></span><span class="attr">#[must_use]
+<a href=#111 id=111 data-nosnippet>111</a></span><span class="kw">pub fn </span>device_bytes() -&gt; u64 {
+<a href=#112 id=112 data-nosnippet>112</a>    <span class="attr">#[cfg(all(target_os = <span class="string">"macos"</span>, not(coverage)))]
+<a href=#113 id=113 data-nosnippet>113</a>    </span>{
+<a href=#114 id=114 data-nosnippet>114</a>        device::live_bytes()
+<a href=#115 id=115 data-nosnippet>115</a>    }
+<a href=#116 id=116 data-nosnippet>116</a>    <span class="attr">#[cfg(not(all(target_os = <span class="string">"macos"</span>, not(coverage))))]
+<a href=#117 id=117 data-nosnippet>117</a>    </span>{
+<a href=#118 id=118 data-nosnippet>118</a>        <span class="number">0
+<a href=#119 id=119 data-nosnippet>119</a>    </span>}
+<a href=#120 id=120 data-nosnippet>120</a>}
+<a href=#121 id=121 data-nosnippet>121</a>
+<a href=#122 id=122 data-nosnippet>122</a><span class="doccomment">/// The device memory a backend's predictions of a native-prediction batch
+<a href=#123 id=123 data-nosnippet>123</a>/// of `samples` samples of `npol` polarizations hold.
+<a href=#124 id=124 data-nosnippet>124</a></span><span class="attr">#[must_use]
+<a href=#125 id=125 data-nosnippet>125</a></span><span class="kw">pub const fn </span>batch_bytes(npol: usize, samples: usize) -&gt; u64 {
+<a href=#126 id=126 data-nosnippet>126</a>    (samples * npol * size_of::&lt;num_complex::Complex32&gt;()) <span class="kw">as </span>u64
+<a href=#127 id=127 data-nosnippet>127</a>}
+<a href=#128 id=128 data-nosnippet>128</a>
+<a href=#129 id=129 data-nosnippet>129</a><span class="doccomment">/// The most device memory a backend holds for cell noise
+<a href=#130 id=130 data-nosnippet>130</a>/// (`MetalBackend::add_cell_noise`) of at most `rows` rows and `terms`
+<a href=#131 id=131 data-nosnippet>131</a>/// terms: the two buffers it copies them to, made at its first noise and
+<a href=#132 id=132 data-nosnippet>132</a>/// grown to the largest, each at least a buffer's 16 bytes. A backend that
+<a href=#133 id=133 data-nosnippet>133</a>/// adds no noise holds none.
+<a href=#134 id=134 data-nosnippet>134</a></span><span class="attr">#[must_use]
+<a href=#135 id=135 data-nosnippet>135</a></span><span class="kw">pub const fn </span>noise_bytes(rows: usize, terms: usize) -&gt; u64 {
+<a href=#136 id=136 data-nosnippet>136</a>    (buffer_bytes(rows * size_of::&lt;MetalNoiseRow&gt;())
+<a href=#137 id=137 data-nosnippet>137</a>        + buffer_bytes(terms * size_of::&lt;MetalNoiseTerm&gt;())) <span class="kw">as </span>u64
+<a href=#138 id=138 data-nosnippet>138</a>}
+<a href=#139 id=139 data-nosnippet>139</a>
+<a href=#140 id=140 data-nosnippet>140</a><span class="doccomment">/// The bytes of a device buffer made for `bytes`: at least 16.
+<a href=#141 id=141 data-nosnippet>141</a></span><span class="kw">const fn </span>buffer_bytes(bytes: usize) -&gt; usize {
+<a href=#142 id=142 data-nosnippet>142</a>    <span class="kw">if </span>bytes &gt; <span class="number">16 </span>{ bytes } <span class="kw">else </span>{ <span class="number">16 </span>}
+<a href=#143 id=143 data-nosnippet>143</a>}
+<a href=#144 id=144 data-nosnippet>144</a>
+<a href=#145 id=145 data-nosnippet>145</a><span class="doccomment">/// Whether this host has a Metal device the backend can use: Metal 3 with
+<a href=#146 id=146 data-nosnippet>146</a>/// memory shared with the host.
+<a href=#147 id=147 data-nosnippet>147</a></span><span class="attr">#[must_use]
+<a href=#148 id=148 data-nosnippet>148</a></span><span class="kw">pub fn </span>available() -&gt; bool {
+<a href=#149 id=149 data-nosnippet>149</a>    <span class="attr">#[cfg(all(target_os = <span class="string">"macos"</span>, not(coverage)))]
+<a href=#150 id=150 data-nosnippet>150</a>    </span>{
+<a href=#151 id=151 data-nosnippet>151</a>        device::Device::present()
+<a href=#152 id=152 data-nosnippet>152</a>    }
+<a href=#153 id=153 data-nosnippet>153</a>    <span class="attr">#[cfg(not(all(target_os = <span class="string">"macos"</span>, not(coverage))))]
+<a href=#154 id=154 data-nosnippet>154</a>    </span>{
+<a href=#155 id=155 data-nosnippet>155</a>        <span class="bool-val">false
+<a href=#156 id=156 data-nosnippet>156</a>    </span>}
+<a href=#157 id=157 data-nosnippet>157</a>}
 </code></pre></div></section></main></body></html>

@@ -1,0 +1,147 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `crates/casa-tables/src/storage/tiled_stman/band_writer.rs`."><title>band_writer.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../../static.files/rustdoc-0c87338a.css"><meta name="rustdoc-vars" data-root-path="../../../../" data-static-root-path="../../../../static.files/" data-current-crate="casa_tables" data-themes="" data-resource-suffix="" data-rustdoc-version="1.99.1 (58cf8f9c3 2026-10-13)" data-channel="1.99.1" data-search-js="search-cf4fc35e.js" data-stringdex-js="stringdex-b5109af9.js" data-settings-js="settings-170eb4bf.js" ><script src="../../../../static.files/storage-41dd4d93.js"></script><script defer src="../../../../static.files/src-script-813739b1.js"></script><script defer src="../../../../src-files.js"></script><script defer src="../../../../static.files/main-417ebf0a.js"></script><noscript><link rel="stylesheet" href="../../../../static.files/noscript-9f56287d.css"></noscript><link rel="alternate icon" type="image/png" href="../../../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><h1><div class="sub-heading">casa_tables/storage/tiled_stman/</div>band_writer.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-3"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// SPDX-License-Identifier: LGPL-3.0-or-later
+<a href=#2 id=2 data-nosnippet>2</a></span><span class="doccomment">//! Writing a streamed tiled column's bands of tiles on a thread of their
+<a href=#3 id=3 data-nosnippet>3</a>//! own, so the thread that lays rows into tiles never waits on the file.
+<a href=#4 id=4 data-nosnippet>4</a>//!
+<a href=#5 id=5 data-nosnippet>5</a>//! A band is every tile of one row of tiles, written in file order. A
+<a href=#6 id=6 data-nosnippet>6</a>//! writer that holds two bands fills one while this thread writes the
+<a href=#7 id=7 data-nosnippet>7</a>//! other, and swaps a filled band for the band written before it; one that
+<a href=#8 id=8 data-nosnippet>8</a>//! holds one band, when memory is short, waits for it to be written. Writing copies a band into the page cache at the rate the
+<a href=#9 id=9 data-nosnippet>9</a>//! system allows (about 3.3 GB/s on an M4, whatever the writers), so laying
+<a href=#10 id=10 data-nosnippet>10</a>//! out the next band beside it takes that time off the column's critical
+<a href=#11 id=11 data-nosnippet>11</a>//! path (#855: at 4096 channels, 2.2 s of every 12.4 s the DATA writer
+<a href=#12 id=12 data-nosnippet>12</a>//! spent).
+<a href=#13 id=13 data-nosnippet>13</a>
+<a href=#14 id=14 data-nosnippet>14</a></span><span class="kw">use </span>std::io::{BufWriter, Write <span class="kw">as </span>IoWrite};
+<a href=#15 id=15 data-nosnippet>15</a><span class="kw">use </span>std::sync::mpsc::{<span class="self">self</span>, Receiver, SyncSender};
+<a href=#16 id=16 data-nosnippet>16</a><span class="kw">use </span>std::thread::JoinHandle;
+<a href=#17 id=17 data-nosnippet>17</a><span class="kw">use </span>std::time::Instant;
+<a href=#18 id=18 data-nosnippet>18</a>
+<a href=#19 id=19 data-nosnippet>19</a><span class="kw">use </span><span class="kw">super</span>::CountingFile;
+<a href=#20 id=20 data-nosnippet>20</a><span class="kw">use </span><span class="kw">crate</span>::storage::StorageError;
+<a href=#21 id=21 data-nosnippet>21</a>
+<a href=#22 id=22 data-nosnippet>22</a><span class="doccomment">/// What the writing thread did, for the column's telemetry.
+<a href=#23 id=23 data-nosnippet>23</a></span><span class="attr">#[derive(Debug, Default, Clone, Copy)]
+<a href=#24 id=24 data-nosnippet>24</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>BandStats {
+<a href=#25 id=25 data-nosnippet>25</a>    <span class="kw">pub</span>(<span class="kw">super</span>) write_seconds: f64,
+<a href=#26 id=26 data-nosnippet>26</a>    <span class="kw">pub</span>(<span class="kw">super</span>) bytes_written: usize,
+<a href=#27 id=27 data-nosnippet>27</a>    <span class="kw">pub</span>(<span class="kw">super</span>) logical_write_calls: usize,
+<a href=#28 id=28 data-nosnippet>28</a>    <span class="kw">pub</span>(<span class="kw">super</span>) max_logical_write_bytes: usize,
+<a href=#29 id=29 data-nosnippet>29</a>}
+<a href=#30 id=30 data-nosnippet>30</a>
+<a href=#31 id=31 data-nosnippet>31</a><span class="doccomment">/// A band: every tile of one row of tiles, in file order.
+<a href=#32 id=32 data-nosnippet>32</a></span><span class="kw">type </span>Band = Vec&lt;Vec&lt;u8&gt;&gt;;
+<a href=#33 id=33 data-nosnippet>33</a>
+<a href=#34 id=34 data-nosnippet>34</a><span class="doccomment">/// What the writing thread gives back: the file's writer and what it did.
+<a href=#35 id=35 data-nosnippet>35</a></span><span class="kw">type </span>Written = <span class="prelude-ty">Result</span>&lt;(BufWriter&lt;CountingFile&gt;, BandStats), StorageError&gt;;
+<a href=#36 id=36 data-nosnippet>36</a>
+<a href=#37 id=37 data-nosnippet>37</a><span class="doccomment">/// The thread that writes a column's bands, and the bands passing to and
+<a href=#38 id=38 data-nosnippet>38</a>/// from it.
+<a href=#39 id=39 data-nosnippet>39</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>BandWriter {
+<a href=#40 id=40 data-nosnippet>40</a>    filled: <span class="prelude-ty">Option</span>&lt;SyncSender&lt;Band&gt;&gt;,
+<a href=#41 id=41 data-nosnippet>41</a>    written: Receiver&lt;Band&gt;,
+<a href=#42 id=42 data-nosnippet>42</a>    thread: <span class="prelude-ty">Option</span>&lt;JoinHandle&lt;Written&gt;&gt;,
+<a href=#43 id=43 data-nosnippet>43</a>}
+<a href=#44 id=44 data-nosnippet>44</a>
+<a href=#45 id=45 data-nosnippet>45</a><span class="kw">impl </span>BandWriter {
+<a href=#46 id=46 data-nosnippet>46</a>    <span class="doccomment">/// Start writing to `writer`. With a `spare` band the laying thread
+<a href=#47 id=47 data-nosnippet>47</a>    /// fills it while its first band is written; without one, each band
+<a href=#48 id=48 data-nosnippet>48</a>    /// comes back once written, so laying and writing take turns as they
+<a href=#49 id=49 data-nosnippet>49</a>    /// did on one thread.
+<a href=#50 id=50 data-nosnippet>50</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>start(
+<a href=#51 id=51 data-nosnippet>51</a>        writer: BufWriter&lt;CountingFile&gt;,
+<a href=#52 id=52 data-nosnippet>52</a>        spare: <span class="prelude-ty">Option</span>&lt;Band&gt;,
+<a href=#53 id=53 data-nosnippet>53</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, StorageError&gt; {
+<a href=#54 id=54 data-nosnippet>54</a>        <span class="kw">let </span>(filled, bands) = mpsc::sync_channel::&lt;Band&gt;(<span class="number">1</span>);
+<a href=#55 id=55 data-nosnippet>55</a>        <span class="kw">let </span>(returns, written) = mpsc::sync_channel::&lt;Band&gt;(<span class="number">2</span>);
+<a href=#56 id=56 data-nosnippet>56</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(spare) = spare {
+<a href=#57 id=57 data-nosnippet>57</a>            returns
+<a href=#58 id=58 data-nosnippet>58</a>                .send(spare)
+<a href=#59 id=59 data-nosnippet>59</a>                .expect(<span class="string">"the receiver is held, and the channel has room"</span>);
+<a href=#60 id=60 data-nosnippet>60</a>        }
+<a href=#61 id=61 data-nosnippet>61</a>        <span class="kw">let </span>thread = std::thread::Builder::new()
+<a href=#62 id=62 data-nosnippet>62</a>            .name(<span class="string">"tiled-band-writer"</span>.to_string())
+<a href=#63 id=63 data-nosnippet>63</a>            .spawn(<span class="kw">move </span>|| write_bands(writer, <span class="kw-2">&amp;</span>bands, <span class="kw-2">&amp;</span>returns))<span class="question-mark">?</span>;
+<a href=#64 id=64 data-nosnippet>64</a>        <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
+<a href=#65 id=65 data-nosnippet>65</a>            filled: <span class="prelude-val">Some</span>(filled),
+<a href=#66 id=66 data-nosnippet>66</a>            written,
+<a href=#67 id=67 data-nosnippet>67</a>            thread: <span class="prelude-val">Some</span>(thread),
+<a href=#68 id=68 data-nosnippet>68</a>        })
+<a href=#69 id=69 data-nosnippet>69</a>    }
+<a href=#70 id=70 data-nosnippet>70</a>
+<a href=#71 id=71 data-nosnippet>71</a>    <span class="doccomment">/// Hand `band`, filled, over to be written, and take back a written band
+<a href=#72 id=72 data-nosnippet>72</a>    /// to fill: waits while the thread is still writing the band before.
+<a href=#73 id=73 data-nosnippet>73</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>swap(<span class="kw-2">&amp;mut </span><span class="self">self</span>, band: Vec&lt;Vec&lt;u8&gt;&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;Vec&lt;u8&gt;&gt;, StorageError&gt; {
+<a href=#74 id=74 data-nosnippet>74</a>        <span class="kw">let </span>sent = <span class="self">self
+<a href=#75 id=75 data-nosnippet>75</a>            </span>.filled
+<a href=#76 id=76 data-nosnippet>76</a>            .as_ref()
+<a href=#77 id=77 data-nosnippet>77</a>            .expect(<span class="string">"bands are swapped only before the writer finishes"</span>)
+<a href=#78 id=78 data-nosnippet>78</a>            .send(band);
+<a href=#79 id=79 data-nosnippet>79</a>        <span class="kw">match </span>sent.ok().and_then(|()| <span class="self">self</span>.written.recv().ok()) {
+<a href=#80 id=80 data-nosnippet>80</a>            <span class="prelude-val">Some</span>(band) =&gt; <span class="prelude-val">Ok</span>(band),
+<a href=#81 id=81 data-nosnippet>81</a>            <span class="comment">// The thread stopped: it failed, and says why when joined.
+<a href=#82 id=82 data-nosnippet>82</a>            </span><span class="prelude-val">None </span>=&gt; <span class="prelude-val">Err</span>(<span class="self">self</span>.join().err().unwrap_or_else(|| {
+<a href=#83 id=83 data-nosnippet>83</a>                StorageError::FormatMismatch(<span class="string">"the band writer stopped without an error"</span>.into())
+<a href=#84 id=84 data-nosnippet>84</a>            })),
+<a href=#85 id=85 data-nosnippet>85</a>        }
+<a href=#86 id=86 data-nosnippet>86</a>    }
+<a href=#87 id=87 data-nosnippet>87</a>
+<a href=#88 id=88 data-nosnippet>88</a>    <span class="doccomment">/// Write every band handed over, and give back the file's writer, not
+<a href=#89 id=89 data-nosnippet>89</a>    /// flushed, and what the thread did.
+<a href=#90 id=90 data-nosnippet>90</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>finish(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;(BufWriter&lt;CountingFile&gt;, BandStats), StorageError&gt; {
+<a href=#91 id=91 data-nosnippet>91</a>        <span class="self">self</span>.join()
+<a href=#92 id=92 data-nosnippet>92</a>    }
+<a href=#93 id=93 data-nosnippet>93</a>
+<a href=#94 id=94 data-nosnippet>94</a>    <span class="kw">fn </span>join(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;(BufWriter&lt;CountingFile&gt;, BandStats), StorageError&gt; {
+<a href=#95 id=95 data-nosnippet>95</a>        <span class="self">self</span>.filled = <span class="prelude-val">None</span>;
+<a href=#96 id=96 data-nosnippet>96</a>        <span class="kw">let </span>thread = <span class="self">self</span>.thread.take().expect(<span class="string">"the band writer is joined once"</span>);
+<a href=#97 id=97 data-nosnippet>97</a>        thread
+<a href=#98 id=98 data-nosnippet>98</a>            .join()
+<a href=#99 id=99 data-nosnippet>99</a>            .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+<a href=#100 id=100 data-nosnippet>100</a>    }
+<a href=#101 id=101 data-nosnippet>101</a>}
+<a href=#102 id=102 data-nosnippet>102</a>
+<a href=#103 id=103 data-nosnippet>103</a><span class="kw">impl </span>Drop <span class="kw">for </span>BandWriter {
+<a href=#104 id=104 data-nosnippet>104</a>    <span class="kw">fn </span>drop(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
+<a href=#105 id=105 data-nosnippet>105</a>        <span class="comment">// A writer dropped unfinished (an error elsewhere) still stops its
+<a href=#106 id=106 data-nosnippet>106</a>        // thread before the file it writes is cleaned up.
+<a href=#107 id=107 data-nosnippet>107</a>        </span><span class="kw">if </span><span class="self">self</span>.thread.is_some() {
+<a href=#108 id=108 data-nosnippet>108</a>            <span class="kw">let _ </span>= <span class="self">self</span>.join();
+<a href=#109 id=109 data-nosnippet>109</a>        }
+<a href=#110 id=110 data-nosnippet>110</a>    }
+<a href=#111 id=111 data-nosnippet>111</a>}
+<a href=#112 id=112 data-nosnippet>112</a>
+<a href=#113 id=113 data-nosnippet>113</a><span class="doccomment">/// The band-writing thread: write each band received, in order, then send
+<a href=#114 id=114 data-nosnippet>114</a>/// it back to be filled again.
+<a href=#115 id=115 data-nosnippet>115</a></span><span class="kw">fn </span>write_bands(
+<a href=#116 id=116 data-nosnippet>116</a>    <span class="kw-2">mut </span>writer: BufWriter&lt;CountingFile&gt;,
+<a href=#117 id=117 data-nosnippet>117</a>    bands: <span class="kw-2">&amp;</span>Receiver&lt;Vec&lt;Vec&lt;u8&gt;&gt;&gt;,
+<a href=#118 id=118 data-nosnippet>118</a>    returns: <span class="kw-2">&amp;</span>SyncSender&lt;Vec&lt;Vec&lt;u8&gt;&gt;&gt;,
+<a href=#119 id=119 data-nosnippet>119</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(BufWriter&lt;CountingFile&gt;, BandStats), StorageError&gt; {
+<a href=#120 id=120 data-nosnippet>120</a>    <span class="kw">let </span><span class="kw-2">mut </span>stats = BandStats::default();
+<a href=#121 id=121 data-nosnippet>121</a>    <span class="kw">for </span>band <span class="kw">in </span>bands {
+<a href=#122 id=122 data-nosnippet>122</a>        <span class="kw">let </span>started = Instant::now();
+<a href=#123 id=123 data-nosnippet>123</a>        <span class="comment">// A channel-tiled band's tiles are complete on-disk buckets: write
+<a href=#124 id=124 data-nosnippet>124</a>        // them straight to the file in order, past the buffered writer. A
+<a href=#125 id=125 data-nosnippet>125</a>        // band of one tile goes through it, which joins small buckets.
+<a href=#126 id=126 data-nosnippet>126</a>        </span><span class="kw">let </span>direct = band.len() &gt; <span class="number">1</span>;
+<a href=#127 id=127 data-nosnippet>127</a>        <span class="kw">if </span>direct {
+<a href=#128 id=128 data-nosnippet>128</a>            writer.flush()<span class="question-mark">?</span>;
+<a href=#129 id=129 data-nosnippet>129</a>        }
+<a href=#130 id=130 data-nosnippet>130</a>        <span class="kw">for </span>tile <span class="kw">in </span><span class="kw-2">&amp;</span>band {
+<a href=#131 id=131 data-nosnippet>131</a>            <span class="kw">if </span>direct {
+<a href=#132 id=132 data-nosnippet>132</a>                writer.get_mut().write_all(tile)<span class="question-mark">?</span>;
+<a href=#133 id=133 data-nosnippet>133</a>            } <span class="kw">else </span>{
+<a href=#134 id=134 data-nosnippet>134</a>                writer.write_all(tile)<span class="question-mark">?</span>;
+<a href=#135 id=135 data-nosnippet>135</a>            }
+<a href=#136 id=136 data-nosnippet>136</a>            stats.logical_write_calls += <span class="number">1</span>;
+<a href=#137 id=137 data-nosnippet>137</a>            stats.max_logical_write_bytes = stats.max_logical_write_bytes.max(tile.len());
+<a href=#138 id=138 data-nosnippet>138</a>            stats.bytes_written += tile.len();
+<a href=#139 id=139 data-nosnippet>139</a>        }
+<a href=#140 id=140 data-nosnippet>140</a>        stats.write_seconds += started.elapsed().as_secs_f64();
+<a href=#141 id=141 data-nosnippet>141</a>        <span class="comment">// The laying thread may have stopped (an error there); the band is
+<a href=#142 id=142 data-nosnippet>142</a>        // then not needed.
+<a href=#143 id=143 data-nosnippet>143</a>        </span><span class="kw">let _ </span>= returns.send(band);
+<a href=#144 id=144 data-nosnippet>144</a>    }
+<a href=#145 id=145 data-nosnippet>145</a>    <span class="prelude-val">Ok</span>((writer, stats))
+<a href=#146 id=146 data-nosnippet>146</a>}
+</code></pre></div></section></main></body></html>

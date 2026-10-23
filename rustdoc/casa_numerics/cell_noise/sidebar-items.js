@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["METAL_EXACT_SIGMA","METAL_KERNEL"],"fn":["box_muller","metal_draws_exactly","metal_source","philox4x32_10","scaled_draw"],"struct":["CellNoise","MetalNoiseParams","MetalNoiseRow","MetalNoiseTerm"]};

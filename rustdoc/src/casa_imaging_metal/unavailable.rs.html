@@ -61,25 +61,40 @@
 <a href=#61 id=61 data-nosnippet>61</a>    /// # Errors
 <a href=#62 id=62 data-nosnippet>62</a>    ///
 <a href=#63 id=63 data-nosnippet>63</a>    /// None; no backend exists on this host.
-<a href=#64 id=64 data-nosnippet>64</a>    </span><span class="kw">pub fn </span>apply_parts(
+<a href=#64 id=64 data-nosnippet>64</a>    </span><span class="kw">pub fn </span>add_cell_noise(
 <a href=#65 id=65 data-nosnippet>65</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-<a href=#66 id=66 data-nosnippet>66</a>        _parts: <span class="kw-2">&amp;</span>[SampleBlock&lt;<span class="lifetime">'_</span>&gt;],
-<a href=#67 id=67 data-nosnippet>67</a>        _cf: <span class="kw-2">&amp;</span><span class="kw">dyn </span>ConvolutionFunctionSet,
-<a href=#68 id=68 data-nosnippet>68</a>        _work: Work&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#69 id=69 data-nosnippet>69</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), OperatorError&gt; {
-<a href=#70 id=70 data-nosnippet>70</a>        <span class="kw">match </span><span class="self">self</span>.never {}
-<a href=#71 id=71 data-nosnippet>71</a>    }
-<a href=#72 id=72 data-nosnippet>72</a>}
+<a href=#66 id=66 data-nosnippet>66</a>        _cells: <span class="kw-2">&amp;</span>DeviceNativeCells,
+<a href=#67 id=67 data-nosnippet>67</a>        _rows: <span class="kw-2">&amp;</span>[<span class="kw">crate</span>::MetalNoiseRow],
+<a href=#68 id=68 data-nosnippet>68</a>        _terms: <span class="kw-2">&amp;</span>[<span class="kw">crate</span>::MetalNoiseTerm],
+<a href=#69 id=69 data-nosnippet>69</a>        _shape: (usize, usize),
+<a href=#70 id=70 data-nosnippet>70</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), OperatorError&gt; {
+<a href=#71 id=71 data-nosnippet>71</a>        <span class="kw">match </span><span class="self">self</span>.never {}
+<a href=#72 id=72 data-nosnippet>72</a>    }
 <a href=#73 id=73 data-nosnippet>73</a>
-<a href=#74 id=74 data-nosnippet>74</a><span class="kw">impl </span>GridBackend <span class="kw">for </span>MetalBackend&lt;<span class="lifetime">'_</span>&gt; {
-<a href=#75 id=75 data-nosnippet>75</a>    <span class="kw">fn </span>apply(
-<a href=#76 id=76 data-nosnippet>76</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-<a href=#77 id=77 data-nosnippet>77</a>        _block: <span class="kw-2">&amp;</span>SampleBlock&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#78 id=78 data-nosnippet>78</a>        _cf: <span class="kw-2">&amp;</span><span class="kw">dyn </span>ConvolutionFunctionSet,
-<a href=#79 id=79 data-nosnippet>79</a>        _work: Work&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#80 id=80 data-nosnippet>80</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), OperatorError&gt; {
-<a href=#81 id=81 data-nosnippet>81</a>        <span class="kw">let _ </span>= <span class="self">self</span>.kernels;
-<a href=#82 id=82 data-nosnippet>82</a>        <span class="kw">match </span><span class="self">self</span>.never {}
-<a href=#83 id=83 data-nosnippet>83</a>    }
-<a href=#84 id=84 data-nosnippet>84</a>}
+<a href=#74 id=74 data-nosnippet>74</a>    <span class="doccomment">/// Unreachable: no backend exists on this host.
+<a href=#75 id=75 data-nosnippet>75</a>    ///
+<a href=#76 id=76 data-nosnippet>76</a>    /// # Errors
+<a href=#77 id=77 data-nosnippet>77</a>    ///
+<a href=#78 id=78 data-nosnippet>78</a>    /// None; no backend exists on this host.
+<a href=#79 id=79 data-nosnippet>79</a>    </span><span class="kw">pub fn </span>apply_parts(
+<a href=#80 id=80 data-nosnippet>80</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+<a href=#81 id=81 data-nosnippet>81</a>        _parts: <span class="kw-2">&amp;</span>[SampleBlock&lt;<span class="lifetime">'_</span>&gt;],
+<a href=#82 id=82 data-nosnippet>82</a>        _cf: <span class="kw-2">&amp;</span><span class="kw">dyn </span>ConvolutionFunctionSet,
+<a href=#83 id=83 data-nosnippet>83</a>        _work: Work&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#84 id=84 data-nosnippet>84</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), OperatorError&gt; {
+<a href=#85 id=85 data-nosnippet>85</a>        <span class="kw">match </span><span class="self">self</span>.never {}
+<a href=#86 id=86 data-nosnippet>86</a>    }
+<a href=#87 id=87 data-nosnippet>87</a>}
+<a href=#88 id=88 data-nosnippet>88</a>
+<a href=#89 id=89 data-nosnippet>89</a><span class="kw">impl </span>GridBackend <span class="kw">for </span>MetalBackend&lt;<span class="lifetime">'_</span>&gt; {
+<a href=#90 id=90 data-nosnippet>90</a>    <span class="kw">fn </span>apply(
+<a href=#91 id=91 data-nosnippet>91</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+<a href=#92 id=92 data-nosnippet>92</a>        _block: <span class="kw-2">&amp;</span>SampleBlock&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#93 id=93 data-nosnippet>93</a>        _cf: <span class="kw-2">&amp;</span><span class="kw">dyn </span>ConvolutionFunctionSet,
+<a href=#94 id=94 data-nosnippet>94</a>        _work: Work&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#95 id=95 data-nosnippet>95</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), OperatorError&gt; {
+<a href=#96 id=96 data-nosnippet>96</a>        <span class="kw">let _ </span>= <span class="self">self</span>.kernels;
+<a href=#97 id=97 data-nosnippet>97</a>        <span class="kw">match </span><span class="self">self</span>.never {}
+<a href=#98 id=98 data-nosnippet>98</a>    }
+<a href=#99 id=99 data-nosnippet>99</a>}
 </code></pre></div></section></main></body></html>
