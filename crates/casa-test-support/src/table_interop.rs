@@ -483,7 +483,9 @@ fn compare_table_to_fixture(table: &Table, fixture: &TableFixture) -> Result<(),
     // Compare schema
     let schema = table.schema().ok_or("reopened table has no schema")?;
 
-    if schema != &fixture.schema {
+    // The columns, not the description's name: casacore fixtures name their
+    // descriptions and Rust fixtures leave them empty.
+    if schema.columns() != fixture.schema.columns() {
         return Err(format!(
             "schema mismatch:\n  expected: {:?}\n  found:    {:?}",
             fixture.schema, schema
