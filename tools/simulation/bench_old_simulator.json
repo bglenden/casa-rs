@@ -60,6 +60,11 @@
         "Beam: the new session has no setvp (the VLA's default pattern is #871's); the old binary always tapers each component by its VLA power pattern, once per field and channel, which is not per-row work.",
         "Model: both have the same 17 components with spectral indices; the 14pt-3gauss-v1 lines and absorption are in neither."
       ]
+    },
+    "case4-vla-components-long": {
+      "differences": [
+        "As case4-vla-components, with 5 s integrations: 2,492 integrations of 351 baselines at the same times."
+      ]
     }
   }
 }
