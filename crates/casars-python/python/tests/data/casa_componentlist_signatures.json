@@ -1,0 +1,844 @@
+{
+  "casa_version": "6.7.6-14",
+  "constructor": [
+    {
+      "default": null,
+      "kind": "VAR_POSITIONAL",
+      "name": "args"
+    },
+    {
+      "default": null,
+      "kind": "VAR_KEYWORD",
+      "name": "kwargs"
+    }
+  ],
+  "methods": {
+    "add": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "thecomponent"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "iknow"
+      }
+    ],
+    "addcomponent": [
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "flux"
+      },
+      {
+        "default": "'Jy'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "fluxunit"
+      },
+      {
+        "default": "'Stokes'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "polarization"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "dir"
+      },
+      {
+        "default": "'point'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "shape"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "majoraxis"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "minoraxis"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "positionangle"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "freq"
+      },
+      {
+        "default": "'constant'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spectrumtype"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "index"
+      },
+      {
+        "default": "[0.0]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "optionalparms"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "label"
+      }
+    ],
+    "asciitocomponentlist": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "filename"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "asciifile"
+      },
+      {
+        "default": "'J2000'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "refer"
+      },
+      {
+        "default": "'ST'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "format"
+      },
+      {
+        "default": "{}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "direction"
+      },
+      {
+        "default": "{}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spectrum"
+      },
+      {
+        "default": "{}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "flux"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "log"
+      }
+    ],
+    "close": [
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "log"
+      }
+    ],
+    "concatenate": [
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "list"
+      },
+      {
+        "default": "[-1]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "which"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "log"
+      }
+    ],
+    "convertfluxpol": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "which"
+      },
+      {
+        "default": "'Stokes'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "polarization"
+      }
+    ],
+    "convertfluxunit": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "which"
+      },
+      {
+        "default": "'Jy'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "unit"
+      }
+    ],
+    "convertfrequnit": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "which"
+      },
+      {
+        "default": "'GHz'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "unit"
+      }
+    ],
+    "convertrefdir": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "which"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "frame"
+      }
+    ],
+    "convertshape": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "which"
+      },
+      {
+        "default": "'arcmin'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "majoraxis"
+      },
+      {
+        "default": "'arcmin'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "minoraxis"
+      },
+      {
+        "default": "'deg'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "positionangle"
+      }
+    ],
+    "deselect": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "which"
+      }
+    ],
+    "done": [],
+    "edit": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "which"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "log"
+      }
+    ],
+    "fromrecord": [
+      {
+        "default": "{}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "record"
+      }
+    ],
+    "getcomponent": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "which"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "iknow"
+      }
+    ],
+    "getfluxerror": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "which"
+      }
+    ],
+    "getfluxpol": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "which"
+      }
+    ],
+    "getfluxunit": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "which"
+      }
+    ],
+    "getfluxvalue": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "which"
+      }
+    ],
+    "getfreq": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "which"
+      }
+    ],
+    "getfreqframe": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "which"
+      }
+    ],
+    "getfrequnit": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "which"
+      }
+    ],
+    "getfreqvalue": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "which"
+      }
+    ],
+    "getkeyword": [
+      {
+        "default": "'metadata'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "keyword"
+      }
+    ],
+    "getlabel": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "which"
+      }
+    ],
+    "getrefdir": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "which"
+      }
+    ],
+    "getrefdirdec": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "which"
+      },
+      {
+        "default": "'deg'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "unit"
+      },
+      {
+        "default": "6",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "precision"
+      }
+    ],
+    "getrefdirframe": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "which"
+      }
+    ],
+    "getrefdirra": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "which"
+      },
+      {
+        "default": "'deg'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "unit"
+      },
+      {
+        "default": "6",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "precision"
+      }
+    ],
+    "getshape": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "which"
+      }
+    ],
+    "getspectrum": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "which"
+      }
+    ],
+    "haskeyword": [
+      {
+        "default": "'metadata'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "keyword"
+      }
+    ],
+    "indices": [],
+    "iscomponentlist": [
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "tool"
+      }
+    ],
+    "isphysical": [
+      {
+        "default": "[-1]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "which"
+      }
+    ],
+    "length": [],
+    "open": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "filename"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "nomodify"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "log"
+      }
+    ],
+    "purge": [],
+    "putkeyword": [
+      {
+        "default": "'metadata'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "keyword"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "value"
+      }
+    ],
+    "recover": [
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "log"
+      }
+    ],
+    "remove": [
+      {
+        "default": "[-1]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "which"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "log"
+      }
+    ],
+    "rename": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "filename"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "log"
+      }
+    ],
+    "replace": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "which"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "list"
+      },
+      {
+        "default": "[-1]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "whichones"
+      }
+    ],
+    "sample": [
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "direction"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pixellatsize"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pixellongsize"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "frequency"
+      }
+    ],
+    "select": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "which"
+      }
+    ],
+    "selected": [],
+    "setflux": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "which"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "value"
+      },
+      {
+        "default": "'Jy'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "unit"
+      },
+      {
+        "default": "'Stokes'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "polarization"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "error"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "log"
+      }
+    ],
+    "setfreq": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "which"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "value"
+      },
+      {
+        "default": "'GHz'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "unit"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "log"
+      }
+    ],
+    "setfreqframe": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "which"
+      },
+      {
+        "default": "'LSRK'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "frame"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "log"
+      }
+    ],
+    "setlabel": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "which"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "value"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "log"
+      }
+    ],
+    "setrefdir": [
+      {
+        "default": "1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "which"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "ra"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "dec"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "log"
+      }
+    ],
+    "setrefdirframe": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "which"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "frame"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "log"
+      }
+    ],
+    "setshape": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "which"
+      },
+      {
+        "default": "'Point'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "type"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "majoraxis"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "minoraxis"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "positionangle"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "majoraxiserror"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "minoraxiserror"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "positionangleerror"
+      },
+      {
+        "default": "[0.0]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "optionalparms"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "log"
+      }
+    ],
+    "setspectrum": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "which"
+      },
+      {
+        "default": "'spectral index'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "type"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "index"
+      },
+      {
+        "default": "[100000000000.0]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "tabularfreqs"
+      },
+      {
+        "default": "[1.0]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "tabularflux"
+      },
+      {
+        "default": "'LSRK'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "tabularframe"
+      }
+    ],
+    "setstokesspectrum": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "which"
+      },
+      {
+        "default": "'spectral index'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "type"
+      },
+      {
+        "default": "[0.0]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "index"
+      },
+      {
+        "default": "[100000000000.0]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "tabularfreqs"
+      },
+      {
+        "default": "[1.0]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "tabulari"
+      },
+      {
+        "default": "[0.0]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "tabularq"
+      },
+      {
+        "default": "[0.0]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "tabularu"
+      },
+      {
+        "default": "[0.0]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "tabularv"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "reffreq"
+      },
+      {
+        "default": "'LSRK'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "frame"
+      }
+    ],
+    "shapetype": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "which"
+      }
+    ],
+    "simulate": [
+      {
+        "default": "1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "howmany"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "log"
+      }
+    ],
+    "sort": [
+      {
+        "default": "'Flux'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "criteria"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "log"
+      }
+    ],
+    "spectrumtype": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "which"
+      }
+    ],
+    "summarize": [
+      {
+        "default": "-1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "which"
+      }
+    ],
+    "torecord": []
+  },
+  "tool": "componentlist"
+}

@@ -633,7 +633,17 @@ mod tests {
             .iter()
             .map(|object| object.name.as_str())
             .collect::<Vec<_>>();
-        assert_eq!(names, ["Image", "Table", "simulator", "measures", "quanta"]);
+        assert_eq!(
+            names,
+            [
+                "Image",
+                "Table",
+                "simulator",
+                "measures",
+                "quanta",
+                "componentlist"
+            ]
+        );
         let annotated = bundle.annotations["python"]["objects"]
             .as_object()
             .expect("annotated objects");

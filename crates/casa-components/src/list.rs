@@ -58,6 +58,20 @@ impl ComponentList {
         table::write_component_list(self, path.as_ref())
     }
 
+    /// Rewrite the component-list table at `path` with this list, as CASA's
+    /// `writeTable` rewrites a list it has open for update (the `cl` tool's
+    /// `close`). The new table is staged beside `path` and swapped in; the
+    /// old one is removed only once the new one is in place.
+    ///
+    /// # Errors
+    ///
+    /// [`ComponentListError::Unwritable`] for a component CASA could not
+    /// write, [`ComponentListError::Publish`] when the tables cannot be
+    /// swapped, and the table system's failures.
+    pub fn rewrite_table(&self, path: impl AsRef<Path>) -> Result<(), ComponentListError> {
+        table::rewrite_component_list(self, path.as_ref())
+    }
+
     /// Append a component (`add`).
     pub fn push(&mut self, component: SkyComponent) {
         self.components.push(component);

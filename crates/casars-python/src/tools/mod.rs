@@ -10,6 +10,7 @@
 //! `casars.tools.<tool>`: CASA's SEVERE messages are logged at ERROR and its
 //! WARN messages at WARNING.
 
+pub(crate) mod componentlist;
 pub(crate) mod measures;
 pub(crate) mod quanta;
 pub(crate) mod simulator;
@@ -23,10 +24,11 @@ use pyo3::prelude::*;
 /// bundle builds every tool entry from this one list
 /// (`crate::object_contract`). `casars.simutil` is not a CASA tool and is
 /// not listed.
-pub(crate) const TOOLS: [&surface::ToolSurface; 3] = [
+pub(crate) const TOOLS: [&surface::ToolSurface; 4] = [
     &simulator::surface::SURFACE,
     &measures::surface::SURFACE,
     &quanta::surface::SURFACE,
+    &componentlist::surface::SURFACE,
 ];
 
 /// A Python logging level for a CASA log message.

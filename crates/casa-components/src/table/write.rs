@@ -32,6 +32,47 @@ pub(crate) fn write_component_list(
     if path.exists() {
         return Err(ComponentListError::Exists(path.to_path_buf()));
     }
+    let staging = staged(list, path)?;
+    publish(&staging, path)
+}
+
+/// Rewrite the component-list table at `path` with `list`, as CASA's
+/// `writeTable` rewrites a list it has open for update: the new table is
+/// staged beside `path` and swapped in, and the old one is removed only once
+/// the new one is in place.
+pub(crate) fn rewrite_component_list(
+    list: &ComponentList,
+    path: &Path,
+) -> Result<(), ComponentListError> {
+    let staging = staged(list, path)?;
+    let replaced = staging.with_extension("replaced");
+    let publish_error = |reason: String| ComponentListError::Publish {
+        path: path.to_path_buf(),
+        reason,
+    };
+    if path.exists() {
+        fs::rename(path, &replaced).map_err(|error| {
+            let _ = fs::remove_dir_all(&staging);
+            publish_error(format!("cannot move the old table aside: {error}"))
+        })?;
+    }
+    if let Err(error) = fs::rename(&staging, path) {
+        let _ = fs::rename(&replaced, path);
+        let _ = fs::remove_dir_all(&staging);
+        return Err(publish_error(format!(
+            "cannot publish {}: {error}",
+            staging.display()
+        )));
+    }
+    if replaced.exists() {
+        fs::remove_dir_all(&replaced)
+            .map_err(|error| publish_error(format!("cannot remove the old table: {error}")))?;
+    }
+    Ok(())
+}
+
+/// `list` built and saved as a table in a staging directory beside `path`.
+fn staged(list: &ComponentList, path: &Path) -> Result<PathBuf, ComponentListError> {
     let table = build_table(list, path)?;
     let staging = prepare_staging(path)?;
     let saved = save(&table, &staging, has_limb_darkened_disk(list));
@@ -42,7 +83,7 @@ pub(crate) fn write_component_list(
             source,
         });
     }
-    publish(&staging, path)
+    Ok(staging)
 }
 
 /// CASA describes `Optional_Parameters` once a limb-darkened disk has been

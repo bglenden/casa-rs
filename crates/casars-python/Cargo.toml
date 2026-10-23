@@ -16,6 +16,7 @@ crate-type = ["cdylib"]
 extension-module = ["pyo3/extension-module"]
 
 [dependencies]
+casa-components = { path = "../casa-components" }
 casa-coordinates = { path = "../casa-coordinates" }
 casa-images = { path = "../casa-images" }
 casa-ms = { path = "../casa-ms" }
@@ -25,6 +26,7 @@ casa-tables = { path = "../casa-tables" }
 casa-types = { path = "../casa-types" }
 casars-frontend-services = { path = "../casars-frontend-services" }
 ndarray.workspace = true
+num-complex.workspace = true
 numpy = "0.28"
 pyo3 = "0.28"
 schemars = "0.8"

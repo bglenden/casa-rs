@@ -26,7 +26,7 @@ import json
 
 import casatools
 
-TOOLS = ("simulator", "measures", "quanta", "simutil")
+TOOLS = ("simulator", "measures", "quanta", "componentlist", "simutil")
 
 
 def parse_args() -> argparse.Namespace:

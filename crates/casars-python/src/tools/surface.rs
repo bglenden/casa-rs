@@ -104,24 +104,33 @@ pub(crate) struct Parameter {
 pub(crate) enum Returns {
     /// A `bool`.
     Bool,
+    /// An `int`.
+    Int,
+    /// A `float`.
+    Float,
     /// A `str`.
     Text,
-    /// A `dict`: a quantity or measure record.
+    /// A `dict`: a quantity, measure or other CASA record.
     Record,
     /// A `list` of `str`.
     Texts,
     /// A NumPy array of floats.
     Floats,
+    /// A NumPy array of integers.
+    Ints,
 }
 
 impl Returns {
     fn schema(self) -> JsonValue {
         match self {
             Self::Bool => json!({"type": "boolean"}),
+            Self::Int => json!({"type": "integer"}),
+            Self::Float => json!({"type": "number"}),
             Self::Text => json!({"type": "string"}),
             Self::Record => json!({"type": "object"}),
             Self::Texts => json!({"type": "array", "items": {"type": "string"}}),
             Self::Floats => json!({"type": "array", "items": {"type": "number"}}),
+            Self::Ints => json!({"type": "array", "items": {"type": "integer"}}),
         }
     }
 }

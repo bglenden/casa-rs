@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Measures from CASA arguments: casatools' `casaMEpoch`, `casaMDirection`
-//! and `casaMPosition`, and the reference codes they accept.
+//! Measures from CASA arguments: casatools' `casaMEpoch`, `casaMDirection`,
+//! `casaMPosition` and `casaMFrequency` ([`frequency`]), and the reference
+//! codes they accept.
 //!
 //! Each function returns `Ok(None)` where CASA's returns `false` (the
 //! calling method then logs its own SEVERE message and continues with a
@@ -29,13 +30,13 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use casa_types::measures::direction::MDirection;
-use casa_types::measures::frequency::FrequencyRef;
+use casa_types::measures::frequency::{FrequencyRef, MFrequency};
 use casa_types::measures::{EpochRef, MEpoch, MPosition, MeasuresProvider};
 use casa_types::quanta::{Dimension, Quantity, UnitDim};
 
 use super::holder::{
     CasaMeasure, DIRECTION_CODES, EPOCH_CODES, FREQUENCY_CODES, HolderError, Measure, MeasureKind,
-    MeasureValue, POSITION_CODES, direction_cosines,
+    MeasureValue, POSITION_CODES, direction_cosines, frequency_hz,
 };
 use super::{ConvertError, ConvertResult, Variant, quantity_record, value_in};
 
@@ -149,6 +150,85 @@ pub(crate) fn frequency_reference(code: &str) -> ConvertResult<FrequencyRef> {
     FrequencyRef::from_str(name).map_err(|_| {
         ConvertError::runtime(format!(
             "the {name} frequency frame is not yet implemented in casa-rs"
+        ))
+    })
+}
+
+/// CASA's `casaMFrequency`: a frequency record, or a quantity record
+/// (LSRK); `"frame value"`; `"value"` (LSRK); or a number of Hz (LSRK). An
+/// unknown frame is LSRK, as CASA defaults it (CASA prints a warning to
+/// stderr; this one is returned). `""` is CASA's `false`.
+pub(crate) fn frequency(value: &Variant) -> ConvertResult<(Option<MFrequency>, Option<String>)> {
+    match value {
+        Variant::Record(record) => {
+            frequency_record(record).map(|frequency| (Some(frequency), None))
+        }
+        Variant::Text(_) | Variant::Texts(_) => match tokens(value).as_slice() {
+            [frame, text] => {
+                let quantity = read_value(text)?;
+                let (refer, warning) = match FREQUENCY_CODES.resolve(frame) {
+                    Some(code) => (frequency_frame(code)?, None),
+                    None => (
+                        FrequencyRef::LSRK,
+                        Some(
+                            "Could not understand frequency frame..defaulting to LSRK".to_string(),
+                        ),
+                    ),
+                };
+                Ok((Some(frequency_of(&quantity, refer)?), warning))
+            }
+            [only] if only.is_empty() => Ok((None, None)),
+            [only] => Ok((
+                Some(frequency_of(&read_value(only)?, FrequencyRef::LSRK)?),
+                None,
+            )),
+            _ => Ok((None, None)),
+        },
+        Variant::Number(hz) => Ok((Some(MFrequency::new(*hz, FrequencyRef::LSRK)), None)),
+        Variant::Empty => Ok((Some(MFrequency::new(0.0, FrequencyRef::LSRK)), None)),
+        Variant::Bool(_) | Variant::Numbers(_) | Variant::Array { .. } | Variant::Other(_) => {
+            Err(ConvertError::Type(format!(
+                "cannot convert {} to a frequency",
+                value.describe()
+            )))
+        }
+    }
+}
+
+/// A frequency record, or a quantity record taken as LSRK.
+fn frequency_record(record: &BTreeMap<String, Variant>) -> ConvertResult<MFrequency> {
+    let wrap = |error: String| {
+        ConvertError::runtime(format!("Error {error}In converting Frequency parameter"))
+    };
+    match measure_of_kind(record, MeasureKind::Frequency, wrap)? {
+        Some(measure) => match measure.to_casa().map_err(ConvertError::runtime)? {
+            CasaMeasure::Frequency(frequency) => Ok(frequency),
+            _ => unreachable!("a frequency measure converts to a frequency"),
+        },
+        None => {
+            let quantity = quantity_record(record).map_err(wrap)?;
+            frequency_of(&quantity, FrequencyRef::LSRK)
+        }
+    }
+}
+
+/// `MFrequency(quantity, refer)`: a frequency, period, wavelength, energy
+/// or momentum (`MVFrequency::makeF`).
+fn frequency_of(quantity: &Quantity, refer: FrequencyRef) -> ConvertResult<MFrequency> {
+    let hz = frequency_hz(quantity).ok_or_else(|| {
+        ConvertError::runtime(format!(
+            "Illegal unit type '{}' for a frequency",
+            quantity.unit().name()
+        ))
+    })?;
+    Ok(MFrequency::new(hz, refer))
+}
+
+/// A frequency frame casa-types converts.
+fn frequency_frame(code: &str) -> ConvertResult<FrequencyRef> {
+    FrequencyRef::from_str(code).map_err(|_| {
+        ConvertError::runtime(format!(
+            "the {code} frequency frame is not yet implemented in casa-rs"
         ))
     })
 }
