@@ -44,7 +44,10 @@ are:
   `~/SoftwareProjects/casatestdata`; long-gate preflight may select
   `/Volumes/home/casatestdata` when it contains the required paths.
 - Tutorial parity data: `CASA_RS_TUTORIAL_DATA_ROOT/tutorial-parity/...` or
-  `~/SoftwareProjects/casa-tutorial-data/tutorial-parity/...`.
+  `~/SoftwareProjects/casa-tutorial-data/tutorial-parity/...`. No copy is
+  kept: the NAS mirrors were removed on 2026-10-23, and
+  `/Volumes/home/casa-rs/tutorial-data/` keeps only the download scripts and
+  checksums to fetch the data from NRAO again.
 - Measures runtime data: an explicit root supplied to `MeasuresRuntime::open`,
   or a complete `CASA_RS_MEASURESPATH` / `~/.casa/data` candidate selected by
   the application before opening the runtime. Discovery never installs data.
