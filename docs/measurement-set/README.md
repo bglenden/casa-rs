@@ -1,6 +1,6 @@
 # MeasurementSet architecture review
 
-Status: draft revision 2; owner iteration pending, not implementation authorization
+Status: draft revision 3; owner iteration pending, not implementation authorization
 Truth class: design proposal
 Date: 2026-10-23
 Repository baseline: `221ec71545fe36a758ab0869e7512349b5db7c0e`
@@ -14,7 +14,7 @@ and measured performance remain acceptance requirements.
 ## Reading order
 
 For a guided introduction, open the standalone [HTML walkthrough](walkthrough.html)
-in a browser (download the file when reading on GitHub). It builds the revision 2
+in a browser (download the file when reading on GitHub). It builds the revision 3
 proposal in twelve steps, with interactive layout/completion examples, review
 questions, and links to the exact draft sources. It works offline; optional notes
 stay in the browser and can be exported. The Markdown contracts below remain the
@@ -33,7 +33,9 @@ library APIs yet. No performance or format-interoperability experiment is
 claimed by this documentation PR.
 
 This revision incorporates Pro and Fable's reviews of commit `526d706c` and
-the owner's question about work groups that finish at different rates.
+owner discussion of work groups that finish at different rates, canonical units,
+explicit access-pattern negotiation, and a provisional `VisibilityBatch` name
+that avoids observatory terminology.
 The documents and PR remain provisional: neither addressing a comment nor an
 agent recommendation finalizes the design. Only the MSv2 + MSv4 scope and MSv3
 deferral have been confirmed by the owner.
@@ -42,14 +44,15 @@ deferral have been confirmed by the owner.
 
 1. **D1 — Shared representation:** approve irregular and rectangular topology,
    typed array views, explicit numeric precision, and separate presence,
-   validity, flags, weights, and coordinate context. Reject a universal
+   validity, flags, weights, and coordinate context. Guarantee canonical coordinate
+   units by default and bind explicit unit requests before computation. Reject a universal
    per-physical-MS-row object interface or a universal dense cube. Factored
    coordinates can accompany the same sample-major values without a transpose.
 2. **D2 — Algorithm-led access:** approve hard layout/grouping requirements
    with bounded fragments, sequential or bounded concurrent group realization,
    proven group completion, and backend chunk aggregation within those
    requirements. Calibration grouping does not require a whole solve in memory.
-3. **D3 — Ownership and writes:** approve reusable borrowed blocks with
+3. **D3 — Ownership and writes:** approve reusable borrowed batches with
    independent work-unit lifetimes and explicit shared-allocation pinning, opaque
    session-local inverse mappings, native-role broadcast/group alias scopes,
    and bulk patches. The proposed local v4 profile replaces individual objects

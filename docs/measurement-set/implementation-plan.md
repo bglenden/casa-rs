@@ -1,6 +1,6 @@
 # MeasurementSet implementation plan
 
-Status: draft revision 2; owner iteration pending, no final design approval
+Status: draft revision 3; owner iteration pending, no final design approval
 Truth class: design proposal
 Date: 2026-10-23
 Design inputs: [architecture](architecture.md), [draft contracts](contracts.md)
@@ -34,7 +34,7 @@ M2: v2 production cutover slices --- M3: v4 production backend
 ```
 
 M2 and M3 can proceed in parallel only after M1 approval. Do not let many agents
-invent slightly different versions of the common block contract. M4 packets
+invent slightly different versions of the common batch contract. M4 packets
 may begin when their required backend operations are accepted. Per the owner's
 2026-10-23 decision, MSv3 is deferred until a concrete dataset/producer requires
 it. It is not a completion dependency for this MSv2 + MSv4 programme.
@@ -102,12 +102,23 @@ parallel migration:
 1. The same imaging operator consumes compatible selections from irregular v2
    and factored v4 coordinates, with sample-major and channel-major layouts.
    Compare results and count copies, calls, allocations and peak memory.
+   Record each real consumer's access request and the adapter's bound realization;
+   verify promised traversal/grouping/window requirements reach that consumer,
+   with repeated-pass estimates and physical I/O costs identified explicitly.
    Prove that compatible native time/baseline axes bind as sample-major without
    a value transpose; measure O(T+B) axis metadata separately from unavoidable
    per-slot UVW/occupancy on few-channel and many-channel fixtures.
+   Bind canonical Hz/m/rad/s and explicit compatible unit requests. Test no-op
+   conversions without extra payload copies, scaled coordinate axes with unchanged
+   scientific values, dimensional/range failures, and persistence in original
+   units after selected writes. A Hz-only consumer must not accept a MHz view.
+   Test declared Jy/mJy amplitude and inverse-variance weight/sigma consistency;
+   unknown instrumental units must not acquire an invented flux calibration.
+   Confirm unit changes do not silently change spectral frames or time scales,
+   and supported epoch formats retain split precision under independent oracles.
 2. Gain and bandpass accumulation consume split scientific groups, including
    multi-SPW rules, empty groups, reordered correlations and a group larger than
-   the allowed resident data. Confirm grouping is independent of block size.
+   the allowed resident data. Confirm grouping is independent of batch size.
    Add four interleaved SPWs and late out-of-order samples. A legal admitted
    concurrent realization reads the payload once without a full-selection row index;
    count delivered fragments/packing and all retained accumulator state too.
@@ -115,7 +126,7 @@ parallel migration:
    origin and group closure across partitions; no eviction or early close.
    Split terminal fragments into compute windows and delay worker completion:
    `Last/Whole` must not finalize twice or early, and a delayed `GroupEnd` waits
-   for prior work. Include an empty group and bounded per-block address views.
+   for prior work. Include an empty group and bounded per-batch address views.
    Solve, write a CASA-compatible caltable, close, permute catalogue/partition
    enumeration, reopen and apply; include overlapping antenna subsets, reordered
    SPWs and ambiguous names so namespace rebinding is tested, not inferred.
@@ -140,7 +151,7 @@ parallel migration:
 5. Sparse times/baselines, duplicate acquisitions, NaNs and v4 fill values do not
    collapse presence into flags. Ordered baselines/cross-hands, split time
    precision, time centroids, moving pointing and spectral frames survive.
-6. A v4 I/O block spans multiple chunks and feeds smaller borrowed kernel
+6. A v4 visibility batch spans multiple chunks and feeds smaller borrowed kernel
    windows. The resource accounting includes decode/packing/index/write scratch,
    and an oversized physical working set fails before unsafe allocation.
    Exercise multiple work units and cooperating worker groups with deliberately
@@ -192,7 +203,7 @@ a stronger agent/person. The lead integrates shared API decisions.
 
 | Packet / fixture family | Accountable owner | Independent gate |
 | --- | --- | --- |
-| `layout-precision` | Contract + imaging owners | One raw primitive type, sample/channel layouts, factorable axis laws, actual operator science and input narrowing. |
+| `layout-precision` | Contract + imaging owners | One raw primitive type, sample/channel layouts, factorable axes, guaranteed/requested units and inverse write scaling, actual operator science and input narrowing. |
 | `group-lifecycle` | Calibration owner | Interleaved SPWs/late samples, admitted concurrent state, proven closure, sequential comparison, solve→caltable→reopen→apply. |
 | `work-unit-lifetimes` | Contract + runtime + imaging owners | Unequal worker/group completion, safe handoff and reuse, shared-allocation pinning, bounded copies/queues/cancellation, cube visibility versus minor-cycle state. |
 | `native-role-updates` | Storage + calibration owners | Broadcast/group aliases, undefined fallback, full/partial unit counts, bit semantics, mixed-owner MODEL_DATA and conflict rejection. |
@@ -232,7 +243,7 @@ MAIN rows to topology slots and physical decode units; do not rebuild resource
 admission merely because the current result is named `rows_per_block`.
 Keep the efficient v2 sample-major realization.
 
-Move imaging's source preparation and operator windows onto the shared blocks
+Move imaging's source preparation and operator windows onto the shared batches
 within the existing single pass/worker/resource architecture. Move calibration
 away from MAIN-row assumptions and whole-selection/group materialization where
 the accepted solver contract permits fragment accumulation. Its solution-table
@@ -322,7 +333,7 @@ mark a consumer migrated merely because it calls a new wrapper that still leaks
 physical rows into the algorithm.
 
 Flagging must remove full-selection `Vec<Sample>`, copied-group and touched-sample
-growth from its migrated route, not wrap those allocations in a block API.
+growth from its migrated route, not wrap those allocations in a batch API.
 Its plan declares algorithm-specific fitting/statistics windows, halos, passes,
 extension state and mutation ordering. A sufficient-state O(groups) bound is
 not assumed: tfcrop's group fit and extension can require resident arrays, and
@@ -354,7 +365,7 @@ Python package tests. No computational work moves into Python.
 This is not a current work packet or completion gate. If a concrete need arises,
 first audit the actual schema/producer and approve a named profile. Reuse the
 casacore persistence layer; implement explicit association mapping rather than
-assuming DATA_DESC_ID and v2 weight layout. Share the native block and mutation
+assuming DATA_DESC_ID and v2 weight layout. Share the native batch and mutation
 contracts with v2/v4. Keep named producer dialects distinct.
 
 **Future acceptance:** independent producer→Rust and Rust→reader checks for every

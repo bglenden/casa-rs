@@ -1,6 +1,6 @@
 # Intermediate observation contracts
 
-Status: draft revision 2; incorporates review input, not accepted or frozen
+Status: draft revision 3; incorporates review input, not accepted or frozen
 Truth class: design proposal
 Date: 2026-10-23
 
@@ -11,12 +11,16 @@ finalize the design. M1 must turn the sketches into a minimal compilable API
 with worked imaging, solve, update, and source-free creation examples before
 broad implementation starts.
 
+The bounded intermediate is provisionally named `VisibilityBatch`. Reserve
+chunk/tile for physical storage and compute window for a kernel's view. The name
+does not require reading visibility payloads for a flags-only request.
+
 ## 1. Contract rules
 
 | Rule | Required behavior |
 | --- | --- |
-| C1: source independence | No physical row IDs, Zarr keys, storage managers, or MS-version branches in scientific kernels. |
-| C2: faithful values | Explicit units/frames/precision, native flag and weight semantics, full data-group association, ordered baselines. No silent scientific transform. |
+| C1: source independence | No physical row IDs, Zarr keys, storage managers, or MS-version branches in numerical processing loops. |
+| C2: faithful values | Guaranteed canonical coordinate units or explicitly requested units at binding; explicit frames/precision, native flag and weight semantics, full data-group association, ordered baselines. No silent scientific transform. |
 | C3: layout independence | Separate sample topology, memory layout, scientific grouping, and storage chunking. |
 | C4: bounded ownership | Every live payload, index, decode buffer, cache, packed copy and queue is admitted; borrowed views cannot outlive/refill their storage. Independent work can retire separately; shared storage stays live until its last use completes. |
 | C5: invertible updates | Sample-preserving reorder/selection retains a checked inverse source map; reduction does not. Shared variables have explicit mutation scope. |
@@ -61,9 +65,9 @@ session. Producer handles map to destination entities independently of any
 opened source. A creation batch addresses `TargetRegion`s, not `UpdateMapRef`s,
 and can transfer recyclable buffers directly to the sink under backpressure.
 
-A block is homogeneous in spectral coordinate context and correlation setup.
-Different shapes/SPWs yield separate blocks, even when one scientific group
-spans them. A field/phase centre may vary inside a block, including a mosaic.
+A batch is homogeneous in spectral coordinate context and correlation setup.
+Different shapes/SPWs yield separate batches, even when one scientific group
+spans them. A field/phase centre may vary inside a batch, including a mosaic.
 The request can select multiple named data groups. Each group retains its own
 UVW and field/source context and explicit alias relationships to other groups.
 
@@ -78,8 +82,8 @@ enum SampleTopology<'a> {
     },
 }
 
-struct ObservationBlock<'a> {
-    context: BlockContext<'a>,
+struct VisibilityBatch<'a> {
+    context: BatchContext<'a>,
     topology: SampleTopology<'a>,
     coordinates: CoordinateViews<'a>,
     groups: &'a [DataGroupView<'a>],
@@ -93,7 +97,7 @@ per integration and ordered baseline. Each sample still carries a
 channel-by-correlation array. Repeated baseline/time coordinates are distinct
 acquisitions; equality of coordinates does not imply identity. Do not discard
 duplicates or average them while opening. Variable row shapes are split into
-compatible blocks. This does not impose the historical physical row order.
+compatible batches. This does not impose the historical physical row order.
 
 `TimeBaseline` factors coordinates and can carry large native v4 arrays without
 replicating timestamps and antenna pairs for every slot. It is a coordinate
@@ -133,6 +137,75 @@ format must explicitly resolve unknown occupancy or report the ambiguity.
 
 ## 3. Numeric arrays, metadata, and data groups
 
+### Units and measure references
+
+The normal processing interface guarantees canonical coordinate units, so a
+kernel never has to inspect a string to discover whether a frequency is in Hz.
+Unit-bearing view types or unit-specific accessors enforce the guarantee;
+concrete names below are illustrative, not an accepted API.
+
+| Quantity | Default processing representation |
+| --- | --- |
+| Frequency, channel width and bandwidth | Hz, for example `frequency_hz()` or `FrequencyView<Hertz>` |
+| UVW and Cartesian positions/distances | m |
+| Angular coordinates | rad, with coordinate representation and reference retained |
+| Durations, integration intervals and exposure | s |
+| Epochs | A precision-preserving typed epoch with explicit origin/representation and time scale; seconds for duration/offset access, not an unlabelled f64 Unix timestamp |
+| Physical velocities, where requested | m/s; frequency-to-velocity mapping still needs an explicit rest frequency and convention |
+
+`AccessRequest` has unit requirements with these defaults. A consumer can
+explicitly request another supported, dimensionally compatible unit at bind
+time. Success guarantees that unit for the resulting view throughout its bound
+scope. A MHz view must not satisfy a Hz-only kernel signature or an accessor
+named `frequency_hz()`. Native-unit inspection remains explicitly identified;
+it cannot silently weaken the canonical processing contract.
+
+Resolve unit syntax, dimensional compatibility and conversion factors at their
+metadata scope. Convert shared coordinate axes once when possible, otherwise
+fuse scaling with an already-required fill/decode/pack. Identity conversions do
+not require a copy or a multiply-by-one pass. Account additional buffers and
+numeric range/rounding under the precision policy; do not promise exact numeric
+preservation for every floating-point unit conversion. Return an error for an
+unsupported/incompatible conversion, without handing the caller unexpected units.
+
+Canonical coordinates do not mean converting every quantity to SI base units.
+Jy is the proposed canonical flux-density unit when that meaning is established;
+uncalibrated/instrumental or other physical quantities retain a declared role
+and require compatible consumer expectations. A Jy request cannot infer a flux
+calibration. Do not rescale all visibility data into W m^-2 Hz^-1 by default:
+besides being inconvenient, inverse-variance weights in those units can exceed
+f32 range. If a declared amplitude conversion is `V_out = a * V_in`, associated
+inverse-variance weights transform as `w_out = w_in / |a|^2`, and a declared
+matching noise sigma as `sigma_out = |a| * sigma_in`. Apply these rules only when
+the weight/sigma meaning is established; do not infer a relationship between
+arbitrary native columns. Unit requests and output plans must remain consistent
+across associated roles and aliases, without silently mutating unselected data.
+
+Each measure view associates values with quantity kind, unit, reference/frame,
+coordinate representation and declared axis dependencies. References shared by
+an axis or batch are stored once; variable references have checked indexed views
+or require compatible batch splitting. Slicing/reordering preserves those
+associations. There is no single universal frame for a batch and no per-visibility
+measure object requirement. Unknown essential metadata is an explicit error for
+processing; any schema-defined legacy default must be identified by the profile.
+
+Unit normalization does not perform a reference-frame or time-scale conversion.
+Hz in TOPO and Hz in LSRK remain distinct; UTC does not become TAI by expressing
+time in seconds. Explicit scientific transforms use the existing measures engine
+and declared context/provider (epoch, position, direction, leap-second/EOP data
+as needed). Reuse/refactor existing `casa-types` measures/quanta foundations;
+the exact raw-type dependency arrangement remains an M1 design decision, not
+permission for a second incompatible measures system. The no-workspace-dependency
+goal for the proposed base crate must be reconciled with that ownership.
+
+Computational normalization leaves persistent units/metadata unchanged. Same-store
+patches convert back to the destination's declared units with representability,
+scope and precision checks; source-free creation uses its output profile. Reading
+or inspecting a dataset does not rewrite its units or introduce rounding into
+untouched persistent values.
+
+### Layouts and scalar precision
+
 Expose typed views with checked extents, axis labels, element strides and
 contiguity guarantees. The initial numerical layouts are a small closed set:
 
@@ -146,11 +219,11 @@ are acceptable. Arbitrary sparse gathers are represented by explicit index
 views or packed by the backend, never disguised as a contiguous slice. Either
 layout may retain `TimeBaseline` coordinates; a rank-four view is a compatible
 factoring of its axes, not a v4-specific operator path. M1 must choose only the
-stride/permutation forms real kernels need and match them once per block.
+stride/permutation forms real kernels need and match them once per batch.
 Arbitrary-rank tensors, negative
 strides, and unrestricted permutations are not initial requirements. A kernel
 that requires contiguous correlation vectors can state that as a hard
-requirement. A fixed channel axis within a block does not imply uniform channel
+requirement. A fixed channel axis within a batch does not imply uniform channel
 spacing, ascending order, or a single frequency frame across the observation.
 
 For factorable axes, filling timestamps and baseline pairs costs O(T+B) entries,
@@ -188,7 +261,7 @@ names. Legacy DATA/CORRECTED_DATA/MODEL_DATA map to explicit group definitions
 with their shared flag/weight/geometry associations.
 
 Match scalar kind and layout once, then invoke a typed loop. Persisted and
-compute precision are separate. A caller can request exact/native values,
+compute precision are separate. A caller can request native scalar precision,
 lossless widening, or explicitly approved narrowing; defaults do not narrow
 complex128 to complex64. The writer checks destination representability too.
 Packing and conversion are charged and fused with decode/fill where possible.
@@ -262,6 +335,26 @@ the preferred role, or expanding a broadcast scalar's mutation scope.
 
 ## 4. Access requests and scientific groups
 
+The processing algorithm's planner builds this request from the operation's
+requirements and selected task parameters. It sends the request through the
+common source interface to the MS adapter during binding. The numerical kernel
+then consumes the bound views; it does not have to issue I/O or describe its
+access pattern again for every value. The exchange has two directions:
+
+```text
+planning:  algorithm planner -- AccessRequest --> MS adapter
+           algorithm planner <-- realization / cost / limits -- MS adapter
+execution: algorithm        <-- VisibilityBatch / windows ---- MS adapter
+```
+
+The access pattern is explicit, not inferred from callbacks or from a requested
+array layout alone. It covers selected roles/extents; required or permitted
+traversal order; scientific group boundaries and fragment/interleaving rules;
+compute-window shape, contiguity and required neighborhoods/overlap; and revisits
+or repeated passes. An expected pass count may be an estimate (for example
+adaptive major cycles); binding states what depends on that estimate. A revisit
+request does not imply all earlier values remain cached.
+
 ```rust
 struct AccessRequest {
     selection: ObservationSelection,
@@ -269,7 +362,9 @@ struct AccessRequest {
     grouping: ScientificGrouping,
     layouts: AcceptedLayouts,
     precision: PrecisionRequest,
+    units: UnitRequirements, // canonical defaults; explicit per-role overrides
     traversal: TraversalRequirements,
+    revisits: RevisitRequirements, // passes/reuse semantics; estimates identified
     compute_windows: ComputeWindowRequirements,
     delivery_limits: DeliveryLimits,
 }
@@ -292,6 +387,12 @@ when scientifically interchangeable. Resource limits come from an admitted
 budget, not an uncoordinated request to allocate memory. Bind returns the exact
 realization or a typed error plus the limiting capability/minimum working set.
 
+The adapter chooses physical reads, chunk aggregation, bounded prefetch/reuse and
+packing among the permitted realizations. It must not silently change scientific
+grouping or a required order. A new phase with incompatible access requirements
+binds a new realization under the same observation/resource ownership; changing
+requirements does not require introducing a second processing engine.
+
 The binding summary includes physical read units, decode units, selected bytes,
 and expected read/decode amplification for the requested channel windows and
 number of traversals. Distinguish exact shape-based decode counts from estimates
@@ -300,14 +401,14 @@ compressed chunk cannot supply a narrow channel window at narrow-window decode
 cost. A bound that cannot admit the minimum decode unit fails explicitly.
 
 Compute-window constraints describe what a kernel can borrow or process at once.
-Delivery limits bound the source's aggregate block and come from admission and
+Delivery limits bound the source's aggregate batch and come from admission and
 explicit algorithm requirements. A small compute window does not impose the
 same limit on native I/O aggregation. The backend may deliver many such windows
-in one block unless the algorithm explicitly requires otherwise.
+in one batch unless the algorithm explicitly requires otherwise.
 
 Scientific groups are formed from declared semantic keys: for example a time
 bin plus field and SPW-combination rules from calibration. They can span
-partitions, blocks, physical files, and storage chunks. Time-bin boundaries and
+partitions, batches, physical files, and storage chunks. Time-bin boundaries and
 reference epochs are explicit. The storage backend executes the requested
 grouping; it does not decide which fields/SPWs a solver may combine.
 
@@ -318,12 +419,12 @@ of actual group shape (baselines, channels, correlations and solver/window
 state, including time-deduplication sets and robust statistics), not a universal
 constant bytes-per-group. Admission includes the live states and maps.
 Neither realization mandates a full-selection row index.
-A single I/O block may lend ranges/index views to several groups without
+A single visibility batch may lend ranges/index views to several groups without
 re-reading or copying the payload. Binding chooses an accepted realization and
 reports any index/reorder bytes and repeated physical reads.
 
 `First/Middle/Last/Whole` describe each group's fragments, not global stream
-order. A control event can end a group after its last payload block, including
+order. A control event can end a group after its last payload batch, including
 an empty group. Signal completion exactly once: `Last/Whole` when already proven
 at delivery, otherwise a later `GroupEnd`; do not both end and reopen the same
 group to satisfy a memory limit. Closure requires a proven completion frontier
@@ -361,22 +462,22 @@ let mut cursor = source.bind_read(request, admitted_resources)?;
 let mut buffers = cursor.allocate_buffers()?;
 while let Some(event) = cursor.next(&mut buffers)? {
     match event {
-        ReadEvent::Block(block) => process(block.borrow_window(window)?),
+        ReadEvent::Batch(batch) => process(batch.borrow_window(window)?),
         ReadEvent::GroupEnd(end) => finish_group(end)?,
     }
 } // each borrow ends before refill/reuse
 ```
 
-Buffers are caller/session owned with reusable capacity. A block borrows their
+Buffers are caller/session owned with reusable capacity. A batch borrows their
 arrays and retained context; safe Rust prevents refill or mutation while views
 remain borrowed. Pipelining uses a bounded admitted pool of buffers and transfers
-exclusive ownership; no `Arc` clone is permission to retain unlimited blocks.
+exclusive ownership; no `Arc` clone is permission to retain unlimited batches.
 Coordinate/group catalogue references can be shared without cloning payloads.
 
 ### Independent work-unit lifetimes
 
 The loop above illustrates synchronous use, not a requirement that all consumers
-finish a block together. A **work unit** executes one or more compute windows on
+finish a batch together. A **work unit** executes one or more compute windows on
 one worker or a cooperating subset of the existing admitted team. This execution
 group is distinct from a scientific group such as a calibration solution bin.
 Ownership follows the work, without requiring permanent OS-thread affinity or a
@@ -389,7 +490,7 @@ and scoped sharing of borrowed views. Mutable compute arrays have one owner or
 proven disjoint mutable regions; disjoint logical windows alone do not establish
 disjoint persistent updates (C5 still applies). M1 must prove the owning/borrowed
 API, including safe cross-worker handoff, before selecting concrete types.
-Ownership operations remain at block/work-unit granularity, outside scalar loops.
+Ownership operations remain at batch/work-unit granularity, outside scalar loops.
 
 Independent work may finish out of delivery order when the request's semantics
 permit it. A completed unit can return its private buffers and let another
@@ -410,11 +511,11 @@ Account actual backing allocations once, all simultaneous private scratch and
 packed copies, and bounded in-flight/ready/write queues. The existing resource
 owner supplies backpressure when the admitted pool is exhausted. Measure pinned
 bytes, copy/decode costs and stalls before choosing the sharing/packing policy;
-do not solve lifetime skew by allocating an unbounded tail of blocks.
+do not solve lifetime skew by allocating an unbounded tail of batches.
 
-For cube CLEAN, visibility blocks belong to gridding/prediction passes. The
+For cube CLEAN, visibility batches belong to gridding/prediction passes. The
 longer-lived model, residual, mask and solver state belong to the imaging owners;
-a channel's minor cycle must not retain an input visibility block merely because
+a channel's minor cycle must not retain an input visibility batch merely because
 that channel needs more iterations. Independent channel work can finish and
 reuse private scratch at different times. Required image state remains available
 for later major cycles/products under existing image storage and admission.
@@ -428,7 +529,7 @@ when lifetime, precision and strides permit it. Otherwise they disclose and
 budget a packed copy. No universal zero-copy promise is made for compression,
 type conversion, transposition, sparse gathers, or GPU upload. Instrument
 bytes read/decoded/copied, allocation counts, call counts and peak live storage
-at meaningful block/phase boundaries, not every scalar.
+at meaningful batch/phase boundaries, not every scalar.
 
 Admission includes selected payloads, native decoded chunks/tiles, codec scratch,
 conversion and permutation scratch, coordinate/index arrays, caches, prefetch
@@ -454,14 +555,14 @@ racing process-global configuration changes.
 
 No legacy `rows_per_block` limit constrains a factored MSv4 array. Logical
 compute-window size and physical aggregation can grow independently when the
-budget allows. A larger I/O block must not increase the number of repeated
+budget allows. A larger visibility batch must not increase the number of repeated
 per-sample adapter operations or metadata allocations.
 
 ## 6. Source and sink lifecycle
 
 The common lifecycle is `open/create → inspect/select → bind → fill/patch/append
 → finish`. Source/sink traits describe this behavior; `casa-ms` chooses the
-concrete backend and uses enum or static dispatch at the binding/block boundary.
+concrete backend and uses enum or static dispatch at the binding/batch boundary.
 An implementation can use separate read, update and creation session types to
 make invalid transitions unrepresentable. It need not force all operations into
 a huge trait whose unsupported methods panic.
@@ -481,7 +582,7 @@ section 7), or a proven read-before-write traversal covering every read of an
 element. Different role/group names alone do not establish disjointness.
 Reject overlapping or revisit patterns that cannot meet that rule;
 do not imply snapshot semantics or retain a hidden whole-array/replay copy.
-A block address cannot be used after closing/reopening its
+A batch address cannot be used after closing/reopening its
 source, even at the same path. Normal Rust ownership/session membership checks
 provide this protection, without hashes or persistent identity markers.
 
@@ -627,7 +728,7 @@ Flush/finish errors are reported; dropping an unfinished session is not success.
 
 Creation takes a scientific catalogue and an explicit storage configuration
 (MS profile, managers or chunks/codecs, target transport, precision). Once bound,
-`append`/`write_region` consume the same block vocabulary as reads, with explicit
+`append`/`write_region` consume the same batch vocabulary as reads, with explicit
 target extents rather than source maps. Record growth strategy up front:
 casacore row append, Zarr known-shape region writes, and Zarr resize are distinct
 capabilities. An unimplemented append capability is rejected before creation.
@@ -650,14 +751,14 @@ without relying on retained metadata from an input dataset.
    proof of original occupancy. Arbitrary external v4 cannot recover the
    original row set. Require a declared conversion policy or rejection.
 2. **Mosaic plus two SPWs:** field varies over time; SPWs have different channel
-   counts/frames. Keep blocks homogeneous while imaging visits both partitions
+   counts/frames. Keep batches homogeneous while imaging visits both partitions
    and a solve may group their fragments. Do not pad them into one invented
    frequency axis or equate a field with antenna pointing.
 3. **Calibrate then write:** gather channels in requested order, solve from
    fragments, apply gains, patch corrected data and selected flag bits. Preserve
    untouched channels, native weights/flag categories, group aliases and actual
    storage bindings. Reject writing averaged solve inputs back as if invertible.
-4. **Large v4 block:** decode multiple chunks into one factored block; borrow
+4. **Large v4 batch:** decode multiple chunks into one factored batch; borrow
    many smaller compute windows. Peak memory counts both decoded and packed
    storage where they overlap. Demonstrate fewer I/O/decode calls or reduced
    elapsed time without inflating kernel scratch.

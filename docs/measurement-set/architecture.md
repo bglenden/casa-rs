@@ -5,8 +5,10 @@ Truth class: design proposal
 Date: 2026-10-23
 Companion documents: [contracts](contracts.md), [implementation plan](implementation-plan.md)
 
-Draft revision 2 incorporates Pro and Fable's reviews and the owner's question
-about independent worker/group lifetimes. Recommendations below remain open
+Draft revision 3 incorporates Pro and Fable's reviews and owner discussion of
+independent lifetimes, guaranteed units, the `VisibilityBatch` name and explicit
+access-pattern negotiation from processing planners to adapters.
+Recommendations below remain open
 for owner iteration; no review response constitutes acceptance or finalization.
 
 ## 1. Outcome and boundaries
@@ -15,7 +17,7 @@ Imaging, calibration, flagging, transforms, and simulation exchange the same
 scientific observation types regardless of persistent MS format. An algorithm
 specifies the information, grouping, ordering, precision, and memory layout it
 needs. A source binds those requirements to the storage implementation and
-returns bounded blocks. A sink accepts bounded creation batches or addressed
+returns bounded batches. A sink accepts bounded creation batches or addressed
 updates. Only opening, creation, capabilities, and diagnostics expose storage
 profiles; scientific inner loops do not branch on MS versions.
 
@@ -44,11 +46,15 @@ existing owners.
 | --- | --- |
 | Persistent partition | A compatible spectral/polarization and observation context; backend discovers and maps it. Not necessarily one field or pointing. |
 | Data group | A named association of visibility, flags, weights, UVW, and field/source context. Variables can be shared between groups. |
-| Scientific group | Samples an algorithm treats together, such as a calibration solution interval. May span blocks and partitions. |
+| Scientific group | Samples an algorithm treats together, such as a calibration solution interval. May span batches and partitions. |
 | Storage chunk/tile | Physical decode/update unit chosen at creation or already present on disk. |
-| I/O block | Bounded aggregation delivered by a source; may contain many physical chunks. |
-| Compute window | A borrowed subset or explicitly packed projection of a block for a kernel. |
+| Visibility batch | Bounded aggregation delivered by a source; may contain many physical chunks. |
+| Compute window | A borrowed subset or explicitly packed projection of a batch for a kernel. |
 | Work unit | One or more windows executed by a worker or cooperating workers on the existing admitted team. Owns or borrows buffers until its actual completion; distinct from a scientific group. |
+
+Use `VisibilityBatch` for the shared intermediate. Avoid the observatory meaning
+of observation/scheduling blocks, and reserve chunk/tile for physical storage.
+The name remains provisional; the crate still describes complete observations.
 
 An MSv2 MAIN row contains a channel-by-correlation visibility matrix for an
 integration/baseline/data-description context, not one polarization scalar
@@ -69,7 +75,7 @@ rectangle. See [topology and identity](contracts.md#2-topology-and-identity).
 ```text
 imaging operator/runtime   calibration   flagging/transforms   simulation
               \               |                |                /
-               casa-observation: scientific block/access contracts
+               casa-observation: scientific batch/access contracts
                                   |
                        casa-ms: open/create/bind
                       /                         \
@@ -78,16 +84,21 @@ imaging operator/runtime   calibration   flagging/transforms   simulation
              casa-tables                    zarrs
 ```
 
-The diagram shows data flow, not that the contract crate depends on its
-implementations. The proposed dependency direction is:
+The diagram shows the participating owners, not a dependency of the contract
+crate on its implementations. The algorithm planner sends an `AccessRequest`
+downward through the common interface; the adapter returns its bound realization
+and streams `VisibilityBatch` views upward. Selection, traversal/order, grouping,
+windows/overlap, layout, units and revisits travel in the request. Only the
+planner negotiates I/O; numerical inner loops consume the resulting views.
+The proposed dependency direction is:
 
 | Owner | Responsibilities | Dependencies and exclusions |
 | --- | --- | --- |
-| New `casa-observation`, policy layer `science` | Shared raw primitives (epoch/time scale, direction/frame, spectral coordinates, ordered baseline), array/block views, access requirements, source/sink traits, capabilities and errors | No workspace dependencies, filesystem, task runtime, or scientific projection engine. Reuse small Rust numeric crates. |
+| New `casa-observation`, policy layer `science` | Shared raw primitives (epoch/time scale, direction/frame, spectral coordinates, ordered baseline), array/batch views, access requirements, source/sink traits, capabilities and errors | No workspace dependencies, filesystem, task runtime, or scientific projection engine. Reuse small Rust numeric crates. |
 | `casa-imaging-model`, policy layer `science` | Compiled imaging geometry and scientific problem definitions | Proposed explicit dependency on `casa-observation` for raw primitives; no dependency on storage, execution or a device. |
 | `casa-ms` | Dataset lifecycle, catalogue access, backend dispatch, source binding, bounded fill/update/create adapters | `casa-observation`, existing storage/measures facilities, and pinned `zarrs`. Initial adapters can be modules; no new storage crate is required merely for symmetry. |
 | `casa-tables` | Existing generic casacore table and storage-manager machinery | Retains its table API and persistent compatibility. It does not depend on observation or imaging contracts. |
-| Imaging/calibration and other domain owners | Request layouts, evaluate geometry, solve/project/reduce, apply scientific transforms | Consume `casa-observation`; no table/Zarr addressing in their scientific kernels. |
+| Imaging/calibration and other domain owners | Request layouts, evaluate geometry, solve/project/reduce, apply scientific transforms | Consume `casa-observation`; no table/Zarr addressing in their numerical loops. |
 | Existing execution owners | Resource admission, worker teams, cancellation, pass lifecycle | Continue to govern I/O/decode/packing work; no independent backend worker pool or scheduler. |
 
 The proposed canonical owner of raw `Epoch`, `SkyDirection`/frame and related
@@ -127,16 +138,18 @@ to the accepted policy in this documentation PR.
 1. `open` detects a supported schema/profile and supplies bounded metadata
    access, named data groups, and precise read/write capabilities. Selection
    resolves semantic catalogue IDs within this opened observation.
-2. The algorithm compiles an `AccessRequest`: required columns/roles, selections,
-   scientific group boundaries, legal topology/layouts, precision, and ordering
-   constraints. It specifies what can be split, not a physical tile size.
+2. The processing algorithm's planner compiles an `AccessRequest`: required columns/roles, selections,
+   scientific group boundaries, legal topology/layouts, precision, units, and ordering
+   constraints, compute windows/neighborhoods and repeated-pass/revisit semantics.
+   It specifies what can be split, not a physical tile size. The request travels
+   through the common source interface to the selected adapter before iteration.
 3. The backend binds a realization under the existing resource budget. Its
    summary states actual layout, aggregation, scratch/decode/queue requirements,
    reorder costs, physical read/decode amplification per window and traversal,
    and minimum physical working set. An unsatisfied hard
    requirement is an error; it is never silently weakened.
-4. The admitted cursor repeatedly fills reusable storage and lends block views.
-   Format/type dispatch happens per binding or block, outside numerical loops.
+4. The admitted cursor repeatedly fills reusable storage and lends batch views.
+   Format/type dispatch happens per binding or batch, outside numerical loops.
    The algorithm borrows compute windows or requests accounted packing.
 5. A write session batches addressed patches and coalesces changes at actual
    tile/chunk/shard boundaries. Finishing reports completion or partial failure
@@ -146,8 +159,16 @@ The backend chooses among the algorithm's permitted layouts and traversal orders
 using concrete storage geometry. It need not build a general cost optimizer.
 Start with explicit, inspectable heuristics and measure them. Existing tiles
 may force whole-cell or whole-chunk reads for narrow selections; expose and
-account for that amplification. A larger I/O block does not require a larger
+account for that amplification. A larger visibility batch does not require a larger
 kernel window or duplicated kernel scratch.
+
+The normal processing views guarantee Hz, m, rad and s for the corresponding
+coordinate quantities. Explicit alternative units are negotiated at binding;
+unit parsing/checks stay outside the numerical loop. Flux-density data use Jy
+when that meaning is established, with coherent weight/sigma scaling when their
+semantics permit it; arbitrary instrumental data are not inferred to be calibrated.
+Frames and time scales remain explicit and scientifically converted only on
+request. See [units and measure references](contracts.md#units-and-measure-references).
 
 Work units may finish independently and reuse their private buffers while other
 units continue, subject to scientific/order/write dependencies. Sharing a large
@@ -193,6 +214,14 @@ no claim that one chunk shape is best for every algorithm follows.
 
 ## 5. Persistent support profiles
 
+The pinned MSv4 schema constrains the main coordinate units: frequency in Hz,
+UVW in m, time attributes in s, and angular coordinates in rad (spatial distances
+in m). Time also declares `format` and `scale`; both must be decoded with the
+units, and alternative time-format combinations need oracle evidence rather than
+a bare unit rescale. This is not an all-SI rule: visibility `units` is a string
+defaulting to Jy. Noncanonical data must be validated against the declared
+profile; do not silently label a nonconforming store as compliant MSv4.
+
 There is no single `supports_v4` boolean. Track read, create, selected update,
 structural extension/append, conversion fidelity, codecs, and concurrency
 separately. This table is a target, not an implemented-capability claim.
@@ -233,7 +262,7 @@ exclusive mutation ownership, with no dataset snapshot/transaction or shared
 cross-process lock protocol. See [failure and creation rules](contracts.md#7-updates-and-creation).
 Default new flags are boolean; reason-preserving integer flags require an
 explicit width and reason mapping. Creation without an input MS must use the
-same catalogue and block vocabulary, not depend on backend-retained metadata.
+same catalogue and batch vocabulary, not depend on backend-retained metadata.
 
 MSv4 does not imply that current CASA directly opens that format. Maintain
 CASA compatibility for MSv2 and require XRADIO compatibility for MSv4; conversion
@@ -324,6 +353,10 @@ Implementation acceptance must record its full oracle dependency lock.
   MSV3B is a producer profile to investigate, not a proven universal v3 oracle.
 - [XRADIO schema, including data groups](https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/src/xradio/measurement_set/schema.py)
   and [MSv4 overview](https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/docs/source/measurement_set/overview.rst).
+- MSv4 unit evidence: [literal coordinate units and time measures](https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/src/xradio/schema/measures.py#L56),
+  [frequency in Hz](https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/src/xradio/measurement_set/schema.py#L432),
+  [UVW in m](https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/src/xradio/measurement_set/schema.py#L637),
+  and [visibility units defaulting to Jy](https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/src/xradio/measurement_set/schema.py#L1035).
 - [XRADIO Zarr format configuration](https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/src/xradio/_utils/zarr/config.py)
   and [conversion defaults](https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/src/xradio/measurement_set/convert_msv2_to_processing_set.py).
 - [Padding values](https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/src/xradio/_utils/list_and_array.py)
