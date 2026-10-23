@@ -39,6 +39,36 @@ const LANCZOS_A: i64 = 3;
 /// dish-class support radius, in GHz.
 const DISH_REFERENCE_GHZ: f64 = 100.0;
 
+/// Which of CASA's two heterogeneous-array mosaic machines a set follows.
+/// They build the same screens, crops, normalisation and resampling, and
+/// differ in how the support is found and, through [`AiryDish`], in the
+/// 7 m dish's radius.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MosaicRules {
+    /// tclean's `gridder='mosaic'`: `TransformMachines2/HetArrayConvFunc`
+    /// (imaging).
+    #[default]
+    Tclean,
+    /// The simulator's `setoptions(ftmachine='mosaic')`: the earlier
+    /// `TransformMachines/HetArrayConvFunc`, which `Simulator::
+    /// createSkyEquation` builds. Its support search walks the weight plane
+    /// inwards from the edge, along the row and the column one cell off
+    /// its centre, and widens the radius it finds by √2; its `MosaicFT`
+    /// grids every row of a window with the widest pair's support.
+    Simulator,
+}
+
+impl MosaicRules {
+    /// Taps on each side of a pair of `support` in a window whose widest
+    /// pair has `window_support`.
+    const fn taps(self, support: usize, window_support: usize) -> usize {
+        match self {
+            Self::Tclean => support,
+            Self::Simulator => window_support,
+        }
+    }
+}
+
 /// One dish class of the heterogeneous array: the annular Airy aperture
 /// `HetArrayConvFunc::findAntennaSizes` builds per distinct dish diameter.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -79,9 +109,27 @@ impl AiryDish {
         }
     }
 
-    /// `HetArrayConvFunc::findAntennaSizes` for any other telescope: the
-    /// dish diameter itself, ALMA's blockage ratio `d/12 · 0.75` and a
-    /// 150″ radius.
+    /// The simulator's `HetArrayConvFunc::findAntennaSizes`
+    /// ([`MosaicRules::Simulator`]) for an ALMA or ACA MeasurementSet: the
+    /// apertures of [`Self::casa_alma`], with a 150″ radius at 100 GHz for
+    /// every dish.
+    #[must_use]
+    pub fn casa_alma_simulator(dish_diameter_m: f64) -> Self {
+        let (aperture_m, blockage_m) = if (dish_diameter_m - 12.0).abs() < 0.5 {
+            (10.7, 0.75)
+        } else {
+            (6.25, 0.75)
+        };
+        Self {
+            aperture_m,
+            blockage_m,
+            max_radius_arcsec: 150.0,
+        }
+    }
+
+    /// `HetArrayConvFunc::findAntennaSizes` for any other telescope, in
+    /// either machine: the dish diameter itself, ALMA's blockage ratio
+    /// `d/12 · 0.75` and a 150″ radius.
     #[must_use]
     pub fn casa_airy(dish_diameter_m: f64) -> Self {
         Self {
@@ -407,6 +455,30 @@ impl MosaicPb {
         dishes: &[AiryDish],
         windows: &[MosaicWindow],
     ) -> Result<MosaicScreens, OperatorError> {
+        Self::screens_for(
+            MosaicRules::Tclean,
+            geometry,
+            polarization,
+            image_frequency_hz,
+            dishes,
+            windows,
+        )
+    }
+
+    /// [`Self::screens`] under `rules`: each pair's support is found, and
+    /// its cells are later cut to the taps, as that machine does.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::screens`].
+    pub fn screens_for(
+        rules: MosaicRules,
+        geometry: &GridGeometry,
+        polarization: &PolarizationRouting,
+        image_frequency_hz: f64,
+        dishes: &[AiryDish],
+        windows: &[MosaicWindow],
+    ) -> Result<MosaicScreens, OperatorError> {
         let MosaicLayout {
             conv_size,
             cells,
@@ -449,13 +521,19 @@ impl MosaicPb {
                         )?);
                     }
                     let last = lattices.last().expect("a window has a cell");
-                    let support = weight_plane_support(&last.weight, lattice)?;
+                    let support = match rules {
+                        MosaicRules::Tclean => weight_plane_support(&last.weight, lattice)?,
+                        MosaicRules::Simulator => {
+                            simulator_weight_plane_support(&last.weight, lattice)?
+                        }
+                    };
                     window_support[window_index] = window_support[window_index].max(support);
                     screened.push((window_index, support, lattices));
                 }
             }
         }
         Ok(MosaicScreens {
+            rules,
             dishes: dishes.len(),
             windows: cells,
             cell_count,
@@ -498,6 +576,7 @@ fn frequency_cell_bytes(windows: &Vec<FrequencyCells>) -> u64 {
 /// cut and resampled ([`MosaicPb::screens`], [`Self::finish`]).
 #[derive(Debug)]
 pub struct MosaicScreens {
+    rules: MosaicRules,
     dishes: usize,
     windows: Vec<FrequencyCells>,
     cell_count: usize,
@@ -544,8 +623,11 @@ impl MosaicScreens {
         let cells = self
             .screened
             .iter()
-            .map(|(_, support, lattices)| {
-                let half = u16::try_from(*support).expect("support fits u16");
+            .map(|(window_index, support, lattices)| {
+                let taps = self
+                    .rules
+                    .taps(*support, self.window_support[*window_index]);
+                let half = u16::try_from(taps).expect("support fits u16");
                 2 * lattices.len() as u64 * dense_cell_bytes(1, MOSAIC_OVERSAMPLING, [half, half])
             })
             .sum::<u64>();
@@ -577,6 +659,7 @@ impl MosaicScreens {
     /// convolution-function integral.
     pub fn finish(self) -> Result<MosaicPb, OperatorError> {
         let Self {
+            rules,
             dishes,
             windows: cells,
             cell_count,
@@ -590,12 +673,14 @@ impl MosaicScreens {
         let planes = pair_planes(dishes);
         // `findConvFunction` crops every pair of a window to the widest
         // pair's `2(support + 2)`; each pair is normalised over its own
-        // support.
+        // support. tclean grids each pair with its own support; the
+        // simulator's `MosaicFT` grids every row with the widest.
         let mut imaging = Vec::with_capacity(planes * cell_count);
         let mut weight = Vec::with_capacity(planes * cell_count);
         let max_half_support = window_support.iter().copied().max().unwrap_or(0);
         for (window_index, support, lattices) in &screened {
             let crop = (2 * (window_support[*window_index] + 2)).min(lattice);
+            let taps = rules.taps(*support, window_support[*window_index]);
             // `interpLanczos` zeroes within three input pixels of the edge, so
             // a crop under seven pixels resamples to nothing.
             if crop < 2 * LANCZOS_A as usize + 1 {
@@ -605,7 +690,7 @@ impl MosaicScreens {
             }
             for lattice_pair in lattices {
                 let (imaging_cell, weight_cell) =
-                    finish_pair(lattice_pair, lattice, *support, crop)?;
+                    finish_pair(lattice_pair, lattice, *support, crop, taps)?;
                 imaging.push(imaging_cell);
                 weight.push(weight_cell);
             }
@@ -918,14 +1003,83 @@ fn weight_plane_support(plane: &[Complex32], side: usize) -> Result<usize, Opera
     Ok(support)
 }
 
-/// `supportAndNormalizeLatt`'s normalisation, `findConvFunction`'s crop to
-/// `2(support + 2)` and the Lanczos resample to [`MOSAIC_OVERSAMPLING`],
-/// then the dense cells of `support` taps on each side of the centre.
+/// The simulator's `HetArrayConvFunc::supportAndNormalizeLatt`
+/// (`TransformMachines/`, [`MosaicRules::Simulator`]) at screen sampling 1:
+/// walking in from `side/2 − 2` towards the centre, the first offset `t`
+/// where the weight plane exceeds the cut level at `(c − t − 1, c − 1)` or
+/// `(c − 1, c − t − 1)`, with `c = side/2`, is widened to `⌊√(2t²)⌋`; no
+/// such offset takes the same fallbacks as tclean's search. At least five,
+/// plus one, and capped below half the lattice.
+fn simulator_weight_plane_support(
+    plane: &[Complex32],
+    side: usize,
+) -> Result<usize, OperatorError> {
+    let sampling = 1_usize;
+    let (mut max_abs, mut min_abs) = (f32::NEG_INFINITY, f32::INFINITY);
+    for value in plane.iter().map(|value| value.norm()) {
+        max_abs = max_abs.max(value);
+        min_abs = min_abs.min(value);
+    }
+    let cut = SUPPORT_CUT_LEVEL * max_abs;
+    let centre = side / 2;
+    let mut found = false;
+    let mut trial = 0_usize;
+    if centre >= 2 {
+        for candidate in (1..=centre - 2).rev() {
+            let along_x = plane[(centre - 1) * side + centre - candidate - 1].norm();
+            let along_y = plane[(centre - candidate - 1) * side + centre - 1].norm();
+            if along_x > cut || along_y > cut {
+                found = true;
+                // `Int(sqrt(2.0*Float(trial*trial)))`, in double precision.
+                trial = (2.0 * f64::from((candidate * candidate) as f32)).sqrt() as usize;
+                break;
+            }
+        }
+    }
+    let fallback =
+        (side / 2)
+            .checked_sub(4 * sampling)
+            .ok_or(OperatorError::ConvolutionFunction {
+                reason: "the mosaic screen is too small for its beam support",
+            })?;
+    let floor = || {
+        if 10 * sampling < side {
+            5 * sampling
+        } else {
+            fallback
+        }
+    };
+    if !found {
+        if max_abs - min_abs > cut {
+            found = true;
+        }
+        trial = floor();
+    }
+    if !found {
+        return Err(OperatorError::ConvolutionFunction {
+            reason: "the mosaic weight convolution function has no support",
+        });
+    }
+    if trial < 5 * sampling {
+        trial = floor();
+    }
+    let mut support = (0.5 + trial as f64 / sampling as f64) as usize + 1;
+    if support * sampling >= side / 2 {
+        support = side / 2 / sampling - 1;
+    }
+    Ok(support)
+}
+
+/// `supportAndNormalizeLatt`'s normalisation over `support`,
+/// `findConvFunction`'s crop to `crop` and the Lanczos resample to
+/// [`MOSAIC_OVERSAMPLING`], then the dense cells of `taps` taps on each side
+/// of the centre.
 fn finish_pair(
     lattices: &PairLattices,
     side: usize,
     support: usize,
     crop: usize,
+    taps: usize,
 ) -> Result<(DenseCell, DenseCell), OperatorError> {
     let cell = |plane: &[Complex32]| -> Result<DenseCell, OperatorError> {
         let integral = block_sum_re(plane, side, support);
@@ -950,7 +1104,7 @@ fn finish_pair(
             centre: [out_side / 2; 2],
             sampling: MOSAIC_OVERSAMPLING,
         };
-        let half = u16::try_from(support).expect("support fits u16");
+        let half = u16::try_from(taps).expect("support fits u16");
         Ok(dense_cell(&[plane], [half, half]))
     };
     Ok((cell(&lattices.imaging)?, cell(&lattices.weight)?))

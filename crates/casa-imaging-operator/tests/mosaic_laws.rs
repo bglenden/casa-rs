@@ -12,7 +12,7 @@ use casa_imaging_operator::{
     AiryDish, Basis, CellHold, CfKey, ConvolutionFunctionSet, CpuBackend, GridBackend,
     GridGeometry, GridPadding, GridPrecision, ImageExtent, KernelNormalisation,
     MOSAIC_OVERSAMPLING, MeasurementOperator, Mode, ModeSet, ModelImages, ModelPlane,
-    ModelPrescale, MosaicPb, MosaicWindow, OperatorError, Placement, PlaneRange,
+    ModelPrescale, MosaicPb, MosaicRules, MosaicWindow, OperatorError, Placement, PlaneRange,
     PolarizationRouting, RowContext, SampleBuffer, Work, pair_plane,
 };
 use casa_numerics::AnnularApertureVoltageTable;
@@ -306,6 +306,78 @@ fn keys_follow_the_pair_plane_and_the_window_cells() {
     assert_eq!(set.normalisation(), KernelNormalisation::UnitSum);
     assert!(set.pointing_ramp());
     assert!(set.resident_bytes() > 0);
+}
+
+/// Each pair's half support under `rules`, in pair-plane order.
+fn pair_supports(
+    rules: MosaicRules,
+    geometry: &GridGeometry,
+    frequency_hz: f64,
+    dishes: &[AiryDish],
+) -> Vec<u16> {
+    let windows = [MosaicWindow {
+        spectral_window: 0,
+        window_frequencies_hz: vec![frequency_hz],
+        channel_width_hz: 1.28e8,
+        selected_frequencies_hz: vec![frequency_hz],
+    }];
+    let set = MosaicPb::screens_for(rules, geometry, &routing(), frequency_hz, dishes, &windows)
+        .expect("screens")
+        .finish()
+        .expect("mosaic set");
+    (0..(dishes.len() * (dishes.len() + 1) / 2) as u16)
+        .map(|group| set.half_support(CfKey { group, cube: 0 }))
+        .collect()
+}
+
+/// CASA 6.7.6 logs "convolution function support" `[6, 6, 6]` for
+/// `sm.predict` and `[7, 6, 6]` for `tclean(gridder='mosaic')` on the #875
+/// probe (320² cells of 0.3″ at 230 GHz, ALMA 12 m and ACA 7 m). On 4.1″
+/// cells at 100 GHz the 7 m class alone finds six taps, yet the simulator
+/// grids every pair of the heterogeneous set with the widest pair's seven:
+/// both sets share one screen, since every simulator dish has a 150″
+/// radius.
+#[test]
+fn the_simulator_rules_find_casa_v1_supports() {
+    let square = |side: usize, cell_arcsec: f64| {
+        let cell = (cell_arcsec / 3600.0_f64).to_radians();
+        GridGeometry::new(
+            ImageExtent {
+                shape: [side, side],
+                increment_rad: [-cell, cell],
+                reference_pixel: [side / 2, side / 2],
+            },
+            GridPadding::None,
+        )
+        .expect("geometry")
+    };
+    let simulator = [
+        AiryDish::casa_alma_simulator(12.0),
+        AiryDish::casa_alma_simulator(7.0),
+    ];
+    let probe = square(320, 0.3);
+    assert_eq!(
+        pair_supports(MosaicRules::Simulator, &probe, 230.0e9, &simulator),
+        [6, 6, 6]
+    );
+    assert_eq!(
+        pair_supports(MosaicRules::Tclean, &probe, 230.0e9, &dishes(&probe)),
+        [7, 6, 6]
+    );
+    let coarse = square(IMAGE, 4.125);
+    assert_eq!(
+        pair_supports(
+            MosaicRules::Simulator,
+            &coarse,
+            FREQUENCY_HZ,
+            &simulator[1..]
+        ),
+        [6]
+    );
+    assert_eq!(
+        pair_supports(MosaicRules::Simulator, &coarse, FREQUENCY_HZ, &simulator),
+        [7, 7, 7]
+    );
 }
 
 #[test]
