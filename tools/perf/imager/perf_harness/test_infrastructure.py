@@ -96,6 +96,58 @@ class CasaProtocolTests(unittest.TestCase):
                 provenance["executables"]["casa_python"]["resolved_path"],
             )
 
+    def test_provenance_worktree_target_link_is_not_dirty(self) -> None:
+        # A clean commit checked out in a worktree whose untracked `target`
+        # links to a shared build directory, as casa-rs worktrees do (#809).
+        # The repository has no ignore rule, so the link stays untracked.
+
+        # The commits ignore the host's git identity, signing and hooks.
+        settings = (
+            "user.name=casa-rs test",
+            "user.email=test@example.invalid",
+            "commit.gpgsign=false",
+            "core.hooksPath=/dev/null",
+        )
+        git = ["git", *(arg for setting in settings for arg in ("-c", setting))]
+
+        def run_git(cwd: pathlib.Path, *args: str) -> str:
+            return subprocess.run(
+                [*git, *args],
+                cwd=cwd,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                check=True,
+            ).stdout.strip()
+
+        def repository(root: pathlib.Path) -> dict[str, object]:
+            return capture_provenance(
+                repo_root=root, executables={}, datasets={}, storage_label="test"
+            )["repository"]
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            checkout = root / "checkout"
+            worktree = root / "worktree"
+            shared_target = root / "shared-target"
+            checkout.mkdir()
+            shared_target.mkdir()
+            run_git(checkout, "init", "-q")
+            source = checkout / "lib.rs"
+            source.write_text("pub fn f() {}\n", encoding="utf-8")
+            run_git(checkout, "add", "lib.rs")
+            run_git(checkout, "commit", "-q", "-m", "clean")
+            run_git(checkout, "worktree", "add", "-q", "--detach", str(worktree))
+            (worktree / "target").symlink_to(shared_target, target_is_directory=True)
+            self.assertIn("?? target", run_git(worktree, "status", "--porcelain"))
+
+            clean = repository(worktree)
+            self.assertEqual(run_git(checkout, "rev-parse", "HEAD"), clean["revision"])
+            self.assertIs(False, clean["dirty"])
+
+            (worktree / "lib.rs").write_text("pub fn g() {}\n", encoding="utf-8")
+            self.assertIs(True, repository(worktree)["dirty"])
+
     def test_checked_in_casa_programs_are_independently_syntax_valid(self) -> None:
         self.assertTrue(CASA_PROGRAMS)
         for path in CASA_PROGRAMS:
