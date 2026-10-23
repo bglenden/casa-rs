@@ -188,6 +188,15 @@ impl<'s> Pipeline<'s> {
                     (&mut batch.data, rows.samples),
                 )?;
             }
+            if self.rows.plan.predicts_single_dish() {
+                let rows = &self.rows;
+                super::single_dish::add_single_dish(
+                    (rows.scans, &rows.rows),
+                    rows.plan,
+                    &runs,
+                    (&mut batch.data, rows.samples),
+                );
+            }
             self.times.predict += started.elapsed();
             let started = Instant::now();
             // A run the stage predicted on the device has its noise.

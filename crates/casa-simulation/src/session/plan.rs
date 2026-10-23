@@ -28,7 +28,7 @@ use std::sync::Arc;
 
 use super::prediction::Prediction;
 use crate::corrupt::NoiseApplication;
-use crate::predict::ComponentPrediction;
+use crate::predict::{ComponentPrediction, SingleDishPrediction};
 
 /// One `setnoise` term: CASA's `ANoise` calibration term, kept until
 /// `reset`.
@@ -62,6 +62,14 @@ pub(crate) enum DataStep {
         /// The step covers scans `0..scans`.
         scans: usize,
     },
+    /// `predict` after `setoptions(ftmachine='sd')`: add each pointing's
+    /// total power to its autocorrelations.
+    PredictSingleDish {
+        /// The sampled model.
+        prediction: Arc<SingleDishPrediction>,
+        /// The step covers scans `0..scans`.
+        scans: usize,
+    },
     /// `corrupt`: add each application's noise.
     Corrupt {
         /// Its applications, one per noise term in the order the terms
@@ -78,6 +86,7 @@ impl DataStep {
         match self {
             Self::Predict { scans, .. }
             | Self::PredictComponents { scans, .. }
+            | Self::PredictSingleDish { scans, .. }
             | Self::Corrupt { scans, .. } => *scans,
         }
     }
@@ -106,6 +115,16 @@ impl DataPlan {
         scans: usize,
     ) {
         self.push(DataStep::PredictComponents { components, scans });
+    }
+
+    /// Record a total-power `predict` of `prediction` covering scans
+    /// `0..scans`, after the steps already taken.
+    pub(crate) fn predict_single_dish(
+        &mut self,
+        prediction: Arc<SingleDishPrediction>,
+        scans: usize,
+    ) {
+        self.push(DataStep::PredictSingleDish { prediction, scans });
     }
 
     /// Record a `corrupt` adding `applications` to scans `0..scans`, after
@@ -155,7 +174,9 @@ impl DataPlan {
             .iter()
             .find_map(|step| match step {
                 DataStep::Corrupt { applications, .. } => Some(applications.start),
-                DataStep::Predict { .. } | DataStep::PredictComponents { .. } => None,
+                DataStep::Predict { .. }
+                | DataStep::PredictComponents { .. }
+                | DataStep::PredictSingleDish { .. } => None,
             })
             .unwrap_or(self.noise.len());
         &self.noise[start..]
@@ -179,7 +200,9 @@ impl DataPlan {
     pub(crate) fn predictions(&self) -> impl Iterator<Item = (&Prediction, usize)> {
         self.steps.iter().filter_map(|step| match step {
             DataStep::Predict { prediction, scans } => Some((prediction.as_ref(), *scans)),
-            DataStep::PredictComponents { .. } | DataStep::Corrupt { .. } => None,
+            DataStep::PredictComponents { .. }
+            | DataStep::PredictSingleDish { .. }
+            | DataStep::Corrupt { .. } => None,
         })
     }
 
@@ -193,7 +216,25 @@ impl DataPlan {
             .iter()
             .filter_map(|step| match step {
                 DataStep::PredictComponents { components, .. } => Some(components.as_ref()),
-                DataStep::Predict { .. } | DataStep::Corrupt { .. } => None,
+                DataStep::Predict { .. }
+                | DataStep::PredictSingleDish { .. }
+                | DataStep::Corrupt { .. } => None,
+            })
+    }
+
+    /// The total-power predictions covering scan `scan`, in the order they
+    /// were taken: they add.
+    pub(crate) fn single_dish_for_scan(
+        &self,
+        scan: usize,
+    ) -> impl Iterator<Item = &SingleDishPrediction> {
+        self.steps_for_scan(scan)
+            .iter()
+            .filter_map(|step| match step {
+                DataStep::PredictSingleDish { prediction, .. } => Some(prediction.as_ref()),
+                DataStep::Predict { .. }
+                | DataStep::PredictComponents { .. }
+                | DataStep::Corrupt { .. } => None,
             })
     }
 
@@ -202,6 +243,13 @@ impl DataPlan {
         self.steps
             .iter()
             .any(|step| matches!(step, DataStep::PredictComponents { .. }))
+    }
+
+    /// Whether any step predicts total power.
+    pub(crate) fn predicts_single_dish(&self) -> bool {
+        self.steps
+            .iter()
+            .any(|step| matches!(step, DataStep::PredictSingleDish { .. }))
     }
 }
 

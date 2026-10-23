@@ -36,6 +36,7 @@ pub mod observe;
 pub(crate) mod plan;
 pub(crate) mod prediction;
 pub mod resources;
+mod single_dish;
 pub mod spectral;
 #[cfg(test)]
 mod tests;
@@ -51,6 +52,7 @@ use casa_imaging_operator::PaddingFactor;
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::{EpochRef, MEpoch, MeasFrame, MeasuresProvider};
 
+use crate::predict::SingleDishKernel;
 use crate::write;
 use array::{Antenna, ArrayConfig};
 use error::{SimulatorError, SimulatorResult};
@@ -135,6 +137,10 @@ pub struct Simulator {
     /// `setoptions(ftmachine='wproject', wprojplanes=…)`: the planes
     /// `predict` projects through, as given, or `None` for `GridFT`.
     w_projection_planes: Option<i64>,
+    /// `setoptions(ftmachine='sd', gridfunction=…)`: the kernel `predict`
+    /// samples total power with, or `None` for an interferometric
+    /// FTMachine.
+    single_dish: Option<SingleDishKernel>,
     /// Whether `predict` applies the primary beam (`setvp(dovp)`).
     voltage_pattern: bool,
     /// Whether that beam squints (`setvp(dosquint)`), as CASA's VLA and
@@ -170,6 +176,7 @@ impl Simulator {
             noise_terms: Vec::new(),
             padding: PaddingFactor::SIMULATOR,
             w_projection_planes: None,
+            single_dish: None,
             voltage_pattern: false,
             squint: false,
             data_plan: DataPlan::default(),
