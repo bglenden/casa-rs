@@ -148,6 +148,14 @@ jobs:
           RUSTDOCFLAGS: -D rustdoc::broken_intra_doc_links -D rustdoc::private_intra_doc_links
         run: cargo doc --workspace --no-deps
 
+      - name: Build rustdoc with private items
+        # The public build never resolves links in private items; this one
+        # does, with the same lints (#805). Keep the public build too: only
+        # it reports a public item that links to a private one.
+        env:
+          RUSTDOCFLAGS: -D rustdoc::broken_intra_doc_links -D rustdoc::private_intra_doc_links
+        run: cargo doc --workspace --no-deps --document-private-items
+
       - name: Build MkDocs site
         run: scripts/build-python-docs.sh site
 

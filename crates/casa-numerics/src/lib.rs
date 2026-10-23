@@ -3,6 +3,7 @@
 //! Shared numerical algorithms without astronomy-domain ownership.
 
 mod annular_aperture;
+pub mod cell_noise;
 mod elliptical_gaussian;
 
 pub use annular_aperture::AnnularApertureVoltageTable;

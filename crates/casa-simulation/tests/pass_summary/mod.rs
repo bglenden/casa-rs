@@ -20,6 +20,8 @@ pub struct PassSummary {
     pub batch_rows: u64,
     pub batches: u64,
     pub workers: u64,
+    /// Rows of a prediction block.
+    pub block_rows: u64,
     /// What `close` was admitted, and the most the process's reservations
     /// held at once while it ran.
     pub reserved_bytes: u64,
@@ -33,6 +35,7 @@ impl Visit for PassSummary {
             "batch_rows" => self.batch_rows = value,
             "batches" => self.batches = value,
             "workers" => self.workers = value,
+            "block_rows" => self.block_rows = value,
             "reserved_bytes" => self.reserved_bytes = value,
             "peak_reserved_bytes" => self.peak_reserved_bytes = value,
             _ => {}

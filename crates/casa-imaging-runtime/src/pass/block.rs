@@ -74,6 +74,22 @@ impl BlockShape {
             + cells * (size_of::<Complex32>() + size_of::<f32>() + size_of::<bool>());
         (self.rows * per_row + (channels + self.correlations) * size_of::<u32>()) as u64
     }
+
+    /// Bytes a [`NativeBlock`] of this shape holds when its rows share one
+    /// spectrum and their samples ([`NativeBlock::shared_with_capacity`]):
+    /// each row's header, order entry and projections, and one row's
+    /// frequencies, values, weights and flags.
+    #[must_use]
+    pub const fn shared_bytes(self) -> u64 {
+        let channels = self.channels();
+        let cells = channels * self.correlations;
+        let per_row = size_of::<NativeRowHeader>()
+            + size_of::<u32>()
+            + self.domains * size_of::<DomainProjection>();
+        let samples = channels * size_of::<f64>()
+            + cells * (size_of::<Complex32>() + size_of::<f32>() + size_of::<bool>());
+        (self.rows * per_row + samples + (channels + self.correlations) * size_of::<u32>()) as u64
+    }
 }
 
 /// One block of native rows sharing a channel and correlation layout,
@@ -84,6 +100,11 @@ impl BlockShape {
 /// projections are `[row][domain]`. Frequencies are per row and channel
 /// because Doppler tracking moves them. Capacity survives
 /// [`NativeBlock::reset`], so a source allocates once.
+///
+/// Rows that all have one spectrum and, in every sample, a zero value, a
+/// unit weight and no flag, as a simulator's rows to predict do, can share
+/// them ([`NativeBlock::reset_shared`]): the block keeps them once, and a
+/// row adds only its header and projections.
 ///
 /// The rows also have a locality order ([`Self::order_rows_by_baseline`]):
 /// a baseline's successive integrations fall on nearly the same uv cells,
@@ -102,6 +123,9 @@ pub struct NativeBlock {
     values: Vec<Complex32>,
     weights: Vec<f32>,
     flags: Vec<bool>,
+    /// Whether every row reads the first row's frequencies, values, weights
+    /// and flags ([`Self::reset_shared`]).
+    shared: bool,
 }
 
 impl NativeBlock {
@@ -109,8 +133,22 @@ impl NativeBlock {
     /// never grows it beyond [`BlockShape::bytes`].
     #[must_use]
     pub fn with_capacity(shape: BlockShape) -> Self {
+        Self::sized(shape, shape.rows)
+    }
+
+    /// An empty block with room for every block of `shape` whose rows share
+    /// their spectrum and samples ([`Self::reset_shared`]), so filling it
+    /// never grows it beyond [`BlockShape::shared_bytes`].
+    #[must_use]
+    pub fn shared_with_capacity(shape: BlockShape) -> Self {
+        Self::sized(shape, 1)
+    }
+
+    /// An empty block with room for `shape`'s rows and the spectra and
+    /// samples of `sample_rows` of them.
+    fn sized(shape: BlockShape, sample_rows: usize) -> Self {
         let channels = shape.channels();
-        let cells = shape.rows * channels * shape.correlations;
+        let cells = sample_rows * channels * shape.correlations;
         Self {
             domains: shape.domains,
             rows: Vec::with_capacity(shape.rows),
@@ -118,10 +156,11 @@ impl NativeBlock {
             projections: Vec::with_capacity(shape.rows * shape.domains),
             channel_indices: Vec::with_capacity(channels),
             correlation_indices: Vec::with_capacity(shape.correlations),
-            frequencies_hz: Vec::with_capacity(shape.rows * channels),
+            frequencies_hz: Vec::with_capacity(sample_rows * channels),
             values: Vec::with_capacity(cells),
             weights: Vec::with_capacity(cells),
             flags: Vec::with_capacity(cells),
+            shared: false,
         }
     }
 
@@ -151,6 +190,7 @@ impl NativeBlock {
             "a native block projects on one domain and selects one channel and correlation"
         );
         self.domains = domains;
+        self.shared = false;
         self.rows.clear();
         self.order.clear();
         self.projections.clear();
@@ -163,6 +203,43 @@ impl NativeBlock {
         self.correlation_indices.clear();
         self.correlation_indices
             .extend_from_slice(correlation_indices);
+    }
+
+    /// [`Self::reset`] for rows that all have `frequencies_hz` and, in
+    /// every channel and correlation, a zero value, a unit weight and no
+    /// flag: the block keeps them once, and the rows that follow come from
+    /// [`Self::push_shared_row`]. Each row then reads exactly as
+    /// [`Self::push_row`] would have made it with those samples.
+    pub fn reset_shared(
+        &mut self,
+        domains: usize,
+        channel_indices: &[u32],
+        correlation_indices: &[u32],
+        frequencies_hz: &[f64],
+    ) {
+        self.reset(domains, channel_indices, correlation_indices);
+        assert_eq!(
+            frequencies_hz.len(),
+            channel_indices.len(),
+            "frequencies per row"
+        );
+        let cells = channel_indices.len() * correlation_indices.len();
+        self.frequencies_hz.extend_from_slice(frequencies_hz);
+        self.values.resize(cells, Complex32::default());
+        self.weights.resize(cells, 1.0);
+        self.flags.resize(cells, false);
+        self.shared = true;
+    }
+
+    /// Append one row of the shared spectrum and samples
+    /// ([`Self::reset_shared`]): its header and its projection on every
+    /// domain.
+    pub fn push_shared_row(&mut self, header: NativeRowHeader, projections: &[DomainProjection]) {
+        assert!(self.shared, "shared rows follow reset_shared");
+        assert_eq!(projections.len(), self.domains, "one projection per domain");
+        self.rows.push(header);
+        self.order.clear();
+        self.projections.extend_from_slice(projections);
     }
 
     /// Append one row: its projection on every domain, `frequencies_hz` per
@@ -201,6 +278,7 @@ impl NativeBlock {
         frequencies_hz: &[f64],
         fill: impl FnOnce(&mut [Complex32], &mut [f32], &mut [bool]) -> Result<(), E>,
     ) -> Result<(), E> {
+        assert!(!self.shared, "a block of shared rows takes push_shared_row");
         let cells = self.channels() * self.correlations();
         assert_eq!(projections.len(), self.domains, "one projection per domain");
         assert_eq!(frequencies_hz.len(), self.channels(), "frequencies per row");
@@ -305,14 +383,16 @@ impl NativeBlock {
         let projection = &self.projections[index * self.domains + domain];
         let channels = self.channels();
         let cells = channels * self.correlations();
+        // Shared rows all read the one row of samples the block keeps.
+        let samples = if self.shared { 0 } else { index };
         NativeRow {
             uvw_m: projection.uvw_m,
             phase_shift_m: projection.phase_shift_m,
             pointing_offset_rad: projection.pointing_offset_rad,
-            frequencies_hz: &self.frequencies_hz[index * channels..(index + 1) * channels],
-            values: &self.values[index * cells..(index + 1) * cells],
-            weights: &self.weights[index * cells..(index + 1) * cells],
-            flags: &self.flags[index * cells..(index + 1) * cells],
+            frequencies_hz: &self.frequencies_hz[samples * channels..(samples + 1) * channels],
+            values: &self.values[samples * cells..(samples + 1) * cells],
+            weights: &self.weights[samples * cells..(samples + 1) * cells],
+            flags: &self.flags[samples * cells..(samples + 1) * cells],
             row_flag: header.row_flag,
             context: header.context,
         }
@@ -392,5 +472,75 @@ mod tests {
         assert_eq!(ordered, [0, 3, 6, 1, 4, 7, 2, 5, 8]);
         push(&mut block, 9);
         assert_eq!(block.ordered_row(1), 1, "appending restores arrival order");
+    }
+
+    /// Rows that share the spectrum and samples read exactly as the same
+    /// rows pushed whole, on every domain, and a block made for them holds
+    /// no more than [`BlockShape::shared_bytes`] however many it takes.
+    #[test]
+    fn shared_rows_read_as_rows_pushed_whole() {
+        let (channels, correlations, domains, rows) = (5, 2, 2, 7);
+        let frequencies = [1.0e9, 1.1e9, 1.2e9, 1.3e9, 1.4e9];
+        let channel_indices = [0, 1, 2, 3, 4];
+        let correlation_indices = [0, 3];
+        let cells = channels * correlations;
+        let shape = BlockShape {
+            rows,
+            spectrum: RowSpectrum::evenly_spaced(channels),
+            correlations,
+            domains,
+        };
+        let projections = |row: usize| {
+            [0, 1].map(|domain| DomainProjection {
+                uvw_m: [row as f64, domain as f64, 0.5],
+                phase_shift_m: 0.25 * domain as f64,
+                pointing_offset_rad: [0.0; 2],
+            })
+        };
+        let mut whole = NativeBlock::with_capacity(shape);
+        whole.reset(domains, &channel_indices, &correlation_indices);
+        let mut shared = NativeBlock::shared_with_capacity(shape);
+        for _ in 0..2 {
+            shared.reset_shared(
+                domains,
+                &channel_indices,
+                &correlation_indices,
+                &frequencies,
+            );
+            for row in 0..rows {
+                shared.push_shared_row(header([0, row as u32 + 1], row as u64), &projections(row));
+            }
+        }
+        for row in 0..rows {
+            whole.push_row(
+                header([0, row as u32 + 1], row as u64),
+                &projections(row),
+                &frequencies,
+                &vec![Complex32::default(); cells],
+                &vec![1.0; cells],
+                &vec![false; cells],
+            );
+        }
+        assert_eq!(shared.len(), rows);
+        for row in 0..rows {
+            for domain in 0..domains {
+                let (a, b) = (whole.row(domain, row), shared.row(domain, row));
+                assert_eq!(a.uvw_m, b.uvw_m, "row {row}, domain {domain}");
+                assert_eq!(a.phase_shift_m, b.phase_shift_m);
+                assert_eq!(a.frequencies_hz, b.frequencies_hz);
+                assert_eq!(a.values, b.values);
+                assert_eq!(a.weights, b.weights);
+                assert_eq!(a.flags, b.flags);
+                assert_eq!(a.context.antennas, b.context.antennas);
+                assert_eq!(a.row_flag, b.row_flag);
+            }
+        }
+        assert!(
+            shared.capacity_bytes() <= shape.shared_bytes(),
+            "{} against {}",
+            shared.capacity_bytes(),
+            shape.shared_bytes()
+        );
+        assert!(shape.shared_bytes() < shape.bytes());
     }
 }
