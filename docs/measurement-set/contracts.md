@@ -82,6 +82,13 @@ This example does not establish a representation for arbitrary simultaneous
 beams/phase centres or per-baseline field changes. A native v4 write must prove
 that its field dependencies fit the chosen schema mapping/partitioning or reject;
 it must not discard them to fit a time-only field coordinate.
+In particular, before writing that mapping, validate that all populated
+baselines at each destination time agree on the field. Do not copy XRADIO's
+maximum-ID reduction as a consistency check; preserve conflicts through valid
+partitioning or reject. Distinct acquisitions must not overwrite one another
+in the same time/baseline cell. The
+[converter evidence](architecture.md#converter-evidence-for-mosaics) distinguishes
+observed upstream behavior from the proposed preservation contract.
 
 ```rust
 // Semantic sketch; private constructors validate dimensions and scope.

@@ -85,6 +85,41 @@ one field, or one spectral window for the whole observation as its universal
 identity. It also cannot assume every observation is a complete time–baseline
 rectangle. See [topology and identity](contracts.md#2-topology-and-identity).
 
+### Converter evidence for mosaics
+
+This behavior is implemented in XRADIO's
+[`convert_msv2_to_processing_set`](https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/src/xradio/measurement_set/convert_msv2_to_processing_set.py#L67),
+not just permitted by its schema. The
+[conversion code](https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/src/xradio/measurement_set/_utils/_msv2/conversion.py#L2080)
+places MAIN `FIELD_ID` values into a time-by-baseline array, reduces it to one
+field ID per time, and assigns `field_name=("time", field_names)`. The
+[field/source helper](https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/src/xradio/measurement_set/_utils/_msv2/create_field_and_source_xds.py#L792)
+loads the distinct fields, appends the original field ID to each name to make
+names unique, and looks up the time-ordered names, including repeated visits.
+Ordinary phase-centre directions live in the field/source dataset keyed by
+field name; ephemeris fields have additional time-dependent coordinates.
+
+The pinned upstream tests include conversions of real mosaic datasets:
+
+| Fixture | What the test exercises |
+| --- | --- |
+| VLA `SNR_G55_10s.split.ms` | [`test_VLA`](https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/tests/stakeholder/test_measure_set_stakeholder.py#L753) uses the [default test schemes](https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/tests/stakeholder/test_measure_set_stakeholder.py#L336), both `[]` and `["FIELD_ID"]`. |
+| ALMA solar mosaic `ALMA_uid___A002_X1003af4_X75a3.split.avg.ms` | [`test_alma_ephemeris_mosaic`](https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/tests/stakeholder/test_measure_set_stakeholder.py#L597) converts with `[]`, selects a target SPW/line/intent, requires one resulting dataset, and checks ephemeris variables. |
+| VLASS `VLASS3.2.sb45755730.eb46170641.60480.16266136574.split.v6.ms` | [`test_vlass`](https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/tests/stakeholder/test_measure_set_stakeholder.py#L697) uses `[]` and explicitly avoids field partitioning because of partition proliferation. |
+
+The shared test helper writes and reopens Zarr, checks schema and weighted
+visibility aggregates. These are source-inspected upstream tests, **not tests
+run for this proposal**, nor a proof of every original row's field association.
+
+The reduction above is specifically `np.max(field_id, axis=1)`, with `-42` for
+missing baselines. It assumes all present baselines at a given time share a
+field; that operation does not validate the assumption. If populated baselines
+have different field IDs, the reduction chooses the largest, losing their
+distinction. Proposed casa-rs conversion must validate agreement within each
+destination time slice, partition compatibly or reject. It must also preserve
+distinct acquisitions that would otherwise collide in a time/baseline cell.
+The common intermediate remains able to express sample-dependent fields.
+
 ## 3. Proposed ownership
 
 ```text
@@ -311,6 +346,7 @@ owner review, not a change to the MSv4 schema.
 | INTERVAL | Median if values vary, stored as scalar `time.integration_time` | Preserve nominal interval through compatible partitioning or a separately accepted representation; otherwise reject/report approved loss. A median cannot recover per-sample values. Do not put INTERVAL into effective integration time. |
 | EXPOSURE | Maps to EFFECTIVE_INTEGRATION_TIME when present | Preserve independently of nominal INTERVAL; neither implies the other. Reverse mapping uses this variable, not the nominal sampling interval. |
 | TIME, TIME_CENTROID and extra-precision metadata | Time/centroid have different roles; centroid extra precision is supported, but not every legacy precision column is mapped | Audit each supplied precision field and epoch/unit conversion; preserve split precision where supported or reject/report loss. Optional absence is not evidence that midpoint and centroid were originally equal. |
+| FIELD_ID per acquisition | Converted to `field_name(time)` using the maximum populated baseline field ID at each time; optional field partitioning is available | Validate field agreement within each destination time slice; partition compatibly or reject conflicting fields. Preserve associations under selection/reordering and repeated mosaic visits. A reader cannot reconstruct distinctions already discarded upstream. See [converter evidence](#converter-evidence-for-mosaics). |
 | WEIGHT and WEIGHT_SPECTRUM | Spectrum preferred; row weights may be broadcast on fallback, and distinct row summaries may be dropped | Bind fallback per cell and report the native-role information retained/lost. Keep effective channel values; preserve a distinct row summary only through an accepted mapping. Reverse reduction is an explicit scientific policy, never an automatic inverse. |
 | SIGMA and SIGMA_SPECTRUM | Not mapped | Preserve through an accepted explicit mapping or reject/report approved loss. Do not reconstruct as `1/sqrt(WEIGHT)` without a separately justified scientific relation. |
 | Duplicate `(time, ordered baseline)` acquisitions within one partition | Dense converter keeps the last row | Reject or split into valid compatible partitions while preserving every acquisition; never alter times or average to force uniqueness. A reader cannot recover acquisitions already discarded upstream. |

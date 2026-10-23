@@ -151,6 +151,12 @@ parallel migration:
 5. Sparse times/baselines, duplicate acquisitions, NaNs and v4 fill values do not
    collapse presence into flags. Ordered baselines/cross-hands, split time
    precision, time centroids, moving pointing and spectral frames survive.
+   Convert a small sequential mosaic with repeated field visits, both with and
+   without field partitioning; compare every selected/reordered sample's field
+   and phase centre to the original MSv2. Add conflicting fields on different
+   baselines at the same time, and distinct acquisitions colliding in one
+   time/baseline cell: valid partitioning must preserve them or conversion must
+   reject, never select the largest field ID or silently overwrite a sample.
 6. A v4 visibility batch spans multiple chunks and feeds smaller borrowed kernel
    windows. The resource accounting includes decode/packing/index/write scratch,
    and an oversized physical working set fails before unsafe allocation.

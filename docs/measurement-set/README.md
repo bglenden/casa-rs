@@ -36,6 +36,9 @@ This revision incorporates Pro and Fable's reviews of commit `526d706c` and
 owner discussion of work groups that finish at different rates, canonical units,
 explicit access-pattern negotiation, and a provisional `VisibilityBatch` name
 that avoids observatory terminology.
+The [mosaic converter evidence](architecture.md#converter-evidence-for-mosaics)
+traces actual XRADIO field mapping and upstream VLA/ALMA/VLASS tests, including
+the consistency assumption that casa-rs must validate before a v4 write.
 The documents and PR remain provisional: neither addressing a comment nor an
 agent recommendation finalizes the design. Only the MSv2 + MSv4 scope and MSv3
 deferral have been confirmed by the owner.
