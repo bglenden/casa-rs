@@ -265,6 +265,19 @@ the MeasurementSets the session writes, and the digests must equal casa-rs's.
 Its counting law (`--test session_memory`) runs alone in a process of its
 own, as the other counting laws do.
 
+Component lists (`casa-components`) carry the 2x2 matrix for their tables.
+`cargo test -p casa-components` reads the lists CASA 6.7.6's `cl` tool wrote
+(`tests/data/casa-6.7.6`, made by `tools/simulation/componentlist_oracle.py
+fixture`) and checks every cell and `getcomponent` record, writes them back
+in CASA's layout, and round-trips casa-rs's own lists. casacore C++ reads
+what casa-rs writes in `cargo test -p casa-components --features
+cpp-interop-tests --test casacore_cpp_interop`, a step of `just
+release-cpp-interop`. The CASA oracle is opt-in,
+because it starts CASA's Python several times: `cargo test -p
+casa-components --test casa_oracle -- --ignored --nocapture` (CASA from
+`CASA_RS_CASA_PYTHON` or `/Applications/CASA.app`) has CASA read the lists
+casa-rs writes, rewrite them in place, and casa-rs read the rewrite back.
+
 Large spectral-cube storage changes additionally run the sparse logical-capacity
 test and the explicit release throughput guard:
 

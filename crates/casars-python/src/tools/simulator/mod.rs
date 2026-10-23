@@ -585,7 +585,8 @@ impl PySimulator {
     }
 
     /// Set whether `predict` applies the primary beam (`dovp`): the
-    /// telescope's default voltage pattern, implemented for ALMA and ACA.
+    /// telescope's default voltage pattern, implemented for ALMA, ACA, the
+    /// VLA (by band) and the EVLA.
     /// A voltage-pattern table raises `NotImplementedError`.
     #[allow(unused_variables, clippy::too_many_arguments)]
     #[pyo3(

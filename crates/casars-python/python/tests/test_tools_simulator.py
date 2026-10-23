@@ -190,9 +190,9 @@ def test_the_bundle_describes_the_class_signatures() -> None:
     )
 
 
-def configure(sm: simulator, *, autocorrelations: bool = True) -> None:
+def configure(sm: simulator, *, autocorrelations: bool = True, telescope: str = "VLA") -> None:
     assert sm.setconfig(
-        telescopename="VLA", x=X, y=Y, z=Z, dishdiameter=[25.0], mount=["ALT-AZ"],
+        telescopename=telescope, x=X, y=Y, z=Z, dishdiameter=[25.0], mount=["ALT-AZ"],
         antname=["A1", "A2", "A3", "A4"], padname=["P1", "P2", "P3", "P4"],
         coordsystem="global",
     )
@@ -807,8 +807,8 @@ def test_total_power_samples_the_model_at_the_pointing(tmp_path: Path) -> None:
     # setoptions(ftmachine='sd') samples the model in the image plane, as
     # CASA's SDGrid does: the autocorrelations carry it and the
     # cross-correlations nothing. BOX takes the pixel nearest the pointing,
-    # the fixture's 1 Jy point; PB needs the telescope's pattern, and VLA's
-    # is not yet in casa-rs.
+    # the fixture's 1 Jy point; PB needs the telescope's pattern, and casa-rs's
+    # PB kernel has ALMA's and ACA's, not yet the VLA's.
     model = sky_model(tmp_path)
     sm = simulator()
     sm.open(str(tmp_path / "sd.ms"))
@@ -831,6 +831,39 @@ def test_total_power_samples_the_model_at_the_pointing(tmp_path: Path) -> None:
         sm.setoptions(ftmachine="sd", gridfunction="GAUSS")
     assert sm.setoptions(ftmachine="sd", gridfunction="PB") is True
     with pytest.raises(NotImplementedError, match="telescope VLA"):
+        sm.predict(imagename=str(model))
+    sm.close()
+
+
+@needs_measures
+def test_setvp_applies_the_vla_and_evla_default_patterns(tmp_path: Path) -> None:
+    # The VLA's Airy pattern of window 0's band and the EVLA's polynomial
+    # fits differ; neither squints a Stokes I model, so RR and LL agree.
+    model = sky_model(tmp_path)
+
+    def predicted(name: str, telescope: str) -> np.ndarray:
+        sm = simulator()
+        sm.open(str(tmp_path / name))
+        configure(sm, telescope=telescope)
+        assert sm.observe("F", "L", starttime="0s", stoptime="60s")
+        assert sm.setvp(dovp=True, usedefaultvp=False) is True
+        assert sm.predict(imagename=str(model)) is True
+        sm.close()
+        return np.asarray(Table.open(tmp_path / name).get_column("DATA"))
+
+    vla = predicted("vla.ms", "VLA")
+    evla = predicted("evla.ms", "EVLA")
+    for data in (vla, evla):
+        assert np.abs(data).max() > 0
+        # DATA is [row, correlation, channel]: RR and LL.
+        assert np.array_equal(data[:, 0, :], data[:, 1, :])
+    assert not np.allclose(vla, evla)
+
+    sm = opened(tmp_path)
+    configure(sm, telescope="SMA")
+    assert sm.observe("F", "L", starttime="0s", stoptime="30s")
+    assert sm.setvp() is True
+    with pytest.raises(NotImplementedError, match="SMA"):
         sm.predict(imagename=str(model))
     sm.close()
 

@@ -84,7 +84,9 @@ def resolve_config(config: dict, args: argparse.Namespace, me) -> dict:
         x, y, z, diam, pads, names, telescope, posobs = util.readantenna(path)
         position = me.measure(posobs, "ITRF")
         kwargs = dict(
-            telescopename=telescope,
+            # A configuration may name another telescope for the same pads
+            # (EVLA for a VLA .cfg).
+            telescopename=config.get("telescopename", telescope),
             x=list(map(float, x)),
             y=list(map(float, y)),
             z=list(map(float, z)),

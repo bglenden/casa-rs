@@ -9,7 +9,7 @@ use casa_imaging_model::{
     ProductBlankingPolicy, ProductNormalization, ProductRole, ProductSupportComparison,
     ProductTerm, ProductValidityRule, RestoringBeamPolicy, TaylorSupportReference,
 };
-use casa_numerics::solve_symmetric_ldlt_casacore_dynamic;
+use casa_numerics::{EvlaBand, EvlaPowerPattern, VlaBand, solve_symmetric_ldlt_casacore_dynamic};
 
 use crate::AnalyticPrimaryBeamModel;
 use crate::beam::{RestoringBeam, fit_restoring_beam};
@@ -722,17 +722,9 @@ pub(crate) fn analytic_evla_primary_beam(
         increment_rad,
         frequency_hz,
     } = beam_geometry(inputs, domain_role, output_channel)?;
-    let coefficients = nearest_evla_common_coefficients(frequency_hz * 1.0e-6)
-        .ok_or(ProductsError::UnsupportedProblem)?;
+    let pattern = evla_common_pattern(frequency_hz).ok_or(ProductsError::UnsupportedProblem)?;
     Ok(summed_beams(shape, &centres, |plane, centre| {
-        add_evla_common_power(
-            plane,
-            shape,
-            centre,
-            increment_rad,
-            frequency_hz,
-            coefficients,
-        );
+        add_evla_common_power(plane, shape, centre, increment_rad, frequency_hz, pattern);
     }))
 }
 
@@ -743,7 +735,7 @@ fn add_evla_common_power(
     centre: [f64; 2],
     increment_rad: [f64; 2],
     frequency_hz: f64,
-    coefficients: [f64; 4],
+    pattern: EvlaPowerPattern,
 ) {
     let increment_deg = increment_rad.map(f64::to_degrees);
     let frequency_factor = 60.0 * frequency_hz / 1.0e9;
@@ -754,8 +746,7 @@ fn add_evla_common_power(
             // PBMath1D::apply stores squared degree offsets and scaled radius
             // as Float. Rounding before the table lookup matters at bin edges.
             let radius_arcmin_ghz = (f64::from((rx2 + ry2).sqrt()) * frequency_factor) as f32;
-            values[x * shape[1] + y] +=
-                evla_common_power_pattern(f64::from(radius_arcmin_ghz), coefficients);
+            values[x * shape[1] + y] += pattern.power(f64::from(radius_arcmin_ghz));
         }
     }
 }
@@ -821,31 +812,6 @@ fn add_annular_aperture_power(
     }
 }
 
-fn evla_common_power_pattern(radius_arcmin_ghz: f64, coefficients: [f64; 4]) -> f32 {
-    if !(radius_arcmin_ghz.is_finite() && (0.0..=58.0).contains(&radius_arcmin_ghz)) {
-        return 0.0;
-    }
-    // CASA PBMath1DEVLA::nearestVPArray(), PBMath1DPoly::fillPBArray(), and
-    // PBMath1D::apply() use 10,000 samples and integer-truncated radial lookup.
-    let inverse_increment_radius = 9_999.0 / 58.0;
-    let sample_index = (radius_arcmin_ghz * inverse_increment_radius).floor();
-    let sampled_radius_arcmin_ghz = sample_index / inverse_increment_radius;
-    let x2 = sampled_radius_arcmin_ghz * sampled_radius_arcmin_ghz;
-    let mut response = 0.0;
-    let mut power = 1.0;
-    for coefficient in coefficients {
-        response += coefficient * power;
-        power *= x2;
-    }
-    if response <= 0.0 {
-        0.0
-    } else {
-        // CASA stores the voltage table as Complex<Float>, then squares it.
-        let voltage = response.sqrt() as f32;
-        voltage * voltage
-    }
-}
-
 fn vla_band_voltage_table(frequency_hz: f64) -> Result<AnnularApertureVoltageTable, ProductsError> {
     // CASA selects VLA_L and VLA_Q in these open intervals. Both use this
     // aperture; SIMapper::addPB applies BeamSquint::NONE for PB images.
@@ -858,9 +824,7 @@ fn vla_band_voltage_table(frequency_hz: f64) -> Result<AnnularApertureVoltageTab
 }
 
 fn vla_band_supported(frequency_hz: f64) -> bool {
-    frequency_hz.is_finite()
-        && ((frequency_hz > 1.0e9 && frequency_hz < 2.0e9)
-            || (frequency_hz > 35.0e9 && frequency_hz < 55.0e9))
+    matches!(VlaBand::of(frequency_hz), Some(VlaBand::L | VlaBand::Q))
 }
 
 pub(crate) fn primary_beam_frequency_supported(
@@ -869,120 +833,24 @@ pub(crate) fn primary_beam_frequency_supported(
 ) -> bool {
     match model {
         AnalyticPrimaryBeamModel::CasaVlaBand => vla_band_supported(frequency_hz),
-        AnalyticPrimaryBeamModel::CasaEvlaCommon => {
-            nearest_evla_common_coefficients(frequency_hz * 1.0e-6).is_some()
-        }
+        AnalyticPrimaryBeamModel::CasaEvlaCommon => evla_common_pattern(frequency_hz).is_some(),
         AnalyticPrimaryBeamModel::CasaAlma12mAiry
         | AnalyticPrimaryBeamModel::CasaAca7mAiry
         | AnalyticPrimaryBeamModel::MosaicSensitivity => true,
     }
 }
 
-fn nearest_evla_common_coefficients(frequency_mhz: f64) -> Option<[f64; 4]> {
-    // Preserve PBMath1DEVLA::feed() precedence in its narrow band overlaps and
-    // limitFreqForBand() clamping. Frequencies outside the represented CASA
-    // bands fail closed instead of silently borrowing another band's beam.
-    let (frequency_mhz, coefficients) = if frequency_mhz > 900.0 && frequency_mhz < 2003.0 {
-        (
-            frequency_mhz.clamp(1040.0, 2000.0),
-            EVLA_L_BAND_COEFFICIENTS,
-        )
-    } else if frequency_mhz > 1990.0 && frequency_mhz < 4001.0 {
-        (
-            frequency_mhz.clamp(2052.0, 3948.0),
-            EVLA_S_BAND_COEFFICIENTS,
-        )
-    } else if frequency_mhz > 3990.0 && frequency_mhz < 8001.0 {
-        (
-            frequency_mhz.clamp(4052.0, 7948.0),
-            EVLA_C_BAND_COEFFICIENTS,
-        )
-    } else {
-        return None;
-    };
-    let mut best = coefficients[0].1;
-    let mut best_delta_mhz = f64::INFINITY;
-    for &(candidate_frequency_mhz, candidate_coefficients) in coefficients {
-        let delta_mhz = (frequency_mhz - candidate_frequency_mhz).abs();
-        // CASA PBMath1DEVLA::nearestVPArray chooses the upper entry on a tie.
-        if delta_mhz <= best_delta_mhz {
-            best_delta_mhz = delta_mhz;
-            best = candidate_coefficients;
-        }
-    }
-    Some(best)
+/// The EVLA common beam CASA applies at `frequency_hz`
+/// ([`EvlaPowerPattern::at`]) in the bands imaging supports, L, S and C
+/// ([`EvlaBand::of`], with CASA's precedence where they overlap). Other
+/// frequencies fail closed instead of borrowing another band's beam.
+fn evla_common_pattern(frequency_hz: f64) -> Option<EvlaPowerPattern> {
+    matches!(
+        EvlaBand::of(frequency_hz),
+        Some(EvlaBand::L | EvlaBand::S | EvlaBand::C)
+    )
+    .then(|| EvlaPowerPattern::at(frequency_hz))
 }
-
-const EVLA_L_BAND_COEFFICIENTS: &[(f64, [f64; 4])] = &[
-    (1040.0, [1.000, -1.529e-3, 8.69e-7, -1.88e-10]),
-    (1104.0, [1.000, -1.486e-3, 8.15e-7, -1.68e-10]),
-    (1168.0, [1.000, -1.439e-3, 7.53e-7, -1.45e-10]),
-    (1232.0, [1.000, -1.450e-3, 7.87e-7, -1.63e-10]),
-    (1296.0, [1.000, -1.428e-3, 7.62e-7, -1.54e-10]),
-    (1360.0, [1.000, -1.449e-3, 8.02e-7, -1.74e-10]),
-    (1424.0, [1.000, -1.462e-3, 8.23e-7, -1.83e-10]),
-    (1488.0, [1.000, -1.455e-3, 7.92e-7, -1.63e-10]),
-    (1552.0, [1.000, -1.435e-3, 7.54e-7, -1.49e-10]),
-    (1680.0, [1.000, -1.443e-3, 7.74e-7, -1.57e-10]),
-    (1744.0, [1.000, -1.462e-3, 8.02e-7, -1.69e-10]),
-    (1808.0, [1.000, -1.488e-3, 8.38e-7, -1.83e-10]),
-    (1872.0, [1.000, -1.486e-3, 8.26e-7, -1.75e-10]),
-    (1936.0, [1.000, -1.459e-3, 7.93e-7, -1.62e-10]),
-    (2000.0, [1.000, -1.508e-3, 8.31e-7, -1.68e-10]),
-];
-
-const EVLA_S_BAND_COEFFICIENTS: &[(f64, [f64; 4])] = &[
-    (2052.0, [1.000, -1.429e-3, 7.52e-7, -1.47e-10]),
-    (2180.0, [1.000, -1.389e-3, 7.06e-7, -1.33e-10]),
-    (2436.0, [1.000, -1.377e-3, 6.90e-7, -1.27e-10]),
-    (2564.0, [1.000, -1.381e-3, 6.92e-7, -1.26e-10]),
-    (2692.0, [1.000, -1.402e-3, 7.23e-7, -1.40e-10]),
-    (2820.0, [1.000, -1.433e-3, 7.62e-7, -1.54e-10]),
-    (2948.0, [1.000, -1.433e-3, 7.46e-7, -1.42e-10]),
-    (3052.0, [1.000, -1.467e-3, 8.05e-7, -1.70e-10]),
-    (3180.0, [1.000, -1.497e-3, 8.38e-7, -1.80e-10]),
-    (3308.0, [1.000, -1.504e-3, 8.37e-7, -1.77e-10]),
-    (3436.0, [1.000, -1.521e-3, 8.63e-7, -1.88e-10]),
-    (3564.0, [1.000, -1.505e-3, 8.37e-7, -1.75e-10]),
-    (3692.0, [1.000, -1.521e-3, 8.51e-7, -1.79e-10]),
-    (3820.0, [1.000, -1.534e-3, 8.57e-7, -1.77e-10]),
-    (3948.0, [1.000, -1.516e-3, 8.30e-7, -1.66e-10]),
-];
-
-const EVLA_C_BAND_COEFFICIENTS: &[(f64, [f64; 4])] = &[
-    (4052.0, [1.000, -1.406e-3, 7.41e-7, -1.48e-10]),
-    (4180.0, [1.000, -1.385e-3, 7.09e-7, -1.36e-10]),
-    (4308.0, [1.000, -1.380e-3, 7.08e-7, -1.37e-10]),
-    (4436.0, [1.000, -1.362e-3, 6.95e-7, -1.35e-10]),
-    (4564.0, [1.000, -1.365e-3, 6.92e-7, -1.31e-10]),
-    (4692.0, [1.000, -1.339e-3, 6.56e-7, -1.17e-10]),
-    (4820.0, [1.000, -1.371e-3, 7.06e-7, -1.40e-10]),
-    (4948.0, [1.000, -1.358e-3, 6.91e-7, -1.34e-10]),
-    (5052.0, [1.000, -1.360e-3, 6.91e-7, -1.33e-10]),
-    (5180.0, [1.000, -1.353e-3, 6.74e-7, -1.25e-10]),
-    (5308.0, [1.000, -1.359e-3, 6.82e-7, -1.27e-10]),
-    (5436.0, [1.000, -1.380e-3, 7.05e-7, -1.37e-10]),
-    (5564.0, [1.000, -1.376e-3, 6.99e-7, -1.31e-10]),
-    (5692.0, [1.000, -1.405e-3, 7.39e-7, -1.47e-10]),
-    (5820.0, [1.000, -1.394e-3, 7.29e-7, -1.45e-10]),
-    (5948.0, [1.000, -1.428e-3, 7.57e-7, -1.57e-10]),
-    (6052.0, [1.000, -1.445e-3, 7.68e-7, -1.50e-10]),
-    (6148.0, [1.000, -1.422e-3, 7.38e-7, -1.38e-10]),
-    (6308.0, [1.000, -1.463e-3, 7.94e-7, -1.62e-10]),
-    (6436.0, [1.000, -1.478e-3, 8.22e-7, -1.74e-10]),
-    (6564.0, [1.000, -1.473e-3, 8.00e-7, -1.62e-10]),
-    (6692.0, [1.000, -1.455e-3, 7.76e-7, -1.53e-10]),
-    (6820.0, [1.000, -1.487e-3, 8.22e-7, -1.72e-10]),
-    (6948.0, [1.000, -1.472e-3, 8.05e-7, -1.67e-10]),
-    (7052.0, [1.000, -1.470e-3, 8.01e-7, -1.64e-10]),
-    (7180.0, [1.000, -1.503e-3, 8.50e-7, -1.84e-10]),
-    (7308.0, [1.000, -1.482e-3, 8.19e-7, -1.72e-10]),
-    (7436.0, [1.000, -1.498e-3, 8.22e-7, -1.66e-10]),
-    (7564.0, [1.000, -1.490e-3, 8.18e-7, -1.66e-10]),
-    (7692.0, [1.000, -1.481e-3, 7.98e-7, -1.56e-10]),
-    (7820.0, [1.000, -1.474e-3, 7.94e-7, -1.57e-10]),
-    (7948.0, [1.000, -1.448e-3, 7.69e-7, -1.51e-10]),
-];
 
 fn model_term(
     inputs: &ContinuumProductInputs<'_>,
@@ -1008,32 +876,23 @@ mod tests {
     use super::ResidualFamily;
 
     #[test]
-    fn evla_coefficient_midpoints_choose_the_upper_frequency_like_casa() {
-        for table in [
-            super::EVLA_L_BAND_COEFFICIENTS,
-            super::EVLA_S_BAND_COEFFICIENTS,
-            super::EVLA_C_BAND_COEFFICIENTS,
+    fn evla_common_beams_cover_the_l_s_and_c_bands_only() {
+        // casa-numerics holds CASA's fits and their nearest-frequency rule;
+        // imaging fails closed outside L, S and C.
+        for (frequency_hz, supported) in [
+            (850.0e6, false),
+            (1.4e9, true),
+            (2.0e9, true),
+            (3.0e9, true),
+            (6.0e9, true),
+            (8.4e9, false),
+            (0.3e9, false),
         ] {
-            for &(frequency, coefficients) in table {
-                assert_eq!(
-                    super::nearest_evla_common_coefficients(frequency),
-                    Some(coefficients)
-                );
-            }
-            for pair in table.windows(2) {
-                let midpoint = (pair[0].0 + pair[1].0) / 2.0;
-                for (frequency, expected) in [
-                    (midpoint - 0.001, pair[0].1),
-                    (midpoint, pair[1].1),
-                    (midpoint + 0.001, pair[1].1),
-                ] {
-                    assert_eq!(
-                        super::nearest_evla_common_coefficients(frequency),
-                        Some(expected),
-                        "frequency {frequency} MHz"
-                    );
-                }
-            }
+            assert_eq!(
+                super::evla_common_pattern(frequency_hz).is_some(),
+                supported,
+                "{frequency_hz} Hz"
+            );
         }
     }
 
@@ -1182,23 +1041,26 @@ mod tests {
     #[test]
     fn evla_common_s_band_uses_casa_sampled_power_lookup() {
         let frequency_hz = 2.091_980_123e9_f64;
-        let coefficients = super::nearest_evla_common_coefficients(frequency_hz * 1.0e-6)
-            .expect("T44 frequency is in EVLA S band");
-        assert_eq!(coefficients, [1.000, -1.429e-3, 7.52e-7, -1.47e-10]);
+        let pattern =
+            super::evla_common_pattern(frequency_hz).expect("T44 frequency is in EVLA S band");
+        assert_eq!(
+            pattern.coefficients(),
+            &[1.000, -1.429e-3, 7.52e-7, -1.47e-10]
+        );
         let sample_index = 2_210.0_f64;
         let inverse_increment = 9_999.0_f64 / 58.0;
         let sampled_radius_arcmin_ghz = sample_index / inverse_increment;
         let radius_arcmin_ghz = sampled_radius_arcmin_ghz + 0.75 / inverse_increment;
         let x2 = sampled_radius_arcmin_ghz * sampled_radius_arcmin_ghz;
         let expected_power = 1.0 - 1.429e-3 * x2 + 7.52e-7 * x2.powi(2) - 1.47e-10 * x2.powi(3);
-        let actual = super::evla_common_power_pattern(radius_arcmin_ghz, coefficients);
+        let actual = pattern.power(radius_arcmin_ghz);
         assert!((actual - expected_power as f32).abs() < 1.0e-7);
-        assert!(super::nearest_evla_common_coefficients(850.0).is_none());
+        assert!(super::evla_common_pattern(850.0e6).is_none());
     }
 
     #[test]
     fn evla_radial_bin_edges_use_casa_float_rounding_and_voltage_squared() {
-        let coefficients = super::nearest_evla_common_coefficients(6000.0).unwrap();
+        let coefficients = super::evla_common_pattern(6.0e9).unwrap();
         let cell = (0.05_f64 / 3600.0).to_radians();
         // Measured CASA PBMath1D pixels (8,693), (8,890), (29,59) on the
         // 4096-square 6-GHz pilot. Double-radius lookup picks adjacent bins.

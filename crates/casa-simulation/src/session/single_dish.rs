@@ -45,13 +45,20 @@ impl Simulator {
         incremental: bool,
     ) -> SimulatorResult<()> {
         let telescope = self.observing_telescope();
+        // The PB kernel is compared with CASA for ALMA's and ACA's patterns;
+        // the VLA's and EVLA's are not yet.
         let kernel_beam = match kernel {
-            SingleDishKernel::Pb => Some(PrimaryBeam::for_telescope(telescope).ok_or_else(|| {
-                SimulatorError::not_yet_implemented(format!(
-                    "setoptions(ftmachine='sd', gridfunction='PB') for telescope {telescope} is \
-                     not yet implemented in casa-rs (#841); ALMA's and ACA's patterns are"
-                ))
-            })?),
+            SingleDishKernel::Pb => Some(
+                PrimaryBeam::for_telescope(telescope, self.reference_frequency_hz())
+                    .filter(|beam| *beam == PrimaryBeam::ALMA || *beam == PrimaryBeam::ACA)
+                    .ok_or_else(|| {
+                        SimulatorError::not_yet_implemented(format!(
+                            "setoptions(ftmachine='sd', gridfunction='PB') for telescope \
+                             {telescope} is not yet implemented in casa-rs (#841); ALMA's and \
+                             ACA's patterns are"
+                        ))
+                    })?,
+            ),
             SingleDishKernel::Box | SingleDishKernel::Spheroidal => None,
         };
         let windows: Vec<SingleDishWindow> = self

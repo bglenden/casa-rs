@@ -1504,7 +1504,27 @@ fn value_to_casacore_data_type(value: &Value) -> Result<CasacoreDataType, Storag
 // Conversion helpers: TableDatContents <-> schema types
 // ---------------------------------------------------------------------------
 
-use crate::schema::{ColumnSchema, TableSchema};
+use crate::schema::{ColumnSchema, TableDescHeader, TableSchema};
+
+impl TableDescContents {
+    /// The description a save writes: the schema's header (name, version and
+    /// comment), the table keywords and the column descriptions.
+    fn from_schema_header(
+        schema: &TableSchema,
+        keywords: &RecordValue,
+        columns: Vec<ColumnDescContents>,
+    ) -> Self {
+        let header = schema.header();
+        Self {
+            name: header.name.clone(),
+            version: header.version.clone(),
+            comment: header.comment.clone(),
+            table_keywords: keywords.clone(),
+            private_keywords: RecordValue::default(),
+            columns,
+        }
+    }
+}
 
 impl TableDatContents {
     pub(crate) fn retained_heap_bytes(&self) -> Option<usize> {
@@ -1565,7 +1585,11 @@ impl TableDatContents {
             .iter()
             .map(|c| c.to_column_schema())
             .collect::<Result<_, _>>()?;
-        Ok(TableSchema::new(columns)?)
+        Ok(TableSchema::new(columns)?.with_header(TableDescHeader {
+            name: self.table_desc.name.clone(),
+            version: self.table_desc.version.clone(),
+            comment: self.table_desc.comment.clone(),
+        }))
     }
 
     pub(crate) fn from_snapshot(
@@ -1601,14 +1625,7 @@ impl TableDatContents {
         TableDatContents {
             nrrow,
             big_endian,
-            table_desc: TableDescContents {
-                name: String::new(),
-                version: String::new(),
-                comment: String::new(),
-                table_keywords: keywords.clone(),
-                private_keywords: RecordValue::default(),
-                columns,
-            },
+            table_desc: TableDescContents::from_schema_header(schema, keywords, columns),
             column_set: ColumnSetContents {
                 nrrow,
                 seq_count: 1,
@@ -2059,14 +2076,7 @@ impl TableDatContents {
         TableDatContents {
             nrrow,
             big_endian,
-            table_desc: TableDescContents {
-                name: String::new(),
-                version: String::new(),
-                comment: String::new(),
-                table_keywords: keywords.clone(),
-                private_keywords: RecordValue::default(),
-                columns,
-            },
+            table_desc: TableDescContents::from_schema_header(schema, keywords, columns),
             column_set: ColumnSetContents {
                 nrrow,
                 seq_count,
@@ -2221,7 +2231,7 @@ impl ColumnDescContents {
                 data_manager_type: "StandardStMan".to_string(),
                 data_manager_group: "StandardStMan".to_string(),
                 data_type: CasacoreDataType::TpRecord,
-                option: 0,
+                option: if col.options().undefined { 2 } else { 0 },
                 nrdim: 0,
                 shape: vec![],
                 max_length: col.max_length(),
@@ -2264,9 +2274,11 @@ impl ColumnDescContents {
         //
         // Fixed-shape arrays are not necessarily direct in casacore; preserve
         // the caller's Direct flag instead of forcing it on every fixed array.
+        // Direct forces FixedShape, scalars included, as casacore's
+        // BaseColumnDesc constructor does (a Direct scalar is option 5).
         let mut option = 0;
         if col.options().direct {
-            option |= 1;
+            option |= 1 | 4;
         }
         if col.options().undefined {
             option |= 2;
@@ -2401,6 +2413,44 @@ mod tests {
         assert_eq!(desc.option, 4);
         assert_eq!(desc.nrdim, 1);
         assert_eq!(desc.shape, vec![3]);
+    }
+
+    #[test]
+    fn option_bits_follow_casacore_base_column_desc() {
+        let direct = crate::ColumnOptions {
+            direct: true,
+            undefined: false,
+        };
+        let undefined = crate::ColumnOptions {
+            direct: false,
+            undefined: true,
+        };
+        let option =
+            |column: crate::ColumnSchema| ColumnDescContents::from_column_schema(&column).option;
+        // Direct forces FixedShape, scalars included: CASA's component lists
+        // carry option 5 on their Direct String and Double scalars.
+        let scalar = crate::ColumnSchema::scalar("Label", PrimitiveType::String);
+        assert_eq!(option(scalar.with_options(direct).unwrap()), 5);
+        let fixed = crate::ColumnSchema::array_fixed("Flux", PrimitiveType::Complex64, vec![4]);
+        assert_eq!(option(fixed.with_options(direct).unwrap()), 5);
+        // Undefined persists on arrays and records, as casacore writes it.
+        let vector = crate::ColumnSchema::array_variable(
+            "Optional_Parameters",
+            PrimitiveType::Float64,
+            Some(1),
+        );
+        assert_eq!(option(vector.with_options(undefined).unwrap()), 2);
+        let record = crate::ColumnSchema::record("Spectral_Record");
+        assert_eq!(option(record.clone()), 0);
+        assert_eq!(option(record.with_options(undefined).unwrap()), 2);
+        let back = ColumnDescContents::from_column_schema(
+            &crate::ColumnSchema::array_variable("v", PrimitiveType::Float64, Some(1))
+                .with_options(undefined)
+                .unwrap(),
+        )
+        .to_column_schema()
+        .unwrap();
+        assert!(back.options().undefined && !back.options().direct);
     }
 
     #[test]

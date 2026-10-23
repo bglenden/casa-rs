@@ -141,8 +141,8 @@ impl Default for PredictionOptions {
 }
 
 /// The arguments of `sm.setvp` that casa-rs reads. `skyposthreshold` and
-/// `pblimit` do not change a symmetric Airy beam's prediction through
-/// `GridFT`.
+/// `pblimit` do not change a radially symmetric beam's prediction
+/// (`PBMath1D::apply` uses the cutoff only to divide by the beam).
 #[derive(Debug, Clone, PartialEq)]
 pub struct VoltagePatternSpec {
     /// `dovp`: multiply the model by the primary beam.
@@ -153,7 +153,9 @@ pub struct VoltagePatternSpec {
     pub use_default_vp: bool,
     /// `vptable`: a voltage-pattern table, read when not `usedefaultvp`.
     pub vp_table: String,
-    /// `dosquint`: beam squint, which a symmetric Airy beam has none of.
+    /// `dosquint`: beam squint, which CASA's VLA and EVLA patterns have but
+    /// which does not reach a Stokes I model, the only one predicted
+    /// ([`PrimaryBeam`]).
     pub do_squint: bool,
     /// `parangleinc`, degrees (CASA's 360 for `[]`), logged only.
     pub parallactic_angle_increment_deg: f64,
@@ -361,9 +363,9 @@ impl Simulator {
     ///   model layout CASA reads and casa-rs does not (other than Stokes I,
     ///   J2000, direction–Stokes–spectral axes), a near-field distance on the
     ///   last field, scans whose windows differ in correlations, or
-    ///   `setvp(dovp=True)` for a telescope without an Airy default pattern
-    ///   (VLA and EVLA among them) or for pointings `observemany` moved off
-    ///   their fields.
+    ///   `setvp(dovp=True)` for a telescope whose default pattern casa-rs
+    ///   does not have (ALMA's, ACA's, the VLA's and the EVLA's it has) or
+    ///   for pointings `observemany` moved off their fields.
     /// - CASA's `False`: no model image ("No model images found"), or no
     ///   rows observed yet.
     /// - Raised: a scan of 3 correlations ("No such VisVector type"), or
@@ -471,23 +473,20 @@ impl Simulator {
     }
 
     /// The primary beam `setvp` asks for: the default pattern of OBSERVATION
-    /// row 0's telescope.
+    /// row 0's telescope at spectral window 0's REF_FREQUENCY, its start
+    /// frequency (`VPSkyJones`).
     fn voltage_pattern_beam(&self) -> SimulatorResult<Option<PrimaryBeam>> {
         if !self.voltage_pattern {
             return Ok(None);
         }
         let telescope = self.observing_telescope();
-        let beam = PrimaryBeam::for_telescope(telescope).ok_or_else(|| {
-            let phase = if telescope == "VLA" || telescope == "EVLA" {
-                "simulation Phase 2"
-            } else {
-                "#841"
-            };
-            SimulatorError::not_yet_implemented(format!(
-                "setvp(dovp=True) for telescope {telescope} is not yet implemented in casa-rs \
-                 ({phase}); ALMA's and ACA's default patterns are"
-            ))
-        })?;
+        let beam = PrimaryBeam::for_telescope(telescope, self.reference_frequency_hz())
+            .ok_or_else(|| {
+                SimulatorError::not_yet_implemented(format!(
+                    "setvp(dovp=True) for telescope {telescope} is not yet implemented in \
+                     casa-rs (#841); the default patterns of ALMA, ACA, VLA and EVLA are"
+                ))
+            })?;
         Ok(Some(beam))
     }
 
@@ -499,6 +498,14 @@ impl Simulator {
             .map_or(self.telescope.as_str(), |observation| {
                 observation.telescope.as_str()
             })
+    }
+
+    /// Spectral window 0's reference frequency, which picks the VLA's
+    /// pattern by band (`VPSkyJones`), Hz.
+    pub(super) fn reference_frequency_hz(&self) -> f64 {
+        self.spectral_windows
+            .first()
+            .map_or(0.0, |window| window.start_frequency_hz)
     }
 
     /// That every scan points at its field, as a primary beam centred on

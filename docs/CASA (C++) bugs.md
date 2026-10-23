@@ -9,7 +9,8 @@ CASA behaviours casa-rs follows for parity:
 [MatrixCleaner's stop iteration](#matrixcleaner-counts-the-iteration-that-stops-it),
 [exact peak comparisons](#peak-searches-let-rounding-choose-between-equal-pixels),
 [multi-term weight normalization](#the-multi-term-weight-normalization-override-is-never-called),
-[the Airy beam's blockage term](#the-airy-beams-blockage-term-uses-the-inverse-length-ratio).
+[the Airy beam's blockage term](#the-airy-beams-blockage-term-uses-the-inverse-length-ratio),
+[the EVLA's 11052 MHz fit](#the-evlas-beam-table-has-no-11052-mhz-fit).
 CASA behaviours casa-rs does not follow:
 [odd-size scale convolutions](#multiscale-and-multi-term-scale-convolutions-shift-by-a-pixel-on-odd-image-sizes),
 [MatrixCleaner's step residual](#matrixcleaners-step-residual-forgets-earlier-steps),
@@ -36,6 +37,8 @@ Simulator behaviours casa-rs does not follow:
 [total power in cross-correlations](#sdgrid-predicts-total-power-into-cross-correlations-with-no-positive-uvw).
 Simulator behaviours casa-rs follows:
 [`observemany`'s padded single name](#observemany-pads-one-name-with-empty-ones).
+Component-list behaviours casa-rs does not follow:
+[a limb-darkened disk without an exponent](#writing-a-limb-darkened-disk-without-an-exponent-aborts-casa).
 
 ## AW-projection pairs the partner hand's visibility with the conjugate-baseline cell
 
@@ -621,6 +624,24 @@ and were not probed. casa-rs's check opens each model as the simulator reads
 it, so a FITS or complex model raises RuntimeError "Unable to open image …"
 at the call.
 
+## Writing a limb-darkened disk without an exponent aborts CASA
+
+- Date noted: 2026-10-23
+- Status: CASA behaviour casa-rs does not follow (#841)
+- Affected code: `casatools/src/code/components/ComponentModels/ComponentList.cc`
+  (`writeTable`, lines 1016-1022; `readTable`, lines 1155-1161)
+
+A component list holding a limb-darkened disk gets an `Optional_Parameters`
+column, and `writeTable` puts each such component's optional parameters in
+it; the first is the disk's limb-darkening exponent. A limb-darkened disk
+made through `cl.fromrecord` without `optionalParameters` has none, and
+writing it throws `casacore::indexError` from the `ComponentList`
+destructor, which terminates the process (probed with CASA 6.7.6: `fromrecord`
+and `rename` succeed, `close` aborts). Had the empty vector been stored,
+`readTable` would read its first element out of bounds. casa-rs leaves the
+cell undefined, which CASA reads as the shape's default exponent of 0.05, as
+it reads every other row the column does not describe.
+
 ## `setmosaicfield` sits its grid off the field centre
 
 - Date noted: 2026-10-23
@@ -728,3 +749,20 @@ zero or negative passes that test and is given the pointing's total power as
 if it were one dish's autocorrelation. Read from the source; a probe with two
 antennas saw only rows with a positive component. casa-rs predicts total
 power into autocorrelations only.
+
+## The EVLA's beam table has no 11052 MHz fit
+
+- Date noted: 2026-10-23
+- Status: likely CASA bug; casa-rs follows it for parity (#841 Phase 2)
+- Affected code: `synthesis/TransformMachines/PBMath1DEVLA.cc` (`init`,
+  line 320)
+
+`PBMath1DEVLA::init` fills its map of polynomial beam fits by frequency, in
+MHz, one 128 MHz step at a time. In X band the sequence runs 10948, then
+10052, then 11180: the second 10052 was meant for 11052. Through
+`std::map::operator[]` it replaces the first 10052 fit, so the map has no
+11052 entry. The 10052 MHz frequencies use the fit meant for 11052, and
+those near 11052 MHz take a neighbour's. The coefficients differ by about 1%
+in the linear term, which moves the beam by a few 1e-3 at its half power.
+casa-rs's table (`casa_numerics::EvlaPowerPattern`, shared by the
+simulator and imaging) is CASA's map as built.

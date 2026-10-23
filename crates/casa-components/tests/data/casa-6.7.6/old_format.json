@@ -1,0 +1,530 @@
+{
+ "casa_version": "6.7.6-14",
+ "cells": {
+  "Direction_Frame": [
+   "J2000",
+   "B1950",
+   "GALACTIC"
+  ],
+  "Flux": [
+   [
+    [
+     1.0,
+     0.0
+    ],
+    [
+     0.0,
+     0.0
+    ],
+    [
+     0.0,
+     0.0
+    ],
+    [
+     0.0,
+     0.0
+    ]
+   ],
+   [
+    [
+     0.75,
+     0.0
+    ],
+    [
+     0.0,
+     0.0
+    ],
+    [
+     0.0,
+     0.0
+    ],
+    [
+     0.0,
+     0.0
+    ]
+   ],
+   [
+    [
+     1.0,
+     0.0
+    ],
+    [
+     0.20000000298023224,
+     0.0
+    ],
+    [
+     0.10000000149011612,
+     0.0
+    ],
+    [
+     0.8999999761581421,
+     0.0
+    ]
+   ]
+  ],
+  "Flux_Polarisation": [
+   "Stokes",
+   "Stokes",
+   "Stokes"
+  ],
+  "Flux_Unit": [
+   "Jy",
+   "Jy",
+   "Jy"
+  ],
+  "Frequency_Frame": [
+   "LSRK",
+   "TOPO",
+   "LSRK"
+  ],
+  "Label": [
+   "old point",
+   "old gaussian",
+   "old disk"
+  ],
+  "Reference_Direction": [
+   [
+    0.7853981633974482,
+    0.17453292519943295
+   ],
+   [
+    -1.5707963267948968,
+    -0.3490658503988659
+   ],
+   [
+    0.5235987755982988,
+    0.008726646259971648
+   ]
+  ],
+  "Reference_Frequency": [
+   1400000000.0,
+   22000000000.0,
+   5000000000.0
+  ],
+  "Shape": [
+   "Point",
+   "Gaussian",
+   "Disk"
+  ],
+  "Shape_Parameters": [
+   [],
+   [
+    4.84813681109536e-05,
+    2.42406840554768e-05,
+    0.17453292519943295
+   ],
+   [
+    0.0005817764173314432,
+    0.0002908882086657216,
+    -0.17453292519943295
+   ]
+  ],
+  "Spectral_Parameters": [
+   [],
+   [
+    -1.2
+   ],
+   []
+  ],
+  "Spectrum_Shape": [
+   "Constant",
+   "Spectral Index",
+   "Constant"
+  ]
+ },
+ "column_names": [
+  "Flux",
+  "Flux_Unit",
+  "Flux_Polarisation",
+  "Shape",
+  "Reference_Direction",
+  "Direction_Frame",
+  "Shape_Parameters",
+  "Spectrum_Shape",
+  "Reference_Frequency",
+  "Frequency_Frame",
+  "Spectral_Parameters",
+  "Label"
+ ],
+ "columns": {
+  "Direction_Frame": {
+   "comment": "The reference direction frame",
+   "dataManagerGroup": "StandardStMan",
+   "dataManagerType": "StandardStMan",
+   "keywords": {},
+   "maxlen": 0,
+   "option": 5,
+   "valueType": "string"
+  },
+  "Flux": {
+   "comment": "Flux values",
+   "dataManagerGroup": "StandardStMan",
+   "dataManagerType": "StandardStMan",
+   "keywords": {},
+   "maxlen": 0,
+   "ndim": 1,
+   "option": 5,
+   "shape": [
+    4
+   ],
+   "valueType": "dcomplex"
+  },
+  "Flux_Polarisation": {
+   "comment": "Flux polarisation representation",
+   "dataManagerGroup": "StandardStMan",
+   "dataManagerType": "StandardStMan",
+   "keywords": {},
+   "maxlen": 0,
+   "option": 5,
+   "valueType": "string"
+  },
+  "Flux_Unit": {
+   "comment": "Flux units",
+   "dataManagerGroup": "StandardStMan",
+   "dataManagerType": "StandardStMan",
+   "keywords": {},
+   "maxlen": 0,
+   "option": 5,
+   "valueType": "string"
+  },
+  "Frequency_Frame": {
+   "comment": "The reference frequency frame",
+   "dataManagerGroup": "StandardStMan",
+   "dataManagerType": "StandardStMan",
+   "keywords": {},
+   "maxlen": 0,
+   "option": 5,
+   "valueType": "string"
+  },
+  "Label": {
+   "comment": "An arbitrary label for the user",
+   "dataManagerGroup": "StandardStMan",
+   "dataManagerType": "StandardStMan",
+   "keywords": {},
+   "maxlen": 0,
+   "option": 5,
+   "valueType": "string"
+  },
+  "Reference_Direction": {
+   "comment": "Reference direction values",
+   "dataManagerGroup": "StandardStMan",
+   "dataManagerType": "StandardStMan",
+   "keywords": {
+    "MEASINFO": {
+     "VarRefCol": "Direction_Frame",
+     "type": "direction"
+    },
+    "QuantumUnits": [
+     "rad",
+     "rad"
+    ]
+   },
+   "maxlen": 0,
+   "ndim": 1,
+   "option": 5,
+   "shape": [
+    2
+   ],
+   "valueType": "double"
+  },
+  "Reference_Frequency": {
+   "comment": "The reference frequency values",
+   "dataManagerGroup": "StandardStMan",
+   "dataManagerType": "StandardStMan",
+   "keywords": {
+    "MEASINFO": {
+     "VarRefCol": "Frequency_Frame",
+     "type": "frequency"
+    },
+    "QuantumUnits": [
+     "Hz"
+    ]
+   },
+   "maxlen": 0,
+   "option": 5,
+   "valueType": "double"
+  },
+  "Shape": {
+   "comment": "Shape of the Component",
+   "dataManagerGroup": "StandardStMan",
+   "dataManagerType": "StandardStMan",
+   "keywords": {},
+   "maxlen": 0,
+   "option": 5,
+   "valueType": "string"
+  },
+  "Shape_Parameters": {
+   "comment": "Parameters specific to the component shape",
+   "dataManagerGroup": "StandardStMan",
+   "dataManagerType": "StandardStMan",
+   "keywords": {},
+   "maxlen": 0,
+   "ndim": 1,
+   "option": 0,
+   "valueType": "double"
+  },
+  "Spectral_Parameters": {
+   "comment": "Parameters specific to the components spectrum",
+   "dataManagerGroup": "StandardStMan",
+   "dataManagerType": "StandardStMan",
+   "keywords": {},
+   "maxlen": 0,
+   "ndim": 1,
+   "option": 0,
+   "valueType": "double"
+  },
+  "Spectrum_Shape": {
+   "comment": "Shape of the spectrum",
+   "dataManagerGroup": "StandardStMan",
+   "dataManagerType": "StandardStMan",
+   "keywords": {},
+   "maxlen": 0,
+   "option": 5,
+   "valueType": "string"
+  }
+ },
+ "components": [
+  {
+   "flux": {
+    "error": [
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "polarisation": "Stokes",
+    "unit": "Jy",
+    "value": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "label": "old point",
+   "shape": {
+    "direction": {
+     "error": {
+      "latitude": {
+       "unit": "rad",
+       "value": 0.0
+      },
+      "longitude": {
+       "unit": "rad",
+       "value": 0.0
+      }
+     },
+     "m0": {
+      "unit": "rad",
+      "value": 0.7853981633974482
+     },
+     "m1": {
+      "unit": "rad",
+      "value": 0.17453292519943295
+     },
+     "refer": "J2000",
+     "type": "direction"
+    },
+    "type": "Point"
+   },
+   "spectrum": {
+    "frequency": {
+     "m0": {
+      "unit": "GHz",
+      "value": 1.4000000000000001
+     },
+     "refer": "LSRK",
+     "type": "frequency"
+    },
+    "type": "Constant"
+   }
+  },
+  {
+   "flux": {
+    "error": [
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "polarisation": "Stokes",
+    "unit": "Jy",
+    "value": [
+     0.75,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "label": "old gaussian",
+   "shape": {
+    "direction": {
+     "error": {
+      "latitude": {
+       "unit": "rad",
+       "value": 0.0
+      },
+      "longitude": {
+       "unit": "rad",
+       "value": 0.0
+      }
+     },
+     "m0": {
+      "unit": "rad",
+      "value": -1.5707963267948968
+     },
+     "m1": {
+      "unit": "rad",
+      "value": -0.3490658503988659
+     },
+     "refer": "B1950",
+     "type": "direction"
+    },
+    "majoraxis": {
+     "unit": "arcmin",
+     "value": 0.16666666666666669
+    },
+    "majoraxiserror": {
+     "unit": "arcmin",
+     "value": 0.0
+    },
+    "minoraxis": {
+     "unit": "arcmin",
+     "value": 0.08333333333333334
+    },
+    "minoraxiserror": {
+     "unit": "arcmin",
+     "value": 0.0
+    },
+    "positionangle": {
+     "unit": "deg",
+     "value": 10.0
+    },
+    "positionangleerror": {
+     "unit": "deg",
+     "value": 0.0
+    },
+    "type": "Gaussian"
+   },
+   "spectrum": {
+    "error": 0.0,
+    "frequency": {
+     "m0": {
+      "unit": "GHz",
+      "value": 22.0
+     },
+     "refer": "TOPO",
+     "type": "frequency"
+    },
+    "index": -1.2,
+    "stokesindex": [
+     0.0
+    ],
+    "type": "Spectral Index"
+   }
+  },
+  {
+   "flux": {
+    "error": [
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "polarisation": "Stokes",
+    "unit": "Jy",
+    "value": [
+     1.0,
+     0.20000000298023224,
+     0.10000000149011612,
+     0.8999999761581421
+    ]
+   },
+   "label": "old disk",
+   "shape": {
+    "direction": {
+     "error": {
+      "latitude": {
+       "unit": "rad",
+       "value": 0.0
+      },
+      "longitude": {
+       "unit": "rad",
+       "value": 0.0
+      }
+     },
+     "m0": {
+      "unit": "rad",
+      "value": 0.5235987755982988
+     },
+     "m1": {
+      "unit": "rad",
+      "value": 0.008726646259971648
+     },
+     "refer": "GALACTIC",
+     "type": "direction"
+    },
+    "majoraxis": {
+     "unit": "arcmin",
+     "value": 2.0
+    },
+    "majoraxiserror": {
+     "unit": "arcmin",
+     "value": 0.0
+    },
+    "minoraxis": {
+     "unit": "arcmin",
+     "value": 1.0
+    },
+    "minoraxiserror": {
+     "unit": "arcmin",
+     "value": 0.0
+    },
+    "positionangle": {
+     "unit": "deg",
+     "value": -10.0
+    },
+    "positionangleerror": {
+     "unit": "deg",
+     "value": 0.0
+    },
+    "type": "Disk"
+   },
+   "spectrum": {
+    "frequency": {
+     "m0": {
+      "unit": "GHz",
+      "value": 5.0
+     },
+     "refer": "LSRK",
+     "type": "frequency"
+    },
+    "type": "Constant"
+   }
+  }
+ ],
+ "data_managers": [
+  {
+   "columns": [
+    "Direction_Frame",
+    "Flux",
+    "Flux_Polarisation",
+    "Flux_Unit",
+    "Frequency_Frame",
+    "Label",
+    "Reference_Direction",
+    "Reference_Frequency",
+    "Shape",
+    "Shape_Parameters",
+    "Spectral_Parameters",
+    "Spectrum_Shape"
+   ],
+   "type": "StandardStMan"
+  }
+ ],
+ "info": {
+  "readme": "This is a ComponentList Table containing parameterised representations\nof the sky brightness.\n",
+  "subType": "",
+  "type": "Component List"
+ }
+}
