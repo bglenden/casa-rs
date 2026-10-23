@@ -10,7 +10,7 @@
     "Every ALMA window is the alma models' band: 230 GHz, 4 channels of 15.625 MHz. A window elsewhere maps no channel onto a model plane and predicts zero.",
     "data: 'model' scenarios compare DATA by normalized RMS; 'noisy' ones compare noisy minus noise-free (their twin) by per-class noise variance, since the draws differ; 'zero' ones check DATA is zero.",
     "Times and the configuration keep every scenario free of shadowing and elevation flags, whose CASA flags are a recorded divergence.",
-    "The predict-mosaic-* scenarios predict through setoptions(ftmachine='mosaic') on the #875 probe's array: six 12 m and six 7 m antennas at ALMA in local coordinates (ACA's six alone in predict-mosaic-aca), on fields 10 to 17 arcsec from the model's centre. Their models (alma-mosaic/, alma-mosaic-wide/) come from the 'models' section: 320 pixels of 0.3 arcsec. predict-mosaic-het-cube-autos calls no setvp, since the mosaic's kernels carry the beams whatever it says, and writes autocorrelations; predict-mosaic-het-wide's 16 channels of 250 MHz take three of the simulator's frequency cells. CASA 6.7.6's sm.close() aborts after a mosaic predict, so they are 'close_aborts' (casa_sm_observe_oracle.py)."
+    "The predict-mosaic-* scenarios predict through setoptions(ftmachine='mosaic') on the #875 probe's array: six 12 m and six 7 m antennas at ALMA in local coordinates (ACA's six alone in predict-mosaic-aca), on fields 10 to 17 arcsec from the model's centre. Their models (alma-mosaic/, alma-mosaic-wide/) come from the 'models' section: 320 pixels of 0.3 arcsec. predict-mosaic-het-cube-autos calls no setvp, since the mosaic's kernels carry the beams whatever it says, and writes autocorrelations; predict-mosaic-het-wide's 16 channels of 250 MHz take three of the simulator's frequency cells, and predict-mosaic-het-two-windows observes both fields in two windows inside that model's band, so each window has its own cells and support. CASA 6.7.6's sm.close() aborts after a mosaic predict, so they are 'close_aborts' (casa_sm_observe_oracle.py)."
   ],
   "scenarios": [
     {
@@ -398,6 +398,28 @@
         {"op": "setfield", "sourcename": "F1", "sourcedirection": ["J2000", "10h00m00.7698", "-30d00m00.0"]},
         {"op": "observe", "sourcename": "F0", "spwname": "wide", "starttime": "-900s", "stoptime": "-780s"},
         {"op": "observe", "sourcename": "F1", "spwname": "wide", "starttime": "-780s", "stoptime": "-660s"},
+        {"op": "setvp", "dovp": true, "usedefaultvp": false},
+        {"op": "setoptions", "ftmachine": "mosaic"},
+        {"op": "predict", "imagename": "alma-mosaic-wide/model1.input.image"}
+      ]
+    },
+    {
+      "name": "predict-mosaic-het-two-windows",
+      "data": "model",
+      "close_aborts": true,
+      "config": {"local": {"telescopename": "ALMA", "x": [0, 35, -30, 20, -45, 60, 15, -15, 45, -60, 75, -5], "y": [0, 20, 25, -40, -10, 5, 50, -55, -25, 40, -35, 70], "z": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], "dishdiameter": [12, 12, 12, 12, 12, 12, 7, 7, 7, 7, 7, 7], "antname": ["A00", "A01", "A02", "A03", "A04", "A05", "A06", "A07", "A08", "A09", "A10", "A11"], "padname": ["P00", "P01", "P02", "P03", "P04", "P05", "P06", "P07", "P08", "P09", "P10", "P11"], "referencelocation": "ALMA"}, "mount": "alt-az"},
+      "calls": [
+        {"op": "setspwindow", "spwname": "lo", "freq": "228.5GHz", "deltafreq": "62.5MHz", "freqresolution": "62.5MHz", "refcode": "TOPO", "nchannels": 4, "stokes": "XX YY"},
+        {"op": "setspwindow", "spwname": "hi", "freq": "231GHz", "deltafreq": "62.5MHz", "freqresolution": "62.5MHz", "refcode": "TOPO", "nchannels": 4, "stokes": "XX YY"},
+        {"op": "setfeed", "mode": "perfect X Y"},
+        {"op": "setauto", "autocorrwt": 0.0},
+        {"op": "settimes", "integrationtime": "10s", "usehourangle": true, "referencetime": ["UTC", "2026/03/20/00:00:00"]},
+        {"op": "setfield", "sourcename": "F0", "sourcedirection": ["J2000", "09h59m59.2302", "-30d00m00.0"]},
+        {"op": "setfield", "sourcename": "F1", "sourcedirection": ["J2000", "10h00m00.7698", "-30d00m00.0"]},
+        {"op": "observe", "sourcename": "F0", "spwname": "lo", "starttime": "-900s", "stoptime": "-780s"},
+        {"op": "observe", "sourcename": "F1", "spwname": "hi", "starttime": "-780s", "stoptime": "-660s"},
+        {"op": "observe", "sourcename": "F0", "spwname": "hi", "starttime": "-660s", "stoptime": "-540s"},
+        {"op": "observe", "sourcename": "F1", "spwname": "lo", "starttime": "-540s", "stoptime": "-420s"},
         {"op": "setvp", "dovp": true, "usedefaultvp": false},
         {"op": "setoptions", "ftmachine": "mosaic"},
         {"op": "predict", "imagename": "alma-mosaic-wide/model1.input.image"}

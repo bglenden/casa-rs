@@ -466,7 +466,14 @@ impl<'s> PredictionStage<'s> {
             &self.correlation_indices,
             &self.frequencies[scan.spectral_window_id],
         );
-        let antenna_type = |antenna: usize| self.antenna_types.get(antenna).copied().unwrap_or(0);
+        let antenna_type = |antenna: usize| {
+            // A mosaic step classed every antenna of the scans it covers.
+            debug_assert!(
+                self.antenna_types.is_empty() || antenna < self.antenna_types.len(),
+                "antenna {antenna} has no dish class"
+            );
+            self.antenna_types.get(antenna).copied().unwrap_or(0)
+        };
         for (offset, row) in rows.iter().enumerate() {
             self.projections.clear();
             self.projections.extend(

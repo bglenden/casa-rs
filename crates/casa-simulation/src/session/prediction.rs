@@ -240,10 +240,13 @@ impl Prediction {
     /// mosaic machine's kernels ramp by; zero for the other machines.
     pub(crate) fn pointing_offset_rad(&self, centre_rad: [f64; 2]) -> [f64; 2] {
         let key = centre_rad.map(f64::to_bits);
-        self.pointings
-            .iter()
-            .find(|(known, _)| *known == key)
-            .map_or([0.0; 2], |(_, offset)| *offset)
+        let found = self.pointings.iter().find(|(known, _)| *known == key);
+        // A mosaic step measured every scan it covers.
+        debug_assert!(
+            found.is_some() || self.pointings.is_empty(),
+            "a mosaic step predicts rows phased on {centre_rad:?}, which it did not measure"
+        );
+        found.map_or([0.0; 2], |(_, offset)| *offset)
     }
 
     /// Each antenna's dish class, which keys the mosaic machine's kernels;
