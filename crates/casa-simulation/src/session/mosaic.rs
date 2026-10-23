@@ -34,7 +34,34 @@ fn diameter_key(diameter_m: f64) -> String {
     format!("{diameter_m:.5e}")
 }
 
+/// The most a diameter key's text holds: `format!` grows its string from
+/// nothing, to 16 bytes for its nine to twelve characters.
+const DIAMETER_KEY_BYTES: usize = 32;
+
+/// One pointing the mosaic machine keeps: a phase centre's bits and its
+/// offset.
+pub(super) type MosaicPointing = ([u64; 2], [f64; 2]);
+
 impl Simulator {
+    /// Bytes the mosaic machine's state holds, known before it is formed:
+    /// what the prediction keeps (a pointing for each scan's phase centre at
+    /// most, and each antenna's dish class), and what builds the beams
+    /// until the kernels are built (a dish and a diameter key for each
+    /// antenna at most, and every window's channel frequencies twice).
+    pub(super) fn mosaic_state_bytes(&self) -> (u64, u64) {
+        let kept =
+            self.scans.len() * size_of::<MosaicPointing>() + self.antennas.len() * size_of::<u8>();
+        let antennas = self.antennas.len()
+            * (size_of::<AiryDish>() + size_of::<String>() + DIAMETER_KEY_BYTES);
+        let windows = self.spectral_windows.len() * size_of::<MosaicWindow>()
+            + self
+                .spectral_windows
+                .iter()
+                .map(|window| 2 * window.channel_count * size_of::<f64>())
+                .sum::<usize>();
+        (kept as u64, (antennas + windows) as u64)
+    }
+
     /// The mosaic machine's beams for the scans observed so far, and each
     /// antenna's dish class.
     ///
@@ -51,8 +78,10 @@ impl Simulator {
                  are"
             )));
         }
-        let mut keys: Vec<String> = Vec::new();
-        let mut dishes = Vec::new();
+        // At most one class an antenna: the capacities are the bounds
+        // `mosaic_state_bytes` admits.
+        let mut keys: Vec<String> = Vec::with_capacity(self.antennas.len());
+        let mut dishes = Vec::with_capacity(self.antennas.len());
         let mut classes = Vec::with_capacity(self.antennas.len());
         for antenna in &self.antennas {
             // `findAntennaSizes` gives a dish class only to `diameter > 0`.
@@ -84,7 +113,7 @@ impl Simulator {
                 )
             })?);
         }
-        let mut windows: Vec<MosaicWindow> = Vec::new();
+        let mut windows: Vec<MosaicWindow> = Vec::with_capacity(self.spectral_windows.len());
         for scan in &self.scans {
             let id = scan.spectral_window_id;
             if windows
@@ -107,7 +136,8 @@ impl Simulator {
 
     /// Each distinct phase centre of the scans observed so far (its bits)
     /// and its pointing offset in `model`
-    /// ([`SkyModel::pointing_offset_rad`]).
+    /// ([`SkyModel::pointing_offset_rad`]), sorted by the bits. The capacity
+    /// is a pointing for each scan, the bound `mosaic_state_bytes` admits.
     ///
     /// # Errors
     ///
@@ -116,13 +146,10 @@ impl Simulator {
     pub(super) fn mosaic_pointings(
         &self,
         model: &SkyModel,
-    ) -> SimulatorResult<Vec<([u64; 2], [f64; 2])>> {
-        let mut pointings: Vec<([u64; 2], [f64; 2])> = Vec::new();
+    ) -> SimulatorResult<Vec<MosaicPointing>> {
+        let mut pointings: Vec<MosaicPointing> = Vec::with_capacity(self.scans.len());
         for scan in &self.scans {
             let key = scan.phase_center_rad.map(f64::to_bits);
-            if pointings.iter().any(|(known, _)| *known == key) {
-                continue;
-            }
             let offset = model
                 .pointing_offset_rad(scan.phase_center_rad)
                 .map_err(|error: PredictError| {
@@ -138,6 +165,8 @@ impl Simulator {
                 })?;
             pointings.push((key, offset));
         }
+        pointings.sort_unstable_by_key(|(key, _)| *key);
+        pointings.dedup_by_key(|(key, _)| *key);
         Ok(pointings)
     }
 }

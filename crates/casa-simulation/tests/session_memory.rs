@@ -895,8 +895,21 @@ fn predict_through(
     budget: u64,
     dishes: &[f64],
 ) -> Predicted {
+    predict_after(options, (ms, model, measures), budget, dishes, |sm| {
+        sm.observe(&scan(1)).expect("observe");
+    })
+}
+
+/// [`predict_through`] after `observe` sets the session's fields and scans.
+fn predict_after(
+    options: &PredictionOptions,
+    (ms, model, measures): (&Path, &Path, &Arc<dyn MeasuresProvider>),
+    budget: u64,
+    dishes: &[f64],
+    observe: impl FnOnce(&mut Simulator),
+) -> Predicted {
     let mut sm = configured_with_dishes(ms, measures, budget, 32, dishes);
-    sm.observe(&scan(1)).expect("observe");
+    observe(&mut sm);
     sm.set_options(options).expect("setoptions");
     let reserved = reserved_memory();
     let baseline = LIVE.load(Ordering::Relaxed);
@@ -1054,6 +1067,103 @@ fn a_mosaic_predict_holds_its_admission_and_keeps_what_it_charges() {
             "predict keeps {} bytes against the {} its reservations keep",
             kept.heap,
             kept.admitted
+        );
+    }
+}
+
+/// One-integration scans of the mosaic pointing law's cases.
+const MOSAIC_POINTING_SCANS: usize = 4_096;
+
+/// The mosaic machine keeps a pointing for each distinct phase centre and a
+/// dish class for each antenna, charged with its kernels (#879 review,
+/// Astra: 16,385 distinct pointings kept 1,048,448 bytes more than shared
+/// ones, with nothing more charged). One scan, then
+/// [`MOSAIC_POINTING_SCANS`] scans on one field and on as many fields inside
+/// the model: `predict` keeps what its reservations keep in each, and the
+/// many scans keep no more beyond them than the one by
+/// [`SCANS_ALLOWANCE_BYTES`], where 32 bytes a pointing uncharged would be
+/// 131 KB.
+#[test]
+fn a_mosaic_predict_charges_what_it_keeps_per_pointing() {
+    if !alone("a_mosaic_predict_charges_what_it_keeps_per_pointing") {
+        return;
+    }
+    let resources = resources(BUDGET_32);
+    charge_process_caches(resources.host(), resources.policy()).expect("the process caches");
+    let measures = casa_test_support::deterministic_measures_provider();
+    let root = tempfile::tempdir().expect("temporary directory");
+    let model = root.path().join("model.image");
+    write_model(&model, 32);
+    let ms = root.path().join("pointings.ms");
+    let options = PredictionOptions {
+        ftmachine: "mosaic".to_string(),
+        ..PredictionOptions::default()
+    };
+    let run = |scans: usize, distinct: bool| {
+        predict_after(
+            &options,
+            (&ms, &model, &measures),
+            BUDGET_MOSAIC,
+            &MOSAIC_DISHES,
+            |sm| {
+                for index in 0..scans {
+                    let source = if distinct {
+                        // A grid of pointings a tenth of a cell apart, within
+                        // 3.2 cells of the centre.
+                        let name = format!("p{index}");
+                        let [column, row] = [index % 64, index / 64].map(|at| at as f64 - 32.0);
+                        let direction = MDirection::from_angles(
+                            CENTRE_RAD[0] + column * 0.1 * CELL_RAD / CENTRE_RAD[1].cos(),
+                            CENTRE_RAD[1] + row * 0.1 * CELL_RAD,
+                            DirectionRef::J2000,
+                        );
+                        sm.set_field(&name, &direction, "", 0.0).expect("setfield");
+                        name
+                    } else {
+                        "target".to_string()
+                    };
+                    sm.observe(&ObserveSpec {
+                        source,
+                        ..scan_from(index, 1)
+                    })
+                    .expect("observe");
+                }
+            },
+        )
+    };
+    // Once unmeasured: state a process keeps once it has predicted.
+    run(MOSAIC_POINTING_SCANS, false);
+    let one = run(1, false);
+    let [shared, distinct] = [false, true].map(|distinct| run(MOSAIC_POINTING_SCANS, distinct));
+    let cases = [
+        ("one scan", one),
+        ("shared pointings", shared),
+        ("distinct pointings", distinct),
+    ];
+    for (label, Predicted { beyond, kept, .. }) in cases {
+        println!(
+            "{label}: predict kept {} against {} charged, {beyond} at most beyond its \
+             reservations",
+            kept.heap, kept.admitted
+        );
+        assert!(
+            beyond <= ALLOWANCE_BYTES as i64,
+            "{label}: predict held {beyond} bytes beyond its reservations at one moment"
+        );
+        assert!(
+            kept.unadmitted().unsigned_abs() <= ALLOWANCE_BYTES,
+            "{label}: predict keeps {} bytes against the {} its reservations keep",
+            kept.heap,
+            kept.admitted
+        );
+    }
+    for (label, many) in [("shared", shared), ("distinct", distinct)] {
+        assert!(
+            many.kept.unadmitted() - one.kept.unadmitted() <= SCANS_ALLOWANCE_BYTES as i64,
+            "{MOSAIC_POINTING_SCANS} scans, {label} pointings, keep {} bytes beyond the \
+             charge, one scan {}",
+            many.kept.unadmitted(),
+            one.kept.unadmitted()
         );
     }
 }

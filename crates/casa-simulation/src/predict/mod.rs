@@ -115,7 +115,8 @@ pub enum FtMachine {
     /// `TransformMachines/HetArrayConvFunc` (`ftmachine='mosaic'`): the
     /// primary beams of each dish pair convolved into the kernels, the
     /// pointing a phase ramp on them, on an unpadded grid, predicting
-    /// autocorrelations (`usezero` true) ([`MosaicBeams`]).
+    /// autocorrelations (`usezero` true). The session builds its beams from
+    /// the array's dish classes and the windows observed.
     Mosaic,
 }
 

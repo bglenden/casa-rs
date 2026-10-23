@@ -63,6 +63,10 @@ const KERNEL_PHASE: &str = "the simulator's convolution functions";
 /// transformed on them.
 const MOSAIC_SCREENS_PHASE: &str = "the simulator's mosaic screens";
 
+/// The phase the mosaic machine's pointings, dish classes and beams'
+/// inputs are admitted as.
+const MOSAIC_STATE_PHASE: &str = "the simulator's mosaic pointings and dish classes";
+
 /// The FTMachines CASA's simulator builds other than `GridFT`,
 /// `WProjectFT`, `MosaicFTNew` and `SDGrid`.
 const OTHER_FTMACHINES: [&str; 2] = ["both", "pbwproject"];
@@ -193,15 +197,17 @@ pub(crate) struct Prediction {
     /// field, the beam centred on it.
     grids: Vec<(Option<usize>, PreparedModelGrids)>,
     /// The mosaic machine's pointing offsets, from the model's pixel
-    /// `(nx/2, ny/2)`, by phase centre (its bits); empty for the others.
+    /// `(nx/2, ny/2)`, by phase centre (its bits), sorted by the bits; empty
+    /// for the others.
     pointings: Vec<([u64; 2], [f64; 2])>,
     /// The mosaic machine's dish class of each antenna; empty for the
     /// others.
     antenna_types: Vec<u8>,
     /// The grids' memory, admitted at `predict` and released with them.
     _reservation: Reservation,
-    /// What the operator's kernels keep, admitted as they were built and
-    /// released with them.
+    /// What the operator's kernels keep, and the mosaic machine's pointings
+    /// and dish classes, admitted as they were built and released with
+    /// them.
     _kernels: Reservation,
 }
 
@@ -240,7 +246,11 @@ impl Prediction {
     /// mosaic machine's kernels ramp by; zero for the other machines.
     pub(crate) fn pointing_offset_rad(&self, centre_rad: [f64; 2]) -> [f64; 2] {
         let key = centre_rad.map(f64::to_bits);
-        let found = self.pointings.iter().find(|(known, _)| *known == key);
+        let found = self
+            .pointings
+            .binary_search_by_key(&key, |(known, _)| *known)
+            .ok()
+            .map(|index| &self.pointings[index]);
         // A mosaic step measured every scan it covers.
         debug_assert!(
             found.is_some() || self.pointings.is_empty(),
@@ -519,8 +529,24 @@ impl Simulator {
         beam: Option<PrimaryBeam>,
     ) -> SimulatorResult<Prediction> {
         let machine = self.ft_machine()?;
+        let mut mosaic_state = None;
         let (beams, antenna_types, pointings) = match machine {
             FtMachine::Mosaic => {
+                // What the machine keeps per pointing and antenna, and its
+                // beams' inputs until the kernels are built, admitted before
+                // they are formed.
+                let (kept, building) = self.mosaic_state_bytes();
+                let resources = &self.options.resources;
+                let reservation = admit(
+                    resources.host(),
+                    resources.policy(),
+                    &Demand {
+                        phase: MOSAIC_STATE_PHASE,
+                        memory: kept + building,
+                    },
+                )
+                .map_err(SimulatorError::admission)?;
+                mosaic_state = Some((reservation, kept));
                 let (beams, antenna_types) = self.mosaic_beams()?;
                 (Some(beams), antenna_types, self.mosaic_pointings(model)?)
             }
@@ -540,8 +566,19 @@ impl Simulator {
         };
         let layout = ModelLayout::new(model, correlations, machine, beams)
             .map_err(|error| correlation_error(error, correlations))?;
-        let (kernels, kernel_reservation) = self.admitted_kernels(&layout)?;
+        let (kernels, mut kernel_reservation) = self.admitted_kernels(&layout)?;
+        // The operator drops the layout's beams.
         let operator = ModelOperator::new(layout, kernels, GridPrecision::F32);
+        if let Some((mut reservation, kept)) = mosaic_state {
+            debug_assert_eq!(
+                (pointings.capacity() * size_of::<([u64; 2], [f64; 2])>()
+                    + antenna_types.capacity()) as u64,
+                kept,
+                "the mosaic state keeps what was admitted for it"
+            );
+            reservation.retain(kept);
+            kernel_reservation.join(reservation);
+        }
         let image_beam = beam.filter(|_| machine != FtMachine::Mosaic);
         let mut prediction = self.prepare(model, operator, image_beam, kernel_reservation)?;
         prediction.pointings = pointings;
