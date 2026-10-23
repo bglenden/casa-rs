@@ -1,0 +1,109 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `crates/casa-components/src/lib.rs`."><title>lib.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-0c87338a.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="casa_components" data-themes="" data-resource-suffix="" data-rustdoc-version="1.99.1 (58cf8f9c3 2026-10-13)" data-channel="1.99.1" data-search-js="search-cf4fc35e.js" data-stringdex-js="stringdex-b5109af9.js" data-settings-js="settings-170eb4bf.js" ><script src="../../static.files/storage-41dd4d93.js"></script><script defer src="../../static.files/src-script-813739b1.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-417ebf0a.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-9f56287d.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><h1><div class="sub-heading">casa_components/</div>lib.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-3"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// SPDX-License-Identifier: LGPL-3.0-or-later
+<a href=#2 id=2 data-nosnippet>2</a></span><span class="doccomment">//! CASA component lists: parameterised models of the sky brightness, and the
+<a href=#3 id=3 data-nosnippet>3</a>//! casacore tables CASA keeps them in.
+<a href=#4 id=4 data-nosnippet>4</a>//!
+<a href=#5 id=5 data-nosnippet>5</a>//! A component list is an ordered list of sky components. Each component has
+<a href=#6 id=6 data-nosnippet>6</a>//! a flux, a shape that places it on the sky and spreads it, a spectral model
+<a href=#7 id=7 data-nosnippet>7</a>//! that scales it with frequency, a label, and optional parameters. This crate
+<a href=#8 id=8 data-nosnippet>8</a>//! models them as CASA's `components` module (`ComponentModels/` in casatools)
+<a href=#9 id=9 data-nosnippet>9</a>//! does, with Rust enums in place of its class hierarchies:
+<a href=#10 id=10 data-nosnippet>10</a>//!
+<a href=#11 id=11 data-nosnippet>11</a>//! | casa-rs | CASA |
+<a href=#12 id=12 data-nosnippet>12</a>//! |---|---|
+<a href=#13 id=13 data-nosnippet>13</a>//! | [`ComponentList`] | `ComponentList` |
+<a href=#14 id=14 data-nosnippet>14</a>//! | [`SkyComponent`] | `SkyComponent` / `SkyCompRep` |
+<a href=#15 id=15 data-nosnippet>15</a>//! | [`Flux`] with [`Polarisation`] | `Flux&lt;Double&gt;` / `FluxRep` with `ComponentType::Polarisation` |
+<a href=#16 id=16 data-nosnippet>16</a>//! | [`ComponentShape`] with [`ShapeKind`] | `ComponentShape`: `PointShape`, `GaussianShape`, `DiskShape`, `LimbDarkenedDiskShape` |
+<a href=#17 id=17 data-nosnippet>17</a>//! | [`SpectralModel`] with [`SpectralKind`] | `SpectralModel`: `ConstantSpectrum`, `SpectralIndex`, `TabularSpectrum`, `PowerLogPoly` |
+<a href=#18 id=18 data-nosnippet>18</a>//! | [`ShapeType`], [`SpectralType`] | `ComponentType::Shape`, `ComponentType::SpectralShape` |
+<a href=#19 id=19 data-nosnippet>19</a>//!
+<a href=#20 id=20 data-nosnippet>20</a>//! Directions and frequencies are casa-types measures
+<a href=#21 id=21 data-nosnippet>21</a>//! ([`MDirection`](casa_types::measures::direction::MDirection),
+<a href=#22 id=22 data-nosnippet>22</a>//! [`MFrequency`](casa_types::measures::frequency::MFrequency)) carrying their
+<a href=#23 id=23 data-nosnippet>23</a>//! frames, and errors that carry units are casa-types
+<a href=#24 id=24 data-nosnippet>24</a>//! [`Quantity`](casa_types::quanta::Quantity) values.
+<a href=#25 id=25 data-nosnippet>25</a>//!
+<a href=#26 id=26 data-nosnippet>26</a>//! [`ComponentList::read_table`] reads a table as CASA's
+<a href=#27 id=27 data-nosnippet>27</a>//! `ComponentList::readTable` does, and [`ComponentList::write_table`] writes
+<a href=#28 id=28 data-nosnippet>28</a>//! one as its `createTable` and `writeTable` do, so CASA reads it back
+<a href=#29 id=29 data-nosnippet>29</a>//! unchanged.
+<a href=#30 id=30 data-nosnippet>30</a>//!
+<a href=#31 id=31 data-nosnippet>31</a>//! # The table format
+<a href=#32 id=32 data-nosnippet>32</a>//!
+<a href=#33 id=33 data-nosnippet>33</a>//! A component list is a casacore table with one row per component. Its
+<a href=#34 id=34 data-nosnippet>34</a>//! table description is named `ComponentListDescription`, version `4`, with
+<a href=#35 id=35 data-nosnippet>35</a>//! the comment "A description of a component list"; its table info has type
+<a href=#36 id=36 data-nosnippet>36</a>//! `Component List`, no subtype, and two readme lines. Every column is in one
+<a href=#37 id=37 data-nosnippet>37</a>//! `StandardStMan` except `Optional_Parameters`.
+<a href=#38 id=38 data-nosnippet>38</a>//!
+<a href=#39 id=39 data-nosnippet>39</a>//! | column | type | options | holds |
+<a href=#40 id=40 data-nosnippet>40</a>//! |---|---|---|---|
+<a href=#41 id=41 data-nosnippet>41</a>//! | `Flux` | `DComplex[4]` | Direct | [`Flux::values`] |
+<a href=#42 id=42 data-nosnippet>42</a>//! | `Flux_Unit` | `String` | Direct | the flux unit's name |
+<a href=#43 id=43 data-nosnippet>43</a>//! | `Flux_Polarisation` | `String` | Direct | `Stokes`, `Linear` or `Circular` |
+<a href=#44 id=44 data-nosnippet>44</a>//! | `Flux_Error` | `DComplex[4]` | Direct | [`Flux::errors`] |
+<a href=#45 id=45 data-nosnippet>45</a>//! | `Shape` | `String` | Direct | [`ShapeType::casa_name`] |
+<a href=#46 id=46 data-nosnippet>46</a>//! | `Reference_Direction` | `Double[2]` | Direct | longitude and latitude, rad |
+<a href=#47 id=47 data-nosnippet>47</a>//! | `Direction_Frame` | `String` | Direct | the direction's frame |
+<a href=#48 id=48 data-nosnippet>48</a>//! | `Direction_Error` | `Double[2]` | Direct | latitude and longitude errors |
+<a href=#49 id=49 data-nosnippet>49</a>//! | `Direction_Error_Units` | `String[2]` | Direct | their units |
+<a href=#50 id=50 data-nosnippet>50</a>//! | `Shape_Parameters` | `Double` vector | | [`ComponentShape::parameters`] |
+<a href=#51 id=51 data-nosnippet>51</a>//! | `Shape_Error` | `Double` vector | | [`ComponentShape::errors`] |
+<a href=#52 id=52 data-nosnippet>52</a>//! | `Spectrum_Shape` | `String` | Direct | [`SpectralType::casa_name`] |
+<a href=#53 id=53 data-nosnippet>53</a>//! | `Reference_Frequency` | `Double` | Direct | the reference frequency, Hz |
+<a href=#54 id=54 data-nosnippet>54</a>//! | `Frequency_Frame` | `String` | Direct | its frame |
+<a href=#55 id=55 data-nosnippet>55</a>//! | `Frequency_Error` | `Double` | Direct | its error |
+<a href=#56 id=56 data-nosnippet>56</a>//! | `Frequency_Error_Units` | `String` | Direct | the error's unit |
+<a href=#57 id=57 data-nosnippet>57</a>//! | `Spectral_Parameters` | `Double` vector | | [`SpectralModel::parameters`] |
+<a href=#58 id=58 data-nosnippet>58</a>//! | `Spectral_Error` | `Double` vector | | [`SpectralModel::errors`] |
+<a href=#59 id=59 data-nosnippet>59</a>//! | `Label` | `String` | Direct | [`SkyComponent::label`] |
+<a href=#60 id=60 data-nosnippet>60</a>//! | `Optional_Parameters` | `Double` vector | Undefined | [`SkyComponent::optional_parameters`], limb-darkened disks only, in a `TiledCellStMan` with one-element tiles |
+<a href=#61 id=61 data-nosnippet>61</a>//! | `Spectral_Record` | record | | what CASA's spectral `toRecord` writes |
+<a href=#62 id=62 data-nosnippet>62</a>//!
+<a href=#63 id=63 data-nosnippet>63</a>//! (A Direct column also carries casacore's FixedShape option.) The keywords
+<a href=#64 id=64 data-nosnippet>64</a>//! are casacore's measure and quantum descriptions:
+<a href=#65 id=65 data-nosnippet>65</a>//!
+<a href=#66 id=66 data-nosnippet>66</a>//! - `Reference_Direction`: `QuantumUnits = ["rad", "rad"]` and
+<a href=#67 id=67 data-nosnippet>67</a>//!   `MEASINFO = {type: "direction", VarRefCol: "Direction_Frame"}`;
+<a href=#68 id=68 data-nosnippet>68</a>//! - `Reference_Frequency`: `QuantumUnits = ["Hz"]` and
+<a href=#69 id=69 data-nosnippet>69</a>//!   `MEASINFO = {type: "frequency", VarRefCol: "Frequency_Frame"}`;
+<a href=#70 id=70 data-nosnippet>70</a>//! - `Direction_Error`: `VariableUnits = "Direction_Error_Units"`;
+<a href=#71 id=71 data-nosnippet>71</a>//! - `Frequency_Error`: `VariableUnits = "Frequency_Error_Units"`.
+<a href=#72 id=72 data-nosnippet>72</a>//!
+<a href=#73 id=73 data-nosnippet>73</a>//! `Optional_Parameters` exists only in lists holding a limb-darkened disk.
+<a href=#74 id=74 data-nosnippet>74</a>//! Lists written before CASA added them lack the error columns and
+<a href=#75 id=75 data-nosnippet>75</a>//! `Spectral_Record`; such lists read with zero errors and with each spectral
+<a href=#76 id=76 data-nosnippet>76</a>//! model's defaults for what only the record holds.
+<a href=#77 id=77 data-nosnippet>77</a>//!
+<a href=#78 id=78 data-nosnippet>78</a>//! # Deliberately not here
+<a href=#79 id=79 data-nosnippet>79</a>//!
+<a href=#80 id=80 data-nosnippet>80</a>//! - **Evaluating components:** sampling a component on an image or
+<a href=#81 id=81 data-nosnippet>81</a>//!   predicting its visibilities. The model keeps every value prediction
+<a href=#82 id=82 data-nosnippet>82</a>//!   needs, in CASA's units and conventions.
+<a href=#83 id=83 data-nosnippet>83</a>//! - **The `cl` tool:** CASA's `componentlist` tool and its record forms
+<a href=#84 id=84 data-nosnippet>84</a>//!   (`torecord`, `fromrecord`, `getcomponent`), its selection state and its
+<a href=#85 id=85 data-nosnippet>85</a>//!   in-place table rewriting.
+<a href=#86 id=86 data-nosnippet>86</a>//! - **Display units:** CASA remembers the units each shape axis was given in;
+<a href=#87 id=87 data-nosnippet>87</a>//!   tables do not store them, and casa-rs keeps radians.
+<a href=#88 id=88 data-nosnippet>88</a>//! - **Table keywords:** a list's table keywords (`cl.putkeyword`) are not
+<a href=#89 id=89 data-nosnippet>89</a>//!   read or written.
+<a href=#90 id=90 data-nosnippet>90</a>
+<a href=#91 id=91 data-nosnippet>91</a></span><span class="kw">mod </span>component;
+<a href=#92 id=92 data-nosnippet>92</a><span class="kw">mod </span>component_type;
+<a href=#93 id=93 data-nosnippet>93</a><span class="kw">mod </span>error;
+<a href=#94 id=94 data-nosnippet>94</a><span class="kw">mod </span>flux;
+<a href=#95 id=95 data-nosnippet>95</a><span class="kw">mod </span>list;
+<a href=#96 id=96 data-nosnippet>96</a><span class="kw">mod </span>shape;
+<a href=#97 id=97 data-nosnippet>97</a><span class="kw">mod </span>spectrum;
+<a href=#98 id=98 data-nosnippet>98</a><span class="kw">mod </span>table;
+<a href=#99 id=99 data-nosnippet>99</a>
+<a href=#100 id=100 data-nosnippet>100</a><span class="kw">pub use </span>component::{DEFAULT_LIMB_DARKENING_EXPONENT, SkyComponent};
+<a href=#101 id=101 data-nosnippet>101</a><span class="kw">pub use </span>component_type::{Polarisation, ShapeType, SpectralType};
+<a href=#102 id=102 data-nosnippet>102</a><span class="kw">pub use </span>error::{ComponentError, ComponentListError};
+<a href=#103 id=103 data-nosnippet>103</a><span class="kw">pub use </span>flux::Flux;
+<a href=#104 id=104 data-nosnippet>104</a><span class="kw">pub use </span>list::ComponentList;
+<a href=#105 id=105 data-nosnippet>105</a><span class="kw">pub use </span>shape::{ComponentShape, DirectionError, Ellipse, EllipseErrors, ShapeKind};
+<a href=#106 id=106 data-nosnippet>106</a><span class="kw">pub use </span>spectrum::{
+<a href=#107 id=107 data-nosnippet>107</a>    PowerLogPolynomial, SpectralIndex, SpectralKind, SpectralModel, TabularSpectrum,
+<a href=#108 id=108 data-nosnippet>108</a>};
+</code></pre></div></section></main></body></html>

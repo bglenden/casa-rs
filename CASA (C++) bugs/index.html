@@ -1093,6 +1093,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#writing-a-limb-darkened-disk-without-an-exponent-aborts-casa" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Writing a limb-darkened disk without an exponent aborts CASA
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#setmosaicfield-sits-its-grid-off-the-field-centre" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1136,6 +1147,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#the-evlas-beam-table-has-no-11052-mhz-fit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The EVLA's beam table has no 11052 MHz fit
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1162,7 +1184,8 @@ CASA behaviours casa-rs follows for parity:
 <a href="#matrixcleaner-counts-the-iteration-that-stops-it">MatrixCleaner's stop iteration</a>,
 <a href="#peak-searches-let-rounding-choose-between-equal-pixels">exact peak comparisons</a>,
 <a href="#the-multi-term-weight-normalization-override-is-never-called">multi-term weight normalization</a>,
-<a href="#the-airy-beams-blockage-term-uses-the-inverse-length-ratio">the Airy beam's blockage term</a>.
+<a href="#the-airy-beams-blockage-term-uses-the-inverse-length-ratio">the Airy beam's blockage term</a>,
+<a href="#the-evlas-beam-table-has-no-11052-mhz-fit">the EVLA's 11052 MHz fit</a>.
 CASA behaviours casa-rs does not follow:
 <a href="#multiscale-and-multi-term-scale-convolutions-shift-by-a-pixel-on-odd-image-sizes">odd-size scale convolutions</a>,
 <a href="#matrixcleaners-step-residual-forgets-earlier-steps">MatrixCleaner's step residual</a>,
@@ -1187,7 +1210,9 @@ Simulator behaviours casa-rs does not follow:
 <a href="#observemany-adds-rows-before-it-looks-up-later-fields"><code>observemany</code>'s rows before an unknown field</a>,
 <a href="#smpredict-through-wprojectft-without-planes-crashes-the-simulator">W projection without planes</a>.
 Simulator behaviours casa-rs follows:
-<a href="#observemany-pads-one-name-with-empty-ones"><code>observemany</code>'s padded single name</a>.</p>
+<a href="#observemany-pads-one-name-with-empty-ones"><code>observemany</code>'s padded single name</a>.
+Component-list behaviours casa-rs does not follow:
+<a href="#writing-a-limb-darkened-disk-without-an-exponent-aborts-casa">a limb-darkened disk without an exponent</a>.</p>
 <h2 id="aw-projection-pairs-the-partner-hands-visibility-with-the-conjugate-baseline-cell">AW-projection pairs the partner hand's visibility with the conjugate-baseline cell<a class="headerlink" href="#aw-projection-pairs-the-partner-hands-visibility-with-the-conjugate-baseline-cell" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-10-09</li>
@@ -1715,6 +1740,23 @@ and returns False, and the script continues with DATA not predicted. These outco
 and were not probed. casa-rs's check opens each model as the simulator reads
 it, so a FITS or complex model raises RuntimeError "Unable to open image …"
 at the call.</p>
+<h2 id="writing-a-limb-darkened-disk-without-an-exponent-aborts-casa">Writing a limb-darkened disk without an exponent aborts CASA<a class="headerlink" href="#writing-a-limb-darkened-disk-without-an-exponent-aborts-casa" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-10-23</li>
+<li>Status: CASA behaviour casa-rs does not follow (#841)</li>
+<li>Affected code: <code>casatools/src/code/components/ComponentModels/ComponentList.cc</code>
+  (<code>writeTable</code>, lines 1016-1022; <code>readTable</code>, lines 1155-1161)</li>
+</ul>
+<p>A component list holding a limb-darkened disk gets an <code>Optional_Parameters</code>
+column, and <code>writeTable</code> puts each such component's optional parameters in
+it; the first is the disk's limb-darkening exponent. A limb-darkened disk
+made through <code>cl.fromrecord</code> without <code>optionalParameters</code> has none, and
+writing it throws <code>casacore::indexError</code> from the <code>ComponentList</code>
+destructor, which terminates the process (probed with CASA 6.7.6: <code>fromrecord</code>
+and <code>rename</code> succeed, <code>close</code> aborts). Had the empty vector been stored,
+<code>readTable</code> would read its first element out of bounds. casa-rs leaves the
+cell undefined, which CASA reads as the shape's default exponent of 0.05, as
+it reads every other row the column does not describe.</p>
 <h2 id="setmosaicfield-sits-its-grid-off-the-field-centre"><code>setmosaicfield</code> sits its grid off the field centre<a class="headerlink" href="#setmosaicfield-sits-its-grid-off-the-field-centre" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-10-23</li>
@@ -1797,6 +1839,22 @@ planes").</p>
 - Autocorrelations predict zero, since the machine is built with <code>usezero</code>
   off.
 - Rows beyond the largest w the planes reach (<code>0.25/|cell|</code>) predict zero.</p>
+<h2 id="the-evlas-beam-table-has-no-11052-mhz-fit">The EVLA's beam table has no 11052 MHz fit<a class="headerlink" href="#the-evlas-beam-table-has-no-11052-mhz-fit" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-10-23</li>
+<li>Status: likely CASA bug; casa-rs follows it for parity (#841 Phase 2)</li>
+<li>Affected code: <code>synthesis/TransformMachines/PBMath1DEVLA.cc</code> (<code>init</code>,
+  line 320)</li>
+</ul>
+<p><code>PBMath1DEVLA::init</code> fills its map of polynomial beam fits by frequency, in
+MHz, one 128 MHz step at a time. In X band the sequence runs 10948, then
+10052, then 11180: the second 10052 was meant for 11052. Through
+<code>std::map::operator[]</code> it replaces the first 10052 fit, so the map has no
+11052 entry. The 10052 MHz frequencies use the fit meant for 11052, and
+those near 11052 MHz take a neighbour's. The coefficients differ by about 1%
+in the linear term, which moves the beam by a few 1e-3 at its half power.
+casa-rs's table (<code>casa_numerics::EvlaPowerPattern</code>, shared by the
+simulator and imaging) is CASA's map as built.</p>
 
 
 

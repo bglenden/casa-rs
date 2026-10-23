@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["DEFAULT_LIMB_DARKENING_EXPONENT"],"enum":["ComponentError","ComponentListError","Polarisation","ShapeKind","ShapeType","SpectralKind","SpectralType"],"struct":["ComponentList","ComponentShape","DirectionError","Ellipse","EllipseErrors","Flux","PowerLogPolynomial","SkyComponent","SpectralIndex","SpectralModel","TabularSpectrum"]};
