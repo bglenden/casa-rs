@@ -9,7 +9,8 @@ CASA behaviours casa-rs follows for parity:
 [MatrixCleaner's stop iteration](#matrixcleaner-counts-the-iteration-that-stops-it),
 [exact peak comparisons](#peak-searches-let-rounding-choose-between-equal-pixels),
 [multi-term weight normalization](#the-multi-term-weight-normalization-override-is-never-called),
-[the Airy beam's blockage term](#the-airy-beams-blockage-term-uses-the-inverse-length-ratio).
+[the Airy beam's blockage term](#the-airy-beams-blockage-term-uses-the-inverse-length-ratio),
+[the EVLA's 11052 MHz fit](#the-evlas-beam-table-has-no-11052-mhz-fit).
 CASA behaviours casa-rs does not follow:
 [odd-size scale convolutions](#multiscale-and-multi-term-scale-convolutions-shift-by-a-pixel-on-odd-image-sizes),
 [MatrixCleaner's step residual](#matrixcleaners-step-residual-forgets-earlier-steps),
@@ -711,3 +712,20 @@ What casa-rs follows of the same machine:
 - Autocorrelations predict zero, since the machine is built with `usezero`
   off.
 - Rows beyond the largest w the planes reach (`0.25/|cell|`) predict zero.
+
+## The EVLA's beam table has no 11052 MHz fit
+
+- Date noted: 2026-10-23
+- Status: likely CASA bug; casa-rs follows it for parity (#841 Phase 2)
+- Affected code: `synthesis/TransformMachines/PBMath1DEVLA.cc` (`init`,
+  line 320)
+
+`PBMath1DEVLA::init` fills its map of polynomial beam fits by frequency, in
+MHz, one 128 MHz step at a time. In X band the sequence runs 10948, then
+10052, then 11180: the second 10052 was meant for 11052. Through
+`std::map::operator[]` it replaces the first 10052 fit, so the map has no
+11052 entry. The 10052 MHz frequencies use the fit meant for 11052, and
+those near 11052 MHz take a neighbour's. The coefficients differ by about 1%
+in the linear term, which moves the beam by a few 1e-3 at its half power.
+casa-rs's table (`casa_numerics::EvlaPowerPattern`, shared by the
+simulator and imaging) is CASA's map as built.
