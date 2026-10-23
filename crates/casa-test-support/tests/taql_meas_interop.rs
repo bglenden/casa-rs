@@ -204,9 +204,11 @@ fn epoch_last_with_position() {
     .unwrap();
     let cpp_seconds = cpp_last.fract() * SECONDS_PER_DAY;
 
+    // 4e-8 s on 2026-10-22. Before the oracle read casa-rs's IERS tables
+    // (#845) the two sides' dUT1 vintages put them 1.04e-4 s apart.
     let diff_s = (rust_mjd - cpp_seconds).abs();
     assert!(
-        diff_s < 1e-4,
+        diff_s < 1e-6,
         "epoch UTC→LAST: Rust={rust_mjd}, C++={cpp_seconds}, diff={diff_s}s"
     );
 }

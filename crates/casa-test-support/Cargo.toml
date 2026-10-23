@@ -92,6 +92,11 @@ path = "tests/measures_interop.rs"
 required-features = ["cpp-interop-tests"]
 
 [[test]]
+name = "measures_runtime_interop"
+path = "tests/measures_runtime_interop.rs"
+required-features = ["cpp-interop-tests"]
+
+[[test]]
 name = "baseline_uvw_interop"
 path = "tests/baseline_uvw_interop.rs"
 required-features = ["cpp-interop-tests"]

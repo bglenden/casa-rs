@@ -46,6 +46,7 @@ fn main() {
     build.file("src/cpp/casacore_cpp_quanta_shim.cpp");
     build.file("src/cpp/casacore_cpp_table_quantum.cpp");
     build.file("src/cpp/casacore_cpp_measures_shim.cpp");
+    build.file("src/cpp/casacore_cpp_measures_runtime_shim.cpp");
     build.file("src/cpp/casacore_cpp_table_complex_vararray.cpp");
     build.file("src/cpp/casacore_cpp_ms.cpp");
     build.file("src/cpp/casacore_cpp_image_shim.cpp");

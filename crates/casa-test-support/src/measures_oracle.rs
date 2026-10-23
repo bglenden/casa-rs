@@ -3,6 +3,8 @@
 
 #[cfg(has_casacore_cpp)]
 use crate::measures_interop::*;
+#[cfg(has_casacore_cpp)]
+use crate::measures_runtime_interop::{cpp_epoch_convert_iau2000a, cpp_measures_table_identity};
 use crate::oracle_runtime::{OracleError, oracle_operation};
 
 macro_rules! measures_operation {
@@ -677,6 +679,36 @@ impl MeasuresOracle {
                 operation: "measures.eop_query",
                 message,
             })
+        })
+    }
+
+    /// The path and `VS_DATE` keyword of the geodetic measures table `name`
+    /// (for example `IERSeop2000`) that casacore resolves for the oracle.
+    pub fn measures_table_identity(name: &str) -> Result<(String, String), OracleError> {
+        measures_operation!("measures.measures_table_identity", {
+            cpp_measures_table_identity(name).map_err(|message| OracleError::CppFailure {
+                operation: "measures.measures_table_identity",
+                message,
+            })
+        })
+    }
+
+    /// Convert an epoch with casacore's IAU 2006/2000A model; the result keeps
+    /// casacore's day count. `observatory_wgs84` is `[lon_rad, lat_rad,
+    /// height_m]`, all zero for a frame without a position.
+    pub fn epoch_convert_iau2000a(
+        mjd_in: f64,
+        ref_in: &str,
+        ref_out: &str,
+        observatory_wgs84: [f64; 3],
+    ) -> Result<f64, OracleError> {
+        measures_operation!("measures.epoch_convert_iau2000a", {
+            cpp_epoch_convert_iau2000a(mjd_in, ref_in, ref_out, observatory_wgs84).map_err(
+                |message| OracleError::CppFailure {
+                    operation: "measures.epoch_convert_iau2000a",
+                    message,
+                },
+            )
         })
     }
 

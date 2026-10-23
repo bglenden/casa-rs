@@ -1957,11 +1957,10 @@ fn eop_dut1_at_j2000() {
         .expect("J2000 should be in EOP range");
     let (cpp_dut1, _, _) = MeasuresOracle::eop_query(J2000_MJD).unwrap();
 
-    // C++ and Rust may use slightly different data vintages, so allow
-    // moderate tolerance. Both should agree to within ~10 ms.
+    // The oracle reads the Rust runtime's tables (#845): agreement to rounding.
     let diff = (rust_vals.dut1_seconds - cpp_dut1).abs();
     assert!(
-        diff < 0.01,
+        diff < 1e-9,
         "dUT1 at J2000: Rust={:.7}, C++={:.7}, diff={:.4}s",
         rust_vals.dut1_seconds,
         cpp_dut1,
@@ -1978,18 +1977,18 @@ fn eop_polar_motion_at_j2000() {
         .expect("J2000 should be in EOP range");
     let (_, cpp_xp, cpp_yp) = MeasuresOracle::eop_query(J2000_MJD).unwrap();
 
-    // Polar motion should agree to within ~1 mas (0.001 arcsec)
+    // One table set on both sides (#845): agreement to rounding.
     let xp_diff = (rust_vals.x_arcsec - cpp_xp).abs();
     let yp_diff = (rust_vals.y_arcsec - cpp_yp).abs();
     assert!(
-        xp_diff < 0.001,
+        xp_diff < 1e-9,
         "xp at J2000: Rust={:.6}\", C++={:.6}\", diff={:.6}\"",
         rust_vals.x_arcsec,
         cpp_xp,
         xp_diff
     );
     assert!(
-        yp_diff < 0.001,
+        yp_diff < 1e-9,
         "yp at J2000: Rust={:.6}\", C++={:.6}\", diff={:.6}\"",
         rust_vals.y_arcsec,
         cpp_yp,
@@ -2065,7 +2064,7 @@ fn eop_epoch_conversion_with_runtime_data() {
 
     let rust_ut1 = utc.convert_to(EpochRef::UT1, &frame).unwrap();
 
-    // C++ uses its own IERS tables for the same conversion
+    // C++ reads the same runtime's IERS tables through the oracle (#845)
     let cpp_ut1_mjd = MeasuresOracle::epoch_convert(J2000_MJD, "UTC", "UT1").unwrap();
 
     let diff_s = (rust_ut1.value().as_mjd() - cpp_ut1_mjd).abs() * SECONDS_PER_DAY;
@@ -2182,7 +2181,7 @@ fn eop_epoch_utc_to_gast() {
     let rust_ut1 = utc.convert_to(EpochRef::UT1, &frame).unwrap();
     let rust_gast = rust_ut1.convert_to(EpochRef::GAST, &frame).unwrap();
 
-    // C++ uses its own IERS tables; pass dut1=0.0 since it's ignored
+    // C++ reads dUT1 from the shared IERS tables; the dut1 argument is ignored
     let cpp_ut1_mjd = MeasuresOracle::epoch_convert(J2000_MJD, "UTC", "UT1").unwrap();
     let cpp_gast = MeasuresOracle::epoch_convert_with_frame(
         cpp_ut1_mjd,
@@ -2358,8 +2357,9 @@ fn accepted_direction_divergence_routes_are_bounded() {
     }
 
     let source = MDirection::from_angles(1.0, 0.5, DirectionRef::J2000);
+    // IAU 1976/1980 agrees to 1 µas once the oracle shares tables and model (#845).
     let cases = [
-        ("IAU1976/1980", IauModel::Iau1976_1980, 0.01_f64),
+        ("IAU1976/1980", IauModel::Iau1976_1980, 0.000_1_f64),
         ("IAU2006/2000A", IauModel::Iau2006_2000A, 0.03_f64),
     ];
     let routes = ["APP", "HADEC", "AZEL", "ITRF"];
