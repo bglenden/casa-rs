@@ -63,6 +63,44 @@ impl MeasurementSetWriteResources {
     }
 }
 
+/// Bytes the visibility columns' streamed tiled writers hold for cells of
+/// `(correlations, channels)` with the visibility, UVW and weight tile
+/// shapes `tiles`: a band of tiles and an I/O buffer of `buffer_bytes`
+/// each, DATA's with `data_bands` bands, and the WEIGHT and SIGMA rows.
+fn visibility_writer_resident_bytes(
+    (correlations, channels): (usize, usize),
+    [visibility_tiles, uvw_tiles, weight_tiles]: [&[usize]; 3],
+    data_bands: usize,
+    buffer_bytes: usize,
+) -> Result<usize, MeasurementSetWriteError> {
+    let cell = [correlations, channels];
+    [
+        (&cell[..], visibility_tiles, 8 * data_bands),
+        (&cell[..], visibility_tiles, 1),
+        (&[3][..], uvw_tiles, 8),
+        (&[correlations][..], weight_tiles, 4),
+        (&[correlations][..], weight_tiles, 4),
+    ]
+    .into_iter()
+    .try_fold(0usize, |total, (cell_shape, tile_shape, element_bytes)| {
+        let bytes = sequential_tiled_writer_resident_bytes(
+            cell_shape,
+            tile_shape,
+            element_bytes,
+            buffer_bytes,
+        )?;
+        total
+            .checked_add(bytes)
+            .ok_or(MeasurementSetWriteError::ByteOverflow)
+    })?
+    .checked_add(
+        correlations
+            .checked_mul(2 * std::mem::size_of::<f32>())
+            .ok_or(MeasurementSetWriteError::ByteOverflow)?,
+    )
+    .ok_or(MeasurementSetWriteError::ByteOverflow)
+}
+
 fn sequential_tiled_writer_resident_bytes(
     cell_shape: &[usize],
     tile_shape: &[usize],
@@ -316,6 +354,9 @@ pub struct MeasurementSetWritePlan {
     uvw_tile_shape: Vec<usize>,
     /// Explicit I/O buffer capacity passed to every sequential tiled writer.
     tiled_column_buffer_bytes: usize,
+    /// Bands of tiles DATA's streamed writer holds: two when the budget
+    /// lets it lay one out while the other is written, else one.
+    data_bands: usize,
     /// Explicit selected MAIN rows for mutation plans.
     selected_rows: Vec<usize>,
     /// Exact columns owned by the operation.
@@ -376,48 +417,6 @@ impl MeasurementSetWritePlan {
         // finalization scratch after them.
         let scalar_buffer_bytes = streamed_scalar_columns_resident_bytes(scalar_columns.len())
             .ok_or(MeasurementSetWriteError::ByteOverflow)?;
-        let tiled_writer_bytes = [
-            (
-                &[correlation_count, channel_count][..],
-                &visibility_tile_shape[..],
-                8usize,
-            ),
-            (
-                &[correlation_count, channel_count][..],
-                &visibility_tile_shape[..],
-                1usize,
-            ),
-            (&[3][..], &uvw_tile_shape[..], 8usize),
-            (&[correlation_count][..], &weight_tile_shape[..], 4usize),
-            (&[correlation_count][..], &weight_tile_shape[..], 4usize),
-        ]
-        .into_iter()
-        .try_fold(0usize, |total, (cell_shape, tile_shape, element_bytes)| {
-            let bytes = sequential_tiled_writer_resident_bytes(
-                cell_shape,
-                tile_shape,
-                element_bytes,
-                resources.tiled_column_buffer_bytes,
-            )?;
-            total
-                .checked_add(bytes)
-                .ok_or(MeasurementSetWriteError::ByteOverflow)
-        })?
-        .checked_add(
-            correlation_count
-                .checked_mul(2 * std::mem::size_of::<f32>())
-                .ok_or(MeasurementSetWriteError::ByteOverflow)?,
-        )
-        .ok_or(MeasurementSetWriteError::ByteOverflow)?;
-        let fixed_writer_bytes = scalar_buffer_bytes
-            .checked_add(tiled_writer_bytes)
-            .ok_or(MeasurementSetWriteError::ByteOverflow)?;
-        if fixed_writer_bytes > resources.available_bytes {
-            return Err(MeasurementSetWriteError::InvalidPlan(format!(
-                "fixed scalar and tiled column buffers require {fixed_writer_bytes} bytes; writer budget is {} bytes",
-                resources.available_bytes
-            )));
-        }
         // DATA complex32 + FLAG + one possible writer-owned FLAG copy,
         // UVW f64[3], WEIGHT f32[ncorr], SIGMA f32[ncorr], and fixed-width scalars.
         let bytes_per_row = sample_count
@@ -426,6 +425,37 @@ impl MeasurementSetWritePlan {
             .and_then(|bytes| bytes.checked_add(correlation_count.checked_mul(4 + 4)?))
             .and_then(|bytes| bytes.checked_add(scalar_bytes_per_row))
             .ok_or(MeasurementSetWriteError::ByteOverflow)?;
+        let tile_rows = visibility_tile_shape.get(2).copied().unwrap_or(1).max(1);
+        let fixed_bytes = |data_bands: usize| {
+            visibility_writer_resident_bytes(
+                (correlation_count, channel_count),
+                [&visibility_tile_shape, &uvw_tile_shape, &weight_tile_shape],
+                data_bands,
+                resources.tiled_column_buffer_bytes,
+            )?
+            .checked_add(scalar_buffer_bytes)
+            .ok_or(MeasurementSetWriteError::ByteOverflow)
+        };
+        // DATA's writer holds a second band of tiles, which it fills while
+        // the first is written, when the budget still leaves each batch a
+        // whole band of rows beside it.
+        let band_fits = |fixed: usize| {
+            resources
+                .available_bytes
+                .checked_sub(fixed)
+                .is_some_and(|left| {
+                    left / resources.maximum_live_batches
+                        >= bytes_per_row.saturating_mul(tile_rows.min(row_count.max(1)))
+                })
+        };
+        let data_bands = if band_fits(fixed_bytes(2)?) { 2 } else { 1 };
+        let fixed_writer_bytes = fixed_bytes(data_bands)?;
+        if fixed_writer_bytes > resources.available_bytes {
+            return Err(MeasurementSetWriteError::InvalidPlan(format!(
+                "fixed scalar and tiled column buffers require {fixed_writer_bytes} bytes; writer budget is {} bytes",
+                resources.available_bytes
+            )));
+        }
         let streaming_budget = resources.available_bytes - fixed_writer_bytes;
         let per_batch_budget = streaming_budget / resources.maximum_live_batches;
         if row_count > 0 && per_batch_budget < bytes_per_row {
@@ -441,7 +471,6 @@ impl MeasurementSetWritePlan {
         // keep the producer and the writer overlapping with little resident
         // memory.
         let budget_rows = per_batch_budget / bytes_per_row;
-        let tile_rows = visibility_tile_shape.get(2).copied().unwrap_or(1).max(1);
         let mut batch_rows = if budget_rows >= tile_rows {
             (TARGET_BATCH_BYTES / bytes_per_row / tile_rows).clamp(1, budget_rows / tile_rows)
                 * tile_rows
@@ -539,6 +568,7 @@ impl MeasurementSetWritePlan {
             weight_tile_shape: weight_tile_shape.clone(),
             uvw_tile_shape: uvw_tile_shape.clone(),
             tiled_column_buffer_bytes: resources.tiled_column_buffer_bytes,
+            data_bands,
             selected_rows: Vec::new(),
             columns,
             array_columns: Vec::new(),
@@ -645,6 +675,7 @@ impl MeasurementSetWritePlan {
             weight_tile_shape: Vec::new(),
             uvw_tile_shape: Vec::new(),
             tiled_column_buffer_bytes: 0,
+            data_bands: 1,
             selected_rows,
             columns,
             array_columns: Vec::new(),
@@ -838,6 +869,7 @@ impl MeasurementSetWritePlan {
             weight_tile_shape: Vec::new(),
             uvw_tile_shape: Vec::new(),
             tiled_column_buffer_bytes: 0,
+            data_bands: 1,
             selected_rows: Vec::new(),
             columns,
             array_columns,
@@ -1255,7 +1287,12 @@ impl MeasurementSetWriteSession {
         let correlation_count = plan.correlation_count;
         let channel_count = plan.channel_count;
         let visibility_tile_shape = plan.visibility_tile_shape.clone();
-        let data_writer = StreamingTiledShapeComplex32Writer::create(
+        let create_data_writer = if plan.data_bands > 1 {
+            StreamingTiledShapeComplex32Writer::create_overlapped
+        } else {
+            StreamingTiledShapeComplex32Writer::create
+        };
+        let data_writer = create_data_writer(
             output.join(".casa-rs.DATA.table.f.tmp"),
             row_count,
             vec![correlation_count, channel_count],
@@ -2589,18 +2626,28 @@ mod tests {
             },
         )
         .expect("derive exact row bytes");
-        let error = MeasurementSetWritePlan::visibility_creation(
-            1,
-            1,
-            1,
-            "VLA",
-            MeasurementSetWriteResources {
-                available_bytes: row_plan.maximum_resident_bytes - 1,
-                maximum_live_batches: 1,
-                tiled_column_buffer_bytes: 0,
-            },
-        )
-        .expect_err("one row cannot fit");
+        assert_eq!(
+            row_plan.data_bands, 2,
+            "a large budget overlaps DATA's writes"
+        );
+        // A byte less gives up the second band of DATA tiles rather than
+        // the row, and a byte less than that cannot hold the row.
+        let plan = |available_bytes| {
+            MeasurementSetWritePlan::visibility_creation(
+                1,
+                1,
+                1,
+                "VLA",
+                MeasurementSetWriteResources {
+                    available_bytes,
+                    maximum_live_batches: 1,
+                    tiled_column_buffer_bytes: 0,
+                },
+            )
+        };
+        let one_band = plan(row_plan.maximum_resident_bytes - 1).expect("one band fits");
+        assert_eq!(one_band.data_bands, 1);
+        let error = plan(one_band.maximum_resident_bytes - 1).expect_err("one row cannot fit");
         assert!(matches!(
             error,
             MeasurementSetWriteError::InsufficientBudget { .. }

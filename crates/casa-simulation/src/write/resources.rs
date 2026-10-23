@@ -13,13 +13,16 @@
 //! 2. **The pipeline.** The batch being filled, the geometry of the
 //!    integrations it spans, each worker's scratch and, when the session
 //!    predicts, the predictor, its block of native rows and (on Metal) the
-//!    device copies of the model grids, for as many of the policy's
-//!    streaming workers as fit what is then free (#737's rule: workers
-//!    shrink first). With one worker that does not fit, `close` is refused.
+//!    device copies of the model grids. A block is the whole batch when
+//!    that fits with the policy's streaming workers; otherwise blocks are
+//!    small, and as many workers as fit what is then free are admitted
+//!    (#737's rule: workers shrink first). With one worker that does not
+//!    fit, `close` is refused.
 //!
 //! The model grids themselves were admitted by `predict`, and are held.
 //! A refusal is a typed [`Admission`] carried by the session error.
 
+use casa_imaging_runtime::pass::BackendChoice;
 use casa_imaging_runtime::{Admission, CoreAllocation, Demand, Reservation, admit, free_memory};
 use casa_ms::{MeasurementSetWriteError, MeasurementSetWritePlan, MeasurementSetWriteResources};
 use casa_tables::STREAMING_TILED_COLUMN_BUFFER_BYTES;
@@ -72,6 +75,9 @@ pub(super) struct MainAdmission {
     pub(super) cores: CoreAllocation,
     /// The policy's allocation, before admission shrank it.
     pub(super) policy_cores: CoreAllocation,
+    /// Rows of a prediction block: the write batch's, or fewer when the
+    /// budget is small.
+    pub(super) block_rows: usize,
     pub(super) reservation: Reservation,
 }
 
@@ -104,25 +110,33 @@ pub(super) fn admit_main_write(
         },
     )
     .map_err(SimulatorError::admission)?;
-    let policy_cores = resources.cores();
+    let policy_cores = resources
+        .close_cores(prediction.is_some_and(|stage| stage.backend() == BackendChoice::Metal));
     let free = free_memory(host, policy);
-    let demand = |cores: CoreAllocation| {
-        pipeline_bytes(shape, plan.batch_rows(), cores)
-            + prediction.map_or(0, |stage| {
-                stage.bytes(plan.batch_rows(), cores.streaming_workers)
-            })
+    let batch_rows = plan.batch_rows();
+    let demand = |cores: CoreAllocation, block_rows: usize| {
+        pipeline_bytes(shape, batch_rows, cores)
+            + prediction.map_or(0, |stage| stage.bytes(block_rows, cores.streaming_workers))
     };
-    let cores = (1..=policy_cores.streaming_workers)
-        .rev()
-        .map(|workers| policy_cores.at_most(workers))
-        .find(|cores| demand(*cores) <= free)
-        .unwrap_or_else(|| policy_cores.at_most(1));
+    // A batch predicted as one block when that fits with the policy's
+    // workers; else small blocks, and the workers shrink first (#737).
+    let (cores, block_rows) = if demand(policy_cores, batch_rows) <= free {
+        (policy_cores, batch_rows)
+    } else {
+        let small = prediction.map_or(batch_rows, |stage| stage.small_block_rows(batch_rows));
+        let cores = (1..=policy_cores.streaming_workers)
+            .rev()
+            .map(|workers| policy_cores.at_most(workers))
+            .find(|cores| demand(*cores, small) <= free)
+            .unwrap_or_else(|| policy_cores.at_most(1));
+        (cores, small)
+    };
     let pipeline = admit(
         host,
         policy,
         &Demand {
             phase: PIPELINE_PHASE,
-            memory: demand(cores),
+            memory: demand(cores, block_rows),
         },
     )
     .map_err(SimulatorError::admission)?;
@@ -131,6 +145,7 @@ pub(super) fn admit_main_write(
         plan,
         cores,
         policy_cores,
+        block_rows,
         reservation,
     })
 }

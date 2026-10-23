@@ -25,7 +25,7 @@ def capture_provenance(
             "root": str(repo_root),
             "revision": _git(repo_root, "rev-parse", "HEAD"),
             "branch": _git(repo_root, "branch", "--show-current"),
-            "dirty": bool(_git(repo_root, "status", "--porcelain")),
+            "dirty": _tracked_changes(repo_root),
         },
         "runtime": {
             "python": sys.version.split()[0],
@@ -69,6 +69,21 @@ def _git(repo_root: pathlib.Path, *args: str) -> str | None:
         check=False,
     )
     return completed.stdout.strip() if completed.returncode == 0 else None
+
+
+def _tracked_changes(repo_root: pathlib.Path) -> bool | None:
+    """Whether tracked files differ from the revision: `repository.dirty`.
+
+    Untracked files do not count (#809). A worktree's `target` symlink to a
+    shared build directory, run outputs and other strays would otherwise
+    mark every run dirty. A new source file usually enters a library build
+    through an edit to a tracked file (a `mod` line, a manifest entry),
+    which still counts. `None` when git cannot say, rather than a clean
+    `False`.
+    """
+
+    status = _git(repo_root, "status", "--porcelain", "--untracked-files=no")
+    return None if status is None else bool(status)
 
 
 def _path_provenance(

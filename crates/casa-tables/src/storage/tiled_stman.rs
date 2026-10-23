@@ -369,6 +369,7 @@ use super::table_control::{
 };
 use super::{StorageError, StorageProfiler, TileLayoutPlanner};
 
+mod band_writer;
 #[cfg(test)]
 mod casacore_tiled_data_tests;
 #[cfg(test)]
@@ -6311,7 +6312,9 @@ impl StreamedTiledShapeComplex32Column {
 /// that means correlation is the fastest-varying axis: `[corr, chan]`.
 pub struct StreamingTiledShapeComplex32Writer {
     temp_data_path: PathBuf,
-    writer: BufWriter<CountingFile>,
+    /// The thread that writes filled bands while the next is laid out;
+    /// taken when the writer finishes.
+    bands: Option<band_writer::BandWriter>,
     row_count: usize,
     rows_written: usize,
     cell_shape: Vec<usize>,
@@ -6337,6 +6340,9 @@ impl StreamingTiledShapeComplex32Writer {
     /// `[corr, chan]`, matching MeasurementSet DATA-like columns.  `tile_shape`
     /// must include the row axis as its final dimension, for example CASA's
     /// common visibility tile shape `[4, 128, 256]`.
+    ///
+    /// The writer holds one band of tiles (one row of tiles), written on a
+    /// thread of its own while the caller waits.
     pub fn create(
         temp_data_path: impl Into<PathBuf>,
         row_count: usize,
@@ -6344,6 +6350,42 @@ impl StreamingTiledShapeComplex32Writer {
         tile_shape: Vec<usize>,
         writer_buffer_bytes: usize,
         big_endian: bool,
+    ) -> Result<Self, StorageError> {
+        let target = (
+            temp_data_path.into(),
+            row_count,
+            writer_buffer_bytes,
+            big_endian,
+        );
+        Self::with_bands(target, cell_shape, tile_shape, false)
+    }
+
+    /// [`Self::create`], holding two bands: the caller lays rows into one
+    /// while the other is written, so laying rows out takes nothing off
+    /// the rate the file is written at (#855).
+    pub fn create_overlapped(
+        temp_data_path: impl Into<PathBuf>,
+        row_count: usize,
+        cell_shape: Vec<usize>,
+        tile_shape: Vec<usize>,
+        writer_buffer_bytes: usize,
+        big_endian: bool,
+    ) -> Result<Self, StorageError> {
+        let target = (
+            temp_data_path.into(),
+            row_count,
+            writer_buffer_bytes,
+            big_endian,
+        );
+        Self::with_bands(target, cell_shape, tile_shape, true)
+    }
+
+    /// The writer of [`Self::create`], with a second band when `overlapped`.
+    fn with_bands(
+        (temp_data_path, row_count, writer_buffer_bytes, big_endian): (PathBuf, usize, usize, bool),
+        cell_shape: Vec<usize>,
+        tile_shape: Vec<usize>,
+        overlapped: bool,
     ) -> Result<Self, StorageError> {
         if cell_shape.len() != 2 {
             return Err(StorageError::FormatMismatch(format!(
@@ -6394,20 +6436,20 @@ impl StreamingTiledShapeComplex32Writer {
             .collect();
         let (bucket_size, _offsets) =
             compute_tile_layout(&[CasacoreDataType::TpComplex], &tile_shape);
-        let tile_buffers = (0..non_row_tile_count)
+        let tile_buffers: Vec<Vec<u8>> = (0..non_row_tile_count)
             .map(|_| vec![0u8; bucket_size])
             .collect();
 
-        let temp_data_path = temp_data_path.into();
         if let Some(parent) = temp_data_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
         let writer =
             BufWriter::with_capacity(writer_buffer_bytes, CountingFile::create(&temp_data_path)?);
+        let spare = overlapped.then(|| tile_buffers.clone());
 
         Ok(Self {
             temp_data_path,
-            writer,
+            bands: Some(band_writer::BandWriter::start(writer, spare)?),
             row_count,
             rows_written: 0,
             cell_shape,
@@ -6540,11 +6582,20 @@ impl StreamingTiledShapeComplex32Writer {
         if self.rows_written > 0 && !self.rows_written.is_multiple_of(self.rows_per_tile) {
             self.flush_tile_row_block()?;
         }
+        let bands = self
+            .bands
+            .take()
+            .expect("the writer finishes once")
+            .finish()?;
+        let (mut writer, written) = bands;
         let write_started = Instant::now();
-        self.writer.flush()?;
-        self.write_seconds += write_started.elapsed().as_secs_f64();
+        writer.flush()?;
+        self.write_seconds += written.write_seconds + write_started.elapsed().as_secs_f64();
+        self.bytes_written += written.bytes_written;
+        self.logical_write_calls += written.logical_write_calls;
+        self.max_logical_write_bytes = written.max_logical_write_bytes;
         if trace_streamed_tiled_writes() {
-            self.trace_write_stats();
+            self.trace_write_stats(&writer.get_ref().stats());
         }
 
         Ok(StreamedTiledShapeComplex32Column {
@@ -6612,40 +6663,24 @@ impl StreamingTiledShapeComplex32Writer {
         Ok(())
     }
 
+    /// Hand the filled band to the band writer ([`band_writer`]) and lay the
+    /// next rows into the band it wrote before, cleared.
     fn flush_tile_row_block(&mut self) -> Result<(), StorageError> {
-        let write_started = Instant::now();
         self.tile_row_blocks_flushed += 1;
-        if self.tile_buffers.len() > 1 {
-            // Channel-tiled spectral columns already hold complete on-disk
-            // buckets. Avoid copying them all through the intermediate
-            // BufWriter; direct sequential bucket writes preserve file order.
-            self.writer.flush()?;
-            for tile in &self.tile_buffers {
-                debug_assert_eq!(tile.len(), self.bucket_size);
-                self.writer.get_mut().write_all(tile)?;
-                self.logical_write_calls += 1;
-                self.max_logical_write_bytes = self.max_logical_write_bytes.max(tile.len());
-                self.bytes_written += tile.len();
-            }
-        } else {
-            for tile in &self.tile_buffers {
-                debug_assert_eq!(tile.len(), self.bucket_size);
-                self.writer.write_all(tile)?;
-                self.logical_write_calls += 1;
-                self.max_logical_write_bytes = self.max_logical_write_bytes.max(tile.len());
-                self.bytes_written += tile.len();
-            }
-        }
-        self.write_seconds += write_started.elapsed().as_secs_f64();
-
-        for tile in &mut self.tile_buffers {
+        let band = std::mem::take(&mut self.tile_buffers);
+        let mut written = self
+            .bands
+            .as_mut()
+            .expect("bands are written only before the writer finishes")
+            .swap(band)?;
+        for tile in &mut written {
             tile.fill(0);
         }
+        self.tile_buffers = written;
         Ok(())
     }
 
-    fn trace_write_stats(&self) {
-        let stats = self.writer.get_ref().stats();
+    fn trace_write_stats(&self, stats: &CountingWriteStats) {
         tracing::debug!(
             target: STREAMED_TILED_TRACE,
             "casa-rs streamed tiled write column={} variant=Shape type=Complex32 rows={} cell_shape={:?} tile_shape={:?} row_tile={} tile_buffers={} tile_row_blocks={} logical_write_calls={} logical_max_write_bytes={} buffered_write_calls={} buffered_max_write_bytes={} buffered_flush_calls={} writer_buffer_bytes={} bytes_written={} assemble_seconds={:.6} write_seconds={:.6}",
@@ -12616,7 +12651,7 @@ fn swap_bytes_inplace(data: &mut [u8], component_size: usize) {
 }
 
 /// Compute C-order (row-major) strides for a given shape.
-/// stride[last] = 1, stride[i] = product of shape[i+1..].
+/// `stride[last] = 1`, `stride[i]` = product of `shape[i+1..]`.
 fn c_order_strides(shape: &[usize]) -> Vec<usize> {
     let ndim = shape.len();
     let mut strides = vec![1usize; ndim];
@@ -12627,7 +12662,7 @@ fn c_order_strides(shape: &[usize]) -> Vec<usize> {
 }
 
 /// Compute Fortran-order (column-major) strides for a given shape.
-/// stride[0] = 1, stride[i] = product of shape[0..i].
+/// `stride[0] = 1`, `stride[i]` = product of `shape[0..i]`.
 fn fortran_order_strides(shape: &[usize]) -> Vec<usize> {
     let ndim = shape.len();
     let mut strides = vec![1usize; ndim];

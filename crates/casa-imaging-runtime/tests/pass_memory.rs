@@ -10,8 +10,10 @@
 //! Astra's probe on #712 held 40,136,661 bytes against 39,617,192 admitted
 //! when the CPU backend's native prediction and residual batches went
 //! uncharged. A block predictor, likewise, holds no more than
-//! `BlockPredictor::bytes`. A global allocator applies to this test binary
-//! alone, and each law runs alone in a process of its own ([`alone`]).
+//! `BlockPredictor::bytes`, and on Metal, adding noise on the device as it
+//! predicts, `BlockPredictor::noise_bytes` more. A global allocator applies
+//! to this test binary alone, and each law runs alone in a process of its
+//! own ([`alone`]).
 
 #[allow(
     dead_code,
@@ -28,9 +30,10 @@ use casa_imaging_operator::{
     SpectralResampler, WeightingGeneration,
 };
 use casa_imaging_runtime::pass::{
-    BackendChoice, BlockPredictor, BoundedSource, CHUNK_PLACEMENTS, Cancel, ModelPreparation,
-    Partition, PassDomain, PassError, PredictionDomain, Residency, WaveDemand, WorkerTeam,
-    row_work_pass_bytes, run_row_work_pass, source_block_bytes,
+    BackendChoice, BlockPredictor, BoundedSource, CHUNK_PLACEMENTS, Cancel, DeviceNoise,
+    MetalNoiseRow, MetalNoiseTerm, ModelPreparation, Partition, PassDomain, PassError,
+    PredictionDomain, Residency, WaveDemand, WorkerTeam, row_work_pass_bytes, run_row_work_pass,
+    source_block_bytes,
 };
 use num_complex::Complex32;
 
@@ -356,7 +359,9 @@ fn the_block_predictor_holds_at_most_its_bytes() {
 }
 
 /// [`the_block_predictor_holds_at_most_its_bytes`] for one case: 100 rows
-/// of `channels` channels in blocks of 37.
+/// of `channels` channels in blocks of 37. On Metal the predictor also
+/// adds three terms of noise on the device as it predicts (#855), and holds
+/// at most [`BlockPredictor::noise_bytes`] more.
 fn predictor_holds_at_most_its_bytes(
     domains: &[PredictionDomain<'_>],
     backend: BackendChoice,
@@ -384,6 +389,31 @@ fn predictor_holds_at_most_its_bytes(
         .collect::<Vec<_>>();
     let cells = channels * 2;
     let mut out = vec![Complex32::default(); BLOCK_ROWS * cells];
+    let noise_rows = (0..rows.rows.len())
+        .map(|row| MetalNoiseRow {
+            row: [row as u32, 0],
+            autocorrelation: u32::from(row % 5 == 0),
+        })
+        .collect::<Vec<_>>();
+    let terms = [0, 1, 2].map(|ordinal| MetalNoiseTerm {
+        key: [41, 0x0100_0000 | ordinal],
+        sigma: 0.1,
+    });
+    let predict = |predictor: &mut BlockPredictor<'_>, index: usize, out: &mut [Complex32]| {
+        let block = &blocks[index];
+        let out = &mut out[..block.len() * cells];
+        match backend {
+            BackendChoice::Cpu => predictor.predict_into(block, &team, out),
+            BackendChoice::Metal => {
+                let start = index * BLOCK_ROWS;
+                let noise = DeviceNoise {
+                    rows: &noise_rows[start..start + block.len()],
+                    terms: &terms,
+                };
+                predictor.predict_into_with_noise(block, &team, out, noise)
+            }
+        }
+    };
     // What the caller and the team hold apart from the predictor is made
     // first: the models' device copies on Metal, and what the team's
     // threads allocate when they first park. Each boxes its condition
@@ -394,23 +424,21 @@ fn predictor_holds_at_most_its_bytes(
     // the pause let every thread park first.
     {
         let mut warm = BlockPredictor::new(domains, backend, shape, workers, false).expect("warm");
-        for block in &blocks {
-            warm.predict_into(block, &team, &mut out[..block.len() * cells])
-                .expect("warm prediction");
+        for index in 0..blocks.len() {
+            predict(&mut warm, index, &mut out).expect("warm prediction");
         }
     }
     std::thread::sleep(std::time::Duration::from_millis(50));
-    let admitted = BlockPredictor::bytes(domains, backend, shape, workers);
+    let admitted = BlockPredictor::bytes(domains, backend, shape, workers)
+        + BlockPredictor::noise_bytes(backend, shape, terms.len());
     let device = casa_imaging_metal::device_bytes();
     let baseline = LIVE.load(Ordering::Relaxed);
     PEAK.store(baseline, Ordering::Relaxed);
     MEASURING.store(true, Ordering::Relaxed);
     let mut predictor =
         BlockPredictor::new(domains, backend, shape, workers, false).expect("predictor");
-    for block in &blocks {
-        predictor
-            .predict_into(block, &team, &mut out[..block.len() * cells])
-            .expect("prediction");
+    for index in 0..blocks.len() {
+        predict(&mut predictor, index, &mut out).expect("prediction");
     }
     let device_held = casa_imaging_metal::device_bytes().saturating_sub(device);
     drop(predictor);

@@ -29,9 +29,10 @@ const MANIFEST: &str = "CasaRsNativeRequest.txt";
 /// holds alone while it writes ([`NativeCacheLock`]).
 const LOCK: &str = "CasaRsNativeCache.lock";
 
-/// The prefix of a cell image being written: [`super::write_cell`] builds
-/// the image under it and renames it to its cell name only when complete,
-/// so a cell name always names a complete image (#739 review).
+/// The prefix of a cell image being written:
+/// [`super::cell_image::write_cell`] builds the image under it and renames
+/// it to its cell name only when complete, so a cell name always names a
+/// complete image (#739 review).
 pub(super) const STAGING_PREFIX: &str = ".staging-";
 
 /// An advisory lock on a native cache directory, held until dropped
