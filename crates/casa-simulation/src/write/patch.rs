@@ -38,17 +38,18 @@ use std::time::Instant;
 
 use casa_imaging_runtime::pass::{BackendChoice, WorkerTeam};
 use casa_imaging_runtime::{
-    CoreAllocation, Demand, Reservation, ReservationWindow, admit, free_memory,
+    CoreAllocation, Demand, Reservation, ReservationWindow, admit, charge_process_caches,
+    free_memory,
 };
 use casa_ms::{
     MeasurementSet, MeasurementSetColumnStorage, MeasurementSetColumnWriteMode,
     MeasurementSetMutationBatch, MeasurementSetMutationColumnBatch,
     MeasurementSetMutationColumnValues, MeasurementSetWriteColumnPlan, MeasurementSetWritePlan,
-    MeasurementSetWriteResources, MeasurementSetWriteSession,
+    MeasurementSetWriteResources, MeasurementSetWriteSession, TARGET_BATCH_BYTES,
 };
 use casa_tables::{
-    RequiredScalarColumnDestination, RequiredScalarColumnValuesMut, SelectedArray1DCellsMut,
-    SelectedArray2DCellsMut,
+    RequiredScalarColumnDestination, RequiredScalarColumnValuesMut,
+    STREAMING_TILED_COLUMN_BUFFER_BYTES, SelectedArray1DCellsMut, SelectedArray2DCellsMut,
 };
 use casa_types::{ArrayValue, Complex32};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
@@ -535,10 +536,16 @@ fn admit_patch(
     prediction: Option<&PredictionStage<'_>>,
 ) -> SimulatorResult<PatchAdmission> {
     let (host, policy) = (resources.host(), resources.policy());
+    // The patch reads the MeasurementSet through the process's table cache.
+    charge_process_caches(host, policy).map_err(SimulatorError::admission)?;
     let free = free_memory(host, policy);
     // The plan holds the selected rows, and copies them once to check them.
+    // Its batches aim at casa-ms's batch size, whatever the budget allows,
+    // as a new MeasurementSet's tile bands do.
     let index_bytes = 2 * (shape.rows * size_of::<usize>()) as u64;
-    let writer_bytes = usize::try_from((free / 2).saturating_sub(index_bytes)).unwrap_or(0);
+    let writer_bytes = usize::try_from((free / 2).saturating_sub(index_bytes))
+        .unwrap_or(usize::MAX)
+        .min(TARGET_BATCH_BYTES);
     let plan = patch_plan(shape, columns, writer_bytes).map_err(|_| {
         SimulatorError::admission(casa_imaging_runtime::Admission {
             phase: WRITER_PHASE,
@@ -561,7 +568,7 @@ fn admit_patch(
     let free = free_memory(host, policy);
     let batch_rows = plan.batch_rows().max(1);
     let demand = |cores: CoreAllocation, block_rows: usize| {
-        pipeline_bytes(shape, batch_rows)
+        pipeline_bytes(shape, columns.len(), batch_rows)
             + prediction.map_or(0, |stage| stage.bytes(block_rows, cores.streaming_workers))
     };
     // As `close` admits a new MeasurementSet's pipeline: a batch predicted
@@ -626,14 +633,35 @@ fn patch_plan(
     )
 }
 
+/// The tiled managers' I/O while the patch reads one column of a batch, or
+/// writes the batch: tiles read, decoded and rewritten, which the tile
+/// layout bounds and the rows do not (`casa_tables::SelectedReadFootprint`
+/// leaves them out). It is charged as `close`'s writer charges a tiled
+/// column's buffer; the reads and the write come one after another.
+const TILED_IO_BYTES: u64 = STREAMING_TILED_COLUMN_BUFFER_BYTES as u64;
+
+/// Copies of a written batch's cells casa-ms's mutation holds beside the
+/// batch itself (measured by `tests/session_memory/patch.rs`):
+/// `write_mutation_batch` clones each cell into the table's pending cells,
+/// the in-place save clones the changed rows' cells again to collect them,
+/// and the tiled manager stages them into its tiles.
+const MUTATION_CELL_COPIES: u64 = 3;
+
+/// Copies of a column a typed row-major read stages beside its output: the
+/// cells it reorders into the output's layout (measured as above).
+const READ_CELL_COPIES: u64 = 1;
+
 /// Bytes the patch holds beside its writer for batches of `batch_rows`
-/// rows: the columns read (ANTENNA1, ANTENNA2, FLAG_ROW, UVW, and DATA when
-/// the fold starts from it, or FLAG while it is checked), the rows'
-/// geometry, and the new DATA.
-fn pipeline_bytes(shape: &PatchShape, batch_rows: usize) -> u64 {
+/// rows writing `columns` columns: the columns read (ANTENNA1, ANTENNA2,
+/// FLAG_ROW, UVW, and DATA when the fold starts from it, or FLAG while it
+/// is checked) and their staging, the rows' geometry, the new DATA, the
+/// mutation's copies of the cells written, and the tiled managers' I/O.
+fn pipeline_bytes(shape: &PatchShape, columns: usize, batch_rows: usize) -> u64 {
     let samples = shape.samples() as u64;
     let cell = samples * size_of::<Complex32>() as u64;
-    let read = if shape.reads_data { cell } else { 0 }.max(samples);
-    let row = 4 + 4 + 1 + 3 * 8 + read + size_of::<RowGeometry>() as u64 + cell;
-    batch_rows as u64 * row
+    let staged = 1 + READ_CELL_COPIES;
+    let read = staged * if shape.reads_data { cell } else { 0 }.max(samples);
+    let written = columns as u64 * MUTATION_CELL_COPIES * (cell + size_of::<ArrayValue>() as u64);
+    let row = 4 + 4 + 1 + staged * 3 * 8 + read + size_of::<RowGeometry>() as u64 + cell + written;
+    batch_rows as u64 * row + TILED_IO_BYTES
 }
