@@ -31,7 +31,8 @@ Simulator behaviours casa-rs does not follow:
 [the model `predict` rewrites](#smpredict-rewrites-the-model-image),
 [models the simulator cannot read](#smpredict-accepts-models-the-simulator-cannot-read),
 [`setmosaicfield`'s off-centre grid](#setmosaicfield-sits-its-grid-off-the-field-centre),
-[`observemany`'s rows before an unknown field](#observemany-adds-rows-before-it-looks-up-later-fields).
+[`observemany`'s rows before an unknown field](#observemany-adds-rows-before-it-looks-up-later-fields),
+[W projection without planes](#smpredict-through-wprojectft-without-planes-crashes-the-simulator).
 Simulator behaviours casa-rs follows:
 [`observemany`'s padded single name](#observemany-pads-one-name-with-empty-ones).
 
@@ -682,3 +683,31 @@ defined raises with the rows already added: their FIELD_ID, TIME and UVW are
 unwritten, and the call returns False. casa-rs looks up every pointing's
 field before it plans anything, so the same call returns False with the
 same message and leaves no rows.
+
+## `sm.predict` through `WProjectFT` without planes crashes the simulator
+
+- Date noted: 2026-10-23
+- Status: CASA bug; casa-rs does not follow it (#841 Phase 2)
+- Affected code: `synthesis/MeasurementEquations/Simulator.cc`
+  (`createSkyEquation`, line 2465); `synthesis/TransformMachines/WPConvFunc.cc`
+  (`findConvFunction`, lines 164-176)
+
+The simulator builds its `WProjectFT` with no w statistics (`minW`, `maxW`
+and `rmsW` all −1). For `setoptions(ftmachine='wproject', wprojplanes=…)`
+below 1, `findConvFunction` takes its automatic branch, whose largest w
+then comes out negative and whose plane count comes out zero or negative.
+Measured on CASA 6.7.6: `setoptions` returns True, and `predict` with
+`wprojplanes=0` or `-1` kills the Python process with a segmentation fault
+(exit 139) after it logs "Fourier transforms will use specified common
+tangent point". casa-rs records the planes at `setoptions`, as CASA does,
+and its `predict` raises RuntimeError ("W projection needs at least two
+planes").
+
+What casa-rs follows of the same machine:
+- `wprojplanes=1` returns False from `predict` with CASA's "Convolution
+  function integral is not positive".
+- `WProjectFT` pads by 1, its constructor's default, whatever
+  `setoptions(padding=…)` says.
+- Autocorrelations predict zero, since the machine is built with `usezero`
+  off.
+- Rows beyond the largest w the planes reach (`0.25/|cell|`) predict zero.

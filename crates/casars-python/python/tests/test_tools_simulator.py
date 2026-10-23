@@ -761,6 +761,48 @@ def test_auto_predicts_on_the_metal_device_as_the_cpu_does(tmp_path: Path) -> No
 
 
 @needs_measures
+def test_wproject_predicts_and_refuses_as_casa_does(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    # WProjectFT pads by 1 whatever `padding` says and predicts the
+    # autocorrelations as zero (`usezero` off); one plane returns False, as
+    # CASA's WPConvFunc refuses it, and fewer raise where CASA crashes.
+    model = sky_model(tmp_path)
+
+    def predicted(name: str, **options: object) -> np.ndarray:
+        sm = simulator()
+        sm.open(str(tmp_path / name))
+        configure(sm)
+        assert sm.observe("F", "L", starttime="0s", stoptime="60s")
+        assert sm.setoptions(**options) is True
+        assert sm.predict(imagename=str(model)) is True
+        sm.close()
+        return np.asarray(Table.open(tmp_path / name).get_column("DATA"))
+
+    w = predicted("w.ms", ftmachine="wproject", wprojplanes=8, padding=1.5)
+    assert np.array_equal(w, predicted("w-padded.ms", ftmachine="wproject", wprojplanes=8))
+    gridft = predicted("ft.ms")
+    table = Table.open(tmp_path / "w.ms")
+    autos = np.asarray(table.get_column("ANTENNA1")) == np.asarray(table.get_column("ANTENNA2"))
+    assert autos.any()
+    assert np.all(w[autos] == 0)
+    assert np.all(np.abs(w[~autos]).max(axis=(1, 2)) > 0)
+    assert np.all(np.abs(gridft[autos]) > 0)
+
+    sm = opened(tmp_path)
+    configure(sm)
+    assert sm.observe("F", "L", starttime="0s", stoptime="30s")
+    assert sm.setoptions(ftmachine="wproject", wprojplanes=1) is True
+    with caplog.at_level(logging.ERROR, logger=LOGGER):
+        assert sm.predict(imagename=str(model)) is False
+    assert caplog.messages == ["Caught exception: Convolution function integral is not positive"]
+    assert sm.setoptions(ftmachine="wproject", wprojplanes=0) is True
+    with pytest.raises(RuntimeError, match="at least two planes"):
+        sm.predict(imagename=str(model))
+    sm.close()
+
+
+@needs_measures
 def test_setoptions_and_setvp_follow_casa(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     sm = opened(tmp_path)
     configure(sm)

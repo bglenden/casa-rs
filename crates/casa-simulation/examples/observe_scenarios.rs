@@ -257,6 +257,10 @@ fn set_options(session: &mut Simulator, call: &Value) -> SimulatorResult<()> {
             .get("padding")
             .and_then(Value::as_f64)
             .unwrap_or(defaults.padding),
+        w_planes: call
+            .get("wprojplanes")
+            .and_then(Value::as_i64)
+            .unwrap_or(defaults.w_planes),
     })
 }
 
