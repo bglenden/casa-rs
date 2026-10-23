@@ -28,8 +28,8 @@ use std::sync::Arc;
 
 use casa_imaging_model::CorrelationType;
 use casa_imaging_operator::{
-    ConvolutionFunctionSet, GridPrecision, OperatorError, PaddingFactor, PreparedModelGrids,
-    Spheroidal, WPlaneCount, WPlanes,
+    ConvolutionFunctionSet, GridPrecision, MAX_W_PLANES, OperatorError, PaddingFactor,
+    PreparedModelGrids, Spheroidal, WPlaneCount, WPlanes,
 };
 use casa_imaging_runtime::pass::WorkerTeam;
 use casa_imaging_runtime::{Demand, Reservation, admit, charge_process_caches, free_memory};
@@ -266,8 +266,8 @@ impl Simulator {
     /// - CASA's `False`: `WProjectFT` with one plane, whose convolution
     ///   function CASA's `WPConvFunc` cannot normalise.
     /// - Raised: `WProjectFT` with no planes or fewer, where CASA's
-    ///   simulator crashes (`docs/CASA (C++) bugs.md`), or more planes than
-    ///   fit `u32`.
+    ///   simulator crashes (`docs/CASA (C++) bugs.md`), or more than
+    ///   casa-rs's [`MAX_W_PLANES`] (65,536).
     /// - Not yet implemented: `WProjectFT` on the Metal backend.
     fn ft_machine(&self) -> SimulatorResult<FtMachine> {
         let Some(planes) = self.w_projection_planes else {
@@ -282,9 +282,15 @@ impl Simulator {
                 "Caught exception: Convolution function integral is not positive",
             )),
             _ => {
-                let planes = u32::try_from(planes).map_err(|_| {
-                    SimulatorError::raised(format!("wprojplanes={planes} is too many planes"))
-                })?;
+                let planes = u32::try_from(planes)
+                    .ok()
+                    .filter(|&planes| planes as usize <= MAX_W_PLANES)
+                    .ok_or_else(|| {
+                        SimulatorError::raised(format!(
+                            "setoptions(ftmachine='wproject', wprojplanes={planes}): casa-rs \
+                             builds at most 65,536 W planes"
+                        ))
+                    })?;
                 if self.options.resources.backend() == BackendRequest::Metal {
                     return Err(SimulatorError::not_yet_implemented(
                         "predict with setoptions(ftmachine='wproject') on the Metal backend is \

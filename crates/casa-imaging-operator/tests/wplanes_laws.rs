@@ -9,7 +9,7 @@ mod common;
 use casa_imaging_model::{CorrelationType, PolarizationCoordinate};
 use casa_imaging_operator::{
     Basis, CellHold, CfKey, ConvolutionFunctionSet, CpuBackend, GridBackend, GridPrecision,
-    KernelNormalisation, MeasurementOperator, Mode, ModeSet, ModelImages, ModelPlane,
+    KernelNormalisation, MAX_W_PLANES, MeasurementOperator, Mode, ModeSet, ModelImages, ModelPlane,
     ModelPrescale, Placement, PlaneRange, PolarizationRouting, RowContext, SampleBuffer,
     Spheroidal, TapLayout, WPlaneCount, WPlanes, Work,
 };
@@ -222,6 +222,27 @@ fn the_screen_is_the_padded_image_stepped_to_the_strict_even_composite_for_sever
     )
     .expect("geometry");
     assert!(WPlanes::new(&unpadded, &polarization, WPlaneCount::Fixed(8)).is_err());
+}
+
+/// A set holds at most [`MAX_W_PLANES`] planes, the 16-bit index its kernel
+/// key carries: more are refused before any screen is sized or built, for a
+/// fixed count and for one `wStat` resolves to (#865 review: a plane index
+/// past it panicked while predicting).
+#[test]
+fn more_planes_than_the_kernel_key_indexes_are_refused() {
+    let geometry = geometry();
+    let polarization = PolarizationRouting::compile(&XX_YY, &STOKES_I).expect("routing");
+    let most = u32::try_from(MAX_W_PLANES).expect("fits u32");
+    assert!(WPlanes::screens_bytes(&geometry, WPlaneCount::Fixed(most)).is_ok());
+    assert!(WPlanes::screens_bytes(&geometry, WPlaneCount::Fixed(most + 1)).is_err());
+    assert!(WPlanes::new(&geometry, &polarization, WPlaneCount::Fixed(most + 1)).is_err());
+    // `wStat` on |w| up to 1e8 wavelengths asks for some 3.4 million planes.
+    let auto = WPlaneCount::Auto {
+        min_w: 0.0,
+        max_w: 1.0e8,
+        rms_w: 0.0,
+    };
+    assert!(WPlanes::screens_bytes(&geometry, auto).is_err());
 }
 
 #[test]
