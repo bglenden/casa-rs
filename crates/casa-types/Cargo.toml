@@ -25,6 +25,3 @@ harness = false
 [[bench]]
 name = "epoch_convert"
 harness = false
-
-[[example]]
-name = "t_measure"
