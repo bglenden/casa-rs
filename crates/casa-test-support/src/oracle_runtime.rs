@@ -7,13 +7,23 @@ use std::fmt;
 #[cfg(has_casacore_cpp)]
 use std::ffi::CStr;
 #[cfg(has_casacore_cpp)]
-use std::sync::{Mutex, MutexGuard, OnceLock};
+use std::sync::{Mutex, MutexGuard, OnceLock, RwLock, RwLockReadGuard, RwLockWriteGuard};
 #[cfg(all(has_casacore_cpp, unix))]
 use std::{fs::OpenOptions, os::fd::AsRawFd};
+
+#[cfg(has_casacore_cpp)]
+unsafe extern "C" {
+    fn measures_shim_use_measures_directory(path: *const std::ffi::c_char) -> i32;
+}
 
 /// Independent process-global state domains used by casacore.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum OracleDomain {
+    /// casacore's IAU-model switches (`measures.iau2000.b_use` and
+    /// `measures.iau2000.b_use2000a`), process-global Aipsrc values that every
+    /// measures conversion reads. Operations that set them hold this domain
+    /// exclusively; every other operation holds it shared, so no conversion
+    /// runs under another thread's model (#845).
     MeasuresIau2000A,
     Imaging,
     Tables,
@@ -78,6 +88,7 @@ macro_rules! oracle_operation {
         #[cfg(has_casacore_cpp)]
         {
             $crate::oracle_runtime::CasacoreOracleRuntime::require($capability)?;
+            $crate::oracle_runtime::CasacoreOracleRuntime::share_measures_runtime()?;
             let _oracle_guard =
                 $crate::oracle_runtime::CasacoreOracleRuntime::lock_operation($capability)?;
             $body
@@ -256,12 +267,56 @@ impl CasacoreOracleRuntime {
         Ok(result)
     }
 
+    /// Point casacore's measures-table search at the runtime the Rust side
+    /// discovers, once per process and before the first casacore call.
+    ///
+    /// Without this, casacore reads the tables compiled into its build
+    /// (Homebrew's `casacore-data`), whose IERS vintage need not match the
+    /// Rust runtime's: on 2026-10-22 the two trees differed by 0.10 ms in
+    /// dUT1 at J2000, enough to fail the LAST and HADEC laws (#845). Sharing
+    /// one tree makes those laws compare the implementations, not the data.
+    /// With no complete runtime discovered, casacore keeps its own search;
+    /// the Rust side of any law that needs the data then fails on its own.
+    #[cfg(has_casacore_cpp)]
+    pub(crate) fn share_measures_runtime() -> Result<(), OracleError> {
+        static SHARED: OnceLock<Result<(), String>> = OnceLock::new();
+        SHARED
+            .get_or_init(|| {
+                let Some(root) = discovered_measures_root() else {
+                    return Ok(());
+                };
+                let path = Self::c_path("measures runtime root", &root)
+                    .map_err(|error| error.to_string())?;
+                let status = unsafe { measures_shim_use_measures_directory(path.as_ptr()) };
+                if status == 0 {
+                    Ok(())
+                } else {
+                    Err(format!("status {status} for {}", root.display()))
+                }
+            })
+            .clone()
+            .map_err(|message| OracleError::CppFailure {
+                operation: "measures.share_runtime",
+                message,
+            })
+    }
+
     #[cfg(has_casacore_cpp)]
     pub(crate) fn lock(domain: OracleDomain) -> Result<OracleGuard, OracleError> {
+        let lock_failure = |error: String| OracleError::LockFailure {
+            domain,
+            message: error,
+        };
         let mutex = match domain {
             OracleDomain::MeasuresIau2000A => {
-                static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-                LOCK.get_or_init(|| Mutex::new(()))
+                let guard = iau_model_lock()
+                    .write()
+                    .map_err(|error| lock_failure(error.to_string()))?;
+                return Ok(OracleGuard {
+                    _state: DomainGuard::IauModel { _guard: guard },
+                    #[cfg(all(has_casacore_cpp, unix))]
+                    _file_lock: None,
+                });
             }
             OracleDomain::Imaging => {
                 static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -277,13 +332,10 @@ impl CasacoreOracleRuntime {
             }
         }
         .lock()
-        .map_err(|error| OracleError::LockFailure {
-            domain,
-            message: error.to_string(),
-        })?;
+        .map_err(|error| lock_failure(error.to_string()))?;
 
         Ok(OracleGuard {
-            _mutex: mutex,
+            _state: DomainGuard::Mutex { _guard: mutex },
             #[cfg(all(has_casacore_cpp, unix))]
             _file_lock: match domain {
                 OracleDomain::Tables | OracleDomain::Imaging => {
@@ -294,13 +346,41 @@ impl CasacoreOracleRuntime {
         })
     }
 
-    /// Acquire the proven global-state domain for an operation, if it needs one.
+    /// Acquire what an operation needs: casacore's IAU-model state, held
+    /// exclusively by an operation that sets it and shared by every other, then
+    /// the operation's proven global-state domain, if it has one.
     #[cfg(has_casacore_cpp)]
-    pub(crate) fn lock_operation(
-        operation: &'static str,
-    ) -> Result<Option<OracleGuard>, OracleError> {
-        let domain = Self::operation_domain(operation);
-        domain.map(Self::lock).transpose()
+    pub(crate) fn lock_operation(operation: &'static str) -> Result<OperationGuard, OracleError> {
+        if Self::sets_iau_model(operation) {
+            return Ok(OperationGuard {
+                _domain: Some(Self::lock(OracleDomain::MeasuresIau2000A)?),
+                _iau_model: None,
+            });
+        }
+        let iau_model = iau_model_lock()
+            .read()
+            .map_err(|error| OracleError::LockFailure {
+                domain: OracleDomain::MeasuresIau2000A,
+                message: error.to_string(),
+            })?;
+        Ok(OperationGuard {
+            _domain: Self::operation_domain(operation)
+                .map(Self::lock)
+                .transpose()?,
+            _iau_model: Some(iau_model),
+        })
+    }
+
+    /// Whether an operation switches casacore's process-global IAU model.
+    #[cfg(any(has_casacore_cpp, test))]
+    fn sets_iau_model(operation: &str) -> bool {
+        matches!(
+            operation,
+            "measures.iau2000_precession_matrix"
+                | "measures.direction_convert_iau2000a"
+                | "measures.direction_convert_cosines_iau2000a"
+                | "measures.epoch_convert_iau2000a"
+        )
     }
 
     #[cfg(any(has_casacore_cpp, test))]
@@ -321,10 +401,7 @@ impl CasacoreOracleRuntime {
             Some(OracleDomain::Imaging)
         } else if operation.starts_with("quanta.") {
             Some(OracleDomain::Quanta)
-        } else if matches!(
-            operation,
-            "measures.iau2000_precession_matrix" | "measures.direction_convert_iau2000a"
-        ) {
+        } else if Self::sets_iau_model(operation) {
             Some(OracleDomain::MeasuresIau2000A)
         } else {
             None
@@ -332,11 +409,45 @@ impl CasacoreOracleRuntime {
     }
 }
 
+/// The first complete measures runtime that `MeasuresRuntime::open_discovered`
+/// would open, which is the one the measures laws read on the Rust side.
+#[cfg(has_casacore_cpp)]
+fn discovered_measures_root() -> Option<std::path::PathBuf> {
+    casa_measures_data::MeasuresRuntime::discover_candidates()
+        .ok()?
+        .into_iter()
+        .find(|candidate| candidate.complete)
+        .map(|candidate| candidate.path)
+}
+
+#[cfg(has_casacore_cpp)]
+fn iau_model_lock() -> &'static RwLock<()> {
+    static LOCK: OnceLock<RwLock<()>> = OnceLock::new();
+    LOCK.get_or_init(|| RwLock::new(()))
+}
+
+#[cfg(has_casacore_cpp)]
+enum DomainGuard {
+    Mutex {
+        _guard: MutexGuard<'static, ()>,
+    },
+    IauModel {
+        _guard: RwLockWriteGuard<'static, ()>,
+    },
+}
+
 #[cfg(has_casacore_cpp)]
 pub(crate) struct OracleGuard {
-    _mutex: MutexGuard<'static, ()>,
+    _state: DomainGuard,
     #[cfg(all(has_casacore_cpp, unix))]
     _file_lock: Option<OracleFileLock>,
+}
+
+/// The locks one oracle operation holds; the domain is released first.
+#[cfg(has_casacore_cpp)]
+pub(crate) struct OperationGuard {
+    _domain: Option<OracleGuard>,
+    _iau_model: Option<RwLockReadGuard<'static, ()>>,
 }
 
 #[cfg(all(has_casacore_cpp, unix))]
@@ -445,6 +556,20 @@ mod tests {
             CasacoreOracleRuntime::operation_domain("measures.epoch_convert"),
             None
         );
+        for operation in [
+            "measures.iau2000_precession_matrix",
+            "measures.direction_convert_iau2000a",
+            "measures.direction_convert_cosines_iau2000a",
+            "measures.epoch_convert_iau2000a",
+        ] {
+            assert!(
+                CasacoreOracleRuntime::sets_iau_model(operation),
+                "{operation}"
+            );
+        }
+        assert!(!CasacoreOracleRuntime::sets_iau_model(
+            "measures.direction_convert"
+        ));
         assert_eq!(
             CasacoreOracleRuntime::operation_domain("hogbom.clean_minor_cycle_2d"),
             Some(OracleDomain::Imaging)
@@ -547,6 +672,39 @@ mod tests {
             .recv_timeout(Duration::from_secs(1))
             .expect("independent domain remained available");
         drop(measures);
+        worker.join().expect("worker completed");
+    }
+
+    /// #845: an IAU 1976/1980 conversion ran while another test thread had
+    /// switched casacore to IAU 2000A, moving its HADEC result by 9.6 mas.
+    #[cfg(has_casacore_cpp)]
+    #[test]
+    fn iau_model_switches_exclude_every_other_measures_call() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let switch = CasacoreOracleRuntime::lock_operation("measures.direction_convert_iau2000a")
+            .expect("acquire the IAU-model switch");
+        let (attempted_tx, attempted_rx) = mpsc::channel();
+        let (acquired_tx, acquired_rx) = mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            attempted_tx.send(()).expect("report lock attempt");
+            let _conversion = CasacoreOracleRuntime::lock_operation("measures.direction_convert")
+                .expect("acquire a measures guard after the switch");
+            acquired_tx.send(()).expect("report acquired lock");
+        });
+
+        attempted_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("worker attempted lock");
+        assert!(
+            acquired_rx.recv_timeout(Duration::from_millis(50)).is_err(),
+            "a measures conversion ran while the IAU model was switched"
+        );
+        drop(switch);
+        acquired_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("worker acquired released lock");
         worker.join().expect("worker completed");
     }
 }
