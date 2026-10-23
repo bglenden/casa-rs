@@ -219,6 +219,7 @@ dependencies = [
  "casa-tables",
  "casa-test-support",
  "casa-types",
+ "libm",
  "ndarray",
  "num-complex",
  "serde_json",
@@ -502,6 +503,7 @@ dependencies = [
 name = "casa-simulation"
 version = "0.27.0"
 dependencies = [
+ "casa-components",
  "casa-coordinates",
  "casa-images",
  "casa-imaging-model",

@@ -19,15 +19,19 @@ mod predict_support;
 
 use std::path::{Path, PathBuf};
 
+use casa_components::{
+    ComponentList, ComponentShape, Flux, SkyComponent, SpectralKind, SpectralModel,
+};
 use casa_simulation::{
     CasaOutcome, NoiseSpec, ObserveManySpec, Pointing, PredictSpec, PredictionOptions, Simulator,
     SimulatorResult, VoltagePatternSpec,
 };
 use casa_types::measures::direction::{DirectionRef, MDirection};
+use casa_types::measures::frequency::{FrequencyRef, MFrequency};
 use num_complex::Complex32;
 use predict_support::{
-    CENTRE_RAD, bits, cube_model, data, extended_model, predict_spec, read_main, resources, scan,
-    session,
+    CENTRE_RAD, FREQUENCY_HZ, bits, cube_model, data, extended_model, predict_spec, read_main,
+    resources, scan, session,
 };
 
 fn simple_noise(sigma_jy: f64) -> NoiseSpec {
@@ -210,12 +214,13 @@ fn predict_refuses_as_casa_does() {
     let (outcome, message) = refusal(sm.predict(&spec(&[&model, &model])));
     assert_eq!(outcome, CasaOutcome::NotYetImplemented);
     assert!(message.contains("Phase 2"), "{message}");
+    // A component list that is not a readable table is CASA's False.
     let (outcome, message) = refusal(sm.predict(&PredictSpec {
         component_list: Some(directory.path().join("model.cl")),
         ..spec(&[&model])
     }));
-    assert_eq!(outcome, CasaOutcome::NotYetImplemented);
-    assert!(message.contains("complist"), "{message}");
+    assert_eq!(outcome, CasaOutcome::ReturnsFalse);
+    assert!(message.contains("not readable"), "{message}");
     sm.close().expect("close");
     let rows = read_main(&directory.path().join("x.ms")).0;
     assert!(
@@ -363,6 +368,143 @@ fn moved_pointing_is_a_field_there(options: Option<&PredictionOptions>) {
         bits(field.iter().map(|row| &row.data)),
         "the moved pointing's DATA"
     );
+}
+
+/// A list of a point at the centre and one 3″ north of it, written to
+/// `path`.
+fn write_points(path: &Path) {
+    let mut list = ComponentList::new();
+    for (north_rad, flux) in [(0.0, 1.0), (1.5e-5, 0.5)] {
+        list.push(SkyComponent::new(
+            Flux::stokes_jy(flux, 0.0, 0.0, 0.0),
+            ComponentShape::point(MDirection::from_angles(
+                CENTRE_RAD[0],
+                CENTRE_RAD[1] + north_rad,
+                DirectionRef::J2000,
+            )),
+            SpectralModel::new(
+                MFrequency::new(FREQUENCY_HZ, FrequencyRef::LSRK),
+                SpectralKind::Constant,
+            ),
+        ));
+    }
+    list.write_table(path).expect("write the list");
+}
+
+/// A component list is predicted at each scan's own pointing, under the
+/// beam centred there: a pointing `observemany` moved off its field gets
+/// the DATA of a field at the moved direction (#872, after #861's moved
+/// pointings).
+#[test]
+fn components_are_predicted_at_a_moved_pointing() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let points = directory.path().join("points.cl");
+    write_points(&points);
+    let moved = MDirection::from_angles(CENTRE_RAD[0] + 1.0e-5, CENTRE_RAD[1], DirectionRef::J2000);
+    let observed = |name: &str, second: Pointing| {
+        let path = directory.path().join(name);
+        let mut sm = session(&path, "ALMA", "XX YY", resources(2, 2 << 30));
+        sm.set_field("moved", &moved, "", 0.0).expect("setfield");
+        let base = scan("target", 0.0, 20.0);
+        sm.observe_many(&ObserveManySpec {
+            pointings: vec![
+                Pointing {
+                    source: "target".to_string(),
+                    start_s: 0.0,
+                    stop_s: 20.0,
+                    direction: None,
+                },
+                second,
+            ],
+            spectral_window: base.spectral_window,
+            add_observation: false,
+            state: base.state,
+            observer: base.observer,
+            project: base.project,
+        })
+        .expect("observemany");
+        sm.set_vp(&VoltagePatternSpec::default()).expect("setvp");
+        sm.predict(&PredictSpec {
+            images: Vec::new(),
+            component_list: Some(points.clone()),
+            incremental: false,
+        })
+        .expect("predict");
+        sm.close().expect("close");
+        read_main(&path).0
+    };
+    let pointed = observed(
+        "pointed.ms",
+        Pointing {
+            source: "target".to_string(),
+            start_s: 20.0,
+            stop_s: 40.0,
+            direction: Some(moved.clone()),
+        },
+    );
+    let field = observed(
+        "field.ms",
+        Pointing {
+            source: "moved".to_string(),
+            start_s: 20.0,
+            stop_s: 40.0,
+            direction: None,
+        },
+    );
+    assert_eq!(pointed.len(), field.len(), "rows");
+    for (row, (pointed, field)) in pointed.iter().zip(&field).enumerate() {
+        assert_eq!(
+            pointed.uvw_m, field.uvw_m,
+            "row {row}: the same phase centre"
+        );
+    }
+    assert!(
+        pointed
+            .iter()
+            .flat_map(|row| &row.data)
+            .any(|v| v.norm() > 0.0),
+        "the list is predicted"
+    );
+    assert_eq!(
+        bits(pointed.iter().map(|row| &row.data)),
+        bits(field.iter().map(|row| &row.data)),
+        "the moved pointing's DATA"
+    );
+}
+
+/// CASA squints the VLA's and the EVLA's beams for a component list, moving
+/// the RR and LL beams apart; casa-rs's patterns are unsquinted, so it
+/// refuses the list under them with squint, and predicts it without.
+#[test]
+fn components_under_a_squinting_beam_are_refused_unless_squint_is_off() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let points = directory.path().join("points.cl");
+    write_points(&points);
+    for telescope in ["VLA", "EVLA"] {
+        let mut sm = session(
+            &directory.path().join(format!("{telescope}.ms")),
+            telescope,
+            "RR LL",
+            resources(2, 2 << 30),
+        );
+        sm.observe(&scan("target", 0.0, 20.0)).expect("observe");
+        let list = PredictSpec {
+            images: Vec::new(),
+            component_list: Some(points.clone()),
+            incremental: false,
+        };
+        sm.set_vp(&VoltagePatternSpec::default()).expect("setvp");
+        let (outcome, message) = refusal(sm.predict(&list));
+        assert_eq!(outcome, CasaOutcome::NotYetImplemented, "{telescope}");
+        assert!(message.contains("squint"), "{telescope}: {message}");
+        sm.set_vp(&VoltagePatternSpec {
+            do_squint: false,
+            ..VoltagePatternSpec::default()
+        })
+        .expect("setvp");
+        sm.predict(&list).expect("unsquinted: predicted");
+        sm.close().expect("close");
+    }
 }
 
 #[test]

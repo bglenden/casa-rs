@@ -108,6 +108,40 @@ class HarnessTest(unittest.TestCase):
         self.assertEqual(body["start_time_mjd_seconds"], 61120.0 * 86400.0 + 100.0 - 30.0 + 37.0)
         self.assertEqual(info["expected_time_first"], body["start_time_mjd_seconds"] + 5.0)
 
+    def test_several_fields_are_one_span_and_a_complist_is_an_analytic_model(self):
+        entry = manifest_entry(predict=False, usehourangle=False)
+        centre = [math.radians(195.0), math.radians(34.0)]
+        calls = [call for call in entry["calls"] if call["op"] not in ("setfield", "observe")]
+        calls[4:4] = [
+            {"op": "setfield", "resolved": {"sourcename": "p0", "sourcedirection": centre}},
+            {"op": "setfield", "resolved": {"sourcename": "p1", "sourcedirection": [centre[0] + 1e-4, centre[1]]}},
+            {"op": "observe", "resolved": {"sourcename": "p0", "starttime": -30.0, "stoptime": 0.0}},
+            {"op": "observe", "resolved": {"sourcename": "p1", "starttime": 0.0, "stoptime": 30.0}},
+            {"op": "predict", "resolved": {"imagename": [], "complist": "/out/complists/case4-14pt-3gauss.cl"}},
+        ]
+        entry["calls"] = calls
+        request, info = self.harness.build_request("c", entry)
+        body = request["request"]
+        self.assertEqual(body["duration_seconds"], 60.0)
+        self.assertEqual([field["name"] for field in body["fields"]], ["p0", "p1"])
+        self.assertAlmostEqual(body["fields"][1]["phase_center_rad"][0], centre[0] + 1e-4)
+        self.assertEqual(info["expected_rows"], 6 * 3)
+        self.assertEqual(body["model"], {"kind": "analytic_components", "path": info["model_json"]})
+        with open(info["model_json"], encoding="utf-8") as handle:
+            components = json.load(handle)["components"]
+        self.assertEqual([c["kind"] for c in components].count("gaussian"), 3)
+        self.assertEqual(len(components), 17)
+        # The first component is at the centre; the second 4.5e-5 and 3.5e-5 rad off it.
+        self.assertAlmostEqual(components[0]["l_rad"], 0.0, places=12)
+        self.assertAlmostEqual(components[1]["l_rad"], 4.5e-5, places=10)
+        self.assertAlmostEqual(components[1]["m_rad"], 3.5e-5, places=10)
+        self.assertEqual(components[0]["spectrum"], {"flux_jy": 1.0, "spectral_index": -0.65, "reference_frequency_hz": 43.0e9})
+        self.assertAlmostEqual(components[14]["major_fwhm_rad"], 3.5e-5, places=10)
+        # A gap between observe calls is not one span.
+        calls[7]["resolved"]["starttime"] = 10.0
+        with self.assertRaises(ValueError):
+            self.harness.build_request("c", entry)
+
     def test_variants_number_after_earlier_runs(self):
         self.harness.runs = [
             {"case": "c", "kind": "oldsim", "variant": "old-1"},

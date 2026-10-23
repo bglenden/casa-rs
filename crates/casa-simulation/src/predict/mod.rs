@@ -41,11 +41,15 @@
 //! (`single_dish`).
 
 mod beam;
+mod components;
 mod model;
 mod single_dish;
 
 pub(crate) use beam::BeamPattern;
 pub use beam::PrimaryBeam;
+pub(crate) use components::{
+    ComponentPrediction, ComponentRefusal, ComponentTargets, ComponentWindow,
+};
 pub use model::SkyModel;
 pub use single_dish::SingleDishKernel;
 pub(crate) use single_dish::{SingleDishPointings, SingleDishPrediction, SingleDishWindow};

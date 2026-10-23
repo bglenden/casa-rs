@@ -15,7 +15,9 @@ For each scenario, in file order:
    into one `simobserve --json-run` request (`bench_old_simulator.json`
    records the translation and every difference from the new session's
    workload);
-2. export the case's model image to FITS with CASA's `ia.tofits` if missing;
+2. export the case's model image to FITS with CASA's `ia.tofits` if missing,
+   or write its component list (the case file's `complists` entry) as the
+   old binary's analytic model;
 3. run the request `--repeats` times for each `--variants` entry (`auto`, the
    old binary's default worker policy; `w1`, one prediction and corruption
    worker beside the writer, as casa-rs's `cpu-w1`) under `/usr/bin/time -l`,
@@ -254,6 +256,63 @@ def fits_header(path: str) -> dict:
     return {}
 
 
+ANGLE_UNITS = {"rad": 1.0, "deg": math.pi / 180.0, "arcsec": math.pi / 180.0 / 3600.0}
+FREQUENCY_UNITS = {"Hz": 1.0, "MHz": 1.0e6, "GHz": 1.0e9}
+
+
+def quantity(text: str, units: dict) -> float:
+    """`text`, a number followed by one of `units`' names, in their base unit."""
+    for unit, scale in sorted(units.items(), key=lambda item: -len(item[0])):
+        if text.endswith(unit):
+            return float(text[: -len(unit)]) * scale
+    raise ValueError(f"{text!r} is not in {sorted(units)}")
+
+
+def analytic_model(spec: list[dict], centre_rad: list[float]) -> list[dict]:
+    """The old binary's analytic components for a scenario file's component
+    list (`cl.addcomponent` arguments): J2000 points and Gaussians of Stokes I
+    in Jy, offset from `centre_rad` as l = Δα cos δ₀ and m = Δδ, with each
+    one's spectral index at its reference frequency."""
+    ra0, dec0 = centre_rad
+    components = []
+    for index, entry in enumerate(spec):
+        frame, ra, dec = entry["dir"]
+        flux = entry["flux"]
+        spectrum = entry.get("spectrumtype", "constant")
+        if (
+            frame != "J2000"
+            or entry.get("polarization", "Stokes") != "Stokes"
+            or entry.get("fluxunit", "Jy") != "Jy"
+            or any(flux[1:])
+            or entry["shape"] not in ("point", "gaussian")
+            or spectrum not in ("constant", "spectral index")
+        ):
+            raise ValueError(
+                f"component {index}: the old binary takes J2000 points and Gaussians of Stokes I "
+                "in Jy with a spectral index"
+            )
+        delta_ra = math.remainder(quantity(ra, ANGLE_UNITS) - ra0, 2.0 * math.pi)
+        component = {
+            "kind": entry["shape"],
+            "name": f"c{index}",
+            "l_rad": delta_ra * math.cos(dec0),
+            "m_rad": quantity(dec, ANGLE_UNITS) - dec0,
+            "spectrum": {
+                "flux_jy": flux[0],
+                "spectral_index": entry.get("index", 0.0) if spectrum == "spectral index" else 0.0,
+                "reference_frequency_hz": quantity(entry["freq"], FREQUENCY_UNITS),
+            },
+        }
+        if entry["shape"] == "gaussian":
+            component.update(
+                major_fwhm_rad=quantity(entry["majoraxis"], ANGLE_UNITS),
+                minor_fwhm_rad=quantity(entry["minoraxis"], ANGLE_UNITS),
+                position_angle_rad=quantity(entry["positionangle"], ANGLE_UNITS),
+            )
+        components.append(component)
+    return components
+
+
 class Harness:
     def __init__(self, args: argparse.Namespace):
         self.args = args
@@ -368,7 +427,13 @@ class Harness:
         stokes = window["stokes"].split()
         times = resolved["settimes"]
         field = resolved["setfield"]
-        observe = resolved["observe"]
+        observes = [call.get("resolved", {}) for call in calls if call["op"] == "observe"]
+        observe = observes[0]
+        # Several observe calls: the old binary takes one span and cycles its
+        # fields an integration at a time, so they must be contiguous.
+        for previous, following in zip(observes, observes[1:]):
+            if following["starttime"] != previous["stoptime"]:
+                raise ValueError(f"{name}: the old binary observes one span; observe calls leave a gap")
         ra, dec = field["sourcedirection"]
         offset = {"offset_s": 0.0}
         if times.get("usehourangle"):
@@ -383,7 +448,7 @@ class Harness:
             + observe["starttime"]
             + self.args.casa_time_shift_s
         )
-        duration = observe["stoptime"] - observe["starttime"]
+        duration = observes[-1]["stoptime"] - observe["starttime"]
         request = {
             "output_ms": os.path.join(self.ms_dir, f"{name}.ms"),
             "overwrite": True,
@@ -409,14 +474,48 @@ class Harness:
             },
             "predict_model": "predict" in resolved,
         }
-        info = {"model_image": None, "model_fits": None}
+        if len(observes) > 1:
+            directions = {
+                call["resolved"]["sourcename"]: call["resolved"]["sourcedirection"]
+                for call in calls
+                if call["op"] == "setfield"
+            }
+            request["fields"] = [
+                {
+                    "name": scan["sourcename"],
+                    "phase_center_rad": [
+                        directions[scan["sourcename"]][0] % (2.0 * math.pi),
+                        directions[scan["sourcename"]][1],
+                    ],
+                }
+                for scan in observes
+            ]
+        info = {"model_image": None, "model_fits": None, "model_json": None}
         if "predict" in resolved:
-            image = resolved["predict"]["imagename"][0]
-            if self.args.image_root:
-                image = os.path.join(self.args.image_root, os.path.basename(image))
-            fits = os.path.join(self.models, os.path.basename(image).removesuffix(".image") + ".fits")
-            request["model"] = {"kind": "fits_image", "path": fits}
-            info.update(model_image=image, model_fits=fits)
+            predict = resolved["predict"]
+            images = [image for image in predict.get("imagename", []) if image]
+            if images:
+                image = images[0]
+                if self.args.image_root:
+                    image = os.path.join(self.args.image_root, os.path.basename(image))
+                fits = os.path.join(self.models, os.path.basename(image).removesuffix(".image") + ".fits")
+                request["model"] = {"kind": "fits_image", "path": fits}
+                info.update(model_image=image, model_fits=fits)
+            else:
+                listed = os.path.basename(predict["complist"])
+                model = {
+                    "schema_version": 1,
+                    "name": listed,
+                    "components": analytic_model(
+                        self.cases["complists"][listed], [ra % (2.0 * math.pi), dec]
+                    ),
+                }
+                path = os.path.join(self.models, f"{name}.analytic.json")
+                with open(path, "w", encoding="utf-8") as handle:
+                    json.dump(model, handle, indent=1)
+                    handle.write("\n")
+                request["model"] = {"kind": "analytic_components", "path": path}
+                info.update(model_json=path)
         if "corrupt" in resolved and "setnoise" in resolved:
             request["corruption"] = {
                 "seed": int(resolved.get("setseed", {}).get("seed", 1)),

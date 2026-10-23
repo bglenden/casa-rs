@@ -9,8 +9,8 @@
     "setspwindow": "one spectral window: start_frequency_hz = freq (the first channel's centre, as the new session's CHAN_FREQ), channel_width_hz = deltafreq, channel_count = nchannels; stokes gives polarization_setup (X/Y tokens linear, R/L circular; correlation_count = the token count)",
     "setfeed": "implied by the polarization basis",
     "setauto": "autocorrwt 0 only: the old interferometric mode writes cross-correlation rows only",
-    "settimes, setfield, observe": "integration_seconds = integrationtime; start_time_mjd_seconds = referencetime + the usehourangle offset (minus the field's hour angle at the reference epoch from the first antenna, by CASA's measures, as observe::hour_angle_offset_s) + observe's starttime + the 37 s TIME shift observe_scenarios applies by default; duration_seconds = stoptime - starttime; allow_below_elevation_limit = true, so the samples are start + (i + 1/2) integration, as the new session writes them; field_name and phase_center_rad (RA in [0, 2 pi)) from setfield",
-    "predict": "predict_model = true with model {kind: fits_image, path: the ia.tofits export of the same CASA image}; model_peak_jy_per_pixel unset, so no rescaling (the plain CLI's 3e-5 Jy/pixel default does not apply)",
+    "settimes, setfield, observe": "integration_seconds = integrationtime; start_time_mjd_seconds = referencetime + the usehourangle offset (minus the field's hour angle at the reference epoch from the first antenna, by CASA's measures, as observe::hour_angle_offset_s) + observe's starttime + the 37 s TIME shift observe_scenarios applies by default; duration_seconds = stoptime - starttime; allow_below_elevation_limit = true, so the samples are start + (i + 1/2) integration, as the new session writes them; field_name and phase_center_rad (RA in [0, 2 pi)) from setfield. Several contiguous observe calls are one span from the first's starttime to the last's stoptime, the hour-angle offset taken for the first setfield; fields lists each observe's field in order, which the old binary cycles an integration at a time.",
+    "predict": "predict_model = true with model {kind: fits_image, path: the ia.tofits export of the same CASA image}; model_peak_jy_per_pixel unset, so no rescaling (the plain CLI's 3e-5 Jy/pixel default does not apply). A complist is the case file's 'complists' entry of that name written as model {kind: analytic_components}: each point or Gaussian's Stokes I flux, spectral index at its reference frequency and axes, offset from the first setfield as l = dRA cos(dec0), m = dDec (bench_old_simulator.analytic_model)",
     "setvp": "not expressible: the old binary always applies its own primary beam to an image model (see the per-case differences)",
     "setseed, setnoise(simplenoise), corrupt": "corruption {seed, noise {mode: simplenoise, simplenoise_jy}}",
     "no predict": "predict_model = false: DATA is zero before any noise"
@@ -51,6 +51,19 @@
       "differences": [
         "Beam: the new session has no setvp, so it applies no beam; the old binary cannot turn its beam off and applies its VLA power pattern (CASA's VLA Q-band Airy table form, scaled by frequency) to every channel's plane. The pattern is zero beyond 0.8564 deg GHz (37 arcmin at 1.4 GHz, 31 arcmin at 1.655 GHz, against the image's 68 arcmin half-width), so two Bessel J1 calls are made for roughly 16-23% of the pixels, about 50 million evaluations over the 256 channels. This is work the new session does not do. Measured: the old report's residual (total minus its listed stages: chiefly the beam and the 256 FFTs) is 2.61-2.64 s here against 2.13-2.26 s for the ALMA cases with their cached Airy table, so the VLA beam costs the old binary about 0.4-0.5 s of wall.",
         "Prediction as case1-alma-cube; no noise."
+      ]
+    },
+    "case4-vla-components": {
+      "differences": [
+        "Rows: the same 1,246 integrations of 351 baselines, but the old binary cycles the 7 fields an integration at a time over one span, where the new session observes each for a block of 178; the work per row is the same.",
+        "Prediction: both are analytic, with no gridding. The old binary rotates nothing: each component is offset from each field's phase centre in direction cosines (l and m from small angles, n - 1 exactly), with one sin_cos per row and component and its phase advanced a channel at a time, and it fills one correlation and copies it to the other three (Stokes I). The new session rotates each row's uvw to each component (GridFtProjection) and evaluates the four correlations from the flux in the circular basis.",
+        "Beam: the new session has no setvp (the VLA's default pattern is #871's); the old binary always tapers each component by its VLA power pattern, once per field and channel, which is not per-row work.",
+        "Model: both have the same 17 components with spectral indices; the 14pt-3gauss-v1 lines and absorption are in neither."
+      ]
+    },
+    "case4-vla-components-long": {
+      "differences": [
+        "As case4-vla-components, with 5 s integrations: 2,492 integrations of 351 baselines at the same times."
       ]
     }
   }

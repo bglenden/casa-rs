@@ -1,0 +1,133 @@
+{
+  "schema_version": 1,
+  "purpose": "simulation Phase 2 (#841): sm.predict(complist=...) scenarios run by CASA and by casa-rs",
+  "notes": [
+    "The oracle writes each of 'complists' with CASA's cl tool under <out>/complists/ before the scenarios run (each entry is one cl.addcomponent's keyword arguments, 'dir' as [frame, longitude, latitude]); CASA reads a list read-only, so casa-rs reads the same table.",
+    "Image models are named relative to the oracle's --model-root, as in sm_predict_scenarios.json (alma/ is 256 pixels of 0.05 arcsec centred on 10h -30d, alma-big/ 512 of 0.15 arcsec centred on (0.0007615435494667714, -0.0001523087098933758) rad).",
+    "Two CASA defects are kept out of these scenarios, as casa-rs does not follow them (docs/CASA (C++) bugs.md): a negative flux under the beam, which CASA's full-spectral beam turns positive, and a polarised component with a single spectral index, whose Stokes indices CASA's matrix sampler reads out of bounds.",
+    "Times and the configuration keep every scenario free of shadowing and elevation flags."
+  ],
+  "complists": {
+    "shapes.cl": [
+      {"flux": [1.0, 0.0, 0.0, 0.0], "fluxunit": "Jy", "polarization": "Stokes", "dir": ["J2000", "10h00m00.1540", "-30d00m00.0"], "shape": "point", "freq": "230GHz"},
+      {"flux": [0.5, 0.0, 0.0, 0.0], "fluxunit": "Jy", "polarization": "Stokes", "dir": ["J2000", "09h59m59.7690", "-29d59m59.0"], "shape": "gaussian", "majoraxis": "1arcsec", "minoraxis": "0.5arcsec", "positionangle": "30deg", "freq": "230GHz", "spectrumtype": "spectral index", "index": -0.7},
+      {"flux": [0.3, 0.0, 0.0, 0.0], "fluxunit": "Jy", "polarization": "Stokes", "dir": ["J2000", "10h00m00.0770", "-30d00m02.0"], "shape": "disk", "majoraxis": "2arcsec", "minoraxis": "1.5arcsec", "positionangle": "60deg", "freq": "230GHz"},
+      {"flux": [200.0, 0.0, 0.0, 0.0], "fluxunit": "mJy", "polarization": "Stokes", "dir": ["J2000", "10h00m00.0", "-29d59m57.0"], "shape": "point", "freq": "225GHz", "spectrumtype": "plp", "index": [-0.5, 0.2]},
+      {"flux": [-0.1, 0.0, 0.0, 0.0], "fluxunit": "Jy", "polarization": "Stokes", "dir": ["J2000", "10h00m00.2310", "-29d59m58.0"], "shape": "point", "freq": "230GHz"}
+    ],
+    "beamed.cl": [
+      {"flux": [1.0, 0.0, 0.0, 0.0], "fluxunit": "Jy", "polarization": "Stokes", "dir": ["J2000", "10h00m00.7699", "-30d00m00.0"], "shape": "point", "freq": "230GHz"},
+      {"flux": [0.5, 0.0, 0.0, 0.0], "fluxunit": "Jy", "polarization": "Stokes", "dir": ["J2000", "09h59m59.5380", "-29d59m52.0"], "shape": "gaussian", "majoraxis": "2arcsec", "minoraxis": "1arcsec", "positionangle": "-20deg", "freq": "230GHz", "spectrumtype": "spectral index", "index": 1.5},
+      {"flux": [0.3, 0.0, 0.0, 0.0], "fluxunit": "Jy", "polarization": "Stokes", "dir": ["J2000", "10h00m00.0", "-30d00m15.0"], "shape": "disk", "majoraxis": "3arcsec", "minoraxis": "3arcsec", "positionangle": "0deg", "freq": "230GHz"}
+    ],
+    "polarised.cl": [
+      {"flux": [1.0, 0.1, 0.05, 0.02], "fluxunit": "Jy", "polarization": "Stokes", "dir": ["J2000", "10h00m00.1540", "-30d00m00.0"], "shape": "point", "freq": "230GHz"},
+      {"flux": [0.4, -0.04, 0.03, 0.0], "fluxunit": "Jy", "polarization": "Stokes", "dir": ["J2000", "09h59m59.8460", "-30d00m03.0"], "shape": "gaussian", "majoraxis": "1.5arcsec", "minoraxis": "1arcsec", "positionangle": "45deg", "freq": "230GHz"}
+    ]
+  },
+  "scenarios": [
+    {
+      "name": "components-xxyy-shapes",
+      "data": "model",
+      "config": {"cfg": "alma.cycle10.3.cfg", "mount": "alt-az"},
+      "calls": [
+        {"op": "setspwindow", "spwname": "band6", "freq": "230GHz", "deltafreq": "15.625MHz", "freqresolution": "15.625MHz", "refcode": "TOPO", "nchannels": 4, "stokes": "XX YY"},
+        {"op": "setfeed", "mode": "perfect X Y"},
+        {"op": "setauto", "autocorrwt": 0.0},
+        {"op": "settimes", "integrationtime": "30s", "usehourangle": true, "referencetime": ["UTC", "2026/03/21/00:00:00"]},
+        {"op": "setfield", "sourcename": "target", "sourcedirection": ["J2000", "10h00m00.0", "-30d00m00.0"]},
+        {"op": "observe", "sourcename": "target", "spwname": "band6", "starttime": "-300s", "stoptime": "300s"},
+        {"op": "predict", "complist": "shapes.cl"}
+      ]
+    },
+    {
+      "name": "components-xxyy-vp-autos",
+      "data": "model",
+      "config": {"cfg": "alma.cycle10.3.cfg", "mount": "alt-az"},
+      "calls": [
+        {"op": "setspwindow", "spwname": "band6", "freq": "230GHz", "deltafreq": "15.625MHz", "freqresolution": "15.625MHz", "refcode": "TOPO", "nchannels": 4, "stokes": "XX YY"},
+        {"op": "setfeed", "mode": "perfect X Y"},
+        {"op": "settimes", "integrationtime": "30s", "usehourangle": true, "referencetime": ["UTC", "2026/03/21/00:00:00"]},
+        {"op": "setfield", "sourcename": "target", "sourcedirection": ["J2000", "10h00m00.0", "-30d00m00.0"]},
+        {"op": "observe", "sourcename": "target", "spwname": "band6", "starttime": "-300s", "stoptime": "300s"},
+        {"op": "setvp", "dovp": true, "usedefaultvp": false},
+        {"op": "predict", "complist": "beamed.cl"}
+      ]
+    },
+    {
+      "name": "components-4corr-polarised",
+      "data": "model",
+      "config": {"cfg": "alma.cycle10.3.cfg", "mount": "alt-az"},
+      "calls": [
+        {"op": "setspwindow", "spwname": "band6", "freq": "230GHz", "deltafreq": "15.625MHz", "freqresolution": "15.625MHz", "refcode": "TOPO", "nchannels": 4, "stokes": "RR RL LR LL"},
+        {"op": "setfeed", "mode": "perfect R L"},
+        {"op": "setauto", "autocorrwt": 0.0},
+        {"op": "settimes", "integrationtime": "30s", "usehourangle": true, "referencetime": ["UTC", "2026/03/21/00:00:00"]},
+        {"op": "setfield", "sourcename": "target", "sourcedirection": ["J2000", "10h00m00.0", "-30d00m00.0"]},
+        {"op": "observe", "sourcename": "target", "spwname": "band6", "starttime": "-300s", "stoptime": "300s"},
+        {"op": "predict", "complist": "polarised.cl"}
+      ]
+    },
+    {
+      "name": "components-xxyy-4corr-linear",
+      "data": "model",
+      "config": {"cfg": "alma.cycle10.3.cfg", "mount": "alt-az"},
+      "calls": [
+        {"op": "setspwindow", "spwname": "band6", "freq": "230GHz", "deltafreq": "15.625MHz", "freqresolution": "15.625MHz", "refcode": "TOPO", "nchannels": 4, "stokes": "XX XY YX YY"},
+        {"op": "setfeed", "mode": "perfect X Y"},
+        {"op": "setauto", "autocorrwt": 0.0},
+        {"op": "settimes", "integrationtime": "30s", "usehourangle": true, "referencetime": ["UTC", "2026/03/21/00:00:00"]},
+        {"op": "setfield", "sourcename": "target", "sourcedirection": ["J2000", "10h00m00.0", "-30d00m00.0"]},
+        {"op": "observe", "sourcename": "target", "spwname": "band6", "starttime": "-300s", "stoptime": "300s"},
+        {"op": "predict", "complist": "polarised.cl"}
+      ]
+    },
+    {
+      "name": "components-with-image",
+      "data": "model",
+      "config": {"cfg": "alma.cycle10.3.cfg", "mount": "alt-az"},
+      "calls": [
+        {"op": "setspwindow", "spwname": "band6", "freq": "230GHz", "deltafreq": "15.625MHz", "freqresolution": "15.625MHz", "refcode": "TOPO", "nchannels": 4, "stokes": "XX YY"},
+        {"op": "setfeed", "mode": "perfect X Y"},
+        {"op": "setauto", "autocorrwt": 0.0},
+        {"op": "settimes", "integrationtime": "30s", "usehourangle": true, "referencetime": ["UTC", "2026/03/21/00:00:00"]},
+        {"op": "setfield", "sourcename": "target", "sourcedirection": ["J2000", "10h00m00.0", "-30d00m00.0"]},
+        {"op": "observe", "sourcename": "target", "spwname": "band6", "starttime": "-300s", "stoptime": "300s"},
+        {"op": "predict", "imagename": "alma/model4.input.image", "complist": "shapes.cl"}
+      ]
+    },
+    {
+      "name": "components-incremental-after-image",
+      "data": "model",
+      "config": {"cfg": "alma.cycle10.3.cfg", "mount": "alt-az"},
+      "calls": [
+        {"op": "setspwindow", "spwname": "band6", "freq": "230GHz", "deltafreq": "15.625MHz", "freqresolution": "15.625MHz", "refcode": "TOPO", "nchannels": 4, "stokes": "XX YY"},
+        {"op": "setfeed", "mode": "perfect X Y"},
+        {"op": "setauto", "autocorrwt": 0.0},
+        {"op": "settimes", "integrationtime": "30s", "usehourangle": true, "referencetime": ["UTC", "2026/03/21/00:00:00"]},
+        {"op": "setfield", "sourcename": "target", "sourcedirection": ["J2000", "10h00m00.0", "-30d00m00.0"]},
+        {"op": "observe", "sourcename": "target", "spwname": "band6", "starttime": "-300s", "stoptime": "0s"},
+        {"op": "predict", "imagename": "alma/model1.input.image"},
+        {"op": "observe", "sourcename": "target", "spwname": "band6", "starttime": "0s", "stoptime": "300s"},
+        {"op": "predict", "complist": "shapes.cl", "incremental": true}
+      ]
+    },
+    {
+      "name": "components-two-fields-vp",
+      "data": "model",
+      "config": {"cfg": "alma.cycle10.3.cfg", "mount": "alt-az"},
+      "calls": [
+        {"op": "setspwindow", "spwname": "band6", "freq": "230GHz", "deltafreq": "15.625MHz", "freqresolution": "15.625MHz", "refcode": "TOPO", "nchannels": 4, "stokes": "XX YY"},
+        {"op": "setfeed", "mode": "perfect X Y"},
+        {"op": "setauto", "autocorrwt": 0.0},
+        {"op": "settimes", "integrationtime": "30s", "usehourangle": true, "referencetime": ["UTC", "2026/03/21/00:00:00"]},
+        {"op": "setfield", "sourcename": "a", "sourcedirection": ["J2000", "10h00m00.0", "-30d00m00.0"]},
+        {"op": "setfield", "sourcename": "b", "sourcedirection": ["J2000", "10h00m00.6928", "-30d00m06.0"]},
+        {"op": "observe", "sourcename": "a", "spwname": "band6", "starttime": "-300s", "stoptime": "0s"},
+        {"op": "observe", "sourcename": "b", "spwname": "band6", "starttime": "0s", "stoptime": "300s"},
+        {"op": "setvp", "dovp": true, "usedefaultvp": false},
+        {"op": "predict", "complist": "beamed.cl"}
+      ]
+    }
+  ]
+}

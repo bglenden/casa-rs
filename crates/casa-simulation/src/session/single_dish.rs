@@ -29,7 +29,8 @@ const SINGLE_DISH_PHASE: &str = "the simulator's total-power samples";
 impl Simulator {
     /// Sample `model` with `kernel` for the scans observed so far and record
     /// the step: replacing what came before unless `incremental`; `beam` is
-    /// `setvp`'s.
+    /// `setvp`'s. The model is dropped, with its tile cache, before the
+    /// preparation's admission is released.
     ///
     /// # Errors
     ///
@@ -39,7 +40,7 @@ impl Simulator {
     ///   model's pixels could not be read.
     pub(super) fn predict_single_dish(
         &mut self,
-        model: &SkyModel,
+        model: SkyModel,
         kernel: SingleDishKernel,
         beam: Option<PrimaryBeam>,
         incremental: bool,
@@ -86,7 +87,7 @@ impl Simulator {
                 phase: SINGLE_DISH_PHASE,
                 memory: held
                     + SingleDishPrediction::preparation_bytes(
-                        model,
+                        &model,
                         kernel_pattern.as_ref(),
                         (&windows, &pointings),
                     ),
@@ -96,14 +97,18 @@ impl Simulator {
         let preparation = reservation.split(reservation.memory() - held);
         let count = pointings.directions_rad.len();
         let prediction = SingleDishPrediction::new(
-            model,
+            &model,
             kernel,
             (kernel_pattern.as_ref(), voltage_pattern.as_ref()),
             (&windows, pointings),
             reservation,
-        )
-        .map_err(|error| SimulatorError::raised(format!("Caught exception: {error}")))?;
+        );
+        // The model's tile cache is charged to the preparation, so the model
+        // goes first.
+        drop(model);
         drop(preparation);
+        let prediction = prediction
+            .map_err(|error| SimulatorError::raised(format!("Caught exception: {error}")))?;
         tracing::info!(
             ?kernel,
             pointings = count,

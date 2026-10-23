@@ -143,6 +143,9 @@ pub struct Simulator {
     single_dish: Option<SingleDishKernel>,
     /// Whether `predict` applies the primary beam (`setvp(dovp)`).
     voltage_pattern: bool,
+    /// Whether that beam squints (`setvp(dosquint)`), as CASA's VLA and
+    /// EVLA patterns then do for a component list.
+    squint: bool,
     /// The DATA steps (`predict`, `corrupt`), applied at `close`.
     data_plan: DataPlan,
 }
@@ -175,6 +178,7 @@ impl Simulator {
             w_projection_planes: None,
             single_dish: None,
             voltage_pattern: false,
+            squint: false,
             data_plan: DataPlan::default(),
         }
     }

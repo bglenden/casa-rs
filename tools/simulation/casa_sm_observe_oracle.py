@@ -16,6 +16,11 @@ those numbers, so it needs no CASA string parsing, and `compare_sm_ms.py`
 compares the two MSs. Each call records what CASA returned, or the exception
 it raised.
 
+A scenario file's `complists` (`sm_components_scenarios.json`) are written
+with CASA's `cl` tool under `<out>/complists/` before any scenario runs, and
+`predict`'s `complist` names one of them; CASA reads a list read-only, so the
+manifest records that table for casa-rs too.
+
 `predict` names its model images relative to `--model-root`. CASA's predict
 rewrites the image it reads (its spectral units and frame, in `table.dat`), so
 CASA predicts from a copy in `<out>/`, and the manifest records the pristine
@@ -36,7 +41,7 @@ import shutil
 import time
 
 from casatasks.private import simutil
-from casatools import measures, quanta, simulator
+from casatools import componentlist, measures, quanta, simulator
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -198,6 +203,11 @@ def run_scenario(scenario: dict, args: argparse.Namespace) -> dict:
             kwargs["imagename"], resolved["imagename"] = model_images(
                 kwargs.get("imagename", []), args, prefix
             )
+            if kwargs.get("complist"):
+                # CASA reads a list read-only, so both sides read the one
+                # the oracle wrote.
+                path = os.path.join(os.path.abspath(args.out), "complists", kwargs["complist"])
+                kwargs["complist"] = resolved["complist"] = path
         resolved_calls.append((op, kwargs, resolved))
     sm = simulator()
     calls = []
@@ -230,12 +240,33 @@ def run_scenario(scenario: dict, args: argparse.Namespace) -> dict:
     }
 
 
+def write_complists(specs: dict, out: str) -> None:
+    """Write each of the scenario file's `complists` with CASA's `cl` tool:
+    a name, under `<out>/complists/`, and the keyword arguments of each
+    `cl.addcomponent`, a `dir` given as `[frame, longitude, latitude]`."""
+    me = measures()
+    root = os.path.join(out, "complists")
+    os.makedirs(root, exist_ok=True)
+    for name, components in specs.items():
+        cl = componentlist()
+        for spec in components:
+            kwargs = dict(spec)
+            if "dir" in kwargs:
+                kwargs["dir"] = me.direction(*kwargs["dir"])
+            cl.addcomponent(**kwargs)
+        cl.rename(os.path.join(root, name))
+        cl.close()
+        cl.done()
+
+
 def main() -> int:
     args = parse_args()
     with open(args.scenarios, encoding="utf-8") as handle:
-        scenarios = json.load(handle)["scenarios"]
+        document = json.load(handle)
+    scenarios = document["scenarios"]
     shutil.rmtree(args.out, ignore_errors=True)
     os.makedirs(args.out)
+    write_complists(document.get("complists", {}), args.out)
     results = []
     for scenario in scenarios:
         if args.only and scenario["name"] not in args.only:

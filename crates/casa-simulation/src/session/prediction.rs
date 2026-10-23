@@ -26,6 +26,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use casa_components::ComponentList;
 use casa_imaging_model::CorrelationType;
 use casa_imaging_operator::{
     ConvolutionFunctionSet, GridPrecision, MAX_W_PLANES, OperatorError, PaddingFactor,
@@ -35,14 +36,18 @@ use casa_imaging_runtime::pass::WorkerTeam;
 use casa_imaging_runtime::{Demand, Reservation, admit, charge_process_caches, free_memory};
 
 use super::error::{SimulatorError, SimulatorResult};
+use super::resources::SessionResources;
 use super::{BackendRequest, Simulator};
 use crate::predict::{
-    BeamPattern, FtMachine, ModelLayout, ModelOperator, PredictError, PrimaryBeam,
-    SingleDishKernel, SkyModel,
+    BeamPattern, ComponentPrediction, ComponentRefusal, ComponentTargets, ComponentWindow,
+    FtMachine, ModelLayout, ModelOperator, PredictError, PrimaryBeam, SingleDishKernel, SkyModel,
 };
 
 /// The phase a model's grids are admitted as.
 pub(crate) const MODEL_PHASE: &str = "the simulator's model grids";
+
+/// The phase a component list's prepared fluxes and beams are admitted as.
+const COMPONENTS_PHASE: &str = "the simulator's component list";
 
 /// The phase the workers preparing a model are admitted as.
 const PREPARATION_PHASE: &str = "the simulator's model preparation";
@@ -347,6 +352,7 @@ impl Simulator {
             );
         }
         self.voltage_pattern = spec.dovp;
+        self.squint = spec.do_squint;
         Ok(())
     }
 
@@ -359,9 +365,11 @@ impl Simulator {
     /// - Raised, as casatools' binding raises before predicting: a named
     ///   image that does not exist or does not open
     ///   ([`PredictSpec::check_images`]).
-    /// - Not yet implemented: a component list, more than one image, a
-    ///   model layout CASA reads and casa-rs does not (other than Stokes I,
-    ///   J2000, direction–Stokes–spectral axes), a near-field distance on the
+    /// - Not yet implemented: more than one image, a model layout CASA reads
+    ///   and casa-rs does not (other than Stokes I, J2000,
+    ///   direction–Stokes–spectral axes), a component casa-rs does not
+    ///   predict (a direction not in J2000, or a flux, spectrum or shape
+    ///   casa-components does not evaluate), a near-field distance on the
     ///   last field, scans whose windows differ in correlations, or
     ///   `setvp(dovp=True)` for a telescope whose default pattern casa-rs
     ///   does not have (ALMA's, ACA's, the VLA's and the EVLA's it has) or
@@ -369,7 +377,8 @@ impl Simulator {
     /// - CASA's `False`: no model image ("No model images found"), or no
     ///   rows observed yet.
     /// - Raised: a scan of 3 correlations ("No such VisVector type"), or
-    ///   model grids or kernels that do not fit the session's memory budget
+    ///   model grids or kernels, or a component list's read or preparation,
+    ///   that do not fit the session's memory budget
     ///   ([`SimulatorError::admission_refused`]).
     /// - As the FTMachine `setoptions` chose refuses: `WProjectFT` with
     ///   fewer than two planes, or on the Metal backend.
@@ -387,12 +396,6 @@ impl Simulator {
         } else {
             tracing::info!("The data column will be replaced");
         }
-        if let Some(list) = &spec.component_list {
-            return Err(SimulatorError::not_yet_implemented(format!(
-                "predict(complist='{}') is not yet implemented in casa-rs (simulation Phase 2)",
-                list.display()
-            )));
-        }
         if images.len() > 1 {
             return Err(SimulatorError::not_yet_implemented(format!(
                 "predict from {} model images is not yet implemented in casa-rs (simulation \
@@ -400,11 +403,15 @@ impl Simulator {
                 images.len()
             )));
         }
-        let Some(path) = images.first() else {
+        let list = spec
+            .component_list
+            .as_deref()
+            .filter(|path| !path.as_os_str().is_empty());
+        if images.is_empty() && list.is_none() {
             return Err(SimulatorError::refused(
                 "Failed to create SkyEquation: No model images found",
             ));
-        };
+        }
         if let Some(field) = self.fields.last()
             && field.distance_m != 0.0
         {
@@ -414,7 +421,14 @@ impl Simulator {
                 field.distance_m, field.name
             )));
         }
-        let model = SkyModel::open(path).map_err(model_error)?;
+        // `createSkyEquation` reads the component list before the images.
+        let list = list
+            .map(|path| read_component_list(path, &self.options.resources))
+            .transpose()?;
+        let model = images
+            .first()
+            .map(|path| SkyModel::open(path).map_err(model_error))
+            .transpose()?;
         if self.planned_rows() == 0 {
             return Err(SimulatorError::refused(
                 "Failed to create SkyEquation: Caught exception: MSIter::construct - Input \
@@ -423,24 +437,148 @@ impl Simulator {
         }
         let correlations = self.predicted_correlations()?;
         let beam = self.voltage_pattern_beam()?;
-        if beam.is_some() {
+        // The model's grids are prepared per field; a component list is
+        // predicted at each scan's own pointing.
+        if beam.is_some() && model.is_some() {
             self.check_pointings_on_fields()?;
         }
         if let Some(kernel) = self.single_dish {
-            return self.predict_single_dish(&model, kernel, beam, spec.incremental);
+            // Total power samples a model image; `SDGrid` with a component
+            // list is not yet here.
+            let Some(model) = model.filter(|_| list.is_none()) else {
+                return Err(SimulatorError::not_yet_implemented(
+                    "predict(complist=…) after setoptions(ftmachine='sd') is not yet \
+                     implemented in casa-rs (#841); a model image is",
+                ));
+            };
+            return self.predict_single_dish(model, kernel, beam, spec.incremental);
         }
-        let layout = ModelLayout::new(&model, &correlations, self.ft_machine()?)
-            .map_err(|error| correlation_error(error, &correlations))?;
-        let (kernels, kernel_reservation) = self.admitted_kernels(&layout)?;
-        let operator = ModelOperator::new(layout, kernels, GridPrecision::F32);
-        let prediction = self.prepare(&model, operator, beam, kernel_reservation)?;
+        let components = list
+            .map(|(path, list, held)| self.prepare_components(&path, (list, held), beam))
+            .transpose()?;
+        let prediction = match model {
+            Some(model) => {
+                let layout = ModelLayout::new(&model, &correlations, self.ft_machine()?)
+                    .map_err(|error| correlation_error(error, &correlations))?;
+                let (kernels, kernel_reservation) = self.admitted_kernels(&layout)?;
+                let operator = ModelOperator::new(layout, kernels, GridPrecision::F32);
+                Some(self.prepare(&model, operator, beam, kernel_reservation)?)
+            }
+            None => None,
+        };
         if !spec.incremental {
             // Every step so far covers a prefix of the scans this one covers.
             self.data_plan.clear();
         }
-        self.data_plan
-            .predict(Arc::new(prediction), self.scans.len());
+        let scans = self.scans.len();
+        if let Some(components) = components {
+            self.data_plan
+                .predict_components(Arc::new(components), scans);
+        }
+        if let Some(prediction) = prediction {
+            self.data_plan.predict(Arc::new(prediction), scans);
+        }
         Ok(())
+    }
+
+    /// `list` prepared for the session's windows, with `beam` per observed
+    /// field, and admitted. The admission is made when the list has been
+    /// read: what the prediction will hold, known from the list's length,
+    /// and its preparation's scratch. The list's own share of the read's
+    /// admission, `held_list`, is released when the list is dropped here.
+    fn prepare_components(
+        &self,
+        path: &Path,
+        (list, held_list): (ComponentList, Reservation),
+        beam: Option<PrimaryBeam>,
+    ) -> SimulatorResult<ComponentPrediction> {
+        // CASA squints the VLA's and EVLA's beams for a component list (RR
+        // and LL beams apart); casa-rs's patterns are unsquinted.
+        if self.squint
+            && let Some(beam) = beam.filter(|beam| beam.squints())
+        {
+            return Err(SimulatorError::not_yet_implemented(format!(
+                "predict(complist='{}') under the {beam:?} primary beam with beam squint is \
+                 not yet implemented in casa-rs (#841): CASA squints the RR and LL beams for \
+                 components; setvp(dosquint=False) predicts them unsquinted",
+                path.display()
+            )));
+        }
+        if self
+            .antennas
+            .windows(2)
+            .any(|pair| pair[0].diameter_m != pair[1].diameter_m)
+        {
+            tracing::warn!(
+                "Heterogeneous array is not supported for simulation from components.  \
+                 Primary beam will be applied by telescope name."
+            );
+        }
+        let windows: Vec<ComponentWindow> = self
+            .spectral_windows
+            .iter()
+            .map(|window| ComponentWindow {
+                first_hz: window.start_frequency_hz,
+                step_hz: window.channel_width_hz,
+                channels: window.channel_count,
+                correlations: window.correlations.clone(),
+            })
+            .collect();
+        let pattern = beam.map(PrimaryBeam::pattern);
+        // A scan is phased on its phase centre, and the beam centred on it:
+        // its field's direction unless `observemany` moved it. Scans at one
+        // centre share a pointing.
+        let mut pointings: Vec<(usize, [f64; 2])> = Vec::new();
+        let pointing_of_scan: Vec<usize> = self
+            .scans
+            .iter()
+            .map(|scan| {
+                let centre = scan.phase_center_rad.map(f64::to_bits);
+                pointings
+                    .iter()
+                    .position(|(_, known)| known.map(f64::to_bits) == centre)
+                    .unwrap_or_else(|| {
+                        pointings.push((pointings.len(), scan.phase_center_rad));
+                        pointings.len() - 1
+                    })
+            })
+            .collect();
+        let targets = ComponentTargets {
+            windows: &windows,
+            pointings: &pointings,
+            pointing_of_scan: &pointing_of_scan,
+            beam: pattern.as_ref(),
+        };
+        let resources = &self.options.resources;
+        let preparation = ComponentTargets::preparation_bytes(list.len());
+        let mut reservation = admit(
+            resources.host(),
+            resources.policy(),
+            &Demand {
+                phase: COMPONENTS_PHASE,
+                memory: targets.bytes(list.len()) + preparation,
+            },
+        )
+        .map_err(SimulatorError::admission)?;
+        let held_preparation = reservation.split(preparation);
+        let prediction = ComponentPrediction::new(&list, targets, reservation).map_err(
+            |ComponentRefusal::NotYetImplemented(reason)| {
+                SimulatorError::not_yet_implemented(format!(
+                    "predict(complist='{}'): {reason} (#841)",
+                    path.display()
+                ))
+            },
+        )?;
+        drop(held_preparation);
+        tracing::info!(
+            components = list.len(),
+            bytes = prediction.bytes(),
+            "prepared the component list {}",
+            path.display()
+        );
+        drop(list);
+        drop(held_list);
+        Ok(prediction)
     }
 
     /// The correlations of the scans observed so far, which one operator
@@ -667,6 +805,39 @@ impl Simulator {
             _kernels: kernels,
         })
     }
+}
+
+/// The component list at `path`, as `createSkyEquation` reads it: CASA's
+/// `False` when the path is not a readable table ("ComponentList … not
+/// readable"), and when the table is not a component list CASA reads
+/// (`ComponentList`'s constructor throws, and `predict` catches it). The
+/// read is admitted within `resources` before it starts; once the list is
+/// formed, the list's share of that admission is returned with it and the
+/// rest released.
+fn read_component_list(
+    path: &Path,
+    resources: &SessionResources,
+) -> SimulatorResult<(PathBuf, ComponentList, Reservation)> {
+    if !path.join("table.dat").is_file() {
+        return Err(SimulatorError::refused(format!(
+            "Failed to create SkyEquation: ComponentList {} not readable",
+            path.display()
+        )));
+    }
+    let refused = |error| SimulatorError::refused(format!("Caught exception: {error}"));
+    let reading_bytes = ComponentList::read_table_bytes(path).map_err(refused)?;
+    let mut reading = admit(
+        resources.host(),
+        resources.policy(),
+        &Demand {
+            phase: COMPONENTS_PHASE,
+            memory: reading_bytes,
+        },
+    )
+    .map_err(SimulatorError::admission)?;
+    let list = ComponentList::read_table(path).map_err(refused)?;
+    let held = reading.split(list.bytes().min(reading_bytes));
+    Ok((path.to_path_buf(), list, held))
 }
 
 /// A model that cannot be read or prepared, as CASA reports it: a layout

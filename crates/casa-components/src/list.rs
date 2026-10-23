@@ -5,6 +5,7 @@ use std::path::Path;
 
 use crate::component::SkyComponent;
 use crate::error::ComponentListError;
+use crate::spectrum::SpectralKind;
 use crate::table;
 
 /// An ordered list of [`SkyComponent`]s, CASA's `ComponentList`.
@@ -41,6 +42,21 @@ impl ComponentList {
     /// CASA requires, or holds a value CASA's model refuses.
     pub fn read_table(path: impl AsRef<Path>) -> Result<Self, ComponentListError> {
         table::read_component_list(path.as_ref())
+    }
+
+    /// The most [`Self::read_table`] holds while it reads the list at
+    /// `path`, bytes, known from the table's description before it reads:
+    /// casa-tables loads every row at the first row's read, some 9.5 KB a
+    /// row beside the columns' bytes on disk for the lists casa-components
+    /// writes, and the list is formed beside them. A memory budget admits
+    /// this before the read.
+    ///
+    /// # Errors
+    ///
+    /// [`ComponentListError::Table`] when the table's description cannot be
+    /// read.
+    pub fn read_table_bytes(path: impl AsRef<Path>) -> Result<u64, ComponentListError> {
+        table::read_bytes(path.as_ref())
     }
 
     /// Write this list as a new CASA component-list table, as CASA's
@@ -129,6 +145,37 @@ impl ComponentList {
     /// Iterate over the components in order.
     pub fn iter(&self) -> std::slice::Iter<'_, SkyComponent> {
         self.components.iter()
+    }
+
+    /// Bytes the list holds in memory: its components and what each owns
+    /// on the heap (unit names, label, optional parameters, and a tabular or
+    /// power-log-polynomial spectrum's values), counted by length.
+    pub fn bytes(&self) -> u64 {
+        let owned: usize = self
+            .components
+            .iter()
+            .map(|component| {
+                let error = component.shape().direction_error();
+                let spectrum = component.spectrum();
+                let values = match spectrum.kind() {
+                    SpectralKind::Tabular(table) => {
+                        size_of_val(table.frequencies_hz()) + size_of_val(table.stokes_flux())
+                    }
+                    SpectralKind::PowerLogPolynomial(polynomial) => {
+                        size_of_val(polynomial.coefficients()) + size_of_val(polynomial.errors())
+                    }
+                    SpectralKind::Constant | SpectralKind::SpectralIndex(_) => 0,
+                };
+                component.flux().unit().name().len()
+                    + error.latitude().unit().name().len()
+                    + error.longitude().unit().name().len()
+                    + spectrum.reference_frequency_error().unit().name().len()
+                    + values
+                    + component.label().len()
+                    + size_of_val(component.optional_parameters())
+            })
+            .sum();
+        (self.components.capacity() * size_of::<SkyComponent>() + owned) as u64
     }
 }
 

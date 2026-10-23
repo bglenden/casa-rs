@@ -2,8 +2,10 @@
   "schema_version": 1,
   "purpose": "simulation Phase 1d benchmarks (#841): the plan's section 5 cases, run by CASA's sm and by casa-rs",
   "notes": [
-    "Cases run in file order: 5 (write-only, then noise-only), 1, 3, 2.",
+    "Cases run in file order: 5 (write-only, then noise-only), 1, 3, 2, 4.",
     "Case 1 is a 256-plane cube model; case 3 is case 1 with one model plane spanning the band; case 5 is case 1 with observe only.",
+    "Case 4 carries July's analytic-model record (docs/tutorial-parity/synthetic-ms-families.md: 1,253 MB/s, a 1 GiB VLA-D Q-band mosaic of 64 channels, 4 correlations and 7 pointings predicted from tools/perf/imager/models/14pt-3gauss-v1.json) as a component list: the model's 14 points and 3 Gaussians with their fluxes, spectral indices (at 43 GHz) and Gaussian axes, offset from 13h +34d by their l and m. Its lines and absorption, which a CASA spectral index cannot express, are left out. Seven pointings 31 arcsec apart (a hexagon about the centre) of 1,780 s each give 437,346 rows. It has no setvp: the VLA's default voltage pattern is #871's. CASA takes under the plan's 60 s for a CASA multiple on it, so case4-vla-components-long, the same case with 5 s integrations (874,692 rows at the same times and elevations), is the one the CASA multiple is quoted on.",
+    "Each of 'complists' is written by the oracle with CASA's cl tool under its output's complists/, and a predict's complist names one.",
     "Each model is named relative to the oracle's --model-root and is written by make_bench_model.py from the 'models' entry of the same name (casa_sm_predict_oracle.write_model's arguments). Its direction is its case's field centre and its spectral axis is its case's window: a window off the model's band predicts zero.",
     "Cells spread the visibilities over the uv grid: 0.1 arcsec for ALMA cycle10.3 at 230 GHz, 8 arcsec for VLA-D at 1.4 GHz.",
     "Times and configurations keep every case free of shadowing and elevation flags."
@@ -12,6 +14,27 @@
     "alma-cube.image": {"ra": "10h00m00.0", "dec": "-30d00m00.0", "freq_ghz": 230.0, "chan_width_mhz": 7.8125, "nchan": 256, "planes": 256, "imsize": 1024, "cell_arcsec": 0.1},
     "alma-mfs.image": {"ra": "10h00m00.0", "dec": "-30d00m00.0", "freq_ghz": 230.0, "chan_width_mhz": 7.8125, "nchan": 256, "planes": 1, "imsize": 1024, "cell_arcsec": 0.1},
     "vla-cube.image": {"ra": "13h00m00.0", "dec": "+34d00m00.0", "freq_ghz": 1.4, "chan_width_mhz": 1.0, "nchan": 256, "planes": 256, "imsize": 1024, "cell_arcsec": 8.0}
+  },
+  "complists": {
+    "case4-14pt-3gauss.cl": [
+      {"flux": [1.0, 0.0, 0.0, 0.0], "fluxunit": "Jy", "polarization": "Stokes", "dir": ["J2000", "195.000000000deg", "34.000000000deg"], "freq": "43GHz", "spectrumtype": "spectral index", "index": -0.65, "shape": "point"},
+      {"flux": [0.83, 0.0, 0.0, 0.0], "fluxunit": "Jy", "polarization": "Stokes", "dir": ["J2000", "195.003110004deg", "34.002005352deg"], "freq": "43GHz", "spectrumtype": "spectral index", "index": -0.2, "shape": "point"},
+      {"flux": [0.71, 0.0, 0.0, 0.0], "fluxunit": "Jy", "polarization": "Stokes", "dir": ["J2000", "194.996406218deg", "33.997650873deg"], "freq": "43GHz", "spectrumtype": "spectral index", "index": 0.15, "shape": "point"},
+      {"flux": [0.62, 0.0, 0.0, 0.0], "fluxunit": "Jy", "polarization": "Stokes", "dir": ["J2000", "194.998755998deg", "34.004297183deg"], "freq": "43GHz", "spectrumtype": "spectral index", "index": -1.1, "shape": "point"},
+      {"flux": [0.55, 0.0, 0.0, 0.0], "fluxunit": "Jy", "polarization": "Stokes", "dir": ["J2000", "195.001520446deg", "33.995244450deg"], "freq": "43GHz", "spectrumtype": "spectral index", "index": -0.4, "shape": "point"},
+      {"flux": [0.49, 0.0, 0.0, 0.0], "fluxunit": "Jy", "polarization": "Stokes", "dir": ["J2000", "195.007049342deg", "33.999369746deg"], "freq": "43GHz", "spectrumtype": "spectral index", "index": 0.0, "shape": "point"},
+      {"flux": [0.43, 0.0, 0.0, 0.0], "fluxunit": "Jy", "polarization": "Stokes", "dir": ["J2000", "194.992259546deg", "34.000916732deg"], "freq": "43GHz", "spectrumtype": "spectral index", "index": -0.8, "shape": "point"},
+      {"flux": [0.38, 0.0, 0.0, 0.0], "fluxunit": "Jy", "polarization": "Stokes", "dir": ["J2000", "195.011057792deg", "34.006302536deg"], "freq": "43GHz", "spectrumtype": "spectral index", "index": 0.25, "shape": "point"},
+      {"flux": [0.33, 0.0, 0.0, 0.0], "fluxunit": "Jy", "polarization": "Stokes", "dir": ["J2000", "194.988251096deg", "34.006875494deg"], "freq": "43GHz", "spectrumtype": "spectral index", "index": -0.95, "shape": "point"},
+      {"flux": [0.29, 0.0, 0.0, 0.0], "fluxunit": "Jy", "polarization": "Stokes", "dir": ["J2000", "195.012440016deg", "33.992551549deg"], "freq": "43GHz", "spectrumtype": "spectral index", "index": -0.1, "shape": "point"},
+      {"flux": [0.25, 0.0, 0.0, 0.0], "fluxunit": "Jy", "polarization": "Stokes", "dir": ["J2000", "194.986868872deg", "33.991978591deg"], "freq": "43GHz", "spectrumtype": "spectral index", "index": -1.3, "shape": "point"},
+      {"flux": [0.21, 0.0, 0.0, 0.0], "fluxunit": "Jy", "polarization": "Stokes", "dir": ["J2000", "195.020042247deg", "34.012032114deg"], "freq": "43GHz", "spectrumtype": "spectral index", "index": -0.55, "shape": "point"},
+      {"flux": [0.18, 0.0, 0.0, 0.0], "fluxunit": "Jy", "polarization": "Stokes", "dir": ["J2000", "194.976502193deg", "34.001145916deg"], "freq": "43GHz", "spectrumtype": "spectral index", "index": 0.35, "shape": "point"},
+      {"flux": [0.15, 0.0, 0.0, 0.0], "fluxunit": "Jy", "polarization": "Stokes", "dir": ["J2000", "195.002073336deg", "33.979373519deg"], "freq": "43GHz", "spectrumtype": "spectral index", "index": -0.25, "shape": "point"},
+      {"flux": [0.52, 0.0, 0.0, 0.0], "fluxunit": "Jy", "polarization": "Stokes", "dir": ["J2000", "195.004837784deg", "33.998281127deg"], "freq": "43GHz", "spectrumtype": "spectral index", "index": -0.45, "shape": "gaussian", "majoraxis": "7.219268arcsec", "minoraxis": "4.125296arcsec", "positionangle": "22.918312deg"},
+      {"flux": [0.46, 0.0, 0.0, 0.0], "fluxunit": "Jy", "polarization": "Stokes", "dir": ["J2000", "194.993779992deg", "34.003151268deg"], "freq": "43GHz", "spectrumtype": "spectral index", "index": 0.1, "shape": "gaussian", "majoraxis": "17.532509arcsec", "minoraxis": "10.725770arcsec", "positionangle": "-40.107046deg"},
+      {"flux": [0.31, 0.0, 0.0, 0.0], "fluxunit": "Jy", "polarization": "Stokes", "dir": ["J2000", "195.015895575deg", "33.989113802deg"], "freq": "43GHz", "spectrumtype": "spectral index", "index": -0.9, "shape": "gaussian", "majoraxis": "26.814425arcsec", "minoraxis": "14.438536arcsec", "positionangle": "63.025357deg"}
+    ]
   },
   "scenarios": [
     {
@@ -91,6 +114,58 @@
         {"op": "setfield", "sourcename": "src", "sourcedirection": ["J2000", "13h00m00.0", "+34d00m00.0"]},
         {"op": "observe", "sourcename": "src", "spwname": "LBAND", "starttime": "-4500s", "stoptime": "4500s"},
         {"op": "predict", "imagename": "vla-cube.image"}
+      ]
+    },
+    {
+      "name": "case4-vla-components",
+      "case": "4 analytic and component-list",
+      "config": {"cfg": "vla.d.cfg", "mount": "alt-az"},
+      "calls": [
+        {"op": "setspwindow", "spwname": "QBAND", "freq": "43GHz", "deltafreq": "2MHz", "freqresolution": "2MHz", "refcode": "TOPO", "nchannels": 64, "stokes": "RR RL LR LL"},
+        {"op": "setfeed", "mode": "perfect R L"},
+        {"op": "setauto", "autocorrwt": 0.0},
+        {"op": "settimes", "integrationtime": "10s", "usehourangle": true, "referencetime": ["UTC", "2026/03/21/00:00:00"]},
+        {"op": "setfield", "sourcename": "p0", "sourcedirection": ["J2000", "195.000000000deg", "34.000000000deg"]},
+        {"op": "setfield", "sourcename": "p1", "sourcedirection": ["J2000", "195.010366680deg", "34.000000000deg"]},
+        {"op": "setfield", "sourcename": "p2", "sourcedirection": ["J2000", "195.005183340deg", "34.007442940deg"]},
+        {"op": "setfield", "sourcename": "p3", "sourcedirection": ["J2000", "194.994816660deg", "34.007442940deg"]},
+        {"op": "setfield", "sourcename": "p4", "sourcedirection": ["J2000", "194.989633320deg", "34.000000000deg"]},
+        {"op": "setfield", "sourcename": "p5", "sourcedirection": ["J2000", "194.994816660deg", "33.992557060deg"]},
+        {"op": "setfield", "sourcename": "p6", "sourcedirection": ["J2000", "195.005183340deg", "33.992557060deg"]},
+        {"op": "observe", "sourcename": "p0", "spwname": "QBAND", "starttime": "-6230s", "stoptime": "-4450s"},
+        {"op": "observe", "sourcename": "p1", "spwname": "QBAND", "starttime": "-4450s", "stoptime": "-2670s"},
+        {"op": "observe", "sourcename": "p2", "spwname": "QBAND", "starttime": "-2670s", "stoptime": "-890s"},
+        {"op": "observe", "sourcename": "p3", "spwname": "QBAND", "starttime": "-890s", "stoptime": "890s"},
+        {"op": "observe", "sourcename": "p4", "spwname": "QBAND", "starttime": "890s", "stoptime": "2670s"},
+        {"op": "observe", "sourcename": "p5", "spwname": "QBAND", "starttime": "2670s", "stoptime": "4450s"},
+        {"op": "observe", "sourcename": "p6", "spwname": "QBAND", "starttime": "4450s", "stoptime": "6230s"},
+        {"op": "predict", "complist": "case4-14pt-3gauss.cl"}
+      ]
+    },
+    {
+      "name": "case4-vla-components-long",
+      "case": "4 analytic and component-list, for the CASA multiple",
+      "config": {"cfg": "vla.d.cfg", "mount": "alt-az"},
+      "calls": [
+        {"op": "setspwindow", "spwname": "QBAND", "freq": "43GHz", "deltafreq": "2MHz", "freqresolution": "2MHz", "refcode": "TOPO", "nchannels": 64, "stokes": "RR RL LR LL"},
+        {"op": "setfeed", "mode": "perfect R L"},
+        {"op": "setauto", "autocorrwt": 0.0},
+        {"op": "settimes", "integrationtime": "5s", "usehourangle": true, "referencetime": ["UTC", "2026/03/21/00:00:00"]},
+        {"op": "setfield", "sourcename": "p0", "sourcedirection": ["J2000", "195.000000000deg", "34.000000000deg"]},
+        {"op": "setfield", "sourcename": "p1", "sourcedirection": ["J2000", "195.010366680deg", "34.000000000deg"]},
+        {"op": "setfield", "sourcename": "p2", "sourcedirection": ["J2000", "195.005183340deg", "34.007442940deg"]},
+        {"op": "setfield", "sourcename": "p3", "sourcedirection": ["J2000", "194.994816660deg", "34.007442940deg"]},
+        {"op": "setfield", "sourcename": "p4", "sourcedirection": ["J2000", "194.989633320deg", "34.000000000deg"]},
+        {"op": "setfield", "sourcename": "p5", "sourcedirection": ["J2000", "194.994816660deg", "33.992557060deg"]},
+        {"op": "setfield", "sourcename": "p6", "sourcedirection": ["J2000", "195.005183340deg", "33.992557060deg"]},
+        {"op": "observe", "sourcename": "p0", "spwname": "QBAND", "starttime": "-6230s", "stoptime": "-4450s"},
+        {"op": "observe", "sourcename": "p1", "spwname": "QBAND", "starttime": "-4450s", "stoptime": "-2670s"},
+        {"op": "observe", "sourcename": "p2", "spwname": "QBAND", "starttime": "-2670s", "stoptime": "-890s"},
+        {"op": "observe", "sourcename": "p3", "spwname": "QBAND", "starttime": "-890s", "stoptime": "890s"},
+        {"op": "observe", "sourcename": "p4", "spwname": "QBAND", "starttime": "890s", "stoptime": "2670s"},
+        {"op": "observe", "sourcename": "p5", "spwname": "QBAND", "starttime": "2670s", "stoptime": "4450s"},
+        {"op": "observe", "sourcename": "p6", "spwname": "QBAND", "starttime": "4450s", "stoptime": "6230s"},
+        {"op": "predict", "complist": "case4-14pt-3gauss.cl"}
       ]
     }
   ]

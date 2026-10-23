@@ -103,6 +103,14 @@ impl PrimaryBeam {
         }
     }
 
+    /// Whether CASA gives this pattern a beam squint: the VLA's and the
+    /// EVLA's (`PBMath1D` with `squint_p` set), which moves the RR and LL
+    /// beams apart for a component.
+    #[must_use]
+    pub fn squints(self) -> bool {
+        self == Self::VLA || self == Self::VLA_NVSS || self == Self::Evla
+    }
+
     /// The pattern's lookup: an Airy pattern's table, shared by every plane
     /// it is evaluated on, or the EVLA's fits, which hold none.
     pub(crate) fn pattern(self) -> BeamPattern {
@@ -164,6 +172,16 @@ impl BeamPattern {
             let radius = (f64::from((squared(x, 0) + squared(y, 1)).sqrt()) * factor) as f32;
             lookup.power(f64::from(radius))
         })
+    }
+
+    /// The power pattern at `separation_rad` from the pointing, at
+    /// `frequency_hz`, as `PBMath1D::apply` evaluates it for a component:
+    /// the separation in arcmin times the frequency in GHz, in `Double`,
+    /// looked up in the table (the EVLA's fit of that frequency, as
+    /// `PBMath1DEVLA` takes it per channel), and zero beyond it.
+    pub(crate) fn power_at(&self, separation_rad: f64, frequency_hz: f64) -> f32 {
+        let radius = separation_rad.to_degrees() * 60.0 * frequency_hz / 1.0e9;
+        self.lookup_at(frequency_hz).power(radius)
     }
 
     /// The power pattern `offset_rad` along an image's x axis from its

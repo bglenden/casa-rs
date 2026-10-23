@@ -13,7 +13,7 @@ use casa_tables::{ColumnOptions, ColumnSchema, TableDescHeader, TableSchema};
 use casa_types::PrimitiveType;
 
 pub(crate) use measures::casacore_angles;
-pub(crate) use read::read_component_list;
+pub(crate) use read::{read_bytes, read_component_list};
 pub(crate) use spectral_record::spectral_record;
 pub(crate) use write::{rewrite_component_list, write_component_list};
 
