@@ -2220,6 +2220,9 @@ pub(super) fn collect_undefined_cells_for_schema(
         .collect()
 }
 
+/// The `Undefined` columns `row` leaves out. Record columns are never
+/// among them: casacore's `ScalarRecordColumnData::isDefined` is always true,
+/// and a missing record reads as an empty one, with or without the option.
 pub(super) fn undefined_columns_for_row(
     row: &RecordValue,
     schema: &TableSchema,
@@ -2227,7 +2230,11 @@ pub(super) fn undefined_columns_for_row(
     schema
         .columns()
         .iter()
-        .filter(|column| column.options().undefined && row.get(column.name()).is_none())
+        .filter(|column| {
+            column.options().undefined
+                && !matches!(column.column_type(), ColumnType::Record)
+                && row.get(column.name()).is_none()
+        })
         .map(|column| column.name().to_string())
         .collect()
 }

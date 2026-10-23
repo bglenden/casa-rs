@@ -1,0 +1,2047 @@
+{
+ "casa_version": "6.7.6-14",
+ "cells": {
+  "Direction_Error": [
+   [
+    0.0,
+    0.0
+   ],
+   [
+    0.0,
+    0.0
+   ],
+   [
+    0.0,
+    0.0
+   ],
+   [
+    0.0,
+    0.0
+   ],
+   [
+    0.0,
+    0.0
+   ],
+   [
+    0.25,
+    30.0
+   ],
+   [
+    1e-06,
+    2e-06
+   ],
+   [
+    0.0,
+    0.0
+   ],
+   [
+    0.0,
+    0.0
+   ]
+  ],
+  "Direction_Error_Units": [
+   [
+    "rad",
+    "rad"
+   ],
+   [
+    "rad",
+    "rad"
+   ],
+   [
+    "rad",
+    "rad"
+   ],
+   [
+    "rad",
+    "rad"
+   ],
+   [
+    "rad",
+    "rad"
+   ],
+   [
+    "arcsec",
+    "mas"
+   ],
+   [
+    "rad",
+    "rad"
+   ],
+   [
+    "rad",
+    "rad"
+   ],
+   [
+    "rad",
+    "rad"
+   ]
+  ],
+  "Direction_Frame": [
+   "J2000",
+   "B1950",
+   "J2000",
+   "J2000",
+   "GALACTIC",
+   "AZEL",
+   "GALACTIC",
+   "J2000",
+   "B1950"
+  ],
+  "Flux": [
+   [
+    [
+     1.5,
+     0.0
+    ],
+    [
+     0.10000000149011612,
+     0.0
+    ],
+    [
+     0.05000000074505806,
+     0.0
+    ],
+    [
+     0.019999999552965164,
+     0.0
+    ]
+   ],
+   [
+    [
+     2.0,
+     0.0
+    ],
+    [
+     0.0,
+     0.0
+    ],
+    [
+     0.0,
+     0.0
+    ],
+    [
+     0.0,
+     0.0
+    ]
+   ],
+   [
+    [
+     0.5,
+     0.0
+    ],
+    [
+     0.0,
+     0.0
+    ],
+    [
+     0.0,
+     0.0
+    ],
+    [
+     0.0,
+     0.0
+    ]
+   ],
+   [
+    [
+     3.0,
+     0.0
+    ],
+    [
+     0.30000001192092896,
+     0.0
+    ],
+    [
+     0.20000000298023224,
+     0.0
+    ],
+    [
+     0.0,
+     0.0
+    ]
+   ],
+   [
+    [
+     1.0,
+     0.0
+    ],
+    [
+     0.0,
+     0.0
+    ],
+    [
+     0.0,
+     0.0
+    ],
+    [
+     0.0,
+     0.0
+    ]
+   ],
+   [
+    [
+     1.1,
+     0.0
+    ],
+    [
+     0.05,
+     0.02
+    ],
+    [
+     0.05,
+     -0.02
+    ],
+    [
+     0.9,
+     0.0
+    ]
+   ],
+   [
+    [
+     900.0,
+     0.0
+    ],
+    [
+     40.0,
+     25.0
+    ],
+    [
+     40.0,
+     -25.0
+    ],
+    [
+     700.0,
+     0.0
+    ]
+   ],
+   [
+    [
+     0.25,
+     0.0
+    ],
+    [
+     0.0,
+     0.0
+    ],
+    [
+     0.0,
+     0.0
+    ],
+    [
+     0.01,
+     0.0
+    ]
+   ],
+   [
+    [
+     4.0,
+     0.0
+    ],
+    [
+     0.0,
+     0.0
+    ],
+    [
+     0.0,
+     0.0
+    ],
+    [
+     0.0,
+     0.0
+    ]
+   ]
+  ],
+  "Flux_Error": [
+   [
+    [
+     0.0,
+     0.0
+    ],
+    [
+     0.0,
+     0.0
+    ],
+    [
+     0.0,
+     0.0
+    ],
+    [
+     0.0,
+     0.0
+    ]
+   ],
+   [
+    [
+     0.0,
+     0.0
+    ],
+    [
+     0.0,
+     0.0
+    ],
+    [
+     0.0,
+     0.0
+    ],
+    [
+     0.0,
+     0.0
+    ]
+   ],
+   [
+    [
+     0.0,
+     0.0
+    ],
+    [
+     0.0,
+     0.0
+    ],
+    [
+     0.0,
+     0.0
+    ],
+    [
+     0.0,
+     0.0
+    ]
+   ],
+   [
+    [
+     0.0,
+     0.0
+    ],
+    [
+     0.0,
+     0.0
+    ],
+    [
+     0.0,
+     0.0
+    ],
+    [
+     0.0,
+     0.0
+    ]
+   ],
+   [
+    [
+     0.0,
+     0.0
+    ],
+    [
+     0.0,
+     0.0
+    ],
+    [
+     0.0,
+     0.0
+    ],
+    [
+     0.0,
+     0.0
+    ]
+   ],
+   [
+    [
+     0.01,
+     0.0
+    ],
+    [
+     0.001,
+     0.001
+    ],
+    [
+     0.001,
+     0.001
+    ],
+    [
+     0.01,
+     0.0
+    ]
+   ],
+   [
+    [
+     5.0,
+     0.0
+    ],
+    [
+     1.0,
+     1.0
+    ],
+    [
+     1.0,
+     1.0
+    ],
+    [
+     5.0,
+     0.0
+    ]
+   ],
+   [
+    [
+     0.02,
+     0.0
+    ],
+    [
+     0.0,
+     0.0
+    ],
+    [
+     0.0,
+     0.0
+    ],
+    [
+     0.001,
+     0.0
+    ]
+   ],
+   [
+    [
+     0.0,
+     0.0
+    ],
+    [
+     0.0,
+     0.0
+    ],
+    [
+     0.0,
+     0.0
+    ],
+    [
+     0.0,
+     0.0
+    ]
+   ]
+  ],
+  "Flux_Polarisation": [
+   "Stokes",
+   "Stokes",
+   "Stokes",
+   "Stokes",
+   "Stokes",
+   "Circular",
+   "Linear",
+   "Stokes",
+   "Stokes"
+  ],
+  "Flux_Unit": [
+   "Jy",
+   "Jy",
+   "Jy",
+   "Jy",
+   "Jy",
+   "Jy",
+   "mJy",
+   "Jy",
+   "Jy"
+  ],
+  "Frequency_Error": [
+   0.0,
+   5.0,
+   0.0,
+   0.0,
+   0.0,
+   0.0,
+   0.002,
+   0.0,
+   0.0
+  ],
+  "Frequency_Error_Units": [
+   "GHz",
+   "kHz",
+   "GHz",
+   "GHz",
+   "GHz",
+   "GHz",
+   "GHz",
+   "GHz",
+   "GHz"
+  ],
+  "Frequency_Frame": [
+   "LSRK",
+   "TOPO",
+   "LSRK",
+   "LSRK",
+   "LSRK",
+   "TOPO",
+   "BARY",
+   "BARY",
+   "LSRK"
+  ],
+  "Label": [
+   "point, Stokes, J2000 at RA 20h",
+   "Gaussian, B1950, PA 200 deg",
+   "disk, tabular",
+   "Gaussian, Stokes spectral indices",
+   "point, GALACTIC, plp",
+   "limb-darkened disk, circular, AZEL, plp",
+   "disk, linear mJy, GALACTIC, PA -30 deg",
+   "circular Gaussian, PA -30 deg, tabular in BARY",
+   ""
+  ],
+  "Optional_Parameters": [
+   null,
+   null,
+   null,
+   null,
+   null,
+   [
+    0.7
+   ],
+   null,
+   null,
+   null
+  ],
+  "Reference_Direction": [
+   [
+    -1.0471975511965976,
+    -0.5235987755982988
+   ],
+   [
+    0.2617993877991494,
+    0.3490658503988659
+   ],
+   [
+    1.4629713400477304,
+    -0.09409263922973875
+   ],
+   [
+    3.141592653589793,
+    0.7853981633974482
+   ],
+   [
+    2.0943951023931953,
+    0.03490658503988659
+   ],
+   [
+    0.5235987755982988,
+    0.7853981633974484
+   ],
+   [
+    0.17453292519943295,
+    -0.08726646259971649
+   ],
+   [
+    -2.7925268031909276,
+    -1.0471975511965976
+   ],
+   [
+    -0.174532925199433,
+    1.553343034274955
+   ]
+  ],
+  "Reference_Frequency": [
+   1400000000.0000002,
+   100000000000.0,
+   1000000000.0,
+   1400000000.0000002,
+   5000000000.0,
+   230000000000.0,
+   8400000000.0,
+   1500000000.0,
+   43000000000.0
+  ],
+  "Shape": [
+   "Point",
+   "Gaussian",
+   "Disk",
+   "Gaussian",
+   "Point",
+   "Limbdarkeneddisk",
+   "Disk",
+   "Gaussian",
+   "Disk"
+  ],
+  "Shape_Error": [
+   [],
+   [
+    0.0,
+    0.0,
+    0.0
+   ],
+   [
+    0.0,
+    0.0,
+    0.0
+   ],
+   [
+    0.0,
+    0.0,
+    0.0
+   ],
+   [],
+   [
+    1.939254724438144e-06,
+    1.4544410433286078e-06,
+    0.026179938779914945
+   ],
+   [
+    9.69627362219072e-07,
+    4.84813681109536e-07,
+    0.008726646259971648
+   ],
+   [
+    0.0,
+    0.0,
+    0.0
+   ],
+   [
+    0.0,
+    0.0,
+    0.0
+   ]
+  ],
+  "Shape_Parameters": [
+   [],
+   [
+    5.8177641733144315e-05,
+    2.9088820866572154e-05,
+    0.34906585039886595
+   ],
+   [
+    0.0001454441043328608,
+    9.69627362219072e-05,
+    0.7853981633974483
+   ],
+   [
+    1.939254724438144e-05,
+    1.939254724438144e-05,
+    0.0
+   ],
+   [],
+   [
+    0.0001939254724438144,
+    0.0001454441043328608,
+    1.0471975511965976
+   ],
+   [
+    9.69627362219072e-05,
+    4.84813681109536e-05,
+    -0.5235987755982988
+   ],
+   [
+    3.878509448876288e-05,
+    3.878509448876288e-05,
+    2.6179938779914944
+   ],
+   [
+    7.27220521664304e-05,
+    7.27220521664304e-05,
+    0.0
+   ]
+  ],
+  "Spectral_Error": [
+   [
+    0.0
+   ],
+   [
+    0.0
+   ],
+   [],
+   [
+    0.0
+   ],
+   [
+    0.0,
+    0.0,
+    0.0
+   ],
+   [
+    0.05,
+    0.01,
+    0.001
+   ],
+   [
+    0.05
+   ],
+   [],
+   [
+    0.0
+   ]
+  ],
+  "Spectral_Parameters": [
+   [],
+   [
+    -0.7
+   ],
+   [],
+   [
+    -0.8
+   ],
+   [
+    0.1,
+    -0.5,
+    0.02
+   ],
+   [
+    0.5,
+    -0.1,
+    0.01
+   ],
+   [
+    0.3
+   ],
+   [],
+   []
+  ],
+  "Spectral_Record": [
+   {
+    "frequency": {
+     "m0": {
+      "unit": "GHz",
+      "value": 1.4000000000000004
+     },
+     "refer": "LSRK",
+     "type": "frequency"
+    },
+    "type": "Constant"
+   },
+   {
+    "error": 0.0,
+    "frequency": {
+     "m0": {
+      "unit": "GHz",
+      "value": 100.0
+     },
+     "refer": "TOPO",
+     "type": "frequency"
+    },
+    "index": -0.7,
+    "stokesindex": [
+     -0.7
+    ],
+    "type": "Spectral Index"
+   },
+   {
+    "freqRef": {
+     "m0": {
+      "unit": "Hz",
+      "value": 0.0
+     },
+     "refer": "LSRK",
+     "type": "frequency"
+    },
+    "frequency": {
+     "m0": {
+      "unit": "GHz",
+      "value": 1.0
+     },
+     "refer": "LSRK",
+     "type": "frequency"
+    },
+    "ival": [
+     1.0,
+     0.8,
+     0.6,
+     0.4
+    ],
+    "maxFreq": 3000000000.0,
+    "minFreq": 1000000000.0,
+    "qval": [
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "referenceFreq": 1000000000.0,
+    "tabFreqVal": [
+     1000000000.0,
+     1500000000.0,
+     2000000000.0,
+     3000000000.0
+    ],
+    "type": "Tabular Spectrum",
+    "uval": [
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "vval": [
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "error": 0.0,
+    "frequency": {
+     "m0": {
+      "unit": "GHz",
+      "value": 1.4000000000000004
+     },
+     "refer": "LSRK",
+     "type": "frequency"
+    },
+    "index": -0.8,
+    "stokesindex": [
+     -0.8,
+     0.1,
+     50.0,
+     0.0
+    ],
+    "type": "Spectral Index"
+   },
+   {
+    "coeffs": [
+     0.1,
+     -0.5,
+     0.02
+    ],
+    "error": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "frequency": {
+     "m0": {
+      "unit": "GHz",
+      "value": 5.0
+     },
+     "refer": "LSRK",
+     "type": "frequency"
+    },
+    "type": "Power Logarithmic Polynomial"
+   },
+   {
+    "coeffs": [
+     0.5,
+     -0.1,
+     0.01
+    ],
+    "error": [
+     0.05,
+     0.01,
+     0.001
+    ],
+    "frequency": {
+     "m0": {
+      "unit": "GHz",
+      "value": 230.00000000000003
+     },
+     "refer": "TOPO",
+     "type": "frequency"
+    },
+    "type": "Power Logarithmic Polynomial"
+   },
+   {
+    "error": 0.05,
+    "frequency": {
+     "m0": {
+      "unit": "GHz",
+      "value": 8.4
+     },
+     "refer": "BARY",
+     "type": "frequency"
+    },
+    "index": 0.3,
+    "stokesindex": [
+     0.3
+    ],
+    "type": "Spectral Index"
+   },
+   {
+    "freqRef": {
+     "m0": {
+      "unit": "Hz",
+      "value": 0.0
+     },
+     "refer": "BARY",
+     "type": "frequency"
+    },
+    "frequency": {
+     "m0": {
+      "unit": "GHz",
+      "value": 1.5
+     },
+     "refer": "BARY",
+     "type": "frequency"
+    },
+    "ival": [
+     1.0,
+     0.5,
+     0.25
+    ],
+    "maxFreq": 4000000000.0,
+    "minFreq": 1000000000.0,
+    "qval": [
+     0.1,
+     0.05,
+     0.0
+    ],
+    "referenceFreq": 1500000000.0,
+    "tabFreqVal": [
+     1000000000.0,
+     2000000000.0,
+     4000000000.0
+    ],
+    "type": "Tabular Spectrum",
+    "uval": [
+     0.0,
+     0.02,
+     0.01
+    ],
+    "vval": [
+     0.01,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "frequency": {
+     "m0": {
+      "unit": "GHz",
+      "value": 43.0
+     },
+     "refer": "LSRK",
+     "type": "frequency"
+    },
+    "type": "Constant"
+   }
+  ],
+  "Spectrum_Shape": [
+   "Constant",
+   "Spectral Index",
+   "Tabular Spectrum",
+   "Spectral Index",
+   "Power Logarithmic Polynomial",
+   "Power Logarithmic Polynomial",
+   "Spectral Index",
+   "Tabular Spectrum",
+   "Constant"
+  ]
+ },
+ "column_names": [
+  "Flux",
+  "Flux_Unit",
+  "Flux_Polarisation",
+  "Flux_Error",
+  "Shape",
+  "Reference_Direction",
+  "Direction_Frame",
+  "Direction_Error",
+  "Direction_Error_Units",
+  "Shape_Parameters",
+  "Shape_Error",
+  "Spectrum_Shape",
+  "Reference_Frequency",
+  "Frequency_Frame",
+  "Frequency_Error",
+  "Frequency_Error_Units",
+  "Spectral_Parameters",
+  "Spectral_Error",
+  "Label",
+  "Optional_Parameters",
+  "Spectral_Record"
+ ],
+ "columns": {
+  "Direction_Error": {
+   "comment": "Error in the reference direction values",
+   "dataManagerGroup": "StandardStMan",
+   "dataManagerType": "StandardStMan",
+   "keywords": {
+    "VariableUnits": "Direction_Error_Units"
+   },
+   "maxlen": 0,
+   "ndim": 1,
+   "option": 5,
+   "shape": [
+    2
+   ],
+   "valueType": "double"
+  },
+  "Direction_Error_Units": {
+   "comment": "Units of the direction error",
+   "dataManagerGroup": "StandardStMan",
+   "dataManagerType": "StandardStMan",
+   "keywords": {},
+   "maxlen": 0,
+   "ndim": 1,
+   "option": 5,
+   "shape": [
+    2
+   ],
+   "valueType": "string"
+  },
+  "Direction_Frame": {
+   "comment": "The reference direction frame",
+   "dataManagerGroup": "StandardStMan",
+   "dataManagerType": "StandardStMan",
+   "keywords": {},
+   "maxlen": 0,
+   "option": 5,
+   "valueType": "string"
+  },
+  "Flux": {
+   "comment": "Flux values",
+   "dataManagerGroup": "StandardStMan",
+   "dataManagerType": "StandardStMan",
+   "keywords": {},
+   "maxlen": 0,
+   "ndim": 1,
+   "option": 5,
+   "shape": [
+    4
+   ],
+   "valueType": "dcomplex"
+  },
+  "Flux_Error": {
+   "comment": "Flux errors",
+   "dataManagerGroup": "StandardStMan",
+   "dataManagerType": "StandardStMan",
+   "keywords": {},
+   "maxlen": 0,
+   "ndim": 1,
+   "option": 5,
+   "shape": [
+    4
+   ],
+   "valueType": "dcomplex"
+  },
+  "Flux_Polarisation": {
+   "comment": "Flux polarisation representation",
+   "dataManagerGroup": "StandardStMan",
+   "dataManagerType": "StandardStMan",
+   "keywords": {},
+   "maxlen": 0,
+   "option": 5,
+   "valueType": "string"
+  },
+  "Flux_Unit": {
+   "comment": "Flux units",
+   "dataManagerGroup": "StandardStMan",
+   "dataManagerType": "StandardStMan",
+   "keywords": {},
+   "maxlen": 0,
+   "option": 5,
+   "valueType": "string"
+  },
+  "Frequency_Error": {
+   "comment": "Error in the reference frequency",
+   "dataManagerGroup": "StandardStMan",
+   "dataManagerType": "StandardStMan",
+   "keywords": {
+    "VariableUnits": "Frequency_Error_Units"
+   },
+   "maxlen": 0,
+   "option": 5,
+   "valueType": "double"
+  },
+  "Frequency_Error_Units": {
+   "comment": "Units of the frequency error",
+   "dataManagerGroup": "StandardStMan",
+   "dataManagerType": "StandardStMan",
+   "keywords": {},
+   "maxlen": 0,
+   "option": 5,
+   "valueType": "string"
+  },
+  "Frequency_Frame": {
+   "comment": "The reference frequency frame",
+   "dataManagerGroup": "StandardStMan",
+   "dataManagerType": "StandardStMan",
+   "keywords": {},
+   "maxlen": 0,
+   "option": 5,
+   "valueType": "string"
+  },
+  "Label": {
+   "comment": "An arbitrary label for the user",
+   "dataManagerGroup": "StandardStMan",
+   "dataManagerType": "StandardStMan",
+   "keywords": {},
+   "maxlen": 0,
+   "option": 5,
+   "valueType": "string"
+  },
+  "Optional_Parameters": {
+   "comment": "optional parameter column",
+   "dataManagerGroup": "TiledOptParms",
+   "dataManagerType": "TiledCellStMan",
+   "keywords": {},
+   "maxlen": 0,
+   "ndim": 1,
+   "option": 2,
+   "valueType": "double"
+  },
+  "Reference_Direction": {
+   "comment": "Reference direction values",
+   "dataManagerGroup": "StandardStMan",
+   "dataManagerType": "StandardStMan",
+   "keywords": {
+    "MEASINFO": {
+     "VarRefCol": "Direction_Frame",
+     "type": "direction"
+    },
+    "QuantumUnits": [
+     "rad",
+     "rad"
+    ]
+   },
+   "maxlen": 0,
+   "ndim": 1,
+   "option": 5,
+   "shape": [
+    2
+   ],
+   "valueType": "double"
+  },
+  "Reference_Frequency": {
+   "comment": "The reference frequency values",
+   "dataManagerGroup": "StandardStMan",
+   "dataManagerType": "StandardStMan",
+   "keywords": {
+    "MEASINFO": {
+     "VarRefCol": "Frequency_Frame",
+     "type": "frequency"
+    },
+    "QuantumUnits": [
+     "Hz"
+    ]
+   },
+   "maxlen": 0,
+   "option": 5,
+   "valueType": "double"
+  },
+  "Shape": {
+   "comment": "Shape of the Component",
+   "dataManagerGroup": "StandardStMan",
+   "dataManagerType": "StandardStMan",
+   "keywords": {},
+   "maxlen": 0,
+   "option": 5,
+   "valueType": "string"
+  },
+  "Shape_Error": {
+   "comment": "Error in the shape parameters",
+   "dataManagerGroup": "StandardStMan",
+   "dataManagerType": "StandardStMan",
+   "keywords": {},
+   "maxlen": 0,
+   "ndim": 1,
+   "option": 0,
+   "valueType": "double"
+  },
+  "Shape_Parameters": {
+   "comment": "Parameters specific to the component shape",
+   "dataManagerGroup": "StandardStMan",
+   "dataManagerType": "StandardStMan",
+   "keywords": {},
+   "maxlen": 0,
+   "ndim": 1,
+   "option": 0,
+   "valueType": "double"
+  },
+  "Spectral_Error": {
+   "comment": "Errors in the spectral parameters",
+   "dataManagerGroup": "StandardStMan",
+   "dataManagerType": "StandardStMan",
+   "keywords": {},
+   "maxlen": 0,
+   "ndim": 1,
+   "option": 0,
+   "valueType": "double"
+  },
+  "Spectral_Parameters": {
+   "comment": "Parameters specific to the components spectrum",
+   "dataManagerGroup": "StandardStMan",
+   "dataManagerType": "StandardStMan",
+   "keywords": {},
+   "maxlen": 0,
+   "ndim": 1,
+   "option": 0,
+   "valueType": "double"
+  },
+  "Spectral_Record": {
+   "comment": "",
+   "dataManagerGroup": "StandardStMan",
+   "dataManagerType": "StandardStMan",
+   "keywords": {},
+   "maxlen": 0,
+   "option": 0,
+   "valueType": "record"
+  },
+  "Spectrum_Shape": {
+   "comment": "Shape of the spectrum",
+   "dataManagerGroup": "StandardStMan",
+   "dataManagerType": "StandardStMan",
+   "keywords": {},
+   "maxlen": 0,
+   "option": 5,
+   "valueType": "string"
+  }
+ },
+ "components": [
+  {
+   "flux": {
+    "error": [
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "polarisation": "Stokes",
+    "unit": "Jy",
+    "value": [
+     1.5,
+     0.10000000149011612,
+     0.05000000074505806,
+     0.019999999552965164
+    ]
+   },
+   "label": "point, Stokes, J2000 at RA 20h",
+   "shape": {
+    "direction": {
+     "error": {
+      "latitude": {
+       "unit": "rad",
+       "value": 0.0
+      },
+      "longitude": {
+       "unit": "rad",
+       "value": 0.0
+      }
+     },
+     "m0": {
+      "unit": "rad",
+      "value": -1.0471975511965976
+     },
+     "m1": {
+      "unit": "rad",
+      "value": -0.5235987755982988
+     },
+     "refer": "J2000",
+     "type": "direction"
+    },
+    "type": "Point"
+   },
+   "spectrum": {
+    "frequency": {
+     "m0": {
+      "unit": "GHz",
+      "value": 1.4000000000000004
+     },
+     "refer": "LSRK",
+     "type": "frequency"
+    },
+    "type": "Constant"
+   }
+  },
+  {
+   "flux": {
+    "error": [
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "polarisation": "Stokes",
+    "unit": "Jy",
+    "value": [
+     2.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "label": "Gaussian, B1950, PA 200 deg",
+   "shape": {
+    "direction": {
+     "error": {
+      "latitude": {
+       "unit": "rad",
+       "value": 0.0
+      },
+      "longitude": {
+       "unit": "rad",
+       "value": 0.0
+      }
+     },
+     "m0": {
+      "unit": "rad",
+      "value": 0.2617993877991494
+     },
+     "m1": {
+      "unit": "rad",
+      "value": 0.3490658503988659
+     },
+     "refer": "B1950",
+     "type": "direction"
+    },
+    "majoraxis": {
+     "unit": "arcmin",
+     "value": 0.2
+    },
+    "majoraxiserror": {
+     "unit": "rad",
+     "value": 0.0
+    },
+    "minoraxis": {
+     "unit": "arcmin",
+     "value": 0.09999999999999999
+    },
+    "minoraxiserror": {
+     "unit": "rad",
+     "value": 0.0
+    },
+    "positionangle": {
+     "unit": "deg",
+     "value": 20.000000000000004
+    },
+    "positionangleerror": {
+     "unit": "rad",
+     "value": 0.0
+    },
+    "type": "Gaussian"
+   },
+   "spectrum": {
+    "error": 0.0,
+    "frequency": {
+     "m0": {
+      "unit": "GHz",
+      "value": 100.0
+     },
+     "refer": "TOPO",
+     "type": "frequency"
+    },
+    "index": -0.7,
+    "stokesindex": [
+     -0.7
+    ],
+    "type": "Spectral Index"
+   }
+  },
+  {
+   "flux": {
+    "error": [
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "polarisation": "Stokes",
+    "unit": "Jy",
+    "value": [
+     0.5,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "label": "disk, tabular",
+   "shape": {
+    "direction": {
+     "error": {
+      "latitude": {
+       "unit": "rad",
+       "value": 0.0
+      },
+      "longitude": {
+       "unit": "rad",
+       "value": 0.0
+      }
+     },
+     "m0": {
+      "unit": "rad",
+      "value": 1.4629713400477304
+     },
+     "m1": {
+      "unit": "rad",
+      "value": -0.09409263922973875
+     },
+     "refer": "J2000",
+     "type": "direction"
+    },
+    "majoraxis": {
+     "unit": "arcmin",
+     "value": 0.5
+    },
+    "majoraxiserror": {
+     "unit": "rad",
+     "value": 0.0
+    },
+    "minoraxis": {
+     "unit": "arcmin",
+     "value": 0.33333333333333337
+    },
+    "minoraxiserror": {
+     "unit": "rad",
+     "value": 0.0
+    },
+    "positionangle": {
+     "unit": "deg",
+     "value": 45.0
+    },
+    "positionangleerror": {
+     "unit": "rad",
+     "value": 0.0
+    },
+    "type": "Disk"
+   },
+   "spectrum": {
+    "freqRef": {
+     "m0": {
+      "unit": "Hz",
+      "value": 0.0
+     },
+     "refer": "LSRK",
+     "type": "frequency"
+    },
+    "frequency": {
+     "m0": {
+      "unit": "GHz",
+      "value": 1.0
+     },
+     "refer": "LSRK",
+     "type": "frequency"
+    },
+    "ival": [
+     1.0,
+     0.8,
+     0.6,
+     0.4
+    ],
+    "maxFreq": 3000000000.0,
+    "minFreq": 1000000000.0,
+    "qval": [
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "referenceFreq": 1000000000.0,
+    "tabFreqVal": [
+     1000000000.0,
+     1500000000.0,
+     2000000000.0,
+     3000000000.0
+    ],
+    "type": "Tabular Spectrum",
+    "uval": [
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "vval": [
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   }
+  },
+  {
+   "flux": {
+    "error": [
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "polarisation": "Stokes",
+    "unit": "Jy",
+    "value": [
+     3.0,
+     0.30000001192092896,
+     0.20000000298023224,
+     0.0
+    ]
+   },
+   "label": "Gaussian, Stokes spectral indices",
+   "shape": {
+    "direction": {
+     "error": {
+      "latitude": {
+       "unit": "rad",
+       "value": 0.0
+      },
+      "longitude": {
+       "unit": "rad",
+       "value": 0.0
+      }
+     },
+     "m0": {
+      "unit": "rad",
+      "value": 3.141592653589793
+     },
+     "m1": {
+      "unit": "rad",
+      "value": 0.7853981633974482
+     },
+     "refer": "J2000",
+     "type": "direction"
+    },
+    "majoraxis": {
+     "unit": "arcmin",
+     "value": 0.06666666666666667
+    },
+    "majoraxiserror": {
+     "unit": "rad",
+     "value": 0.0
+    },
+    "minoraxis": {
+     "unit": "arcmin",
+     "value": 0.06666666666666667
+    },
+    "minoraxiserror": {
+     "unit": "rad",
+     "value": 0.0
+    },
+    "positionangle": {
+     "unit": "deg",
+     "value": 0.0
+    },
+    "positionangleerror": {
+     "unit": "rad",
+     "value": 0.0
+    },
+    "type": "Gaussian"
+   },
+   "spectrum": {
+    "error": 0.0,
+    "frequency": {
+     "m0": {
+      "unit": "GHz",
+      "value": 1.4000000000000004
+     },
+     "refer": "LSRK",
+     "type": "frequency"
+    },
+    "index": -0.8,
+    "stokesindex": [
+     -0.8,
+     0.1,
+     50.0,
+     0.0
+    ],
+    "type": "Spectral Index"
+   }
+  },
+  {
+   "flux": {
+    "error": [
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "polarisation": "Stokes",
+    "unit": "Jy",
+    "value": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "label": "point, GALACTIC, plp",
+   "shape": {
+    "direction": {
+     "error": {
+      "latitude": {
+       "unit": "rad",
+       "value": 0.0
+      },
+      "longitude": {
+       "unit": "rad",
+       "value": 0.0
+      }
+     },
+     "m0": {
+      "unit": "rad",
+      "value": 2.0943951023931953
+     },
+     "m1": {
+      "unit": "rad",
+      "value": 0.03490658503988659
+     },
+     "refer": "GALACTIC",
+     "type": "direction"
+    },
+    "type": "Point"
+   },
+   "spectrum": {
+    "coeffs": [
+     0.1,
+     -0.5,
+     0.02
+    ],
+    "error": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "frequency": {
+     "m0": {
+      "unit": "GHz",
+      "value": 5.0
+     },
+     "refer": "LSRK",
+     "type": "frequency"
+    },
+    "type": "Power Logarithmic Polynomial"
+   }
+  },
+  {
+   "flux": {
+    "error": [
+     [
+      0.01,
+      0.0
+     ],
+     [
+      0.001,
+      0.001
+     ],
+     [
+      0.001,
+      0.001
+     ],
+     [
+      0.01,
+      0.0
+     ]
+    ],
+    "polarisation": "Circular",
+    "unit": "Jy",
+    "value": [
+     [
+      1.1,
+      0.0
+     ],
+     [
+      0.05,
+      0.02
+     ],
+     [
+      0.05,
+      -0.02
+     ],
+     [
+      0.9,
+      0.0
+     ]
+    ]
+   },
+   "label": "limb-darkened disk, circular, AZEL, plp",
+   "optionalParameters": [
+    0.7
+   ],
+   "shape": {
+    "direction": {
+     "error": {
+      "latitude": {
+       "unit": "arcsec",
+       "value": 0.25
+      },
+      "longitude": {
+       "unit": "mas",
+       "value": 30.0
+      }
+     },
+     "m0": {
+      "unit": "rad",
+      "value": 0.5235987755982988
+     },
+     "m1": {
+      "unit": "rad",
+      "value": 0.7853981633974484
+     },
+     "refer": "AZEL",
+     "type": "direction"
+    },
+    "majoraxis": {
+     "unit": "arcmin",
+     "value": 0.6666666666666667
+    },
+    "majoraxiserror": {
+     "unit": "rad",
+     "value": 1.939254724438144e-06
+    },
+    "minoraxis": {
+     "unit": "arcmin",
+     "value": 0.5
+    },
+    "minoraxiserror": {
+     "unit": "rad",
+     "value": 1.4544410433286078e-06
+    },
+    "positionangle": {
+     "unit": "deg",
+     "value": 59.99999999999999
+    },
+    "positionangleerror": {
+     "unit": "rad",
+     "value": 0.026179938779914945
+    },
+    "type": "Limbdarkeneddisk"
+   },
+   "spectrum": {
+    "coeffs": [
+     0.5,
+     -0.1,
+     0.01
+    ],
+    "error": [
+     0.05,
+     0.01,
+     0.001
+    ],
+    "frequency": {
+     "m0": {
+      "unit": "GHz",
+      "value": 230.00000000000003
+     },
+     "refer": "TOPO",
+     "type": "frequency"
+    },
+    "type": "Power Logarithmic Polynomial"
+   }
+  },
+  {
+   "flux": {
+    "error": [
+     [
+      5.0,
+      0.0
+     ],
+     [
+      1.0,
+      1.0
+     ],
+     [
+      1.0,
+      1.0
+     ],
+     [
+      5.0,
+      0.0
+     ]
+    ],
+    "polarisation": "Linear",
+    "unit": "mJy",
+    "value": [
+     [
+      900.0,
+      0.0
+     ],
+     [
+      40.0,
+      25.0
+     ],
+     [
+      40.0,
+      -25.0
+     ],
+     [
+      700.0,
+      0.0
+     ]
+    ]
+   },
+   "label": "disk, linear mJy, GALACTIC, PA -30 deg",
+   "shape": {
+    "direction": {
+     "error": {
+      "latitude": {
+       "unit": "rad",
+       "value": 1e-06
+      },
+      "longitude": {
+       "unit": "rad",
+       "value": 2e-06
+      }
+     },
+     "m0": {
+      "unit": "rad",
+      "value": 0.17453292519943295
+     },
+     "m1": {
+      "unit": "rad",
+      "value": -0.0872664625997165
+     },
+     "refer": "GALACTIC",
+     "type": "direction"
+    },
+    "majoraxis": {
+     "unit": "arcmin",
+     "value": 0.33333333333333337
+    },
+    "majoraxiserror": {
+     "unit": "rad",
+     "value": 9.69627362219072e-07
+    },
+    "minoraxis": {
+     "unit": "arcmin",
+     "value": 0.16666666666666669
+    },
+    "minoraxiserror": {
+     "unit": "rad",
+     "value": 4.84813681109536e-07
+    },
+    "positionangle": {
+     "unit": "deg",
+     "value": -29.999999999999996
+    },
+    "positionangleerror": {
+     "unit": "rad",
+     "value": 0.008726646259971648
+    },
+    "type": "Disk"
+   },
+   "spectrum": {
+    "error": 0.05,
+    "frequency": {
+     "m0": {
+      "unit": "GHz",
+      "value": 8.4
+     },
+     "refer": "BARY",
+     "type": "frequency"
+    },
+    "index": 0.3,
+    "stokesindex": [
+     0.3
+    ],
+    "type": "Spectral Index"
+   }
+  },
+  {
+   "flux": {
+    "error": [
+     0.02,
+     0.0,
+     0.0,
+     0.001
+    ],
+    "polarisation": "Stokes",
+    "unit": "Jy",
+    "value": [
+     0.25,
+     0.0,
+     0.0,
+     0.01
+    ]
+   },
+   "label": "circular Gaussian, PA -30 deg, tabular in BARY",
+   "shape": {
+    "direction": {
+     "error": {
+      "latitude": {
+       "unit": "rad",
+       "value": 0.0
+      },
+      "longitude": {
+       "unit": "rad",
+       "value": 0.0
+      }
+     },
+     "m0": {
+      "unit": "rad",
+      "value": -2.7925268031909276
+     },
+     "m1": {
+      "unit": "rad",
+      "value": -1.0471975511965976
+     },
+     "refer": "J2000",
+     "type": "direction"
+    },
+    "majoraxis": {
+     "unit": "arcmin",
+     "value": 0.13333333333333333
+    },
+    "majoraxiserror": {
+     "unit": "rad",
+     "value": 0.0
+    },
+    "minoraxis": {
+     "unit": "arcmin",
+     "value": 0.13333333333333333
+    },
+    "minoraxiserror": {
+     "unit": "rad",
+     "value": 0.0
+    },
+    "positionangle": {
+     "unit": "deg",
+     "value": 150.0
+    },
+    "positionangleerror": {
+     "unit": "rad",
+     "value": 0.0
+    },
+    "type": "Gaussian"
+   },
+   "spectrum": {
+    "freqRef": {
+     "m0": {
+      "unit": "Hz",
+      "value": 0.0
+     },
+     "refer": "BARY",
+     "type": "frequency"
+    },
+    "frequency": {
+     "m0": {
+      "unit": "GHz",
+      "value": 1.5
+     },
+     "refer": "BARY",
+     "type": "frequency"
+    },
+    "ival": [
+     1.0,
+     0.5,
+     0.25
+    ],
+    "maxFreq": 4000000000.0,
+    "minFreq": 1000000000.0,
+    "qval": [
+     0.1,
+     0.05,
+     0.0
+    ],
+    "referenceFreq": 1500000000.0,
+    "tabFreqVal": [
+     1000000000.0,
+     2000000000.0,
+     4000000000.0
+    ],
+    "type": "Tabular Spectrum",
+    "uval": [
+     0.0,
+     0.02,
+     0.01
+    ],
+    "vval": [
+     0.01,
+     0.0,
+     0.0
+    ]
+   }
+  },
+  {
+   "flux": {
+    "error": [
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "polarisation": "Stokes",
+    "unit": "Jy",
+    "value": [
+     4.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "label": "",
+   "shape": {
+    "direction": {
+     "error": {
+      "latitude": {
+       "unit": "rad",
+       "value": 0.0
+      },
+      "longitude": {
+       "unit": "rad",
+       "value": 0.0
+      }
+     },
+     "m0": {
+      "unit": "rad",
+      "value": -0.174532925199433
+     },
+     "m1": {
+      "unit": "rad",
+      "value": 1.553343034274955
+     },
+     "refer": "B1950",
+     "type": "direction"
+    },
+    "majoraxis": {
+     "unit": "arcmin",
+     "value": 0.25
+    },
+    "majoraxiserror": {
+     "unit": "rad",
+     "value": 0.0
+    },
+    "minoraxis": {
+     "unit": "arcmin",
+     "value": 0.25
+    },
+    "minoraxiserror": {
+     "unit": "rad",
+     "value": 0.0
+    },
+    "positionangle": {
+     "unit": "deg",
+     "value": 0.0
+    },
+    "positionangleerror": {
+     "unit": "rad",
+     "value": 0.0
+    },
+    "type": "Disk"
+   },
+   "spectrum": {
+    "frequency": {
+     "m0": {
+      "unit": "GHz",
+      "value": 43.0
+     },
+     "refer": "LSRK",
+     "type": "frequency"
+    },
+    "type": "Constant"
+   }
+  }
+ ],
+ "data_managers": [
+  {
+   "columns": [
+    "Direction_Error",
+    "Direction_Error_Units",
+    "Direction_Frame",
+    "Flux",
+    "Flux_Error",
+    "Flux_Polarisation",
+    "Flux_Unit",
+    "Frequency_Error",
+    "Frequency_Error_Units",
+    "Frequency_Frame",
+    "Label",
+    "Reference_Direction",
+    "Reference_Frequency",
+    "Shape",
+    "Shape_Error",
+    "Shape_Parameters",
+    "Spectral_Error",
+    "Spectral_Parameters",
+    "Spectral_Record",
+    "Spectrum_Shape"
+   ],
+   "type": "StandardStMan"
+  },
+  {
+   "columns": [
+    "Optional_Parameters"
+   ],
+   "type": "TiledCellStMan"
+  }
+ ],
+ "info": {
+  "readme": "This is a ComponentList Table containing parameterised representations\nof the sky brightness.\n",
+  "subType": "",
+  "type": "Component List"
+ }
+}
