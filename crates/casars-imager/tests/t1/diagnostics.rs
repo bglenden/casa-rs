@@ -98,6 +98,77 @@ fn events<'a>(stderr: &'a str, target: &str) -> Vec<&'a str> {
         .collect()
 }
 
+/// The major-cycle passes the run of `summary` made: one per `major cycle`
+/// phase.
+fn passes(summary: &Value) -> usize {
+    summary["phases"]
+        .as_array()
+        .expect("phases")
+        .iter()
+        .filter(|phase| {
+            phase["name"]
+                .as_str()
+                .is_some_and(|name| name.starts_with("major cycle "))
+        })
+        .count()
+}
+
+/// The `source stream` events each wave of each pass logged, pass by pass
+/// and wave by wave in the order `stderr` gives them. A wave ends with its
+/// `wave stages` line and a pass with its `imaging major cycle:` line,
+/// which the thread that streamed its source logs after it; an event
+/// after the last pass is a wave of its own.
+fn source_streams_by_pass_and_wave(stderr: &str) -> Vec<Vec<usize>> {
+    let mut passes = Vec::new();
+    let mut waves = Vec::new();
+    let mut streams = 0;
+    for line in stderr.lines() {
+        if line.contains(METAL_STAGE_TIMING) && line.contains(" source stream") {
+            streams += 1;
+        } else if line.contains(" wave stages") {
+            waves.push(std::mem::take(&mut streams));
+        } else if line.contains(" imaging major cycle: ") {
+            passes.push(std::mem::take(&mut waves));
+        }
+    }
+    if streams > 0 {
+        waves.push(streams);
+    }
+    if !waves.is_empty() {
+        passes.push(waves);
+    }
+    passes
+}
+
+/// Assert that each wave of every pass the run of `summary` made logged one
+/// `source stream` event in `stderr`, and that each pass made from one wave
+/// to one a plane of its `planes`: the summary counts the passes, and the
+/// log each pass's waves (#830).
+fn assert_one_source_stream_per_pass_and_wave(stderr: &str, summary: &Value, planes: usize) {
+    let streams = source_streams_by_pass_and_wave(stderr);
+    let passes = passes(summary);
+    assert!(passes > 0, "the run made a pass: {summary}");
+    assert_eq!(
+        streams.len(),
+        passes,
+        "one `imaging major cycle:` line a pass of the summary: {streams:?}\n{stderr}"
+    );
+    for (pass, waves) in streams.iter().enumerate() {
+        assert!(
+            (1..=planes).contains(&waves.len()),
+            "pass {pass} made one wave to one a plane: {streams:?}\n{stderr}"
+        );
+        assert!(
+            waves.iter().all(|streams| *streams == 1),
+            "each wave of pass {pass} logs one source stream: {streams:?}\n{stderr}"
+        );
+    }
+    eprintln!(
+        "{passes} passes of {:?} waves, one source stream each",
+        streams.iter().map(Vec::len).collect::<Vec<_>>()
+    );
+}
+
 /// The value of `name=` in a structured log line; a quoted value without
 /// its quotes.
 fn field<'a>(line: &'a str, name: &str) -> &'a str {
@@ -181,7 +252,8 @@ fn stage_timing_logs_each_phase_record_and_switches_off_log_nothing() {
 /// Each Metal backend logs its timing: the gridding owners of a continuum
 /// clean, and in a linearly interpolated cube's later major cycle the row
 /// chunks' prediction backends, so the native-channel residual's model is
-/// degridded on the device.
+/// degridded on the device. Each pass logs one source stream a wave, for
+/// every pass the summary records (#830).
 #[test]
 fn metal_stage_timing_logs_each_metal_backend() {
     let metal = ["--backend", "gpu", "--metal-stage-timing"];
@@ -201,10 +273,6 @@ fn metal_stage_timing_logs_each_metal_backend() {
             .into_iter()
             .partition(|line| line.contains("source stream"));
         assert!(!lines.is_empty(), "{stderr}");
-        assert!(
-            !streams.is_empty(),
-            "each pass logs its source stream:\n{stderr}"
-        );
         for line in &streams {
             assert!(field(line, "blocks").parse::<u64>().expect("blocks") > 0);
             field(line, "consumer_wait_seconds")
@@ -228,6 +296,8 @@ fn metal_stage_timing_logs_each_metal_backend() {
             .sum::<u64>()
     };
     check(&stderr);
+    // A continuum clean has one plane, so one wave a pass.
+    assert_one_source_stream_per_pass_and_wave(&stderr, &summary(&observation, "metal-timed"), 1);
 
     let band = Observation::synthesise_band(4, &[("point", POINT)]);
     let cube = [
@@ -245,6 +315,7 @@ fn metal_stage_timing_logs_each_metal_backend() {
         check(&stderr) > 0,
         "the cube's later major cycle predicts on the device:\n{stderr}"
     );
+    assert_one_source_stream_per_pass_and_wave(&stderr, &summary(&band, "metal-cube-timed"), 4);
 }
 
 /// `backend = auto` grids standard imaging on the GPU where the host has
