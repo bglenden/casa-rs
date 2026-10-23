@@ -72,7 +72,15 @@ fn routing() -> PolarizationRouting {
 }
 
 fn mosaic(geometry: &GridGeometry, dishes: &[AiryDish], windows: &[MosaicWindow]) -> MosaicPb {
-    MosaicPb::new(geometry, &routing(), FREQUENCY_HZ, dishes, windows).expect("mosaic set")
+    MosaicPb::new(
+        MosaicRules::Tclean,
+        geometry,
+        &routing(),
+        FREQUENCY_HZ,
+        dishes,
+        windows,
+    )
+    .expect("mosaic set")
 }
 
 fn single_window_mosaic(geometry: &GridGeometry) -> MosaicPb {
@@ -230,6 +238,7 @@ fn too_small_a_screen_is_a_typed_error_not_a_panic() {
         .expect("geometry");
         let dishes = [AiryDish::casa_alma(12.0, &geometry)];
         let result = MosaicPb::new(
+            MosaicRules::Tclean,
             &geometry,
             &routing(),
             5.0e10,
@@ -321,9 +330,7 @@ fn pair_supports(
         channel_width_hz: 1.28e8,
         selected_frequencies_hz: vec![frequency_hz],
     }];
-    let set = MosaicPb::screens_for(rules, geometry, &routing(), frequency_hz, dishes, &windows)
-        .expect("screens")
-        .finish()
+    let set = MosaicPb::new(rules, geometry, &routing(), frequency_hz, dishes, &windows)
         .expect("mosaic set");
     (0..(dishes.len() * (dishes.len() + 1) / 2) as u16)
         .map(|group| set.half_support(CfKey { group, cube: 0 }))
@@ -336,7 +343,7 @@ fn pair_supports(
 /// cells at 100 GHz the 7 m class alone finds six taps, yet the simulator
 /// grids every pair of the heterogeneous set with the widest pair's seven:
 /// both sets share one screen, since every simulator dish has a 150″
-/// radius.
+/// radius. The simulator's screen has no least size.
 #[test]
 fn the_simulator_rules_find_casa_v1_supports() {
     let square = |side: usize, cell_arcsec: f64| {
@@ -378,6 +385,18 @@ fn the_simulator_rules_find_casa_v1_supports() {
         pair_supports(MosaicRules::Simulator, &coarse, FREQUENCY_HZ, &simulator),
         [7, 7, 7]
     );
+    // A 1,024-cell image: the beams span 72 pixels, under tclean's floor
+    // of a tenth of the image, so the screens are 80 and 96 pixels
+    // (`nextLargerEven(73) = 80`, `nextLargerEven(103) = 108`, `/16·16`).
+    let wide = square(1024, 4.125);
+    let screen = |rules| {
+        let windows = [window(0, vec![FREQUENCY_HZ], FREQUENCY_HZ)];
+        MosaicPb::new(rules, &wide, &routing(), FREQUENCY_HZ, &simulator, &windows)
+            .expect("mosaic set")
+            .screen_size()
+    };
+    assert_eq!(screen(MosaicRules::Simulator), 80);
+    assert_eq!(screen(MosaicRules::Tclean), 96);
 }
 
 #[test]

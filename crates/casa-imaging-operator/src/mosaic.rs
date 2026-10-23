@@ -40,9 +40,9 @@ const LANCZOS_A: i64 = 3;
 const DISH_REFERENCE_GHZ: f64 = 100.0;
 
 /// Which of CASA's two heterogeneous-array mosaic machines a set follows.
-/// They build the same screens, crops, normalisation and resampling, and
-/// differ in how the support is found and, through [`AiryDish`], in the
-/// 7 m dish's radius.
+/// They build the same crops, normalisation and resampling, and differ in
+/// the screen's least size, in how the support is found and gridded and,
+/// through [`AiryDish`], in the 7 m dish's radius.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum MosaicRules {
     /// tclean's `gridder='mosaic'`: `TransformMachines2/HetArrayConvFunc`
@@ -51,10 +51,11 @@ pub enum MosaicRules {
     Tclean,
     /// The simulator's `setoptions(ftmachine='mosaic')`: the earlier
     /// `TransformMachines/HetArrayConvFunc`, which `Simulator::
-    /// createSkyEquation` builds. Its support search walks the weight plane
-    /// inwards from the edge, along the row and the column one cell off
-    /// its centre, and widens the radius it finds by √2; its `MosaicFT`
-    /// grids every row of a window with the widest pair's support.
+    /// createSkyEquation` builds. Its screen has no least size beside the
+    /// beams'; its support search walks the weight plane inwards from the
+    /// edge, along the row and the column one cell off its centre, and
+    /// widens the radius it finds by √2; and its `MosaicFT` grids every row
+    /// of a window with the widest pair's support.
     Simulator,
 }
 
@@ -321,6 +322,7 @@ struct MosaicLayout {
 
 impl MosaicLayout {
     fn new(
+        rules: MosaicRules,
         geometry: &GridGeometry,
         image_frequency_hz: f64,
         dishes: &[AiryDish],
@@ -344,8 +346,12 @@ impl MosaicLayout {
         let image = geometry.image();
         let [nx, ny] = image.shape;
         let increment = image.increment_rad;
-        // `findConvFunction`: the screen size from the widest dish class.
-        let mut support = nx.max(ny) / 10;
+        // `findConvFunction`: the screen size from the widest dish class,
+        // at least a tenth of the image in tclean's machine.
+        let mut support = match rules {
+            MosaicRules::Tclean => nx.max(ny) / 10,
+            MosaicRules::Simulator => 0,
+        };
         for dish in dishes {
             support = support.max(dish.support_pixels(increment[0], image_frequency_hz));
         }
@@ -383,9 +389,9 @@ impl MosaicLayout {
 }
 
 impl MosaicPb {
-    /// Build the cells for `geometry`'s image (which is the grid: the
-    /// mosaic set grids without padding), `dishes` in CASA's dish-class
-    /// order and the selected `windows`: [`Self::screens`], then
+    /// Build the cells under `rules` for `geometry`'s image (which is the
+    /// grid: the mosaic set grids without padding), `dishes` in CASA's
+    /// dish-class order and the selected `windows`: [`Self::screens`], then
     /// [`MosaicScreens::finish`]. `image_frequency_hz` is the image's
     /// frequency at spectral pixel 0, which sizes the screen
     /// (`PBMath1D::support`).
@@ -394,13 +400,22 @@ impl MosaicPb {
     ///
     /// As those two stages.
     pub fn new(
+        rules: MosaicRules,
         geometry: &GridGeometry,
         polarization: &PolarizationRouting,
         image_frequency_hz: f64,
         dishes: &[AiryDish],
         windows: &[MosaicWindow],
     ) -> Result<Self, OperatorError> {
-        Self::screens(geometry, polarization, image_frequency_hz, dishes, windows)?.finish()
+        Self::screens(
+            rules,
+            geometry,
+            polarization,
+            image_frequency_hz,
+            dishes,
+            windows,
+        )?
+        .finish()
     }
 
     /// Bytes [`Self::screens`] holds at most for the same arguments: each
@@ -412,12 +427,13 @@ impl MosaicPb {
     ///
     /// As [`Self::screens`] refuses the arguments, before it allocates.
     pub fn screens_bytes(
+        rules: MosaicRules,
         geometry: &GridGeometry,
         image_frequency_hz: f64,
         dishes: &[AiryDish],
         windows: &[MosaicWindow],
     ) -> Result<u64, OperatorError> {
-        let layout = MosaicLayout::new(geometry, image_frequency_hz, dishes, windows)?;
+        let layout = MosaicLayout::new(rules, geometry, image_frequency_hz, dishes, windows)?;
         let conv = layout.conv_size;
         let lattice = conv / 4;
         let pairs = pair_planes(dishes.len());
@@ -439,7 +455,8 @@ impl MosaicPb {
 
     /// The first stage of building the cells: every dish pair's beam
     /// products transformed on the screen at every beam frequency, cropped
-    /// to their lattices, with each window's support.
+    /// to their lattices, with each window's support, the screen sized and
+    /// the supports found as `rules`' machine does.
     /// [`MosaicScreens::kernel_bytes`] then says what the cells cropped from
     /// them hold before [`MosaicScreens::finish`] builds them.
     ///
@@ -449,29 +466,6 @@ impl MosaicPb {
     /// screen too small to hold a cell, a failed FFT plan or a zero
     /// support.
     pub fn screens(
-        geometry: &GridGeometry,
-        polarization: &PolarizationRouting,
-        image_frequency_hz: f64,
-        dishes: &[AiryDish],
-        windows: &[MosaicWindow],
-    ) -> Result<MosaicScreens, OperatorError> {
-        Self::screens_for(
-            MosaicRules::Tclean,
-            geometry,
-            polarization,
-            image_frequency_hz,
-            dishes,
-            windows,
-        )
-    }
-
-    /// [`Self::screens`] under `rules`: each pair's support is found, and
-    /// its cells are later cut to the taps, as that machine does.
-    ///
-    /// # Errors
-    ///
-    /// As [`Self::screens`].
-    pub fn screens_for(
         rules: MosaicRules,
         geometry: &GridGeometry,
         polarization: &PolarizationRouting,
@@ -483,7 +477,7 @@ impl MosaicPb {
             conv_size,
             cells,
             cell_count,
-        } = MosaicLayout::new(geometry, image_frequency_hz, dishes, windows)?;
+        } = MosaicLayout::new(rules, geometry, image_frequency_hz, dishes, windows)?;
         let image = geometry.image();
         let [nx, ny] = image.shape;
         let increment = image.increment_rad;
