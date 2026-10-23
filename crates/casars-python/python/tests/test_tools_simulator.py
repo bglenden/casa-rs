@@ -41,13 +41,13 @@ DIRECTION = "J2000 23h30m00 34d00m00"
 REFERENCE = "UTC 2020/01/01/00:00:00"
 
 IMPLEMENTED = {
-    "open", "close", "done", "name", "type", "summary", "setconfig", "setfeed",
-    "setspwindow", "setfield", "setmosaicfield", "settimes", "setlimits", "setauto",
-    "observe", "observemany", "setdata", "setseed", "setnoise", "corrupt", "reset",
-    "predict", "setoptions", "setvp",
+    "open", "openfromms", "close", "done", "name", "type", "summary", "setconfig",
+    "setfeed", "setspwindow", "setfield", "setmosaicfield", "settimes", "setlimits",
+    "setauto", "observe", "observemany", "setdata", "setseed", "setnoise", "corrupt",
+    "reset", "predict", "setoptions", "setvp",
 }
 NOT_YET_IMPLEMENTED = {
-    "openfromms", "setapply", "setgain", "settrop", "setleakage",
+    "setapply", "setgain", "settrop", "setleakage",
 }
 DISABLED_IN_CASA = {"setbandpass", "setpa", "setpointingerror"}
 
@@ -610,6 +610,29 @@ def test_setnoise_and_corrupt_add_casas_thermal_noise_at_close(tmp_path: Path) -
     assert np.all(data[auto].imag == 0.0)
     assert np.var(data[auto].real) > 0.005
     assert np.array_equal(np.asarray(main.get_column("WEIGHT")), np.ones((300, 2)))
+
+
+@needs_measures
+def test_openfromms_corrupts_the_measurement_set_closed_before(tmp_path: Path) -> None:
+    # One session corrupting before close, and another closing first and
+    # corrupting after openfromms, write the same DATA.
+    expected = noisy(tmp_path / "one.ms", 5)
+    path = tmp_path / "two.ms"
+    sm = simulator()
+    sm.open(str(path))
+    configure(sm)
+    assert sm.observe("F", "L", starttime="0s", stoptime="300s")
+    assert sm.openfromms(str(path)) is True  # writes the open session first
+    assert sm.name() == str(path)
+    assert sm.setseed(5) is True
+    assert sm.setnoise(mode="simplenoise", simplenoise="0.1Jy") is True
+    assert sm.corrupt() is True
+    with pytest.raises(NotImplementedError, match="observe after openfromms"):
+        sm.observe("F", "L", starttime="300s", stoptime="310s")
+    sm.close()
+    assert np.array_equal(np.asarray(Table.open(path).get_column("DATA")), expected)
+    with pytest.raises(RuntimeError):
+        sm.openfromms(str(tmp_path / "missing.ms"))
 
 
 @needs_measures
