@@ -49,7 +49,7 @@ use super::geometry::{ArrayGeometry, RowGeometry};
 use super::prediction::PredictionStage;
 use crate::corrupt::NoiseApplication;
 use crate::session::error::{SimulatorError, SimulatorResult};
-use crate::session::observe::Scan;
+use crate::session::observe::{PlannedScan, Scan};
 use crate::session::plan::DataPlan;
 
 /// Jobs per worker a batch's noise is split into, so that workers
@@ -86,6 +86,8 @@ pub(super) struct StageTimes {
 /// The rows of the batch in hand and what fills their cells and columns.
 struct Rows<'s> {
     scans: &'s [Scan],
+    /// The same scans with the rows `observe` planned for them.
+    planned: &'s [PlannedScan<'s>],
     geometry: &'s ArrayGeometry<'s>,
     team: &'s WorkerTeam,
     /// The session's DATA steps, which give each scan's noise.
@@ -110,10 +112,11 @@ pub(super) struct Pipeline<'s> {
 }
 
 impl<'s> Pipeline<'s> {
-    /// The pipeline for `scans`, predicting with `prediction` and adding
-    /// the noise of `plan`, on cells of `(correlations, channels)`.
+    /// The pipeline for `scans`, whose planned rows are `planned`,
+    /// predicting with `prediction` and adding the noise of `plan`, on
+    /// cells of `(correlations, channels)`.
     pub(super) fn new(
-        scans: &'s [Scan],
+        (scans, planned): (&'s [Scan], &'s [PlannedScan<'s>]),
         geometry: &'s ArrayGeometry<'s>,
         team: &'s WorkerTeam,
         (prediction, plan): (Option<PredictionStage<'s>>, &'s DataPlan),
@@ -122,6 +125,7 @@ impl<'s> Pipeline<'s> {
         Self {
             rows: Rows {
                 scans,
+                planned,
                 geometry,
                 team,
                 plan,
@@ -238,20 +242,21 @@ impl Rows<'_> {
                 time_s,
                 first: covered,
             });
-            covered += self.scans[scan].baseline_count();
+            covered += self.planned[scan].rows.baseline_count();
         }
         let carried = self.rows.len();
         self.rows.resize(covered, RowGeometry::default());
         let mut jobs = Vec::with_capacity(self.integrations.len());
         let mut rest = &mut self.rows[carried..];
         for integration in &self.integrations {
-            let (rows, after) = rest.split_at_mut(self.scans[integration.scan].baseline_count());
+            let (rows, after) =
+                rest.split_at_mut(self.planned[integration.scan].rows.baseline_count());
             jobs.push((*integration, rows));
             rest = after;
         }
-        let (scans, geometry) = (self.scans, self.geometry);
+        let (planned, geometry) = (self.planned, self.geometry);
         self.team.for_each_mut(&mut jobs, |_, (integration, rows)| {
-            geometry.integration_rows(&scans[integration.scan], integration.time_s, rows)
+            geometry.integration_rows(planned[integration.scan], integration.time_s, rows)
         })
     }
 
@@ -281,7 +286,7 @@ impl Rows<'_> {
             sigma,
         })];
         self.noise_jobs((first_row, rows), data, noised, &mut jobs);
-        let (scans, integrations, geometry) = (self.scans, &self.integrations, &self.rows);
+        let (scans, integrations, geometry) = (self.planned, &self.integrations, &self.rows);
         let (correlations, samples) = (self.correlations, self.samples);
         self.team.for_each_mut(&mut jobs, |_, job| match job {
             BatchJob::Columns(job) => job.run(&geometry[..rows], scans, integrations, geometry),
@@ -290,12 +295,6 @@ impl Rows<'_> {
                 Ok(())
             }
         })
-    }
-
-    /// Rows of one noise job for a batch of `rows` rows.
-    fn job_rows(&self, rows: usize) -> usize {
-        rows.div_ceil(self.team.workers() * NOISE_JOBS_PER_WORKER)
-            .max(MINIMUM_NOISE_JOB_ROWS)
     }
 
     /// Split the batch's `rows` rows of `data` into noise jobs, runs of one
@@ -307,25 +306,18 @@ impl Rows<'_> {
         noised: &dyn Fn(usize) -> bool,
         jobs: &mut Vec<BatchJob<'a>>,
     ) {
-        let job_rows = self.job_rows(rows);
-        let mut rest = data;
-        for (scan, start, count) in self.segments(rows) {
-            let (segment, after) = rest.split_at_mut(count * self.samples);
-            rest = after;
-            let noise = self.plan.noise_for_scan(scan);
-            if noise.is_empty() || noised(scan) {
-                continue;
-            }
-            for (index, cells) in segment.chunks_mut(job_rows * self.samples).enumerate() {
-                let start = start + index * job_rows;
-                jobs.push(BatchJob::Noise(NoiseJob {
-                    first_row: first_row + start as u64,
-                    cells,
-                    rows: &self.rows[start..],
-                    noise,
-                }));
-            }
-        }
+        let runs = self.segments(rows);
+        jobs.extend(
+            noise_jobs(
+                (self.plan, self.team),
+                (&self.rows, &runs),
+                (first_row, data),
+                self.samples,
+                noised,
+            )
+            .into_iter()
+            .map(BatchJob::Noise),
+        );
     }
 
     /// The batch's first `rows` rows as runs of one scan: (scan, first row,
@@ -348,7 +340,7 @@ impl Rows<'_> {
         };
         push(self.carried_scan, 0, carried);
         for integration in &self.integrations {
-            let end = integration.first + self.scans[integration.scan].baseline_count();
+            let end = integration.first + self.planned[integration.scan].rows.baseline_count();
             push(integration.scan, integration.first, end);
         }
         segments
@@ -384,7 +376,7 @@ impl ColumnsJob<'_> {
     fn run(
         &mut self,
         rows: &[RowGeometry],
-        scans: &[Scan],
+        scans: &[PlannedScan<'_>],
         integrations: &[Integration],
         geometry: &[RowGeometry],
     ) -> SimulatorResult<()> {
@@ -395,16 +387,54 @@ impl ColumnsJob<'_> {
             self.sigma.push(row.sigma);
         }
         for integration in integrations {
-            let scan = &scans[integration.scan];
-            let rows = &geometry[integration.first..integration.first + scan.baseline_count()];
+            let scan = scans[integration.scan];
+            let rows = &geometry[integration.first..integration.first + scan.rows.baseline_count()];
             self.writer.push_scalars(scan, integration.time_s, rows)?;
         }
         Ok(())
     }
 }
 
+/// The noise jobs of a batch whose first row is MAIN row `first_row`: its
+/// `runs`, (scan, first row, rows) of `rows` covering it in order, split
+/// into jobs of about [`NOISE_JOBS_PER_WORKER`] a worker of `team`, each
+/// adding its scan's noise in `plan` to its rows of `data` (`samples` a
+/// row), but for the scans `noised` already has.
+pub(super) fn noise_jobs<'a>(
+    (plan, team): (&'a DataPlan, &WorkerTeam),
+    (rows, runs): (&'a [RowGeometry], &[(usize, usize, usize)]),
+    (first_row, data): (u64, &'a mut [Complex32]),
+    samples: usize,
+    noised: &dyn Fn(usize) -> bool,
+) -> Vec<NoiseJob<'a>> {
+    let batch_rows: usize = runs.iter().map(|&(_, _, count)| count).sum();
+    let job_rows = batch_rows
+        .div_ceil(team.workers() * NOISE_JOBS_PER_WORKER)
+        .max(MINIMUM_NOISE_JOB_ROWS);
+    let mut jobs = Vec::new();
+    let mut rest = data;
+    for &(scan, start, count) in runs {
+        let (segment, after) = std::mem::take(&mut rest).split_at_mut(count * samples);
+        rest = after;
+        let noise = plan.noise_for_scan(scan);
+        if noise.is_empty() || noised(scan) {
+            continue;
+        }
+        for (index, cells) in segment.chunks_mut(job_rows * samples).enumerate() {
+            let start = start + index * job_rows;
+            jobs.push(NoiseJob {
+                first_row: first_row + start as u64,
+                cells,
+                rows: &rows[start..],
+                noise,
+            });
+        }
+    }
+    jobs
+}
+
 /// One noise job: consecutive rows of one scan.
-struct NoiseJob<'a> {
+pub(super) struct NoiseJob<'a> {
     /// The MAIN row of the first cell.
     first_row: u64,
     cells: &'a mut [Complex32],
@@ -416,7 +446,7 @@ struct NoiseJob<'a> {
 impl NoiseJob<'_> {
     /// Add the noise to every cell of `samples` samples of `correlations`
     /// correlations.
-    fn run(&mut self, correlations: usize, samples: usize) {
+    pub(super) fn run(&mut self, correlations: usize, samples: usize) {
         for (offset, (cell, row)) in self
             .cells
             .chunks_exact_mut(samples)

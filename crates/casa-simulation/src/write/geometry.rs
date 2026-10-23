@@ -20,7 +20,7 @@ use casa_types::measures::{EpochRef, MEpoch, MPosition, MeasFrame, MeasuresProvi
 
 use crate::session::array::Antenna;
 use crate::session::error::{SimulatorError, SimulatorResult};
-use crate::session::observe::Scan;
+use crate::session::observe::PlannedScan;
 
 /// The array's fixed geometry for a session.
 pub(crate) struct ArrayGeometry<'a> {
@@ -72,22 +72,24 @@ impl<'a> ArrayGeometry<'a> {
     /// The rows of one integration of `scan` at stored TIME `time_s`, in
     /// CASA's order: antenna 1 ascending, then antenna 2 from antenna 1
     /// (autocorrelations written) or the next. `rows` holds the scan's
-    /// [`Scan::baseline_count`] rows.
+    /// [`PlannedRows::baseline_count`](crate::session::observe::PlannedRows::baseline_count)
+    /// rows.
     ///
     /// The result depends only on the arguments, so integrations can be
     /// computed on any thread in any order.
     pub(crate) fn integration_rows(
         &self,
-        scan: &Scan,
+        scan: PlannedScan<'_>,
         time_s: f64,
         rows: &mut [RowGeometry],
     ) -> SimulatorResult<()> {
-        debug_assert_eq!(rows.len(), scan.baseline_count());
-        let count = scan.antenna_count;
+        let planned = scan.rows;
+        debug_assert_eq!(rows.len(), planned.baseline_count());
+        let count = planned.antenna_count;
         let antennas = &self.antennas[..count];
         let epoch = MEpoch::from_mjd(time_s / 86_400.0, EpochRef::UT1);
         let frame = UvwFrame::new(
-            scan.phase_center_rad,
+            scan.scan.phase_center_rad,
             epoch.clone(),
             &self.observatory,
             self.measures.clone(),
@@ -109,7 +111,7 @@ impl<'a> ArrayGeometry<'a> {
             .iter()
             .map(|antenna| antenna.diameter_m)
             .fold(0.0_f64, f64::max);
-        let with_autocorrelations = scan.autocorrelation_weight > 0.0;
+        let with_autocorrelations = planned.autocorrelation_weight > 0.0;
         let baselines = (0..count).flat_map(|antenna1| {
             let first = if with_autocorrelations {
                 antenna1
@@ -128,7 +130,7 @@ impl<'a> ArrayGeometry<'a> {
             let sigma = (largest_diameter * largest_diameter / diameters) as f32;
             let mut weight = 1.0 / (sigma * sigma);
             if antenna1 == antenna2 {
-                weight *= scan.autocorrelation_weight;
+                weight *= planned.autocorrelation_weight;
             }
             *row = RowGeometry {
                 antenna1,
@@ -150,7 +152,7 @@ impl<'a> ArrayGeometry<'a> {
                     diameter1_m: antennas[row.antenna1].diameter_m,
                     diameter2_m: antennas[row.antenna2].diameter_m,
                 }),
-            scan.shadow_fraction_limit,
+            planned.shadow_fraction_limit,
             ShadowedAntenna::Behind,
         );
         let low = self.below_elevation_limit(scan, &epoch)?;
@@ -165,13 +167,14 @@ impl<'a> ArrayGeometry<'a> {
 
     /// For each antenna, whether the field is below `scan`'s elevation limit
     /// at its position (`NewMSSimulator`'s per-antenna `azel`).
-    fn below_elevation_limit(&self, scan: &Scan, epoch: &MEpoch) -> SimulatorResult<Vec<bool>> {
-        let direction = MDirection::from_angles(
-            scan.phase_center_rad[0],
-            scan.phase_center_rad[1],
-            DirectionRef::J2000,
-        );
-        self.positions[..scan.antenna_count]
+    fn below_elevation_limit(
+        &self,
+        scan: PlannedScan<'_>,
+        epoch: &MEpoch,
+    ) -> SimulatorResult<Vec<bool>> {
+        let [ra, dec] = scan.scan.phase_center_rad;
+        let direction = MDirection::from_angles(ra, dec, DirectionRef::J2000);
+        self.positions[..scan.rows.antenna_count]
             .iter()
             .map(|position| {
                 let frame = MeasFrame::new()
@@ -181,7 +184,7 @@ impl<'a> ArrayGeometry<'a> {
                 let azel = direction
                     .convert_to(DirectionRef::AZEL, &frame)
                     .map_err(|error| SimulatorError::raised(format!("elevation: {error}")))?;
-                Ok(azel.as_angles().1 < scan.elevation_limit_rad)
+                Ok(azel.as_angles().1 < scan.rows.elevation_limit_rad)
             })
             .collect()
     }

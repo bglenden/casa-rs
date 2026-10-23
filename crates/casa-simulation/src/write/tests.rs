@@ -34,6 +34,7 @@ use ndarray::{ArrayD, IxDyn};
 use super::prediction::PredictionStage;
 use super::resources::{MainShape, admit_main_write, writer_plan};
 use super::{cell_shape, main_shape};
+use crate::session::observe::PlannedScan;
 use crate::session::{BackendRequest, SessionResources};
 use crate::{
     ArrayConfig, CoordinateSystem, NoiseSpec, ObserveSpec, PredictSpec, Simulator,
@@ -236,7 +237,12 @@ fn session_predicting(
 /// MAIN of the session.
 fn shape(session: &Simulator) -> MainShape<'_> {
     let cell = cell_shape(session).expect("one shape").expect("scans");
-    main_shape(session, cell)
+    main_shape(session, &planned(session), cell)
+}
+
+/// The session's scans with their planned rows.
+fn planned(session: &Simulator) -> Vec<PlannedScan<'_>> {
+    PlannedScan::of_all(session.scans()).expect("every scan planned")
 }
 
 /// Write the session with `resources` to `directory/name` and digest it.
@@ -341,7 +347,7 @@ fn the_predicted_measurement_set_is_the_same_for_any_worker_count_and_budget() {
             Some(&model),
         );
         let cell = cell_shape(&probe).expect("one shape").expect("scans");
-        let shape = main_shape(&probe, cell);
+        let shape = main_shape(&probe, &planned(&probe), cell);
         let stage = PredictionStage::new(&probe, cell, BackendChoice::Cpu)
             .expect("stage")
             .expect("the session predicts");

@@ -32,6 +32,7 @@ mod corruption;
 pub mod error;
 mod feeds;
 pub mod fields;
+mod from_ms;
 mod mosaic;
 pub mod observe;
 pub(crate) mod plan;
@@ -152,6 +153,9 @@ pub struct Simulator {
     squint: bool,
     /// The DATA steps (`predict`, `corrupt`), applied at `close`.
     data_plan: DataPlan,
+    /// The MeasurementSet `openfromms` opened, whose rows `close` patches;
+    /// `None` when `close` creates the MeasurementSet.
+    opened: Option<from_ms::OpenedMs>,
 }
 
 impl Simulator {
@@ -185,6 +189,7 @@ impl Simulator {
             voltage_pattern: false,
             squint: false,
             data_plan: DataPlan::default(),
+            opened: None,
         }
     }
 
@@ -193,7 +198,9 @@ impl Simulator {
         &self.path
     }
 
-    /// The number of scans `observe` has planned. They are written only at
+    /// The number of scans: those `observe` has planned, or the runs of
+    /// MAIN rows of one scan, field and spectral window in the
+    /// MeasurementSet `openfromms` opened. DATA is written only at
     /// [`close`](Self::close); a session dropped without it writes nothing.
     pub fn scan_count(&self) -> usize {
         self.scans.len()
@@ -206,6 +213,7 @@ impl Simulator {
     /// Coordinates or per-antenna lists of different lengths, or
     /// `longlat` coordinates.
     pub fn set_config(&mut self, config: &ArrayConfig) -> SimulatorResult<()> {
+        self.refuse_after_openfromms("setconfig")?;
         let antennas = config.antennas()?;
         match config.coordinate_system {
             array::CoordinateSystem::Global => {
@@ -233,6 +241,7 @@ impl Simulator {
         y: &[f64],
         pol: &[String],
     ) -> SimulatorResult<()> {
+        self.refuse_after_openfromms("setfeed")?;
         let feeds = feeds::feeds(mode, x, y, pol, self.antennas.len())?;
         self.feeds.extend(feeds);
         self.feeds_set = true;
@@ -246,6 +255,7 @@ impl Simulator {
     ///
     /// No channels (CASA returns `False`).
     pub fn set_spectral_window(&mut self, spec: &SpectralWindowSpec) -> SimulatorResult<()> {
+        self.refuse_after_openfromms("setspwindow")?;
         let window = SpectralWindow::new(spec)?;
         tracing::info!(
             "Creating new spectral window {}, ID {}",
@@ -270,6 +280,7 @@ impl Simulator {
         calcode: &str,
         distance_m: f64,
     ) -> SimulatorResult<()> {
+        self.refuse_after_openfromms("setfield")?;
         if name.is_empty() {
             return Err(SimulatorError::refused("must provide a source name"));
         }
@@ -317,6 +328,7 @@ impl Simulator {
         distance_m: f64,
     ) -> SimulatorResult<()> {
         use std::f64::consts::{FRAC_PI_2, PI, TAU};
+        self.refuse_after_openfromms("setmosaicfield")?;
         let (ra0, dec0) = centre.as_angles();
         let offset = |index: usize, count: usize| index as f64 - (count as f64 - 1.0) / 2.0;
         let mut k = 0;
@@ -407,6 +419,7 @@ impl Simulator {
     /// No antennas, spectral window or field, or none of the given names
     /// (CASA logs the error and returns `False`).
     pub fn observe(&mut self, spec: &ObserveSpec) -> SimulatorResult<()> {
+        self.refuse_after_openfromms("observe")?;
         self.plan_pointings(&ObserveManySpec::from(spec))
     }
 
@@ -420,6 +433,7 @@ impl Simulator {
     /// pointings; or a direction that cannot be converted to J2000 without
     /// an epoch and position.
     pub fn observe_many(&mut self, spec: &ObserveManySpec) -> SimulatorResult<()> {
+        self.refuse_after_openfromms("observemany")?;
         self.plan_pointings(spec)
     }
 
@@ -480,13 +494,18 @@ impl Simulator {
         )))
     }
 
-    /// `sm.close()` / `sm.done()`: write the MeasurementSet.
+    /// `sm.close()` / `sm.done()`: write the MeasurementSet, or, after
+    /// `openfromms`, patch the rows the DATA steps rewrite in place.
     ///
     /// # Errors
     ///
-    /// A failure to create or write the MeasurementSet.
+    /// A failure to create, read or write the MeasurementSet.
     pub fn close(self) -> SimulatorResult<()> {
-        write::write_measurement_set(&self)
+        if self.opened.is_some() {
+            write::patch_measurement_set(&self)
+        } else {
+            write::write_measurement_set(&self)
+        }
     }
 
     /// `direction` in J2000, as `[ra, dec]` radians with the longitude in

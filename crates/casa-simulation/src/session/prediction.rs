@@ -475,6 +475,17 @@ impl Simulator {
         }
         let correlations = self.predicted_correlations()?;
         let beam = self.voltage_pattern_beam()?;
+        // Each of these points a scan at its phase centre, which on an
+        // opened MeasurementSet POINTING must agree with.
+        if self.mosaic && model.is_some() {
+            self.require_pointings_at_phase_centres("setoptions(ftmachine='mosaic')")?;
+        }
+        if beam.is_some() {
+            self.require_pointings_at_phase_centres("setvp(dovp=True)")?;
+        }
+        if self.single_dish.is_some() {
+            self.require_pointings_at_phase_centres("setoptions(ftmachine='sd')")?;
+        }
         // The model's grids are prepared per field under an image-plane
         // beam, and once for the mosaic machine, whose kernels point each
         // scan; a component list is predicted at each scan's own pointing.

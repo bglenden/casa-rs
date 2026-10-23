@@ -18,6 +18,7 @@
 
 mod components;
 mod geometry;
+mod patch;
 mod pipeline;
 mod prediction;
 mod resources;
@@ -41,8 +42,9 @@ use casa_types::ScalarValue;
 
 use crate::session::Simulator;
 use crate::session::error::{SimulatorError, SimulatorResult};
-use crate::session::observe::Scan;
+use crate::session::observe::PlannedScan;
 use geometry::{ArrayGeometry, RowGeometry};
+pub(crate) use patch::patch_measurement_set;
 use pipeline::Pipeline;
 use prediction::PredictionStage;
 use resources::{MainAdmission, MainShape};
@@ -60,8 +62,11 @@ fn write_error(what: &str) -> impl Fn(casa_ms::MeasurementSetWriteError) -> Simu
 /// Create the session's MeasurementSet.
 pub(crate) fn write_measurement_set(session: &Simulator) -> SimulatorResult<()> {
     let window = ReservationWindow::open();
+    let planned = PlannedScan::of_all(session.scans()).ok_or_else(|| {
+        SimulatorError::raised("only a session's planned scans make a new MeasurementSet")
+    })?;
     let cell = cell_shape(session)?;
-    let shape = cell.map(|cell| main_shape(session, cell));
+    let shape = cell.map(|cell| main_shape(session, &planned, cell));
     let resources = &session.options().resources;
     let prediction = match cell {
         Some(cell) => PredictionStage::new(session, cell, resources.prediction_backend())?,
@@ -92,7 +97,7 @@ pub(crate) fn write_measurement_set(session: &Simulator) -> SimulatorResult<()> 
         readme: MAIN_README.iter().map(|line| (*line).to_string()).collect(),
     });
     subtables::write_subtables(&mut ms, session)?;
-    let generated = subtables::subtable_overrides(session)?;
+    let generated = subtables::subtable_overrides(&planned)?;
     match shape.zip(admission) {
         Some((shape, admission)) => {
             let main = MainTarget {
@@ -100,7 +105,13 @@ pub(crate) fn write_measurement_set(session: &Simulator) -> SimulatorResult<()> 
                 generated: &generated,
                 window: &window,
             };
-            write_main(&mut ms, session, &main, &shape, (admission, prediction))?;
+            write_main(
+                &mut ms,
+                (session, &planned),
+                &main,
+                &shape,
+                (admission, prediction),
+            )?;
         }
         None => ms
             .save()
@@ -131,22 +142,29 @@ fn cell_shape(session: &Simulator) -> SimulatorResult<Option<(usize, usize)>> {
     Ok(shape)
 }
 
-/// MAIN as the session's scans make it, with cells of `(correlations,
-/// channels)`.
-fn main_shape(session: &Simulator, (correlations, channels): (usize, usize)) -> MainShape<'_> {
-    let scans = session.scans();
+/// MAIN as the session's planned scans make it, with cells of
+/// `(correlations, channels)`.
+fn main_shape<'s>(
+    session: &'s Simulator,
+    planned: &[PlannedScan<'_>],
+    (correlations, channels): (usize, usize),
+) -> MainShape<'s> {
     MainShape {
-        rows: scans.iter().map(Scan::row_count).sum(),
+        rows: planned.iter().map(|scan| scan.rows.row_count()).sum(),
         correlations,
         channels,
         telescope: session.telescope(),
-        largest_integration: scans.iter().map(Scan::baseline_count).max().unwrap_or(0),
-        antennas: scans
+        largest_integration: planned
             .iter()
-            .map(|scan| scan.antenna_count)
+            .map(|scan| scan.rows.baseline_count())
             .max()
             .unwrap_or(0),
-        generated_bytes: subtables::generated_bytes(session),
+        antennas: planned
+            .iter()
+            .map(|scan| scan.rows.antenna_count)
+            .max()
+            .unwrap_or(0),
+        generated_bytes: subtables::generated_bytes(planned),
     }
 }
 
@@ -162,7 +180,7 @@ struct MainTarget<'a> {
 /// predicting with `prediction` when the session predicts.
 fn write_main<'s>(
     ms: &mut MeasurementSet,
-    session: &'s Simulator,
+    (session, planned): (&'s Simulator, &[PlannedScan<'_>]),
     target: &MainTarget<'_>,
     shape: &MainShape<'_>,
     (admission, mut prediction): (MainAdmission, Option<PredictionStage<'s>>),
@@ -184,19 +202,22 @@ fn write_main<'s>(
     )?;
     let team = WorkerTeam::new(admission.cores.streaming_workers)
         .map_err(|error| SimulatorError::raised(format!("the worker team: {error}")))?;
-    let scans = session.scans();
     let mut pipeline = Pipeline::new(
-        scans,
+        (session.scans(), planned),
         &geometry,
         &team,
         (prediction, session.data_plan()),
         (shape.correlations, shape.channels),
     );
-    let integrations = scans
+    let integrations = planned
         .iter()
         .enumerate()
-        .filter(|(_, scan)| scan.baseline_count() > 0)
-        .flat_map(|(index, scan)| scan.integration_times_s().map(move |time| (index, time)));
+        .filter(|(_, scan)| scan.rows.baseline_count() > 0)
+        .flat_map(|(index, scan)| {
+            scan.rows
+                .integration_times_s()
+                .map(move |time| (index, time))
+        });
     let setup = started.elapsed();
     pipeline.write_rows(&mut writer, integrations, shape.rows, batch_rows)?;
     let finishing = Instant::now();
@@ -293,7 +314,10 @@ impl MainWriter {
     /// TIME `time_s`, whose rows are `rows`.
     fn push_scalars(
         &mut self,
-        scan: &Scan,
+        PlannedScan {
+            scan,
+            rows: planned,
+        }: PlannedScan<'_>,
         time_s: f64,
         rows: &[RowGeometry],
     ) -> SimulatorResult<()> {
@@ -332,11 +356,11 @@ impl MainWriter {
         for (column, name) in columns.constants {
             let value = match name {
                 "DATA_DESC_ID" => ScalarValue::Int32(scan.spectral_window_id as i32),
-                "EXPOSURE" | "INTERVAL" => ScalarValue::Float64(scan.integration_s),
+                "EXPOSURE" | "INTERVAL" => ScalarValue::Float64(planned.integration_s),
                 "FIELD_ID" => ScalarValue::Int32(scan.field_id as i32),
-                "OBSERVATION_ID" => ScalarValue::Int32(scan.observation_id),
+                "OBSERVATION_ID" => ScalarValue::Int32(planned.observation_id),
                 "SCAN_NUMBER" => ScalarValue::Int32(scan.scan_number),
-                "STATE_ID" => ScalarValue::Int32(scan.state_id as i32),
+                "STATE_ID" => ScalarValue::Int32(planned.state_id as i32),
                 // ARRAY_ID, FEED1, FEED2 and PROCESSOR_ID.
                 _ => ScalarValue::Int32(0),
             };
