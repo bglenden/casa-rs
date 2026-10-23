@@ -39,6 +39,10 @@ impl PaddingFactor {
     pub const TCLEAN: Self = Self(1.2_f32.to_bits());
     /// The simulator tool's default padding (`sm.setoptions(padding=1.3)`).
     pub const SIMULATOR: Self = Self(1.3_f32.to_bits());
+    /// The simulator tool's `WProjectFT` padding, 1: its constructor's
+    /// default, which `setoptions(padding=…)` does not reach
+    /// (`Simulator::createSkyEquation`).
+    pub const SIMULATOR_WPROJECT: Self = Self(1.0_f32.to_bits());
 
     /// A padding factor; CASA keeps only factors of at least 1.
     ///
@@ -74,6 +78,7 @@ impl PaddingFactor {
 #[derive(Clone, Debug, PartialEq)]
 pub struct GridGeometry {
     image: ImageExtent,
+    padding: GridPadding,
     grid_shape: [usize; 2],
     image_origin: [usize; 2],
     scale: [f64; 2],
@@ -149,6 +154,7 @@ impl GridGeometry {
         let image_origin = [x0, y0];
         Ok(Self {
             image,
+            padding,
             grid_shape,
             image_origin,
             scale: [
@@ -162,6 +168,14 @@ impl GridGeometry {
     #[must_use]
     pub const fn image(&self) -> ImageExtent {
         self.image
+    }
+
+    /// How the grid extends beyond the image. Kernel sets that are sampled
+    /// on a screen of the padded size, as W projection's are
+    /// (`WPConvFunc::findConvFunction`), read their factor here.
+    #[must_use]
+    pub const fn padding(&self) -> GridPadding {
+        self.padding
     }
 
     /// `[nx, ny]` of the padded grid.

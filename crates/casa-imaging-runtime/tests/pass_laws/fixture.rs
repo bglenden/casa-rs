@@ -325,6 +325,9 @@ pub struct TestKernels {
     /// Whether every lend of the weight taps panics: only the weight
     /// owner's grid of its summed groups lends them (#787).
     weight_panics: bool,
+    /// The cells samples key on, from their row's w ([`keyed_cell`]);
+    /// `None` for the spheroidal's one cell.
+    cells: Option<u16>,
 }
 
 impl TestKernels {
@@ -341,6 +344,7 @@ impl TestKernels {
             panic_at,
             lent: AtomicUsize::new(0),
             weight_panics: false,
+            cells: None,
         }
     }
 
@@ -352,15 +356,76 @@ impl TestKernels {
             ..self
         }
     }
+
+    /// These kernels, each sample keying one of `cells` cells from its
+    /// row's w ([`keyed_cell`]), as a W or AW set keys its w-plane (#810).
+    /// Every cell lends the spheroidal's taps, so the images are the
+    /// spheroidal's, but a weight owner's table sums each cell's samples
+    /// apart.
+    #[must_use]
+    pub fn keyed_on_w(self, cells: u16) -> Self {
+        Self {
+            cells: Some(cells),
+            ..self
+        }
+    }
+}
+
+/// The cell [`TestKernels::keyed_on_w`] keys a sample at `w_lambda` and
+/// `freq_hz` on: its row's w in whole millimetres, modulo `cells`. A row's
+/// channels share a cell, and rows whose w differ by a multiple of `cells`
+/// millimetres share one too.
+pub fn keyed_cell(w_lambda: f64, freq_hz: f64, cells: u16) -> CfKey {
+    let millimetres = (w_lambda * SPEED_OF_LIGHT / freq_hz * 1.0e3).round() as i64;
+    CfKey {
+        group: u16::try_from(millimetres.rem_euclid(i64::from(cells))).expect("below cells"),
+        cube: 0,
+    }
+}
+
+/// The weight-image groups the samples of `rows` make on each plane of
+/// [`nearest_cube`] under [`TestKernels::keyed_on_w`] of `cells`: the
+/// distinct (cell, sign of w) of the samples with an unflagged
+/// correlation, as a weight owner's table groups them, and how many of
+/// those take samples from several rows (#810).
+pub fn keyed_weight_groups(rows: &Rows, cells: u16) -> Vec<(usize, usize)> {
+    let mut planes = vec![std::collections::HashMap::<(CfKey, bool), usize>::new(); CHANNELS / 2];
+    for row in &rows.rows {
+        let w_m = row.projections[0].uvw_m[2];
+        for (plane, groups) in planes.iter_mut().enumerate() {
+            let channels = 2 * plane..2 * plane + 2;
+            let placed = channels
+                .clone()
+                .any(|channel| row.flags[2 * channel..2 * channel + 2].contains(&false));
+            if placed {
+                let freq_hz = rows.frequencies[channels.start];
+                let w_lambda = w_m * (freq_hz / SPEED_OF_LIGHT);
+                *groups
+                    .entry((keyed_cell(w_lambda, freq_hz, cells), w_lambda > 0.0))
+                    .or_default() += 1;
+            }
+        }
+    }
+    planes
+        .iter()
+        .map(|groups| {
+            let gathered = groups.values().filter(|rows| **rows > 1).count();
+            (groups.len(), gathered)
+        })
+        .collect()
 }
 
 impl ConvolutionFunctionSet for TestKernels {
     fn key(&self, row: &RowContext, freq_hz: f64, w_lambda: f64) -> CfKey {
-        self.inner.key(row, freq_hz, w_lambda)
+        match self.cells {
+            Some(cells) => keyed_cell(w_lambda, freq_hz, cells),
+            None => self.inner.key(row, freq_hz, w_lambda),
+        }
     }
 
     fn uniform_key(&self) -> Option<CfKey> {
-        self.inner.uniform_key()
+        self.cells
+            .map_or_else(|| self.inner.uniform_key(), |_| None)
     }
 
     fn taps<'s>(&'s self, key: CfKey, hold: &'s mut CellHold) -> TapLayout<'s> {
@@ -423,17 +488,14 @@ impl ConvolutionFunctionSet for TestKernels {
     }
 
     /// The spheroidal's cell, lent again as the weight taps when the
-    /// kernels grid a weight image.
+    /// kernels grid a weight image, and once for every keyed cell.
     fn tap_footprint(&self) -> casa_imaging_operator::TapFootprint {
         let inner = self.inner.tap_footprint();
-        if self.weight_image {
-            casa_imaging_operator::TapFootprint {
-                tap_bytes: 2 * inner.tap_bytes,
-                norm_bytes: 2 * inner.norm_bytes,
-                cells: 2 * inner.cells,
-            }
-        } else {
-            inner
+        let copies = usize::from(self.cells.unwrap_or(1)) * (1 + usize::from(self.weight_image));
+        casa_imaging_operator::TapFootprint {
+            tap_bytes: copies as u64 * inner.tap_bytes,
+            norm_bytes: copies as u64 * inner.norm_bytes,
+            cells: copies * inner.cells,
         }
     }
 
@@ -472,6 +534,19 @@ pub fn panicking_weights_operator() -> MeasurementOperator {
         Basis::Constant,
         |geometry, polarization| {
             Box::new(TestKernels::new(geometry, polarization, true, None).panicking_weights())
+        },
+    )
+}
+
+/// [`test_kernels_operator`] on `basis` with a weight image, its samples
+/// keyed on `cells` cells ([`TestKernels::keyed_on_w`]).
+pub fn keyed_weights_operator(basis: Basis, cells: u16) -> MeasurementOperator {
+    operator_with(
+        IMAGE,
+        GridPrecision::F64,
+        basis,
+        |geometry, polarization| {
+            Box::new(TestKernels::new(geometry, polarization, true, None).keyed_on_w(cells))
         },
     )
 }

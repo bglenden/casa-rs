@@ -54,13 +54,15 @@ pub(super) struct OptionsRequest<'a> {
     pub(super) grid_function: &'a str,
     pub(super) location: Variant,
     pub(super) padding: f64,
+    pub(super) w_planes: i64,
 }
 
-/// `sm.setoptions(...)`: record the padding `predict` grids with.
+/// `sm.setoptions(...)`: record the FTMachine `predict` degrids through,
+/// with `GridFT`'s padding and `WProjectFT`'s planes.
 ///
 /// `location` is converted as CASA's binding converts it: one that does not
-/// convert is logged and the call goes on. `cache`, `tile`, `facets`,
-/// `maxdata` and `wprojplanes`, which do not change what `GridFT` predicts,
+/// convert is logged and the call goes on. `cache`, `tile`, `facets` and
+/// `maxdata`, which do not change what `GridFT` or `WProjectFT` predicts,
 /// are accepted as typed.
 pub(super) fn setoptions(
     tool: &PySimulator,
@@ -80,6 +82,7 @@ pub(super) fn setoptions(
             ftmachine: request.ftmachine.to_string(),
             grid_function: request.grid_function.to_string(),
             padding: request.padding,
+            w_planes: request.w_planes,
         };
         outcome(session.simulator.set_options(&options), lines)
     })?;
