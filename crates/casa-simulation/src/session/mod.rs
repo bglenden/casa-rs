@@ -11,6 +11,10 @@
 //! writes each row (`plan`, `prediction`, `corruption`); `predict` prepares
 //! its model's grids when it is called.
 //!
+//! A session [`Simulator::open_from_ms`] opens on an existing MeasurementSet
+//! (`sm.openfromms`) reads its state back, takes its rows as scans already
+//! observed, and patches their DATA in place at `close` (`from_ms`).
+//!
 //! The session runs within its [`SessionResources`]: `predict` admits its
 //! model's grids, and `close` what it holds, against the imaging runtime's
 //! resource policy, and `close` computes each write batch's geometry,

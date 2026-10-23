@@ -15,6 +15,8 @@
 //! session's resource policy ([`resources`]); each batch's geometry,
 //! prediction ([`prediction`]) and noise are then computed on the session's
 //! worker team ([`pipeline`]).
+//!
+//! A session `openfromms` opened is patched in place instead ([`patch`]).
 
 mod components;
 mod geometry;

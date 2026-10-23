@@ -12,6 +12,7 @@
 //! | CASA | casa-rs |
 //! |---|---|
 //! | the `sm` tool's session (`open`, the setters, `observe`, `close`) | [`session::Simulator`] |
+//! | `sm.openfromms`: `predict` and `corrupt` on an existing MeasurementSet | [`Simulator::open_from_ms`] |
 //! | `sm.predict` with `GridFT` or `WProjectFT` (`setoptions(ftmachine='ft' or 'wproject')`) | [`Simulator::predict`], [`Simulator::set_options`], [`predict::FtMachine`]; one row at a time, [`predict::ModelPredictor`] |
 //! | `sm.predict` with `MosaicFTNew` for ALMA and ACA (`setoptions(ftmachine='mosaic')`) | [`Simulator::predict`], [`predict::FtMachine::Mosaic`] |
 //! | the model image `sm.predict` reads | [`predict::SkyModel`] |

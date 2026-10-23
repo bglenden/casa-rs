@@ -188,6 +188,7 @@ pub(crate) fn patch_measurement_set(session: &Simulator) -> SimulatorResult<()> 
         columns = ?columns,
         reads_data = shape.reads_data,
         batches = patch.batches,
+        backend = ?patch.prediction.as_ref().map(PredictionStage::backend),
         workers = admission.cores.streaming_workers,
         block_rows = admission.block_rows,
         reserved_bytes = admission.reservation.memory(),

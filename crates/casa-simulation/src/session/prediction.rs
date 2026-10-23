@@ -20,8 +20,9 @@
 //!
 //! Divergences: CASA rewrites the model image's spectral units and frame in
 //! place; casa-rs never writes it (`docs/CASA (C++) bugs.md`). MODEL_DATA
-//! and CORRECTED_DATA are not written (plan decision 6), even for an
-//! incremental predict, whose sum CASA forms through MODEL_DATA.
+//! and CORRECTED_DATA are not created (plan decision 6), even for an
+//! incremental predict, whose sum CASA forms through MODEL_DATA; a
+//! MeasurementSet `openfromms` opened keeps those it has in step with DATA.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

@@ -36,7 +36,9 @@ Simulator behaviours casa-rs does not follow:
 [`observemany`'s rows before an unknown field](#observemany-adds-rows-before-it-looks-up-later-fields),
 [W projection without planes](#smpredict-through-wprojectft-without-planes-crashes-the-simulator),
 [total power in cross-correlations](#sdgrid-predicts-total-power-into-cross-correlations-with-no-positive-uvw),
-[`close` after a mosaic predict](#smclose-aborts-the-process-after-a-mosaic-predict).
+[`close` after a mosaic predict](#smclose-aborts-the-process-after-a-mosaic-predict),
+[a moved pointing phased on its field](#smpredict-phases-a-moved-observemany-pointing-on-its-field),
+[scratch columns added at `predict` and `corrupt`](#predict-and-corrupt-add-scratch-columns-to-a-measurementset-without-them).
 Measures behaviours casa-rs follows for parity:
 [IAU 1980 sidereal time and obliquities under IAU 2000](#iau-2000-keeps-the-iau-1980-sidereal-time-and-ecliptic-obliquities).
 Measures behaviours casa-rs does not follow:
@@ -1043,3 +1045,49 @@ rotation. At offsets of 10–17″ the two differ by a few 1e-4 cells, which
 flips the fine offset of a sample near a rounding boundary; with the
 mosaic's ten offsets a cell, such a sample moved by up to 10% (#841: 33 of
 4,752 rows, until the simulator took `girarUVW` too).
+
+## `sm.predict` phases a moved `observemany` pointing on its field
+
+- Date noted: 2026-10-23
+- Status: CASA bug; casa-rs's own session does not follow it (#861), and
+  after `openfromms` casa-rs predicts as CASA does (#841 Phase 2)
+- Affected code: casacore `ms/MSOper/NewMSSimulator.cc` (`observe`, the
+  vector form `observemany` calls) and `msvis/MSVis/VisBuffer.cc`
+  (`phaseCenter`, from FIELD)
+
+A pointing `observemany` gives a direction keeps its field's FIELD row:
+`NewMSSimulator` computes its UVW at the direction and writes that direction
+to POINTING, but leaves FIELD as it was. `predict` reads the MeasurementSet
+through a `VisBuffer`, whose phase centre is FIELD's PHASE_DIR, so it
+phases the pointing on the field while its UVW belong to the moved
+direction. Measured on CASA 6.7.6 (twelve ALMA antennas, a second pointing
+moved 10.4″ east): a 1 Jy point at the field's direction predicts 1 Jy at
+zero phase in both pointings, and one at the moved direction predicts
+phases spread over ±180° (rms 101°) in the pointing centred on it.
+
+casa-rs's session phases a moved pointing on its direction, where its UVW
+are (#861), so a model predicted there is the sky that pointing sees. A
+MeasurementSet records only FIELD as the phase centre, and POINTING may
+point elsewhere for other reasons (tracking errors, offset pointings), so
+after `openfromms` casa-rs phases every scan on its FIELD's PHASE_DIR as
+CASA does: the `openfromms-moved-pointing-*` scenarios agree with CASA to
+0 and 7e-11 normalized RMS (`tools/simulation/sm_openfromms_scenarios.json`).
+Whether the session should phase as CASA does, or keep its correction, is
+#884.
+
+## `predict` and `corrupt` add scratch columns to a MeasurementSet without them
+
+- Date noted: 2026-10-23
+- Status: CASA behaviour casa-rs does not follow (plan decision 6)
+- Affected code: `synthesis/MeasurementEquations/Simulator.cc` (`predict`
+  and `corrupt` build a `VisSet`) and `msvis/MSVis/VisSet.cc` (its
+  constructor's `addCalSet2` and `initCalSet`)
+
+CASA's simulator writes its steps' results through a `VisSet`, whose
+constructor adds MODEL_DATA (1) and CORRECTED_DATA (DATA) to a
+MeasurementSet without CORRECTED_DATA. `predict` then sets CORRECTED_DATA to
+the new DATA and MODEL_DATA to 1, and `corrupt` sets CORRECTED_DATA to the
+corrupted DATA. casa-rs's simulator writes DATA only (plan decision 6), and
+after `openfromms` it creates neither column: it keeps those MAIN already
+has in step with DATA as CASA does, and leaves a MeasurementSet without
+them without them.
