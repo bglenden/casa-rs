@@ -8,6 +8,7 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use casa_imaging_operator::{DeviceFailure, OperatorError};
+use casa_numerics::cell_noise;
 use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
 use objc2_foundation::NSString;
@@ -39,6 +40,8 @@ pub(crate) struct Device {
     pub predict: Pipeline,
     pub residual: Pipeline,
     pub native: Pipeline,
+    /// The cell noise (`casa_numerics::cell_noise`).
+    pub noise: Pipeline,
 }
 
 // SAFETY: Metal documents `MTLDevice`, `MTLCommandQueue` and
@@ -80,8 +83,12 @@ impl Device {
         let options = MTLCompileOptions::new();
         #[allow(deprecated, reason = "the replacement `setMathMode` needs macOS 15")]
         options.setFastMathEnabled(false);
+        // The contract's kernels and the cell noise, which the source of
+        // `casa_numerics::cell_noise` defines beside its CPU draws. The
+        // noise comes last: it turns contraction off from its start on.
+        let source = format!("{SOURCE}\n{}", cell_noise::metal_source());
         let library = device
-            .newLibraryWithSource_options_error(&NSString::from_str(SOURCE), Some(&options))
+            .newLibraryWithSource_options_error(&NSString::from_str(&source), Some(&options))
             .unwrap_or_else(|error| {
                 panic!("the bundled Metal kernels must compile on a Metal 3 device: {error}")
             });
@@ -111,6 +118,7 @@ impl Device {
             predict: pipeline("predict"),
             residual: pipeline("residual"),
             native: pipeline("native_model"),
+            noise: pipeline(cell_noise::METAL_KERNEL),
             device,
             queue,
         })

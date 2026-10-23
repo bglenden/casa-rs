@@ -351,6 +351,14 @@ today's, within 5%. Any trade-off is recorded and needs owner approval.
 - **Where it runs.** Sustained runs go on GLENDENNING, the 1 TB NVMe external
   drive (about 3 GB/s). The internal disk has 72 GB free and must stay above
   40 GB.
+- **Phase 1's record (owner decision, 2026-10-22).** The indicative runs at
+  #855's final head stand as Phase 1's acceptance; there is no purged,
+  repeated rerun. That record is `sustained-20261022-d6ab21e2de` on the NAS:
+  - the page cache was not purged;
+  - each case ran once, between two ceiling runs;
+  - the dataset was 81.6 GiB against 32 GiB of RAM.
+
+  It met both targets with a wide margin: 104% write-only and 100% with Metal.
 - **Fast regression check.** The 1 GiB internal-disk case stays as a quick
   check, labelled cache-resident. A 4 GB `dd` on the internal disk measured
   about 2 GB/s on 2026-10-20, but that file is smaller than RAM and so went

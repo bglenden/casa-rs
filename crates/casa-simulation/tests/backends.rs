@@ -18,8 +18,15 @@
 //! 4 correlations exactly zero, as the CPU does, and the pass reports that
 //! it predicted on Metal.
 //!
-//! Noise is drawn on the host, so a session that only corrupts writes the
-//! same MeasurementSet whatever backend it asks for.
+//! A session that only corrupts writes the same MeasurementSet whatever
+//! backend it asks for: rows Metal does not predict get the host's noise.
+//! Rows it predicts get their noise on the device, added to the model there
+//! (#855), with the host's draws: with one noise term, a Metal session
+//! that predicts and corrupts writes, bit for bit, the sum of the Metal
+//! session that only predicts and the CPU session that only corrupts. That
+//! holds too for a σ so small that some draws are subnormal, which the
+//! host then draws as the device would flush them, and a σ of zero leaves
+//! the model as it is.
 //!
 //! On a host without a Metal device the Metal comparisons print `skipped:
 //! no Metal device` and pass: run them outside command sandboxes on Apple
@@ -248,5 +255,105 @@ fn noise_is_the_same_whatever_backend_is_asked_for() {
             cpu,
             "metal writes the CPU's MeasurementSet"
         );
+    }
+}
+
+/// A session of 4 linear correlations with `backend` that observes a scan
+/// of several write batches, predicts `model` into it when given one and
+/// corrupts it with one noise term of σ `noise_jy` when given one, then
+/// observes a scan it neither predicts nor corrupts; MAIN read back with the
+/// pass's summary.
+fn predicted_and_corrupted(
+    path: &Path,
+    model: Option<&Path>,
+    noise_jy: Option<f64>,
+    backend: BackendRequest,
+) -> (Vec<Row>, PassSummary) {
+    let mut sm = session_with_channels(path, "ALMA", "XX XY YX YY", CHANNELS, resources(backend));
+    let long_s = 10.0 * LONG_SCAN_INTEGRATIONS as f64;
+    sm.observe(&scan("target", 0.0, long_s)).expect("observe");
+    if let Some(model) = model {
+        sm.set_vp(&VoltagePatternSpec::default()).expect("setvp");
+        sm.predict(&predict_spec(model, false)).expect("predict");
+    }
+    if let Some(simple_noise_jy) = noise_jy {
+        sm.set_noise(&NoiseSpec {
+            mode: "simplenoise".to_string(),
+            simple_noise_jy,
+            on_the_fly: true,
+        })
+        .expect("setnoise");
+        sm.corrupt().expect("corrupt");
+    }
+    sm.observe(&scan("offset", long_s, long_s + 500.0))
+        .expect("observe");
+    let ((), summary) = capture(|| sm.close().expect("close"));
+    (read_main(path).0, summary.expect("the pass's summary"))
+}
+
+#[test]
+fn metal_adds_the_hosts_noise_to_the_model_on_the_device() {
+    if !metal_device() {
+        return;
+    }
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let path = |name: &str| directory.path().join(name);
+    let model = cube(directory.path());
+    let (model_only, model_pass) =
+        predicted_and_corrupted(&path("model.ms"), Some(&model), None, BackendRequest::Metal);
+    // A σ the device draws exactly; one whose draws are partly subnormal,
+    // which the device would flush, so the host draws it (#856 review); and
+    // σ = 0, which adds nothing on either side, signed zeros included.
+    for sigma in [0.1, 1.0e-36, 0.0] {
+        let (both, both_pass) = predicted_and_corrupted(
+            &path("both.ms"),
+            Some(&model),
+            Some(sigma),
+            BackendRequest::Metal,
+        );
+        let (noise, _) =
+            predicted_and_corrupted(&path("noise.ms"), None, Some(sigma), BackendRequest::Cpu);
+        for ms in ["both.ms", "noise.ms"] {
+            std::fs::remove_dir_all(path(ms)).expect("remove the run");
+        }
+        assert_eq!(
+            both_pass.backend, "Metal",
+            "σ {sigma}: the pass predicted on Metal"
+        );
+        assert!(both_pass.batches > 1, "σ {sigma}: {both_pass:?}");
+        assert_eq!(both_pass.block_rows, model_pass.block_rows, "σ {sigma}");
+        assert_eq!(both.len(), model_only.len(), "σ {sigma}: rows");
+        assert_eq!(both.len(), noise.len(), "σ {sigma}: rows");
+        let (mut predicted, mut subnormal) = (0, 0);
+        for (index, ((both, model), noise)) in both.iter().zip(&model_only).zip(&noise).enumerate()
+        {
+            predicted += usize::from(model.data.iter().any(|sample| !zero(sample)));
+            for (sample, ((found, model), noise)) in both
+                .data
+                .iter()
+                .zip(&model.data)
+                .zip(&noise.data)
+                .enumerate()
+            {
+                // One term rounds once on either side: (model + noise); a
+                // term of σ = 0 is skipped, leaving the model as it is.
+                let expected = if sigma == 0.0 { *model } else { model + noise };
+                subnormal += usize::from(found.re.is_subnormal() || found.im.is_subnormal());
+                assert!(
+                    found.re.to_bits() == expected.re.to_bits()
+                        && found.im.to_bits() == expected.im.to_bits(),
+                    "σ {sigma}, row {index}, sample {sample}: {found} against model {model} + \
+                     noise {noise}"
+                );
+            }
+        }
+        assert!(predicted > 0, "σ {sigma}: the model reaches the rows");
+        let noisy = noise
+            .iter()
+            .any(|row| row.data.iter().any(|sample| !zero(sample)));
+        assert_eq!(noisy, sigma != 0.0, "σ {sigma}: the noise reaches the rows");
+        if sigma == 1.0e-36 {
+            assert!(subnormal > 0, "σ {sigma}: some noise is subnormal");
+        }
     }
 }

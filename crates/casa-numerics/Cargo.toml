@@ -11,6 +11,7 @@ publish = false
 [dependencies]
 libm = "0.2"
 nalgebra.workspace = true
+num-complex.workspace = true
 
 [lints]
 workspace = true
