@@ -1,9 +1,9 @@
 # MeasurementSet implementation plan
 
-Status: proposed; dependent on architecture and contract approval
+Status: draft revision 1; owner iteration pending, no final design approval
 Truth class: design proposal
 Date: 2026-10-23
-Design inputs: [architecture](architecture.md), [contract revision 0](contracts.md)
+Design inputs: [architecture](architecture.md), [draft contracts](contracts.md)
 
 ## 1. Delivery strategy
 
@@ -53,7 +53,10 @@ baseline evidence; no speculative mass refactor.
   Keep a runnable baseline of current production routes before changing them.
   Historical #648/#659 results inform diagnosis; they do not replace a matched
   current baseline.
-- Pin XRADIO commit, Python dependency lock, Zarr/profile and `zarrs` candidate.
+- Pin XRADIO commit, Python dependency lock, Zarr/profile and the complete Rust
+  store/codec graph and features, including `zarrs_filesystem`. Audit per-key
+  retention, file-handle caches, partial updates, concurrency and synchronization
+  in that exact graph; a development-tree fix is not evidence for a release pin.
   Build small public/reproducible fixtures with the actual Python writer; inspect
   metadata and bytes with an independent reader. No assumption that a schema
   example is an interoperable file.
@@ -63,9 +66,15 @@ baseline evidence; no speculative mass refactor.
 - Identify existing production managers, optional columns, mutation capabilities,
   selection/weight fallback policies, and expected error behavior to preserve.
   Include FLOAT_DATA, LAG_DATA, FLAG_CATEGORY and SIGMA_SPECTRUM in the audit.
+  Expand the [conversion fidelity table](architecture.md#conversion-fidelity)
+  to the complete accepted input schema; distinguish preserved effective values
+  from lost native roles/provenance and define each rejection/loss policy.
 - Define a **blocking** comparison harness for selected bulk reads, selected
-  writes, and representative production imaging/calibration. Establish noise
-  bands from the actual baseline and name critical workloads before optimizing.
+  writes, representative production imaging/calibration, and flagdata tfcrop
+  and rflag. Record peak live bytes and bytes per selected sample for flagging,
+  including sample objects, copied groups, masks and touched-sample sets.
+  Establish noise bands from the actual baseline and name critical workloads
+  before optimizing.
 
 **Gate:** stronger reviewers approve the inventory, claimed profiles, immutable
 baseline, and acceptance cases. Missing data/oracles are reported as missing,
@@ -82,17 +91,34 @@ semantics to implementation agents.
 **Deliverables:** minimal `casa-observation` crate and proposed dependency-policy
 update; rustdoc/examples; one reusable v2 read path and one real local MSv4
 read/decode path; bounded addressed-write trial for each; production-kernel
-integration probes, not a synthetic array API demonstration alone.
+integration probes and source-free creation, not a synthetic array API
+demonstration alone. One shared raw-primitive representation must compile through
+all consumers; the proposed `casa-imaging-model → casa-observation` edge and
+primitive/error ownership are an explicit prerequisite decision.
 
 Exercise all of the following before declaring the contract stable enough for
 parallel migration:
 
 1. The same imaging operator consumes compatible selections from irregular v2
-   and factored v4, with sample-major and one useful channel/factored layout.
+   and factored v4 coordinates, with sample-major and channel-major layouts.
    Compare results and count copies, calls, allocations and peak memory.
+   Prove that compatible native time/baseline axes bind as sample-major without
+   a value transpose; measure O(T+B) axis metadata separately from unavoidable
+   per-slot UVW/occupancy on few-channel and many-channel fixtures.
 2. Gain and bandpass accumulation consume split scientific groups, including
    multi-SPW rules, empty groups, reordered correlations and a group larger than
    the allowed resident data. Confirm grouping is independent of block size.
+   Add four interleaved SPWs and late out-of-order samples. A legal admitted
+   concurrent realization reads the payload once without a full-selection row index;
+   count delivered fragments/packing and all retained accumulator state too.
+   Compare sequential realization's index/repeated-read costs. Validate time-bin
+   origin and group closure across partitions; no eviction or early close.
+   Split terminal fragments into compute windows and delay worker completion:
+   `Last/Whole` must not finalize twice or early, and a delayed `GroupEnd` waits
+   for prior work. Include an empty group and bounded per-block address views.
+   Solve, write a CASA-compatible caltable, close, permute catalogue/partition
+   enumeration, reopen and apply; include overlapping antenna subsets, reordered
+   SPWs and ambiguous names so namespace rebinding is tested, not inferred.
 3. Flags-only read, undefined WEIGHT_SPECTRUM fallback, FLOAT_DATA where already
    supported, typed c32/c64 dispatch, f16 weight widening, bit flags/categories,
    row flags, and native weight broadcast all have explicit tests.
@@ -104,16 +130,69 @@ parallel migration:
    underlying variable, and a requested revisit: prove disjoint underlying
    regions or a legal read-before-write traversal, or typed rejection, with no
    hidden snapshot or whole-array cache.
+   Add scalar WEIGHT=2 shared by two channels: changing only channel 0 must
+   preserve channel 1 or be explicitly widened/materialized/rejected. Test
+   per-cell fallback and simultaneous native row/spectral-weight patches.
+   Complete physical-unit replacement reads zero old destination payload;
+   partial bits, co-stored columns and supported shard subregions preserve untouched
+   content and count metadata/index reads separately. Test final-pass MODEL_DATA
+   creation/traversal with one planned mixed owner, plus conflicting sessions.
 5. Sparse times/baselines, duplicate acquisitions, NaNs and v4 fill values do not
    collapse presence into flags. Ordered baselines/cross-hands, split time
    precision, time centroids, moving pointing and spectral frames survive.
 6. A v4 I/O block spans multiple chunks and feeds smaller borrowed kernel
    windows. The resource accounting includes decode/packing/index/write scratch,
    and an oversized physical working set fails before unsafe allocation.
+   Scan increasing present/missing chunk-key prefixes and repeated major-cycle
+   passes at fixed budgets: live store/cache/registry state must plateau.
+   On the actual compressed multichunk path, verify W1 has no hidden parallel
+   decode and W4 uses only the admitted team, counting threads and simultaneous
+   encoded/decoded/codec buffers. No reliance on a concurrency target alone.
 7. Actual XRADIO reads Rust-written trial data and Rust reads XRADIO-written
-   data. Independently check v2→v4 semantics that the converter might omit,
-   particularly FLAG_ROW. The Python converter is an oracle for its output
-   conventions, not sole authority for CASA science.
+   data. Independently test every minimum case in the conversion fidelity table
+   using the original v2 data, XRADIO output, and Rust conversion or rejection.
+   Keep FLAG_ROW, INTERVAL versus EXPOSURE, duplicate acquisitions, weights and
+   SIGMA/category losses explicit. The converter is an oracle for its actual
+   output conventions, not sole authority for CASA science or recoverability.
+8. A real simulation/import producer seam constructs a validated catalogue and
+   batches without opening an input MS, copying retained backend metadata or
+   acquiring inverse source maps. Create fresh v2 and known-shape v4 outputs;
+   independently reopen with CASA/casacore and XRADIO. Exercise multi-SPW/field
+   metadata, target-region addressing, recyclable producer/writer buffers,
+   bounded backpressure and failure before publication. This is a narrow seam
+   trial, not the entire simulator/import migration.
+9. Inject short writes/ENOSPC and terminate during local v4 object replacement.
+   Independently reopen and prove the previous published state (including an
+   absent fill key) or new complete chunk/supported shard, including unselected
+   sentinels and failed first materialization. Unsupported sharding is rejected
+   before mutation. Test failure between related objects separately: it is
+   partial operation completion, not a transaction. Account encoded buffers and
+   temporary disk; measure synchronization cost and define finish durability
+   separately from process-failure atomicity. Do not claim power-loss guarantees
+   from a process-kill test.
+
+### M1 exit checklist and packet ownership
+
+These are planned fixture/packet names, not commands claimed to exist today.
+Before assignment, the M0/M1 lead supplies exact fixture recipes, runnable test
+commands and result locations in each linked issue. A packet's implementer may
+be a cheaper agent after its contract is reviewed; the independent reviewer is
+a stronger agent/person. The lead integrates shared API decisions.
+
+| Packet / fixture family | Accountable owner | Independent gate |
+| --- | --- | --- |
+| `layout-precision` | Contract + imaging owners | One raw primitive type, sample/channel layouts, factorable axis laws, actual operator science and input narrowing. |
+| `group-lifecycle` | Calibration owner | Interleaved SPWs/late samples, admitted concurrent state, proven closure, sequential comparison, solve→caltable→reopen→apply. |
+| `native-role-updates` | Storage + calibration owners | Broadcast/group aliases, undefined fallback, full/partial unit counts, bit semantics, mixed-owner MODEL_DATA and conflict rejection. |
+| `conversion-fidelity` | Format owner | Each audited mapping/loss, original/converter/Rust/reverse-reader evidence, no invented repair of lost information. |
+| `source-free-create` | Simulation/import + storage owners | No input MS, standard metadata, target extents, buffer recycling/backpressure and publication failure. |
+| `store-retention-executor` | Storage + runtime owners | Locked dependency graph, present/missing-key plateau and repeated passes, W1/W4 thread/buffer counts. |
+| `object-failure` | Storage owner | Mid-replacement fault/kill, independent reopen, previous state (including absence) or complete new object, temporary space and finish/durability cost. |
+| `production-access-cost` | Imaging/calibration/performance owners | Named MFS/cube/bandpass rows and both chunk geometries; matched within-v4 and v2 evidence, no count-only acceptance. |
+
+Every row requires passing evidence for M1 acceptance. A missing prerequisite
+must be documented and keeps M1 blocked; recording it is not acceptance.
+No checklist entry is satisfied by source inspection alone.
 
 Review the contract as code: lifetime behavior, allowed axis permutations,
 metadata dependence, error cases, array layout, and mutation scope. Publish the
@@ -135,8 +214,11 @@ shared facade changes; parallelize only disjoint consumer edits.
 Preserve storage-manager bindings, endian behavior, variable cell shapes,
 undefined cells, narrow selections, coordinate evaluation and native write
 semantics. Reuse current typed bulk fast paths rather than rebuild them through
-generic per-cell values. Replace row-limit policy with bytes/layout-aware
-planning, while retaining the efficient v2 sample-major realization.
+generic per-cell values. Retain the existing byte-budgeted source plan and
+selected-channel staging/amplification model. Generalize its delivery unit from
+MAIN rows to topology slots and physical decode units; do not rebuild resource
+admission merely because the current result is named `rows_per_block`.
+Keep the efficient v2 sample-major realization.
 
 Move imaging's source preparation and operator windows onto the shared blocks
 within the existing single pass/worker/resource architecture. Move calibration
@@ -174,10 +256,35 @@ path already exercised in M2; no v4-specific imaging or calibration algorithm.
 
 **Gate:** bidirectional XRADIO/Rust read/create/update checks, cross-format science
 through actual imaging and calibration, admitted-memory laws, no-Python runtime
-execution, and measured aggregation benefit. Demonstrate that larger native
-aggregation reduces physical calls/decodes/copies or elapsed time for a
-representative workload; a larger configured batch alone does not satisfy this
-requirement. Report component benefit separately from any end-to-end speedup.
+execution, and measured aggregation benefit with no statistically supported
+production-task regression. Compare a reasonable accepted smaller-aggregation
+realization against the larger candidate on the **same v4 store**, holding chunk
+geometry, selected roles/elements, precision, workers, admitted memory budget,
+cache state and
+scientific work fixed. Require a real mechanism benefit and no significant task
+slowdown under M0's noise method, unless the owner explicitly accepts a tradeoff.
+Fewer calls alone cannot pass a slower task. An unchanged task time with a
+measured component benefit is valid; do not claim an end-to-end speedup from it.
+
+The new harness owns these mandatory rows; M0 chooses exact existing scientific
+fixtures and records their recipes/parameters before assignment:
+
+| Workload row | Store variants | Required comparisons/counters |
+| --- | --- | --- |
+| MFS continuum | XRADIO-default full-frequency chunks; frequency-chunked equivalent | Matched smaller/larger v4 aggregation, science-equal v2 production reference, calls/read/decode/copy bytes, wall/CPU and pipeline stalls. |
+| Restricted-wave cube, narrow and wider channel selections | Same two variants, with a budget requiring multiple plane waves | Per-wave and per-major-cycle encoded bytes, decoded bytes, repeat decodes and bytes per selected sample; image-state I/O and peak buffers; matched v2 tiles and within-v4 comparison. |
+| Bandpass solve with interleaved SPWs | Same two variants, sequential/concurrent traversal where accepted | Group/index/state bytes, payload traversal and packing, solution parity, wall/CPU and within-v4 aggregation comparison. |
+| Flags-only and full-/partial-unit updates | Relevant boolean/bitmask and tiled/chunked fixtures; supported sharding or typed rejection | No unrequested visibility payload, old-destination payload versus metadata/index reads, bounded coalescing, replacement/sync cost. |
+
+Use W1 and admitted parallel runs, with cache conditions recorded. The cube row
+also measures whether decode supplies the consumer fast enough; workers come
+from existing admission, not a new source pool. Distinguish poor persistent
+chunk geometry from interface overhead. A small test-only direct-native Zarr
+reference can isolate the latter only when it returns the same selected typed
+values/layout and performs equivalent required validity handling; it is not a
+second production route. Cross-format timings alone cannot isolate that cost.
+Record the first accepted v4 production revision as the baseline for M4/M5.
+Neither this gate nor the matched v2 context requires v4 to beat v2 universally.
 
 ## 6. M4 — migrate remaining consumers and producers
 
@@ -189,7 +296,7 @@ treating textual references as proof of production ownership.
 | Existing observation access | `casa-ms/src/visibility_buffer.rs`, `selected_observation_buffer.rs`, `selected_observation/`, `observation_owner/` | Consolidate into one common path; retain buffer reuse, selection and source ownership. |
 | Imaging | `casa-imaging-application/src/imaging/source.rs`, `casa-imaging-runtime/src/source_access.rs`, `pass/`, `casa-imaging-operator/src/sample.rs` | Same operator and pass driver; source aggregation independent of compute windows; geometry remains scientific. |
 | Calibration | `casa-calibration/src/{session,solve,plan,execute,gencal}.rs`, `solve/grouping.rs` | Solve/apply/metadata access uses observation contracts; separately preserve calibration-table outputs and CASA science. |
-| Flagging/transforms | `casa-ms/src/{flagging,transform,selection,spectral_selection}.rs` | Bit/category/row flag semantics, averaging and output provenance, optional columns, selected updates and new outputs. |
+| Flagging/transforms | `casa-ms/src/{flagging,transform,selection,spectral_selection}.rs` | Bit/category/row flag semantics, averaging/output provenance, optional columns, selected updates/new outputs; tfcrop/rflag peak-memory and timing gates below. |
 | Observation metadata/plots | `casa-ms/src/derived/`, `selected_observation/access/geometry.rs`, `ephemeris.rs`, `selected_pointing.rs`, `subtables/pointing.rs`, plot/listobs/msexplore paths | Catalogue/window access, native metadata, moving fields/pointing; remove MAIN/DDI assumptions at domain boundary. |
 | Simulation | `casa-simulation/src/write/`, including `subtables.rs` and the admitted pipeline | Common creation batches, multi-SPW/mosaic metadata, prediction/write boundedness, CASA-paired outputs. |
 | Import | `casa-vla` importer | Preserve supported variable shapes, column metadata and FLAG_CATEGORY; use common creation when output format is selected. |
@@ -201,6 +308,29 @@ MSv2 features must keep working; a not-yet-implemented v4 feature returns typed
 unavailable and remains outstanding in the programme's support matrix. Do not
 mark a consumer migrated merely because it calls a new wrapper that still leaks
 physical rows into the algorithm.
+
+Flagging must remove full-selection `Vec<Sample>`, copied-group and touched-sample
+growth from its migrated route, not wrap those allocations in a block API.
+Its plan declares algorithm-specific fitting/statistics windows, halos, passes,
+extension state and mutation ordering. A sufficient-state O(groups) bound is
+not assumed: tfcrop's group fit and extension can require resident arrays, and
+rflag's local stencil does not eliminate global threshold/extension work.
+Retain existing scientific windows; arbitrary I/O fragments must not become new
+fit boundaries. Use an equivalent admitted multi-pass realization, an admitted
+resident group, or explicit resource refusal; a changed science window requires
+separate owner/science approval. No existing supported capability is silently
+removed to pass the resource gate.
+
+Statistics and all reads requiring original flags complete before overlapping
+flag patches are published, using a bounded decision/write pass when needed.
+Do not queue a whole group's sample-sized patches merely to delay writes.
+Count peak live bytes as admitted payload/fit windows, masks/halos, aggregate
+state and bounded update queues. Increase group count while holding maximum
+scientific group/window shape fixed to catch hidden full-selection growth;
+separately grow group shape and check predicted state growth or explicit
+admission refusal. M4 compares tfcrop/rflag with M0 time/memory and CASA science at different
+I/O fragment boundaries. Failed science or a critical performance regression
+blocks migration even when the memory curve improves.
 
 **Gate:** per-packet acceptance and deletion review; milestone review audits the
 remaining observation bypasses and creation routes. Frontend signature/parameter
@@ -227,7 +357,8 @@ decision; do not advertise complete v3 interoperability on prose alone.
 Complete the promised support matrix and consumer inventory. Run the affected
 representative science and release interoperability/performance gates. Compare
 final v2 production behavior to M0, accounting for equal scientific work; confirm
-the v4 aggregation benefit still reaches the production route. Audit imports,
+the v4 aggregation benefit still reaches the production route without a task
+regression against M3's accepted v4 baseline. Audit imports,
 runtime dependencies, resource ownership, and removal of displaced domain paths.
 
 Publish user-facing format/capability documentation, explicit conversion limits,
@@ -253,8 +384,9 @@ Use four independent evidence classes:
 Do not substitute a one-million-element toy for the repository's representative
 science requirements. Reuse unchanged accepted oracle outputs; repeat timings
 when noise prevents a conclusion rather than prescribe an arbitrary count.
-No statistically supported regression in the named critical v2 workloads is
-accepted without an explicit owner decision. An increase in steady-state
+No statistically supported regression in the named critical v2 workloads or
+the accepted v4 production/aggregation comparisons is accepted without an
+explicit owner decision. An increase in steady-state
 allocations/copies or read amplification requires an explicitly justified,
 independently reviewed realization change with no critical-workload regression;
 merely reporting an extra full-buffer copy does not satisfy acceptance.
@@ -287,6 +419,11 @@ public recipes and summaries to assess each claim. Tests may fingerprint inputs;
 that does not authorize runtime payload hashes or source sidecars.
 
 ## 10. Review and change control
+
+This draft remains open for owner iteration after Pro/Fable review. Updating
+text or passing documentation checks neither finalizes D1–D6 nor authorizes the
+implementation programme. Keep the PR draft and external discussion visible;
+owner acceptance is an explicit later step.
 
 Every implementation packet/PR includes:
 

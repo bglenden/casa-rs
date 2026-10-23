@@ -5,6 +5,9 @@ Truth class: design proposal
 Date: 2026-10-23
 Companion documents: [contracts](contracts.md), [implementation plan](implementation-plan.md)
 
+Draft revision 1 responds to Pro and Fable. Recommendations below remain open
+for owner iteration; no review response constitutes acceptance or finalization.
+
 ## 1. Outcome and boundaries
 
 Imaging, calibration, flagging, transforms, and simulation exchange the same
@@ -78,20 +81,30 @@ implementations. The proposed dependency direction is:
 
 | Owner | Responsibilities | Dependencies and exclusions |
 | --- | --- | --- |
-| New `casa-observation` | Typed raw scientific metadata, array/block views, access requirements, source/sink traits, capabilities and errors | No workspace dependencies, filesystem, task runtime, or scientific projection engine. Reuse small Rust numeric crates. |
+| New `casa-observation`, policy layer `science` | Shared raw primitives (epoch/time scale, direction/frame, spectral coordinates, ordered baseline), array/block views, access requirements, source/sink traits, capabilities and errors | No workspace dependencies, filesystem, task runtime, or scientific projection engine. Reuse small Rust numeric crates. |
+| `casa-imaging-model`, policy layer `science` | Compiled imaging geometry and scientific problem definitions | Proposed explicit dependency on `casa-observation` for raw primitives; no dependency on storage, execution or a device. |
 | `casa-ms` | Dataset lifecycle, catalogue access, backend dispatch, source binding, bounded fill/update/create adapters | `casa-observation`, existing storage/measures facilities, and pinned `zarrs`. Initial adapters can be modules; no new storage crate is required merely for symmetry. |
 | `casa-tables` | Existing generic casacore table and storage-manager machinery | Retains its table API and persistent compatibility. It does not depend on observation or imaging contracts. |
 | Imaging/calibration and other domain owners | Request layouts, evaluate geometry, solve/project/reduce, apply scientific transforms | Consume `casa-observation`; no table/Zarr addressing in their scientific kernels. |
 | Existing execution owners | Resource admission, worker teams, cancellation, pass lifecycle | Continue to govern I/O/decode/packing work; no independent backend worker pool or scheduler. |
 
-`casa-imaging-model` remains workspace-dependency-free and owns compiled imaging
-science. Raw observation metadata is distinct from projected imaging geometry.
+The proposed canonical owner of raw `Epoch`, `SkyDirection`/frame and related
+coordinate primitives is `casa-observation`. `casa-imaging-model` imports them
+and retains compiled projections and imaging geometry. This deliberately changes
+its present zero-workspace-dependency rule; it does not create duplicate epoch
+conventions or make calibration depend on imaging. Separate primitive validation
+from imaging-specific compile errors when moving types. The shared epoch must
+retain source split precision, not just copy today's f64-MJD representation.
+Frame conversion algorithms keep their existing scientific owner; storage only
+decodes/encodes declared units and epochs through shared conversions.
+
 Existing `SelectedObservationRunRow` must not simply be renamed and moved: it
 mixes physical row/DDI identities with imaging projection. Factor raw types into
-the new contract, retain derived types with their scientific owner, and convert
-or bind at block scope. Do not introduce parallel geometry implementations.
+the base contract and retain derived types with their owner. M1 compiles one
+primitive representation through read, calibration, imaging and creation and
+tests precision roundtrips. No separate geometry implementation is introduced.
 
-New dependency edges from `casa-ms`, calibration, imaging operator/runtime, and
+New dependency edges from `casa-imaging-model`, `casa-ms`, calibration, imaging operator/runtime, and
 affected applications to `casa-observation` require a reviewed update of
 [`dependency-policy.json`](../../resources/imaging-architecture/dependency-policy.json)
 and [`ARCHITECTURE.md`](../../ARCHITECTURE.md). Preserve ADR-0016's single
@@ -99,6 +112,13 @@ compile/plan/run path, shared operators, and resource authority. There is no new
 execution DAG, runtime migration matrix, receipt system, plan hash, or replay
 store. One source binding may be revisited each major cycle without caching the
 whole visibility dataset.
+
+The policy delta must register `casa-observation` in `science` with no workspace
+dependencies, change the model's exact dependency list to include that base,
+and enumerate each actual consumer edge. The checker already permits same-layer
+edges; do not broadly relax its layer rules. This and the corresponding
+ADR-0016 raw-type ownership amendment are proposed for owner review, not applied
+to the accepted policy in this documentation PR.
 
 ## 4. Access is negotiated once, then executed in bulk
 
@@ -110,7 +130,8 @@ whole visibility dataset.
    constraints. It specifies what can be split, not a physical tile size.
 3. The backend binds a realization under the existing resource budget. Its
    summary states actual layout, aggregation, scratch/decode/queue requirements,
-   reorder costs, and minimum physical working set. An unsatisfied hard
+   reorder costs, physical read/decode amplification per window and traversal,
+   and minimum physical working set. An unsatisfied hard
    requirement is an error; it is never silently weakened.
 4. The admitted cursor repeatedly fills reusable storage and lends block views.
    Format/type dispatch happens per binding or block, outside numerical loops.
@@ -128,9 +149,9 @@ kernel window or duplicated kernel scratch.
 
 | Consumer | Typical request, not a universal mandate |
 | --- | --- |
-| Continuum imaging | Selected groups/SPWs; UVW, frequency, correlation, validity and weights; bounded sample-major or factored windows accepted by the operator. Revisit selection each major cycle. |
-| Cube imaging | Frequency-local work with many samples per channel and explicit spectral mapping. Storage may aggregate adjacent frequency chunks while compute windows remain small. |
-| Gain/bandpass solve | Scientific grouping by solution interval and configured field/SPW rules; correlations/channels arranged for the solver; bounded fragments feed accumulators. |
+| Continuum imaging | Selected groups/SPWs; UVW, frequency, correlation, validity and weights; bounded sample/channel-major views with irregular or factored coordinates. Revisit selection each major cycle. |
+| Cube imaging | Frequency-local work with many samples per channel and explicit spectral mapping. Full-frequency storage chunks may be decoded repeatedly across plane waves; bind reports that cost and admits feasible traversal alternatives. |
+| Gain/bandpass solve | Scientific grouping by solution interval and configured field/SPW rules; correlations/channels arranged for the solver; sequential or bounded concurrent fragments feed admitted accumulators. |
 | Apply calibration | Streaming visibility/flag/weight updates, with gains interpolated by the calibration owner. No need to materialize a whole solve group. |
 | Flagging | Metadata plus flags and requested diagnostics; flags-only operations read no visibility payload unless the algorithm requests it. |
 
@@ -139,6 +160,25 @@ averaging, correlation conversion, spectral interpolation, UVW rotation,
 conjugation, and calibration change their interpretation and belong to explicit
 scientific operators. Their output cannot inherit writable source provenance
 without a separately defined update rule.
+
+XRADIO's pinned converter defaults to time chunks spanning the other axes,
+targeting roughly 128 MiB for the largest variable; it splits frequency and
+then baseline when even one time step exceeds the codec limit. Therefore a cube
+processed in channel waves can decode an entire band once per wave. Aggregation
+alone cannot repair that geometry. The existing imaging resource planner may
+choose a wider admitted plane wave, bounded chunk reuse, or a proven compatible
+traversal that accounts for both visibility and image-state I/O. It cannot make
+all plane grids resident merely because a decoded chunk fits. No hidden grid
+paging scheme, whole-observation cache, or rechunk-on-open is authorized here.
+If available realizations must reread, report and measure that amplification.
+
+Creation exposes workload-oriented chunk policies. The proposed cube-oriented
+default splits frequency as well as time/baseline, with concrete extents selected
+from channel access and decode budgets; M1 benchmarks determine the actual
+heuristic. A continuum-oriented policy may favor full-frequency chunks. Record
+the resolved chunk shape at creation and preserve existing stores on update.
+M3 compares both layouts on continuum, restricted-wave cube and bandpass work;
+no claim that one chunk shape is best for every algorithm follows.
 
 ## 5. Persistent support profiles
 
@@ -169,6 +209,21 @@ dimension names, strings, fill values, endian codecs, CF/Xarray attributes,
 nested metadata, and consolidation behavior. Generic Zarr support is necessary
 but is not proof of XRADIO interoperability.
 
+Pin the complete Rust store/codec feature graph, including `zarrs_filesystem`,
+and the complete Python oracle environment. Inspected zarrs 0.23.14 references
+filesystem 0.3.9, whose per-key lock registry grows with visited keys; the
+inspected development tree instead uses filesystem 0.4.0 with different cache,
+locking and sync behavior. These are feasibility findings, not a selected
+compatible dependency pair. M0/M1 must select a bounded realization and prove
+long-session retention, admitted codec concurrency, and replacement working set.
+
+The proposed local v4 write profile uses per-object atomic replacement under
+exclusive mutation ownership, with no dataset snapshot/transaction or shared
+cross-process lock protocol. See [failure and creation rules](contracts.md#7-updates-and-creation).
+Default new flags are boolean; reason-preserving integer flags require an
+explicit width and reason mapping. Creation without an input MS must use the
+same catalogue and block vocabulary, not depend on backend-retained metadata.
+
 MSv4 does not imply that current CASA directly opens that format. Maintain
 CASA compatibility for MSv2 and require XRADIO compatibility for MSv4; conversion
 to CASA is an explicit supported mapping, with a preflight loss/unsupported
@@ -176,11 +231,44 @@ report where semantics cannot be preserved. No arbitrary MSv2→v4→MSv2 exact-
 roundtrip is promised. Original row existence can be unknowable after NaN
 padding, and format extensions may have no destination representation.
 
-Same-format updates retain unselected data, unknown extensions, and physical
+Successful same-format updates retain unselected data, unknown extensions, and physical
 storage arrangements. Do not normalize an existing dataset on open. Data-group
 aliasing and flag semantics require special care; the
 [write contract](contracts.md#7-updates-and-creation) is authoritative for this
 proposal.
+
+### Conversion fidelity
+
+This is the minimum audited loss table for the pinned XRADIO converter, not a
+claim that every MSv2 extension has been inventoried. M0 enumerates every column,
+keyword and subtable in the accepted input profiles. Any unmapped item needs an
+explicit preservation mapping, a reported loss decision or rejection before
+conversion; same-format updates continue to preserve it. Default casa-rs
+conversion rejects unapproved loss. The table proposes conversion behavior for
+owner review, not a change to the MSv4 schema.
+
+| MSv2 source fact | Pinned XRADIO conversion / v4 representation | Proposed casa-rs creation and reverse-conversion rule |
+| --- | --- | --- |
+| DATA, CORRECTED_DATA, MODEL_DATA and their associations | Named correlated-data variables/data groups; group context includes flags, weights, UVW and field/source | Map every selected group explicitly; preserve associations/aliases and numeric precision, or reject. Group labels do not recreate missing native roles automatically. |
+| FLAG | Copied to boolean FLAG | Preserve element badness. Existing integer flags retain their declared reasons on same-format writes; projection to boolean loses reasons unless a separately accepted category mapping exists. |
+| FLAG_ROW | Omitted; FLAG is not automatically ORed with it | Encode effective `FLAG OR FLAG_ROW` for every affected channel/correlation. Report loss of row-versus-element provenance; reverse conversion cannot recover the original row flag. Never infer omitted row flags when reading an already converted file. |
+| FLAG_CATEGORY | Not mapped | Require an explicit reason/category mapping or reject/report approved loss. Do not assume category reasons equal the cumulative FLAG, or silently discard them. |
+| INTERVAL | Median if values vary, stored as scalar `time.integration_time` | Preserve nominal interval through compatible partitioning or a separately accepted representation; otherwise reject/report approved loss. A median cannot recover per-sample values. Do not put INTERVAL into effective integration time. |
+| EXPOSURE | Maps to EFFECTIVE_INTEGRATION_TIME when present | Preserve independently of nominal INTERVAL; neither implies the other. Reverse mapping uses this variable, not the nominal sampling interval. |
+| TIME, TIME_CENTROID and extra-precision metadata | Time/centroid have different roles; centroid extra precision is supported, but not every legacy precision column is mapped | Audit each supplied precision field and epoch/unit conversion; preserve split precision where supported or reject/report loss. Optional absence is not evidence that midpoint and centroid were originally equal. |
+| WEIGHT and WEIGHT_SPECTRUM | Spectrum preferred; row weights may be broadcast on fallback, and distinct row summaries may be dropped | Bind fallback per cell and report the native-role information retained/lost. Keep effective channel values; preserve a distinct row summary only through an accepted mapping. Reverse reduction is an explicit scientific policy, never an automatic inverse. |
+| SIGMA and SIGMA_SPECTRUM | Not mapped | Preserve through an accepted explicit mapping or reject/report approved loss. Do not reconstruct as `1/sqrt(WEIGHT)` without a separately justified scientific relation. |
+| Duplicate `(time, ordered baseline)` acquisitions within one partition | Dense converter keeps the last row | Reject or split into valid compatible partitions while preserving every acquisition; never alter times or average to force uniqueness. A reader cannot recover acquisitions already discarded upstream. |
+| Absent slots versus actual NaN-valued acquisitions | NaN payload padding, possibly FLAG=false; standard output need not retain legacy row occupancy | Retain unknown occupancy; reverse row creation requires an explicit declared policy or rejection. Chunk presence and flags do not prove measured-row existence. |
+| Original row/subtable IDs, other optional columns/keywords | Some IDs are replaced by local names/subsets; many optional fields have no standard mapping | Use explicit catalogue/caltable namespace bindings. Inventory remaining metadata; no opaque sidecar is used to claim a lossless CASA roundtrip. |
+
+For each row, M1 retains the original MSv2 fixture, reads the pinned converter's
+actual output, tests the proposed Rust conversion or typed rejection, and checks
+what an independent reverse reader can establish. Where the converter lost
+information, compare the Rust reader to the file that actually exists and
+separately document divergence from the original MSv2. It must not invent a
+repair. Scientific paired fixtures used to claim equivalence must either avoid
+those losses or apply an explicit, independently checked mapping.
 
 ## 6. Existing decisions and deliberate changes
 
@@ -229,9 +317,23 @@ Implementation acceptance must record its full oracle dependency lock.
   and [conversion defaults](https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/src/xradio/measurement_set/convert_msv2_to_processing_set.py).
 - [Padding values](https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/src/xradio/_utils/list_and_array.py)
   and [optional conversion test row indices](https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/src/xradio/measurement_set/_utils/_msv2/conversion.py#L2148).
+- Conversion-loss evidence: [MAIN role mapping](https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/src/xradio/measurement_set/_utils/_msv2/msv2_to_msv4_meta.py#L3),
+  [weight preference](https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/src/xradio/measurement_set/_utils/_msv2/conversion.py#L916),
+  [interval median](https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/src/xradio/measurement_set/_utils/_msv2/conversion.py#L1865),
+  [EXPOSURE destination](https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/src/xradio/measurement_set/schema.py#L1785),
+  and [duplicate/padding behavior](https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/src/xradio/measurement_set/_utils/_msv2/_tables/read.py#L1494).
+- [XRADIO default chunk sizing](https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/src/xradio/measurement_set/_utils/_msv2/conversion.py#L427)
+  and [suggested flag meanings](https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/docs/source/measurement_set/schema.rst#L344).
 - [Zarr v3 specification](https://zarr-specs.readthedocs.io/en/latest/v3/core/index.html),
   [Xarray encoding conventions](https://docs.xarray.dev/en/stable/internals/zarr-encoding-spec.html),
   [zarrs](https://docs.rs/zarrs/0.23.14/zarrs/), and
   [zarrs object-store adapter](https://docs.rs/zarrs_object_store/).
+- Store feasibility evidence: [release filesystem dependency](https://github.com/zarrs/zarrs/blob/f2c77ea616507cd5837f32eafb4f4bf317db8896/Cargo.toml#L66),
+  [retained per-key locks and in-place writes](https://github.com/zarrs/zarrs/blob/f2c77ea616507cd5837f32eafb4f4bf317db8896/zarrs_filesystem/src/lib.rs#L164),
+  [release concurrency initialization](https://github.com/zarrs/zarrs/blob/f2c77ea616507cd5837f32eafb4f4bf317db8896/zarrs/src/array/concurrency.rs#L23),
+  and [different development-store behavior](https://github.com/zarrs/zarrs/blob/7b13a7fac68bbdcdd543a2b805df9de48e5c4b20/zarrs_filesystem/src/lib.rs#L79).
+- [Inspected zarr-python atomic local replacement](https://github.com/zarr-developers/zarr-python/blob/957a5f682b46b4055d5619d01b4a3a3cc36c04db/src/zarr/storage/_local.py#L107)
+  is evidence about that commit, not every XRADIO dependency lock, dataset
+  consistency or power-loss durability.
 - [XRADIO image schema](https://xradio.readthedocs.io/en/latest/image_data/schema.html):
   a separate schema, deferred from this visibility programme.

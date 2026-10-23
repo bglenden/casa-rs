@@ -1,6 +1,6 @@
 # MeasurementSet architecture review
 
-Status: proposed; design review, not implementation authorization
+Status: draft revision 1; owner iteration pending, not implementation authorization
 Truth class: design proposal
 Date: 2026-10-23
 Repository baseline: `221ec71545fe36a758ab0869e7512349b5db7c0e`
@@ -25,28 +25,38 @@ The Rust sketches describe contracts; they are not implemented or compilable
 library APIs yet. No performance or format-interoperability experiment is
 claimed by this documentation PR.
 
+This revision incorporates Pro and Fable's reviews of commit `526d706c`.
+The documents and PR remain provisional: neither addressing a comment nor an
+agent recommendation finalizes the design. Only the MSv2 + MSv4 scope and MSv3
+deferral have been confirmed by the owner.
+
 ## Decisions for the owner and independent reviewers
 
 1. **D1 — Shared representation:** approve irregular and rectangular topology,
    typed array views, explicit numeric precision, and separate presence,
    validity, flags, weights, and coordinate context. Reject a universal
-   row-shaped buffer or a universal dense cube.
+   per-physical-MS-row object interface or a universal dense cube. Factored
+   coordinates can accompany the same sample-major values without a transpose.
 2. **D2 — Algorithm-led access:** approve hard layout/grouping requirements
-   with bounded fragments, and backend choice of chunk aggregation within those
+   with bounded fragments, sequential or bounded concurrent group realization,
+   proven group completion, and backend chunk aggregation within those
    requirements. Calibration grouping does not require a whole solve in memory.
 3. **D3 — Ownership and writes:** approve reusable borrowed blocks, opaque
-   session-local inverse mappings, alias-aware bulk patches, and truthful
-   backend-specific failure guarantees.
+   session-local inverse mappings, native-role broadcast/group alias scopes,
+   and bulk patches. The proposed local v4 profile replaces individual objects
+   atomically; it does not promise a dataset transaction or power-loss durability.
 4. **D4 — Boundaries:** approve a small shared `casa-observation` contract crate,
-   storage adapters under `casa-ms`, and the explicit dependency-policy changes
-   described in the architecture. Keep one existing execution/resource owner.
+   as the raw science base, with `casa-imaging-model` depending on it; keep
+   projected geometry in imaging and storage adapters under `casa-ms`. This is
+   an explicit proposed amendment of the model's current dependency rule.
+   Keep one existing execution/resource owner.
 5. **D5 — Support scope:** approve native local MSv4 read/create/update first,
    no Python on the processing path, preservation of existing MSv2 support,
    with MSv3 deferred until concrete datasets justify a named profile.
    Object-store mutation and XRADIO
    image persistence require later, explicit work.
 6. **D6 — Sequence and stability:** approve an early executable contract trial
-   across imaging, calibration, and writes before broad migration. Freeze
+   across imaging, calibration, writes, and source-free creation before broad migration. Freeze
    semantics after that trial, with reviewed changes still possible.
 
 Approval can accept some decisions and request changes to others. The owner
@@ -55,6 +65,13 @@ contracts and other decisions remain proposed. MSv3 is a beta specification
 with producer-specific variants; no generic MSv3 interoperability is promised.
 The interface should accommodate a future adapter without making it a
 completion dependency now.
+
+The main choices for the next owner discussion are D2's concurrent grouping and
+closure, D3's object-replacement/durability boundary, D4's shared primitive owner,
+and the proposed creation/conversion policies (frequency chunking for cubes and
+explicit loss/rejection rules). Dependency versions, exact chunk extents and
+performance feasibility remain M0/M1 evidence questions. The updated plan makes
+those experiments mandatory rather than treating them as settled by prose.
 
 ## GitHub review protocol
 
