@@ -9,6 +9,7 @@
 //! results are renormalized, which leaves every angle unchanged.
 
 use std::sync::LazyLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 type Matrix = [[f64; 3]; 3];
 type Vector = [f64; 3];
@@ -185,6 +186,37 @@ pub(super) fn j2000_obliquity_rad() -> f64 {
 /// of 2000.0, which is 0.
 pub(super) fn b1950_epoch_centuries(ut1_mjd: Option<f64>) -> f64 {
     ut1_mjd.map_or(0.0, |mjd| (mjd - MJD2000) / JULIAN_CENTURY_DAYS)
+}
+
+/// Note, once per process as casacore does, that the B1950 epoch term took
+/// dUT1 as 0 at `utc_mjd` for want of Earth-orientation data: casacore's
+/// `MeasIERS::get` logs at NORMAL, or NORMAL3 for a future epoch, and
+/// `MeasTable::dUT1` at NORMAL3, then both return 0.
+pub(super) fn note_missing_dut1(utc_mjd: f64) {
+    static NOTED: AtomicBool = AtomicBool::new(false);
+    if NOTED.swap(true, Ordering::Relaxed) {
+        return;
+    }
+    if utc_mjd > current_mjd() {
+        tracing::debug!(
+            "High precision Earth axis data is not yet available for requested JD {utc_mjd}"
+        );
+    } else {
+        tracing::info!(
+            "Requested JD {utc_mjd} is outside the range of the IERS (Earth axis data) table. \
+             Calculations will proceed with less precision"
+        );
+    }
+    tracing::debug!("High precision dUT1 information not available.");
+}
+
+/// The current time as an MJD, as casacore's `Time().modifiedJulianDay()`.
+fn current_mjd() -> f64 {
+    const MJD_OF_UNIX_EPOCH: f64 = 40_587.0;
+    let seconds = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0.0, |elapsed| elapsed.as_secs_f64());
+    MJD_OF_UNIX_EPOCH + seconds / 86_400.0
 }
 
 /// The E-terms vector for an epoch (`MeasMath::applyETerms`).

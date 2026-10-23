@@ -32,6 +32,11 @@ const MJD_OFFSET: f64 = 2_400_000.5;
 /// Number of seconds in a day.
 const SECONDS_PER_DAY: f64 = 86_400.0;
 
+/// The [`MeasureError::MissingFrameData`] a UTC ↔ UT1 conversion reports
+/// when the frame has no dUT1 for its epoch.
+pub(super) const MISSING_DUT1: &str =
+    "dUT1 (UT1-UTC offset in seconds; set with_dut1() or with_eop())";
+
 /// Greenwich apparent sidereal time of a UT1 epoch, in radians, as casacore
 /// computes it under either IAU model (`casacore_sidereal`).
 pub(super) fn casacore_gast_rad(ut1: MjdHighPrec) -> f64 {
@@ -716,23 +721,17 @@ fn apply_hop(
         }
         // UT1 → UTC: subtract dUT1
         (UT1, UTC) => {
-            let dut1 =
-                frame
-                    .dut1_for_mjd(value.as_mjd())?
-                    .ok_or(MeasureError::MissingFrameData {
-                        what: "dUT1 (UT1-UTC offset in seconds; set with_dut1() or with_eop())",
-                    })?;
+            let dut1 = frame
+                .dut1_for_mjd(value.as_mjd())?
+                .ok_or(MeasureError::MissingFrameData { what: MISSING_DUT1 })?;
             // UT1 = UTC + dUT1, so UTC = UT1 - dUT1
             Ok(value - dut1 / SECONDS_PER_DAY)
         }
         // UTC → UT1: add dUT1
         (UTC, UT1) => {
-            let dut1 =
-                frame
-                    .dut1_for_mjd(value.as_mjd())?
-                    .ok_or(MeasureError::MissingFrameData {
-                        what: "dUT1 (UT1-UTC offset in seconds; set with_dut1() or with_eop())",
-                    })?;
+            let dut1 = frame
+                .dut1_for_mjd(value.as_mjd())?
+                .ok_or(MeasureError::MissingFrameData { what: MISSING_DUT1 })?;
             // UT1 = UTC + dUT1
             Ok(value + dut1 / SECONDS_PER_DAY)
         }

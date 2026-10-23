@@ -8,7 +8,7 @@
 use casa_measures_data::MeasuresRuntime;
 use casa_test_support::measures_interop::MeasuresOracle;
 use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::{EpochRef, IauModel, MEpoch, MPosition, MeasFrame};
+use casa_types::measures::{EpochRef, IauModel, MEpoch, MPosition, MeasFrame, MeasuresProvider};
 use std::sync::{Arc, OnceLock};
 
 const SECONDS_PER_DAY: f64 = 86_400.0;
@@ -167,6 +167,24 @@ fn b1950_matches_casacore_with_and_without_an_epoch() {
     ];
     let epochs = [None, Some(EPOCHS_MJD[0]), Some(EPOCHS_MJD[1])];
     assert_routes(&routes, &epochs, IauModel::Iau1976_1980);
+}
+
+/// At epochs the IERS tables do not cover (1941 and 2058), casacore's dUT1
+/// is 0, so its B1950 epoch term takes UT1 as UTC; casa-rs does the same
+/// instead of failing for want of Earth-orientation data.
+#[test]
+fn b1950_without_earth_orientation_data_matches_casacore() {
+    use DirectionRef::*;
+    let epochs = [30_000.5, 73_000.5];
+    for mjd in epochs {
+        let covered = measures_runtime().eop_values(mjd).expect("read EOP");
+        assert!(covered.is_none(), "the EOP table covers MJD {mjd}");
+    }
+    assert_routes(
+        &[(J2000, B1950), (B1950, ICRS)],
+        &epochs.map(Some),
+        IauModel::Iau1976_1980,
+    );
 }
 
 /// The ecliptics of date, under each IAU model. Under IAU 2000 the routes

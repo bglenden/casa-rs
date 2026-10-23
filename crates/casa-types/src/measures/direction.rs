@@ -101,7 +101,7 @@ use crate::quanta::{Quantity, Unit};
 use super::casacore_aberration::earth_barycentric_velocity_ms;
 use super::casacore_frames;
 use super::casacore_nutation::standard_true_obliquity_rad;
-use super::epoch::{EpochRef, MEpoch, MjdHighPrec, casacore_gast_rad};
+use super::epoch::{EpochRef, MEpoch, MISSING_DUT1, MjdHighPrec, casacore_gast_rad};
 use super::error::MeasureError;
 use super::frame::{IauModel, MeasFrame};
 
@@ -1105,15 +1105,29 @@ fn rotate_obliquity(eps: f64, cosines: &[f64; 3], to_ecliptic: bool) -> [f64; 3]
 /// The B1950 conversions' epoch term: the frame's UT1 epoch in Julian
 /// centuries from J2000, or 0 without an epoch, as casacore's
 /// `MeasMath::applyJ2000toB1950` takes it.
+///
+/// Without Earth-orientation data for the epoch, casacore's
+/// `MeasTable::dUT1` returns 0, so UT1 is taken as UTC, with casacore's note
+/// (`casacore_frames::note_missing_dut1`). The term moves a direction by
+/// about 1e-15 rad per second of time. Every other UT1 conversion in casa-rs
+/// still requires the data.
 fn b1950_epoch_centuries(frame: &MeasFrame, ctx: &ConvCtx) -> Result<f64, MeasureError> {
-    let ut1_mjd = match frame.epoch() {
-        Some(_) => {
-            let (ut_a, ut_b) = get_ut1_jd(frame, ctx)?;
-            Some((ut_a - MJD_OFFSET) + ut_b)
-        }
-        None => None,
+    let Some(epoch) = frame.epoch() else {
+        return Ok(casacore_frames::b1950_epoch_centuries(None));
     };
-    Ok(casacore_frames::b1950_epoch_centuries(ut1_mjd))
+    let ut1_mjd = match get_ut1_jd(frame, ctx) {
+        Ok((ut_a, ut_b)) => (ut_a - MJD_OFFSET) + ut_b,
+        Err(MeasureError::MissingFrameData { what }) if what == MISSING_DUT1 => {
+            let ut1_mjd = epoch
+                .convert_to(EpochRef::UT1, &frame.clone().with_dut1(0.0))?
+                .value()
+                .as_mjd();
+            casacore_frames::note_missing_dut1(ut1_mjd);
+            ut1_mjd
+        }
+        Err(error) => return Err(error),
+    };
+    Ok(casacore_frames::b1950_epoch_centuries(Some(ut1_mjd)))
 }
 
 /// Get the Earth's barycentric velocity in AU/day for aberration.

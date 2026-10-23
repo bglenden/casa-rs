@@ -998,6 +998,35 @@ fn direction_b1950_roundtrip() {
     );
 }
 
+/// With a frame epoch but no Earth-orientation data, the B1950 epoch term
+/// takes dUT1 as 0, as casacore's `MeasTable::dUT1` does, instead of
+/// failing.
+#[test]
+fn b1950_epoch_term_takes_dut1_as_zero_without_earth_orientation_data() {
+    let dir = MDirection::from_angles(1.0, 0.5, DirectionRef::J2000);
+    let epoch = MEpoch::from_mjd(61_181.25, EpochRef::UTC);
+    let without_data = MeasFrame::new().with_epoch(epoch.clone());
+    let zero_dut1 = MeasFrame::new().with_epoch(epoch).with_dut1(0.0);
+    let no_epoch = MeasFrame::new();
+
+    let fallback = dir.convert_to(DirectionRef::B1950, &without_data).unwrap();
+    let explicit = dir.convert_to(DirectionRef::B1950, &zero_dut1).unwrap();
+    let default_epoch = dir.convert_to(DirectionRef::B1950, &no_epoch).unwrap();
+    assert_eq!(fallback.cosines(), explicit.cosines());
+    // The epoch term of 2026 moves the direction by about 0.1″, so the
+    // fallback did use the frame epoch.
+    let moved = angular_sep(&fallback.cosines(), &default_epoch.cosines());
+    assert!(moved > 1e-7, "epoch term moved the direction {moved} rad");
+
+    let back = fallback
+        .convert_to(DirectionRef::J2000, &without_data)
+        .unwrap();
+    let residual = (0..3)
+        .map(|k| (back.cosines()[k] - dir.cosines()[k]).abs())
+        .fold(0.0, f64::max);
+    assert!(residual < 1e-11, "B1950 round trip residual {residual}");
+}
+
 // ==========================================================================
 // ITRF direction
 // ==========================================================================
