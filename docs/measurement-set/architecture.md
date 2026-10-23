@@ -61,9 +61,24 @@ integration/baseline/data-description context, not one polarization scalar
 spectrum. MSv3 beta changes schema and column associations; it is not merely
 another label for today's MSv2 files. MSv4's principal visibility variable is
 `[time, baseline_id, frequency, polarization]` within a dataset; a Processing
-Set collects datasets. Mosaic fields can vary along time within a partition.
+Set collects datasets. In the pinned schema, `field_name` is an auxiliary
+coordinate indexed by time, not another dimension of the visibility array.
+Sequential mosaic fields can therefore vary along time within a compatible
+partition: at each integration the coordinate identifies that integration's
+field. This does **not** require all fields of a mosaic to share one hypercube.
+XRADIO's converter permits additional `FIELD_ID` partitioning, yielding separate
+datasets per field and other partition keys. Its default extra partition scheme
+is empty and is explicitly recommended for rapidly changing phase centres in
+on-the-fly mosaics; mandatory partition keys still apply.
 Different spectral windows generally occupy different partitions, including
 when continuum and line data are processed together.
+
+The antenna beam-pointing history is separately associated by time and antenna
+in `pointing_xds`. It is not the same as the correlated field/phase centre.
+See the pinned [visibility dimensions](https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/src/xradio/measurement_set/schema.py#L1020),
+[time-indexed field coordinate](https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/src/xradio/measurement_set/schema.py#L1734),
+[optional field partitioning](https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/src/xradio/measurement_set/convert_msv2_to_processing_set.py#L97),
+and [mandatory keys](https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/src/xradio/measurement_set/_utils/_msv2/partition_queries.py#L39).
 
 The shared interface therefore cannot use a casacore row number, DATA_DESC_ID,
 one field, or one spectral window for the whole observation as its universal

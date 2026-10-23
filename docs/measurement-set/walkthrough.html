@@ -277,10 +277,21 @@
       </div></div>
       <p>A data group might represent raw, corrected, or model visibilities. These labels are conveniences; the actual array associations are explicit. Two groups may share a flag or weight variable, which matters when writing.</p>
       <div class="table-scroll"><table><thead><tr><th>Case</th><th>Proposed representation</th></tr></thead><tbody>
-        <tr><td>Mosaic pointings</td><td>Field/phase-centre context may vary within a batch. There is no universal requirement for one visibility array per pointing. Antenna pointing and phase centre remain distinct.</td></tr>
+        <tr><td>Mosaic fields</td><td>Compatible sequential fields may share a time axis, using <code>field_name(time)</code>. Alternatively, partitioning by <code>FIELD_ID</code> yields separate datasets. A mosaic is not required to occupy one hypercube.</td></tr>
         <tr><td>Continuum and line SPWs</td><td>Different spectral contexts generally occupy different partitions. Batches have compatible spectral coordinates and correlation setup; the algorithm may combine several batches scientifically.</td></tr>
         <tr><td>Large metadata</td><td>Moving-source, pointing, and ephemeris metadata are queried in bounded windows instead of loading sample-sized histories on open.</td></tr>
       </tbody></table></div>
+      <h2>Why a mosaic need not add a visibility axis</h2>
+      <p>In a sequential mosaic, the correlated field is a function of time. The visibility array has axes <code>[time, baseline, frequency, polarization]</code>, while an auxiliary coordinate labels each time:</p>
+      <div class="table-scroll"><table><thead><tr><th>Time</th><th>Field coordinate</th><th>Visibility slice</th></tr></thead><tbody>
+        <tr><td>t0</td><td>A</td><td>V[t0, :, :, :] belongs to field A</td></tr>
+        <tr><td>t1</td><td>A</td><td>V[t1, :, :, :] belongs to field A</td></tr>
+        <tr><td>t2</td><td>B</td><td>V[t2, :, :, :] belongs to field B</td></tr>
+        <tr><td>t3</td><td>A</td><td>V[t3, :, :, :] is a later visit to A</td></tr>
+      </tbody></table></div>
+      <p>There is no independent A-versus-B choice at t0 in this example, so a time × field visibility grid would introduce unused combinations. The fields are neither averaged nor overlaid. The reader preserves the field association, and imaging applies the appropriate geometry to each sample.</p>
+      <p>XRADIO can also split by field. Its default extra partition scheme is empty, explicitly recommended for rapidly changing phase centres in on-the-fly mosaics; required spectral/observation partitioning still applies. Antenna beam-pointing history is separately indexed by time and antenna in <code>pointing_xds</code>. Simultaneous beams or phase centres need an explicit supported mapping; this sequential example does not settle those cases.</p>
+      <p class="source">Verified against the pinned <a href="https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/src/xradio/measurement_set/schema.py#L1734">field_name(time) schema</a>, <a href="https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/src/xradio/measurement_set/convert_msv2_to_processing_set.py#L97">partitioning options</a>, and <a href="https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/src/xradio/measurement_set/schema.py#L1463">antenna pointing schema</a>.</p>
       <details><summary>Identity needs care when calibration is saved and reopened</summary><p>Catalogue handles belong to an opened observation. They are not permanent MS row numbers. Calibration owns the binding to antenna/SPW/field identities in a persisted caltable. Reopening and changing catalogue enumeration must not change which solutions apply.</p></details>
       <div class="pause"><div class="eyebrow">Pause here · D1</div><p>Does the catalogue expose enough scientific context without leaking table row IDs or Zarr paths into algorithms?</p></div>
       <p class="source">Read: <a href="https://github.com/bglenden/casa-rs/blob/abcc5ac0e773f7ad81f1909317c602c63aedbd98/docs/measurement-set/contracts.md#2-topology-and-identity">Contracts §2</a> and <a href="https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/src/xradio/measurement_set/schema.py">pinned XRADIO schema</a>.</p>
@@ -493,7 +504,7 @@ VisibilityBatch {
         <li><a href="https://github.com/bglenden/casa-rs/blob/abcc5ac0e773f7ad81f1909317c602c63aedbd98/docs/measurement-set/implementation-plan.md">Implementation plan</a> — M0–M5, evidence packets, and change control.</li>
         <li><a href="https://github.com/bglenden/casa-rs/blob/abcc5ac0e773f7ad81f1909317c602c63aedbd98/docs/measurement-set/architecture.md#7-reference-baseline">Primary references</a> — pinned XRADIO, Zarr, casacore, and Rust dependency evidence.</li>
       </ul>
-      <p class="source">This standalone explanation reflects draft <code>abcc5ac0</code>. The linked proposal governs if the explanation omits detail. Examples are illustrative; no implementation or benchmark result is claimed.</p>
+      <p class="source">This standalone explanation follows draft <code>abcc5ac0</code>, with a later source-checked clarification of mosaic field coordinates and partitioning in step 3. The linked proposal governs if the explanation omits detail. Examples are illustrative; no implementation or benchmark result is claimed.</p>
     </section>
 
     <details class="notes js-only" id="notes-panel">

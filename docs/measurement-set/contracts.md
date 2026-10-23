@@ -71,6 +71,18 @@ spans them. A field/phase centre may vary inside a batch, including a mosaic.
 The request can select multiple named data groups. Each group retains its own
 UVW and field/source context and explicit alias relationships to other groups.
 
+For native MSv4, distinguish a dimension from an auxiliary coordinate:
+`VISIBILITY[time, baseline, frequency, polarization]` carries `field_name[time]`.
+A sequential mosaic may therefore have fields `[A, A, B, B, A]` along its time
+axis without a field axis or any averaging across fields. Optional field-based
+partitioning produces separate datasets instead; the common API must preserve
+the correct sample-to-field association in either case, including selection,
+slicing and reordering. Per-antenna pointing remains a separate association.
+This example does not establish a representation for arbitrary simultaneous
+beams/phase centres or per-baseline field changes. A native v4 write must prove
+that its field dependencies fit the chosen schema mapping/partitioning or reject;
+it must not discard them to fit a time-only field coordinate.
+
 ```rust
 // Semantic sketch; private constructors validate dimensions and scope.
 enum SampleTopology<'a> {
@@ -754,6 +766,8 @@ without relying on retained metadata from an input dataset.
    counts/frames. Keep batches homogeneous while imaging visits both partitions
    and a solve may group their fragments. Do not pad them into one invented
    frequency axis or equate a field with antenna pointing.
+   Compare compatible fields combined along time with the same data partitioned
+   by field, retaining repeated visits and sample-to-field/pointing associations.
 3. **Calibrate then write:** gather channels in requested order, solve from
    fragments, apply gains, patch corrected data and selected flag bits. Preserve
    untouched channels, native weights/flag categories, group aliases and actual
