@@ -59,6 +59,11 @@
 //! formed them, and `close` holds no more beyond its admission for twice
 //! the components.
 //!
+//! A seventh law predicts through the simulator's mosaic machine (#841
+//! Phase 2) for 12 m and 7 m dishes: `predict` holds no more than it is
+//! admitted while it builds every dish pair's beams on their screens, and
+//! keeps what its reservations keep, the cells and one set of grids.
+//!
 //! This binary's global allocator counts the live heap; the counters are
 //! the process's, so each law runs alone in a process of its own
 //! ([`alone`]).
@@ -418,13 +423,25 @@ fn noise() -> NoiseSpec {
     }
 }
 
-/// A session writing `ms` within `budget`, with its antennas, a window of
-/// `channels` channels, the field and the times set.
+/// A session writing `ms` within `budget`, with its 12 m antennas, a window
+/// of `channels` channels, the field and the times set.
 fn configured(
     ms: &Path,
     measures: &Arc<dyn MeasuresProvider>,
     budget: u64,
     channels: usize,
+) -> Simulator {
+    configured_with_dishes(ms, measures, budget, channels, &[12.0])
+}
+
+/// [`configured`] with antennas of the diameters `dishes`: one for every
+/// antenna, or one each.
+fn configured_with_dishes(
+    ms: &Path,
+    measures: &Arc<dyn MeasuresProvider>,
+    budget: u64,
+    channels: usize,
+    dishes: &[f64],
 ) -> Simulator {
     let mut sm = Simulator::open(
         ms,
@@ -446,7 +463,7 @@ fn configured(
         x: along(0, 50.0),
         y: along(1, -15.0),
         z: along(2, 30.0),
-        dish_diameter: vec![12.0],
+        dish_diameter: dishes.to_vec(),
         offset: vec![0.0],
         mount: vec!["alt-az".to_string()],
         antenna_names: vec!["DA".to_string()],
@@ -861,14 +878,26 @@ const BUDGET_W: u64 = BUDGET_32 + (32 << 20);
 /// [`W_PLANES`] planes: what `predict` held and kept. The session is closed
 /// and `ms` deleted after.
 fn predict_w(ms: &Path, model: &Path, measures: &Arc<dyn MeasuresProvider>) -> Predicted {
-    let mut sm = configured(ms, measures, BUDGET_W, 32);
-    sm.observe(&scan(1)).expect("observe");
-    sm.set_options(&PredictionOptions {
+    let options = PredictionOptions {
         ftmachine: "wproject".to_string(),
         w_planes: W_PLANES,
         ..PredictionOptions::default()
-    })
-    .expect("setoptions");
+    };
+    predict_through(&options, (ms, model, measures), BUDGET_W, &[12.0])
+}
+
+/// A one-integration scan of antennas of `dishes` predicted from `model`
+/// within `budget` through the FTMachine `options` choose: what `predict`
+/// held and kept. The session is closed and `ms` deleted after.
+fn predict_through(
+    options: &PredictionOptions,
+    (ms, model, measures): (&Path, &Path, &Arc<dyn MeasuresProvider>),
+    budget: u64,
+    dishes: &[f64],
+) -> Predicted {
+    let mut sm = configured_with_dishes(ms, measures, budget, 32, dishes);
+    sm.observe(&scan(1)).expect("observe");
+    sm.set_options(options).expect("setoptions");
     let reserved = reserved_memory();
     let baseline = LIVE.load(Ordering::Relaxed);
     PEAK.store(baseline, Ordering::Relaxed);
@@ -936,6 +965,83 @@ fn a_w_projection_predict_holds_its_admission_and_keeps_what_it_charges() {
         assert!(
             kept.admitted > 2 * ALLOWANCE_BYTES,
             "the kernels and grids are charged: {kept:?}"
+        );
+        assert!(
+            during.heap <= during.admitted + ALLOWANCE_BYTES,
+            "predict held {} bytes, beyond the {} admitted and the allowance",
+            during.heap,
+            during.admitted
+        );
+        assert!(
+            kept.unadmitted().unsigned_abs() <= ALLOWANCE_BYTES,
+            "predict keeps {} bytes against the {} its reservations keep",
+            kept.heap,
+            kept.admitted
+        );
+    }
+}
+
+/// The mosaic law's session budget: the 32-channel cases' and room for the
+/// screens beside `close`'s writer.
+const BUDGET_MOSAIC: u64 = BUDGET_32 + (32 << 20);
+
+/// The mosaic law's dishes: ALMA's 12 m and ACA's 7 m in turn, so the set
+/// has three dish pairs.
+const MOSAIC_DISHES: [f64; ANTENNAS] = [12.0, 7.0, 12.0, 7.0, 12.0, 7.0];
+
+/// `predict` through the simulator's mosaic machine transforms every dish
+/// pair's beams on a screen and keeps the cells cut from them (#841 Phase
+/// 2): while it runs, the heap stays within the most its reservations held
+/// (the screens, then the cells, then the model's one set of grids and its
+/// preparation) and the allowance, and at no moment more than the
+/// allowance beyond them; after it, what the session keeps (the cells, the
+/// corrections and the grids) is what its reservations keep.
+#[test]
+fn a_mosaic_predict_holds_its_admission_and_keeps_what_it_charges() {
+    if !alone("a_mosaic_predict_holds_its_admission_and_keeps_what_it_charges") {
+        return;
+    }
+    let resources = resources(BUDGET_32);
+    charge_process_caches(resources.host(), resources.policy()).expect("the process caches");
+    let measures = casa_test_support::deterministic_measures_provider();
+    let root = tempfile::tempdir().expect("temporary directory");
+    let model = root.path().join("model.image");
+    write_model(&model, 32);
+    let ms = root.path().join("mosaic.ms");
+    let options = PredictionOptions {
+        ftmachine: "mosaic".to_string(),
+        ..PredictionOptions::default()
+    };
+    let run = || {
+        predict_through(
+            &options,
+            (&ms, &model, &measures),
+            BUDGET_MOSAIC,
+            &MOSAIC_DISHES,
+        )
+    };
+    // Once unmeasured: state a process keeps once it has predicted.
+    run();
+    for _ in 0..MEASURED_RUNS {
+        let Predicted {
+            during,
+            beyond,
+            kept,
+        } = run();
+        println!(
+            "mosaic predict: held {} bytes against {} admitted, {beyond} at most beyond its \
+             reservations; kept {} against {} charged",
+            during.heap, during.admitted, kept.heap, kept.admitted
+        );
+        // Six cells of about 160 KB (three dish pairs, imaging and weight)
+        // and the grids: about 1 MB.
+        assert!(
+            kept.admitted > ALLOWANCE_BYTES,
+            "the cells and grids are charged: {kept:?}"
+        );
+        assert!(
+            beyond <= ALLOWANCE_BYTES as i64,
+            "predict held {beyond} bytes beyond its reservations at one moment"
         );
         assert!(
             during.heap <= during.admitted + ALLOWANCE_BYTES,

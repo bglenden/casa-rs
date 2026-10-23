@@ -121,10 +121,10 @@ pub enum FtMachine {
 
 impl FtMachine {
     /// Whether the Metal backend predicts through this machine: `GridFT`'s
-    /// spheroidal set only.
+    /// spheroidal set and `MosaicFTNew`'s beams, not the W planes.
     #[must_use]
     pub const fn runs_on_metal(self) -> bool {
-        matches!(self, Self::Grid(_))
+        matches!(self, Self::Grid(_) | Self::Mosaic)
     }
 }
 

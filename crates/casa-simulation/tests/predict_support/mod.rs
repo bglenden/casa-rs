@@ -189,6 +189,19 @@ pub fn session_with_channels(
     channels: usize,
     resources: SessionResources,
 ) -> Simulator {
+    session_with_dishes(path, telescope, stokes, channels, &[12.0], resources)
+}
+
+/// [`session_with_channels`] with antennas of the diameters `dishes`: one
+/// for every antenna, or one each.
+pub fn session_with_dishes(
+    path: &Path,
+    telescope: &str,
+    stokes: &str,
+    channels: usize,
+    dishes: &[f64],
+    resources: SessionResources,
+) -> Simulator {
     let mut session = Simulator::open(
         path,
         SimulatorOptions {
@@ -209,7 +222,7 @@ pub fn session_with_channels(
             x: along(0, 20.0),
             y: along(1, -6.0),
             z: along(2, 12.0),
-            dish_diameter: vec![12.0],
+            dish_diameter: dishes.to_vec(),
             offset: vec![0.0],
             mount: vec!["alt-az".to_string()],
             antenna_names: vec!["DA".to_string()],

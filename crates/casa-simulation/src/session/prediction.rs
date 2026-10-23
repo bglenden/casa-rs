@@ -313,17 +313,9 @@ impl Simulator {
     /// - Raised: `WProjectFT` with no planes or fewer, where CASA's
     ///   simulator crashes (`docs/CASA (C++) bugs.md`), or more than
     ///   casa-rs's [`MAX_W_PLANES`] (65,536).
-    /// - Not yet implemented: `WProjectFT` or `MosaicFTNew` on the Metal
-    ///   backend.
+    /// - Not yet implemented: `WProjectFT` on the Metal backend.
     fn ft_machine(&self) -> SimulatorResult<FtMachine> {
         if self.mosaic {
-            if self.options.resources.backend() == BackendRequest::Metal {
-                return Err(SimulatorError::not_yet_implemented(
-                    "predict with setoptions(ftmachine='mosaic') on the Metal backend is not \
-                     yet implemented in casa-rs (#841); backend 'auto' or 'cpu' predicts it on \
-                     the CPU",
-                ));
-            }
             return Ok(FtMachine::Mosaic);
         }
         let Some(planes) = self.w_projection_planes else {
