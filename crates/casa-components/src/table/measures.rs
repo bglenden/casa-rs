@@ -288,7 +288,7 @@ pub(super) fn quantity(
 /// A direction's longitude and latitude as casacore stores them
 /// (`MVDirection::get`): `atan2(y, x)` in (−π, π] and `asin(z)`, from the
 /// direction cosines.
-pub(super) fn casacore_angles(direction: &MDirection) -> [f64; 2] {
+pub(crate) fn casacore_angles(direction: &MDirection) -> [f64; 2] {
     let [x, y, z] = direction.cosines();
     let longitude = if x != 0.0 || y != 0.0 {
         y.atan2(x)

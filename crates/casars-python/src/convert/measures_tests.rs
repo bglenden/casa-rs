@@ -291,6 +291,44 @@ fn positions_casa_cannot_read_are_false_or_raise() {
     );
 }
 
+/// `casaMFrequency` takes a first token that is no frame as LSRK, with a
+/// warning, and reads the two tokens again as one, so that `"1.4 GHz"` is
+/// 1.4 GHz; when they do not read as one, the second token's value stands,
+/// and when the second token does not read, it raises (CASA 6.7.6 probes,
+/// 2026-10-23).
+#[test]
+fn a_frequency_whose_frame_is_not_one_reads_its_tokens_again_as_one() {
+    let warning = Some("Could not understand frequency frame..defaulting to LSRK".to_string());
+    for (value, hz, warned) in [
+        ("1.4 GHz", 1.4e9, &warning),
+        ("foo 1.4GHz", 1.4e9, &warning),
+        ("1.4 Hz", 1.4, &warning),
+        ("1.4 m", 299_792_458.0 / 1.4, &warning),
+        ("BARY 1.4GHz", 1.4e9, &None),
+    ] {
+        let (frequency, warning) = frequency(&text(value)).unwrap();
+        let frequency = frequency.unwrap();
+        let expected = if value.starts_with("BARY") {
+            FrequencyRef::BARY
+        } else {
+            FrequencyRef::LSRK
+        };
+        assert_eq!(frequency.refer(), expected, "{value}");
+        assert!(
+            (frequency.hz() - hz).abs() <= 1e-12 * hz,
+            "{value}: {} Hz",
+            frequency.hz()
+        );
+        assert_eq!(&warning, warned, "{value}");
+    }
+    assert!(
+        frequency(&text("1.4GHz foo"))
+            .unwrap_err()
+            .to_string()
+            .starts_with(EMPTY_HOLDER)
+    );
+}
+
 #[test]
 fn frequency_codes_follow_casa() {
     assert_eq!(frequency_reference("").unwrap(), FrequencyRef::TOPO);

@@ -702,6 +702,7 @@ dependencies = [
 name = "casars-python"
 version = "0.27.0"
 dependencies = [
+ "casa-components",
  "casa-coordinates",
  "casa-images",
  "casa-ms",
@@ -711,6 +712,7 @@ dependencies = [
  "casa-types",
  "casars-frontend-services",
  "ndarray",
+ "num-complex",
  "numpy",
  "pyo3",
  "schemars",

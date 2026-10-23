@@ -16,6 +16,6 @@ the module path.
 
 from __future__ import annotations
 
-from .._core import measures, quanta, simulator
+from .._core import componentlist, measures, quanta, simulator
 
-__all__ = ["measures", "quanta", "simulator"]
+__all__ = ["componentlist", "measures", "quanta", "simulator"]

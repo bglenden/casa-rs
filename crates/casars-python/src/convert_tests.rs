@@ -117,4 +117,36 @@ fn variants_describe_themselves_like_casa() {
     assert_eq!(Variant::Empty.describe(), "[]");
     assert_eq!(text("NOWHERE").describe(), "NOWHERE");
     assert_eq!(Variant::Numbers(vec![1.0, 2.5]).describe(), "[1, 2.5]");
+    assert_eq!(
+        Variant::Complexes(vec![Complex64::new(1.0, 0.5)]).describe(),
+        "[(1,0.5)]"
+    );
+}
+
+#[test]
+fn numbers_read_as_complex_vectors_and_a_complex_is_no_quantity() {
+    // `setflux` reads its values with casatools' `toComplexVec`, and
+    // `casaQuantity` of a complex number raises (CASA 6.7.6, 2026-10-23).
+    let complex = Complex64::new;
+    assert_eq!(
+        complex_values(&Variant::Number(2.0)),
+        Some(vec![complex(2.0, 0.0)])
+    );
+    assert_eq!(
+        complex_values(&Variant::Numbers(vec![1.0, 0.5])),
+        Some(vec![complex(1.0, 0.0), complex(0.5, 0.0)])
+    );
+    assert_eq!(
+        complex_values(&Variant::Complex(complex(2.0, 3.0))),
+        Some(vec![complex(2.0, 3.0)])
+    );
+    assert_eq!(complex_values(&text("1")), None);
+    assert_eq!(
+        quantity(&Variant::Complex(complex(0.0, 1.0)))
+            .unwrap_err()
+            .to_string(),
+        "Wrong QuantumHolder to convert asQuantumDouble"
+    );
+    let vector = quantity(&Variant::Complexes(vec![complex(0.0, 1.0)])).unwrap();
+    assert_eq!((vector.value(), vector.unit().name()), (0.0, ""));
 }
