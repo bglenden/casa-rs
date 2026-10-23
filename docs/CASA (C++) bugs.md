@@ -31,7 +31,10 @@ Simulator behaviours casa-rs does not follow:
 [the model `predict` rewrites](#smpredict-rewrites-the-model-image),
 [models the simulator cannot read](#smpredict-accepts-models-the-simulator-cannot-read).
 Component-list behaviours casa-rs does not follow:
-[a limb-darkened disk without an exponent](#writing-a-limb-darkened-disk-without-an-exponent-aborts-casa).
+[a limb-darkened disk without an exponent](#writing-a-limb-darkened-disk-without-an-exponent-aborts-casa),
+[a negative component under the primary beam](#a-negative-component-turns-positive-under-the-primary-beam),
+[a single spectral index](#a-single-spectral-index-is-read-past-its-end),
+[the beam's component spectrum frame](#the-primary-beams-component-spectrum-labels-topocentric-samples-lsrk).
 
 ## AW-projection pairs the partner hand's visibility with the conjugate-baseline cell
 
@@ -634,3 +637,57 @@ and `rename` succeed, `close` aborts). Had the empty vector been stored,
 `readTable` would read its first element out of bounds. casa-rs leaves the
 cell undefined, which CASA reads as the shape's default exponent of 0.05, as
 it reads every other row the column does not describe.
+
+## A negative component turns positive under the primary beam
+
+- Date noted: 2026-10-23
+- Status: CASA bug casa-rs does not follow (#841)
+- Affected code: `casatools/src/code/synthesis/TransformMachines/BeamSkyJones.cc`
+  (`apply(SkyComponent&, …)`, lines 488-511)
+
+With `sm.setvp(dovp=True)`, `SkyEquation::applySkyJones` applies the beam to
+each component with `fullspectral` set. That path multiplies the beam-applied
+flux, which keeps the component's sign, by a per-channel factor of the
+spectrum's sample over `abs(flux)`, which carries the sign again, so a
+negative flux comes out positive. Probed with CASA 6.7.6: a −0.4 Jy point
+20 arcsec from the pointing centre predicts −0.4 Jy without the beam and
++0.4 Jy times the beam with it. casa-rs keeps the sign;
+`sm_components_scenarios.json` keeps negative components away from the beam.
+
+## A single spectral index is read past its end
+
+- Date noted: 2026-10-23
+- Status: CASA bug casa-rs does not follow (#841)
+- Affected code: `casatools/src/code/components/ComponentModels/SpectralIndex.cc`
+  (`sampleStokes`, lines 138-146 and 213-237);
+  `components/ComponentModels/SkyCompRep.cc` (`visibility`, line 314)
+
+`cl.addcomponent(spectrumtype="spectral index", index=α)` stores one index.
+The per-frequency `sampleStokes` scales only I by it and leaves Q, U and V
+alone; the matrix `sampleStokes`, which `SkyCompRep::visibility` and so
+every component prediction uses, has no one-index branch and reads indices
+1 to 3 out of bounds. For an unpolarised component the out-of-bounds factors
+multiply zeros. Read from the source and not probed: a polarised component
+with a single index predicts Q, U and V scaled by whatever follows the
+vector. casa-rs reads a single index as `[α, 0, 0, 0]`, so the fractional
+polarisation is constant, as the matrix sampler's comments describe;
+`sm_components_scenarios.json` gives its polarised components no index.
+
+## The primary beam's component spectrum labels topocentric samples LSRK
+
+- Date noted: 2026-10-23
+- Status: CASA behaviour casa-rs does not follow (#841)
+- Affected code: `casatools/src/code/synthesis/TransformMachines/BeamSkyJones.cc`
+  (`apply(SkyComponent&, …)`, lines 494-529);
+  `components/ComponentModels/SkyCompRep.cc` (`visibility`, lines 303-314)
+
+The full-spectral beam path evaluates the beam and the spectrum at each
+channel's topocentric frequency, stores the products in a `TabularSpectrum`
+at the channels' LSRK frequencies, and labels it LSRK. `SkyCompRep::visibility`
+then looks the table up at the topocentric frequencies, which it takes to be
+in the component's frame, so each channel reads the table shifted by the
+observatory's velocity, up to about 1e-4 of the frequency. casa-rs evaluates
+the beam and the spectrum at each channel's own frequency. With the beam,
+`sm_components_scenarios.json` agrees with CASA to 7e-5 and 1e-4 normalized
+RMS, against 1.3e-5 or better without it: consistent in size with this
+shift, though the shift was not isolated.

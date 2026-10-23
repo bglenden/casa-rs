@@ -603,12 +603,14 @@ def test_predict_outcomes_follow_casa(tmp_path: Path, caplog: pytest.LogCaptureF
     sm = opened(tmp_path)
     configure(sm)
     assert sm.observe("F", "L", starttime="0s", stoptime="30s")
+    missing = tmp_path / "model.cl"
     with caplog.at_level(logging.ERROR, logger=LOGGER):
         assert sm.predict() is False
         assert sm.predict(imagename=[""]) is False
-    assert caplog.messages == ["Failed to create SkyEquation: No model images found"] * 2
-    with pytest.raises(NotImplementedError, match="complist.*Phase 2"):
-        sm.predict(complist=str(tmp_path / "model.cl"))
+        assert sm.predict(complist=str(missing)) is False
+    assert caplog.messages == ["Failed to create SkyEquation: No model images found"] * 2 + [
+        f"Failed to create SkyEquation: ComponentList {missing} not readable"
+    ]
     with pytest.raises(RuntimeError, match="does not exist"):
         sm.predict(imagename=str(tmp_path / "missing.image"))
     sm.close()

@@ -208,12 +208,13 @@ fn predict_refuses_as_casa_does() {
     let (outcome, message) = refusal(sm.predict(&spec(&[&model, &model])));
     assert_eq!(outcome, CasaOutcome::NotYetImplemented);
     assert!(message.contains("Phase 2"), "{message}");
+    // A component list that is not a readable table is CASA's False.
     let (outcome, message) = refusal(sm.predict(&PredictSpec {
         component_list: Some(directory.path().join("model.cl")),
         ..spec(&[&model])
     }));
-    assert_eq!(outcome, CasaOutcome::NotYetImplemented);
-    assert!(message.contains("complist"), "{message}");
+    assert_eq!(outcome, CasaOutcome::ReturnsFalse);
+    assert!(message.contains("not readable"), "{message}");
     sm.close().expect("close");
     let rows = read_main(&directory.path().join("x.ms")).0;
     assert!(

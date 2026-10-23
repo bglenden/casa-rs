@@ -10,7 +10,8 @@
 //!    time.
 //! 2. **Prediction.** DATA is zeroed in the writer's recycled batch, and
 //!    the rows of scans a `predict` covers are predicted into it, in blocks
-//!    on the team ([`super::prediction`]).
+//!    on the team ([`super::prediction`]); then the visibilities of the
+//!    component lists covering them are added ([`super::components`]).
 //! 3. **Cells and columns.** Then, on the team at once:
 //!    - each scan's noise is added to its rows, a run of rows per job: a
 //!      draw depends only on the term, the MAIN row, the channel and the
@@ -43,6 +44,7 @@ use casa_ms::VisibilityColumns;
 use casa_types::Complex32;
 
 use super::MainWriter;
+use super::components::add_components;
 use super::geometry::{ArrayGeometry, RowGeometry};
 use super::prediction::PredictionStage;
 use crate::corrupt::NoiseApplication;
@@ -174,6 +176,16 @@ impl<'s> Pipeline<'s> {
                     first,
                     &mut batch.data,
                     |scan| rows.plan.noise_for_scan(scan),
+                )?;
+            }
+            if self.rows.plan.predicts_components() {
+                let rows = &self.rows;
+                add_components(
+                    rows.team,
+                    (rows.scans, &rows.rows),
+                    rows.plan,
+                    &runs,
+                    (&mut batch.data, rows.samples),
                 )?;
             }
             self.times.predict += started.elapsed();

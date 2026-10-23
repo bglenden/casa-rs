@@ -32,10 +32,14 @@
 //! writes.
 
 mod beam;
+mod components;
 mod model;
 
 pub(crate) use beam::BeamPattern;
 pub use beam::PrimaryBeam;
+pub(crate) use components::{
+    ComponentPrediction, ComponentRefusal, ComponentTargets, ComponentWindow,
+};
 pub use model::SkyModel;
 
 use casa_coordinates::CoordinateError;

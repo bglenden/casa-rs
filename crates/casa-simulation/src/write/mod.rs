@@ -16,6 +16,7 @@
 //! prediction ([`prediction`]) and noise are then computed on the session's
 //! worker team ([`pipeline`]).
 
+mod components;
 mod geometry;
 mod pipeline;
 mod prediction;

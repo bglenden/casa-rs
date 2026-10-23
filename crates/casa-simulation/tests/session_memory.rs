@@ -43,6 +43,12 @@
 //! admission than a little, so what the prediction stage keeps per noise
 //! term is charged where it is kept (on Metal only, for the device).
 //!
+//! A fourth law predicts component lists (#841 Phase 2): what `predict`
+//! keeps (each component's fluxes and beam powers per channel, its shape's
+//! transform and each field's rotation) is what it was admitted before it
+//! formed them, and `close` holds no more beyond its admission for twice
+//! the components.
+//!
 //! This binary's global allocator counts the live heap; the counters are
 //! the process's, so each law runs alone in a process of its own
 //! ([`alone`]).
@@ -54,6 +60,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
+use casa_components::{
+    ComponentList, ComponentShape, Ellipse, EllipseErrors, Flux, ShapeKind, SkyComponent,
+    SpectralIndex, SpectralKind, SpectralModel,
+};
 use casa_coordinates::{
     CoordinateSystem as ImageCoordinates, DirectionCoordinate, Projection, ProjectionType,
     SpectralCoordinate, StokesCoordinate, StokesType,
@@ -69,7 +79,7 @@ use casa_simulation::{
     VoltagePatternSpec,
 };
 use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::frequency::FrequencyRef;
+use casa_types::measures::frequency::{FrequencyRef, MFrequency};
 use casa_types::measures::{EpochRef, MEpoch, MeasuresProvider};
 use ndarray::{ArrayD, IxDyn};
 use num_complex::Complex32;
@@ -818,4 +828,196 @@ fn a_predicting_close_holds_its_admission_however_often_its_scan_is_corrupted() 
         few.unadmitted(),
         REPEATED_APPLICATIONS[0]
     );
+}
+
+/// The component law's lists, of this many components.
+const LISTED_COMPONENTS: [usize; 2] = [128, 256];
+
+/// The component law's channels. Each component's fluxes in XX and YY take
+/// 10,240 bytes, and its beam's powers 1,280.
+const COMPONENT_CHANNELS: usize = 320;
+
+/// Write a list of `count` components around [`CENTRE_RAD`] to `path`:
+/// points and Gaussians 2″ apart, with spectral indices.
+fn write_components(path: &Path, count: usize) {
+    let mut list = ComponentList::new();
+    for index in 0..count {
+        let (column, row) = ((index % 16) as f64 - 7.5, (index / 16) as f64 - 7.5);
+        let direction = MDirection::from_angles(
+            CENTRE_RAD[0] + column * 1.0e-5 / CENTRE_RAD[1].cos(),
+            CENTRE_RAD[1] + row * 1.0e-5,
+            DirectionRef::J2000,
+        );
+        let shape = if index % 2 == 0 {
+            ComponentShape::point(direction)
+        } else {
+            let axes = Ellipse::new(6.0e-6, 3.0e-6, 0.5).expect("axes");
+            ComponentShape::new(
+                direction,
+                ShapeKind::Gaussian {
+                    axes,
+                    errors: EllipseErrors::default(),
+                },
+            )
+            .expect("a Gaussian")
+        };
+        let spectrum = SpectralModel::new(
+            MFrequency::new(FREQUENCY_HZ, FrequencyRef::LSRK),
+            SpectralKind::SpectralIndex(SpectralIndex::new(-0.7)),
+        );
+        list.push(SkyComponent::new(
+            Flux::stokes_jy(0.01, 0.0, 0.0, 0.0),
+            shape,
+            spectrum,
+        ));
+    }
+    list.write_table(path).expect("write the list");
+}
+
+/// What a `predict` held while it ran and kept after, beyond what was live
+/// before it, and what was admitted.
+#[derive(Debug, Clone, Copy)]
+struct Predicted {
+    /// The heap's peak during `predict`, and the most its reservations held.
+    during: Closed,
+    /// The heap left live after `predict`, and what its reservations keep.
+    kept: Closed,
+}
+
+/// A 20-integration scan predicted from the list at `list` under the
+/// default voltage pattern within `budget`, written to `ms` and closed: what
+/// `predict` held and kept, and what `close` held.
+fn predict_components(
+    ms: &Path,
+    list: &Path,
+    measures: &Arc<dyn MeasuresProvider>,
+    budget: u64,
+) -> (Predicted, Closed) {
+    let mut sm = configured(ms, measures, budget, COMPONENT_CHANNELS);
+    sm.observe(&scan(20)).expect("observe");
+    sm.set_vp(&VoltagePatternSpec::default()).expect("setvp");
+    let reserved = reserved_memory();
+    let baseline = LIVE.load(Ordering::Relaxed);
+    PEAK.store(baseline, Ordering::Relaxed);
+    let window = ReservationWindow::open();
+    sm.predict(&PredictSpec {
+        images: Vec::new(),
+        component_list: Some(list.to_path_buf()),
+        incremental: false,
+    })
+    .expect("predict");
+    let predicted = Predicted {
+        during: Closed {
+            heap: PEAK.load(Ordering::Relaxed) - baseline,
+            admitted: window.close() - reserved,
+        },
+        kept: Closed {
+            heap: LIVE.load(Ordering::Relaxed).saturating_sub(baseline),
+            admitted: reserved_memory() - reserved,
+        },
+    };
+    drop(window);
+    (predicted, measured_close(sm, ms, false).0)
+}
+
+/// `predict(complist=…)` admits, once the list is read, the list and what
+/// it prepares before it forms that (this PR, #841 Phase 2): while it runs,
+/// the heap stays within that admission and the allowance, and holds no
+/// more beyond it for twice the components (the list as read, some 0.6 KB a
+/// component, was held uncharged); after it, what the session keeps is what
+/// its reservation keeps. `close` adds the components into each batch in
+/// place, so it too holds no more beyond its admission for twice the
+/// components. Each list's budget is the base's and its charge, so that
+/// `close` finds the same memory free and its writer batches alike.
+#[test]
+fn predicting_components_keeps_what_it_charges_and_close_holds_its_admission() {
+    if !alone("predicting_components_keeps_what_it_charges_and_close_holds_its_admission") {
+        return;
+    }
+    let resources = resources(BUDGET_320);
+    charge_process_caches(resources.host(), resources.policy()).expect("the process caches");
+    let measures = casa_test_support::deterministic_measures_provider();
+    let root = tempfile::tempdir().expect("temporary directory");
+    let ms = root.path().join("components.ms");
+    let lists = LISTED_COMPONENTS.map(|count| {
+        let path = root.path().join(format!("{count}.cl"));
+        write_components(&path, count);
+        path
+    });
+    // Once unmeasured: state a process keeps once it has predicted, and
+    // each list's charge.
+    let charges = lists.each_ref().map(|list| {
+        predict_components(&ms, list, &measures, BUDGET_320)
+            .0
+            .kept
+            .admitted
+    });
+    let least = || Closed {
+        heap: u64::MAX,
+        admitted: 0,
+    };
+    let [few, many] = [0, 1].map(|case| {
+        let count = LISTED_COMPONENTS[case];
+        let (mut predicts, mut closes) = (least(), least());
+        for _ in 0..MEASURED_RUNS {
+            let (Predicted { during, kept }, closed) =
+                predict_components(&ms, &lists[case], &measures, BUDGET_320 + charges[case]);
+            println!(
+                "{count} components: predict held {} bytes against {} admitted and kept {} \
+                 against {} charged; close held {} against {}",
+                during.heap,
+                during.admitted,
+                kept.heap,
+                kept.admitted,
+                closed.heap,
+                closed.admitted
+            );
+            assert!(
+                kept.admitted >= count as u64 * (10_240 + 1_280),
+                "{count} components: the fluxes and powers are charged: {kept:?}"
+            );
+            assert!(
+                during.heap <= during.admitted + ALLOWANCE_BYTES,
+                "{count} components: predict held {} bytes, beyond the {} admitted and the \
+                 allowance",
+                during.heap,
+                during.admitted
+            );
+            assert!(
+                kept.unadmitted().unsigned_abs() <= ALLOWANCE_BYTES,
+                "{count} components: predict keeps {} bytes against the {} its reservation keeps",
+                kept.heap,
+                kept.admitted
+            );
+            assert!(
+                closed.heap <= closed.admitted + ALLOWANCE_BYTES,
+                "{count} components: close held {} bytes, beyond the {} admitted and the \
+                 allowance",
+                closed.heap,
+                closed.admitted
+            );
+            predicts.heap = predicts.heap.min(during.heap);
+            predicts.admitted = predicts.admitted.max(during.admitted);
+            closes.heap = closes.heap.min(closed.heap);
+            closes.admitted = closes.admitted.max(closed.admitted);
+        }
+        [predicts, closes]
+    });
+    for (step, call) in ["predict", "close"].into_iter().enumerate() {
+        let (few, many) = (few[step], many[step]);
+        println!(
+            "{} - {} components: {call} held {} bytes more beyond its admission",
+            LISTED_COMPONENTS[1],
+            LISTED_COMPONENTS[0],
+            many.unadmitted() - few.unadmitted()
+        );
+        assert!(
+            many.unadmitted() <= few.unadmitted() + SCANS_ALLOWANCE_BYTES as i64,
+            "{} components: {call} held {} bytes beyond its admission, against {} for {}",
+            LISTED_COMPONENTS[1],
+            many.unadmitted(),
+            few.unadmitted(),
+            LISTED_COMPONENTS[0]
+        );
+    }
 }

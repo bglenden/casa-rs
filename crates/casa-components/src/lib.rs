@@ -75,11 +75,22 @@
 //! `Spectral_Record`; such lists read with zero errors and with each spectral
 //! model's defaults for what only the record holds.
 //!
+//! # Visibilities
+//!
+//! [`SkyComponent::visibility`] forms a component's visibility as CASA's
+//! `SkyCompRep::visibility` does: the Stokes flux sampled by the spectral
+//! model ([`SpectralModel::sample_stokes`]), converted to the data's
+//! polarisation basis ([`stokes_in`]), times the shape's visibility
+//! ([`ComponentShape::visibility_scale`]). A limb-darkened disk's visibility
+//! and some tabular spectra are refused (the `visibility` module lists them).
+//! A predictor evaluating many baselines and channels prepares each shape's
+//! [`ShapeTransform`] once, takes it at each baseline
+//! ([`ShapeTransform::at_baseline`]) and leaves each channel a function of
+//! frequency alone ([`BaselineTransform::at_frequency`]).
+//!
 //! # Deliberately not here
 //!
-//! - **Evaluating components:** sampling a component on an image or
-//!   predicting its visibilities. The model keeps every value prediction
-//!   needs, in CASA's units and conventions.
+//! - **Sampling components on an image.**
 //! - **The `cl` tool:** CASA's `componentlist` tool and its record forms
 //!   (`torecord`, `fromrecord`, `getcomponent`), its selection state and its
 //!   in-place table rewriting.
@@ -96,6 +107,7 @@ mod list;
 mod shape;
 mod spectrum;
 mod table;
+mod visibility;
 
 pub use component::{DEFAULT_LIMB_DARKENING_EXPONENT, SkyComponent};
 pub use component_type::{Polarisation, ShapeType, SpectralType};
@@ -106,3 +118,4 @@ pub use shape::{ComponentShape, DirectionError, Ellipse, EllipseErrors, ShapeKin
 pub use spectrum::{
     PowerLogPolynomial, SpectralIndex, SpectralKind, SpectralModel, TabularSpectrum,
 };
+pub use visibility::{BaselineTransform, ShapeTransform, stokes_in};

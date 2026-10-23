@@ -486,10 +486,12 @@ impl PySimulator {
         stubs::not_yet_implemented("setdata")
     }
 
-    /// Predict the model image into the rows observed so far, replacing
-    /// their DATA or, with `incremental`, adding to it; written at `close`.
-    /// One CASA image (Stokes I, J2000) is implemented; a component list or
-    /// several images raise `NotImplementedError`.
+    /// Predict the model image and the component list into the rows observed
+    /// so far, replacing their DATA or, with `incremental`, adding to it;
+    /// written at `close`. One CASA image (Stokes I, J2000) and a CASA
+    /// component list of J2000 points, Gaussians and disks are implemented;
+    /// several images, a limb-darkened disk or another frame raise
+    /// `NotImplementedError`.
     #[pyo3(
         signature = (imagename = StringList::of(&[]), complist = "", incremental = false),
         text_signature = "($self, imagename=[], complist='', incremental=False)"

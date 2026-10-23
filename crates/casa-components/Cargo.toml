@@ -17,6 +17,7 @@ workspace = true
 [dependencies]
 casa-tables = { path = "../casa-tables" }
 casa-types = { path = "../casa-types" }
+libm = "0.2"
 ndarray.workspace = true
 num-complex.workspace = true
 thiserror.workspace = true

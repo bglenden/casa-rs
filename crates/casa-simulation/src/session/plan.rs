@@ -28,6 +28,7 @@ use std::sync::Arc;
 
 use super::prediction::Prediction;
 use crate::corrupt::NoiseApplication;
+use crate::predict::ComponentPrediction;
 
 /// One `setnoise` term: CASA's `ANoise` calibration term, kept until
 /// `reset`.
@@ -52,6 +53,15 @@ pub(crate) enum DataStep {
         /// The step covers scans `0..scans`.
         scans: usize,
     },
+    /// `predict(complist=…)`: add the component list's visibilities. A
+    /// `predict` of an image and a list records both steps, the list's
+    /// first, as CASA predicts its components first.
+    PredictComponents {
+        /// The prepared list.
+        components: Arc<ComponentPrediction>,
+        /// The step covers scans `0..scans`.
+        scans: usize,
+    },
     /// `corrupt`: add each application's noise.
     Corrupt {
         /// Its applications, one per noise term in the order the terms
@@ -66,7 +76,9 @@ impl DataStep {
     /// The step covers scans `0..scans()`.
     pub(crate) fn scans(&self) -> usize {
         match self {
-            Self::Predict { scans, .. } | Self::Corrupt { scans, .. } => *scans,
+            Self::Predict { scans, .. }
+            | Self::PredictComponents { scans, .. }
+            | Self::Corrupt { scans, .. } => *scans,
         }
     }
 }
@@ -84,6 +96,16 @@ impl DataPlan {
     /// the steps already taken.
     pub(crate) fn predict(&mut self, prediction: Arc<Prediction>, scans: usize) {
         self.push(DataStep::Predict { prediction, scans });
+    }
+
+    /// Record a `predict` of the component list `components` covering scans
+    /// `0..scans`, after the steps already taken.
+    pub(crate) fn predict_components(
+        &mut self,
+        components: Arc<ComponentPrediction>,
+        scans: usize,
+    ) {
+        self.push(DataStep::PredictComponents { components, scans });
     }
 
     /// Record a `corrupt` adding `applications` to scans `0..scans`, after
@@ -133,7 +155,7 @@ impl DataPlan {
             .iter()
             .find_map(|step| match step {
                 DataStep::Corrupt { applications, .. } => Some(applications.start),
-                DataStep::Predict { .. } => None,
+                DataStep::Predict { .. } | DataStep::PredictComponents { .. } => None,
             })
             .unwrap_or(self.noise.len());
         &self.noise[start..]
@@ -157,8 +179,29 @@ impl DataPlan {
     pub(crate) fn predictions(&self) -> impl Iterator<Item = (&Prediction, usize)> {
         self.steps.iter().filter_map(|step| match step {
             DataStep::Predict { prediction, scans } => Some((prediction.as_ref(), *scans)),
-            DataStep::Corrupt { .. } => None,
+            DataStep::PredictComponents { .. } | DataStep::Corrupt { .. } => None,
         })
+    }
+
+    /// The component lists the steps covering scan `scan` predict, in the
+    /// order they were taken: their visibilities add.
+    pub(crate) fn components_for_scan(
+        &self,
+        scan: usize,
+    ) -> impl Iterator<Item = &ComponentPrediction> {
+        self.steps_for_scan(scan)
+            .iter()
+            .filter_map(|step| match step {
+                DataStep::PredictComponents { components, .. } => Some(components.as_ref()),
+                DataStep::Predict { .. } | DataStep::Corrupt { .. } => None,
+            })
+    }
+
+    /// Whether any step predicts a component list.
+    pub(crate) fn predicts_components(&self) -> bool {
+        self.steps
+            .iter()
+            .any(|step| matches!(step, DataStep::PredictComponents { .. }))
     }
 }
 

@@ -112,6 +112,16 @@ impl BeamPattern {
             voltage * voltage
         })
     }
+
+    /// The power pattern at `separation_rad` from the pointing, at
+    /// `frequency_hz`, as `PBMath1D::apply` evaluates it for a component:
+    /// the separation in arcmin times the frequency in GHz, in `Double`,
+    /// looked up in the table, and zero beyond it.
+    pub(crate) fn power_at(&self, separation_rad: f64, frequency_hz: f64) -> f32 {
+        let radius = separation_rad.to_degrees() * 60.0 * frequency_hz / 1.0e9;
+        let voltage = self.table.evaluate(radius);
+        voltage * voltage
+    }
 }
 
 #[cfg(test)]
