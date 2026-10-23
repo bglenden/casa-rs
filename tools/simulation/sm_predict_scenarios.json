@@ -5,6 +5,7 @@
     "Model images are named relative to the oracle's --model-root. They are casa_sm_predict_oracle.py's: alma/ is 256 pixels of 0.05 arcsec centred on 10h -30d, alma-big/ 512 of 0.15 arcsec (past ALMA's primary beam at 230 GHz) centred on (0.0007615435494667714, -0.0001523087098933758) rad; model4 has one plane per channel of the 4-channel 230 GHz band, model1 one plane spanning it.",
     "vla-wide/ and vla-coarse/ are make_bench_model.py's, written from this file's 'models' section (make_bench_model.py --scenarios sm_predict_scenarios.json): 512 pixels of 10 arcsec and 256 of 60 arcsec centred on 13h +20d, one plane spanning the 4-channel 1.4 GHz band of the predict-wproject scenarios.",
     "predict-wproject-wide's sources lie 17 to 21 arcmin from the centre, where VLA D's w-terms reach about 0.4 rad: CASA's GridFT and WProjectFT predictions of it differ by 0.066 normalized RMS. Its padding of 1.5 is ignored by WProjectFT, and its autocorrelations predict zero. predict-wproject-coarse's 60 arcsec cells drop the rows whose kernels leave the grid and those beyond the largest w the planes reach (0.25/|cell|, 859 wavelengths). One plane is refused by CASA's WPConvFunc (predict returns False); no planes, or fewer, crash CASA's simulator, so no scenario has them.",
+    "The predict-vla-* and predict-evla-* scenarios apply the VLA's and the EVLA's default patterns as simobserve asks for them (setvp(dovp=True, usedefaultvp=False), squint on): the VLA's Airy pattern of spectral window 0's band (S band, between CASA's VLA bands, takes the NVSS pattern), and the EVLA's polynomial fits, one per model plane (evla-cube's four planes, 1.36 to 1.48 GHz, take the 1360, 1424, 1424 and 1488 MHz fits). Their models (vla-c/, vla-s/, vla-x/, vla-p/, evla-cube/) come from the 'models' section. The squint does not reach a Stokes I model (CASA's RR and LL agree). The EVLA scenarios name the telescope EVLA for vla.d.cfg's pads ('telescopename' in 'config').",
     "The beam is centred on the field, so the setvp scenarios observe a field at or near the model's centre; elsewhere the beam is zero on the model.",
     "Every ALMA window is the alma models' band: 230 GHz, 4 channels of 15.625 MHz. A window elsewhere maps no channel onto a model plane and predicts zero.",
     "data: 'model' scenarios compare DATA by normalized RMS; 'noisy' ones compare noisy minus noise-free (their twin) by per-class noise variance, since the draws differ; 'zero' ones check DATA is zero.",
@@ -225,10 +226,113 @@
         {"op": "setoptions", "ftmachine": "wproject", "wprojplanes": 1},
         {"op": "predict", "imagename": "vla-wide/model1.input.image"}
       ]
+    },
+    {
+      "name": "predict-vla-l-vp",
+      "data": "model",
+      "config": {"cfg": "vla.d.cfg", "mount": "alt-az"},
+      "calls": [
+        {"op": "setspwindow", "spwname": "B", "freq": "1.4GHz", "deltafreq": "1MHz", "freqresolution": "1MHz", "refcode": "TOPO", "nchannels": 4, "stokes": "RR LL"},
+        {"op": "setfeed", "mode": "perfect R L"},
+        {"op": "settimes", "integrationtime": "60s", "usehourangle": true, "referencetime": ["UTC", "2026/03/21/00:00:00"]},
+        {"op": "setfield", "sourcename": "src", "sourcedirection": ["J2000", "13h00m00.0", "+20d00m00.0"]},
+        {"op": "observe", "sourcename": "src", "spwname": "B", "starttime": "-900s", "stoptime": "900s"},
+        {"op": "setvp", "dovp": true, "usedefaultvp": false},
+        {"op": "predict", "imagename": "vla-wide/model1.input.image"}
+      ]
+    },
+    {
+      "name": "predict-vla-c-vp",
+      "data": "model",
+      "config": {"cfg": "vla.d.cfg", "mount": "alt-az"},
+      "calls": [
+        {"op": "setspwindow", "spwname": "B", "freq": "5GHz", "deltafreq": "1MHz", "freqresolution": "1MHz", "refcode": "TOPO", "nchannels": 4, "stokes": "RR LL"},
+        {"op": "setfeed", "mode": "perfect R L"},
+        {"op": "settimes", "integrationtime": "60s", "usehourangle": true, "referencetime": ["UTC", "2026/03/21/00:00:00"]},
+        {"op": "setfield", "sourcename": "src", "sourcedirection": ["J2000", "13h00m00.0", "+20d00m00.0"]},
+        {"op": "observe", "sourcename": "src", "spwname": "B", "starttime": "-900s", "stoptime": "900s"},
+        {"op": "setvp", "dovp": true, "usedefaultvp": false},
+        {"op": "predict", "imagename": "vla-c/model1.input.image"}
+      ]
+    },
+    {
+      "name": "predict-vla-s-nvss-vp",
+      "data": "model",
+      "config": {"cfg": "vla.d.cfg", "mount": "alt-az"},
+      "calls": [
+        {"op": "setspwindow", "spwname": "B", "freq": "3GHz", "deltafreq": "1MHz", "freqresolution": "1MHz", "refcode": "TOPO", "nchannels": 4, "stokes": "RR LL"},
+        {"op": "setfeed", "mode": "perfect R L"},
+        {"op": "settimes", "integrationtime": "60s", "usehourangle": true, "referencetime": ["UTC", "2026/03/21/00:00:00"]},
+        {"op": "setfield", "sourcename": "src", "sourcedirection": ["J2000", "13h00m00.0", "+20d00m00.0"]},
+        {"op": "observe", "sourcename": "src", "spwname": "B", "starttime": "-900s", "stoptime": "900s"},
+        {"op": "setvp", "dovp": true, "usedefaultvp": false},
+        {"op": "predict", "imagename": "vla-s/model1.input.image"}
+      ]
+    },
+    {
+      "name": "predict-evla-l-vp",
+      "data": "model",
+      "config": {"cfg": "vla.d.cfg", "mount": "alt-az", "telescopename": "EVLA"},
+      "calls": [
+        {"op": "setspwindow", "spwname": "B", "freq": "1.4GHz", "deltafreq": "1MHz", "freqresolution": "1MHz", "refcode": "TOPO", "nchannels": 4, "stokes": "RR LL"},
+        {"op": "setfeed", "mode": "perfect R L"},
+        {"op": "settimes", "integrationtime": "60s", "usehourangle": true, "referencetime": ["UTC", "2026/03/21/00:00:00"]},
+        {"op": "setfield", "sourcename": "src", "sourcedirection": ["J2000", "13h00m00.0", "+20d00m00.0"]},
+        {"op": "observe", "sourcename": "src", "spwname": "B", "starttime": "-900s", "stoptime": "900s"},
+        {"op": "setvp", "dovp": true, "usedefaultvp": false},
+        {"op": "predict", "imagename": "vla-wide/model1.input.image"}
+      ]
+    },
+    {
+      "name": "predict-evla-x-vp",
+      "data": "model",
+      "config": {"cfg": "vla.d.cfg", "mount": "alt-az", "telescopename": "EVLA"},
+      "calls": [
+        {"op": "setspwindow", "spwname": "B", "freq": "10GHz", "deltafreq": "1MHz", "freqresolution": "1MHz", "refcode": "TOPO", "nchannels": 4, "stokes": "RR LL"},
+        {"op": "setfeed", "mode": "perfect R L"},
+        {"op": "settimes", "integrationtime": "60s", "usehourangle": true, "referencetime": ["UTC", "2026/03/21/00:00:00"]},
+        {"op": "setfield", "sourcename": "src", "sourcedirection": ["J2000", "13h00m00.0", "+20d00m00.0"]},
+        {"op": "observe", "sourcename": "src", "spwname": "B", "starttime": "-900s", "stoptime": "900s"},
+        {"op": "setvp", "dovp": true, "usedefaultvp": false},
+        {"op": "predict", "imagename": "vla-x/model1.input.image"}
+      ]
+    },
+    {
+      "name": "predict-evla-p-vp",
+      "data": "model",
+      "config": {"cfg": "vla.d.cfg", "mount": "alt-az", "telescopename": "EVLA"},
+      "calls": [
+        {"op": "setspwindow", "spwname": "B", "freq": "0.3GHz", "deltafreq": "1MHz", "freqresolution": "1MHz", "refcode": "TOPO", "nchannels": 4, "stokes": "RR LL"},
+        {"op": "setfeed", "mode": "perfect R L"},
+        {"op": "settimes", "integrationtime": "60s", "usehourangle": true, "referencetime": ["UTC", "2026/03/21/00:00:00"]},
+        {"op": "setfield", "sourcename": "src", "sourcedirection": ["J2000", "13h00m00.0", "+20d00m00.0"]},
+        {"op": "observe", "sourcename": "src", "spwname": "B", "starttime": "-900s", "stoptime": "900s"},
+        {"op": "setvp", "dovp": true, "usedefaultvp": false},
+        {"op": "predict", "imagename": "vla-p/model1.input.image"}
+      ]
+    },
+    {
+      "name": "predict-evla-cube-vp",
+      "data": "model",
+      "config": {"cfg": "vla.d.cfg", "mount": "alt-az", "telescopename": "EVLA"},
+      "calls": [
+        {"op": "setspwindow", "spwname": "B", "freq": "1.36GHz", "deltafreq": "40MHz", "freqresolution": "40MHz", "refcode": "TOPO", "nchannels": 4, "stokes": "RR LL"},
+        {"op": "setfeed", "mode": "perfect R L"},
+        {"op": "settimes", "integrationtime": "60s", "usehourangle": true, "referencetime": ["UTC", "2026/03/21/00:00:00"]},
+        {"op": "setfield", "sourcename": "src", "sourcedirection": ["J2000", "13h00m00.0", "+20d00m00.0"]},
+        {"op": "observe", "sourcename": "src", "spwname": "B", "starttime": "-900s", "stoptime": "900s"},
+        {"op": "setvp", "dovp": true, "usedefaultvp": false},
+        {"op": "predict", "imagename": "evla-cube/model4.input.image"}
+      ]
     }
   ],
   "models": {
     "vla-wide/model1.input.image": {"ra": "13h00m00.0", "dec": "+20d00m00.0", "freq_ghz": 1.4, "chan_width_mhz": 1.0, "nchan": 4, "planes": 1, "imsize": 512, "cell_arcsec": 10.0},
-    "vla-coarse/model1.input.image": {"ra": "13h00m00.0", "dec": "+20d00m00.0", "freq_ghz": 1.4, "chan_width_mhz": 1.0, "nchan": 4, "planes": 1, "imsize": 256, "cell_arcsec": 60.0}
+    "vla-coarse/model1.input.image": {"ra": "13h00m00.0", "dec": "+20d00m00.0", "freq_ghz": 1.4, "chan_width_mhz": 1.0, "nchan": 4, "planes": 1, "imsize": 256, "cell_arcsec": 60.0},
+    "vla-c/model1.input.image": {"ra": "13h00m00.0", "dec": "+20d00m00.0", "freq_ghz": 5.0, "chan_width_mhz": 1.0, "nchan": 4, "planes": 1, "imsize": 256, "cell_arcsec": 2.0},
+    "vla-s/model1.input.image": {"ra": "13h00m00.0", "dec": "+20d00m00.0", "freq_ghz": 3.0, "chan_width_mhz": 1.0, "nchan": 4, "planes": 1, "imsize": 256, "cell_arcsec": 4.0},
+    "vla-x/model1.input.image": {"ra": "13h00m00.0", "dec": "+20d00m00.0", "freq_ghz": 10.0, "chan_width_mhz": 1.0, "nchan": 4, "planes": 1, "imsize": 256, "cell_arcsec": 1.0},
+    "vla-p/model1.input.image": {"ra": "13h00m00.0", "dec": "+20d00m00.0", "freq_ghz": 0.3, "chan_width_mhz": 1.0, "nchan": 4, "planes": 1, "imsize": 256, "cell_arcsec": 40.0},
+    "evla-cube/model4.input.image": {"ra": "13h00m00.0", "dec": "+20d00m00.0", "freq_ghz": 1.36, "chan_width_mhz": 40.0, "nchan": 4, "planes": 4, "imsize": 512, "cell_arcsec": 10.0}
   }
 }

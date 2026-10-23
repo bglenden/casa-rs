@@ -151,7 +151,7 @@ pub fn table_row_field_manifest(table: &Table, row_index: usize, ms_path: &Path)
         let value = match row.get(&name) {
             Some(value) => value,
             None => {
-                synthesized = synthesized_record(table, &name);
+                synthesized = synthesized_value(table, &name);
                 &synthesized
             }
         };
@@ -600,21 +600,39 @@ fn sorted_row_columns(table: &Table, row: &RecordValue) -> Vec<String> {
     names
 }
 
-/// The empty record a row omits for a record column.
-fn synthesized_record(table: &Table, name: &str) -> Value {
+/// The value of a field a row omits: the empty record of a record column,
+/// or, for an undefined array cell, an empty array of the column's type,
+/// which gives the manifest its type tag (its elements are not digested).
+fn synthesized_value(table: &Table, name: &str) -> Value {
     let schema = table
         .schema()
         .unwrap_or_else(|| panic!("missing row field {name} without schema"));
-    assert!(
-        matches!(
-            schema
-                .column(name)
-                .map(casa_tables::ColumnSchema::column_type),
-            Some(ColumnType::Record)
-        ),
-        "missing value for defined row field {name}"
-    );
-    Value::Record(RecordValue::default())
+    let column = schema
+        .column(name)
+        .unwrap_or_else(|| panic!("missing row field {name} not in the schema"));
+    match (column.column_type(), column.data_type()) {
+        (ColumnType::Record, _) => Value::Record(RecordValue::default()),
+        (ColumnType::Array(_), Some(data_type)) => Value::Array(empty_array(data_type)),
+        _ => panic!("missing value for defined row field {name}"),
+    }
+}
+
+/// An empty array of `data_type`.
+fn empty_array(data_type: PrimitiveType) -> ArrayValue {
+    match data_type {
+        PrimitiveType::Bool => ArrayValue::from_bool_vec(Vec::new()),
+        PrimitiveType::UInt8 => ArrayValue::from_u8_vec(Vec::new()),
+        PrimitiveType::UInt16 => ArrayValue::from_u16_vec(Vec::new()),
+        PrimitiveType::UInt32 => ArrayValue::from_u32_vec(Vec::new()),
+        PrimitiveType::Int16 => ArrayValue::from_i16_vec(Vec::new()),
+        PrimitiveType::Int32 => ArrayValue::from_i32_vec(Vec::new()),
+        PrimitiveType::Int64 => ArrayValue::from_i64_vec(Vec::new()),
+        PrimitiveType::Float32 => ArrayValue::from_f32_vec(Vec::new()),
+        PrimitiveType::Float64 => ArrayValue::from_f64_vec(Vec::new()),
+        PrimitiveType::Complex32 => ArrayValue::from_complex32_vec(Vec::new()),
+        PrimitiveType::Complex64 => ArrayValue::from_complex64_vec(Vec::new()),
+        PrimitiveType::String => ArrayValue::from_string_vec(Vec::new()),
+    }
 }
 
 fn undefined_cell_ndim(table: &Table, name: &str) -> i64 {
@@ -722,7 +740,7 @@ fn write_row_digest_for_table(
         let value = match row.get(&name) {
             Some(value) => value,
             None => {
-                synthesized = synthesized_record(table, &name);
+                synthesized = synthesized_value(table, &name);
                 &synthesized
             }
         };

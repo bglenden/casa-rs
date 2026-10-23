@@ -225,6 +225,187 @@ fn scans_count_up_and_observations_follow_add_observation() {
     assert_eq!(session.scan_count(), 3);
 }
 
+/// `observemany`'s pointings as one call: a scan per run of one field.
+fn many(pointings: &[(&str, f64, f64, Option<MDirection>)]) -> ObserveManySpec {
+    ObserveManySpec {
+        pointings: pointings
+            .iter()
+            .map(|(source, start_s, stop_s, direction)| observe::Pointing {
+                source: (*source).to_string(),
+                start_s: *start_s,
+                stop_s: *stop_s,
+                direction: direction.clone(),
+            })
+            .collect(),
+        ..ObserveManySpec::from(&scan("north", 0.0, 0.0))
+    }
+}
+
+/// `NewMSSimulator::observe` with several pointings: a new scan number at
+/// the first and at each change of field; each pointing its own start and
+/// integration count; a direction moves that pointing's phase centre, and
+/// a pointing without one keeps the previous pointing's while the field
+/// stays the same. OBSERVATION spans the first start to the last stop.
+#[test]
+fn observemany_numbers_a_scan_per_run_of_one_field() {
+    let mut session = ready(Path::new("unused.ms"));
+    session
+        .observe(&scan("south", -20.0, -10.0))
+        .expect("observe");
+    let moved = direction(151.0, 35.0);
+    session
+        .observe_many(&many(&[
+            ("north", 0.0, 10.0, None),
+            ("north", 10.0, 30.0, Some(moved.clone())),
+            ("north", 30.0, 40.0, None),
+            ("south", 40.0, 45.0, None),
+            ("north", 50.0, 60.0, None),
+        ]))
+        .expect("observemany");
+    let north = session.fields[0].direction_rad;
+    let south = session.fields[1].direction_rad;
+    let moved_rad = [151.0_f64.to_radians(), 35.0_f64.to_radians()];
+    let reference_s = REFERENCE_MJD * 86_400.0;
+    let planned = session.scans[1..]
+        .iter()
+        .map(|scan| {
+            (
+                scan.scan_number,
+                scan.field_id,
+                scan.start_s - reference_s,
+                scan.integration_count,
+                scan.phase_center_rad,
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        planned,
+        vec![
+            (2, 0, 0.0, 1, north),
+            (2, 0, 10.0, 2, moved_rad),
+            (2, 0, 30.0, 1, moved_rad),
+            (3, 1, 40.0, 1, south),
+            (4, 0, 50.0, 1, north),
+        ]
+    );
+    assert_eq!(session.observations.len(), 1, "OBSERVATION is the first's");
+    let mut added = many(&[("north", 70.0, 80.0, None), ("south", 80.0, 95.0, None)]);
+    added.add_observation = true;
+    session.observe_many(&added).expect("observemany");
+    assert_eq!(
+        session.observations[1].time_range_s,
+        [reference_s + 70.0, reference_s + 95.0]
+    );
+    assert!(
+        session.scans[6..]
+            .iter()
+            .all(|scan| scan.observation_id == 1)
+    );
+}
+
+/// CASA looks the later pointings' fields up after adding their rows;
+/// casa-rs looks every one up first and plans nothing when one is missing.
+#[test]
+fn observemany_checks_every_field_before_planning_any() {
+    let mut session = ready(Path::new("unused.ms"));
+    let (outcome, message) = refusal(session.observe_many(&many(&[
+        ("north", 0.0, 10.0, None),
+        ("west", 10.0, 20.0, None),
+    ])));
+    assert_eq!(outcome, CasaOutcome::ReturnsFalse);
+    assert_eq!(message, "   Field 1: west not yet defined");
+    let (_, message) = refusal(session.observe_many(&many(&[("west", 0.0, 10.0, None)])));
+    assert_eq!(message, "Field named west not yet defined");
+    let (outcome, _) = refusal(session.observe_many(&many(&[])));
+    assert_eq!(outcome, CasaOutcome::ReturnsFalse);
+    assert!(session.scans.is_empty() && session.observations.is_empty());
+}
+
+/// `setmosaicfield` names its fields down each column and then across, and
+/// centres the grid on the field centre: `(i − (n − 1)/2)` spacings, in
+/// right ascension divided by the centre's cos δ. Over a pole the
+/// declination folds back and the right ascension turns by π.
+#[test]
+fn setmosaicfield_centres_its_grid_on_the_field_centre() {
+    let mut session = ready(Path::new("unused.ms"));
+    let spacing = 0.5_f64.to_radians();
+    let (ra0, dec0) = (150.0_f64.to_radians(), 34.0_f64.to_radians());
+    session
+        .set_mosaic_field("mos", "C", &direction(150.0, 34.0), (3, 2), spacing, 0.0)
+        .expect("setmosaicfield");
+    let added = &session.fields[2..];
+    assert_eq!(
+        added
+            .iter()
+            .map(|field| field.name.as_str())
+            .collect::<Vec<_>>(),
+        ["mos_0", "mos_1", "mos_2", "mos_3", "mos_4", "mos_5"]
+    );
+    for (k, field) in added.iter().enumerate() {
+        let (i, j) = (k / 2, k % 2);
+        let ra = ra0 + (i as f64 - 1.0) * spacing / dec0.cos();
+        let dec = dec0 + (j as f64 - 0.5) * spacing;
+        assert!(
+            (field.direction_rad[0] - ra).abs() < 1e-12
+                && (field.direction_rad[1] - dec).abs() < 1e-12,
+            "{}: {:?}",
+            field.name,
+            field.direction_rad
+        );
+        assert_eq!(field.code, "C");
+    }
+    // A column through the north pole.
+    session
+        .set_mosaic_field("pole", "", &direction(10.0, 89.75), (1, 3), spacing, 0.0)
+        .expect("setmosaicfield");
+    let over = session.fields.last().expect("field");
+    assert!((over.direction_rad[1] - 89.75_f64.to_radians()).abs() < 1e-12);
+    // 190°, kept in (−π, π] as casacore keeps a longitude.
+    assert!((over.direction_rad[0] - (-170.0_f64).to_radians()).abs() < 1e-12);
+}
+
+/// `setdata` takes the selections that keep every row observed so far, as
+/// CASA's does when it selects them all or none (an empty selection
+/// reverts to every row); one that keeps some, or a TaQL string, is not yet
+/// implemented.
+#[test]
+fn setdata_takes_selections_that_keep_every_row() {
+    let mut session = ready(Path::new("unused.ms"));
+    session
+        .set_spectral_window(&window("CBand"))
+        .expect("second window");
+    // Nothing observed yet: every selection keeps every row.
+    session.set_data(&[0], &[0], "").expect("nothing observed");
+    session.observe(&scan("north", 0.0, 10.0)).expect("observe");
+    session
+        .observe(&scan("south", 10.0, 20.0))
+        .expect("observe");
+    for (windows, fields) in [
+        (vec![0], vec![0, 1]),
+        (vec![0, 1], vec![]),
+        (vec![], vec![]),
+        (vec![7], vec![]),
+        (vec![1], vec![]),
+        (vec![0], vec![5]),
+    ] {
+        session
+            .set_data(&windows, &fields, " ")
+            .unwrap_or_else(|error| panic!("{windows:?} {fields:?}: {error}"));
+    }
+    for (windows, fields) in [(vec![0], vec![0]), (vec![], vec![1])] {
+        let (outcome, message) = refusal(session.set_data(&windows, &fields, ""));
+        assert_eq!(
+            outcome,
+            CasaOutcome::NotYetImplemented,
+            "{windows:?} {fields:?}"
+        );
+        assert!(message.contains("1 of the 2 scans"), "{message}");
+    }
+    let (outcome, message) = refusal(session.set_data(&[0], &[0, 1], "ANTENNA1==0"));
+    assert_eq!(outcome, CasaOutcome::NotYetImplemented);
+    assert!(message.contains("msselect"), "{message}");
+}
+
 #[test]
 fn identical_states_share_a_row() {
     let mut session = ready(Path::new("unused.ms"));

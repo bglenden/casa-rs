@@ -62,7 +62,7 @@ pub(super) fn add_components(
     team.for_each_mut(&mut jobs, |_, job| {
         for components in plan.components_for_scan(job.index) {
             components.add_rows(
-                (job.scan.field_id, job.scan.spectral_window_id),
+                (job.index, job.scan.spectral_window_id),
                 job.rows.iter().map(|row| row.uvw_m),
                 job.cells,
             );

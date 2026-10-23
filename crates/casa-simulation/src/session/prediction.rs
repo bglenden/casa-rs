@@ -145,8 +145,8 @@ impl Default for PredictionOptions {
 }
 
 /// The arguments of `sm.setvp` that casa-rs reads. `skyposthreshold` and
-/// `pblimit` do not change a symmetric Airy beam's prediction through
-/// `GridFT`.
+/// `pblimit` do not change a radially symmetric beam's prediction
+/// (`PBMath1D::apply` uses the cutoff only to divide by the beam).
 #[derive(Debug, Clone, PartialEq)]
 pub struct VoltagePatternSpec {
     /// `dovp`: multiply the model by the primary beam.
@@ -157,7 +157,9 @@ pub struct VoltagePatternSpec {
     pub use_default_vp: bool,
     /// `vptable`: a voltage-pattern table, read when not `usedefaultvp`.
     pub vp_table: String,
-    /// `dosquint`: beam squint, which a symmetric Airy beam has none of.
+    /// `dosquint`: beam squint, which CASA's VLA and EVLA patterns have but
+    /// which does not reach a Stokes I model, the only one predicted
+    /// ([`PrimaryBeam`]).
     pub do_squint: bool,
     /// `parangleinc`, degrees (CASA's 360 for `[]`), logged only.
     pub parallactic_angle_increment_deg: f64,
@@ -335,6 +337,7 @@ impl Simulator {
             );
         }
         self.voltage_pattern = spec.dovp;
+        self.squint = spec.do_squint;
         Ok(())
     }
 
@@ -353,8 +356,9 @@ impl Simulator {
     ///   predict (a direction not in J2000, or a flux, spectrum or shape
     ///   casa-components does not evaluate), a near-field distance on the
     ///   last field, scans whose windows differ in correlations, or
-    ///   `setvp(dovp=True)` for a telescope without an Airy default pattern
-    ///   (VLA and EVLA among them).
+    ///   `setvp(dovp=True)` for a telescope whose default pattern casa-rs
+    ///   does not have (ALMA's, ACA's, the VLA's and the EVLA's it has) or
+    ///   for pointings `observemany` moved off their fields.
     /// - CASA's `False`: no model image ("No model images found"), or no
     ///   rows observed yet.
     /// - Raised: a scan of 3 correlations ("No such VisVector type"), or
@@ -418,6 +422,11 @@ impl Simulator {
         }
         let correlations = self.predicted_correlations()?;
         let beam = self.voltage_pattern_beam()?;
+        // The model's grids are prepared per field; a component list is
+        // predicted at each scan's own pointing.
+        if beam.is_some() && model.is_some() {
+            self.check_pointings_on_fields()?;
+        }
         let components = list
             .map(|(path, list, held)| self.prepare_components(&path, (list, held), beam))
             .transpose()?;
@@ -457,6 +466,18 @@ impl Simulator {
         (list, held_list): (ComponentList, Reservation),
         beam: Option<PrimaryBeam>,
     ) -> SimulatorResult<ComponentPrediction> {
+        // CASA squints the VLA's and EVLA's beams for a component list (RR
+        // and LL beams apart); casa-rs's patterns are unsquinted.
+        if self.squint
+            && let Some(beam) = beam.filter(|beam| beam.squints())
+        {
+            return Err(SimulatorError::not_yet_implemented(format!(
+                "predict(complist='{}') under the {beam:?} primary beam with beam squint is \
+                 not yet implemented in casa-rs (#841): CASA squints the RR and LL beams for \
+                 components; setvp(dosquint=False) predicts them unsquinted",
+                path.display()
+            )));
+        }
         if self
             .antennas
             .windows(2)
@@ -478,16 +499,28 @@ impl Simulator {
             })
             .collect();
         let pattern = beam.map(PrimaryBeam::pattern);
-        // A scan is phased on its field's direction, and the beam centred on
-        // it.
-        let fields: Vec<(usize, [f64; 2])> = self
-            .observed_fields()
-            .into_iter()
-            .map(|field| (field, self.fields[field].direction_rad))
+        // A scan is phased on its phase centre, and the beam centred on it:
+        // its field's direction unless `observemany` moved it. Scans at one
+        // centre share a pointing.
+        let mut pointings: Vec<(usize, [f64; 2])> = Vec::new();
+        let pointing_of_scan: Vec<usize> = self
+            .scans
+            .iter()
+            .map(|scan| {
+                let centre = scan.phase_center_rad.map(f64::to_bits);
+                pointings
+                    .iter()
+                    .position(|(_, known)| known.map(f64::to_bits) == centre)
+                    .unwrap_or_else(|| {
+                        pointings.push((pointings.len(), scan.phase_center_rad));
+                        pointings.len() - 1
+                    })
+            })
             .collect();
         let targets = ComponentTargets {
             windows: &windows,
-            fields: &fields,
+            pointings: &pointings,
+            pointing_of_scan: &pointing_of_scan,
             beam: pattern.as_ref(),
         };
         let resources = &self.options.resources;
@@ -552,7 +585,8 @@ impl Simulator {
     }
 
     /// The primary beam `setvp` asks for: the default pattern of OBSERVATION
-    /// row 0's telescope.
+    /// row 0's telescope at spectral window 0's REF_FREQUENCY, its start
+    /// frequency (`VPSkyJones`).
     fn voltage_pattern_beam(&self) -> SimulatorResult<Option<PrimaryBeam>> {
         if !self.voltage_pattern {
             return Ok(None);
@@ -563,18 +597,38 @@ impl Simulator {
             .map_or(self.telescope.as_str(), |observation| {
                 observation.telescope.as_str()
             });
-        let beam = PrimaryBeam::for_telescope(telescope).ok_or_else(|| {
-            let phase = if telescope == "VLA" || telescope == "EVLA" {
-                "simulation Phase 2"
-            } else {
-                "#841"
-            };
-            SimulatorError::not_yet_implemented(format!(
-                "setvp(dovp=True) for telescope {telescope} is not yet implemented in casa-rs \
-                 ({phase}); ALMA's and ACA's default patterns are"
-            ))
-        })?;
+        let reference_frequency_hz = self
+            .spectral_windows
+            .first()
+            .map_or(0.0, |window| window.start_frequency_hz);
+        let beam =
+            PrimaryBeam::for_telescope(telescope, reference_frequency_hz).ok_or_else(|| {
+                SimulatorError::not_yet_implemented(format!(
+                    "setvp(dovp=True) for telescope {telescope} is not yet implemented in \
+                     casa-rs (#841); the default patterns of ALMA, ACA, VLA and EVLA are"
+                ))
+            })?;
         Ok(Some(beam))
+    }
+
+    /// That every scan points at its field, as a primary beam centred on
+    /// each field needs. CASA centres the beam on each pointing's direction
+    /// (from POINTING), which casa-rs does not yet do for the pointings
+    /// `observemany` moves off their field.
+    fn check_pointings_on_fields(&self) -> SimulatorResult<()> {
+        let moved = self
+            .scans
+            .iter()
+            .find(|scan| scan.phase_center_rad != self.fields[scan.field_id].direction_rad);
+        match moved {
+            Some(scan) => Err(SimulatorError::not_yet_implemented(format!(
+                "predict with setvp(dovp=True) for scan {} pointed away from its field {} is \
+                 not yet implemented in casa-rs (simulation Phase 2); pointings at their \
+                 fields' centres are",
+                scan.scan_number, self.fields[scan.field_id].name
+            ))),
+            None => Ok(()),
+        }
     }
 
     /// The fields of the scans observed so far, each once, in the order

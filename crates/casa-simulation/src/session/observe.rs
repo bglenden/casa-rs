@@ -1,11 +1,16 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! `sm.settimes` and `sm.observe`: the schedule of one scan.
+//! `sm.settimes`, `sm.observe` and `sm.observemany`: the schedule of scans.
 //!
-//! `observe` records a scan; the session writes every scan's rows at
-//! `close`. The bookkeeping follows `NewMSSimulator::observe`: scan numbers
-//! continue from the last scan, an OBSERVATION row is added when asked for
-//! or when there is none, STATE rows are shared by identical states, and the
-//! integration count is `max(1, Int(0.5 + (stop − start)/Tint))`.
+//! `observe` records a scan, and `observemany` a run of pointings, each
+//! pointing a scan of its own; the session writes every scan's rows at
+//! `close`. The bookkeeping follows `NewMSSimulator::observe`, whose
+//! one-source form is `observemany` with one pointing and no direction:
+//! - scan numbers continue from the last scan, and a run of pointings of one
+//!   field shares one;
+//! - an OBSERVATION row is added when asked for or when there is none;
+//! - STATE rows are shared by identical states;
+//! - each pointing's integration count is
+//!   `max(1, Int(0.5 + (stop − start)/Tint))`.
 //!
 //! **Times honour the requested UTC** (plan decision 5). CASA adds the
 //! reference time in TAI to start and stop and stores the result in a TIME
@@ -57,6 +62,64 @@ pub struct ObserveSpec {
     pub observer: String,
     /// PROJECT (`project`).
     pub project: String,
+}
+
+/// One pointing of `sm.observemany`: a field, by name, observed from
+/// `start_s` to `stop_s`, its phase centre moved to `direction` when one is
+/// given.
+#[derive(Debug, Clone)]
+pub struct Pointing {
+    /// The field, by name (an element of `sourcenames`).
+    pub source: String,
+    /// Start, seconds, as [`ObserveSpec::start_s`] (an element of
+    /// `starttimes`).
+    pub start_s: f64,
+    /// Stop, seconds (an element of `stoptimes`).
+    pub stop_s: f64,
+    /// The pointing's phase centre (an element of `directions`). `None`
+    /// keeps the field's, or the previous pointing's when the field is the
+    /// same; casatools passes the pole for an empty direction, which
+    /// `NewMSSimulator` reads as none.
+    pub direction: Option<MDirection>,
+}
+
+/// The arguments of `sm.observemany`: its pointings, observed in order, and
+/// the window, OBSERVATION and STATE of them all.
+#[derive(Debug, Clone)]
+pub struct ObserveManySpec {
+    /// The pointings, in time order (CASA does not check it).
+    pub pointings: Vec<Pointing>,
+    /// The spectral window, by name (`spwname`).
+    pub spectral_window: String,
+    /// Add an OBSERVATION row (`add_observation`); one is added anyway when
+    /// there is none.
+    pub add_observation: bool,
+    /// The pointings' state.
+    pub state: StateSpec,
+    /// OBSERVER (`observer`).
+    pub observer: String,
+    /// PROJECT (`project`).
+    pub project: String,
+}
+
+impl From<&ObserveSpec> for ObserveManySpec {
+    /// `sm.observe`'s arguments as the one pointing `NewMSSimulator`'s
+    /// `observe` makes of them, with no direction.
+    fn from(spec: &ObserveSpec) -> Self {
+        Self {
+            pointings: vec![Pointing {
+                source: spec.source.clone(),
+                start_s: spec.start_s,
+                stop_s: spec.stop_s,
+                direction: None,
+            }],
+            spectral_window: spec.spectral_window.clone(),
+            add_observation: spec.add_observation,
+            state: spec.state.clone(),
+            observer: spec.observer.clone(),
+            project: spec.project.clone(),
+        }
+    }
 }
 
 /// `settimes` and its effects.
@@ -148,6 +211,184 @@ impl Scan {
             time += self.integration_s;
             centre
         })
+    }
+}
+
+impl super::Simulator {
+    /// `NewMSSimulator::observe`'s bookkeeping for `spec`'s pointings, each
+    /// planned as a [`Scan`] of its own:
+    /// - a new scan number at the first pointing and whenever the field
+    ///   changes, so consecutive pointings of one field share one;
+    /// - each pointing's phase centre is its direction when it has one,
+    ///   else its field's at a change of field, else the previous
+    ///   pointing's;
+    /// - the hour-angle offset is the first field's, and the OBSERVATION
+    ///   row spans the first pointing's start to the last one's stop.
+    ///
+    /// CASA adds every pointing's MAIN rows before it looks up the fields
+    /// after the first, so a missing one raises with rows left behind;
+    /// casa-rs looks every field up first and plans nothing.
+    pub(super) fn plan_pointings(&mut self, spec: &ObserveManySpec) -> SimulatorResult<()> {
+        let spectral_window_id = self.observable_window(&spec.spectral_window)?;
+        let Some((first, last)) = spec.pointings.first().zip(spec.pointings.last()) else {
+            return Err(SimulatorError::refused(
+                "observemany: no pointings to observe",
+            ));
+        };
+        if self.fields.is_empty() {
+            return Err(SimulatorError::refused("Field information not yet defined"));
+        }
+        let field_of = |name: &str| self.fields.iter().position(|field| field.name == name);
+        let first_field = field_of(&first.source).ok_or_else(|| {
+            SimulatorError::refused(format!("Field named {} not yet defined", first.source))
+        })?;
+        let mut field_ids = Vec::with_capacity(spec.pointings.len());
+        for (index, pointing) in spec.pointings.iter().enumerate() {
+            field_ids.push(field_of(&pointing.source).ok_or_else(|| {
+                SimulatorError::refused(format!(
+                    "   Field {index}: {} not yet defined",
+                    pointing.source
+                ))
+            })?);
+        }
+        let directions = spec
+            .pointings
+            .iter()
+            .map(|pointing| {
+                pointing
+                    .direction
+                    .as_ref()
+                    .map(|direction| self.j2000_rad(direction, "pointing direction"))
+                    .transpose()
+            })
+            .collect::<SimulatorResult<Vec<_>>>()?;
+        let first_direction_rad = self.fields[first_field].direction_rad;
+        tracing::info!(
+            "First source: {} @ {first_direction_rad:?}",
+            self.fields[first_field].name
+        );
+
+        let integration_s = self.times.integration_s;
+        if integration_s <= 0.0 {
+            return Err(SimulatorError::refused(
+                "observe: the integration time must be positive",
+            ));
+        }
+        if self.times.use_hour_angle && self.times.hour_angle_offset_s.is_none() {
+            self.times.hour_angle_offset_s = Some(hour_angle_offset_s(
+                first_direction_rad,
+                &self.times.reference,
+                self.antennas[0].position_itrf_m,
+                self.options.measures.clone(),
+            )?);
+        }
+        let offset_s = if self.times.use_hour_angle {
+            self.times.hour_angle_offset_s.unwrap_or(0.0)
+        } else {
+            0.0
+        };
+        let reference_s = self.times.reference_utc_s();
+        let utc_s = move |seconds: f64| seconds + reference_s + offset_s;
+        let (start_s, stop_s) = (utc_s(first.start_s), utc_s(last.stop_s));
+        tracing::info!("Full time range: {start_s} -- {stop_s} UTC with int = {integration_s}");
+
+        let observation_id = self.observation_for(spec, [start_s, stop_s]);
+        let state_id = match self.states.iter().rposition(|state| *state == spec.state) {
+            Some(existing) => existing,
+            None => {
+                self.states.push(spec.state.clone());
+                self.states.len() - 1
+            }
+        };
+        let mut scan_number = self.scans.last().map_or(0, |scan| scan.scan_number);
+        let mut phase_center_rad = first_direction_rad;
+        let mut integrations = 0;
+        for (index, pointing) in spec.pointings.iter().enumerate() {
+            let field_id = field_ids[index];
+            if index == 0 || pointing.source != spec.pointings[index - 1].source {
+                scan_number += 1;
+                phase_center_rad = self.fields[field_id].direction_rad;
+            }
+            if let Some(direction) = directions[index] {
+                phase_center_rad = direction;
+            }
+            let start_s = utc_s(pointing.start_s);
+            let integration_count =
+                integration_count(start_s, utc_s(pointing.stop_s), integration_s);
+            integrations += integration_count;
+            self.scans.push(Scan {
+                scan_number,
+                field_id,
+                spectral_window_id,
+                start_s,
+                integration_s,
+                integration_count,
+                observation_id,
+                state_id,
+                antenna_count: self.antennas.len(),
+                phase_center_rad,
+                autocorrelation_weight: self.autocorrelation_weight,
+                elevation_limit_rad: self.elevation_limit_rad,
+                shadow_fraction_limit: self.shadow_fraction_limit,
+            });
+        }
+        tracing::info!("Calculating a total of {integrations} integrations");
+        Ok(())
+    }
+
+    /// The checks `NewMSSimulator::observe` makes before its fields, and
+    /// the default feeds it sets: antennas, feeds as one per antenna, and
+    /// the spectral window named `name`, whose index it returns.
+    fn observable_window(&mut self, name: &str) -> SimulatorResult<usize> {
+        if self.antennas.is_empty() {
+            return Err(SimulatorError::refused(
+                "Antenna information not yet defined",
+            ));
+        }
+        if !self.feeds_set && self.feeds.is_empty() {
+            tracing::warn!("Feeds have not been set - using default perfect R L");
+            self.feeds = super::feeds::perfect_feeds("perfect R L", self.antennas.len());
+        }
+        if !self.times.set {
+            tracing::warn!("Times have not been set - using defaults");
+            tracing::warn!("     Times will be interpreted as hour angles for first source");
+        }
+        if self.feeds.len() != self.antennas.len() {
+            return Err(SimulatorError::refused(
+                "Feed table format is incompatible with existing code of NewMSSimulator::observe",
+            ));
+        }
+        if self.spectral_windows.is_empty() {
+            return Err(SimulatorError::refused(
+                "Spectral window information not yet defined",
+            ));
+        }
+        self.spectral_windows
+            .iter()
+            .position(|window| window.name == name)
+            .ok_or_else(|| {
+                SimulatorError::refused(format!("Spectral window named {name} not yet defined"))
+            })
+    }
+
+    /// The OBSERVATION_ID of a planned observation spanning `time_range_s`:
+    /// a new OBSERVATION row when `spec` asks for one or there is none,
+    /// numbered one past the largest OBSERVATION_ID in MAIN so far, else 0.
+    fn observation_for(&mut self, spec: &ObserveManySpec, time_range_s: [f64; 2]) -> i32 {
+        if !spec.add_observation && !self.observations.is_empty() {
+            return 0;
+        }
+        self.observations.push(Observation {
+            telescope: self.telescope.clone(),
+            time_range_s,
+            observer: spec.observer.clone(),
+            project: spec.project.clone(),
+        });
+        self.scans
+            .iter()
+            .map(|scan| scan.observation_id)
+            .max()
+            .map_or(0, |largest| largest + 1)
     }
 }
 

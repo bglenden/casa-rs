@@ -78,13 +78,17 @@ pub(crate) enum ComponentRefusal {
     NotYetImplemented(String),
 }
 
-/// What a component list is predicted into: the session's windows, its
-/// observed fields (`(field id, J2000 direction rad)`), and the primary
-/// beam with `setvp(dovp=True)`.
+/// What a component list is predicted into: the session's windows, the
+/// distinct pointings of its scans (`(pointing, J2000 phase centre rad)`),
+/// each scan's pointing, and the primary beam with `setvp(dovp=True)`. A
+/// scan is phased, and the beam centred, on its phase centre, which
+/// `observemany` can move off the scan's field.
 #[derive(Clone, Copy)]
 pub(crate) struct ComponentTargets<'a> {
     pub(crate) windows: &'a [ComponentWindow],
-    pub(crate) fields: &'a [(usize, [f64; 2])],
+    pub(crate) pointings: &'a [(usize, [f64; 2])],
+    /// `[scan]`: the scan's pointing.
+    pub(crate) pointing_of_scan: &'a [usize],
     pub(crate) beam: Option<&'a BeamPattern>,
 }
 
@@ -98,7 +102,12 @@ impl ComponentTargets<'_> {
             .map(|window| window.channels * window.correlations.len())
             .sum();
         let channels: usize = self.windows.iter().map(|window| window.channels).sum();
-        let field_slots = self.fields.iter().map(|(id, _)| id + 1).max().unwrap_or(0);
+        let field_slots = self
+            .pointings
+            .iter()
+            .map(|(id, _)| id + 1)
+            .max()
+            .unwrap_or(0);
         let per_field = components * size_of::<GridFtProjection>()
             + self.beam.map_or(0, |_| {
                 self.windows.len() * size_of::<Vec<f32>>()
@@ -107,7 +116,8 @@ impl ComponentTargets<'_> {
         (components * (size_of::<ShapeTransform>() + samples * size_of::<Complex64>())
             + self.windows.len() * size_of::<PreparedWindow>()
             + field_slots * size_of::<Option<FieldTerms>>()
-            + self.fields.len() * per_field) as u64
+            + self.pointings.len() * per_field
+            + size_of_val(self.pointing_of_scan)) as u64
     }
 
     /// Bytes [`ComponentPrediction::new`] holds only while it prepares
@@ -123,8 +133,10 @@ pub(crate) struct ComponentPrediction {
     /// Each component's shape transform.
     transforms: Vec<ShapeTransform>,
     windows: Vec<PreparedWindow>,
-    /// `[field]`: an observed field's terms, `None` for one not observed.
+    /// `[pointing]`: a pointing's terms, `None` for one not prepared.
     fields: Vec<Option<FieldTerms>>,
+    /// `[scan]`: the scan's pointing.
+    of_scan: Vec<usize>,
     /// The bytes [`Self::bytes`] counts, admitted before they were formed
     /// and held with them.
     _reservation: Reservation,
@@ -192,13 +204,13 @@ impl ComponentPrediction {
             .map(|window| prepare_window(components, window))
             .collect::<Result<Vec<_>, _>>()?;
         let slots = targets
-            .fields
+            .pointings
             .iter()
             .map(|(id, _)| id + 1)
             .max()
             .unwrap_or(0);
         let mut fields: Vec<Option<FieldTerms>> = (0..slots).map(|_| None).collect();
-        for &(field, direction) in targets.fields {
+        for &(field, direction) in targets.pointings {
             let projections = directions_rad
                 .iter()
                 .map(|component| GridFtProjection::between_j2000_directions(direction, *component))
@@ -228,13 +240,14 @@ impl ComponentPrediction {
             transforms,
             windows,
             fields,
+            of_scan: targets.pointing_of_scan.to_vec(),
             _reservation: reservation,
         })
     }
 
     /// Bytes the prediction holds beside the list it was read from: its
-    /// fluxes, the beam's powers, the shapes' transforms and the fields'
-    /// rotations.
+    /// fluxes, the beam's powers, the shapes' transforms, the pointings'
+    /// rotations and the scans' pointings.
     pub(crate) fn bytes(&self) -> u64 {
         let windows: usize = self
             .windows
@@ -261,25 +274,31 @@ impl ComponentPrediction {
                     })
             })
             .sum();
-        (self.transforms.len() * size_of::<ShapeTransform>() + windows + fields) as u64
+        (self.transforms.len() * size_of::<ShapeTransform>()
+            + windows
+            + fields
+            + self.of_scan.len() * size_of::<usize>()) as u64
     }
 
     /// Add to `out` the visibilities of `rows` (each row's raw uvw in
-    /// metres) of a scan of `field` in window `window`. `out` holds the
-    /// rows' samples back to back, `[row][channel][correlation]`.
+    /// metres) of scan `scan` in window `window`, at the scan's pointing.
+    /// `out` holds the rows' samples back to back,
+    /// `[row][channel][correlation]`.
     pub(crate) fn add_rows(
         &self,
-        (field, window): (usize, usize),
+        (scan, window): (usize, usize),
         rows: impl Iterator<Item = [f64; 3]>,
         out: &mut [Complex32],
     ) {
-        let Some(terms) = self.fields.get(field).and_then(Option::as_ref) else {
+        let Some(terms) = self
+            .of_scan
+            .get(scan)
+            .and_then(|&pointing| self.fields.get(pointing))
+            .and_then(Option::as_ref)
+        else {
             // A prediction covers the scans observed before it, whose
-            // fields it prepared.
-            debug_assert!(
-                false,
-                "field {field} was not observed before the prediction"
-            );
+            // pointings it prepared.
+            debug_assert!(false, "scan {scan} was not observed before the prediction");
             return;
         };
         let prepared = &self.windows[window];

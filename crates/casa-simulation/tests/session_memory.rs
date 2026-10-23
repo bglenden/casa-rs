@@ -1098,7 +1098,15 @@ fn components_hold_their_admission(
     };
     let [(few, few_beyond), (many, many_beyond)] = [0, 1].map(|case| {
         let count = counts[case];
-        let (mut predicts, mut closes, mut least_beyond) = (least(), least(), i64::MAX);
+        // `close`'s peak depends on whether the band writer's I/O thread
+        // still holds a band when the next fills, which varies from run to
+        // run on a loaded host (59.2 or 61.4 MB here on CI), so its worst run
+        // is compared: a per-component cost raises every run alike.
+        let most = Closed {
+            heap: 0,
+            admitted: 0,
+        };
+        let (mut predicts, mut closes, mut least_beyond) = (least(), most, i64::MAX);
         for _ in 0..MEASURED_RUNS {
             let (
                 Predicted {
@@ -1156,7 +1164,7 @@ fn components_hold_their_admission(
             );
             predicts.heap = predicts.heap.min(during.heap);
             predicts.admitted = predicts.admitted.max(during.admitted);
-            closes.heap = closes.heap.min(closed.heap);
+            closes.heap = closes.heap.max(closed.heap);
             closes.admitted = closes.admitted.max(closed.admitted);
         }
         ([predicts, closes], least_beyond)

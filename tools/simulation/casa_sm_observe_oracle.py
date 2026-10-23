@@ -89,7 +89,9 @@ def resolve_config(config: dict, args: argparse.Namespace, me) -> dict:
         x, y, z, diam, pads, names, telescope, posobs = util.readantenna(path)
         position = me.measure(posobs, "ITRF")
         kwargs = dict(
-            telescopename=telescope,
+            # A configuration may name another telescope for the same pads
+            # (EVLA for a VLA .cfg).
+            telescopename=config.get("telescopename", telescope),
             x=list(map(float, x)),
             y=list(map(float, y)),
             z=list(map(float, z)),
@@ -165,6 +167,19 @@ def resolve_call(call: dict, me, qa) -> tuple[str, dict, dict]:
         kwargs["sourcedirection"] = direction
         j2000 = me.measure(direction, "J2000")
         resolved["sourcedirection"] = [j2000["m0"]["value"], j2000["m1"]["value"]]
+    # observemany's lists: times as seconds, and each direction (a string,
+    # as CASA takes it) as J2000 radians, or None where it is empty.
+    for key in ("starttimes", "stoptimes"):
+        if key in kwargs:
+            resolved[key] = [qa.convert(qa.quantity(value), "s")["value"] for value in kwargs[key]]
+    if "directions" in kwargs:
+        resolved["directions"] = []
+        for text in kwargs["directions"]:
+            if not text:
+                resolved["directions"].append(None)
+                continue
+            j2000 = me.measure(me.direction(*text.split()), "J2000")
+            resolved["directions"].append([j2000["m0"]["value"], j2000["m1"]["value"]])
     if "referencetime" in kwargs:
         epoch = me.epoch(*kwargs["referencetime"])
         kwargs["referencetime"] = epoch

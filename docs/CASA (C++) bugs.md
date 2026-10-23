@@ -9,7 +9,8 @@ CASA behaviours casa-rs follows for parity:
 [MatrixCleaner's stop iteration](#matrixcleaner-counts-the-iteration-that-stops-it),
 [exact peak comparisons](#peak-searches-let-rounding-choose-between-equal-pixels),
 [multi-term weight normalization](#the-multi-term-weight-normalization-override-is-never-called),
-[the Airy beam's blockage term](#the-airy-beams-blockage-term-uses-the-inverse-length-ratio).
+[the Airy beam's blockage term](#the-airy-beams-blockage-term-uses-the-inverse-length-ratio),
+[the EVLA's 11052 MHz fit](#the-evlas-beam-table-has-no-11052-mhz-fit).
 CASA behaviours casa-rs does not follow:
 [odd-size scale convolutions](#multiscale-and-multi-term-scale-convolutions-shift-by-a-pixel-on-odd-image-sizes),
 [MatrixCleaner's step residual](#matrixcleaners-step-residual-forgets-earlier-steps),
@@ -30,7 +31,11 @@ Simulator behaviours casa-rs does not follow:
 [the measures tool's default frame](#the-measures-tool-converts-with-a-frame-at-mjd-0-and-the-geocentre),
 [the model `predict` rewrites](#smpredict-rewrites-the-model-image),
 [models the simulator cannot read](#smpredict-accepts-models-the-simulator-cannot-read),
+[`setmosaicfield`'s off-centre grid](#setmosaicfield-sits-its-grid-off-the-field-centre),
+[`observemany`'s rows before an unknown field](#observemany-adds-rows-before-it-looks-up-later-fields),
 [W projection without planes](#smpredict-through-wprojectft-without-planes-crashes-the-simulator).
+Simulator behaviours casa-rs follows:
+[`observemany`'s padded single name](#observemany-pads-one-name-with-empty-ones).
 Component-list behaviours casa-rs does not follow:
 [a limb-darkened disk without an exponent](#writing-a-limb-darkened-disk-without-an-exponent-aborts-casa),
 [a negative component under the primary beam](#a-negative-component-turns-positive-under-the-primary-beam),
@@ -693,6 +698,70 @@ the beam and the spectrum at each channel's own frequency. With the beam,
 RMS, against 1.3e-5 or better without it: consistent in size with this
 shift, though the shift was not isolated.
 
+## `setmosaicfield` sits its grid off the field centre
+
+- Date noted: 2026-10-23
+- Status: CASA bug; casa-rs does not follow it (#841 Phase 2, plan §4
+  "Diverged and recorded")
+- Affected code: `synthesis/MeasurementEquations/Simulator.cc`
+  (`setmosaicfield`, lines 849-901)
+
+`setmosaicfield` tests for an odd count with `(nx/2)!=floor(nx/2)` on
+integers. That is always false, so every grid takes the even-count offsets.
+Those offsets, `(i − ceil(nx/2)) − 0.5` spacings in right ascension and
+`(j − ceil(ny/2.0)) − 0.5` in declination, count `i` and `j` from zero where
+one was meant.
+
+Measured with CASA 6.7.6 at 1′ spacing:
+- **3 × 3:** right ascension offsets −1.5, −0.5 and +0.5 spacings;
+  declination offsets −2.5, −1.5 and −0.5.
+- **2 × 2:** −1.5 and −0.5 spacings on both axes.
+
+A centred grid would be at −1, 0 and +1, and at ±0.5.
+
+Over a pole, CASA also sets the right ascension to `|π − α|`, where crossing
+the pole adds π.
+
+casa-rs centres every grid: offsets `(i − (n − 1)/2)` spacings, right
+ascension divided by the centre's cos δ. It crosses a pole as the sphere
+does. The fields keep CASA's names, `{sourcename}_{k}`, numbered down each
+column and then across.
+
+## `observemany` pads one name with empty ones
+
+- Date noted: 2026-10-23
+- Status: CASA bug; casa-rs follows its outcome (#841 Phase 2)
+- Affected code: `casatools/src/tools/simulator/simulator_cmpt.cc`
+  (`observemany`, lines 318-326)
+
+casatools means one source name, or one direction, to stand for every
+pointing. It grows the list with `Vector<String>::resize(nptg, true)`, which
+keeps the existing elements and default-constructs the rest, so the new
+entries are empty strings, not copies. With one name and several pointings,
+pointing 1's field is `""`. `NewMSSimulator::observe` raises "Field 1:  not
+yet defined", and `sm.observemany` logs it and returns False (measured with
+CASA 6.7.6). With one direction, the later pointings have none, and each
+keeps the previous pointing's phase centre while the field stays the same.
+
+`casars.tools.simulator` pads the lists the same way, so it returns the same
+False, and moves only the first pointing. Unlike CASA, it adds no rows
+before refusing (next entry).
+
+## `observemany` adds rows before it looks up later fields
+
+- Date noted: 2026-10-23
+- Status: CASA bug; casa-rs does not follow it (#841 Phase 2)
+- Affected code: `ms/MSOper/NewMSSimulator.cc` (`observe`, the vector
+  form)
+
+`observe` adds every pointing's MAIN rows (`ms_p->addRow(nNewRows)`) before
+its pointing loop. It looks up the first pointing's field before that, but
+each later field only when the loop reaches it. A later field that is not
+defined raises with the rows already added: their FIELD_ID, TIME and UVW are
+unwritten, and the call returns False. casa-rs looks up every pointing's
+field before it plans anything, so the same call returns False with the
+same message and leaves no rows.
+
 ## `sm.predict` through `WProjectFT` without planes crashes the simulator
 
 - Date noted: 2026-10-23
@@ -720,3 +789,20 @@ What casa-rs follows of the same machine:
 - Autocorrelations predict zero, since the machine is built with `usezero`
   off.
 - Rows beyond the largest w the planes reach (`0.25/|cell|`) predict zero.
+
+## The EVLA's beam table has no 11052 MHz fit
+
+- Date noted: 2026-10-23
+- Status: likely CASA bug; casa-rs follows it for parity (#841 Phase 2)
+- Affected code: `synthesis/TransformMachines/PBMath1DEVLA.cc` (`init`,
+  line 320)
+
+`PBMath1DEVLA::init` fills its map of polynomial beam fits by frequency, in
+MHz, one 128 MHz step at a time. In X band the sequence runs 10948, then
+10052, then 11180: the second 10052 was meant for 11052. Through
+`std::map::operator[]` it replaces the first 10052 fit, so the map has no
+11052 entry. The 10052 MHz frequencies use the fit meant for 11052, and
+those near 11052 MHz take a neighbour's. The coefficients differ by about 1%
+in the linear term, which moves the beam by a few 1e-3 at its half power.
+casa-rs's table (`casa_numerics::EvlaPowerPattern`, shared by the
+simulator and imaging) is CASA's map as built.

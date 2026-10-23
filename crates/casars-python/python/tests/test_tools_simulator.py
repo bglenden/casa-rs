@@ -42,12 +42,12 @@ REFERENCE = "UTC 2020/01/01/00:00:00"
 
 IMPLEMENTED = {
     "open", "close", "done", "name", "type", "summary", "setconfig", "setfeed",
-    "setspwindow", "setfield", "settimes", "setlimits", "setauto", "observe",
-    "setseed", "setnoise", "corrupt", "reset", "predict", "setoptions", "setvp",
+    "setspwindow", "setfield", "setmosaicfield", "settimes", "setlimits", "setauto",
+    "observe", "observemany", "setdata", "setseed", "setnoise", "corrupt", "reset",
+    "predict", "setoptions", "setvp",
 }
 NOT_YET_IMPLEMENTED = {
-    "openfromms", "observemany", "setmosaicfield", "setdata", "setapply", "setgain",
-    "settrop", "setleakage",
+    "openfromms", "setapply", "setgain", "settrop", "setleakage",
 }
 DISABLED_IN_CASA = {"setbandpass", "setpa", "setpointingerror"}
 
@@ -190,9 +190,9 @@ def test_the_bundle_describes_the_class_signatures() -> None:
     )
 
 
-def configure(sm: simulator, *, autocorrelations: bool = True) -> None:
+def configure(sm: simulator, *, autocorrelations: bool = True, telescope: str = "VLA") -> None:
     assert sm.setconfig(
-        telescopename="VLA", x=X, y=Y, z=Z, dishdiameter=[25.0], mount=["ALT-AZ"],
+        telescopename=telescope, x=X, y=Y, z=Z, dishdiameter=[25.0], mount=["ALT-AZ"],
         antname=["A1", "A2", "A3", "A4"], padname=["P1", "P2", "P3", "P4"],
         coordsystem="global",
     )
@@ -399,6 +399,106 @@ def test_vector_arguments_take_scalars_and_sequences(tmp_path: Path) -> None:
     sm.close()
     antennas = Table.open(tmp_path / "x.ms" / "ANTENNA")
     assert antennas.get_column("NAME") == ["A", "A"]
+
+
+@needs_measures
+def test_observemany_writes_a_scan_per_run_of_one_field(tmp_path: Path) -> None:
+    sm = opened(tmp_path)
+    configure(sm, autocorrelations=False)
+    assert sm.setfield(sourcename="G", sourcedirection="J2000 23h40m00 30d00m00")
+    # F twice, the second pointing moved off F's centre; then G.
+    assert sm.observemany(
+        sourcenames=["F", "F", "G"], spwname="L", starttimes=["0s", "10s", "20s"],
+        stoptimes=["10s", "20s", "30s"], directions=["", "J2000 23h30m30 34d00m00", ""],
+    )
+    sm.close()
+    main = Table.open(tmp_path / "x.ms")
+    # 4 antennas, no autocorrelations: 6 baselines in each of 3 integrations.
+    assert main.row_count == 18
+    scans = main.get_column("SCAN_NUMBER")
+    fields = main.get_column("FIELD_ID")
+    assert list(scans) == [1] * 12 + [2] * 6
+    assert list(fields) == [0] * 12 + [1] * 6
+    # POINTING follows each pointing's phase centre: F's, the moved one, G's.
+    directions = np.asarray(Table.open(tmp_path / "x.ms" / "POINTING").get_column("DIRECTION"))
+    pointed = {tuple(np.round(cell.reshape(2), 9)) for cell in directions}
+    moved = (round(np.radians(352.625 - 360.0), 9), round(np.radians(34.0), 9))
+    f_centre = (round(np.radians(352.5 - 360.0), 9), round(np.radians(34.0), 9))
+    g_centre = (round(np.radians(355.0 - 360.0), 9), round(np.radians(30.0), 9))
+    assert pointed == {f_centre, moved, g_centre}
+
+
+@needs_measures
+def test_observemany_pads_one_name_as_casa_does_and_raises_for_mismatched_lists(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    sm = opened(tmp_path)
+    configure(sm)
+    # casatools pads one name with empty ones (casacore's Vector::resize), so
+    # the second pointing's field is "" and CASA returns False; casa-rs plans
+    # nothing, where CASA has already added rows.
+    with caplog.at_level(logging.ERROR, logger=LOGGER):
+        assert sm.observemany(
+            sourcenames="F", spwname="L", starttimes=["0s", "10s"], stoptimes=["10s", "20s"]
+        ) is False
+    assert "Field 1:  not yet defined" in caplog.text
+    # One direction is padded the same way: only the first pointing moves.
+    assert sm.observemany(
+        sourcenames=["F", "F"], spwname="L", starttimes=["0s", "10s"],
+        stoptimes=["10s", "20s"], directions=["J2000 23h30m30 34d00m00"],
+    )
+    with pytest.raises(RuntimeError, match="AlwaysAssert"):
+        sm.observemany(
+            sourcenames=["F"], spwname="L", starttimes=["0s", "10s"], stoptimes=["10s"]
+        )
+    with pytest.raises(RuntimeError, match="AlwaysAssert"):
+        sm.observemany(
+            sourcenames=["F", "F", "F"], spwname="L", starttimes=["0s", "10s"],
+            stoptimes=["10s", "20s"],
+        )
+    sm.close()
+    assert len(set(Table.open(tmp_path / "x.ms").get_column("SCAN_NUMBER"))) == 1
+
+
+@needs_measures
+def test_setdata_takes_a_selection_of_every_row(tmp_path: Path) -> None:
+    sm = opened(tmp_path)
+    configure(sm)
+    assert sm.setfield(sourcename="G", sourcedirection="J2000 23h40m00 30d00m00")
+    assert sm.observe("F", "L", starttime="0s", stoptime="10s")
+    assert sm.observe("G", "L", starttime="10s", stoptime="20s")
+    # simobserve's selections: every field, or none.
+    assert sm.setdata(fieldid=list(range(2)))
+    assert sm.setdata(fieldid=[])
+    assert sm.setdata(spwid=0, fieldid=(0, 1), msselect="")
+    with pytest.raises(NotImplementedError, match="1 of the 2 scans"):
+        sm.setdata(fieldid=[1])
+    with pytest.raises(NotImplementedError, match="msselect"):
+        sm.setdata(fieldid=[0, 1], msselect="ANTENNA1==0")
+    with pytest.raises(TypeError):
+        sm.setdata(fieldid="0")
+    sm.close()
+
+
+@needs_measures
+def test_setmosaicfield_adds_a_grid_centred_on_its_centre(tmp_path: Path) -> None:
+    sm = opened(tmp_path)
+    configure(sm)
+    assert sm.setmosaicfield(
+        sourcename="M", fieldcenter=DIRECTION, xmosp=3, ymosp=1, mosspacing="1arcmin"
+    )
+    assert sm.observe("M_1", "L", starttime="0s", stoptime="10s")
+    sm.close()
+    fields = Table.open(tmp_path / "x.ms" / "FIELD")
+    assert fields.get_column("NAME") == ["F", "M_0", "M_1", "M_2"]
+    centres = np.asarray(fields.get_column("PHASE_DIR")).reshape(4, 2)
+    ra = np.unwrap(centres[1:, 0])
+    dec = centres[1:, 1]
+    spacing = np.radians(1.0 / 60.0) / np.cos(np.radians(34.0))
+    # The middle field sits on the centre; its neighbours a spacing either side.
+    assert np.allclose(centres[2], centres[0], atol=1e-12)
+    assert np.allclose(np.diff(ra), spacing, atol=1e-12)
+    assert np.allclose(dec, np.radians(34.0), atol=1e-12)
 
 
 @needs_measures
@@ -700,6 +800,39 @@ def test_wproject_predicts_and_refuses_as_casa_does(
     assert caplog.messages == ["Caught exception: Convolution function integral is not positive"]
     assert sm.setoptions(ftmachine="wproject", wprojplanes=0) is True
     with pytest.raises(RuntimeError, match="at least two planes"):
+        sm.predict(imagename=str(model))
+    sm.close()
+
+
+@needs_measures
+def test_setvp_applies_the_vla_and_evla_default_patterns(tmp_path: Path) -> None:
+    # The VLA's Airy pattern of window 0's band and the EVLA's polynomial
+    # fits differ; neither squints a Stokes I model, so RR and LL agree.
+    model = sky_model(tmp_path)
+
+    def predicted(name: str, telescope: str) -> np.ndarray:
+        sm = simulator()
+        sm.open(str(tmp_path / name))
+        configure(sm, telescope=telescope)
+        assert sm.observe("F", "L", starttime="0s", stoptime="60s")
+        assert sm.setvp(dovp=True, usedefaultvp=False) is True
+        assert sm.predict(imagename=str(model)) is True
+        sm.close()
+        return np.asarray(Table.open(tmp_path / name).get_column("DATA"))
+
+    vla = predicted("vla.ms", "VLA")
+    evla = predicted("evla.ms", "EVLA")
+    for data in (vla, evla):
+        assert np.abs(data).max() > 0
+        # DATA is [row, correlation, channel]: RR and LL.
+        assert np.array_equal(data[:, 0, :], data[:, 1, :])
+    assert not np.allclose(vla, evla)
+
+    sm = opened(tmp_path)
+    configure(sm, telescope="SMA")
+    assert sm.observe("F", "L", starttime="0s", stoptime="30s")
+    assert sm.setvp() is True
+    with pytest.raises(NotImplementedError, match="SMA"):
         sm.predict(imagename=str(model))
     sm.close()
 

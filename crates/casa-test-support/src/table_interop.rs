@@ -139,6 +139,21 @@ pub fn run_cc_only(fixture: &TableFixture) -> Option<MatrixCellResult> {
     fixture.cpp_fixture.map(run_cc)
 }
 
+/// Run CC and CR for a layout casa-rs reads but does not write: casacore
+/// writes the fixture's table and verifies it, and casa-rs reads it.
+/// Empty if C++ is unavailable or the fixture has no C++ side.
+pub fn run_read_cross_matrix(
+    fixture: &TableFixture,
+    manager: ManagerKind,
+) -> Vec<MatrixCellResult> {
+    match fixture.cpp_fixture {
+        Some(cpp_fix) if crate::casacore_oracle_available() => {
+            vec![run_cc(cpp_fix), run_cr(fixture, manager, cpp_fix)]
+        }
+        _ => Vec::new(),
+    }
+}
+
 /// Run the full 2x2 matrix including CR and RC.
 /// Only call this once the Rust storage format is casacore-compatible.
 pub fn run_full_cross_matrix(
