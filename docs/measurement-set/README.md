@@ -43,6 +43,11 @@ Step 04 now expands the nested data group into a
 [concrete numeric batch](contracts.md#concrete-batch-example), with selectable
 visibility/flag/weight elements and explicit
 [autocorrelation scalar semantics](contracts.md#autocorrelations-and-real-valued-data).
+It distinguishes [buffer ownership from array views](contracts.md#buffer-ownership-and-array-views):
+the batch carries actual numerical data, and a borrowed view provides direct
+access without copying. [Using `ndarray`](contracts.md#using-ndarray) is the
+proposed starting point, with thin scientific types and M1 checks for buffer
+reuse, ownership transfer and performance; concrete types remain open for review.
 The owner also requires [native Measures types and bulk conversion](contracts.md#shared-measures-types-and-bulk-conversion),
 authorizing substantial Measures refactoring. The revised ownership keeps those
 types and conversions in the Measures foundation, directly used by the batch.

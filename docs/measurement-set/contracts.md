@@ -397,13 +397,63 @@ struct DataGroupView<'a> {
 }
 ```
 
-These are views of the **actual numeric buffers used for computation**. Before
-delivery, the source completes the requested read/decode/packing needed by that
-batch. Accessing a visibility, flag or weight through a delivered view does not
-perform backend I/O or decode a chunk. Buffers may belong to the caller or the
-session; the batch's borrow keeps them valid until the consumer releases it.
-The nested `groups` field supplies the payload arrays, not just their catalogue
+### Buffer ownership and array views
+
+The batch carries the **actual numerical data**, accessed through typed array
+views. A view is a borrowed reference into an existing numeric buffer, with
+shape and element strides. It can cover the whole array or a rectangular/strided
+subset; making such a view does not copy its elements. Indexing it reads the
+stored value directly. Arbitrary gathers require the explicit index/packing
+representation described above; a regular strided view cannot express every
+selection.
+
+Before delivery, the source completes the requested read/decode/conversion/
+packing needed by that batch. Accessing a visibility, flag or weight through a
+delivered view does not perform backend I/O or decode a chunk. The backing
+buffers may belong to the caller, session or an admitted work unit; the borrowed
+`VisibilityBatch<'a>` need not itself own their allocations. Its lifetime keeps
+the storage valid and prevents refill while the borrow is live. The nested
+`groups` field supplies access to the payload arrays, not just their catalogue
 descriptions. Dispatch on type/layout happens outside the numerical loop.
+
+For independent workers, transfer the buffer owner or share read-only storage
+under the lifetime rules in section 5, then borrow local views. A small view
+can keep a much larger allocation live until its last use. Writable views require
+exclusive access or proven disjoint mutable regions; a broadcast view is not a
+set of independent writable cells. Borrowing a view does not by itself authorize
+a persistent update.
+
+### Using ndarray
+
+**Proposed implementation starting point:** use `ndarray` for numerical arrays
+and borrowed views, with thin domain types carrying checked axis/layout
+semantics, native Measures metadata, flag/weight meaning and update provenance.
+There is no architectural reason to build a competing general array library.
+The workspace already declares `ndarray = "0.17"` and locks 0.17.2;
+[`casa-values::ArrayValue`](https://github.com/bglenden/casa-rs/blob/221ec71545fe36a758ab0869e7512349b5db7c0e/crates/casa-values/src/lib.rs#L336)
+already holds typed `ArrayD` payloads.
+
+An [`ArrayView3<'a, Complex<f32>>`](https://docs.rs/ndarray/0.17.2/ndarray/type.ArrayView3.html)
+is a natural building block for the three-axis example below. Prefer fixed-rank
+views for the admitted layouts and a compatible rank-four view for factored
+axes; this does not require copying an existing dynamic-rank allocation. An
+owning `Array3`/`Array4` or a reusable flat allocation can supply views. Choose
+the owner separately from the consumer view, so a kernel does not require a
+particular allocation or reference-counting policy.
+
+`ndarray` supplies shape/stride-aware access, slicing and read-only broadcasting;
+it does not supply scientific axis meanings, Measures references, resource
+admission, storage scheduling or write provenance. Preserve the closed layout
+contract even though the library supports more layouts. Use contiguous slices
+or typed iterators where appropriate in hot loops; an `ArrayView` does not by
+itself guarantee a contiguous slice or efficient loop order. Do not introduce
+implicit owned copies, packing, broadcast expansion or copy-on-write mutation
+into a path that promises borrowed access. Charge any required copies and
+allocation lifetimes explicitly. The library's
+[ownership and layout documentation](https://docs.rs/ndarray/0.17.2/ndarray/struct.ArrayBase.html)
+is part of the M1 review basis. M1 must prove direct views, buffer reuse and
+cross-worker handoff against existing performance before freezing concrete
+types; no performance result is claimed by this proposal.
 
 ### Concrete batch example
 
