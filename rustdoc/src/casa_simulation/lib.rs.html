@@ -12,7 +12,7 @@
 <a href=#12 id=12 data-nosnippet>12</a>//! | CASA | casa-rs |
 <a href=#13 id=13 data-nosnippet>13</a>//! |---|---|
 <a href=#14 id=14 data-nosnippet>14</a>//! | the `sm` tool's session (`open`, the setters, `observe`, `close`) | [`session::Simulator`] |
-<a href=#15 id=15 data-nosnippet>15</a>//! | `sm.predict` with `GridFT` (`setoptions(ftmachine='ft')`) | [`Simulator::predict`], [`Simulator::set_options`]; one row at a time, [`predict::ModelPredictor`] |
+<a href=#15 id=15 data-nosnippet>15</a>//! | `sm.predict` with `GridFT` or `WProjectFT` (`setoptions(ftmachine='ft' or 'wproject')`) | [`Simulator::predict`], [`Simulator::set_options`], [`predict::FtMachine`]; one row at a time, [`predict::ModelPredictor`] |
 <a href=#16 id=16 data-nosnippet>16</a>//! | the model image `sm.predict` reads | [`predict::SkyModel`] |
 <a href=#17 id=17 data-nosnippet>17</a>//! | `sm.setvp(dovp=True)` with an Airy voltage pattern | [`Simulator::set_vp`], [`predict::PrimaryBeam`] |
 <a href=#18 id=18 data-nosnippet>18</a>//! | `sm.setseed`, `sm.setnoise(mode='simplenoise')`, `sm.corrupt`, `sm.reset` | [`Simulator::set_seed`], [`Simulator::set_noise`], [`Simulator::corrupt`], [`Simulator::reset`] |
@@ -21,21 +21,22 @@
 <a href=#21 id=21 data-nosnippet>21</a>//! CASA's `sm` has no execution controls; a session's memory budget, workers
 <a href=#22 id=22 data-nosnippet>22</a>//! and backend ([`ExecutionControls`], [`SessionResources`]) are the Python
 <a href=#23 id=23 data-nosnippet>23</a>//! tool's constructor arguments. `close` predicts a model on the CPU or the
-<a href=#24 id=24 data-nosnippet>24</a>//! host's Metal device and draws noise on the CPU. Where the session departs
-<a href=#25 id=25 data-nosnippet>25</a>//! from CASA is recorded in `docs/CASA (C++) bugs.md`.
-<a href=#26 id=26 data-nosnippet>26</a>
-<a href=#27 id=27 data-nosnippet>27</a></span><span class="kw">mod </span>corrupt;
-<a href=#28 id=28 data-nosnippet>28</a><span class="kw">pub mod </span>predict;
-<a href=#29 id=29 data-nosnippet>29</a><span class="kw">pub mod </span>readantenna;
-<a href=#30 id=30 data-nosnippet>30</a><span class="kw">pub mod </span>session;
-<a href=#31 id=31 data-nosnippet>31</a><span class="kw">mod </span>write;
-<a href=#32 id=32 data-nosnippet>32</a>
-<a href=#33 id=33 data-nosnippet>33</a><span class="kw">pub use </span>session::array::{ArrayConfig, CoordinateSystem};
-<a href=#34 id=34 data-nosnippet>34</a><span class="kw">pub use </span>session::error::{CasaOutcome, SimulatorError, SimulatorResult};
-<a href=#35 id=35 data-nosnippet>35</a><span class="kw">pub use </span>session::observe::{ObserveSpec, StateSpec};
-<a href=#36 id=36 data-nosnippet>36</a><span class="kw">pub use </span>session::spectral::SpectralWindowSpec;
-<a href=#37 id=37 data-nosnippet>37</a><span class="kw">pub use </span>session::{
-<a href=#38 id=38 data-nosnippet>38</a>    BackendRequest, DEFAULT_SEED, ExecutionControls, NoiseSpec, PredictSpec, PredictionOptions,
-<a href=#39 id=39 data-nosnippet>39</a>    SessionResources, Simulator, SimulatorOptions, UnknownBackend, VoltagePatternSpec,
-<a href=#40 id=40 data-nosnippet>40</a>};
+<a href=#24 id=24 data-nosnippet>24</a>//! host's Metal device (on the CPU only through `WProjectFT`) and draws
+<a href=#25 id=25 data-nosnippet>25</a>//! noise on the CPU. Where the session departs
+<a href=#26 id=26 data-nosnippet>26</a>//! from CASA is recorded in `docs/CASA (C++) bugs.md`.
+<a href=#27 id=27 data-nosnippet>27</a>
+<a href=#28 id=28 data-nosnippet>28</a></span><span class="kw">mod </span>corrupt;
+<a href=#29 id=29 data-nosnippet>29</a><span class="kw">pub mod </span>predict;
+<a href=#30 id=30 data-nosnippet>30</a><span class="kw">pub mod </span>readantenna;
+<a href=#31 id=31 data-nosnippet>31</a><span class="kw">pub mod </span>session;
+<a href=#32 id=32 data-nosnippet>32</a><span class="kw">mod </span>write;
+<a href=#33 id=33 data-nosnippet>33</a>
+<a href=#34 id=34 data-nosnippet>34</a><span class="kw">pub use </span>session::array::{ArrayConfig, CoordinateSystem};
+<a href=#35 id=35 data-nosnippet>35</a><span class="kw">pub use </span>session::error::{CasaOutcome, SimulatorError, SimulatorResult};
+<a href=#36 id=36 data-nosnippet>36</a><span class="kw">pub use </span>session::observe::{ObserveSpec, StateSpec};
+<a href=#37 id=37 data-nosnippet>37</a><span class="kw">pub use </span>session::spectral::SpectralWindowSpec;
+<a href=#38 id=38 data-nosnippet>38</a><span class="kw">pub use </span>session::{
+<a href=#39 id=39 data-nosnippet>39</a>    BackendRequest, DEFAULT_SEED, ExecutionControls, NoiseSpec, PredictSpec, PredictionOptions,
+<a href=#40 id=40 data-nosnippet>40</a>    SessionResources, Simulator, SimulatorOptions, UnknownBackend, VoltagePatternSpec,
+<a href=#41 id=41 data-nosnippet>41</a>};
 </code></pre></div></section></main></body></html>

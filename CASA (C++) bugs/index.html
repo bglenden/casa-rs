@@ -1092,6 +1092,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#smpredict-through-wprojectft-without-planes-crashes-the-simulator" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        sm.predict through WProjectFT without planes crashes the simulator
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1138,7 +1149,8 @@ Simulator behaviours casa-rs does not follow:
 <a href="#simutilreadantenna-names-antennas-after-blank-lines"><code>readantenna</code>'s names after blank lines</a>,
 <a href="#the-measures-tool-converts-with-a-frame-at-mjd-0-and-the-geocentre">the measures tool's default frame</a>,
 <a href="#smpredict-rewrites-the-model-image">the model <code>predict</code> rewrites</a>,
-<a href="#smpredict-accepts-models-the-simulator-cannot-read">models the simulator cannot read</a>.</p>
+<a href="#smpredict-accepts-models-the-simulator-cannot-read">models the simulator cannot read</a>,
+<a href="#smpredict-through-wprojectft-without-planes-crashes-the-simulator">W projection without planes</a>.</p>
 <h2 id="aw-projection-pairs-the-partner-hands-visibility-with-the-conjugate-baseline-cell">AW-projection pairs the partner hand's visibility with the conjugate-baseline cell<a class="headerlink" href="#aw-projection-pairs-the-partner-hands-visibility-with-the-conjugate-baseline-cell" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-10-09</li>
@@ -1666,6 +1678,32 @@ and returns False, and the script continues with DATA not predicted. These outco
 and were not probed. casa-rs's check opens each model as the simulator reads
 it, so a FITS or complex model raises RuntimeError "Unable to open image …"
 at the call.</p>
+<h2 id="smpredict-through-wprojectft-without-planes-crashes-the-simulator"><code>sm.predict</code> through <code>WProjectFT</code> without planes crashes the simulator<a class="headerlink" href="#smpredict-through-wprojectft-without-planes-crashes-the-simulator" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-10-23</li>
+<li>Status: CASA bug; casa-rs does not follow it (#841 Phase 2)</li>
+<li>Affected code: <code>synthesis/MeasurementEquations/Simulator.cc</code>
+  (<code>createSkyEquation</code>, line 2465); <code>synthesis/TransformMachines/WPConvFunc.cc</code>
+  (<code>findConvFunction</code>, lines 164-176)</li>
+</ul>
+<p>The simulator builds its <code>WProjectFT</code> with no w statistics (<code>minW</code>, <code>maxW</code>
+and <code>rmsW</code> all −1). For <code>setoptions(ftmachine='wproject', wprojplanes=…)</code>
+below 1, <code>findConvFunction</code> takes its automatic branch, whose largest w
+then comes out negative and whose plane count comes out zero or negative.
+Measured on CASA 6.7.6: <code>setoptions</code> returns True, and <code>predict</code> with
+<code>wprojplanes=0</code> or <code>-1</code> kills the Python process with a segmentation fault
+(exit 139) after it logs "Fourier transforms will use specified common
+tangent point". casa-rs records the planes at <code>setoptions</code>, as CASA does,
+and its <code>predict</code> raises RuntimeError ("W projection needs at least two
+planes").</p>
+<p>What casa-rs follows of the same machine:
+- <code>wprojplanes=1</code> returns False from <code>predict</code> with CASA's "Convolution
+  function integral is not positive".
+- <code>WProjectFT</code> pads by 1, its constructor's default, whatever
+  <code>setoptions(padding=…)</code> says.
+- Autocorrelations predict zero, since the machine is built with <code>usezero</code>
+  off.
+- Rows beyond the largest w the planes reach (<code>0.25/|cell|</code>) predict zero.</p>
 
 
 
