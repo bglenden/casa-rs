@@ -36,7 +36,7 @@ const OFFSETS: [[f64; 3]; 4] = [
 /// J2000 directions: equatorial, southern, northern and near the pole.
 const DIRECTIONS: [[f64; 2]; 4] = [
     [0.0, 0.0],
-    [2.617_993_877_991_494, -0.523_598_775_598_298_9],
+    [2.617_993_877_991_494, -std::f64::consts::FRAC_PI_6],
     [4.712_388_980_384_69, 0.593_411_945_678_072],
     [1.0, 1.55],
 ];

@@ -14,6 +14,7 @@ workspace = true
 casa-values = { path = "../casa-values" }
 sofars.workspace = true
 time = "0.3"
+tracing.workspace = true
 
 [dev-dependencies]
 criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support", "rayon"] }
@@ -25,6 +26,3 @@ harness = false
 [[bench]]
 name = "epoch_convert"
 harness = false
-
-[[example]]
-name = "t_measure"

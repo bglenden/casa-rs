@@ -51,7 +51,9 @@
 //! ```
 
 mod casacore_aberration;
+mod casacore_frames;
 mod casacore_nutation;
+mod casacore_sidereal;
 
 pub mod baseline;
 pub mod direction;

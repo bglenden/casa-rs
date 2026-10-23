@@ -35,6 +35,12 @@ Simulator behaviours casa-rs does not follow:
 [`observemany`'s rows before an unknown field](#observemany-adds-rows-before-it-looks-up-later-fields),
 [W projection without planes](#smpredict-through-wprojectft-without-planes-crashes-the-simulator),
 [total power in cross-correlations](#sdgrid-predicts-total-power-into-cross-correlations-with-no-positive-uvw).
+Measures behaviours casa-rs follows for parity:
+[IAU 1980 sidereal time and obliquities under IAU 2000](#iau-2000-keeps-the-iau-1980-sidereal-time-and-ecliptic-obliquities).
+Measures behaviours casa-rs does not follow:
+[latitudes of unnormalized directions](#direction-latitudes-come-from-an-unnormalized-vector),
+[IAU 2000 JMEAN to J2000](#iau-2000-jmean-to-j2000-applies-bias-and-precession-in-the-wrong-order),
+[IAU 2000 GMST1](#iau-2000-gmst1-adds-the-tt-day-fraction).
 Simulator behaviours casa-rs follows:
 [`observemany`'s padded single name](#observemany-pads-one-name-with-empty-ones).
 Component-list behaviours casa-rs does not follow:
@@ -623,6 +629,76 @@ and returns False, and the script continues with DATA not predicted. These outco
 and were not probed. casa-rs's check opens each model as the simulator reads
 it, so a FITS or complex model raises RuntimeError "Unable to open image …"
 at the call.
+
+## IAU 2000 keeps the IAU 1980 sidereal time and ecliptic obliquities
+
+- Date noted: 2026-10-22
+- Status: casacore behaviour; casa-rs follows it for parity (#850)
+- Affected code: `measures/Measures/MCEpoch.cc` (`initConvert`, `UT1_GAST`),
+  `measures/Measures/MeasMath.cc` (`applyMECLIPtoJMEAN`,
+  `applyTECLIPtoJTRUE`), `measures/Measures/MeasTable.cc` (`fundArg`)
+
+With `measures.iau2000.b_use` set, casacore still forms GAST from the IAU
+1982 GMST and the IAU 1980 equation of the equinoxes of `Nutation::STANDARD`,
+without the 1994 complementary terms, and every HADEC, AZEL and ITRF
+conversion takes its LAST from that GAST. TECLIPTIC rotates by the IAU 1980
+true obliquity and MECLIPTIC by `MeasTable::fundArg(0)`, under either model.
+That polynomial's T² term is −0.0059″, where IAU 1976 has −0.00059″: 0.37
+mas in MECLIPTIC by 2026. casa-rs computes all of these as casacore does
+(`casacore_sidereal`, `casacore_frames`), which moved its IAU 2000A
+J2000→HADEC from 20.4 to 16.7 mas off casacore, the residual of the APP
+step alone.
+
+## Direction latitudes come from an unnormalized vector
+
+- Date noted: 2026-10-22
+- Status: casacore numerical defect; casa-rs does not follow it (#850)
+- Affected code: `measures/Measures/MeasData.cc` (`GALtoJ2000`,
+  `GALtoB1950`, `MToB1950`, `MToJ2000`), `measures/Measures/MCDirection.cc`
+  (`doConvert`), `casa/Quanta/MVDirection.cc` (`getLat`, `get`)
+
+casacore's galactic and FK4 matrices are 10-digit literals, orthogonal only
+to about 7e-11 (1.5e-8 for `MToB1950(4)`), and `MCDirection::doConvert`
+does not renormalize after applying them. `MVDirection::getLat()` and
+`get()` then take `asin(z)`, assuming a unit vector, so the latitude casacore
+reports is off by about (|v| − 1)·tan(b) and becomes NaN once z exceeds 1.
+casa-rs converts with the same matrices, renormalizes, and reports the
+latitude of the unit vector. The two directions agree to 0.01 µas; the
+reported angles differ by up to 51 µas for B1950→GALACTIC on the law's grid
+and by 1.6 mas for J2000→B1950 at b = −89.77°, where tan(b) is 250
+(`measures_frames_interop`).
+
+## IAU 2000 JMEAN to J2000 applies bias and precession in the wrong order
+
+- Date noted: 2026-10-22
+- Status: casacore bug; casa-rs does not follow it (#850)
+- Affected code: `measures/Measures/MeasMath.cc` (`deapplyPrecession`)
+
+Under IAU 2000, `applyPrecession` takes J2000 to JMEAN as `in *= B; in *= P`,
+v′ = Pᵀ·Bᵀ·v, with B the frame bias and P the precession. The inverse,
+`deapplyPrecession`, applies `in = B·in` and then `in = P·in`, which is
+P·B·v′, not B·P·v′. The two do not commute, so casacore's JMEAN→J2000 is
+not the inverse of its J2000→JMEAN: MECLIPTIC→J2000 and TECLIPTIC→J2000 are
+0.14 mas off in 2026, and the error grows with time from J2000. casa-rs
+inverts exactly; the frame law compares the IAU 2000 ecliptics from the
+equator of date.
+
+## IAU 2000 GMST1 adds the TT day fraction
+
+- Date noted: 2026-10-22
+- Status: casacore bug; casa-rs does not follow it (#850)
+- Affected code: `measures/Measures/MCEpoch.cc` (`UT1_GMST1`,
+  `GMST1_UT1`), `measures/Measures/MeasTable.cc` (`GMST00`)
+
+Under IAU 2000, `UT1_GMST1` turns the UT1 epoch into TT and adds
+`GMST00/(2π)` and 6713 days to it. `GMST00` is already the sidereal time of
+day (the Earth rotation angle in [0, 2π) plus precession), so the TT day
+fraction is counted twice: UT1 51544.5 gives GMST1 58258.280, against the
+IAU 1976 path's 58257.779 and a GAST of 58257.779, and LMST inherits the
+error. `GMST1_UT1`'s iteration does not undo it: GMST1 58258.280 converts
+back to UT1 51544.999. casa-rs uses the IAU 1976 GMST1 under either model,
+as casacore's own GAST does, so its GMST1, LMST, GAST and LAST agree with
+each other and, under IAU 1976, with casacore.
 
 ## Writing a limb-darkened disk without an exponent aborts CASA
 

@@ -42,6 +42,8 @@
 #include <casacore/measures/Measures/Aberration.h>
 #include <casacore/measures/Measures/SolarPos.h>
 
+#include "casacore_cpp_measures_iau_model.h"
+
 using namespace casacore;
 
 static MEpoch::Types parse_epoch_ref(const char* ref_str) {
@@ -1363,12 +1365,7 @@ int measures_shim_iau2000_precession_matrix(
     double* mat_out)  // 9 doubles: [0..2] = bias*v, [3..5] = prec*bias*v, [6..8] = bias matrix diag
 {
     try {
-        uInt reg_use = AipsrcValue<Bool>::registerRC(
-            "measures.iau2000.b_use", False);
-        uInt reg_2000a = AipsrcValue<Bool>::registerRC(
-            "measures.iau2000.b_use2000a", False);
-        AipsrcValue<Bool>::set(reg_use, True);
-        AipsrcValue<Bool>::set(reg_2000a, True);
+        casacore_shim::Iau2000AScope model;
 
         // Test vector: (lon=1.0, lat=0.5) direction cosines
         MVDirection v(Quantity(1.0, "rad"), Quantity(0.5, "rad"));
@@ -1394,8 +1391,6 @@ int measures_shim_iau2000_precession_matrix(
         mat_out[7] = e(1);  // theta
         mat_out[8] = e(2);  // z
 
-        AipsrcValue<Bool>::set(reg_use, False);
-        AipsrcValue<Bool>::set(reg_2000a, False);
         return 0;
     } catch (...) {
         return -1;
@@ -1409,22 +1404,11 @@ int measures_shim_direction_convert_iau2000a(
     double* lon_out, double* lat_out)
 {
     try {
-        // Enable IAU 2000A mode via global Aipsrc switches.
-        // Force static initialization of the registration IDs inside
-        // MeasTable by calling the query functions first, then set True.
-        // This ensures the static const uInt inside MeasTable::useIAU2000()
-        // is initialized before we call set(), so registerRC won't re-register.
-        (void)MeasTable::useIAU2000();
-        (void)MeasTable::useIAU2000A();
-        uInt reg_use = AipsrcValue<Bool>::registerRC(
-            "measures.iau2000.b_use", False);
-        uInt reg_2000a = AipsrcValue<Bool>::registerRC(
-            "measures.iau2000.b_use2000a", False);
-        AipsrcValue<Bool>::set(reg_use, True);
-        AipsrcValue<Bool>::set(reg_2000a, True);
+        // IAU 2000A for this call only, restored on every exit.
+        casacore_shim::Iau2000AScope model;
 
         // Verify the flags are actually set
-        if (!MeasTable::useIAU2000() || !MeasTable::useIAU2000A()) {
+        if (!model.active()) {
             fprintf(stderr, "IAU2000A: FAILED to set flags! use=%d use2000a=%d\n",
                     (int)MeasTable::useIAU2000(), (int)MeasTable::useIAU2000A());
             return -2;
@@ -1454,10 +1438,6 @@ int measures_shim_direction_convert_iau2000a(
 
         *lon_out = result.getValue().getLong();
         *lat_out = result.getValue().getLat();
-
-        // Reset back to default IAU 1976/1980
-        AipsrcValue<Bool>::set(reg_use, False);
-        AipsrcValue<Bool>::set(reg_2000a, False);
 
         return 0;
     } catch (...) {
