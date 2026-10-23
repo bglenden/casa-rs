@@ -40,8 +40,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use casa_simulation::{
     ArrayConfig, BackendRequest, CasaOutcome, CoordinateSystem, ExecutionControls, NoiseSpec,
-    ObserveSpec, PredictSpec, PredictionOptions, SessionResources, Simulator, SimulatorOptions,
-    SimulatorResult, SpectralWindowSpec, StateSpec, VoltagePatternSpec,
+    ObserveManySpec, ObserveSpec, Pointing, PredictSpec, PredictionOptions, SessionResources,
+    Simulator, SimulatorOptions, SimulatorResult, SpectralWindowSpec, StateSpec,
+    VoltagePatternSpec,
 };
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::frequency::FrequencyRef;
@@ -135,6 +136,68 @@ fn observe(session: &mut Simulator, call: &Value, shift_s: f64) {
     session.observe(&spec).expect("observe");
 }
 
+/// Replay `observemany` from its resolved lists. One source name, or one
+/// direction, is padded to every pointing with empty ones, as casatools pads
+/// them (`casars.tools.simulator` does the same).
+fn observe_many(session: &mut Simulator, call: &Value, shift_s: f64) -> SimulatorResult<()> {
+    let starts = numbers(call, "starttimes");
+    let stops = numbers(call, "stoptimes");
+    let sources: Vec<String> = match &call["sourcenames"] {
+        Value::String(name) => vec![name.clone()],
+        Value::Array(values) => values
+            .iter()
+            .map(|value| value.as_str().expect("a name").to_string())
+            .collect(),
+        other => panic!("sourcenames is {other}"),
+    };
+    let directions = call["directions"].as_array().cloned().unwrap_or_default();
+    let direction = |index: usize| {
+        let value = directions.get(index)?;
+        let angles = value.as_array()?;
+        Some(MDirection::from_angles(
+            angles[0].as_f64().expect("ra"),
+            angles[1].as_f64().expect("dec"),
+            DirectionRef::J2000,
+        ))
+    };
+    let pointings = starts
+        .iter()
+        .zip(&stops)
+        .enumerate()
+        .map(|(index, (start, stop))| Pointing {
+            source: sources.get(index).cloned().unwrap_or_default(),
+            start_s: start + shift_s,
+            stop_s: stop + shift_s,
+            direction: direction(index),
+        })
+        .collect();
+    let base = ObserveSpec {
+        source: String::new(),
+        spectral_window: text(call, "spwname", "").to_string(),
+        start_s: 0.0,
+        stop_s: 0.0,
+        add_observation: call
+            .get("add_observation")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        state: StateSpec {
+            sig: true,
+            reference: false,
+            cal: 0.0,
+            load: 0.0,
+            sub_scan: 0,
+            obs_mode: text(call, "state_obs_mode", "OBSERVE_TARGET#ON_SOURCE").to_string(),
+        },
+        observer: text(call, "observer", "CASA simulator").to_string(),
+        project: text(call, "project", "CASA simulation").to_string(),
+    };
+    let spec = ObserveManySpec {
+        pointings,
+        ..ObserveManySpec::from(&base)
+    };
+    session.observe_many(&spec)
+}
+
 /// Noise added after a scenario's own calls (`--simplenoise-jy`, `--seed`).
 #[derive(Clone, Copy)]
 struct ExtraNoise {
@@ -194,6 +257,10 @@ fn set_options(session: &mut Simulator, call: &Value) -> SimulatorResult<()> {
             .get("padding")
             .and_then(Value::as_f64)
             .unwrap_or(defaults.padding),
+        w_planes: call
+            .get("wprojplanes")
+            .and_then(Value::as_i64)
+            .unwrap_or(defaults.w_planes),
     })
 }
 
@@ -282,6 +349,7 @@ fn run_scenario(
                     .expect("setfield");
             }
             "observe" => observe(&mut session, call, shift_s),
+            "observemany" => expect_casas_outcome(entry, observe_many(&mut session, call, shift_s)),
             "setseed" => session.set_seed(number(call, "seed") as i32),
             "setnoise" => expect_casas_outcome(entry, set_noise(&mut session, call)),
             "corrupt" => expect_casas_outcome(entry, session.corrupt()),

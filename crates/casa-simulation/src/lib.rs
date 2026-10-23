@@ -12,7 +12,7 @@
 //! | CASA | casa-rs |
 //! |---|---|
 //! | the `sm` tool's session (`open`, the setters, `observe`, `close`) | [`session::Simulator`] |
-//! | `sm.predict` with `GridFT` (`setoptions(ftmachine='ft')`) | [`Simulator::predict`], [`Simulator::set_options`]; one row at a time, [`predict::ModelPredictor`] |
+//! | `sm.predict` with `GridFT` or `WProjectFT` (`setoptions(ftmachine='ft' or 'wproject')`) | [`Simulator::predict`], [`Simulator::set_options`], [`predict::FtMachine`]; one row at a time, [`predict::ModelPredictor`] |
 //! | the model image `sm.predict` reads | [`predict::SkyModel`] |
 //! | `sm.setvp(dovp=True)` with an Airy voltage pattern | [`Simulator::set_vp`], [`predict::PrimaryBeam`] |
 //! | `sm.setseed`, `sm.setnoise(mode='simplenoise')`, `sm.corrupt`, `sm.reset` | [`Simulator::set_seed`], [`Simulator::set_noise`], [`Simulator::corrupt`], [`Simulator::reset`] |
@@ -21,7 +21,8 @@
 //! CASA's `sm` has no execution controls; a session's memory budget, workers
 //! and backend ([`ExecutionControls`], [`SessionResources`]) are the Python
 //! tool's constructor arguments. `close` predicts a model on the CPU or the
-//! host's Metal device and draws noise on the CPU. Where the session departs
+//! host's Metal device (on the CPU only through `WProjectFT`) and draws
+//! noise on the CPU. Where the session departs
 //! from CASA is recorded in `docs/CASA (C++) bugs.md`.
 
 mod corrupt;
@@ -32,7 +33,7 @@ mod write;
 
 pub use session::array::{ArrayConfig, CoordinateSystem};
 pub use session::error::{CasaOutcome, SimulatorError, SimulatorResult};
-pub use session::observe::{ObserveSpec, StateSpec};
+pub use session::observe::{ObserveManySpec, ObserveSpec, Pointing, StateSpec};
 pub use session::spectral::SpectralWindowSpec;
 pub use session::{
     BackendRequest, DEFAULT_SEED, ExecutionControls, NoiseSpec, PredictSpec, PredictionOptions,

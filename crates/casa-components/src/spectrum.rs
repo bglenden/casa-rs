@@ -271,26 +271,27 @@ impl PowerLogPolynomial {
 
     /// This polynomial with its coefficients' errors set (`setErrors`).
     ///
+    /// As in CASA, the coefficients are resized to the number of errors:
+    /// those that remain keep their values and new ones are zero.
+    ///
     /// # Errors
     ///
-    /// [`ComponentError::Spectrum`] when an error is negative (CASA refuses
-    /// it) or the lengths differ.
+    /// [`ComponentError::Spectrum`] when an error is negative, which CASA
+    /// refuses; the polynomial is then unchanged.
     pub fn with_errors(mut self, errors: Vec<f64>) -> Result<Self, ComponentError> {
-        if errors.len() != self.coefficients.len() {
-            return Err(ComponentError::Spectrum {
-                spectrum: "power-log-polynomial",
-                reason: format!(
-                    "{} coefficients but {} errors",
-                    self.coefficients.len(),
-                    errors.len()
-                ),
-            });
-        }
+        self.set_errors(errors)?;
+        Ok(self)
+    }
+
+    /// `PowerLogPoly::setErrors`: refuse negative errors, then take the errors
+    /// and resize the coefficients to match.
+    fn set_errors(&mut self, errors: Vec<f64>) -> Result<(), ComponentError> {
         for error in &errors {
             non_negative_error("power-log-polynomial", *error)?;
         }
+        self.coefficients.resize(errors.len(), 0.0);
         self.errors = errors;
-        Ok(self)
+        Ok(())
     }
 
     /// The coefficients c₀, c₁, … (`coeffs`).
@@ -498,11 +499,16 @@ impl SpectralModel {
 
     /// Apply an error vector as CASA's `setErrors` does.
     ///
+    /// A constant spectrum ignores it; a spectral index takes α's error from
+    /// its first value; a power-log polynomial takes all of them and resizes
+    /// its coefficients to match, keeping those it still has and zero for
+    /// new ones (`PowerLogPoly::setErrors`).
+    ///
     /// # Errors
     ///
     /// [`ComponentError::Spectrum`] for a negative spectral-index or
     /// power-log-polynomial error, and [`ComponentError::ParameterCount`] for
-    /// a vector of the wrong length.
+    /// a spectral index without a value or a tabular spectrum with any.
     pub fn set_errors(&mut self, errors: &[f64]) -> Result<(), ComponentError> {
         match &mut self.kind {
             SpectralKind::Constant => {}
@@ -524,17 +530,7 @@ impl SpectralModel {
                 }
             }
             SpectralKind::PowerLogPolynomial(polynomial) => {
-                if errors.len() != polynomial.coefficients.len() {
-                    return Err(ComponentError::ParameterCount {
-                        what: "power-log-polynomial errors",
-                        expected: polynomial.coefficients.len(),
-                        actual: errors.len(),
-                    });
-                }
-                for error in errors {
-                    non_negative_error("power-log-polynomial", *error)?;
-                }
-                polynomial.errors = errors.to_vec();
+                polynomial.set_errors(errors.to_vec())?
             }
         }
         Ok(())
@@ -563,5 +559,36 @@ fn non_negative_error(spectrum: &'static str, error: f64) -> Result<f64, Compone
         })
     } else {
         Ok(error)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn power_log_polynomial_errors_resize_the_coefficients() {
+        // `PowerLogPoly::setErrors` resizes the coefficients to the errors'
+        // length, keeping those it has; casacore's resize zeroes new ones.
+        let mut model = SpectralModel::new(
+            MFrequency::new(1.4e9, FrequencyRef::LSRK),
+            SpectralKind::PowerLogPolynomial(PowerLogPolynomial::new(vec![1.0, 2.0, 3.0])),
+        );
+        model.set_errors(&[0.1, 0.2]).expect("setErrors");
+        assert_eq!(model.parameters(), [1.0, 2.0]);
+        assert_eq!(model.errors(), [0.1, 0.2]);
+        model.set_errors(&[0.1, 0.2, 0.3]).expect("setErrors");
+        assert_eq!(model.parameters(), [1.0, 2.0, 0.0]);
+        assert_eq!(model.errors(), [0.1, 0.2, 0.3]);
+        // A negative error is refused before anything changes.
+        assert!(model.set_errors(&[0.1, -0.2]).is_err());
+        assert_eq!(model.parameters(), [1.0, 2.0, 0.0]);
+        assert_eq!(model.errors(), [0.1, 0.2, 0.3]);
+
+        let polynomial = PowerLogPolynomial::new(vec![1.0, 2.0, 3.0])
+            .with_errors(vec![0.1, 0.2])
+            .expect("setErrors");
+        assert_eq!(polynomial.coefficients(), [1.0, 2.0]);
+        assert_eq!(polynomial.errors(), [0.1, 0.2]);
     }
 }

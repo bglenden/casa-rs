@@ -3,7 +3,8 @@
 //! as casacore's `ISMColumn` writes and reads them.
 //!
 //! A cell of `nrelem` elements is its elements in canonical form, in storage
-//! (Fortran) order: Bools bit-packed (`Conversion::boolToBit`), other
+//! (Fortran) order ([`cell_elements`](super::super::cell_elements)): Bools
+//! bit-packed from the cell's first byte (`Conversion::boolToBit`), other
 //! fixed-width types at their canonical size in the file's byte order, and
 //! strings as `ISMColumn::fromString` lays them out. A scalar is a cell of
 //! one element, so a one-element array is stored exactly as a scalar of its
@@ -11,161 +12,12 @@
 
 use std::iter::repeat_n;
 
-use casa_types::{ArrayValue, Complex32, Complex64, ScalarValue, Value};
+use casa_types::{ArrayValue, Value};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 
+pub(super) use super::super::cell_elements::Cell;
+use super::super::cell_elements::{Canonical, Element, encode_fixed_cell, for_each_element};
 use super::{CasacoreDataType, ColumnRawData, StorageError, ism_element_size, read_ism_string};
-
-/// One cell as the encoder takes it.
-#[derive(Clone, Copy)]
-pub(super) enum Cell<'a> {
-    Scalar(&'a ScalarValue),
-    Array(&'a ArrayValue),
-    /// No value: the cell encodes as zeros and empty strings.
-    Undefined,
-}
-
-impl<'a> From<Option<&'a Value>> for Cell<'a> {
-    fn from(value: Option<&'a Value>) -> Self {
-        match value {
-            Some(Value::Scalar(value)) => Self::Scalar(value),
-            Some(Value::Array(value)) => Self::Array(value),
-            _ => Self::Undefined,
-        }
-    }
-}
-
-impl<'a> From<Option<&'a ScalarValue>> for Cell<'a> {
-    fn from(value: Option<&'a ScalarValue>) -> Self {
-        value.map_or(Self::Undefined, Self::Scalar)
-    }
-}
-
-/// An element type of ISM cells: where its elements are in a scalar or an
-/// array of the type.
-trait Element: Sized {
-    fn of_scalar(value: &ScalarValue) -> Option<&Self>;
-    fn of_array(value: &ArrayValue) -> Option<&ArrayD<Self>>;
-}
-
-/// A fixed-width element type: its canonical size and encoding.
-trait Canonical: Element + Copy {
-    const BYTES: usize;
-    fn put(self, dst: &mut [u8], big_endian: bool);
-    fn get(src: &[u8], big_endian: bool) -> Self;
-}
-
-macro_rules! element {
-    ($type:ty, $variant:ident) => {
-        impl Element for $type {
-            fn of_scalar(value: &ScalarValue) -> Option<&Self> {
-                match value {
-                    ScalarValue::$variant(value) => Some(value),
-                    _ => None,
-                }
-            }
-
-            fn of_array(value: &ArrayValue) -> Option<&ArrayD<Self>> {
-                match value {
-                    ArrayValue::$variant(value) => Some(value),
-                    _ => None,
-                }
-            }
-        }
-    };
-}
-
-/// A fixed-width element type encoded by the primitive's own byte
-/// conversions.
-macro_rules! primitive {
-    ($type:ty, $variant:ident) => {
-        element!($type, $variant);
-
-        impl Canonical for $type {
-            const BYTES: usize = size_of::<$type>();
-
-            fn put(self, dst: &mut [u8], big_endian: bool) {
-                let bytes = if big_endian {
-                    self.to_be_bytes()
-                } else {
-                    self.to_le_bytes()
-                };
-                dst[..Self::BYTES].copy_from_slice(&bytes);
-            }
-
-            fn get(src: &[u8], big_endian: bool) -> Self {
-                let bytes = src[..Self::BYTES].try_into().expect("element bytes");
-                if big_endian {
-                    Self::from_be_bytes(bytes)
-                } else {
-                    Self::from_le_bytes(bytes)
-                }
-            }
-        }
-    };
-}
-
-/// A complex element type: its real part, then its imaginary part.
-macro_rules! complex {
-    ($type:ty, $variant:ident, $part:ty) => {
-        element!($type, $variant);
-
-        impl Canonical for $type {
-            const BYTES: usize = 2 * size_of::<$part>();
-
-            fn put(self, dst: &mut [u8], big_endian: bool) {
-                self.re.put(dst, big_endian);
-                self.im.put(&mut dst[size_of::<$part>()..], big_endian);
-            }
-
-            fn get(src: &[u8], big_endian: bool) -> Self {
-                Self::new(
-                    <$part>::get(src, big_endian),
-                    <$part>::get(&src[size_of::<$part>()..], big_endian),
-                )
-            }
-        }
-    };
-}
-
-element!(bool, Bool);
-element!(String, String);
-primitive!(u8, UInt8);
-primitive!(i16, Int16);
-primitive!(u16, UInt16);
-primitive!(i32, Int32);
-primitive!(u32, UInt32);
-primitive!(i64, Int64);
-primitive!(f32, Float32);
-primitive!(f64, Float64);
-complex!(Complex32, Complex32, f32);
-complex!(Complex64, Complex64, f64);
-
-/// Call `put(index, element)` for the first `nrelem` elements of `cell` of
-/// type `T`, in storage order: a scalar is the element of a one-element
-/// cell, an array gives its elements in Fortran order, and an undefined or
-/// mistyped cell gives none.
-fn for_each_element<'a, T: Element + 'a>(
-    cell: Cell<'a>,
-    nrelem: usize,
-    mut put: impl FnMut(usize, &'a T),
-) {
-    match cell {
-        Cell::Scalar(value) if nrelem == 1 => {
-            if let Some(element) = T::of_scalar(value) {
-                put(0, element);
-            }
-        }
-        Cell::Array(value) => {
-            if let Some(array) = T::of_array(value) {
-                for (index, element) in array.t().into_iter().take(nrelem).enumerate() {
-                    put(index, element);
-                }
-            }
-        }
-        _ => {}
-    }
-}
 
 /// The canonical bytes of `cell` in a column of `nrelem` elements of type
 /// `data_type`; the elements it does not give are zeros or empty strings.
@@ -186,26 +38,12 @@ pub(super) fn encode_cell(
             bytes
         }
         CasacoreDataType::TpString => encode_strings(cell, nrelem, big_endian),
-        CasacoreDataType::TpUChar => encode_fixed::<u8>(cell, nrelem, big_endian),
-        CasacoreDataType::TpShort => encode_fixed::<i16>(cell, nrelem, big_endian),
-        CasacoreDataType::TpUShort => encode_fixed::<u16>(cell, nrelem, big_endian),
-        CasacoreDataType::TpInt => encode_fixed::<i32>(cell, nrelem, big_endian),
-        CasacoreDataType::TpUInt => encode_fixed::<u32>(cell, nrelem, big_endian),
-        CasacoreDataType::TpInt64 => encode_fixed::<i64>(cell, nrelem, big_endian),
-        CasacoreDataType::TpFloat => encode_fixed::<f32>(cell, nrelem, big_endian),
-        CasacoreDataType::TpDouble => encode_fixed::<f64>(cell, nrelem, big_endian),
-        CasacoreDataType::TpComplex => encode_fixed::<Complex32>(cell, nrelem, big_endian),
-        CasacoreDataType::TpDComplex => encode_fixed::<Complex64>(cell, nrelem, big_endian),
-        _ => vec![0u8; ism_element_size(data_type) * nrelem],
+        _ => {
+            let mut bytes = vec![0u8; ism_element_size(data_type) * nrelem];
+            encode_fixed_cell(&mut bytes, cell, data_type, nrelem, big_endian);
+            bytes
+        }
     }
-}
-
-fn encode_fixed<T: Canonical>(cell: Cell<'_>, nrelem: usize, big_endian: bool) -> Vec<u8> {
-    let mut bytes = vec![0u8; T::BYTES * nrelem];
-    for_each_element::<T>(cell, nrelem, |index, &element| {
-        element.put(&mut bytes[index * T::BYTES..], big_endian);
-    });
-    bytes
 }
 
 /// Strings as `ISMColumn::fromString` writes them: a length that includes
@@ -358,6 +196,8 @@ pub(super) fn flatten_array_cells(
 mod tests {
     //! A one-element array is stored as a scalar of its type; arrays keep
     //! every element, in storage order, for every element type.
+
+    use casa_types::{Complex32, Complex64, ScalarValue};
 
     use super::*;
 

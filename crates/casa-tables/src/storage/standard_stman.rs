@@ -29,10 +29,9 @@ use super::canonical::{
     read_f32_slice_le, read_f64_be, read_f64_le, read_f64_slice_be, read_f64_slice_le,
     read_i16_slice_be, read_i16_slice_le, read_i32_be, read_i32_slice_be, read_i32_slice_le,
     read_i64_slice_be, read_i64_slice_le, read_u16_slice_be, read_u16_slice_le, read_u32_slice_be,
-    read_u32_slice_le, write_bool_bits, write_f32_be, write_f32_le, write_f64_be, write_f64_le,
-    write_i16_be, write_i16_le, write_i32_be, write_i32_le, write_i64_be, write_i64_le,
-    write_u16_be, write_u16_le, write_u32_be, write_u32_le,
+    read_u32_slice_le, write_bool_bits, write_i32_be, write_i32_le, write_i64_be, write_i64_le,
 };
+use super::cell_elements::{cell_bools, encode_fixed_cell};
 use super::data_type::CasacoreDataType;
 use super::scalar_sources::SCALAR_BLOCK_CELLS;
 use super::stman_aipsio::{ColumnRawData, extract_row_value};
@@ -2770,15 +2769,18 @@ fn write_cell_to_bucket(
     use casa_types::{ArrayValue, ScalarValue, Value};
 
     match data_type {
+        // A column's Bools are packed one bit each from the start of its
+        // area, so a cell starts at bit `row_in_bucket * nrelem`, not on a
+        // byte.
         CasacoreDataType::TpBool => {
             let bit_offset = row_in_bucket * nrelem;
             let byte_offset = col_offset + bit_offset / 8;
             let sub_bit = bit_offset % 8;
-            let bools: Vec<bool> = match value {
-                Some(Value::Scalar(ScalarValue::Bool(b))) => vec![*b],
-                _ => vec![false; nrelem],
-            };
-            write_bool_bits(&mut bucket[byte_offset..], sub_bit, &bools);
+            write_bool_bits(
+                &mut bucket[byte_offset..],
+                sub_bit,
+                &cell_bools(value.into(), nrelem),
+            );
         }
         CasacoreDataType::TpString => {
             if col_desc.max_length > 0 {
@@ -2901,252 +2903,16 @@ fn write_cell_to_bucket(
             }
         }
         _ => {
-            // Fixed-size types
             let (elem_bytes, _) = canonical_element_size(data_type);
-            let bytes_per_row = elem_bytes * nrelem;
-            let data_start = col_offset + row_in_bucket * bytes_per_row;
-            write_value_canonical(
+            let data_start = col_offset + row_in_bucket * elem_bytes * nrelem;
+            encode_fixed_cell(
                 &mut bucket[data_start..],
+                value.into(),
                 data_type,
                 nrelem,
-                value,
                 big_endian,
             );
         }
-    }
-}
-
-/// Write a scalar or array value in the specified byte order.
-fn write_value_canonical(
-    dst: &mut [u8],
-    data_type: CasacoreDataType,
-    nrelem: usize,
-    value: Option<&casa_types::Value>,
-    big_endian: bool,
-) {
-    use casa_types::{ArrayValue, ScalarValue, Value};
-
-    match data_type {
-        CasacoreDataType::TpUChar => {
-            if nrelem == 1 {
-                let v = match value {
-                    Some(Value::Scalar(ScalarValue::UInt8(v))) => *v,
-                    _ => 0,
-                };
-                dst[0] = v;
-            } else if let Some(Value::Array(ArrayValue::UInt8(arr))) = value {
-                for (i, &v) in arr.t().iter().enumerate().take(nrelem) {
-                    dst[i] = v;
-                }
-            }
-        }
-        CasacoreDataType::TpShort => {
-            let v = match value {
-                Some(Value::Scalar(ScalarValue::Int16(v))) => *v,
-                _ => 0,
-            };
-            if big_endian {
-                write_i16_be(dst, v);
-            } else {
-                write_i16_le(dst, v);
-            }
-        }
-        CasacoreDataType::TpUShort => {
-            if nrelem == 1 {
-                let v = match value {
-                    Some(Value::Scalar(ScalarValue::UInt16(v))) => *v,
-                    _ => 0,
-                };
-                if big_endian {
-                    write_u16_be(dst, v);
-                } else {
-                    write_u16_le(dst, v);
-                }
-            } else if let Some(Value::Array(ArrayValue::UInt16(arr))) = value {
-                for (i, &v) in arr.t().iter().enumerate().take(nrelem) {
-                    if big_endian {
-                        write_u16_be(&mut dst[i * 2..], v);
-                    } else {
-                        write_u16_le(&mut dst[i * 2..], v);
-                    }
-                }
-            }
-        }
-        CasacoreDataType::TpInt => {
-            if nrelem == 1 {
-                let v = match value {
-                    Some(Value::Scalar(ScalarValue::Int32(v))) => *v,
-                    _ => 0,
-                };
-                if big_endian {
-                    write_i32_be(dst, v);
-                } else {
-                    write_i32_le(dst, v);
-                }
-            } else if let Some(Value::Array(ArrayValue::Int32(arr))) = value {
-                for (i, &v) in arr.t().iter().enumerate().take(nrelem) {
-                    if big_endian {
-                        write_i32_be(&mut dst[i * 4..], v);
-                    } else {
-                        write_i32_le(&mut dst[i * 4..], v);
-                    }
-                }
-            }
-        }
-        CasacoreDataType::TpUInt => {
-            if nrelem == 1 {
-                let v = match value {
-                    Some(Value::Scalar(ScalarValue::UInt32(v))) => *v,
-                    _ => 0,
-                };
-                if big_endian {
-                    write_u32_be(dst, v);
-                } else {
-                    write_u32_le(dst, v);
-                }
-            } else if let Some(Value::Array(ArrayValue::UInt32(arr))) = value {
-                for (i, &v) in arr.t().iter().enumerate().take(nrelem) {
-                    if big_endian {
-                        write_u32_be(&mut dst[i * 4..], v);
-                    } else {
-                        write_u32_le(&mut dst[i * 4..], v);
-                    }
-                }
-            }
-        }
-        CasacoreDataType::TpFloat => {
-            if nrelem == 1 {
-                let v = match value {
-                    Some(Value::Scalar(ScalarValue::Float32(v))) => *v,
-                    _ => 0.0,
-                };
-                if big_endian {
-                    write_f32_be(dst, v);
-                } else {
-                    write_f32_le(dst, v);
-                }
-            } else if let Some(Value::Array(ArrayValue::Float32(arr))) = value {
-                for (i, &v) in arr.t().iter().enumerate().take(nrelem) {
-                    if big_endian {
-                        write_f32_be(&mut dst[i * 4..], v);
-                    } else {
-                        write_f32_le(&mut dst[i * 4..], v);
-                    }
-                }
-            }
-        }
-        CasacoreDataType::TpDouble => {
-            if nrelem == 1 {
-                let v = match value {
-                    Some(Value::Scalar(ScalarValue::Float64(v))) => *v,
-                    _ => 0.0,
-                };
-                if big_endian {
-                    write_f64_be(dst, v);
-                } else {
-                    write_f64_le(dst, v);
-                }
-            } else if let Some(Value::Array(ArrayValue::Float64(arr))) = value {
-                for (i, &v) in arr.t().iter().enumerate().take(nrelem) {
-                    if big_endian {
-                        write_f64_be(&mut dst[i * 8..], v);
-                    } else {
-                        write_f64_le(&mut dst[i * 8..], v);
-                    }
-                }
-            }
-        }
-        CasacoreDataType::TpInt64 => {
-            if nrelem == 1 {
-                let v = match value {
-                    Some(Value::Scalar(ScalarValue::Int64(v))) => *v,
-                    _ => 0,
-                };
-                if big_endian {
-                    write_i64_be(dst, v);
-                } else {
-                    write_i64_le(dst, v);
-                }
-            } else if let Some(Value::Array(ArrayValue::Int64(arr))) = value {
-                for (i, &v) in arr.t().iter().enumerate().take(nrelem) {
-                    if big_endian {
-                        write_i64_be(&mut dst[i * 8..], v);
-                    } else {
-                        write_i64_le(&mut dst[i * 8..], v);
-                    }
-                }
-            }
-        }
-        CasacoreDataType::TpComplex | CasacoreDataType::TpDComplex => {
-            write_complex_canonical(dst, data_type, nrelem, value, big_endian);
-        }
-        _ => {}
-    }
-}
-
-/// Write a `TpComplex` or `TpDComplex` value as (re, im) pairs in the
-/// specified byte order; the complex half of [`write_value_canonical`].
-fn write_complex_canonical(
-    dst: &mut [u8],
-    data_type: CasacoreDataType,
-    nrelem: usize,
-    value: Option<&casa_types::Value>,
-    big_endian: bool,
-) {
-    use casa_types::{ArrayValue, ScalarValue, Value};
-
-    match data_type {
-        CasacoreDataType::TpComplex => {
-            if nrelem == 1 {
-                let (re, im) = match value {
-                    Some(Value::Scalar(ScalarValue::Complex32(c))) => (c.re, c.im),
-                    _ => (0.0, 0.0),
-                };
-                if big_endian {
-                    write_f32_be(dst, re);
-                    write_f32_be(&mut dst[4..], im);
-                } else {
-                    write_f32_le(dst, re);
-                    write_f32_le(&mut dst[4..], im);
-                }
-            } else if let Some(Value::Array(ArrayValue::Complex32(arr))) = value {
-                for (i, c) in arr.t().iter().enumerate().take(nrelem) {
-                    if big_endian {
-                        write_f32_be(&mut dst[i * 8..], c.re);
-                        write_f32_be(&mut dst[i * 8 + 4..], c.im);
-                    } else {
-                        write_f32_le(&mut dst[i * 8..], c.re);
-                        write_f32_le(&mut dst[i * 8 + 4..], c.im);
-                    }
-                }
-            }
-        }
-        CasacoreDataType::TpDComplex => {
-            if nrelem == 1 {
-                let (re, im) = match value {
-                    Some(Value::Scalar(ScalarValue::Complex64(c))) => (c.re, c.im),
-                    _ => (0.0, 0.0),
-                };
-                if big_endian {
-                    write_f64_be(dst, re);
-                    write_f64_be(&mut dst[8..], im);
-                } else {
-                    write_f64_le(dst, re);
-                    write_f64_le(&mut dst[8..], im);
-                }
-            } else if let Some(Value::Array(ArrayValue::Complex64(arr))) = value {
-                for (i, c) in arr.t().iter().enumerate().take(nrelem) {
-                    if big_endian {
-                        write_f64_be(&mut dst[i * 16..], c.re);
-                        write_f64_be(&mut dst[i * 16 + 8..], c.im);
-                    } else {
-                        write_f64_le(&mut dst[i * 16..], c.re);
-                        write_f64_le(&mut dst[i * 16 + 8..], c.im);
-                    }
-                }
-            }
-        }
-        _ => {}
     }
 }
 

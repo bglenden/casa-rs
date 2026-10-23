@@ -4,8 +4,11 @@
 //!
 //! ```text
 //! cargo run --release -p casa-simulation --example predict_vs_casa -- \
-//!     MS MODEL_IMAGE [--vp alma] [--padding 1.3] [--f64]
+//!     MS MODEL_IMAGE [--vp alma|vla|vla-nvss|evla] [--padding 1.3 | --wproject PLANES] [--f64]
 //! ```
+//!
+//! `--wproject` predicts through `WProjectFT` with `PLANES` planes, as after
+//! `sm.setoptions(ftmachine='wproject', wprojplanes=PLANES)`.
 //!
 //! `tools/simulation/casa_sm_predict_oracle.py` writes the MeasurementSets
 //! and model images. Each row is rotated to the model's tangent point as
@@ -27,7 +30,8 @@ use casa_ms::columns::main_ids::{antenna1, antenna2};
 use casa_ms::columns::uvw_column::UvwColumn;
 use casa_ms::derived::GridFtProjection;
 use casa_simulation::predict::{
-    ModelPredictor, PredictOptions, PredictRow, PredictionWorkspace, PrimaryBeam, SkyModel,
+    FtMachine, ModelPredictor, PredictOptions, PredictRow, PredictionWorkspace, PrimaryBeam,
+    SkyModel,
 };
 use casa_types::ArrayValue;
 use ndarray::IxDyn;
@@ -46,9 +50,11 @@ fn main() -> ExitCode {
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let [ms_path, model_path] = [args.first(), args.get(1)].map(|value| {
-        value
-            .cloned()
-            .ok_or("usage: predict_vs_casa MS MODEL_IMAGE [--vp alma] [--padding P] [--f64]")
+        value.cloned().ok_or(
+            "usage: predict_vs_casa MS MODEL_IMAGE [--vp alma|vla|vla-nvss|evla] [--padding P | \
+                 --wproject N] \
+                 [--f64]",
+        )
     });
     let (ms_path, model_path) = (ms_path?, model_path?);
     let mut options = PredictOptions::default();
@@ -58,12 +64,22 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             "--vp" => {
                 options.primary_beam = match flags.next().map(String::as_str) {
                     Some("alma") => Some(PrimaryBeam::ALMA),
+                    Some("vla") => Some(PrimaryBeam::VLA),
+                    Some("vla-nvss") => Some(PrimaryBeam::VLA_NVSS),
+                    Some("evla") => Some(PrimaryBeam::Evla),
                     other => return Err(format!("unknown voltage pattern {other:?}").into()),
                 };
             }
             "--padding" => {
                 let factor: f32 = flags.next().ok_or("--padding needs a value")?.parse()?;
-                options.padding = PaddingFactor::new(factor)?;
+                options.ft_machine = FtMachine::Grid(PaddingFactor::new(factor)?);
+            }
+            "--wproject" => {
+                let planes = flags
+                    .next()
+                    .ok_or("--wproject needs a plane count")?
+                    .parse()?;
+                options.ft_machine = FtMachine::WProject(planes);
             }
             "--f64" => options.precision = GridPrecision::F64,
             other => return Err(format!("unknown option {other}").into()),
@@ -193,10 +209,10 @@ impl Stats {
             .map(|(difference, reference)| format!("{:.3e}", nrms(*difference, *reference)))
             .collect();
         format!(
-            "{{\"rows\": {rows}, \"padding\": {}, \"primary_beam\": {}, \"precision\": \"{:?}\", \
+            "{{\"rows\": {rows}, \"ft_machine\": \"{:?}\", \"primary_beam\": {}, \"precision\": \"{:?}\", \
              \"normalized_rms\": {:.3e}, \"per_correlation_normalized_rms\": [{}], \
              \"max_difference_over_peak\": {:.3e}, \"prepare_s\": {prepare_s:.3}, \"predict_s\": {predict_s:.3}}}",
-            options.padding.get(),
+            options.ft_machine,
             options.primary_beam.is_some(),
             options.precision,
             nrms(self.difference.iter().sum(), self.reference.iter().sum()),

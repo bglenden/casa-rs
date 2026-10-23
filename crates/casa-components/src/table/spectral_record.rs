@@ -18,9 +18,12 @@
 //! frequency, its error, the parameters and their errors from their own
 //! columns, so only the record-only values survive from it. It ignores
 //! whether `fromRecord` succeeded, so a record missing a field it needs leaves
-//! the model's defaults in place; casa-rs does the same.
+//! the model's defaults in place; casa-rs does the same. `fromRecord` applies
+//! nothing unless `MeasureHolder::fromRecord` reads the record's `frequency`
+//! as a frequency, and a tabulation nothing unless it also reads `freqRef`.
 
 use casa_types::measures::frequency::FrequencyRef;
+use casa_types::quanta::{Dimension, Unit, UnitDim};
 use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 
 use crate::error::ComponentError;
@@ -95,9 +98,12 @@ pub(crate) fn spectral_record(model: &SpectralModel) -> Result<RecordValue, Comp
 
 /// Apply a `Spectral_Record` cell to `kind` as the model's `fromRecord` does.
 ///
-/// Nothing is applied when the record lacks a usable `frequency` field
-/// (`SpectralModel::fromRecord` fails first), and a model-specific field that
-/// is missing or malformed leaves that value at its default.
+/// Nothing is applied unless the record's `frequency` is a frequency measure
+/// `frequency_measure` accepts or the string `current`
+/// (`SpectralModel::fromRecord` fails first), and nothing to a tabulation
+/// unless its `freqRef` is one too (`TabularSpectrum::fromRecord` reads it
+/// before the tabulation). A model-specific field that is missing or
+/// malformed leaves that value at its default.
 ///
 /// # Errors
 ///
@@ -128,13 +134,10 @@ pub(super) fn apply_spectral_record(
             *index = updated.with_error(error)?;
         }
         SpectralKind::Tabular(tabular) => {
-            let frame = record
-                .get("freqRef")
-                .and_then(|value| match value {
-                    Value::Record(frame) => frame_of(frame),
-                    _ => None,
-                })
-                .unwrap_or(tabular.frame());
+            let Some(frame) = record.get("freqRef").and_then(frequency_measure) else {
+                return Ok(());
+            };
+            let frame = frame_of(frame).unwrap_or(tabular.frame());
             let frequencies = record.get("tabFreqVal").and_then(real_array);
             let ival = record.get("ival").and_then(real_array);
             *tabular = match (frequencies, ival) {
@@ -196,15 +199,87 @@ fn frequency_record(frame: FrequencyRef, first: RecordField, second: RecordField
 }
 
 /// `SpectralModel::fromRecord` needs a `frequency` field holding a frequency
-/// record, or the string `current`.
+/// measure, or the string `current`.
 fn has_frequency(record: &RecordValue) -> bool {
     match record.get("frequency") {
-        Some(Value::Record(frequency)) => {
-            matches!(frequency.get("type"), Some(Value::Scalar(ScalarValue::String(kind))) if kind.eq_ignore_ascii_case("frequency"))
-        }
         Some(Value::Scalar(ScalarValue::String(text))) => text == "current",
-        _ => false,
+        Some(value) => frequency_measure(value).is_some(),
+        None => false,
     }
+}
+
+/// The measure record in `value`, when `MeasureHolder::fromRecord` reads it
+/// and it is an `MFrequency` (`isMFrequency`).
+///
+/// casacore needs string `type` and `refer` fields. It takes any `refer` (an
+/// unknown one is the default frame, with a warning), reads an `offset`
+/// record as a measure of the same kind (`MFrequency::setOffset`), and hands
+/// the quantity records `m0`, then `m1` and `m2`, to `MVFrequency::putValue`,
+/// which takes none (0 Hz) or one. casacore throws, rather than refuses, on a
+/// quantity it cannot convert (an unknown unit, a complex value, a
+/// non-`Double` array); casa-rs refuses those records too.
+fn frequency_measure(value: &Value) -> Option<&RecordValue> {
+    let Value::Record(measure) = value else {
+        return None;
+    };
+    let (
+        Some(Value::Scalar(ScalarValue::String(kind))),
+        Some(Value::Scalar(ScalarValue::String(_))),
+    ) = (measure.get("type"), measure.get("refer"))
+    else {
+        return None;
+    };
+    if !kind.eq_ignore_ascii_case("frequency") {
+        return None;
+    }
+    if let Some(offset @ Value::Record(_)) = measure.get("offset") {
+        frequency_measure(offset)?;
+    }
+    let quantities: Vec<&RecordValue> = ["m0", "m1", "m2"]
+        .into_iter()
+        .map_while(|name| match measure.get(name) {
+            Some(Value::Record(quantity)) => Some(quantity),
+            _ => None,
+        })
+        .collect();
+    match quantities.as_slice() {
+        [] => Some(measure),
+        [quantity] => is_frequency_quantity(quantity).then_some(measure),
+        _ => None,
+    }
+}
+
+/// Whether `quantity` is a quantity record (`QuantumHolder::fromRecord`) with
+/// one real value, or a non-empty `Double` array, in a unit
+/// `MVFrequency::putValue` takes: a frequency, period, angular rate,
+/// wavelength, wavenumber, energy, or casacore's `Impuls` (mass × length).
+fn is_frequency_quantity(quantity: &RecordValue) -> bool {
+    let value = match quantity.get("value") {
+        Some(Value::Scalar(
+            ScalarValue::Float64(_) | ScalarValue::Float32(_) | ScalarValue::Int32(_),
+        )) => true,
+        Some(Value::Array(ArrayValue::Float64(values))) => !values.is_empty(),
+        _ => false,
+    };
+    let Some(Value::Scalar(ScalarValue::String(unit))) = quantity.get("unit") else {
+        return false;
+    };
+    let basis = UnitDim::basis;
+    let (time, length, mass) = (
+        basis(Dimension::Time),
+        basis(Dimension::Length),
+        basis(Dimension::Mass),
+    );
+    let frequency_like = [
+        time,
+        UnitDim::NODIM / time,
+        basis(Dimension::Angle) / time,
+        length,
+        UnitDim::NODIM / length,
+        mass * length * length / time / time,
+        mass * length,
+    ];
+    value && Unit::new(unit).is_ok_and(|unit| frequency_like.contains(&unit.val().dim))
 }
 
 /// The frame of a `MeasureHolder` frequency record.
@@ -252,6 +327,7 @@ mod tests {
     use casa_types::measures::frequency::MFrequency;
 
     use super::*;
+    use crate::component_type::SpectralType;
     use crate::spectrum::{PowerLogPolynomial, SpectralIndex};
 
     fn applied(model: &SpectralModel) -> SpectralKind {
@@ -325,6 +401,161 @@ mod tests {
         ]);
         apply_spectral_record(&mut kind, &record).expect("apply");
         assert_eq!(kind, SpectralKind::SpectralIndex(SpectralIndex::new(0.0)));
+    }
+
+    fn record(fields: Vec<RecordField>) -> Value {
+        Value::Record(RecordValue::new(fields))
+    }
+
+    /// The quantity record `name` holding 1.4 `unit`.
+    fn quantity(name: &str, unit: &str) -> RecordField {
+        field(
+            name,
+            record(vec![field("unit", string(unit)), field("value", real(1.4))]),
+        )
+    }
+
+    /// Frequency fields `MeasureHolder::fromRecord` refuses or reads as
+    /// another measure.
+    fn unreadable_frequencies() -> Vec<Value> {
+        let typed = |kind: &str| field("type", string(kind));
+        let lsrk = || field("refer", string("LSRK"));
+        vec![
+            // No `refer`: the record CASA 6.7.6 ignored.
+            record(vec![typed("frequency")]),
+            record(vec![typed("frequency"), field("refer", real(1.0))]),
+            record(vec![typed("direction"), field("refer", string("J2000"))]),
+            record(vec![typed("frequencies"), lsrk()]),
+            record(vec![typed("frequency"), lsrk(), quantity("m0", "Jy")]),
+            record(vec![
+                typed("frequency"),
+                lsrk(),
+                quantity("m0", "GHz"),
+                quantity("m1", "GHz"),
+            ]),
+            record(vec![
+                typed("frequency"),
+                lsrk(),
+                field("m0", record(vec![field("value", real(1.4))])),
+            ]),
+            record(vec![
+                typed("frequency"),
+                lsrk(),
+                field("offset", record(vec![typed("frequency")])),
+            ]),
+            string("now"),
+        ]
+    }
+
+    fn index_record() -> RecordValue {
+        let model = SpectralModel::new(
+            MFrequency::new(1.4e9, FrequencyRef::LSRK),
+            SpectralKind::SpectralIndex(
+                SpectralIndex::new(-0.7).with_stokes_indices([2.0, 3.0, 4.0, 5.0]),
+            ),
+        );
+        spectral_record(&model).expect("record")
+    }
+
+    fn tabular_record() -> RecordValue {
+        let model = SpectralModel::new(
+            MFrequency::new(1.4e9, FrequencyRef::BARY),
+            SpectralKind::Tabular(
+                TabularSpectrum::new(
+                    FrequencyRef::BARY,
+                    vec![1.0e9, 2.0e9],
+                    vec![[1.0, 0.0, 0.0, 0.0], [0.5, 0.0, 0.0, 0.0]],
+                )
+                .expect("tabulation"),
+            ),
+        );
+        spectral_record(&model).expect("record")
+    }
+
+    fn applied_to_default(record: &RecordValue, kind: SpectralType) -> SpectralKind {
+        let mut applied = SpectralKind::casa_default(kind);
+        apply_spectral_record(&mut applied, record).expect("apply");
+        applied
+    }
+
+    #[test]
+    fn a_frequency_casacore_cannot_read_leaves_the_model_alone() {
+        // `SpectralModel::fromRecord` needs `MeasureHolder::fromRecord` to
+        // read a frequency before a model applies anything else.
+        for unreadable in unreadable_frequencies() {
+            let mut record = index_record();
+            record.upsert("frequency", unreadable.clone());
+            assert_eq!(
+                applied_to_default(&record, SpectralType::SpectralIndex),
+                SpectralKind::casa_default(SpectralType::SpectralIndex),
+                "{unreadable:?}"
+            );
+            let mut record = tabular_record();
+            record.upsert("frequency", unreadable.clone());
+            assert_eq!(
+                applied_to_default(&record, SpectralType::Tabular),
+                SpectralKind::casa_default(SpectralType::Tabular),
+                "{unreadable:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_tabulation_needs_a_readable_frame() {
+        // `TabularSpectrum::fromRecord` reads `freqRef` with `MeasureHolder`
+        // too, and stops before the tabulation when it cannot.
+        let mut missing = tabular_record();
+        missing.remove("freqRef");
+        let mut cases = vec![missing];
+        for unreadable in unreadable_frequencies() {
+            let mut record = tabular_record();
+            record.upsert("freqRef", unreadable);
+            cases.push(record);
+        }
+        for record in cases {
+            assert_eq!(
+                applied_to_default(&record, SpectralType::Tabular),
+                SpectralKind::casa_default(SpectralType::Tabular),
+                "{:?}",
+                record.get("freqRef")
+            );
+        }
+    }
+
+    #[test]
+    fn frequencies_casacore_reads_are_applied() {
+        // A record without a quantity record `m0` is 0 Hz
+        // (`MVFrequency::putValue`), an unknown frame is casacore's default
+        // with a warning, a frequency may be a wavelength or a period, and
+        // `current` keeps the model's frequency.
+        let typed = field("type", string("FREQUENCY"));
+        let lsrk = || field("refer", string("LSRK"));
+        let expected = applied_to_default(&index_record(), SpectralType::SpectralIndex);
+        assert_ne!(
+            expected,
+            SpectralKind::casa_default(SpectralType::SpectralIndex)
+        );
+        for readable in [
+            record(vec![typed.clone(), lsrk()]),
+            record(vec![typed.clone(), field("refer", string("NOSUCH"))]),
+            record(vec![typed.clone(), lsrk(), quantity("m0", "cm")]),
+            record(vec![typed.clone(), lsrk(), quantity("m0", "ns")]),
+            record(vec![typed.clone(), lsrk(), field("m0", real(1.0))]),
+            record(vec![
+                typed.clone(),
+                lsrk(),
+                field("offset", record(vec![typed.clone(), lsrk()])),
+            ]),
+            string("current"),
+        ] {
+            let mut record = index_record();
+            record.upsert("frequency", readable.clone());
+            assert_eq!(
+                applied_to_default(&record, SpectralType::SpectralIndex),
+                expected,
+                "{readable:?}"
+            );
+        }
     }
 
     #[test]

@@ -17,7 +17,7 @@ use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::ops::Range;
 use std::path::PathBuf;
 
-use casa_types::{ScalarValue, Value};
+use casa_types::{RecordValue, ScalarValue, Value};
 
 use super::StorageError;
 use super::array_sources::GeneratedArraySource;
@@ -93,6 +93,8 @@ pub(crate) enum ColumnSource<'a> {
     Cells(&'a [Option<Value>]),
     /// A generated array column, its cells checked as they are read.
     GeneratedArray(GeneratedArraySource<'a>),
+    /// A column of row records, scalar or array.
+    RowFields(RowFields<'a>),
 }
 
 impl<'a> ColumnSource<'a> {
@@ -101,6 +103,15 @@ impl<'a> ColumnSource<'a> {
             Self::Materialized(values) => Ok(values.get(row).cloned().unwrap_or(None)),
             Self::Generated(column) => Ok(column.value(row)),
             Self::Streamed(reader) => reader.borrow_mut().value(row),
+            Self::RowFields(fields) => match fields.cell(row) {
+                None => Ok(None),
+                Some(Value::Scalar(value)) => Ok(Some(value.clone())),
+                Some(other) => Err(StorageError::FormatMismatch(format!(
+                    "column {} row {row} holds {:?}, not a scalar",
+                    fields.name,
+                    other.kind()
+                ))),
+            },
             Self::Cells(_) | Self::GeneratedArray(_) => Err(StorageError::FormatMismatch(
                 "an array column source has no scalar values".to_string(),
             )),
@@ -112,6 +123,7 @@ impl<'a> ColumnSource<'a> {
         match self {
             Self::Cells(values) => Ok(values.get(row).and_then(Option::as_ref).map(Cow::Borrowed)),
             Self::GeneratedArray(source) => source.cell(row),
+            Self::RowFields(fields) => Ok(fields.cell(row).map(Cow::Borrowed)),
             _ => Ok(self
                 .value(row)?
                 .map(|value| Cow::Owned(Value::Scalar(value)))),
@@ -124,7 +136,8 @@ impl<'a> ColumnSource<'a> {
             Self::Materialized(_)
             | Self::Streamed(_)
             | Self::Cells(_)
-            | Self::GeneratedArray(_) => None,
+            | Self::GeneratedArray(_)
+            | Self::RowFields(_) => None,
         }
     }
 
@@ -148,6 +161,35 @@ impl<'a> ColumnSource<'a> {
         }
         reader.read_encoded(rows, big_endian, out)?;
         Ok(true)
+    }
+}
+
+/// A column of row records: in each row, the field of the column's name,
+/// found at its index in the record when the save gives one and by name
+/// otherwise; a row without the field is undefined.
+pub(crate) struct RowFields<'a> {
+    rows: &'a [RecordValue],
+    field_index: Option<usize>,
+    name: &'a str,
+}
+
+impl<'a> RowFields<'a> {
+    /// Column `name` of `rows`, expected at `field_index` in each record.
+    pub(crate) fn new(rows: &'a [RecordValue], field_index: Option<usize>, name: &'a str) -> Self {
+        Self {
+            rows,
+            field_index,
+            name,
+        }
+    }
+
+    fn cell(&self, row: usize) -> Option<&'a Value> {
+        let fields = self.rows.get(row)?.fields();
+        self.field_index
+            .and_then(|index| fields.get(index))
+            .filter(|field| field.name == self.name)
+            .or_else(|| fields.iter().find(|field| field.name == self.name))
+            .map(|field| &field.value)
     }
 }
 

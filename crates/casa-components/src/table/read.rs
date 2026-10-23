@@ -226,12 +226,28 @@ impl<'a> ListReader<'a> {
                 )?)
                 .map_err(|source| self.refused(row, source))?;
         }
+        let parameters = self.reals(row, SPECTRAL_PARAMETERS)?;
         spectrum
-            .set_parameters(&self.reals(row, SPECTRAL_PARAMETERS)?)
+            .set_parameters(&parameters)
             .map_err(|source| self.refused(row, source))?;
         if self.optional.spectral_error {
+            let errors = self.reals(row, SPECTRAL_ERROR)?;
+            // `readTable` reads the errors into the parameters' vector, which
+            // `ArrayColumn::get` resizes only when it is empty.
+            if !parameters.is_empty() && errors.len() != parameters.len() {
+                return Err(cell_error(
+                    self.path,
+                    row,
+                    SPECTRAL_ERROR,
+                    format!(
+                        "{} errors for {} spectral parameters",
+                        errors.len(),
+                        parameters.len()
+                    ),
+                ));
+            }
             spectrum
-                .set_errors(&self.reals(row, SPECTRAL_ERROR)?)
+                .set_errors(&errors)
                 .map_err(|source| self.refused(row, source))?;
         }
         Ok(spectrum)

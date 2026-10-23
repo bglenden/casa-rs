@@ -20,12 +20,14 @@ mod predict_support;
 use std::path::{Path, PathBuf};
 
 use casa_simulation::{
-    CasaOutcome, NoiseSpec, PredictSpec, PredictionOptions, Simulator, SimulatorResult,
-    VoltagePatternSpec,
+    CasaOutcome, NoiseSpec, ObserveManySpec, Pointing, PredictSpec, PredictionOptions, Simulator,
+    SimulatorResult, VoltagePatternSpec,
 };
+use casa_types::measures::direction::{DirectionRef, MDirection};
 use num_complex::Complex32;
 use predict_support::{
-    bits, cube_model, data, extended_model, predict_spec, read_main, resources, scan, session,
+    CENTRE_RAD, bits, cube_model, data, extended_model, predict_spec, read_main, resources, scan,
+    session,
 };
 
 fn simple_noise(sigma_jy: f64) -> NoiseSpec {
@@ -222,14 +224,135 @@ fn predict_refuses_as_casa_does() {
     );
 }
 
+/// CASA centres the voltage pattern on each pointing's direction, which
+/// casa-rs does not yet do for a pointing `observemany` moved off its
+/// field: `predict` with `setvp` refuses it, and predicts it without one.
+#[test]
+fn predict_with_a_beam_refuses_pointings_moved_off_their_field() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let model = extended_model(directory.path(), "model.image");
+    let mut sm = session(
+        &directory.path().join("moved.ms"),
+        "ALMA",
+        "XX YY",
+        resources(2, 2 << 30),
+    );
+    let base = scan("target", 0.0, 20.0);
+    let pointing = |start_s: f64, direction: Option<MDirection>| Pointing {
+        source: "target".to_string(),
+        start_s,
+        stop_s: start_s + 20.0,
+        direction,
+    };
+    let moved = MDirection::from_angles(CENTRE_RAD[0] + 1.0e-5, CENTRE_RAD[1], DirectionRef::J2000);
+    sm.observe_many(&ObserveManySpec {
+        pointings: vec![pointing(0.0, None), pointing(20.0, Some(moved))],
+        spectral_window: base.spectral_window.clone(),
+        add_observation: false,
+        state: base.state.clone(),
+        observer: base.observer.clone(),
+        project: base.project.clone(),
+    })
+    .expect("observemany");
+    sm.set_vp(&VoltagePatternSpec::default())
+        .expect("setvp records");
+    let (outcome, message) = refusal(sm.predict(&spec(&[&model])));
+    assert_eq!(outcome, CasaOutcome::NotYetImplemented);
+    assert!(
+        message.contains("pointed away") && message.contains("Phase 2"),
+        "{message}"
+    );
+    sm.set_vp(&VoltagePatternSpec {
+        dovp: false,
+        ..VoltagePatternSpec::default()
+    })
+    .expect("setvp");
+    sm.predict(&spec(&[&model])).expect("no beam: predicted");
+    sm.close().expect("close");
+}
+
+/// A pointing `observemany` moved off its field is predicted at its own
+/// phase centre: its DATA is that of a field at the moved direction, and the
+/// first pointing's is unchanged (#861 review: the prediction stage reused
+/// the first pointing's projection, at a normalized RMS of 1.1).
+#[test]
+fn a_moved_pointing_is_predicted_at_its_own_phase_centre() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let model = extended_model(directory.path(), "model.image");
+    let moved = MDirection::from_angles(CENTRE_RAD[0] + 1.0e-5, CENTRE_RAD[1], DirectionRef::J2000);
+    let observed = |name: &str, second: Pointing| {
+        let path = directory.path().join(name);
+        let mut sm = session(&path, "ALMA", "XX YY", resources(2, 2 << 30));
+        sm.set_field("moved", &moved, "", 0.0).expect("setfield");
+        let base = scan("target", 0.0, 20.0);
+        sm.observe_many(&ObserveManySpec {
+            pointings: vec![
+                Pointing {
+                    source: "target".to_string(),
+                    start_s: 0.0,
+                    stop_s: 20.0,
+                    direction: None,
+                },
+                second,
+            ],
+            spectral_window: base.spectral_window,
+            add_observation: false,
+            state: base.state,
+            observer: base.observer,
+            project: base.project,
+        })
+        .expect("observemany");
+        sm.predict(&spec(&[&model])).expect("predict");
+        sm.close().expect("close");
+        read_main(&path).0
+    };
+    let pointed = observed(
+        "pointed.ms",
+        Pointing {
+            source: "target".to_string(),
+            start_s: 20.0,
+            stop_s: 40.0,
+            direction: Some(moved.clone()),
+        },
+    );
+    let field = observed(
+        "field.ms",
+        Pointing {
+            source: "moved".to_string(),
+            start_s: 20.0,
+            stop_s: 40.0,
+            direction: None,
+        },
+    );
+    assert_eq!(pointed.len(), field.len(), "rows");
+    for (row, (pointed, field)) in pointed.iter().zip(&field).enumerate() {
+        assert_eq!(
+            pointed.uvw_m, field.uvw_m,
+            "row {row}: the same phase centre"
+        );
+    }
+    assert!(
+        pointed
+            .iter()
+            .flat_map(|row| &row.data)
+            .any(|v| v.norm() > 0.0),
+        "the model is predicted"
+    );
+    assert_eq!(
+        bits(pointed.iter().map(|row| &row.data)),
+        bits(field.iter().map(|row| &row.data)),
+        "the moved pointing's DATA"
+    );
+}
+
 #[test]
 fn setvp_setoptions_and_the_session_refuse_what_casa_rs_lacks() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let model = extended_model(directory.path(), "model.image");
-    // VLA's default voltage pattern is not an Airy pattern casa-rs has.
+    // The SMA's default voltage pattern is not one casa-rs has.
     let mut vla = session(
-        &directory.path().join("vla.ms"),
-        "VLA",
+        &directory.path().join("sma.ms"),
+        "SMA",
         "RR LL",
         resources(2, 2 << 30),
     );
@@ -239,7 +362,7 @@ fn setvp_setoptions_and_the_session_refuse_what_casa_rs_lacks() {
     let (outcome, message) = refusal(vla.predict(&spec(&[&model])));
     assert_eq!(outcome, CasaOutcome::NotYetImplemented);
     assert!(
-        message.contains("VLA") && message.contains("Phase 2"),
+        message.contains("SMA") && message.contains("#841"),
         "{message}"
     );
     vla.set_vp(&VoltagePatternSpec {
@@ -255,7 +378,7 @@ fn setvp_setoptions_and_the_session_refuse_what_casa_rs_lacks() {
         ..VoltagePatternSpec::default()
     }));
     assert_eq!(outcome, CasaOutcome::NotYetImplemented);
-    for ftmachine in ["mosaic", "WPROJECT", "sd"] {
+    for ftmachine in ["mosaic", "SD"] {
         let (outcome, message) = refusal(vla.set_options(&PredictionOptions {
             ftmachine: ftmachine.to_string(),
             ..PredictionOptions::default()

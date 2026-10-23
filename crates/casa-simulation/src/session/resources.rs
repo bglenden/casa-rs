@@ -25,10 +25,12 @@
 //! The backend is where a session predicts its model
 //! ([`SessionResources::prediction_backend`]); noise never runs on a device,
 //! so a session that predicts nothing writes the same MeasurementSet
-//! whatever the request. Every kernel set a session predicts with is the
-//! standard `GridFT` one, which the imaging runtime's Metal laws and the
-//! simulator's own (`tests/backends.rs`) cover, so `Auto` takes the host's
-//! Metal device whenever there is one.
+//! whatever the request. Metal predicts through the standard `GridFT`
+//! kernel set, which the imaging runtime's Metal laws and the simulator's
+//! own (`tests/backends.rs`) cover, so `Auto` takes the host's Metal device
+//! whenever there is one, except for a session that projects w
+//! (`setoptions(ftmachine='wproject')`): `close` predicts that on the CPU,
+//! and `predict` refuses it on an explicit `Metal`.
 
 use std::num::NonZeroUsize;
 use std::str::FromStr;

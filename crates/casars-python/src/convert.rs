@@ -353,6 +353,48 @@ impl<'a, 'py> FromPyObject<'a, 'py> for DoubleList {
     }
 }
 
+/// A vector-of-ints parameter: a sequence of integers, or one integer.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct IntList(pub(crate) Vec<i64>);
+
+impl IntList {
+    /// The binding default `values`.
+    pub(crate) fn of(values: &[i64]) -> Self {
+        Self(values.to_vec())
+    }
+}
+
+impl<'a, 'py> FromPyObject<'a, 'py> for IntList {
+    type Error = PyErr;
+
+    fn extract(object: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
+        let object = &*object;
+        if object.is_instance_of::<PyString>() {
+            return Err(PyTypeError::new_err(format!(
+                "expected an int or a sequence of ints, got the str {}",
+                object.repr()?
+            )));
+        }
+        if is_sequence(object)? {
+            return object
+                .try_iter()?
+                .map(|item| {
+                    let item = item?;
+                    if item.is_instance_of::<PyString>() {
+                        return Err(PyTypeError::new_err(format!(
+                            "expected a sequence of ints, found the str {}",
+                            item.repr()?
+                        )));
+                    }
+                    item.extract::<i64>()
+                })
+                .collect::<PyResult<Vec<_>>>()
+                .map(Self);
+        }
+        Ok(Self(vec![object.extract::<i64>()?]))
+    }
+}
+
 /// A vector-of-strings parameter: a sequence of `str`, or one `str` as a
 /// one-element list.
 ///

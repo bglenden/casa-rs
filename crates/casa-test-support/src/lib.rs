@@ -15,6 +15,7 @@ mod oracle_ffi;
 mod oracle_runtime;
 pub mod quanta_interop;
 pub mod spectral_interop;
+pub mod table_element_arrays;
 pub mod table_interop;
 pub mod table_measures_interop;
 mod table_oracle;
