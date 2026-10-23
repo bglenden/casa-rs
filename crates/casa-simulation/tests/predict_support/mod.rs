@@ -20,7 +20,8 @@ use casa_ms::columns::main_ids::{antenna1, antenna2, field_id};
 use casa_ms::columns::uvw_column::UvwColumn;
 use casa_ms::derived::GridFtProjection;
 use casa_simulation::predict::{
-    ModelPredictor, PredictOptions, PredictRow, PredictionWorkspace, PrimaryBeam, SkyModel,
+    FtMachine, ModelPredictor, PredictOptions, PredictRow, PredictionWorkspace, PrimaryBeam,
+    SkyModel,
 };
 use casa_simulation::{
     ArrayConfig, BackendRequest, CoordinateSystem, ObserveSpec, PredictSpec, SessionResources,
@@ -313,11 +314,29 @@ pub fn reference(
     correlations: &[CorrelationType],
     beam: Option<PrimaryBeam>,
 ) -> Vec<Vec<Complex32>> {
+    reference_through(
+        rows,
+        model,
+        correlations,
+        beam,
+        PredictOptions::default().ft_machine,
+    )
+}
+
+/// [`reference`] through `ft_machine`.
+pub fn reference_through(
+    rows: &[Row],
+    model: &Path,
+    correlations: &[CorrelationType],
+    beam: Option<PrimaryBeam>,
+    ft_machine: FtMachine,
+) -> Vec<Vec<Complex32>> {
     let model = SkyModel::open(model).expect("model");
     let frequencies: Vec<f64> = (0..CHANNELS)
         .map(|channel| FREQUENCY_HZ + channel as f64 * CHANNEL_HZ)
         .collect();
     let options = PredictOptions {
+        ft_machine,
         primary_beam: beam,
         ..PredictOptions::default()
     };

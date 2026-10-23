@@ -130,8 +130,11 @@ pub struct Simulator {
     seed: i32,
     /// The noise terms `setnoise` set, until `reset`.
     noise_terms: Vec<NoiseTerm>,
-    /// `predict`'s grid padding (`setoptions`).
+    /// `predict`'s `GridFT` grid padding (`setoptions`).
     padding: PaddingFactor,
+    /// `setoptions(ftmachine='wproject', wprojplanes=…)`: the planes
+    /// `predict` projects through, as given, or `None` for `GridFT`.
+    w_projection_planes: Option<i64>,
     /// Whether `predict` applies the primary beam (`setvp(dovp)`).
     voltage_pattern: bool,
     /// The DATA steps (`predict`, `corrupt`), applied at `close`.
@@ -163,6 +166,7 @@ impl Simulator {
             seed: DEFAULT_SEED,
             noise_terms: Vec::new(),
             padding: PaddingFactor::SIMULATOR,
+            w_projection_planes: None,
             voltage_pattern: false,
             data_plan: DataPlan::default(),
         }

@@ -70,6 +70,7 @@ def main() -> int:
             print(name, "exists")
             continue
         shutil.rmtree(path, ignore_errors=True)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
         started = time.perf_counter()
         write_model(path, model_args(spec), int(spec["planes"]))
         print(name, f"written in {time.perf_counter() - started:.1f} s", flush=True)

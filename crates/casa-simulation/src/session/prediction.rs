@@ -28,16 +28,19 @@ use std::sync::Arc;
 
 use casa_components::ComponentList;
 use casa_imaging_model::CorrelationType;
-use casa_imaging_operator::{GridPrecision, OperatorError, PaddingFactor, PreparedModelGrids};
+use casa_imaging_operator::{
+    ConvolutionFunctionSet, GridPrecision, MAX_W_PLANES, OperatorError, PaddingFactor,
+    PreparedModelGrids, Spheroidal, WPlaneCount, WPlanes,
+};
 use casa_imaging_runtime::pass::WorkerTeam;
 use casa_imaging_runtime::{Demand, Reservation, admit, charge_process_caches, free_memory};
 
-use super::Simulator;
 use super::error::{SimulatorError, SimulatorResult};
 use super::resources::SessionResources;
+use super::{BackendRequest, Simulator};
 use crate::predict::{
     BeamPattern, ComponentPrediction, ComponentRefusal, ComponentTargets, ComponentWindow,
-    ModelOperator, PredictError, PrimaryBeam, SkyModel,
+    FtMachine, ModelLayout, ModelOperator, PredictError, PrimaryBeam, SkyModel,
 };
 
 /// The phase a model's grids are admitted as.
@@ -49,8 +52,16 @@ const COMPONENTS_PHASE: &str = "the simulator's component list";
 /// The phase the workers preparing a model are admitted as.
 const PREPARATION_PHASE: &str = "the simulator's model preparation";
 
-/// The FTMachines CASA's simulator builds other than `GridFT`.
-const OTHER_FTMACHINES: [&str; 5] = ["sd", "both", "mosaic", "wproject", "pbwproject"];
+/// The phase the W-projection screens are admitted as while the planes are
+/// transformed on them.
+const W_SCREENS_PHASE: &str = "the simulator's W-projection screens";
+
+/// The phase a model's kernels are admitted as.
+const KERNEL_PHASE: &str = "the simulator's convolution functions";
+
+/// The FTMachines CASA's simulator builds other than `GridFT` and
+/// `WProjectFT`.
+const OTHER_FTMACHINES: [&str; 4] = ["sd", "both", "mosaic", "pbwproject"];
 
 /// The arguments of `sm.predict`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -105,26 +116,30 @@ impl PredictSpec {
 }
 
 /// The arguments of `sm.setoptions` that casa-rs reads. `cache`, `tile`,
-/// `location`, `facets`, `maxdata` and `wprojplanes` do not change what
-/// `GridFT` predicts; the session's memory budget stands for `cache`.
+/// `location`, `facets` and `maxdata` do not change what `GridFT` and
+/// `WProjectFT` predict; the session's memory budget stands for `cache`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PredictionOptions {
-    /// `ftmachine`; `GridFT` unless `sd`, `both`, `mosaic`, `wproject` or
-    /// `pbwproject` (case-insensitive).
+    /// `ftmachine`: `WProjectFT` for `wproject`, and `GridFT` unless `sd`,
+    /// `both`, `mosaic` or `pbwproject` (case-insensitive).
     pub ftmachine: String,
     /// `gridfunction`; `SF`, the spheroid, is implemented.
     pub grid_function: String,
-    /// `padding`; factors below 1 are ignored, as CASA ignores them.
+    /// `padding`, `GridFT`'s; factors below 1 are ignored, as CASA ignores
+    /// them. `WProjectFT` pads by 1 whatever it is.
     pub padding: f64,
+    /// `wprojplanes`, `WProjectFT`'s planes.
+    pub w_planes: i64,
 }
 
 impl Default for PredictionOptions {
-    /// CASA's binding defaults: `ft`, `SF`, 1.3.
+    /// CASA's binding defaults: `ft`, `SF`, 1.3 and one plane.
     fn default() -> Self {
         Self {
             ftmachine: "ft".to_string(),
             grid_function: "SF".to_string(),
             padding: 1.3,
+            w_planes: 1,
         }
     }
 }
@@ -172,6 +187,9 @@ pub(crate) struct Prediction {
     grids: Vec<(Option<usize>, PreparedModelGrids)>,
     /// The grids' memory, admitted at `predict` and released with them.
     _reservation: Reservation,
+    /// What the operator's kernels keep, admitted as they were built and
+    /// released with them.
+    _kernels: Reservation,
 }
 
 impl std::fmt::Debug for Prediction {
@@ -207,13 +225,15 @@ impl Prediction {
 }
 
 impl Simulator {
-    /// `sm.setoptions(...)`: record the padding `predict` grids with.
+    /// `sm.setoptions(...)`: record the FTMachine `predict` degrids through,
+    /// `GridFT`'s padding and `WProjectFT`'s planes. Each call sets the
+    /// FTMachine anew, as CASA's does.
     ///
     /// # Errors
     ///
-    /// Not yet implemented: an FTMachine other than `GridFT` (`sd`, `both`,
-    /// `mosaic`, `wproject`, `pbwproject`), or a grid function other than
-    /// `SF`. Nothing is recorded then.
+    /// Not yet implemented: an FTMachine other than `GridFT` and
+    /// `WProjectFT` (`sd`, `both`, `mosaic`, `pbwproject`), or a grid
+    /// function other than `SF`. Nothing is recorded then.
     pub fn set_options(&mut self, options: &PredictionOptions) -> SimulatorResult<()> {
         let ftmachine = options.ftmachine.to_lowercase();
         if OTHER_FTMACHINES.contains(&ftmachine.as_str()) {
@@ -241,7 +261,52 @@ impl Simulator {
             self.padding = PaddingFactor::new(padding)
                 .map_err(|error| SimulatorError::raised(format!("padding {padding}: {error}")))?;
         }
+        self.w_projection_planes = (ftmachine == "wproject").then_some(options.w_planes);
         Ok(())
+    }
+
+    /// The FTMachine `predict` degrids through, as `setoptions` chose it.
+    ///
+    /// # Errors
+    ///
+    /// - CASA's `False`: `WProjectFT` with one plane, whose convolution
+    ///   function CASA's `WPConvFunc` cannot normalise.
+    /// - Raised: `WProjectFT` with no planes or fewer, where CASA's
+    ///   simulator crashes (`docs/CASA (C++) bugs.md`), or more than
+    ///   casa-rs's [`MAX_W_PLANES`] (65,536).
+    /// - Not yet implemented: `WProjectFT` on the Metal backend.
+    fn ft_machine(&self) -> SimulatorResult<FtMachine> {
+        let Some(planes) = self.w_projection_planes else {
+            return Ok(FtMachine::Grid(self.padding));
+        };
+        match planes {
+            ..=0 => Err(SimulatorError::raised(format!(
+                "setoptions(ftmachine='wproject', wprojplanes={planes}): W projection needs at \
+                 least two planes"
+            ))),
+            1 => Err(SimulatorError::refused(
+                "Caught exception: Convolution function integral is not positive",
+            )),
+            _ => {
+                let planes = u32::try_from(planes)
+                    .ok()
+                    .filter(|&planes| planes as usize <= MAX_W_PLANES)
+                    .ok_or_else(|| {
+                        SimulatorError::raised(format!(
+                            "setoptions(ftmachine='wproject', wprojplanes={planes}): casa-rs \
+                             builds at most 65,536 W planes"
+                        ))
+                    })?;
+                if self.options.resources.backend() == BackendRequest::Metal {
+                    return Err(SimulatorError::not_yet_implemented(
+                        "predict with setoptions(ftmachine='wproject') on the Metal backend is \
+                         not yet implemented in casa-rs (#841); backend 'auto' or 'cpu' \
+                         predicts it on the CPU",
+                    ));
+                }
+                Ok(FtMachine::WProject(planes))
+            }
+        }
     }
 
     /// `sm.setvp(...)`: record whether `predict` applies the primary beam.
@@ -293,9 +358,11 @@ impl Simulator {
     /// - CASA's `False`: no model image ("No model images found"), or no
     ///   rows observed yet.
     /// - Raised: a scan of 3 correlations ("No such VisVector type"), or
-    ///   model grids, or a component list's read or preparation, that do not
-    ///   fit the session's memory budget
+    ///   model grids or kernels, or a component list's read or preparation,
+    ///   that do not fit the session's memory budget
     ///   ([`SimulatorError::admission_refused`]).
+    /// - As the FTMachine `setoptions` chose refuses: `WProjectFT` with
+    ///   fewer than two planes, or on the Metal backend.
     pub fn predict(&mut self, spec: &PredictSpec) -> SimulatorResult<()> {
         spec.check_images()?;
         let images = spec.named_images();
@@ -356,10 +423,11 @@ impl Simulator {
             .transpose()?;
         let prediction = match model {
             Some(model) => {
-                let operator =
-                    ModelOperator::new(&model, &correlations, self.padding, GridPrecision::F32)
-                        .map_err(|error| correlation_error(error, &correlations))?;
-                Some(self.prepare(&model, operator, beam)?)
+                let layout = ModelLayout::new(&model, &correlations, self.ft_machine()?)
+                    .map_err(|error| correlation_error(error, &correlations))?;
+                let (kernels, kernel_reservation) = self.admitted_kernels(&layout)?;
+                let operator = ModelOperator::new(layout, kernels, GridPrecision::F32);
+                Some(self.prepare(&model, operator, beam, kernel_reservation)?)
             }
             None => None,
         };
@@ -521,14 +589,63 @@ impl Simulator {
         fields
     }
 
+    /// Build `layout`'s kernels, admitted as they are built, as imaging
+    /// admits them: the spheroidal set's bytes, or the W-projection screens
+    /// ([`WPlanes::screens_bytes`]) and then the kernels cropped from them
+    /// ([`WScreens::kernel_bytes`](casa_imaging_operator::WScreens::kernel_bytes)),
+    /// the screens released once the kernels are built. The reservation
+    /// returned keeps what the kernels hold.
+    fn admitted_kernels(
+        &self,
+        layout: &ModelLayout,
+    ) -> SimulatorResult<(Box<dyn ConvolutionFunctionSet>, Reservation)> {
+        let resources = &self.options.resources;
+        let (host, policy) = (resources.host(), resources.policy());
+        charge_process_caches(host, policy).map_err(SimulatorError::admission)?;
+        let admitted = |phase, memory| {
+            admit(host, policy, &Demand { phase, memory }).map_err(SimulatorError::admission)
+        };
+        let (geometry, polarization) = (layout.geometry(), layout.polarization());
+        let raised =
+            |error: OperatorError| SimulatorError::raised(format!("Caught exception: {error}"));
+        Ok(match layout.machine() {
+            FtMachine::Grid(_) => (
+                Box::new(Spheroidal::new(geometry, polarization)),
+                admitted(KERNEL_PHASE, Spheroidal::bytes(geometry))?,
+            ),
+            FtMachine::WProject(planes) => {
+                let count = WPlaneCount::Fixed(planes);
+                let screening = admitted(
+                    W_SCREENS_PHASE,
+                    WPlanes::screens_bytes(geometry, count).map_err(raised)?,
+                )?;
+                let screens = WPlanes::screens(geometry, polarization, count).map_err(raised)?;
+                let mut kernels = admitted(KERNEL_PHASE, screens.kernel_bytes())?;
+                let set = screens.finish().map_err(raised)?;
+                drop(screening);
+                kernels.retain(set.resident_bytes());
+                tracing::info!(
+                    planes,
+                    screen = set.screen_size(),
+                    bytes = set.resident_bytes(),
+                    "W projection using {planes} planes"
+                );
+                (Box::new(set), kernels)
+            }
+        })
+    }
+
     /// Admit and prepare `model`'s grids: one set, or one per observed field
     /// with `beam` centred on it. The planes are prepared on as many of the
-    /// policy's workers as fit their scratch beside the grids.
+    /// policy's workers as fit their scratch beside the grids. The
+    /// prediction keeps `kernels`, the reservation of the operator's
+    /// kernels.
     fn prepare(
         &self,
         model: &SkyModel,
         operator: ModelOperator,
         beam: Option<PrimaryBeam>,
+        kernels: Reservation,
     ) -> SimulatorResult<Prediction> {
         let resources = &self.options.resources;
         let (host, policy) = (resources.host(), resources.policy());
@@ -596,6 +713,7 @@ impl Simulator {
             tangent_rad: model.centre_rad(),
             grids,
             _reservation: reservation,
+            _kernels: kernels,
         })
     }
 }

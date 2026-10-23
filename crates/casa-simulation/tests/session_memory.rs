@@ -43,7 +43,12 @@
 //! admission than a little, so what the prediction stage keeps per noise
 //! term is charged where it is kept (on Metal only, for the device).
 //!
-//! A fourth law predicts component lists (#841 Phase 2): what `predict`
+//! A fourth law predicts through `WProjectFT` (#841 Phase 2): `predict`
+//! holds no more than it is admitted while it builds the planes on their
+//! screens, and what it keeps after (the kernels and the grids) is what its
+//! reservations keep.
+//!
+//! A fifth law predicts component lists (#841 Phase 2): what `predict`
 //! keeps (each component's fluxes and beam powers per channel, its shape's
 //! transform and each field's rotation) is what it was admitted before it
 //! formed them, and `close` holds no more beyond its admission for twice
@@ -75,8 +80,8 @@ use casa_imaging_runtime::{
 };
 use casa_simulation::{
     ArrayConfig, BackendRequest, CoordinateSystem, NoiseSpec, ObserveSpec, PredictSpec,
-    SessionResources, Simulator, SimulatorOptions, SpectralWindowSpec, StateSpec,
-    VoltagePatternSpec,
+    PredictionOptions, SessionResources, Simulator, SimulatorOptions, SpectralWindowSpec,
+    StateSpec, VoltagePatternSpec,
 };
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::frequency::{FrequencyRef, MFrequency};
@@ -838,6 +843,108 @@ fn a_predicting_close_holds_its_admission_however_often_its_scan_is_corrupted() 
         few.unadmitted(),
         REPEATED_APPLICATIONS[0]
     );
+}
+
+/// The W-projection law's planes.
+const W_PLANES: i64 = 128;
+
+/// The W-projection law's session budget: the 32-channel cases' and room
+/// for the planes beside `close`'s writer.
+const BUDGET_W: u64 = BUDGET_32 + (32 << 20);
+
+/// A one-integration scan predicted from `model` through `WProjectFT` with
+/// [`W_PLANES`] planes: what `predict` held and kept. The session is closed
+/// and `ms` deleted after.
+fn predict_w(ms: &Path, model: &Path, measures: &Arc<dyn MeasuresProvider>) -> Predicted {
+    let mut sm = configured(ms, measures, BUDGET_W, 32);
+    sm.observe(&scan(1)).expect("observe");
+    sm.set_options(&PredictionOptions {
+        ftmachine: "wproject".to_string(),
+        w_planes: W_PLANES,
+        ..PredictionOptions::default()
+    })
+    .expect("setoptions");
+    let reserved = reserved_memory();
+    let baseline = LIVE.load(Ordering::Relaxed);
+    PEAK.store(baseline, Ordering::Relaxed);
+    let window = ReservationWindow::open();
+    let before = excess_now();
+    EXCESS.store(before, Ordering::Relaxed);
+    sm.predict(&PredictSpec {
+        images: vec![model.to_path_buf()],
+        component_list: None,
+        incremental: false,
+    })
+    .expect("predict");
+    let predicted = Predicted {
+        during: Closed {
+            heap: PEAK.load(Ordering::Relaxed) - baseline,
+            admitted: window.close() - reserved,
+        },
+        beyond: EXCESS.load(Ordering::Relaxed) - before,
+        kept: Closed {
+            heap: LIVE.load(Ordering::Relaxed).saturating_sub(baseline),
+            admitted: reserved_memory() - reserved,
+        },
+    };
+    drop(window);
+    sm.close().expect("close");
+    std::fs::remove_dir_all(ms).expect("remove the run");
+    predicted
+}
+
+/// `predict` through `WProjectFT` builds its planes on screens and keeps the
+/// kernels cropped from them (#865, #841 Phase 2): while it runs, the
+/// heap stays within the most its reservations held (the screens, then the
+/// kernels, then the model's grids and their preparation) and the
+/// allowance; after it, what the session keeps (the kernels and the grids)
+/// is what its reservations keep, within the allowance either way. The
+/// 128 planes keep about 2.1 MB of kernels, built on about 1.4 MB of
+/// screens: a predict that kept the kernels uncharged held 2.18 MB against
+/// 33 KB charged, and one that kept the screens' charge would be as far
+/// apart the other way.
+#[test]
+fn a_w_projection_predict_holds_its_admission_and_keeps_what_it_charges() {
+    if !alone("a_w_projection_predict_holds_its_admission_and_keeps_what_it_charges") {
+        return;
+    }
+    let resources = resources(BUDGET_32);
+    charge_process_caches(resources.host(), resources.policy()).expect("the process caches");
+    let measures = casa_test_support::deterministic_measures_provider();
+    let root = tempfile::tempdir().expect("temporary directory");
+    let model = root.path().join("model.image");
+    write_model(&model, 32);
+    let ms = root.path().join("w.ms");
+    // Once unmeasured: state a process keeps once it has predicted.
+    predict_w(&ms, &model, &measures);
+    for _ in 0..MEASURED_RUNS {
+        let Predicted {
+            during,
+            beyond,
+            kept,
+        } = predict_w(&ms, &model, &measures);
+        println!(
+            "W predict: held {} bytes against {} admitted, {beyond} at most beyond its \
+             reservations; kept {} against {} charged",
+            during.heap, during.admitted, kept.heap, kept.admitted
+        );
+        assert!(
+            kept.admitted > 2 * ALLOWANCE_BYTES,
+            "the kernels and grids are charged: {kept:?}"
+        );
+        assert!(
+            during.heap <= during.admitted + ALLOWANCE_BYTES,
+            "predict held {} bytes, beyond the {} admitted and the allowance",
+            during.heap,
+            during.admitted
+        );
+        assert!(
+            kept.unadmitted().unsigned_abs() <= ALLOWANCE_BYTES,
+            "predict keeps {} bytes against the {} its reservations keep",
+            kept.heap,
+            kept.admitted
+        );
+    }
 }
 
 /// The component law's cases: lists of this many components, observed in

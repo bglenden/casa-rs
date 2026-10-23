@@ -256,7 +256,7 @@ fn setvp_setoptions_and_the_session_refuse_what_casa_rs_lacks() {
         ..VoltagePatternSpec::default()
     }));
     assert_eq!(outcome, CasaOutcome::NotYetImplemented);
-    for ftmachine in ["mosaic", "WPROJECT", "sd"] {
+    for ftmachine in ["mosaic", "SD"] {
         let (outcome, message) = refusal(vla.set_options(&PredictionOptions {
             ftmachine: ftmachine.to_string(),
             ..PredictionOptions::default()
