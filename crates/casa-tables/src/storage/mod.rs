@@ -1107,6 +1107,7 @@ impl CompositeStorage {
 
         match read_table_dat_dispatch(&control_path)? {
             TableDatResult::Plain(mut table_dat) => {
+                table_dat.raise_row_count(snapshot.row_count as u64);
                 table_dat.table_desc.table_keywords = snapshot.keywords.clone();
                 for column in &mut table_dat.table_desc.columns {
                     column.keywords = snapshot

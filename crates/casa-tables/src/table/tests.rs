@@ -2479,6 +2479,102 @@ fn incremental_selected_array_cell_writes_retain_at_most_one_cell_and_no_rows() 
     std::fs::remove_dir_all(&root).expect("cleanup test dir");
 }
 
+/// casacore publishes a table's rows in `table.lock`'s sync data before it
+/// rewrites `table.dat`, and CASA 6.7.6's simulator stops between the two
+/// after a mosaic predict, leaving `table.dat` with fewer rows than its
+/// storage managers hold (#880). casa-rs reads the table's rows from the
+/// sync data; an in-place write under casacore's write lock then keeps them
+/// in `table.dat` and in the sync data it publishes, where it once wrote the
+/// stale count back and casacore refused the table ("TiledStMan::
+/// headerFileGet: mismatch in #row").
+#[cfg(unix)]
+#[test]
+fn an_in_place_write_keeps_the_rows_a_stale_table_dat_lacks() {
+    use crate::lock::{LockFile, SyncData, TableWriteLock};
+    use crate::storage::table_control::{TableDatResult, read_table_dat_dispatch, write_table_dat};
+    let schema = TableSchema::new(vec![ColumnSchema::array_fixed(
+        "DATA",
+        PrimitiveType::Complex32,
+        vec![2, 2],
+    )])
+    .expect("schema");
+    let mut table = Table::with_schema(schema);
+    let cell = |value: f32| {
+        Value::Array(ArrayValue::Complex32(
+            ndarray::ArrayD::from_shape_vec(vec![2, 2], vec![Complex32::new(value, 0.0); 4])
+                .expect("2x2 cell"),
+        ))
+    };
+    for row in 0..4 {
+        table
+            .add_row(RecordValue::new(vec![RecordField::new(
+                "DATA",
+                cell(row as f32),
+            )]))
+            .expect("append cell");
+    }
+    let root = unique_test_dir("stale_table_dat_rows");
+    std::fs::create_dir_all(&root).expect("create test dir");
+    table
+        .save(TableOptions::new(&root).with_data_manager(DataManagerKind::TiledShapeStMan))
+        .expect("save tiled table");
+    let control = root.join(crate::storage::TABLE_CONTROL_FILE);
+    let plain = || match read_table_dat_dispatch(&control).expect("read table.dat") {
+        TableDatResult::Plain(contents) => contents,
+        _ => panic!("a plain table"),
+    };
+    // What the stopped process left: one row in `table.dat`, four published.
+    let mut stale = plain();
+    let managers = stale.column_set.data_managers.len();
+    stale.nrrow = 1;
+    stale.column_set.nrrow = 1;
+    write_table_dat(&control, &stale).expect("write the stale table.dat");
+    {
+        let lock = LockFile::create_or_open(&root, false, 5.0, false).expect("table.lock");
+        let mut sync = lock
+            .read_sync_data()
+            .expect("read sync")
+            .unwrap_or_else(SyncData::new);
+        sync.record_write(4, 1, true, &vec![true; managers]);
+        lock.write_sync_data(&sync).expect("publish four rows");
+    }
+
+    let mut reopened = Table::open(TableOptions::new(&root)).expect("open the stale table");
+    assert_eq!(reopened.row_count(), 4, "the rows the sync data publishes");
+    let mut write_lock = TableWriteLock::acquire(&root, 1).expect("casacore's write lock");
+    {
+        let mut prepared = reopened
+            .row_accessor_mut()
+            .prepare(&["DATA"])
+            .expect("prepare DATA");
+        prepared.seek(2).expect("row 2");
+        prepared.set_value_at(0, cell(20.0)).expect("write row 2");
+    }
+    reopened
+        .prepare_write()
+        .save_selected_rows(&["DATA"], &[2])
+        .expect("persist row 2 in place");
+    write_lock.record_write();
+    write_lock.release().expect("publish the write");
+
+    let after = plain();
+    assert_eq!((after.nrrow, after.column_set.nrrow), (4, 4));
+    let lock = LockFile::create_or_open(&root, false, 5.0, false).expect("table.lock");
+    let published = lock
+        .read_sync_data()
+        .expect("read sync")
+        .expect("sync data");
+    assert_eq!(published.nrrow, 4, "the published rows");
+    drop(lock);
+    let verify = Table::open(TableOptions::new(&root)).expect("reopen");
+    assert_eq!(verify.row_count(), 4);
+    let ArrayValue::Complex32(values) = table_array(&verify, 2, "DATA").unwrap() else {
+        panic!("DATA is complex")
+    };
+    assert_eq!(values[[0, 0]], Complex32::new(20.0, 0.0));
+    std::fs::remove_dir_all(&root).expect("cleanup test dir");
+}
+
 /// A selected-row save whose rows span the hypercubes of a heterogeneous
 /// `TiledShapeStMan` patches each row into its own cube.
 #[test]

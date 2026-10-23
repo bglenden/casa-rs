@@ -285,7 +285,8 @@ impl Table {
     /// tables on disk.
     pub fn save_metadata_only(&self, options: TableOptions) -> Result<(), TableError> {
         let snapshot = StorageSnapshot {
-            row_count: 0,
+            // The table's rows, which `table.dat` on disk can trail (#880).
+            row_count: self.row_count(),
             rows: Vec::new(),
             undefined_cells: Vec::new(),
             keywords: self.inner.keywords().clone(),
@@ -604,6 +605,7 @@ impl Table {
                     ));
                 }
             };
+        table_dat.raise_row_count(self.row_count() as u64);
 
         let mut profiler = StorageProfiler::start(format!(
             "Table::save_selected_columns_in_place path={}",
@@ -1027,6 +1029,7 @@ impl Table {
                         ));
                     }
                 };
+            table_dat.raise_row_count(self.row_count() as u64);
 
             if table_dat
                 .table_desc
@@ -1212,6 +1215,7 @@ impl Table {
                         ));
                     }
                 };
+            table_dat.raise_row_count(self.row_count() as u64);
 
             if table_dat
                 .table_desc

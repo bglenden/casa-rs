@@ -73,6 +73,23 @@ pub(crate) struct TableDatContents {
     pub column_set: ColumnSetContents,
 }
 
+impl TableDatContents {
+    /// Bring both of `table.dat`'s row counts up to `rows`, the table's own
+    /// as casa-rs opened it, before the file read from disk is written back,
+    /// as casacore's `PlainTable::putFile` writes its `nrrow_p`. The file can
+    /// trail the table: casacore publishes rows in `table.lock`'s sync data,
+    /// which casa-rs takes as the table's count, before it rewrites
+    /// `table.dat`, and a process that stops between the two leaves the file
+    /// stale (CASA 6.7.6's simulator after a mosaic predict, #880). casacore
+    /// checks every storage manager's rows against the count the file gives.
+    /// A count is never lowered here: an in-place write never removes rows.
+    pub(crate) fn raise_row_count(&mut self, rows: u64) {
+        let rows = rows.max(self.nrrow).max(self.column_set.nrrow);
+        self.nrrow = rows;
+        self.column_set.nrrow = rows;
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct TableDescContents {
     pub name: String,
