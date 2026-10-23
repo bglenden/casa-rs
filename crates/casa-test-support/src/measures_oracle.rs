@@ -2,9 +2,11 @@
 //! Stable typed facade over the private casacore measures shim.
 
 #[cfg(has_casacore_cpp)]
+use crate::measures_frames_interop::{cpp_direction_convert_cosines, cpp_epoch_convert_model};
+#[cfg(has_casacore_cpp)]
 use crate::measures_interop::*;
 #[cfg(has_casacore_cpp)]
-use crate::measures_runtime_interop::{cpp_epoch_convert_iau2000a, cpp_measures_table_identity};
+use crate::measures_runtime_interop::cpp_measures_table_identity;
 use crate::oracle_runtime::{OracleError, oracle_operation};
 
 macro_rules! measures_operation {
@@ -703,9 +705,47 @@ impl MeasuresOracle {
         observatory_wgs84: [f64; 3],
     ) -> Result<f64, OracleError> {
         measures_operation!("measures.epoch_convert_iau2000a", {
-            cpp_epoch_convert_iau2000a(mjd_in, ref_in, ref_out, observatory_wgs84).map_err(
+            cpp_epoch_convert_model(mjd_in, ref_in, ref_out, observatory_wgs84, true).map_err(
                 |message| OracleError::CppFailure {
                     operation: "measures.epoch_convert_iau2000a",
+                    message,
+                },
+            )
+        })
+    }
+
+    /// casacore's direction vector for one conversion, as it leaves
+    /// `MCDirection`: unnormalized, so free of `MVDirection::getLat()`'s
+    /// `asin(z)`. The frame has the UTC epoch `epoch_mjd` (0 for none) and no
+    /// position.
+    pub fn direction_convert_cosines(
+        lon_lat: (f64, f64),
+        ref_in: &str,
+        ref_out: &str,
+        epoch_mjd: f64,
+    ) -> Result<[f64; 3], OracleError> {
+        measures_operation!("measures.direction_convert_cosines", {
+            cpp_direction_convert_cosines(lon_lat, ref_in, ref_out, epoch_mjd, false).map_err(
+                |message| OracleError::CppFailure {
+                    operation: "measures.direction_convert_cosines",
+                    message,
+                },
+            )
+        })
+    }
+
+    /// [`Self::direction_convert_cosines`] under casacore's IAU 2006/2000A
+    /// model.
+    pub fn direction_convert_cosines_iau2000a(
+        lon_lat: (f64, f64),
+        ref_in: &str,
+        ref_out: &str,
+        epoch_mjd: f64,
+    ) -> Result<[f64; 3], OracleError> {
+        measures_operation!("measures.direction_convert_cosines_iau2000a", {
+            cpp_direction_convert_cosines(lon_lat, ref_in, ref_out, epoch_mjd, true).map_err(
+                |message| OracleError::CppFailure {
+                    operation: "measures.direction_convert_cosines_iau2000a",
                     message,
                 },
             )

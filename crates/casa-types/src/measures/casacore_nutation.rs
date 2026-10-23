@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Casacore `Nutation::STANDARD` equation-of-equinoxes series.
+//! Casacore `Nutation::STANDARD` (IAU 1980) series: the equation of the
+//! equinoxes and the true obliquity.
 
 const ARCSEC_RAD: f64 = 0.000_004_848_136_811_095_36;
 const MJD_J2000: f64 = 51_544.5;
@@ -8,6 +9,19 @@ const JD_CENTURY_DAYS: f64 = 36_525.0;
 /// Evaluate the equation of equinoxes used by casacore's standard nutation
 /// model at the supplied epoch (MJD).
 pub(crate) fn standard_equation_of_equinoxes_rad(mjd: f64) -> f64 {
+    let (nutation_longitude, true_obliquity) = standard_nutation_rad(mjd);
+    nutation_longitude * true_obliquity.cos()
+}
+
+/// The true obliquity of the ecliptic of casacore's standard nutation model
+/// at the supplied epoch (MJD): its mean obliquity plus the nutation in
+/// obliquity, the angle `MeasMath::applyTECLIPtoJTRUE` rotates by.
+pub(crate) fn standard_true_obliquity_rad(mjd: f64) -> f64 {
+    standard_nutation_rad(mjd).1
+}
+
+/// The nutation in longitude Δψ and the true obliquity ε0 + Δε, in radians.
+fn standard_nutation_rad(mjd: f64) -> (f64, f64) {
     let t = (mjd - MJD_J2000) / JD_CENTURY_DAYS;
     let fundamental = FUNDAMENTAL_ARGUMENTS
         .map(|coeff| (coeff[0] + t * (coeff[1] + t * (coeff[2] + t * coeff[3]))) * ARCSEC_RAD);
@@ -37,9 +51,8 @@ pub(crate) fn standard_equation_of_equinoxes_rad(mjd: f64) -> f64 {
         obliquity += obliquity_coeff * cos_phase;
     }
 
-    let nutation_longitude = -longitude;
-    let true_obliquity = -fundamental[0] - obliquity;
-    -nutation_longitude * true_obliquity.cos()
+    // casacore keeps these as the Euler angles -Δψ and -(ε0 + Δε).
+    (longitude, fundamental[0] + obliquity)
 }
 
 const FUNDAMENTAL_ARGUMENTS: [[f64; 4]; 6] = [

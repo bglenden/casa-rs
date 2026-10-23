@@ -228,10 +228,10 @@ fn dir_j2000_to_galactic() {
     )
     .unwrap();
 
-    // Use angle-aware comparison (accounts for 2π wrapping) and ~1e-5 tolerance
-    // for known SOFA vs casacore algorithm differences in galactic conversion.
+    // Angle-aware comparison (accounts for 2π wrapping); casa-rs uses
+    // casacore's galactic matrix (#850).
     assert!(
-        close_angle(rust_lon, cpp_lon, 1e-4) && close(rust_lat, cpp_lat, 1e-4),
+        close_angle(rust_lon, cpp_lon, 1e-9) && close(rust_lat, cpp_lat, 1e-9),
         "dir J2000→GAL: Rust=({rust_lon},{rust_lat}), C++=({cpp_lon},{cpp_lat})"
     );
 }
@@ -247,7 +247,7 @@ fn dir_galactic_to_j2000() {
             .unwrap();
 
     assert!(
-        close_angle(rust_lon, cpp_lon, 1e-4) && close(rust_lat, cpp_lat, 1e-4),
+        close_angle(rust_lon, cpp_lon, 1e-9) && close(rust_lat, cpp_lat, 1e-9),
         "dir GAL→J2000: Rust=({rust_lon},{rust_lat}), C++=({cpp_lon},{cpp_lat})"
     );
 }
@@ -262,7 +262,7 @@ fn dir_j2000_to_b1950() {
             .unwrap();
 
     assert!(
-        close_angle(rust_lon, cpp_lon, 1e-4) && close(rust_lat, cpp_lat, 1e-4),
+        close_angle(rust_lon, cpp_lon, 1e-9) && close(rust_lat, cpp_lat, 1e-9),
         "dir J2000→B1950: Rust=({rust_lon},{rust_lat}), C++=({cpp_lon},{cpp_lat})"
     );
 }

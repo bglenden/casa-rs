@@ -6,6 +6,7 @@ mod image_oracle;
 mod image_oracle_impl;
 mod lattice_oracle;
 mod lattice_oracle_impl;
+mod measures_frames_interop;
 pub mod measures_interop;
 mod measures_oracle;
 mod measures_runtime_interop;

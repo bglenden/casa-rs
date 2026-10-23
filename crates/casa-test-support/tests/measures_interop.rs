@@ -409,13 +409,13 @@ fn rc_direction_j2000_to_galactic() {
         MeasuresOracle::direction_convert(1.0, 0.5, "J2000", "GALACTIC", 0.0, 0.0, 0.0, 0.0)
             .unwrap();
     assert!(
-        close(rust_lon, cpp_lon, 1e-4),
+        close(rust_lon, cpp_lon, 1e-9),
         "lon: Rust={}, C++={}",
         rust_lon,
         cpp_lon
     );
     assert!(
-        close(rust_lat, cpp_lat, 1e-4),
+        close(rust_lat, cpp_lat, 1e-9),
         "lat: Rust={}, C++={}",
         rust_lat,
         cpp_lat
@@ -432,13 +432,13 @@ fn rc_direction_j2000_to_ecliptic() {
         MeasuresOracle::direction_convert(1.0, 0.5, "J2000", "ECLIPTIC", J2000_MJD, 0.0, 0.0, 0.0)
             .unwrap();
     assert!(
-        close(rust_lon, cpp_lon, 1e-4),
+        close(rust_lon, cpp_lon, 1e-9),
         "lon: Rust={}, C++={}",
         rust_lon,
         cpp_lon
     );
     assert!(
-        close(rust_lat, cpp_lat, 1e-4),
+        close(rust_lat, cpp_lat, 1e-9),
         "lat: Rust={}, C++={}",
         rust_lat,
         cpp_lat
@@ -455,13 +455,13 @@ fn rc_direction_galactic_to_supergal() {
         MeasuresOracle::direction_convert(1.0, 0.5, "GALACTIC", "SUPERGAL", 0.0, 0.0, 0.0, 0.0)
             .unwrap();
     assert!(
-        close(rust_lon, cpp_lon, 1e-4),
+        close(rust_lon, cpp_lon, 1e-9),
         "lon: Rust={}, C++={}",
         rust_lon,
         cpp_lon
     );
     assert!(
-        close(rust_lat, cpp_lat, 1e-4),
+        close(rust_lat, cpp_lat, 1e-9),
         "lat: Rust={}, C++={}",
         rust_lat,
         cpp_lat
@@ -719,13 +719,13 @@ fn cr_direction_j2000_to_galactic() {
     let rust_gal = d.convert_to(DirectionRef::GALACTIC, &frame).unwrap();
     let (rust_lon, rust_lat) = rust_gal.as_angles();
     assert!(
-        close(rust_lon, cpp_lon, 1e-4),
+        close(rust_lon, cpp_lon, 1e-9),
         "lon: Rust={}, C++={}",
         rust_lon,
         cpp_lon
     );
     assert!(
-        close(rust_lat, cpp_lat, 1e-4),
+        close(rust_lat, cpp_lat, 1e-9),
         "lat: Rust={}, C++={}",
         rust_lat,
         cpp_lat
@@ -742,13 +742,13 @@ fn cr_direction_j2000_to_ecliptic() {
     let rust_ecl = d.convert_to(DirectionRef::ECLIPTIC, &frame).unwrap();
     let (rust_lon, rust_lat) = rust_ecl.as_angles();
     assert!(
-        close(rust_lon, cpp_lon, 1e-4),
+        close(rust_lon, cpp_lon, 1e-9),
         "lon: Rust={}, C++={}",
         rust_lon,
         cpp_lon
     );
     assert!(
-        close(rust_lat, cpp_lat, 1e-4),
+        close(rust_lat, cpp_lat, 1e-9),
         "lat: Rust={}, C++={}",
         rust_lat,
         cpp_lat
@@ -765,13 +765,13 @@ fn cr_direction_galactic_to_supergal() {
     let rust_sg = d.convert_to(DirectionRef::SUPERGAL, &frame).unwrap();
     let (rust_lon, rust_lat) = rust_sg.as_angles();
     assert!(
-        close(rust_lon, cpp_lon, 1e-4),
+        close(rust_lon, cpp_lon, 1e-9),
         "lon: Rust={}, C++={}",
         rust_lon,
         cpp_lon
     );
     assert!(
-        close(rust_lat, cpp_lat, 1e-4),
+        close(rust_lat, cpp_lat, 1e-9),
         "lat: Rust={}, C++={}",
         rust_lat,
         cpp_lat
@@ -900,13 +900,13 @@ fn rc_direction_j2000_to_icrs() {
     let (cpp_lon, cpp_lat) =
         MeasuresOracle::direction_convert(1.0, 0.5, "J2000", "ICRS", 0.0, 0.0, 0.0, 0.0).unwrap();
     assert!(
-        close(rust_lon, cpp_lon, 1e-4),
+        close(rust_lon, cpp_lon, 1e-9),
         "lon: Rust={}, C++={}",
         rust_lon,
         cpp_lon
     );
     assert!(
-        close(rust_lat, cpp_lat, 1e-4),
+        close(rust_lat, cpp_lat, 1e-9),
         "lat: Rust={}, C++={}",
         rust_lat,
         cpp_lat
@@ -930,7 +930,7 @@ fn rc_direction_j2000_to_jmean() {
         cpp_lon
     );
     assert!(
-        close(rust_lat, cpp_lat, 5e-5),
+        close(rust_lat, cpp_lat, 1e-9),
         "lat: Rust={}, C++={}",
         rust_lat,
         cpp_lat
@@ -951,13 +951,13 @@ fn rc_direction_multiple_values() {
                 .unwrap();
         // Use angle-aware comparison (C++ getLong returns [-π,π], Rust returns [0,2π))
         assert!(
-            close_angle(rust_lon, cpp_lon, 1e-4),
+            close_angle(rust_lon, cpp_lon, 1e-9),
             "lon_in={lon_in}: Rust lon={}, C++ lon={}",
             rust_lon,
             cpp_lon
         );
         assert!(
-            close(rust_lat, cpp_lat, 1e-4),
+            close(rust_lat, cpp_lat, 1e-9),
             "lon_in={lon_in}: Rust lat={}, C++ lat={}",
             rust_lat,
             cpp_lat
@@ -1649,13 +1649,13 @@ fn rc_dir_j2000_to_b1950() {
     let (cpp_lon, cpp_lat) =
         MeasuresOracle::direction_convert(1.0, 0.5, "J2000", "B1950", 0.0, 0.0, 0.0, 0.0).unwrap();
     assert!(
-        close_angle(rust_lon, cpp_lon, 1e-4),
+        close_angle(rust_lon, cpp_lon, 1e-9),
         "lon: Rust={}, C++={}",
         rust_lon,
         cpp_lon
     );
     assert!(
-        close(rust_lat, cpp_lat, 1e-4),
+        close(rust_lat, cpp_lat, 1e-9),
         "lat: Rust={}, C++={}",
         rust_lat,
         cpp_lat
@@ -1671,13 +1671,13 @@ fn rc_dir_b1950_to_j2000() {
     let (cpp_lon, cpp_lat) =
         MeasuresOracle::direction_convert(1.0, 0.5, "B1950", "J2000", 0.0, 0.0, 0.0, 0.0).unwrap();
     assert!(
-        close_angle(rust_lon, cpp_lon, 1e-4),
+        close_angle(rust_lon, cpp_lon, 1e-9),
         "lon: Rust={}, C++={}",
         rust_lon,
         cpp_lon
     );
     assert!(
-        close(rust_lat, cpp_lat, 1e-4),
+        close(rust_lat, cpp_lat, 1e-9),
         "lat: Rust={}, C++={}",
         rust_lat,
         cpp_lat
@@ -1693,13 +1693,13 @@ fn cr_dir_j2000_to_b1950() {
     let rust_b = d.convert_to(DirectionRef::B1950, &frame).unwrap();
     let (rust_lon, rust_lat) = rust_b.as_angles();
     assert!(
-        close_angle(rust_lon, cpp_lon, 1e-4),
+        close_angle(rust_lon, cpp_lon, 1e-9),
         "lon: Rust={}, C++={}",
         rust_lon,
         cpp_lon
     );
     assert!(
-        close(rust_lat, cpp_lat, 1e-4),
+        close(rust_lat, cpp_lat, 1e-9),
         "lat: Rust={}, C++={}",
         rust_lat,
         cpp_lat

@@ -378,6 +378,7 @@ impl CasacoreOracleRuntime {
             operation,
             "measures.iau2000_precession_matrix"
                 | "measures.direction_convert_iau2000a"
+                | "measures.direction_convert_cosines_iau2000a"
                 | "measures.epoch_convert_iau2000a"
         )
     }
@@ -558,6 +559,7 @@ mod tests {
         for operation in [
             "measures.iau2000_precession_matrix",
             "measures.direction_convert_iau2000a",
+            "measures.direction_convert_cosines_iau2000a",
             "measures.epoch_convert_iau2000a",
         ] {
             assert!(

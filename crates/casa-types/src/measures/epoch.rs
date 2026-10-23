@@ -21,9 +21,9 @@ use std::ops;
 use std::str::FromStr;
 use std::sync::LazyLock;
 
-use super::casacore_nutation::standard_equation_of_equinoxes_rad;
+use super::casacore_sidereal;
 use super::error::MeasureError;
-use super::frame::{IauModel, MeasFrame};
+use super::frame::MeasFrame;
 use crate::quanta::{Quantity, Unit};
 
 /// The Julian Date offset for MJD: JD = MJD + 2400000.5.
@@ -32,31 +32,10 @@ const MJD_OFFSET: f64 = 2_400_000.5;
 /// Number of seconds in a day.
 const SECONDS_PER_DAY: f64 = 86_400.0;
 
-/// Greenwich apparent sidereal time using casacore's selected IAU model.
-pub(super) fn casacore_gast_rad(ut1_jd: (f64, f64), tt_jd: (f64, f64), iau_model: IauModel) -> f64 {
-    let (ut_a, ut_b) = ut1_jd;
-    let (tt_a, tt_b) = tt_jd;
-    match iau_model {
-        IauModel::Iau1976_1980 => {
-            // `MCEpoch::UT1_GAST` passes its UT1 epoch directly to
-            // `Nutation::STANDARD`; preserve that legacy time-scale choice.
-            let ut1_mjd = (ut_a - MJD_OFFSET) + ut_b;
-            let equation_of_equinoxes = standard_equation_of_equinoxes_rad(ut1_mjd);
-            let centuries_since_j2000 = (ut1_mjd - 51_544.5) / 36_525.0;
-            let gmst0_seconds = 24_110.548_41
-                + centuries_since_j2000
-                    * (8_640_184.812_866
-                        + centuries_since_j2000 * (0.093_104 + centuries_since_j2000 * -6.2e-6));
-            let gast = MjdHighPrec::from_jd_pair(ut_a, ut_b)
-                + gmst0_seconds / SECONDS_PER_DAY
-                + 6_713.0
-                + equation_of_equinoxes / std::f64::consts::TAU;
-            gast.frac() * std::f64::consts::TAU
-        }
-        IauModel::Iau2006_2000A => {
-            sofars::vm::anp(sofars::erst::gmst82(ut_a, ut_b) + sofars::erst::ee00a(tt_a, tt_b))
-        }
-    }
+/// Greenwich apparent sidereal time of a UT1 epoch, in radians, as casacore
+/// computes it under either IAU model (`casacore_sidereal`).
+pub(super) fn casacore_gast_rad(ut1: MjdHighPrec) -> f64 {
+    casacore_sidereal::gast_rad(ut1)
 }
 
 // ---------------------------------------------------------------------------
@@ -379,6 +358,10 @@ impl fmt::Display for EpochRef {
 /// - UT1 ↔ UTC requires `dut1_seconds` (the UT1−UTC offset).
 /// - GMST1 ↔ LMST requires a position (for the observatory longitude).
 ///
+/// Sidereal epochs (GMST1, LMST, GAST, LAST) count casacore's sidereal days:
+/// UT1 MJD 51544.5 is GMST1 58257.779. Their fraction is the sidereal time
+/// of day.
+///
 /// # Examples
 ///
 /// ```no_run
@@ -456,8 +439,7 @@ impl MEpoch {
     ///
     /// Some conversions require data in the [`MeasFrame`]:
     /// - UT1 ↔ UTC: requires `dut1_seconds`
-    /// - GMST1 ↔ LMST: requires `position` (for longitude)
-    /// - UT1 → GMST1: requires the frame to derive TT
+    /// - GMST1 ↔ LMST and GAST ↔ LAST: require `position` (for longitude)
     pub fn convert_to(&self, target: EpochRef, frame: &MeasFrame) -> Result<MEpoch, MeasureError> {
         if self.refer == target {
             return Ok(self.clone());
@@ -754,143 +736,32 @@ fn apply_hop(
             // UT1 = UTC + dUT1
             Ok(value + dut1 / SECONDS_PER_DAY)
         }
-        // UT1 → GMST1: use SOFA's IAU-2006 epoch arithmetic.
-        (UT1, GMST1) => {
-            // gmst06 needs both UT1 and TT as 2-part JDs.
-            // Derive TT from UT1 via UT1→UTC→TAI→TT.
-            let utc = apply_hop(value, UT1, UTC, frame)?;
-            let tai = apply_hop(utc, UTC, TAI, frame)?;
-            let tt = apply_hop(tai, TAI, TT, frame)?;
-
-            let (ut_a, ut_b) = value.as_jd_pair();
-            let (tt_a, tt_b) = tt.as_jd_pair();
-
-            let gmst_rad = sofars::erst::gmst06(ut_a, ut_b, tt_a, tt_b);
-            // GMST is in radians; convert to fraction of day (turns)
-            let gmst_turns = gmst_rad / (2.0 * std::f64::consts::PI);
-            // The MJD for GMST is the integer UT1 day + GMST fraction
-            Ok(MjdHighPrec::new(value.day(), gmst_turns))
-        }
-        // GMST1 → UT1: iterative Newton-Raphson inverse
-        // GMST is a monotonically increasing function of UT1 fraction within a day.
-        // The sidereal/solar ratio is approximately 1.00273781191.
-        (GMST1, UT1) => {
-            // The UT1 integer day is the same as the GMST day.
-            // We need to find the UT1 fraction that produces the given GMST fraction.
-            let gmst_frac = value.frac();
-
-            // Initial guess: UT1_frac ≈ GMST_frac / sidereal_ratio
-            const SIDEREAL_RATIO: f64 = 1.002_737_811_91;
-            let mut ut1_frac = gmst_frac / SIDEREAL_RATIO;
-
-            // Newton-Raphson iteration
-            for _ in 0..15 {
-                let trial_ut1 = MjdHighPrec::new(value.day(), ut1_frac);
-                // Compute GMST for this trial UT1
-                let trial_gmst = apply_hop(trial_ut1, UT1, GMST1, frame)?;
-                let trial_gmst_frac = trial_gmst.frac();
-
-                // Residual (handle wrapping)
-                let mut residual = gmst_frac - trial_gmst_frac;
-                if residual > 0.5 {
-                    residual -= 1.0;
-                }
-                if residual < -0.5 {
-                    residual += 1.0;
-                }
-
-                if residual.abs() < 1e-15 {
-                    break;
-                }
-
-                // Correct: dUT1 ≈ dGMST / sidereal_ratio
-                ut1_frac += residual / SIDEREAL_RATIO;
-            }
-
-            Ok(MjdHighPrec::new(value.day(), ut1_frac))
-        }
-        // GMST1 → LMST: add longitude
-        (GMST1, LMST) => {
-            let pos = frame.position().ok_or(MeasureError::MissingFrameData {
-                what: "position (for observatory longitude)",
-            })?;
-            let lon_rad = pos.longitude_rad();
-            let lon_turns = lon_rad / (2.0 * std::f64::consts::PI);
-            Ok(MjdHighPrec::new(value.day(), value.frac() + lon_turns))
-        }
-        // LMST → GMST1: subtract longitude
-        (LMST, GMST1) => {
-            let pos = frame.position().ok_or(MeasureError::MissingFrameData {
-                what: "position (for observatory longitude)",
-            })?;
-            let lon_rad = pos.longitude_rad();
-            let lon_turns = lon_rad / (2.0 * std::f64::consts::PI);
-            Ok(MjdHighPrec::new(value.day(), value.frac() - lon_turns))
-        }
-        // UT1 → GAST: Greenwich Apparent Sidereal Time
-        (UT1, GAST) => {
-            let (ut_a, ut_b) = value.as_jd_pair();
-            let tt_jd = match frame.iau_model() {
-                IauModel::Iau1976_1980 => (ut_a, ut_b),
-                IauModel::Iau2006_2000A => {
-                    let utc = apply_hop(value, UT1, UTC, frame)?;
-                    let tai = apply_hop(utc, UTC, TAI, frame)?;
-                    apply_hop(tai, TAI, TT, frame)?.as_jd_pair()
-                }
-            };
-            let gast_rad = casacore_gast_rad((ut_a, ut_b), tt_jd, frame.iau_model());
-            let gast_turns = gast_rad / (2.0 * std::f64::consts::PI);
-            Ok(MjdHighPrec::new(value.day(), gast_turns))
-        }
-        // GAST → UT1: iterative Newton-Raphson inverse (same approach as GMST1→UT1)
-        (GAST, UT1) => {
-            let gast_frac = value.frac();
-            const SIDEREAL_RATIO: f64 = 1.002_737_811_91;
-            let mut ut1_frac = gast_frac / SIDEREAL_RATIO;
-
-            for _ in 0..15 {
-                let trial_ut1 = MjdHighPrec::new(value.day(), ut1_frac);
-                let trial_gast = apply_hop(trial_ut1, UT1, GAST, frame)?;
-                let trial_gast_frac = trial_gast.frac();
-
-                let mut residual = gast_frac - trial_gast_frac;
-                if residual > 0.5 {
-                    residual -= 1.0;
-                }
-                if residual < -0.5 {
-                    residual += 1.0;
-                }
-
-                if residual.abs() < 1e-15 {
-                    break;
-                }
-                ut1_frac += residual / SIDEREAL_RATIO;
-            }
-
-            Ok(MjdHighPrec::new(value.day(), ut1_frac))
-        }
-        // GAST → LAST: add longitude (same as GMST1→LMST)
-        (GAST, LAST) => {
-            let pos = frame.position().ok_or(MeasureError::MissingFrameData {
-                what: "position (for observatory longitude)",
-            })?;
-            let lon_rad = pos.longitude_rad();
-            let lon_turns = lon_rad / (2.0 * std::f64::consts::PI);
-            Ok(MjdHighPrec::new(value.day(), value.frac() + lon_turns))
-        }
-        // LAST → GAST: subtract longitude
-        (LAST, GAST) => {
-            let pos = frame.position().ok_or(MeasureError::MissingFrameData {
-                what: "position (for observatory longitude)",
-            })?;
-            let lon_rad = pos.longitude_rad();
-            let lon_turns = lon_rad / (2.0 * std::f64::consts::PI);
-            Ok(MjdHighPrec::new(value.day(), value.frac() - lon_turns))
-        }
+        // Sidereal epochs, in casacore's sidereal day count under either IAU
+        // model (`casacore_sidereal`).
+        (UT1, GMST1) => Ok(casacore_sidereal::ut1_to_gmst1(value)),
+        (GMST1, UT1) => Ok(casacore_sidereal::gmst1_to_ut1(value)),
+        (UT1, GAST) => Ok(casacore_sidereal::ut1_to_gast(value)),
+        (GAST, UT1) => Ok(casacore_sidereal::gast_to_ut1(value)),
+        (GMST1, LMST) | (GAST, LAST) => Ok(casacore_sidereal::add_longitude(
+            value,
+            observatory_longitude_rad(frame)?,
+        )),
+        (LMST, GMST1) | (LAST, GAST) => Ok(casacore_sidereal::add_longitude(
+            value,
+            -observatory_longitude_rad(frame)?,
+        )),
         _ => Err(MeasureError::NotYetImplemented {
             route: format!("{from_ref} → {to_ref}"),
         }),
     }
+}
+
+/// The observatory longitude a local sidereal time adds.
+fn observatory_longitude_rad(frame: &MeasFrame) -> Result<f64, MeasureError> {
+    let position = frame.position().ok_or(MeasureError::MissingFrameData {
+        what: "position (for observatory longitude)",
+    })?;
+    Ok(position.longitude_rad())
 }
 
 /// Computes the TDB−TT approximation in seconds.
