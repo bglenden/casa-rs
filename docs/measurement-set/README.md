@@ -13,6 +13,13 @@ and measured performance remain acceptance requirements.
 
 ## Reading order
 
+For a guided introduction, open the standalone [HTML walkthrough](walkthrough.html)
+in a browser (download the file when reading on GitHub). It builds the revision 2
+proposal in twelve steps, with interactive layout/completion examples, review
+questions, and links to the exact draft sources. It works offline; optional notes
+stay in the browser and can be exported. The Markdown contracts below remain the
+detailed proposal; the walkthrough does not finalize any decision.
+
 | Document | Review focus |
 | --- | --- |
 | [Architecture](architecture.md) | Boundaries, decisions, format scope, and alternatives; start here for the overall design. |
