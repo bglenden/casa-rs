@@ -125,7 +125,13 @@ impl<'s> PredictionStage<'s> {
                 scan_segments.push(None);
                 continue;
             }
-            let key = (steps, scan.field_id);
+            // Pointings of one field that `observemany` moved have their own
+            // phase centres, and so their own projections.
+            let key = (
+                steps,
+                scan.field_id,
+                scan.phase_center_rad.map(f64::to_bits),
+            );
             let segment = match keys.get(&key) {
                 Some(segment) => *segment,
                 None => {

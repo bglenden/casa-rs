@@ -271,6 +271,80 @@ fn predict_with_a_beam_refuses_pointings_moved_off_their_field() {
     sm.close().expect("close");
 }
 
+/// A pointing `observemany` moved off its field is predicted at its own
+/// phase centre: its DATA is that of a field at the moved direction, and the
+/// first pointing's is unchanged (#861 review: the prediction stage reused
+/// the first pointing's projection, at a normalized RMS of 1.1).
+#[test]
+fn a_moved_pointing_is_predicted_at_its_own_phase_centre() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let model = extended_model(directory.path(), "model.image");
+    let moved = MDirection::from_angles(CENTRE_RAD[0] + 1.0e-5, CENTRE_RAD[1], DirectionRef::J2000);
+    let observed = |name: &str, second: Pointing| {
+        let path = directory.path().join(name);
+        let mut sm = session(&path, "ALMA", "XX YY", resources(2, 2 << 30));
+        sm.set_field("moved", &moved, "", 0.0).expect("setfield");
+        let base = scan("target", 0.0, 20.0);
+        sm.observe_many(&ObserveManySpec {
+            pointings: vec![
+                Pointing {
+                    source: "target".to_string(),
+                    start_s: 0.0,
+                    stop_s: 20.0,
+                    direction: None,
+                },
+                second,
+            ],
+            spectral_window: base.spectral_window,
+            add_observation: false,
+            state: base.state,
+            observer: base.observer,
+            project: base.project,
+        })
+        .expect("observemany");
+        sm.predict(&spec(&[&model])).expect("predict");
+        sm.close().expect("close");
+        read_main(&path).0
+    };
+    let pointed = observed(
+        "pointed.ms",
+        Pointing {
+            source: "target".to_string(),
+            start_s: 20.0,
+            stop_s: 40.0,
+            direction: Some(moved.clone()),
+        },
+    );
+    let field = observed(
+        "field.ms",
+        Pointing {
+            source: "moved".to_string(),
+            start_s: 20.0,
+            stop_s: 40.0,
+            direction: None,
+        },
+    );
+    assert_eq!(pointed.len(), field.len(), "rows");
+    for (row, (pointed, field)) in pointed.iter().zip(&field).enumerate() {
+        assert_eq!(
+            pointed.uvw_m, field.uvw_m,
+            "row {row}: the same phase centre"
+        );
+    }
+    assert!(
+        pointed
+            .iter()
+            .flat_map(|row| &row.data)
+            .any(|v| v.norm() > 0.0),
+        "the model is predicted"
+    );
+    assert_eq!(
+        bits(pointed.iter().map(|row| &row.data)),
+        bits(field.iter().map(|row| &row.data)),
+        "the moved pointing's DATA"
+    );
+}
+
 #[test]
 fn setvp_setoptions_and_the_session_refuse_what_casa_rs_lacks() {
     let directory = tempfile::tempdir().expect("temporary directory");

@@ -160,32 +160,39 @@ pub(super) fn observemany(
         return Ok(false);
     }
     let count = request.starts.len();
-    let expand = |values: &[String], what: &str| match values.len() {
-        1 => {
-            let mut padded = vec![String::new(); count.max(1)];
-            padded[0].clone_from(&values[0]);
-            Ok(padded)
+    let check = |values: &[String], what: &str| {
+        if values.len() == 1 || values.len() == count {
+            Ok(())
+        } else {
+            Err(PyRuntimeError::new_err(format!(
+                "Failed AlwaysAssert {what}.nelements() == nptg"
+            )))
         }
-        length if length == count => Ok(values.to_vec()),
-        _ => Err(PyRuntimeError::new_err(format!(
-            "Failed AlwaysAssert {what}.nelements() == nptg"
-        ))),
     };
     if request.stops.len() != count {
         return Err(PyRuntimeError::new_err(
             "Failed AlwaysAssert sstoptimes.nelements() == nptg",
         ));
     }
-    let sources = expand(&request.sources, "ssourcenames")?;
-    let directions = expand(&request.directions, "sdirections")?;
+    check(&request.sources, "ssourcenames")?;
+    check(&request.directions, "sdirections")?;
+    // A single value is the first pointing's, and the rest are padded empty.
+    let padded = |values: &[String], index: usize| -> String {
+        match (values.len(), index) {
+            (1, 0) => values[0].clone(),
+            (1, _) => String::new(),
+            _ => values[index].clone(),
+        }
+    };
     let state = state_spec(&request.state)?;
     let result = tool.on_session(py, |session, lines| {
         let mut pointings = Vec::with_capacity(count);
         for index in 0..count {
-            let direction = if directions[index].is_empty() {
+            let given = padded(&request.directions, index);
+            let direction = if given.is_empty() {
                 None
             } else {
-                let given = Variant::Text(directions[index].clone());
+                let given = Variant::Text(given);
                 match measures::direction(&given, &session.measures)? {
                     Some(direction) => Some(direction).filter(|direction| !is_pole(direction)),
                     None => {
@@ -197,7 +204,7 @@ pub(super) fn observemany(
                 }
             };
             pointings.push(Pointing {
-                source: sources[index].clone(),
+                source: padded(&request.sources, index),
                 start_s: quantity_value(&Variant::Text(request.starts[index].clone()), "s")?,
                 stop_s: quantity_value(&Variant::Text(request.stops[index].clone()), "s")?,
                 direction,
