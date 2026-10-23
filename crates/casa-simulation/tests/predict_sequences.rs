@@ -226,10 +226,10 @@ fn predict_refuses_as_casa_does() {
 fn setvp_setoptions_and_the_session_refuse_what_casa_rs_lacks() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let model = extended_model(directory.path(), "model.image");
-    // VLA's default voltage pattern is not an Airy pattern casa-rs has.
+    // The SMA's default voltage pattern is not one casa-rs has.
     let mut vla = session(
-        &directory.path().join("vla.ms"),
-        "VLA",
+        &directory.path().join("sma.ms"),
+        "SMA",
         "RR LL",
         resources(2, 2 << 30),
     );
@@ -239,7 +239,7 @@ fn setvp_setoptions_and_the_session_refuse_what_casa_rs_lacks() {
     let (outcome, message) = refusal(vla.predict(&spec(&[&model])));
     assert_eq!(outcome, CasaOutcome::NotYetImplemented);
     assert!(
-        message.contains("VLA") && message.contains("Phase 2"),
+        message.contains("SMA") && message.contains("#841"),
         "{message}"
     );
     vla.set_vp(&VoltagePatternSpec {

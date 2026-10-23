@@ -4,7 +4,7 @@
 //!
 //! ```text
 //! cargo run --release -p casa-simulation --example predict_vs_casa -- \
-//!     MS MODEL_IMAGE [--vp alma] [--padding 1.3 | --wproject PLANES] [--f64]
+//!     MS MODEL_IMAGE [--vp alma|vla|vla-nvss|evla] [--padding 1.3 | --wproject PLANES] [--f64]
 //! ```
 //!
 //! `--wproject` predicts through `WProjectFT` with `PLANES` planes, as after
@@ -51,7 +51,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let [ms_path, model_path] = [args.first(), args.get(1)].map(|value| {
         value.cloned().ok_or(
-            "usage: predict_vs_casa MS MODEL_IMAGE [--vp alma] [--padding P | --wproject N] \
+            "usage: predict_vs_casa MS MODEL_IMAGE [--vp alma|vla|vla-nvss|evla] [--padding P | \
+                 --wproject N] \
                  [--f64]",
         )
     });
@@ -63,6 +64,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             "--vp" => {
                 options.primary_beam = match flags.next().map(String::as_str) {
                     Some("alma") => Some(PrimaryBeam::ALMA),
+                    Some("vla") => Some(PrimaryBeam::VLA),
+                    Some("vla-nvss") => Some(PrimaryBeam::VLA_NVSS),
+                    Some("evla") => Some(PrimaryBeam::Evla),
                     other => return Err(format!("unknown voltage pattern {other:?}").into()),
                 };
             }
