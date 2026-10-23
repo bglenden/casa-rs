@@ -832,11 +832,14 @@ fn ssm_column_keywords_endian_cross_matrix() {
 // --- Every element type in arrays stored directly, indirectly and by shape ---
 
 /// The storages of the every-type StandardStMan fixture: fixed-shape arrays
-/// in the buckets and in `table.f0i`, and variable-shape arrays.
-const SSM_ELEMENT_STORAGES: [ElementStorage; 3] = [
+/// in the buckets and in `table.f0i`, and variable-shape arrays, defined in
+/// every row and not. casa-rs once read an undefined variable-shape cell as
+/// a placeholder array (#852, undefined indirect cells).
+const SSM_ELEMENT_STORAGES: [ElementStorage; 4] = [
     ElementStorage::Direct,
     ElementStorage::Indirect,
     ElementStorage::Variable,
+    ElementStorage::Undefined,
 ];
 
 fn ssm_element_arrays_fixture() -> TableFixture {

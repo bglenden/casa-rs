@@ -7,9 +7,10 @@
 //! of shapes `[1]`, `[3]` and `[2, 3]`, named `<type>_<shape>`
 //! (`Float64_2x3`) when stored directly and `<type>_<shape>_ind` when stored
 //! in the storage manager's array file, and variable-shape arrays of rank 1,
-//! named `<type>_var`, whose cell in row `row` has `row + 1` elements.
-//! Element `index`, in storage (Fortran) order, of row `row` is made from
-//! `7 + 10 row + index`, so `Float64_1` holds `[7.0]` in row 0.
+//! named `<type>_var`, whose cell in row `row` has `row + 1` elements (and
+//! `<type>_undef`, the same with row 0 undefined). Element `index`, in
+//! storage (Fortran) order, of row `row` is made from `7 + 10 row + index`,
+//! so `Float64_1` holds `[7.0]` in row 0.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -59,6 +60,8 @@ pub enum ElementStorage {
     Indirect,
     /// Variable-shape arrays of rank 1, in the array file.
     Variable,
+    /// The variable-shape arrays with row 0 never written, so undefined.
+    Undefined,
 }
 
 impl ElementStorage {
@@ -68,6 +71,12 @@ impl ElementStorage {
             direct: self == Self::Direct,
             undefined: false,
         }
+    }
+
+    /// The first row whose cell is written; the rows before it are
+    /// undefined.
+    fn first_row(self) -> usize {
+        usize::from(self == Self::Undefined)
     }
 }
 
@@ -99,12 +108,15 @@ impl ElementColumn {
         }
     }
 
-    /// The column's cell in `row`.
-    pub fn cell(&self, row: usize) -> ArrayValue {
-        match self.shape {
+    /// The column's cell in `row`, `None` when it is undefined.
+    pub fn cell(&self, row: usize) -> Option<ArrayValue> {
+        if row < self.storage.first_row() {
+            return None;
+        }
+        Some(match self.shape {
             Some(shape) => element_array(self.data_type, shape, row),
             None => element_array(self.data_type, &[row + 1], row),
-        }
+        })
     }
 }
 
@@ -132,6 +144,9 @@ pub fn element_columns(storages: &[ElementStorage]) -> Vec<ElementColumn> {
                 }
                 ElementStorage::Variable => {
                     columns.push(column(format!("{data_type:?}_var"), None))
+                }
+                ElementStorage::Undefined => {
+                    columns.push(column(format!("{data_type:?}_undef"), None))
                 }
             }
         }
@@ -218,12 +233,12 @@ pub fn save_generated_element_arrays(
     for column in element_columns(storages) {
         let generated = if runs {
             let runs = (0..ELEMENT_ROWS)
-                .map(|row| GeneratedArrayValueRun::new(row, Some(column.cell(row))))
+                .map(|row| GeneratedArrayValueRun::new(row, column.cell(row)))
                 .collect();
             GeneratedArrayColumn::from_array_runs(ELEMENT_ROWS, runs)?
         } else {
             let column = column.clone();
-            GeneratedArrayColumn::new(ELEMENT_ROWS, move |row| Some(column.cell(row)))
+            GeneratedArrayColumn::new(ELEMENT_ROWS, move |row| column.cell(row))
         };
         overrides.insert_generated_array(column.name, generated);
     }
@@ -247,11 +262,13 @@ pub fn element_arrays_fixture(
     let columns = element_columns(storages);
     let rows = (0..ELEMENT_ROWS)
         .map(|row| {
+            // An undefined cell is a field the row leaves out.
             RecordValue::new(
                 columns
                     .iter()
-                    .map(|column| {
-                        RecordField::new(column.name.as_str(), Value::Array(column.cell(row)))
+                    .filter_map(|column| {
+                        let cell = column.cell(row)?;
+                        Some(RecordField::new(column.name.as_str(), Value::Array(cell)))
                     })
                     .collect(),
             )

@@ -8,7 +8,9 @@
 // - indirect: the same shapes without the Direct option, kept in the storage
 //   manager's array file, named "<type>_<shape>_ind";
 // - variable: variable-shape arrays of rank 1, kept in the array file, named
-//   "<type>_var", whose cell in row r has r + 1 elements.
+//   "<type>_var", whose cell in row r has r + 1 elements;
+// - undefined: the variable-shape arrays with row 0 never written, so
+//   undefined, named "<type>_undef".
 // Element i, in storage order, of row r is made from 7 + 10 r + i, so
 // Float64_1 holds [7.0] in row 0. casa_test_support::table_element_arrays
 // makes the same values.
@@ -50,18 +52,21 @@ std::vector<std::pair<std::string, casacore::IPosition>> elementShapes() {
             {"2x3", casacore::IPosition(2, 2, 3)}};
 }
 
-// A family of columns: the suffix of their names, their options, and
-// whether they are variable-shape rather than of the fixed shapes.
+// A family of columns: the suffix of their names, their options, whether
+// they are variable-shape rather than of the fixed shapes, and the first
+// row written (the rows before it are undefined).
 struct ElementStorage {
     std::string suffix;
     int options;
     bool variable;
+    casacore::uInt firstRow;
 };
 
 const ElementStorage kDirect{
-    "", casacore::ColumnDesc::Direct | casacore::ColumnDesc::FixedShape, false};
-const ElementStorage kIndirect{"_ind", casacore::ColumnDesc::FixedShape, false};
-const ElementStorage kVariable{"var", 0, true};
+    "", casacore::ColumnDesc::Direct | casacore::ColumnDesc::FixedShape, false, 0};
+const ElementStorage kIndirect{"_ind", casacore::ColumnDesc::FixedShape, false, 0};
+const ElementStorage kVariable{"var", 0, true, 0};
+const ElementStorage kUndefined{"undef", 0, true, 1};
 
 // Call f(ElementTag<T>{}, name, shape, storage) for each column of each of
 // `storages`; `shape` is empty for a variable-shape column.
@@ -139,7 +144,7 @@ void writeElementArrays(const char* path, casacore::DataManager& stman,
                                        const ElementStorage& storage) {
         using T = typename decltype(tag)::type;
         casacore::ArrayColumn<T> column(table, name);
-        for (casacore::uInt row = 0; row < kElementRows; ++row) {
+        for (casacore::uInt row = storage.firstRow; row < kElementRows; ++row) {
             column.put(row, elementCell<T>(row, cellShape(storage, shape, row)));
         }
     });
@@ -161,6 +166,11 @@ void verifyElementArrays(const char* path, const std::vector<ElementStorage>& st
         casacore::ArrayColumn<T> column(table, name);
         for (casacore::uInt row = 0; row < kElementRows; ++row) {
             const std::string cell = name + " row " + std::to_string(row);
+            if (row < storage.firstRow) {
+                if (column.isDefined(row)) throw std::runtime_error(cell + " is defined");
+                continue;
+            }
+            if (!column.isDefined(row)) throw std::runtime_error(cell + " is undefined");
             casacore::Array<T> found = column(row);
             const casacore::IPosition expectedShape = cellShape(storage, shape, row);
             if (!found.shape().isEqual(expectedShape))
@@ -183,8 +193,8 @@ void verifyElementArrays(const char* path, const std::vector<ElementStorage>& st
 // writes has only Direct columns; it reads the arrays casacore keeps in the
 // array file (ISMIndColumn), which ism_indirect_arrays holds.
 const std::vector<ElementStorage> kIsmStorages{kDirect};
-const std::vector<ElementStorage> kIsmIndirectStorages{kIndirect, kVariable};
-const std::vector<ElementStorage> kSsmStorages{kDirect, kIndirect, kVariable};
+const std::vector<ElementStorage> kIsmIndirectStorages{kIndirect, kVariable, kUndefined};
+const std::vector<ElementStorage> kSsmStorages{kDirect, kIndirect, kVariable, kUndefined};
 
 // Run `body`, reporting an exception as `out_error`.
 template <class F> int32_t guarded(const char* what, char** out_error, F&& body) {

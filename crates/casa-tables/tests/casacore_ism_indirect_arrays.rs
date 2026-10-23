@@ -12,7 +12,8 @@
 //! tables as casacore 3.7.1 wrote them: arrays of every element type in 3
 //! rows, of fixed shapes `[1]`, `[3]` and `[2, 3]` without the Direct option
 //! (`Float64_2x3_ind`), and of variable shape and rank 1 (`Float64_var`,
-//! whose cell in row `row` has `row + 1` elements). Element `index`, in
+//! whose cell in row `row` has `row + 1` elements, and `Float64_undef`, the
+//! same with row 0 never written, so undefined). Element `index`, in
 //! storage (Fortran) order, of row `row` is made from `7 + 10 row + index`.
 //! Regenerate them with those fixtures' writers when the fixture changes.
 
@@ -103,20 +104,28 @@ fn cell(data_type: PrimitiveType, shape: &[usize], row: usize) -> ArrayValue {
     }
 }
 
-/// Each column of the fixture by name, with its cell in each row.
-fn columns() -> Vec<(String, Vec<ArrayValue>)> {
+/// Each column of the fixture by name, with its cell in each row, `None`
+/// where it is undefined.
+fn columns() -> Vec<(String, Vec<Option<ArrayValue>>)> {
     let mut columns = Vec::new();
     for data_type in TYPES {
         for (name, shape) in SHAPES {
             columns.push((
                 format!("{data_type:?}_{name}_ind"),
-                (0..ROWS).map(|row| cell(data_type, shape, row)).collect(),
+                (0..ROWS)
+                    .map(|row| Some(cell(data_type, shape, row)))
+                    .collect(),
             ));
         }
+        let variable = |row: usize| cell(data_type, &[row + 1], row);
         columns.push((
             format!("{data_type:?}_var"),
+            (0..ROWS).map(|row| Some(variable(row))).collect(),
+        ));
+        columns.push((
+            format!("{data_type:?}_undef"),
             (0..ROWS)
-                .map(|row| cell(data_type, &[row + 1], row))
+                .map(|row| (row > 0).then(|| variable(row)))
                 .collect(),
         ));
     }
@@ -148,18 +157,17 @@ fn incremental_indirect_arrays_casacore_wrote_read_back() {
             let column = table.column_accessor(&name).expect("column");
             let read = column.array_cells_owned(&[0, 1, 2]).expect("read cells");
             for (row, expected) in cells.iter().enumerate() {
+                assert_eq!(&read[row], expected, "{endian}: {name} row {row}");
+                let cell = table.cell_accessor(row, &name).expect("cell");
                 assert_eq!(
-                    read[row].as_ref(),
-                    Some(expected),
+                    cell.value().expect("cell value"),
+                    expected.clone().map(Value::Array).as_ref(),
                     "{endian}: {name} row {row}"
                 );
                 assert_eq!(
-                    table
-                        .cell_accessor(row, &name)
-                        .and_then(|cell| cell.value())
-                        .expect("cell"),
-                    Some(&Value::Array(expected.clone())),
-                    "{endian}: {name} row {row}"
+                    cell.is_defined(),
+                    Ok(expected.is_some()),
+                    "{endian}: {name} row {row} definedness"
                 );
             }
         }

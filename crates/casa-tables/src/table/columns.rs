@@ -96,6 +96,22 @@ fn fill_prepared_row_buffer(
     Ok(())
 }
 
+/// The value of the slot `slot_index`, column `column`, in a cached row of
+/// the prepared columns: at the slot's position, unless an undefined cell
+/// before it, which a row leaves out, moved it; `None` for an undefined
+/// cell.
+fn cached_slot_value<'r>(
+    row: &'r RecordValue,
+    slot_index: usize,
+    column: &str,
+) -> Option<&'r Value> {
+    row.fields()
+        .get(slot_index)
+        .filter(|field| field.name == column)
+        .or_else(|| row.fields().iter().find(|field| field.name == column))
+        .map(|field| &field.value)
+}
+
 fn current_prepared_row_index(row_index: Option<usize>) -> Result<usize, TableError> {
     row_index.ok_or(TableError::RowOutOfBounds {
         row_index: 0,
@@ -1497,13 +1513,10 @@ impl<'a> PreparedTableRow<'a> {
         if let Some(rows) = self.cached_rows.as_ref() {
             if !self.row_materialized {
                 let cached_row = rows.get(row_index)?;
-                for (target, source) in self
-                    .row
-                    .fields_mut()
-                    .iter_mut()
-                    .zip(cached_row.fields().iter())
-                {
-                    target.value = source.value.clone();
+                // As without cached rows, a row with an undefined cell has
+                // no buffer.
+                for (slot_index, target) in self.row.fields_mut().iter_mut().enumerate() {
+                    target.value = cached_slot_value(cached_row, slot_index, &target.name)?.clone();
                 }
                 self.row_materialized = true;
             }
@@ -1539,7 +1552,7 @@ impl<'a> PreparedTableRow<'a> {
                 row_index,
                 row_count: rows.len(),
             })?;
-            return match row.fields().get(slot_index).map(|field| &field.value) {
+            return match cached_slot_value(row, slot_index, &slot.column) {
                 Some(Value::Scalar(value)) => Ok(value),
                 Some(value) => Err(TableError::ColumnTypeMismatch {
                     row_index,
@@ -1578,7 +1591,7 @@ impl<'a> PreparedTableRow<'a> {
                 row_index,
                 row_count: rows.len(),
             })?;
-            return match row.fields().get(slot_index).map(|field| &field.value) {
+            return match cached_slot_value(row, slot_index, &slot.column) {
                 Some(Value::Array(value)) => Ok(value),
                 Some(value) => Err(TableError::ColumnTypeMismatch {
                     row_index,

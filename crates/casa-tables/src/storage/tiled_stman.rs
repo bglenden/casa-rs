@@ -2509,24 +2509,14 @@ fn load_tiled_shape_stman(
         }
     }
 
-    for (row_idx, row) in rows.iter_mut().enumerate().take(nrrow) {
+    // The cells no hypercube holds are undefined.
+    for (row, undefined) in rows.iter_mut().zip(undefined_cells.iter_mut()).take(nrrow) {
         for col_desc in col_descs {
-            if row.get(&col_desc.col_name).is_some() {
-                continue;
+            if row.get(&col_desc.col_name).is_none()
+                && let Some(value) = super::undefined_indirect_cell(col_desc, undefined)
+            {
+                row.push(RecordField::new(col_desc.col_name.clone(), value));
             }
-            let value = if col_desc.is_record() {
-                Value::Record(RecordValue::default())
-            } else {
-                let dt = CasacoreDataType::from_primitive_type(
-                    col_desc.require_primitive_type()?,
-                    false,
-                );
-                if let Some(set) = undefined_cells.get_mut(row_idx) {
-                    set.insert(col_desc.col_name.clone());
-                }
-                super::make_undefined_array(dt, col_desc.nrdim.max(0) as usize)
-            };
-            row.push(RecordField::new(col_desc.col_name.clone(), value));
         }
     }
 

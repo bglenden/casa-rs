@@ -688,9 +688,12 @@ fn ism_element_arrays_generated_save_reads_in_cpp() {
 
 /// The every-type columns casacore's IncrementalStMan keeps in its array
 /// file: fixed-shape arrays without the Direct option and variable-shape
-/// arrays.
-const ISM_INDIRECT_STORAGES: [ElementStorage; 2] =
-    [ElementStorage::Indirect, ElementStorage::Variable];
+/// arrays, defined in every row and not.
+const ISM_INDIRECT_STORAGES: [ElementStorage; 3] = [
+    ElementStorage::Indirect,
+    ElementStorage::Variable,
+    ElementStorage::Undefined,
+];
 
 /// casa-rs reads the `ISMIndColumn`s casacore writes, whose bucket values
 /// are offsets of the cells in `table.f0i`, in either byte order. It once
