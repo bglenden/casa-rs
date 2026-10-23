@@ -61,6 +61,21 @@ impl<'cf> MetalBackend<'cf> {
     /// # Errors
     ///
     /// None; no backend exists on this host.
+    pub fn add_cell_noise(
+        &mut self,
+        _cells: &DeviceNativeCells,
+        _rows: &[crate::MetalNoiseRow],
+        _terms: &[crate::MetalNoiseTerm],
+        _shape: (usize, usize),
+    ) -> Result<(), OperatorError> {
+        match self.never {}
+    }
+
+    /// Unreachable: no backend exists on this host.
+    ///
+    /// # Errors
+    ///
+    /// None; no backend exists on this host.
     pub fn apply_parts(
         &mut self,
         _parts: &[SampleBlock<'_>],

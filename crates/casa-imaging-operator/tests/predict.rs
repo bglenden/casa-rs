@@ -180,6 +180,117 @@ fn direct_prediction_is_the_degridded_value_at_each_native_channel() {
     );
 }
 
+/// Neighbouring channels that read the same taps of the model share one
+/// degridded sample (#855), and every channel still predicts exactly what
+/// it predicts alone. A row of 256 channels 2 MHz apart near 1 GHz crosses
+/// a fine offset every 16 channels or so:
+/// - without a phase shift it places a sample per run, whether its
+///   channels ascend or descend in frequency (the run ends found by
+///   probing) or are shuffled (placed channel by channel);
+/// - with the phase centre shifted 0.013 m, each channel's phase moves
+///   about 5e-4 rad, far past the shared tolerance, and nothing is shared;
+/// - under a Taylor basis the Taylor variable tells channels apart, and
+///   nothing is shared.
+#[test]
+fn neighbouring_channels_that_read_the_same_taps_share_one_sample() {
+    let ascending: Vec<f64> = (0..256)
+        .map(|channel| 1.0e9 + 2.0e6 * f64::from(channel))
+        .collect();
+    let descending: Vec<f64> = ascending.iter().rev().copied().collect();
+    // A stride coprime to 256 visits every channel out of order.
+    let shuffled: Vec<f64> = (0..256).map(|index| ascending[index * 97 % 256]).collect();
+    let constant = SpectralResampler::direct(Basis::Constant).expect("direct");
+    let taylor = SpectralResampler::direct(Basis::Taylor {
+        terms: 2,
+        reference_hz: 1.0e9,
+    })
+    .expect("direct");
+    // Four output channels across the band: runs also end where a channel's
+    // nearest plane changes.
+    let planes = SpectralAxis::new(1.064e9, 1.28e8, 4).expect("axis");
+    let nearest = SpectralResampler::channel_local(planes, SpectralKernel::Nearest);
+    // `Some(true)`: few samples; `Some(false)`: one per channel.
+    for (resampler, phase_shift_m, frequencies, shares) in [
+        (constant, 0.0, &ascending, Some(true)),
+        (constant, 0.0, &descending, Some(true)),
+        (constant, 0.0, &shuffled, None),
+        (nearest, 0.0, &ascending, Some(true)),
+        (nearest, 0.0, &descending, Some(true)),
+        (constant, 0.013, &ascending, Some(false)),
+        (taylor, 0.0, &ascending, Some(false)),
+    ] {
+        let basis = resampler.basis();
+        let operator = operator(GridPrecision::F64, basis, &XX_YY, &STOKES_I);
+        let mut image = Array2::zeros((IMAGE, IMAGE));
+        image[(IMAGE / 2 + 3, IMAGE / 2 - 5)] = 1.3;
+        let model = operator
+            .prepare_model(
+                &ModelImages {
+                    first_plane: 0,
+                    planes: (0..basis.planes())
+                        .map(|plane| ModelPlane {
+                            // A flux per plane, so a run that crossed planes
+                            // would predict the wrong one.
+                            images: vec![&image * (1.0 + plane as f32); basis.data_terms()],
+                        })
+                        .collect(),
+                },
+                ModelPrescale::Unit,
+            )
+            .expect("model");
+        let values = vec![Complex32::new(1.0, 0.0); frequencies.len() * 2];
+        let weights = vec![1.0; values.len()];
+        let flags = vec![false; values.len()];
+        let row = |frequencies_hz| NativeRow {
+            phase_shift_m,
+            ..row_on(
+                UVW_M,
+                [0, 1],
+                frequencies_hz,
+                (
+                    &values[..frequencies_hz.len() * 2],
+                    &weights[..frequencies_hz.len() * 2],
+                    &flags[..frequencies_hz.len() * 2],
+                ),
+            )
+        };
+        let whole = row(frequencies);
+        let mut scratch = PredictionScratch::default();
+        scratch.begin(2);
+        resampler
+            .place_prediction(&operator, &model, &whole, &mut scratch)
+            .expect("placed");
+        let label = format!(
+            "{basis:?}, phase shift {phase_shift_m} m, first {} Hz, second {} Hz",
+            frequencies[0], frequencies[1]
+        );
+        match shares {
+            Some(true) => assert!(
+                scratch.samples() < frequencies.len() / 4,
+                "{label}: {} samples for {} channels",
+                scratch.samples(),
+                frequencies.len()
+            ),
+            Some(false) => assert_eq!(scratch.samples(), frequencies.len(), "{label}"),
+            None => {}
+        }
+        let predicted = predict_one(&resampler, &operator, &model, &whole);
+        for (channel, frequency_hz) in frequencies.iter().enumerate() {
+            let alone = predict_one(
+                &resampler,
+                &operator,
+                &model,
+                &row(std::slice::from_ref(frequency_hz)),
+            );
+            assert_eq!(
+                predicted[channel * 2..channel * 2 + 2],
+                alone[..],
+                "{label}: channel {channel}"
+            );
+        }
+    }
+}
+
 /// The visibility of a unit point at the phase centre without a phase
 /// shift: constant over uv and frequency, it is the operator's correction
 /// at the centre.

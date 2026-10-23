@@ -16,7 +16,7 @@
 
 use std::ops::Range;
 
-use casa_imaging_metal::MetalBackend;
+use casa_imaging_metal::{MetalBackend, MetalNoiseRow, MetalNoiseTerm};
 use casa_imaging_operator::{
     CpuBackend, DeviceNativeCells, GridPrecision, MeasurementOperator, NativeModel, NativeTarget,
     PredictionScratch, PreparedModelGrids, SpectralResampler,
@@ -42,6 +42,17 @@ pub struct PredictionDomain<'a> {
     pub resampler: &'a SpectralResampler,
     /// The model grids of every plane the rows reach.
     pub model: &'a PreparedModelGrids,
+}
+
+/// Noise a [`BlockPredictor`] adds on the device to the rows it predicts
+/// ([`BlockPredictor::predict_into_with_noise`]): its terms, added in
+/// order, and each row's number and autocorrelation flag.
+#[derive(Clone, Copy, Debug)]
+pub struct DeviceNoise<'a> {
+    /// One per row of the block, in order.
+    pub rows: &'a [MetalNoiseRow],
+    /// The noise terms.
+    pub terms: &'a [MetalNoiseTerm],
 }
 
 /// What a block prediction's row chunks are allocated for.
@@ -286,24 +297,29 @@ impl<'w> BlockPrediction<'w> {
 
     /// The model at native cells of every selected sample of `block`'s rows,
     /// summed over `domains`, in row order into `out`: on the CPU directly,
-    /// on Metal from the device store once every predictor has completed.
+    /// on Metal from the device store once every predictor has completed,
+    /// with `noise`'s terms added to each row there first.
     fn predict_into(
         &mut self,
         block: &NativeBlock,
         team: &WorkerTeam,
         domains: &[PredictionDomain<'_>],
         out: &mut [Complex32],
+        noise: Option<DeviceNoise<'_>>,
     ) -> Result<(), PassError> {
         match &self.store {
-            NativeStore::Host(_) => predict_rows(
-                &mut self.chunks,
-                self.rows,
-                block,
-                team,
-                domains,
-                false,
-                Cells::Host(out),
-            )?,
+            NativeStore::Host(_) => {
+                assert!(noise.is_none(), "noise is added on the device only");
+                predict_rows(
+                    &mut self.chunks,
+                    self.rows,
+                    block,
+                    team,
+                    domains,
+                    false,
+                    Cells::Host(out),
+                )?;
+            }
             NativeStore::Device(store) => {
                 predict_rows(
                     &mut self.chunks,
@@ -314,6 +330,23 @@ impl<'w> BlockPrediction<'w> {
                     false,
                     Cells::Device(store),
                 )?;
+                if let Some(noise) = noise {
+                    // Any backend of the device adds it: its command follows
+                    // every native-model command on the one queue.
+                    let Some(Predictor::Metal(backend)) = self
+                        .chunks
+                        .first_mut()
+                        .and_then(|chunk| chunk.predictors.first_mut())
+                    else {
+                        unreachable!("a device store's predictors are Metal's");
+                    };
+                    backend.add_cell_noise(
+                        store,
+                        noise.rows,
+                        noise.terms,
+                        (block.channels(), block.correlations()),
+                    )?;
+                }
                 complete(&mut self.chunks)?;
                 // SAFETY: only the predictors' work writes the cells, every
                 // command of it has completed, and none is issued while the
@@ -470,6 +503,20 @@ impl<'w> BlockPredictor<'w> {
             + store
     }
 
+    /// Bytes a predictor of blocks of at most `block` on `backend` holds
+    /// beyond [`Self::bytes`] once [`Self::predict_into_with_noise`] has
+    /// added noise of at most `terms` terms: on Metal the one backend that
+    /// adds it keeps the rows and the terms on the device
+    /// ([`casa_imaging_metal::noise_bytes`]); nothing on the CPU, where the
+    /// predictor adds none. The [`DeviceNoise`] is the caller's.
+    #[must_use]
+    pub const fn noise_bytes(backend: BackendChoice, block: BlockShape, terms: usize) -> u64 {
+        match backend {
+            BackendChoice::Cpu => 0,
+            BackendChoice::Metal => casa_imaging_metal::noise_bytes(block.rows, terms),
+        }
+    }
+
     /// A predictor of blocks of at most `block` (rows, channels and
     /// correlations; each row projected on every domain) over `domains` on
     /// `backend`, in the chunks of `workers` workers; with `stage_timing`,
@@ -565,7 +612,48 @@ impl<'w> BlockPredictor<'w> {
             "one prediction per selected sample"
         );
         self.prediction
-            .predict_into(block, team, &self.domains, out)
+            .predict_into(block, team, &self.domains, out, None)
+    }
+
+    /// Whether the predictor forms the model in device memory, where
+    /// [`Self::predict_into_with_noise`] adds noise to it.
+    #[must_use]
+    pub fn adds_noise_on_device(&self) -> bool {
+        matches!(self.prediction.store, NativeStore::Device(_))
+    }
+
+    /// [`Self::predict_into`] with `noise` added to every row's model on
+    /// the device before it is copied out: the draws of
+    /// `casa_numerics::cell_noise::CellNoise::add_to_row` for each term in
+    /// order, with each row's number and autocorrelation flag from
+    /// `noise.rows` (one per row of `block`). The simulator corrupts the
+    /// rows it predicts this way, with no pass of its own over the cells.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::predict_into`].
+    ///
+    /// # Panics
+    ///
+    /// As [`Self::predict_into`]; when the predictor does not
+    /// [`Self::adds_noise_on_device`], or `noise.rows` is not one row per
+    /// row of `block`.
+    pub fn predict_into_with_noise(
+        &mut self,
+        block: &NativeBlock,
+        team: &WorkerTeam,
+        out: &mut [Complex32],
+        noise: DeviceNoise<'_>,
+    ) -> Result<(), PassError> {
+        assert!(self.adds_noise_on_device(), "noise is added on the device");
+        assert_eq!(noise.rows.len(), block.len(), "one noise row per block row");
+        assert_eq!(
+            out.len(),
+            block.len() * block.channels() * block.correlations(),
+            "one prediction per selected sample"
+        );
+        self.prediction
+            .predict_into(block, team, &self.domains, out, Some(noise))
     }
 }
 

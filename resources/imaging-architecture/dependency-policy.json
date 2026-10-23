@@ -89,7 +89,8 @@
    "casa-types"
   ],
   "casa-imaging-metal": [
-   "casa-imaging-operator"
+   "casa-imaging-operator",
+   "casa-numerics"
   ],
   "casa-imaging-runtime": [
    "casa-imaging-deconvolution",

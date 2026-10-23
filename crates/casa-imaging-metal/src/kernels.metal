@@ -221,10 +221,38 @@ static inline void spread_values(Sample s, Table t, thread const float2 *values,
     }
 }
 
+// One tap (ix, iy) of `gather`, at `cell` of each model plane: through every
+// route, the conjugate tap times the model, summed over the terms (each
+// route's terms start at `bases[r]`, a plane apart), added to every
+// polarization the route carries.
+static inline void gather_tap(Sample s, Table t, device const float *rows,
+                              device const float2 *dense, device const float2 *model,
+                              constant Params &p, thread const Routes &routes,
+                              thread const ulong *bases, ulong grid_cells,
+                              thread const float *powers, uint ix, uint iy, ulong cell,
+                              bool w_positive, thread float2 *sums) {
+    for (uint r = 0; r < routes.count; ++r) {
+        float2 tap = cconj(tap_value(t, rows, dense, s, routes.mueller[r], ix, iy, w_positive));
+        float2 gathered = float2(0.0f);
+        ulong at = bases[r] + cell;
+        for (uint term = 0; term < p.term_count; ++term) {
+            gathered += cmul(tap, model[at]) * powers[term];
+            at += grid_cells;
+        }
+        for (uint vpol = 0; vpol < p.npol; ++vpol) {
+            if ((routes.vpols[r] >> vpol) & 1u) {
+                sums[vpol] += gathered;
+            }
+        }
+    }
+}
+
 // The prediction numerator Σ_t s^t Σ_{gpol,m} Σ conj(tap') · model of every
 // visibility polarization, summed over the sample's lanes and scaled by the
 // host's inverse norm; every lane receives the result. Each route is
-// gathered once and added to every polarization it carries.
+// gathered once and added to every polarization it carries. A thread that
+// serves a sample alone walks its support row by row, the order the strided
+// walk of `lanes` threads takes, without dividing a tap index per tap.
 static inline void gather(Sample s, Table t, device const float2 *inverse_norms, uint index,
                           device const float *rows, device const float2 *dense,
                           device const float2 *model, constant Params &p,
@@ -233,28 +261,32 @@ static inline void gather(Sample s, Table t, device const float2 *inverse_norms,
     spectral_powers(s.spectral, p.term_count, powers);
     float2 sums[MAX_POLS] = {float2(0.0f), float2(0.0f), float2(0.0f), float2(0.0f)};
     uint sx = t.support.x;
-    uint taps = sx * support_y(t);
+    uint sy = support_y(t);
     uint w_positive = (s.flags >> 1u) & 1u;
     Routes routes = routes_of(p.forward[w_positive], p.gpols, p.npol);
     ulong grid_cells = ulong(p.grid_shape.x) * ulong(p.grid_shape.y);
-    for (uint k = lane; k < taps; k += width) {
-        uint ix = k % sx;
-        uint iy = k / sx;
-        ulong cell = ulong(s.origin.y + p.tile_origin.y + iy) * ulong(p.grid_shape.x)
-                     + ulong(s.origin.x + p.tile_origin.x + ix);
-        for (uint r = 0; r < routes.count; ++r) {
-            uint gpol = routes.gpol[r];
-            float2 tap = cconj(tap_value(t, rows, dense, s, routes.mueller[r], ix, iy, w_positive != 0u));
-            float2 gathered = float2(0.0f);
-            for (uint term = 0; term < p.term_count; ++term) {
-                ulong block = ulong((s.model_plane * p.gpols + gpol) * p.model_terms + term);
-                gathered += cmul(tap, model[block * grid_cells + cell]) * powers[term];
+    // Each route's first term plane.
+    ulong bases[MAX_ROUTES];
+    for (uint r = 0; r < routes.count; ++r) {
+        bases[r] = ulong((s.model_plane * p.gpols + routes.gpol[r]) * p.model_terms) * grid_cells;
+    }
+    if (width == 1u) {
+        for (uint iy = 0; iy < sy; ++iy) {
+            ulong row = ulong(s.origin.y + p.tile_origin.y + iy) * ulong(p.grid_shape.x)
+                        + ulong(s.origin.x + p.tile_origin.x);
+            for (uint ix = 0; ix < sx; ++ix) {
+                gather_tap(s, t, rows, dense, model, p, routes, bases, grid_cells, powers, ix, iy,
+                           row + ix, w_positive != 0u, sums);
             }
-            for (uint vpol = 0; vpol < p.npol; ++vpol) {
-                if ((routes.vpols[r] >> vpol) & 1u) {
-                    sums[vpol] += gathered;
-                }
-            }
+        }
+    } else {
+        for (uint k = lane; k < sx * sy; k += width) {
+            uint ix = k % sx;
+            uint iy = k / sx;
+            ulong cell = ulong(s.origin.y + p.tile_origin.y + iy) * ulong(p.grid_shape.x)
+                         + ulong(s.origin.x + p.tile_origin.x + ix);
+            gather_tap(s, t, rows, dense, model, p, routes, bases, grid_cells, powers, ix, iy,
+                       cell, w_positive != 0u, sums);
         }
     }
     for (uint vpol = 0; vpol < p.npol; ++vpol) {

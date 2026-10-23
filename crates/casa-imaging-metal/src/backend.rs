@@ -10,6 +10,7 @@ use casa_imaging_operator::{
     NativeSource, NativeTarget, NativeTerm, OperatorError, PreparedModelGrids, SampleBlock,
     TapLayout, Tile, Work,
 };
+use casa_numerics::cell_noise::{MetalNoiseParams, MetalNoiseRow, MetalNoiseTerm};
 use num_complex::{Complex32, Complex64};
 use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
@@ -74,6 +75,13 @@ pub struct MetalBackend<'cf> {
     /// The predictions of a [`Work::PredictNative`] batch, which stay on
     /// the device for the native model.
     batch: Buffer,
+    /// The rows and terms of the last cell noise added
+    /// ([`Self::add_cell_noise`]), made at the first and grown to the
+    /// largest ([`crate::noise_bytes`]), and its command: the buffers are
+    /// rewritten only once it has completed.
+    noise_rows: Option<Buffer>,
+    noise_terms: Option<Buffer>,
+    noise_command: Option<Command>,
 }
 
 /// What a backend was asked to dispatch over its life, logged once when it
@@ -237,6 +245,9 @@ impl<'cf> MetalBackend<'cf> {
             stage_timing,
             defer_grid: false,
             batch: device.buffer(0)?,
+            noise_rows: None,
+            noise_terms: None,
+            noise_command: None,
         })
     }
 
@@ -270,8 +281,118 @@ impl<'cf> MetalBackend<'cf> {
                 result = waited;
             }
         }
+        let noise = self.wait_noise();
+        if result.is_ok() {
+            result = noise;
+        }
         self.usage.failed |= result.is_err();
         result
+    }
+
+    /// Wait for the last cell noise's command, if any.
+    fn wait_noise(&mut self) -> Result<(), OperatorError> {
+        let Some(Command(command)) = self.noise_command.take() else {
+            return Ok(());
+        };
+        let started = std::time::Instant::now();
+        command.waitUntilCompleted();
+        self.usage.wait += started.elapsed();
+        if self.stage_timing {
+            self.usage.completed(&command);
+        }
+        if command.status() == MTLCommandBufferStatus::Error {
+            let code = command.error().map_or(-1, |error| error.code() as i64);
+            return Err(OperatorError::Device(DeviceFailure::CommandFailed { code }));
+        }
+        Ok(())
+    }
+
+    /// Add the noise of `terms`, in order, to every sample of the first
+    /// `rows.len()` rows of `cells`, `channels × correlations` complex
+    /// samples a row, on the device: the draws of
+    /// `casa_numerics::cell_noise::CellNoise::add_to_row` for each row's
+    /// number and autocorrelation flag, from the same source run on the
+    /// device. The work runs after the work already committed that writes
+    /// the cells (one queue, tracked buffers) and is left running;
+    /// [`Self::complete`] waits for it.
+    ///
+    /// # Errors
+    ///
+    /// A device failure.
+    ///
+    /// # Panics
+    ///
+    /// When `cells` are not from [`Self::native_cells`] or hold fewer than
+    /// the rows' samples.
+    pub fn add_cell_noise(
+        &mut self,
+        cells: &DeviceNativeCells,
+        rows: &[MetalNoiseRow],
+        terms: &[MetalNoiseTerm],
+        (channels, correlations): (usize, usize),
+    ) -> Result<(), OperatorError> {
+        let samples = rows.len() * channels * correlations;
+        assert!(samples <= cells.len(), "the cells hold every row's samples");
+        if samples == 0 || terms.is_empty() {
+            return Ok(());
+        }
+        let native = cells
+            .owner()
+            .downcast_ref::<Buffer>()
+            .expect("the Metal backend adds noise to cells from MetalBackend::native_cells");
+        self.wait_noise()?;
+        let device = self.device;
+        let noise_rows = holding(&mut self.noise_rows, device, size_of_val(rows))?;
+        noise_rows
+            .slice_mut::<MetalNoiseRow>(rows.len())
+            .copy_from_slice(rows);
+        let noise_terms = holding(&mut self.noise_terms, device, size_of_val(terms))?;
+        noise_terms
+            .slice_mut::<MetalNoiseTerm>(terms.len())
+            .copy_from_slice(terms);
+        let count = |value: usize| u32::try_from(value).expect("noise shapes fit u32");
+        let params = MetalNoiseParams {
+            rows: count(rows.len()),
+            channels: count(channels),
+            correlations: count(correlations),
+            terms: count(terms.len()),
+        };
+        let threads = rows.len() * channels * correlations.div_ceil(2);
+        let failed = OperatorError::Device(DeviceFailure::CommandFailed { code: -1 });
+        let pipeline = &device.noise;
+        let (noise_rows, noise_terms) = (&*noise_rows, &*noise_terms);
+        let command = objc2::rc::autoreleasepool(|_| {
+            let command = device.queue.commandBuffer().ok_or(failed.clone())?;
+            let encoder = command.computeCommandEncoder().ok_or(failed)?;
+            encoder.setComputePipelineState(&pipeline.state);
+            for (buffer, index) in [(native, 0), (noise_rows, 1), (noise_terms, 2)] {
+                // SAFETY: the command buffer retains every buffer it binds;
+                // the host rewrites the rows and terms only after this
+                // command completes (`wait_noise`), and only device
+                // commands write the cells. Indices match the kernel.
+                unsafe { encoder.setBuffer_offset_atIndex(Some(&buffer.raw), 0, index) };
+            }
+            let pointer = std::ptr::NonNull::from(&params).cast();
+            // SAFETY: Metal copies the params' bytes during the call.
+            unsafe { encoder.setBytes_length_atIndex(pointer, size_of::<MetalNoiseParams>(), 3) };
+            encoder.dispatchThreadgroups_threadsPerThreadgroup(
+                MTLSize {
+                    width: threads.div_ceil(pipeline.threads),
+                    height: 1,
+                    depth: 1,
+                },
+                MTLSize {
+                    width: pipeline.threads,
+                    height: 1,
+                    depth: 1,
+                },
+            );
+            encoder.endEncoding();
+            command.commit();
+            Ok::<_, OperatorError>(command)
+        })?;
+        self.noise_command = Some(Command(command));
+        Ok(())
     }
 
     /// `len` zeroed model values at native cells (`npol` per cell) in memory
@@ -905,14 +1026,18 @@ impl Drop for MetalBackend<'_> {
     fn drop(&mut self) {
         // Deferred grid work may still run; a backend dropped without
         // `complete` waits for it, and its usage says whether it failed.
-        for slot in &mut self.ring {
-            if let Some(Command(command)) = slot.command.take() {
-                command.waitUntilCompleted();
-                if self.stage_timing {
-                    self.usage.completed(&command);
-                }
-                self.usage.failed |= command.status() == MTLCommandBufferStatus::Error;
+        let noise = self.noise_command.take();
+        for Command(command) in self
+            .ring
+            .iter_mut()
+            .filter_map(|slot| slot.command.take())
+            .chain(noise)
+        {
+            command.waitUntilCompleted();
+            if self.stage_timing {
+                self.usage.completed(&command);
             }
+            self.usage.failed |= command.status() == MTLCommandBufferStatus::Error;
         }
         let Usage {
             applies,
@@ -942,6 +1067,20 @@ impl Drop for MetalBackend<'_> {
             );
         }
     }
+}
+
+/// `buffer`, made, or remade when it holds fewer than `bytes`; the old one
+/// is released first, so the two are never held at once.
+fn holding<'b>(
+    buffer: &'b mut Option<Buffer>,
+    device: &Device,
+    bytes: usize,
+) -> Result<&'b mut Buffer, OperatorError> {
+    if buffer.as_ref().is_none_or(|held| held.bytes < bytes) {
+        *buffer = None;
+        *buffer = Some(device.buffer(bytes)?);
+    }
+    Ok(buffer.as_mut().expect("made above"))
 }
 
 /// The device cells of an accumulator from [`MetalBackend::accumulator`].

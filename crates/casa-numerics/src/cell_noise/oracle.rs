@@ -1,25 +1,78 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Standard normals from pairs of 32-bit words: Box–Muller, evaluated on
-//! the words themselves.
+//! The noise path as it was before draws were batched across channels and
+//! made in single precision (#855): one Philox counter and one Box–Muller
+//! pair at a time, in `f64`, copied from commit `0cf4a8994a`. Since then
+//! [`radius`], [`sin_cos_turn`] and [`standard_normals`] are exposed to the
+//! tests, the tests that held the logarithm, sine and cosine to `std` live
+//! here, and, since the generator moved from casa-simulation to
+//! casa-numerics (#855), it takes the stream's key and σ from a
+//! [`CellNoise`] rather than forming the key from a seed and an ordinal.
 //!
-//! With `u₁ = (w₀ + 1)·2⁻³²` in (0, 1] and `θ = 2π·w₁·2⁻³²`, the pair
-//! `√(−2 ln u₁)·(cos θ, sin θ)` is two independent standard normals. The
-//! logarithm and the sine and cosine are computed here rather than by the
-//! platform's `libm`, for two reasons:
-//! - **Speed.** The angle's octant is the word's top three bits, so the
-//!   sine and cosine need only a short polynomial on [0, π/4] and no range
-//!   reduction; the logarithm splits `u₁` into exponent and mantissa and
-//!   sums an `atanh` series. A draw costs about half what `ln` and
-//!   `sin_cos` cost, which is most of the noise pass.
-//! - **Reproducibility.** Only IEEE-754 additions, multiplications, one
-//!   division and a square root are used, all correctly rounded, so a draw
-//!   is bitwise the same on every platform.
-//!
-//! Both are accurate to a few units in the last place of `f64` (the tests
-//! compare them with `std` over 2²⁰ words), far below the `f32` the
-//! visibilities are stored in.
+//! It is the reference the single-precision [`CellNoise::add_to_row`] must
+//! stay within the bounds of [`super::normal`] of, and it calls nothing the
+//! noise path uses but the key and σ accessors, so a change to the
+//! generator or the counters, or one that moves a draw by more than those
+//! bounds, fails the comparison. How a caller forms its keys is the
+//! caller's to pin (casa-simulation holds cells of its own to known bits).
+//! Changing the draws is a science change; this file changes only with one.
 
 use std::f64::consts::{FRAC_PI_4, LN_2, SQRT_2};
+
+use num_complex::Complex32;
+
+use super::CellNoise;
+
+/// Philox's 128-bit counter.
+type Counter = [u32; 4];
+/// Philox's 64-bit key.
+type Key = [u32; 2];
+
+/// `PHILOX_M4x32_0` and `PHILOX_M4x32_1`.
+const MULTIPLIERS: [u32; 2] = [0xD251_1F53, 0xCD9E_8D57];
+/// `PHILOX_W32_0` and `PHILOX_W32_1`: the golden ratio and √3 − 1 as 32-bit
+/// fractions.
+const WEYL: [u32; 2] = [0x9E37_79B9, 0xBB67_AE85];
+
+/// The high and low words of `a × b`.
+#[inline(always)]
+fn multiply_high_low(a: u32, b: u32) -> (u32, u32) {
+    let product = u64::from(a) * u64::from(b);
+    ((product >> 32) as u32, product as u32)
+}
+
+/// One round (`_philox4x32round`).
+#[inline(always)]
+fn round(counter: Counter, key: Key) -> Counter {
+    let (high0, low0) = multiply_high_low(MULTIPLIERS[0], counter[0]);
+    let (high1, low1) = multiply_high_low(MULTIPLIERS[1], counter[2]);
+    [
+        high1 ^ counter[1] ^ key[0],
+        low1,
+        high0 ^ counter[3] ^ key[1],
+        low0,
+    ]
+}
+
+/// Philox4x32 with `ROUNDS` rounds: the first with `key`, each later one
+/// with the key bumped once more by the Weyl constants.
+#[inline(always)]
+fn philox4x32<const ROUNDS: usize>(counter: Counter, key: Key) -> Counter {
+    let mut counter = counter;
+    let mut key = key;
+    for index in 0..ROUNDS {
+        if index > 0 {
+            key = [key[0].wrapping_add(WEYL[0]), key[1].wrapping_add(WEYL[1])];
+        }
+        counter = round(counter, key);
+    }
+    counter
+}
+
+/// Philox4x32-10, Random123's recommended round count.
+#[inline(always)]
+fn philox4x32_10(counter: Counter, key: Key) -> Counter {
+    philox4x32::<10>(counter, key)
+}
 
 /// 2⁻³², a 32-bit word's scale to [0, 1).
 const WORD_SCALE: f64 = 1.0 / 4_294_967_296.0;
@@ -29,9 +82,15 @@ const OCTANT_WORDS: u32 = 1 << 29;
 /// Two independent standard normals from two uniform words.
 #[inline(always)]
 pub(super) fn box_muller(first: u32, second: u32) -> (f64, f64) {
-    let radius = (-2.0 * ln_uniform(first)).sqrt();
+    let radius = radius(first);
     let (sin, cos) = sin_cos_turn(second);
     (radius * cos, radius * sin)
+}
+
+/// Box–Muller's radius `√(−2 ln u₁)` from the first word.
+#[inline(always)]
+pub(super) fn radius(word: u32) -> f64 {
+    (-2.0 * ln_uniform(word)).sqrt()
 }
 
 /// `ln((w + 1)·2⁻³²)`.
@@ -72,7 +131,7 @@ fn ln_uniform(word: u32) -> f64 {
 /// the Taylor series of `sin x` to x¹⁵ and `cos x` to x¹⁶ are accurate to
 /// rounding there. The octant then swaps and negates them.
 #[inline(always)]
-fn sin_cos_turn(word: u32) -> (f64, f64) {
+pub(super) fn sin_cos_turn(word: u32) -> (f64, f64) {
     let octant = word >> 29;
     let within = word & (OCTANT_WORDS - 1);
     let odd = octant & 1 == 1;
@@ -108,7 +167,58 @@ fn sin_cos_turn(word: u32) -> (f64, f64) {
     }
 }
 
-#[cfg(test)]
+/// The counter of a draw: the row (two words), the channel, and the
+/// correlation pair (correlations 0 and 1 are pair 0, 2 and 3 pair 1).
+fn counter(row: u64, channel: usize, pair: usize) -> Counter {
+    [row as u32, (row >> 32) as u32, channel as u32, pair as u32]
+}
+
+/// The four standard normals of the draw of (row, channel, pair): slot 0's
+/// (real, imaginary) then slot 1's.
+pub(super) fn standard_normals(
+    noise: &CellNoise,
+    row: u64,
+    channel: usize,
+    pair: usize,
+) -> [f64; 4] {
+    let words = philox4x32_10(counter(row, channel, pair), noise.key());
+    let (a, b) = box_muller(words[0], words[1]);
+    let (c, d) = box_muller(words[2], words[3]);
+    [a, b, c, d]
+}
+
+/// `noise` added to the cell of row `row`, one draw at a time:
+/// `add_to_row` as it was.
+pub(super) fn add_to_row(
+    noise: &CellNoise,
+    row: u64,
+    autocorrelation: bool,
+    correlations: usize,
+    cell: &mut [Complex32],
+) {
+    // Adding σ·N with σ = 0 changes nothing but the sign of a zero.
+    if noise.sigma() == 0.0 || correlations == 0 {
+        return;
+    }
+    let sigma = f64::from(noise.sigma());
+    let key = noise.key();
+    for (channel, samples) in cell.chunks_exact_mut(correlations).enumerate() {
+        for (pair, slots) in samples.chunks_mut(2).enumerate() {
+            let words = philox4x32_10(counter(row, channel, pair), key);
+            for (slot, sample) in slots.iter_mut().enumerate() {
+                let (re, im) = box_muller(words[2 * slot], words[2 * slot + 1]);
+                sample.re += (re * sigma) as f32;
+                if !autocorrelation {
+                    sample.im += (im * sigma) as f32;
+                }
+            }
+        }
+    }
+}
+
+/// The oracle's logarithm, sine and cosine against `std`, so that the
+/// single-precision draws are measured against the right values; the
+/// tests the double-precision draws had before #855 moved them here.
 mod tests {
     use super::*;
 
