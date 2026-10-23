@@ -441,6 +441,16 @@ owning `Array3`/`Array4` or a reusable flat allocation can supply views. Choose
 the owner separately from the consumer view, so a kernel does not require a
 particular allocation or reference-counting policy.
 
+Slicing an array/view returns another borrowed `ArrayView` (or `ArrayViewMut`
+for exclusive mutable access). For example, on the `[2, 2, 4]` sample-major
+array below, `values.slice(s![.., 1..2, ..])` selects channel 1 with shape
+`[2, 1, 4]` without copying; the view retains strides `[8, 4, 1]` and is not
+contiguous across samples. `Slice`/`SliceInfo` and the `s!` macro describe the
+selection, rather than owning its elements. A regular Rust `&[T]` is available
+only when layout permits: `as_slice()` requires contiguous standard order;
+`as_slice_memory_order()` permits contiguous storage in its physical order.
+Neither accessor silently packs a noncontiguous view.
+
 `ndarray` supplies shape/stride-aware access, slicing and read-only broadcasting;
 it does not supply scientific axis meanings, Measures references, resource
 admission, storage scheduling or write provenance. Preserve the closed layout
