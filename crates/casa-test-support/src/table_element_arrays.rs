@@ -1,14 +1,15 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! The every-type array fixtures of the table cross matrix.
 //!
-//! Fixed-shape arrays of every element type, of shapes `[1]`, `[3]` and
-//! `[2, 3]`, in [`ELEMENT_ROWS`] rows, as
-//! `casacore_cpp_table_element_arrays.cpp` makes them. A column is named
-//! `<type>_<shape>` (`Float64_2x3`) when it is stored directly and
-//! `<type>_<shape>_ind` when it is stored indirectly, in its storage
-//! manager's array file. Element `index`, in storage (Fortran) order, of row
-//! `row` is made from `7 + 10 row + index`, so `Float64_1` holds `[7.0]` in
-//! row 0.
+//! Arrays of every element type in [`ELEMENT_ROWS`] rows, as
+//! `casacore_cpp_table_element_arrays.cpp` makes them, in families of
+//! columns by how they are stored ([`ElementStorage`]): fixed-shape arrays
+//! of shapes `[1]`, `[3]` and `[2, 3]`, named `<type>_<shape>`
+//! (`Float64_2x3`) when stored directly and `<type>_<shape>_ind` when stored
+//! in the storage manager's array file, and variable-shape arrays of rank 1,
+//! named `<type>_var`, whose cell in row `row` has `row + 1` elements.
+//! Element `index`, in storage (Fortran) order, of row `row` is made from
+//! `7 + 10 row + index`, so `Float64_1` holds `[7.0]` in row 0.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -48,24 +49,19 @@ pub const ELEMENT_SHAPES: [(&str, &[usize]); 3] = [("1", &[1]), ("3", &[3]), ("2
 /// Rows of the every-type fixtures.
 pub const ELEMENT_ROWS: usize = 3;
 
-/// How a column of an every-type fixture stores its cells.
+/// How a family of columns of an every-type fixture stores its cells.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ElementStorage {
-    /// In the storage manager's own data (the Direct option).
+    /// Fixed-shape arrays in the storage manager's own data (the Direct
+    /// option).
     Direct,
-    /// In the storage manager's array file (`table.fNi`).
+    /// Fixed-shape arrays in the storage manager's array file (`table.fNi`).
     Indirect,
+    /// Variable-shape arrays of rank 1, in the array file.
+    Variable,
 }
 
 impl ElementStorage {
-    /// The suffix of the column names.
-    fn suffix(self) -> &'static str {
-        match self {
-            Self::Direct => "",
-            Self::Indirect => "_ind",
-        }
-    }
-
     /// The column options.
     fn options(self) -> ColumnOptions {
         ColumnOptions {
@@ -78,12 +74,14 @@ impl ElementStorage {
 /// One column of an every-type fixture.
 #[derive(Debug, Clone)]
 pub struct ElementColumn {
-    /// The column name, such as `Float64_2x3` or `Float64_2x3_ind`.
+    /// The column name, such as `Float64_2x3`, `Float64_2x3_ind` or
+    /// `Float64_var`.
     pub name: String,
     /// The element type.
     pub data_type: PrimitiveType,
-    /// The cell shape.
-    pub shape: &'static [usize],
+    /// The cell shape of a fixed-shape column; `None` for a variable-shape
+    /// one.
+    pub shape: Option<&'static [usize]>,
     /// How the column stores its cells.
     pub storage: ElementStorage,
 }
@@ -91,35 +89,54 @@ pub struct ElementColumn {
 impl ElementColumn {
     /// The column's schema.
     pub fn schema(&self) -> ColumnSchema {
-        ColumnSchema::array_fixed(self.name.as_str(), self.data_type, self.shape.to_vec())
-            .with_options(self.storage.options())
-            .expect("fixed-shape array options")
+        match self.shape {
+            Some(shape) => {
+                ColumnSchema::array_fixed(self.name.as_str(), self.data_type, shape.to_vec())
+                    .with_options(self.storage.options())
+                    .expect("fixed-shape array options")
+            }
+            None => ColumnSchema::array_variable(self.name.as_str(), self.data_type, Some(1)),
+        }
     }
 
     /// The column's cell in `row`.
     pub fn cell(&self, row: usize) -> ArrayValue {
-        element_array(self.data_type, self.shape, row)
+        match self.shape {
+            Some(shape) => element_array(self.data_type, shape, row),
+            None => element_array(self.data_type, &[row + 1], row),
+        }
     }
 }
 
-/// The columns of an every-type fixture: every element type at every shape,
-/// for each of `storages` in turn.
+/// The columns of an every-type fixture: every element type at every shape
+/// (once, for a variable-shape family), for each of `storages` in turn.
 pub fn element_columns(storages: &[ElementStorage]) -> Vec<ElementColumn> {
-    storages
-        .iter()
-        .flat_map(|&storage| {
-            ELEMENT_TYPES.into_iter().flat_map(move |data_type| {
-                ELEMENT_SHAPES
-                    .into_iter()
-                    .map(move |(name, shape)| ElementColumn {
-                        name: format!("{data_type:?}_{name}{}", storage.suffix()),
-                        data_type,
-                        shape,
-                        storage,
-                    })
-            })
-        })
-        .collect()
+    let mut columns = Vec::new();
+    for &storage in storages {
+        for data_type in ELEMENT_TYPES {
+            let column = |name: String, shape| ElementColumn {
+                name,
+                data_type,
+                shape,
+                storage,
+            };
+            match storage {
+                ElementStorage::Direct => columns.extend(
+                    ELEMENT_SHAPES
+                        .map(|(name, shape)| column(format!("{data_type:?}_{name}"), Some(shape))),
+                ),
+                ElementStorage::Indirect => {
+                    columns.extend(ELEMENT_SHAPES.map(|(name, shape)| {
+                        column(format!("{data_type:?}_{name}_ind"), Some(shape))
+                    }))
+                }
+                ElementStorage::Variable => {
+                    columns.push(column(format!("{data_type:?}_var"), None))
+                }
+            }
+        }
+    }
+    columns
 }
 
 /// The cell of an every-type column of type `data_type` and shape `shape`

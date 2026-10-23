@@ -1,11 +1,17 @@
-// Every-type array fixtures: ism_element_arrays and ssm_element_arrays.
+// Every-type array fixtures: ism_element_arrays, ssm_element_arrays and
+// ism_indirect_arrays.
 //
-// Fixed-shape arrays of every element type, of shapes [1], [3] and [2,3], in
-// 3 rows. A column is named "<type>_<shape>" (Float64_2x3) when it is stored
-// directly (the Direct option) and "<type>_<shape>_ind" when it is stored
-// indirectly, in the storage manager's array file. Element i, in storage
-// order, of row r is made from 7 + 10 r + i, so Float64_1 holds [7.0] in
-// row 0. casa_test_support::table_element_arrays makes the same values.
+// Arrays of every element type, in 3 rows, in families of columns by how
+// they are stored:
+// - direct: fixed shapes [1], [3] and [2,3], with the Direct option, named
+//   "<type>_<shape>" (Float64_2x3);
+// - indirect: the same shapes without the Direct option, kept in the storage
+//   manager's array file, named "<type>_<shape>_ind";
+// - variable: variable-shape arrays of rank 1, kept in the array file, named
+//   "<type>_var", whose cell in row r has r + 1 elements.
+// Element i, in storage order, of row r is made from 7 + 10 r + i, so
+// Float64_1 holds [7.0] in row 0. casa_test_support::table_element_arrays
+// makes the same values.
 #include "casacore_cpp_common.h"
 #include <casacore/tables/DataMan/IncrementalStMan.h>
 #include <casacore/tables/DataMan/StandardStMan.h>
@@ -44,26 +50,40 @@ std::vector<std::pair<std::string, casacore::IPosition>> elementShapes() {
             {"2x3", casacore::IPosition(2, 2, 3)}};
 }
 
-// The columns of one storage: the suffix of their names and their options.
+// A family of columns: the suffix of their names, their options, and
+// whether they are variable-shape rather than of the fixed shapes.
 struct ElementStorage {
     std::string suffix;
     int options;
+    bool variable;
 };
 
-const ElementStorage kDirect{"", casacore::ColumnDesc::Direct | casacore::ColumnDesc::FixedShape};
-const ElementStorage kIndirect{"_ind", casacore::ColumnDesc::FixedShape};
+const ElementStorage kDirect{
+    "", casacore::ColumnDesc::Direct | casacore::ColumnDesc::FixedShape, false};
+const ElementStorage kIndirect{"_ind", casacore::ColumnDesc::FixedShape, false};
+const ElementStorage kVariable{"var", 0, true};
 
-// Call f(ElementTag<T>{}, name, shape, options) for each column of each of
-// `storages`.
+// Call f(ElementTag<T>{}, name, shape, storage) for each column of each of
+// `storages`; `shape` is empty for a variable-shape column.
 template <class F>
 void forEachElementColumn(const std::vector<ElementStorage>& storages, F&& f) {
     for (const auto& storage : storages) {
         forEachElementType([&](auto tag, const std::string& type) {
+            if (storage.variable) {
+                f(tag, type + "_" + storage.suffix, casacore::IPosition(), storage);
+                return;
+            }
             for (const auto& [name, shape] : elementShapes()) {
-                f(tag, type + "_" + name + storage.suffix, shape, storage.options);
+                f(tag, type + "_" + name + storage.suffix, shape, storage);
             }
         });
     }
+}
+
+// The shape of the cell in `row` of a column of `storage` and `shape`.
+casacore::IPosition cellShape(const ElementStorage& storage, const casacore::IPosition& shape,
+                              casacore::uInt row) {
+    return storage.variable ? casacore::IPosition(1, row + 1) : shape;
 }
 
 casacore::Int64 elementBase(casacore::uInt row, size_t i) {
@@ -98,22 +118,29 @@ casacore::Array<T> elementCell(casacore::uInt row, const casacore::IPosition& sh
 }
 
 void writeElementArrays(const char* path, casacore::DataManager& stman,
-                        const std::vector<ElementStorage>& storages) {
+                        const std::vector<ElementStorage>& storages,
+                        casacore::Table::EndianFormat endian = casacore::Table::AipsrcEndian) {
     casacore::TableDesc td("", casacore::TableDesc::Scratch);
     forEachElementColumn(storages, [&](auto tag, const std::string& name,
-                                       const casacore::IPosition& shape, int options) {
+                                       const casacore::IPosition& shape,
+                                       const ElementStorage& storage) {
         using T = typename decltype(tag)::type;
-        td.addColumn(casacore::ArrayColumnDesc<T>(name, shape, options));
+        if (storage.variable) {
+            td.addColumn(casacore::ArrayColumnDesc<T>(name, 1, storage.options));
+        } else {
+            td.addColumn(casacore::ArrayColumnDesc<T>(name, shape, storage.options));
+        }
     });
     casacore::SetupNewTable setup(path, td, casacore::Table::New);
     setup.bindAll(stman);
-    casacore::Table table(setup, kElementRows);
+    casacore::Table table(setup, kElementRows, casacore::False, endian);
     forEachElementColumn(storages, [&](auto tag, const std::string& name,
-                                       const casacore::IPosition& shape, int) {
+                                       const casacore::IPosition& shape,
+                                       const ElementStorage& storage) {
         using T = typename decltype(tag)::type;
         casacore::ArrayColumn<T> column(table, name);
         for (casacore::uInt row = 0; row < kElementRows; ++row) {
-            column.put(row, elementCell<T>(row, shape));
+            column.put(row, elementCell<T>(row, cellShape(storage, shape, row)));
         }
     });
     table.flush();
@@ -124,18 +151,21 @@ void verifyElementArrays(const char* path, const std::vector<ElementStorage>& st
     if (table.nrow() != kElementRows)
         throw std::runtime_error("expected 3 rows, got " + std::to_string(table.nrow()));
     forEachElementColumn(storages, [&](auto tag, const std::string& name,
-                                       const casacore::IPosition& shape, int options) {
+                                       const casacore::IPosition& shape,
+                                       const ElementStorage& storage) {
         using T = typename decltype(tag)::type;
-        if ((table.tableDesc().columnDesc(name).options() & casacore::ColumnDesc::Direct) !=
-            (options & casacore::ColumnDesc::Direct))
+        const int options = table.tableDesc().columnDesc(name).options();
+        if ((options & casacore::ColumnDesc::Direct) !=
+            (storage.options & casacore::ColumnDesc::Direct))
             throw std::runtime_error(name + ": Direct option differs");
         casacore::ArrayColumn<T> column(table, name);
         for (casacore::uInt row = 0; row < kElementRows; ++row) {
             const std::string cell = name + " row " + std::to_string(row);
             casacore::Array<T> found = column(row);
-            if (!found.shape().isEqual(shape))
+            const casacore::IPosition expectedShape = cellShape(storage, shape, row);
+            if (!found.shape().isEqual(expectedShape))
                 throw std::runtime_error(cell + ": shape " + found.shape().toString());
-            casacore::Array<T> expected = elementCell<T>(row, shape);
+            casacore::Array<T> expected = elementCell<T>(row, expectedShape);
             casacore::Bool deleteFound;
             const T* values = found.getStorage(deleteFound);
             const T* expectedValues = expected.data();
@@ -149,47 +179,78 @@ void verifyElementArrays(const char* path, const std::vector<ElementStorage>& st
     });
 }
 
-// casa-rs writes IncrementalStMan arrays only directly, so its fixture has
-// only Direct columns.
+// casa-rs writes IncrementalStMan arrays only directly, so the fixture it
+// writes has only Direct columns; it reads the arrays casacore keeps in the
+// array file (ISMIndColumn), which ism_indirect_arrays holds.
 const std::vector<ElementStorage> kIsmStorages{kDirect};
-const std::vector<ElementStorage> kSsmStorages{kDirect, kIndirect};
+const std::vector<ElementStorage> kIsmIndirectStorages{kIndirect, kVariable};
+const std::vector<ElementStorage> kSsmStorages{kDirect, kIndirect, kVariable};
+
+// Run `body`, reporting an exception as `out_error`.
+template <class F> int32_t guarded(const char* what, char** out_error, F&& body) {
+    try {
+        body();
+        return 0;
+    } catch (const std::exception& e) {
+        *out_error = make_error(e.what());
+        return -1;
+    } catch (...) {
+        *out_error = make_error(std::string("unknown exception in ") + what);
+        return -1;
+    }
+}
 
 } // namespace
 
 extern "C" {
 
 int32_t cpp_table_write_ism_element_arrays(const char* path, char** out_error) {
-    try {
+    return guarded("write_ism_element_arrays", out_error, [&] {
         casacore::IncrementalStMan stman;
         writeElementArrays(path, stman, kIsmStorages);
-        return 0;
-    } catch (const std::exception& e) { *out_error = make_error(e.what()); return -1;
-    } catch (...) { *out_error = make_error("unknown exception in write_ism_element_arrays"); return -1; }
+    });
 }
 
 int32_t cpp_table_verify_ism_element_arrays(const char* path, char** out_error) {
-    try {
-        verifyElementArrays(path, kIsmStorages);
-        return 0;
-    } catch (const std::exception& e) { *out_error = make_error(e.what()); return -1;
-    } catch (...) { *out_error = make_error("unknown exception in verify_ism_element_arrays"); return -1; }
+    return guarded("verify_ism_element_arrays", out_error,
+                   [&] { verifyElementArrays(path, kIsmStorages); });
 }
 
 int32_t cpp_table_write_ssm_element_arrays(const char* path, char** out_error) {
-    try {
+    return guarded("write_ssm_element_arrays", out_error, [&] {
         casacore::StandardStMan stman;
         writeElementArrays(path, stman, kSsmStorages);
-        return 0;
-    } catch (const std::exception& e) { *out_error = make_error(e.what()); return -1;
-    } catch (...) { *out_error = make_error("unknown exception in write_ssm_element_arrays"); return -1; }
+    });
 }
 
 int32_t cpp_table_verify_ssm_element_arrays(const char* path, char** out_error) {
-    try {
-        verifyElementArrays(path, kSsmStorages);
-        return 0;
-    } catch (const std::exception& e) { *out_error = make_error(e.what()); return -1;
-    } catch (...) { *out_error = make_error("unknown exception in verify_ssm_element_arrays"); return -1; }
+    return guarded("verify_ssm_element_arrays", out_error,
+                   [&] { verifyElementArrays(path, kSsmStorages); });
+}
+
+// The ism_indirect_arrays tables are checked in to casa-tables'
+// tests/data/ism_indirect_arrays, so their buckets are small: 4 KiB rather
+// than the default 32 KiB, which holds the fixture's 3 rows but not the 10
+// casacore checks for by default.
+const casacore::uInt kIsmIndirectBucketBytes = 4096;
+
+int32_t cpp_table_write_ism_indirect_arrays(const char* path, char** out_error) {
+    return guarded("write_ism_indirect_arrays", out_error, [&] {
+        casacore::IncrementalStMan stman("ISM", kIsmIndirectBucketBytes, casacore::False);
+        writeElementArrays(path, stman, kIsmIndirectStorages, casacore::Table::LittleEndian);
+    });
+}
+
+int32_t cpp_table_write_ism_indirect_arrays_big_endian(const char* path, char** out_error) {
+    return guarded("write_ism_indirect_arrays_big_endian", out_error, [&] {
+        casacore::IncrementalStMan stman("ISM", kIsmIndirectBucketBytes, casacore::False);
+        writeElementArrays(path, stman, kIsmIndirectStorages, casacore::Table::BigEndian);
+    });
+}
+
+int32_t cpp_table_verify_ism_indirect_arrays(const char* path, char** out_error) {
+    return guarded("verify_ism_indirect_arrays", out_error,
+                   [&] { verifyElementArrays(path, kIsmIndirectStorages); });
 }
 
 } // extern "C"

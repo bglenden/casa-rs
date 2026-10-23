@@ -489,6 +489,14 @@ pub(crate) enum IsmColumnResult {
     Indirect(Vec<Option<casa_types::Value>>),
 }
 
+/// Whether casacore stores the array column `desc` as an `ISMIndColumn`:
+/// every array column without the Direct option, of fixed shape or not
+/// (`ArrayColumnData::createDataManagerColumn`). Its bucket values are the
+/// offsets of its cells in the `table.fNi` array file, 0 for no array.
+fn is_ism_indirect_array(desc: &ColumnDescContents) -> bool {
+    desc.is_array && desc.option & 1 == 0
+}
+
 pub(crate) fn read_ism_file(
     file_path: &Path,
     dm_blob: &[u8],
@@ -523,18 +531,20 @@ pub(crate) fn read_ism_file_columns(
             } else {
                 1
             };
+            let indirect = is_ism_indirect_array(c);
             Ok((
                 scalar_dt,
                 nrelem,
-                c.is_array && c.nrdim > 0 && !c.shape.is_empty(),
-                c.is_array && (c.option & 1) == 0 && c.shape.is_empty(),
+                c.is_array && !indirect && !c.shape.is_empty(),
+                indirect,
             ))
         })
         .collect::<Result<_, StorageError>>()?;
 
-    let mut array_reader = if col_descs.iter().any(|(_, col_desc)| {
-        col_desc.is_array && (col_desc.option & 1) == 0 && col_desc.shape.is_empty()
-    }) {
+    let mut array_reader = if col_descs
+        .iter()
+        .any(|(_, col_desc)| is_ism_indirect_array(col_desc))
+    {
         let array_path = PathBuf::from(format!("{}i", file_path.display()));
         if !array_path.is_file() {
             return Err(StorageError::MissingDataFile(array_path));
@@ -550,10 +560,7 @@ pub(crate) fn read_ism_file_columns(
         (0..ncol).map(|_| Vec::with_capacity(nrrow)).collect();
     let mut indirect_columns: Vec<Option<Vec<Option<casa_types::Value>>>> = col_descs
         .iter()
-        .map(|(_, col_desc)| {
-            (col_desc.is_array && (col_desc.option & 1) == 0 && col_desc.shape.is_empty())
-                .then(|| Vec::with_capacity(nrrow))
-        })
+        .map(|(_, col_desc)| is_ism_indirect_array(col_desc).then(|| Vec::with_capacity(nrrow)))
         .collect();
 
     // Iterate over bucket intervals from the ISMIndex

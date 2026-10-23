@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 #![cfg(feature = "cpp-interop-tests")]
 
-use casa_tables::{ColumnOptions, ColumnSchema, DataManagerKind, EndianFormat, TableSchema};
+use casa_tables::{
+    ColumnOptions, ColumnSchema, DataManagerKind, EndianFormat, Table, TableOptions, TableSchema,
+};
 use casa_test_support::table_element_arrays::{
     ElementStorage, element_arrays_fixture, save_generated_element_arrays,
 };
 use casa_test_support::table_interop::{
     ManagerKind, TableFixture, run_endian_cross_matrix, run_full_cross_matrix,
-    run_table_cross_matrix,
+    run_read_cross_matrix, run_table_cross_matrix,
 };
 use casa_test_support::{CppTableFixture, TableOracle};
 use casa_types::{
@@ -677,4 +679,56 @@ fn ism_element_arrays_generated_save_reads_in_cpp() {
             }
         }
     }
+}
+
+// --- Arrays casacore keeps in table.f0i (ISMIndColumn): read, not written ---
+
+/// The every-type columns casacore's IncrementalStMan keeps in its array
+/// file: fixed-shape arrays without the Direct option and variable-shape
+/// arrays.
+const ISM_INDIRECT_STORAGES: [ElementStorage; 2] =
+    [ElementStorage::Indirect, ElementStorage::Variable];
+
+/// casa-rs reads the `ISMIndColumn`s casacore writes, whose bucket values
+/// are offsets of the cells in `table.f0i`, in either byte order. It once
+/// read a fixed-shape column's offsets as its cells (#852, ISMIndColumn
+/// reading).
+#[test]
+fn ism_indirect_arrays_read_cross_matrix() {
+    for cpp_fixture in [
+        CppTableFixture::IsmIndirectArrays,
+        CppTableFixture::IsmIndirectArraysBigEndian,
+    ] {
+        let fixture = element_arrays_fixture(&ISM_INDIRECT_STORAGES, cpp_fixture);
+        let results = run_read_cross_matrix(&fixture, ManagerKind::IncrementalStMan);
+        for result in &results {
+            assert!(
+                result.passed,
+                "[IncrementalStMan {cpp_fixture:?}] {}: {}",
+                result.label,
+                result.error.as_deref().unwrap_or("unknown error")
+            );
+        }
+    }
+}
+
+/// casa-rs refuses to write those columns, rather than write a table
+/// casacore cannot read.
+#[test]
+fn ism_indirect_arrays_are_refused_on_save() {
+    let fixture =
+        element_arrays_fixture(&ISM_INDIRECT_STORAGES, CppTableFixture::IsmIndirectArrays);
+    let dir = tempfile::tempdir().expect("tempdir");
+    let error = Table::from_rows_with_schema(fixture.rows, fixture.schema)
+        .expect("table")
+        .save(
+            TableOptions::new(dir.path().join("indirect"))
+                .with_data_manager(DataManagerKind::IncrementalStMan),
+        )
+        .expect_err("IncrementalStMan refuses indirect arrays");
+    let message = error.to_string();
+    assert!(
+        message.contains("as an ISMIndColumn in table.fNi"),
+        "{message}"
+    );
 }

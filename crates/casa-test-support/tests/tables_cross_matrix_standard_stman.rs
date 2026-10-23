@@ -829,12 +829,15 @@ fn ssm_column_keywords_endian_cross_matrix() {
     ));
 }
 
-// --- Every element type in fixed-shape arrays, stored directly and not ---
+// --- Every element type in arrays stored directly, indirectly and by shape ---
 
-/// The storages of the every-type StandardStMan fixture: each array in the
-/// buckets and in `table.f0i`.
-const SSM_ELEMENT_STORAGES: [ElementStorage; 2] =
-    [ElementStorage::Direct, ElementStorage::Indirect];
+/// The storages of the every-type StandardStMan fixture: fixed-shape arrays
+/// in the buckets and in `table.f0i`, and variable-shape arrays.
+const SSM_ELEMENT_STORAGES: [ElementStorage; 3] = [
+    ElementStorage::Direct,
+    ElementStorage::Indirect,
+    ElementStorage::Variable,
+];
 
 fn ssm_element_arrays_fixture() -> TableFixture {
     element_arrays_fixture(&SSM_ELEMENT_STORAGES, CppTableFixture::SsmElementArrays)

@@ -236,9 +236,17 @@ pub enum CppTableFixture {
     IsmElementArrays,
     /// SSM element arrays: the arrays of `IsmElementArrays`, once stored
     /// directly and once indirectly in `table.f0i` (columns `Float64_1` and
-    /// `Float64_1_ind`), stored with `StandardStMan`. Full CC/CR/RC
+    /// `Float64_1_ind`), and variable-shape arrays of every element type
+    /// (`Float64_var`), stored with `StandardStMan`. Full CC/CR/RC
     /// cross-matrix.
     SsmElementArrays,
+    /// ISM indirect arrays: the indirect fixed-shape and variable-shape
+    /// columns of `SsmElementArrays`, which casacore's IncrementalStMan keeps
+    /// in `table.f0i` (`ISMIndColumn`), little-endian. CC and CR only:
+    /// casa-rs does not write them.
+    IsmIndirectArrays,
+    /// `IsmIndirectArrays` in a big-endian table.
+    IsmIndirectArraysBigEndian,
 }
 
 /// A C++ fixture entry point: it writes or verifies the table at a path and
@@ -268,6 +276,14 @@ fn cell_fixture_entries(fixture: CppTableFixture) -> Result<CellFixtureEntries, 
         CppTableFixture::SsmElementArrays => (
             cpp_table_write_ssm_element_arrays,
             cpp_table_verify_ssm_element_arrays,
+        ),
+        CppTableFixture::IsmIndirectArrays => (
+            cpp_table_write_ism_indirect_arrays,
+            cpp_table_verify_ism_indirect_arrays,
+        ),
+        CppTableFixture::IsmIndirectArraysBigEndian => (
+            cpp_table_write_ism_indirect_arrays_big_endian,
+            cpp_table_verify_ism_indirect_arrays,
         ),
         other => return Err(format!("{other:?} has no C++ write and verify")),
     };
