@@ -42,7 +42,7 @@ use pyo3::exceptions::{PyNotImplementedError, PyResourceWarning, PyRuntimeError}
 use pyo3::prelude::*;
 use pyo3::sync::MutexExt;
 
-use crate::convert::{DoubleList, StringList, Variant};
+use crate::convert::{DoubleList, IntList, StringList, Variant};
 use crate::tools::{LogLine, emit};
 
 /// The Python logger CASA's `sm` messages go to.
@@ -503,19 +503,28 @@ impl PySimulator {
         setup::setmosaicfield(self, py, &request)
     }
 
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
+    /// Select the rows the next `predict` and `corrupt` act on, until the
+    /// next `observe`. casa-rs takes a selection that keeps every row
+    /// observed so far (`simobserve`'s); one that keeps fewer, or a TaQL
+    /// `msselect`, raises `NotImplementedError`.
     #[pyo3(
-        signature = (spwid = None, fieldid = None, msselect = None),
+        signature = (spwid = IntList::of(&[0]), fieldid = IntList::of(&[0]), msselect = ""),
         text_signature = "($self, spwid=[0], fieldid=[0], msselect='')"
     )]
     fn setdata(
         &self,
-        spwid: Option<&Bound<'_, PyAny>>,
-        fieldid: Option<&Bound<'_, PyAny>>,
-        msselect: Option<&Bound<'_, PyAny>>,
+        py: Python<'_>,
+        spwid: IntList,
+        fieldid: IntList,
+        msselect: &str,
     ) -> PyResult<bool> {
-        stubs::not_yet_implemented("setdata")
+        let result = self.on_session(py, |session, lines| {
+            outcome(
+                session.simulator.set_data(&spwid.0, &fieldid.0, msselect),
+                lines,
+            )
+        })?;
+        Ok(result.unwrap_or(false))
     }
 
     /// Predict the model image into the rows observed so far, replacing

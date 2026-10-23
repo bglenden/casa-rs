@@ -43,11 +43,11 @@ REFERENCE = "UTC 2020/01/01/00:00:00"
 IMPLEMENTED = {
     "open", "close", "done", "name", "type", "summary", "setconfig", "setfeed",
     "setspwindow", "setfield", "setmosaicfield", "settimes", "setlimits", "setauto",
-    "observe", "observemany", "setseed", "setnoise", "corrupt", "reset", "predict",
-    "setoptions", "setvp",
+    "observe", "observemany", "setdata", "setseed", "setnoise", "corrupt", "reset",
+    "predict", "setoptions", "setvp",
 }
 NOT_YET_IMPLEMENTED = {
-    "openfromms", "setdata", "setapply", "setgain", "settrop", "setleakage",
+    "openfromms", "setapply", "setgain", "settrop", "setleakage",
 }
 DISABLED_IN_CASA = {"setbandpass", "setpa", "setpointingerror"}
 
@@ -458,6 +458,26 @@ def test_observemany_pads_one_name_as_casa_does_and_raises_for_mismatched_lists(
         )
     sm.close()
     assert len(set(Table.open(tmp_path / "x.ms").get_column("SCAN_NUMBER"))) == 1
+
+
+@needs_measures
+def test_setdata_takes_a_selection_of_every_row(tmp_path: Path) -> None:
+    sm = opened(tmp_path)
+    configure(sm)
+    assert sm.setfield(sourcename="G", sourcedirection="J2000 23h40m00 30d00m00")
+    assert sm.observe("F", "L", starttime="0s", stoptime="10s")
+    assert sm.observe("G", "L", starttime="10s", stoptime="20s")
+    # simobserve's selections: every field, or none.
+    assert sm.setdata(fieldid=list(range(2)))
+    assert sm.setdata(fieldid=[])
+    assert sm.setdata(spwid=0, fieldid=(0, 1), msselect="")
+    with pytest.raises(NotImplementedError, match="1 of the 2 scans"):
+        sm.setdata(fieldid=[1])
+    with pytest.raises(NotImplementedError, match="msselect"):
+        sm.setdata(fieldid=[0, 1], msselect="ANTENNA1==0")
+    with pytest.raises(TypeError):
+        sm.setdata(fieldid="0")
+    sm.close()
 
 
 @needs_measures

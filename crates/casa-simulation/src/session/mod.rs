@@ -403,6 +403,63 @@ impl Simulator {
         self.plan_pointings(spec)
     }
 
+    /// `sm.setdata(spwid, fieldid, msselect)`: select the rows the next
+    /// `predict` and `corrupt` act on, until the next `observe`, which drops
+    /// CASA's selection.
+    ///
+    /// CASA's selection works on the rows observed so far:
+    /// - their FIELD_ID must be among `field_ids`, when there are any;
+    /// - their DATA_DESC_ID must be one of the windows `spectral_window_ids`
+    ///   names, when it names any (casa-rs's data description `w` is
+    ///   window `w`);
+    /// - then the TaQL `msselect` applies;
+    /// - a selection that keeps no row reverts to every row, with a warning.
+    ///
+    /// casa-rs takes a selection that keeps every row, as `simobserve`'s
+    /// `setdata(fieldid=range(nfld))` does. The following steps then act on
+    /// every row observed so far, as without `setdata`.
+    ///
+    /// # Errors
+    ///
+    /// Not yet implemented: a selection that keeps some but not all of the
+    /// rows, or a non-blank `msselect`.
+    pub fn set_data(
+        &mut self,
+        spectral_window_ids: &[i64],
+        field_ids: &[i64],
+        ms_select: &str,
+    ) -> SimulatorResult<()> {
+        tracing::info!("Selecting data");
+        if !ms_select.trim().is_empty() {
+            return Err(SimulatorError::not_yet_implemented(format!(
+                "setdata(msselect='{ms_select}') is not yet implemented in casa-rs (#841)"
+            )));
+        }
+        let windows: Vec<usize> = (0..self.spectral_windows.len())
+            .filter(|window| spectral_window_ids.contains(&(*window as i64)))
+            .collect();
+        if field_ids.is_empty() && windows.is_empty() {
+            return Ok(());
+        }
+        let selected = |scan: &Scan| {
+            (field_ids.is_empty() || field_ids.contains(&(scan.field_id as i64)))
+                && (windows.is_empty() || windows.contains(&scan.spectral_window_id))
+        };
+        let kept = self.scans.iter().filter(|scan| selected(scan)).count();
+        if kept == 0 {
+            tracing::warn!("Selection is empty: reverting to original MeasurementSet");
+            return Ok(());
+        }
+        if kept == self.scans.len() {
+            return Ok(());
+        }
+        Err(SimulatorError::not_yet_implemented(format!(
+            "setdata selecting {kept} of the {} scans observed so far is not yet implemented in \
+             casa-rs (simulation Phase 2); a selection of them all is",
+            self.scans.len()
+        )))
+    }
+
     /// `sm.close()` / `sm.done()`: write the MeasurementSet.
     ///
     /// # Errors

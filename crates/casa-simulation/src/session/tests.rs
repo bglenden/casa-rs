@@ -364,6 +364,48 @@ fn setmosaicfield_centres_its_grid_on_the_field_centre() {
     assert!((over.direction_rad[0] - (-170.0_f64).to_radians()).abs() < 1e-12);
 }
 
+/// `setdata` takes the selections that keep every row observed so far, as
+/// CASA's does when it selects them all or none (an empty selection
+/// reverts to every row); one that keeps some, or a TaQL string, is not yet
+/// implemented.
+#[test]
+fn setdata_takes_selections_that_keep_every_row() {
+    let mut session = ready(Path::new("unused.ms"));
+    session
+        .set_spectral_window(&window("CBand"))
+        .expect("second window");
+    // Nothing observed yet: every selection keeps every row.
+    session.set_data(&[0], &[0], "").expect("nothing observed");
+    session.observe(&scan("north", 0.0, 10.0)).expect("observe");
+    session
+        .observe(&scan("south", 10.0, 20.0))
+        .expect("observe");
+    for (windows, fields) in [
+        (vec![0], vec![0, 1]),
+        (vec![0, 1], vec![]),
+        (vec![], vec![]),
+        (vec![7], vec![]),
+        (vec![1], vec![]),
+        (vec![0], vec![5]),
+    ] {
+        session
+            .set_data(&windows, &fields, " ")
+            .unwrap_or_else(|error| panic!("{windows:?} {fields:?}: {error}"));
+    }
+    for (windows, fields) in [(vec![0], vec![0]), (vec![], vec![1])] {
+        let (outcome, message) = refusal(session.set_data(&windows, &fields, ""));
+        assert_eq!(
+            outcome,
+            CasaOutcome::NotYetImplemented,
+            "{windows:?} {fields:?}"
+        );
+        assert!(message.contains("1 of the 2 scans"), "{message}");
+    }
+    let (outcome, message) = refusal(session.set_data(&[0], &[0, 1], "ANTENNA1==0"));
+    assert_eq!(outcome, CasaOutcome::NotYetImplemented);
+    assert!(message.contains("msselect"), "{message}");
+}
+
 #[test]
 fn identical_states_share_a_row() {
     let mut session = ready(Path::new("unused.ms"));

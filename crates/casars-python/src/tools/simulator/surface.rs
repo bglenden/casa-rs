@@ -230,7 +230,7 @@ const METHODS: &[Method] = &[
             param("fieldid", K::Ints, Ints(&[0])),
             param("msselect", K::Text, Text("")),
         ],
-        NotYetImplemented,
+        Implemented,
     ),
     method(
         "predict",
