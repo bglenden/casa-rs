@@ -1093,6 +1093,50 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#iau-2000-keeps-the-iau-1980-sidereal-time-and-ecliptic-obliquities" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        IAU 2000 keeps the IAU 1980 sidereal time and ecliptic obliquities
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#direction-latitudes-come-from-an-unnormalized-vector" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Direction latitudes come from an unnormalized vector
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#iau-2000-jmean-to-j2000-applies-bias-and-precession-in-the-wrong-order" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        IAU 2000 JMEAN to J2000 applies bias and precession in the wrong order
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#iau-2000-gmst1-adds-the-tt-day-fraction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        IAU 2000 GMST1 adds the TT day fraction
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#writing-a-limb-darkened-disk-without-an-exponent-aborts-casa" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1209,6 +1253,12 @@ Simulator behaviours casa-rs does not follow:
 <a href="#setmosaicfield-sits-its-grid-off-the-field-centre"><code>setmosaicfield</code>'s off-centre grid</a>,
 <a href="#observemany-adds-rows-before-it-looks-up-later-fields"><code>observemany</code>'s rows before an unknown field</a>,
 <a href="#smpredict-through-wprojectft-without-planes-crashes-the-simulator">W projection without planes</a>.
+Measures behaviours casa-rs follows for parity:
+<a href="#iau-2000-keeps-the-iau-1980-sidereal-time-and-ecliptic-obliquities">IAU 1980 sidereal time and obliquities under IAU 2000</a>.
+Measures behaviours casa-rs does not follow:
+<a href="#direction-latitudes-come-from-an-unnormalized-vector">latitudes of unnormalized directions</a>,
+<a href="#iau-2000-jmean-to-j2000-applies-bias-and-precession-in-the-wrong-order">IAU 2000 JMEAN to J2000</a>,
+<a href="#iau-2000-gmst1-adds-the-tt-day-fraction">IAU 2000 GMST1</a>.
 Simulator behaviours casa-rs follows:
 <a href="#observemany-pads-one-name-with-empty-ones"><code>observemany</code>'s padded single name</a>.
 Component-list behaviours casa-rs does not follow:
@@ -1740,6 +1790,72 @@ and returns False, and the script continues with DATA not predicted. These outco
 and were not probed. casa-rs's check opens each model as the simulator reads
 it, so a FITS or complex model raises RuntimeError "Unable to open image …"
 at the call.</p>
+<h2 id="iau-2000-keeps-the-iau-1980-sidereal-time-and-ecliptic-obliquities">IAU 2000 keeps the IAU 1980 sidereal time and ecliptic obliquities<a class="headerlink" href="#iau-2000-keeps-the-iau-1980-sidereal-time-and-ecliptic-obliquities" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-10-22</li>
+<li>Status: casacore behaviour; casa-rs follows it for parity (#850)</li>
+<li>Affected code: <code>measures/Measures/MCEpoch.cc</code> (<code>initConvert</code>, <code>UT1_GAST</code>),
+  <code>measures/Measures/MeasMath.cc</code> (<code>applyMECLIPtoJMEAN</code>,
+  <code>applyTECLIPtoJTRUE</code>), <code>measures/Measures/MeasTable.cc</code> (<code>fundArg</code>)</li>
+</ul>
+<p>With <code>measures.iau2000.b_use</code> set, casacore still forms GAST from the IAU
+1982 GMST and the IAU 1980 equation of the equinoxes of <code>Nutation::STANDARD</code>,
+without the 1994 complementary terms, and every HADEC, AZEL and ITRF
+conversion takes its LAST from that GAST. TECLIPTIC rotates by the IAU 1980
+true obliquity and MECLIPTIC by <code>MeasTable::fundArg(0)</code>, under either model.
+That polynomial's T² term is −0.0059″, where IAU 1976 has −0.00059″: 0.37
+mas in MECLIPTIC by 2026. casa-rs computes all of these as casacore does
+(<code>casacore_sidereal</code>, <code>casacore_frames</code>), which moved its IAU 2000A
+J2000→HADEC from 20.4 to 16.7 mas off casacore, the residual of the APP
+step alone.</p>
+<h2 id="direction-latitudes-come-from-an-unnormalized-vector">Direction latitudes come from an unnormalized vector<a class="headerlink" href="#direction-latitudes-come-from-an-unnormalized-vector" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-10-22</li>
+<li>Status: casacore numerical defect; casa-rs does not follow it (#850)</li>
+<li>Affected code: <code>measures/Measures/MeasData.cc</code> (<code>GALtoJ2000</code>,
+  <code>GALtoB1950</code>, <code>MToB1950</code>, <code>MToJ2000</code>), <code>measures/Measures/MCDirection.cc</code>
+  (<code>doConvert</code>), <code>casa/Quanta/MVDirection.cc</code> (<code>getLat</code>, <code>get</code>)</li>
+</ul>
+<p>casacore's galactic and FK4 matrices are 10-digit literals, orthogonal only
+to about 7e-11 (1.5e-8 for <code>MToB1950(4)</code>), and <code>MCDirection::doConvert</code>
+does not renormalize after applying them. <code>MVDirection::getLat()</code> and
+<code>get()</code> then take <code>asin(z)</code>, assuming a unit vector, so the latitude casacore
+reports is off by about (|v| − 1)·tan(b) and becomes NaN once z exceeds 1.
+casa-rs converts with the same matrices, renormalizes, and reports the
+latitude of the unit vector. The two directions agree to 0.01 µas; the
+reported angles differ by up to 51 µas for B1950→GALACTIC on the law's grid
+and by 1.6 mas for J2000→B1950 at b = −89.77°, where tan(b) is 250
+(<code>measures_frames_interop</code>).</p>
+<h2 id="iau-2000-jmean-to-j2000-applies-bias-and-precession-in-the-wrong-order">IAU 2000 JMEAN to J2000 applies bias and precession in the wrong order<a class="headerlink" href="#iau-2000-jmean-to-j2000-applies-bias-and-precession-in-the-wrong-order" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-10-22</li>
+<li>Status: casacore bug; casa-rs does not follow it (#850)</li>
+<li>Affected code: <code>measures/Measures/MeasMath.cc</code> (<code>deapplyPrecession</code>)</li>
+</ul>
+<p>Under IAU 2000, <code>applyPrecession</code> takes J2000 to JMEAN as <code>in *= B; in *= P</code>,
+v′ = Pᵀ·Bᵀ·v, with B the frame bias and P the precession. The inverse,
+<code>deapplyPrecession</code>, applies <code>in = B·in</code> and then <code>in = P·in</code>, which is
+P·B·v′, not B·P·v′. The two do not commute, so casacore's JMEAN→J2000 is
+not the inverse of its J2000→JMEAN: MECLIPTIC→J2000 and TECLIPTIC→J2000 are
+0.14 mas off in 2026, and the error grows with time from J2000. casa-rs
+inverts exactly; the frame law compares the IAU 2000 ecliptics from the
+equator of date.</p>
+<h2 id="iau-2000-gmst1-adds-the-tt-day-fraction">IAU 2000 GMST1 adds the TT day fraction<a class="headerlink" href="#iau-2000-gmst1-adds-the-tt-day-fraction" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-10-22</li>
+<li>Status: casacore bug; casa-rs does not follow it (#850)</li>
+<li>Affected code: <code>measures/Measures/MCEpoch.cc</code> (<code>UT1_GMST1</code>,
+  <code>GMST1_UT1</code>), <code>measures/Measures/MeasTable.cc</code> (<code>GMST00</code>)</li>
+</ul>
+<p>Under IAU 2000, <code>UT1_GMST1</code> turns the UT1 epoch into TT and adds
+<code>GMST00/(2π)</code> and 6713 days to it. <code>GMST00</code> is already the sidereal time of
+day (the Earth rotation angle in [0, 2π) plus precession), so the TT day
+fraction is counted twice: UT1 51544.5 gives GMST1 58258.280, against the
+IAU 1976 path's 58257.779 and a GAST of 58257.779, and LMST inherits the
+error. <code>GMST1_UT1</code>'s iteration does not undo it: GMST1 58258.280 converts
+back to UT1 51544.999. casa-rs uses the IAU 1976 GMST1 under either model,
+as casacore's own GAST does, so its GMST1, LMST, GAST and LAST agree with
+each other and, under IAU 1976, with casacore.</p>
 <h2 id="writing-a-limb-darkened-disk-without-an-exponent-aborts-casa">Writing a limb-darkened disk without an exponent aborts CASA<a class="headerlink" href="#writing-a-limb-darkened-disk-without-an-exponent-aborts-casa" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-10-23</li>
