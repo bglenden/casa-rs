@@ -1,6 +1,6 @@
 # Intermediate observation contracts
 
-Status: draft revision 1; incorporates review input, not accepted or frozen
+Status: draft revision 2; incorporates review input, not accepted or frozen
 Truth class: design proposal
 Date: 2026-10-23
 
@@ -18,7 +18,7 @@ broad implementation starts.
 | C1: source independence | No physical row IDs, Zarr keys, storage managers, or MS-version branches in scientific kernels. |
 | C2: faithful values | Explicit units/frames/precision, native flag and weight semantics, full data-group association, ordered baselines. No silent scientific transform. |
 | C3: layout independence | Separate sample topology, memory layout, scientific grouping, and storage chunking. |
-| C4: bounded ownership | Every live payload, index, decode buffer, cache, packed copy and queue is admitted; borrowed views cannot outlive/refill their storage. |
+| C4: bounded ownership | Every live payload, index, decode buffer, cache, packed copy and queue is admitted; borrowed views cannot outlive/refill their storage. Independent work can retire separately; shared storage stays live until its last use completes. |
 | C5: invertible updates | Sample-preserving reorder/selection retains a checked inverse source map; reduction does not. Shared variables have explicit mutation scope. |
 | C6: honest guarantees | Unknown acquisition occupancy is representable; unsupported profiles/layouts and non-atomic writes are explicit. |
 | C7: bulk execution | Bind numeric kind, layout and context outside scalar loops; no required per-sample allocation, virtual call, or coordinate reconstruction. |
@@ -372,6 +372,56 @@ arrays and retained context; safe Rust prevents refill or mutation while views
 remain borrowed. Pipelining uses a bounded admitted pool of buffers and transfers
 exclusive ownership; no `Arc` clone is permission to retain unlimited blocks.
 Coordinate/group catalogue references can be shared without cloning payloads.
+
+### Independent work-unit lifetimes
+
+The loop above illustrates synchronous use, not a requirement that all consumers
+finish a block together. A **work unit** executes one or more compute windows on
+one worker or a cooperating subset of the existing admitted team. This execution
+group is distinct from a scientific group such as a calibration solution bin.
+Ownership follows the work, without requiring permanent OS-thread affinity or a
+new pool/scheduler. A consumer can have private work-unit state and scratch,
+share read-only inputs with its cooperating workers, and use worker-local
+scratch whose shorter lifetime permits reuse.
+
+The API must support safe Rust transfer of buffer ownership between work units
+and scoped sharing of borrowed views. Mutable compute arrays have one owner or
+proven disjoint mutable regions; disjoint logical windows alone do not establish
+disjoint persistent updates (C5 still applies). M1 must prove the owning/borrowed
+API, including safe cross-worker handoff, before selecting concrete types.
+Ownership operations remain at block/work-unit granularity, outside scalar loops.
+
+Independent work may finish out of delivery order when the request's semantics
+permit it. A completed unit can return its private buffers and let another
+admitted unit run while slower work continues. The representation imposes no
+global barrier: required joins come from scientific dependencies, declared
+ordering, or conflicting writes. Reuse waits for actual last use, including
+outstanding device operations where applicable; dispatch or cancellation alone
+does not establish completion. Group-input completion remains separate from
+completion of the jobs consuming it, as specified in section 4. Ordered outputs
+and pending writes must not introduce an unbounded completion/reorder queue.
+
+A slow window borrowing one large backing allocation keeps that **entire
+allocation** live; releasing other slices does not free their share of it.
+Large native I/O aggregation therefore does not imply one indivisible lifetime
+for all subsequent computation. Realizations can use independently owned pieces
+or explicitly budgeted packing when prolonged sharing would pin too much memory.
+Account actual backing allocations once, all simultaneous private scratch and
+packed copies, and bounded in-flight/ready/write queues. The existing resource
+owner supplies backpressure when the admitted pool is exhausted. Measure pinned
+bytes, copy/decode costs and stalls before choosing the sharing/packing policy;
+do not solve lifetime skew by allocating an unbounded tail of blocks.
+
+For cube CLEAN, visibility blocks belong to gridding/prediction passes. The
+longer-lived model, residual, mask and solver state belong to the imaging owners;
+a channel's minor cycle must not retain an input visibility block merely because
+that channel needs more iterations. Independent channel work can finish and
+reuse private scratch at different times. Required image state remains available
+for later major cycles/products under existing image storage and admission.
+Cross-channel coupling or major-cycle/stopping rules can still require joins;
+this contract does not change the science or replicate the whole cube per worker.
+
+### Accounting and backend realization
 
 Backends can fill directly into a requested layout or lend a decoded chunk view
 when lifetime, precision and strides permit it. Otherwise they disclose and

@@ -1,6 +1,6 @@
 # MeasurementSet implementation plan
 
-Status: draft revision 1; owner iteration pending, no final design approval
+Status: draft revision 2; owner iteration pending, no final design approval
 Truth class: design proposal
 Date: 2026-10-23
 Design inputs: [architecture](architecture.md), [draft contracts](contracts.md)
@@ -143,6 +143,17 @@ parallel migration:
 6. A v4 I/O block spans multiple chunks and feeds smaller borrowed kernel
    windows. The resource accounting includes decode/packing/index/write scratch,
    and an oversized physical working set fails before unsafe allocation.
+   Exercise multiple work units and cooperating worker groups with deliberately
+   unequal completion times. With independently owned buffers and available
+   admission, fast work retires/reuses buffers and further work progresses while
+   one unit is held. Repeat with windows sharing an allocation: it must remain
+   pinned until the last user finishes, without refill or an unbounded queue.
+   Include bounded packing, private/shared scratch, ordered-output backpressure,
+   and cancellation with work still in flight. Count unique backing allocations,
+   pinned bytes, copies and stalls, and demonstrate safe cross-worker handoff.
+   A cube integration probe separates streamed visibility lifetimes from uneven
+   channel minor-cycle work, retaining required image state and scientific joins
+   without retaining visibilities throughout CLEAN or duplicating the whole cube.
    Scan increasing present/missing chunk-key prefixes and repeated major-cycle
    passes at fixed budgets: live store/cache/registry state must plateau.
    On the actual compressed multichunk path, verify W1 has no hidden parallel
@@ -183,6 +194,7 @@ a stronger agent/person. The lead integrates shared API decisions.
 | --- | --- | --- |
 | `layout-precision` | Contract + imaging owners | One raw primitive type, sample/channel layouts, factorable axis laws, actual operator science and input narrowing. |
 | `group-lifecycle` | Calibration owner | Interleaved SPWs/late samples, admitted concurrent state, proven closure, sequential comparison, solve→caltable→reopen→apply. |
+| `work-unit-lifetimes` | Contract + runtime + imaging owners | Unequal worker/group completion, safe handoff and reuse, shared-allocation pinning, bounded copies/queues/cancellation, cube visibility versus minor-cycle state. |
 | `native-role-updates` | Storage + calibration owners | Broadcast/group aliases, undefined fallback, full/partial unit counts, bit semantics, mixed-owner MODEL_DATA and conflict rejection. |
 | `conversion-fidelity` | Format owner | Each audited mapping/loss, original/converter/Rust/reverse-reader evidence, no invented repair of lost information. |
 | `source-free-create` | Simulation/import + storage owners | No input MS, standard metadata, target extents, buffer recycling/backpressure and publication failure. |

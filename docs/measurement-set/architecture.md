@@ -5,7 +5,8 @@ Truth class: design proposal
 Date: 2026-10-23
 Companion documents: [contracts](contracts.md), [implementation plan](implementation-plan.md)
 
-Draft revision 1 responds to Pro and Fable. Recommendations below remain open
+Draft revision 2 incorporates Pro and Fable's reviews and the owner's question
+about independent worker/group lifetimes. Recommendations below remain open
 for owner iteration; no review response constitutes acceptance or finalization.
 
 ## 1. Outcome and boundaries
@@ -47,6 +48,7 @@ existing owners.
 | Storage chunk/tile | Physical decode/update unit chosen at creation or already present on disk. |
 | I/O block | Bounded aggregation delivered by a source; may contain many physical chunks. |
 | Compute window | A borrowed subset or explicitly packed projection of a block for a kernel. |
+| Work unit | One or more windows executed by a worker or cooperating workers on the existing admitted team. Owns or borrows buffers until its actual completion; distinct from a scientific group. |
 
 An MSv2 MAIN row contains a channel-by-correlation visibility matrix for an
 integration/baseline/data-description context, not one polarization scalar
@@ -146,6 +148,15 @@ Start with explicit, inspectable heuristics and measure them. Existing tiles
 may force whole-cell or whole-chunk reads for narrow selections; expose and
 account for that amplification. A larger I/O block does not require a larger
 kernel window or duplicated kernel scratch.
+
+Work units may finish independently and reuse their private buffers while other
+units continue, subject to scientific/order/write dependencies. Sharing a large
+allocation can let one slow window pin it; the realization must account for that
+lifetime or use admitted independent pieces/packing. Cube minor-cycle state has
+its own imaging owner and does not extend the lifetime of streamed visibilities.
+See [independent work-unit lifetimes](contracts.md#independent-work-unit-lifetimes);
+this extends the representation's requirements, not the number of schedulers or
+resource authorities.
 
 | Consumer | Typical request, not a universal mandate |
 | --- | --- |

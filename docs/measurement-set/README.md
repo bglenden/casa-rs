@@ -1,6 +1,6 @@
 # MeasurementSet architecture review
 
-Status: draft revision 1; owner iteration pending, not implementation authorization
+Status: draft revision 2; owner iteration pending, not implementation authorization
 Truth class: design proposal
 Date: 2026-10-23
 Repository baseline: `221ec71545fe36a758ab0869e7512349b5db7c0e`
@@ -25,7 +25,8 @@ The Rust sketches describe contracts; they are not implemented or compilable
 library APIs yet. No performance or format-interoperability experiment is
 claimed by this documentation PR.
 
-This revision incorporates Pro and Fable's reviews of commit `526d706c`.
+This revision incorporates Pro and Fable's reviews of commit `526d706c` and
+the owner's question about work groups that finish at different rates.
 The documents and PR remain provisional: neither addressing a comment nor an
 agent recommendation finalizes the design. Only the MSv2 + MSv4 scope and MSv3
 deferral have been confirmed by the owner.
@@ -41,7 +42,8 @@ deferral have been confirmed by the owner.
    with bounded fragments, sequential or bounded concurrent group realization,
    proven group completion, and backend chunk aggregation within those
    requirements. Calibration grouping does not require a whole solve in memory.
-3. **D3 — Ownership and writes:** approve reusable borrowed blocks, opaque
+3. **D3 — Ownership and writes:** approve reusable borrowed blocks with
+   independent work-unit lifetimes and explicit shared-allocation pinning, opaque
    session-local inverse mappings, native-role broadcast/group alias scopes,
    and bulk patches. The proposed local v4 profile replaces individual objects
    atomically; it does not promise a dataset transaction or power-loss durability.
