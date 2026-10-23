@@ -88,14 +88,23 @@
 //! ([`ShapeTransform::at_baseline`]) and leaves each channel a function of
 //! frequency alone ([`BaselineTransform::at_frequency`]).
 //!
+//! # Records
+//!
+//! [`ComponentList::to_record`] and [`SkyComponent::to_record`] form the
+//! records CASA's `toRecord` does, which the `cl` tool's `torecord` and
+//! `getcomponent` return; the flux, shape and spectrum each have their own
+//! (`Flux::to_record`, `ComponentShape::to_record`,
+//! `SpectralModel::to_record`).
+//!
 //! # Deliberately not here
 //!
 //! - **Sampling components on an image.**
-//! - **The `cl` tool:** CASA's `componentlist` tool and its record forms
-//!   (`torecord`, `fromrecord`, `getcomponent`), its selection state and its
-//!   in-place table rewriting.
+//! - **The `cl` tool** itself: its argument conventions, its selection state
+//!   and when it writes its table belong to `casars.tools.componentlist`.
+//!   Reading records back (`fromrecord`) is not here either.
 //! - **Display units:** CASA remembers the units each shape axis was given in;
-//!   tables do not store them, and casa-rs keeps radians.
+//!   tables do not store them, and casa-rs keeps radians. Records give a
+//!   shape's axes in the units CASA gives one read from a table.
 //! - **Table keywords:** a list's table keywords (`cl.putkeyword`) are not
 //!   read or written.
 
@@ -104,6 +113,7 @@ mod component_type;
 mod error;
 mod flux;
 mod list;
+mod record;
 mod shape;
 mod spectrum;
 mod table;

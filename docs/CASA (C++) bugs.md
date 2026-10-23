@@ -34,13 +34,24 @@ Simulator behaviours casa-rs does not follow:
 [`setmosaicfield`'s off-centre grid](#setmosaicfield-sits-its-grid-off-the-field-centre),
 [`observemany`'s rows before an unknown field](#observemany-adds-rows-before-it-looks-up-later-fields),
 [W projection without planes](#smpredict-through-wprojectft-without-planes-crashes-the-simulator).
+Measures behaviours casa-rs follows for parity:
+[IAU 1980 sidereal time and obliquities under IAU 2000](#iau-2000-keeps-the-iau-1980-sidereal-time-and-ecliptic-obliquities).
+Measures behaviours casa-rs does not follow:
+[latitudes of unnormalized directions](#direction-latitudes-come-from-an-unnormalized-vector),
+[IAU 2000 JMEAN to J2000](#iau-2000-jmean-to-j2000-applies-bias-and-precession-in-the-wrong-order),
+[IAU 2000 GMST1](#iau-2000-gmst1-adds-the-tt-day-fraction).
 Simulator behaviours casa-rs follows:
 [`observemany`'s padded single name](#observemany-pads-one-name-with-empty-ones).
 Component-list behaviours casa-rs does not follow:
 [a limb-darkened disk without an exponent](#writing-a-limb-darkened-disk-without-an-exponent-aborts-casa),
 [a negative component under the primary beam](#a-negative-component-turns-positive-under-the-primary-beam),
 [a single spectral index](#a-single-spectral-index-is-read-past-its-end),
-[the beam's component spectrum frame](#the-primary-beams-component-spectrum-labels-topocentric-samples-lsrk).
+[the beam's component spectrum frame](#the-primary-beams-component-spectrum-labels-topocentric-samples-lsrk),
+[`addcomponent`'s single-precision flux](#claddcomponent-stores-the-flux-in-single-precision),
+[the `cl` tool's record units](#the-cl-tool-records-a-shapes-axes-in-the-units-it-was-given).
+Component-list behaviours casa-rs follows:
+[`addcomponent`'s polarization](#claddcomponent-stores-four-flux-values-as-stokes),
+[a shape `addcomponent` cannot make](#claddcomponent-keeps-a-point-for-a-shape-it-cannot-make).
 
 ## AW-projection pairs the partner hand's visibility with the conjugate-baseline cell
 
@@ -626,6 +637,76 @@ and were not probed. casa-rs's check opens each model as the simulator reads
 it, so a FITS or complex model raises RuntimeError "Unable to open image …"
 at the call.
 
+## IAU 2000 keeps the IAU 1980 sidereal time and ecliptic obliquities
+
+- Date noted: 2026-10-22
+- Status: casacore behaviour; casa-rs follows it for parity (#850)
+- Affected code: `measures/Measures/MCEpoch.cc` (`initConvert`, `UT1_GAST`),
+  `measures/Measures/MeasMath.cc` (`applyMECLIPtoJMEAN`,
+  `applyTECLIPtoJTRUE`), `measures/Measures/MeasTable.cc` (`fundArg`)
+
+With `measures.iau2000.b_use` set, casacore still forms GAST from the IAU
+1982 GMST and the IAU 1980 equation of the equinoxes of `Nutation::STANDARD`,
+without the 1994 complementary terms, and every HADEC, AZEL and ITRF
+conversion takes its LAST from that GAST. TECLIPTIC rotates by the IAU 1980
+true obliquity and MECLIPTIC by `MeasTable::fundArg(0)`, under either model.
+That polynomial's T² term is −0.0059″, where IAU 1976 has −0.00059″: 0.37
+mas in MECLIPTIC by 2026. casa-rs computes all of these as casacore does
+(`casacore_sidereal`, `casacore_frames`), which moved its IAU 2000A
+J2000→HADEC from 20.4 to 16.7 mas off casacore, the residual of the APP
+step alone.
+
+## Direction latitudes come from an unnormalized vector
+
+- Date noted: 2026-10-22
+- Status: casacore numerical defect; casa-rs does not follow it (#850)
+- Affected code: `measures/Measures/MeasData.cc` (`GALtoJ2000`,
+  `GALtoB1950`, `MToB1950`, `MToJ2000`), `measures/Measures/MCDirection.cc`
+  (`doConvert`), `casa/Quanta/MVDirection.cc` (`getLat`, `get`)
+
+casacore's galactic and FK4 matrices are 10-digit literals, orthogonal only
+to about 7e-11 (1.5e-8 for `MToB1950(4)`), and `MCDirection::doConvert`
+does not renormalize after applying them. `MVDirection::getLat()` and
+`get()` then take `asin(z)`, assuming a unit vector, so the latitude casacore
+reports is off by about (|v| − 1)·tan(b) and becomes NaN once z exceeds 1.
+casa-rs converts with the same matrices, renormalizes, and reports the
+latitude of the unit vector. The two directions agree to 0.01 µas; the
+reported angles differ by up to 51 µas for B1950→GALACTIC on the law's grid
+and by 1.6 mas for J2000→B1950 at b = −89.77°, where tan(b) is 250
+(`measures_frames_interop`).
+
+## IAU 2000 JMEAN to J2000 applies bias and precession in the wrong order
+
+- Date noted: 2026-10-22
+- Status: casacore bug; casa-rs does not follow it (#850)
+- Affected code: `measures/Measures/MeasMath.cc` (`deapplyPrecession`)
+
+Under IAU 2000, `applyPrecession` takes J2000 to JMEAN as `in *= B; in *= P`,
+v′ = Pᵀ·Bᵀ·v, with B the frame bias and P the precession. The inverse,
+`deapplyPrecession`, applies `in = B·in` and then `in = P·in`, which is
+P·B·v′, not B·P·v′. The two do not commute, so casacore's JMEAN→J2000 is
+not the inverse of its J2000→JMEAN: MECLIPTIC→J2000 and TECLIPTIC→J2000 are
+0.14 mas off in 2026, and the error grows with time from J2000. casa-rs
+inverts exactly; the frame law compares the IAU 2000 ecliptics from the
+equator of date.
+
+## IAU 2000 GMST1 adds the TT day fraction
+
+- Date noted: 2026-10-22
+- Status: casacore bug; casa-rs does not follow it (#850)
+- Affected code: `measures/Measures/MCEpoch.cc` (`UT1_GMST1`,
+  `GMST1_UT1`), `measures/Measures/MeasTable.cc` (`GMST00`)
+
+Under IAU 2000, `UT1_GMST1` turns the UT1 epoch into TT and adds
+`GMST00/(2π)` and 6713 days to it. `GMST00` is already the sidereal time of
+day (the Earth rotation angle in [0, 2π) plus precession), so the TT day
+fraction is counted twice: UT1 51544.5 gives GMST1 58258.280, against the
+IAU 1976 path's 58257.779 and a GAST of 58257.779, and LMST inherits the
+error. `GMST1_UT1`'s iteration does not undo it: GMST1 58258.280 converts
+back to UT1 51544.999. casa-rs uses the IAU 1976 GMST1 under either model,
+as casacore's own GAST does, so its GMST1, LMST, GAST and LAST agree with
+each other and, under IAU 1976, with casacore.
+
 ## Writing a limb-darkened disk without an exponent aborts CASA
 
 - Date noted: 2026-10-23
@@ -697,6 +778,79 @@ the beam and the spectrum at each channel's own frequency. With the beam,
 `sm_components_scenarios.json` agrees with CASA to 7e-5 and 1e-4 normalized
 RMS, against 1.3e-5 or better without it: consistent in size with this
 shift, though the shift was not isolated.
+
+## `cl.addcomponent` stores four flux values as Stokes
+
+- Date noted: 2026-10-23
+- Status: CASA bug; casa-rs follows it (#841, owner decision 2026-10-23)
+- Affected code: `casatools/src/tools/componentlist/componentlist_cmpt.cc`
+  (`setflux`, lines 831-930); `components/ComponentModels/Flux.tcc`
+  (`FluxRep::setValue(const Vector<T>&)`, lines 363-368)
+
+`setflux`, which `addcomponent` calls, sets the flux's representation from
+`polarization` and then stores four values with
+`FluxRep::setValue(Vector<Double>)`, which resets the representation to
+Stokes. So `cl.addcomponent(flux=[1, 0.1, 0.2, 0.9],
+polarization='circular')` stores I = 1, Q = 0.1, U = 0.2, V = 0.9 rather than
+RR, RL, LR and LL (probed with CASA 6.7.6 for 'Circular', 'circular',
+'CIRCULAR' and 'linear'). `polarization` still has effects: an unknown name
+raises, and one value with a representation other than Stokes raises. casa-rs
+does the same, so a script gets the list CASA would give it.
+
+## `cl.addcomponent` stores the flux in single precision
+
+- Date noted: 2026-10-23
+- Status: CASA behaviour casa-rs does not follow (#841)
+- Affected code: `casatools/src/tools/componentlist/componentlist_cmpt.cc`
+  (`setflux`, lines 858-870)
+
+`setflux` reads the values into a `Vector<Complex>` (single precision) before
+storing them as doubles, so `flux=0.1` is stored as 0.10000000149011612
+(probed with CASA 6.7.6). casa-rs keeps the values given; they differ from
+CASA's by at most one single-precision rounding, 6e-8 relative.
+
+## The `cl` tool records a shape's axes in the units it was given
+
+- Date noted: 2026-10-23
+- Status: CASA behaviour casa-rs does not follow (#841)
+- Affected code: `components/ComponentModels/TwoSidedShape.cc` (`toRecord`,
+  lines 265-330)
+
+`TwoSidedShape` remembers the units its axes were set in, and its record
+gives them in those units: a Gaussian made by `addcomponent` with
+`majoraxis='1arcsec'` records `{'unit': 'arcsec', 'value': 1.0}`. A shape
+read from a table has the units `readTable` sets: arcmin for the axes and
+degrees for the position angle, with the errors in radians. casa-rs holds
+radians and records every shape as CASA records one read from a table
+(`{'unit': 'arcmin', 'value': 0.016666666666666666}`); the quantities are the
+same, and the table is the same either way.
+
+## `cl.addcomponent` keeps a point for a shape it cannot make
+
+- Date noted: 2026-10-23
+- Status: CASA behaviour casa-rs follows (#841)
+- Affected code: `casatools/src/tools/componentlist/componentlist_cmpt.cc`
+  (`addcomponent`, lines 453-526; `setshape`, lines 1285-1386)
+
+`addcomponent` adds a point and then calls `setshape`, ignoring what it
+returns. `setshape` logs SEVERE and returns False for a shape name it does
+not know, for a limb-darkened disk ("not implemented yet"), and for an axis
+that is not an angle (none given, a number, or another unit), so the
+component stays a point at the given direction and `addcomponent` returns
+True (probed with CASA 6.7.6). casa-rs does the same and logs the message at
+ERROR. Scripts that misspell a shape name therefore get points, as they do in
+CASA.
+
+What `setshape` raises, `addcomponent` raises too, after removing the
+component it began: an axis that does not read as a quantity (`'garbage'`, a
+complex number), and what the shape's constructor raises, such as a
+Gaussian's position angle outside ±2π (`Gaussian2DParam::setPA`) or axes that
+are not positive. A minor axis longer than the major raises as well:
+`TwoSidedShape::fromRecord` (`TwoSidedShape.cc`, lines 229-263) means to
+refuse it, but compares the minor axis with itself (`near(minorAxisInRad,
+minorAxisInRad)`, line 249), so the check never fires and the constructor
+raises instead. casa-rs raises in each case with casacore's message, and adds
+nothing.
 
 ## `setmosaicfield` sits its grid off the field centre
 

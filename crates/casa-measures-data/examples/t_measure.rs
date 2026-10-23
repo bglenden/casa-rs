@@ -4,7 +4,15 @@
 //! Equivalent to a subset of C++ casacore's `tMeasure` program.
 //! Demonstrates epoch, position, direction, frequency, and Doppler conversions,
 //! plus record serialization.
+//!
+//! Usage: cargo run --example t_measure -p casa-measures-data
+//!
+//! Epoch conversions read TAI−UTC from a measures runtime, discovered as the
+//! measures tests discover it (`$CASA_RS_MEASURESPATH`, then `~/.casa/data`).
 
+use std::sync::Arc;
+
+use casa_measures_data::MeasuresRuntime;
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::doppler::{DopplerRef, MDoppler};
 use casa_types::measures::frequency::{FrequencyRef, MFrequency};
@@ -16,7 +24,22 @@ use casa_types::measures::{
     position_to_record, radial_velocity_from_record, radial_velocity_to_record,
 };
 
+/// A frame that reads the discovered measures runtime, or `None`, with a
+/// note, when there is none.
+fn measures_frame() -> Option<MeasFrame> {
+    match MeasuresRuntime::open_discovered(Default::default()) {
+        Ok(runtime) => Some(MeasFrame::new().with_measures(Arc::new(runtime))),
+        Err(error) => {
+            eprintln!("t_measure needs a measures runtime: {error}");
+            None
+        }
+    }
+}
+
 fn main() {
+    let Some(frame) = measures_frame() else {
+        return;
+    };
     println!("=== Measures Demo ===");
     println!();
 
@@ -27,8 +50,6 @@ fn main() {
     // J2000.0 in UTC
     let j2000_utc = MEpoch::from_mjd(51544.5, EpochRef::UTC);
     println!("J2000.0 UTC:  {j2000_utc}");
-
-    let frame = MeasFrame::new();
 
     // UTC → TAI
     let tai = j2000_utc.convert_to(EpochRef::TAI, &frame).unwrap();
@@ -71,12 +92,12 @@ fn main() {
     // --- UT1/GMST with dUT1 ---
 
     println!("--- UT1/GMST conversions ---");
-    let frame_ut1 = MeasFrame::new().with_dut1(0.3);
+    let frame_ut1 = frame.clone().with_dut1(0.3);
     let ut1 = j2000_utc.convert_to(EpochRef::UT1, &frame_ut1).unwrap();
     println!("J2000.0 UT1:  {ut1}  (with dUT1=0.3s)");
 
     let vla = MPosition::new_itrf(-1601185.4, -5041977.5, 3554875.9);
-    let frame_full = MeasFrame::new().with_dut1(0.3).with_position(vla.clone());
+    let frame_full = frame.clone().with_dut1(0.3).with_position(vla.clone());
     let gmst = ut1.convert_to(EpochRef::GMST1, &frame_full).unwrap();
     let gmst_hours = gmst.value().frac() * 24.0;
     println!("J2000.0 GMST: {gmst}  ({gmst_hours:.4} hours)");
@@ -139,7 +160,7 @@ fn main() {
 
     // Precession: J2000 → JMEAN (needs epoch)
     let epoch = MEpoch::from_mjd(51544.5, EpochRef::UTC);
-    let frame_epoch = MeasFrame::new().with_epoch(epoch);
+    let frame_epoch = frame.clone().with_epoch(epoch);
     let jmean = src.convert_to(DirectionRef::JMEAN, &frame_epoch).unwrap();
     let (lon_jm, lat_jm) = jmean.as_angles();
     println!(
@@ -163,7 +184,7 @@ fn main() {
         41.27_f64.to_radians(),
         DirectionRef::J2000,
     );
-    let freq_frame = MeasFrame::new().with_direction(m31_dir);
+    let freq_frame = frame.clone().with_direction(m31_dir);
     let bary = freq_1420
         .convert_to(FrequencyRef::BARY, &freq_frame)
         .unwrap();
@@ -189,7 +210,7 @@ fn main() {
     let z_val = MDoppler::new(1.0, DopplerRef::Z);
     println!("Redshift z=1: {z_val}");
 
-    let frame_d = MeasFrame::new();
+    let frame_d = frame.clone();
     let radio = z_val.convert_to(DopplerRef::RADIO, &frame_d).unwrap();
     println!("  → RADIO:    {radio}");
 
@@ -223,7 +244,7 @@ fn main() {
         41.27_f64.to_radians(),
         DirectionRef::J2000,
     );
-    let rv_frame = MeasFrame::new().with_direction(m31_dir_rv);
+    let rv_frame = frame.clone().with_direction(m31_dir_rv);
 
     let rv_bary = rv.convert_to(RadialVelocityRef::BARY, &rv_frame).unwrap();
     let shift = rv_bary.ms() - rv.ms();
@@ -248,7 +269,7 @@ fn main() {
 
     // --- REST frequency with radial velocity ---
 
-    demo_rest_frequency();
+    demo_rest_frequency(&frame);
 
     println!();
 
@@ -301,12 +322,13 @@ fn main() {
 
 /// REST → LSRK frequency conversion with a radial velocity in the frame,
 /// and back.
-fn demo_rest_frequency() {
+fn demo_rest_frequency(frame: &MeasFrame) {
     println!("--- REST frequency (with radial velocity) ---");
 
     let rest_freq = MFrequency::new(1.42e9, FrequencyRef::REST);
     let rv_for_freq = MRadialVelocity::new(50_000.0, RadialVelocityRef::LSRK);
-    let rest_frame = MeasFrame::new()
+    let rest_frame = frame
+        .clone()
         .with_direction(MDirection::from_angles(
             10.68_f64.to_radians(),
             41.27_f64.to_radians(),

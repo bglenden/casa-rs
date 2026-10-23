@@ -717,6 +717,32 @@ def test_predict_outcomes_follow_casa(tmp_path: Path, caplog: pytest.LogCaptureF
     assert np.all(np.asarray(Table.open(tmp_path / "x.ms").get_column("DATA")) == 0)
 
 
+@needs_measures
+def test_a_list_the_cl_tool_writes_is_predicted(tmp_path: Path) -> None:
+    # The cl tool's list read by sm.predict(complist=...), as simobserve
+    # uses the two: a 1 Jy point at the phase centre, with no beam, is 1 Jy
+    # on RR and LL of every cross-correlation, in every channel.
+    from casars.tools import componentlist
+
+    path = tmp_path / "point.cl"
+    cl = componentlist()
+    assert cl.addcomponent(flux=1.0, fluxunit="Jy", dir=DIRECTION, shape="point",
+                           freq="1.4GHz")
+    assert cl.rename(str(path)) is True
+    assert cl.close(log=False) is True
+
+    sm = opened(tmp_path)
+    configure(sm)
+    assert sm.observe("F", "L", starttime="0s", stoptime="30s")
+    assert sm.predict(complist=str(path)) is True
+    sm.close()
+    table = Table.open(tmp_path / "x.ms")
+    data = np.asarray(table.get_column("DATA"))
+    cross = np.asarray(table.get_column("ANTENNA1")) != np.asarray(table.get_column("ANTENNA2"))
+    assert cross.any()
+    np.testing.assert_allclose(data[cross], 1.0, atol=1e-6)
+
+
 REPO_ROOT = Path(__file__).resolve().parents[4]
 
 

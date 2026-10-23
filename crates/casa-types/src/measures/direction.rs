@@ -24,7 +24,7 @@
 //!
 //! | IAU model | Typical deviation | Main contributors |
 //! |-----------|-------------------|-------------------|
-//! | 1976/1980 | sub-mas | residual series decomposition |
+//! | 1976/1980 | ~1 µas | residual series decomposition |
 //! | 2000A | ~16 mas | Precession/nutation parameterization |
 //!
 //! The affected conversion paths are the ones that pass through apparent place:
@@ -61,18 +61,33 @@
 //!
 //! # Implemented routes
 //!
-//! **Constant-matrix** (no frame data needed):
-//! J2000 ↔ GALACTIC, J2000 ↔ ICRS, GALACTIC ↔ SUPERGAL,
-//! AZEL ↔ AZELSW, AZELGEO ↔ AZELSWGEO
+//! **Constant-matrix** (no frame data needed), with casacore's matrices
+//! (`casacore_frames`): J2000 ↔ GALACTIC, GALACTIC ↔ B1950, GALACTIC ↔
+//! SUPERGAL, J2000 ↔ ECLIPTIC (casacore's J2000 obliquity, no frame bias),
+//! J2000 ↔ ICRS, AZEL ↔ AZELSW, AZELGEO ↔ AZELSWGEO
+//!
+//! **FK4**: J2000 ↔ B1950 follows casacore's rotation, E-terms and epoch
+//! term; the epoch is the frame's UT1 epoch, or J2000.0 without one.
 //!
 //! **Epoch-dependent** (need epoch in frame):
 //! J2000 ↔ JMEAN (precession), JMEAN ↔ JTRUE (nutation),
-//! J2000 ↔ ECLIPTIC (obliquity), JMEAN ↔ MECLIPTIC, JTRUE ↔ TECLIPTIC,
-//! J2000 ↔ JNAT (solar deflection), JNAT ↔ APP (aberration plus
-//! precession/nutation)
+//! JMEAN ↔ MECLIPTIC, JTRUE ↔ TECLIPTIC (casacore's IAU 1980 obliquities
+//! under either model), J2000 ↔ JNAT (solar deflection), JNAT ↔ APP
+//! (aberration plus precession/nutation)
 //!
 //! **Epoch + position** (need both):
-//! APP ↔ HADEC (sidereal time), HADEC ↔ AZEL, HADEC ↔ AZELGEO
+//! APP ↔ TOPO (unchanged for a sky direction), TOPO ↔ HADEC (diurnal
+//! aberration, polar motion and sidereal time), HADEC ↔ AZEL,
+//! HADEC ↔ AZELGEO, HADEC ↔ ITRF
+//!
+//! # Routes that differ from casacore's
+//!
+//! Every route between the frames here follows casacore's routing table
+//! (`MCDirection::ToRef_p`), except that casacore converts B1950 to and from
+//! APP directly, with its B1950 precession, nutation and aberration, and so
+//! B1950 to and from TOPO, HADEC, the AZEL frames and ITRF. casa-rs goes
+//! through J2000, which differs by 2.5–4.9″ (2026-10-22, #863). casa-rs has
+//! no BMEAN, BTRUE or B1950_VLA frame.
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, VecDeque};
@@ -84,7 +99,9 @@ use crate::quanta::MvAngle;
 use crate::quanta::{Quantity, Unit};
 
 use super::casacore_aberration::earth_barycentric_velocity_ms;
-use super::epoch::{EpochRef, MEpoch, casacore_gast_rad};
+use super::casacore_frames;
+use super::casacore_nutation::standard_true_obliquity_rad;
+use super::epoch::{EpochRef, MEpoch, MISSING_DUT1, MjdHighPrec, casacore_gast_rad};
 use super::error::MeasureError;
 use super::frame::{IauModel, MeasFrame};
 
@@ -103,8 +120,8 @@ const MJD_OFFSET: f64 = 2_400_000.5;
 
 /// Celestial reference frame types for direction measures.
 ///
-/// Corresponds to a subset of C++ `MDirection::Types`. Planet-based and
-/// B1950 frames are declared but conversions are deferred.
+/// Corresponds to a subset of C++ `MDirection::Types`; the planet-based
+/// frames, B1950_VLA, BMEAN and BTRUE are not represented.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DirectionRef {
     /// Mean equator/equinox at J2000.0 (dynamical).
@@ -117,7 +134,7 @@ pub enum DirectionRef {
     APP,
     /// J2000 natural direction (geometric, before gravitational deflection).
     JNAT,
-    /// Mean equator/equinox at B1950.0 (FK4). Deferred.
+    /// Mean equator/equinox at B1950.0 (FK4, E-terms included).
     B1950,
     /// Galactic coordinates (IAU 1958).
     GALACTIC,
@@ -125,7 +142,7 @@ pub enum DirectionRef {
     SUPERGAL,
     /// International Celestial Reference System.
     ICRS,
-    /// Ecliptic coordinates (mean obliquity of J2000.0).
+    /// Ecliptic coordinates (casacore's mean obliquity of J2000.0).
     ECLIPTIC,
     /// Mean ecliptic of date.
     MECLIPTIC,
@@ -141,9 +158,10 @@ pub enum DirectionRef {
     AZELGEO,
     /// Azimuth / elevation (geodetic latitude, S through W).
     AZELSWGEO,
-    /// International Terrestrial Reference Frame direction. Deferred.
+    /// International Terrestrial Reference Frame direction.
     ITRF,
-    /// Topocentric direction. Deferred.
+    /// Topocentric apparent right ascension and declination. For a sky
+    /// direction, which has no distance, it equals APP, as in casacore.
     TOPO,
 }
 
@@ -962,14 +980,21 @@ fn fill_rise_set(
     Ok(0)
 }
 
+/// The UTC of a local apparent sidereal time on the sidereal day that starts
+/// the UTC day `start_day_mjd`, as casacore's `DirectionEngine::fillRiseSet`
+/// offsets it: the start of the day converted to LAST and razed to whole
+/// sidereal days.
 fn last_angle_to_utc_mjd(
     start_day_mjd: f64,
     last_angle_rad: f64,
     frame: &MeasFrame,
 ) -> Result<f64, MeasureError> {
-    let last_mjd = start_day_mjd + last_angle_rad / std::f64::consts::TAU;
-    let last_epoch = MEpoch::from_mjd(last_mjd, EpochRef::LAST);
-    Ok(last_epoch
+    let sidereal_day = MEpoch::from_mjd(start_day_mjd, EpochRef::UTC)
+        .convert_to(EpochRef::LAST, frame)?
+        .value()
+        .day();
+    let last = MjdHighPrec::new(sidereal_day, last_angle_rad / std::f64::consts::TAU);
+    Ok(MEpoch::new(last, EpochRef::LAST)
         .convert_to(EpochRef::UTC, frame)?
         .value()
         .as_mjd())
@@ -997,31 +1022,6 @@ fn rotate_t(r: &[[f64; 3]; 3], v: &[f64; 3]) -> [f64; 3] {
 // Constant rotation matrices
 // ---------------------------------------------------------------------------
 
-/// Galactic-to-ICRS rotation matrix (Hipparcos, Murray 1989).
-///
-/// This matrix converts direction cosines from the galactic coordinate system
-/// to ICRS (≈ J2000). It is the transpose of the matrix used internally by
-/// `sofars::coords::g2icrs`.
-///
-/// v_ICRS = GAL_TO_ICRS * v_GAL
-const GAL_TO_ICRS: [[f64; 3]; 3] = [
-    [
-        -0.054_875_560_416_215_4,
-        0.494_109_427_875_583_7,
-        -0.867_666_149_019_004_7,
-    ],
-    [
-        -0.873_437_090_234_885,
-        -0.444_829_629_960_011_2,
-        -0.198_076_373_431_201_5,
-    ],
-    [
-        -0.483_835_015_548_713_2,
-        0.746_982_244_497_281_2,
-        0.455_983_776_175_066_9,
-    ],
-];
-
 /// ICRS-to-J2000 frame tie rotation matrix (IAU 2006).
 ///
 /// The frame tie between ICRS and the dynamical mean equator/equinox at
@@ -1033,29 +1033,6 @@ fn icrs_to_j2000_matrix() -> [[f64; 3]; 3] {
     // bp06 returns (rb, rp, rbp) where rb is the frame bias
     let (rb, _, _) = sofars::pnp::bp06(MJD_OFFSET, 51544.5);
     rb
-}
-
-/// Supergalactic-to-Galactic rotation matrix.
-///
-/// Constructed from the de Vaucouleurs (1991) definition:
-/// - Supergalactic pole at (l, b) = (47.37°, 6.32°)
-/// - Zero longitude at l = 137.37° (= 47.37° + 90°)
-///
-/// v_GAL = SG_TO_GAL * v_SG
-fn supergal_to_gal_matrix() -> [[f64; 3]; 3] {
-    let l = 47.37_f64.to_radians();
-    let b = 6.32_f64.to_radians();
-    let (sl, cl) = (l.sin(), l.cos());
-    let (sb, cb) = (b.sin(), b.cos());
-
-    // Columns: e_x = [-sin(l), cos(l), 0]
-    //          e_y = [-sin(b)cos(l), -sin(b)sin(l), cos(b)]
-    //          e_z = [cos(b)cos(l), cos(b)sin(l), sin(b)]
-    [
-        [-sl, -sb * cl, cb * cl],
-        [cl, -sb * sl, cb * sl],
-        [0.0, cb, sb],
-    ]
 }
 
 // ---------------------------------------------------------------------------
@@ -1101,31 +1078,56 @@ fn nutation_matrix(frame: &MeasFrame, ctx: &ConvCtx) -> Result<[[f64; 3]; 3], Me
     ctx.get_nutation(frame)
 }
 
-/// Mean obliquity of the ecliptic at the frame epoch.
-fn mean_obliquity(frame: &MeasFrame, ctx: &ConvCtx) -> Result<f64, MeasureError> {
-    let (tt1, tt2) = get_tt_jd(frame, ctx)?;
-    Ok(match frame.iau_model() {
-        IauModel::Iau1976_1980 => sofars::pnp::obl80(tt1, tt2),
-        IauModel::Iau2006_2000A => sofars::pnp::obl80(tt1, tt2),
-    })
-}
-
-/// Ecliptic rotation matrix for J2000: equatorial → ecliptic.
-///
-/// Uses the ecliptic-to-equatorial matrix from `sofars::coords::ecm06`,
-/// transposed to get equatorial → ecliptic.
-fn ecliptic_matrix_j2000() -> [[f64; 3]; 3] {
-    // ecm06 returns the GCRS-to-ecliptic rotation matrix (equatorial → ecliptic).
-    sofars::coords::ecm06(MJD_OFFSET, 51544.5)
-}
-
-/// Build a rotation matrix for rotation about x-axis by obliquity.
-/// This converts equatorial → ecliptic.
+/// The equatorial-to-ecliptic rotation about x by obliquity `eps`; its
+/// transpose converts back.
 fn obliquity_rotation(eps: f64) -> [[f64; 3]; 3] {
     let mut r = [[0.0; 3]; 3];
     sofars::vm::ir(&mut r);
     sofars::vm::rx(eps, &mut r);
     r
+}
+
+/// The J2000-to-ECLIPTIC rotation (`MeasMath::deapplyECLIPtoJ2000`).
+fn j2000_ecliptic_rotation() -> [[f64; 3]; 3] {
+    obliquity_rotation(casacore_frames::j2000_obliquity_rad())
+}
+
+/// Rotate equatorial to ecliptic coordinates by `eps`, or back.
+fn rotate_obliquity(eps: f64, cosines: &[f64; 3], to_ecliptic: bool) -> [f64; 3] {
+    let m = obliquity_rotation(eps);
+    if to_ecliptic {
+        rotate(&m, cosines)
+    } else {
+        rotate_t(&m, cosines)
+    }
+}
+
+/// The B1950 conversions' epoch term: the frame's UT1 epoch in Julian
+/// centuries from J2000, or 0 without an epoch, as casacore's
+/// `MeasMath::applyJ2000toB1950` takes it.
+///
+/// Without Earth-orientation data for the epoch, casacore's
+/// `MeasTable::dUT1` returns 0, so UT1 is taken as UTC, with casacore's note
+/// (`casacore_frames::note_missing_dut1`). The term moves a direction by
+/// about 1e-15 rad per second of time. Every other UT1 conversion in casa-rs
+/// still requires the data.
+fn b1950_epoch_centuries(frame: &MeasFrame, ctx: &ConvCtx) -> Result<f64, MeasureError> {
+    let Some(epoch) = frame.epoch() else {
+        return Ok(casacore_frames::b1950_epoch_centuries(None));
+    };
+    let ut1_mjd = match get_ut1_jd(frame, ctx) {
+        Ok((ut_a, ut_b)) => (ut_a - MJD_OFFSET) + ut_b,
+        Err(MeasureError::MissingFrameData { what }) if what == MISSING_DUT1 => {
+            let ut1_mjd = epoch
+                .convert_to(EpochRef::UT1, &frame.clone().with_dut1(0.0))?
+                .value()
+                .as_mjd();
+            casacore_frames::note_missing_dut1(ut1_mjd);
+            ut1_mjd
+        }
+        Err(error) => return Err(error),
+    };
+    Ok(casacore_frames::b1950_epoch_centuries(Some(ut1_mjd)))
 }
 
 /// Get the Earth's barycentric velocity in AU/day for aberration.
@@ -1138,15 +1140,10 @@ fn earth_velocity_au_per_day(
 
 /// Get GAST (Greenwich Apparent Sidereal Time) from the frame.
 ///
-/// Dispatches on the IAU model:
-/// - [`Iau1976_1980`](IauModel::Iau1976_1980): GMST82 plus casacore's
-///   IAU-1980 equation of equinoxes (without the later 1994 complementary terms)
-/// - [`Iau2006_2000A`](IauModel::Iau2006_2000A): GMST82 + equation of equinoxes
-///   IAU 2000A (`sofars::erst::gmst82` + `sofars::erst::ee00a`).
-///
-///   This matches C++ casacore's `MCEpoch::UT1_GAST` conversion, which always
-///   uses GMST82 for the mean sidereal time even in IAU 2000 mode, combined
-///   with the IAU 2000A equation of equinoxes (including complementary terms).
+/// Under either IAU model this is casacore's `MCEpoch::UT1_GAST`, which
+/// `MCFrame::getLASTr` uses for every HADEC conversion: the IAU 1982 GMST
+/// plus the IAU 1980 equation of the equinoxes of `Nutation::STANDARD`,
+/// without the 1994 complementary terms.
 fn get_gast(frame: &MeasFrame, ctx: &ConvCtx) -> Result<f64, MeasureError> {
     ctx.get_gast(frame)
 }
@@ -1154,11 +1151,7 @@ fn get_gast(frame: &MeasFrame, ctx: &ConvCtx) -> Result<f64, MeasureError> {
 /// Compute GAST (uncached, used by ConvCtx).
 fn compute_gast(frame: &MeasFrame, ctx: &ConvCtx) -> Result<f64, MeasureError> {
     let (ut_a, ut_b) = ctx.get_ut1_jd(frame)?;
-    let tt_jd = match frame.iau_model() {
-        IauModel::Iau1976_1980 => (ut_a, ut_b),
-        IauModel::Iau2006_2000A => ctx.get_tt_jd(frame)?,
-    };
-    Ok(casacore_gast_rad((ut_a, ut_b), tt_jd, frame.iau_model()))
+    Ok(casacore_gast_rad(MjdHighPrec::from_jd_pair(ut_a, ut_b)))
 }
 
 /// Get the observer geodetic latitude from the frame position.
@@ -1454,10 +1447,13 @@ const ROUTING_EDGES: &[(DirectionRef, DirectionRef)] = &[
     (DirectionRef::HADEC, DirectionRef::AZELGEO),
     (DirectionRef::AZEL, DirectionRef::AZELSW),
     (DirectionRef::AZELGEO, DirectionRef::AZELSWGEO),
-    (DirectionRef::APP, DirectionRef::HADEC),
+    // casacore reaches HADEC from APP through TOPO.
+    (DirectionRef::APP, DirectionRef::TOPO),
+    (DirectionRef::TOPO, DirectionRef::HADEC),
     (DirectionRef::J2000, DirectionRef::B1950),
+    // casacore converts between GALACTIC and B1950 directly, not via J2000.
+    (DirectionRef::GALACTIC, DirectionRef::B1950),
     (DirectionRef::HADEC, DirectionRef::ITRF),
-    (DirectionRef::HADEC, DirectionRef::TOPO),
 ];
 
 /// Maps a DirectionRef to a unique index for BFS.
@@ -1681,9 +1677,13 @@ fn apply_hop(
     match (from, to) {
         // ----- Constant matrices -----
 
-        // J2000 ↔ GALACTIC (via ICRS ≈ J2000 approximation)
-        (J2000, GALACTIC) => Ok(rotate_t(&GAL_TO_ICRS, &cosines)),
-        (GALACTIC, J2000) => Ok(rotate(&GAL_TO_ICRS, &cosines)),
+        // J2000, B1950 and SUPERGAL ↔ GALACTIC (casacore's matrices)
+        (J2000, GALACTIC) => Ok(casacore_frames::j2000_to_galactic(cosines)),
+        (GALACTIC, J2000) => Ok(casacore_frames::galactic_to_j2000(cosines)),
+        (B1950, GALACTIC) => Ok(casacore_frames::b1950_to_galactic(cosines)),
+        (GALACTIC, B1950) => Ok(casacore_frames::galactic_to_b1950(cosines)),
+        (SUPERGAL, GALACTIC) => Ok(casacore_frames::supergalactic_to_galactic(cosines)),
+        (GALACTIC, SUPERGAL) => Ok(casacore_frames::galactic_to_supergalactic(cosines)),
 
         // J2000 ↔ ICRS (frame tie, ~17 mas)
         (ICRS, J2000) => {
@@ -1692,16 +1692,6 @@ fn apply_hop(
         }
         (J2000, ICRS) => {
             let m = icrs_to_j2000_matrix();
-            Ok(rotate_t(&m, &cosines))
-        }
-
-        // GALACTIC ↔ SUPERGAL
-        (SUPERGAL, GALACTIC) => {
-            let m = supergal_to_gal_matrix();
-            Ok(rotate(&m, &cosines))
-        }
-        (GALACTIC, SUPERGAL) => {
-            let m = supergal_to_gal_matrix();
             Ok(rotate_t(&m, &cosines))
         }
 
@@ -1755,45 +1745,21 @@ fn apply_hop(
             Ok(rotate_t(&rn, &cosines))
         }
 
-        // J2000 ↔ ECLIPTIC (obliquity at J2000.0)
-        (J2000, ECLIPTIC) => {
-            let m = ecliptic_matrix_j2000();
-            Ok(rotate(&m, &cosines))
-        }
-        (ECLIPTIC, J2000) => {
-            let m = ecliptic_matrix_j2000();
-            Ok(rotate_t(&m, &cosines))
+        // J2000 ↔ ECLIPTIC (casacore's mean obliquity at J2000.0, no bias)
+        (J2000, ECLIPTIC) => Ok(rotate(&j2000_ecliptic_rotation(), &cosines)),
+        (ECLIPTIC, J2000) => Ok(rotate_t(&j2000_ecliptic_rotation(), &cosines)),
+
+        // JMEAN ↔ MECLIPTIC (casacore's mean obliquity at the TDB epoch)
+        (JMEAN, MECLIPTIC) | (MECLIPTIC, JMEAN) => {
+            let eps = casacore_frames::mean_obliquity_rad(tdb_mjd(frame)?);
+            Ok(rotate_obliquity(eps, &cosines, from == JMEAN))
         }
 
-        // JMEAN ↔ MECLIPTIC (mean obliquity at epoch)
-        (JMEAN, MECLIPTIC) => {
-            let eps = mean_obliquity(frame, ctx)?;
-            let m = obliquity_rotation(eps);
-            Ok(rotate(&m, &cosines))
-        }
-        (MECLIPTIC, JMEAN) => {
-            let eps = mean_obliquity(frame, ctx)?;
-            let m = obliquity_rotation(eps);
-            Ok(rotate_t(&m, &cosines))
-        }
-
-        // JTRUE ↔ TECLIPTIC (true obliquity = mean + nutation)
-        (JTRUE, TECLIPTIC) => {
-            let (tt1, tt2) = get_tt_jd(frame, ctx)?;
-            let eps0 = sofars::pnp::obl06(tt1, tt2);
-            let (dpsi, deps) = sofars::pnp::nut06a(tt1, tt2);
-            let eps_true = eps0 + deps;
-            let _ = dpsi; // nutation in longitude not needed for obliquity rotation
-            let m = obliquity_rotation(eps_true);
-            Ok(rotate(&m, &cosines))
-        }
-        (TECLIPTIC, JTRUE) => {
-            let (tt1, tt2) = get_tt_jd(frame, ctx)?;
-            let eps0 = sofars::pnp::obl06(tt1, tt2);
-            let (_, deps) = sofars::pnp::nut06a(tt1, tt2);
-            let eps_true = eps0 + deps;
-            let m = obliquity_rotation(eps_true);
-            Ok(rotate_t(&m, &cosines))
+        // JTRUE ↔ TECLIPTIC (true obliquity of casacore's IAU 1980
+        // nutation, `Nutation::STANDARD`, under either IAU model)
+        (JTRUE, TECLIPTIC) | (TECLIPTIC, JTRUE) => {
+            let eps = standard_true_obliquity_rad(tdb_mjd(frame)?);
+            Ok(rotate_obliquity(eps, &cosines, from == JTRUE))
         }
 
         // JTRUE → APP (aberration)
@@ -1801,10 +1767,14 @@ fn apply_hop(
         // APP → JTRUE (inverse aberration — iterative)
         (APP, JTRUE) => remove_annual_aberration(cosines, frame, ctx),
 
-        // APP → HADEC (sidereal time + diurnal aberration + polar motion)
-        (APP, HADEC) => apparent_to_hadec(cosines, frame, ctx),
-        // HADEC → APP (inverse of above)
-        (HADEC, APP) => hadec_to_apparent(cosines, frame, ctx),
+        // APP ↔ TOPO: casacore's `applyAPPtoTOPO` shifts only a direction
+        // with a distance (a planet's), so a sky direction is unchanged.
+        (APP, TOPO) | (TOPO, APP) => Ok(cosines),
+
+        // TOPO → HADEC (diurnal aberration + polar motion + sidereal time)
+        (TOPO, HADEC) => topocentric_to_hadec(cosines, frame, ctx),
+        // HADEC → TOPO (inverse of above)
+        (HADEC, TOPO) => hadec_to_topocentric(cosines, frame, ctx),
 
         // HADEC ↔ AZEL (horizon coordinates using geocentric latitude)
         // C++ casacore uses geocentric latitude for AZEL (MeasMath::applyHADECtoAZEL
@@ -1838,20 +1808,15 @@ fn apply_hop(
             Ok(sofars::vm::s2c(ha, dec))
         }
 
-        // ----- B1950 (FK4/FK5) -----
-
-        // J2000 → B1950: FK5 to FK4 via sofars::star::fk54z
-        (J2000, B1950) => {
-            let (lon, lat) = sofars::vm::c2s(&cosines);
-            let (r1950, d1950, _, _) = sofars::star::fk54z(lon, lat, 1950.0);
-            Ok(sofars::vm::s2c(r1950, d1950))
-        }
-        // B1950 → J2000: FK4 to FK5 via sofars::star::fk45z
-        (B1950, J2000) => {
-            let (lon, lat) = sofars::vm::c2s(&cosines);
-            let (r2000, d2000) = sofars::star::fk45z(lon, lat, 1950.0);
-            Ok(sofars::vm::s2c(r2000, d2000))
-        }
+        // ----- B1950 (FK4, casacore's rotation and E-terms) -----
+        (J2000, B1950) => Ok(casacore_frames::j2000_to_b1950(
+            cosines,
+            b1950_epoch_centuries(frame, ctx)?,
+        )),
+        (B1950, J2000) => Ok(casacore_frames::b1950_to_j2000(
+            cosines,
+            b1950_epoch_centuries(frame, ctx)?,
+        )),
 
         // ----- ITRF (via HADEC, matching C++ MeasMath::applyHADECtoITRF) -----
 
@@ -1884,13 +1849,6 @@ fn apply_hop(
             let z = cosines[2];
             Ok([x, y, z])
         }
-
-        // ----- TOPO (diurnal aberration) -----
-
-        // HADEC → TOPO: apply diurnal aberration
-        // Diurnal aberration is very small (~0.3" max) and is due to the
-        // observer's velocity from Earth rotation.
-        (HADEC, TOPO) | (TOPO, HADEC) => hadec_topo_diurnal_aberration(cosines, from, frame, ctx),
 
         _ => Err(MeasureError::NotYetImplemented {
             route: format!("{from} → {to}"),
@@ -1956,14 +1914,12 @@ fn remove_annual_aberration(
     Ok(pnat)
 }
 
-/// APP → HADEC hop (sidereal time + diurnal aberration + polar motion).
-///
-/// Matches C++ casacore's TOPO→HADEC path (APP→TOPO is a no-op for
-/// unit-vector directions). The steps are:
+/// TOPO → HADEC hop (diurnal aberration + polar motion + sidereal time),
+/// casacore's `MeasMath::applyTOPOtoHADEC`. The steps are:
 ///   1. Diurnal aberration: add v/c in zenith direction, renormalize
 ///   2. Polar motion + LAST rotation via Euler R = Ry(xp)×Rx(yp)×Rz(LAST)
 ///   3. Apply R^T and negate y to get (HA, Dec)
-fn apparent_to_hadec(
+fn topocentric_to_hadec(
     cosines: [f64; 3],
     frame: &MeasFrame,
     ctx: &ConvCtx,
@@ -1994,8 +1950,8 @@ fn apparent_to_hadec(
     Ok([result[0], -result[1], result[2]])
 }
 
-/// HADEC → APP hop: the inverse of [`apparent_to_hadec`].
-fn hadec_to_apparent(
+/// HADEC → TOPO hop: the inverse of [`topocentric_to_hadec`].
+fn hadec_to_topocentric(
     cosines: [f64; 3],
     frame: &MeasFrame,
     ctx: &ConvCtx,
@@ -2023,64 +1979,6 @@ fn hadec_to_apparent(
     ];
     let (_, unit) = sofars::vm::pn(&unshifted);
     Ok(unit)
-}
-
-/// HADEC ↔ TOPO hop: add (from HADEC) or subtract (from TOPO) the
-/// first-order diurnal aberration of the observatory's rotation velocity.
-fn hadec_topo_diurnal_aberration(
-    cosines: [f64; 3],
-    from: DirectionRef,
-    frame: &MeasFrame,
-    ctx: &ConvCtx,
-) -> Result<[f64; 3], MeasureError> {
-    // Diurnal aberration is small enough that we can use the simplified
-    // formula. For now, treat TOPO ≈ HADEC (identity), which is accurate
-    // to ~0.3 arcsec. This matches the precision of most casacore uses.
-    // A full implementation would need the observatory velocity vector
-    // projected onto the sky plane.
-    let pos = frame.position().ok_or(MeasureError::MissingFrameData {
-        what: "position (for diurnal aberration)",
-    })?;
-    let itrf = pos.as_itrf();
-    const OMEGA: f64 = 7.292_115e-5; // Earth angular velocity rad/s
-    // Observatory velocity in ITRF
-    let v_itrf = [-OMEGA * itrf[1], OMEGA * itrf[0], 0.0];
-
-    // Get GAST for rotation to equatorial (dispatches on IAU model)
-    let gast = get_gast(frame, ctx)?;
-    let lon = get_longitude(frame)?;
-    let last = gast + lon;
-
-    // Rotate velocity from ITRF to HADEC frame
-    let mut r = [[0.0; 3]; 3];
-    sofars::vm::ir(&mut r);
-    sofars::vm::rz(-last, &mut r);
-    let mut v_hadec = [0.0; 3];
-    sofars::vm::rxp(&r, &v_itrf, &mut v_hadec);
-
-    // Speed of light
-    const C: f64 = 299_792_458.0;
-
-    // Diurnal aberration: Δp = v/c - (p·v/c)p (first order)
-    let pdotv = sofars::vm::pdp(&cosines, &v_hadec) / C;
-
-    if from == DirectionRef::HADEC {
-        // HADEC → TOPO: add aberration
-        let mut result = [0.0; 3];
-        for k in 0..3 {
-            result[k] = cosines[k] + v_hadec[k] / C - pdotv * cosines[k];
-        }
-        let (_, unit) = sofars::vm::pn(&result);
-        Ok(unit)
-    } else {
-        // TOPO → HADEC: subtract aberration
-        let mut result = [0.0; 3];
-        for k in 0..3 {
-            result[k] = cosines[k] - v_hadec[k] / C + pdotv * cosines[k];
-        }
-        let (_, unit) = sofars::vm::pn(&result);
-        Ok(unit)
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2239,7 +2137,8 @@ mod tests {
         let gal = d.convert_to(DirectionRef::GALACTIC, &frame).unwrap();
         let back = gal.convert_to(DirectionRef::J2000, &frame).unwrap();
         let sep = sofars::vm::sepp(&d.cosines(), &back.cosines());
-        assert!(sep < 1e-13, "roundtrip sep = {} rad", sep);
+        // casacore's 10-digit matrix is orthogonal to about 7e-11.
+        assert!(sep < 2e-10, "roundtrip sep = {} rad", sep);
     }
 
     #[test]

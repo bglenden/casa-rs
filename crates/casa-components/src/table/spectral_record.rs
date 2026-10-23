@@ -35,7 +35,7 @@ use crate::spectrum::{SpectralKind, SpectralModel, TabularSpectrum};
 ///
 /// [`ComponentError::Spectrum`] for a tabular spectrum whose reference
 /// frequency CASA could not express in its tabulation frame.
-pub(super) fn spectral_record(model: &SpectralModel) -> Result<RecordValue, ComponentError> {
+pub(crate) fn spectral_record(model: &SpectralModel) -> Result<RecordValue, ComponentError> {
     let reference = model.reference_frequency();
     let mut fields = vec![
         field("type", string(model.spectral_type().casa_name())),

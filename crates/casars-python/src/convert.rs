@@ -5,11 +5,13 @@
 //! CASA tools take three kinds of loosely typed arguments, and scripts rely on
 //! how CASA's C++ layer (`CasacSupport.cc` in casatools) reads each:
 //!
-//! - **`any` parameters** arrive as a [`Variant`]: a string, a number, a
-//!   record, `[]` (the default of every `any` parameter in the installed
-//!   binding) and so on. [`quantity`] and [`quantity_value`] read quantities,
-//!   and the [`measures`] module reads epochs, directions and positions from
-//!   strings and from records as casacore's `MeasureHolder` writes them.
+//! - **`any` parameters** arrive as a [`Variant`]: a string, a number (real
+//!   or complex), a record, `[]` (the default of every `any` parameter in the
+//!   installed binding) and so on. [`quantity`] and [`quantity_value`] read
+//!   quantities, [`complex_values`] reads numbers as casatools' complex
+//!   vectors, and the [`measures`] module reads epochs, directions,
+//!   positions and frequencies from strings and from records as casacore's
+//!   `MeasureHolder` writes them.
 //! - **Vector parameters** ([`DoubleList`], [`StringList`]) take a sequence
 //!   or a single value.
 //! - Everything else is a plain Python scalar.
@@ -31,10 +33,11 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 use casa_types::quanta::{Dimension, Quantity, Unit, UnitDim, casacore_unit_name};
+use num_complex::Complex64;
 use numpy::{PyReadonlyArrayDyn, PyUntypedArrayMethods};
 use pyo3::exceptions::{PyRuntimeError, PyTypeError};
 use pyo3::prelude::*;
-use pyo3::types::{PyBool, PyDict, PyFloat, PyInt, PyString};
+use pyo3::types::{PyBool, PyComplex, PyDict, PyFloat, PyInt, PyString};
 
 /// The speed of light, m/s (casacore's `C::c`).
 const SPEED_OF_LIGHT_M_S: f64 = 299_792_458.0;
@@ -92,6 +95,11 @@ pub(crate) enum Variant {
     Texts(Vec<String>),
     /// A non-empty sequence of numbers.
     Numbers(Vec<f64>),
+    /// A `complex` (NumPy's `complex128` is one): casatools' `COMPLEX`.
+    Complex(Complex64),
+    /// A non-empty sequence of numbers with a `complex` among them, such as
+    /// a one-dimensional `complex128` array: casatools' `COMPLEXVEC`.
+    Complexes(Vec<Complex64>),
     /// A NumPy array of two or more dimensions, its values in Fortran
     /// (column-major) order, as casatools' `variant` holds them.
     Array { shape: Vec<usize>, values: Vec<f64> },
@@ -122,6 +130,16 @@ impl Variant {
                 values
                     .iter()
                     .map(f64::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            // C++'s `std::complex` output.
+            Self::Complex(value) => format!("({},{})", value.re, value.im),
+            Self::Complexes(values) => format!(
+                "[{}]",
+                values
+                    .iter()
+                    .map(|value| format!("({},{})", value.re, value.im))
                     .collect::<Vec<_>>()
                     .join(", ")
             ),
@@ -159,6 +177,9 @@ fn variant_from_python(object: &Bound<'_, PyAny>) -> PyResult<Variant> {
             record.insert(key, variant_from_python(&value)?);
         }
         return Ok(Variant::Record(record));
+    }
+    if let Ok(value) = object.cast::<PyComplex>() {
+        return Ok(Variant::Complex(complex_of(value)));
     }
     if object.is_instance_of::<PyInt>() || object.is_instance_of::<PyFloat>() {
         return Ok(Variant::Number(object.extract::<f64>()?));
@@ -215,8 +236,9 @@ fn is_sequence(object: &Bound<'_, PyAny>) -> PyResult<bool> {
     Ok(object.hasattr("__len__")? && object.hasattr("__iter__")?)
 }
 
-/// A sequence as [`Variant::Empty`], [`Variant::Texts`] or
-/// [`Variant::Numbers`], or [`Variant::Other`] when it mixes kinds.
+/// A sequence as [`Variant::Empty`], [`Variant::Texts`],
+/// [`Variant::Numbers`] or (with a `complex` among the numbers)
+/// [`Variant::Complexes`], or [`Variant::Other`] when it mixes kinds.
 fn sequence_variant(object: &Bound<'_, PyAny>) -> PyResult<Variant> {
     let items = object.try_iter()?.collect::<PyResult<Vec<_>>>()?;
     if items.is_empty() {
@@ -229,20 +251,38 @@ fn sequence_variant(object: &Bound<'_, PyAny>) -> PyResult<Variant> {
     {
         return Ok(Variant::Texts(texts));
     }
-    let numbers = items
-        .iter()
-        .map(|item| {
-            if item.is_instance_of::<PyString>() || item.is_instance_of::<PyBool>() {
-                None
-            } else {
-                item.extract::<f64>().ok()
-            }
-        })
-        .collect::<Option<Vec<_>>>();
-    Ok(match numbers {
-        Some(numbers) => Variant::Numbers(numbers),
-        None => Variant::Other(object.repr()?.to_string()),
-    })
+    let number = |item: &Bound<'_, PyAny>| {
+        if item.is_instance_of::<PyString>() || item.is_instance_of::<PyBool>() {
+            None
+        } else {
+            item.extract::<f64>().ok()
+        }
+    };
+    let variant = if items.iter().any(|item| item.is_instance_of::<PyComplex>()) {
+        items
+            .iter()
+            .map(|item| match item.cast::<PyComplex>() {
+                Ok(value) => Some(complex_of(value)),
+                Err(_) => number(item).map(|re| Complex64::new(re, 0.0)),
+            })
+            .collect::<Option<Vec<_>>>()
+            .map(Variant::Complexes)
+    } else {
+        items
+            .iter()
+            .map(number)
+            .collect::<Option<Vec<_>>>()
+            .map(Variant::Numbers)
+    };
+    match variant {
+        Some(variant) => Ok(variant),
+        None => Ok(Variant::Other(object.repr()?.to_string())),
+    }
+}
+
+/// A Python `complex` as a [`Complex64`].
+fn complex_of(value: &Bound<'_, PyComplex>) -> Complex64 {
+    Complex64::new(value.real(), value.imag())
 }
 
 /// A record parameter (casatools' `record`): a `dict`. Anything else is the
@@ -406,8 +446,9 @@ impl<'a, 'py> FromPyObject<'a, 'py> for StringList {
 }
 
 /// CASA's `casaQuantity(variant)`: a string through casacore's reader, a
-/// `{'value', 'unit'}` record, or a number (dimensionless). Every other
-/// value, including `[]` and lists of numbers, is a dimensionless 0.
+/// `{'value', 'unit'}` record, or a number (dimensionless). A complex number
+/// raises, as casacore cannot take a complex quantity as one double. Every
+/// other value, including `[]` and lists of numbers, is a dimensionless 0.
 pub(crate) fn quantity(value: &Variant) -> ConvertResult<Quantity> {
     match value {
         Variant::Text(text) => read_quantity(text, " in converting quantity"),
@@ -426,9 +467,28 @@ pub(crate) fn quantity(value: &Variant) -> ConvertResult<Quantity> {
         }),
         Variant::Number(number) => Ok(Quantity::dimensionless(*number)),
         Variant::Bool(flag) => Ok(Quantity::dimensionless(f64::from(u8::from(*flag)))),
-        Variant::Empty | Variant::Numbers(_) | Variant::Array { .. } | Variant::Other(_) => {
-            Ok(Quantity::dimensionless(0.0))
-        }
+        Variant::Complex(_) => Err(ConvertError::runtime(
+            "Wrong QuantumHolder to convert asQuantumDouble",
+        )),
+        Variant::Empty
+        | Variant::Numbers(_)
+        | Variant::Complexes(_)
+        | Variant::Array { .. }
+        | Variant::Other(_) => Ok(Quantity::dimensionless(0.0)),
+    }
+}
+
+/// casatools' `variant::toComplexVec` for a numeric value: a number or a
+/// complex number as one value, a sequence of either as its values, with
+/// the numbers' imaginary parts zero; `None` for any other value.
+pub(crate) fn complex_values(value: &Variant) -> Option<Vec<Complex64>> {
+    let real = |value: f64| Complex64::new(value, 0.0);
+    match value {
+        Variant::Number(number) => Some(vec![real(*number)]),
+        Variant::Numbers(numbers) => Some(numbers.iter().copied().map(real).collect()),
+        Variant::Complex(value) => Some(vec![*value]),
+        Variant::Complexes(values) => Some(values.clone()),
+        _ => None,
     }
 }
 

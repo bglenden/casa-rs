@@ -4,13 +4,16 @@
 //!
 //! casatools hands records to Python as `dict`s whose keys are sorted (its
 //! records are `std::map`s), so [`CasaValue::record`] sorts them; arrays
-//! become NumPy arrays, numeric ones of `float64` and string ones of
-//! NumPy's unicode type, as casatools returns them.
+//! become NumPy arrays, real ones of `float64`, complex ones of `complex128`
+//! and string ones of NumPy's unicode type, as casatools returns them.
+//! [`CasaValue::from_record`] converts a casacore record built in Rust.
 
+use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
+use num_complex::Complex64;
 use numpy::IntoPyArray;
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList, PyTuple};
+use pyo3::types::{PyComplex, PyDict, PyList, PyTuple};
 
 use super::Variant;
 
@@ -23,11 +26,18 @@ pub(crate) enum CasaValue {
     Int(i64),
     /// A `float`.
     Float(f64),
+    /// A `complex`.
+    Complex(Complex64),
     /// A `str`.
     Text(String),
     /// A NumPy `float64` array of `shape`, its values in Fortran (column-major)
     /// order, as casacore arrays hold them.
     Floats { shape: Vec<usize>, values: Vec<f64> },
+    /// A NumPy `complex128` array of `shape`, in Fortran order.
+    Complexes {
+        shape: Vec<usize>,
+        values: Vec<Complex64>,
+    },
     /// A NumPy unicode array.
     Texts(Vec<String>),
     /// A Python `list`.
@@ -72,6 +82,11 @@ impl CasaValue {
             Variant::Text(text) | Variant::Other(text) => Self::Text(text.clone()),
             Variant::Texts(texts) => Self::Texts(texts.clone()),
             Variant::Numbers(numbers) => Self::floats(numbers.clone()),
+            Variant::Complex(value) => Self::Complex(*value),
+            Variant::Complexes(values) => Self::Complexes {
+                shape: vec![values.len()],
+                values: values.clone(),
+            },
             Variant::Array { shape, values } => Self::Floats {
                 shape: shape.clone(),
                 values: values.clone(),
@@ -81,6 +96,85 @@ impl CasaValue {
                     .iter()
                     .map(|(key, value)| (key.clone(), Self::from_variant(value))),
             ),
+        }
+    }
+
+    /// A casacore record as casatools hands it to Python: its fields sorted
+    /// by key, its arrays as NumPy arrays (integer arrays as `float64`).
+    pub(crate) fn from_record(record: &RecordValue) -> Self {
+        Self::record(
+            record
+                .fields()
+                .iter()
+                .map(|field| (field.name.clone(), Self::from_value(&field.value))),
+        )
+    }
+
+    /// A casacore value; see [`Self::from_record`].
+    pub(crate) fn from_value(value: &Value) -> Self {
+        match value {
+            Value::Scalar(scalar) => Self::from_scalar(scalar),
+            Value::Array(array) => Self::from_array(array),
+            Value::Record(record) => Self::from_record(record),
+            // casatools hands a table keyword to Python as its path.
+            Value::TableRef(path) => Self::Text(path.clone()),
+        }
+    }
+
+    fn from_scalar(scalar: &ScalarValue) -> Self {
+        match scalar {
+            ScalarValue::Bool(flag) => Self::Bool(*flag),
+            ScalarValue::UInt8(value) => Self::Int(i64::from(*value)),
+            ScalarValue::UInt16(value) => Self::Int(i64::from(*value)),
+            ScalarValue::UInt32(value) => Self::Int(i64::from(*value)),
+            ScalarValue::Int16(value) => Self::Int(i64::from(*value)),
+            ScalarValue::Int32(value) => Self::Int(i64::from(*value)),
+            ScalarValue::Int64(value) => Self::Int(*value),
+            ScalarValue::Float32(value) => Self::Float(f64::from(*value)),
+            ScalarValue::Float64(value) => Self::Float(*value),
+            ScalarValue::Complex32(value) => {
+                Self::Complex(Complex64::new(f64::from(value.re), f64::from(value.im)))
+            }
+            ScalarValue::Complex64(value) => Self::Complex(*value),
+            ScalarValue::String(text) => Self::Text(text.clone()),
+        }
+    }
+
+    fn from_array(array: &ArrayValue) -> Self {
+        /// Fortran order: the transpose's logical order.
+        fn fortran<T: Copy, U>(
+            array: &ArrayD<T>,
+            convert: impl Fn(T) -> U,
+        ) -> (Vec<usize>, Vec<U>) {
+            (
+                array.shape().to_vec(),
+                array.t().iter().map(|value| convert(*value)).collect(),
+            )
+        }
+        let floats = |(shape, values)| Self::Floats { shape, values };
+        match array {
+            ArrayValue::Bool(values) => {
+                Self::List(values.t().iter().map(|flag| Self::Bool(*flag)).collect())
+            }
+            ArrayValue::UInt8(values) => floats(fortran(values, f64::from)),
+            ArrayValue::UInt16(values) => floats(fortran(values, f64::from)),
+            ArrayValue::UInt32(values) => floats(fortran(values, f64::from)),
+            ArrayValue::Int16(values) => floats(fortran(values, f64::from)),
+            ArrayValue::Int32(values) => floats(fortran(values, f64::from)),
+            ArrayValue::Int64(values) => floats(fortran(values, |value| value as f64)),
+            ArrayValue::Float32(values) => floats(fortran(values, f64::from)),
+            ArrayValue::Float64(values) => floats(fortran(values, |value| value)),
+            ArrayValue::Complex32(values) => {
+                let (shape, values) = fortran(values, |value| {
+                    Complex64::new(f64::from(value.re), f64::from(value.im))
+                });
+                Self::Complexes { shape, values }
+            }
+            ArrayValue::Complex64(values) => {
+                let (shape, values) = fortran(values, |value| value);
+                Self::Complexes { shape, values }
+            }
+            ArrayValue::String(texts) => Self::Texts(texts.t().iter().cloned().collect()),
         }
     }
 
@@ -98,15 +192,18 @@ impl CasaValue {
             Self::Bool(flag) => flag.into_pyobject(py)?.to_owned().into_any().unbind(),
             Self::Int(value) => value.into_pyobject(py)?.into_any().unbind(),
             Self::Float(value) => value.into_pyobject(py)?.into_any().unbind(),
+            Self::Complex(value) => PyComplex::from_doubles(py, value.re, value.im)
+                .into_any()
+                .unbind(),
             Self::Text(text) => text.into_pyobject(py)?.into_any().unbind(),
-            Self::Floats { shape, values } => {
-                let array = ArrayD::from_shape_vec(IxDyn(&shape).f(), values).map_err(|error| {
-                    pyo3::exceptions::PyRuntimeError::new_err(format!(
-                        "array of shape {shape:?}: {error}"
-                    ))
-                })?;
-                array.into_pyarray(py).into_any().unbind()
-            }
+            Self::Floats { shape, values } => fortran_array(shape, values)?
+                .into_pyarray(py)
+                .into_any()
+                .unbind(),
+            Self::Complexes { shape, values } => fortran_array(shape, values)?
+                .into_pyarray(py)
+                .into_any()
+                .unbind(),
             Self::Texts(texts) => {
                 let keywords = PyDict::new(py);
                 keywords.set_item("dtype", "str")?;
@@ -137,6 +234,13 @@ impl CasaValue {
             }
         })
     }
+}
+
+/// `values`, in Fortran order, as an array of `shape`.
+fn fortran_array<T>(shape: Vec<usize>, values: Vec<T>) -> PyResult<ArrayD<T>> {
+    ArrayD::from_shape_vec(IxDyn(&shape).f(), values).map_err(|error| {
+        pyo3::exceptions::PyRuntimeError::new_err(format!("array of shape {shape:?}: {error}"))
+    })
 }
 
 /// `value` as a C++ `ostream` writes a `double` by default: six significant

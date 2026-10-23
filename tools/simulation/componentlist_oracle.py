@@ -3,7 +3,7 @@
 """CASA oracle for component-list tables (simulation Phase 2, #841).
 
 Run with CASA's Python (for example `/Applications/CASA.app/Contents/MacOS/python3`).
-Three subcommands:
+Four subcommands:
 
 `fixture --out DIR`
     Writes, with CASA's `cl` tool, the component lists casa-components'
@@ -27,6 +27,17 @@ Three subcommands:
 `rewrite TABLE`
     Opens a component list for update and closes it, so that CASA's
     `writeTable` rewrites it in place.
+
+`tool --json FILE`
+    Records what CASA's `cl` tool returns for a fixed script
+    (`TOOL_CALLS`): each `addcomponent` call's keyword arguments, what it
+    returned or the first line of what it raised, and the list's length
+    after it; then `torecord`, and for every component `getcomponent`,
+    `getspectrum`, `getrefdir`, `getfluxvalue`, `getfluxunit`, `getlabel`,
+    `shapetype` and `spectrumtype`; and the outcomes of the edge cases in
+    `TOOL_EDGES`. Complex arguments are recorded as `{"complex": [re, im]}`.
+    `casars.tools.componentlist`'s tests replay the same script
+    (`crates/casars-python/python/tests/data/casa_componentlist_tool.json`).
 
 A JSON record holds `components` (each `getcomponent(i)`), `cells` (column
 name to a list with one entry per row: the cell, or null when it is
@@ -371,6 +382,112 @@ def rewrite(path):
     cl.close(log=False)
 
 
+TOOL_CALLS = [
+    {"flux": 1.0, "dir": "J2000 10h00m00.0 -30d00m00.0", "shape": "point", "freq": "230GHz", "label": "point"},
+    {
+        "flux": [0.5, 0.1, 0.0, 0.0], "fluxunit": "mJy", "dir": ["J2000", "150deg", "-30deg"],
+        "shape": "gaussian", "majoraxis": "1arcsec", "minoraxis": "0.5arcsec", "positionangle": "30deg",
+        "freq": "230GHz", "spectrumtype": "spectral index", "index": -0.7, "label": "Gaussian",
+    },
+    {
+        "flux": 0.3, "dir": "B1950 10h00m00.0 -30d00m00.0", "shape": "disk", "majoraxis": "2arcsec",
+        "minoraxis": "1.5arcsec", "positionangle": "60deg", "freq": "LSRK 100GHz", "spectrumtype": "plp",
+        "index": [-0.5, 0.2],
+    },
+    {"flux": [1.0, 0.1, 0.2, 0.9], "polarization": "circular", "dir": "J2000 1rad 0.5rad", "freq": "1.4GHz"},
+    {},
+    {"shape": "nosuch", "flux": 0.25},
+    {
+        "shape": "gauss", "majoraxis": "10arcsec", "minoraxis": "5arcsec", "positionangle": "-20deg",
+        "freq": {"type": "frequency", "refer": "TOPO", "m0": {"unit": "GHz", "value": 43.0}},
+        "dir": {"type": "direction", "refer": "J2000", "m0": {"unit": "deg", "value": 10.0},
+                "m1": {"unit": "deg", "value": 20.0}},
+    },
+    {"shape": "Gaussian", "flux": 0.5},
+    {"shape": "limbdarkeneddisk", "majoraxis": "3arcsec", "minoraxis": "2arcsec"},
+    {"flux": [1.0, 2.0]},
+    {"spectrumtype": "tabular"},
+    {"dir": "nonsense"},
+    {"spectrumtype": "plp", "index": 0.5},
+    {"spectrumtype": "nonsense"},
+    {"spectrumtype": "spectral index"},
+    {"spectrumtype": "spectral index", "index": [0.3, 0.1]},
+    {"polarization": "circ"},
+    {"fluxunit": "K"},
+    {"flux": 2.0, "dir": "GALACTIC 120deg 2deg", "freq": 1.4e9, "label": "a number as freq"},
+    {"freq": "BARY 5GHz"},
+    {"shape": "disk", "majoraxis": "1arcsec", "minoraxis": "2arcsec"},
+    # Added for the review of PR #873: spaced frequencies, shapes whose
+    # constructors raise, axes that do not read, and complex fluxes.
+    {"flux": 1.0, "freq": "1.4 GHz", "label": "a spaced frequency"},
+    {"flux": 1.0, "freq": "foo 1.4GHz"},
+    {"shape": "gaussian", "majoraxis": "2arcsec", "minoraxis": "1arcsec", "positionangle": "400deg"},
+    {"shape": "gaussian", "majoraxis": "30arcsec", "minoraxis": "2arcmin", "positionangle": "0deg"},
+    {"shape": "gaussian", "majoraxis": "1arcsec", "minoraxis": "2arcsec", "positionangle": "0deg"},
+    {"shape": "gaussian", "majoraxis": "2arcsec", "minoraxis": "0arcsec", "positionangle": "0deg"},
+    {"shape": "disk", "majoraxis": "1arcsec", "minoraxis": "2arcsec", "positionangle": "0deg"},
+    {"shape": "gaussian", "majoraxis": "2Jy", "minoraxis": "1arcsec", "positionangle": "garbage"},
+    {"shape": "gaussian", "majoraxis": 1j, "minoraxis": "1arcsec", "positionangle": "0deg"},
+    {"shape": "gaussian", "majoraxis": "2Jy", "minoraxis": "1arcsec", "positionangle": "0deg"},
+    {"flux": [1 + 0j, 0.1 + 0.2j, 0j, 0.5j], "label": "complex values"},
+    {"flux": 2 + 3j},
+    {"flux": [1, 0.1j, 0, 0]},
+    {"flux": [1 + 1j, 0.1, 0.2, 0.9], "polarization": "linear"},
+    {"flux": 1 + 1j, "polarization": "circular"},
+]
+
+TOOL_ACCESSORS = ("getcomponent", "getspectrum", "getrefdir", "getfluxvalue", "getfluxunit",
+                  "getlabel", "shapetype", "spectrumtype")
+
+
+def outcome(call):
+    """What a call returned, or the first line of what it raised."""
+    try:
+        return {"returned": jsonable(call())}
+    except Exception as error:  # noqa: BLE001 - CASA raises RuntimeError and others
+        return {"raised": str(error).split("\n", 1)[0]}
+
+
+def tagged(value):
+    """A script argument for JSON, with each complex number as
+    `{"complex": [re, im]}` so that it reads back as complex."""
+    if isinstance(value, complex):
+        return {"complex": [value.real, value.imag]}
+    if isinstance(value, dict):
+        return {key: tagged(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [tagged(item) for item in value]
+    return value
+
+
+def tool(json_path):
+    cl = componentlist()
+    calls = []
+    for kwargs in TOOL_CALLS:
+        result = outcome(lambda: cl.addcomponent(**kwargs))
+        calls.append(dict(result, kwargs=tagged(kwargs), length=cl.length()))
+    components = []
+    for index in range(cl.length()):
+        components.append({name: outcome(lambda: getattr(cl, name)(index)) for name in TOOL_ACCESSORS})
+    document = {
+        "casa_version": casatools.version_string(),
+        "calls": calls,
+        "torecord": outcome(cl.torecord),
+        "components": components,
+        "edges": {
+            "getcomponent_out_of_range": outcome(lambda: cl.getcomponent(cl.length())),
+            "getfluxvalue_out_of_range": outcome(lambda: cl.getfluxvalue(-1)),
+            "getrefdir_out_of_range": outcome(lambda: cl.getrefdir(cl.length())),
+        },
+    }
+    cl.done()
+    document["edges"]["torecord_empty"] = outcome(cl.torecord)
+    document["edges"]["length_empty"] = outcome(cl.length)
+    with open(json_path, "w", encoding="utf-8") as handle:
+        json.dump(document, handle, indent=1, sort_keys=True)
+        handle.write("\n")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -381,7 +498,12 @@ def main():
     dumping.add_argument("--json", required=True)
     rewriting = commands.add_parser("rewrite")
     rewriting.add_argument("table")
+    tooling = commands.add_parser("tool")
+    tooling.add_argument("--json", required=True)
     args = parser.parse_args()
+    if args.command == "tool":
+        tool(args.json)
+        return
     if args.command == "fixture":
         os.makedirs(args.out, exist_ok=True)
         components = os.path.join(args.out, "components.cl")

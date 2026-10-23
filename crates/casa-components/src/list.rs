@@ -74,6 +74,30 @@ impl ComponentList {
         table::write_component_list(self, path.as_ref())
     }
 
+    /// Rewrite the component-list table at `path` with this list, as CASA's
+    /// `writeTable` rewrites a list it has open for update (the `cl` tool's
+    /// `close`).
+    ///
+    /// The table is written in place under casacore's write lock on it, as
+    /// every in-place writer writes (ADR-0008): a lock another process holds
+    /// is waited for, as casacore waits, and releasing the lock announces the
+    /// write, so a process holding the table open re-reads it. The table
+    /// keeps its directory and `table.lock`. An interrupted rewrite may leave
+    /// the table partly written, as an interrupted CASA `writeTable` does. A
+    /// table that does not exist is created as [`Self::write_table`] creates
+    /// it.
+    ///
+    /// # Errors
+    ///
+    /// [`ComponentListError::Unwritable`] for a component CASA could not
+    /// write (the table is then untouched), [`ComponentListError::Table`]
+    /// when the write lock cannot be taken (another handle in this process
+    /// holds it, or waiting would deadlock) or the table cannot be saved,
+    /// and [`Self::write_table`]'s errors for a new table.
+    pub fn rewrite_table(&self, path: impl AsRef<Path>) -> Result<(), ComponentListError> {
+        table::rewrite_component_list(self, path.as_ref())
+    }
+
     /// Append a component (`add`).
     pub fn push(&mut self, component: SkyComponent) {
         self.components.push(component);
