@@ -65,6 +65,17 @@ fn vector_separation(a: [f64; 3], b: [f64; 3]) -> f64 {
     cross.iter().map(|c| c * c).sum::<f64>().sqrt().atan2(dot)
 }
 
+/// `xyz`, which must be a finite, nonzero direction vector: a NaN would
+/// pass `f64::max` and every bound unnoticed.
+fn usable(xyz: [f64; 3], what: std::fmt::Arguments<'_>) -> [f64; 3] {
+    let norm = xyz.iter().map(|c| c * c).sum::<f64>().sqrt();
+    assert!(
+        norm.is_finite() && norm > 0.0,
+        "{what}: {xyz:?} is not a direction"
+    );
+    xyz
+}
+
 /// The direction casacore reports for its vector: `MVDirection::getLong()`
 /// and `getLat()`, the latter `asin(z)` without normalizing.
 fn casacore_reported(xyz: [f64; 3]) -> [f64; 3] {
@@ -105,6 +116,8 @@ fn max_direction_separation(
         };
         let cpp = convert((lon, lat), from.as_str(), to.as_str(), oracle_epoch)
             .unwrap_or_else(|error| panic!("casacore {from}->{to}: {error}"));
+        let rust = usable(rust, format_args!("casa-rs {from}->{to} of ({lon}, {lat})"));
+        let cpp = usable(cpp, format_args!("casacore {from}->{to} of ({lon}, {lat})"));
         worst = worst.max(vector_separation(rust, cpp) * MICROARCSEC_PER_RAD);
         let reported = vector_separation(rust, casacore_reported(cpp)) * MICROARCSEC_PER_RAD;
         worst_reported = worst_reported.max(reported);
@@ -254,6 +267,11 @@ fn epoch_difference_seconds(mjd: f64, from: EpochRef, to: EpochRef, model: IauMo
         .as_mjd();
     let cpp = casacore_epoch(mjd, from, to, model);
     eprintln!("{model:?} {from}->{to} at {mjd}: casa-rs {rust:.9} casacore {cpp:.9}");
+    // A NaN difference would pass the bound unnoticed.
+    assert!(
+        rust.is_finite() && cpp.is_finite(),
+        "{model:?} {from}->{to} at {mjd}: casa-rs {rust}, casacore {cpp}"
+    );
     (rust - cpp).abs() * SECONDS_PER_DAY
 }
 

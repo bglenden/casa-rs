@@ -998,6 +998,27 @@ fn direction_b1950_roundtrip() {
     );
 }
 
+/// A NaN or zero direction converted to B1950 ends with a NaN direction, as
+/// casacore's iteration ends on a NaN residual (#864 review: the iteration
+/// ran forever).
+#[test]
+fn a_nonfinite_direction_converts_to_b1950_without_hanging() {
+    let frame = MeasFrame::new();
+    for dir in [
+        MDirection::from_angles(f64::NAN, 0.5, DirectionRef::J2000),
+        MDirection::from_cosines([0.0; 3], DirectionRef::J2000),
+    ] {
+        let b1950 = dir
+            .convert_to(DirectionRef::B1950, &frame)
+            .expect("converted");
+        assert!(
+            b1950.cosines().iter().all(|c| c.is_nan()),
+            "{:?}",
+            b1950.cosines()
+        );
+    }
+}
+
 /// With a frame epoch but no Earth-orientation data, the B1950 epoch term
 /// takes dUT1 as 0, as casacore's `MeasTable::dUT1` does, instead of
 /// failing.

@@ -251,7 +251,9 @@ pub(super) fn b1950_to_j2000(b1950: Vector, epoch_centuries: f64) -> Vector {
 
 /// J2000 to FK4 B1950 (`MeasMath::applyJ2000toB1950`): rotate, remove the
 /// E-terms with casacore's one-step estimate, then correct by fixed-point
-/// iteration on [`b1950_to_j2000`] until the J2000 residual is below 1e-12.
+/// iteration on [`b1950_to_j2000`] while the J2000 residual exceeds 1e-12.
+/// As casacore's `do … while (radius > 1e-12)`, a NaN residual (from a NaN
+/// or zero direction) ends the iteration, and the result is NaN.
 pub(super) fn j2000_to_b1950(j2000: Vector, epoch_centuries: f64) -> Vector {
     let rotated = normalized(rotate(&J2000_TO_B1950, &j2000));
     // `MeasMath::deapplyETerms`: its 1e-5 tolerance exceeds the E-terms'
@@ -266,7 +268,8 @@ pub(super) fn j2000_to_b1950(j2000: Vector, epoch_centuries: f64) -> Vector {
         let residual: Vector = std::array::from_fn(|k| predicted[k] - j2000[k]);
         let correction = rotate(&J2000_TO_B1950, &residual);
         b1950 = std::array::from_fn(|k| b1950[k] - correction[k]);
-        if norm(&residual) <= 1e-12 {
+        let radius = norm(&residual);
+        if radius.is_nan() || radius <= 1e-12 {
             break;
         }
     }
