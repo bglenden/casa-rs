@@ -1314,13 +1314,13 @@ impl CasaUvwMachine {
 }
 
 #[derive(Debug, Clone, Copy)]
-struct CasaGirarUvwTransform {
+pub(crate) struct CasaGirarUvwTransform {
     frame_machine: CasaUvwMachine,
     phase_machine: CasaUvwMachine,
 }
 
 impl CasaGirarUvwTransform {
-    fn new(source_direction: &MDirection, image_direction: &MDirection) -> Self {
+    pub(crate) fn new(source_direction: &MDirection, image_direction: &MDirection) -> Self {
         Self {
             // `FTMachine::girarUVW()` first executes an explicit-output
             // UVWMachine for the correlator direction -> in-field direction
@@ -1331,7 +1331,8 @@ impl CasaGirarUvwTransform {
         }
     }
 
-    fn apply(self, raw_uvw_m: [f64; 3]) -> ([f64; 3], f64) {
+    /// A row's raw `UVW` reprojected, and CASA's `dphase` in metres.
+    pub(crate) fn apply(self, raw_uvw_m: [f64; 3]) -> ([f64; 3], f64) {
         // `AWProjectFT::put()` enters `girarUVW()` through `negateUV(vb)`.
         // Keep CASA's native sign convention inside this one shared boundary.
         let casa_input_uvw_m = [-raw_uvw_m[0], -raw_uvw_m[1], raw_uvw_m[2]];

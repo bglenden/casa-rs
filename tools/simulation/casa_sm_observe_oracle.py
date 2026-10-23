@@ -30,14 +30,24 @@ call's) time only CASA's `sm` work. A scenario's `data` (`zero`, `model` or `noi
 (the noise-free scenario a noisy one is compared with) and `noise_variance`
 (the variance its noise should have, Jy²) are copied to the manifest for
 `compare_sm_ms.py`.
+
+A scenario with `close_aborts` runs in a child process (`run_in_child`):
+CASA 6.7.6's `sm.close()` aborts the process after a mosaic predict, once
+DATA is written. The child turns the abort into a quiet exit, so macOS
+shows no crash report; the abort is accepted only when every `predict`
+returned True, and `close` is recorded as aborted.
 """
 
 from __future__ import annotations
 
 import argparse
+import ctypes
 import json
 import os
 import shutil
+import signal
+import subprocess
+import sys
 import time
 
 from casatasks.private import simutil
@@ -65,6 +75,10 @@ def parse_args() -> argparse.Namespace:
         help="directory the scenarios' predict image names are relative to",
     )
     parser.add_argument("--only", nargs="*", help="run only these scenarios")
+    parser.add_argument(
+        "--child",
+        help="run this one scenario into the parent oracle's --out (run_in_child)",
+    )
     return parser.parse_args()
 
 
@@ -187,7 +201,11 @@ def resolve_call(call: dict, me, qa) -> tuple[str, dict, dict]:
     return op, kwargs, resolved
 
 
-def run_scenario(scenario: dict, args: argparse.Namespace) -> dict:
+def run_scenario(
+    scenario: dict, args: argparse.Namespace, record_path: str | None = None
+) -> dict:
+    """Run `scenario`'s calls and `close`, writing its record to
+    `record_path` first when given."""
     me = measures()
     qa = quanta()
     ms = os.path.join(args.out, scenario["name"] + ".ms")
@@ -226,9 +244,7 @@ def run_scenario(scenario: dict, args: argparse.Namespace) -> dict:
             record["raised"] = str(error).split("\n", 1)[0]
         record["seconds"] = time.perf_counter() - call_started
         calls.append(record)
-    sm.close()
-    calls.append({"op": "close", "resolved": {}, "returned": True})
-    return {
+    result = {
         "name": scenario["name"],
         "ms": ms,
         "ignore": scenario.get("ignore", []),
@@ -238,6 +254,64 @@ def run_scenario(scenario: dict, args: argparse.Namespace) -> dict:
         "calls": calls,
         "seconds": time.perf_counter() - started,
     }
+    if record_path is not None:
+        with open(record_path, "w", encoding="utf-8") as handle:
+            json.dump(result, handle)
+    sm.close()
+    calls.append({"op": "close", "resolved": {}, "returned": True})
+    result["seconds"] = time.perf_counter() - started
+    return result
+
+
+def exit_quietly_on_abort() -> None:
+    """Make SIGABRT end the process with `_exit(SIGABRT)`: a C handler, so
+    `abort()` never returns to its default action, and macOS reports no
+    crash. A Python handler would not do: `abort()` raises again when one
+    returns."""
+    libc = ctypes.CDLL(None)
+    libc.signal.argtypes = [ctypes.c_int, ctypes.c_void_p]
+    libc.signal.restype = ctypes.c_void_p
+    libc.signal(signal.SIGABRT, ctypes.cast(libc._exit, ctypes.c_void_p))
+
+
+def run_in_child(scenario: dict, args: argparse.Namespace) -> dict:
+    """Run a `close_aborts` scenario in a process of its own. CASA 6.7.6's
+    `sm.close()` aborts the process after a mosaic predict ("Pure virtual
+    function called!") once DATA is written (`docs/CASA (C++) bugs.md`), so
+    the child saves the scenario's record before `close`, and exits with
+    status SIGABRT through `exit_quietly_on_abort`. The abort is accepted only
+    when every `predict` returned True; `close` is then recorded as
+    aborted."""
+    record = os.path.join(args.out, scenario["name"] + ".record.json")
+    command = [
+        sys.executable,
+        os.path.abspath(__file__),
+        "--out", args.out,
+        "--scenarios", args.scenarios,
+        "--config-root", args.config_root,
+        "--model-root", args.model_root,
+        "--child", scenario["name"],
+    ]
+    completed = subprocess.run(command, check=False)
+    if not os.path.exists(record):
+        raise SystemExit(f"{scenario['name']}: the child exited {completed.returncode} before close")
+    with open(record, encoding="utf-8") as handle:
+        result = json.load(handle)
+    os.remove(record)
+    if completed.returncode == 0:
+        result["calls"].append({"op": "close", "resolved": {}, "returned": True})
+        return result
+    predicts = [call for call in result["calls"] if call["op"] == "predict"]
+    if completed.returncode != signal.SIGABRT or not all(
+        call.get("returned") is True for call in predicts
+    ):
+        raise SystemExit(
+            f"{scenario['name']}: close exited {completed.returncode} after predicts {predicts}"
+        )
+    result["calls"].append(
+        {"op": "close", "resolved": {}, "returned": None, "aborted": completed.returncode}
+    )
+    return result
 
 
 def write_complists(specs: dict, out: str) -> None:
@@ -264,6 +338,11 @@ def main() -> int:
     with open(args.scenarios, encoding="utf-8") as handle:
         document = json.load(handle)
     scenarios = document["scenarios"]
+    if args.child:
+        exit_quietly_on_abort()
+        scenario = next(scenario for scenario in scenarios if scenario["name"] == args.child)
+        run_scenario(scenario, args, os.path.join(args.out, args.child + ".record.json"))
+        return 0
     shutil.rmtree(args.out, ignore_errors=True)
     os.makedirs(args.out)
     write_complists(document.get("complists", {}), args.out)
@@ -271,7 +350,10 @@ def main() -> int:
     for scenario in scenarios:
         if args.only and scenario["name"] not in args.only:
             continue
-        result = run_scenario(scenario, args)
+        if scenario.get("close_aborts"):
+            result = run_in_child(scenario, args)
+        else:
+            result = run_scenario(scenario, args)
         results.append(result)
         print(result["name"], f"{result['seconds']:.2f} s")
     manifest = {

@@ -1,33 +1,39 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Visibility prediction from an external sky model, as CASA's simulator
-//! tool predicts it (`sm.predict` with its default `GridFT`, or with
-//! `WProjectFT` after `setoptions(ftmachine='wproject')`).
+//! tool predicts it (`sm.predict` with its default `GridFT`, with
+//! `WProjectFT` after `setoptions(ftmachine='wproject')`, or with
+//! `MosaicFTNew` after `setoptions(ftmachine='mosaic')`).
 //!
 //! CASA's `Simulator::predict` degrids the model through the FTMachine
 //! `setoptions` chose ([`FtMachine`]):
 //! - `GridFT`'s grid is padded by `setoptions(padding=…)`, 1.3 by default.
 //!   `WProjectFT`'s is padded by 1, its constructor's default, and degrids
-//!   through `wprojplanes` W-projection planes.
+//!   through `wprojplanes` W-projection planes. `MosaicFTNew`'s is not
+//!   padded, and degrids through the primary beams of each pair of dish
+//!   classes, the pointing applied as a phase ramp on them.
 //! - The tangent point is the direction of pixel `(nx/2, ny/2)`, whatever
 //!   the image's reference pixel is (`FTMachine::initMaps`), and every row is
 //!   rotated to it (`FTMachine::rotateUVW`).
 //! - Each MeasurementSet channel takes the nearest model plane, with no
 //!   frequency-frame conversion.
-//! - `GridFT` predicts autocorrelations, as the model's zero spacing (its
-//!   `usezero` is on by default); `WProjectFT` is built with `usezero` off
-//!   and predicts them as zero.
+//! - `GridFT` and `MosaicFTNew` predict autocorrelations, as the model's
+//!   zero spacing (their `usezero` is on); `WProjectFT` is built with
+//!   `usezero` off and predicts them as zero.
 //! - After `setvp(dovp=True)`, a `VPSkyJones` multiplies the model by the
 //!   primary beam's power pattern in the image plane, centred on the
-//!   pointing.
+//!   pointing, except through `MosaicFTNew`, whose kernels carry the beams
+//!   whatever `setvp` says (`SkyEquation::applySkyJones` skips machines
+//!   named `MosaicFT…`).
 //!
 //! The model is prepared on the imaging measurement operator, one plane at
 //! a time ([`SkyModel`] reads a plane, the beam multiplies it, the operator
 //! transforms it into the plane's grids):
 //! - the spheroidal or W-projection kernel set on a
-//!   [`GridPadding::CasaComposite`] grid;
+//!   [`GridPadding::CasaComposite`] grid, or the mosaic set
+//!   ([`MosaicRules::Simulator`]) on an unpadded one;
 //! - a channel-local basis with nearest mapping, predicting
-//!   autocorrelations through `GridFT`;
-//! - the beam as the plane's prescale factor.
+//!   autocorrelations through `GridFT` and `MosaicFTNew`;
+//! - the beam, outside the mosaic machine, as the plane's prescale factor.
 //!
 //! The session predicts the rows it writes from the same preparation, in
 //! blocks on the worker team; [`ModelPredictor`] predicts one row at a time
@@ -58,10 +64,11 @@ use casa_coordinates::CoordinateError;
 use casa_images::ImageError;
 use casa_imaging_model::{CorrelationType, PolarizationCoordinate};
 use casa_imaging_operator::{
-    ConvolutionFunctionSet, CpuBackend, GridGeometry, GridPadding, GridPrecision, ImageExtent,
-    MeasurementOperator, ModeSet, ModelPlane, ModelPlaneGrids, NativeRow, OperatorError,
-    PaddingFactor, PlaneRange, PolarizationRouting, PredictionScratch, PreparedModelGrids,
-    RowContext, SpectralAxis, SpectralKernel, SpectralResampler, Spheroidal, WPlaneCount, WPlanes,
+    AiryDish, ConvolutionFunctionSet, CpuBackend, GridGeometry, GridPadding, GridPrecision,
+    ImageExtent, MeasurementOperator, ModeSet, ModelPlane, ModelPlaneGrids, MosaicPb, MosaicRules,
+    MosaicWindow, NativeRow, OperatorError, PaddingFactor, PlaneRange, PolarizationRouting,
+    PredictionScratch, PreparedModelGrids, RowContext, SpectralAxis, SpectralKernel,
+    SpectralResampler, Spheroidal, WPlaneCount, WPlanes,
 };
 use casa_imaging_runtime::pass::WorkerTeam;
 use num_complex::Complex32;
@@ -104,6 +111,12 @@ pub enum FtMachine {
     /// with its constructor's padding of 1, whatever `setoptions(padding=…)`
     /// says, and with `usezero` false, so autocorrelations predict zero.
     WProject(u32),
+    /// `MosaicFTNew` with the heterogeneous-array beams of
+    /// `TransformMachines/HetArrayConvFunc` (`ftmachine='mosaic'`): the
+    /// primary beams of each dish pair convolved into the kernels, the
+    /// pointing a phase ramp on them, on an unpadded grid, predicting
+    /// autocorrelations (`usezero` true) ([`MosaicBeams`]).
+    Mosaic,
 }
 
 impl FtMachine {
@@ -115,6 +128,17 @@ impl FtMachine {
     }
 }
 
+/// What the simulator's mosaic machine builds its kernels from: an Airy
+/// dish per class of dish diameter (`HetArrayConvFunc::findAntennaSizes`)
+/// and the spectral windows predicted.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct MosaicBeams {
+    /// One dish per class, in class order.
+    pub(crate) dishes: Vec<AiryDish>,
+    /// The windows of the scans predicted, every channel selected.
+    pub(crate) windows: Vec<MosaicWindow>,
+}
+
 /// The grid, polarization routing and spectral resampler of a model's
 /// operator for one FTMachine, before its kernels are built: the session
 /// admits the kernels from it ([`Self::geometry`]) and builds them in stages,
@@ -124,32 +148,50 @@ pub(crate) struct ModelLayout {
     geometry: GridGeometry,
     polarization: PolarizationRouting,
     resampler: SpectralResampler,
+    /// The model's frequency at spectral pixel 0, which sizes the mosaic
+    /// screen (`PBMath1D::support`).
+    image_frequency_hz: f64,
+    /// The mosaic machine's beams; `None` for the others.
+    beams: Option<MosaicBeams>,
 }
 
 impl ModelLayout {
-    /// The layout for `model` on rows with `correlations` through `machine`.
+    /// The layout for `model` on rows with `correlations` through `machine`,
+    /// with `beams` for [`FtMachine::Mosaic`] (the others ignore them).
     ///
     /// # Errors
     ///
-    /// A geometry the grid cannot hold, or correlations the Stokes I model
-    /// cannot feed.
+    /// A geometry the grid cannot hold, correlations the Stokes I model
+    /// cannot feed, or the mosaic machine without beams.
     pub(crate) fn new(
         model: &SkyModel,
         correlations: &[CorrelationType],
         machine: FtMachine,
+        beams: Option<MosaicBeams>,
     ) -> Result<Self, PredictError> {
         let [nx, ny] = model.shape();
         let padding = match machine {
-            FtMachine::Grid(padding) => padding,
-            FtMachine::WProject(_) => PaddingFactor::SIMULATOR_WPROJECT,
+            FtMachine::Grid(padding) => GridPadding::CasaComposite(padding),
+            FtMachine::WProject(_) => GridPadding::CasaComposite(PaddingFactor::SIMULATOR_WPROJECT),
+            FtMachine::Mosaic => GridPadding::None,
         };
+        let beams = match machine {
+            FtMachine::Mosaic => Some(beams.ok_or_else(|| {
+                PredictError::UnsupportedModel(
+                    "the mosaic machine needs the array's dish classes and windows".into(),
+                )
+            })?),
+            FtMachine::Grid(_) | FtMachine::WProject(_) => None,
+        };
+        // The pointing ramp (`pixFieldDir`) is measured from pixel
+        // `(nx/2, ny/2)`, the reference pixel here.
         let geometry = GridGeometry::new(
             ImageExtent {
                 shape: [nx, ny],
                 increment_rad: model.increment_rad,
                 reference_pixel: [nx / 2, ny / 2],
             },
-            GridPadding::CasaComposite(padding),
+            padding,
         )?;
         let polarization =
             PolarizationRouting::compile(correlations, &[PolarizationCoordinate::StokesI])?;
@@ -162,7 +204,7 @@ impl ModelLayout {
         )?;
         let resampler = SpectralResampler::channel_local(axis, SpectralKernel::Nearest);
         let resampler = match machine {
-            FtMachine::Grid(_) => resampler.predicting_autocorrelations(),
+            FtMachine::Grid(_) | FtMachine::Mosaic => resampler.predicting_autocorrelations(),
             FtMachine::WProject(_) => resampler,
         };
         Ok(Self {
@@ -170,12 +212,24 @@ impl ModelLayout {
             geometry,
             polarization,
             resampler,
+            image_frequency_hz: model.first_frequency_hz,
+            beams,
         })
     }
 
     /// The FTMachine.
     pub(crate) const fn machine(&self) -> FtMachine {
         self.machine
+    }
+
+    /// The model's frequency at spectral pixel 0.
+    pub(crate) const fn image_frequency_hz(&self) -> f64 {
+        self.image_frequency_hz
+    }
+
+    /// The mosaic machine's beams.
+    pub(crate) const fn beams(&self) -> Option<&MosaicBeams> {
+        self.beams.as_ref()
     }
 
     /// The padded grid the kernels are built for.
@@ -192,15 +246,26 @@ impl ModelLayout {
     ///
     /// # Errors
     ///
-    /// The W-projection planes cannot be built.
+    /// The W-projection planes or the mosaic beams cannot be built.
     pub(crate) fn kernels(&self) -> Result<Box<dyn ConvolutionFunctionSet>, PredictError> {
-        Ok(match self.machine {
-            FtMachine::Grid(_) => Box::new(Spheroidal::new(&self.geometry, &self.polarization)),
-            FtMachine::WProject(planes) => Box::new(WPlanes::new(
+        Ok(match (self.machine, &self.beams) {
+            (FtMachine::Grid(_), _) => {
+                Box::new(Spheroidal::new(&self.geometry, &self.polarization))
+            }
+            (FtMachine::WProject(planes), _) => Box::new(WPlanes::new(
                 &self.geometry,
                 &self.polarization,
                 WPlaneCount::Fixed(planes),
             )?),
+            (FtMachine::Mosaic, Some(beams)) => Box::new(MosaicPb::new(
+                MosaicRules::Simulator,
+                &self.geometry,
+                &self.polarization,
+                self.image_frequency_hz,
+                &beams.dishes,
+                &beams.windows,
+            )?),
+            (FtMachine::Mosaic, None) => unreachable!("the layout of a mosaic has its beams"),
         })
     }
 }
@@ -228,6 +293,7 @@ impl ModelOperator {
             geometry,
             polarization,
             resampler,
+            ..
         } = layout;
         let operator = MeasurementOperator::new(
             geometry,
@@ -389,7 +455,7 @@ impl ModelPredictor {
         pointing_rad: [f64; 2],
         options: &PredictOptions,
     ) -> Result<Self, PredictError> {
-        let layout = ModelLayout::new(model, correlations, options.ft_machine)?;
+        let layout = ModelLayout::new(model, correlations, options.ft_machine, None)?;
         let kernels = layout.kernels()?;
         let operator = ModelOperator::new(layout, kernels, options.precision);
         let pattern = options.primary_beam.map(PrimaryBeam::pattern);

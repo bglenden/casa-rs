@@ -198,6 +198,26 @@ impl SkyModel {
         Ok([pixel[0], pixel[1]])
     }
 
+    /// The offset of a J2000 pointing from pixel `(nx/2, ny/2)` along the
+    /// image axes, radians (its pixel offset times the increments), as the
+    /// mosaic machine measures it (`HetArrayConvFunc::findConvFunction`'s
+    /// `pixFieldDir`); `None` when its pixel, truncated as
+    /// `checkPBOfField` truncates it, lies outside the image.
+    pub(crate) fn pointing_offset_rad(
+        &self,
+        direction_rad: [f64; 2],
+    ) -> Result<Option<[f64; 2]>, PredictError> {
+        let pixel = self.pixel_of(direction_rad)?;
+        let inside = |pixel: f64, n: usize| (0.0..n as f64).contains(&pixel.trunc());
+        if !inside(pixel[0], self.shape[0]) || !inside(pixel[1], self.shape[1]) {
+            return Ok(None);
+        }
+        Ok(Some([
+            (pixel[0] - (self.shape[0] / 2) as f64) * self.increment_rad[0],
+            (pixel[1] - (self.shape[1] / 2) as f64) * self.increment_rad[1],
+        ]))
+    }
+
     /// Model plane `plane`, `[y][x]`, read from the image.
     ///
     /// # Errors
