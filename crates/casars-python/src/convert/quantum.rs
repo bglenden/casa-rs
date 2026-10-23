@@ -5,7 +5,7 @@
 //!
 //! The arithmetic is casacore's, not [`Quantity`]'s operators:
 //!
-//! - **Conversion** ([`convert`]) scales conformant units; between angles
+//! - **Conversion** ([`Quantum::convert`]) scales conformant units; between angles
 //!   and times it goes at 360 degrees a day; for other units it keeps the
 //!   value in the target unit times the remaining SI dimensions
 //!   (`'1.5km'` to `s` is `1500 s.m.s-1`). With no target it converts to SI

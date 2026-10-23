@@ -12626,7 +12626,7 @@ fn swap_bytes_inplace(data: &mut [u8], component_size: usize) {
 }
 
 /// Compute C-order (row-major) strides for a given shape.
-/// stride[last] = 1, stride[i] = product of shape[i+1..].
+/// `stride[last] = 1`, `stride[i]` = product of `shape[i+1..]`.
 fn c_order_strides(shape: &[usize]) -> Vec<usize> {
     let ndim = shape.len();
     let mut strides = vec![1usize; ndim];
@@ -12637,7 +12637,7 @@ fn c_order_strides(shape: &[usize]) -> Vec<usize> {
 }
 
 /// Compute Fortran-order (column-major) strides for a given shape.
-/// stride[0] = 1, stride[i] = product of shape[0..i].
+/// `stride[0] = 1`, `stride[i]` = product of `shape[0..i]`.
 fn fortran_order_strides(shape: &[usize]) -> Vec<usize> {
     let ndim = shape.len();
     let mut strides = vec![1usize; ndim];
