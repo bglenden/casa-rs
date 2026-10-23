@@ -1,11 +1,9 @@
 // IncrementalStMan fixtures: ism_scalar_primitives, ism_slowly_changing,
-// ism_complex_scalars, ism_typed_arrays, ism_complex_arrays, ism_column_keywords,
-// ism_element_arrays.
+// ism_complex_scalars, ism_typed_arrays, ism_complex_arrays,
+// ism_column_keywords, ism_bucket_starts. ism_element_arrays and
+// ism_indirect_arrays are in casacore_cpp_table_element_arrays.cpp.
 #include "casacore_cpp_common.h"
 #include <casacore/tables/DataMan/IncrementalStMan.h>
-
-#include <utility>
-#include <vector>
 
 using casacore_shim::make_error;
 
@@ -428,145 +426,63 @@ int32_t cpp_table_verify_ism_column_keywords(const char* path, char** out_error)
 
 } // extern "C"
 
-// ===== ISM element_arrays fixture =====
-// Direct fixed-shape arrays of every element type, of shapes [1], [3] and
-// [2,3], in 3 rows; column "<type>_<shape>" (Float64_2x3). Element i, in
-// storage order, of row r is made from 7 + 10 r + i, so Float64_1 holds [7.0]
-// in row 0. The Rust fixture in tables_cross_matrix_incremental_stman.rs
-// makes the same values.
+// ===== ISM bucket_starts fixture =====
+// TIME (Double, 4e9 + row) and NAME (String: "r<row>:" and 600 copies of
+// the row's letter), in 8 rows. casa-rs sizes IncrementalStMan buckets for
+// strings of 12 bytes, so in its tables each NAME fills about half a bucket
+// and a bucket starts at every row: values change at a bucket's first row.
+// The Rust fixture is in tables_cross_matrix_incremental_stman.rs.
 
 namespace {
 
-const casacore::uInt kElementRows = 3;
+const casacore::uInt kBucketStartRows = 8;
 
-template <class T> struct ElementTag { using type = T; };
-
-// Call f(ElementTag<T>{}, name) for each element type, by the name its
-// columns take.
-template <class F> void forEachElementType(F&& f) {
-    f(ElementTag<casacore::Bool>{}, "Bool");
-    f(ElementTag<casacore::uChar>{}, "UInt8");
-    f(ElementTag<casacore::Short>{}, "Int16");
-    f(ElementTag<casacore::uShort>{}, "UInt16");
-    f(ElementTag<casacore::Int>{}, "Int32");
-    f(ElementTag<casacore::uInt>{}, "UInt32");
-    f(ElementTag<casacore::Int64>{}, "Int64");
-    f(ElementTag<casacore::Float>{}, "Float32");
-    f(ElementTag<casacore::Double>{}, "Float64");
-    f(ElementTag<casacore::Complex>{}, "Complex32");
-    f(ElementTag<casacore::DComplex>{}, "Complex64");
-    f(ElementTag<casacore::String>{}, "String");
-}
-
-std::vector<std::pair<std::string, casacore::IPosition>> elementShapes() {
-    return {{"1", casacore::IPosition(1, 1)},
-            {"3", casacore::IPosition(1, 3)},
-            {"2x3", casacore::IPosition(2, 2, 3)}};
-}
-
-casacore::Int64 elementBase(casacore::uInt row, size_t i) {
-    return 7 + 10 * casacore::Int64(row) + casacore::Int64(i);
-}
-
-void elementValue(casacore::uInt row, size_t i, casacore::Bool& v) { v = (row + i) % 2 == 0; }
-void elementValue(casacore::uInt row, size_t i, casacore::uChar& v) { v = casacore::uChar(elementBase(row, i)); }
-void elementValue(casacore::uInt row, size_t i, casacore::Short& v) { v = casacore::Short(-elementBase(row, i)); }
-void elementValue(casacore::uInt row, size_t i, casacore::uShort& v) { v = casacore::uShort(65535 - elementBase(row, i)); }
-void elementValue(casacore::uInt row, size_t i, casacore::Int& v) { v = casacore::Int(-1000 * elementBase(row, i)); }
-void elementValue(casacore::uInt row, size_t i, casacore::uInt& v) { v = casacore::uInt(4294967295LL - elementBase(row, i)); }
-void elementValue(casacore::uInt row, size_t i, casacore::Int64& v) { v = -(elementBase(row, i) << 40); }
-void elementValue(casacore::uInt row, size_t i, casacore::Float& v) { v = casacore::Float(elementBase(row, i)) + 0.25f; }
-void elementValue(casacore::uInt row, size_t i, casacore::Double& v) { v = casacore::Double(elementBase(row, i)); }
-void elementValue(casacore::uInt row, size_t i, casacore::Complex& v) {
-    v = casacore::Complex(casacore::Float(elementBase(row, i)), -0.5f);
-}
-void elementValue(casacore::uInt row, size_t i, casacore::DComplex& v) {
-    v = casacore::DComplex(casacore::Double(elementBase(row, i)), 0.125);
-}
-void elementValue(casacore::uInt row, size_t i, casacore::String& v) {
-    v = "r" + std::to_string(row) + "e" + std::to_string(i);
-}
-
-template <class T>
-casacore::Array<T> elementCell(casacore::uInt row, const casacore::IPosition& shape) {
-    casacore::Array<T> cell(shape);
-    T* data = cell.data();
-    for (size_t i = 0; i < cell.nelements(); ++i) elementValue(row, i, data[i]);
-    return cell;
-}
-
-void writeElementArrays(const char* path) {
-    casacore::TableDesc td("", casacore::TableDesc::Scratch);
-    forEachElementType([&](auto tag, const std::string& type) {
-        using T = typename decltype(tag)::type;
-        for (const auto& [name, shape] : elementShapes()) {
-            td.addColumn(casacore::ArrayColumnDesc<T>(type + "_" + name, shape,
-                casacore::ColumnDesc::Direct | casacore::ColumnDesc::FixedShape));
-        }
-    });
-    casacore::SetupNewTable setup(path, td, casacore::Table::New);
-    casacore::IncrementalStMan stman;
-    setup.bindAll(stman);
-    casacore::Table table(setup, kElementRows);
-    forEachElementType([&](auto tag, const std::string& type) {
-        using T = typename decltype(tag)::type;
-        for (const auto& [name, shape] : elementShapes()) {
-            casacore::ArrayColumn<T> column(table, type + "_" + name);
-            for (casacore::uInt row = 0; row < kElementRows; ++row) {
-                column.put(row, elementCell<T>(row, shape));
-            }
-        }
-    });
-    table.flush();
-}
-
-void verifyElementArrays(const char* path) {
-    casacore::Table table(path, casacore::Table::Old);
-    if (table.nrow() != kElementRows)
-        throw std::runtime_error("expected 3 rows, got " + std::to_string(table.nrow()));
-    forEachElementType([&](auto tag, const std::string& type) {
-        using T = typename decltype(tag)::type;
-        for (const auto& [name, shape] : elementShapes()) {
-            const std::string column_name = type + "_" + name;
-            casacore::ArrayColumn<T> column(table, column_name);
-            for (casacore::uInt row = 0; row < kElementRows; ++row) {
-                const std::string cell = column_name + " row " + std::to_string(row);
-                casacore::Array<T> found = column(row);
-                if (!found.shape().isEqual(shape))
-                    throw std::runtime_error(cell + ": shape " + found.shape().toString());
-                casacore::Array<T> expected = elementCell<T>(row, shape);
-                casacore::Bool deleteFound;
-                const T* values = found.getStorage(deleteFound);
-                const T* expectedValues = expected.data();
-                bool same = true;
-                for (size_t i = 0; i < expected.nelements(); ++i) {
-                    if (!(values[i] == expectedValues[i])) same = false;
-                }
-                found.freeStorage(values, deleteFound);
-                if (!same) throw std::runtime_error(cell + " mismatch");
-            }
-        }
-    });
+casacore::String bucketStartName(casacore::uInt row) {
+    return "r" + std::to_string(row) + ":" + std::string(600, char('a' + row % 26));
 }
 
 } // namespace
 
 extern "C" {
 
-int32_t cpp_table_write_ism_element_arrays(const char* path, char** out_error) {
+int32_t cpp_table_write_ism_bucket_starts(const char* path, char** out_error) {
     try {
-        writeElementArrays(path);
+        casacore::TableDesc td("", casacore::TableDesc::Scratch);
+        td.addColumn(casacore::ScalarColumnDesc<casacore::Double>("TIME"));
+        td.addColumn(casacore::ScalarColumnDesc<casacore::String>("NAME"));
+        casacore::SetupNewTable setup(path, td, casacore::Table::New);
+        casacore::IncrementalStMan stman;
+        setup.bindAll(stman);
+        casacore::Table table(setup, kBucketStartRows);
+        casacore::ScalarColumn<casacore::Double> time(table, "TIME");
+        casacore::ScalarColumn<casacore::String> name(table, "NAME");
+        for (casacore::uInt row = 0; row < kBucketStartRows; ++row) {
+            time.put(row, 4.0e9 + row);
+            name.put(row, bucketStartName(row));
+        }
+        table.flush();
         return 0;
     } catch (const std::exception& e) { *out_error = make_error(e.what()); return -1;
-    } catch (...) { *out_error = make_error("unknown exception in write_ism_element_arrays"); return -1; }
+    } catch (...) { *out_error = make_error("unknown exception in write_ism_bucket_starts"); return -1; }
 }
 
-int32_t cpp_table_verify_ism_element_arrays(const char* path, char** out_error) {
+int32_t cpp_table_verify_ism_bucket_starts(const char* path, char** out_error) {
     try {
-        verifyElementArrays(path);
+        casacore::Table table(path, casacore::Table::Old);
+        if (table.nrow() != kBucketStartRows)
+            throw std::runtime_error("expected 8 rows, got " + std::to_string(table.nrow()));
+        casacore::ScalarColumn<casacore::Double> time(table, "TIME");
+        casacore::ScalarColumn<casacore::String> name(table, "NAME");
+        for (casacore::uInt row = 0; row < kBucketStartRows; ++row) {
+            if (time(row) != 4.0e9 + row)
+                throw std::runtime_error("TIME mismatch at row " + std::to_string(row));
+            if (name(row) != bucketStartName(row))
+                throw std::runtime_error("NAME mismatch at row " + std::to_string(row) +
+                                         ": " + std::string(name(row)).substr(0, 40));
+        }
         return 0;
     } catch (const std::exception& e) { *out_error = make_error(e.what()); return -1;
-    } catch (...) { *out_error = make_error("unknown exception in verify_ism_element_arrays"); return -1; }
+    } catch (...) { *out_error = make_error("unknown exception in verify_ism_bucket_starts"); return -1; }
 }
 
 } // extern "C"

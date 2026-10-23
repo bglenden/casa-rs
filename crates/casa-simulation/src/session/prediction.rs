@@ -348,7 +348,8 @@ impl Simulator {
     ///   J2000, direction–Stokes–spectral axes), a near-field distance on the
     ///   last field, scans whose windows differ in correlations, or
     ///   `setvp(dovp=True)` for a telescope whose default pattern casa-rs
-    ///   does not have (ALMA's, ACA's, the VLA's and the EVLA's it has).
+    ///   does not have (ALMA's, ACA's, the VLA's and the EVLA's it has) or
+    ///   for pointings `observemany` moved off their fields.
     /// - CASA's `False`: no model image ("No model images found"), or no
     ///   rows observed yet.
     /// - Raised: a scan of 3 correlations ("No such VisVector type"), or
@@ -406,6 +407,9 @@ impl Simulator {
         }
         let correlations = self.predicted_correlations()?;
         let beam = self.voltage_pattern_beam()?;
+        if beam.is_some() {
+            self.check_pointings_on_fields()?;
+        }
         let layout = ModelLayout::new(&model, &correlations, self.ft_machine()?)
             .map_err(|error| correlation_error(error, &correlations))?;
         let (kernels, kernel_reservation) = self.admitted_kernels(&layout)?;
@@ -474,6 +478,26 @@ impl Simulator {
                 ))
             })?;
         Ok(Some(beam))
+    }
+
+    /// That every scan points at its field, as a primary beam centred on
+    /// each field needs. CASA centres the beam on each pointing's direction
+    /// (from POINTING), which casa-rs does not yet do for the pointings
+    /// `observemany` moves off their field.
+    fn check_pointings_on_fields(&self) -> SimulatorResult<()> {
+        let moved = self
+            .scans
+            .iter()
+            .find(|scan| scan.phase_center_rad != self.fields[scan.field_id].direction_rad);
+        match moved {
+            Some(scan) => Err(SimulatorError::not_yet_implemented(format!(
+                "predict with setvp(dovp=True) for scan {} pointed away from its field {} is \
+                 not yet implemented in casa-rs (simulation Phase 2); pointings at their \
+                 fields' centres are",
+                scan.scan_number, self.fields[scan.field_id].name
+            ))),
+            None => Ok(()),
+        }
     }
 
     /// The fields of the scans observed so far, each once, in the order
