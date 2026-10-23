@@ -13,7 +13,8 @@
 //!   a Metal device; an explicit `metal` backend is refused at `predict`.
 //! - Fewer than two planes are refused: one plane as CASA's
 //!   `WPConvFunc` refuses it, none or fewer raised where CASA's simulator
-//!   crashes.
+//!   crashes. More than 65,536, the planes casa-rs's kernel key indexes,
+//!   are raised.
 //!
 //! Agreement with CASA's own `sm.predict` through `WProjectFT` is measured
 //! by `tools/simulation/compare_sm_ms.py` on `sm_predict_scenarios.json`.
@@ -24,15 +25,15 @@ use std::path::Path;
 
 use casa_imaging_model::CorrelationType;
 use casa_imaging_runtime::{HostResources, ResourcePolicy};
-use casa_simulation::predict::{FtMachine, PrimaryBeam};
+use casa_simulation::predict::{FtMachine, ModelPredictor, PredictOptions, PrimaryBeam, SkyModel};
 use casa_simulation::{
     BackendRequest, CasaOutcome, PredictionOptions, SessionResources, Simulator, SimulatorResult,
     VoltagePatternSpec,
 };
 use num_complex::Complex32;
 use predict_support::{
-    bits, data, extended_model, predict_spec, read_main, reference_through, resources, scan,
-    session,
+    CENTRE_RAD, bits, data, extended_model, predict_spec, read_main, reference_through, resources,
+    scan, session,
 };
 
 const PLANES: u32 = 16;
@@ -202,6 +203,38 @@ fn w_projection_predicts_on_the_cpu_and_refuses_an_explicit_metal_backend() {
     let (outcome, message) = refusal(predicted(sm, &model, &[wproject(8, 1.3)], false));
     assert_eq!(outcome, CasaOutcome::NotYetImplemented);
     assert!(message.contains("Metal"), "{message}");
+}
+
+/// More planes than casa-rs's kernel key indexes (65,536) are refused
+/// before anything is prepared, by the session and by the row predictor;
+/// the row predictor panicked past a 16-bit plane index (#865 review).
+#[test]
+fn more_planes_than_the_kernel_key_indexes_are_refused() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let model = extended_model(directory.path(), "model.image");
+    let mut sm = session(
+        &directory.path().join("planes.ms"),
+        "ALMA",
+        "XX YY",
+        resources(2, 2 << 30),
+    );
+    sm.observe(&scan("target", 0.0, 20.0)).expect("observe");
+    sm.set_options(&wproject(65_537, 1.3))
+        .expect("setoptions records, as CASA's does");
+    let (outcome, message) = refusal(sm.predict(&predict_spec(&model, false)));
+    assert_eq!(outcome, CasaOutcome::Raises, "{message}");
+    assert!(message.contains("65,536"), "{message}");
+    let sky = SkyModel::open(&model).expect("model");
+    let options = |planes| PredictOptions {
+        ft_machine: FtMachine::WProject(planes),
+        ..PredictOptions::default()
+    };
+    let correlations = [CorrelationType::LinearXx, CorrelationType::LinearYy];
+    let refused = ModelPredictor::new(&sky, &correlations, CENTRE_RAD, &options(65_537))
+        .err()
+        .expect("refused");
+    assert!(refused.to_string().contains("65,536"), "{refused}");
+    ModelPredictor::new(&sky, &correlations, CENTRE_RAD, &options(16)).expect("16 planes");
 }
 
 #[test]

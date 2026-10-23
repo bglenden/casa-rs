@@ -23,6 +23,10 @@ const W_OVERSAMPLING: u16 = 4;
 /// modulus exceeds this fraction of the peak-normalised plane.
 const SUPPORT_THRESHOLD: f64 = 1.0e-3;
 
+/// The most w-planes a set holds: a plane is keyed by a 16-bit index
+/// ([`CfKey::group`]).
+pub const MAX_W_PLANES: usize = 1 << 16;
+
 /// How many w-planes to build.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum WPlaneCount {
@@ -104,6 +108,11 @@ impl WLayout {
         if planes == 0 {
             return Err(OperatorError::ConvolutionFunction {
                 reason: "W projection needs at least one plane",
+            });
+        }
+        if planes > MAX_W_PLANES {
+            return Err(OperatorError::ConvolutionFunction {
+                reason: "W projection keys its planes by a 16-bit index: at most 65,536 planes",
             });
         }
         let sampling = if planes > 1 { W_OVERSAMPLING } else { 1 };
