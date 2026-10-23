@@ -180,15 +180,15 @@
 <div class="shell">
   <aside aria-label="Walkthrough navigation">
     <div class="brand">casa-rs<span style="color:var(--teal)">.</span></div>
-    <span class="badge">Design draft · revision 2</span>
+    <span class="badge">Design draft · revision 3</span>
     <div class="sidebar-title">From storage<br>to science</div>
     <p class="sidebar-copy">A guided review of the shared observation interface. One idea at a time.</p>
     <nav aria-label="Steps">
       <ol>
         <li><a href="#boundary"><span class="num">01</span> One scientific boundary</a></li>
-        <li><a href="#units"><span class="num">02</span> Separate the units</a></li>
+        <li><a href="#units"><span class="num">02</span> Separate the concepts</a></li>
         <li><a href="#catalogue"><span class="num">03</span> Describe the observation</a></li>
-        <li><a href="#block"><span class="num">04</span> Build the shared block</a></li>
+        <li><a href="#block"><span class="num">04</span> Build the shared batch</a></li>
         <li><a href="#layout"><span class="num">05</span> Choose a memory layout</a></li>
         <li><a href="#request"><span class="num">06</span> Negotiate access</a></li>
         <li><a href="#groups"><span class="num">07</span> Accumulate a solve</a></li>
@@ -199,7 +199,7 @@
         <li><a href="#review"><span class="num">12</span> Decide, prove, then build</a></li>
       </ol>
     </nav>
-    <div class="sidebar-bottom">Based on draft <code>62dc25fc</code><br>23 October 2026<br><a href="https://github.com/bglenden/casa-rs/pull/878">PR #878 · design discussion</a></div>
+    <div class="sidebar-bottom">Based on draft <code>abcc5ac0</code><br>23 October 2026<br><a href="https://github.com/bglenden/casa-rs/pull/878">PR #878 · design discussion</a></div>
   </aside>
   <main id="content">
     <div class="toolbar js-only">
@@ -215,44 +215,55 @@
       <h1 id="title-boundary" tabindex="-1">One scientific boundary.<br>Two storage worlds.</h1>
       <p class="lead">Imaging, calibration, and flagging should consume the same scientific structures whether the data came from a CASA table or an MSv4 array store.</p>
       <div class="diagram">
+        <h3>Before iteration · the planner requests access</h3>
+        <div class="flow">
+          <div class="box"><b>MS adapter</b><small>Chooses physical reads, aggregation, prefetch and packing within the budget</small></div>
+          <span class="arrow" aria-hidden="true">←</span>
+          <div class="box accent"><b>AccessRequest</b><small>Selection · roles · traversal/order · grouping · windows/overlap · layout · units/precision · revisits</small></div>
+          <span class="arrow" aria-hidden="true">←</span>
+          <div class="box"><b>Algorithm planner</b><small>Operation requirements + task parameters for imaging, calibration or flagging</small></div>
+        </div>
+        <p class="caption">The adapter returns the bound layout/traversal, read/decode/copy costs and resource limits, or an explicit error. This negotiation happens before numerical iteration.</p>
+        <h3 style="margin-top:24px">During iteration · data flows to the processing algorithm</h3>
         <div class="flow">
           <div class="stack"><div class="box"><b>MSv2</b><small>casacore tables · cells · storage managers</small></div><div class="box"><b>MSv4</b><small>XRADIO schema · Zarr arrays · codecs</small></div></div>
           <span class="arrow" aria-hidden="true">→</span>
           <div class="box"><b>Storage adapters</b><small>Selection, I/O, decode, packing, addressed writes</small></div>
           <span class="arrow" aria-hidden="true">→</span>
-          <div class="box accent"><b>Observation blocks</b><small>Typed arrays + coordinates + scientific meaning</small></div>
+          <div class="box accent"><b>Visibility batches</b><small>Typed arrays + coordinates + scientific meaning</small></div>
           <span class="arrow" aria-hidden="true">→</span>
-          <div class="box"><b>Scientific kernels</b><small>Image · solve · apply · flag</small></div>
+          <div class="box"><b>Processing algorithms</b><small>Image · solve · apply · flag</small></div>
         </div>
         <p class="caption">Proposed common boundary. Production computation and I/O run natively, without a Python runtime.</p>
       </div>
-      <p>The adapters know the storage format. The kernels know visibility values, frequencies, baselines, weights, flags, and the geometry they need. Storage dispatch happens at a binding or block boundary, outside the numerical inner loop.</p>
+      <p>The processing planner knows how its operation will consume data and sends that access pattern through the common source interface. The adapter knows the storage geometry and organizes I/O accordingly. The algorithm's numerical loops consume the resulting views; they do not negotiate I/O per value.</p>
       <div class="columns">
-        <div class="card"><h3>Common after binding</h3><p>Select → bind access → receive blocks → compute → submit changes → finish.</p></div>
+        <div class="card"><h3>Common after binding</h3><p>Select → bind access → receive batches → compute → submit changes → finish.</p></div>
         <div class="card"><h3>Specific at creation</h3><p>MSv2 storage managers and tiles; MSv4 chunk geometry, codecs, and schema metadata.</p></div>
       </div>
       <div class="note">This is a walkthrough of a proposal. The shared API is not implemented or frozen. MSv2 + MSv4 is the agreed scope; MSv3 and XRADIO image persistence are deferred.</div>
-      <div class="pause"><div class="eyebrow">Pause here · D4</div><p>Does this put the storage–science boundary in the right place? We can discuss this step before choosing any Rust types.</p></div>
-      <p class="source">Read: <a href="https://github.com/bglenden/casa-rs/blob/62dc25fc8b2ed6a9239da9d2f05de8af6c3891cc/docs/measurement-set/architecture.md#1-outcome-and-boundaries">Architecture §1</a>.</p>
+      <div class="pause"><div class="eyebrow">Pause here · D2 / D4</div><p>Does this put the storage–science boundary in the right place, with enough access-pattern information flowing back to the adapter?</p></div>
+      <p class="source">Read: <a href="https://github.com/bglenden/casa-rs/blob/abcc5ac0e773f7ad81f1909317c602c63aedbd98/docs/measurement-set/architecture.md#1-outcome-and-boundaries">Architecture §1</a>.</p>
     </section>
 
-    <section class="step" id="units" data-title="Separate the units" aria-labelledby="title-units">
+    <section class="step" id="units" data-title="Separate the concepts" aria-labelledby="title-units">
       <div class="eyebrow">02 · Vocabulary</div>
-      <h1 id="title-units" tabindex="-1">Meaning, storage, and execution have different units.</h1>
+      <h1 id="title-units" tabindex="-1">Keep scientific grouping, I/O, and work separate.</h1>
       <p class="lead">A physical chunk does not define a calibration solution, a kernel invocation, or the amount of work assigned to a thread.</p>
       <div class="columns three">
         <div class="card"><div class="eyebrow">Scientific meaning</div><h2>Partition &amp; scientific group</h2><p>A <strong>partition</strong> has a compatible spectral, polarization, and observation context.</p><p>A <strong>scientific group</strong> is what an algorithm treats together, such as one solution interval. It can cross partitions.</p></div>
-        <div class="card"><div class="eyebrow">Data movement</div><h2>Chunk &amp; I/O block</h2><p>A <strong>chunk or tile</strong> is a physical decode/update unit.</p><p>An <strong>I/O block</strong> is the bounded aggregation delivered by the adapter. It may span many chunks.</p></div>
-        <div class="card"><div class="eyebrow">Execution</div><h2>Window &amp; work unit</h2><p>A <strong>compute window</strong> is the part of a block a kernel processes.</p><p>A <strong>work unit</strong> runs one or more windows on one worker or a cooperating worker group.</p></div>
+        <div class="card"><div class="eyebrow">Data movement</div><h2>Chunk &amp; visibility batch</h2><p>A <strong>chunk or tile</strong> is a physical decode/update unit.</p><p>An <strong>visibility batch</strong> is the bounded aggregation delivered by the adapter. It may span many chunks.</p></div>
+        <div class="card"><div class="eyebrow">Execution</div><h2>Window &amp; work unit</h2><p>A <strong>compute window</strong> is the part of a batch a kernel processes.</p><p>A <strong>work unit</strong> runs one or more windows on one worker or a cooperating worker group.</p></div>
       </div>
       <div class="diagram"><div class="flow">
         <div class="box"><b>Several stored chunks</b><small>Read/decode efficiently</small></div><span class="arrow" aria-hidden="true">→</span>
-        <div class="box accent"><b>One larger I/O block</b><small>Amortize adapter work</small></div><span class="arrow" aria-hidden="true">→</span>
+        <div class="box accent"><b>One larger visibility batch</b><small>Amortize adapter work</small></div><span class="arrow" aria-hidden="true">→</span>
         <div class="stack"><div class="box"><b>Window A → worker 1</b></div><div class="box"><b>Window B → workers 2–3</b></div></div>
-      </div><p class="caption">Relationships are flexible. A scientific group may need fragments from several blocks, and one block may feed several groups.</p></div>
+      </div><p class="caption">Relationships are flexible. A scientific group may need fragments from several batches, and one batch may feed several groups.</p></div>
       <p>This separation lets MSv4 use larger native aggregation without making every kernel use a large scratch buffer. A <strong>data group</strong>, introduced next, is another concept: it associates the arrays that describe one visibility product.</p>
+      <p><strong>Visibility batch</strong> is the provisional name for the common intermediate. “Observation block” has an observatory meaning; “chunk” is reserved here for physical storage. The batch can contain only requested metadata/flags when visibility values are unnecessary.</p>
       <div class="pause"><div class="eyebrow">Pause here · D2</div><p>Is this vocabulary clear enough to use consistently? In particular, a scientific group and a cooperating worker group have different purposes.</p></div>
-      <p class="source">Read: <a href="https://github.com/bglenden/casa-rs/blob/62dc25fc8b2ed6a9239da9d2f05de8af6c3891cc/docs/measurement-set/architecture.md#2-the-important-distinctions">Architecture §2</a>.</p>
+      <p class="source">Read: <a href="https://github.com/bglenden/casa-rs/blob/abcc5ac0e773f7ad81f1909317c602c63aedbd98/docs/measurement-set/architecture.md#2-the-important-distinctions">Architecture §2</a>.</p>
     </section>
 
     <section class="step" id="catalogue" data-title="Describe the observation" aria-labelledby="title-catalogue">
@@ -266,26 +277,26 @@
       </div></div>
       <p>A data group might represent raw, corrected, or model visibilities. These labels are conveniences; the actual array associations are explicit. Two groups may share a flag or weight variable, which matters when writing.</p>
       <div class="table-scroll"><table><thead><tr><th>Case</th><th>Proposed representation</th></tr></thead><tbody>
-        <tr><td>Mosaic pointings</td><td>Field/phase-centre context may vary within a block. There is no universal requirement for one visibility array per pointing. Antenna pointing and phase centre remain distinct.</td></tr>
-        <tr><td>Continuum and line SPWs</td><td>Different spectral contexts generally occupy different partitions. Blocks have compatible spectral coordinates and correlation setup; the algorithm may combine several blocks scientifically.</td></tr>
+        <tr><td>Mosaic pointings</td><td>Field/phase-centre context may vary within a batch. There is no universal requirement for one visibility array per pointing. Antenna pointing and phase centre remain distinct.</td></tr>
+        <tr><td>Continuum and line SPWs</td><td>Different spectral contexts generally occupy different partitions. Batches have compatible spectral coordinates and correlation setup; the algorithm may combine several batches scientifically.</td></tr>
         <tr><td>Large metadata</td><td>Moving-source, pointing, and ephemeris metadata are queried in bounded windows instead of loading sample-sized histories on open.</td></tr>
       </tbody></table></div>
       <details><summary>Identity needs care when calibration is saved and reopened</summary><p>Catalogue handles belong to an opened observation. They are not permanent MS row numbers. Calibration owns the binding to antenna/SPW/field identities in a persisted caltable. Reopening and changing catalogue enumeration must not change which solutions apply.</p></details>
       <div class="pause"><div class="eyebrow">Pause here · D1</div><p>Does the catalogue expose enough scientific context without leaking table row IDs or Zarr paths into algorithms?</p></div>
-      <p class="source">Read: <a href="https://github.com/bglenden/casa-rs/blob/62dc25fc8b2ed6a9239da9d2f05de8af6c3891cc/docs/measurement-set/contracts.md#2-topology-and-identity">Contracts §2</a> and <a href="https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/src/xradio/measurement_set/schema.py">pinned XRADIO schema</a>.</p>
+      <p class="source">Read: <a href="https://github.com/bglenden/casa-rs/blob/abcc5ac0e773f7ad81f1909317c602c63aedbd98/docs/measurement-set/contracts.md#2-topology-and-identity">Contracts §2</a> and <a href="https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/src/xradio/measurement_set/schema.py">pinned XRADIO schema</a>.</p>
     </section>
 
-    <section class="step" id="block" data-title="Build the shared block" aria-labelledby="title-block">
+    <section class="step" id="block" data-title="Build the shared batch" aria-labelledby="title-block">
       <div class="eyebrow">04 · The central intermediate structure</div>
-      <h1 id="title-block" tabindex="-1">A block is arrays plus their meaning.</h1>
-      <p class="lead">An <code>ObservationBlock</code> lends typed array views and the metadata needed to interpret them. The memory backing those views has an explicit owner.</p>
+      <h1 id="title-block" tabindex="-1">A batch is arrays plus their meaning.</h1>
+      <p class="lead">A <code>VisibilityBatch</code> lends typed array views and the metadata needed to interpret them. The memory backing those views has an explicit owner.</p>
       <div class="diagram">
-        <div class="controls" role="group" aria-label="Inspect a block component">
-          <button data-component="values" aria-pressed="true">Values</button><button data-component="coordinates" aria-pressed="false">Coordinates</button><button data-component="flags" aria-pressed="false">Flags &amp; validity</button><button data-component="weights" aria-pressed="false">Weights</button><button data-component="addresses" aria-pressed="false">Update maps</button>
+        <div class="controls" role="group" aria-label="Inspect a batch component">
+          <button data-component="values" aria-pressed="true">Values</button><button data-component="coordinates" aria-pressed="false">Coordinates</button><button data-component="units" aria-pressed="false">Units &amp; frames</button><button data-component="flags" aria-pressed="false">Flags &amp; validity</button><button data-component="weights" aria-pressed="false">Weights</button><button data-component="addresses" aria-pressed="false">Update maps</button>
         </div>
         <div class="component" id="component-detail" aria-live="polite"><h3>Typed visibility values</h3><p>Complex32/64 or supported real values, with checked dimensions, axis labels, and strides. Bind the type once, then run a typed numerical loop.</p></div>
         <pre><code>// Semantic sketch, not a finished Rust API.
-ObservationBlock {
+VisibilityBatch {
     context,       // compatible spectral/correlation context
     topology,      // irregular samples or factored time × baseline
     coordinates,   // epochs, frequencies, baseline/field context
@@ -296,10 +307,13 @@ ObservationBlock {
         <p class="caption">Requested roles only. A flags-only operation need not read visibility values. Missing required roles fail binding.</p>
       </div>
       <p>Metadata declares which axes it depends on. A constant frequency frame, per-time epoch, or per-correlation row weight should not become one allocated object per visibility.</p>
+      <h2>Known units at the numerical boundary</h2>
+      <p>The proposed default views guarantee <strong>Hz for frequency, m for distances, rad for angles, and s for durations</strong>. Epochs retain explicit origin/representation, time scale, and split precision. A caller can request another compatible unit at binding; the result guarantees that choice. A <code>frequency_hz()</code> accessor cannot return MHz.</p>
+      <details><summary>Canonical units, explicit conversions, and the MSv4 convention</summary><p>Unit syntax and scaling are resolved once at the appropriate metadata scope. Shared axes are converted once where possible; other scaling can be fused with fill/decode/packing. Already-canonical views need no unit-conversion pass. Frames remain separate: Hz in TOPO is not Hz in LSRK, and seconds do not imply UTC or TAI.</p><p>The pinned MSv4 schema constrains the main coordinate quantities to Hz, m, s and rad. Visibility units are a string defaulting to Jy. We propose Jy for established flux-density data, rather than converting everything to SI base units; instrumental data cannot acquire a flux calibration through unit conversion. Declared inverse-variance weights and matching sigma must scale consistently with amplitude units.</p><p>Computation does not rewrite persistent unit metadata. Updates convert back to the destination's units under scope and precision checks.</p><p>Sources: <a href="https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/src/xradio/schema/measures.py#L56">coordinate units</a>, <a href="https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/src/xradio/measurement_set/schema.py#L1035">visibility units</a>, and <a href="https://github.com/bglenden/casa-rs/blob/abcc5ac0e773f7ad81f1909317c602c63aedbd98/docs/measurement-set/contracts.md#units-and-measure-references">proposed unit contract</a>.</p></details>
       <div class="note amber"><strong>Three facts stay separate:</strong> selection, whether an acquisition is known to exist, and whether its requested values are usable. NaN padding or a false flag does not prove an acquisition occurred.</div>
       <details><summary>Precision is an explicit request</summary><p>Native precision, lossless widening, and approved narrowing are different policies. The initial imaging binding requests complex64 input (<code>Complex&lt;f32&gt;</code>); narrowing complex128 requires scientific approval. Grid precision does not authorize input conversion.</p></details>
       <div class="pause"><div class="eyebrow">Pause here · D1</div><p>Are these the right contents for the shared structure? Which facts should every consumer be able to rely on without rechecking them per value?</p></div>
-      <p class="source">Read: <a href="https://github.com/bglenden/casa-rs/blob/62dc25fc8b2ed6a9239da9d2f05de8af6c3891cc/docs/measurement-set/contracts.md#3-numeric-arrays-metadata-and-data-groups">Contracts §3</a>.</p>
+      <p class="source">Read: <a href="https://github.com/bglenden/casa-rs/blob/abcc5ac0e773f7ad81f1909317c602c63aedbd98/docs/measurement-set/contracts.md#3-numeric-arrays-metadata-and-data-groups">Contracts §3</a>.</p>
     </section>
 
     <section class="step" id="layout" data-title="Choose a memory layout" aria-labelledby="title-layout">
@@ -320,32 +334,39 @@ ObservationBlock {
       <p>Checked strides determine whether a view is possible. Transposes, sparse gathers, type conversion, and decompression can require accounted buffers. The interface does not promise universal zero-copy access.</p>
       <details><summary>What factoring saves, and what it cannot save</summary><p>Time and baseline coordinate entries can scale as O(T+B). UVW and other truly sample-dependent data still scale with the samples. A rectangular view has one slot per time/baseline pair; duplicate acquisitions cannot be silently averaged or overwritten to make them fit.</p></details>
       <div class="pause"><div class="eyebrow">Pause here · D1</div><p>Are two explicit layouts, checked strides, and separate topology sufficient for the first real imaging and calibration kernels?</p></div>
-      <p class="source">Read: <a href="https://github.com/bglenden/casa-rs/blob/62dc25fc8b2ed6a9239da9d2f05de8af6c3891cc/docs/measurement-set/contracts.md#3-numeric-arrays-metadata-and-data-groups">Contracts §3</a>. M1 must test the actual kernels before these choices stabilize.</p>
+      <p class="source">Read: <a href="https://github.com/bglenden/casa-rs/blob/abcc5ac0e773f7ad81f1909317c602c63aedbd98/docs/measurement-set/contracts.md#3-numeric-arrays-metadata-and-data-groups">Contracts §3</a>. M1 must test the actual kernels before these choices stabilize.</p>
     </section>
 
     <section class="step" id="request" data-title="Negotiate access" aria-labelledby="title-request">
       <div class="eyebrow">06 · Algorithm-led access</div>
       <h1 id="title-request" tabindex="-1">The algorithm states its needs.<br>The adapter binds a realization.</h1>
-      <p class="lead">The request specifies scientific grouping, roles, layout, precision, and ordering. The backend realizes those requirements within the admitted memory and worker budget.</p>
+      <p class="lead">The processing planner sends the adapter a declared access pattern plus required units, precision, and layouts. The adapter returns a realization within the admitted memory and worker budget.</p>
+      <div class="table-scroll"><table><thead><tr><th>Request carries</th><th>What the adapter learns</th></tr></thead><tbody>
+        <tr><td>Selection and roles</td><td>Which fields/SPWs/channels/correlations and visibility/flag/weight/geometry arrays are needed.</td></tr>
+        <tr><td>Traversal and scientific grouping</td><td>Required ordering, legal reordering/interleaving, solution-bin boundaries, and fragment/completion rules.</td></tr>
+        <tr><td>Compute windows and overlap</td><td>What the operation consumes together; channel waves, contiguous axes, and required neighborhoods/halos.</td></tr>
+        <tr><td>Layouts, units and precision</td><td>Which array views and conversions the consumer can accept.</td></tr>
+        <tr><td>Revisits and delivery limits</td><td>Repeated passes or reuse needs and bounded aggregation. Adaptive pass counts are identified as estimates; revisiting does not imply retaining all input.</td></tr>
+      </tbody></table></div>
       <div class="diagram">
         <div class="controls" role="group" aria-label="Example consumer"><button data-consumer="image" aria-pressed="true">Cube imaging</button><button data-consumer="solve" aria-pressed="false">Calibration solve</button><button data-consumer="apply" aria-pressed="false">Apply calibration</button></div>
         <div class="columns" style="margin-bottom:0">
           <div class="box accent"><h3>Example request</h3><div id="consumer-request" aria-live="polite"><p>Selected channel wave; visibility, flags, weights, UVW and frequency context; a kernel-compatible channel-local layout.</p></div></div>
           <div class="box"><h3>Binding must disclose</h3><div id="consumer-binding" aria-live="polite"><p>Actual chunks decoded, packing and image-state memory, and repeated whole-band reads if stored chunks span more channels than the wave.</p></div></div>
         </div>
-        <p class="caption">Illustrative requests, not universal defaults. A real kernel declares the layouts and orderings it accepts.</p>
+        <p class="caption">Illustrative requests, not universal defaults. The processing planner supplies the operation's requirements before iteration; the numerical loop receives the agreed views.</p>
       </div>
       <div class="table-scroll"><table><thead><tr><th>Hard requirement</th><th>Preference</th><th>Binding result</th></tr></thead><tbody><tr><td>Scientific selection/grouping, accepted strides, permitted precision changes, required order</td><td>Aggregation target and locality among scientifically equivalent choices</td><td>An exact supported realization, or a typed error explaining the limiting capability/working set</td></tr></tbody></table></div>
       <p>The budget includes payloads, decoded chunks, codec scratch, packed copies, indexes, caches, queued writes, and consumer state that are alive together. A backend cannot make a minimum decode buffer disappear by promising smaller compute windows.</p>
       <div class="note amber">Chunk geometry still matters. Reading a narrow channel window from a full-band compressed chunk may decode the full band repeatedly. Larger aggregation alone does not fix this; creation policies and admitted traversal choices must be measured.</div>
       <div class="pause"><div class="eyebrow">Pause here · D2</div><p>Does the request give the algorithm enough control while leaving the adapter room to use larger native MSv4 operations?</p></div>
-      <p class="source">Read: <a href="https://github.com/bglenden/casa-rs/blob/62dc25fc8b2ed6a9239da9d2f05de8af6c3891cc/docs/measurement-set/contracts.md#4-access-requests-and-scientific-groups">Contracts §4</a> and <a href="https://github.com/bglenden/casa-rs/blob/62dc25fc8b2ed6a9239da9d2f05de8af6c3891cc/docs/measurement-set/architecture.md#4-access-is-negotiated-once-then-executed-in-bulk">Architecture §4</a>.</p>
+      <p class="source">Read: <a href="https://github.com/bglenden/casa-rs/blob/abcc5ac0e773f7ad81f1909317c602c63aedbd98/docs/measurement-set/contracts.md#4-access-requests-and-scientific-groups">Contracts §4</a> and <a href="https://github.com/bglenden/casa-rs/blob/abcc5ac0e773f7ad81f1909317c602c63aedbd98/docs/measurement-set/architecture.md#4-access-is-negotiated-once-then-executed-in-bulk">Architecture §4</a>.</p>
     </section>
 
     <section class="step" id="groups" data-title="Accumulate a solve" aria-labelledby="title-groups">
       <div class="eyebrow">07 · Scientific completion</div>
-      <h1 id="title-groups" tabindex="-1">A solution interval can span many blocks.</h1>
-      <p class="lead">A splittable solver consumes fragments and retains its admitted accumulator state. The storage block does not set the solution boundary.</p>
+      <h1 id="title-groups" tabindex="-1">A solution interval can span many batches.</h1>
+      <p class="lead">A splittable solver consumes fragments and retains its admitted accumulator state. The storage batch does not set the solution boundary.</p>
       <div class="diagram">
         <h3>Two interleaved scientific groups, K0 and K1</h3>
         <p class="tiny">Each can be a solution-bin/SPW key under an explicit grouping rule. A combined-SPW solve uses a different declared key. This sequence illustrates control events, not a solver implementation.</p>
@@ -358,7 +379,7 @@ ObservationBlock {
       <p>Closing a group needs a proven traversal frontier or end-of-stream. Seeing a later timestamp in an unordered stream is insufficient. A later <code>GroupEnd</code> can close input when the final payload could not carry that proof; completion is signaled exactly once.</p>
       <details><summary>What if a solve needs every sample at once?</summary><p>It must declare that requirement. It either fits within admission, uses an explicitly supported equivalent bounded strategy, or fails. Storage does not secretly build a whole-observation replay cache. Iterative revisits are explicit bounded passes.</p></details>
       <div class="pause"><div class="eyebrow">Pause here · D2</div><p>Do these grouping and completion rules fit gain and bandpass solving, including multi-SPW rules and late samples?</p></div>
-      <p class="source">Read: <a href="https://github.com/bglenden/casa-rs/blob/62dc25fc8b2ed6a9239da9d2f05de8af6c3891cc/docs/measurement-set/contracts.md#4-access-requests-and-scientific-groups">Contracts §4</a>.</p>
+      <p class="source">Read: <a href="https://github.com/bglenden/casa-rs/blob/abcc5ac0e773f7ad81f1909317c602c63aedbd98/docs/measurement-set/contracts.md#4-access-requests-and-scientific-groups">Contracts §4</a>.</p>
     </section>
 
     <section class="step" id="workers" data-title="Finish at different rates" aria-labelledby="title-workers">
@@ -381,10 +402,10 @@ ObservationBlock {
       </div>
       <p>Independent jobs can finish out of order where the algorithm permits. Shared mutable arrays require exclusive ownership or proven disjoint regions. Buffers are reused only after actual last use, including any outstanding device operation. Queues and scratch stay under the existing resource authority.</p>
       <h2>Your cube CLEAN example</h2>
-      <p>Visibility blocks belong to gridding/prediction passes. Model, residual, mask, and solver state belong to imaging. A channel needing more minor-cycle iterations should not keep its input visibility block alive. A completed channel can release scratch and free workers for other admitted work; required image state survives for later major cycles and products.</p>
+      <p>Visibility batches belong to gridding/prediction passes. Model, residual, mask, and solver state belong to imaging. A channel needing more minor-cycle iterations should not keep its input visibility batch alive. A completed channel can release scratch and free workers for other admitted work; required image state survives for later major cycles and products.</p>
       <div class="note">Scientific coupling and major-cycle/stopping rules may still require joins. The shared representation itself adds no global “all channels must finish” barrier.</div>
-      <div class="pause"><div class="eyebrow">Pause here · D3</div><p>Does this separate the lifetimes you had in mind: input blocks, work-group state, and reusable thread-local scratch?</p></div>
-      <p class="source">Read: <a href="https://github.com/bglenden/casa-rs/blob/62dc25fc8b2ed6a9239da9d2f05de8af6c3891cc/docs/measurement-set/contracts.md#independent-work-unit-lifetimes">Independent work-unit lifetimes</a>. M1 must prove safe handoff, independent progress, pinning, cancellation, and bounded queues.</p>
+      <div class="pause"><div class="eyebrow">Pause here · D3</div><p>Does this separate the lifetimes you had in mind: input batches, work-group state, and reusable thread-local scratch?</p></div>
+      <p class="source">Read: <a href="https://github.com/bglenden/casa-rs/blob/abcc5ac0e773f7ad81f1909317c602c63aedbd98/docs/measurement-set/contracts.md#independent-work-unit-lifetimes">Independent work-unit lifetimes</a>. M1 must prove safe handoff, independent progress, pinning, cancellation, and bounded queues.</p>
     </section>
 
     <section class="step" id="updates" data-title="Write changes back" aria-labelledby="title-updates">
@@ -402,7 +423,7 @@ ObservationBlock {
       <p>The same care applies to data groups sharing variables and integer flags carrying multiple reasons. Updates preserve unselected values and unknown flag bits. The sink coalesces physical writes within bounded flush windows.</p>
       <details><summary>Locks and failures are part of the contract</summary><p>Plan read/write ownership before traversal, including destination-column creation. Original-input semantics need disjoint native regions or a proven read-before-write order. MSv2 retains ordinary casacore locks and partial-failure behavior.</p><p>The proposed local MSv4 profile replaces each encoded object atomically on supported filesystems. Failure may still leave some objects updated and others unchanged. This does not provide a dataset transaction, concurrent-reader snapshot, cross-process XRADIO lock protocol, or an automatic power-loss guarantee.</p></details>
       <div class="pause"><div class="eyebrow">Pause here · D3</div><p>Are explicit per-role patches and mutation scopes the right write interface? Is the proposed per-object MSv4 failure guarantee sufficient?</p></div>
-      <p class="source">Read: <a href="https://github.com/bglenden/casa-rs/blob/62dc25fc8b2ed6a9239da9d2f05de8af6c3891cc/docs/measurement-set/contracts.md#7-updates-and-creation">Contracts §7</a>.</p>
+      <p class="source">Read: <a href="https://github.com/bglenden/casa-rs/blob/abcc5ac0e773f7ad81f1909317c602c63aedbd98/docs/measurement-set/contracts.md#7-updates-and-creation">Contracts §7</a>.</p>
     </section>
 
     <section class="step" id="creation" data-title="Create and interoperate" aria-labelledby="title-creation">
@@ -425,7 +446,7 @@ ObservationBlock {
       </tbody></table></div>
       <p>These are examples from a longer loss table. Arbitrary MSv2 → MSv4 → MSv2 exact-row roundtrips are not promised.</p>
       <div class="pause"><div class="eyebrow">Pause here · D5</div><p>Are source-free creation and explicit conversion-loss policies strong enough to protect persistent interoperability?</p></div>
-      <p class="source">Read: <a href="https://github.com/bglenden/casa-rs/blob/62dc25fc8b2ed6a9239da9d2f05de8af6c3891cc/docs/measurement-set/architecture.md#conversion-fidelity">Conversion fidelity table</a> and <a href="https://github.com/bglenden/casa-rs/blob/62dc25fc8b2ed6a9239da9d2f05de8af6c3891cc/docs/measurement-set/contracts.md#7-updates-and-creation">creation contract</a>.</p>
+      <p class="source">Read: <a href="https://github.com/bglenden/casa-rs/blob/abcc5ac0e773f7ad81f1909317c602c63aedbd98/docs/measurement-set/architecture.md#conversion-fidelity">Conversion fidelity table</a> and <a href="https://github.com/bglenden/casa-rs/blob/abcc5ac0e773f7ad81f1909317c602c63aedbd98/docs/measurement-set/contracts.md#7-updates-and-creation">creation contract</a>.</p>
     </section>
 
     <section class="step" id="rust" data-title="Place the Rust pieces" aria-labelledby="title-rust">
@@ -433,7 +454,7 @@ ObservationBlock {
       <h1 id="title-rust" tabindex="-1">A small shared contract.<br>Specialized owners around it.</h1>
       <p class="lead">The proposed <code>casa-observation</code> crate holds raw scientific primitives and observation contracts. Storage adapters and scientific engines depend on it.</p>
       <div class="table-scroll"><table><thead><tr><th>Owner</th><th>Responsibility</th></tr></thead><tbody>
-        <tr><td><code>casa-observation</code><br><span class="tiny">Proposed new crate</span></td><td>Epochs/frames, directions, spectral coordinates, ordered baselines; block/array views; access and source/sink contracts. No workspace dependencies or execution runtime.</td></tr>
+        <tr><td><code>casa-observation</code><br><span class="tiny">Proposed new crate</span></td><td>Epochs/frames, directions, spectral coordinates, ordered baselines; batch/array views; access and source/sink contracts. No workspace dependencies or execution runtime.</td></tr>
         <tr><td><code>casa-ms</code></td><td>MSv2/MSv4 adapters, schema/catalogue mapping, retained storage bindings, decode/pack, and persistence.</td></tr>
         <tr><td>Imaging and calibration owners</td><td>Geometry projection, scientific transformations, gridding, solving, and their own admitted working state.</td></tr>
         <tr><td>Existing execution/resource owners</td><td>Worker teams, memory admission, cancellation, and pass lifecycle. Backend decode uses that admitted executor.</td></tr>
@@ -443,7 +464,7 @@ ObservationBlock {
       <div class="note amber">Moving shared raw primitives changes the current dependency rule for <code>casa-imaging-model</code>. This is an explicit proposed ADR/policy amendment; the accepted architecture has not already been changed.</div>
       <details><summary>Scope of the initial MSv4 profile</summary><p>Local interferometric <code>VisibilityXds</code>, XRADIO schema 4.0.1 and Zarr v3. Read, create, update, codecs, and structural capabilities are tracked separately. Other schema versions, Zarr v2, remote mutation, and antenna-axis spectra need their own evidence.</p><p>Production orchestration and science are Rust. Native codec dependencies are compatible with this goal; optional Python tooling can prepare data and serve as an interoperability oracle.</p></details>
       <div class="pause"><div class="eyebrow">Pause here · D4</div><p>Is the new raw-science contract crate the right long-term home for these primitives and interfaces?</p></div>
-      <p class="source">Read: <a href="https://github.com/bglenden/casa-rs/blob/62dc25fc8b2ed6a9239da9d2f05de8af6c3891cc/docs/measurement-set/architecture.md#3-proposed-ownership">Proposed ownership</a>, <a href="https://github.com/bglenden/casa-rs/blob/62dc25fc8b2ed6a9239da9d2f05de8af6c3891cc/docs/measurement-set/architecture.md#7-reference-baseline">pinned technology references</a>, and <a href="https://zarr-specs.readthedocs.io/en/latest/v3/core/index.html">Zarr v3 specification</a>.</p>
+      <p class="source">Read: <a href="https://github.com/bglenden/casa-rs/blob/abcc5ac0e773f7ad81f1909317c602c63aedbd98/docs/measurement-set/architecture.md#3-proposed-ownership">Proposed ownership</a>, <a href="https://github.com/bglenden/casa-rs/blob/abcc5ac0e773f7ad81f1909317c602c63aedbd98/docs/measurement-set/architecture.md#7-reference-baseline">pinned technology references</a>, and <a href="https://zarr-specs.readthedocs.io/en/latest/v3/core/index.html">Zarr v3 specification</a>.</p>
     </section>
 
     <section class="step" id="review" data-title="Decide, prove, then build" aria-labelledby="title-review">
@@ -453,7 +474,7 @@ ObservationBlock {
       <div class="milestones"><div class="milestone"><b>M0</b>Inventory, profiles, baseline</div><div class="milestone key"><b>M1</b>Executable contract trial</div><div class="milestone"><b>M2</b>Production MSv2 cutover</div><div class="milestone"><b>M3</b>Native MSv4 backend</div><div class="milestone"><b>M4</b>Remaining consumers</div><div class="milestone"><b>M5</b>Integrated acceptance</div></div>
       <p>M2 and M3 can proceed as coordinated branches after M1. M1 is the key checkpoint: real v2/v4 reads, imaging and calibration, addressed updates, source-free creation, unequal worker completion, interoperability, and bounded resources.</p>
       <div class="columns">
-        <div class="card"><div class="decision-tag">D1 · REPRESENTATION</div><h3>Are the block's meanings right?</h3><p>Typed arrays, two topologies, separate presence/validity, coordinates, and group associations.</p></div>
+        <div class="card"><div class="decision-tag">D1 · REPRESENTATION</div><h3>Are the batch's meanings right?</h3><p>Typed arrays, two topologies, separate presence/validity, coordinates, and group associations.</p></div>
         <div class="card"><div class="decision-tag">D2 · ACCESS</div><h3>Do algorithms have enough control?</h3><p>Hard layout/grouping requirements, fragments, closure, and larger native aggregation.</p></div>
         <div class="card"><div class="decision-tag">D3 · OWNERSHIP &amp; WRITES</div><h3>Are lifetimes and mutation precise?</h3><p>Independent retirement, shared-allocation pinning, inverse maps, aliases, and failure boundaries.</p></div>
         <div class="card"><div class="decision-tag">D4 · BOUNDARIES</div><h3>Do types live with the right owner?</h3><p>Shared raw primitives, storage adapters, scientific geometry, and one resource authority.</p></div>
@@ -467,12 +488,12 @@ ObservationBlock {
       <h2>Review sources</h2>
       <ul>
         <li><a href="https://github.com/bglenden/casa-rs/pull/878">Draft PR #878</a> — discussion and Pro/Fable review responses.</li>
-        <li><a href="https://github.com/bglenden/casa-rs/blob/62dc25fc8b2ed6a9239da9d2f05de8af6c3891cc/docs/measurement-set/README.md">Revision 2 review guide</a> — decisions and pinned casa-rs source map.</li>
-        <li><a href="https://github.com/bglenden/casa-rs/blob/62dc25fc8b2ed6a9239da9d2f05de8af6c3891cc/docs/measurement-set/contracts.md">Intermediate contracts</a> — full semantic proposal behind this explanation.</li>
-        <li><a href="https://github.com/bglenden/casa-rs/blob/62dc25fc8b2ed6a9239da9d2f05de8af6c3891cc/docs/measurement-set/implementation-plan.md">Implementation plan</a> — M0–M5, evidence packets, and change control.</li>
-        <li><a href="https://github.com/bglenden/casa-rs/blob/62dc25fc8b2ed6a9239da9d2f05de8af6c3891cc/docs/measurement-set/architecture.md#7-reference-baseline">Primary references</a> — pinned XRADIO, Zarr, casacore, and Rust dependency evidence.</li>
+        <li><a href="https://github.com/bglenden/casa-rs/blob/abcc5ac0e773f7ad81f1909317c602c63aedbd98/docs/measurement-set/README.md">Revision 2 review guide</a> — decisions and pinned casa-rs source map.</li>
+        <li><a href="https://github.com/bglenden/casa-rs/blob/abcc5ac0e773f7ad81f1909317c602c63aedbd98/docs/measurement-set/contracts.md">Intermediate contracts</a> — full semantic proposal behind this explanation.</li>
+        <li><a href="https://github.com/bglenden/casa-rs/blob/abcc5ac0e773f7ad81f1909317c602c63aedbd98/docs/measurement-set/implementation-plan.md">Implementation plan</a> — M0–M5, evidence packets, and change control.</li>
+        <li><a href="https://github.com/bglenden/casa-rs/blob/abcc5ac0e773f7ad81f1909317c602c63aedbd98/docs/measurement-set/architecture.md#7-reference-baseline">Primary references</a> — pinned XRADIO, Zarr, casacore, and Rust dependency evidence.</li>
       </ul>
-      <p class="source">This standalone explanation reflects draft <code>62dc25fc</code>. The linked proposal governs if the explanation omits detail. Examples are illustrative; no implementation or benchmark result is claimed.</p>
+      <p class="source">This standalone explanation reflects draft <code>abcc5ac0</code>. The linked proposal governs if the explanation omits detail. Examples are illustrative; no implementation or benchmark result is claimed.</p>
     </section>
 
     <details class="notes js-only" id="notes-panel">
@@ -481,7 +502,7 @@ ObservationBlock {
       <textarea id="step-notes" placeholder="Questions, disagreements, or changes to discuss…"></textarea>
       <div class="notes-actions"><span class="tiny" id="notes-status" role="status">Notes stay in this browser. Export to keep or share; nothing is posted to GitHub.</span><button id="export-notes">Export all notes</button></div>
     </details>
-    <footer class="js-only"><button id="previous">← Back</button><span id="next-label">Next: Separate the units</span><button id="next" class="primary">Next →</button></footer>
+    <footer class="js-only"><button id="previous">← Back</button><span id="next-label">Next: Separate the concepts</span><button id="next" class="primary">Next →</button></footer>
   </main>
 </div>
 <script>
@@ -573,7 +594,7 @@ ObservationBlock {
     }
   });
   document.getElementById('export-notes').addEventListener('click', () => {
-    const lines = ['# MSv2/MSv4 design review notes', '', 'Draft snapshot: 62dc25fc', 'PR: https://github.com/bglenden/casa-rs/pull/878', '', 'Personal discussion notes; not design approval.', ''];
+    const lines = ['# MSv2/MSv4 design review notes', '', 'Draft snapshot: abcc5ac0', 'PR: https://github.com/bglenden/casa-rs/pull/878', '', 'Personal discussion notes; not design approval.', ''];
     sections.forEach((section, i) => {
       const value = notes[section.id];
       if (typeof value === 'string' && value.trim()) lines.push(`## ${i + 1}. ${section.dataset.title}`, '', value.trim(), '');
@@ -592,6 +613,7 @@ ObservationBlock {
   const components = {
     values: ['Typed visibility values', 'Complex32/64 or supported real values, with checked dimensions, axis labels, and strides. Bind the type once, then run a typed numerical loop.'],
     coordinates: ['Coordinates with declared axes', 'Epoch/time scale, ordered antenna/feed pairs, frequency/frame, UVW, and group-specific field/source context. Keep genuinely per-sample quantities; factor repeated time and baseline axes when possible.'],
+    units: ['Guaranteed units; explicit references', 'Canonical processing coordinates use Hz, m, rad and s. Alternative compatible units are requested at binding and guaranteed by the returned view. Frames, epoch origins and time scales remain explicit; unit scaling does not perform those scientific transformations.'],
     flags: ['Native flags and separate validity', 'Retain boolean or bitmask flags, reasons, and requested legacy row/category flags. Selection, acquisition occupancy, and computational validity are distinct. Preserve unknown bits on writes.'],
     weights: ['Weights with native broadcast semantics', 'A row/correlation weight may apply across channels without being copied into every element. Channel-dependent weights, undefined-cell fallback, units, and provenance remain explicit.'],
     addresses: ['Optional role-specific inverse maps', 'Reordering or selecting samples preserves checked provenance for the selected writable role. A row-weight scalar has a different address domain from a visibility array; reductions do not retain an invented inverse.']
