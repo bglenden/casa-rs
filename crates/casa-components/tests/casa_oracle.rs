@@ -9,8 +9,8 @@
 //! cargo test -p casa-components --test casa_oracle -- --ignored --nocapture
 //! ```
 //!
-//! For two lists (the CASA fixture as casa-rs reads it, and one built through
-//! casa-rs's constructors):
+//! For three lists (the CASA fixture as casa-rs reads it, one built through
+//! casa-rs's constructors, and an empty one):
 //!
 //! 1. casa-rs writes the list;
 //! 2. CASA's `cl.open` and `cl.getcomponent` read it, and every component and
@@ -255,6 +255,7 @@ fn casa_reads_rewrites_and_casa_rs_reads_back() {
     let from_casa = ComponentList::read_table(&fixture).expect("read fixture");
     check_round_trip(&python, &from_casa, scratch.path(), "fixture");
     check_round_trip(&python, &constructed_list(), scratch.path(), "constructed");
+    check_round_trip(&python, &ComponentList::new(), scratch.path(), "empty");
 }
 
 #[test]

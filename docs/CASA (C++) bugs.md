@@ -30,6 +30,8 @@ Simulator behaviours casa-rs does not follow:
 [the measures tool's default frame](#the-measures-tool-converts-with-a-frame-at-mjd-0-and-the-geocentre),
 [the model `predict` rewrites](#smpredict-rewrites-the-model-image),
 [models the simulator cannot read](#smpredict-accepts-models-the-simulator-cannot-read).
+Component-list behaviours casa-rs does not follow:
+[a limb-darkened disk without an exponent](#writing-a-limb-darkened-disk-without-an-exponent-aborts-casa).
 
 ## AW-projection pairs the partner hand's visibility with the conjugate-baseline cell
 
@@ -614,3 +616,21 @@ and returns False, and the script continues with DATA not predicted. These outco
 and were not probed. casa-rs's check opens each model as the simulator reads
 it, so a FITS or complex model raises RuntimeError "Unable to open image …"
 at the call.
+
+## Writing a limb-darkened disk without an exponent aborts CASA
+
+- Date noted: 2026-10-23
+- Status: CASA behaviour casa-rs does not follow (#841)
+- Affected code: `casatools/src/code/components/ComponentModels/ComponentList.cc`
+  (`writeTable`, lines 1016-1022; `readTable`, lines 1155-1161)
+
+A component list holding a limb-darkened disk gets an `Optional_Parameters`
+column, and `writeTable` puts each such component's optional parameters in
+it; the first is the disk's limb-darkening exponent. A limb-darkened disk
+made through `cl.fromrecord` without `optionalParameters` has none, and
+writing it throws `casacore::indexError` from the `ComponentList`
+destructor, which terminates the process (probed with CASA 6.7.6: `fromrecord`
+and `rename` succeed, `close` aborts). Had the empty vector been stored,
+`readTable` would read its first element out of bounds. casa-rs leaves the
+cell undefined, which CASA reads as the shape's default exponent of 0.05, as
+it reads every other row the column does not describe.
