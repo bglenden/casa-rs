@@ -20,6 +20,7 @@ mod geometry;
 mod pipeline;
 mod prediction;
 mod resources;
+mod single_dish;
 mod subtables;
 #[cfg(test)]
 mod tests;

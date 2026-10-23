@@ -37,7 +37,8 @@ use casa_imaging_runtime::{Demand, Reservation, admit, charge_process_caches, fr
 use super::error::{SimulatorError, SimulatorResult};
 use super::{BackendRequest, Simulator};
 use crate::predict::{
-    BeamPattern, FtMachine, ModelLayout, ModelOperator, PredictError, PrimaryBeam, SkyModel,
+    BeamPattern, FtMachine, ModelLayout, ModelOperator, PredictError, PrimaryBeam,
+    SingleDishKernel, SkyModel,
 };
 
 /// The phase a model's grids are admitted as.
@@ -53,9 +54,9 @@ const W_SCREENS_PHASE: &str = "the simulator's W-projection screens";
 /// The phase a model's kernels are admitted as.
 const KERNEL_PHASE: &str = "the simulator's convolution functions";
 
-/// The FTMachines CASA's simulator builds other than `GridFT` and
-/// `WProjectFT`.
-const OTHER_FTMACHINES: [&str; 4] = ["sd", "both", "mosaic", "pbwproject"];
+/// The FTMachines CASA's simulator builds other than `GridFT`,
+/// `WProjectFT` and `SDGrid`.
+const OTHER_FTMACHINES: [&str; 3] = ["both", "mosaic", "pbwproject"];
 
 /// The arguments of `sm.predict`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -114,10 +115,11 @@ impl PredictSpec {
 /// `WProjectFT` predict; the session's memory budget stands for `cache`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PredictionOptions {
-    /// `ftmachine`: `WProjectFT` for `wproject`, and `GridFT` unless `sd`,
-    /// `both`, `mosaic` or `pbwproject` (case-insensitive).
+    /// `ftmachine`: `WProjectFT` for `wproject`, `SDGrid` for `sd`, and
+    /// `GridFT` unless `both`, `mosaic` or `pbwproject` (case-insensitive).
     pub ftmachine: String,
-    /// `gridfunction`; `SF`, the spheroid, is implemented.
+    /// `gridfunction`: `SF`, the spheroid, for `GridFT` and `WProjectFT`;
+    /// `PB`, `BOX` or `SF` for `SDGrid`.
     pub grid_function: String,
     /// `padding`, `GridFT`'s; factors below 1 are ignored, as CASA ignores
     /// them. `WProjectFT` pads by 1 whatever it is.
@@ -227,9 +229,10 @@ impl Simulator {
     ///
     /// # Errors
     ///
-    /// Not yet implemented: an FTMachine other than `GridFT` and
-    /// `WProjectFT` (`sd`, `both`, `mosaic`, `pbwproject`), or a grid
-    /// function other than `SF`. Nothing is recorded then.
+    /// Not yet implemented: an FTMachine other than `GridFT`, `WProjectFT`
+    /// and `SDGrid` (`both`, `mosaic`, `pbwproject`), a grid function other
+    /// than `SF` for `GridFT` and `WProjectFT`, or other than `PB`, `BOX`
+    /// and `SF` for `SDGrid`. Nothing is recorded then.
     pub fn set_options(&mut self, options: &PredictionOptions) -> SimulatorResult<()> {
         let ftmachine = options.ftmachine.to_lowercase();
         if OTHER_FTMACHINES.contains(&ftmachine.as_str()) {
@@ -242,14 +245,26 @@ impl Simulator {
                 "setoptions(ftmachine='{ftmachine}') is not yet implemented in casa-rs ({phase})"
             )));
         }
-        let grid_function = options.grid_function.to_lowercase();
-        if grid_function != "sf" {
-            return Err(SimulatorError::not_yet_implemented(format!(
-                "setoptions(gridfunction='{}') is not yet implemented in casa-rs (#841); \
-                 'SF' is",
-                options.grid_function
-            )));
-        }
+        let single_dish = if ftmachine == "sd" {
+            Some(
+                SingleDishKernel::from_grid_function(&options.grid_function).ok_or_else(|| {
+                    SimulatorError::not_yet_implemented(format!(
+                        "setoptions(ftmachine='sd', gridfunction='{}') is not yet implemented \
+                         in casa-rs (#841); 'PB', 'BOX' and 'SF' are",
+                        options.grid_function
+                    ))
+                })?,
+            )
+        } else {
+            if options.grid_function.to_lowercase() != "sf" {
+                return Err(SimulatorError::not_yet_implemented(format!(
+                    "setoptions(gridfunction='{}') is not yet implemented in casa-rs (#841); \
+                     'SF' is",
+                    options.grid_function
+                )));
+            }
+            None
+        };
         tracing::info!("Setting processing options");
         // CASA keeps a padding of at least 1 and ignores the rest.
         let padding = options.padding as f32;
@@ -258,6 +273,7 @@ impl Simulator {
                 .map_err(|error| SimulatorError::raised(format!("padding {padding}: {error}")))?;
         }
         self.w_projection_planes = (ftmachine == "wproject").then_some(options.w_planes);
+        self.single_dish = single_dish;
         Ok(())
     }
 
@@ -410,6 +426,9 @@ impl Simulator {
         if beam.is_some() {
             self.check_pointings_on_fields()?;
         }
+        if let Some(kernel) = self.single_dish {
+            return self.predict_single_dish(&model, kernel, beam, spec.incremental);
+        }
         let layout = ModelLayout::new(&model, &correlations, self.ft_machine()?)
             .map_err(|error| correlation_error(error, &correlations))?;
         let (kernels, kernel_reservation) = self.admitted_kernels(&layout)?;
@@ -460,24 +479,33 @@ impl Simulator {
         if !self.voltage_pattern {
             return Ok(None);
         }
-        let telescope = self
-            .observations
-            .first()
-            .map_or(self.telescope.as_str(), |observation| {
-                observation.telescope.as_str()
-            });
-        let reference_frequency_hz = self
-            .spectral_windows
-            .first()
-            .map_or(0.0, |window| window.start_frequency_hz);
-        let beam =
-            PrimaryBeam::for_telescope(telescope, reference_frequency_hz).ok_or_else(|| {
+        let telescope = self.observing_telescope();
+        let beam = PrimaryBeam::for_telescope(telescope, self.reference_frequency_hz())
+            .ok_or_else(|| {
                 SimulatorError::not_yet_implemented(format!(
                     "setvp(dovp=True) for telescope {telescope} is not yet implemented in \
                      casa-rs (#841); the default patterns of ALMA, ACA, VLA and EVLA are"
                 ))
             })?;
         Ok(Some(beam))
+    }
+
+    /// OBSERVATION row 0's telescope, whose patterns CASA's `VPSkyJones`
+    /// takes (`msc.observation().telescopeName()(0)`).
+    pub(super) fn observing_telescope(&self) -> &str {
+        self.observations
+            .first()
+            .map_or(self.telescope.as_str(), |observation| {
+                observation.telescope.as_str()
+            })
+    }
+
+    /// Spectral window 0's reference frequency, which picks the VLA's
+    /// pattern by band (`VPSkyJones`), Hz.
+    pub(super) fn reference_frequency_hz(&self) -> f64 {
+        self.spectral_windows
+            .first()
+            .map_or(0.0, |window| window.start_frequency_hz)
     }
 
     /// That every scan points at its field, as a primary beam centred on
@@ -502,7 +530,7 @@ impl Simulator {
 
     /// The fields of the scans observed so far, each once, in the order
     /// first observed.
-    fn observed_fields(&self) -> Vec<usize> {
+    pub(super) fn observed_fields(&self) -> Vec<usize> {
         let mut fields = Vec::new();
         for scan in &self.scans {
             if !fields.contains(&scan.field_id) {

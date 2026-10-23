@@ -159,14 +159,43 @@ impl BeamPattern {
         let squared = |pixel: usize, axis: usize| {
             ((pixel as f64 - centre[axis]) * increment_deg[axis]).powi(2) as f32
         };
-        let lookup = match &self.0 {
-            Lookup::Airy(table) => PlaneLookup::Airy(table),
-            Lookup::Evla => PlaneLookup::Evla(EvlaPowerPattern::at(frequency_hz)),
-        };
+        let lookup = self.lookup_at(frequency_hz);
         Array2::from_shape_fn((ny, nx), |(y, x)| {
             let radius = (f64::from((squared(x, 0) + squared(y, 1)).sqrt()) * factor) as f32;
             lookup.power(f64::from(radius))
         })
+    }
+
+    /// The power pattern `offset_rad` along an image's x axis from its
+    /// centre, at `frequency_hz`, with [`Self::power_plane`]'s arithmetic
+    /// (`SDGrid::findPBAsConvFunction` applies the beam to a one-row
+    /// image).
+    pub(super) fn power_on_axis(&self, offset_rad: f64, frequency_hz: f64) -> f32 {
+        let ghz = frequency_hz / 1.0e9;
+        let l_deg = offset_rad.to_degrees() as f32;
+        let radius_deg = (l_deg * l_deg).sqrt();
+        let radius = (f64::from(radius_deg) * 60.0 * ghz) as f32;
+        self.lookup_at(frequency_hz).power(f64::from(radius))
+    }
+
+    /// `PBMath1D::support`: the pattern's diameter in pixels of
+    /// `increment_x_rad` at `frequency_hz`, rounded down.
+    pub(super) fn support_pixels(&self, increment_x_rad: f64, frequency_hz: f64) -> usize {
+        let maximum_arcmin_ghz = match &self.0 {
+            Lookup::Airy(table) => table.maximum_radius(),
+            Lookup::Evla => EvlaPowerPattern::MAXIMUM_RADIUS_ARCMIN_GHZ,
+        };
+        let radius_rad = (maximum_arcmin_ghz / 60.0).to_radians();
+        (radius_rad / increment_x_rad.abs() * 2.0 * 1.0e9 / frequency_hz).floor() as usize
+    }
+
+    /// The lookup at `frequency_hz`: the Airy table, or the EVLA's fit of
+    /// that frequency.
+    fn lookup_at(&self, frequency_hz: f64) -> PlaneLookup<'_> {
+        match &self.0 {
+            Lookup::Airy(table) => PlaneLookup::Airy(table),
+            Lookup::Evla => PlaneLookup::Evla(EvlaPowerPattern::at(frequency_hz)),
+        }
     }
 }
 

@@ -35,13 +35,20 @@
 //!
 //! The model must be Stokes I, J2000 and in the axis order `simobserve`
 //! writes.
+//!
+//! `setoptions(ftmachine='sd')` predicts total power instead, by sampling
+//! the model in the image plane as CASA's `SDGrid` does, with no gridding
+//! (`single_dish`).
 
 mod beam;
 mod model;
+mod single_dish;
 
 pub(crate) use beam::BeamPattern;
 pub use beam::PrimaryBeam;
 pub use model::SkyModel;
+pub use single_dish::SingleDishKernel;
+pub(crate) use single_dish::{SingleDishPointings, SingleDishPrediction, SingleDishWindow};
 
 use casa_coordinates::CoordinateError;
 use casa_images::ImageError;

@@ -546,11 +546,12 @@ impl PySimulator {
     }
 
     /// Set how `predict` grids: `GridFT` (`ftmachine='ft'`) with the
-    /// spheroidal `gridfunction='SF'` and its `padding`, and `WProjectFT`
+    /// spheroidal `gridfunction='SF'` and its `padding`, `WProjectFT`
     /// (`ftmachine='wproject'`) with `wprojplanes` planes, which CASA pads
-    /// by 1 whatever `padding` says, are implemented. `WProjectFT` predicts
-    /// on the CPU. Other FTMachines and grid functions raise
-    /// `NotImplementedError`.
+    /// by 1 whatever `padding` says, and total power through `SDGrid`
+    /// (`ftmachine='sd'`) with `gridfunction` `'PB'`, `'BOX'` or `'SF'`, are
+    /// implemented. `WProjectFT` and `SDGrid` predict on the CPU. Other
+    /// FTMachines and grid functions raise `NotImplementedError`.
     #[allow(unused_variables, clippy::too_many_arguments)]
     #[pyo3(
         signature = (

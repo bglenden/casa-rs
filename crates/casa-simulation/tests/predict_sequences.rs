@@ -277,6 +277,23 @@ fn predict_with_a_beam_refuses_pointings_moved_off_their_field() {
 /// the first pointing's projection, at a normalized RMS of 1.1).
 #[test]
 fn a_moved_pointing_is_predicted_at_its_own_phase_centre() {
+    moved_pointing_is_a_field_there(None);
+}
+
+/// Total power samples a moved pointing at its own direction, not its
+/// field's (#874, after #861's moved pointings).
+#[test]
+fn total_power_samples_a_moved_pointing_at_its_own_direction() {
+    moved_pointing_is_a_field_there(Some(&PredictionOptions {
+        ftmachine: "sd".to_string(),
+        grid_function: "PB".to_string(),
+        ..PredictionOptions::default()
+    }));
+}
+
+/// A second pointing moved off its field, predicted after `options`, writes
+/// the DATA of a field at the moved direction.
+fn moved_pointing_is_a_field_there(options: Option<&PredictionOptions>) {
     let directory = tempfile::tempdir().expect("temporary directory");
     let model = extended_model(directory.path(), "model.image");
     let moved = MDirection::from_angles(CENTRE_RAD[0] + 1.0e-5, CENTRE_RAD[1], DirectionRef::J2000);
@@ -302,6 +319,9 @@ fn a_moved_pointing_is_predicted_at_its_own_phase_centre() {
             project: base.project,
         })
         .expect("observemany");
+        if let Some(options) = options {
+            sm.set_options(options).expect("setoptions");
+        }
         sm.predict(&spec(&[&model])).expect("predict");
         sm.close().expect("close");
         read_main(&path).0
@@ -378,13 +398,21 @@ fn setvp_setoptions_and_the_session_refuse_what_casa_rs_lacks() {
         ..VoltagePatternSpec::default()
     }));
     assert_eq!(outcome, CasaOutcome::NotYetImplemented);
-    for ftmachine in ["mosaic", "SD"] {
+    let (outcome, message) = refusal(vla.set_options(&PredictionOptions {
+        ftmachine: "mosaic".to_string(),
+        ..PredictionOptions::default()
+    }));
+    assert_eq!(outcome, CasaOutcome::NotYetImplemented);
+    assert!(message.contains("Phase 2"), "{message}");
+    // SDGrid's Gaussian kernels.
+    for grid_function in ["GAUSS", "GJINC"] {
         let (outcome, message) = refusal(vla.set_options(&PredictionOptions {
-            ftmachine: ftmachine.to_string(),
+            ftmachine: "SD".to_string(),
+            grid_function: grid_function.to_string(),
             ..PredictionOptions::default()
         }));
-        assert_eq!(outcome, CasaOutcome::NotYetImplemented, "{ftmachine}");
-        assert!(message.contains("Phase 2"), "{message}");
+        assert_eq!(outcome, CasaOutcome::NotYetImplemented, "{grid_function}");
+        assert!(message.contains("'PB', 'BOX' and 'SF' are"), "{message}");
     }
     let (outcome, _) = refusal(vla.set_options(&PredictionOptions {
         grid_function: "BOX".to_string(),

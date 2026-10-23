@@ -502,10 +502,15 @@ def describe_data(data: dict) -> str:
     """A one-line summary of a scenario's DATA comparison."""
     kind = data.get("kind")
     if kind == "model" and data.get("nrms") is not None:
-        auto = data.get("auto_nrms")
+        # A total-power MS has autocorrelations only.
+        parts = [
+            f"{name} {value:.2e}"
+            for name, value in (("cross", data.get("cross_nrms")), ("auto", data.get("auto_nrms")))
+            if value is not None
+        ]
         return (
             f"; DATA NRMS {data['nrms']:.2e} over {data['samples_compared']} samples"
-            f" (cross {data['cross_nrms']:.2e}" + (f", auto {auto:.2e}" if auto is not None else "") + ")"
+            f" ({', '.join(parts)})"
         )
     if kind == "noisy" and "casa" in data and "casa-rs" in data:
         variances = lambda side: ", ".join(  # noqa: E731

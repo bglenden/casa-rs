@@ -1,0 +1,922 @@
+{
+ "schema_version": 1,
+ "purpose": "simulation Phase 2 (#841): sm total power (setoptions(ftmachine='sd')) scenarios run by CASA and by casa-rs",
+ "notes": [
+  "Models are named relative to the oracle's --model-root, as in sm_predict_scenarios.json: alma-big/ is 512 pixels of 0.15 arcsec centred on (0.0007615435494667714, -0.0001523087098933758) rad, model1 one plane and model4 four.",
+  "One ALMA 12 m antenna with autocorrelations on (setauto(1.0)), as simobserve's total-power branch observes; fields are offset from the model's centre in arcsec.",
+  "Times keep every scan free of elevation flags."
+ ],
+ "scenarios": [
+  {
+   "name": "sd-pb-raster",
+   "data": "model",
+   "config": {
+    "local": {
+     "telescopename": "ALMA",
+     "referencelocation": "ALMA",
+     "x": [
+      0.0
+     ],
+     "y": [
+      0.0
+     ],
+     "z": [
+      0.0
+     ],
+     "dishdiameter": [
+      12.0
+     ],
+     "antname": [
+      "PM01"
+     ],
+     "padname": [
+      "T701"
+     ]
+    },
+    "mount": "alt-az"
+   },
+   "calls": [
+    {
+     "op": "setspwindow",
+     "spwname": "band6",
+     "freq": "230GHz",
+     "deltafreq": "15.625MHz",
+     "freqresolution": "15.625MHz",
+     "refcode": "TOPO",
+     "nchannels": 4,
+     "stokes": "XX YY"
+    },
+    {
+     "op": "setfeed",
+     "mode": "perfect X Y"
+    },
+    {
+     "op": "setauto",
+     "autocorrwt": 1.0
+    },
+    {
+     "op": "settimes",
+     "integrationtime": "10s",
+     "usehourangle": true,
+     "referencetime": [
+      "UTC",
+      "2026/03/21/00:00:00"
+     ]
+    },
+    {
+     "op": "setfield",
+     "sourcename": "p0",
+     "sourcedirection": [
+      "J2000",
+      "0.000713062180793rad",
+      "-0.000200790078004rad"
+     ]
+    },
+    {
+     "op": "setfield",
+     "sourcename": "p1",
+     "sourcedirection": [
+      "J2000",
+      "0.000761543549467rad",
+      "-0.000200790078004rad"
+     ]
+    },
+    {
+     "op": "setfield",
+     "sourcename": "p2",
+     "sourcedirection": [
+      "J2000",
+      "0.000810024918140rad",
+      "-0.000200790078004rad"
+     ]
+    },
+    {
+     "op": "setfield",
+     "sourcename": "p3",
+     "sourcedirection": [
+      "J2000",
+      "0.000713062180793rad",
+      "-0.000152308709893rad"
+     ]
+    },
+    {
+     "op": "setfield",
+     "sourcename": "p4",
+     "sourcedirection": [
+      "J2000",
+      "0.000761543549467rad",
+      "-0.000152308709893rad"
+     ]
+    },
+    {
+     "op": "setfield",
+     "sourcename": "p5",
+     "sourcedirection": [
+      "J2000",
+      "0.000810024918140rad",
+      "-0.000152308709893rad"
+     ]
+    },
+    {
+     "op": "setfield",
+     "sourcename": "p6",
+     "sourcedirection": [
+      "J2000",
+      "0.000713062180793rad",
+      "-0.000103827341782rad"
+     ]
+    },
+    {
+     "op": "setfield",
+     "sourcename": "p7",
+     "sourcedirection": [
+      "J2000",
+      "0.000761543549467rad",
+      "-0.000103827341782rad"
+     ]
+    },
+    {
+     "op": "setfield",
+     "sourcename": "p8",
+     "sourcedirection": [
+      "J2000",
+      "0.000810024918140rad",
+      "-0.000103827341782rad"
+     ]
+    },
+    {
+     "op": "observe",
+     "sourcename": "p0",
+     "spwname": "band6",
+     "starttime": "-300s",
+     "stoptime": "-270s"
+    },
+    {
+     "op": "observe",
+     "sourcename": "p1",
+     "spwname": "band6",
+     "starttime": "-270s",
+     "stoptime": "-240s"
+    },
+    {
+     "op": "observe",
+     "sourcename": "p2",
+     "spwname": "band6",
+     "starttime": "-240s",
+     "stoptime": "-210s"
+    },
+    {
+     "op": "observe",
+     "sourcename": "p3",
+     "spwname": "band6",
+     "starttime": "-210s",
+     "stoptime": "-180s"
+    },
+    {
+     "op": "observe",
+     "sourcename": "p4",
+     "spwname": "band6",
+     "starttime": "-180s",
+     "stoptime": "-150s"
+    },
+    {
+     "op": "observe",
+     "sourcename": "p5",
+     "spwname": "band6",
+     "starttime": "-150s",
+     "stoptime": "-120s"
+    },
+    {
+     "op": "observe",
+     "sourcename": "p6",
+     "spwname": "band6",
+     "starttime": "-120s",
+     "stoptime": "-90s"
+    },
+    {
+     "op": "observe",
+     "sourcename": "p7",
+     "spwname": "band6",
+     "starttime": "-90s",
+     "stoptime": "-60s"
+    },
+    {
+     "op": "observe",
+     "sourcename": "p8",
+     "spwname": "band6",
+     "starttime": "-60s",
+     "stoptime": "-30s"
+    },
+    {
+     "op": "setoptions",
+     "ftmachine": "sd",
+     "gridfunction": "PB"
+    },
+    {
+     "op": "predict",
+     "imagename": "alma-big/model1.input.image"
+    }
+   ]
+  },
+  {
+   "name": "sd-sf",
+   "data": "model",
+   "config": {
+    "local": {
+     "telescopename": "ALMA",
+     "referencelocation": "ALMA",
+     "x": [
+      0.0
+     ],
+     "y": [
+      0.0
+     ],
+     "z": [
+      0.0
+     ],
+     "dishdiameter": [
+      12.0
+     ],
+     "antname": [
+      "PM01"
+     ],
+     "padname": [
+      "T701"
+     ]
+    },
+    "mount": "alt-az"
+   },
+   "calls": [
+    {
+     "op": "setspwindow",
+     "spwname": "band6",
+     "freq": "230GHz",
+     "deltafreq": "15.625MHz",
+     "freqresolution": "15.625MHz",
+     "refcode": "TOPO",
+     "nchannels": 4,
+     "stokes": "XX YY"
+    },
+    {
+     "op": "setfeed",
+     "mode": "perfect X Y"
+    },
+    {
+     "op": "setauto",
+     "autocorrwt": 1.0
+    },
+    {
+     "op": "settimes",
+     "integrationtime": "10s",
+     "usehourangle": true,
+     "referencetime": [
+      "UTC",
+      "2026/03/21/00:00:00"
+     ]
+    },
+    {
+     "op": "setfield",
+     "sourcename": "p0",
+     "sourcedirection": [
+      "J2000",
+      "0.000761543549467rad",
+      "-0.000152308709893rad"
+     ]
+    },
+    {
+     "op": "setfield",
+     "sourcename": "p1",
+     "sourcedirection": [
+      "J2000",
+      "0.000795480507538rad",
+      "-0.000137764299460rad"
+     ]
+    },
+    {
+     "op": "setfield",
+     "sourcename": "p2",
+     "sourcedirection": [
+      "J2000",
+      "0.000703365907059rad",
+      "-0.000128068025838rad"
+     ]
+    },
+    {
+     "op": "observe",
+     "sourcename": "p0",
+     "spwname": "band6",
+     "starttime": "-300s",
+     "stoptime": "-270s"
+    },
+    {
+     "op": "observe",
+     "sourcename": "p1",
+     "spwname": "band6",
+     "starttime": "-270s",
+     "stoptime": "-240s"
+    },
+    {
+     "op": "observe",
+     "sourcename": "p2",
+     "spwname": "band6",
+     "starttime": "-240s",
+     "stoptime": "-210s"
+    },
+    {
+     "op": "setoptions",
+     "ftmachine": "sd",
+     "gridfunction": "SF"
+    },
+    {
+     "op": "predict",
+     "imagename": "alma-big/model1.input.image"
+    }
+   ]
+  },
+  {
+   "name": "sd-box",
+   "data": "model",
+   "config": {
+    "local": {
+     "telescopename": "ALMA",
+     "referencelocation": "ALMA",
+     "x": [
+      0.0
+     ],
+     "y": [
+      0.0
+     ],
+     "z": [
+      0.0
+     ],
+     "dishdiameter": [
+      12.0
+     ],
+     "antname": [
+      "PM01"
+     ],
+     "padname": [
+      "T701"
+     ]
+    },
+    "mount": "alt-az"
+   },
+   "calls": [
+    {
+     "op": "setspwindow",
+     "spwname": "band6",
+     "freq": "230GHz",
+     "deltafreq": "15.625MHz",
+     "freqresolution": "15.625MHz",
+     "refcode": "TOPO",
+     "nchannels": 4,
+     "stokes": "XX YY"
+    },
+    {
+     "op": "setfeed",
+     "mode": "perfect X Y"
+    },
+    {
+     "op": "setauto",
+     "autocorrwt": 1.0
+    },
+    {
+     "op": "settimes",
+     "integrationtime": "10s",
+     "usehourangle": true,
+     "referencetime": [
+      "UTC",
+      "2026/03/21/00:00:00"
+     ]
+    },
+    {
+     "op": "setfield",
+     "sourcename": "p0",
+     "sourcedirection": [
+      "J2000",
+      "0.000761543549467rad",
+      "-0.000152308709893rad"
+     ]
+    },
+    {
+     "op": "setfield",
+     "sourcename": "p1",
+     "sourcedirection": [
+      "J2000",
+      "0.000795480507538rad",
+      "-0.000137764299460rad"
+     ]
+    },
+    {
+     "op": "setfield",
+     "sourcename": "p2",
+     "sourcedirection": [
+      "J2000",
+      "0.000703365907059rad",
+      "-0.000128068025838rad"
+     ]
+    },
+    {
+     "op": "observe",
+     "sourcename": "p0",
+     "spwname": "band6",
+     "starttime": "-300s",
+     "stoptime": "-270s"
+    },
+    {
+     "op": "observe",
+     "sourcename": "p1",
+     "spwname": "band6",
+     "starttime": "-270s",
+     "stoptime": "-240s"
+    },
+    {
+     "op": "observe",
+     "sourcename": "p2",
+     "spwname": "band6",
+     "starttime": "-240s",
+     "stoptime": "-210s"
+    },
+    {
+     "op": "setoptions",
+     "ftmachine": "sd",
+     "gridfunction": "BOX"
+    },
+    {
+     "op": "predict",
+     "imagename": "alma-big/model1.input.image"
+    }
+   ]
+  },
+  {
+   "name": "sd-pb-cube-4corr",
+   "data": "model",
+   "config": {
+    "local": {
+     "telescopename": "ALMA",
+     "referencelocation": "ALMA",
+     "x": [
+      0.0
+     ],
+     "y": [
+      0.0
+     ],
+     "z": [
+      0.0
+     ],
+     "dishdiameter": [
+      12.0
+     ],
+     "antname": [
+      "PM01"
+     ],
+     "padname": [
+      "T701"
+     ]
+    },
+    "mount": "alt-az"
+   },
+   "calls": [
+    {
+     "op": "setspwindow",
+     "spwname": "band6",
+     "freq": "230GHz",
+     "deltafreq": "15.625MHz",
+     "freqresolution": "15.625MHz",
+     "refcode": "TOPO",
+     "nchannels": 4,
+     "stokes": "XX XY YX YY"
+    },
+    {
+     "op": "setfeed",
+     "mode": "perfect X Y"
+    },
+    {
+     "op": "setauto",
+     "autocorrwt": 1.0
+    },
+    {
+     "op": "settimes",
+     "integrationtime": "10s",
+     "usehourangle": true,
+     "referencetime": [
+      "UTC",
+      "2026/03/21/00:00:00"
+     ]
+    },
+    {
+     "op": "setfield",
+     "sourcename": "p0",
+     "sourcedirection": [
+      "J2000",
+      "0.000761543549467rad",
+      "-0.000152308709893rad"
+     ]
+    },
+    {
+     "op": "setfield",
+     "sourcename": "p1",
+     "sourcedirection": [
+      "J2000",
+      "0.000795480507538rad",
+      "-0.000137764299460rad"
+     ]
+    },
+    {
+     "op": "setfield",
+     "sourcename": "p2",
+     "sourcedirection": [
+      "J2000",
+      "0.000703365907059rad",
+      "-0.000128068025838rad"
+     ]
+    },
+    {
+     "op": "observe",
+     "sourcename": "p0",
+     "spwname": "band6",
+     "starttime": "-300s",
+     "stoptime": "-270s"
+    },
+    {
+     "op": "observe",
+     "sourcename": "p1",
+     "spwname": "band6",
+     "starttime": "-270s",
+     "stoptime": "-240s"
+    },
+    {
+     "op": "observe",
+     "sourcename": "p2",
+     "spwname": "band6",
+     "starttime": "-240s",
+     "stoptime": "-210s"
+    },
+    {
+     "op": "setoptions",
+     "ftmachine": "sd",
+     "gridfunction": "PB"
+    },
+    {
+     "op": "predict",
+     "imagename": "alma-big/model4.input.image"
+    }
+   ]
+  },
+  {
+   "name": "sd-pb-circular",
+   "data": "model",
+   "config": {
+    "local": {
+     "telescopename": "ALMA",
+     "referencelocation": "ALMA",
+     "x": [
+      0.0
+     ],
+     "y": [
+      0.0
+     ],
+     "z": [
+      0.0
+     ],
+     "dishdiameter": [
+      12.0
+     ],
+     "antname": [
+      "PM01"
+     ],
+     "padname": [
+      "T701"
+     ]
+    },
+    "mount": "alt-az"
+   },
+   "calls": [
+    {
+     "op": "setspwindow",
+     "spwname": "band6",
+     "freq": "230GHz",
+     "deltafreq": "15.625MHz",
+     "freqresolution": "15.625MHz",
+     "refcode": "TOPO",
+     "nchannels": 4,
+     "stokes": "RR RL LR LL"
+    },
+    {
+     "op": "setfeed",
+     "mode": "perfect R L"
+    },
+    {
+     "op": "setauto",
+     "autocorrwt": 1.0
+    },
+    {
+     "op": "settimes",
+     "integrationtime": "10s",
+     "usehourangle": true,
+     "referencetime": [
+      "UTC",
+      "2026/03/21/00:00:00"
+     ]
+    },
+    {
+     "op": "setfield",
+     "sourcename": "p0",
+     "sourcedirection": [
+      "J2000",
+      "0.000761543549467rad",
+      "-0.000152308709893rad"
+     ]
+    },
+    {
+     "op": "setfield",
+     "sourcename": "p1",
+     "sourcedirection": [
+      "J2000",
+      "0.000795480507538rad",
+      "-0.000137764299460rad"
+     ]
+    },
+    {
+     "op": "setfield",
+     "sourcename": "p2",
+     "sourcedirection": [
+      "J2000",
+      "0.000703365907059rad",
+      "-0.000128068025838rad"
+     ]
+    },
+    {
+     "op": "observe",
+     "sourcename": "p0",
+     "spwname": "band6",
+     "starttime": "-300s",
+     "stoptime": "-270s"
+    },
+    {
+     "op": "observe",
+     "sourcename": "p1",
+     "spwname": "band6",
+     "starttime": "-270s",
+     "stoptime": "-240s"
+    },
+    {
+     "op": "observe",
+     "sourcename": "p2",
+     "spwname": "band6",
+     "starttime": "-240s",
+     "stoptime": "-210s"
+    },
+    {
+     "op": "setoptions",
+     "ftmachine": "sd",
+     "gridfunction": "PB"
+    },
+    {
+     "op": "predict",
+     "imagename": "alma-big/model1.input.image"
+    }
+   ]
+  },
+  {
+   "name": "sd-pb-vp",
+   "data": "model",
+   "config": {
+    "local": {
+     "telescopename": "ALMA",
+     "referencelocation": "ALMA",
+     "x": [
+      0.0
+     ],
+     "y": [
+      0.0
+     ],
+     "z": [
+      0.0
+     ],
+     "dishdiameter": [
+      12.0
+     ],
+     "antname": [
+      "PM01"
+     ],
+     "padname": [
+      "T701"
+     ]
+    },
+    "mount": "alt-az"
+   },
+   "calls": [
+    {
+     "op": "setspwindow",
+     "spwname": "band6",
+     "freq": "230GHz",
+     "deltafreq": "15.625MHz",
+     "freqresolution": "15.625MHz",
+     "refcode": "TOPO",
+     "nchannels": 4,
+     "stokes": "XX YY"
+    },
+    {
+     "op": "setfeed",
+     "mode": "perfect X Y"
+    },
+    {
+     "op": "setauto",
+     "autocorrwt": 1.0
+    },
+    {
+     "op": "settimes",
+     "integrationtime": "10s",
+     "usehourangle": true,
+     "referencetime": [
+      "UTC",
+      "2026/03/21/00:00:00"
+     ]
+    },
+    {
+     "op": "setfield",
+     "sourcename": "p0",
+     "sourcedirection": [
+      "J2000",
+      "0.000761543549467rad",
+      "-0.000152308709893rad"
+     ]
+    },
+    {
+     "op": "setfield",
+     "sourcename": "p1",
+     "sourcedirection": [
+      "J2000",
+      "0.000795480507538rad",
+      "-0.000137764299460rad"
+     ]
+    },
+    {
+     "op": "setfield",
+     "sourcename": "p2",
+     "sourcedirection": [
+      "J2000",
+      "0.000703365907059rad",
+      "-0.000128068025838rad"
+     ]
+    },
+    {
+     "op": "observe",
+     "sourcename": "p0",
+     "spwname": "band6",
+     "starttime": "-300s",
+     "stoptime": "-270s"
+    },
+    {
+     "op": "observe",
+     "sourcename": "p1",
+     "spwname": "band6",
+     "starttime": "-270s",
+     "stoptime": "-240s"
+    },
+    {
+     "op": "observe",
+     "sourcename": "p2",
+     "spwname": "band6",
+     "starttime": "-240s",
+     "stoptime": "-210s"
+    },
+    {
+     "op": "setvp",
+     "dovp": true,
+     "usedefaultvp": false
+    },
+    {
+     "op": "setoptions",
+     "ftmachine": "sd",
+     "gridfunction": "PB"
+    },
+    {
+     "op": "predict",
+     "imagename": "alma-big/model1.input.image"
+    }
+   ]
+  },
+  {
+   "name": "sd-pb-incremental",
+   "data": "model",
+   "config": {
+    "local": {
+     "telescopename": "ALMA",
+     "referencelocation": "ALMA",
+     "x": [
+      0.0
+     ],
+     "y": [
+      0.0
+     ],
+     "z": [
+      0.0
+     ],
+     "dishdiameter": [
+      12.0
+     ],
+     "antname": [
+      "PM01"
+     ],
+     "padname": [
+      "T701"
+     ]
+    },
+    "mount": "alt-az"
+   },
+   "calls": [
+    {
+     "op": "setspwindow",
+     "spwname": "band6",
+     "freq": "230GHz",
+     "deltafreq": "15.625MHz",
+     "freqresolution": "15.625MHz",
+     "refcode": "TOPO",
+     "nchannels": 4,
+     "stokes": "XX YY"
+    },
+    {
+     "op": "setfeed",
+     "mode": "perfect X Y"
+    },
+    {
+     "op": "setauto",
+     "autocorrwt": 1.0
+    },
+    {
+     "op": "settimes",
+     "integrationtime": "10s",
+     "usehourangle": true,
+     "referencetime": [
+      "UTC",
+      "2026/03/21/00:00:00"
+     ]
+    },
+    {
+     "op": "setfield",
+     "sourcename": "p0",
+     "sourcedirection": [
+      "J2000",
+      "0.000761543549467rad",
+      "-0.000152308709893rad"
+     ]
+    },
+    {
+     "op": "setfield",
+     "sourcename": "p1",
+     "sourcedirection": [
+      "J2000",
+      "0.000795480507538rad",
+      "-0.000137764299460rad"
+     ]
+    },
+    {
+     "op": "observe",
+     "sourcename": "p0",
+     "spwname": "band6",
+     "starttime": "-300s",
+     "stoptime": "-270s"
+    },
+    {
+     "op": "observe",
+     "sourcename": "p1",
+     "spwname": "band6",
+     "starttime": "-270s",
+     "stoptime": "-240s"
+    },
+    {
+     "op": "setoptions",
+     "ftmachine": "sd",
+     "gridfunction": "PB"
+    },
+    {
+     "op": "predict",
+     "imagename": "alma-big/model1.input.image"
+    },
+    {
+     "op": "setfield",
+     "sourcename": "q",
+     "sourcedirection": [
+      "J2000",
+      "0.000780936096936rad",
+      "-0.000181397530760rad"
+     ]
+    },
+    {
+     "op": "observe",
+     "sourcename": "q",
+     "spwname": "band6",
+     "starttime": "-200s",
+     "stoptime": "-170s"
+    },
+    {
+     "op": "predict",
+     "imagename": "alma-big/model4.input.image",
+     "incremental": true
+    }
+   ]
+  }
+ ]
+}
