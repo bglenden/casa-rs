@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["Absorber"],"fn":["channel_absorption","channel_totals"],"struct":["AbsorptionProfile","ChannelAbsorption","ChannelTotals","LayerAbsorption","LayerTotals"],"trait":["AbsorptionChannel"]};

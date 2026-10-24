@@ -1543,6 +1543,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#refractiveindexprofiles-averaged-non-dispersive-wet-phase-reads-a-channel-as-a-water-column" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        RefractiveIndexProfile's averaged non-dispersive wet phase reads a channel as a water column
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1636,7 +1647,9 @@ ATM behaviours casa-rs follows for parity with the <code>at</code> tool:
 <a href="#atms-hcn-profile-stops-at-100-km">HCN above 100 km</a>,
 <a href="#copying-an-atmprofile-copies-its-top-pressures-as-bottom-pressures">copied bottom pressures</a>,
 <a href="#atm-leaves-the-ozone-isotopologue-layers-unpadded">unpadded ozone isotopologue layers</a>,
-<a href="#atm-omits-16o17o">(16)O(17)O</a>.</p>
+<a href="#atm-omits-16o17o">(16)O(17)O</a>.
+ATM behaviours casa-rs does not follow:
+<a href="#refractiveindexprofiles-averaged-non-dispersive-wet-phase-reads-a-channel-as-a-water-column">the averaged non-dispersive wet phase</a>.</p>
 <h2 id="aw-projection-pairs-the-partner-hands-visibility-with-the-conjugate-baseline-cell">AW-projection pairs the partner hand's visibility with the conjugate-baseline cell<a class="headerlink" href="#aw-projection-pairs-the-partner-hands-visibility-with-the-conjugate-baseline-cell" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-10-09</li>
@@ -2967,6 +2980,23 @@ this needs a user profile with zero ozone.</p>
 the isotope was removed in 2024 while its catalogue is reviewed, because it
 gave lines that do not exist. The port returns zero too and keeps the
 catalogue in its tables for the record.</p>
+<h2 id="refractiveindexprofiles-averaged-non-dispersive-wet-phase-reads-a-channel-as-a-water-column">RefractiveIndexProfile's averaged non-dispersive wet phase reads a channel as a water column<a class="headerlink" href="#refractiveindexprofiles-averaged-non-dispersive-wet-phase-reads-a-channel-as-a-water-column" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-10-24</li>
+<li>Status: ATM bug; casa-rs does not follow it (#841 Phase 4b)</li>
+<li>Affected code: <code>atmosphere/ATM/ATMRefractiveIndexProfile.cc:2466</code>
+  (<code>getAverageNonDispersiveH2OPhaseDelay(const Length &amp;, unsigned int)</code>)</li>
+</ul>
+<p>The window average calls <code>getNonDispersiveH2OPhaseDelay(v_transfertId_[spwid]
++ i)</code>. <code>RefractiveIndexProfile</code> has no overload taking a channel alone, so
+the index converts to a <code>Length</code> in metres, and the call returns channel 0's
+phase for a water column of 0, 1, 2 … metres. The average is then scaled
+again by the requested column. For the simulator's Chajnantor atmosphere and
+1.3 mm of water this gives 306,132° in a 22 GHz window, where the channels'
+mean is a few degrees (<code>casa-atmosphere</code>'s <code>oracle_absorption</code> test
+reproduces ATM's number exactly). CASA's <code>at</code> tool does not reach this
+function: its averages go through <code>SkyStatus</code>, whose override is correct.
+<code>casa-atmosphere</code> takes the mean of the channels' phases.</p>
 
 
 
