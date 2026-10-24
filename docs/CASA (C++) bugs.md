@@ -11,7 +11,8 @@ CASA behaviours casa-rs follows for parity:
 [multi-term weight normalization](#the-multi-term-weight-normalization-override-is-never-called),
 [the Airy beam's blockage term](#the-airy-beams-blockage-term-uses-the-inverse-length-ratio),
 [the EVLA's 11052 MHz fit](#the-evlas-beam-table-has-no-11052-mhz-fit),
-[the simulator's and tclean's two mosaic machines](#the-simulators-mosaic-machine-is-not-tcleans).
+[the simulator's and tclean's two mosaic machines](#the-simulators-mosaic-machine-is-not-tcleans),
+[a moved pointing phased on its field](#smpredict-phases-a-moved-observemany-pointing-on-its-field).
 CASA behaviours casa-rs does not follow:
 [odd-size scale convolutions](#multiscale-and-multi-term-scale-convolutions-shift-by-a-pixel-on-odd-image-sizes),
 [MatrixCleaner's step residual](#matrixcleaners-step-residual-forgets-earlier-steps),
@@ -37,7 +38,7 @@ Simulator behaviours casa-rs does not follow:
 [W projection without planes](#smpredict-through-wprojectft-without-planes-crashes-the-simulator),
 [total power in cross-correlations](#sdgrid-predicts-total-power-into-cross-correlations-with-no-positive-uvw),
 [`close` after a mosaic predict](#smclose-aborts-the-process-after-a-mosaic-predict),
-[a moved pointing phased on its field](#smpredict-phases-a-moved-observemany-pointing-on-its-field),
+[the beam on a moved pointing](#the-beam-on-a-moved-pointing-stays-where-the-fields-first-row-points),
 [scratch columns added at `predict` and `corrupt`](#predict-and-corrupt-add-scratch-columns-to-a-measurementset-without-them).
 Measures behaviours casa-rs follows for parity:
 [IAU 1980 sidereal time and obliquities under IAU 2000](#iau-2000-keeps-the-iau-1980-sidereal-time-and-ecliptic-obliquities).
@@ -1049,31 +1050,76 @@ mosaic's ten offsets a cell, such a sample moved by up to 10% (#841: 33 of
 ## `sm.predict` phases a moved `observemany` pointing on its field
 
 - Date noted: 2026-10-23
-- Status: CASA bug; casa-rs's own session does not follow it (#861), and
-  after `openfromms` casa-rs predicts as CASA does (#841 Phase 2)
+- Status: CASA behaviour casa-rs follows for parity (#884, which corrected
+  the session's own phasing of #861)
 - Affected code: casacore `ms/MSOper/NewMSSimulator.cc` (`observe`, the
   vector form `observemany` calls) and `msvis/MSVis/VisBuffer.cc`
   (`phaseCenter`, from FIELD)
 
-A pointing `observemany` gives a direction keeps its field's FIELD row:
-`NewMSSimulator` computes its UVW at the direction and writes that direction
-to POINTING, but leaves FIELD as it was. `predict` reads the MeasurementSet
-through a `VisBuffer`, whose phase centre is FIELD's PHASE_DIR, so it
-phases the pointing on the field while its UVW belong to the moved
-direction. Measured on CASA 6.7.6 (twelve ALMA antennas, a second pointing
-moved 10.4″ east): a 1 Jy point at the field's direction predicts 1 Jy at
-zero phase in both pointings, and one at the moved direction predicts
-phases spread over ±180° (rms 101°) in the pointing centred on it.
+A pointing `observemany` gives a direction keeps its field's FIELD row.
+`NewMSSimulator` computes its UVW and elevation at the direction and writes
+that direction to POINTING, but leaves FIELD as it was. `predict` reads the
+MeasurementSet through a `VisBuffer`, whose phase centre is FIELD's
+PHASE_DIR, so it phases the pointing on the field while its UVW belong to
+the moved direction. Measured on CASA 6.7.6 (twelve ALMA antennas, a second
+pointing moved 10.4″ east): a 1 Jy point at the field's direction predicts
+1 Jy at zero phase in both pointings, and one at the moved direction
+predicts phases spread over ±180° (rms 101°) in the pointing centred on it.
 
-casa-rs's session phases a moved pointing on its direction, where its UVW
-are (#861), so a model predicted there is the sky that pointing sees. A
-MeasurementSet records only FIELD as the phase centre, and POINTING may
-point elsewhere for other reasons (tracking errors, offset pointings), so
-after `openfromms` casa-rs phases every scan on its FIELD's PHASE_DIR as
-CASA does: the `openfromms-moved-pointing-*` scenarios agree with CASA to
-0 and 7e-11 normalized RMS (`tools/simulation/sm_openfromms_scenarios.json`).
-Whether the session should phase as CASA does, or keep its correction, is
-#884.
+casa-rs follows. A moved pointing's UVW, elevation limit and POINTING are at
+the moved direction (`Scan::pointing_rad`), and its DATA is phased on its
+field (`Scan::phase_center_rad`). Total power samples where POINTING points
+(#874), as CASA's `SDGrid` does. The phasing is what every imager and
+calibrator reading the MeasurementSet assumes: FIELD is the only phase
+centre it records, so DATA phased on the moved direction would image
+shifted by the offset. The UVW at the moved direction are CASA's
+inconsistency. They distort the geometry only at second order, in the
+offset times a source's distance from the phase centre.
+
+Evidence on the CPU and on Metal:
+- `components-moved-pointing` in `tools/simulation/sm_components_scenarios.json`, an image and a component list without a beam: 8.36e-6 normalized RMS;
+- the `openfromms-moved-pointing-*` scenarios of `sm_openfromms_scenarios.json`: 0 and 7e-11.
+
+A primary beam on a moved pointing is a separate matter, and casa-rs
+refuses it ([the next entry](#the-beam-on-a-moved-pointing-stays-where-the-fields-first-row-points)).
+
+## The beam on a moved pointing stays where the field's first row points
+
+- Date noted: 2026-10-24
+- Status: CASA bug; casa-rs refuses a primary beam, and the mosaic machine,
+  on a moved pointing rather than follow it (#884, PR #888 review)
+- Affected code: `synthesis/TransformMachines/BeamSkyJones.cc` (`changed`,
+  `update`) and `synthesis/MeasurementEquations/Simulator.cc`
+  (`makeVisSet`'s sort)
+
+`VPSkyJones`, the simulator's primary beam, inherits `BeamSkyJones::update`,
+which takes the beam's centre from POINTING (`VisBufferUtil::getPointingDir`)
+at the row it updates on. It updates only when `BeamSkyJones::changed`
+fires:
+- the MeasurementSet, the array or the field changes;
+- the parallactic angle moves past `setvp`'s `parangleincrement`. Its
+  default of 360° means never;
+- POINTING is in a local frame and the time changes.
+
+The comparisons of the pointing directions themselves are commented out.
+`predict` iterates FIELD_ID first, then FEED1, ARRAY_ID, DATA_DESC_ID and
+TIME. So every row of a field is beamed where the field's first-visited row
+points, whichever direction a later pointing of the field was moved to.
+
+Measured on CASA 6.7.6, ALMA at 230 GHz, a second pointing moved 10.4″ east:
+- **Field first, then moved:** a point at the moved direction keeps 0.652 of
+  the beam's peak in both pointings. The beam stays on the field.
+- **Moved first, then back at the field** (Astra's probe on PR #888): 1.0 in
+  both. The beam stays on the moved direction.
+- **Total power:** `SDGrid` samples POINTING's moved direction while the beam
+  stays where the first row pointed. With one antenna, a constant model and
+  the BOX kernel, CASA's moved samples are 0.671.
+
+None of these is the beam the moved pointing sees, which follows the
+antennas. casa-rs refuses a primary beam over a model image, a component
+list or total power, and the mosaic machine, on a pointing `observemany`
+moved off its field. It does not reproduce a cache. `simobserve` gives each
+pointing its own field and never reaches this.
 
 ## `predict` and `corrupt` add scratch columns to a MeasurementSet without them
 

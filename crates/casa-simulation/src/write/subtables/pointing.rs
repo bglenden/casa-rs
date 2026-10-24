@@ -40,7 +40,7 @@ impl PointingScan {
             integrations: rows.integration_count,
             start_s: rows.start_s,
             integration_s: rows.integration_s,
-            direction_rad: scan.phase_center_rad,
+            direction_rad: scan.pointing_rad,
         };
         debug_assert!(
             rows.integration_times_s()

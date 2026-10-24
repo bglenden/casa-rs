@@ -6,7 +6,7 @@
     "Model images are named relative to the oracle's --model-root, as in sm_predict_scenarios.json: alma/model4 is 256 pixels of 0.05 arcsec centred on 10h -30d with one plane per channel of the 4-channel 230 GHz band; alma-mosaic/model1 is that file's make_bench_model.py image.",
     "openfromms-mosaic-het-casa-ms reopens CASA's observed heterogeneous mosaic and predicts through the mosaic machine; CASA 6.7.6's close then aborts (close_aborts), as after any mosaic predict.",
     "CASA's VisSet adds MODEL_DATA and CORRECTED_DATA to an MS without them; casa-rs creates neither (plan decision 6) and keeps the ones there are in step with DATA, which its laws check (crates/casa-simulation/tests/open_from_ms.rs). CORRECTED_DATA is not compared here.",
-    "The moved-pointing scenarios observe a second pointing of 'target' moved 10.4 arcsec east, which keeps target's FIELD row: CASA phases it on the field, and so does casa-rs after openfromms. A point at the field predicts unit amplitude and zero phase in both pointings."
+    "The moved-pointing scenarios observe a second pointing of 'target' moved 10.4 arcsec east, which keeps target's FIELD row: CASA phases it on the field, and so does casa-rs, in its own session as after openfromms (#884). A point at the field predicts unit amplitude and zero phase in both pointings."
   ],
   "complists": {
     "point-at-field.cl": [

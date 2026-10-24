@@ -243,8 +243,8 @@ impl Prediction {
         self.grids.iter().map(|(_, grids)| grids.bytes()).sum()
     }
 
-    /// The offset of the pointing of rows phased on `centre_rad`, which the
-    /// mosaic machine's kernels ramp by; zero for the other machines.
+    /// The offset of rows pointed at `centre_rad`, which the mosaic
+    /// machine's kernels ramp by; zero for the other machines.
     pub(crate) fn pointing_offset_rad(&self, centre_rad: [f64; 2]) -> [f64; 2] {
         let key = centre_rad.map(f64::to_bits);
         let found = self
@@ -255,7 +255,7 @@ impl Prediction {
         // A mosaic step measured every scan it covers.
         debug_assert!(
             found.is_some() || self.pointings.is_empty(),
-            "a mosaic step predicts rows phased on {centre_rad:?}, which it did not measure"
+            "a mosaic step predicts rows pointed at {centre_rad:?}, which it did not measure"
         );
         found.map_or([0.0; 2], |(_, offset)| *offset)
     }
@@ -487,15 +487,15 @@ impl Simulator {
         if self.single_dish.is_some() {
             self.require_pointings_at_phase_centres("setoptions(ftmachine='sd')")?;
         }
-        // The model's grids are prepared per field under an image-plane
-        // beam, and once for the mosaic machine, whose kernels point each
-        // scan; a component list is predicted at each scan's own pointing.
-        if model.is_some() {
-            if self.mosaic {
-                self.check_pointings_on_fields("setoptions(ftmachine='mosaic')")?;
-            } else if beam.is_some() {
-                self.check_pointings_on_fields("setvp(dovp=True)")?;
-            }
+        // A primary beam, over a model image, a component list or total
+        // power, and the mosaic machine's kernels are centred on each
+        // scan's field here, which a pointing `observemany` moved does not
+        // point at (#884).
+        if model.is_some() && self.mosaic {
+            self.check_pointings_on_fields("setoptions(ftmachine='mosaic')")?;
+        }
+        if beam.is_some() {
+            self.check_pointings_on_fields("setvp(dovp=True)")?;
         }
         if let Some(kernel) = self.single_dish {
             // Total power samples a model image; `SDGrid` with a component
@@ -642,9 +642,10 @@ impl Simulator {
             })
             .collect();
         let pattern = beam.map(PrimaryBeam::pattern);
-        // A scan is phased on its phase centre, and the beam centred on it:
-        // its field's direction unless `observemany` moved it. Scans at one
-        // centre share a pointing.
+        // A scan is phased on its field's phase centre, as CASA's
+        // `VisBuffer` phases it, and the beam centred there: a beam on a
+        // pointing `observemany` moved was refused above (#884). Scans at
+        // one centre share a pointing.
         let mut pointings: Vec<(usize, [f64; 2])> = Vec::new();
         let pointing_of_scan: Vec<usize> = self
             .scans
@@ -763,21 +764,22 @@ impl Simulator {
             .map_or(0.0, |window| window.reference_frequency_hz)
     }
 
-    /// That every scan points at its field, as a model image predicted
-    /// through `what` (a primary beam centred on each field, or the mosaic
-    /// machine) needs here. CASA points each scan at its direction in
-    /// POINTING, which casa-rs does not yet follow for the pointings
-    /// `observemany` moves off their field.
+    /// That every scan points at its field, as `what` needs here: a primary
+    /// beam, or the mosaic machine's kernels, centred on each scan's field.
+    /// CASA's beam on a pointing `observemany` moved off its field is
+    /// centred where the first row of the field it visits points, which
+    /// `BeamSkyJones` keeps for the field's other rows (#884, `docs/CASA
+    /// (C++) bugs.md`); casa-rs does not follow it yet.
     fn check_pointings_on_fields(&self, what: &str) -> SimulatorResult<()> {
         let moved = self
             .scans
             .iter()
-            .find(|scan| scan.phase_center_rad != self.fields[scan.field_id].direction_rad);
+            .find(|scan| scan.pointing_rad != scan.phase_center_rad);
         match moved {
             Some(scan) => Err(SimulatorError::not_yet_implemented(format!(
                 "predict with {what} for scan {} pointed away from its field {} is not yet \
-                 implemented in casa-rs (simulation Phase 2); pointings at their fields' \
-                 centres are",
+                 implemented in casa-rs (simulation Phase 2, #884); pointings at their \
+                 fields' centres are",
                 scan.scan_number, self.fields[scan.field_id].name
             ))),
             None => Ok(()),

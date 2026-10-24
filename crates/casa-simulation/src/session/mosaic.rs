@@ -134,8 +134,8 @@ impl Simulator {
         Ok((MosaicBeams { dishes, windows }, classes))
     }
 
-    /// Each distinct phase centre of the scans observed so far (its bits)
-    /// and its pointing offset in `model`
+    /// Each distinct pointing of the scans observed so far (its bits), where
+    /// their antennas point, and its offset in `model`
     /// ([`SkyModel::pointing_offset_rad`]), sorted by the bits. The capacity
     /// is a pointing for each scan, the bound `mosaic_state_bytes` admits.
     ///
@@ -149,9 +149,9 @@ impl Simulator {
     ) -> SimulatorResult<Vec<MosaicPointing>> {
         let mut pointings: Vec<MosaicPointing> = Vec::with_capacity(self.scans.len());
         for scan in &self.scans {
-            let key = scan.phase_center_rad.map(f64::to_bits);
+            let key = scan.pointing_rad.map(f64::to_bits);
             let offset = model
-                .pointing_offset_rad(scan.phase_center_rad)
+                .pointing_offset_rad(scan.pointing_rad)
                 .map_err(|error: PredictError| {
                     SimulatorError::raised(format!("Caught exception: {error}"))
                 })?

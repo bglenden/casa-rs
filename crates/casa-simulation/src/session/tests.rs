@@ -255,9 +255,10 @@ fn many(pointings: &[(&str, f64, f64, Option<MDirection>)]) -> ObserveManySpec {
 
 /// `NewMSSimulator::observe` with several pointings: a new scan number at
 /// the first and at each change of field; each pointing its own start and
-/// integration count; a direction moves that pointing's phase centre, and
-/// a pointing without one keeps the previous pointing's while the field
-/// stays the same. OBSERVATION spans the first start to the last stop.
+/// integration count; a direction moves where that pointing points, and a
+/// pointing without one keeps the previous pointing's while the field stays
+/// the same. Every pointing is phased on its field (#884). OBSERVATION
+/// spans the first start to the last stop.
 #[test]
 fn observemany_numbers_a_scan_per_run_of_one_field() {
     let mut session = ready(Path::new("unused.ms"));
@@ -286,6 +287,7 @@ fn observemany_numbers_a_scan_per_run_of_one_field() {
                 scan.field_id,
                 planned(scan).start_s - reference_s,
                 planned(scan).integration_count,
+                scan.pointing_rad,
                 scan.phase_center_rad,
             )
         })
@@ -293,11 +295,11 @@ fn observemany_numbers_a_scan_per_run_of_one_field() {
     assert_eq!(
         pointings,
         vec![
-            (2, 0, 0.0, 1, north),
-            (2, 0, 10.0, 2, moved_rad),
-            (2, 0, 30.0, 1, moved_rad),
-            (3, 1, 40.0, 1, south),
-            (4, 0, 50.0, 1, north),
+            (2, 0, 0.0, 1, north, north),
+            (2, 0, 10.0, 2, moved_rad, north),
+            (2, 0, 30.0, 1, moved_rad, north),
+            (3, 1, 40.0, 1, south, south),
+            (4, 0, 50.0, 1, north, north),
         ]
     );
     assert_eq!(session.observations.len(), 1, "OBSERVATION is the first's");

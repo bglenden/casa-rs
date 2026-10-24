@@ -5,7 +5,8 @@
     "The oracle writes each of 'complists' with CASA's cl tool under <out>/complists/ before the scenarios run (each entry is one cl.addcomponent's keyword arguments, 'dir' as [frame, longitude, latitude]); CASA reads a list read-only, so casa-rs reads the same table.",
     "Image models are named relative to the oracle's --model-root, as in sm_predict_scenarios.json (alma/ is 256 pixels of 0.05 arcsec centred on 10h -30d, alma-big/ 512 of 0.15 arcsec centred on (0.0007615435494667714, -0.0001523087098933758) rad).",
     "Two CASA defects are kept out of these scenarios, as casa-rs does not follow them (docs/CASA (C++) bugs.md): a negative flux under the beam, which CASA's full-spectral beam turns positive, and a polarised component with a single spectral index, whose Stokes indices CASA's matrix sampler reads out of bounds.",
-    "Times and the configuration keep every scenario free of shadowing and elevation flags."
+    "Times and the configuration keep every scenario free of shadowing and elevation flags.",
+    "components-moved-pointing observes a second pointing of 'target' that observemany moves 10.4 arcsec east, keeping target's FIELD row: CASA phases its rows on the field, from FIELD's PHASE_DIR, and so does casa-rs (#884). It has no beam: CASA's beam on a moved pointing is centred where the first row of the field it visits points, which casa-rs refuses (docs/CASA (C++) bugs.md)."
   ],
   "complists": {
     "shapes.cl": [
@@ -127,6 +128,20 @@
         {"op": "observe", "sourcename": "b", "spwname": "band6", "starttime": "0s", "stoptime": "300s"},
         {"op": "setvp", "dovp": true, "usedefaultvp": false},
         {"op": "predict", "complist": "beamed.cl"}
+      ]
+    },
+    {
+      "name": "components-moved-pointing",
+      "data": "model",
+      "config": {"cfg": "alma.cycle10.3.cfg", "mount": "alt-az"},
+      "calls": [
+        {"op": "setspwindow", "spwname": "band6", "freq": "230GHz", "deltafreq": "15.625MHz", "freqresolution": "15.625MHz", "refcode": "TOPO", "nchannels": 4, "stokes": "XX YY"},
+        {"op": "setfeed", "mode": "perfect X Y"},
+        {"op": "setauto", "autocorrwt": 0.0},
+        {"op": "settimes", "integrationtime": "30s", "usehourangle": true, "referencetime": ["UTC", "2026/03/21/00:00:00"]},
+        {"op": "setfield", "sourcename": "target", "sourcedirection": ["J2000", "10h00m00.0", "-30d00m00.0"]},
+        {"op": "observemany", "sourcenames": ["target", "target"], "spwname": "band6", "starttimes": ["-300s", "0s"], "stoptimes": ["0s", "300s"], "directions": ["", "J2000 10h00m00.8 -30d00m00.0"]},
+        {"op": "predict", "imagename": "alma/model4.input.image", "complist": "shapes.cl"}
       ]
     }
   ]

@@ -88,8 +88,10 @@ impl<'a> ArrayGeometry<'a> {
         let count = planned.antenna_count;
         let antennas = &self.antennas[..count];
         let epoch = MEpoch::from_mjd(time_s / 86_400.0, EpochRef::UT1);
+        // At the pointing direction, as `NewMSSimulator` computes a moved
+        // pointing's UVW, though its DATA is phased on the field (#884).
         let frame = UvwFrame::new(
-            scan.scan.phase_center_rad,
+            scan.scan.pointing_rad,
             epoch.clone(),
             &self.observatory,
             self.measures.clone(),
@@ -165,14 +167,15 @@ impl<'a> ArrayGeometry<'a> {
         Ok(())
     }
 
-    /// For each antenna, whether the field is below `scan`'s elevation limit
-    /// at its position (`NewMSSimulator`'s per-antenna `azel`).
+    /// For each antenna, whether `scan`'s pointing direction is below its
+    /// elevation limit at the antenna's position (`NewMSSimulator`'s
+    /// per-antenna `azel`).
     fn below_elevation_limit(
         &self,
         scan: PlannedScan<'_>,
         epoch: &MEpoch,
     ) -> SimulatorResult<Vec<bool>> {
-        let [ra, dec] = scan.scan.phase_center_rad;
+        let [ra, dec] = scan.scan.pointing_rad;
         let direction = MDirection::from_angles(ra, dec, DirectionRef::J2000);
         self.positions[..scan.rows.antenna_count]
             .iter()

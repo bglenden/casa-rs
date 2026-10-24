@@ -412,6 +412,9 @@ fn read_scans(
                 field_id,
                 spectral_window_id: window,
                 phase_center_rad: fields[field_id].direction_rad,
+                // POINTING, read when a step needs it, must point there
+                // (`require_pointings_at_phase_centres`).
+                pointing_rad: fields[field_id].direction_rad,
                 rows: ScanRows::OnDisk(row..row + 1),
             });
             times_s.push([time_s, time_s]);
