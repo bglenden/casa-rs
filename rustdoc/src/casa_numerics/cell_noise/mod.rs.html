@@ -164,149 +164,243 @@
 <a href=#164 id=164 data-nosnippet>164</a>        </span><span class="kw">if </span><span class="self">self</span>.sigma == <span class="number">0.0 </span>|| correlations == <span class="number">0 </span>{
 <a href=#165 id=165 data-nosnippet>165</a>            <span class="kw">return</span>;
 <a href=#166 id=166 data-nosnippet>166</a>        }
-<a href=#167 id=167 data-nosnippet>167</a>        <span class="comment">// The common cross-correlation shapes, each compiled with its
-<a href=#168 id=168 data-nosnippet>168</a>        // correlation count fixed so that the additions into the cell
-<a href=#169 id=169 data-nosnippet>169</a>        // vectorise; every arm runs the same code.
-<a href=#170 id=170 data-nosnippet>170</a>        </span><span class="kw">match </span>(correlations, autocorrelation) {
-<a href=#171 id=171 data-nosnippet>171</a>            (<span class="number">1</span>, <span class="bool-val">false</span>) =&gt; <span class="self">self</span>.add_batches(row, <span class="number">1</span>, <span class="bool-val">false</span>, cell),
-<a href=#172 id=172 data-nosnippet>172</a>            (<span class="number">2</span>, <span class="bool-val">false</span>) =&gt; <span class="self">self</span>.add_batches(row, <span class="number">2</span>, <span class="bool-val">false</span>, cell),
-<a href=#173 id=173 data-nosnippet>173</a>            (<span class="number">4</span>, <span class="bool-val">false</span>) =&gt; <span class="self">self</span>.add_batches(row, <span class="number">4</span>, <span class="bool-val">false</span>, cell),
-<a href=#174 id=174 data-nosnippet>174</a>            <span class="kw">_ </span>=&gt; <span class="self">self</span>.add_batches(row, correlations, autocorrelation, cell),
-<a href=#175 id=175 data-nosnippet>175</a>        }
-<a href=#176 id=176 data-nosnippet>176</a>    }
-<a href=#177 id=177 data-nosnippet>177</a>
-<a href=#178 id=178 data-nosnippet>178</a>    <span class="doccomment">/// [`Self::add_to_row`] in batches of [`LANES`] channels, and a last,
-<a href=#179 id=179 data-nosnippet>179</a>    /// partial batch.
-<a href=#180 id=180 data-nosnippet>180</a>    </span><span class="attr">#[inline(always)]
-<a href=#181 id=181 data-nosnippet>181</a>    </span><span class="kw">fn </span>add_batches(
-<a href=#182 id=182 data-nosnippet>182</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#183 id=183 data-nosnippet>183</a>        row: u64,
-<a href=#184 id=184 data-nosnippet>184</a>        correlations: usize,
-<a href=#185 id=185 data-nosnippet>185</a>        autocorrelation: bool,
-<a href=#186 id=186 data-nosnippet>186</a>        cell: <span class="kw-2">&amp;mut </span>[Complex32],
-<a href=#187 id=187 data-nosnippet>187</a>    ) {
-<a href=#188 id=188 data-nosnippet>188</a>        <span class="kw">let </span>batch = Batch {
-<a href=#189 id=189 data-nosnippet>189</a>            key: <span class="self">self</span>.key,
-<a href=#190 id=190 data-nosnippet>190</a>            sigma: <span class="self">self</span>.sigma,
-<a href=#191 id=191 data-nosnippet>191</a>            row,
-<a href=#192 id=192 data-nosnippet>192</a>            correlations,
-<a href=#193 id=193 data-nosnippet>193</a>            autocorrelation,
-<a href=#194 id=194 data-nosnippet>194</a>        };
-<a href=#195 id=195 data-nosnippet>195</a>        <span class="kw">let </span>channels = cell.len() / correlations;
-<a href=#196 id=196 data-nosnippet>196</a>        <span class="kw">let </span><span class="kw-2">mut </span>batches = cell[..channels * correlations].chunks_exact_mut(LANES * correlations);
-<a href=#197 id=197 data-nosnippet>197</a>        <span class="kw">for </span>(index, samples) <span class="kw">in </span>(<span class="kw-2">&amp;mut </span>batches).enumerate() {
-<a href=#198 id=198 data-nosnippet>198</a>            batch.add(index * LANES, samples, LANES);
-<a href=#199 id=199 data-nosnippet>199</a>        }
-<a href=#200 id=200 data-nosnippet>200</a>        <span class="kw">let </span>tail = batches.into_remainder();
-<a href=#201 id=201 data-nosnippet>201</a>        <span class="kw">if </span>!tail.is_empty() {
-<a href=#202 id=202 data-nosnippet>202</a>            batch.add_partial(channels - channels % LANES, tail, channels % LANES);
-<a href=#203 id=203 data-nosnippet>203</a>        }
-<a href=#204 id=204 data-nosnippet>204</a>    }
-<a href=#205 id=205 data-nosnippet>205</a>}
-<a href=#206 id=206 data-nosnippet>206</a>
-<a href=#207 id=207 data-nosnippet>207</a><span class="doccomment">/// What every batch of one row's noise shares.
-<a href=#208 id=208 data-nosnippet>208</a></span><span class="kw">struct </span>Batch {
-<a href=#209 id=209 data-nosnippet>209</a>    <span class="doccomment">/// The stream key.
-<a href=#210 id=210 data-nosnippet>210</a>    </span>key: philox::Key,
-<a href=#211 id=211 data-nosnippet>211</a>    <span class="doccomment">/// σ of each draw.
-<a href=#212 id=212 data-nosnippet>212</a>    </span>sigma: f32,
-<a href=#213 id=213 data-nosnippet>213</a>    <span class="doccomment">/// The row.
-<a href=#214 id=214 data-nosnippet>214</a>    </span>row: u64,
-<a href=#215 id=215 data-nosnippet>215</a>    <span class="doccomment">/// Correlations per channel.
-<a href=#216 id=216 data-nosnippet>216</a>    </span>correlations: usize,
-<a href=#217 id=217 data-nosnippet>217</a>    <span class="doccomment">/// An autocorrelation row, which gets real draws only.
-<a href=#218 id=218 data-nosnippet>218</a>    </span>autocorrelation: bool,
-<a href=#219 id=219 data-nosnippet>219</a>}
-<a href=#220 id=220 data-nosnippet>220</a>
-<a href=#221 id=221 data-nosnippet>221</a><span class="kw">impl </span>Batch {
-<a href=#222 id=222 data-nosnippet>222</a>    <span class="doccomment">/// Add the noise of the `lanes` channels from `first`, at most
-<a href=#223 id=223 data-nosnippet>223</a>    /// [`LANES`], to their `samples`: the draws of each correlation pair in
-<a href=#224 id=224 data-nosnippet>224</a>    /// all the channels, then the additions, both correlations of the pair
-<a href=#225 id=225 data-nosnippet>225</a>    /// together.
-<a href=#226 id=226 data-nosnippet>226</a>    </span><span class="attr">#[inline(always)]
-<a href=#227 id=227 data-nosnippet>227</a>    </span><span class="kw">fn </span>add(<span class="kw-2">&amp;</span><span class="self">self</span>, first: usize, samples: <span class="kw-2">&amp;mut </span>[Complex32], lanes: usize) {
-<a href=#228 id=228 data-nosnippet>228</a>        <span class="kw">let </span>correlations = <span class="self">self</span>.correlations;
-<a href=#229 id=229 data-nosnippet>229</a>        <span class="kw">for </span>pair <span class="kw">in </span><span class="number">0</span>..correlations.div_ceil(<span class="number">2</span>) {
-<a href=#230 id=230 data-nosnippet>230</a>            <span class="kw">let </span>words = philox::philox4x32_10_lanes(counters(<span class="self">self</span>.row, first, pair), <span class="self">self</span>.key);
-<a href=#231 id=231 data-nosnippet>231</a>            <span class="kw">let </span>both = correlations - <span class="number">2 </span>* pair &gt;= <span class="number">2</span>;
-<a href=#232 id=232 data-nosnippet>232</a>            <span class="kw">let </span>[re0, im0] = scaled_draws(<span class="kw-2">&amp;</span>words[<span class="number">0</span>], <span class="kw-2">&amp;</span>words[<span class="number">1</span>], <span class="self">self</span>.sigma);
-<a href=#233 id=233 data-nosnippet>233</a>            <span class="kw">let </span>[re1, im1] = <span class="kw">if </span>both {
-<a href=#234 id=234 data-nosnippet>234</a>                scaled_draws(<span class="kw-2">&amp;</span>words[<span class="number">2</span>], <span class="kw-2">&amp;</span>words[<span class="number">3</span>], <span class="self">self</span>.sigma)
-<a href=#235 id=235 data-nosnippet>235</a>            } <span class="kw">else </span>{
-<a href=#236 id=236 data-nosnippet>236</a>                [[<span class="number">0.0</span>; LANES]; <span class="number">2</span>]
-<a href=#237 id=237 data-nosnippet>237</a>            };
-<a href=#238 id=238 data-nosnippet>238</a>            <span class="kw">for </span>lane <span class="kw">in </span><span class="number">0</span>..lanes {
-<a href=#239 id=239 data-nosnippet>239</a>                <span class="kw">let </span>at = lane * correlations + <span class="number">2 </span>* pair;
-<a href=#240 id=240 data-nosnippet>240</a>                samples[at].re += re0[lane];
-<a href=#241 id=241 data-nosnippet>241</a>                <span class="kw">if </span>both {
-<a href=#242 id=242 data-nosnippet>242</a>                    samples[at + <span class="number">1</span>].re += re1[lane];
-<a href=#243 id=243 data-nosnippet>243</a>                }
-<a href=#244 id=244 data-nosnippet>244</a>                <span class="kw">if </span>!<span class="self">self</span>.autocorrelation {
-<a href=#245 id=245 data-nosnippet>245</a>                    samples[at].im += im0[lane];
-<a href=#246 id=246 data-nosnippet>246</a>                    <span class="kw">if </span>both {
-<a href=#247 id=247 data-nosnippet>247</a>                        samples[at + <span class="number">1</span>].im += im1[lane];
-<a href=#248 id=248 data-nosnippet>248</a>                    }
-<a href=#249 id=249 data-nosnippet>249</a>                }
-<a href=#250 id=250 data-nosnippet>250</a>            }
-<a href=#251 id=251 data-nosnippet>251</a>        }
-<a href=#252 id=252 data-nosnippet>252</a>    }
-<a href=#253 id=253 data-nosnippet>253</a>
-<a href=#254 id=254 data-nosnippet>254</a>    <span class="doccomment">/// [`Self::add`] for a row's last, partial batch: one copy for every
-<a href=#255 id=255 data-nosnippet>255</a>    /// shape, since it runs at most once a row.
-<a href=#256 id=256 data-nosnippet>256</a>    </span><span class="attr">#[inline(never)]
-<a href=#257 id=257 data-nosnippet>257</a>    </span><span class="kw">fn </span>add_partial(<span class="kw-2">&amp;</span><span class="self">self</span>, first: usize, samples: <span class="kw-2">&amp;mut </span>[Complex32], lanes: usize) {
-<a href=#258 id=258 data-nosnippet>258</a>        <span class="self">self</span>.add(first, samples, lanes);
-<a href=#259 id=259 data-nosnippet>259</a>    }
-<a href=#260 id=260 data-nosnippet>260</a>}
-<a href=#261 id=261 data-nosnippet>261</a>
-<a href=#262 id=262 data-nosnippet>262</a><span class="doccomment">/// The counters of one correlation pair's draws in the [`LANES`] channels
-<a href=#263 id=263 data-nosnippet>263</a>/// from `first`: the row (two words), the channel, and the correlation pair
-<a href=#264 id=264 data-nosnippet>264</a>/// (correlations 0 and 1 are pair 0, 2 and 3 pair 1).
-<a href=#265 id=265 data-nosnippet>265</a></span><span class="kw">fn </span>counters(row: u64, first: usize, pair: usize) -&gt; philox::Lanes&lt;LANES&gt; {
-<a href=#266 id=266 data-nosnippet>266</a>    [
-<a href=#267 id=267 data-nosnippet>267</a>        [row <span class="kw">as </span>u32; LANES],
-<a href=#268 id=268 data-nosnippet>268</a>        [(row &gt;&gt; <span class="number">32</span>) <span class="kw">as </span>u32; LANES],
-<a href=#269 id=269 data-nosnippet>269</a>        std::array::from_fn(|lane| (first + lane) <span class="kw">as </span>u32),
-<a href=#270 id=270 data-nosnippet>270</a>        [pair <span class="kw">as </span>u32; LANES],
-<a href=#271 id=271 data-nosnippet>271</a>    ]
-<a href=#272 id=272 data-nosnippet>272</a>}
+<a href=#167 id=167 data-nosnippet>167</a>        <span class="self">self</span>.add_shapes(
+<a href=#168 id=168 data-nosnippet>168</a>            row,
+<a href=#169 id=169 data-nosnippet>169</a>            autocorrelation,
+<a href=#170 id=170 data-nosnippet>170</a>            correlations,
+<a href=#171 id=171 data-nosnippet>171</a>            Uniform(<span class="self">self</span>.sigma),
+<a href=#172 id=172 data-nosnippet>172</a>            cell,
+<a href=#173 id=173 data-nosnippet>173</a>        );
+<a href=#174 id=174 data-nosnippet>174</a>    }
+<a href=#175 id=175 data-nosnippet>175</a>
+<a href=#176 id=176 data-nosnippet>176</a>    <span class="doccomment">/// [`Self::add_to_row`] with σ scaled per channel: channel `c`'s samples
+<a href=#177 id=177 data-nosnippet>177</a>    /// get σ·`channel_scale[c]` (a noise whose σ depends on frequency, as a
+<a href=#178 id=178 data-nosnippet>178</a>    /// system temperature does). The draws are [`Self::add_to_row`]'s, so a
+<a href=#179 id=179 data-nosnippet>179</a>    /// scale of 1 everywhere adds bit for bit the same noise; another scale
+<a href=#180 id=180 data-nosnippet>180</a>    /// gives its unit draws times σ·`channel_scale[c]` to the rounding of
+<a href=#181 id=181 data-nosnippet>181</a>    /// that product, which scales each draw's radius.
+<a href=#182 id=182 data-nosnippet>182</a>    ///
+<a href=#183 id=183 data-nosnippet>183</a>    /// # Panics
+<a href=#184 id=184 data-nosnippet>184</a>    ///
+<a href=#185 id=185 data-nosnippet>185</a>    /// When `channel_scale` has fewer values than the cell has whole
+<a href=#186 id=186 data-nosnippet>186</a>    /// channels.
+<a href=#187 id=187 data-nosnippet>187</a>    </span><span class="kw">pub fn </span>add_to_row_scaled(
+<a href=#188 id=188 data-nosnippet>188</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#189 id=189 data-nosnippet>189</a>        row: u64,
+<a href=#190 id=190 data-nosnippet>190</a>        autocorrelation: bool,
+<a href=#191 id=191 data-nosnippet>191</a>        correlations: usize,
+<a href=#192 id=192 data-nosnippet>192</a>        channel_scale: <span class="kw-2">&amp;</span>[f32],
+<a href=#193 id=193 data-nosnippet>193</a>        cell: <span class="kw-2">&amp;mut </span>[Complex32],
+<a href=#194 id=194 data-nosnippet>194</a>    ) {
+<a href=#195 id=195 data-nosnippet>195</a>        <span class="kw">if </span><span class="self">self</span>.sigma == <span class="number">0.0 </span>|| correlations == <span class="number">0 </span>{
+<a href=#196 id=196 data-nosnippet>196</a>            <span class="kw">return</span>;
+<a href=#197 id=197 data-nosnippet>197</a>        }
+<a href=#198 id=198 data-nosnippet>198</a>        <span class="macro">assert!</span>(
+<a href=#199 id=199 data-nosnippet>199</a>            channel_scale.len() &gt;= cell.len() / correlations,
+<a href=#200 id=200 data-nosnippet>200</a>            <span class="string">"a scale for every channel of the cell"
+<a href=#201 id=201 data-nosnippet>201</a>        </span>);
+<a href=#202 id=202 data-nosnippet>202</a>        <span class="self">self</span>.add_shapes(
+<a href=#203 id=203 data-nosnippet>203</a>            row,
+<a href=#204 id=204 data-nosnippet>204</a>            autocorrelation,
+<a href=#205 id=205 data-nosnippet>205</a>            correlations,
+<a href=#206 id=206 data-nosnippet>206</a>            Scaled {
+<a href=#207 id=207 data-nosnippet>207</a>                sigma: <span class="self">self</span>.sigma,
+<a href=#208 id=208 data-nosnippet>208</a>                channel_scale,
+<a href=#209 id=209 data-nosnippet>209</a>            },
+<a href=#210 id=210 data-nosnippet>210</a>            cell,
+<a href=#211 id=211 data-nosnippet>211</a>        );
+<a href=#212 id=212 data-nosnippet>212</a>    }
+<a href=#213 id=213 data-nosnippet>213</a>
+<a href=#214 id=214 data-nosnippet>214</a>    <span class="doccomment">/// The common cross-correlation shapes, each compiled with its
+<a href=#215 id=215 data-nosnippet>215</a>    /// correlation count fixed so that the additions into the cell
+<a href=#216 id=216 data-nosnippet>216</a>    /// vectorise; every arm runs the same code.
+<a href=#217 id=217 data-nosnippet>217</a>    </span><span class="attr">#[inline(always)]
+<a href=#218 id=218 data-nosnippet>218</a>    </span><span class="kw">fn </span>add_shapes&lt;S: LaneSigma&gt;(
+<a href=#219 id=219 data-nosnippet>219</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#220 id=220 data-nosnippet>220</a>        row: u64,
+<a href=#221 id=221 data-nosnippet>221</a>        autocorrelation: bool,
+<a href=#222 id=222 data-nosnippet>222</a>        correlations: usize,
+<a href=#223 id=223 data-nosnippet>223</a>        sigma: S,
+<a href=#224 id=224 data-nosnippet>224</a>        cell: <span class="kw-2">&amp;mut </span>[Complex32],
+<a href=#225 id=225 data-nosnippet>225</a>    ) {
+<a href=#226 id=226 data-nosnippet>226</a>        <span class="kw">match </span>(correlations, autocorrelation) {
+<a href=#227 id=227 data-nosnippet>227</a>            (<span class="number">1</span>, <span class="bool-val">false</span>) =&gt; <span class="self">self</span>.add_batches(row, <span class="number">1</span>, <span class="bool-val">false</span>, sigma, cell),
+<a href=#228 id=228 data-nosnippet>228</a>            (<span class="number">2</span>, <span class="bool-val">false</span>) =&gt; <span class="self">self</span>.add_batches(row, <span class="number">2</span>, <span class="bool-val">false</span>, sigma, cell),
+<a href=#229 id=229 data-nosnippet>229</a>            (<span class="number">4</span>, <span class="bool-val">false</span>) =&gt; <span class="self">self</span>.add_batches(row, <span class="number">4</span>, <span class="bool-val">false</span>, sigma, cell),
+<a href=#230 id=230 data-nosnippet>230</a>            <span class="kw">_ </span>=&gt; <span class="self">self</span>.add_batches(row, correlations, autocorrelation, sigma, cell),
+<a href=#231 id=231 data-nosnippet>231</a>        }
+<a href=#232 id=232 data-nosnippet>232</a>    }
+<a href=#233 id=233 data-nosnippet>233</a>
+<a href=#234 id=234 data-nosnippet>234</a>    <span class="doccomment">/// [`Self::add_to_row`] in batches of [`LANES`] channels, and a last,
+<a href=#235 id=235 data-nosnippet>235</a>    /// partial batch.
+<a href=#236 id=236 data-nosnippet>236</a>    </span><span class="attr">#[inline(always)]
+<a href=#237 id=237 data-nosnippet>237</a>    </span><span class="kw">fn </span>add_batches&lt;S: LaneSigma&gt;(
+<a href=#238 id=238 data-nosnippet>238</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#239 id=239 data-nosnippet>239</a>        row: u64,
+<a href=#240 id=240 data-nosnippet>240</a>        correlations: usize,
+<a href=#241 id=241 data-nosnippet>241</a>        autocorrelation: bool,
+<a href=#242 id=242 data-nosnippet>242</a>        sigma: S,
+<a href=#243 id=243 data-nosnippet>243</a>        cell: <span class="kw-2">&amp;mut </span>[Complex32],
+<a href=#244 id=244 data-nosnippet>244</a>    ) {
+<a href=#245 id=245 data-nosnippet>245</a>        <span class="kw">let </span>batch = Batch {
+<a href=#246 id=246 data-nosnippet>246</a>            key: <span class="self">self</span>.key,
+<a href=#247 id=247 data-nosnippet>247</a>            sigma,
+<a href=#248 id=248 data-nosnippet>248</a>            row,
+<a href=#249 id=249 data-nosnippet>249</a>            correlations,
+<a href=#250 id=250 data-nosnippet>250</a>            autocorrelation,
+<a href=#251 id=251 data-nosnippet>251</a>        };
+<a href=#252 id=252 data-nosnippet>252</a>        <span class="kw">let </span>channels = cell.len() / correlations;
+<a href=#253 id=253 data-nosnippet>253</a>        <span class="kw">let </span><span class="kw-2">mut </span>batches = cell[..channels * correlations].chunks_exact_mut(LANES * correlations);
+<a href=#254 id=254 data-nosnippet>254</a>        <span class="kw">for </span>(index, samples) <span class="kw">in </span>(<span class="kw-2">&amp;mut </span>batches).enumerate() {
+<a href=#255 id=255 data-nosnippet>255</a>            batch.add(index * LANES, samples, LANES);
+<a href=#256 id=256 data-nosnippet>256</a>        }
+<a href=#257 id=257 data-nosnippet>257</a>        <span class="kw">let </span>tail = batches.into_remainder();
+<a href=#258 id=258 data-nosnippet>258</a>        <span class="kw">if </span>!tail.is_empty() {
+<a href=#259 id=259 data-nosnippet>259</a>            batch.add_partial(channels - channels % LANES, tail, channels % LANES);
+<a href=#260 id=260 data-nosnippet>260</a>        }
+<a href=#261 id=261 data-nosnippet>261</a>    }
+<a href=#262 id=262 data-nosnippet>262</a>}
+<a href=#263 id=263 data-nosnippet>263</a>
+<a href=#264 id=264 data-nosnippet>264</a><span class="doccomment">/// σ of each of a batch's [`LANES`] channels.
+<a href=#265 id=265 data-nosnippet>265</a></span><span class="kw">trait </span>LaneSigma: Copy {
+<a href=#266 id=266 data-nosnippet>266</a>    <span class="doccomment">/// σ of the channels from `first`.
+<a href=#267 id=267 data-nosnippet>267</a>    </span><span class="kw">fn </span>lanes(<span class="self">self</span>, first: usize) -&gt; [f32; LANES];
+<a href=#268 id=268 data-nosnippet>268</a>}
+<a href=#269 id=269 data-nosnippet>269</a>
+<a href=#270 id=270 data-nosnippet>270</a><span class="doccomment">/// One σ for every channel.
+<a href=#271 id=271 data-nosnippet>271</a></span><span class="attr">#[derive(Clone, Copy)]
+<a href=#272 id=272 data-nosnippet>272</a></span><span class="kw">struct </span>Uniform(f32);
 <a href=#273 id=273 data-nosnippet>273</a>
-<a href=#274 id=274 data-nosnippet>274</a><span class="doccomment">/// The real and imaginary noise of `LANES` samples from their two words
-<a href=#275 id=275 data-nosnippet>275</a>/// each: Box–Muller's `(r·σ)·cos θ` and `(r·σ)·sin θ`, in `f32`. Scaling
-<a href=#276 id=276 data-nosnippet>276</a>/// the radius once saves a multiplication per sample over scaling each
-<a href=#277 id=277 data-nosnippet>277</a>/// normal, with the same number of roundings.
-<a href=#278 id=278 data-nosnippet>278</a>///
-<a href=#279 id=279 data-nosnippet>279</a>/// Each lane computes the products as a draw made alone does
-<a href=#280 id=280 data-nosnippet>280</a>/// ([`scaled_draw`]), but in two passes, the radii and then the angles:
-<a href=#281 id=281 data-nosnippet>281</a>/// each pass's polynomial coefficients and running sums then fit the vector
-<a href=#282 id=282 data-nosnippet>282</a>/// registers together, which keeps more lanes' arithmetic in flight.
-<a href=#283 id=283 data-nosnippet>283</a></span><span class="attr">#[inline(always)]
-<a href=#284 id=284 data-nosnippet>284</a></span><span class="kw">fn </span>scaled_draws&lt;<span class="kw">const </span>LANES: usize&gt;(
-<a href=#285 id=285 data-nosnippet>285</a>    first: <span class="kw-2">&amp;</span>[u32; LANES],
-<a href=#286 id=286 data-nosnippet>286</a>    second: <span class="kw-2">&amp;</span>[u32; LANES],
-<a href=#287 id=287 data-nosnippet>287</a>    sigma: f32,
-<a href=#288 id=288 data-nosnippet>288</a>) -&gt; [[f32; LANES]; <span class="number">2</span>] {
-<a href=#289 id=289 data-nosnippet>289</a>    <span class="kw">let </span><span class="kw-2">mut </span>radii = [<span class="number">0.0</span>; LANES];
-<a href=#290 id=290 data-nosnippet>290</a>    <span class="kw">for </span>(radius, <span class="kw-2">&amp;</span>word) <span class="kw">in </span>radii.iter_mut().zip(first) {
-<a href=#291 id=291 data-nosnippet>291</a>        <span class="kw-2">*</span>radius = normal::radius(word) * sigma;
-<a href=#292 id=292 data-nosnippet>292</a>    }
-<a href=#293 id=293 data-nosnippet>293</a>    <span class="kw">let </span><span class="kw-2">mut </span>draws = [[<span class="number">0.0</span>; LANES]; <span class="number">2</span>];
-<a href=#294 id=294 data-nosnippet>294</a>    <span class="kw">for </span>lane <span class="kw">in </span><span class="number">0</span>..LANES {
-<a href=#295 id=295 data-nosnippet>295</a>        <span class="kw">let </span>(sin, cos) = normal::sin_cos_turn(second[lane]);
-<a href=#296 id=296 data-nosnippet>296</a>        draws[<span class="number">0</span>][lane] = radii[lane] * cos;
-<a href=#297 id=297 data-nosnippet>297</a>        draws[<span class="number">1</span>][lane] = radii[lane] * sin;
-<a href=#298 id=298 data-nosnippet>298</a>    }
-<a href=#299 id=299 data-nosnippet>299</a>    draws
-<a href=#300 id=300 data-nosnippet>300</a>}
-<a href=#301 id=301 data-nosnippet>301</a>
-<a href=#302 id=302 data-nosnippet>302</a><span class="doccomment">/// The four standard normals of one draw, slot 0's (real, imaginary) then
-<a href=#303 id=303 data-nosnippet>303</a>/// slot 1's, as [`CellNoise::add_to_row`] uses them.
-<a href=#304 id=304 data-nosnippet>304</a></span><span class="attr">#[cfg(test)]
-<a href=#305 id=305 data-nosnippet>305</a></span><span class="kw">fn </span>standard_normals(noise: <span class="kw-2">&amp;</span>CellNoise, row: u64, channel: usize, pair: usize) -&gt; [f32; <span class="number">4</span>] {
-<a href=#306 id=306 data-nosnippet>306</a>    <span class="kw">let </span>counter = [row <span class="kw">as </span>u32, (row &gt;&gt; <span class="number">32</span>) <span class="kw">as </span>u32, channel <span class="kw">as </span>u32, pair <span class="kw">as </span>u32];
-<a href=#307 id=307 data-nosnippet>307</a>    <span class="kw">let </span>words = philox::philox4x32_10(counter, noise.key());
-<a href=#308 id=308 data-nosnippet>308</a>    <span class="kw">let </span>(a, b) = box_muller(words[<span class="number">0</span>], words[<span class="number">1</span>]);
-<a href=#309 id=309 data-nosnippet>309</a>    <span class="kw">let </span>(c, d) = box_muller(words[<span class="number">2</span>], words[<span class="number">3</span>]);
-<a href=#310 id=310 data-nosnippet>310</a>    [a, b, c, d]
-<a href=#311 id=311 data-nosnippet>311</a>}
+<a href=#274 id=274 data-nosnippet>274</a><span class="kw">impl </span>LaneSigma <span class="kw">for </span>Uniform {
+<a href=#275 id=275 data-nosnippet>275</a>    <span class="attr">#[inline(always)]
+<a href=#276 id=276 data-nosnippet>276</a>    </span><span class="kw">fn </span>lanes(<span class="self">self</span>, _first: usize) -&gt; [f32; LANES] {
+<a href=#277 id=277 data-nosnippet>277</a>        [<span class="self">self</span>.<span class="number">0</span>; LANES]
+<a href=#278 id=278 data-nosnippet>278</a>    }
+<a href=#279 id=279 data-nosnippet>279</a>}
+<a href=#280 id=280 data-nosnippet>280</a>
+<a href=#281 id=281 data-nosnippet>281</a><span class="doccomment">/// σ times each channel's scale; channels past the scales (a partial
+<a href=#282 id=282 data-nosnippet>282</a>/// batch's draws beyond the cell) get 0.
+<a href=#283 id=283 data-nosnippet>283</a></span><span class="attr">#[derive(Clone, Copy)]
+<a href=#284 id=284 data-nosnippet>284</a></span><span class="kw">struct </span>Scaled&lt;<span class="lifetime">'a</span>&gt; {
+<a href=#285 id=285 data-nosnippet>285</a>    sigma: f32,
+<a href=#286 id=286 data-nosnippet>286</a>    channel_scale: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[f32],
+<a href=#287 id=287 data-nosnippet>287</a>}
+<a href=#288 id=288 data-nosnippet>288</a>
+<a href=#289 id=289 data-nosnippet>289</a><span class="kw">impl </span>LaneSigma <span class="kw">for </span>Scaled&lt;<span class="lifetime">'_</span>&gt; {
+<a href=#290 id=290 data-nosnippet>290</a>    <span class="attr">#[inline(always)]
+<a href=#291 id=291 data-nosnippet>291</a>    </span><span class="kw">fn </span>lanes(<span class="self">self</span>, first: usize) -&gt; [f32; LANES] {
+<a href=#292 id=292 data-nosnippet>292</a>        std::array::from_fn(|lane| {
+<a href=#293 id=293 data-nosnippet>293</a>            <span class="self">self</span>.channel_scale
+<a href=#294 id=294 data-nosnippet>294</a>                .get(first + lane)
+<a href=#295 id=295 data-nosnippet>295</a>                .map_or(<span class="number">0.0</span>, |scale| <span class="self">self</span>.sigma * scale)
+<a href=#296 id=296 data-nosnippet>296</a>        })
+<a href=#297 id=297 data-nosnippet>297</a>    }
+<a href=#298 id=298 data-nosnippet>298</a>}
+<a href=#299 id=299 data-nosnippet>299</a>
+<a href=#300 id=300 data-nosnippet>300</a><span class="doccomment">/// What every batch of one row's noise shares.
+<a href=#301 id=301 data-nosnippet>301</a></span><span class="kw">struct </span>Batch&lt;S&gt; {
+<a href=#302 id=302 data-nosnippet>302</a>    <span class="doccomment">/// The stream key.
+<a href=#303 id=303 data-nosnippet>303</a>    </span>key: philox::Key,
+<a href=#304 id=304 data-nosnippet>304</a>    <span class="doccomment">/// σ of each draw.
+<a href=#305 id=305 data-nosnippet>305</a>    </span>sigma: S,
+<a href=#306 id=306 data-nosnippet>306</a>    <span class="doccomment">/// The row.
+<a href=#307 id=307 data-nosnippet>307</a>    </span>row: u64,
+<a href=#308 id=308 data-nosnippet>308</a>    <span class="doccomment">/// Correlations per channel.
+<a href=#309 id=309 data-nosnippet>309</a>    </span>correlations: usize,
+<a href=#310 id=310 data-nosnippet>310</a>    <span class="doccomment">/// An autocorrelation row, which gets real draws only.
+<a href=#311 id=311 data-nosnippet>311</a>    </span>autocorrelation: bool,
+<a href=#312 id=312 data-nosnippet>312</a>}
+<a href=#313 id=313 data-nosnippet>313</a>
+<a href=#314 id=314 data-nosnippet>314</a><span class="kw">impl</span>&lt;S: LaneSigma&gt; Batch&lt;S&gt; {
+<a href=#315 id=315 data-nosnippet>315</a>    <span class="doccomment">/// Add the noise of the `lanes` channels from `first`, at most
+<a href=#316 id=316 data-nosnippet>316</a>    /// [`LANES`], to their `samples`: the draws of each correlation pair in
+<a href=#317 id=317 data-nosnippet>317</a>    /// all the channels, then the additions, both correlations of the pair
+<a href=#318 id=318 data-nosnippet>318</a>    /// together.
+<a href=#319 id=319 data-nosnippet>319</a>    </span><span class="attr">#[inline(always)]
+<a href=#320 id=320 data-nosnippet>320</a>    </span><span class="kw">fn </span>add(<span class="kw-2">&amp;</span><span class="self">self</span>, first: usize, samples: <span class="kw-2">&amp;mut </span>[Complex32], lanes: usize) {
+<a href=#321 id=321 data-nosnippet>321</a>        <span class="kw">let </span>correlations = <span class="self">self</span>.correlations;
+<a href=#322 id=322 data-nosnippet>322</a>        <span class="kw">let </span>sigma = <span class="self">self</span>.sigma.lanes(first);
+<a href=#323 id=323 data-nosnippet>323</a>        <span class="kw">for </span>pair <span class="kw">in </span><span class="number">0</span>..correlations.div_ceil(<span class="number">2</span>) {
+<a href=#324 id=324 data-nosnippet>324</a>            <span class="kw">let </span>words = philox::philox4x32_10_lanes(counters(<span class="self">self</span>.row, first, pair), <span class="self">self</span>.key);
+<a href=#325 id=325 data-nosnippet>325</a>            <span class="kw">let </span>both = correlations - <span class="number">2 </span>* pair &gt;= <span class="number">2</span>;
+<a href=#326 id=326 data-nosnippet>326</a>            <span class="kw">let </span>[re0, im0] = scaled_draws(<span class="kw-2">&amp;</span>words[<span class="number">0</span>], <span class="kw-2">&amp;</span>words[<span class="number">1</span>], <span class="kw-2">&amp;</span>sigma);
+<a href=#327 id=327 data-nosnippet>327</a>            <span class="kw">let </span>[re1, im1] = <span class="kw">if </span>both {
+<a href=#328 id=328 data-nosnippet>328</a>                scaled_draws(<span class="kw-2">&amp;</span>words[<span class="number">2</span>], <span class="kw-2">&amp;</span>words[<span class="number">3</span>], <span class="kw-2">&amp;</span>sigma)
+<a href=#329 id=329 data-nosnippet>329</a>            } <span class="kw">else </span>{
+<a href=#330 id=330 data-nosnippet>330</a>                [[<span class="number">0.0</span>; LANES]; <span class="number">2</span>]
+<a href=#331 id=331 data-nosnippet>331</a>            };
+<a href=#332 id=332 data-nosnippet>332</a>            <span class="kw">for </span>lane <span class="kw">in </span><span class="number">0</span>..lanes {
+<a href=#333 id=333 data-nosnippet>333</a>                <span class="kw">let </span>at = lane * correlations + <span class="number">2 </span>* pair;
+<a href=#334 id=334 data-nosnippet>334</a>                samples[at].re += re0[lane];
+<a href=#335 id=335 data-nosnippet>335</a>                <span class="kw">if </span>both {
+<a href=#336 id=336 data-nosnippet>336</a>                    samples[at + <span class="number">1</span>].re += re1[lane];
+<a href=#337 id=337 data-nosnippet>337</a>                }
+<a href=#338 id=338 data-nosnippet>338</a>                <span class="kw">if </span>!<span class="self">self</span>.autocorrelation {
+<a href=#339 id=339 data-nosnippet>339</a>                    samples[at].im += im0[lane];
+<a href=#340 id=340 data-nosnippet>340</a>                    <span class="kw">if </span>both {
+<a href=#341 id=341 data-nosnippet>341</a>                        samples[at + <span class="number">1</span>].im += im1[lane];
+<a href=#342 id=342 data-nosnippet>342</a>                    }
+<a href=#343 id=343 data-nosnippet>343</a>                }
+<a href=#344 id=344 data-nosnippet>344</a>            }
+<a href=#345 id=345 data-nosnippet>345</a>        }
+<a href=#346 id=346 data-nosnippet>346</a>    }
+<a href=#347 id=347 data-nosnippet>347</a>
+<a href=#348 id=348 data-nosnippet>348</a>    <span class="doccomment">/// [`Self::add`] for a row's last, partial batch: one copy for every
+<a href=#349 id=349 data-nosnippet>349</a>    /// shape, since it runs at most once a row.
+<a href=#350 id=350 data-nosnippet>350</a>    </span><span class="attr">#[inline(never)]
+<a href=#351 id=351 data-nosnippet>351</a>    </span><span class="kw">fn </span>add_partial(<span class="kw-2">&amp;</span><span class="self">self</span>, first: usize, samples: <span class="kw-2">&amp;mut </span>[Complex32], lanes: usize) {
+<a href=#352 id=352 data-nosnippet>352</a>        <span class="self">self</span>.add(first, samples, lanes);
+<a href=#353 id=353 data-nosnippet>353</a>    }
+<a href=#354 id=354 data-nosnippet>354</a>}
+<a href=#355 id=355 data-nosnippet>355</a>
+<a href=#356 id=356 data-nosnippet>356</a><span class="doccomment">/// The counters of one correlation pair's draws in the [`LANES`] channels
+<a href=#357 id=357 data-nosnippet>357</a>/// from `first`: the row (two words), the channel, and the correlation pair
+<a href=#358 id=358 data-nosnippet>358</a>/// (correlations 0 and 1 are pair 0, 2 and 3 pair 1).
+<a href=#359 id=359 data-nosnippet>359</a></span><span class="kw">fn </span>counters(row: u64, first: usize, pair: usize) -&gt; philox::Lanes&lt;LANES&gt; {
+<a href=#360 id=360 data-nosnippet>360</a>    [
+<a href=#361 id=361 data-nosnippet>361</a>        [row <span class="kw">as </span>u32; LANES],
+<a href=#362 id=362 data-nosnippet>362</a>        [(row &gt;&gt; <span class="number">32</span>) <span class="kw">as </span>u32; LANES],
+<a href=#363 id=363 data-nosnippet>363</a>        std::array::from_fn(|lane| (first + lane) <span class="kw">as </span>u32),
+<a href=#364 id=364 data-nosnippet>364</a>        [pair <span class="kw">as </span>u32; LANES],
+<a href=#365 id=365 data-nosnippet>365</a>    ]
+<a href=#366 id=366 data-nosnippet>366</a>}
+<a href=#367 id=367 data-nosnippet>367</a>
+<a href=#368 id=368 data-nosnippet>368</a><span class="doccomment">/// The real and imaginary noise of `LANES` samples from their two words
+<a href=#369 id=369 data-nosnippet>369</a>/// each: Box–Muller's `(r·σ)·cos θ` and `(r·σ)·sin θ`, in `f32`. Scaling
+<a href=#370 id=370 data-nosnippet>370</a>/// the radius once saves a multiplication per sample over scaling each
+<a href=#371 id=371 data-nosnippet>371</a>/// normal, with the same number of roundings.
+<a href=#372 id=372 data-nosnippet>372</a>///
+<a href=#373 id=373 data-nosnippet>373</a>/// Each lane computes the products as a draw made alone does
+<a href=#374 id=374 data-nosnippet>374</a>/// ([`scaled_draw`]), but in two passes, the radii and then the angles:
+<a href=#375 id=375 data-nosnippet>375</a>/// each pass's polynomial coefficients and running sums then fit the vector
+<a href=#376 id=376 data-nosnippet>376</a>/// registers together, which keeps more lanes' arithmetic in flight.
+<a href=#377 id=377 data-nosnippet>377</a></span><span class="attr">#[inline(always)]
+<a href=#378 id=378 data-nosnippet>378</a></span><span class="kw">fn </span>scaled_draws&lt;<span class="kw">const </span>LANES: usize&gt;(
+<a href=#379 id=379 data-nosnippet>379</a>    first: <span class="kw-2">&amp;</span>[u32; LANES],
+<a href=#380 id=380 data-nosnippet>380</a>    second: <span class="kw-2">&amp;</span>[u32; LANES],
+<a href=#381 id=381 data-nosnippet>381</a>    sigma: <span class="kw-2">&amp;</span>[f32; LANES],
+<a href=#382 id=382 data-nosnippet>382</a>) -&gt; [[f32; LANES]; <span class="number">2</span>] {
+<a href=#383 id=383 data-nosnippet>383</a>    <span class="kw">let </span><span class="kw-2">mut </span>radii = [<span class="number">0.0</span>; LANES];
+<a href=#384 id=384 data-nosnippet>384</a>    <span class="kw">for </span>((radius, <span class="kw-2">&amp;</span>word), <span class="kw-2">&amp;</span>sigma) <span class="kw">in </span>radii.iter_mut().zip(first).zip(sigma) {
+<a href=#385 id=385 data-nosnippet>385</a>        <span class="kw-2">*</span>radius = normal::radius(word) * sigma;
+<a href=#386 id=386 data-nosnippet>386</a>    }
+<a href=#387 id=387 data-nosnippet>387</a>    <span class="kw">let </span><span class="kw-2">mut </span>draws = [[<span class="number">0.0</span>; LANES]; <span class="number">2</span>];
+<a href=#388 id=388 data-nosnippet>388</a>    <span class="kw">for </span>lane <span class="kw">in </span><span class="number">0</span>..LANES {
+<a href=#389 id=389 data-nosnippet>389</a>        <span class="kw">let </span>(sin, cos) = normal::sin_cos_turn(second[lane]);
+<a href=#390 id=390 data-nosnippet>390</a>        draws[<span class="number">0</span>][lane] = radii[lane] * cos;
+<a href=#391 id=391 data-nosnippet>391</a>        draws[<span class="number">1</span>][lane] = radii[lane] * sin;
+<a href=#392 id=392 data-nosnippet>392</a>    }
+<a href=#393 id=393 data-nosnippet>393</a>    draws
+<a href=#394 id=394 data-nosnippet>394</a>}
+<a href=#395 id=395 data-nosnippet>395</a>
+<a href=#396 id=396 data-nosnippet>396</a><span class="doccomment">/// The four standard normals of one draw, slot 0's (real, imaginary) then
+<a href=#397 id=397 data-nosnippet>397</a>/// slot 1's, as [`CellNoise::add_to_row`] uses them.
+<a href=#398 id=398 data-nosnippet>398</a></span><span class="attr">#[cfg(test)]
+<a href=#399 id=399 data-nosnippet>399</a></span><span class="kw">fn </span>standard_normals(noise: <span class="kw-2">&amp;</span>CellNoise, row: u64, channel: usize, pair: usize) -&gt; [f32; <span class="number">4</span>] {
+<a href=#400 id=400 data-nosnippet>400</a>    <span class="kw">let </span>counter = [row <span class="kw">as </span>u32, (row &gt;&gt; <span class="number">32</span>) <span class="kw">as </span>u32, channel <span class="kw">as </span>u32, pair <span class="kw">as </span>u32];
+<a href=#401 id=401 data-nosnippet>401</a>    <span class="kw">let </span>words = philox::philox4x32_10(counter, noise.key());
+<a href=#402 id=402 data-nosnippet>402</a>    <span class="kw">let </span>(a, b) = box_muller(words[<span class="number">0</span>], words[<span class="number">1</span>]);
+<a href=#403 id=403 data-nosnippet>403</a>    <span class="kw">let </span>(c, d) = box_muller(words[<span class="number">2</span>], words[<span class="number">3</span>]);
+<a href=#404 id=404 data-nosnippet>404</a>    [a, b, c, d]
+<a href=#405 id=405 data-nosnippet>405</a>}
 </code></pre></div></section></main></body></html>

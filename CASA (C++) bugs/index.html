@@ -1456,6 +1456,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#tsys-atm-noise-takes-its-atmosphere-half-a-band-below-each-channel" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        tsys-atm noise takes its atmosphere half a band below each channel
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#atms-hcn-catalogue-misplaces-a-line-at-106-ghz" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1614,6 +1625,7 @@ Simulator behaviours casa-rs does not follow:
 <a href="#tsys-manual-noise-takes-stale-or-borrowed-system-temperatures"><code>tsys-manual</code>'s stale and borrowed system temperatures</a>,
 <a href="#a-tsys-manual-term-scales-every-noise-term"><code>tsys-manual</code> scaling every noise term</a>,
 <a href="#a-refused-tsys-manual-setnoise-leaves-a-unit-noise-term">the noise term a refused <code>tsys-manual</code> leaves</a>,
+<a href="#tsys-atm-noise-takes-its-atmosphere-half-a-band-below-each-channel"><code>tsys-atm</code>'s atmosphere half a band away</a>,
 <a href="#casas-gain-screens-read-past-their-transform">gain screens read past their transform</a>,
 <a href="#gain-screens-of-neighbouring-antennas-share-a-seed">gain screens sharing a seed</a>,
 <a href="#setgainmoderandom-draws-gains-about-zero">random gains about zero</a>,
@@ -2867,7 +2879,65 @@ Tsys parameters. A water vapour above 100 mm, or a zenith Tsys that is not
 positive or above 10⁶ K, then makes it return <code>False</code>, but the <code>ANoise</code> stays:
 the next <code>corrupt</code> adds 1 Jy of noise (CASA 6.7.6, <code>pwv='200mm'</code>: variance
 0.872 over cross- and autocorrelations, where 1 Jy gives 0.875). casa-rs
-refuses such a <code>setnoise</code> without adding a term.</p>
+refuses such a <code>setnoise</code> without adding a term. <code>tsys-atm</code> takes the same
+path in <code>setnoise</code> (the <code>ANoise</code> is created before either Tsys mode's
+checks; read from the source, not measured), and casa-rs refuses it the
+same way.</p>
+<h2 id="tsys-atm-noise-takes-its-atmosphere-half-a-band-below-each-channel"><code>tsys-atm</code> noise takes its atmosphere half a band below each channel<a class="headerlink" href="#tsys-atm-noise-takes-its-atmosphere-half-a-band-below-each-channel" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-10-24</li>
+<li>Status: CASA bugs; casa-rs does not follow them (#841 Phase 4c)</li>
+<li>Affected code: <code>synthesis/MeasurementComponents/CalCorruptor.cc</code>
+  (<code>AtmosCorruptor::initAtm</code>, <code>tsys</code>, <code>opac</code>) and
+  <code>synthesis/MeasurementComponents/SolvableVisCal.cc</code> (<code>setSimulate</code>)</li>
+</ul>
+<p><code>setnoise(mode='tsys-atm')</code> scales a unit <code>ANoise</code> by a <code>Tf</code> term ("TF
+NOISE") whose Tsys comes from ATM for each channel:
+Tsys(A, c) = (hν/k) e^(τA) (1/(e^(hν/k/T_ebb(A)) − 1) + T_rx/(hν/k)) (1 + g),
+τ the zenith opacity and T_ebb the sky's equivalent blackbody temperature
+at airmass A, with hν/k from the channel's frequency (<code>casa_simulation</code>'s
+<code>corrupt::tsys_atm</code> has the whole model). Measured on CASA 6.7.6 (ALMA's
+site defaults, 1 mm of water, 64-channel windows of 100 MHz from 180 GHz,
+across the 183 GHz line, and from 321 GHz, 2 s integrations; the probe
+scripts and results are on the NAS under <code>casa-rs/issue-841-tsys-4c</code>),
+every channel's noise variance agrees with that formula, through
+<code>casa-atmosphere</code>, with no free parameter (ratio 1.0000 and 1.0027, rms
+0.0106 and 0.0100 per channel, against a statistical 1σ of 0.0149) once the
+atmosphere is taken at the frequencies CASA gives ATM, which are not the
+channels':</p>
+<ul>
+<li><strong>The atmosphere is half a band below the channel.</strong> <code>initAtm</code> builds
+  each window's ATM grid from <code>REF_FREQUENCY</code>, which the simulator sets to
+  the first channel's frequency, with the reference at the middle channel:
+  ATM's channel i is at <code>REF + (i − n/2)·Δν</code> for the first window and
+  <code>REF + (i − n/2 − 1)·Δν</code> for the others, and <code>opac</code> and <code>tsys</code> read
+  channel c of that grid. So channel c's τ and T_ebb are those of a
+  frequency half the band below it (3.2 GHz for the probe's windows), while
+  hν/k is the channel's own. Against the atmosphere at each channel's own
+  frequency, CASA's variance across the 183 GHz line is off by a mean factor
+  of 6.1 and up to 103; at 321 GHz by 0.39 on average and up to 5.5. The
+  shift grows with the window's width and matters wherever the atmosphere
+  changes across it: the 183 GHz line's brightness changes by tens of
+  kelvin over a few GHz at a 5,000 m site (Thompson, Moran &amp; Swenson,
+  <em>Interferometry and Synthesis in Radio Astronomy</em>, 3rd ed., p. 746,
+  Fig. 13.21), and an ozone line at 231.7 GHz nearly doubles ALMA's system
+  temperature within a band (B. Svoboda, <em>Special Topics: Spectral Lines</em>,
+  NRAO Synthesis Imaging Workshop 2026, slide 18).</li>
+<li><strong>A one-channel window after the first gets no Tsys.</strong> For n = 1 the
+  later windows' channel map is read past its end, which is undefined
+  behaviour. In CASA 6.7.6 on macOS the index it read pointed past the grid
+  (the log reads "ch 972849296/20"); the term's <code>T</code> came out bad,
+  <code>setMatByOk</code> applied it as 1, and the probe's 2 GHz continuum window at
+  230 GHz got unscaled 1 Jy noise (variance 0.996 Jy²). Another build may
+  read something else.</li>
+</ul>
+<p>casa-rs evaluates ATM at each channel's CHAN_FREQ, for every window and a
+one-channel window alike, so a channel's σ follows the sky it observes. As
+for <code>tsys-manual</code>, each row takes its own integration's airmasses and
+EXPOSURE (<a href="#tsys-manual-noise-takes-stale-or-borrowed-system-temperatures">stale and borrowed system
+temperatures</a>);
+the term is also refused when its zenith Tsys at the first window's centre
+is not a number, which CASA's check (&gt; 10⁶ K or ≤ 0) lets through.</p>
 <h2 id="atms-hcn-catalogue-misplaces-a-line-at-106-ghz">ATM's HCN catalogue misplaces a line at 106 GHz<a class="headerlink" href="#atms-hcn-catalogue-misplaces-a-line-at-106-ghz" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-10-24</li>

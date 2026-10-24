@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["AtmosphereError","AtmosphereType"],"mod":["absorption","refractivity"],"struct":["AtmosphereProfile","Layer","ProfileParameters","Sky","SpectralGrid","SpectralWindow"]};
+window.SIDEBAR_ITEMS = {"enum":["AtmosphereError","AtmosphereType"],"mod":["absorption","refractivity"],"struct":["AtmosphereProfile","Layer","ProfileParameters","Sky","SkyColumn","SpectralGrid","SpectralWindow"]};
