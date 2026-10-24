@@ -314,7 +314,7 @@ impl WeightView<'_> {
 ///
 /// A role is `None` only when the request did not ask for it; a role the
 /// request needs but the store lacks fails binding. `flags` and
-/// `row_flags` are the stored flag state; [`Self::validity`] is the one
+/// `row_flags` are the stored flag state; [`VisibilityBatch::validity`] is the one
 /// rule that decides whether a value is used.
 #[derive(Clone, Copy, Debug)]
 pub struct DataGroupView<'a> {
