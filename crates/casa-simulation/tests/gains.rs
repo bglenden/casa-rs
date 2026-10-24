@@ -15,6 +15,7 @@ use casa_simulation::{
 use num_complex::Complex32;
 use predict_support::{
     ANTENNAS, CENTRE_RAD, Row, bits, data, read_main, resources, scan, session, write_point_list,
+    write_stokes_point_list,
 };
 
 fn gain(amplitude: f64) -> GainSpec {
@@ -235,6 +236,45 @@ fn leakage_holds_through_the_scans() {
         assert_eq!(first.antennas, later.antennas);
         assert_eq!(bits([&first.data]), bits([&later.data]));
     }
+}
+
+/// One `corrupt` applies leakage before gains, from the sky side in, as
+/// CASA's `collapseForSim` does: on a polarised point (`U` makes XY
+/// nonzero), `XY_both = (XY_G / XY_model) · XY_D` within float rounding,
+/// which gains applied first would not give. Draws are keyed by their
+/// purpose, so the three sessions share their gains and leakages.
+#[test]
+fn leakage_comes_before_gains() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let point = directory.path().join("polarised.cl");
+    write_stokes_point_list(&point, CENTRE_RAD, [1.0, 0.1, 0.3, 0.0]);
+    let path = |name: &str| directory.path().join(name);
+    let run = |name: &str, gains: bool, leaks: bool| {
+        simulate(&path(name), "XX XY YX YY", Some(&point), &|sm| {
+            if leaks {
+                sm.set_leakage(&leakage())?;
+            }
+            if gains {
+                sm.set_gain(&gain(0.05))?;
+            }
+            sm.corrupt()
+        })
+    };
+    let model = run("model.ms", false, false);
+    let gained = run("gained.ms", true, false);
+    let leaked = run("leaked.ms", false, true);
+    let both = run("both.ms", true, true);
+    let mut worst = 0.0_f32;
+    for (((model, gained), leaked), both) in model.iter().zip(&gained).zip(&leaked).zip(&both) {
+        for sample in 0..model.data.len() / 4 {
+            for hand in [1, 2] {
+                let index = 4 * sample + hand;
+                let expected = gained.data[index] / model.data[index] * leaked.data[index];
+                worst = worst.max((both.data[index] - expected).norm() / expected.norm());
+            }
+        }
+    }
+    assert!(worst < 1e-5, "D then G: worst relative error {worst}");
 }
 
 /// `reset` removes the gains and leakage: a later `corrupt` leaves DATA as

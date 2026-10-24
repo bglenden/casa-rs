@@ -1198,9 +1198,12 @@ antenna's and receptor's screens apart.
 The `random` mode, which `setgain`'s documentation does not list but
 `Simulator::setgain` accepts, returns `camp.re·n₁ + i·camp.im·n₂` per
 integration, antenna and receptor, without adding one: gains of a few
-hundredths, which all but erase the data. The `fbm` gains scatter about
-one, and the amplitude is documented as the gain variations' scale.
-casa-rs draws `1 + camp.re·n₁ + i·camp.im·n₂`.
+hundredths, which all but erase the data. Measured with CASA 6.7.6,
+`amplitude=[0.05]` on a 1 Jy point: the table's gains have a mean modulus
+of 0.065, real parts of mean 0.0000 and standard deviation 0.048, and DATA
+a mean modulus of 0.0046 Jy. The `fbm` gains scatter about one, and the
+amplitude is documented as the gain variations' scale. casa-rs draws
+`1 + camp.re·n₁ + i·camp.im·n₂`.
 
 ## An autocorrelation row resets its antenna's simulated term
 
@@ -1230,9 +1233,10 @@ Measured with CASA 6.7.6, five ALMA antennas and `setleakage(table=...)`:
 with three, four or eight spectral windows, observed once or twice each,
 the table has solutions for windows 0 and 1 only, and `corrupt` logs
 "Encountered data spw N for which there is no (simulated) calibration" for
-each later window and leaves its rows as they were. casa-rs simulates a
-leakage for every window. The CASA comparison, `corrupt-leakage`, observes
-two windows.
+each later window and leaves its rows as they were. `setgain` is not
+affected: with four windows its table has solutions for all four, and every
+window is corrupted. casa-rs simulates a leakage for every window. The CASA
+comparison, `corrupt-leakage`, observes two windows.
 
 ## `setleakage` draws one leakage per window for the whole run
 
