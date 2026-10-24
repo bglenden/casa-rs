@@ -27,6 +27,7 @@
 //! MS on disk; the drop emits a `ResourceWarning`.
 
 mod corruption;
+mod gains;
 mod lifecycle;
 mod prediction;
 mod setup;
@@ -626,9 +627,60 @@ impl PySimulator {
         corruption::corrupt(self, py)
     }
 
-    /// Remove every noise term; noise `corrupt` already applied stays.
+    /// Remove every noise, gain and leakage term; what `corrupt` already
+    /// applied stays.
     fn reset(&self, py: Python<'_>) -> PyResult<bool> {
         corruption::reset(self, py)
+    }
+
+    /// Simulate antenna gains over the rows observed so far, as fractional
+    /// Brownian motion of `amplitude` (`mode='fbm'`), for `corrupt` to
+    /// apply. `mode='random'` and writing `table` raise
+    /// `NotImplementedError`.
+    #[pyo3(
+        signature = (
+            mode = "fbm", table = "", interval = Variant::Empty,
+            amplitude = DoubleList::of(&[0.01])
+        ),
+        text_signature = "($self, mode='fbm', table='', interval=[], amplitude=[0.01])"
+    )]
+    fn setgain(
+        &self,
+        py: Python<'_>,
+        mode: &str,
+        table: &str,
+        interval: Variant,
+        amplitude: DoubleList,
+    ) -> PyResult<bool> {
+        let request = gains::GainRequest {
+            mode,
+            table,
+            interval,
+            amplitude: amplitude.0,
+        };
+        gains::setgain(self, py, request)
+    }
+
+    /// Simulate polarization leakages over the rows observed so far, of
+    /// `amplitude` about `offset`, for `corrupt` to apply. Writing `table`
+    /// raises `NotImplementedError`.
+    #[allow(unused_variables)]
+    #[pyo3(
+        signature = (
+            mode = "constant", table = "", amplitude = DoubleList::of(&[0.01]),
+            offset = DoubleList::of(&[0.0])
+        ),
+        text_signature = "($self, mode='constant', table='', amplitude=[0.01], offset=[0.0])"
+    )]
+    fn setleakage(
+        &self,
+        py: Python<'_>,
+        mode: &str,
+        table: &str,
+        amplitude: DoubleList,
+        offset: DoubleList,
+    ) -> PyResult<bool> {
+        gains::setleakage(self, py, (table, amplitude.0, offset.0))
     }
 
     /// Disabled in CASA: logs CASA's error and returns `False`.
@@ -672,22 +724,6 @@ impl PySimulator {
     }
 
     /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(
-        signature = (mode = None, table = None, interval = None, amplitude = None),
-        text_signature = "($self, mode='fbm', table='', interval=[], amplitude=[0.01])"
-    )]
-    fn setgain(
-        &self,
-        mode: Option<&Bound<'_, PyAny>>,
-        table: Option<&Bound<'_, PyAny>>,
-        interval: Option<&Bound<'_, PyAny>>,
-        amplitude: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<bool> {
-        stubs::not_yet_implemented("setgain")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[allow(unused_variables, clippy::too_many_arguments)]
     #[pyo3(
         signature = (
@@ -723,22 +759,6 @@ impl PySimulator {
         dopbcorrection: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<bool> {
         stubs::disabled_in_casa(self, py)
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(
-        signature = (mode = None, table = None, amplitude = None, offset = None),
-        text_signature = "($self, mode='constant', table='', amplitude=[0.01], offset=[0.0])"
-    )]
-    fn setleakage(
-        &self,
-        mode: Option<&Bound<'_, PyAny>>,
-        table: Option<&Bound<'_, PyAny>>,
-        amplitude: Option<&Bound<'_, PyAny>>,
-        offset: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<bool> {
-        stubs::not_yet_implemented("setleakage")
     }
 
     /// Deprecated in CASA; casa-rs provides `setnoise` instead.

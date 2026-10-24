@@ -94,7 +94,7 @@ fn gains_are_antenna_based() {
     );
     assert_eq!(rows.len() % INTEGRATION_ROWS, 0);
     let mut moved = 0;
-    for integration in rows.chunks_exact(INTEGRATION_ROWS) {
+    for integration in rows.as_chunks::<INTEGRATION_ROWS>().0 {
         let v = |p: usize, q: usize| {
             let row = integration
                 .iter()
@@ -178,7 +178,7 @@ fn leakage_moves_the_cross_hands_and_needs_them() {
     let one = Complex32::new(1.0, 0.0);
     let mut cross = 0.0_f32;
     for row in &rows {
-        for sample in row.data.chunks_exact(4) {
+        for sample in row.data.as_chunks::<4>().0 {
             assert_eq!([sample[0], sample[3]], [one, one], "the parallel hands");
             cross = cross.max(sample[1].norm()).max(sample[2].norm());
         }

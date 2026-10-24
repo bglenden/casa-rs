@@ -306,7 +306,7 @@ const METHODS: &[Method] = &[
             param("interval", K::Quantity, Empty),
             param("amplitude", K::Floats, Floats(&[0.01])),
         ],
-        NotYetImplemented,
+        Implemented,
     ),
     method(
         "settrop",
@@ -338,7 +338,7 @@ const METHODS: &[Method] = &[
             param("amplitude", K::Floats, Floats(&[0.01])),
             param("offset", K::Floats, Floats(&[0.0])),
         ],
-        NotYetImplemented,
+        Implemented,
     ),
     method("oldsetnoise", &OLDSETNOISE, DeprecatedInCasa),
     method("setnoise", &SETNOISE, Implemented),
