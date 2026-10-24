@@ -67,6 +67,9 @@ pub(super) struct MainShape<'a> {
     /// Heap of the subtable columns the save generates (POINTING's), which
     /// grows with the scans.
     pub(super) generated_bytes: u64,
+    /// Heap of the session's gain and leakage terms, which the corruption
+    /// reads and which grow with the integrations.
+    pub(super) term_bytes: u64,
 }
 
 /// What `close` was admitted: the write plan, the workers that fit, and the
@@ -108,7 +111,7 @@ pub(super) fn admit_main_write(
         policy,
         &Demand {
             phase: WRITER_PHASE,
-            memory: plan.maximum_resident_bytes() as u64 + shape.generated_bytes,
+            memory: plan.maximum_resident_bytes() as u64 + shape.generated_bytes + shape.term_bytes,
         },
     )
     .map_err(SimulatorError::admission)?;
@@ -248,6 +251,7 @@ mod tests {
             largest_integration: 1_000,
             antennas: 44,
             generated_bytes: 0,
+            term_bytes: 0,
         }
     }
 

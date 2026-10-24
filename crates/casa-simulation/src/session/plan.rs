@@ -188,6 +188,11 @@ impl DataPlan {
         !self.jones.is_empty()
     }
 
+    /// The antenna-based terms the steps apply.
+    pub(crate) fn jones_terms(&self) -> &[Arc<JonesTerm>] {
+        &self.jones
+    }
+
     /// Whether a step covering scan `scan` corrupts it by an antenna-based
     /// term: its noise then follows each step's terms
     /// ([`Self::corruptions_for_scan`]) rather than adding at once.

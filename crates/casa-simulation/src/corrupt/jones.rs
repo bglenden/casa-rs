@@ -124,6 +124,19 @@ impl JonesTerm {
             .is_some_and(|times| !times.is_empty())
     }
 
+    /// The heap the term holds: its solutions and values, which grow with
+    /// the integrations (gains) or windows (leakage) times the antennas.
+    pub(crate) fn bytes(&self) -> u64 {
+        let solutions: usize = self
+            .solutions
+            .iter()
+            .map(|solutions| solutions.capacity() * size_of::<Solution>())
+            .sum();
+        (solutions
+            + self.solutions.capacity() * size_of::<Vec<Solution>>()
+            + self.values.capacity() * size_of::<[Complex32; 2]>()) as u64
+    }
+
     /// Every solution, by window and in time order, with the receptors'
     /// values of each antenna: the rows of its calibration table.
     pub(crate) fn solutions(

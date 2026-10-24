@@ -151,6 +151,21 @@ impl Simulator {
         Ok(())
     }
 
+    /// The heap of the gain and leakage terms the session holds through
+    /// `close` (set, applied by a step, or to be written as a table), each
+    /// counted once: they grow with the integrations or windows times the
+    /// antennas, and `close` admits them.
+    pub(crate) fn jones_term_bytes(&self) -> u64 {
+        let mut seen = std::collections::HashSet::new();
+        self.jones_terms
+            .iter()
+            .chain(self.data_plan().jones_terms())
+            .chain(self.jones_tables.iter().map(|(_, term)| term))
+            .filter(|term| seen.insert(Arc::as_ptr(term)))
+            .map(|term| term.bytes())
+            .sum()
+    }
+
     /// Write the calibration tables `setgain` and `setleakage` named, from
     /// the MeasurementSet `close` wrote: one row per solution and antenna,
     /// by spectral window, time and antenna, as CASA's

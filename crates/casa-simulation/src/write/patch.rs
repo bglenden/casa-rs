@@ -93,6 +93,9 @@ struct PatchShape {
     /// Whether the corruption needs each row's TIME: gains, leakage or
     /// `tsys-manual`.
     times: bool,
+    /// Heap of the session's gain and leakage terms, which the corruption
+    /// reads and which grow with the integrations.
+    term_bytes: u64,
 }
 
 impl PatchShape {
@@ -156,6 +159,7 @@ pub(crate) fn patch_measurement_set(session: &Simulator) -> SimulatorResult<()> 
         antennas: session.antennas().len(),
         airmass: noise_varies_by_row(plan),
         times: noise_varies_by_row(plan) || plan.corrupts_by_jones(),
+        term_bytes: session.jones_term_bytes(),
     };
     let admission = admit_patch(resources, &shape, &columns, prediction.as_ref())?;
     let mut ms = MeasurementSet::open(session.path())
@@ -670,7 +674,7 @@ fn admit_patch(
         policy,
         &Demand {
             phase: WRITER_PHASE,
-            memory: plan.maximum_resident_bytes() as u64 + index_bytes,
+            memory: plan.maximum_resident_bytes() as u64 + index_bytes + shape.term_bytes,
         },
     )
     .map_err(SimulatorError::admission)?;
