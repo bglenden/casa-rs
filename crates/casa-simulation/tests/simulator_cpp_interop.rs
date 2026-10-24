@@ -345,11 +345,7 @@ fn write_predicted_session(path: &Path) {
         .observe(&scan("first", "LBand", 0.0, 30.0, false))
         .expect("observe");
     session
-        .set_noise(&NoiseSpec {
-            mode: "simplenoise".to_string(),
-            simple_noise_jy: 0.1,
-            on_the_fly: true,
-        })
+        .set_noise(&NoiseSpec::simple(0.1))
         .expect("setnoise");
     session.corrupt().expect("corrupt");
     session.close().expect("close");

@@ -18,6 +18,7 @@
 //! | the model image `sm.predict` reads | [`predict::SkyModel`] |
 //! | `sm.setvp(dovp=True)` with an Airy voltage pattern | [`Simulator::set_vp`], [`predict::PrimaryBeam`] |
 //! | `sm.setseed`, `sm.setnoise(mode='simplenoise')`, `sm.corrupt`, `sm.reset` | [`Simulator::set_seed`], [`Simulator::set_noise`], [`Simulator::corrupt`], [`Simulator::reset`] |
+//! | `sm.setnoise(mode='tsys-manual')`: σ per row from a system temperature (CASA's `AtmosCorruptor`) | [`Simulator::set_noise`], [`NoiseSpec::tsys_manual`], [`TsysParameters`] |
 //! | `simutil.readantenna(antab)` | [`readantenna::read_antenna_config`] |
 //!
 //! CASA's `sm` has no execution controls; a session's memory budget, workers
@@ -39,5 +40,6 @@ pub use session::observe::{ObserveManySpec, ObserveSpec, Pointing, StateSpec};
 pub use session::spectral::SpectralWindowSpec;
 pub use session::{
     BackendRequest, DEFAULT_SEED, ExecutionControls, NoiseSpec, PredictSpec, PredictionOptions,
-    SessionResources, Simulator, SimulatorOptions, UnknownBackend, VoltagePatternSpec,
+    SessionResources, Simulator, SimulatorOptions, TsysParameters, UnknownBackend,
+    VoltagePatternSpec,
 };

@@ -13,7 +13,8 @@
 //! observe's start and stop. The reference time is left unchanged, so the
 //! hour-angle offset and SOURCE.TIME stay the same.
 //!
-//! Scenarios may also call `setseed`, `setnoise` (`simplenoise` in Jy),
+//! Scenarios may also call `setseed`, `setnoise` (`simplenoise` in Jy, or
+//! `tsys-manual` with its parameters; `pwv` in mm),
 //! `corrupt`, `reset`, `setoptions`, `setvp` and `predict` (Phase 1d;
 //! `tools/simulation/sm_predict_scenarios.json`), and, in two stages,
 //! `close` and then `openfromms` (Phase 2;
@@ -45,7 +46,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use casa_simulation::{
     ArrayConfig, BackendRequest, CasaOutcome, CoordinateSystem, ExecutionControls, NoiseSpec,
     ObserveManySpec, ObserveSpec, Pointing, PredictSpec, PredictionOptions, SessionResources,
-    Simulator, SimulatorOptions, SimulatorResult, SpectralWindowSpec, StateSpec,
+    Simulator, SimulatorOptions, SimulatorResult, SpectralWindowSpec, StateSpec, TsysParameters,
     VoltagePatternSpec,
 };
 use casa_types::measures::direction::{DirectionRef, MDirection};
@@ -210,22 +211,35 @@ struct ExtraNoise {
 }
 
 fn simple_noise(sigma_jy: f64) -> NoiseSpec {
-    NoiseSpec {
-        mode: "simplenoise".to_string(),
-        simple_noise_jy: sigma_jy,
-        on_the_fly: true,
-    }
+    NoiseSpec::simple(sigma_jy)
 }
 
+/// `setnoise` with the call's arguments, CASA's defaults for the others:
+/// `simplenoise` in Jy, `pwv` in mm, the Tsys parameters as numbers.
 fn set_noise(session: &mut Simulator, call: &Value) -> SimulatorResult<()> {
+    let or = |key: &str, default: f64| call.get(key).and_then(Value::as_f64).unwrap_or(default);
+    let defaults = TsysParameters::default();
     session.set_noise(&NoiseSpec {
         mode: text(call, "mode", "simplenoise").to_string(),
+        simple_noise_jy: or("simplenoise", 0.0),
+        table: text(call, "table", "").to_string(),
+        water_vapour_mm: or("pwv", 0.0),
+        tsys: TsysParameters {
+            tau: or("tau", defaults.tau),
+            atmosphere_k: or("tatmos", defaults.atmosphere_k),
+            antenna_efficiency: or("antefficiency", defaults.antenna_efficiency),
+            spillover_efficiency: or("spillefficiency", defaults.spillover_efficiency),
+            correlator_efficiency: or("correfficiency", defaults.correlator_efficiency),
+            receiver_k: or("trx", defaults.receiver_k),
+            ground_k: or("tground", defaults.ground_k),
+            cmb_k: or("tcmb", defaults.cmb_k),
+            sensitivity: or("senscoeff", defaults.sensitivity),
+            receiver_type: call
+                .get("rxtype")
+                .and_then(Value::as_i64)
+                .unwrap_or(defaults.receiver_type),
+        },
         on_the_fly: call.get("OTF").and_then(Value::as_bool).unwrap_or(true),
-        ..simple_noise(
-            call.get("simplenoise")
-                .and_then(Value::as_f64)
-                .unwrap_or(0.0),
-        )
     })
 }
 

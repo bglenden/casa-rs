@@ -36,6 +36,17 @@ oracle's manifest, the comparison opens `<casa>/<name>.ms` and
     zero, and a two-sample Kolmogorov-Smirnov test compares the two
     implementations' normalized cross-correlation noise.
 
+    A scenario whose noise is one `setnoise(mode='tsys-manual')` term has no
+    single variance: each row's σ comes from its antennas' system
+    temperatures (`tsys_manual_sigma`, CASA's `AtmosCorruptor`, with the
+    elevations casatools' measures give at each row's TIME). On the rows
+    unflagged in both, each implementation's noise divided by that σ must
+    have unit variance per correlation and class, as above, and the KS test
+    compares the normalized noise. Without the formula, CASA's and casa-rs's
+    variances are compared directly in groups of rows (spectral window,
+    dish pair and time bin, `grouped_variance_ratios`): each group's ratio
+    must be 1 within five of its standard errors.
+
   A NaN or infinite DATA or noise sample fails a `model` or `noisy`
   scenario, as does a statistic that is not a number (#853 review).
 
@@ -386,6 +397,240 @@ def compare_noisy_data(paths: dict, expected: float | None) -> tuple[dict, list[
     return stats, failures
 
 
+# CASA's sm.setnoise defaults for the tsys-manual parameters (simulator.xml).
+TSYS_DEFAULTS = {
+    "tau": 0.1,
+    "tatmos": 250.0,
+    "antefficiency": 0.8,
+    "spillefficiency": 0.85,
+    "correfficiency": 0.88,
+    "trx": 50.0,
+    "tground": 270.0,
+    "tcmb": 2.73,
+    "senscoeff": 0.0,
+    "rxtype": 0,
+}
+# Time bins of the direct CASA/casa-rs variance comparison.
+NOISE_TIME_BINS = 8
+
+
+def tsys_manual_sigma(
+    params: dict,
+    frequency_hz: np.ndarray,
+    channel_bandwidth_hz: np.ndarray,
+    exposure_s: np.ndarray,
+    diameters_m: np.ndarray,
+    elevations_rad: np.ndarray,
+) -> np.ndarray:
+    """Each row's σ per real and imaginary draw for CASA's
+    `sm.setnoise(mode='tsys-manual')`, in double precision.
+
+    CASA scales a unit `ANoise` by the inverse of a `T` term whose antenna
+    value is `D / f / sqrt(Tsys(A))` (`AtmosCorruptor::simPar`,
+    `CalCorruptor.cc`), so σ_ij = s_i s_j with
+    s = sqrt(c a / sqrt(Δν t) · Tsys(A)) / D, `a = 8 k 1e19 / (η_a η_q π)`,
+    `c = senscoeff` (1/√2 when not positive), `Δν` the window's
+    |TOTAL_BANDWIDTH| / NUM_CHAN, `t` EXPOSURE, `A = 1/sin(e)` (1000 at
+    e <= 0), and `Tsys(A) = (hν/k) R (1 + rxtype)`,
+    `R = η_s R(T_cmb) + e^τ (η_s (1 - e^-τ) R(T_atm) + (1 - η_s) R(T_gnd)
+    + T_rx / (hν/k))`, `τ = tau·A`, `R(T) = 1/(e^(hν/kT) - 1)`, ν the
+    window's REF_FREQUENCY. An antenna whose Tsys overflows single precision
+    (below the horizon) applies as 1, as CASA applies a bad `T`.
+
+    `frequency_hz`, `channel_bandwidth_hz` and `exposure_s` hold one value
+    per row; `diameters_m` and `elevations_rad` (rows, 2), the row's
+    antennas'."""
+    p = dict(TSYS_DEFAULTS, **{key: value for key, value in params.items() if key in TSYS_DEFAULTS})
+    frequency = np.asarray(frequency_hz, dtype=float)[:, None]
+    h_nu_k = 4.80145e-11 * frequency
+
+    def radiance(temperature: float) -> np.ndarray:
+        return 1.0 / np.expm1(0.04799274551e-9 * frequency / temperature)
+
+    spill = p["spillefficiency"]
+    tatmos = p["tatmos"] if p["tatmos"] > 10 else 250.0
+    elevations = np.asarray(elevations_rad, dtype=float)
+    with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
+        airmass = np.where(elevations > 0, 1.0 / np.sin(elevations), 1000.0)
+        tau = p["tau"] * airmass
+        r = spill * radiance(p["tcmb"]) + np.exp(tau) * (
+            spill * (1.0 - np.exp(-tau)) * radiance(tatmos)
+            + (1.0 - spill) * radiance(p["tground"])
+            + p["trx"] / h_nu_k
+        )
+        tsys = h_nu_k * r * (1 + max(int(p["rxtype"]), 0))
+        c = p["senscoeff"] if p["senscoeff"] > 0 else 1.0 / np.sqrt(2.0)
+        a = 8 * 1.38062e-16 * 1e23 * 1e-4 / (p["antefficiency"] * p["correfficiency"] * np.pi)
+        factor = c * a / np.sqrt(np.asarray(channel_bandwidth_hz) * np.asarray(exposure_s))
+        scale = np.sqrt(factor[:, None] * tsys) / np.asarray(diameters_m, dtype=float)
+    scale = np.where(tsys > np.finfo(np.float32).max, 1.0, scale)
+    return scale[:, 0] * scale[:, 1]
+
+
+def grouped_variance_ratios(
+    casa: np.ndarray, ours: np.ndarray, groups: np.ndarray
+) -> tuple[list[dict], list[str]]:
+    """casa-rs's noise variance over CASA's in each group of rows, by
+    group label (one per row), over every sample's real and imaginary parts
+    (`casa` and `ours`: rows of complex samples; autocorrelations are
+    compared by their real parts, which the caller passes alone). Each ratio
+    must be 1 within five of its standard errors, sqrt(2/n_casa + 2/n_ours)
+    for normal noise."""
+    results, failures = [], []
+    for label in np.unique(groups):
+        a, b = casa[groups == label].ravel(), ours[groups == label].ravel()
+        if np.iscomplexobj(a):
+            a = np.concatenate([a.real, a.imag])
+            b = np.concatenate([b.real, b.imag])
+        if a.size < 2:
+            continue
+        ratio = float(np.mean(b * b) / np.mean(a * a))
+        error = float(np.sqrt(2.0 / a.size + 2.0 / b.size))
+        results.append({"group": str(label), "n": int(a.size), "ratio": ratio, "standard_error": error})
+        if not abs(ratio - 1.0) <= NOISE_STANDARD_ERRORS * error:
+            failures.append(
+                f"group {label}: casa-rs/CASA variance {ratio:.4f}, expected 1 +- "
+                f"{NOISE_STANDARD_ERRORS * error:.4f} over {a.size} samples"
+            )
+    return results, failures
+
+
+def tsys_term(scenario: dict) -> dict | None:
+    """The resolved arguments of the scenario's one `tsys-manual` setnoise,
+    or None when its noise is not that alone."""
+    calls = [call for call in scenario.get("calls", []) if call["op"] == "setnoise"]
+    terms = [call["resolved"] for call in calls if call.get("returned")]
+    if len(terms) == 1 and terms[0].get("mode") == "tsys-manual":
+        return terms[0]
+    return None
+
+
+def row_geometry(tb, me, qa, path: str) -> dict:
+    """What a row's tsys-manual σ takes, from the MS at `path`: each row's
+    window frequency and channel bandwidth, EXPOSURE, its antennas' dishes,
+    and their elevations of the row's field at its TIME (UTC, as CASA's
+    VisIter takes TIME), and the rows' window, antennas and time."""
+    tb.open(path)
+    try:
+        a1, a2 = np.asarray(tb.getcol("ANTENNA1")), np.asarray(tb.getcol("ANTENNA2"))
+        time = np.asarray(tb.getcol("TIME"))
+        exposure = np.asarray(tb.getcol("EXPOSURE"))
+        ddid = np.asarray(tb.getcol("DATA_DESC_ID"))
+        field = np.asarray(tb.getcol("FIELD_ID"))
+    finally:
+        tb.close()
+
+    def column(subtable: str, name: str) -> np.ndarray:
+        tb.open(os.path.join(path, subtable))
+        try:
+            return np.asarray(tb.getcol(name))
+        finally:
+            tb.close()
+
+    spw = column("DATA_DESCRIPTION", "SPECTRAL_WINDOW_ID")[ddid]
+    reference = column("SPECTRAL_WINDOW", "REF_FREQUENCY")
+    bandwidth = np.abs(column("SPECTRAL_WINDOW", "TOTAL_BANDWIDTH")) / column("SPECTRAL_WINDOW", "NUM_CHAN")
+    positions = column("ANTENNA", "POSITION")
+    diameters = column("ANTENNA", "DISH_DIAMETER")
+    phase = column("FIELD", "PHASE_DIR")[:, 0, :]
+    elevation = np.zeros((time.size, 2))
+    for t, f in sorted(set(zip(time.tolist(), field.tolist()))):
+        me.doframe(me.epoch("UTC", qa.quantity(t, "s")))
+        direction = me.direction("J2000", qa.quantity(phase[0, f], "rad"), qa.quantity(phase[1, f], "rad"))
+        antennas = []
+        for antenna in range(positions.shape[1]):
+            me.doframe(me.position("ITRF", *[qa.quantity(positions[k, antenna], "m") for k in range(3)]))
+            antennas.append(me.measure(direction, "AZEL")["m1"]["value"])
+        rows = (time == t) & (field == f)
+        elevation[rows, 0] = np.asarray(antennas)[a1[rows]]
+        elevation[rows, 1] = np.asarray(antennas)[a2[rows]]
+    return {
+        "frequency": reference[spw],
+        "bandwidth": bandwidth[spw],
+        "exposure": exposure,
+        "diameters": np.stack([diameters[a1], diameters[a2]], axis=1),
+        "elevations": elevation,
+        "spw": spw,
+        "time": time,
+    }
+
+
+def time_bins(time: np.ndarray, bins: int = NOISE_TIME_BINS) -> np.ndarray:
+    """Each row's bin of `bins` equal spans of the rows' times."""
+    span = max(float(time.max() - time.min()), 1e-9)
+    return np.minimum(((time - time.min()) / span * bins).astype(int), bins - 1)
+
+
+def compare_tsys_noise(paths: dict, term: dict) -> tuple[dict, list[str]]:
+    """A tsys-manual term's noise in both implementations: normalized by
+    each row's σ (`tsys_manual_sigma`), and CASA's against casa-rs's in
+    groups of rows (`grouped_variance_ratios`)."""
+    from casatools import measures, quanta, table
+
+    tb, me, qa = table(), measures(), quanta()
+    geometry = row_geometry(tb, me, qa, paths["casa"])
+    sigma = tsys_manual_sigma(
+        term,
+        geometry["frequency"],
+        geometry["bandwidth"],
+        geometry["exposure"],
+        geometry["diameters"],
+        geometry["elevations"],
+    )
+    noise, stats, failures = {}, {}, []
+    for side in ("casa", "casa-rs"):
+        noisy, clean = main_columns(tb, paths[side]), main_columns(tb, paths[side + "-twin"])
+        if noisy["data"].shape != clean["data"].shape or noisy["data"].shape[0] != sigma.size:
+            failures.append(f"{side}: the twin's or CASA's DATA has another shape")
+            return stats, failures
+        noise[side] = (noisy["data"] - clean["data"], noisy["flag_row"], noisy["auto"])
+    unflagged = ~noise["casa"][1] & ~noise["casa-rs"][1]
+    auto = noise["casa"][2]
+    stats["rows_compared"] = int(unflagged.sum())
+    stats["rows_flagged"] = int((~unflagged).sum())
+    stats["sigma_range_jy"] = [float(sigma[unflagged].min()), float(sigma[unflagged].max())]
+    elevation = np.degrees(geometry["elevations"][unflagged])
+    stats["elevation_range_deg"] = [float(elevation.min()), float(elevation.max())]
+    normalized = {}
+    for side in ("casa", "casa-rs"):
+        values = noise[side][0][unflagged] / sigma[unflagged][:, None, None]
+        classes, side_failures = noise_classes(values, auto[unflagged], 1.0)
+        stats[side] = classes
+        failures += [f"{side} normalized noise: {failure}" for failure in side_failures]
+        cross = values[~auto[unflagged]].ravel()
+        normalized[side] = np.concatenate([cross.real, cross.imag])
+    if all(np.all(np.isfinite(values)) for values in normalized.values()):
+        statistic, p_value = ks_two_sample(normalized["casa"], normalized["casa-rs"])
+        stats["ks_cross"] = {"statistic": statistic, "p_value": p_value}
+        failures += ks_failures(statistic, p_value)
+    pairs = np.sort(geometry["diameters"], axis=1)
+    labels = np.array(
+        [
+            f"spw{spw} {d1:g}m-{d2:g}m {'auto' if is_auto else 'cross'} t{bin_}"
+            for spw, (d1, d2), is_auto, bin_ in zip(
+                geometry["spw"], pairs, auto, time_bins(geometry["time"])
+            )
+        ]
+    )
+    casa, ours = noise["casa"][0][unflagged], noise["casa-rs"][0][unflagged]
+    cross_rows, auto_rows = ~auto[unflagged], auto[unflagged]
+    groups, group_failures = grouped_variance_ratios(
+        casa[cross_rows], ours[cross_rows], labels[unflagged][cross_rows]
+    )
+    if auto_rows.any():
+        auto_groups, auto_failures = grouped_variance_ratios(
+            casa[auto_rows].real, ours[auto_rows].real, labels[unflagged][auto_rows]
+        )
+        groups += auto_groups
+        group_failures += auto_failures
+    stats["groups"] = groups
+    pulls = [(group["ratio"] - 1.0) / group["standard_error"] for group in groups]
+    stats["groups_worst_pull"] = float(max(np.abs(pulls))) if pulls else None
+    stats["groups_chi2_per_group"] = float(np.mean(np.square(pulls))) if pulls else None
+    failures += [f"noise: {failure}" for failure in group_failures]
+    return stats, failures
+
+
 def ks_failures(statistic: float, p_value: float) -> list[str]:
     """The two-sample KS test's failure: a p-value below 1e-3, or one that is
     not a number."""
@@ -410,6 +655,10 @@ def compare_data(tb, scenario: dict, paths: dict, limit: float) -> tuple[dict, l
         )
         return dict(stats, kind=kind), failures
     if kind == "noisy":
+        term = tsys_term(scenario)
+        if term is not None and scenario.get("noise_variance") is None:
+            stats, failures = compare_tsys_noise(paths, term)
+            return dict(stats, kind=kind, noise="tsys-manual"), failures
         stats, failures = compare_noisy_data(paths, scenario.get("noise_variance"))
         return dict(stats, kind=kind), failures
     return {"kind": kind}, [f"unknown data kind {kind!r}"]
@@ -511,6 +760,22 @@ def describe_data(data: dict) -> str:
         return (
             f"; DATA NRMS {data['nrms']:.2e} over {data['samples_compared']} samples"
             f" ({', '.join(parts)})"
+        )
+    if kind == "noisy" and data.get("noise") == "tsys-manual" and "casa" in data and "casa-rs" in data:
+        normalized = lambda side: ", ".join(  # noqa: E731
+            f"{entry['cross_re_var']:.4f}/{entry['cross_im_var']:.4f}"
+            + (f"/{entry['auto_re_var']:.4f}" if "auto_re_var" in entry else "")
+            for key, entry in data[side].items()
+            if key.startswith("corr")
+        )
+        ks = data.get("ks_cross", {})
+        return (
+            f"; tsys-manual noise over sigma {data['sigma_range_jy'][0]:.4g}-"
+            f"{data['sigma_range_jy'][1]:.4g} Jy, normalized cross re/im[/auto] variance "
+            f"CASA [{normalized('casa')}], casa-rs [{normalized('casa-rs')}]"
+            + (f", KS p {ks['p_value']:.2g}" if ks else "")
+            + f"; {len(data['groups'])} groups, worst pull {data['groups_worst_pull']:.2f},"
+            f" chi2/group {data['groups_chi2_per_group']:.2f}"
         )
     if kind == "noisy" and "casa" in data and "casa-rs" in data:
         variances = lambda side: ", ".join(  # noqa: E731
