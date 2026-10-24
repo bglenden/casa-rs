@@ -22,11 +22,12 @@ with its noise-free twin, a 1 Jy unpolarised point at the phase centre:
     standard deviation `π·gain_scale` (corrected for the reference's
     share), pooled within `SCALE_TOLERANCE`.
 
-  Antennas with unit gain throughout (CASA's last antenna when
-  autocorrelations are written) are left out of the scales and must be
-  the scenario's `casa_unit_antennas` for CASA and none for casa-rs.
-  CASA's screens copy their last slots from past the end of their FFT's
-  output, and normalise with them, so its scales vary from run to run
+  Antennas with unit gain throughout are left out of the scales and
+  reported; casa-rs must have none. CASA has its last antenna's when
+  autocorrelations are written, and others' when a screen's
+  normalisation takes a huge value from past the end of its FFT's output,
+  so CASA's are not checked. CASA's screens copy their last slots from
+  there and normalise with them, so its scales vary from run to run
   (docs/CASA (C++) bugs.md): a scenario's `casa_gain_checks` leaves them
   out for CASA. Instead the screens' shape is compared across the two
   implementations (`structure_failures`): their autocorrelations at
@@ -169,10 +170,11 @@ def gain_statistics(
     twin: dict,
     scale: float,
     checks: list[str],
-    unit_expected: list[int],
+    unit_expected: list[int] | None,
 ) -> tuple[dict, list[str]]:
     """Gain statistics of one implementation against its twin, and the
-    failures (see the module documentation)."""
+    failures (see the module documentation); its unit-gain antennas must
+    be `unit_expected` unless that is None."""
     rows, baselines, failure = integrations(side["time"], side["antenna1"], side["antenna2"])
     if failure:
         return {}, [failure]
@@ -215,7 +217,8 @@ def gain_statistics(
                 failures.append(f"correlation {c}: {check} scale {ratio:.3f} of the expected")
     if unit is None:
         return stats, ["no parallel hands with model power"]
-    if sorted(unit) != sorted(unit_expected):
+    stats["unit_antennas"] = sorted(unit)
+    if unit_expected is not None and sorted(unit) != sorted(unit_expected):
         failures.append(f"unit-gain antennas {sorted(unit)}, expected {sorted(unit_expected)}")
     return stats, failures
 

@@ -149,6 +149,9 @@ pub struct Simulator {
     /// The antenna-based terms `setgain` and `setleakage` set, in the order
     /// they were set, until `reset`.
     jones_terms: Vec<Arc<JonesTerm>>,
+    /// The calibration tables `close` writes, each with its term (a
+    /// `table` given to `setgain` or `setleakage`); `reset` keeps them.
+    jones_tables: Vec<(PathBuf, Arc<JonesTerm>)>,
     /// `predict`'s `GridFT` grid padding (`setoptions`).
     padding: PaddingFactor,
     /// `setoptions(ftmachine='wproject', wprojplanes=…)`: the planes
@@ -201,6 +204,7 @@ impl Simulator {
             seed: DEFAULT_SEED,
             noise_terms: Vec::new(),
             jones_terms: Vec::new(),
+            jones_tables: Vec::new(),
             padding: PaddingFactor::SIMULATOR,
             w_projection_planes: None,
             mosaic: false,
@@ -516,17 +520,20 @@ impl Simulator {
     }
 
     /// `sm.close()` / `sm.done()`: write the MeasurementSet, or, after
-    /// `openfromms`, patch the rows the DATA steps rewrite in place.
+    /// `openfromms`, patch the rows the DATA steps rewrite in place; then
+    /// write the calibration tables `setgain` and `setleakage` named.
     ///
     /// # Errors
     ///
-    /// A failure to create, read or write the MeasurementSet.
+    /// A failure to create, read or write the MeasurementSet or a
+    /// calibration table.
     pub fn close(self) -> SimulatorResult<()> {
         if self.opened.is_some() {
-            write::patch_measurement_set(&self)
+            write::patch_measurement_set(&self)?;
         } else {
-            write::write_measurement_set(&self)
+            write::write_measurement_set(&self)?;
         }
+        self.write_jones_tables()
     }
 
     /// `direction` in J2000, as `[ra, dec]` radians with the longitude in

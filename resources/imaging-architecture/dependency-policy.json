@@ -118,6 +118,7 @@
    "casa-numerics"
   ],
   "casa-simulation": [
+   "casa-calibration",
    "casa-components",
    "casa-coordinates",
    "casa-fft",

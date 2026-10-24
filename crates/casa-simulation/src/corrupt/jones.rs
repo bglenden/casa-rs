@@ -93,14 +93,24 @@ pub(crate) enum JonesKind {
     Leakage,
 }
 
+/// One solution of a term: a time in a spectral window, its block of
+/// values, and the field it was solved on (the table's FIELD_ID).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct Solution {
+    pub(crate) time_s: f64,
+    /// The block of `JonesTerm::values` it takes.
+    block: u32,
+    pub(crate) field: u32,
+}
+
 /// One simulated antenna-based term: per spectral window, its solutions in
 /// time order, each a block of one value per antenna and receptor.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct JonesTerm {
     pub(crate) kind: JonesKind,
     antennas: usize,
-    /// `[window]`: (solution time, block) in time order.
-    solutions: Vec<Vec<(f64, u32)>>,
+    /// `[window]`: the solutions in time order.
+    solutions: Vec<Vec<Solution>>,
     /// `[block · antennas + antenna]`: the receptors' values.
     values: Vec<[Complex32; 2]>,
 }
@@ -114,14 +124,30 @@ impl JonesTerm {
             .is_some_and(|times| !times.is_empty())
     }
 
+    /// Every solution, by window and in time order, with the receptors'
+    /// values of each antenna: the rows of its calibration table.
+    pub(crate) fn solutions(
+        &self,
+    ) -> impl Iterator<Item = (usize, &Solution, &[[Complex32; 2]])> + '_ {
+        self.solutions
+            .iter()
+            .enumerate()
+            .flat_map(move |(window, solutions)| {
+                solutions.iter().map(move |solution| {
+                    let first = solution.block as usize * self.antennas;
+                    (window, solution, &self.values[first..first + self.antennas])
+                })
+            })
+    }
+
     /// The receptors' values of `antenna` at the solution nearest `time_s`
     /// in `window`, the earlier of two as near (`CalCorruptor::setCurrTime`).
     fn at(&self, window: usize, time_s: f64, antenna: usize) -> [Complex32; 2] {
         let times = &self.solutions[window];
-        let after = times.partition_point(|&(time, _)| time < time_s);
+        let after = times.partition_point(|solution| solution.time_s < time_s);
         let nearest = match (after.checked_sub(1), times.get(after)) {
-            (Some(before), Some(&(later, _))) => {
-                if (later - time_s).abs() < (time_s - times[before].0).abs() {
+            (Some(before), Some(later)) => {
+                if (later.time_s - time_s).abs() < (time_s - times[before].time_s).abs() {
                     after
                 } else {
                     before
@@ -130,7 +156,7 @@ impl JonesTerm {
             (Some(before), None) => before,
             (None, _) => 0,
         };
-        let block = times[nearest].1 as usize;
+        let block = times[nearest].block as usize;
         self.values[block * self.antennas + antenna]
     }
 
@@ -181,26 +207,37 @@ impl JonesTerm {
     }
 }
 
-/// The solution chunks of a term: per spectral window, (time, chunk) in
-/// time order, and how many chunks there are.
+/// The solution chunks of a term: per spectral window, the chunks in time
+/// order, each its own block, and how many chunks there are.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct Chunks {
-    /// `[window]`: (the chunk's time, chunk) in time order.
-    pub(crate) by_window: Vec<Vec<(f64, u32)>>,
+    /// `[window]`: the chunks, in time order once sorted.
+    pub(crate) by_window: Vec<Vec<Solution>>,
     pub(crate) count: u32,
 }
 
 impl Chunks {
-    /// Add a chunk at `time_s` in `window`; chunks are added in time order
-    /// within a window.
-    pub(crate) fn push(&mut self, window: usize, time_s: f64) -> u32 {
+    /// Add a chunk at `time_s` in `window`, solved on field `field`.
+    pub(crate) fn push(&mut self, window: usize, time_s: f64, field: usize) -> u32 {
         if self.by_window.len() <= window {
             self.by_window.resize_with(window + 1, Vec::new);
         }
         let chunk = self.count;
-        self.by_window[window].push((time_s, chunk));
+        self.by_window[window].push(Solution {
+            time_s,
+            block: chunk,
+            field: field as u32,
+        });
         self.count += 1;
         chunk
+    }
+
+    /// Each window's chunks in time order, as `corrupt` looks them up.
+    pub(crate) fn sorted(mut self) -> Self {
+        for solutions in &mut self.by_window {
+            solutions.sort_by(|a, b| a.time_s.total_cmp(&b.time_s));
+        }
+        self
     }
 
     /// The earliest and latest chunk times.
@@ -208,7 +245,7 @@ impl Chunks {
         self.by_window
             .iter()
             .flatten()
-            .map(|&(time, _)| time)
+            .map(|solution| solution.time_s)
             .fold(None, |span, time| {
                 Some(span.map_or([time, time], |[low, high]: [f64; 2]| {
                     [low.min(time), high.max(time)]
@@ -255,11 +292,14 @@ pub(crate) fn fbm_gains(seed: i32, scale: f64, antennas: usize, chunks: Chunks) 
     };
     let solutions = chunks
         .by_window
-        .iter()
-        .map(|times| {
-            times
-                .iter()
-                .map(|&(time, _)| (time, slot_of(time)))
+        .into_iter()
+        .map(|solutions| {
+            solutions
+                .into_iter()
+                .map(|solution| Solution {
+                    block: slot_of(solution.time_s),
+                    ..solution
+                })
                 .collect()
         })
         .collect();

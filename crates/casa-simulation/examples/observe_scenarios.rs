@@ -20,7 +20,10 @@
 //! `close` and then `openfromms` (Phase 2;
 //! `tools/simulation/sm_openfromms_scenarios.json`): the first stage is
 //! closed, and its MS, or a copy of CASA's when the scenario's
-//! `openfromms_ms` is `casa`, reopened. Each of those must end as
+//! `openfromms_ms` is `casa`, reopened; and `setdata`, `setgain` and
+//! `setleakage` (Phase 3; `tools/simulation/sm_corrupt_scenarios.json`),
+//! whose `table` is written under the output directory, as the oracle
+//! writes CASA's under its own. Each of those must end as
 //! CASA's did: `True`, `False`, or raised, as the manifest records; a call
 //! that does not stops the run. `--simplenoise-jy` adds a `setnoise` and a
 //! `corrupt` after every scenario's own calls, with the seed of `--seed`
@@ -252,17 +255,36 @@ fn numbers_or(call: &Value, key: &str, default: &[f64]) -> Vec<f64> {
     }
 }
 
-fn set_gain(session: &mut Simulator, call: &Value) -> SimulatorResult<()> {
+/// `setdata`, with CASA's defaults (`spwid=[0]`, `fieldid=[0]`).
+fn set_data(session: &mut Simulator, call: &Value) -> SimulatorResult<()> {
+    let ids = |key: &str| -> Vec<i64> {
+        numbers_or(call, key, &[0.0])
+            .into_iter()
+            .map(|id| id as i64)
+            .collect()
+    };
+    session.set_data(&ids("spwid"), &ids("fieldid"), text(call, "msselect", ""))
+}
+
+/// A `setgain` or `setleakage` table, named in the manifest, under `out`.
+fn table_under(call: &Value, out: &Path) -> String {
+    match text(call, "table", "") {
+        "" => String::new(),
+        name => out.join(name).to_string_lossy().into_owned(),
+    }
+}
+
+fn set_gain(session: &mut Simulator, call: &Value, out: &Path) -> SimulatorResult<()> {
     session.set_gain(&GainSpec {
         mode: text(call, "mode", "fbm").to_string(),
-        table: text(call, "table", "").to_string(),
+        table: table_under(call, out),
         amplitude: numbers_or(call, "amplitude", &[0.01]),
     })
 }
 
-fn set_leakage(session: &mut Simulator, call: &Value) -> SimulatorResult<()> {
+fn set_leakage(session: &mut Simulator, call: &Value, out: &Path) -> SimulatorResult<()> {
     session.set_leakage(&LeakageSpec {
-        table: text(call, "table", "").to_string(),
+        table: table_under(call, out),
         amplitude: numbers_or(call, "amplitude", &[0.01]),
         offset: numbers_or(call, "offset", &[0.0]),
     })
@@ -442,8 +464,9 @@ fn run_scenario(
             "observemany" => expect_casas_outcome(entry, observe_many(session, call, shift_s)),
             "setseed" => session.set_seed(number(call, "seed") as i32),
             "setnoise" => expect_casas_outcome(entry, set_noise(session, call)),
-            "setgain" => expect_casas_outcome(entry, set_gain(session, call)),
-            "setleakage" => expect_casas_outcome(entry, set_leakage(session, call)),
+            "setdata" => expect_casas_outcome(entry, set_data(session, call)),
+            "setgain" => expect_casas_outcome(entry, set_gain(session, call, out)),
+            "setleakage" => expect_casas_outcome(entry, set_leakage(session, call, out)),
             "corrupt" => expect_casas_outcome(entry, session.corrupt()),
             "reset" => session.reset(),
             "setoptions" => expect_casas_outcome(entry, set_options(session, call)),

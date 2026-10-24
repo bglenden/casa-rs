@@ -335,20 +335,10 @@ fn gains_and_leakage_refuse_what_casa_or_casa_rs_cannot_do() {
         assert_eq!(outcome, expected, "mode {mode}: {message}");
     }
     let (outcome, _) = refusal(sm.set_gain(&GainSpec {
-        table: "g.cal".to_string(),
-        ..gain(0.05)
-    }));
-    assert_eq!(outcome, CasaOutcome::NotYetImplemented, "a table to write");
-    let (outcome, _) = refusal(sm.set_gain(&GainSpec {
         amplitude: Vec::new(),
         ..gain(0.05)
     }));
     assert_eq!(outcome, CasaOutcome::ReturnsFalse, "no amplitude");
-    let (outcome, _) = refusal(sm.set_leakage(&LeakageSpec {
-        table: "d.cal".to_string(),
-        ..leakage()
-    }));
-    assert_eq!(outcome, CasaOutcome::NotYetImplemented, "a table to write");
 
     sm.predict(&PredictSpec {
         images: Vec::new(),

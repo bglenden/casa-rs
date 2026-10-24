@@ -33,6 +33,7 @@ mod model;
 mod plan;
 mod plots;
 mod session;
+mod simulated;
 mod solve;
 mod stats;
 mod summary;
@@ -78,6 +79,7 @@ pub use session::{
     CalibrationDataset, CalibrationError, CalibrationSolveRequest, CalibrationSolveResult,
     solve_calibration,
 };
+pub use simulated::{SimulatedJones, SimulatedSolution, write_simulated_jones_table};
 pub use solve::{
     GainSolveCombine, GainSolveError, GainSolveInterval, GainSolveMode, GainSolveModelSource,
     GainSolveReport, GainSolveRequest, GainType, RefAntSelector,

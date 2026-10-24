@@ -55,6 +55,10 @@ oracle's manifest, the comparison opens `<casa>/<name>.ms` and
   A NaN or infinite DATA or noise sample fails a `model`, `noisy`, `gains`
   or `leakage` scenario, as does a statistic that is not a number (#853
   review).
+- **calibration tables**: a scenario's `tables`, written by `setgain` or
+  `setleakage` beside each side's MS, must agree in what is not drawn
+  (`table_differences`): keywords and subtype, columns, rows, TIME,
+  the identifying columns, and CPARAM's shapes and FLAG.
 
 Data managers are not compared; the plan lets them differ. A scenario's
 `ignore` entries (`TABLE.COLUMN`) are skipped. The exit status is 1 if any
@@ -678,9 +682,9 @@ def compare_corrupted_data(paths: dict, scenario: dict) -> tuple[dict, list[str]
             continue
         side_failures = non_finite("DATA", corrupted["data"]) + non_finite("twin DATA", twin["data"])
         if not side_failures and kind == "gains":
-            # CASA's defects: its unit-gain antennas, and the checks its
-            # gains fail (the scenario's notes say why).
-            unit = scenario.get("casa_unit_antennas", []) if side == "casa" else []
+            # CASA's defects: its unit-gain antennas, reported but not
+            # checked, and the checks its gains fail (corruption_stats.py).
+            unit = None if side == "casa" else []
             checks = scenario.get("casa_gain_checks", GAIN_CHECKS) if side == "casa" else GAIN_CHECKS
             stats[side], side_failures = gain_statistics(corrupted, twin, scenario["gain_scale"], checks, unit)
         elif not side_failures:
@@ -800,7 +804,79 @@ def compare_scenario(
                 report["largest"][qualified] = largest
             if aspect is not None:
                 differ(f"{qualified}:{aspect}", f"{qualified}: {note}")
+    for name in scenario.get("tables", []):
+        rows = {}
+        for side, ms in (("casa", casa_ms), ("casa-rs", casars_ms)):
+            path = os.path.join(os.path.dirname(ms), name)
+            if not os.path.isdir(path):
+                differ(f"{name}:missing", f"calibration table {name}: missing from {side}")
+                break
+            rows[side] = calibration_table(tb, path)
+        else:
+            for message in table_differences(rows["casa"], rows["casa-rs"]):
+                differ(f"{name}:table", f"calibration table {name}: {message}")
     return report
+
+
+# The calibration-table columns compared exactly: what a simulated table's
+# rows are, whatever the draws (`write_simulated_jones_table`).
+TABLE_ID_COLUMNS = (
+    "FIELD_ID",
+    "SPECTRAL_WINDOW_ID",
+    "ANTENNA1",
+    "ANTENNA2",
+    "INTERVAL",
+    "SCAN_NUMBER",
+    "OBSERVATION_ID",
+)
+
+
+def calibration_table(tb, path: str) -> dict:
+    """A calibration table's keywords, columns, TIME and identifying
+    columns, and its CPARAM and FLAG cell shapes."""
+    tb.open(path)
+    try:
+        keywords = {
+            key: value
+            for key, value in tb.getkeywords().items()
+            if key in ("VisCal", "ParType", "PolBasis")
+        }
+        rows = tb.nrows()
+        found = {
+            "keywords": keywords,
+            "subtype": tb.info().get("subType"),
+            "columns": sorted(tb.colnames()),
+            "TIME": np.asarray(tb.getcol("TIME")) if rows else np.zeros(0),
+            "shapes": [tb.getcell("CPARAM", row).shape for row in range(rows)],
+            "flags": [bool(np.any(tb.getcell("FLAG", row))) for row in range(rows)],
+        }
+        for column in TABLE_ID_COLUMNS:
+            found[column] = np.asarray(tb.getcol(column)) if rows else np.zeros(0)
+        return found
+    finally:
+        tb.close()
+
+
+def table_differences(casa: dict, casars: dict) -> list[str]:
+    """How casa-rs's calibration table differs from CASA's in what is not
+    drawn: its keywords and subtype, columns, rows, TIME (within
+    `TOLERANCES['TIME']`), identifying columns, cell shapes and flags."""
+    found = []
+    for key in ("subtype", "keywords", "columns"):
+        if casa[key] != casars[key]:
+            found.append(f"{key} {casa[key]!r} against {casars[key]!r}")
+    if len(casa["TIME"]) != len(casars["TIME"]):
+        return found + [f"{len(casa['TIME'])} rows against {len(casars['TIME'])}"]
+    if casa["TIME"].size and not np.all(np.abs(casa["TIME"] - casars["TIME"]) <= TOLERANCES["TIME"]):
+        found.append(f"TIME differs by up to {np.max(np.abs(casa['TIME'] - casars['TIME'])):.3g} s")
+    for column in TABLE_ID_COLUMNS:
+        if not np.array_equal(casa[column], casars[column]):
+            row = int(np.argmax(casa[column] != casars[column]))
+            found.append(f"{column} row {row}: {casa[column][row]} against {casars[column][row]}")
+    for key in ("shapes", "flags"):
+        if casa[key] != casars[key]:
+            found.append(f"{key} differ")
+    return found
 
 
 def describe_data(data: dict) -> str:
@@ -855,6 +931,7 @@ def describe_data(data: dict) -> str:
         return (
             f"; gain amplitude/phase scale CASA [{scales('casa')}], casa-rs [{scales('casa-rs')}]"
             f"; screen autocorrelation at lags {structure.get('lags')} CASA [{lags('casa')}], casa-rs [{lags('casa-rs')}]"
+            f"; CASA's unit-gain antennas {data['casa'].get('unit_antennas')}"
         )
     if kind == "leakage" and "casa" in data and "casa-rs" in data:
         squares = lambda side: ", ".join(  # noqa: E731
