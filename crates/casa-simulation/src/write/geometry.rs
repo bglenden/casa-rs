@@ -39,6 +39,8 @@ pub(crate) struct RowGeometry {
     pub(crate) flagged: bool,
     pub(crate) sigma: f32,
     pub(crate) weight: f32,
+    /// TIME, seconds: where gains and leakage take their solution.
+    pub(crate) time_s: f64,
 }
 
 impl<'a> ArrayGeometry<'a> {
@@ -141,6 +143,7 @@ impl<'a> ArrayGeometry<'a> {
                 flagged: false,
                 sigma,
                 weight,
+                time_s,
             };
         }
         let shadowed = shadowed_antennas(

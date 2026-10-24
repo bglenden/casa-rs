@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! `sm.setseed`, `sm.setnoise`, `sm.corrupt` and `sm.reset`: thermal noise.
+//! `sm.setseed`, `sm.setnoise`, `sm.corrupt` and `sm.reset`: thermal noise,
+//! and `corrupt`'s gains and leakage (`setgain`, `setleakage`: the `gains`
+//! module).
 //!
 //! As in CASA's `Simulator`:
 //! - `setnoise` adds a noise term with the seed in force at the call; terms
@@ -14,9 +16,12 @@
 //! coherently in one `corrupt`, as CASA's identical streams do, and a term
 //! applied again draws afresh.
 
+use std::sync::Arc;
+
 use super::Simulator;
 use super::error::{SimulatorError, SimulatorResult};
 use super::plan::NoiseTerm;
+use crate::corrupt::jones::{JonesKind, JonesTerm};
 use crate::corrupt::{MAXIMUM_APPLICATIONS, NoiseApplication};
 
 /// CASA's `Simulator` seed until `setseed` (`seed_p(11111)`). The Python
@@ -98,19 +103,24 @@ impl Simulator {
         Ok(())
     }
 
-    /// `sm.corrupt()`: apply every noise term to the rows observed so far.
-    /// With no terms it does nothing.
+    /// `sm.corrupt()`: apply every term to the rows observed so far: the
+    /// gains and leakages (`setgain`, `setleakage`), then the noise. With
+    /// no terms it does nothing.
     ///
     /// # Errors
     ///
-    /// A scan observed so far with a correlation count other than 1, 2 or 4,
-    /// which CASA cannot corrupt ("No such VisVector type"), or a term
-    /// applied 2²⁴ times.
+    /// - A scan observed so far with a correlation count other than 1, 2 or
+    ///   4, which CASA cannot corrupt ("No such VisVector type"); leakage on
+    ///   a scan without the cross hands (CASA's `JonesGenLin` raises); or a
+    ///   noise term applied 2²⁴ times.
+    /// - A scan in a spectral window a gain or leakage term has no solution
+    ///   for, which CASA leaves uncorrupted: not yet implemented.
     pub fn corrupt(&mut self) -> SimulatorResult<()> {
-        if self.noise_terms.is_empty() {
+        if self.noise_terms.is_empty() && self.jones_terms.is_empty() {
             return Ok(());
         }
         self.check_visibility_correlations("corrupted")?;
+        self.check_jones_coverage()?;
         if self
             .noise_terms
             .iter()
@@ -130,16 +140,56 @@ impl Simulator {
             term.applications += 1;
             application
         });
-        self.data_plan.corrupt(applications, self.scans.len());
+        // CASA corrupts the model from the sky side in: leakage before
+        // gains, and of one kind the term set last first
+        // (`VisEquation::collapseForSim`).
+        let mut jones: Vec<(usize, &Arc<JonesTerm>)> =
+            self.jones_terms.iter().enumerate().collect();
+        jones.sort_by(|a, b| b.1.kind.cmp(&a.1.kind).then(b.0.cmp(&a.0)));
+        let jones: Vec<Arc<JonesTerm>> = jones
+            .into_iter()
+            .map(|(_, term)| Arc::clone(term))
+            .collect();
+        self.data_plan
+            .corrupt(applications, jones, self.scans.len());
         Ok(())
     }
 
-    /// `sm.reset()`: remove every noise term. Corruptions already applied,
-    /// and the seed, stay.
+    /// Refuse gains or leakage on a scan observed so far that they cannot
+    /// corrupt as CASA does: leakage without the cross hands, which CASA's
+    /// `JonesGenLin` raises on, and a spectral window a term has no solution
+    /// for, which CASA leaves wholly uncorrupted.
+    fn check_jones_coverage(&self) -> SimulatorResult<()> {
+        for scan in &self.scans {
+            let window = &self.spectral_windows[scan.spectral_window_id];
+            let products = window.correlation_products();
+            let cross = products.contains(&[0, 1]) && products.contains(&[1, 0]);
+            for term in &self.jones_terms {
+                if term.kind == JonesKind::Leakage && !cross {
+                    return Err(SimulatorError::raised(
+                        "JonesGenLin matrix apply (J::aR) incompatible with VisVector.",
+                    ));
+                }
+                if !term.covers(scan.spectral_window_id) {
+                    return Err(SimulatorError::not_yet_implemented(format!(
+                        "corrupt of spectral window {}, observed after a setgain or setleakage \
+                         term was set, is not yet implemented in casa-rs (simulation Phase 3): \
+                         CASA leaves it uncorrupted",
+                        window.name
+                    )));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// `sm.reset()`: remove every noise, gain and leakage term.
+    /// Corruptions already applied, and the seed, stay.
     pub fn reset(&mut self) {
         tracing::info!("Resetting all visibility corruption components");
         tracing::info!("Reset all image-plane corruption components");
         self.noise_terms.clear();
+        self.jones_terms.clear();
     }
 
     /// MAIN rows of the scans observed so far.

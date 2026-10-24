@@ -52,17 +52,19 @@ use crate::session::plan::DataPlan;
 /// add on the device ([`PredictionStage::predict`]): all of it, but none
 /// when `from_disk`, the DATA on disk being added after the prediction (a
 /// patch after `openfromms`), whose noise the host adds after it (#886
-/// review).
+/// review), or when gains or leakage corrupt the scan, whose noise follows
+/// them (`session::plan`).
 ///
 /// Noise added before a value that is then cancelled keeps only the
 /// precision of the sum: beside visibilities of 2²³ σ and more it is
-/// rounded to steps of σ, or lost. The DATA on disk may hold such a value. The component lists' and
-/// total power's visibilities, which the host adds after the device's
-/// noise, are a sky model's, far below that: adding them after the noise
-/// rounds each sample once, independently, and the device's noise saves
-/// the host's pass (#886 follow-up: 0.34 s of a 2.1 s Metal `close`).
+/// rounded to steps of σ, or lost. The DATA on disk may hold such a value.
+/// The component lists' and total power's visibilities, which the host
+/// adds after the device's noise, are a sky model's, far below that:
+/// adding them after the noise rounds each sample once, independently, and
+/// the device's noise saves the host's pass (#886 follow-up: 0.34 s of a
+/// 2.1 s Metal `close`).
 pub(super) fn device_noise(plan: &DataPlan, scan: usize, from_disk: bool) -> &[NoiseApplication] {
-    if from_disk {
+    if from_disk || plan.has_jones_for_scan(scan) {
         &[]
     } else {
         plan.noise_for_scan(scan)

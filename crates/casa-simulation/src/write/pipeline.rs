@@ -92,6 +92,9 @@ struct Rows<'s> {
     team: &'s WorkerTeam,
     /// The session's DATA steps, which give each scan's noise.
     plan: &'s DataPlan,
+    /// `[window]`: each correlation's receptors, which gains and leakage
+    /// take.
+    receptors: Vec<Vec<[usize; 2]>>,
     correlations: usize,
     samples: usize,
     /// Rows of the integrations in hand: those the last batch left
@@ -113,14 +116,15 @@ pub(super) struct Pipeline<'s> {
 
 impl<'s> Pipeline<'s> {
     /// The pipeline for `scans`, whose planned rows are `planned`,
-    /// predicting with `prediction` and adding the noise of `plan`, on
-    /// cells of `(correlations, channels)`.
+    /// predicting with `prediction` and corrupting by `plan`, on cells of
+    /// `(correlations, channels)` whose correlations have the receptors
+    /// `receptors` (`[window]`).
     pub(super) fn new(
         (scans, planned): (&'s [Scan], &'s [PlannedScan<'s>]),
         geometry: &'s ArrayGeometry<'s>,
         team: &'s WorkerTeam,
         (prediction, plan): (Option<PredictionStage<'s>>, &'s DataPlan),
-        (correlations, channels): (usize, usize),
+        (correlations, channels, receptors): (usize, usize, Vec<Vec<[usize; 2]>>),
     ) -> Self {
         Self {
             rows: Rows {
@@ -129,6 +133,7 @@ impl<'s> Pipeline<'s> {
                 geometry,
                 team,
                 plan,
+                receptors,
                 correlations,
                 samples: correlations * channels,
                 rows: Vec::new(),
@@ -310,6 +315,7 @@ impl Rows<'_> {
         jobs.extend(
             noise_jobs(
                 (self.plan, self.team),
+                (self.scans, &self.receptors),
                 (&self.rows, &runs),
                 (first_row, data),
                 self.samples,
@@ -399,9 +405,13 @@ impl ColumnsJob<'_> {
 /// `runs`, (scan, first row, rows) of `rows` covering it in order, split
 /// into jobs of about [`NOISE_JOBS_PER_WORKER`] a worker of `team`, each
 /// adding its scan's noise in `plan` to its rows of `data` (`samples` a
-/// row), but for the scans `noised` already has.
+/// row), but for the scans `noised` already has. A scan with gains or
+/// leakage has each of its corruptions applied in order instead
+/// ([`Corruption`]), its windows' correlations having the receptors
+/// `receptors` (`[window]`).
 pub(super) fn noise_jobs<'a>(
     (plan, team): (&'a DataPlan, &WorkerTeam),
+    (scans, receptors): (&'a [Scan], &'a [Vec<[usize; 2]>]),
     (rows, runs): (&'a [RowGeometry], &[(usize, usize, usize)]),
     (first_row, data): (u64, &'a mut [Complex32]),
     samples: usize,
@@ -411,7 +421,9 @@ pub(super) fn noise_jobs<'a>(
     let job_rows = batch_rows
         .div_ceil(team.workers() * NOISE_JOBS_PER_WORKER)
         .max(MINIMUM_NOISE_JOB_ROWS);
-    let noised_here = |scan| !plan.noise_for_scan(scan).is_empty() && !noised(scan);
+    let noised_here = |scan| {
+        plan.has_jones_for_scan(scan) || (!plan.noise_for_scan(scan).is_empty() && !noised(scan))
+    };
     // As many jobs as there are, at most a run's plus one every
     // `MINIMUM_NOISE_JOB_ROWS` rows (the patch's admission).
     let mut jobs = Vec::with_capacity(
@@ -428,6 +440,15 @@ pub(super) fn noise_jobs<'a>(
             continue;
         }
         let noise = plan.noise_for_scan(scan);
+        let corruption = plan.has_jones_for_scan(scan).then(|| {
+            let window = scans[scan].spectral_window_id;
+            Corruption {
+                plan,
+                scan,
+                window,
+                receptors: &receptors[window],
+            }
+        });
         for (index, cells) in segment.chunks_mut(job_rows * samples).enumerate() {
             let start = start + index * job_rows;
             jobs.push(NoiseJob {
@@ -435,6 +456,7 @@ pub(super) fn noise_jobs<'a>(
                 cells,
                 rows: &rows[start..],
                 noise,
+                corruption,
             });
         }
     }
@@ -449,11 +471,25 @@ pub(super) struct NoiseJob<'a> {
     /// The geometry of the rows, from the first.
     rows: &'a [RowGeometry],
     noise: &'a [NoiseApplication],
+    /// With gains or leakage, the scan's corruptions, applied in order in
+    /// place of `noise`.
+    corruption: Option<Corruption<'a>>,
+}
+
+/// The corruptions of a scan with gains or leakage: each corrupts DATA by
+/// its antenna-based terms and then adds its noise (`session::plan`).
+#[derive(Clone, Copy)]
+pub(super) struct Corruption<'a> {
+    plan: &'a DataPlan,
+    scan: usize,
+    window: usize,
+    /// Each correlation's receptors.
+    receptors: &'a [[usize; 2]],
 }
 
 impl NoiseJob<'_> {
     /// Add the noise to every cell of `samples` samples of `correlations`
-    /// correlations.
+    /// correlations, or apply the scan's corruptions in order.
     pub(super) fn run(&mut self, correlations: usize, samples: usize) {
         for (offset, (cell, row)) in self
             .cells
@@ -461,13 +497,26 @@ impl NoiseJob<'_> {
             .zip(self.rows)
             .enumerate()
         {
-            for application in self.noise {
-                application.add_to_row(
-                    self.first_row + offset as u64,
-                    row.antenna1 == row.antenna2,
-                    correlations,
-                    cell,
-                );
+            let row_number = self.first_row + offset as u64;
+            let autocorrelation = row.antenna1 == row.antenna2;
+            let Some(corruption) = &self.corruption else {
+                for application in self.noise {
+                    application.add_to_row(row_number, autocorrelation, correlations, cell);
+                }
+                continue;
+            };
+            for (noise, jones) in corruption.plan.corruptions_for_scan(corruption.scan) {
+                for term in jones {
+                    term.apply(
+                        (corruption.window, row.time_s),
+                        (row.antenna1, row.antenna2),
+                        corruption.receptors,
+                        cell,
+                    );
+                }
+                for application in noise {
+                    application.add_to_row(row_number, autocorrelation, correlations, cell);
+                }
             }
         }
     }

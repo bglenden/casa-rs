@@ -37,6 +37,7 @@ pub mod error;
 mod feeds;
 pub mod fields;
 mod from_ms;
+mod gains;
 mod mosaic;
 pub mod observe;
 pub(crate) mod plan;
@@ -48,6 +49,7 @@ pub mod spectral;
 mod tests;
 
 pub use corruption::{DEFAULT_SEED, NoiseSpec};
+pub use gains::{GainSpec, LeakageSpec};
 pub use prediction::{PredictSpec, PredictionOptions, VoltagePatternSpec};
 pub use resources::{BackendRequest, ExecutionControls, SessionResources, UnknownBackend};
 
@@ -58,6 +60,7 @@ use casa_imaging_operator::PaddingFactor;
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::{EpochRef, MEpoch, MeasFrame, MeasuresProvider};
 
+use crate::corrupt::jones::JonesTerm;
 use crate::predict::SingleDishKernel;
 use crate::write;
 use array::{Antenna, ArrayConfig};
@@ -143,6 +146,9 @@ pub struct Simulator {
     seed: i32,
     /// The noise terms `setnoise` set, until `reset`.
     noise_terms: Vec<NoiseTerm>,
+    /// The antenna-based terms `setgain` and `setleakage` set, in the order
+    /// they were set, until `reset`.
+    jones_terms: Vec<Arc<JonesTerm>>,
     /// `predict`'s `GridFT` grid padding (`setoptions`).
     padding: PaddingFactor,
     /// `setoptions(ftmachine='wproject', wprojplanes=…)`: the planes
@@ -194,6 +200,7 @@ impl Simulator {
             scans: Vec::new(),
             seed: DEFAULT_SEED,
             noise_terms: Vec::new(),
+            jones_terms: Vec::new(),
             padding: PaddingFactor::SIMULATOR,
             w_projection_planes: None,
             mosaic: false,

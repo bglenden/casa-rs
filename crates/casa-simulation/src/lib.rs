@@ -38,6 +38,7 @@ pub use session::error::{CasaOutcome, SimulatorError, SimulatorResult};
 pub use session::observe::{ObserveManySpec, ObserveSpec, Pointing, StateSpec};
 pub use session::spectral::SpectralWindowSpec;
 pub use session::{
-    BackendRequest, DEFAULT_SEED, ExecutionControls, NoiseSpec, PredictSpec, PredictionOptions,
-    SessionResources, Simulator, SimulatorOptions, UnknownBackend, VoltagePatternSpec,
+    BackendRequest, DEFAULT_SEED, ExecutionControls, GainSpec, LeakageSpec, NoiseSpec, PredictSpec,
+    PredictionOptions, SessionResources, Simulator, SimulatorOptions, UnknownBackend,
+    VoltagePatternSpec,
 };
