@@ -1,0 +1,206 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//! The MSv4 profile's metadata conventions: measure attributes, string
+//! coordinates and the data-group record.
+
+use std::sync::Arc;
+
+use casa_observation::{ObservationError, VisibilityUnits};
+use casa_types::measures::direction::DirectionRef;
+use casa_types::measures::frequency::FrequencyRef;
+use casa_types::measures::{EpochRef, MjdHighPrec};
+use serde_json::{Map, Value};
+use zarrs::array::{Array, ArraySubset};
+use zarrs::filesystem::FilesystemStore;
+
+/// The schema version this profile reads and writes.
+pub(crate) const SCHEMA_VERSION: &str = "4.0.1";
+
+/// MJD of the Unix epoch, the origin of `format: unix` times.
+pub(crate) const UNIX_EPOCH_MJD: f64 = 40_587.0;
+
+pub(crate) fn invalid(reason: impl Into<String>) -> ObservationError {
+    ObservationError::InvalidStore {
+        reason: reason.into(),
+    }
+}
+
+pub(crate) fn storage(error: impl std::error::Error + Send + Sync + 'static) -> ObservationError {
+    ObservationError::Storage(Box::new(error))
+}
+
+/// A string attribute.
+pub(crate) fn text<'a>(
+    attributes: &'a Map<String, Value>,
+    name: &str,
+    of: &str,
+) -> Result<&'a str, ObservationError> {
+    attributes
+        .get(name)
+        .and_then(Value::as_str)
+        .ok_or_else(|| invalid(format!("{of} has no string attribute {name}")))
+}
+
+/// Require `units` to be `expected`: the profile's canonical unit, which
+/// the reader does not convert.
+pub(crate) fn require_units(
+    attributes: &Map<String, Value>,
+    expected: &str,
+    of: &str,
+) -> Result<(), ObservationError> {
+    let units = text(attributes, "units", of)?;
+    if units == expected {
+        Ok(())
+    } else {
+        Err(invalid(format!(
+            "{of} is in {units}; the MSv4 schema requires {expected}"
+        )))
+    }
+}
+
+/// The time scale and origin of a `time` measure: `scale` names the scale,
+/// and `format: unix` counts seconds from 1970-01-01.
+pub(crate) fn time_reference(
+    attributes: &Map<String, Value>,
+    of: &str,
+) -> Result<(EpochRef, MjdHighPrec), ObservationError> {
+    require_units(attributes, "s", of)?;
+    let scale = match text(attributes, "scale", of)? {
+        "utc" => EpochRef::UTC,
+        "tai" => EpochRef::TAI,
+        _ => {
+            return Err(ObservationError::Unsupported {
+                what: "an MSv4 time scale other than utc or tai",
+            });
+        }
+    };
+    if text(attributes, "format", of)? != "unix" {
+        return Err(ObservationError::Unsupported {
+            what: "an MSv4 time format other than unix",
+        });
+    }
+    Ok((scale, MjdHighPrec::new(UNIX_EPOCH_MJD, 0.0)))
+}
+
+/// XRADIO's spelling of a spectral frame (`observer`) and back. Lowercase
+/// names are astropy's; XRADIO keeps the frames astropy lacks in upper case.
+const FREQUENCY_FRAMES: [(&str, FrequencyRef); 9] = [
+    ("REST", FrequencyRef::REST),
+    ("lsrk", FrequencyRef::LSRK),
+    ("lsrd", FrequencyRef::LSRD),
+    ("BARY", FrequencyRef::BARY),
+    ("gcrs", FrequencyRef::GEO),
+    ("TOPO", FrequencyRef::TOPO),
+    ("GALACTO", FrequencyRef::GALACTO),
+    ("LGROUP", FrequencyRef::LGROUP),
+    ("CMB", FrequencyRef::CMB),
+];
+
+pub(crate) fn frequency_frame(
+    attributes: &Map<String, Value>,
+    of: &str,
+) -> Result<FrequencyRef, ObservationError> {
+    require_units(attributes, "Hz", of)?;
+    let observer = text(attributes, "observer", of)?;
+    FREQUENCY_FRAMES
+        .iter()
+        .find(|(name, _)| *name == observer)
+        .map(|(_, frame)| *frame)
+        .ok_or_else(|| invalid(format!("{of} has unknown observer {observer}")))
+}
+
+/// XRADIO's `frame` for a direction or UVW measure.
+const DIRECTION_FRAMES: [(&str, DirectionRef); 2] =
+    [("fk5", DirectionRef::J2000), ("icrs", DirectionRef::ICRS)];
+
+pub(crate) fn direction_frame(
+    attributes: &Map<String, Value>,
+    of: &str,
+) -> Result<DirectionRef, ObservationError> {
+    let frame = text(attributes, "frame", of)?;
+    DIRECTION_FRAMES
+        .iter()
+        .find(|(name, _)| *name == frame)
+        .map(|(_, reference)| *reference)
+        .ok_or(ObservationError::Unsupported {
+            what: "an MSv4 direction or UVW frame other than fk5 or icrs",
+        })
+}
+
+/// What a correlated-data variable's `units` attribute says.
+pub(crate) fn visibility_units(attributes: &Map<String, Value>) -> VisibilityUnits {
+    match attributes.get("units").and_then(Value::as_str) {
+        Some("Jy") => VisibilityUnits::Jansky,
+        Some(other) => VisibilityUnits::Declared(other.to_string()),
+        None => VisibilityUnits::Undeclared,
+    }
+}
+
+/// Open array `path`.
+pub(crate) fn open_array(
+    store: &Arc<FilesystemStore>,
+    path: &str,
+) -> Result<Array<FilesystemStore>, ObservationError> {
+    Array::open(store.clone(), path).map_err(storage)
+}
+
+/// Every element of a one-dimensional `fixed_length_utf32` coordinate.
+pub(crate) fn strings(
+    store: &Arc<FilesystemStore>,
+    path: &str,
+) -> Result<Vec<String>, ObservationError> {
+    let array = open_array(store, path)?;
+    let subset = ArraySubset::new_with_shape(array.shape().to_vec());
+    let values: Vec<Vec<char>> = array.retrieve_array_subset(&subset).map_err(storage)?;
+    Ok(values
+        .into_iter()
+        .map(|chars| chars.into_iter().collect())
+        .collect())
+}
+
+/// Every element of a numeric coordinate or small variable.
+pub(crate) fn numbers<T: zarrs::array::ElementOwned>(
+    store: &Arc<FilesystemStore>,
+    path: &str,
+) -> Result<(Vec<T>, Map<String, Value>), ObservationError> {
+    let array = open_array(store, path)?;
+    let subset = ArraySubset::new_with_shape(array.shape().to_vec());
+    let values = array.retrieve_array_subset(&subset).map_err(storage)?;
+    Ok((values, array.attributes().clone()))
+}
+
+/// One data group of a dataset's `data_groups` attribute.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct DataGroupRecord {
+    pub(crate) name: String,
+    pub(crate) correlated_data: String,
+    pub(crate) flag: String,
+    pub(crate) weight: String,
+    pub(crate) uvw: String,
+    pub(crate) field_and_source: String,
+}
+
+pub(crate) fn data_groups(
+    attributes: &Map<String, Value>,
+) -> Result<Vec<DataGroupRecord>, ObservationError> {
+    let groups = attributes
+        .get("data_groups")
+        .and_then(Value::as_object)
+        .ok_or_else(|| invalid("the dataset has no data_groups"))?;
+    groups
+        .iter()
+        .map(|(name, group)| {
+            let group = group
+                .as_object()
+                .ok_or_else(|| invalid(format!("data group {name} is not a record")))?;
+            let role = |role: &str| text(group, role, name).map(str::to_string);
+            Ok(DataGroupRecord {
+                name: name.clone(),
+                correlated_data: role("correlated_data")?,
+                flag: role("flag")?,
+                weight: role("weight")?,
+                uvw: role("uvw")?,
+                field_and_source: role("field_and_source")?,
+            })
+        })
+        .collect()
+}
