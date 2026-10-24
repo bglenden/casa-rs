@@ -206,7 +206,10 @@ impl<'a> ArrayGeometry<'a> {
             // The corruptor's airmass is at the phase centre, which a moved
             // pointing leaves (#884).
             let airmasses: Vec<f32> = if scan.scan.phase_center_rad == scan.scan.pointing_rad {
-                pointing.iter().map(|&elevation| airmass(elevation)).collect()
+                pointing
+                    .iter()
+                    .map(|&elevation| airmass(elevation))
+                    .collect()
             } else {
                 self.airmasses(scan.scan.phase_center_rad, time_s, count)?
             };

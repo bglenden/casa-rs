@@ -241,7 +241,8 @@ impl TsysManual {
     /// The band at frequency `frequency_hz`.
     fn band(&self, frequency_hz: f64) -> Band {
         let h_nu_over_k = PLANCK_OVER_BOLTZMANN_RADIANCE * frequency_hz;
-        let radiance = |temperature_k: f32| 1.0 / ((h_nu_over_k / f64::from(temperature_k)).exp() - 1.0);
+        let radiance =
+            |temperature_k: f32| 1.0 / ((h_nu_over_k / f64::from(temperature_k)).exp() - 1.0);
         Band {
             h_nu_over_k: PLANCK_OVER_BOLTZMANN_TSYS * frequency_hz,
             cmb: radiance(self.cmb_k),
@@ -398,7 +399,8 @@ mod tests {
     #[test]
     fn sigma_scales_as_the_formula_says() {
         let model = TsysManual::new(&TsysParameters::default());
-        let sigma = |window: &WindowNoise, row: &RowNoise| f64::from(model.for_window(window).sigma(row));
+        let sigma =
+            |window: &WindowNoise, row: &RowNoise| f64::from(model.for_window(window).sigma(row));
         let base = row([12.0, 12.0], [1.2, 1.2], 10.0);
         let at = sigma(&BAND6, &base);
         // σ ∝ 1/(D_i D_j), 1/√t and 1/√Δν.

@@ -199,9 +199,10 @@ impl Simulator {
         }
         let model = TsysManual::new(parameters);
         // CASA checks the zenith Tsys at the centre of the first window.
-        let window = self.spectral_windows.first().ok_or_else(|| {
-            SimulatorError::raised("tsys-manual noise needs a spectral window")
-        })?;
+        let window = self
+            .spectral_windows
+            .first()
+            .ok_or_else(|| SimulatorError::raised("tsys-manual noise needs a spectral window"))?;
         let zenith = model.zenith_tsys(
             window.reference_frequency_hz,
             window.total_bandwidth_hz,

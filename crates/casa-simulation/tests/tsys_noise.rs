@@ -34,8 +34,8 @@ use casa_ms::columns::time_columns::TimeColumn;
 use casa_ms::columns::weight_columns::{SigmaColumn, WeightColumn};
 use casa_simulation::{
     ArrayConfig, BackendRequest, CasaOutcome, CoordinateSystem, NoiseSpec, ObserveSpec,
-    SessionResources, Simulator, SimulatorOptions, SimulatorResult, SpectralWindowSpec,
-    StateSpec, TsysParameters,
+    SessionResources, Simulator, SimulatorOptions, SimulatorResult, SpectralWindowSpec, StateSpec,
+    TsysParameters,
 };
 use casa_types::ArrayValue;
 use casa_types::measures::direction::{DirectionRef, MDirection};
@@ -203,10 +203,7 @@ fn observed(path: &Path, workers: usize, backend: BackendRequest) -> Simulator {
 }
 
 /// Write the observed session at `path` after `steps`.
-fn write(
-    path: &Path,
-    steps: &dyn Fn(&mut Simulator) -> SimulatorResult<()>,
-) -> Main {
+fn write(path: &Path, steps: &dyn Fn(&mut Simulator) -> SimulatorResult<()>) -> Main {
     write_with(path, 2, BackendRequest::Cpu, steps)
 }
 

@@ -210,11 +210,7 @@ fn write_main<'s>(
         (session.scans(), planned),
         &geometry,
         &team,
-        (
-            prediction,
-            session.data_plan(),
-            NoiseContext::of(session),
-        ),
+        (prediction, session.data_plan(), NoiseContext::of(session)),
         (shape.correlations, shape.channels),
     );
     let integrations = planned
