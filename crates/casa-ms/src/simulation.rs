@@ -44,6 +44,8 @@ use crate::shadowing::{
 use crate::write_session::{MeasurementSetCreateTarget, MeasurementSetWriteSession};
 use crate::{MeasurementSet, MeasurementSetBuilder, OptionalMainColumn};
 
+#[cfg(test)]
+mod corruption_tests;
 mod main_columns;
 
 use main_columns::MainArrayWriter;

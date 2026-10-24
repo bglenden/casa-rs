@@ -725,8 +725,10 @@ fn four_correlation_corruption_applies_receptor_pair_gains() {
     }
 
     // The draws do not depend on the correlations, so the parallel hands
-    // match a two-correlation run's: antenna 1's gain is the one left
-    // unconjugated.
+    // match a two-correlation run's. That shows the two paths agree, not
+    // which antenna is conjugated: conjugated gains are an equally valid
+    // draw. The unit test `corruption_tests` pins the conjugation with gains
+    // written out by hand.
     let two = SyntheticPolarizationSetup::new(SyntheticPolarizationBasis::Linear, 2).unwrap();
     let two_clean = generated(polarized_request(
         &temp.path().join("two-clean"),
