@@ -8,8 +8,8 @@ use std::sync::Arc;
 
 use casa_observation::{
     AccessRequest, AntennaEntry, AntennaId, BatchBuffers, BatchShape, Catalogue, Correlation,
-    DataGroupEntry, FieldEntry, IoCounters, Layout, ObservationError, Occupancy, OrderedBaseline,
-    PartitionEntry, Precision, ReadEvent, Realization, TopologyShape, VisibilityCursor,
+    DataGroupEntry, FieldEntry, Fill, IoCounters, Layout, ObservationError, Occupancy,
+    OrderedBaseline, PartitionEntry, Precision, Realization, TopologyShape, VisibilityCursor,
 };
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::{EpochRef, MjdHighPrec};
@@ -527,7 +527,7 @@ pub struct Msv4Cursor<'o> {
 }
 
 impl Msv4Cursor<'_> {
-    fn fill(
+    fn fill_batch(
         &mut self,
         buffers: &mut BatchBuffers,
         rows: Range<usize>,
@@ -633,25 +633,20 @@ impl VisibilityCursor for Msv4Cursor<'_> {
         &self.realization
     }
 
-    fn next<'b>(
-        &mut self,
-        buffers: &'b mut BatchBuffers,
-    ) -> Result<Option<ReadEvent<'b>>, ObservationError> {
+    fn fill(&mut self, buffers: &mut BatchBuffers) -> Result<Option<Fill>, ObservationError> {
         if let Some(key) = self.groups.as_mut().and_then(GroupIndex::pop_end) {
-            return Ok(Some(ReadEvent::GroupEnd(key)));
+            buffers.clear();
+            return Ok(Some(Fill::GroupEnd(key)));
         }
         let times = self.dataset.times.len();
         if self.next_time == times {
             return Ok(None);
         }
         let rows = self.next_time..(self.next_time + self.times_per_batch).min(times);
-        let shape = self.fill(buffers, rows.clone())?;
+        let shape = self.fill_batch(buffers, rows.clone())?;
         self.next_time = rows.end;
         self.counters.batches += 1;
-        let buffers: &'b BatchBuffers = buffers;
-        buffers
-            .view(&shape)
-            .map(|batch| Some(ReadEvent::Batch(batch)))
+        Ok(Some(Fill::Batch(shape)))
     }
 
     fn counters(&self) -> IoCounters {

@@ -5,8 +5,8 @@ use std::path::Path;
 
 use casa_observation::{
     AccessRequest, AntennaEntry, BatchBuffers, BatchShape, Catalogue, Correlation, DataGroupEntry,
-    FieldEntry, IoCounters, Layout, ObservationError, PartitionEntry, Precision, ReadEvent,
-    Realization, TopologyShape, VisibilityCursor, VisibilityUnits,
+    FieldEntry, Fill, IoCounters, Layout, ObservationError, PartitionEntry, Precision, Realization,
+    TopologyShape, VisibilityCursor, VisibilityUnits,
 };
 use casa_tables::{
     RequiredScalarColumnDestination, RequiredScalarColumnValuesMut, SelectedArray1DCellsMut,
@@ -356,7 +356,7 @@ pub struct Msv2Cursor<'o> {
 }
 
 impl Msv2Cursor<'_> {
-    fn fill(
+    fn fill_batch(
         &mut self,
         buffers: &mut BatchBuffers,
         end: usize,
@@ -511,25 +511,20 @@ impl VisibilityCursor for Msv2Cursor<'_> {
         &self.realization
     }
 
-    fn next<'b>(
-        &mut self,
-        buffers: &'b mut BatchBuffers,
-    ) -> Result<Option<ReadEvent<'b>>, ObservationError> {
+    fn fill(&mut self, buffers: &mut BatchBuffers) -> Result<Option<Fill>, ObservationError> {
         if let Some(key) = self.groups.as_mut().and_then(GroupIndex::pop_end) {
-            return Ok(Some(ReadEvent::GroupEnd(key)));
+            buffers.clear();
+            return Ok(Some(Fill::GroupEnd(key)));
         }
         if self.next == self.rows.len() {
             return Ok(None);
         }
         let end = (self.next + self.realization.samples_per_batch).min(self.rows.len());
-        let shape = self.fill(buffers, end)?;
+        let shape = self.fill_batch(buffers, end)?;
         self.counters.batches += 1;
         self.counters.decode_units += end - self.next;
         self.next = end;
-        let buffers: &'b BatchBuffers = buffers;
-        buffers
-            .view(&shape)
-            .map(|batch| Some(ReadEvent::Batch(batch)))
+        Ok(Some(Fill::Batch(shape)))
     }
 
     fn counters(&self) -> IoCounters {

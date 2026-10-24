@@ -268,3 +268,103 @@ impl BatchBuffers {
         )
     }
 }
+
+impl BatchBuffers {
+    /// Copy `batch` (typically a compute window of a larger batch) into
+    /// these buffers, replacing what they held, and return its shape and
+    /// the payload elements copied: the explicit, accounted packing that
+    /// gives a window storage of its own. Strided views are gathered into
+    /// standard order; a per-correlation weight stays per-correlation.
+    ///
+    /// # Errors
+    ///
+    /// When `batch` holds `Complex<f64>` visibilities, which these buffers
+    /// do not store.
+    pub fn pack(
+        &mut self,
+        batch: &VisibilityBatch<'_>,
+    ) -> Result<(BatchShape, usize), ObservationError> {
+        self.clear();
+        let group = &batch.group;
+        self.group_name.clear();
+        self.group_name.push_str(group.name);
+        self.units = Some(group.units.clone());
+        self.correlations.extend_from_slice(batch.correlations);
+        self.frequency_hz.extend(batch.frequency.hz().iter());
+        self.fragments.extend_from_slice(batch.fragments);
+        let time = batch.topology.time();
+        self.time_offsets_s.extend(time.offsets_s().iter());
+        let topology = match batch.topology {
+            SampleTopology::Irregular(samples) => {
+                self.antenna1.extend(samples.antenna1.iter());
+                self.antenna2.extend(samples.antenna2.iter());
+                self.field.extend(samples.field.iter());
+                TopologyShape::Irregular {
+                    samples: samples.time.len(),
+                }
+            }
+            SampleTopology::TimeBaseline(samples) => {
+                self.baselines.extend_from_slice(samples.baselines);
+                self.field.extend(samples.field.iter());
+                TopologyShape::TimeBaseline {
+                    times: samples.time.len(),
+                    occupancy: samples.occupancy,
+                }
+            }
+        };
+        let mut copied = 0;
+        if let Some(values) = group.values {
+            let VisibilityValues::Complex32(values) = values else {
+                return Err(ObservationError::Unsupported {
+                    what: "packing Complex<f64> visibilities",
+                });
+            };
+            self.values.extend(values.iter());
+            copied += values.len();
+        }
+        if let Some(flags) = group.flags {
+            self.flags.extend(flags.iter());
+            copied += flags.len();
+        }
+        if let Some(row_flags) = group.row_flags {
+            self.row_flags.extend(row_flags.iter());
+            copied += row_flags.len();
+        }
+        let spectral_weights = match group.weights {
+            Some(WeightView::Spectral(weights)) => {
+                self.weights.extend(weights.iter());
+                copied += weights.len();
+                true
+            }
+            Some(WeightView::PerCorrelation(weights)) => {
+                self.weights.extend(weights.iter());
+                copied += weights.len();
+                false
+            }
+            None => false,
+        };
+        if let Some(uvw) = group.uvw {
+            self.uvw.extend(uvw.metres().iter());
+            copied += uvw.metres().len();
+        }
+        let shape = BatchShape {
+            partition: batch.partition,
+            topology,
+            channels: batch.channels(),
+            roles: Roles {
+                values: group.values.is_some(),
+                flags: group.flags.is_some(),
+                weights: group.weights.is_some(),
+                uvw: group.uvw.is_some(),
+            },
+            spectral_weights,
+            time_scale: time.reference(),
+            time_origin: time.origin(),
+            frequency_frame: batch.frequency.reference(),
+            uvw_frame: group.uvw.map_or(DirectionRef::J2000, |uvw| uvw.reference()),
+            row_flags: group.row_flags.is_some(),
+        };
+        self.view(&shape)?;
+        Ok((shape, copied))
+    }
+}

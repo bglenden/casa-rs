@@ -113,27 +113,144 @@ pub enum ObservationError {
     Storage(#[source] Box<dyn std::error::Error + Send + Sync>),
 }
 
+/// What one [`VisibilityCursor::fill`] produced.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Fill {
+    /// The buffers hold a batch of this shape.
+    Batch(BatchShape),
+    /// No further samples of this group will arrive; the buffers are empty.
+    GroupEnd(GroupKey),
+}
+
+/// A batch together with the buffers it was filled into: an owned value a
+/// work unit can take, share read-only through an `Arc`, or hand back
+/// whole for refilling.
+///
+/// [`VisibilityBatch`] borrows its buffers, so it cannot outlive or leave
+/// the caller that filled them. A `FilledBatch` moves with its storage
+/// instead, which is how a batch's lifetime is separated from the
+/// traversal's: the cursor can fill the next buffers while earlier batches
+/// are still in use elsewhere, and a slow user keeps exactly its own
+/// batch's allocation alive.
+#[derive(Debug)]
+pub struct FilledBatch {
+    buffers: BatchBuffers,
+    shape: BatchShape,
+}
+
+impl FilledBatch {
+    /// The batch: views of the owned buffers, checked when this value was
+    /// made.
+    #[must_use]
+    pub fn batch(&self) -> VisibilityBatch<'_> {
+        self.buffers
+            .view(&self.shape)
+            .expect("shape checked at fill")
+    }
+
+    /// The shape the buffers were filled to.
+    #[must_use]
+    pub fn shape(&self) -> &BatchShape {
+        &self.shape
+    }
+
+    /// The buffers, for refilling.
+    #[must_use]
+    pub fn into_buffers(self) -> BatchBuffers {
+        self.buffers
+    }
+
+    /// Bytes the buffers hold, from their capacities.
+    #[must_use]
+    pub fn capacity_bytes(&self) -> usize {
+        self.buffers.capacity_bytes()
+    }
+
+    /// Copy `batch` into `buffers` ([`BatchBuffers::pack`]): a window with
+    /// storage of its own, and the payload elements copied.
+    ///
+    /// # Errors
+    ///
+    /// As [`BatchBuffers::pack`].
+    pub fn pack(
+        batch: &VisibilityBatch<'_>,
+        mut buffers: BatchBuffers,
+    ) -> Result<(Self, usize), ObservationError> {
+        let (shape, copied) = buffers.pack(batch)?;
+        Ok((Self { buffers, shape }, copied))
+    }
+}
+
+/// What [`VisibilityCursor::next_owned`] delivers.
+#[derive(Debug)]
+pub enum OwnedEvent {
+    /// The next batch, with its buffers.
+    Batch(FilledBatch),
+    /// No further samples of this group will arrive; the buffers come back
+    /// unused.
+    GroupEnd(GroupKey, BatchBuffers),
+}
+
 /// A bound traversal of one [`AccessRequest`].
 ///
-/// [`Self::next`] fills `buffers` and lends them as the next event; the
-/// returned event borrows the buffers, so they cannot be refilled or
-/// mutated until it is dropped. Format dispatch happens once per call, never
-/// per element.
+/// An adapter implements [`Self::fill`]; consumers call [`Self::next`],
+/// which lends the filled buffers as a [`VisibilityBatch`], or
+/// [`Self::next_owned`], which hands them over as a [`FilledBatch`].
+/// Format dispatch happens once per call, never per element.
 pub trait VisibilityCursor {
     /// How the source realized the request.
     fn realization(&self) -> &Realization;
 
-    /// The next event, or `None` at the end of the traversal.
+    /// Fill `buffers` with the next batch, or announce a group's end, or
+    /// return `None` at the end of the traversal.
     ///
     /// # Errors
     ///
     /// When the store cannot be read or holds data the bound profile does
     /// not admit.
-    fn next<'b>(
-        &mut self,
-        buffers: &'b mut BatchBuffers,
-    ) -> Result<Option<ReadEvent<'b>>, ObservationError>;
+    fn fill(&mut self, buffers: &mut BatchBuffers) -> Result<Option<Fill>, ObservationError>;
 
     /// What the traversal has read so far.
     fn counters(&self) -> IoCounters;
+
+    /// The next event, borrowing `buffers`: they cannot be refilled or
+    /// mutated until the event is dropped.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::fill`].
+    fn next<'b>(
+        &mut self,
+        buffers: &'b mut BatchBuffers,
+    ) -> Result<Option<ReadEvent<'b>>, ObservationError> {
+        match self.fill(buffers)? {
+            None => Ok(None),
+            Some(Fill::GroupEnd(key)) => Ok(Some(ReadEvent::GroupEnd(key))),
+            Some(Fill::Batch(shape)) => {
+                let buffers: &'b BatchBuffers = buffers;
+                buffers
+                    .view(&shape)
+                    .map(|batch| Some(ReadEvent::Batch(batch)))
+            }
+        }
+    }
+
+    /// The next event, taking `buffers` and handing them back with it.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::fill`].
+    fn next_owned(
+        &mut self,
+        mut buffers: BatchBuffers,
+    ) -> Result<Option<OwnedEvent>, ObservationError> {
+        match self.fill(&mut buffers)? {
+            None => Ok(None),
+            Some(Fill::GroupEnd(key)) => Ok(Some(OwnedEvent::GroupEnd(key, buffers))),
+            Some(Fill::Batch(shape)) => {
+                buffers.view(&shape)?;
+                Ok(Some(OwnedEvent::Batch(FilledBatch { buffers, shape })))
+            }
+        }
+    }
 }
