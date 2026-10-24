@@ -195,16 +195,34 @@ pub fn o2_refractivity(
     water_vapour_pressure_hpa: f64,
     frequency_ghz: f64,
 ) -> Complex64 {
-    specific_refractivity(
-        species,
+    o2_per_path(
+        specific_refractivity(
+            species,
+            temperature_k,
+            pressure_hpa,
+            water_vapour_pressure_hpa,
+            frequency_ghz,
+        ),
         temperature_k,
         pressure_hpa,
-        water_vapour_pressure_hpa,
-        frequency_ghz,
-    ) * O2_MIXING_RATIO
-        * pressure_hpa
-        * 100.0
-        / (BOLTZMANN * temperature_k)
+    )
+}
+
+/// An O2 specific refractivity (or a sum of them) times the O2 number
+/// density, in ATM's order of operations.
+pub(crate) fn o2_per_path(specific: Complex64, temperature_k: f64, pressure_hpa: f64) -> Complex64 {
+    specific * O2_MIXING_RATIO * pressure_hpa * 100.0 / (BOLTZMANN * temperature_k)
+}
+
+/// A water specific refractivity (or a sum of them) times the water number
+/// density for partial pressure `water_vapour_pressure_hpa`, as ATM writes
+/// it.
+pub(crate) fn h2o_per_path(
+    specific: Complex64,
+    temperature_k: f64,
+    water_vapour_pressure_hpa: f64,
+) -> Complex64 {
+    specific * (6.023e23 * water_vapour_pressure_hpa * 217.0 / (temperature_k * 18.005059688))
 }
 
 /// A water line species' refractivity per unit path, (rad/m, 1/m): the
@@ -219,13 +237,17 @@ pub fn h2o_refractivity(
     water_vapour_pressure_hpa: f64,
     frequency_ghz: f64,
 ) -> Complex64 {
-    specific_refractivity(
-        species,
+    h2o_per_path(
+        specific_refractivity(
+            species,
+            temperature_k,
+            pressure_hpa,
+            water_vapour_pressure_hpa,
+            frequency_ghz,
+        ),
         temperature_k,
-        pressure_hpa,
         water_vapour_pressure_hpa,
-        frequency_ghz,
-    ) * (6.023e23 * water_vapour_pressure_hpa * 217.0 / (temperature_k * 18.005059688))
+    )
 }
 
 /// A species' refractivity per unit path for a number density in

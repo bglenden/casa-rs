@@ -201,6 +201,15 @@ impl SpectralGrid {
         &self.windows
     }
 
+    /// Releases spare vector capacity, so the grid keeps exactly its
+    /// windows and their channels (what a profile's memory estimate counts).
+    pub(crate) fn shrink_to_fit(&mut self) {
+        self.windows.shrink_to_fit();
+        for window in &mut self.windows {
+            window.frequencies_hz.shrink_to_fit();
+        }
+    }
+
     /// The number of channels in all windows.
     #[must_use]
     pub fn total_channels(&self) -> usize {

@@ -77,6 +77,8 @@ ATM behaviours casa-rs follows for parity with the `at` tool:
 [copied bottom pressures](#copying-an-atmprofile-copies-its-top-pressures-as-bottom-pressures),
 [unpadded ozone isotopologue layers](#atm-leaves-the-ozone-isotopologue-layers-unpadded),
 [(16)O(17)O](#atm-omits-16o17o).
+ATM behaviours casa-rs does not follow:
+[the averaged non-dispersive wet phase](#refractiveindexprofiles-averaged-non-dispersive-wet-phase-reads-a-channel-as-a-water-column).
 
 ## AW-projection pairs the partner hand's visibility with the conjugate-baseline cell
 
@@ -1524,3 +1526,21 @@ The (16)O(17)O function returns zero before its line loop. The comment says
 the isotope was removed in 2024 while its catalogue is reviewed, because it
 gave lines that do not exist. The port returns zero too and keeps the
 catalogue in its tables for the record.
+
+## RefractiveIndexProfile's averaged non-dispersive wet phase reads a channel as a water column
+
+- Date noted: 2026-10-24
+- Status: ATM bug; casa-rs does not follow it (#841 Phase 4b)
+- Affected code: `atmosphere/ATM/ATMRefractiveIndexProfile.cc:2466`
+  (`getAverageNonDispersiveH2OPhaseDelay(const Length &, unsigned int)`)
+
+The window average calls `getNonDispersiveH2OPhaseDelay(v_transfertId_[spwid]
++ i)`. `RefractiveIndexProfile` has no overload taking a channel alone, so
+the index converts to a `Length` in metres, and the call returns channel 0's
+phase for a water column of 0, 1, 2 … metres. The average is then scaled
+again by the requested column. For the simulator's Chajnantor atmosphere and
+1.3 mm of water this gives 306,132° in a 22 GHz window, where the channels'
+mean is a few degrees (`casa-atmosphere`'s `oracle_absorption` test
+reproduces ATM's number exactly). CASA's `at` tool does not reach this
+function: its averages go through `SkyStatus`, whose override is correct.
+`casa-atmosphere` takes the mean of the channels' phases.

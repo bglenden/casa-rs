@@ -6,7 +6,49 @@
 
 #![allow(dead_code, reason = "each test binary uses part of the helpers")]
 
+use casa_atmosphere::{AtmosphereProfile, AtmosphereType, ProfileParameters, SpectralGrid};
 use std::path::PathBuf;
+
+/// The atmosphere of an `absorption.json` profile (the oracle passes ATM's
+/// pressure-step factor too, which ATM ignores).
+pub fn sky_atmosphere(profile: &serde_json::Value) -> AtmosphereProfile {
+    let number = u32::try_from(profile["atmosphere"].as_u64().unwrap()).unwrap();
+    AtmosphereProfile::new(&ProfileParameters {
+        altitude_m: num(&profile["altitude_m"]),
+        ground_pressure_hpa: num(&profile["ground_pressure_hpa"]),
+        ground_temperature_k: num(&profile["ground_temperature_k"]),
+        lapse_rate_k_per_km: num(&profile["lapse_rate_k_per_km"]),
+        relative_humidity_percent: num(&profile["relative_humidity_percent"]),
+        water_vapour_scale_height_km: num(&profile["water_vapour_scale_height_km"]),
+        pressure_step_hpa: num(&profile["pressure_step_hpa"]),
+        top_altitude_km: num(&profile["top_altitude_km"]),
+        atmosphere: AtmosphereType::from_number(number).unwrap(),
+    })
+    .unwrap()
+}
+
+/// The spectral grid of `absorption.json`'s windows.
+pub fn sky_grid(windows: &serde_json::Value) -> SpectralGrid {
+    let mut grid = SpectralGrid::new();
+    for window in windows.as_array().unwrap() {
+        let count = usize::try_from(window["channels"].as_u64().unwrap()).unwrap();
+        let reference = usize::try_from(window["ref_chan"].as_u64().unwrap()).unwrap();
+        grid.add_regular(
+            count,
+            reference,
+            num(&window["ref_hz"]),
+            num(&window["sep_hz"]),
+        )
+        .unwrap();
+    }
+    grid
+}
+
+/// 1e-13 of the largest magnitude in `values`: the floor below which a
+/// difference is the rounding of a cancelled sum.
+pub fn peak_floor(values: &[f64]) -> f64 {
+    1e-13 * values.iter().fold(0.0_f64, |peak, v| peak.max(v.abs()))
+}
 
 /// A fixture file's path.
 pub fn fixture(name: &str) -> PathBuf {

@@ -309,6 +309,12 @@ impl AtmosphereProfile {
         });
         column_mm * 1e-3
     }
+
+    /// Releases spare vector capacity, so the profile keeps exactly its
+    /// layers (what an absorption profile's memory estimate counts).
+    pub(crate) fn shrink_to_fit(&mut self) {
+        self.layers.shrink_to_fit();
+    }
 }
 
 fn validate(parameters: &ProfileParameters) -> Result<(), AtmosphereError> {
