@@ -270,9 +270,11 @@ pub fn density_refractivity(
 /// The fractions of the parent gas in each isotopologue and vibrational
 /// state at temperature `tt`, as ATM computes them.
 ///
-/// ATM's H2(17)O fraction uses the (18)O abundance, and its HDO fraction's
-/// denominator reads `2-0*abun_d` (that is, 2) where `2.0*abun_d` was
-/// meant; both are kept so the port sums what ATM sums.
+/// Two of ATM's fractions are corrected (`docs/CASA (C++) bugs.md`): its
+/// H2(17)O fraction uses the (18)O abundance, and its HDO fraction's
+/// denominator reads `2-0*abun_d` (that is, 2) where `2.0*abun_d` was meant.
+/// Here H2(17)O takes the (17)O abundance, and HDO the water parent's
+/// denominator, as H2(18)O does.
 struct IsotopicRatios {
     o2: f64,
     o2_vibrational: f64,
@@ -323,8 +325,8 @@ impl IsotopicRatios {
             h2o: (1.0 - (-TEX_H2OVIB / tt).exp()) / (1.0 + ABUN_18O + ABUN_17O + 2.0 * ABUN_D),
             h2o_bending: (-TEX_H2OVIB / tt).exp() / (1.0 + ABUN_18O + ABUN_17O + 2.0 * ABUN_D),
             h2o_isotope18: ABUN_18O / h2o_parent,
-            h2o_isotope17: ABUN_18O / h2o_parent,
-            hdo: 2.0 * ABUN_D / (1.0 + ABUN_18O + ABUN_17O + 2.0),
+            h2o_isotope17: ABUN_17O / h2o_parent,
+            hdo: 2.0 * ABUN_D / h2o_parent,
         }
     }
 }
