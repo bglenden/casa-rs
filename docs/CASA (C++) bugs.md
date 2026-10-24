@@ -1201,8 +1201,8 @@ precision below the horizon, airmass 1000): that antenna scales by 1.
 ## A `tsys-manual` term scales every noise term
 
 - Date noted: 2026-10-24
-- Status: CASA bug; casa-rs does not follow it, pending the owner's
-  decision, since the Phase 3 plan asks for CASA's collapse order (#841
+- Status: CASA bug; casa-rs does not follow it (owner, 2026-10-24: follow
+  CASA only if its product is the better simulation, which it is not; #841
   Phase 3)
 - Affected code: `synthesis/MeasurementEquations/VisEquation.cc`
   (`collapseForSim`)
@@ -1218,6 +1218,14 @@ the system temperature. casa-rs adds each term's noise with its own σ, as
 `simplenoise` terms add, so `simplenoise`'s σ stays in Jy whatever else is
 set; terms of one seed still add coherently. `simobserve` sets one noise
 term and never reaches this.
+
+CASA's product has no physical counterpart. A system temperature is the
+sum of its contributions (receiver, atmosphere, spillover, CMB), which a
+single `tsys-manual` term already models; a baseline's noise variance
+scales as the product of its two antennas' system temperatures; and the
+powers of uncorrelated noise add (Thompson, Moran & Swenson, *Interferometry
+and Synthesis in Radio Astronomy*, 3rd ed., pp. 55, 266, 386 and 733).
+Multiplying one term's σ by another's gives Jy², not a noise in Jy.
 
 ## A refused `tsys-manual` `setnoise` leaves a unit noise term
 
