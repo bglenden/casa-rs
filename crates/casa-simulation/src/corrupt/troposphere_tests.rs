@@ -57,7 +57,7 @@ fn mean_and_rms(values: &[f64]) -> (f64, f64) {
 /// to a fifth of its length.
 #[test]
 fn the_screen_is_laid_out_as_casas() {
-    let layout = ScreenLayout::new(&PROBE_ANTENNAS, &[12.0; 6], (7.0, 1_098.0));
+    let layout = ScreenLayout::new(&PROBE_ANTENNAS, &[12.0; 6], (7.0, 1_098.0)).expect("layout");
     assert_eq!(layout.pixel_m, 6.0);
     assert_eq!(layout.shape, [271, 1_359]);
     assert!(
@@ -70,8 +70,73 @@ fn the_screen_is_laid_out_as_casas() {
     );
     // Without wind the screen is the array's extent and the border; a
     // screen no longer than five times its width is not widened.
-    let still = ScreenLayout::new(&PROBE_ANTENNAS, &[12.0; 6], (0.0, 1_098.0));
+    let still = ScreenLayout::new(&PROBE_ANTENNAS, &[12.0; 6], (0.0, 1_098.0)).expect("layout");
     assert!(still.shape[1] <= 5 * still.shape[0], "{:?}", still.shape);
+    // A dish of no size, or a wind's run past what a screen can hold, is
+    // refused rather than made or indexed beyond (#899 review).
+    assert!(ScreenLayout::new(&PROBE_ANTENNAS, &[0.0; 6], (7.0, 1_098.0)).is_err());
+    assert!(ScreenLayout::new(&PROBE_ANTENNAS, &[12.0; 6], (1e30, 1_098.0)).is_err());
+    assert!(ScreenLayout::new(&PROBE_ANTENNAS, &[12.0; 6], (1e9, 1_098.0)).is_err());
+}
+
+/// The screen's spectrum is Hermitian where the real transform needs it to
+/// be: on the half spectrum's first column, row r is row N − r's
+/// conjugate. Drawn apart, those modes would come out of the transform at
+/// half the power of modes in its interior at the same wavenumber (#899
+/// review: 0.50 measured). On a square screen the modes (r, 0) and (0, r)
+/// share a wavenumber; over many screens their powers agree.
+#[test]
+fn boundary_modes_have_the_power_of_interior_modes() {
+    let side = 32;
+    let layout = ScreenLayout {
+        pixel_m: 1.0,
+        shape: [side, side],
+        antennas: (0..side)
+            .flat_map(|row| (0..side).map(move |column| [row, column]))
+            .collect(),
+    };
+    let slots = Slots {
+        start_s: 0.0,
+        width_s: 1.0,
+        count: 1,
+    };
+    let mut fft = casa_fft::RealFft2::<f64>::with_threads([side, side], 1)
+        .expect("transform")
+        .with_estimated_plan();
+    let half = side / 2 + 1;
+    // Each wavenumber's power over the screens, boundary and interior: a
+    // mode's power is exponentially distributed, so each ratio of 2,048 has
+    // a standard error of about 3 %, and their mean of about 1 %.
+    let mut boundary = vec![0.0; side / 2];
+    let mut interior = vec![0.0; side / 2];
+    for seed in 0..2_048 {
+        let screen = screen_excess(seed, (2.0, 1.0), &layout, (&slots, 0.0), 1).expect("screen");
+        let mut plane = vec![num_complex::Complex64::new(0.0, 0.0); side * half];
+        for (row, values) in plane.chunks_exact_mut(half).enumerate() {
+            for column in 0..side {
+                let value = f64::from(screen[row * side + column]);
+                let pair = &mut values[column / 2];
+                if column.is_multiple_of(2) {
+                    pair.re = value;
+                } else {
+                    pair.im = value;
+                }
+            }
+        }
+        fft.forward(&mut plane).expect("forward");
+        for wavenumber in 1..side / 2 {
+            boundary[wavenumber] += plane[wavenumber * half].norm_sqr();
+            interior[wavenumber] += plane[wavenumber].norm_sqr();
+        }
+    }
+    let ratios: Vec<f64> = (1..side / 2)
+        .map(|wavenumber| boundary[wavenumber] / interior[wavenumber])
+        .collect();
+    let ratio = ratios.iter().sum::<f64>() / ratios.len() as f64;
+    assert!(
+        (0.95..1.05).contains(&ratio),
+        "boundary/interior power {ratio} ({ratios:?})"
+    );
 }
 
 /// Each antenna's series is scaled to the root-mean-square asked for about

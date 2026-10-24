@@ -1209,7 +1209,10 @@ screens by their autocorrelations, which a screen's scale does not change.
 `settrop(mode='individual')`'s water-vapour series come from the same
 `fBM::initialize` and normalise the same way (#841 Phase 4d): in one
 probe, antenna 0's phases were all below 5·10⁻¹⁰ rad. casa-rs transforms
-every slot there too.
+every slot there too. On fewer than six slots the spectrum's bins
+`i < N/2 − 1` hold only the mean, so whatever varies in CASA's series is
+what it read past the transform; casa-rs refuses `individual` mode on so
+short a track rather than add no turbulence.
 
 ## Gain screens of neighbouring antennas share a seed
 
@@ -1571,10 +1574,13 @@ out, had `−(β+1)/2`):
 Isotropic turbulence's phase spectrum depends only on the spatial
 frequency's size, `|q|^−11/3` in two dimensions (Thompson, Moran & Swenson,
 3rd ed., sec. 13.1.7, p. 725). casa-rs draws `|k|^−(β+1)/2` on the
-wavenumbers in cycles per pixel, the full axis wrapped, and transforms
-every pixel: on a screen five times as long as wide its structure function
-is the same along the wind and across it, where CASA's differ by five
-(`corrupt::troposphere`'s unit tests).
+wavenumbers in cycles per pixel, the full axis wrapped, with the conjugate
+pairs and real bins the real transform needs on the half axis's first and
+Nyquist columns (drawn apart, those modes come out at half the power), and
+transforms every pixel: on a screen five times as long as wide its
+structure function is the same along the wind and across it, where CASA's
+differ by five, and its boundary modes have their interior neighbours'
+power (`corrupt::troposphere`'s unit tests).
 
 ## `settrop` with `simint` stamps a solution halfway to its interval's start
 

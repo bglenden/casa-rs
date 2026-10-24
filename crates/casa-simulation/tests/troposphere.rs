@@ -393,6 +393,51 @@ fn a_one_channel_window_turns_and_deltapwv_is_at_most_one() {
     }
 }
 
+/// An exponent far from CASA's 1.1, either way, gives finite phases that
+/// vary (the spectrum is taken relative to its largest amplitude, so no
+/// power overflows; #899 review); and a screen varies on a track as short
+/// as a series may not (four slots of 30 s), its pixels apart.
+#[test]
+fn extreme_exponents_and_a_short_screen_give_finite_varying_phases() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let point = point(directory.path());
+    let cases: [(&str, f64, f64); 5] = [
+        ("individual", 1000.0, -1.0),
+        ("individual", -1000.0, -1.0),
+        ("screen", 1000.0, -1.0),
+        ("screen", -1000.0, -1.0),
+        ("screen", 1.1, 30.0),
+    ];
+    for (index, (mode, beta, simint_s)) in cases.into_iter().enumerate() {
+        let table = directory.path().join(format!("{index}.cal"));
+        let mut sm = observed(
+            &directory.path().join(format!("{index}.ms")),
+            options(2, 2 << 30),
+            &point,
+        );
+        sm.set_trop(&TroposphereSpec {
+            beta,
+            simint_s,
+            ..trop(mode, &table)
+        })
+        .expect("settrop");
+        sm.close().expect("close");
+        let (solutions, _) = read_table(&table);
+        let phases: Vec<f32> = solutions
+            .iter()
+            .flat_map(|solution| solution.values.iter().map(|value| value.arg()))
+            .collect();
+        assert!(
+            phases.iter().all(|phase| phase.is_finite()),
+            "{mode} beta {beta}: finite phases"
+        );
+        assert!(
+            phases.iter().any(|phase| phase.abs() > 1e-6),
+            "{mode} beta {beta} simint {simint_s}: the phases vary"
+        );
+    }
+}
+
 /// DATA is bitwise the same for one worker or four, for a budget whose
 /// batches split integrations, and after `openfromms`.
 #[test]
@@ -480,13 +525,17 @@ fn settrop_refusals_add_no_term() {
     }));
     assert_eq!(refused, CasaOutcome::ReturnsFalse);
     assert!(message.contains("setEvenSlots"), "{message}");
-    // Not a number, or infinite, in any argument; and a wind blowing the
-    // screen west (which CASA's checks let through).
-    let bad: [Change; 6] = [
+    // Not a number, or infinite in the single precision CASA holds it in, in
+    // any argument; and a wind blowing the screen west (which CASA's checks
+    // let through).
+    let bad: [Change; 9] = [
         ("pwv", |spec| spec.water_vapour_mm = f64::NAN),
+        ("pwv", |spec| spec.water_vapour_mm = 1e100),
         ("deltapwv", |spec| spec.delta_pwv = f64::NAN),
         ("beta", |spec| spec.beta = f64::INFINITY),
+        ("beta", |spec| spec.beta = 1e300),
         ("windspeed", |spec| spec.windspeed_m_s = f64::NAN),
+        ("windspeed", |spec| spec.windspeed_m_s = 1e100),
         ("simint", |spec| spec.simint_s = f64::NEG_INFINITY),
         ("windspeed", |spec| spec.windspeed_m_s = -7.0),
     ];
@@ -497,6 +546,22 @@ fn settrop_refusals_add_no_term() {
         assert_eq!(refused, CasaOutcome::ReturnsFalse, "{name}");
         assert!(message.contains(&format!("settrop's {name}")), "{message}");
     }
+    // A wind whose run no screen can hold, and a series too short to vary
+    // (four slots of 30 s over the two minutes): refused, where CASA makes
+    // or indexes past its screen, or reads its series' last slots from
+    // past their transform.
+    let (refused, message) = outcome(sm.set_trop(&TroposphereSpec {
+        windspeed_m_s: 1e9,
+        ..trop("screen", none)
+    }));
+    assert_eq!(refused, CasaOutcome::ReturnsFalse);
+    assert!(message.contains("cannot be made"), "{message}");
+    let (refused, message) = outcome(sm.set_trop(&TroposphereSpec {
+        simint_s: 30.0,
+        ..trop("individual", none)
+    }));
+    assert_eq!(refused, CasaOutcome::ReturnsFalse);
+    assert!(message.contains("at least 6 slots"), "{message}");
     let inside = path.join("trop.cal");
     let (refused, _) = outcome(sm.set_trop(&trop("individual", &inside)));
     assert_eq!(refused, CasaOutcome::Raises);

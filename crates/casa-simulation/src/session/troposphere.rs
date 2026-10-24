@@ -23,7 +23,7 @@ use super::error::{SimulatorError, SimulatorResult};
 use super::tsys_atm::{building_bytes, window_totals};
 use crate::corrupt::jones::{Slots, TermBytes, tropospheric};
 use crate::corrupt::troposphere::{
-    ScreenLayout, TroposphericPhase, antenna_series, screen_excess, wet_delays,
+    FEWEST_SERIES_SLOTS, ScreenLayout, TroposphericPhase, antenna_series, screen_excess, wet_delays,
 };
 use crate::corrupt::tsys_atm::{self, single};
 
@@ -96,9 +96,12 @@ impl Simulator {
     ///   `mode='test'` is not yet implemented.
     /// - No rows observed yet; a `pwv` that is not positive; integrations
     ///   spanning less than one slot (CASA's `setEvenSlots` "logic
-    ///   problem"); an argument that is not a finite number, or a negative
-    ///   `windspeed` in `screen` mode (which CASA's checks let through):
-    ///   refused.
+    ///   problem"): refused.
+    /// - What CASA's checks let through into undefined phases: an argument
+    ///   that is not a finite number in single precision; in `individual`
+    ///   mode, integrations spanning fewer than six slots, on which a
+    ///   series is flat; in `screen` mode, a negative `windspeed`, a dish of
+    ///   no size, or a screen too large to make: refused.
     /// - A `table` path that cannot be made absolute, or that is, lies
     ///   inside or contains the session's MeasurementSet: raised.
     /// - The term's memory does not fit the session's resource policy: an
@@ -144,8 +147,16 @@ impl Simulator {
             ));
         }
         let slots = Slots::spanning(span, slot_s);
+        if !screen && slots.count < FEWEST_SERIES_SLOTS {
+            return Err(SimulatorError::refused(format!(
+                "Caught exception: settrop(mode='individual') needs integrations spanning at \
+                 least {FEWEST_SERIES_SLOTS} slots of {slot_s} s for its series to vary; these \
+                 span {}",
+                slots.count
+            )));
+        }
         let windspeed_m_s = single(spec.windspeed_m_s);
-        let layout = screen.then(|| {
+        let layout = if screen {
             let positions: Vec<[f64; 3]> = self
                 .antennas
                 .iter()
@@ -156,8 +167,13 @@ impl Simulator {
                 .iter()
                 .map(|antenna| antenna.diameter_m)
                 .collect();
-            ScreenLayout::new(&positions, &diameters, (windspeed_m_s, stop - start))
-        });
+            Some(
+                ScreenLayout::new(&positions, &diameters, (windspeed_m_s, stop - start))
+                    .map_err(|reason| not_formed(&reason))?,
+            )
+        } else {
+            None
+        };
         let antennas = self.antennas.len();
         let workers = self.options.resources.cores().workers.max(1);
         let bytes = self.troposphere_bytes((&per_window, &slots), layout.as_ref(), workers);
@@ -259,21 +275,24 @@ impl Simulator {
 }
 
 /// Refuse what CASA would turn into undefined screens: an argument that is
-/// not a number or infinite (CASA's checks let it through, and its phases
-/// come out NaN), and in `screen` mode a negative `windspeed`, which would
+/// not a number, or is infinite in the single precision CASA's corruptor
+/// holds it in (CASA's checks let it through, and its phases come out NaN;
+/// #899 review), and in `screen` mode a negative `windspeed`, which would
 /// blow the screen off its west end (CASA's screen shrinks and its antennas
-/// read pixels before its first).
+/// read pixels before its first). A `deltapwv` past single precision is
+/// held to 1, as any above 1 is.
 fn check_numbers(spec: &TroposphereSpec, screen: bool) -> SimulatorResult<()> {
-    for (name, value) in [
-        ("pwv", spec.water_vapour_mm),
-        ("deltapwv", spec.delta_pwv),
-        ("beta", spec.beta),
-        ("windspeed", spec.windspeed_m_s),
-        ("simint", spec.simint_s),
+    for (name, value, held) in [
+        ("pwv", spec.water_vapour_mm, single(spec.water_vapour_mm)),
+        ("deltapwv", spec.delta_pwv, spec.delta_pwv),
+        ("beta", spec.beta, single(spec.beta)),
+        ("windspeed", spec.windspeed_m_s, single(spec.windspeed_m_s)),
+        ("simint", spec.simint_s, single(spec.simint_s)),
     ] {
-        if !value.is_finite() {
+        if !held.is_finite() {
             return Err(SimulatorError::refused(format!(
-                "Caught exception: settrop's {name} must be a finite number, not {value}"
+                "Caught exception: settrop's {name} must be a finite number in single \
+                 precision, not {value}"
             )));
         }
     }

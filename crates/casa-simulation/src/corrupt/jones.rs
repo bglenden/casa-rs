@@ -750,14 +750,19 @@ impl ScreenFft {
             return vec![0.0; self.slots];
         };
         self.storage.fill(Complex64::new(0.0, 0.0));
+        // Amplitudes relative to the largest, so that a negative exponent
+        // overflows nothing (#899 review): the screen is scaled after, and
+        // for `beta` ≥ 0 the largest is the first bin's, 1.
+        let bins = self.slots / 2 - 1;
+        let reference = if beta < 0.0 { bins as f64 } else { 1.0 };
         // `F(i)` for `i < N/2 - 1`, the rest zero.
-        for bin in 0..self.slots / 2 - 1 {
+        for bin in 0..bins {
             let mut bin_counter = counter;
             bin_counter[2] = bin as u32;
             let phase = 2.0 * std::f64::consts::PI * uniform(key, bin_counter);
             bin_counter[3] = 1;
             let [normal, _] = normal_pair(key, bin_counter);
-            let amplitude = ((bin + 1) as f64).powf(-0.5 * beta) * normal;
+            let amplitude = ((bin + 1) as f64 / reference).powf(-0.5 * beta) * normal;
             self.storage[bin] = Complex64::from_polar(amplitude, phase);
         }
         fft.inverse(&mut self.storage)

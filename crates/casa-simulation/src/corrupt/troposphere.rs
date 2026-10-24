@@ -53,10 +53,13 @@
 //!   spectrum. casa-rs draws `|k|^−(β+1)/2` on the wavenumbers themselves
 //!   (cycles per pixel, wrapped), the spectrum of a two-dimensional
 //!   fractional Brownian motion whose one-dimensional cuts have the
-//!   spectral exponent `beta`, as `individual` mode's series do.
+//!   spectral exponent `beta`, as `individual` mode's series do, with the
+//!   conjugate pairs the real transform needs on its boundary columns.
 //! - **The series.** As for `setgain(mode='fbm')` ([`super::jones`]), CASA
 //!   reads a series' last two slots from past the end of its transform and
-//!   normalises with them; casa-rs transforms every slot.
+//!   normalises with them; casa-rs transforms every slot, and refuses a
+//!   track of fewer than [`FEWEST_SERIES_SLOTS`] slots, on which a series
+//!   holds only its mean.
 //! - As for `setgain`, every antenna is simulated where CASA's
 //!   autocorrelation rows reset theirs to 1, and with `simint` longer than
 //!   an integration each solution is stamped with its own integration's
@@ -69,7 +72,7 @@
 
 use casa_atmosphere::{AbsorptionProfile, ChannelTotals};
 use casa_fft::RealFft2;
-use num_complex::Complex32;
+use num_complex::{Complex32, Complex64};
 
 use super::jones::{Slots, normal_pair, uniform};
 
@@ -89,6 +92,15 @@ const BLOW_MARGIN: f64 = 1.05;
 /// The longest screen CASA makes for its width: a screen more than this
 /// many times as long as wide is widened.
 const LONGEST_ASPECT: usize = 5;
+
+/// The most spectrum elements a screen may have: 2⁴⁰, 8 TiB of them, past
+/// any budget, so that the bytes counted for admission cannot overflow.
+pub(crate) const LARGEST_SCREEN_ELEMENTS: usize = 1 << 40;
+
+/// The fewest slots on which an `individual` series varies: CASA's spectrum
+/// fills bins `i < N/2 − 1`, so on fewer than six it holds only the mean
+/// and the series, scaled about it, is flat (#899 review).
+pub(crate) const FEWEST_SERIES_SLOTS: usize = 6;
 
 /// A tropospheric term's phases: each solution's fractional excess of water
 /// vapour above each antenna, and each window's wet phase delay per channel
@@ -214,12 +226,24 @@ impl ScreenLayout {
     /// antennas, with two pixels' border and the wind's run along the east
     /// axis, 5 % more; a screen more than five times as long as wide is
     /// widened to a fifth of its length.
+    ///
+    /// # Errors
+    ///
+    /// A pixel that is not a positive length (a dish of no size), or a
+    /// screen of more than [`LARGEST_SCREEN_ELEMENTS`] spectrum elements or
+    /// whose sides are not finite (a wind run past single precision), which
+    /// CASA would make or index beyond (#899 review).
     pub(crate) fn new(
         positions_itrf_m: &[[f64; 3]],
         diameters_m: &[f64],
         (windspeed_m_s, track_s): (f64, f64),
-    ) -> Self {
+    ) -> Result<Self, String> {
         let pixel_m = 0.5 * diameters_m.iter().copied().fold(f64::INFINITY, f64::min);
+        if !(pixel_m.is_finite() && pixel_m > 0.0) {
+            return Err(format!(
+                "a screen's pixels are half the smallest dish, here {pixel_m} m"
+            ));
+        }
         let north: Vec<f64> = positions_itrf_m
             .iter()
             .map(|[x, y, z]| z.atan2(x.hypot(*y)) * EARTH_RADIUS_M)
@@ -240,21 +264,40 @@ impl ScreenLayout {
         let most = |values: &[f64]| values.iter().copied().fold(0.0, f64::max);
         // CASA holds the track and the run of the wind as `Float`s.
         let run_m = f64::from((windspeed_m_s * f64::from(track_s as f32) * BLOW_MARGIN) as f32);
-        let columns = (most(&east) + SCREEN_BORDER_PIXELS + run_m / pixel_m).ceil() as usize;
-        let mut rows = (most(&north) + SCREEN_BORDER_PIXELS).ceil() as usize;
+        let sides = [
+            (most(&north) + SCREEN_BORDER_PIXELS).ceil(),
+            (most(&east) + SCREEN_BORDER_PIXELS + run_m / pixel_m).ceil(),
+        ];
+        // Both sides below 2³¹ (FFTW's), so their product is exact.
+        if !sides
+            .iter()
+            .all(|&side| side.is_finite() && side < f64::from(i32::MAX))
+        {
+            return Err(format!(
+                "a screen of {} by {} pixels cannot be made",
+                sides[0], sides[1]
+            ));
+        }
+        let columns = sides[1] as usize;
+        let mut rows = sides[0] as usize;
         if columns > LONGEST_ASPECT * rows {
             rows = columns / LONGEST_ASPECT;
         }
-        let antennas = north
-            .iter()
-            .zip(&east)
-            .map(|(&row, &column)| [row as usize, column as usize])
-            .collect();
-        Self {
+        let layout = Self {
             pixel_m,
             shape: [rows, columns],
-            antennas,
+            antennas: north
+                .iter()
+                .zip(&east)
+                .map(|(&row, &column)| [row as usize, column as usize])
+                .collect(),
+        };
+        if layout.spectrum_len() > LARGEST_SCREEN_ELEMENTS {
+            return Err(format!(
+                "a screen of {rows} by {columns} pixels is too large to make"
+            ));
         }
+        Ok(layout)
     }
 
     /// The real transform's elements: the screen's spectrum, which the
@@ -267,6 +310,63 @@ impl ScreenLayout {
     /// `slots` at `windspeed_m_s`.
     fn blown(&self, slots: &Slots, slot: usize, windspeed_m_s: f64) -> usize {
         ((slot as f64 * slots.width_s * windspeed_m_s) / self.pixel_m).floor() as usize
+    }
+}
+
+/// The spectrum of a screen of fractional Brownian motion: at wavenumber
+/// `k` (cycles per pixel, the full axis wrapped), a normal amplitude of
+/// `|k|^−(β+1)/2` and a uniform phase, drawn from `seed`'s streams by bin.
+/// The amplitudes are relative to the largest (at the smallest wavenumber,
+/// or the largest when the exponent is positive), so no power overflows
+/// (#899 review); the screen is scaled afterwards, so the factor is
+/// immaterial.
+struct ScreenSpectrum {
+    key: [u32; 2],
+    shape: [usize; 2],
+    exponent: f64,
+    reference: f64,
+}
+
+impl ScreenSpectrum {
+    fn new(seed: i32, beta: f64, shape: [usize; 2]) -> Self {
+        let exponent = -0.5 * (beta + 1.0);
+        let [rows, columns] = shape;
+        let smallest = 1.0 / rows.max(columns) as f64;
+        let largest =
+            ((rows / 2) as f64 / rows as f64).hypot((columns / 2) as f64 / columns as f64);
+        Self {
+            key: [seed as u32, (PURPOSE_TROPOSPHERE_SCREEN << 24) | 1],
+            shape,
+            exponent,
+            reference: if exponent <= 0.0 { smallest } else { largest },
+        }
+    }
+
+    /// Bin (`row`, `column`)'s amplitude: zero at the mean.
+    fn amplitude(&self, row: usize, column: usize) -> f64 {
+        let [rows, columns] = self.shape;
+        let north = row.min(rows - row) as f64 / rows as f64;
+        let east = column.min(columns - column) as f64 / columns as f64;
+        let wavenumber = north.hypot(east);
+        if wavenumber == 0.0 {
+            return 0.0;
+        }
+        (wavenumber / self.reference).powf(self.exponent)
+    }
+
+    /// Bin (`row`, `column`)'s value: its amplitude times a normal draw, at
+    /// a uniform phase.
+    fn draw(&self, row: usize, column: usize) -> Complex64 {
+        let phase =
+            2.0 * std::f64::consts::PI * uniform(self.key, [row as u32, column as u32, 0, 0]);
+        Complex64::from_polar(self.real(row, column), phase)
+    }
+
+    /// Bin (`row`, `column`)'s real value, for a bin its own conjugate: its
+    /// amplitude times a normal draw.
+    fn real(&self, row: usize, column: usize) -> f64 {
+        let [normal, _] = normal_pair(self.key, [row as u32, column as u32, 1, 0]);
+        self.amplitude(row, column) * normal
     }
 }
 
@@ -293,21 +393,24 @@ pub(crate) fn screen_excess(
         .with_estimated_plan()
         .with_owned_plan();
     let mut plane = vec![Complex32::new(0.0, 0.0); layout.spectrum_len()];
-    let key = [seed as u32, (PURPOSE_TROPOSPHERE_SCREEN << 24) | 1];
-    for (row, spectrum) in plane.chunks_exact_mut(half).enumerate() {
-        // Cycles per pixel, the full axis wrapped.
-        let north = row.min(rows - row) as f64 / rows as f64;
-        for (column, value) in spectrum.iter_mut().enumerate() {
-            if row == 0 && column == 0 {
-                continue;
-            }
-            let east = column as f64 / columns as f64;
-            let counter = [row as u32, column as u32, 0, 0];
-            let phase = 2.0 * std::f64::consts::PI * uniform(key, counter);
-            let [normal, _] = normal_pair(key, [row as u32, column as u32, 1, 0]);
-            let amplitude = north.hypot(east).powf(-0.5 * (beta + 1.0)) * normal;
-            let polar = num_complex::Complex64::from_polar(amplitude, phase);
-            *value = Complex32::new(polar.re as f32, polar.im as f32);
+    let spectrum = ScreenSpectrum::new(seed, beta, [rows, columns]);
+    // The half spectrum's first column, and its last when the width is
+    // even, hold both signs of the full axis's wavenumbers: row r is the
+    // conjugate of row N − r there, and a row that is its own mirror is
+    // real (#899 review: drawn apart, C2R halves their power).
+    let paired =
+        |column: usize| column == 0 || (columns.is_multiple_of(2) && column == columns / 2);
+    for (row, values) in plane.chunks_exact_mut(half).enumerate() {
+        let mirror = (rows - row) % rows;
+        for (column, value) in values.iter_mut().enumerate() {
+            let drawn = if !paired(column) || row < mirror {
+                spectrum.draw(row, column)
+            } else if row == mirror {
+                Complex64::new(spectrum.real(row, column), 0.0)
+            } else {
+                spectrum.draw(mirror, column).conj()
+            };
+            *value = Complex32::new(drawn.re as f32, drawn.im as f32);
         }
     }
     fft.inverse(&mut plane)?;
