@@ -139,6 +139,12 @@ impl JonesTerm {
             .is_some_and(|times| !times.is_empty())
     }
 
+    /// The rows of its calibration table: one per solution and antenna.
+    pub(crate) fn table_rows(&self) -> u64 {
+        let solutions: usize = self.solutions.iter().map(Vec::len).sum();
+        (solutions * self.antennas) as u64
+    }
+
     /// Every solution, by window and in time order, with the receptors'
     /// values of each antenna: the rows of its calibration table.
     pub(crate) fn solutions(

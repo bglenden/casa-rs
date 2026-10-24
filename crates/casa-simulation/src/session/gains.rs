@@ -16,7 +16,10 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use casa_calibration::{SimulatedJones, SimulatedSolution, write_simulated_jones_table};
+use casa_calibration::{
+    SimulatedJones, SimulatedSolution, check_simulated_table_destination, simulated_table_bytes,
+    write_simulated_jones_table,
+};
 use casa_imaging_runtime::{Demand, Reservation, admit};
 use casa_ms::MeasurementSet;
 use num_complex::Complex64;
@@ -31,6 +34,10 @@ use crate::corrupt::jones::{
 /// The phase a gain or leakage term is admitted as, at `setgain` or
 /// `setleakage`: what it keeps for the session, and what forming it holds.
 const JONES_TERM_PHASE: &str = "a simulated gain or leakage term";
+
+/// The phase writing the calibration tables of the terms is admitted as, at
+/// `close`: the largest table built in memory and saved.
+const JONES_TABLE_PHASE: &str = "writing a simulated calibration table";
 
 /// The arguments of `sm.setgain`.
 #[derive(Debug, Clone, PartialEq)]
@@ -85,7 +92,8 @@ impl Simulator {
     ///   `False`; another unknown mode is refused as CASA's "unsupported
     ///   mode".
     /// - No rows observed yet, or no `amplitude`: refused.
-    /// - A `table` path that cannot be made absolute: raised.
+    /// - A `table` path that cannot be made absolute, or that is, lies
+    ///   inside or contains the session's MeasurementSet: raised.
     /// - The term's memory does not fit the session's resource policy: an
     ///   admission error, before anything is formed.
     pub fn set_gain(&mut self, spec: &GainSpec) -> SimulatorResult<()> {
@@ -101,7 +109,7 @@ impl Simulator {
                 )));
             }
         };
-        let table = table_path(&spec.table)?;
+        let table = self.table_path(&spec.table)?;
         let camp = pair(&spec.amplitude, "setgain's amplitude")?;
         tracing::info!("Gain corruption with complex RMS amplitude = {camp}");
         self.require_rows()?;
@@ -136,11 +144,12 @@ impl Simulator {
     /// # Errors
     ///
     /// No rows observed yet, or no `amplitude` or `offset`: refused. A
-    /// `table` path that cannot be made absolute: raised. The term's memory
+    /// `table` path that cannot be made absolute, or that is, lies inside
+    /// or contains the session's MeasurementSet: raised. The term's memory
     /// does not fit the session's resource policy: an admission error,
     /// before anything is formed.
     pub fn set_leakage(&mut self, spec: &LeakageSpec) -> SimulatorResult<()> {
-        let table = table_path(&spec.table)?;
+        let table = self.table_path(&spec.table)?;
         let camp = pair(&spec.amplitude, "setleakage's amplitude")?;
         let offset = pair(&spec.offset, "setleakage's offset")?;
         self.require_rows()?;
@@ -209,10 +218,30 @@ impl Simulator {
     /// the MeasurementSet `close` wrote: one row per solution and antenna,
     /// by spectral window, time and antenna, as CASA's
     /// `NewCalTable::writeToDisk` sorts them.
+    ///
+    /// The terms hold their own admission; a table is built in memory and
+    /// saved, one at a time, so the largest table's build is admitted
+    /// before any is written, and each row is formed from its term as it
+    /// is added (#891 review).
     pub(super) fn write_jones_tables(&self) -> SimulatorResult<()> {
-        if self.jones_tables.is_empty() {
+        let Some(rows) = self
+            .jones_tables
+            .iter()
+            .map(|(_, term)| term.table_rows())
+            .max()
+        else {
             return Ok(());
-        }
+        };
+        let resources = &self.options.resources;
+        let _building = admit(
+            resources.host(),
+            resources.policy(),
+            &Demand {
+                phase: JONES_TABLE_PHASE,
+                memory: simulated_table_bytes(rows),
+            },
+        )
+        .map_err(SimulatorError::admission)?;
         let ms = MeasurementSet::open(self.path()).map_err(|error| {
             SimulatorError::raised(format!("reopen the MeasurementSet: {error}"))
         })?;
@@ -221,21 +250,19 @@ impl Simulator {
                 JonesKind::Gain => SimulatedJones::Gain,
                 JonesKind::Leakage => SimulatedJones::Leakage,
             };
-            let solutions: Vec<SimulatedSolution> =
-                term.solutions()
-                    .flat_map(|(window, solution, values)| {
-                        values.iter().enumerate().map(move |(antenna, &receptors)| {
-                            SimulatedSolution {
-                                time_s: solution.time_s,
-                                field_id: solution.field as i32,
-                                spectral_window_id: window as i32,
-                                antenna: antenna as i32,
-                                receptors,
-                            }
-                        })
+            let rows = term.solutions().flat_map(|(window, solution, values)| {
+                values
+                    .iter()
+                    .enumerate()
+                    .map(move |(antenna, &receptors)| SimulatedSolution {
+                        time_s: solution.time_s,
+                        field_id: solution.field as i32,
+                        spectral_window_id: window as i32,
+                        antenna: antenna as i32,
+                        receptors,
                     })
-                    .collect();
-            write_simulated_jones_table(&ms, path, kind, &solutions).map_err(|error| {
+            });
+            write_simulated_jones_table(&ms, path, kind, rows).map_err(|error| {
                 SimulatorError::raised(format!(
                     "write the calibration table {}: {error}",
                     path.display()
@@ -243,6 +270,20 @@ impl Simulator {
             })?;
         }
         Ok(())
+    }
+
+    /// `table` as the absolute path `close` writes it to, or `None` for
+    /// none; refused when it is, lies inside or contains the session's
+    /// MeasurementSet, which writing it would replace.
+    fn table_path(&self, table: &str) -> SimulatorResult<Option<PathBuf>> {
+        if table.is_empty() {
+            return Ok(None);
+        }
+        let path = std::path::absolute(table)
+            .map_err(|error| SimulatorError::raised(format!("table {table}: {error}")))?;
+        check_simulated_table_destination(self.path(), &path)
+            .map_err(|error| SimulatorError::raised(error.to_string()))?;
+        Ok(Some(path))
     }
 
     /// Scan `scan`'s integrations, their TIMEs in order: as planned, or as
@@ -331,14 +372,4 @@ fn window_chunks(first: &[Option<(f64, usize)>], per_window: &[usize]) -> Chunks
         }
     }
     chunks
-}
-
-/// `table` as the absolute path `close` writes it to, or `None` for none.
-fn table_path(table: &str) -> SimulatorResult<Option<PathBuf>> {
-    if table.is_empty() {
-        return Ok(None);
-    }
-    std::path::absolute(table)
-        .map(Some)
-        .map_err(|error| SimulatorError::raised(format!("table {table}: {error}")))
 }

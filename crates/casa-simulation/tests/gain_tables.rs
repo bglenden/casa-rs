@@ -200,6 +200,52 @@ fn a_table_path_that_is_not_a_table_is_refused() {
     assert!(table.exists() && !table.join("table.dat").exists());
 }
 
+/// A table that would replace the MeasurementSet it is written from is
+/// refused when it is set, and the MeasurementSet is kept (#891 review,
+/// whose probe the first case is): the MeasurementSet itself after
+/// `openfromms`, a subtable of it, the directory holding it, and aliases
+/// through `..` and a symbolic link. A table beside it is written.
+#[test]
+fn a_table_on_the_measurement_set_is_refused_and_the_measurement_set_kept() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let point = point(directory.path());
+    let path = |name: &str| directory.path().join(name);
+    observed(&path("source.ms"), "XX YY", &point)
+        .close()
+        .expect("close");
+    let rows = read_main(&path("source.ms")).0.len();
+    std::os::unix::fs::symlink(path("source.ms"), path("alias.ms")).expect("a symbolic link");
+    let mut sm = Simulator::open_from_ms(path("source.ms"), options()).expect("openfromms");
+    for table in [
+        path("source.ms"),
+        path("source.ms").join("ANTENNA"),
+        directory.path().to_path_buf(),
+        path("missing").join("..").join("source.ms"),
+        path("alias.ms"),
+    ] {
+        let error = sm
+            .set_gain(&gain(&table))
+            .expect_err("a table on the MeasurementSet");
+        assert!(
+            error
+                .message()
+                .contains("MeasurementSet it is written from"),
+            "{}: {error}",
+            table.display()
+        );
+    }
+    sm.set_gain(&gain(&path("gains.cal")))
+        .expect("a table beside it");
+    sm.corrupt().expect("corrupt");
+    sm.close().expect("close");
+    assert_eq!(
+        read_main(&path("source.ms")).0.len(),
+        rows,
+        "the MeasurementSet is kept"
+    );
+    assert!(path("gains.cal").join("table.dat").is_file());
+}
+
 /// The options `session` opens with.
 fn options() -> SimulatorOptions {
     SimulatorOptions {
