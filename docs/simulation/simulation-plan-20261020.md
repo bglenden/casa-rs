@@ -489,13 +489,21 @@ This is delivered as four PRs, in order.
 
 **Acceptance.**
 - Tebb and opacity agree with CASA's ATM, through the `at` tool, to about
-  1e-6 relative across its bands.
-- `tsys-atm` noise agrees with CASA statistically.
+  1e-6 relative across its bands. casa-rs corrects four of ATM's data
+  errors (owner decision, 2026-10-24; `docs/CASA (C++) bugs.md`), so
+  `tools/atmosphere/at_tool_check.py` checks the agreement through the C++:
+  ATM as CASA ships it against the `at` tool, and casa-atmosphere against
+  ATM with the corrections, each to 1e-6; it reports what the corrections
+  change.
+- `tsys-atm` noise agrees with CASA statistically, each implementation's
+  noise against its own ATM (CASA's through the `at` tool, casa-rs's
+  through casa-atmosphere).
 - `settrop` (added in 4d, where CASA's phase is the dispersive wet delay
   alone and casa-rs's the whole one, `docs/CASA (C++) bugs.md`): each
   implementation's `Tf Jones` table is one water-vapour excess per
-  solution times its own delay model, through the `at` tool, to single
-  precision; DATA is the table's `g_p·conj(g_q)`; CASA applies casa-rs's
+  solution times its own delay model (CASA's through the `at` tool,
+  casa-rs's through casa-atmosphere) to single precision; DATA is the
+  table's `g_p·conj(g_q)`; CASA applies casa-rs's
   table (`setapply`) to the same DATA; casa-rs's `individual` series have
   the root-mean-square `deltapwv`, and the screens' statistics are
   reported.

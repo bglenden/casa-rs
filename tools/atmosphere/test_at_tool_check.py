@@ -21,6 +21,7 @@ import at_tool_check  # noqa: E402
 CONFIG = {
     "profiles": [{"name": "a"}, {"name": "b"}],
     "bands": [{"centre_ghz": 90.0, "channels": 2}, {"centre_ghz": 230.0, "channels": 3}],
+    "sets": [{"water_m": 2e-3, "airmass": 1.5}, {"water_m": 5e-4, "airmass": 2.5}],
 }
 
 
@@ -34,6 +35,11 @@ def result(scale: float = 1.0) -> dict:
         }
         for key in at_tool_check.WINDOW_QUANTITIES:
             window[key] = scale * 7.5
+        for k, key in enumerate(at_tool_check.SET_QUANTITIES):
+            window[key] = [
+                [scale * (2.0 + 0.1 * c + 0.01 * k + i) for c in range(band["channels"])]
+                for i in range(len(CONFIG["sets"]))
+            ]
         windows.append(window)
     return {"ground_water_m": scale * 1.5e-3, "windows": windows}
 
@@ -58,9 +64,60 @@ class CompareTests(unittest.TestCase):
     def test_identical_results_pass(self):
         worst, problems = at_tool_check.compare(CONFIG, casa(), rust())
         self.assertEqual(problems, [])
-        expected = {*at_tool_check.CHANNEL_QUANTITIES, *at_tool_check.WINDOW_QUANTITIES, "ground_water_m"}
+        expected = {
+            *at_tool_check.CHANNEL_QUANTITIES,
+            *at_tool_check.WINDOW_QUANTITIES,
+            *at_tool_check.SET_QUANTITIES,
+            "ground_water_m",
+        }
         self.assertEqual(set(worst), expected)
         self.assertTrue(all(d == 0.0 for d, _ in worst.values()))
+
+    def test_a_missing_reference_is_refused_by_its_name(self):
+        problems = at_tool_check.compare(CONFIG, None, rust(), ("casa-rs", "the C++ with corrections"))[1]
+        self.assertTrue(any("the C++ with corrections gave no profiles for 2" in p for p in problems), problems)
+
+    def test_a_missing_set_is_refused(self):
+        short = rust()
+        short["profiles"][0]["windows"][1]["set_wet"].pop()
+        self.assertRefused(casa(), short, "a band 230.0 GHz set_wet: casa-rs has 1 and the at tool 2 sets for 2")
+
+    def test_a_short_set_is_refused(self):
+        short = casa()
+        short[1]["windows"][0]["set_tebb"][1].pop()
+        self.assertRefused(short, rust(), "b band 90.0 GHz set 1 set_tebb: casa-rs has 2 and the at tool 1 channels")
+
+    def test_a_gated_set_quantity_beyond_tolerance_is_refused(self):
+        off = rust()
+        off["profiles"][1]["windows"][0]["set_tebb"][1][0] *= 1 + 3e-6
+        self.assertRefused(casa(), off, "set_tebb: 3.000e-06 at b band 90.0 GHz set 1 channel 0")
+
+    def test_an_ungated_comparison_reports_but_does_not_refuse(self):
+        off = rust()
+        off["profiles"][0]["windows"][0]["tebb"][0] *= 1 + 1e-2
+        worst, problems = at_tool_check.compare(CONFIG, casa(), off, gate=False)
+        self.assertEqual(problems, [])
+        self.assertAlmostEqual(worst["tebb"][0], 1e-2, places=12)
+
+    def test_an_ungated_comparison_still_refuses_a_missing_value(self):
+        nan = rust()
+        nan["profiles"][0]["windows"][0]["wet"][0] = math.nan
+        problems = at_tool_check.compare(CONFIG, casa(), nan, gate=False)[1]
+        self.assertTrue(any("wet: not a finite pair" in p for p in problems), problems)
+
+    def test_the_oracle_input_lists_every_profile_band_and_set(self):
+        config = {
+            "profiles": [
+                {"altitude_m": 5000.0, "temperature_k": 270.0, "pressure_mbar": 560.0, "maxAltitude_km": 48.0,
+                 "humidity": 20.0, "dTem_dh_k_per_km": -5.6, "dP_mbar": 10.0, "h0_km": 2.0, "atmType": 1}
+            ],
+            "bands": [{"channels": 5, "centre_ghz": 22.235, "res_ghz": 0.5}],
+            "sets": CONFIG["sets"],
+        }
+        self.assertEqual(
+            at_tool_check.oracle_input(config).splitlines(),
+            ["1", "5000.0 270.0 560.0 48.0 20.0 -5.6 10.0 2.0 1", "1", "5 22.235 0.5", "2", "0.002 1.5", "0.0005 2.5"],
+        )
 
     def test_no_profiles_is_refused(self):
         self.assertRefused(casa(), {"profiles": []}, "casa-rs gave 0 profiles for 2")
@@ -111,8 +168,8 @@ class CompareTests(unittest.TestCase):
         missing = rust()
         for profile in missing["profiles"]:
             for window in profile["windows"]:
-                del window["tebb_set"]
-        self.assertRefused(casa(), missing, "tebb_set: casa-rs has None")
+                del window["trj"]
+        self.assertRefused(casa(), missing, "trj: casa-rs has None")
 
     def test_a_missing_window_average_is_refused(self):
         missing = casa()
