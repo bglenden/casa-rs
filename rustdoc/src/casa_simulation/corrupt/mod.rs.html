@@ -56,128 +56,129 @@
 <a href=#56 id=56 data-nosnippet>56</a>//! backend or platform; the tests hold a few cells to the bits they had
 <a href=#57 id=57 data-nosnippet>57</a>//! before the generator moved to casa-numerics (#855).
 <a href=#58 id=58 data-nosnippet>58</a>
-<a href=#59 id=59 data-nosnippet>59</a></span><span class="attr">#[cfg(test)]
-<a href=#60 id=60 data-nosnippet>60</a></span><span class="kw">mod </span>tests;
-<a href=#61 id=61 data-nosnippet>61</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>tsys;
-<a href=#62 id=62 data-nosnippet>62</a>
-<a href=#63 id=63 data-nosnippet>63</a><span class="kw">use </span>casa_numerics::cell_noise::CellNoise;
-<a href=#64 id=64 data-nosnippet>64</a><span class="kw">use </span>num_complex::Complex32;
-<a href=#65 id=65 data-nosnippet>65</a>
-<a href=#66 id=66 data-nosnippet>66</a><span class="kw">pub use </span>tsys::TsysParameters;
-<a href=#67 id=67 data-nosnippet>67</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">use </span>tsys::{RowNoise, TsysManual, WindowNoise, airmass};
-<a href=#68 id=68 data-nosnippet>68</a>
-<a href=#69 id=69 data-nosnippet>69</a><span class="doccomment">/// The top byte of the key's second word names what the stream is for, so
-<a href=#70 id=70 data-nosnippet>70</a>/// later corruptions (gains, fBM screens) draw from streams disjoint from
-<a href=#71 id=71 data-nosnippet>71</a>/// thermal noise under the same seed.
-<a href=#72 id=72 data-nosnippet>72</a></span><span class="kw">const </span>PURPOSE_THERMAL_NOISE: u32 = <span class="number">0x01</span>;
-<a href=#73 id=73 data-nosnippet>73</a>
-<a href=#74 id=74 data-nosnippet>74</a><span class="doccomment">/// Application ordinals share the key word with the purpose byte, so a term
-<a href=#75 id=75 data-nosnippet>75</a>/// can be applied at most this many times.
-<a href=#76 id=76 data-nosnippet>76</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>MAXIMUM_APPLICATIONS: u32 = <span class="number">1 </span>&lt;&lt; <span class="number">24</span>;
-<a href=#77 id=77 data-nosnippet>77</a>
-<a href=#78 id=78 data-nosnippet>78</a><span class="doccomment">/// How large a noise term's draws are.
-<a href=#79 id=79 data-nosnippet>79</a></span><span class="attr">#[derive(Debug, Clone, Copy, PartialEq)]
-<a href=#80 id=80 data-nosnippet>80</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">enum </span>NoiseLevel {
-<a href=#81 id=81 data-nosnippet>81</a>    <span class="doccomment">/// `simplenoise`: σ of each real and imaginary draw, Jy, held as CASA
-<a href=#82 id=82 data-nosnippet>82</a>    /// holds it.
-<a href=#83 id=83 data-nosnippet>83</a>    </span>Simple(f32),
-<a href=#84 id=84 data-nosnippet>84</a>    <span class="doccomment">/// `tsys-manual`: σ of each row from the model ([`tsys`]).
-<a href=#85 id=85 data-nosnippet>85</a>    </span>TsysManual(TsysManual),
-<a href=#86 id=86 data-nosnippet>86</a>}
-<a href=#87 id=87 data-nosnippet>87</a>
-<a href=#88 id=88 data-nosnippet>88</a><span class="doccomment">/// One application of a noise term: the noise one `corrupt` adds for one
-<a href=#89 id=89 data-nosnippet>89</a>/// `setnoise` term.
-<a href=#90 id=90 data-nosnippet>90</a></span><span class="attr">#[derive(Debug, Clone, Copy, PartialEq)]
-<a href=#91 id=91 data-nosnippet>91</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>NoiseApplication {
-<a href=#92 id=92 data-nosnippet>92</a>    <span class="doccomment">/// The seed in force when the term was set (`sm.setseed`).
-<a href=#93 id=93 data-nosnippet>93</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) seed: i32,
-<a href=#94 id=94 data-nosnippet>94</a>    <span class="doccomment">/// How large its draws are.
-<a href=#95 id=95 data-nosnippet>95</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) level: NoiseLevel,
-<a href=#96 id=96 data-nosnippet>96</a>    <span class="doccomment">/// How many times the term had been applied before; below
-<a href=#97 id=97 data-nosnippet>97</a>    /// [`MAXIMUM_APPLICATIONS`].
-<a href=#98 id=98 data-nosnippet>98</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) ordinal: u32,
-<a href=#99 id=99 data-nosnippet>99</a>}
-<a href=#100 id=100 data-nosnippet>100</a>
-<a href=#101 id=101 data-nosnippet>101</a><span class="kw">impl </span>NoiseApplication {
-<a href=#102 id=102 data-nosnippet>102</a>    <span class="doccomment">/// The stream key: the seed's 32 bits (two's complement), then the
-<a href=#103 id=103 data-nosnippet>103</a>    /// thermal-noise purpose byte above the ordinal.
-<a href=#104 id=104 data-nosnippet>104</a>    </span><span class="kw">fn </span>key(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; [u32; <span class="number">2</span>] {
-<a href=#105 id=105 data-nosnippet>105</a>        <span class="macro">debug_assert!</span>(<span class="self">self</span>.ordinal &lt; MAXIMUM_APPLICATIONS);
-<a href=#106 id=106 data-nosnippet>106</a>        [
-<a href=#107 id=107 data-nosnippet>107</a>            <span class="self">self</span>.seed <span class="kw">as </span>u32,
-<a href=#108 id=108 data-nosnippet>108</a>            (PURPOSE_THERMAL_NOISE &lt;&lt; <span class="number">24</span>) | <span class="self">self</span>.ordinal,
-<a href=#109 id=109 data-nosnippet>109</a>        ]
-<a href=#110 id=110 data-nosnippet>110</a>    }
-<a href=#111 id=111 data-nosnippet>111</a>
-<a href=#112 id=112 data-nosnippet>112</a>    <span class="doccomment">/// This application's noise when every row has the same σ
-<a href=#113 id=113 data-nosnippet>113</a>    /// (`simplenoise`): σ under [`Self::key`]; `None` when σ depends on the
-<a href=#114 id=114 data-nosnippet>114</a>    /// row (`tsys-manual`).
-<a href=#115 id=115 data-nosnippet>115</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>uniform(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;CellNoise&gt; {
-<a href=#116 id=116 data-nosnippet>116</a>        <span class="kw">match </span><span class="self">self</span>.level {
-<a href=#117 id=117 data-nosnippet>117</a>            NoiseLevel::Simple(sigma_jy) =&gt; <span class="prelude-val">Some</span>(CellNoise::new(<span class="self">self</span>.key(), sigma_jy)),
-<a href=#118 id=118 data-nosnippet>118</a>            NoiseLevel::TsysManual(<span class="kw">_</span>) =&gt; <span class="prelude-val">None</span>,
-<a href=#119 id=119 data-nosnippet>119</a>        }
-<a href=#120 id=120 data-nosnippet>120</a>    }
-<a href=#121 id=121 data-nosnippet>121</a>
-<a href=#122 id=122 data-nosnippet>122</a>    <span class="doccomment">/// Whether σ depends on the row (`tsys-manual`), which then needs each
-<a href=#123 id=123 data-nosnippet>123</a>    /// row's [`RowNoise`].
-<a href=#124 id=124 data-nosnippet>124</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>varies_by_row(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
-<a href=#125 id=125 data-nosnippet>125</a>        <span class="macro">matches!</span>(<span class="self">self</span>.level, NoiseLevel::TsysManual(<span class="kw">_</span>))
-<a href=#126 id=126 data-nosnippet>126</a>    }
-<a href=#127 id=127 data-nosnippet>127</a>
-<a href=#128 id=128 data-nosnippet>128</a>    <span class="doccomment">/// This application for the rows of a scan in spectral window `window`.
-<a href=#129 id=129 data-nosnippet>129</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>for_window(<span class="kw-2">&amp;</span><span class="self">self</span>, window: <span class="kw-2">&amp;</span>WindowNoise) -&gt; ScanNoise {
-<a href=#130 id=130 data-nosnippet>130</a>        ScanNoise {
-<a href=#131 id=131 data-nosnippet>131</a>            key: <span class="self">self</span>.key(),
-<a href=#132 id=132 data-nosnippet>132</a>            level: <span class="kw">match </span><span class="kw-2">&amp;</span><span class="self">self</span>.level {
-<a href=#133 id=133 data-nosnippet>133</a>                NoiseLevel::Simple(sigma_jy) =&gt; ScanLevel::Simple(<span class="kw-2">*</span>sigma_jy),
-<a href=#134 id=134 data-nosnippet>134</a>                NoiseLevel::TsysManual(model) =&gt; ScanLevel::TsysManual(model.for_window(window)),
-<a href=#135 id=135 data-nosnippet>135</a>            },
-<a href=#136 id=136 data-nosnippet>136</a>        }
-<a href=#137 id=137 data-nosnippet>137</a>    }
-<a href=#138 id=138 data-nosnippet>138</a>}
-<a href=#139 id=139 data-nosnippet>139</a>
-<a href=#140 id=140 data-nosnippet>140</a><span class="doccomment">/// A noise application for the rows of one spectral window.
-<a href=#141 id=141 data-nosnippet>141</a></span><span class="attr">#[derive(Debug, Clone, Copy, PartialEq)]
-<a href=#142 id=142 data-nosnippet>142</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>ScanNoise {
-<a href=#143 id=143 data-nosnippet>143</a>    key: [u32; <span class="number">2</span>],
-<a href=#144 id=144 data-nosnippet>144</a>    level: ScanLevel,
-<a href=#145 id=145 data-nosnippet>145</a>}
-<a href=#146 id=146 data-nosnippet>146</a>
-<a href=#147 id=147 data-nosnippet>147</a><span class="attr">#[derive(Debug, Clone, Copy, PartialEq)]
-<a href=#148 id=148 data-nosnippet>148</a></span><span class="kw">enum </span>ScanLevel {
-<a href=#149 id=149 data-nosnippet>149</a>    Simple(f32),
-<a href=#150 id=150 data-nosnippet>150</a>    TsysManual(tsys::WindowTsys),
-<a href=#151 id=151 data-nosnippet>151</a>}
-<a href=#152 id=152 data-nosnippet>152</a>
-<a href=#153 id=153 data-nosnippet>153</a><span class="kw">impl </span>ScanNoise {
-<a href=#154 id=154 data-nosnippet>154</a>    <span class="doccomment">/// σ of each real and imaginary draw of a row of `row`'s antennas,
-<a href=#155 id=155 data-nosnippet>155</a>    /// airmasses and integration time, Jy.
-<a href=#156 id=156 data-nosnippet>156</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>sigma(<span class="kw-2">&amp;</span><span class="self">self</span>, row: <span class="kw-2">&amp;</span>RowNoise) -&gt; f32 {
-<a href=#157 id=157 data-nosnippet>157</a>        <span class="kw">match </span><span class="kw-2">&amp;</span><span class="self">self</span>.level {
-<a href=#158 id=158 data-nosnippet>158</a>            ScanLevel::Simple(sigma_jy) =&gt; <span class="kw-2">*</span>sigma_jy,
-<a href=#159 id=159 data-nosnippet>159</a>            ScanLevel::TsysManual(model) =&gt; model.sigma(row),
-<a href=#160 id=160 data-nosnippet>160</a>        }
-<a href=#161 id=161 data-nosnippet>161</a>    }
-<a href=#162 id=162 data-nosnippet>162</a>
-<a href=#163 id=163 data-nosnippet>163</a>    <span class="doccomment">/// Add this application's noise to the cell of MAIN row `row`, whose
-<a href=#164 id=164 data-nosnippet>164</a>    /// antennas, airmasses and integration time are `inputs`:
-<a href=#165 id=165 data-nosnippet>165</a>    /// `correlations × channels` samples, correlation fastest. An
-<a href=#166 id=166 data-nosnippet>166</a>    /// autocorrelation row gets real draws only; samples past the last
-<a href=#167 id=167 data-nosnippet>167</a>    /// whole channel are left alone ([`CellNoise::add_to_row`]).
-<a href=#168 id=168 data-nosnippet>168</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>add_to_row(
-<a href=#169 id=169 data-nosnippet>169</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#170 id=170 data-nosnippet>170</a>        (row, inputs): (u64, <span class="kw-2">&amp;</span>RowNoise),
-<a href=#171 id=171 data-nosnippet>171</a>        autocorrelation: bool,
-<a href=#172 id=172 data-nosnippet>172</a>        correlations: usize,
-<a href=#173 id=173 data-nosnippet>173</a>        cell: <span class="kw-2">&amp;mut </span>[Complex32],
-<a href=#174 id=174 data-nosnippet>174</a>    ) {
-<a href=#175 id=175 data-nosnippet>175</a>        CellNoise::new(<span class="self">self</span>.key, <span class="self">self</span>.sigma(inputs)).add_to_row(
-<a href=#176 id=176 data-nosnippet>176</a>            row,
-<a href=#177 id=177 data-nosnippet>177</a>            autocorrelation,
-<a href=#178 id=178 data-nosnippet>178</a>            correlations,
-<a href=#179 id=179 data-nosnippet>179</a>            cell,
-<a href=#180 id=180 data-nosnippet>180</a>        );
-<a href=#181 id=181 data-nosnippet>181</a>    }
-<a href=#182 id=182 data-nosnippet>182</a>}
+<a href=#59 id=59 data-nosnippet>59</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>jones;
+<a href=#60 id=60 data-nosnippet>60</a><span class="attr">#[cfg(test)]
+<a href=#61 id=61 data-nosnippet>61</a></span><span class="kw">mod </span>tests;
+<a href=#62 id=62 data-nosnippet>62</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>tsys;
+<a href=#63 id=63 data-nosnippet>63</a>
+<a href=#64 id=64 data-nosnippet>64</a><span class="kw">use </span>casa_numerics::cell_noise::CellNoise;
+<a href=#65 id=65 data-nosnippet>65</a><span class="kw">use </span>num_complex::Complex32;
+<a href=#66 id=66 data-nosnippet>66</a>
+<a href=#67 id=67 data-nosnippet>67</a><span class="kw">pub use </span>tsys::TsysParameters;
+<a href=#68 id=68 data-nosnippet>68</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">use </span>tsys::{RowNoise, TsysManual, WindowNoise, airmass};
+<a href=#69 id=69 data-nosnippet>69</a>
+<a href=#70 id=70 data-nosnippet>70</a><span class="doccomment">/// The top byte of the key's second word names what the stream is for, so
+<a href=#71 id=71 data-nosnippet>71</a>/// later corruptions (gains, fBM screens) draw from streams disjoint from
+<a href=#72 id=72 data-nosnippet>72</a>/// thermal noise under the same seed.
+<a href=#73 id=73 data-nosnippet>73</a></span><span class="kw">const </span>PURPOSE_THERMAL_NOISE: u32 = <span class="number">0x01</span>;
+<a href=#74 id=74 data-nosnippet>74</a>
+<a href=#75 id=75 data-nosnippet>75</a><span class="doccomment">/// Application ordinals share the key word with the purpose byte, so a term
+<a href=#76 id=76 data-nosnippet>76</a>/// can be applied at most this many times.
+<a href=#77 id=77 data-nosnippet>77</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>MAXIMUM_APPLICATIONS: u32 = <span class="number">1 </span>&lt;&lt; <span class="number">24</span>;
+<a href=#78 id=78 data-nosnippet>78</a>
+<a href=#79 id=79 data-nosnippet>79</a><span class="doccomment">/// How large a noise term's draws are.
+<a href=#80 id=80 data-nosnippet>80</a></span><span class="attr">#[derive(Debug, Clone, Copy, PartialEq)]
+<a href=#81 id=81 data-nosnippet>81</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">enum </span>NoiseLevel {
+<a href=#82 id=82 data-nosnippet>82</a>    <span class="doccomment">/// `simplenoise`: σ of each real and imaginary draw, Jy, held as CASA
+<a href=#83 id=83 data-nosnippet>83</a>    /// holds it.
+<a href=#84 id=84 data-nosnippet>84</a>    </span>Simple(f32),
+<a href=#85 id=85 data-nosnippet>85</a>    <span class="doccomment">/// `tsys-manual`: σ of each row from the model ([`tsys`]).
+<a href=#86 id=86 data-nosnippet>86</a>    </span>TsysManual(TsysManual),
+<a href=#87 id=87 data-nosnippet>87</a>}
+<a href=#88 id=88 data-nosnippet>88</a>
+<a href=#89 id=89 data-nosnippet>89</a><span class="doccomment">/// One application of a noise term: the noise one `corrupt` adds for one
+<a href=#90 id=90 data-nosnippet>90</a>/// `setnoise` term.
+<a href=#91 id=91 data-nosnippet>91</a></span><span class="attr">#[derive(Debug, Clone, Copy, PartialEq)]
+<a href=#92 id=92 data-nosnippet>92</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>NoiseApplication {
+<a href=#93 id=93 data-nosnippet>93</a>    <span class="doccomment">/// The seed in force when the term was set (`sm.setseed`).
+<a href=#94 id=94 data-nosnippet>94</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) seed: i32,
+<a href=#95 id=95 data-nosnippet>95</a>    <span class="doccomment">/// How large its draws are.
+<a href=#96 id=96 data-nosnippet>96</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) level: NoiseLevel,
+<a href=#97 id=97 data-nosnippet>97</a>    <span class="doccomment">/// How many times the term had been applied before; below
+<a href=#98 id=98 data-nosnippet>98</a>    /// [`MAXIMUM_APPLICATIONS`].
+<a href=#99 id=99 data-nosnippet>99</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) ordinal: u32,
+<a href=#100 id=100 data-nosnippet>100</a>}
+<a href=#101 id=101 data-nosnippet>101</a>
+<a href=#102 id=102 data-nosnippet>102</a><span class="kw">impl </span>NoiseApplication {
+<a href=#103 id=103 data-nosnippet>103</a>    <span class="doccomment">/// The stream key: the seed's 32 bits (two's complement), then the
+<a href=#104 id=104 data-nosnippet>104</a>    /// thermal-noise purpose byte above the ordinal.
+<a href=#105 id=105 data-nosnippet>105</a>    </span><span class="kw">fn </span>key(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; [u32; <span class="number">2</span>] {
+<a href=#106 id=106 data-nosnippet>106</a>        <span class="macro">debug_assert!</span>(<span class="self">self</span>.ordinal &lt; MAXIMUM_APPLICATIONS);
+<a href=#107 id=107 data-nosnippet>107</a>        [
+<a href=#108 id=108 data-nosnippet>108</a>            <span class="self">self</span>.seed <span class="kw">as </span>u32,
+<a href=#109 id=109 data-nosnippet>109</a>            (PURPOSE_THERMAL_NOISE &lt;&lt; <span class="number">24</span>) | <span class="self">self</span>.ordinal,
+<a href=#110 id=110 data-nosnippet>110</a>        ]
+<a href=#111 id=111 data-nosnippet>111</a>    }
+<a href=#112 id=112 data-nosnippet>112</a>
+<a href=#113 id=113 data-nosnippet>113</a>    <span class="doccomment">/// This application's noise when every row has the same σ
+<a href=#114 id=114 data-nosnippet>114</a>    /// (`simplenoise`): σ under [`Self::key`]; `None` when σ depends on the
+<a href=#115 id=115 data-nosnippet>115</a>    /// row (`tsys-manual`).
+<a href=#116 id=116 data-nosnippet>116</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>uniform(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;CellNoise&gt; {
+<a href=#117 id=117 data-nosnippet>117</a>        <span class="kw">match </span><span class="self">self</span>.level {
+<a href=#118 id=118 data-nosnippet>118</a>            NoiseLevel::Simple(sigma_jy) =&gt; <span class="prelude-val">Some</span>(CellNoise::new(<span class="self">self</span>.key(), sigma_jy)),
+<a href=#119 id=119 data-nosnippet>119</a>            NoiseLevel::TsysManual(<span class="kw">_</span>) =&gt; <span class="prelude-val">None</span>,
+<a href=#120 id=120 data-nosnippet>120</a>        }
+<a href=#121 id=121 data-nosnippet>121</a>    }
+<a href=#122 id=122 data-nosnippet>122</a>
+<a href=#123 id=123 data-nosnippet>123</a>    <span class="doccomment">/// Whether σ depends on the row (`tsys-manual`), which then needs each
+<a href=#124 id=124 data-nosnippet>124</a>    /// row's [`RowNoise`].
+<a href=#125 id=125 data-nosnippet>125</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>varies_by_row(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
+<a href=#126 id=126 data-nosnippet>126</a>        <span class="macro">matches!</span>(<span class="self">self</span>.level, NoiseLevel::TsysManual(<span class="kw">_</span>))
+<a href=#127 id=127 data-nosnippet>127</a>    }
+<a href=#128 id=128 data-nosnippet>128</a>
+<a href=#129 id=129 data-nosnippet>129</a>    <span class="doccomment">/// This application for the rows of a scan in spectral window `window`.
+<a href=#130 id=130 data-nosnippet>130</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>for_window(<span class="kw-2">&amp;</span><span class="self">self</span>, window: <span class="kw-2">&amp;</span>WindowNoise) -&gt; ScanNoise {
+<a href=#131 id=131 data-nosnippet>131</a>        ScanNoise {
+<a href=#132 id=132 data-nosnippet>132</a>            key: <span class="self">self</span>.key(),
+<a href=#133 id=133 data-nosnippet>133</a>            level: <span class="kw">match </span><span class="kw-2">&amp;</span><span class="self">self</span>.level {
+<a href=#134 id=134 data-nosnippet>134</a>                NoiseLevel::Simple(sigma_jy) =&gt; ScanLevel::Simple(<span class="kw-2">*</span>sigma_jy),
+<a href=#135 id=135 data-nosnippet>135</a>                NoiseLevel::TsysManual(model) =&gt; ScanLevel::TsysManual(model.for_window(window)),
+<a href=#136 id=136 data-nosnippet>136</a>            },
+<a href=#137 id=137 data-nosnippet>137</a>        }
+<a href=#138 id=138 data-nosnippet>138</a>    }
+<a href=#139 id=139 data-nosnippet>139</a>}
+<a href=#140 id=140 data-nosnippet>140</a>
+<a href=#141 id=141 data-nosnippet>141</a><span class="doccomment">/// A noise application for the rows of one spectral window.
+<a href=#142 id=142 data-nosnippet>142</a></span><span class="attr">#[derive(Debug, Clone, Copy, PartialEq)]
+<a href=#143 id=143 data-nosnippet>143</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>ScanNoise {
+<a href=#144 id=144 data-nosnippet>144</a>    key: [u32; <span class="number">2</span>],
+<a href=#145 id=145 data-nosnippet>145</a>    level: ScanLevel,
+<a href=#146 id=146 data-nosnippet>146</a>}
+<a href=#147 id=147 data-nosnippet>147</a>
+<a href=#148 id=148 data-nosnippet>148</a><span class="attr">#[derive(Debug, Clone, Copy, PartialEq)]
+<a href=#149 id=149 data-nosnippet>149</a></span><span class="kw">enum </span>ScanLevel {
+<a href=#150 id=150 data-nosnippet>150</a>    Simple(f32),
+<a href=#151 id=151 data-nosnippet>151</a>    TsysManual(tsys::WindowTsys),
+<a href=#152 id=152 data-nosnippet>152</a>}
+<a href=#153 id=153 data-nosnippet>153</a>
+<a href=#154 id=154 data-nosnippet>154</a><span class="kw">impl </span>ScanNoise {
+<a href=#155 id=155 data-nosnippet>155</a>    <span class="doccomment">/// σ of each real and imaginary draw of a row of `row`'s antennas,
+<a href=#156 id=156 data-nosnippet>156</a>    /// airmasses and integration time, Jy.
+<a href=#157 id=157 data-nosnippet>157</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>sigma(<span class="kw-2">&amp;</span><span class="self">self</span>, row: <span class="kw-2">&amp;</span>RowNoise) -&gt; f32 {
+<a href=#158 id=158 data-nosnippet>158</a>        <span class="kw">match </span><span class="kw-2">&amp;</span><span class="self">self</span>.level {
+<a href=#159 id=159 data-nosnippet>159</a>            ScanLevel::Simple(sigma_jy) =&gt; <span class="kw-2">*</span>sigma_jy,
+<a href=#160 id=160 data-nosnippet>160</a>            ScanLevel::TsysManual(model) =&gt; model.sigma(row),
+<a href=#161 id=161 data-nosnippet>161</a>        }
+<a href=#162 id=162 data-nosnippet>162</a>    }
+<a href=#163 id=163 data-nosnippet>163</a>
+<a href=#164 id=164 data-nosnippet>164</a>    <span class="doccomment">/// Add this application's noise to the cell of MAIN row `row`, whose
+<a href=#165 id=165 data-nosnippet>165</a>    /// antennas, airmasses and integration time are `inputs`:
+<a href=#166 id=166 data-nosnippet>166</a>    /// `correlations × channels` samples, correlation fastest. An
+<a href=#167 id=167 data-nosnippet>167</a>    /// autocorrelation row gets real draws only; samples past the last
+<a href=#168 id=168 data-nosnippet>168</a>    /// whole channel are left alone ([`CellNoise::add_to_row`]).
+<a href=#169 id=169 data-nosnippet>169</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>add_to_row(
+<a href=#170 id=170 data-nosnippet>170</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#171 id=171 data-nosnippet>171</a>        (row, inputs): (u64, <span class="kw-2">&amp;</span>RowNoise),
+<a href=#172 id=172 data-nosnippet>172</a>        autocorrelation: bool,
+<a href=#173 id=173 data-nosnippet>173</a>        correlations: usize,
+<a href=#174 id=174 data-nosnippet>174</a>        cell: <span class="kw-2">&amp;mut </span>[Complex32],
+<a href=#175 id=175 data-nosnippet>175</a>    ) {
+<a href=#176 id=176 data-nosnippet>176</a>        CellNoise::new(<span class="self">self</span>.key, <span class="self">self</span>.sigma(inputs)).add_to_row(
+<a href=#177 id=177 data-nosnippet>177</a>            row,
+<a href=#178 id=178 data-nosnippet>178</a>            autocorrelation,
+<a href=#179 id=179 data-nosnippet>179</a>            correlations,
+<a href=#180 id=180 data-nosnippet>180</a>            cell,
+<a href=#181 id=181 data-nosnippet>181</a>        );
+<a href=#182 id=182 data-nosnippet>182</a>    }
+<a href=#183 id=183 data-nosnippet>183</a>}
 </code></pre></div></section></main></body></html>

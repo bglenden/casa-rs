@@ -1346,6 +1346,83 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#casas-gain-screens-read-past-their-transform" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CASA's gain screens read past their transform
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#gain-screens-of-neighbouring-antennas-share-a-seed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Gain screens of neighbouring antennas share a seed
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#setgainmoderandom-draws-gains-about-zero" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        setgain(mode='random') draws gains about zero
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#an-autocorrelation-row-resets-its-antennas-simulated-term" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        An autocorrelation row resets its antenna's simulated term
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#setleakage-simulates-only-the-first-two-spectral-windows" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        setleakage simulates only the first two spectral windows
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#setleakage-draws-one-leakage-per-window-for-the-whole-run" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        setleakage draws one leakage per window for the whole run
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#a-simulated-terms-table-is-written-when-the-term-is-set" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A simulated term's table is written when the term is set
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#tsys-manual-noise-takes-stale-or-borrowed-system-temperatures" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1437,7 +1514,13 @@ Simulator behaviours casa-rs does not follow:
 <a href="#predict-and-corrupt-add-scratch-columns-to-a-measurementset-without-them">scratch columns added at <code>predict</code> and <code>corrupt</code></a>,
 <a href="#tsys-manual-noise-takes-stale-or-borrowed-system-temperatures"><code>tsys-manual</code>'s stale and borrowed system temperatures</a>,
 <a href="#a-tsys-manual-term-scales-every-noise-term"><code>tsys-manual</code> scaling every noise term</a>,
-<a href="#a-refused-tsys-manual-setnoise-leaves-a-unit-noise-term">the noise term a refused <code>tsys-manual</code> leaves</a>.
+<a href="#a-refused-tsys-manual-setnoise-leaves-a-unit-noise-term">the noise term a refused <code>tsys-manual</code> leaves</a>,
+<a href="#casas-gain-screens-read-past-their-transform">gain screens read past their transform</a>,
+<a href="#gain-screens-of-neighbouring-antennas-share-a-seed">gain screens sharing a seed</a>,
+<a href="#setgainmoderandom-draws-gains-about-zero">random gains about zero</a>,
+<a href="#an-autocorrelation-row-resets-its-antennas-simulated-term">the last antenna's unit gain or leakage</a>,
+<a href="#setleakage-simulates-only-the-first-two-spectral-windows">leakage for two windows only</a>,
+<a href="#a-simulated-terms-table-is-written-when-the-term-is-set">a simulated term's table written when it is set</a>.
 Measures behaviours casa-rs follows for parity:
 <a href="#iau-2000-keeps-the-iau-1980-sidereal-time-and-ecliptic-obliquities">IAU 1980 sidereal time and obliquities under IAU 2000</a>.
 Measures behaviours casa-rs does not follow:
@@ -1445,7 +1528,8 @@ Measures behaviours casa-rs does not follow:
 <a href="#iau-2000-jmean-to-j2000-applies-bias-and-precession-in-the-wrong-order">IAU 2000 JMEAN to J2000</a>,
 <a href="#iau-2000-gmst1-adds-the-tt-day-fraction">IAU 2000 GMST1</a>.
 Simulator behaviours casa-rs follows:
-<a href="#observemany-pads-one-name-with-empty-ones"><code>observemany</code>'s padded single name</a>.
+<a href="#observemany-pads-one-name-with-empty-ones"><code>observemany</code>'s padded single name</a>,
+<a href="#setleakage-draws-one-leakage-per-window-for-the-whole-run">one leakage per window for the whole run</a>.
 Component-list behaviours casa-rs does not follow:
 <a href="#writing-a-limb-darkened-disk-without-an-exponent-aborts-casa">a limb-darkened disk without an exponent</a>,
 <a href="#a-negative-component-turns-positive-under-the-primary-beam">a negative component under the primary beam</a>,
@@ -2440,6 +2524,138 @@ corrupted DATA. casa-rs's simulator writes DATA only (plan decision 6), and
 after <code>openfromms</code> it creates neither column: it keeps those MAIN already
 has in step with DATA as CASA does, and leaves a MeasurementSet without
 them without them.</p>
+<h2 id="casas-gain-screens-read-past-their-transform">CASA's gain screens read past their transform<a class="headerlink" href="#casas-gain-screens-read-past-their-transform" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-10-24</li>
+<li>Status: CASA bug; casa-rs does not follow it (#841 Phase 3)</li>
+<li>Affected code: <code>synthesis/MeasurementComponents/CalCorruptor.cc</code>
+  (<code>fBM::initialize</code>, <code>GJonesCorruptor::initialize</code>)</li>
+</ul>
+<p><code>sm.setgain(mode='fbm')</code> draws each antenna's amplitude and phase screens
+with <code>fBM::initialize</code> on <code>n</code> even slots of 5 s. It fills a half spectrum
+<code>F</code> of <code>n/2</code> values, all but the last, and transforms it with
+<code>FFTServer::fft</code> into a real <code>G</code> whose length the server chooses: the last
+value's imaginary part is zero and the server was sized <code>n</code>, which is
+neither <code>2·(n/2) − 2</code> nor <code>2·(n/2) − 1</code>, so <code>G</code> has <code>n − 2</code> values for an
+even <code>n</code> and <code>n − 3</code> for an odd one. It then copies <code>n</code> values out of <code>G</code>,
+the last two or three from past its end, and <code>GJonesCorruptor::initialize</code>
+scales each screen by its root-mean-square, those values included.</p>
+<p>What lies past the end changes from run to run. Measured with CASA 6.7.6:
+- three runs of <code>corrupt-gain</code> (<code>tools/simulation/sm_corrupt_scenarios.json</code>,
+  the same seed) gave amplitude scales of 0.969, 0.966 and 1.005 of the
+  documented one;
+- in a six-antenna probe with <code>amplitude=[0.1]</code>, the phases' scale was
+  0.15 to 0.22 of it in one run and 1.0 in another;
+- with a table written, one run's last solution was unit gain, as zeros
+  past the end would make it;
+- in one run of <code>corrupt-gain-table</code>, antennas 0–6 and 10 of 12 had unit
+  gain throughout, their screens normalised by a value large enough to
+  flatten them.</p>
+<p>casa-rs transforms every slot, so its screens have the documented scale.
+The CASA comparison holds CASA's gains to closure only, reports rather than
+checks CASA's unit-gain antennas, and compares the two implementations'
+screens by their autocorrelations, which a screen's scale does not change.</p>
+<h2 id="gain-screens-of-neighbouring-antennas-share-a-seed">Gain screens of neighbouring antennas share a seed<a class="headerlink" href="#gain-screens-of-neighbouring-antennas-share-a-seed" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-10-24</li>
+<li>Status: CASA bug; casa-rs does not follow it (#841 Phase 3)</li>
+<li>Affected code: <code>synthesis/MeasurementComponents/CalCorruptor.cc</code>
+  (<code>GJonesCorruptor::initialize</code>)</li>
+</ul>
+<p><code>GJonesCorruptor::initialize</code> seeds antenna <code>a</code>'s amplitude screen for
+receptor <code>r</code> with <code>seed + a + r</code>, and its phase screen with 100 times that.
+Antenna <code>a</code>'s second receptor and antenna <code>a + 1</code>'s first draw the same
+screens: measured, their amplitudes are identical. casa-rs keys each
+antenna's and receptor's screens apart.</p>
+<h2 id="setgainmoderandom-draws-gains-about-zero"><code>setgain(mode='random')</code> draws gains about zero<a class="headerlink" href="#setgainmoderandom-draws-gains-about-zero" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-10-24</li>
+<li>Status: CASA bug; casa-rs does not follow it (owner, 2026-10-24: follow
+  CASA only if there is a good reason for its behaviour, which there is
+  not; #841 Phase 3)</li>
+<li>Affected code: <code>synthesis/MeasurementComponents/CalCorruptor.cc</code>
+  (<code>GJonesCorruptor::simPar</code>)</li>
+</ul>
+<p>The <code>random</code> mode, which <code>setgain</code>'s documentation does not list but
+<code>Simulator::setgain</code> accepts, returns <code>camp.re·n₁ + i·camp.im·n₂</code> per
+integration, antenna and receptor, without adding one: gains of a few
+hundredths, which all but erase the data. Measured with CASA 6.7.6,
+<code>amplitude=[0.05]</code> on a 1 Jy point: the table's gains have a mean modulus
+of 0.065, real parts of mean 0.0000 and standard deviation 0.048, and DATA
+a mean modulus of 0.0046 Jy. The <code>fbm</code> gains scatter about one, and the
+amplitude is documented as the gain variations' scale. Gain errors are
+multiplicative and near unity: a well-designed array's gains factor into
+antenna gains to within a per cent, and simulations of gain errors draw
+deviations of a per cent and a degree about one (Synthesis Imaging in Radio
+Astronomy II, pp. 122 and 354; Heywood, <em>Calibration II</em>, NRAO Synthesis
+Imaging Workshop 2024, slide 22). Nothing in CASA adds the one back for
+<code>random</code>; it appears in <code>GJonesCorruptor::simPar</code> and
+<code>GJones::createCorruptor</code> only. casa-rs draws
+<code>1 + camp.re·n₁ + i·camp.im·n₂</code>.</p>
+<h2 id="an-autocorrelation-row-resets-its-antennas-simulated-term">An autocorrelation row resets its antenna's simulated term<a class="headerlink" href="#an-autocorrelation-row-resets-its-antennas-simulated-term" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-10-24</li>
+<li>Status: CASA bug; casa-rs does not follow it (#841 Phase 3)</li>
+<li>Affected code: <code>synthesis/MeasurementComponents/SolvableVisCal.cc</code>
+  (<code>setSimulate</code>)</li>
+</ul>
+<p><code>SolvableVisCal::setSimulate</code> fills a solution from its chunk's rows,
+setting ANTENNA1's value at every row, and at an autocorrelation sets it to
+1 for a multiplicative term instead of a draw. An antenna's autocorrelation
+comes before its cross-correlations as ANTENNA1, which set it again, except
+for the last antenna, which is ANTENNA1 only of its autocorrelation. So
+with autocorrelations written, CASA's default, the last antenna has unit
+gain throughout (<code>setgain</code>) and a leakage of 1 on both receptors
+(<code>setleakage</code>); measured, antenna 42 of 43 in <code>corrupt-gain</code>. casa-rs
+simulates every antenna's term.</p>
+<h2 id="setleakage-simulates-only-the-first-two-spectral-windows"><code>setleakage</code> simulates only the first two spectral windows<a class="headerlink" href="#setleakage-simulates-only-the-first-two-spectral-windows" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-10-24</li>
+<li>Status: CASA bug; casa-rs does not follow it (#841 Phase 3)</li>
+<li>Affected code: <code>synthesis/MeasurementComponents/SolvableVisCal.cc</code>
+  (<code>setSimulate</code>, <code>sizeUpSim</code>); the cause was not traced</li>
+</ul>
+<p>Measured with CASA 6.7.6, five ALMA antennas and <code>setleakage(table=...)</code>:
+with three, four or eight spectral windows, observed once or twice each,
+the table has solutions for windows 0 and 1 only, and <code>corrupt</code> logs
+"Encountered data spw N for which there is no (simulated) calibration" for
+each later window and leaves its rows as they were. <code>setgain</code> is not
+affected: with four windows its table has solutions for all four, and every
+window is corrupted. casa-rs simulates a leakage for every window. The CASA
+comparison, <code>corrupt-leakage</code>, observes two windows.</p>
+<h2 id="setleakage-draws-one-leakage-per-window-for-the-whole-run"><code>setleakage</code> draws one leakage per window for the whole run<a class="headerlink" href="#setleakage-draws-one-leakage-per-window-for-the-whole-run" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-10-24</li>
+<li>Status: CASA behaviour casa-rs follows (#841 Phase 3)</li>
+<li>Affected code: <code>synthesis/MeasurementEquations/Simulator.cc</code>
+  (<code>setleakage</code>), <code>synthesis/MeasurementComponents/SolvableVisCal.cc</code>
+  (<code>setSimulate</code>) and <code>JonesGenLin</code></li>
+</ul>
+<p><code>Simulator::setleakage</code> simulates with an infinite solution interval: its
+table has one solution per spectral window and antenna, spanning every scan
+and field, and <code>corrupt</code> applies it alike to every scan (measured: eight
+scans of two windows). <code>corrupt</code> applies it as the linearised
+<code>JonesGenLin</code>, which raises "JonesGenLin matrix apply (J::aR) incompatible
+with VisVector." on data with two correlations. casa-rs follows both, and
+likewise does not read <code>setgain</code>'s <code>interval</code>, whose documentation says it
+is not used: CASA's gains are solved per integration.</p>
+<h2 id="a-simulated-terms-table-is-written-when-the-term-is-set">A simulated term's table is written when the term is set<a class="headerlink" href="#a-simulated-terms-table-is-written-when-the-term-is-set" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-10-24</li>
+<li>Status: CASA behaviour casa-rs does not follow (#841 Phase 3)</li>
+<li>Affected code: <code>synthesis/MeasurementComponents/SolvableVisCal.cc</code>
+  (<code>setSimulate</code>, <code>storeNCT</code>) and <code>NewCalTable::writeToDisk</code></li>
+</ul>
+<p><code>setgain(table=...)</code> and <code>setleakage(table=...)</code> write the term's
+calibration table as soon as they simulate it, replacing a table of that
+name, its subtables copied from the MeasurementSet as it then is. casa-rs
+writes the MeasurementSet only at <code>close</code>, so it writes the table there, from
+the MeasurementSet it wrote: its rows, sorted by spectral window, time and
+antenna as CASA sorts them, are the same (<code>tables</code> in
+<code>tools/simulation/sm_corrupt_scenarios.json</code> compares them with CASA's), but
+the table appears at <code>close</code>, after <code>reset</code> too, and its subtables include
+what was observed after the call. casa-rs replaces only a table at the path;
+anything else there is refused.</p>
 <h2 id="tsys-manual-noise-takes-stale-or-borrowed-system-temperatures"><code>tsys-manual</code> noise takes stale or borrowed system temperatures<a class="headerlink" href="#tsys-manual-noise-takes-stale-or-borrowed-system-temperatures" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-10-24</li>

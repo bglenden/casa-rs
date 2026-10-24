@@ -16,7 +16,7 @@ read when a row first needs it is a catalog broken under the run, and
 the catalog panics with the cell’s path rather than gridding without it.</p>
 </div></details><h2 id="implementations" class="section-header">Implementations<a href="#implementations" class="anchor">§</a></h2><div id="implementations-list"><details class="toggle implementors-toggle" open><summary><section id="impl-AwCatalog" class="impl"><a class="src rightside" href="../src/casa_imaging_operator/aw/native_cache.rs.html#318-426">Source</a><a href="#impl-AwCatalog" class="anchor">§</a><h3 class="code-header">impl <a class="struct" href="struct.AwCatalog.html" title="struct casa_imaging_operator::AwCatalog">AwCatalog</a></h3></section></summary><div class="impl-items"><details class="toggle method-toggle" open><summary><section id="method.native_cache_state" class="method"><a class="src rightside" href="../src/casa_imaging_operator/aw/native_cache.rs.html#327-388">Source</a><h4 class="code-header">pub fn <a href="#method.native_cache_state" class="fn">native_cache_state</a>(
     root: impl <a class="trait" href="https://doc.rust-lang.org/1.99.1/core/convert/trait.AsRef.html" title="trait core::convert::AsRef">AsRef</a>&lt;<a class="struct" href="https://doc.rust-lang.org/1.99.1/std/path/struct.Path.html" title="struct std::path::Path">Path</a>&gt;,
-    input: &amp;<a class="struct" href="../casa_imaging_model/native_aw/struct.NativeAwRequestInput.html" title="struct casa_imaging_model::native_aw::NativeAwRequestInput">NativeAwRequestInput</a>,
+    input: &amp;NativeAwRequestInput,
 ) -&gt; <a class="enum" href="https://doc.rust-lang.org/1.99.1/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;<a class="struct" href="struct.NativeCacheState.html" title="struct casa_imaging_operator::NativeCacheState">NativeCacheState</a>, <a class="enum" href="enum.AwCatalogError.html" title="enum casa_imaging_operator::AwCatalogError">AwCatalogError</a>&gt;</h4></section></summary><div class="docblock"><p>How the native cache at <code>root</code> stands against <code>input</code>: whether its
 manifest records <code>input</code>, how many of <code>input</code>’s cells it holds, and
 how many cell images it holds that <code>input</code> does not name. A missing
@@ -48,7 +48,7 @@ over <code>geometry</code>’s grid. Pixels are read on demand, at most
 a cell lacks its partner, a (PA, frequency, w) group lacks a Mueller
 element, or the catalog has no element for a selected correlation.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.generation_bytes" class="method"><a class="src rightside" href="../src/casa_imaging_operator/aw/mod.rs.html#478-490">Source</a><h4 class="code-header">pub const fn <a href="#method.generation_bytes" class="fn">generation_bytes</a>(
-    input: &amp;<a class="struct" href="../casa_imaging_model/native_aw/struct.NativeAwRequestInput.html" title="struct casa_imaging_model::native_aw::NativeAwRequestInput">NativeAwRequestInput</a>,
+    input: &amp;NativeAwRequestInput,
     workers: <a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.usize.html">usize</a>,
 ) -&gt; <a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.u64.html">u64</a></h4></section></summary><div class="docblock"><p>Heap bytes <a href="struct.AwCatalog.html#method.generate_native" title="associated function casa_imaging_operator::AwCatalog::generate_native"><code>Self::generate_native</code></a> holds at most for <code>input</code> on
 <code>workers</code> workers (#738, #708): for each worker, the working grid
@@ -61,7 +61,7 @@ with the request (#747 review): the work list, two presence bits per
 cell for the state a fill checks first, and the request manifest.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.generate_native" class="method"><a class="src rightside" href="../src/casa_imaging_operator/aw/mod.rs.html#514-537">Source</a><h4 class="code-header">pub fn <a href="#method.generate_native" class="fn">generate_native</a>(
     root: impl <a class="trait" href="https://doc.rust-lang.org/1.99.1/core/convert/trait.AsRef.html" title="trait core::convert::AsRef">AsRef</a>&lt;<a class="struct" href="https://doc.rust-lang.org/1.99.1/std/path/struct.Path.html" title="struct std::path::Path">Path</a>&gt;,
-    input: &amp;<a class="struct" href="../casa_imaging_model/native_aw/struct.NativeAwRequestInput.html" title="struct casa_imaging_model::native_aw::NativeAwRequestInput">NativeAwRequestInput</a>,
+    input: &amp;NativeAwRequestInput,
     only_missing: <a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.bool.html">bool</a>,
     workers: <a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.usize.html">usize</a>,
 ) -&gt; <a class="enum" href="https://doc.rust-lang.org/1.99.1/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.unit.html">()</a>, <a class="enum" href="enum.AwCatalogError.html" title="enum casa_imaging_operator::AwCatalogError">AwCatalogError</a>&gt;</h4></section></summary><div class="docblock"><p>Generate every cell of <code>input</code> natively into <code>root</code> as CASA-format

@@ -25,7 +25,7 @@ normalized weight plane is allocated.</p>
 <h5 id="errors-2"><a class="doc-anchor" href="#errors-2">§</a>Errors</h5>
 <p>The sum of weights or the scaled peak is not positive and finite.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.primary_beam_at" class="method"><a class="src rightside" href="../src/casa_imaging_products/normalization.rs.html#204-206">Source</a><h4 class="code-header">pub fn <a href="#method.primary_beam_at" class="fn">primary_beam_at</a>(self, index: <a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.usize.html">usize</a>) -&gt; <a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.f64.html">f64</a></h4></section></summary><div class="docblock"><p>Return one unit-peak primary-beam value, <code>sqrt(|sensitivity| / peak)</code>.</p>
-</div></details><details class="toggle method-toggle" open><summary><section id="method.valid_at" class="method"><a class="src rightside" href="../src/casa_imaging_products/normalization.rs.html#210-212">Source</a><h4 class="code-header">pub fn <a href="#method.valid_at" class="fn">valid_at</a>(self, index: <a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.usize.html">usize</a>, policy: <a class="struct" href="../casa_imaging_model/compiled_problem/struct.PrimaryBeamValidityPolicy.html" title="struct casa_imaging_model::compiled_problem::PrimaryBeamValidityPolicy">PrimaryBeamValidityPolicy</a>) -&gt; <a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.bool.html">bool</a></h4></section></summary><div class="docblock"><p>Return whether a pixel is inside the PB support.</p>
+</div></details><details class="toggle method-toggle" open><summary><section id="method.valid_at" class="method"><a class="src rightside" href="../src/casa_imaging_products/normalization.rs.html#210-212">Source</a><h4 class="code-header">pub fn <a href="#method.valid_at" class="fn">valid_at</a>(self, index: <a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.usize.html">usize</a>, policy: PrimaryBeamValidityPolicy) -&gt; <a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.bool.html">bool</a></h4></section></summary><div class="docblock"><p>Return whether a pixel is inside the PB support.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.primary_beam" class="method"><a class="src rightside" href="../src/casa_imaging_products/normalization.rs.html#222-227">Source</a><h4 class="code-header">pub fn <a href="#method.primary_beam" class="fn">primary_beam</a>(self) -&gt; <a class="struct" href="https://doc.rust-lang.org/1.99.1/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.f32.html">f32</a>&gt;</h4></section></summary><div class="docblock"><p>Build CASA’s unit-peak PB, <code>sqrt(|sensitivity| / peak)</code>.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.primary_beam_from_weight" class="method"><a class="src rightside" href="../src/casa_imaging_products/normalization.rs.html#235-248">Source</a><h4 class="code-header">pub fn <a href="#method.primary_beam_from_weight" class="fn">primary_beam_from_weight</a>(
     weight: &amp;[<a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.f32.html">f32</a>],
@@ -36,8 +36,8 @@ roots.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.normalize" class="method"><a class="src rightside" href="../src/casa_imaging_products/normalization.rs.html#265-297">Source</a><h4 class="code-header">pub fn <a href="#method.normalize" class="fn">normalize</a>(
     self,
     values: &amp;[<a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.f32.html">f32</a>],
-    normalization: <a class="enum" href="../casa_imaging_model/compiled_problem/enum.ProductNormalization.html" title="enum casa_imaging_model::compiled_problem::ProductNormalization">ProductNormalization</a>,
-    policy: <a class="struct" href="../casa_imaging_model/compiled_problem/struct.PrimaryBeamValidityPolicy.html" title="struct casa_imaging_model::compiled_problem::PrimaryBeamValidityPolicy">PrimaryBeamValidityPolicy</a>,
+    normalization: ProductNormalization,
+    policy: PrimaryBeamValidityPolicy,
 ) -&gt; <a class="enum" href="https://doc.rust-lang.org/1.99.1/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;<a class="struct" href="https://doc.rust-lang.org/1.99.1/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.f32.html">f32</a>&gt;, <a class="enum" href="enum.ProductsError.html" title="enum casa_imaging_products::ProductsError">ProductsError</a>&gt;</h4></section></summary><div class="docblock"><p>Normalize a raw residual plane to flat noise or flat sky.</p>
 <p>This is <a href="struct.MosaicSensitivity.html#method.normalize_weighted_residual_sample" title="method casa_imaging_products::MosaicSensitivity::normalize_weighted_residual_sample"><code>Self::normalize_weighted_residual_sample</code></a> in the raw
 sensitivity’s units, where every sum of weights cancels: flat noise
@@ -52,10 +52,10 @@ residual is zero elsewhere.</p>
     self,
     value: <a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.f64.html">f64</a>,
     index: <a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.usize.html">usize</a>,
-    normalization: <a class="enum" href="../casa_imaging_model/compiled_problem/enum.ProductNormalization.html" title="enum casa_imaging_model::compiled_problem::ProductNormalization">ProductNormalization</a>,
+    normalization: ProductNormalization,
     family: <a class="enum" href="enum.ResidualFamily.html" title="enum casa_imaging_products::ResidualFamily">ResidualFamily</a>,
     published_sum_weight: <a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.f64.html">f64</a>,
-    policy: <a class="struct" href="../casa_imaging_model/compiled_problem/struct.PrimaryBeamValidityPolicy.html" title="struct casa_imaging_model::compiled_problem::PrimaryBeamValidityPolicy">PrimaryBeamValidityPolicy</a>,
+    policy: PrimaryBeamValidityPolicy,
 ) -&gt; <a class="enum" href="https://doc.rust-lang.org/1.99.1/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.f64.html">f64</a>, <a class="enum" href="enum.ProductsError.html" title="enum casa_imaging_products::ProductsError">ProductsError</a>&gt;</h4></section></summary><div class="docblock"><p>Normalize a residual through CASA’s Float sum-weight and weight-image
 stages.</p>
 <p>The normal sum weight is bound by <a href="struct.MosaicSensitivity.html#method.with_normal_sum_weight" title="method casa_imaging_products::MosaicSensitivity::with_normal_sum_weight"><code>Self::with_normal_sum_weight</code></a>.
@@ -70,20 +70,20 @@ is zero.</p>
 <p>Unit-response normalization, or non-finite input or arithmetic.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.weighted_primary_beam" class="method"><a class="src rightside" href="../src/casa_imaging_products/normalization.rs.html#371-385">Source</a><h4 class="code-header">pub fn <a href="#method.weighted_primary_beam" class="fn">weighted_primary_beam</a>(
     self,
-    policy: <a class="struct" href="../casa_imaging_model/compiled_problem/struct.PrimaryBeamValidityPolicy.html" title="struct casa_imaging_model::compiled_problem::PrimaryBeamValidityPolicy">PrimaryBeamValidityPolicy</a>,
+    policy: PrimaryBeamValidityPolicy,
 ) -&gt; <a class="enum" href="https://doc.rust-lang.org/1.99.1/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;<a class="struct" href="https://doc.rust-lang.org/1.99.1/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.f32.html">f32</a>&gt;, <a class="enum" href="enum.ProductsError.html" title="enum casa_imaging_products::ProductsError">ProductsError</a>&gt;</h4></section></summary><div class="docblock"><p>Form CASA’s cutoff-blanked Float PB from the bound normalized weight.</p>
 <p>This weight-image route takes the absolute value before its square
 root, matching model conversion. Scalar mosaic products use the
 unnormalized positive-sensitivity <a href="struct.MosaicSensitivity.html#method.primary_beam" title="method casa_imaging_products::MosaicSensitivity::primary_beam"><code>Self::primary_beam</code></a> instead.</p>
 <h5 id="errors-6"><a class="doc-anchor" href="#errors-6">§</a>Errors</h5>
 <p>A non-finite PB value.</p>
-</div></details><details class="toggle method-toggle" open><summary><section id="method.validity" class="method"><a class="src rightside" href="../src/casa_imaging_products/normalization.rs.html#389-393">Source</a><h4 class="code-header">pub fn <a href="#method.validity" class="fn">validity</a>(self, policy: <a class="struct" href="../casa_imaging_model/compiled_problem/struct.PrimaryBeamValidityPolicy.html" title="struct casa_imaging_model::compiled_problem::PrimaryBeamValidityPolicy">PrimaryBeamValidityPolicy</a>) -&gt; <a class="struct" href="https://doc.rust-lang.org/1.99.1/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.bool.html">bool</a>&gt;</h4></section></summary><div class="docblock"><p>Return PB support, independent of the CLEAN mask and model.</p>
+</div></details><details class="toggle method-toggle" open><summary><section id="method.validity" class="method"><a class="src rightside" href="../src/casa_imaging_products/normalization.rs.html#389-393">Source</a><h4 class="code-header">pub fn <a href="#method.validity" class="fn">validity</a>(self, policy: PrimaryBeamValidityPolicy) -&gt; <a class="struct" href="https://doc.rust-lang.org/1.99.1/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.bool.html">bool</a>&gt;</h4></section></summary><div class="docblock"><p>Return PB support, independent of the CLEAN mask and model.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.physical_to_apparent" class="method"><a class="src rightside" href="../src/casa_imaging_products/normalization.rs.html#405-424">Source</a><h4 class="code-header">pub fn <a href="#method.physical_to_apparent" class="fn">physical_to_apparent</a>(
     self,
     value: <a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.f64.html">f64</a>,
     index: <a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.usize.html">usize</a>,
-    normalization: <a class="enum" href="../casa_imaging_model/compiled_problem/enum.ProductNormalization.html" title="enum casa_imaging_model::compiled_problem::ProductNormalization">ProductNormalization</a>,
-    policy: <a class="struct" href="../casa_imaging_model/compiled_problem/struct.PrimaryBeamValidityPolicy.html" title="struct casa_imaging_model::compiled_problem::PrimaryBeamValidityPolicy">PrimaryBeamValidityPolicy</a>,
+    normalization: ProductNormalization,
+    policy: PrimaryBeamValidityPolicy,
 ) -&gt; <a class="enum" href="https://doc.rust-lang.org/1.99.1/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.f64.html">f64</a>, <a class="enum" href="enum.ProductsError.html" title="enum casa_imaging_products::ProductsError">ProductsError</a>&gt;</h4></section></summary><div class="docblock"><p>Map a physical flat-sky model pixel to the units the minor cycle
 solves in.</p>
 <p>CASA flat noise multiplies by the PB inside its support and zeroes
@@ -95,8 +95,8 @@ restoring-beam convolution.</p>
     self,
     value: <a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.f64.html">f64</a>,
     index: <a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.usize.html">usize</a>,
-    normalization: <a class="enum" href="../casa_imaging_model/compiled_problem/enum.ProductNormalization.html" title="enum casa_imaging_model::compiled_problem::ProductNormalization">ProductNormalization</a>,
-    policy: <a class="struct" href="../casa_imaging_model/compiled_problem/struct.PrimaryBeamValidityPolicy.html" title="struct casa_imaging_model::compiled_problem::PrimaryBeamValidityPolicy">PrimaryBeamValidityPolicy</a>,
+    normalization: ProductNormalization,
+    policy: PrimaryBeamValidityPolicy,
 ) -&gt; <a class="enum" href="https://doc.rust-lang.org/1.99.1/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.f64.html">f64</a>, <a class="enum" href="enum.ProductsError.html" title="enum casa_imaging_products::ProductsError">ProductsError</a>&gt;</h4></section></summary><div class="docblock"><p>Map a solved pixel to the physical model that prediction consumes.</p>
 <p>Apply it to every pixel after multiscale expansion, not only to the
 component centre. PB support is not the CLEAN mask.</p>
@@ -105,7 +105,7 @@ component centre. PB support is not the CLEAN mask.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.correct_primary_beam" class="method"><a class="src rightside" href="../src/casa_imaging_products/normalization.rs.html#465-491">Source</a><h4 class="code-header">pub fn <a href="#method.correct_primary_beam" class="fn">correct_primary_beam</a>(
     self,
     values: &amp;[<a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.f32.html">f32</a>],
-    policy: <a class="struct" href="../casa_imaging_model/compiled_problem/struct.PrimaryBeamValidityPolicy.html" title="struct casa_imaging_model::compiled_problem::PrimaryBeamValidityPolicy">PrimaryBeamValidityPolicy</a>,
+    policy: PrimaryBeamValidityPolicy,
 ) -&gt; <a class="enum" href="https://doc.rust-lang.org/1.99.1/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;<a class="struct" href="https://doc.rust-lang.org/1.99.1/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.f32.html">f32</a>&gt;, <a class="enum" href="enum.ProductsError.html" title="enum casa_imaging_products::ProductsError">ProductsError</a>&gt;</h4></section></summary><div class="docblock"><p>PB-correct a normalized plane inside the PB support and zero it
 outside.</p>
 <h5 id="errors-9"><a class="doc-anchor" href="#errors-9">§</a>Errors</h5>
