@@ -145,8 +145,11 @@ extend it; a session reads them when it starts.
   - Run work that reads large data on the mini, next to the NAS and
     GLENDENNING, and bring back only results.
 - The NAS is not mounted in cloud sessions: the container's kernel has no SMB
-  support and the NAS needs its own login. Reach its data from the mini.
-  Non-public datasets stay off the cloud container (`AGENTS.md`).
+  support and the NAS needs its own login. Reach its data from the mini, which
+  does not mount it by default: the owner mounts it there (Finder or screen
+  sharing) when a run needs it, and SSH logins see it under `/Volumes` while it
+  stays mounted. Non-public datasets stay off the cloud container
+  (`AGENTS.md`).
 
 ## Release And Installation
 
