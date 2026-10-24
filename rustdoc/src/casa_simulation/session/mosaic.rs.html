@@ -134,8 +134,8 @@
 <a href=#134 id=134 data-nosnippet>134</a>        <span class="prelude-val">Ok</span>((MosaicBeams { dishes, windows }, classes))
 <a href=#135 id=135 data-nosnippet>135</a>    }
 <a href=#136 id=136 data-nosnippet>136</a>
-<a href=#137 id=137 data-nosnippet>137</a>    <span class="doccomment">/// Each distinct phase centre of the scans observed so far (its bits)
-<a href=#138 id=138 data-nosnippet>138</a>    /// and its pointing offset in `model`
+<a href=#137 id=137 data-nosnippet>137</a>    <span class="doccomment">/// Each distinct pointing of the scans observed so far (its bits), where
+<a href=#138 id=138 data-nosnippet>138</a>    /// their antennas point, and its offset in `model`
 <a href=#139 id=139 data-nosnippet>139</a>    /// ([`SkyModel::pointing_offset_rad`]), sorted by the bits. The capacity
 <a href=#140 id=140 data-nosnippet>140</a>    /// is a pointing for each scan, the bound `mosaic_state_bytes` admits.
 <a href=#141 id=141 data-nosnippet>141</a>    ///
@@ -149,9 +149,9 @@
 <a href=#149 id=149 data-nosnippet>149</a>    ) -&gt; SimulatorResult&lt;Vec&lt;MosaicPointing&gt;&gt; {
 <a href=#150 id=150 data-nosnippet>150</a>        <span class="kw">let </span><span class="kw-2">mut </span>pointings: Vec&lt;MosaicPointing&gt; = Vec::with_capacity(<span class="self">self</span>.scans.len());
 <a href=#151 id=151 data-nosnippet>151</a>        <span class="kw">for </span>scan <span class="kw">in </span><span class="kw-2">&amp;</span><span class="self">self</span>.scans {
-<a href=#152 id=152 data-nosnippet>152</a>            <span class="kw">let </span>key = scan.phase_center_rad.map(f64::to_bits);
+<a href=#152 id=152 data-nosnippet>152</a>            <span class="kw">let </span>key = scan.pointing_rad.map(f64::to_bits);
 <a href=#153 id=153 data-nosnippet>153</a>            <span class="kw">let </span>offset = model
-<a href=#154 id=154 data-nosnippet>154</a>                .pointing_offset_rad(scan.phase_center_rad)
+<a href=#154 id=154 data-nosnippet>154</a>                .pointing_offset_rad(scan.pointing_rad)
 <a href=#155 id=155 data-nosnippet>155</a>                .map_err(|error: PredictError| {
 <a href=#156 id=156 data-nosnippet>156</a>                    SimulatorError::raised(<span class="macro">format!</span>(<span class="string">"Caught exception: {error}"</span>))
 <a href=#157 id=157 data-nosnippet>157</a>                })<span class="question-mark">?

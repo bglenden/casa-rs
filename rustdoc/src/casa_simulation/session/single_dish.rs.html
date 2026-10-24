@@ -70,10 +70,10 @@
 <a href=#70 id=70 data-nosnippet>70</a>                correlations: window.correlations.clone(),
 <a href=#71 id=71 data-nosnippet>71</a>            })
 <a href=#72 id=72 data-nosnippet>72</a>            .collect();
-<a href=#73 id=73 data-nosnippet>73</a>        <span class="comment">// A scan is pointed at its phase centre (the POINTING table casa-rs
-<a href=#74 id=74 data-nosnippet>74</a>        // writes).
+<a href=#73 id=73 data-nosnippet>73</a>        <span class="comment">// Total power samples where the antennas point: the POINTING table
+<a href=#74 id=74 data-nosnippet>74</a>        // casa-rs writes.
 <a href=#75 id=75 data-nosnippet>75</a>        </span><span class="kw">let </span>pointings =
-<a href=#76 id=76 data-nosnippet>76</a>            SingleDishPointings::of_scans(<span class="self">self</span>.scans.iter().map(|scan| scan.phase_center_rad));
+<a href=#76 id=76 data-nosnippet>76</a>            SingleDishPointings::of_scans(<span class="self">self</span>.scans.iter().map(|scan| scan.pointing_rad));
 <a href=#77 id=77 data-nosnippet>77</a>        <span class="kw">let </span>(kernel_pattern, voltage_pattern) = (
 <a href=#78 id=78 data-nosnippet>78</a>            kernel_beam.map(PrimaryBeam::pattern),
 <a href=#79 id=79 data-nosnippet>79</a>            beam.map(PrimaryBeam::pattern),

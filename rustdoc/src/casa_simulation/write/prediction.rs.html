@@ -169,43 +169,43 @@
 <a href=#169 id=169 data-nosnippet>169</a>                scan_segments.push(<span class="prelude-val">None</span>);
 <a href=#170 id=170 data-nosnippet>170</a>                <span class="kw">continue</span>;
 <a href=#171 id=171 data-nosnippet>171</a>            }
-<a href=#172 id=172 data-nosnippet>172</a>            <span class="comment">// Pointings of one field that `observemany` moved have their own
-<a href=#173 id=173 data-nosnippet>173</a>            // phase centres, and so their own projections.
+<a href=#172 id=172 data-nosnippet>172</a>            <span class="comment">// Rows are phased on their field (#884); the mosaic machine's
+<a href=#173 id=173 data-nosnippet>173</a>            // kernels ramp to where the antennas point.
 <a href=#174 id=174 data-nosnippet>174</a>            </span><span class="kw">let </span>key = (
 <a href=#175 id=175 data-nosnippet>175</a>                steps,
 <a href=#176 id=176 data-nosnippet>176</a>                scan.field_id,
-<a href=#177 id=177 data-nosnippet>177</a>                scan.phase_center_rad.map(f64::to_bits),
-<a href=#178 id=178 data-nosnippet>178</a>            );
-<a href=#179 id=179 data-nosnippet>179</a>            <span class="kw">let </span>segment = <span class="kw">match </span>keys.get(<span class="kw-2">&amp;</span>key) {
-<a href=#180 id=180 data-nosnippet>180</a>                <span class="prelude-val">Some</span>(segment) =&gt; <span class="kw-2">*</span>segment,
-<a href=#181 id=181 data-nosnippet>181</a>                <span class="prelude-val">None </span>=&gt; {
-<a href=#182 id=182 data-nosnippet>182</a>                    <span class="kw">let </span><span class="kw-2">mut </span>domains = Vec::with_capacity(key.<span class="number">0</span>.len());
-<a href=#183 id=183 data-nosnippet>183</a>                    <span class="kw">let </span><span class="kw-2">mut </span>projections = Vec::with_capacity(key.<span class="number">0</span>.len());
-<a href=#184 id=184 data-nosnippet>184</a>                    <span class="kw">let </span><span class="kw-2">mut </span>pointing_offsets = Vec::with_capacity(key.<span class="number">0</span>.len());
-<a href=#185 id=185 data-nosnippet>185</a>                    <span class="kw">for </span>step <span class="kw">in </span>key.<span class="number">0</span>.clone() {
-<a href=#186 id=186 data-nosnippet>186</a>                        <span class="kw">let </span>prediction = predictions[step];
-<a href=#187 id=187 data-nosnippet>187</a>                        <span class="kw">let </span>model = prediction.grids_for(scan.field_id).ok_or_else(|| {
-<a href=#188 id=188 data-nosnippet>188</a>                            SimulatorError::raised(<span class="macro">format!</span>(
-<a href=#189 id=189 data-nosnippet>189</a>                                <span class="string">"predict prepared no grids for field {}"</span>,
-<a href=#190 id=190 data-nosnippet>190</a>                                scan.field_id
-<a href=#191 id=191 data-nosnippet>191</a>                            ))
-<a href=#192 id=192 data-nosnippet>192</a>                        })<span class="question-mark">?</span>;
-<a href=#193 id=193 data-nosnippet>193</a>                        domains.push(PredictionDomain {
-<a href=#194 id=194 data-nosnippet>194</a>                            operator: <span class="kw-2">&amp;</span>prediction.model.operator,
-<a href=#195 id=195 data-nosnippet>195</a>                            resampler: <span class="kw-2">&amp;</span>prediction.model.resampler,
-<a href=#196 id=196 data-nosnippet>196</a>                            model,
-<a href=#197 id=197 data-nosnippet>197</a>                        });
-<a href=#198 id=198 data-nosnippet>198</a>                        <span class="comment">// `MosaicFT` reprojects through `girarUVW`, the
-<a href=#199 id=199 data-nosnippet>199</a>                        // others through `rotateUVW`.
-<a href=#200 id=200 data-nosnippet>200</a>                        </span><span class="kw">let </span>project = <span class="kw">match </span>prediction.model.machine() {
-<a href=#201 id=201 data-nosnippet>201</a>                            FtMachine::Mosaic =&gt; GridFtProjection::mosaic_between_j2000_directions,
-<a href=#202 id=202 data-nosnippet>202</a>                            FtMachine::Grid(<span class="kw">_</span>) | FtMachine::WProject(<span class="kw">_</span>) =&gt; {
-<a href=#203 id=203 data-nosnippet>203</a>                                GridFtProjection::between_j2000_directions
-<a href=#204 id=204 data-nosnippet>204</a>                            }
-<a href=#205 id=205 data-nosnippet>205</a>                        };
-<a href=#206 id=206 data-nosnippet>206</a>                        projections.push(project(scan.phase_center_rad, prediction.tangent_rad));
-<a href=#207 id=207 data-nosnippet>207</a>                        pointing_offsets
-<a href=#208 id=208 data-nosnippet>208</a>                            .push(prediction.pointing_offset_rad(scan.phase_center_rad));
+<a href=#177 id=177 data-nosnippet>177</a>                [scan.phase_center_rad, scan.pointing_rad]
+<a href=#178 id=178 data-nosnippet>178</a>                    .map(|direction| direction.map(f64::to_bits)),
+<a href=#179 id=179 data-nosnippet>179</a>            );
+<a href=#180 id=180 data-nosnippet>180</a>            <span class="kw">let </span>segment = <span class="kw">match </span>keys.get(<span class="kw-2">&amp;</span>key) {
+<a href=#181 id=181 data-nosnippet>181</a>                <span class="prelude-val">Some</span>(segment) =&gt; <span class="kw-2">*</span>segment,
+<a href=#182 id=182 data-nosnippet>182</a>                <span class="prelude-val">None </span>=&gt; {
+<a href=#183 id=183 data-nosnippet>183</a>                    <span class="kw">let </span><span class="kw-2">mut </span>domains = Vec::with_capacity(key.<span class="number">0</span>.len());
+<a href=#184 id=184 data-nosnippet>184</a>                    <span class="kw">let </span><span class="kw-2">mut </span>projections = Vec::with_capacity(key.<span class="number">0</span>.len());
+<a href=#185 id=185 data-nosnippet>185</a>                    <span class="kw">let </span><span class="kw-2">mut </span>pointing_offsets = Vec::with_capacity(key.<span class="number">0</span>.len());
+<a href=#186 id=186 data-nosnippet>186</a>                    <span class="kw">for </span>step <span class="kw">in </span>key.<span class="number">0</span>.clone() {
+<a href=#187 id=187 data-nosnippet>187</a>                        <span class="kw">let </span>prediction = predictions[step];
+<a href=#188 id=188 data-nosnippet>188</a>                        <span class="kw">let </span>model = prediction.grids_for(scan.field_id).ok_or_else(|| {
+<a href=#189 id=189 data-nosnippet>189</a>                            SimulatorError::raised(<span class="macro">format!</span>(
+<a href=#190 id=190 data-nosnippet>190</a>                                <span class="string">"predict prepared no grids for field {}"</span>,
+<a href=#191 id=191 data-nosnippet>191</a>                                scan.field_id
+<a href=#192 id=192 data-nosnippet>192</a>                            ))
+<a href=#193 id=193 data-nosnippet>193</a>                        })<span class="question-mark">?</span>;
+<a href=#194 id=194 data-nosnippet>194</a>                        domains.push(PredictionDomain {
+<a href=#195 id=195 data-nosnippet>195</a>                            operator: <span class="kw-2">&amp;</span>prediction.model.operator,
+<a href=#196 id=196 data-nosnippet>196</a>                            resampler: <span class="kw-2">&amp;</span>prediction.model.resampler,
+<a href=#197 id=197 data-nosnippet>197</a>                            model,
+<a href=#198 id=198 data-nosnippet>198</a>                        });
+<a href=#199 id=199 data-nosnippet>199</a>                        <span class="comment">// `MosaicFT` reprojects through `girarUVW`, the
+<a href=#200 id=200 data-nosnippet>200</a>                        // others through `rotateUVW`.
+<a href=#201 id=201 data-nosnippet>201</a>                        </span><span class="kw">let </span>project = <span class="kw">match </span>prediction.model.machine() {
+<a href=#202 id=202 data-nosnippet>202</a>                            FtMachine::Mosaic =&gt; GridFtProjection::mosaic_between_j2000_directions,
+<a href=#203 id=203 data-nosnippet>203</a>                            FtMachine::Grid(<span class="kw">_</span>) | FtMachine::WProject(<span class="kw">_</span>) =&gt; {
+<a href=#204 id=204 data-nosnippet>204</a>                                GridFtProjection::between_j2000_directions
+<a href=#205 id=205 data-nosnippet>205</a>                            }
+<a href=#206 id=206 data-nosnippet>206</a>                        };
+<a href=#207 id=207 data-nosnippet>207</a>                        projections.push(project(scan.phase_center_rad, prediction.tangent_rad));
+<a href=#208 id=208 data-nosnippet>208</a>                        pointing_offsets.push(prediction.pointing_offset_rad(scan.pointing_rad));
 <a href=#209 id=209 data-nosnippet>209</a>                    }
 <a href=#210 id=210 data-nosnippet>210</a>                    segments.push(Segment {
 <a href=#211 id=211 data-nosnippet>211</a>                        domains,
