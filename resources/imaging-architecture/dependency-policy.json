@@ -120,6 +120,7 @@
   ],
   "casa-atmosphere": [],
   "casa-simulation": [
+   "casa-atmosphere",
    "casa-calibration",
    "casa-components",
    "casa-coordinates",

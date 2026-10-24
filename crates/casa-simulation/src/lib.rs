@@ -19,6 +19,7 @@
 //! | `sm.setvp(dovp=True)` with an Airy voltage pattern | [`Simulator::set_vp`], [`predict::PrimaryBeam`] |
 //! | `sm.setseed`, `sm.setnoise(mode='simplenoise')`, `sm.corrupt`, `sm.reset` | [`Simulator::set_seed`], [`Simulator::set_noise`], [`Simulator::corrupt`], [`Simulator::reset`] |
 //! | `sm.setnoise(mode='tsys-manual')`: σ per row from a system temperature (CASA's `AtmosCorruptor`) | [`Simulator::set_noise`], [`NoiseSpec::tsys_manual`], [`TsysParameters`] |
+//! | `sm.setnoise(mode='tsys-atm')`: σ per row and channel from a system temperature the ATM atmosphere model gives | [`Simulator::set_noise`], [`NoiseSpec::tsys_atm`], [`AtmosphereSpec`] |
 //! | `sm.setgain(mode='fbm' or 'random')`, `sm.setleakage`, and the calibration tables they write | [`Simulator::set_gain`], [`Simulator::set_leakage`] |
 //! | `sm.setapply` of a `G` or `D` table | [`Simulator::set_apply`] |
 //! | `simutil.readantenna(antab)` | [`readantenna::read_antenna_config`] |
@@ -41,7 +42,7 @@ pub use session::error::{CasaOutcome, SimulatorError, SimulatorResult};
 pub use session::observe::{ObserveManySpec, ObserveSpec, Pointing, StateSpec};
 pub use session::spectral::SpectralWindowSpec;
 pub use session::{
-    ApplySpec, BackendRequest, DEFAULT_SEED, ExecutionControls, GainSpec, LeakageSpec, NoiseSpec,
-    PredictSpec, PredictionOptions, SessionResources, Simulator, SimulatorOptions, TsysParameters,
-    UnknownBackend, VoltagePatternSpec,
+    ApplySpec, AtmosphereSpec, BackendRequest, DEFAULT_SEED, ExecutionControls, GainSpec,
+    LeakageSpec, NoiseSpec, PredictSpec, PredictionOptions, SessionResources, Simulator,
+    SimulatorOptions, TsysParameters, UnknownBackend, VoltagePatternSpec,
 };

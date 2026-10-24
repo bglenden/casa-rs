@@ -16,7 +16,7 @@
 //! reports by logging and returning `False` is logged at ERROR on the Python
 //! logger `casars.tools.simulator`; a failure CASA raises is a
 //! `RuntimeError`. What CASA does and casa-rs does not yet (a whole method,
-//! or a mode such as `setnoise(mode='tsys-atm')`) raises
+//! or a mode such as `setnoise(OTF=False)`) raises
 //! `NotImplementedError` naming the phase that implements it.
 //!
 //! Divergence: the MeasurementSet is written at `close` or `done` (and by an
@@ -809,8 +809,10 @@ impl PySimulator {
     /// `mode='tsys-manual'` adds the σ of each row's system temperature
     /// (`tau`, `tatmos`, the efficiencies, `trx`, `tground`, `tcmb`,
     /// `senscoeff`, `rxtype`, the row's dishes, elevations, channel width
-    /// and integration time). `tsys-atm`, `OTF=False`, and `tsys-manual`
-    /// with a `table`, raise `NotImplementedError`.
+    /// and integration time); `mode='tsys-atm'` the σ of each row's and
+    /// channel's, its atmosphere ATM's for `pwv`, `pground`, `relhum`,
+    /// `altitude`, `waterheight` and `tground`. `OTF=False`, and a Tsys
+    /// mode with a `table`, raise `NotImplementedError`.
     #[allow(unused_variables, non_snake_case, clippy::too_many_arguments)]
     #[pyo3(
         signature = (
@@ -850,6 +852,7 @@ impl PySimulator {
             table,
             simple_noise: simplenoise,
             ground_pressure: pground,
+            relative_humidity: relhum,
             altitude,
             water_height: waterheight,
             water_vapour: pwv,

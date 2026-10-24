@@ -37,7 +37,7 @@ use crate::predict::{ComponentPrediction, SingleDishPrediction};
 
 /// One `setnoise` term: CASA's `ANoise` calibration term (with, for
 /// `tsys-manual`, the `T` that scales it), kept until `reset`.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct NoiseTerm {
     /// The seed in force at `setnoise`.
     pub(crate) seed: i32,
@@ -375,7 +375,7 @@ mod tests {
         }
         for scan in 0..4 {
             let expected = (scan as u32..4).map(|ordinal| noise(1, ordinal));
-            assert!(plan.noise_for_scan(scan).iter().copied().eq(expected));
+            assert!(plan.noise_for_scan(scan).iter().cloned().eq(expected));
         }
         // Each scan's noise is the end of the one list.
         let all = plan.noise_for_scan(0).as_ptr_range();

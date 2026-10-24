@@ -15,6 +15,7 @@ cpp-interop-tests = ["casa-test-support/cpp-interop-tests"]
 workspace = true
 
 [dependencies]
+casa-atmosphere = { path = "../casa-atmosphere" }
 casa-calibration = { path = "../casa-calibration" }
 casa-components = { path = "../casa-components" }
 casa-coordinates = { path = "../casa-coordinates" }

@@ -60,8 +60,9 @@ use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 
 use super::components::{self, add_components};
 use super::geometry::{ArrayGeometry, RowGeometry};
-use super::pipeline::{MINIMUM_NOISE_JOB_ROWS, NoiseContext, NoiseJob, noise_jobs};
+use super::pipeline::{MINIMUM_NOISE_JOB_ROWS, NoiseContext, NoiseJob, batch_scales, noise_jobs};
 use super::prediction::{PredictionStage, device_noise};
+use super::resources::NoiseScales;
 use super::{cell_shape, noise_varies_by_row, write_error};
 use crate::session::SessionResources;
 use crate::session::Simulator;
@@ -87,13 +88,17 @@ struct PatchShape {
     columns: usize,
     /// Antennas of the MeasurementSet.
     antennas: usize,
-    /// Whether the noise needs each row's airmasses and exposure
-    /// (`tsys-manual`).
+    /// Whether the noise needs each row's airmasses and exposure (the Tsys
+    /// modes).
     airmass: bool,
-    /// Whether the corruption needs each row's TIME: gains, leakage or
-    /// `tsys-manual`. (The gain and leakage terms it reads hold their own
+    /// Whether the corruption needs each row's TIME: gains, leakage or the
+    /// Tsys modes. (The gain and leakage terms it reads hold their own
     /// admission, from `setgain` and `setleakage`.)
     times: bool,
+    /// What a batch's `tsys-atm` noise holds beside the cells. The rows on
+    /// disk need not come in whole integrations, so it is bounded by the
+    /// rows alone.
+    noise_scales: NoiseScales,
 }
 
 impl PatchShape {
@@ -157,6 +162,7 @@ pub(crate) fn patch_measurement_set(session: &Simulator) -> SimulatorResult<()> 
         antennas: session.antennas().len(),
         airmass: noise_varies_by_row(plan),
         times: noise_varies_by_row(plan) || plan.corrupts_by_jones(),
+        noise_scales: NoiseScales::of(plan, channels, None),
     };
     let admission = admit_patch(resources, &shape, &columns, prediction.as_ref())?;
     let mut ms = MeasurementSet::open(session.path())
@@ -339,12 +345,17 @@ impl Patch<'_> {
                 .as_ref()
                 .is_some_and(|stage| stage.noised(scan, device_noise(plan, scan, reads_data)))
         };
+        let scales = batch_scales(
+            (plan, NoiseContext::of(session), team),
+            (geometry, runs),
+            &noised,
+        )?;
         let mut jobs = noise_jobs(
             (plan, NoiseContext::of(session), team),
             &self.receptors,
             (geometry, runs),
             (first as u64, &mut self.data),
-            samples,
+            (samples, &scales),
             &noised,
         );
         let correlations = self.shape.correlations;
@@ -681,6 +692,9 @@ fn admit_patch(
     let batch_rows = plan.batch_rows().max(1);
     let demand = |cores: CoreAllocation, block_rows: usize| {
         pipeline_bytes(shape, columns.len(), batch_rows)
+            + shape
+                .noise_scales
+                .bytes(batch_rows, cores.streaming_workers)
             + prediction.map_or(0, |stage| stage.bytes(block_rows, cores.streaming_workers))
     };
     // As `close` admits a new MeasurementSet's pipeline: a batch predicted

@@ -681,32 +681,74 @@ def test_setnoise_outcomes_follow_casa(tmp_path: Path, caplog: pytest.LogCapture
         assert sm.setnoise(mode="bogus") is False
     assert caplog.messages[0].startswith("Caught exception: Error in Simulator::create_corrupt")
     assert caplog.messages[1:] == ["Caught exception: unsupported mode bogus in setnoise()"]
-    with pytest.raises(NotImplementedError, match="tsys-atm.*Phase 4"):
-        sm.setnoise(mode="tsys-atm")
     with pytest.raises(NotImplementedError, match="OTF=False"):
         sm.setnoise(simplenoise="0.1Jy", OTF=False)
-    # CASA writes tsys-manual's T term to <table>.T.cal; casa-rs not yet.
-    with pytest.raises(NotImplementedError, match=r"noisy\.T\.cal"):
-        sm.setnoise(mode="tsys-manual", table="noisy.cal")
+    # CASA writes a Tsys mode's T term to <table>.T.cal; casa-rs not yet.
+    for mode in ["tsys-manual", "tsys-atm"]:
+        with pytest.raises(NotImplementedError, match=r"noisy\.T\.cal"):
+            sm.setnoise(mode=mode, table="noisy.cal")
     caplog.clear()
     with caplog.at_level(logging.ERROR, logger=LOGGER):
         assert sm.setnoise(mode="tsys-manual", pwv="200mm") is False
         # A pwv without units is metres, as in CASA.
         assert sm.setnoise(mode="tsys-manual", pwv=5) is False
         assert sm.setnoise(mode="tsys-manual", tau=50.0) is False
+        assert sm.setnoise(mode="tsys-atm", pwv="200mm") is False
     assert caplog.messages[0].startswith("Caught exception:  you input PWV=200mm")
     assert caplog.messages[1].startswith("Caught exception:  you input PWV=5000mm")
     assert "Tsys" in caplog.messages[2] and "poorly defined" in caplog.messages[2]
+    assert caplog.messages[3].startswith("Caught exception:  you input PWV=200mm")
     with pytest.raises(RuntimeError, match="Cannot convert Jy to mm"):
         sm.setnoise(mode="tsys-manual", pwv="1Jy")
+    with pytest.raises(RuntimeError, match="Cannot convert"):
+        sm.setnoise(mode="tsys-atm", altitude="5Jy")
     # None of those added a term; `[]` is 0 Jy.
     assert sm.setnoise() is True
     assert sm.setnoise(mode="tsys-manual") is True
+    assert sm.setnoise(mode="tsys-atm") is True
     assert sm.reset() is True
     assert sm.corrupt() is True
     sm.close()
     data = np.asarray(Table.open(tmp_path / "x.ms").get_column("DATA"))
     assert np.all(data == 0)
+
+
+def tsys_atm_data(path: Path, **site: Any) -> np.ndarray:
+    """DATA of 300 s in four 1 GHz channels from 180 GHz, up the 183 GHz
+    water line, after one `tsys-atm` term of seed 5 with `site`."""
+    sm = simulator()
+    sm.open(str(path))
+    configure(sm)
+    assert sm.setspwindow(
+        spwname="W", freq="180GHz", deltafreq="1GHz", freqresolution="1GHz", nchannels=4,
+        stokes="RR LL",
+    )
+    assert sm.observe("F", "W", starttime="0s", stoptime="300s")
+    assert sm.setseed(5) is True
+    assert sm.setnoise(mode="tsys-atm", **site) is True
+    assert sm.corrupt() is True
+    sm.close()
+    return np.asarray(Table.open(path).get_column("DATA"))
+
+
+@needs_measures
+def test_tsys_atm_noise_rises_up_the_water_line(tmp_path: Path) -> None:
+    site = {
+        "pwv": "2mm", "pground": "550mbar", "relhum": 30.0, "altitude": "5050m",
+        "waterheight": "1500m",
+    }
+    data = tsys_atm_data(tmp_path / "site.ms", **site)
+    main = Table.open(tmp_path / "site.ms")
+    auto = np.asarray(main.get_column("ANTENNA1")) == np.asarray(main.get_column("ANTENNA2"))
+    variance = np.var(data[~auto].real, axis=(0, 1))
+    # Each channel nearer the line sees a hotter, more opaque sky.
+    assert np.all(np.diff(variance) > 0), variance
+    assert variance[-1] > 3 * variance[0], variance
+    # The site's values decide the noise; a ground pressure without units is
+    # in pascals, at most 100 mbar, which CASA takes as unset.
+    default = tsys_atm_data(tmp_path / "default.ms")
+    assert not np.array_equal(default, data)
+    assert np.array_equal(tsys_atm_data(tmp_path / "pascals.ms", pground=550), default)
 
 
 @needs_measures

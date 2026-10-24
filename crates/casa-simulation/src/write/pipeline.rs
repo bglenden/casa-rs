@@ -12,11 +12,14 @@
 //!    the rows of scans a `predict` covers are predicted into it, in blocks
 //!    on the team ([`super::prediction`]); then the visibilities of the
 //!    component lists covering them are added ([`super::components`]).
-//! 3. **Cells and columns.** Then, on the team at once:
+//! 3. **Cells and columns.** For `tsys-atm` noise, each antenna's scales
+//!    for each integration the batch reaches are worked out first, on the
+//!    team ([`batch_scales`]). Then, on the team at once:
 //!    - each scan's noise is added to its rows, a run of rows per job: a
 //!      draw depends only on the term, the MAIN row, the channel and the
 //!      correlation ([`crate::corrupt`]), and its σ on the term and, for
-//!      `tsys-manual`, the row's window, dishes, airmasses and exposure;
+//!      the Tsys modes, the row's window, dishes, airmasses and exposure
+//!      (for `tsys-atm`, through those scales, and per channel);
 //!    - one job copies FLAG_ROW, UVW, WEIGHT and SIGMA from the geometry and
 //!      pushes the scalar columns of the integrations computed for the
 //!      batch, in MAIN order.
@@ -48,7 +51,9 @@ use super::MainWriter;
 use super::components::add_components;
 use super::geometry::{ArrayGeometry, RowGeometry};
 use super::prediction::{PredictionStage, device_noise};
-use crate::corrupt::{NoiseApplication, WindowNoise};
+use crate::corrupt::{
+    BatchScales, BatchScalesBuilder, NoiseApplication, NoiseScratch, WindowNoise,
+};
 use crate::session::Simulator;
 use crate::session::array::Antenna;
 use crate::session::error::{SimulatorError, SimulatorResult};
@@ -84,7 +89,8 @@ impl<'a> NoiseContext<'a> {
 
     /// What scan `scan`'s window gives its noise.
     fn window(&self, scan: usize) -> WindowNoise {
-        self.windows[self.scans[scan].spectral_window_id].noise()
+        let window = self.scans[scan].spectral_window_id;
+        self.windows[window].noise(window)
     }
 }
 
@@ -315,6 +321,12 @@ impl Rows<'_> {
             weight,
             sigma,
         } = batch;
+        let runs = self.segments(rows);
+        let scales = batch_scales(
+            (self.plan, self.noise, self.team),
+            (&self.rows, &runs),
+            noised,
+        )?;
         let mut jobs = vec![BatchJob::Columns(ColumnsJob {
             writer,
             flag_row,
@@ -322,7 +334,7 @@ impl Rows<'_> {
             weight,
             sigma,
         })];
-        self.noise_jobs((first_row, rows), data, noised, &mut jobs);
+        self.noise_jobs((first_row, data), &runs, &scales, noised, &mut jobs);
         let (scans, integrations, geometry) = (self.planned, &self.integrations, &self.rows);
         let (correlations, samples) = (self.correlations, self.samples);
         self.team.for_each_mut(&mut jobs, |_, job| match job {
@@ -334,23 +346,23 @@ impl Rows<'_> {
         })
     }
 
-    /// Split the batch's `rows` rows of `data` into noise jobs, runs of one
-    /// scan with noise that `noised` does not already have.
+    /// Split the batch's `runs` of `data` into noise jobs, runs of one scan
+    /// with noise that `noised` does not already have, reading `scales`.
     fn noise_jobs<'a>(
         &'a self,
-        (first_row, rows): (u64, usize),
-        data: &'a mut [Complex32],
+        (first_row, data): (u64, &'a mut [Complex32]),
+        runs: &[(usize, usize, usize)],
+        scales: &'a BatchScales,
         noised: &dyn Fn(usize) -> bool,
         jobs: &mut Vec<BatchJob<'a>>,
     ) {
-        let runs = self.segments(rows);
         jobs.extend(
             noise_jobs(
                 (self.plan, self.noise, self.team),
                 &self.receptors,
-                (&self.rows, &runs),
+                (&self.rows, runs),
                 (first_row, data),
-                self.samples,
+                (self.samples, scales),
                 noised,
             )
             .into_iter()
@@ -441,26 +453,26 @@ impl ColumnsJob<'_> {
 /// with gains or leakage has each of its corruptions applied in order
 /// instead ([`Corruption`]), its windows' correlations having the
 /// receptors `receptors` (`[window]`).
+///
+/// A `tsys-atm` application's σ comes from `scales`, the batch's antenna
+/// scales ([`batch_scales`]).
 pub(super) fn noise_jobs<'a>(
     (plan, context, team): (&'a DataPlan, NoiseContext<'a>, &WorkerTeam),
     receptors: &'a [Vec<[usize; 2]>],
     (rows, runs): (&'a [RowGeometry], &[(usize, usize, usize)]),
     (first_row, data): (u64, &'a mut [Complex32]),
-    samples: usize,
+    (samples, scales): (usize, &'a BatchScales),
     noised: &dyn Fn(usize) -> bool,
 ) -> Vec<NoiseJob<'a>> {
     let batch_rows: usize = runs.iter().map(|&(_, _, count)| count).sum();
     let job_rows = batch_rows
         .div_ceil(team.workers() * NOISE_JOBS_PER_WORKER)
         .max(MINIMUM_NOISE_JOB_ROWS);
-    let noised_here = |scan| {
-        plan.has_jones_for_scan(scan) || (!plan.noise_for_scan(scan).is_empty() && !noised(scan))
-    };
     // As many jobs as there are, at most a run's plus one every
     // `MINIMUM_NOISE_JOB_ROWS` rows (the patch's admission).
     let mut jobs = Vec::with_capacity(
         runs.iter()
-            .filter(|&&(scan, _, _)| noised_here(scan))
+            .filter(|&&(scan, _, _)| noised_here(plan, scan, noised))
             .map(|&(_, _, count)| count.div_ceil(job_rows))
             .sum(),
     );
@@ -468,7 +480,7 @@ pub(super) fn noise_jobs<'a>(
     for &(scan, start, count) in runs {
         let (segment, after) = std::mem::take(&mut rest).split_at_mut(count * samples);
         rest = after;
-        if !noised_here(scan) {
+        if !noised_here(plan, scan, noised) {
             continue;
         }
         let noise = plan.noise_for_scan(scan);
@@ -491,11 +503,55 @@ pub(super) fn noise_jobs<'a>(
                 noise,
                 window,
                 antennas: context.antennas,
+                scales,
                 corruption,
             });
         }
     }
     jobs
+}
+
+/// Whether a batch's noise jobs take scan `scan`: it has gains or leakage,
+/// or noise in `plan` that `noised` does not already have.
+fn noised_here(plan: &DataPlan, scan: usize, noised: &dyn Fn(usize) -> bool) -> bool {
+    plan.has_jones_for_scan(scan) || (!plan.noise_for_scan(scan).is_empty() && !noised(scan))
+}
+
+/// The antenna scales the `tsys-atm` noise of a batch's jobs reads
+/// ([`noise_jobs`], with the same arguments): for each run they take, those
+/// its rows need for each `tsys-atm` application of its scan, worked out
+/// on `team` before the jobs run. Empty when no run needs any.
+///
+/// # Errors
+///
+/// A worker's failure.
+pub(super) fn batch_scales(
+    (plan, context, team): (&DataPlan, NoiseContext<'_>, &WorkerTeam),
+    (rows, runs): (&[RowGeometry], &[(usize, usize, usize)]),
+    noised: &dyn Fn(usize) -> bool,
+) -> SimulatorResult<BatchScales> {
+    let mut scales = BatchScalesBuilder::default();
+    for &(scan, start, count) in runs {
+        if !noised_here(plan, scan, noised) {
+            continue;
+        }
+        let window = context.window(scan);
+        for application in plan.noise_for_scan(scan) {
+            let rows = rows[start..start + count]
+                .iter()
+                .map(|row| row.noise(context.antennas));
+            application.add_scales(&window, rows, &mut scales);
+        }
+    }
+    if scales.is_empty() {
+        return Ok(BatchScales::default());
+    }
+    scales.build(team.workers() * NOISE_JOBS_PER_WORKER, |jobs| {
+        team.for_each_mut(jobs, |_, job| {
+            job.run();
+            Ok::<_, SimulatorError>(())
+        })
+    })
 }
 
 /// One noise job: consecutive rows of one scan.
@@ -508,8 +564,10 @@ pub(super) struct NoiseJob<'a> {
     noise: &'a [NoiseApplication],
     /// What the scan's spectral window gives the noise.
     window: WindowNoise,
-    /// The antennas, whose dishes a `tsys-manual` σ takes.
+    /// The antennas, whose dishes the Tsys modes' σ takes.
     antennas: &'a [Antenna],
+    /// The batch's `tsys-atm` antenna scales.
+    scales: &'a BatchScales,
     /// With gains or leakage, the scan's corruptions, applied in order in
     /// place of `noise`.
     corruption: Option<Corruption<'a>>,
@@ -555,6 +613,7 @@ impl NoiseJob<'_> {
     /// scan's window once, then added to every row; every sample still gets
     /// the applications in their order.
     fn add_noise(&mut self, noise: &[NoiseApplication], correlations: usize, samples: usize) {
+        let mut scratch = NoiseScratch::new(self.scales);
         for application in noise {
             let noise = application.for_window(&self.window);
             for (offset, (cell, row)) in self
@@ -565,9 +624,9 @@ impl NoiseJob<'_> {
             {
                 noise.add_to_row(
                     (self.first_row + offset as u64, &row.noise(self.antennas)),
-                    row.antenna1 == row.antenna2,
-                    correlations,
+                    (row.antenna1 == row.antenna2, correlations),
                     cell,
+                    &mut scratch,
                 );
             }
         }

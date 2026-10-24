@@ -395,8 +395,9 @@ impl<'s> PredictionStage<'s> {
     /// Metal, where the model is formed in device memory, when every term
     /// has one σ for every row (`simplenoise`) and draws there exactly as on
     /// the host ([`casa_numerics::cell_noise::metal_draws_exactly`]);
-    /// otherwise the host adds it after. A `tsys-manual` term, whose σ
-    /// varies by row, is the host's: the device's terms hold one σ each.
+    /// otherwise the host adds it after. A Tsys term, whose σ varies by row
+    /// (and for `tsys-atm` by channel), is the host's: the device's terms
+    /// hold one σ each.
     pub(super) fn noises_on_device(&self, noise: &[NoiseApplication]) -> bool {
         self.backend == BackendChoice::Metal
             && noise.iter().all(|application| {

@@ -189,6 +189,45 @@ impl<C: AbsorptionChannel> AbsorptionProfile<C> {
         Ok(self.channel_mean(window, |channel| self.trj(channel, sky)))
     }
 
+    /// Channel `channel`'s line of sight under `sky`'s conditions, prepared
+    /// for the sky temperature at many airmasses ([`SkyColumn`]); `sky`'s
+    /// airmass is not used.
+    ///
+    /// # Errors
+    ///
+    /// As [`AbsorptionProfile::tebb_sky`], less the airmass.
+    pub fn sky_column(&self, channel: usize, sky: &Sky) -> Result<SkyColumn, AtmosphereError> {
+        Sky {
+            airmass: 1.0,
+            ..*sky
+        }
+        .validate(true)?;
+        let column = &self.channels()[channel];
+        let frequency_ghz = 1.0e-9 * column.frequency_hz();
+        let ratio = sky.water_column_m / self.ground_water_column_m();
+        let (opacity, occupations) = self
+            .atmosphere()
+            .layers()
+            .iter()
+            .enumerate()
+            .map(|(j, layer)| {
+                let totals = column.layer_totals(j);
+                (
+                    (totals.wet_absorption() * ratio + totals.dry_absorption()) * layer.thickness_m,
+                    occupation(frequency_ghz, layer.temperature_k),
+                )
+            })
+            .unzip();
+        Ok(SkyColumn {
+            frequency_ghz,
+            opacity,
+            occupation: occupations,
+            sky_coupling: sky.sky_coupling,
+            background: occupation(frequency_ghz, sky.background_temperature_k),
+            spill: occupation(frequency_ghz, sky.spill_temperature_k),
+        })
+    }
+
     /// ATM's `RT` over a window: each channel's value divided by the
     /// channel count, summed.
     fn channel_mean(&self, window: usize, value: impl Fn(usize) -> f64) -> f64 {
@@ -198,5 +237,64 @@ impl<C: AbsorptionChannel> AbsorptionProfile<C> {
             .expect("a spectral window of the grid");
         let count = self.grid().windows()[window].num_channels();
         (first..first + count).fold(0.0, |sum, channel| sum + value(channel) / count as f64)
+    }
+}
+
+/// One channel's line of sight under fixed conditions (water column,
+/// coupling, spillover and background), prepared for the sky temperature
+/// at many airmasses ([`AbsorptionProfile::sky_column`]).
+///
+/// It keeps each layer's zenith opacity and Planck occupation, so a
+/// temperature costs one exponential per layer: the transmission through
+/// the layers below is carried as a product. That agrees with
+/// [`AbsorptionProfile::tebb_sky`] to rounding. A caller evaluating many
+/// lines of sight per channel (the simulator's `tsys-atm` noise, one per
+/// antenna and integration) prepares a column once per channel.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SkyColumn {
+    frequency_ghz: f64,
+    /// Each layer's zenith opacity, from the ground up.
+    opacity: Vec<f64>,
+    /// Each layer's Planck occupation.
+    occupation: Vec<f64>,
+    sky_coupling: f64,
+    /// The background's occupation.
+    background: f64,
+    /// The spillover's occupation.
+    spill: f64,
+}
+
+impl SkyColumn {
+    /// The heap bytes a column of `layers` layers keeps.
+    #[must_use]
+    pub const fn heap_bytes(layers: usize) -> u64 {
+        (2 * layers * size_of::<f64>()) as u64
+    }
+
+    /// The zenith opacity of the whole column.
+    #[must_use]
+    pub fn zenith_opacity(&self) -> f64 {
+        self.opacity.iter().sum()
+    }
+
+    /// The radiance (Planck occupation) seen at `airmass`.
+    fn radiance(&self, airmass: f64) -> f64 {
+        let mut radiance = 0.0;
+        let mut transmission = 1.0;
+        for (&tau, &occupation) in self.opacity.iter().zip(&self.occupation) {
+            let layer = (-airmass * tau).exp();
+            radiance += occupation * transmission * (1.0 - layer);
+            transmission *= layer;
+        }
+        self.sky_coupling * (radiance + self.background * transmission)
+            + self.spill * (1.0 - self.sky_coupling)
+    }
+
+    /// The sky's equivalent blackbody temperature at `airmass`, kelvin, as
+    /// [`AbsorptionProfile::tebb_sky`] gives it. The airmass is not checked
+    /// (ATM refuses one below 1).
+    #[must_use]
+    pub fn tebb(&self, airmass: f64) -> f64 {
+        H_OVER_K * self.frequency_ghz / (1.0 + 1.0 / self.radiance(airmass)).ln()
     }
 }

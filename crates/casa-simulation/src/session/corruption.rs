@@ -18,9 +18,10 @@
 //!
 //! `setnoise(mode='simplenoise')` gives every draw one σ;
 //! `mode='tsys-manual'` gives each row the σ of a system-temperature model
-//! (the `corrupt` module's `tsys`). Each term adds its own noise: CASA
-//! instead scales the noise of every term by every `tsys-manual` term's
-//! σ, recorded with casa-rs's other departures in
+//! (the `corrupt` module's `tsys`), and `mode='tsys-atm'` each row and
+//! channel the σ of one whose atmosphere is ATM's (`tsys_atm`). Each term
+//! adds its own noise: CASA instead scales the noise of every term by every
+//! Tsys term's σ, recorded with casa-rs's other departures in
 //! `docs/CASA (C++) bugs.md`.
 
 use std::sync::Arc;
@@ -28,8 +29,8 @@ use std::sync::Arc;
 use super::Simulator;
 use super::error::{SimulatorError, SimulatorResult};
 use super::plan::NoiseTerm;
-pub use crate::corrupt::TsysParameters;
 use crate::corrupt::jones::{HeldTerm, JonesKind};
+pub use crate::corrupt::{AtmosphereSpec, TsysParameters};
 use crate::corrupt::{MAXIMUM_APPLICATIONS, NoiseApplication, NoiseLevel, TsysManual};
 
 /// CASA's `Simulator` seed until `setseed` (`seed_p(11111)`). The Python
@@ -42,25 +43,32 @@ const LARGEST_WATER_VAPOUR_MM: f64 = 100.0;
 
 /// A zenith Tsys above this, K, or not positive, is refused
 /// (`AtmosCorruptor::initialize`).
-const LARGEST_ZENITH_TSYS_K: f32 = 1e6;
+pub(super) const LARGEST_ZENITH_TSYS_K: f32 = 1e6;
+
+/// The water vapour `tsys-atm` takes when `pwv` is not positive, mm.
+const DEFAULT_WATER_VAPOUR_MM: f64 = 1.0;
 
 /// The arguments of `sm.setnoise` that casa-rs reads.
 #[derive(Debug, Clone, PartialEq)]
 pub struct NoiseSpec {
-    /// `mode`: `simplenoise` and `tsys-manual` are implemented; `tsys-atm`
-    /// is a later phase's (#841).
+    /// `mode`: `simplenoise`, `tsys-manual` or `tsys-atm`.
     pub mode: String,
     /// `simplenoise`: σ of each real and imaginary draw, Jy.
     pub simple_noise_jy: f64,
     /// `table`: the calibration table's name. CASA writes no table for a
-    /// `simplenoise` term set with `OTF`; for `tsys-manual` it writes the
+    /// `simplenoise` term set with `OTF`; for the Tsys modes it writes the
     /// `T` term's to `<table>.T.cal`, which casa-rs does not yet.
     pub table: String,
     /// `pwv`, mm: in the Tsys modes, a value above 100 mm is refused, as
-    /// CASA refuses it (`tsys-manual` uses no water vapour).
+    /// CASA refuses it. `tsys-atm` sees the sky through this column of
+    /// water, 1 mm when not positive; `tsys-manual` uses none.
     pub water_vapour_mm: f64,
-    /// `tsys-manual`'s atmosphere, antenna and receiver parameters.
+    /// The Tsys modes' antenna and receiver parameters, and
+    /// `tsys-manual`'s atmosphere (`tatmos`, `tau`).
     pub tsys: TsysParameters,
+    /// `tsys-atm`'s site and atmosphere (`pground`, `relhum`, `altitude`,
+    /// `waterheight`); the ground's temperature is `tsys`'s `tground`.
+    pub atmosphere: AtmosphereSpec,
     /// `OTF`: corrupt on the fly. CASA writes no calibration table then,
     /// whatever `table` says; without it, it writes one, which casa-rs does
     /// not yet.
@@ -76,6 +84,7 @@ impl Default for NoiseSpec {
             table: String::new(),
             water_vapour_mm: 0.0,
             tsys: TsysParameters::default(),
+            atmosphere: AtmosphereSpec::default(),
             on_the_fly: true,
         }
     }
@@ -100,6 +109,32 @@ impl NoiseSpec {
             ..Self::default()
         }
     }
+
+    /// `setnoise(mode='tsys-atm', pwv=…, ...)` with `tsys`'s antenna and
+    /// receiver parameters, `water_vapour_mm` of water vapour and the site
+    /// `atmosphere`.
+    #[must_use]
+    pub fn tsys_atm(
+        tsys: TsysParameters,
+        water_vapour_mm: f64,
+        atmosphere: AtmosphereSpec,
+    ) -> Self {
+        Self {
+            mode: "tsys-atm".to_string(),
+            water_vapour_mm,
+            tsys,
+            atmosphere,
+            ..Self::default()
+        }
+    }
+}
+
+/// The noise modes `setnoise` knows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NoiseMode {
+    Simple,
+    TsysManual,
+    TsysAtm,
 }
 
 impl Simulator {
@@ -114,24 +149,23 @@ impl Simulator {
     ///
     /// - A mode CASA does not know: CASA logs "unsupported mode … in
     ///   setnoise()" and returns `False`.
-    /// - `tsys-atm`, or `OTF=False`: not yet implemented; so is
-    ///   `tsys-manual` with a `table`, which CASA writes.
+    /// - `OTF=False`: not yet implemented; nor is a Tsys mode with a
+    ///   `table`, which CASA writes.
     /// - No rows observed yet: CASA cannot size the term on an empty
     ///   MeasurementSet and returns `False`, adding no term.
-    /// - `tsys-manual` with a water vapour above 100 mm, or a zenith Tsys
-    ///   that is not positive or above 10⁶ K: CASA returns `False`. It has
-    ///   added a unit-σ noise term by then, which casa-rs does not
-    ///   (`docs/CASA (C++) bugs.md`).
+    /// - A Tsys mode with a water vapour above 100 mm, or a zenith Tsys at
+    ///   the centre of the first spectral window that is not positive or is
+    ///   above 10⁶ K: CASA returns `False`. It has added a unit-σ noise term
+    ///   by then, which casa-rs does not (`docs/CASA (C++) bugs.md`).
+    ///   casa-rs also refuses a `tsys-atm` zenith Tsys that is not a number,
+    ///   which CASA's check lets through.
+    /// - `tsys-atm` with site values ATM cannot build an atmosphere from, or
+    ///   whose atmosphere the session's memory budget cannot hold.
     pub fn set_noise(&mut self, spec: &NoiseSpec) -> SimulatorResult<()> {
-        let tsys = match spec.mode.as_str() {
-            "simplenoise" => false,
-            "tsys-manual" => true,
-            "tsys-atm" => {
-                return Err(SimulatorError::not_yet_implemented(
-                    "setnoise(mode='tsys-atm') is not yet implemented in casa-rs \
-                     (simulation Phase 4)",
-                ));
-            }
+        let mode = match spec.mode.as_str() {
+            "simplenoise" => NoiseMode::Simple,
+            "tsys-manual" => NoiseMode::TsysManual,
+            "tsys-atm" => NoiseMode::TsysAtm,
             other => {
                 return Err(SimulatorError::refused(format!(
                     "Caught exception: unsupported mode {other} in setnoise()"
@@ -144,7 +178,7 @@ impl Simulator {
                  in casa-rs (simulation Phase 3)",
             ));
         }
-        if !tsys {
+        if mode == NoiseMode::Simple {
             tracing::info!(
                 "Using simple noise model with noise level of {} Jy",
                 spec.simple_noise_jy
@@ -156,14 +190,29 @@ impl Simulator {
                  Input MeasurementSet.has zero selected rows",
             ));
         }
-        let level = if tsys {
-            NoiseLevel::TsysManual(self.tsys_manual(spec)?)
-        } else {
-            NoiseLevel::Simple(spec.simple_noise_jy as f32)
+        let level = match mode {
+            NoiseMode::Simple => NoiseLevel::Simple(spec.simple_noise_jy as f32),
+            NoiseMode::TsysManual => NoiseLevel::TsysManual(self.tsys_manual(spec)?),
+            NoiseMode::TsysAtm => {
+                check_tsys_spec(spec)?;
+                let water_vapour_mm = if spec.water_vapour_mm > 0.0 {
+                    spec.water_vapour_mm
+                } else {
+                    tracing::info!("User has not set PWV, using 1mm");
+                    DEFAULT_WATER_VAPOUR_MM
+                };
+                NoiseLevel::TsysAtm(Arc::new(self.tsys_atm(spec, water_vapour_mm)?))
+            }
         };
         tracing::info!("Creating A NOISE Calibration structure for data corruption.");
-        if tsys {
-            tracing::info!("Creating T Calibration structure for data corruption.");
+        match mode {
+            NoiseMode::Simple => {}
+            NoiseMode::TsysManual => {
+                tracing::info!("Creating T Calibration structure for data corruption.");
+            }
+            NoiseMode::TsysAtm => {
+                tracing::info!("Creating TF NOISE Calibration structure for data corruption.");
+            }
         }
         self.noise_terms.push(NoiseTerm {
             seed: self.seed,
@@ -176,32 +225,7 @@ impl Simulator {
     /// The `tsys-manual` model of `spec`, checked as CASA checks it.
     fn tsys_manual(&self, spec: &NoiseSpec) -> SimulatorResult<TsysManual> {
         let parameters = &spec.tsys;
-        if parameters.receiver_type > 0 {
-            tracing::info!("User has requested Double Sideband Receiver");
-        } else if parameters.receiver_type < 0 {
-            tracing::info!("User has not set Rx type, using 2SB");
-        }
-        if parameters.sensitivity > 0.0 {
-            tracing::info!(
-                "adding noise with the sensitivity constant of {}",
-                parameters.sensitivity as f32
-            );
-        } else {
-            tracing::info!("adding noise with the sensitivity constant of 1/sqrt(2)");
-        }
-        if spec.water_vapour_mm > LARGEST_WATER_VAPOUR_MM {
-            return Err(SimulatorError::refused(format!(
-                "Caught exception:  you input PWV={}mm. The most common reason for this error \
-                 is forgetting to set units, which default to meters",
-                spec.water_vapour_mm
-            )));
-        }
-        if let Some(table) = calibration_table_root(&spec.table) {
-            return Err(SimulatorError::not_yet_implemented(format!(
-                "setnoise(mode='tsys-manual', table=...), which writes the T calibration table \
-                 {table}.T.cal, is not yet implemented in casa-rs (simulation Phase 3)"
-            )));
-        }
+        check_tsys_spec(spec)?;
         let model = TsysManual::new(parameters);
         // CASA checks the zenith Tsys at the centre of the first window.
         let window = self
@@ -241,7 +265,8 @@ impl Simulator {
     ///   a scan without all four correlations (CASA's `JonesGenLin` raises);
     ///   or a noise term applied 2²⁴ times.
     /// - A scan in a spectral window a gain or leakage term has no solution
-    ///   for, which CASA leaves uncorrupted: not yet implemented.
+    ///   for, which CASA leaves uncorrupted, or one defined after a
+    ///   `tsys-atm` term was set: not yet implemented.
     pub fn corrupt(&mut self) -> SimulatorResult<()> {
         if self.noise_terms.is_empty() && self.jones_terms.is_empty() {
             return Ok(());
@@ -254,6 +279,7 @@ impl Simulator {
             .map(|source| self.jones_term(source))
             .collect::<SimulatorResult<Vec<_>>>()?;
         self.check_jones_coverage(&terms)?;
+        self.check_noise_coverage()?;
         if self
             .noise_terms
             .iter()
@@ -267,7 +293,7 @@ impl Simulator {
         let applications = self.noise_terms.iter_mut().map(|term| {
             let application = NoiseApplication {
                 seed: term.seed,
-                level: term.level,
+                level: term.level.clone(),
                 ordinal: term.applications,
             };
             term.applications += 1;
@@ -316,6 +342,30 @@ impl Simulator {
         Ok(())
     }
 
+    /// Refuse a scan observed so far in a spectral window defined after a
+    /// `tsys-atm` term was set: as CASA's corruptor, the term built its
+    /// atmosphere for the windows defined then.
+    fn check_noise_coverage(&self) -> SimulatorResult<()> {
+        for term in &self.noise_terms {
+            let NoiseLevel::TsysAtm(model) = &term.level else {
+                continue;
+            };
+            if let Some(scan) = self
+                .scans
+                .iter()
+                .find(|scan| !model.covers(scan.spectral_window_id))
+            {
+                return Err(SimulatorError::not_yet_implemented(format!(
+                    "corrupt of spectral window {}, defined after a setnoise(mode='tsys-atm') \
+                     term was set, is not yet implemented in casa-rs (simulation Phase 4): \
+                     the term has no atmosphere for it",
+                    self.spectral_windows[scan.spectral_window_id].name
+                )));
+            }
+        }
+        Ok(())
+    }
+
     /// `sm.reset()`: remove every noise, gain and leakage term.
     /// Corruptions already applied, and the seed, stay.
     pub fn reset(&mut self) {
@@ -352,6 +402,40 @@ impl Simulator {
         }
         Ok(())
     }
+}
+
+/// The checks, and log lines, `setnoise` makes of both Tsys modes'
+/// arguments before it builds the model.
+fn check_tsys_spec(spec: &NoiseSpec) -> SimulatorResult<()> {
+    let parameters = &spec.tsys;
+    if parameters.receiver_type > 0 {
+        tracing::info!("User has requested Double Sideband Receiver");
+    } else if parameters.receiver_type < 0 {
+        tracing::info!("User has not set Rx type, using 2SB");
+    }
+    if parameters.sensitivity > 0.0 {
+        tracing::info!(
+            "adding noise with the sensitivity constant of {}",
+            parameters.sensitivity as f32
+        );
+    } else {
+        tracing::info!("adding noise with the sensitivity constant of 1/sqrt(2)");
+    }
+    if spec.water_vapour_mm > LARGEST_WATER_VAPOUR_MM {
+        return Err(SimulatorError::refused(format!(
+            "Caught exception:  you input PWV={}mm. The most common reason for this error is \
+             forgetting to set units, which default to meters",
+            spec.water_vapour_mm
+        )));
+    }
+    if let Some(table) = calibration_table_root(&spec.table) {
+        return Err(SimulatorError::not_yet_implemented(format!(
+            "setnoise(mode='{}', table=...), which writes the T calibration table {table}.T.cal, \
+             is not yet implemented in casa-rs (simulation Phase 3)",
+            spec.mode
+        )));
+    }
+    Ok(())
 }
 
 /// The root of the calibration table `setnoise` writes for `table`, as
