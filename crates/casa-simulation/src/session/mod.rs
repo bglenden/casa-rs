@@ -60,7 +60,7 @@ use casa_imaging_operator::PaddingFactor;
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::{EpochRef, MEpoch, MeasFrame, MeasuresProvider};
 
-use crate::corrupt::jones::JonesTerm;
+use crate::corrupt::jones::HeldTerm;
 use crate::predict::SingleDishKernel;
 use crate::write;
 use array::{Antenna, ArrayConfig};
@@ -148,7 +148,7 @@ pub struct Simulator {
     noise_terms: Vec<NoiseTerm>,
     /// The antenna-based terms `setgain` and `setleakage` set, in the order
     /// they were set, until `reset`.
-    jones_terms: Vec<Arc<JonesTerm>>,
+    jones_terms: Vec<Arc<HeldTerm>>,
     /// `predict`'s `GridFT` grid padding (`setoptions`).
     padding: PaddingFactor,
     /// `setoptions(ftmachine='wproject', wprojplanes=…)`: the planes

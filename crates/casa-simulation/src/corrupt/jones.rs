@@ -60,7 +60,10 @@
 //! - CASA simulates leakage for the first two spectral windows only and
 //!   leaves later windows uncorrupted; casa-rs simulates every window.
 
+use std::ops::Deref;
+
 use casa_fft::RealFft2;
+use casa_imaging_runtime::Reservation;
 use casa_numerics::cell_noise::philox4x32_10;
 use num_complex::{Complex32, Complex64};
 
@@ -106,6 +109,17 @@ pub(crate) struct JonesTerm {
 }
 
 impl JonesTerm {
+    /// Heap bytes the term keeps.
+    pub(crate) fn bytes(&self) -> u64 {
+        self.solutions.capacity() as u64 * WINDOW_BYTES
+            + self
+                .solutions
+                .iter()
+                .map(|times| times.capacity() as u64 * SOLUTION_BYTES)
+                .sum::<u64>()
+            + self.values.capacity() as u64 * VALUE_BYTES
+    }
+
     /// Whether the term has a solution in spectral window `window`: CASA
     /// does not corrupt a window it has none for.
     pub(crate) fn covers(&self, window: usize) -> bool {
@@ -162,7 +176,8 @@ impl JonesTerm {
             }
             JonesKind::Leakage => {
                 let position = |pair: [usize; 2]| receptors.iter().position(|&r| r == pair);
-                // `corrupt` refuses leakage on data without the cross hands.
+                // `corrupt` refuses leakage on data without all four
+                // correlations.
                 let (Some(xx), Some(xy), Some(yx), Some(yy)) = (
                     position([0, 0]),
                     position([0, 1]),
@@ -181,6 +196,103 @@ impl JonesTerm {
     }
 }
 
+/// A term with the memory admitted for what it keeps. The session's terms
+/// and the corruptions recorded with them share it, so the charge lasts as
+/// long as the term does (#890 review).
+#[derive(Debug)]
+pub(crate) struct HeldTerm {
+    term: JonesTerm,
+    _reservation: Reservation,
+}
+
+impl HeldTerm {
+    /// `term`, holding `reservation`, which covers what it keeps.
+    pub(crate) fn new(term: JonesTerm, reservation: Reservation) -> Self {
+        debug_assert!(
+            term.bytes() <= reservation.memory(),
+            "a term keeps at most what was admitted for it"
+        );
+        Self {
+            term,
+            _reservation: reservation,
+        }
+    }
+}
+
+impl Deref for HeldTerm {
+    type Target = JonesTerm;
+
+    fn deref(&self) -> &JonesTerm {
+        &self.term
+    }
+}
+
+/// Heap bytes of a window's vector of solutions.
+const WINDOW_BYTES: u64 = size_of::<Vec<(f64, u32)>>() as u64;
+/// Heap bytes of a solution (time, block).
+const SOLUTION_BYTES: u64 = size_of::<(f64, u32)>() as u64;
+/// Heap bytes of an antenna's receptors' values in a block.
+const VALUE_BYTES: u64 = size_of::<[Complex32; 2]>() as u64;
+
+/// The memory a term is admitted for before it is formed: what the term
+/// keeps, and what forming it holds beside that until it is formed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct TermBytes {
+    pub(crate) kept: u64,
+    pub(crate) forming: u64,
+}
+
+impl TermBytes {
+    /// [`fbm_gains`] for chunks counted `per_window` on `slots` slots: it
+    /// keeps the solutions and a value per slot and antenna; forming them
+    /// holds the chunks, the screens' transform (FFTW's plans, the plane it
+    /// plans on, and the spectrum) and an antenna's screens: both
+    /// receptors' gains, and a receptor's amplitude and phase with the
+    /// phase's samples (32 bytes a slot).
+    pub(crate) fn fbm(per_window: &[usize], slots: usize, antennas: usize) -> Self {
+        let spectrum = slots / 2 + 1;
+        let transform = if slots >= MINIMUM_SCREEN_SLOTS {
+            casa_fft::plan_pair_bytes(1) as u64
+                + casa_fft::planning_bytes::<f64>(spectrum)
+                + (spectrum * size_of::<Complex64>()) as u64
+        } else {
+            0
+        };
+        Self {
+            kept: solutions_bytes(per_window) + (slots * antennas) as u64 * VALUE_BYTES,
+            forming: solutions_bytes(per_window) + transform + 32 * slots as u64,
+        }
+    }
+
+    /// [`random_gains`] and [`leakages`] for chunks counted `per_window`:
+    /// the chunks become the solutions, and each has a value per antenna.
+    pub(crate) fn per_chunk(per_window: &[usize], antennas: usize) -> Self {
+        let chunks: usize = per_window.iter().sum();
+        Self {
+            kept: solutions_bytes(per_window) + (chunks * antennas) as u64 * VALUE_BYTES,
+            forming: 0,
+        }
+    }
+}
+
+/// Heap bytes of the solutions of chunks counted `per_window`, in vectors
+/// sized to them ([`Chunks::with_capacity`]).
+fn solutions_bytes(per_window: &[usize]) -> u64 {
+    per_window.len() as u64 * WINDOW_BYTES
+        + per_window.iter().sum::<usize>() as u64 * SOLUTION_BYTES
+}
+
+/// The slots of the screens spanning chunk times `span`
+/// (`CalCorruptor::setEvenSlots`).
+pub(crate) fn screen_slots(span: Option<[f64; 2]>) -> usize {
+    let [start, stop] = span.unwrap_or([0.0, 0.0]);
+    (((stop - start) / SCREEN_SLOT_S + 1.0) as usize).max(1)
+}
+
+/// The fewest slots a screen has a spectrum for; on fewer CASA's screen is
+/// flat.
+const MINIMUM_SCREEN_SLOTS: usize = 4;
+
 /// The solution chunks of a term: per spectral window, (time, chunk) in
 /// time order, and how many chunks there are.
 #[derive(Debug, Clone, Default)]
@@ -191,6 +303,18 @@ pub(crate) struct Chunks {
 }
 
 impl Chunks {
+    /// No chunks yet, with room for those counted `per_window`, so the term
+    /// that keeps them as its solutions keeps no spare room.
+    pub(crate) fn with_capacity(per_window: &[usize]) -> Self {
+        Self {
+            by_window: per_window
+                .iter()
+                .map(|&count| Vec::with_capacity(count))
+                .collect(),
+            count: 0,
+        }
+    }
+
     /// Add a chunk at `time_s` in `window`; chunks are added in time order
     /// within a window.
     pub(crate) fn push(&mut self, window: usize, time_s: f64) -> u32 {
@@ -221,10 +345,9 @@ impl Chunks {
 /// [`MAXIMUM_GAIN_SCALE`]) for `antennas` antennas, with the solution
 /// `chunks` (one per integration), drawn from `seed`'s streams.
 pub(crate) fn fbm_gains(seed: i32, scale: f64, antennas: usize, chunks: Chunks) -> JonesTerm {
-    let [start, stop] = chunks.span().unwrap_or([0.0, 0.0]);
-    // `CalCorruptor::setEvenSlots`.
-    let slots = ((stop - start) / SCREEN_SLOT_S + 1.0) as usize;
-    let slots = slots.max(1);
+    let span = chunks.span();
+    let start = span.map_or(0.0, |[start, _]| start);
+    let slots = screen_slots(span);
     let mut fft = ScreenFft::new(slots);
     // `[slot · antennas + antenna]`.
     let mut screens = vec![[Complex32::new(1.0, 0.0); 2]; slots * antennas];
@@ -371,7 +494,7 @@ struct ScreenFft {
 
 impl ScreenFft {
     fn new(slots: usize) -> Self {
-        let fft = (slots >= 4).then(|| {
+        let fft = (slots >= MINIMUM_SCREEN_SLOTS).then(|| {
             RealFft2::with_threads([1, slots], 1)
                 .expect("a one-row real transform")
                 .with_estimated_plan()

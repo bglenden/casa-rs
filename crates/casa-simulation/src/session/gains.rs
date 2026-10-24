@@ -6,14 +6,27 @@
 //! observed so far, with the seed in force (`sm.setseed`), and adds it to
 //! the terms every later `corrupt` applies, until `reset`. The simulation
 //! and its differences from CASA are the `corrupt::jones` module's.
+//!
+//! A term grows with the integrations observed, so each call counts them
+//! first, admits what the term keeps and what forming it holds against the
+//! session's resource policy, and only then forms it; the term keeps its
+//! share for as long as it, or a corruption recorded with it, lives.
 
 use std::sync::Arc;
 
+use casa_imaging_runtime::{Demand, Reservation, admit};
 use num_complex::Complex64;
 
 use super::Simulator;
 use super::error::{SimulatorError, SimulatorResult};
-use crate::corrupt::jones::{Chunks, MAXIMUM_GAIN_SCALE, fbm_gains, leakages, random_gains};
+use crate::corrupt::jones::{
+    Chunks, HeldTerm, JonesTerm, MAXIMUM_GAIN_SCALE, TermBytes, fbm_gains, leakages, random_gains,
+    screen_slots,
+};
+
+/// The phase a gain or leakage term is admitted as, at `setgain` or
+/// `setleakage`: what it keeps for the session, and what forming it holds.
+const JONES_TERM_PHASE: &str = "a simulated gain or leakage term";
 
 /// The arguments of `sm.setgain`.
 #[derive(Debug, Clone, PartialEq)]
@@ -69,6 +82,8 @@ impl Simulator {
     /// - A `table` to write, or a session `openfromms` opened: not yet
     ///   implemented.
     /// - No rows observed yet, or no `amplitude`: refused.
+    /// - The term's memory does not fit the session's resource policy: an
+    ///   admission error, before anything is formed.
     pub fn set_gain(&mut self, spec: &GainSpec) -> SimulatorResult<()> {
         let random = match spec.mode.as_str() {
             "fbm" => false,
@@ -88,8 +103,16 @@ impl Simulator {
         tracing::info!("Gain corruption with complex RMS amplitude = {camp}");
         self.require_rows()?;
         tracing::info!("Creating G JONES Calibration structure for data corruption.");
-        let chunks = self.integration_chunks();
         let antennas = self.antennas.len();
+        let (per_window, span) = self.integration_counts();
+        let bytes = if random {
+            TermBytes::per_chunk(&per_window, antennas)
+        } else {
+            TermBytes::fbm(&per_window, screen_slots(span), antennas)
+        };
+        let reservation = self.admit_term(bytes)?;
+        let chunks = self.integration_chunks(&per_window);
+        drop(per_window);
         let term = if random {
             random_gains(self.seed, camp, antennas, chunks)
         } else {
@@ -100,8 +123,30 @@ impl Simulator {
             }
             fbm_gains(self.seed, scale, antennas, chunks)
         };
-        self.jones_terms.push(Arc::new(term));
+        self.hold_term(term, reservation, bytes);
         Ok(())
+    }
+
+    /// Admit a term's memory before it is formed.
+    fn admit_term(&self, bytes: TermBytes) -> SimulatorResult<Reservation> {
+        let resources = &self.options.resources;
+        admit(
+            resources.host(),
+            resources.policy(),
+            &Demand {
+                phase: JONES_TERM_PHASE,
+                memory: bytes.kept + bytes.forming,
+            },
+        )
+        .map_err(SimulatorError::admission)
+    }
+
+    /// Add `term` to the terms `corrupt` applies, keeping of `reservation`
+    /// what it keeps, for as long as the term lives.
+    fn hold_term(&mut self, term: JonesTerm, mut reservation: Reservation, bytes: TermBytes) {
+        reservation.retain(bytes.kept);
+        self.jones_terms
+            .push(Arc::new(HeldTerm::new(term, reservation)));
     }
 
     /// `sm.setleakage(...)`: simulate polarization leakages over the rows
@@ -111,7 +156,8 @@ impl Simulator {
     ///
     /// A `table` to write, or a session `openfromms` opened: not yet
     /// implemented. No rows observed yet, or no `amplitude` or `offset`:
-    /// refused.
+    /// refused. The term's memory does not fit the session's resource
+    /// policy: an admission error, before anything is formed.
     pub fn set_leakage(&mut self, spec: &LeakageSpec) -> SimulatorResult<()> {
         self.refuse_after_openfromms("setleakage")?;
         Self::refuse_table("setleakage", &spec.table)?;
@@ -119,9 +165,17 @@ impl Simulator {
         let offset = pair(&spec.offset, "setleakage's offset")?;
         self.require_rows()?;
         tracing::info!("Creating D Calibration structure for data corruption.");
-        let chunks = self.window_chunks();
-        let term = leakages(self.seed, (camp, offset), self.antennas.len(), chunks);
-        self.jones_terms.push(Arc::new(term));
+        let antennas = self.antennas.len();
+        let first = self.first_times();
+        let per_window: Vec<usize> = first
+            .iter()
+            .map(|time| usize::from(time.is_some()))
+            .collect();
+        let bytes = TermBytes::per_chunk(&per_window, antennas);
+        let reservation = self.admit_term(bytes)?;
+        let chunks = window_chunks(&first, &per_window);
+        let term = leakages(self.seed, (camp, offset), antennas, chunks);
+        self.hold_term(term, reservation, bytes);
         Ok(())
     }
 
@@ -149,10 +203,35 @@ impl Simulator {
         Ok(())
     }
 
+    /// The integrations of the scans observed so far in each spectral
+    /// window, and the span of their times: what a gain term's chunks
+    /// number, counted before they are formed.
+    fn integration_counts(&self) -> (Vec<usize>, Option<[f64; 2]>) {
+        let mut per_window = Vec::new();
+        let mut span: Option<[f64; 2]> = None;
+        for scan in &self.scans {
+            let Some(planned) = scan.planned() else {
+                continue;
+            };
+            let window = scan.spectral_window_id;
+            if per_window.len() <= window {
+                per_window.resize(window + 1, 0);
+            }
+            for time_s in planned.integration_times_s() {
+                per_window[window] += 1;
+                span = Some(span.map_or([time_s, time_s], |[low, high]| {
+                    [low.min(time_s), high.max(time_s)]
+                }));
+            }
+        }
+        (per_window, span)
+    }
+
     /// The solution chunks of a gain term: one per integration of each scan
-    /// observed so far, at its TIME, in its spectral window.
-    fn integration_chunks(&self) -> Chunks {
-        let mut chunks = Chunks::default();
+    /// observed so far, at its TIME, in its spectral window, counted
+    /// `per_window` ([`Self::integration_counts`]).
+    fn integration_chunks(&self, per_window: &[usize]) -> Chunks {
+        let mut chunks = Chunks::with_capacity(per_window);
         for scan in &self.scans {
             let Some(planned) = scan.planned() else {
                 continue;
@@ -161,14 +240,20 @@ impl Simulator {
                 chunks.push(scan.spectral_window_id, time_s);
             }
         }
-        sorted(chunks)
+        // Each window's in time order, as `corrupt` looks them up; equal
+        // times keep the order they were observed in. Sorting in place
+        // holds nothing beside the chunks.
+        for times in &mut chunks.by_window {
+            times.sort_unstable_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+        }
+        chunks
     }
 
-    /// The solution chunks of a leakage term: one per spectral window
-    /// observed so far, at its earliest TIME. CASA's infinite solution
-    /// interval spans every scan and field of a window: its table has one
-    /// solution per window and antenna.
-    fn window_chunks(&self) -> Chunks {
+    /// Each spectral window's earliest TIME among the scans observed so
+    /// far, if any. CASA's infinite leakage solution interval spans every
+    /// scan and field of a window: its table has one solution per window
+    /// and antenna.
+    fn first_times(&self) -> Vec<Option<f64>> {
         let mut first: Vec<Option<f64>> = Vec::new();
         for scan in &self.scans {
             let Some(time_s) = scan
@@ -183,20 +268,18 @@ impl Simulator {
             }
             first[window] = Some(first[window].map_or(time_s, |earlier| earlier.min(time_s)));
         }
-        let mut chunks = Chunks::default();
-        for (window, time_s) in first.into_iter().enumerate() {
-            if let Some(time_s) = time_s {
-                chunks.push(window, time_s);
-            }
-        }
-        chunks
+        first
     }
 }
 
-/// `chunks` with each window's in time order, as `corrupt` looks them up.
-fn sorted(mut chunks: Chunks) -> Chunks {
-    for times in &mut chunks.by_window {
-        times.sort_by(|a, b| a.0.total_cmp(&b.0));
+/// The solution chunks of a leakage term: one per spectral window observed
+/// so far, at its earliest TIME (`first`), counted `per_window`.
+fn window_chunks(first: &[Option<f64>], per_window: &[usize]) -> Chunks {
+    let mut chunks = Chunks::with_capacity(per_window);
+    for (window, time_s) in first.iter().enumerate() {
+        if let Some(time_s) = *time_s {
+            chunks.push(window, time_s);
+        }
     }
     chunks
 }
