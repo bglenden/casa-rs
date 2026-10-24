@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["AtmosphereError","AtmosphereType"],"mod":["refractivity"],"struct":["AtmosphereProfile","Layer","ProfileParameters","SpectralGrid","SpectralWindow"]};

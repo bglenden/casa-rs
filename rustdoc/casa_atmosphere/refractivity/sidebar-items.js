@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["Species"],"fn":["density_refractivity","h2o_refractivity","o2_refractivity","specific_refractivity"]};
