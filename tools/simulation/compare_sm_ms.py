@@ -58,7 +58,8 @@ oracle's manifest, the comparison opens `<casa>/<name>.ms` and
 - **calibration tables**: a scenario's `tables`, written by `setgain` or
   `setleakage` beside each side's MS, must agree in what is not drawn
   (`table_differences`): keywords and subtype, columns, rows, TIME,
-  the identifying columns, and CPARAM's shapes and FLAG.
+  the identifying columns, CPARAM's shapes and FLAG, and the
+  SPECTRAL_WINDOW subtable's channels.
 
 Data managers are not compared; the plan lets them differ. A scenario's
 `ignore` entries (`TABLE.COLUMN`) are skipped. The exit status is 1 if any
@@ -833,7 +834,8 @@ TABLE_ID_COLUMNS = (
 
 def calibration_table(tb, path: str) -> dict:
     """A calibration table's keywords, columns, TIME and identifying
-    columns, and its CPARAM and FLAG cell shapes."""
+    columns, its CPARAM and FLAG cell shapes, and its SPECTRAL_WINDOW
+    channels."""
     tb.open(path)
     try:
         keywords = {
@@ -852,9 +854,23 @@ def calibration_table(tb, path: str) -> dict:
         }
         for column in TABLE_ID_COLUMNS:
             found[column] = np.asarray(tb.getcol(column)) if rows else np.zeros(0)
-        return found
     finally:
         tb.close()
+    # CASA reduces each window to one channel (`makeSpwSingleChan`), which
+    # its `applycal` needs.
+    tb.open(os.path.join(path, "SPECTRAL_WINDOW"))
+    try:
+        found["windows"] = [
+            (
+                int(tb.getcell("NUM_CHAN", row)),
+                [float(value) for value in tb.getcell("CHAN_FREQ", row)],
+                [float(value) for value in tb.getcell("CHAN_WIDTH", row)],
+            )
+            for row in range(tb.nrows())
+        ]
+    finally:
+        tb.close()
+    return found
 
 
 def table_differences(casa: dict, casars: dict) -> list[str]:
@@ -876,6 +892,8 @@ def table_differences(casa: dict, casars: dict) -> list[str]:
     for key in ("shapes", "flags"):
         if casa[key] != casars[key]:
             found.append(f"{key} differ")
+    if casa.get("windows") != casars.get("windows"):
+        found.append(f"SPECTRAL_WINDOW {casa.get('windows')} against {casars.get('windows')}")
     return found
 
 

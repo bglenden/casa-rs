@@ -16,8 +16,8 @@ use casa_tables::{Table, TableOptions};
 use casa_types::measures::{EpochRef, MEpoch};
 use casa_types::{ArrayValue, Complex32, ScalarValue, Value};
 use predict_support::{
-    ANTENNAS, CENTRE_RAD, REFERENCE_MJD, bits, data, read_main, resources, scan, session,
-    write_point_list,
+    ANTENNAS, CENTRE_RAD, CHANNEL_HZ, CHANNELS, FREQUENCY_HZ, REFERENCE_MJD, bits, data, read_main,
+    resources, scan, session, write_point_list,
 };
 
 fn gain(table: &Path) -> GainSpec {
@@ -143,6 +143,25 @@ fn the_gain_table_holds_the_gains_corrupt_applied() {
     let summary = casa_calibration::summarize_table(&table).expect("casa-calibration reads it");
     assert_eq!(summary.table_subtype, "G Jones");
     assert!(summary.supported_for_v1_apply(), "{:?}", summary.issues);
+    // Its window is one channel, as CASA's `makeSpwSingleChan` leaves it:
+    // the middle channel's frequency and the whole band's width.
+    let windows =
+        Table::open(TableOptions::new(table.join("SPECTRAL_WINDOW"))).expect("SPECTRAL_WINDOW");
+    let window = &windows.rows().expect("the rows")[0];
+    let floats = |name: &str| -> Vec<f64> {
+        match window.get(name) {
+            Some(Value::Array(ArrayValue::Float64(values))) => values.iter().copied().collect(),
+            other => panic!("{name}: {other:?}"),
+        }
+    };
+    assert_eq!(
+        window.get("NUM_CHAN"),
+        Some(&Value::Scalar(ScalarValue::Int32(1)))
+    );
+    let band = CHANNELS as f64 * CHANNEL_HZ;
+    assert_eq!(floats("CHAN_FREQ"), vec![FREQUENCY_HZ + 2.0 * CHANNEL_HZ]);
+    assert_eq!(floats("CHAN_WIDTH"), vec![band]);
+    assert_eq!(floats("RESOLUTION"), vec![band]);
 }
 
 /// `setleakage(table=…)` writes a `D Jones` table of one solution per
