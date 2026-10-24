@@ -13,8 +13,11 @@ and the VLA in winter) and fifteen bands from 22 GHz to 1 THz it reads, per
 channel, the opacities, phase delays, path lengths and sky temperatures the
 `at` tool gives, computes the same with casa-atmosphere (the example reads
 this script's configuration on stdin), and prints the largest relative
-difference of each quantity. It fails if a sky temperature or opacity
-differs by more than the plan's acceptance, 1e-6 relative.
+difference of each quantity. It fails if either side is missing a
+profile, window, channel or quantity, if any value or difference is not
+finite, or if a sky temperature or opacity differs by more than the plan's
+acceptance, 1e-6 relative (`compare`; `test_at_tool_check.py` feeds it
+fault cases).
 """
 
 from __future__ import annotations
@@ -27,6 +30,15 @@ import sys
 
 ACCEPTANCE = 1e-6
 ACCEPTED = ("dry", "wet", "tebb", "tebb_1mm", "tebb_set", "trj", "average_tebb", "average_trj")
+
+# Every quantity both sides must give: one value per channel, and one per
+# window.
+CHANNEL_QUANTITIES = (
+    "freq_hz", "dry", "dry_cont", "o2", "o3", "co", "n2o", "wet", "h2o_lines", "h2o_cont", "tebb", "tebb_1mm",
+    "trj", "disp_phase", "nondisp_phase", "nondisp_dry_phase", "disp_path", "nondisp_path", "nondisp_dry_path",
+    "o2_path", "o3_path", "co_path", "n2o_path", "tebb_set",
+)
+WINDOW_QUANTITIES = ("average_tebb", "average_trj")
 
 PROFILES = [
     {"name": f"chajnantor type {t}", "altitude_m": 5000.0, "temperature_k": 270.0, "pressure_mbar": 560.0,
@@ -138,6 +150,77 @@ def relative(rust: float, casa: float) -> float:
     return abs(rust - casa) / abs(casa)
 
 
+def finite_number(x) -> bool:
+    return isinstance(x, (int, float)) and not isinstance(x, bool) and math.isfinite(x)
+
+
+def compare(config: dict, casa_profiles: list, rust: dict) -> tuple[dict, list[str]]:
+    """The worst relative difference of each quantity, and every problem.
+
+    A problem is anything that would make a success meaningless or a
+    failure: a profile, window, channel or quantity missing from either
+    side (or extra), a value or difference that is not finite, or an
+    accepted quantity beyond ACCEPTANCE. The check passes only with none.
+    """
+    worst: dict[str, tuple[float, str]] = {}
+    problems: list[str] = []
+    profiles, bands = config["profiles"], config["bands"]
+    ours_profiles = rust.get("profiles") if isinstance(rust, dict) else None
+    if not isinstance(ours_profiles, list) or len(ours_profiles) != len(profiles):
+        problems.append(f"casa-rs gave {len(ours_profiles) if isinstance(ours_profiles, list) else 'no'} "
+                        f"profiles for {len(profiles)}")
+        return worst, problems
+    if len(casa_profiles) != len(profiles):
+        problems.append(f"the at tool gave {len(casa_profiles)} profiles for {len(profiles)}")
+        return worst, problems
+
+    def pair(key: str, ours, casa, place: str) -> None:
+        if not finite_number(ours) or not finite_number(casa):
+            problems.append(f"{place} {key}: not a finite pair (casa-rs {ours!r}, at tool {casa!r})")
+            return
+        d = relative(ours, casa)
+        if not math.isfinite(d):
+            problems.append(f"{place} {key}: difference not finite (casa-rs {ours!r}, at tool {casa!r})")
+            return
+        if key not in worst or d > worst[key][0]:
+            worst[key] = (d, place)
+
+    def windows_of(side: str, result, name: str):
+        windows = result.get("windows") if isinstance(result, dict) else None
+        if isinstance(windows, list) and len(windows) == len(bands) and all(isinstance(w, dict) for w in windows):
+            return windows
+        count = len(windows) if isinstance(windows, list) else "no"
+        problems.append(f"{name}: {side} gave {count} windows for {len(bands)}")
+        return None
+
+    for profile, ours, casa in zip(profiles, ours_profiles, casa_profiles):
+        name = profile["name"]
+        ours_windows, casa_windows = windows_of("casa-rs", ours, name), windows_of("the at tool", casa, name)
+        if ours_windows is None or casa_windows is None:
+            continue
+        pair("ground_water_m", ours.get("ground_water_m"), casa.get("ground_water_m"), name)
+        for band, rw, cw in zip(bands, ours_windows, casa_windows):
+            place = f"{name} band {band['centre_ghz']} GHz"
+            for key in CHANNEL_QUANTITIES:
+                rv, cv = rw.get(key), cw.get(key)
+                lengths = [len(v) if isinstance(v, list) else None for v in (rv, cv)]
+                if lengths != [band["channels"], band["channels"]]:
+                    problems.append(f"{place} {key}: casa-rs has {lengths[0]} and the at tool {lengths[1]} "
+                                    f"channels for {band['channels']}")
+                    continue
+                for c, (r, a) in enumerate(zip(rv, cv)):
+                    pair(key, r, a, f"{place} channel {c}")
+            for key in WINDOW_QUANTITIES:
+                pair(key, rw.get(key), cw.get(key), place)
+    for key in (*CHANNEL_QUANTITIES, *WINDOW_QUANTITIES, "ground_water_m"):
+        if key not in worst:
+            problems.append(f"{key}: no value compared")
+    for key in ACCEPTED:
+        if key in worst and worst[key][0] > ACCEPTANCE:
+            problems.append(f"{key}: {worst[key][0]:.3e} at {worst[key][1]} exceeds {ACCEPTANCE:g}")
+    return worst, problems
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--rust", required=True, help="the at_tool_quantities example binary")
@@ -150,34 +233,22 @@ def main() -> int:
     config = {"profiles": PROFILES, "bands": bands, "set": SET}
     rust = json.loads(subprocess.run([args.rust], input=json.dumps(config), capture_output=True, text=True,
                                      check=True).stdout)
-    worst: dict[str, tuple[float, str]] = {}
-    report = []
-    for profile, ours in zip(PROFILES, rust["profiles"]):
-        casa = at_tool(profile, bands)
-        report.append({"profile": profile["name"], "casa": casa, "rust": ours})
-        diff = relative(ours["ground_water_m"], casa["ground_water_m"])
-        worst["ground_water_m"] = max(worst.get("ground_water_m", (0.0, "")), (diff, profile["name"]))
-        for s, (cw, rw) in enumerate(zip(casa["windows"], ours["windows"])):
-            for key, cv in cw.items():
-                rv = rw[key]
-                pairs = zip(rv, cv) if isinstance(cv, list) else [(rv, cv)]
-                for c, (r, a) in enumerate(pairs):
-                    d = relative(r, a)
-                    place = f"{profile['name']} band {BANDS[s][0]} GHz channel {c}"
-                    if key not in worst or d > worst[key][0]:
-                        worst[key] = (d, place)
-    failed = False
+    casa = [at_tool(profile, bands) for profile in PROFILES]
+    worst, problems = compare(config, casa, rust)
     print(f"{'quantity':20s} {'max relative difference':>24s}  where")
     for key, (d, place) in worst.items():
-        mark = ""
-        if key in ACCEPTED and d > ACCEPTANCE:
-            mark = "  FAIL"
-            failed = True
+        mark = "  FAIL" if key in ACCEPTED and d > ACCEPTANCE else ""
         print(f"{key:20s} {d:24.3e}  {place}{mark}")
     if args.report:
         with open(args.report, "w") as handle:
-            json.dump({"worst": worst, "report": report}, handle)
-    return 1 if failed else 0
+            json.dump({"worst": worst, "problems": problems, "casa": casa, "rust": rust}, handle)
+    for problem in problems[:50]:
+        print(f"at_tool_check: {problem}", file=sys.stderr)
+    if problems:
+        print(f"at_tool_check: FAILED with {len(problems)} problems", file=sys.stderr)
+        return 1
+    print("at_tool_check: every quantity present, finite and, where gated, within 1e-6")
+    return 0
 
 
 if __name__ == "__main__":

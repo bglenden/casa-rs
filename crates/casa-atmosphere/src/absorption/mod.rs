@@ -373,10 +373,11 @@ impl AbsorptionProfile<ChannelAbsorption> {
     /// The full profile of `atmosphere` over `grid`, computed serially.
     #[must_use]
     pub fn new(atmosphere: AtmosphereProfile, grid: SpectralGrid) -> Self {
-        let channels = grid
-            .frequencies_hz()
-            .map(|frequency| channel_absorption(&atmosphere, frequency))
-            .collect();
+        let mut channels = Vec::with_capacity(grid.total_channels());
+        channels.extend(
+            grid.frequencies_hz()
+                .map(|frequency| channel_absorption(&atmosphere, frequency)),
+        );
         Self::assemble(atmosphere, grid, channels)
     }
 }
@@ -385,10 +386,11 @@ impl AbsorptionProfile<ChannelTotals> {
     /// The compact profile of `atmosphere` over `grid`, computed serially.
     #[must_use]
     pub fn new_totals(atmosphere: AtmosphereProfile, grid: SpectralGrid) -> Self {
-        let channels = grid
-            .frequencies_hz()
-            .map(|frequency| channel_totals(&atmosphere, frequency))
-            .collect();
+        let mut channels = Vec::with_capacity(grid.total_channels());
+        channels.extend(
+            grid.frequencies_hz()
+                .map(|frequency| channel_totals(&atmosphere, frequency)),
+        );
         Self::assemble(atmosphere, grid, channels)
     }
 }
@@ -397,6 +399,12 @@ impl<C: AbsorptionChannel> AbsorptionProfile<C> {
     /// A profile from channels computed elsewhere (for example in parallel
     /// with [`channel_absorption`] or [`channel_totals`]), one per grid
     /// channel in the grid's flat order.
+    ///
+    /// The profile keeps no spare capacity: the vector of channels (and the
+    /// grid's and atmosphere's vectors) are shrunk to their lengths, so the
+    /// profile keeps [`AbsorptionProfile::bytes`] however `channels` was
+    /// grown. Shrinking reallocates in place where the allocator can; give
+    /// an exactly sized vector to be sure of no transient copy.
     ///
     /// # Errors
     ///
@@ -434,7 +442,18 @@ impl<C: AbsorptionChannel> AbsorptionProfile<C> {
         Ok(Self::assemble(atmosphere, grid, channels))
     }
 
-    fn assemble(atmosphere: AtmosphereProfile, grid: SpectralGrid, channels: Vec<C>) -> Self {
+    /// The profile, keeping no spare vector capacity: what
+    /// [`AbsorptionProfile::bytes`] counts is then exactly what it keeps.
+    /// A channel's own layers are exactly sized already: the channel types
+    /// are only made by this module, with exact capacities.
+    fn assemble(
+        mut atmosphere: AtmosphereProfile,
+        mut grid: SpectralGrid,
+        mut channels: Vec<C>,
+    ) -> Self {
+        channels.shrink_to_fit();
+        grid.shrink_to_fit();
+        atmosphere.shrink_to_fit();
         let ground_water_column_m = atmosphere.ground_water_column_m();
         Self {
             atmosphere,
@@ -444,10 +463,15 @@ impl<C: AbsorptionChannel> AbsorptionProfile<C> {
         }
     }
 
-    /// The bytes a profile of this form keeps for `grid` and an atmosphere
-    /// of `layers` layers: its channels (exactly sized), the grid's
-    /// frequencies and windows and the atmosphere's layers. Building it
-    /// holds nothing more: each layer is formed in place.
+    /// The heap bytes a profile of this form keeps for `grid` and an
+    /// atmosphere of `layers` layers: the vector of channels and each
+    /// channel's layers, the grid's windows and channel frequencies, and the
+    /// atmosphere's layers. A profile keeps exactly this, whatever spare
+    /// capacity the vectors it was built from had (see
+    /// [`AbsorptionProfile::from_channels`]). Building with
+    /// [`AbsorptionProfile::new`] or [`AbsorptionProfile::new_totals`] holds
+    /// nothing more: the channels' vector is allocated once at its size and
+    /// each layer is formed in place. The `allocation` tests measure both.
     #[must_use]
     pub fn bytes(grid: &SpectralGrid, layers: usize) -> u64 {
         let channels = grid.total_channels() as u64;

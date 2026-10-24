@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 
 # Runs the tests of the imaging performance and evidence tools under
-# tools/perf/imager, and of the simulation oracle and benchmark tools under
-# tools/simulation, with pytest, which collects both the unittest and the
+# tools/perf/imager, of the simulation oracle and benchmark tools under
+# tools/simulation, and of the ATM oracle checker under tools/atmosphere,
+# with pytest, which collects both the unittest and the
 # pytest style files and imports perf_harness as a package. A tool whose
 # casa-rs inputs go away should fail here, not linger. Needs pytest and
 # numpy, scipy and matplotlib; astropy is optional (one FITS check skips
@@ -33,4 +34,4 @@ if ! "$python_bin" -c 'import pytest, numpy, scipy, matplotlib' 2>/dev/null; the
 fi
 
 PYTHONDONTWRITEBYTECODE=1 MPLBACKEND=Agg \
-  "$python_bin" -m pytest -q -p no:cacheprovider tools/perf/imager tools/simulation "$@"
+  "$python_bin" -m pytest -q -p no:cacheprovider tools/perf/imager tools/simulation tools/atmosphere "$@"
