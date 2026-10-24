@@ -296,7 +296,7 @@ const METHODS: &[Method] = &[
             param("spwmap", K::Ints, Ints(&[-1])),
             param("opacity", K::Float, Float(0.0)),
         ],
-        NotYetImplemented,
+        Implemented,
     ),
     method(
         "setgain",

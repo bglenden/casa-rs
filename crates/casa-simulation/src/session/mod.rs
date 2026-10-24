@@ -31,6 +31,7 @@
 //! Where CASA crashes, writes garbage or corrupts data, the session refuses
 //! or diverges, as recorded in `docs/CASA (C++) bugs.md`.
 
+mod apply;
 pub mod array;
 mod corruption;
 pub mod error;
@@ -48,6 +49,7 @@ pub mod spectral;
 #[cfg(test)]
 mod tests;
 
+pub use apply::ApplySpec;
 pub use corruption::{DEFAULT_SEED, NoiseSpec, TsysParameters};
 pub use gains::{GainSpec, LeakageSpec};
 pub use prediction::{PredictSpec, PredictionOptions, VoltagePatternSpec};

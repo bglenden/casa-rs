@@ -249,6 +249,11 @@ def run_scenario(
             # CASA writes the table under the oracle's output; the manifest
             # keeps its name, which the casa-rs driver writes under its own.
             kwargs["table"] = os.path.join(os.path.abspath(args.out), kwargs["table"])
+        if op == "setapply" and kwargs.get("table"):
+            # A table an earlier scenario's setgain or setleakage wrote under
+            # the oracle's output: both sides apply CASA's.
+            path = os.path.join(os.path.abspath(args.out), kwargs["table"])
+            kwargs["table"] = resolved["table"] = path
         resolved_calls.append((op, kwargs, resolved))
     sm = simulator()
     calls = []

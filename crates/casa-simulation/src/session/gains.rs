@@ -130,7 +130,7 @@ impl Simulator {
     /// tables `close` writes when it names one. CASA writes the table at
     /// once; casa-rs writes it at `close`, beside the MeasurementSet whose
     /// subtables it copies. `reset` does not remove it.
-    fn add_jones_term(&mut self, term: JonesTerm, table: Option<PathBuf>) {
+    pub(super) fn add_jones_term(&mut self, term: JonesTerm, table: Option<PathBuf>) {
         let term = Arc::new(term);
         if let Some(path) = table {
             tracing::info!("Writing calTable = {} at close", path.display());
@@ -141,7 +141,7 @@ impl Simulator {
 
     /// CASA's `create_corrupt` cannot size a term on an empty
     /// MeasurementSet.
-    fn require_rows(&self) -> SimulatorResult<()> {
+    pub(super) fn require_rows(&self) -> SimulatorResult<()> {
         if self.planned_rows() == 0 {
             return Err(SimulatorError::refused(
                 "Caught exception: Error in Simulator::create_corrupt: MSIter::construct - \
@@ -208,7 +208,7 @@ impl Simulator {
 
     /// Scan `scan`'s integrations, their TIMEs in order: as planned, or as
     /// the opened MeasurementSet has them.
-    fn integration_times_s(&self, scan: usize) -> Vec<f64> {
+    pub(super) fn integration_times_s(&self, scan: usize) -> Vec<f64> {
         if let Some(planned) = self.scans[scan].planned() {
             return planned.integration_times_s().collect();
         }
