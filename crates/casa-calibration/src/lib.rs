@@ -28,6 +28,7 @@ mod corrected_export;
 mod execute;
 mod fluxscale;
 mod gencal;
+mod lookup;
 mod managed_output;
 mod model;
 mod plan;
@@ -58,6 +59,7 @@ pub use fluxscale::{
     fluxscale,
 };
 pub use gencal::{GencalError, GencalReport, GencalRequest, GencalType, gencal};
+pub use lookup::{CalibrationTableLookup, ComplexSolution};
 pub use managed_output::{CalibrationTaskResult, ManagedCalibrationOutput};
 pub use model::{
     CalibrationColumnSummary, CalibrationIssueSeverity, CalibrationKeywordSummary,
