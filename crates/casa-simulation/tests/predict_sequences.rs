@@ -22,6 +22,7 @@ use std::path::{Path, PathBuf};
 use casa_components::{
     ComponentList, ComponentShape, Flux, SkyComponent, SpectralKind, SpectralModel,
 };
+use casa_imaging_model::CorrelationType;
 use casa_simulation::{
     CasaOutcome, NoiseSpec, ObserveManySpec, Pointing, PredictSpec, PredictionOptions, Simulator,
     SimulatorResult, VoltagePatternSpec,
@@ -30,9 +31,11 @@ use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::frequency::{FrequencyRef, MFrequency};
 use num_complex::Complex32;
 use predict_support::{
-    CENTRE_RAD, FREQUENCY_HZ, bits, cube_model, data, extended_model, predict_spec, read_main,
-    resources, scan, session,
+    CENTRE_RAD, FREQUENCY_HZ, Row, bits, cube_model, data, extended_model, predict_spec, read_main,
+    reference, resources, scan, session, write_point_list,
 };
+
+const XX_YY: [CorrelationType; 2] = [CorrelationType::LinearXx, CorrelationType::LinearYy];
 
 fn simple_noise(sigma_jy: f64) -> NoiseSpec {
     NoiseSpec {
@@ -276,34 +279,71 @@ fn predict_with_a_beam_refuses_pointings_moved_off_their_field() {
     sm.close().expect("close");
 }
 
-/// A pointing `observemany` moved off its field is predicted at its own
-/// phase centre: its DATA is that of a field at the moved direction, and the
-/// first pointing's is unchanged (#861 review: the prediction stage reused
-/// the first pointing's projection, at a normalized RMS of 1.1).
+/// A pointing `observemany` moved off its field is phased on its field, as
+/// CASA's `VisBuffer` phases it from FIELD's PHASE_DIR (#884): its DATA is
+/// the per-row reference's at the field, with its UVW, which are a field's
+/// at the moved direction, as `NewMSSimulator` computes them. A field there
+/// is phased there, and predicts other DATA.
 #[test]
-fn a_moved_pointing_is_predicted_at_its_own_phase_centre() {
-    moved_pointing_is_a_field_there(None);
+fn a_moved_pointing_is_phased_on_its_field() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let model = extended_model(directory.path(), "model.image");
+    let (pointed, field) = moved_and_field_there(directory.path(), &model, None);
+    let expected = reference(&pointed, &model, &XX_YY, None);
+    assert_eq!(
+        bits(&data(&pointed)),
+        bits(&expected),
+        "the moved pointing is phased on its field"
+    );
+    assert_ne!(
+        bits(&data(&pointed)),
+        bits(&data(&field)),
+        "a field at the moved direction is phased there"
+    );
 }
 
 /// Total power samples a moved pointing at its own direction, not its
-/// field's (#874, after #861's moved pointings).
+/// field's (#874, after #861's moved pointings): its DATA is that of a
+/// field at the moved direction.
 #[test]
 fn total_power_samples_a_moved_pointing_at_its_own_direction() {
-    moved_pointing_is_a_field_there(Some(&PredictionOptions {
-        ftmachine: "sd".to_string(),
-        grid_function: "PB".to_string(),
-        ..PredictionOptions::default()
-    }));
-}
-
-/// A second pointing moved off its field, predicted after `options`, writes
-/// the DATA of a field at the moved direction.
-fn moved_pointing_is_a_field_there(options: Option<&PredictionOptions>) {
     let directory = tempfile::tempdir().expect("temporary directory");
     let model = extended_model(directory.path(), "model.image");
+    let (pointed, field) = moved_and_field_there(
+        directory.path(),
+        &model,
+        Some(&PredictionOptions {
+            ftmachine: "sd".to_string(),
+            grid_function: "PB".to_string(),
+            ..PredictionOptions::default()
+        }),
+    );
+    assert!(
+        pointed
+            .iter()
+            .flat_map(|row| &row.data)
+            .any(|v| v.norm() > 0.0),
+        "the model is predicted"
+    );
+    assert_eq!(
+        bits(pointed.iter().map(|row| &row.data)),
+        bits(field.iter().map(|row| &row.data)),
+        "the moved pointing's DATA"
+    );
+}
+
+/// Sessions of two pointings predicting `model` after `options`: the second
+/// pointing moved off its field, and the second at a field at the moved
+/// direction. Their UVW agree, as `NewMSSimulator` computes a moved
+/// pointing's at the moved direction.
+fn moved_and_field_there(
+    directory: &Path,
+    model: &Path,
+    options: Option<&PredictionOptions>,
+) -> (Vec<Row>, Vec<Row>) {
     let moved = MDirection::from_angles(CENTRE_RAD[0] + 1.0e-5, CENTRE_RAD[1], DirectionRef::J2000);
     let observed = |name: &str, second: Pointing| {
-        let path = directory.path().join(name);
+        let path = directory.join(name);
         let mut sm = session(&path, "ALMA", "XX YY", resources(2, 2 << 30));
         sm.set_field("moved", &moved, "", 0.0).expect("setfield");
         let base = scan("target", 0.0, 20.0);
@@ -327,7 +367,7 @@ fn moved_pointing_is_a_field_there(options: Option<&PredictionOptions>) {
         if let Some(options) = options {
             sm.set_options(options).expect("setoptions");
         }
-        sm.predict(&spec(&[&model])).expect("predict");
+        sm.predict(&spec(&[model])).expect("predict");
         sm.close().expect("close");
         read_main(&path).0
     };
@@ -351,23 +391,9 @@ fn moved_pointing_is_a_field_there(options: Option<&PredictionOptions>) {
     );
     assert_eq!(pointed.len(), field.len(), "rows");
     for (row, (pointed, field)) in pointed.iter().zip(&field).enumerate() {
-        assert_eq!(
-            pointed.uvw_m, field.uvw_m,
-            "row {row}: the same phase centre"
-        );
+        assert_eq!(pointed.uvw_m, field.uvw_m, "row {row}: the same UVW");
     }
-    assert!(
-        pointed
-            .iter()
-            .flat_map(|row| &row.data)
-            .any(|v| v.norm() > 0.0),
-        "the model is predicted"
-    );
-    assert_eq!(
-        bits(pointed.iter().map(|row| &row.data)),
-        bits(field.iter().map(|row| &row.data)),
-        "the moved pointing's DATA"
-    );
+    (pointed, field)
 }
 
 /// A list of a point at the centre and one 3″ north of it, written to
@@ -391,16 +417,19 @@ fn write_points(path: &Path) {
     list.write_table(path).expect("write the list");
 }
 
-/// A component list is predicted at each scan's own pointing, under the
-/// beam centred there: a pointing `observemany` moved off its field gets
-/// the DATA of a field at the moved direction (#872, after #861's moved
-/// pointings).
+/// A component list under the beam is predicted with each scan's beam
+/// centred where its antennas point, as CASA's `VPSkyJones` centres it on
+/// POINTING (#872), and its rows phased on their field (#884). A point at
+/// the direction `observemany` moved a pointing to has the beam's peak
+/// there, as in a field at the moved direction, but the phases of a source
+/// off the field's phase centre, where the field there has none.
 #[test]
 fn components_are_predicted_at_a_moved_pointing() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let points = directory.path().join("points.cl");
-    write_points(&points);
-    let moved = MDirection::from_angles(CENTRE_RAD[0] + 1.0e-5, CENTRE_RAD[1], DirectionRef::J2000);
+    let moved_rad = [CENTRE_RAD[0] + 1.0e-5, CENTRE_RAD[1]];
+    write_point_list(&points, moved_rad, 1.0);
+    let moved = MDirection::from_angles(moved_rad[0], moved_rad[1], DirectionRef::J2000);
     let observed = |name: &str, second: Pointing| {
         let path = directory.path().join(name);
         let mut sm = session(&path, "ALMA", "XX YY", resources(2, 2 << 30));
@@ -452,23 +481,26 @@ fn components_are_predicted_at_a_moved_pointing() {
         },
     );
     assert_eq!(pointed.len(), field.len(), "rows");
-    for (row, (pointed, field)) in pointed.iter().zip(&field).enumerate() {
-        assert_eq!(
-            pointed.uvw_m, field.uvw_m,
-            "row {row}: the same phase centre"
-        );
+    // The second pointing's rows: the two pointings have as many each.
+    let second = pointed.len() / 2;
+    let mut phased = false;
+    for (row, (pointed, field)) in pointed[second..].iter().zip(&field[second..]).enumerate() {
+        assert_eq!(pointed.uvw_m, field.uvw_m, "row {row}: the same UVW");
+        for (found, there) in pointed.data.iter().zip(&field.data) {
+            assert!(
+                (there.re - 1.0).abs() < 1e-5 && there.im.abs() < 1e-5,
+                "row {row}: the field at the point predicts its flux at zero phase: {there}"
+            );
+            assert!(
+                (found.norm() - there.norm()).abs() < 1e-5,
+                "row {row}: the beam is centred on the moved pointing: {found} against {there}"
+            );
+            phased |= found.arg().abs() > 0.1;
+        }
     }
     assert!(
-        pointed
-            .iter()
-            .flat_map(|row| &row.data)
-            .any(|v| v.norm() > 0.0),
-        "the list is predicted"
-    );
-    assert_eq!(
-        bits(pointed.iter().map(|row| &row.data)),
-        bits(field.iter().map(|row| &row.data)),
-        "the moved pointing's DATA"
+        phased,
+        "the moved pointing is phased on its field, off the point"
     );
 }
 

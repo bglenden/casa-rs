@@ -40,8 +40,9 @@ use super::error::{SimulatorError, SimulatorResult};
 use super::resources::SessionResources;
 use super::{BackendRequest, Simulator};
 use crate::predict::{
-    BeamPattern, ComponentPrediction, ComponentRefusal, ComponentTargets, ComponentWindow,
-    FtMachine, ModelLayout, ModelOperator, PredictError, PrimaryBeam, SingleDishKernel, SkyModel,
+    BeamPattern, ComponentPointing, ComponentPrediction, ComponentRefusal, ComponentTargets,
+    ComponentWindow, FtMachine, ModelLayout, ModelOperator, PredictError, PrimaryBeam,
+    SingleDishKernel, SkyModel,
 };
 
 /// The phase a model's grids are admitted as.
@@ -243,8 +244,8 @@ impl Prediction {
         self.grids.iter().map(|(_, grids)| grids.bytes()).sum()
     }
 
-    /// The offset of the pointing of rows phased on `centre_rad`, which the
-    /// mosaic machine's kernels ramp by; zero for the other machines.
+    /// The offset of rows pointed at `centre_rad`, which the mosaic
+    /// machine's kernels ramp by; zero for the other machines.
     pub(crate) fn pointing_offset_rad(&self, centre_rad: [f64; 2]) -> [f64; 2] {
         let key = centre_rad.map(f64::to_bits);
         let found = self
@@ -255,7 +256,7 @@ impl Prediction {
         // A mosaic step measured every scan it covers.
         debug_assert!(
             found.is_some() || self.pointings.is_empty(),
-            "a mosaic step predicts rows phased on {centre_rad:?}, which it did not measure"
+            "a mosaic step predicts rows pointed at {centre_rad:?}, which it did not measure"
         );
         found.map_or([0.0; 2], |(_, offset)| *offset)
     }
@@ -642,20 +643,28 @@ impl Simulator {
             })
             .collect();
         let pattern = beam.map(PrimaryBeam::pattern);
-        // A scan is phased on its phase centre, and the beam centred on it:
-        // its field's direction unless `observemany` moved it. Scans at one
-        // centre share a pointing.
-        let mut pointings: Vec<(usize, [f64; 2])> = Vec::new();
+        // A scan is phased on its field's phase centre, and the beam centred
+        // where its antennas point, which `observemany` can move off the
+        // field (#884). Scans at one phase centre and pointing share a
+        // pointing.
+        let mut pointings: Vec<(usize, ComponentPointing)> = Vec::new();
         let pointing_of_scan: Vec<usize> = self
             .scans
             .iter()
             .map(|scan| {
-                let centre = scan.phase_center_rad.map(f64::to_bits);
+                let at = ComponentPointing {
+                    phase_center_rad: scan.phase_center_rad,
+                    beam_center_rad: scan.pointing_rad,
+                };
+                let bits = |pointing: &ComponentPointing| {
+                    [pointing.phase_center_rad, pointing.beam_center_rad]
+                        .map(|direction| direction.map(f64::to_bits))
+                };
                 pointings
                     .iter()
-                    .position(|(_, known)| known.map(f64::to_bits) == centre)
+                    .position(|(_, known)| bits(known) == bits(&at))
                     .unwrap_or_else(|| {
-                        pointings.push((pointings.len(), scan.phase_center_rad));
+                        pointings.push((pointings.len(), at));
                         pointings.len() - 1
                     })
             })
@@ -772,7 +781,7 @@ impl Simulator {
         let moved = self
             .scans
             .iter()
-            .find(|scan| scan.phase_center_rad != self.fields[scan.field_id].direction_rad);
+            .find(|scan| scan.pointing_rad != scan.phase_center_rad);
         match moved {
             Some(scan) => Err(SimulatorError::not_yet_implemented(format!(
                 "predict with {what} for scan {} pointed away from its field {} is not yet \

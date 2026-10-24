@@ -70,10 +70,10 @@ impl Simulator {
                 correlations: window.correlations.clone(),
             })
             .collect();
-        // A scan is pointed at its phase centre (the POINTING table casa-rs
-        // writes).
+        // Total power samples where the antennas point: the POINTING table
+        // casa-rs writes.
         let pointings =
-            SingleDishPointings::of_scans(self.scans.iter().map(|scan| scan.phase_center_rad));
+            SingleDishPointings::of_scans(self.scans.iter().map(|scan| scan.pointing_rad));
         let (kernel_pattern, voltage_pattern) = (
             kernel_beam.map(PrimaryBeam::pattern),
             beam.map(PrimaryBeam::pattern),

@@ -467,14 +467,12 @@ fn components_under_the_beam_and_total_power_predict_after_openfromms_as_before(
 }
 
 /// A pointing `observemany` moved off its field keeps its field's FIELD
-/// row, and after `openfromms` it is phased there, as CASA's `VisBuffer`
-/// phases it: a source at the field's direction predicts zero phase in
-/// both pointings, as it does in CASA 6.7.6 (measured), although the moved
-/// pointing's UVW were computed at the moved direction. The session that
-/// observed phases the moved pointing at the moved direction
-/// (`docs/CASA (C++) bugs.md`). The pointing not moved predicts the same
-/// either way, and a primary beam, centred on POINTING's direction, is
-/// refused.
+/// row, and is phased there, as CASA's `VisBuffer` phases it, both in the
+/// session that observed it and after `openfromms` (#884): a source at the
+/// field's direction predicts zero phase in both pointings, as it does in
+/// CASA 6.7.6 (measured), although the moved pointing's UVW were computed
+/// at the moved direction. A primary beam after `openfromms`, centred on
+/// POINTING's direction, is refused.
 #[test]
 fn a_moved_pointing_is_phased_on_its_field_after_openfromms() {
     use casa_simulation::{ObserveManySpec, Pointing, PredictSpec, VoltagePatternSpec};
@@ -522,21 +520,13 @@ fn a_moved_pointing_is_phased_on_its_field_after_openfromms() {
         })
     };
     let (one, two) = two_stage(directory.path(), &moved, &nothing, &predict);
-    // The two pointings have as many rows each.
-    let half = one.len() / 2;
-    assert_eq!(bits(&data(&one[..half])), bits(&data(&two[..half])));
+    assert_eq!(bits(&data(&one)), bits(&data(&two)));
     for row in &two {
         for value in &row.data {
             assert!((value.re - 1.0).abs() < 1e-6, "{value}");
             assert!(value.im.abs() < 1e-6, "{value}");
         }
     }
-    assert!(
-        one[half..]
-            .iter()
-            .any(|row| row.data.iter().any(|value| value.im.abs() > 1e-3)),
-        "the session that observed phases the moved pointing elsewhere"
-    );
 
     let mut sm =
         Simulator::open_from_ms(directory.path().join("two.ms"), options()).expect("openfromms");

@@ -78,15 +78,24 @@ pub(crate) enum ComponentRefusal {
     NotYetImplemented(String),
 }
 
+/// Where a scan's components are predicted, J2000 radians: the phase centre
+/// its rows are phased on (its field's PHASE_DIR, as CASA's `VisBuffer`
+/// phases them) and the direction its beam is centred on (where its
+/// antennas point, which `observemany` can move off the field; CASA's
+/// `VPSkyJones` takes POINTING's).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct ComponentPointing {
+    pub(crate) phase_center_rad: [f64; 2],
+    pub(crate) beam_center_rad: [f64; 2],
+}
+
 /// What a component list is predicted into: the session's windows, the
-/// distinct pointings of its scans (`(pointing, J2000 phase centre rad)`),
-/// each scan's pointing, and the primary beam with `setvp(dovp=True)`. A
-/// scan is phased, and the beam centred, on its phase centre, which
-/// `observemany` can move off the scan's field.
+/// distinct pointings of its scans (`(pointing, where)`), each scan's
+/// pointing, and the primary beam with `setvp(dovp=True)`.
 #[derive(Clone, Copy)]
 pub(crate) struct ComponentTargets<'a> {
     pub(crate) windows: &'a [ComponentWindow],
-    pub(crate) pointings: &'a [(usize, [f64; 2])],
+    pub(crate) pointings: &'a [(usize, ComponentPointing)],
     /// `[scan]`: the scan's pointing.
     pub(crate) pointing_of_scan: &'a [usize],
     pub(crate) beam: Option<&'a BeamPattern>,
@@ -210,10 +219,15 @@ impl ComponentPrediction {
             .max()
             .unwrap_or(0);
         let mut fields: Vec<Option<FieldTerms>> = (0..slots).map(|_| None).collect();
-        for &(field, direction) in targets.pointings {
+        for &(field, pointing) in targets.pointings {
             let projections = directions_rad
                 .iter()
-                .map(|component| GridFtProjection::between_j2000_directions(direction, *component))
+                .map(|component| {
+                    GridFtProjection::between_j2000_directions(
+                        pointing.phase_center_rad,
+                        *component,
+                    )
+                })
                 .collect();
             let powers = targets.beam.map(|pattern| {
                 targets
@@ -222,7 +236,7 @@ impl ComponentPrediction {
                     .map(|window| {
                         let mut powers = Vec::with_capacity(directions_rad.len() * window.channels);
                         for component in &directions_rad {
-                            let separation = separation_rad(*component, direction);
+                            let separation = separation_rad(*component, pointing.beam_center_rad);
                             powers.extend((0..window.channels).map(|channel| {
                                 pattern.power_at(separation, window.frequency_hz(channel))
                             }));

@@ -169,12 +169,13 @@ impl<'s> PredictionStage<'s> {
                 scan_segments.push(None);
                 continue;
             }
-            // Pointings of one field that `observemany` moved have their own
-            // phase centres, and so their own projections.
+            // Rows are phased on their field (#884); the mosaic machine's
+            // kernels ramp to where the antennas point.
             let key = (
                 steps,
                 scan.field_id,
-                scan.phase_center_rad.map(f64::to_bits),
+                [scan.phase_center_rad, scan.pointing_rad]
+                    .map(|direction| direction.map(f64::to_bits)),
             );
             let segment = match keys.get(&key) {
                 Some(segment) => *segment,
@@ -204,8 +205,7 @@ impl<'s> PredictionStage<'s> {
                             }
                         };
                         projections.push(project(scan.phase_center_rad, prediction.tangent_rad));
-                        pointing_offsets
-                            .push(prediction.pointing_offset_rad(scan.phase_center_rad));
+                        pointing_offsets.push(prediction.pointing_offset_rad(scan.pointing_rad));
                     }
                     segments.push(Segment {
                         domains,

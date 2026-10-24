@@ -173,8 +173,15 @@ pub(crate) struct Scan {
     pub(crate) scan_number: i32,
     pub(crate) field_id: usize,
     pub(crate) spectral_window_id: usize,
-    /// The J2000 phase centre, radians.
+    /// The J2000 phase centre, radians: the field's PHASE_DIR, on which
+    /// CASA's `VisBuffer` phases the DATA `predict` writes.
     pub(crate) phase_center_rad: [f64; 2],
+    /// The J2000 direction the antennas point at, radians: the phase centre
+    /// unless `observemany` moved the pointing. `NewMSSimulator` computes
+    /// the rows' UVW and the elevation limit there and writes it to
+    /// POINTING, but keeps the field's FIELD row, so a moved pointing's
+    /// DATA is phased on its field (#884).
+    pub(crate) pointing_rad: [f64; 2],
     pub(crate) rows: ScanRows,
 }
 
@@ -363,16 +370,16 @@ impl super::Simulator {
             }
         };
         let mut scan_number = self.scans.last().map_or(0, |scan| scan.scan_number);
-        let mut phase_center_rad = first_direction_rad;
+        let mut pointing_rad = first_direction_rad;
         let mut integrations = 0;
         for (index, pointing) in spec.pointings.iter().enumerate() {
             let field_id = field_ids[index];
             if index == 0 || pointing.source != spec.pointings[index - 1].source {
                 scan_number += 1;
-                phase_center_rad = self.fields[field_id].direction_rad;
+                pointing_rad = self.fields[field_id].direction_rad;
             }
             if let Some(direction) = directions[index] {
-                phase_center_rad = direction;
+                pointing_rad = direction;
             }
             let start_s = utc_s(pointing.start_s);
             let integration_count =
@@ -382,7 +389,8 @@ impl super::Simulator {
                 scan_number,
                 field_id,
                 spectral_window_id,
-                phase_center_rad,
+                phase_center_rad: self.fields[field_id].direction_rad,
+                pointing_rad,
                 rows: ScanRows::Planned(PlannedRows {
                     start_s,
                     integration_s,
