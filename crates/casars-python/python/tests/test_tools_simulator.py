@@ -44,10 +44,10 @@ IMPLEMENTED = {
     "open", "openfromms", "close", "done", "name", "type", "summary", "setconfig",
     "setfeed", "setspwindow", "setfield", "setmosaicfield", "settimes", "setlimits",
     "setauto", "observe", "observemany", "setdata", "setseed", "setnoise", "corrupt",
-    "reset", "predict", "setoptions", "setvp",
+    "reset", "predict", "setoptions", "setvp", "setgain", "setleakage",
 }
 NOT_YET_IMPLEMENTED = {
-    "setapply", "setgain", "settrop", "setleakage",
+    "setapply", "settrop",
 }
 DISABLED_IN_CASA = {"setbandpass", "setpa", "setpointingerror"}
 
@@ -707,6 +707,52 @@ def test_setnoise_outcomes_follow_casa(tmp_path: Path, caplog: pytest.LogCapture
     sm.close()
     data = np.asarray(Table.open(tmp_path / "x.ms").get_column("DATA"))
     assert np.all(data == 0)
+
+
+@needs_measures
+def test_setgain_and_setleakage_follow_casa(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    sm = opened(tmp_path)
+    configure(sm)
+    assert sm.observe("F", "L", starttime="0s", stoptime="60s")
+    with caplog.at_level(logging.ERROR, logger=LOGGER):
+        assert sm.setgain(mode="table") is False
+    assert caplog.messages == ["Cannot yet read from table"]
+    with caplog.at_level(logging.ERROR, logger=LOGGER):
+        assert sm.setgain(mode="drift") is False
+    assert caplog.messages[-1] == "Caught exception: unsupported mode drift in setgain()"
+    with pytest.raises(NotImplementedError, match="writes the simulated term"):
+        sm.setleakage(table="d.cal")
+    # A second corrupt gains the first one's noise: DATA differs from the
+    # same noise without gains.
+    assert sm.setseed(5) is True
+    assert sm.setnoise(mode="simplenoise", simplenoise="0.1Jy") is True
+    assert sm.corrupt() is True
+    assert sm.setgain(amplitude=[0.05]) is True
+    assert sm.setgain(mode="random", amplitude=[0.02, 0.01]) is True
+    assert sm.corrupt() is True
+    sm.close()
+    gained = np.asarray(Table.open(tmp_path / "x.ms").get_column("DATA"))
+    sm = simulator()
+    sm.open(str(tmp_path / "plain.ms"))
+    configure(sm)
+    assert sm.observe("F", "L", starttime="0s", stoptime="60s")
+    assert sm.setseed(5) is True
+    assert sm.setnoise(mode="simplenoise", simplenoise="0.1Jy") is True
+    assert sm.corrupt() is True
+    assert sm.corrupt() is True
+    sm.close()
+    plain = np.asarray(Table.open(tmp_path / "plain.ms").get_column("DATA"))
+    assert gained.shape == plain.shape
+    assert not np.array_equal(gained, plain)
+    # Leakage needs the cross hands, which RR LL lacks.
+    sm = opened(tmp_path / "leak")
+    configure(sm)
+    assert sm.observe("F", "L", starttime="0s", stoptime="20s")
+    assert sm.setleakage(amplitude=[0.05], offset=[0.01]) is True
+    with pytest.raises(RuntimeError, match="JonesGenLin"):
+        sm.corrupt()
 
 
 @needs_measures

@@ -42,7 +42,12 @@ Simulator behaviours casa-rs does not follow:
 [scratch columns added at `predict` and `corrupt`](#predict-and-corrupt-add-scratch-columns-to-a-measurementset-without-them),
 [`tsys-manual`'s stale and borrowed system temperatures](#tsys-manual-noise-takes-stale-or-borrowed-system-temperatures),
 [`tsys-manual` scaling every noise term](#a-tsys-manual-term-scales-every-noise-term),
-[the noise term a refused `tsys-manual` leaves](#a-refused-tsys-manual-setnoise-leaves-a-unit-noise-term).
+[the noise term a refused `tsys-manual` leaves](#a-refused-tsys-manual-setnoise-leaves-a-unit-noise-term),
+[gain screens read past their transform](#casas-gain-screens-read-past-their-transform),
+[gain screens sharing a seed](#gain-screens-of-neighbouring-antennas-share-a-seed),
+[random gains about zero](#setgainmoderandom-draws-gains-about-zero),
+[the last antenna's unit gain or leakage](#an-autocorrelation-row-resets-its-antennas-simulated-term),
+[leakage for two windows only](#setleakage-simulates-only-the-first-two-spectral-windows).
 Measures behaviours casa-rs follows for parity:
 [IAU 1980 sidereal time and obliquities under IAU 2000](#iau-2000-keeps-the-iau-1980-sidereal-time-and-ecliptic-obliquities).
 Measures behaviours casa-rs does not follow:
@@ -50,7 +55,8 @@ Measures behaviours casa-rs does not follow:
 [IAU 2000 JMEAN to J2000](#iau-2000-jmean-to-j2000-applies-bias-and-precession-in-the-wrong-order),
 [IAU 2000 GMST1](#iau-2000-gmst1-adds-the-tt-day-fraction).
 Simulator behaviours casa-rs follows:
-[`observemany`'s padded single name](#observemany-pads-one-name-with-empty-ones).
+[`observemany`'s padded single name](#observemany-pads-one-name-with-empty-ones),
+[one leakage per window for the whole run](#setleakage-draws-one-leakage-per-window-for-the-whole-run).
 Component-list behaviours casa-rs does not follow:
 [a limb-darkened disk without an exponent](#writing-a-limb-darkened-disk-without-an-exponent-aborts-casa),
 [a negative component under the primary beam](#a-negative-component-turns-positive-under-the-primary-beam),
@@ -1140,6 +1146,126 @@ corrupted DATA. casa-rs's simulator writes DATA only (plan decision 6), and
 after `openfromms` it creates neither column: it keeps those MAIN already
 has in step with DATA as CASA does, and leaves a MeasurementSet without
 them without them.
+
+## CASA's gain screens read past their transform
+
+- Date noted: 2026-10-24
+- Status: CASA bug; casa-rs does not follow it (#841 Phase 3)
+- Affected code: `synthesis/MeasurementComponents/CalCorruptor.cc`
+  (`fBM::initialize`, `GJonesCorruptor::initialize`)
+
+`sm.setgain(mode='fbm')` draws each antenna's amplitude and phase screens
+with `fBM::initialize` on `n` even slots of 5 s. It fills a half spectrum
+`F` of `n/2` values, all but the last, and transforms it with
+`FFTServer::fft` into a real `G` whose length the server chooses: the last
+value's imaginary part is zero and the server was sized `n`, which is
+neither `2·(n/2) − 2` nor `2·(n/2) − 1`, so `G` has `n − 2` values for an
+even `n` and `n − 3` for an odd one. It then copies `n` values out of `G`,
+the last two or three from past its end, and `GJonesCorruptor::initialize`
+scales each screen by its root-mean-square, those values included.
+
+What lies past the end changes from run to run. Measured with CASA 6.7.6:
+- three runs of `corrupt-gain` (`tools/simulation/sm_corrupt_scenarios.json`,
+  the same seed) gave amplitude scales of 0.969, 0.966 and 1.005 of the
+  documented one;
+- in a six-antenna probe with `amplitude=[0.1]`, the phases' scale was
+  0.15 to 0.22 of it in one run and 1.0 in another;
+- with a table written, one run's last solution was unit gain, as zeros
+  past the end would make it.
+
+casa-rs transforms every slot, so its screens have the documented scale.
+The CASA comparison holds CASA's gains to closure only and compares the
+two implementations' screens by their autocorrelations, which a screen's
+scale does not change.
+
+## Gain screens of neighbouring antennas share a seed
+
+- Date noted: 2026-10-24
+- Status: CASA bug; casa-rs does not follow it (#841 Phase 3)
+- Affected code: `synthesis/MeasurementComponents/CalCorruptor.cc`
+  (`GJonesCorruptor::initialize`)
+
+`GJonesCorruptor::initialize` seeds antenna `a`'s amplitude screen for
+receptor `r` with `seed + a + r`, and its phase screen with 100 times that.
+Antenna `a`'s second receptor and antenna `a + 1`'s first draw the same
+screens: measured, their amplitudes are identical. casa-rs keys each
+antenna's and receptor's screens apart.
+
+## `setgain(mode='random')` draws gains about zero
+
+- Date noted: 2026-10-24
+- Status: CASA bug; casa-rs does not follow it (owner, 2026-10-24: follow
+  CASA only if there is a good reason for its behaviour, which there is
+  not; #841 Phase 3)
+- Affected code: `synthesis/MeasurementComponents/CalCorruptor.cc`
+  (`GJonesCorruptor::simPar`)
+
+The `random` mode, which `setgain`'s documentation does not list but
+`Simulator::setgain` accepts, returns `camp.re·n₁ + i·camp.im·n₂` per
+integration, antenna and receptor, without adding one: gains of a few
+hundredths, which all but erase the data. Measured with CASA 6.7.6,
+`amplitude=[0.05]` on a 1 Jy point: the table's gains have a mean modulus
+of 0.065, real parts of mean 0.0000 and standard deviation 0.048, and DATA
+a mean modulus of 0.0046 Jy. The `fbm` gains scatter about one, and the
+amplitude is documented as the gain variations' scale. Gain errors are
+multiplicative and near unity: a well-designed array's gains factor into
+antenna gains to within a per cent, and simulations of gain errors draw
+deviations of a per cent and a degree about one (Synthesis Imaging in Radio
+Astronomy II, pp. 122 and 354; Heywood, *Calibration II*, NRAO Synthesis
+Imaging Workshop 2024, slide 22). Nothing in CASA adds the one back for
+`random`; it appears in `GJonesCorruptor::simPar` and
+`GJones::createCorruptor` only. casa-rs draws
+`1 + camp.re·n₁ + i·camp.im·n₂`.
+
+## An autocorrelation row resets its antenna's simulated term
+
+- Date noted: 2026-10-24
+- Status: CASA bug; casa-rs does not follow it (#841 Phase 3)
+- Affected code: `synthesis/MeasurementComponents/SolvableVisCal.cc`
+  (`setSimulate`)
+
+`SolvableVisCal::setSimulate` fills a solution from its chunk's rows,
+setting ANTENNA1's value at every row, and at an autocorrelation sets it to
+1 for a multiplicative term instead of a draw. An antenna's autocorrelation
+comes before its cross-correlations as ANTENNA1, which set it again, except
+for the last antenna, which is ANTENNA1 only of its autocorrelation. So
+with autocorrelations written, CASA's default, the last antenna has unit
+gain throughout (`setgain`) and a leakage of 1 on both receptors
+(`setleakage`); measured, antenna 42 of 43 in `corrupt-gain`. casa-rs
+simulates every antenna's term.
+
+## `setleakage` simulates only the first two spectral windows
+
+- Date noted: 2026-10-24
+- Status: CASA bug; casa-rs does not follow it (#841 Phase 3)
+- Affected code: `synthesis/MeasurementComponents/SolvableVisCal.cc`
+  (`setSimulate`, `sizeUpSim`); the cause was not traced
+
+Measured with CASA 6.7.6, five ALMA antennas and `setleakage(table=...)`:
+with three, four or eight spectral windows, observed once or twice each,
+the table has solutions for windows 0 and 1 only, and `corrupt` logs
+"Encountered data spw N for which there is no (simulated) calibration" for
+each later window and leaves its rows as they were. `setgain` is not
+affected: with four windows its table has solutions for all four, and every
+window is corrupted. casa-rs simulates a leakage for every window. The CASA
+comparison, `corrupt-leakage`, observes two windows.
+
+## `setleakage` draws one leakage per window for the whole run
+
+- Date noted: 2026-10-24
+- Status: CASA behaviour casa-rs follows (#841 Phase 3)
+- Affected code: `synthesis/MeasurementEquations/Simulator.cc`
+  (`setleakage`), `synthesis/MeasurementComponents/SolvableVisCal.cc`
+  (`setSimulate`) and `JonesGenLin`
+
+`Simulator::setleakage` simulates with an infinite solution interval: its
+table has one solution per spectral window and antenna, spanning every scan
+and field, and `corrupt` applies it alike to every scan (measured: eight
+scans of two windows). `corrupt` applies it as the linearised
+`JonesGenLin`, which raises "JonesGenLin matrix apply (J::aR) incompatible
+with VisVector." on data with two correlations. casa-rs follows both, and
+likewise does not read `setgain`'s `interval`, whose documentation says it
+is not used: CASA's gains are solved per integration.
 
 ## `tsys-manual` noise takes stale or borrowed system temperatures
 

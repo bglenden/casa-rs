@@ -17,6 +17,7 @@ workspace = true
 [dependencies]
 casa-components = { path = "../casa-components" }
 casa-coordinates = { path = "../casa-coordinates" }
+casa-fft = { path = "../casa-fft" }
 casa-images = { path = "../casa-images" }
 casa-imaging-model = { path = "../casa-imaging-model" }
 casa-imaging-operator = { path = "../casa-imaging-operator" }

@@ -30,7 +30,8 @@ before the scenario's clock starts at `open`, so its `seconds` (and each
 call's) time only CASA's `sm` work. A scenario's `data` (`zero`, `model` or `noisy`), `twin`
 (the noise-free scenario a noisy one is compared with) and `noise_variance`
 (the variance its noise should have, Jy²) are copied to the manifest for
-`compare_sm_ms.py`.
+`compare_sm_ms.py`, as are a corrupted scenario's `CORRUPTION_KEYS`
+(`sm_corrupt_scenarios.json`).
 
 A two-stage scenario (`sm_openfromms_scenarios.json`) calls `close` and then
 `openfromms` among its calls: the first stage's MS is copied to
@@ -62,6 +63,10 @@ from casatasks.private import simutil
 from casatools import componentlist, measures, quanta, simulator
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+
+# What compare_sm_ms.py's `gains` and `leakage` comparisons read from a
+# scenario (corruption_stats.py).
+CORRUPTION_KEYS = ("gain_scale", "casa_gain_checks", "casa_unit_antennas", "leakage_amplitude")
 
 
 def parse_args() -> argparse.Namespace:
@@ -276,6 +281,7 @@ def run_scenario(
         "openfromms_ms": scenario.get("openfromms_ms", "casa-rs"),
         "calls": calls,
         "seconds": time.perf_counter() - started,
+        **{key: scenario[key] for key in CORRUPTION_KEYS if key in scenario},
     }
     if record_path is not None:
         with open(record_path, "w", encoding="utf-8") as handle:

@@ -44,10 +44,10 @@ use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use casa_simulation::{
-    ArrayConfig, BackendRequest, CasaOutcome, CoordinateSystem, ExecutionControls, NoiseSpec,
-    ObserveManySpec, ObserveSpec, Pointing, PredictSpec, PredictionOptions, SessionResources,
-    Simulator, SimulatorOptions, SimulatorResult, SpectralWindowSpec, StateSpec, TsysParameters,
-    VoltagePatternSpec,
+    ArrayConfig, BackendRequest, CasaOutcome, CoordinateSystem, ExecutionControls, GainSpec,
+    LeakageSpec, NoiseSpec, ObserveManySpec, ObserveSpec, Pointing, PredictSpec, PredictionOptions,
+    SessionResources, Simulator, SimulatorOptions, SimulatorResult, SpectralWindowSpec, StateSpec,
+    TsysParameters, VoltagePatternSpec,
 };
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::frequency::FrequencyRef;
@@ -243,6 +243,31 @@ fn set_noise(session: &mut Simulator, call: &Value) -> SimulatorResult<()> {
     })
 }
 
+/// The numbers of `key`, or `default` when the call has none.
+fn numbers_or(call: &Value, key: &str, default: &[f64]) -> Vec<f64> {
+    if call.get(key).is_some() {
+        numbers(call, key)
+    } else {
+        default.to_vec()
+    }
+}
+
+fn set_gain(session: &mut Simulator, call: &Value) -> SimulatorResult<()> {
+    session.set_gain(&GainSpec {
+        mode: text(call, "mode", "fbm").to_string(),
+        table: text(call, "table", "").to_string(),
+        amplitude: numbers_or(call, "amplitude", &[0.01]),
+    })
+}
+
+fn set_leakage(session: &mut Simulator, call: &Value) -> SimulatorResult<()> {
+    session.set_leakage(&LeakageSpec {
+        table: text(call, "table", "").to_string(),
+        amplitude: numbers_or(call, "amplitude", &[0.01]),
+        offset: numbers_or(call, "offset", &[0.0]),
+    })
+}
+
 fn flag(call: &Value, key: &str, default: bool) -> bool {
     call.get(key).and_then(Value::as_bool).unwrap_or(default)
 }
@@ -417,6 +442,8 @@ fn run_scenario(
             "observemany" => expect_casas_outcome(entry, observe_many(session, call, shift_s)),
             "setseed" => session.set_seed(number(call, "seed") as i32),
             "setnoise" => expect_casas_outcome(entry, set_noise(session, call)),
+            "setgain" => expect_casas_outcome(entry, set_gain(session, call)),
+            "setleakage" => expect_casas_outcome(entry, set_leakage(session, call)),
             "corrupt" => expect_casas_outcome(entry, session.corrupt()),
             "reset" => session.reset(),
             "setoptions" => expect_casas_outcome(entry, set_options(session, call)),
