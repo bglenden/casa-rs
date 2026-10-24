@@ -11,6 +11,7 @@ use std::path::Path;
 
 use casa_simulation::{
     CasaOutcome, GainSpec, LeakageSpec, NoiseSpec, PredictSpec, Simulator, SimulatorResult,
+    TsysParameters,
 };
 use num_complex::Complex32;
 use predict_support::{
@@ -130,17 +131,27 @@ fn gains_are_antenna_based_in(mode: &str) {
     );
 }
 
-/// The noise of a `corrupt` follows its gains (`collapseForSim`): DATA is
-/// the gained model plus the noise a session of the noise alone writes,
+/// The noise of a `corrupt` follows its gains (`collapseForSim`), whether
+/// a fixed σ or a system temperature's (which scales the noise alone): DATA
+/// is the gained model plus the noise a session of the noise alone writes,
 /// bit for bit.
 #[test]
 fn the_noise_of_a_corrupt_follows_its_gains() {
+    for noise in [
+        simple_noise(),
+        NoiseSpec::tsys_manual(TsysParameters::default()),
+    ] {
+        the_noise_follows_the_gains(&noise);
+    }
+}
+
+fn the_noise_follows_the_gains(noise_spec: &NoiseSpec) {
     let directory = tempfile::tempdir().expect("temporary directory");
     let point = point(directory.path());
     let path = |name: &str| directory.path().join(name);
     let both = simulate(&path("both.ms"), "XX YY", Some(&point), &|sm| {
         sm.set_gain(&gain(0.05))?;
-        sm.set_noise(&simple_noise())?;
+        sm.set_noise(noise_spec)?;
         sm.corrupt()
     });
     let gained = simulate(&path("gained.ms"), "XX YY", Some(&point), &|sm| {
@@ -148,7 +159,7 @@ fn the_noise_of_a_corrupt_follows_its_gains() {
         sm.corrupt()
     });
     let noise = simulate(&path("noise.ms"), "XX YY", None, &|sm| {
-        sm.set_noise(&simple_noise())?;
+        sm.set_noise(noise_spec)?;
         sm.corrupt()
     });
     let expected: Vec<Vec<Complex32>> = gained
