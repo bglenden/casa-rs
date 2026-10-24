@@ -227,11 +227,23 @@ impl AtmosphereProfile {
     ///
     /// # Errors
     ///
-    /// As [`AtmosphereProfile::new`].
+    /// As [`AtmosphereProfile::new`], and
+    /// [`AtmosphereError::InvalidParameter`] if a level's altitude or
+    /// temperature is not finite, a temperature is not positive, or a
+    /// layer's mean overflows (#894 review: ATM takes them, and the profile
+    /// would carry them into every refractivity).
     pub fn with_temperature_levels(
         parameters: &ProfileParameters,
         levels: &[(f64, f64)],
     ) -> Result<Self, AtmosphereError> {
+        if let Some((altitude, temperature)) = levels.iter().find(|(altitude, temperature)| {
+            !(altitude.is_finite() && temperature.is_finite() && *temperature > 0.0)
+        }) {
+            return Err(AtmosphereError::InvalidParameter(format!(
+                "temperature level ({altitude} m, {temperature} K) is not a finite altitude and \
+                 a positive temperature"
+            )));
+        }
         let mut profile = Self::new(parameters)?;
         let mut bottom = profile.parameters.altitude_m;
         for layer in &mut profile.layers {
@@ -243,7 +255,14 @@ impl AtmosphereProfile {
                     (sum + temperature, count + 1.0)
                 });
             if sum > 0.0 {
-                layer.temperature_k = sum / count;
+                let mean = sum / count;
+                if !mean.is_finite() {
+                    return Err(AtmosphereError::InvalidParameter(format!(
+                        "the temperature levels between {bottom} m and {top} m overflow their \
+                         mean"
+                    )));
+                }
+                layer.temperature_k = mean;
             }
             bottom = top;
         }
