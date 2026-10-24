@@ -46,9 +46,20 @@ oracle's manifest, the comparison opens `<casa>/<name>.ms` and
     variances are compared directly in groups of rows (spectral window,
     dish pair and time bin, `grouped_variance_ratios`): each group's ratio
     must be 1 within five of its standard errors.
+  - `gains` and `leakage` (`sm.setgain` or `sm.setleakage`, then
+    `corrupt`; Phase 3): the draws differ, so each implementation's DATA
+    is checked against what CASA's corruptors simulate, from its quotient
+    or difference with its noise-free `twin` (`corruption_stats.py`
+    says how).
 
-  A NaN or infinite DATA or noise sample fails a `model` or `noisy`
-  scenario, as does a statistic that is not a number (#853 review).
+  A NaN or infinite DATA or noise sample fails a `model`, `noisy`, `gains`
+  or `leakage` scenario, as does a statistic that is not a number (#853
+  review).
+- **calibration tables**: a scenario's `tables`, written by `setgain` or
+  `setleakage` beside each side's MS, must agree in what is not drawn
+  (`table_differences`): keywords and subtype, columns, rows, TIME,
+  the identifying columns, CPARAM's shapes and FLAG, and the
+  SPECTRAL_WINDOW subtable's channels.
 
 Data managers are not compared; the plan lets them differ. A scenario's
 `ignore` entries (`TABLE.COLUMN`) are skipped. The exit status is 1 if any
@@ -67,6 +78,12 @@ import os
 import sys
 
 import numpy as np
+
+from corruption_stats import gain_statistics, leakage_statistics, structure_failures
+
+# What a `gains` scenario checks: on casa-rs always, on CASA unless the
+# scenario's `casa_gain_checks` says otherwise.
+GAIN_CHECKS = ["closure", "amplitude", "phase"]
 
 # Absolute tolerances by column, added to RELATIVE_TOLERANCE times the
 # value; other float columns use DEFAULT_TOLERANCE. Times are seconds near
@@ -250,16 +267,27 @@ def normalise_keywords(value):
 
 
 def main_columns(tb, path: str) -> dict:
-    """MAIN's DATA as [row, corr, chan], FLAG_ROW, and which rows are
-    autocorrelations."""
+    """MAIN's DATA as [row, corr, chan], FLAG_ROW, which rows are
+    autocorrelations, and the antennas, TIME and DATA_DESC_ID."""
     tb.open(path)
     try:
         data = np.transpose(tb.getcol("DATA"), (2, 0, 1))
         flag_row = np.asarray(tb.getcol("FLAG_ROW"), dtype=bool)
-        auto = np.asarray(tb.getcol("ANTENNA1")) == np.asarray(tb.getcol("ANTENNA2"))
+        antenna1 = np.asarray(tb.getcol("ANTENNA1"))
+        antenna2 = np.asarray(tb.getcol("ANTENNA2"))
+        time = np.asarray(tb.getcol("TIME"))
+        data_desc = np.asarray(tb.getcol("DATA_DESC_ID"))
     finally:
         tb.close()
-    return {"data": data.astype(np.complex128), "flag_row": flag_row, "auto": auto}
+    return {
+        "data": data.astype(np.complex128),
+        "flag_row": flag_row,
+        "auto": antenna1 == antenna2,
+        "antenna1": antenna1,
+        "antenna2": antenna2,
+        "time": time,
+        "data_desc": data_desc,
+    }
 
 
 def non_finite(label: str, values: np.ndarray) -> list[str]:
@@ -639,8 +667,38 @@ def ks_failures(statistic: float, p_value: float) -> list[str]:
     return [f"noise: two-sample KS p-value {p_value:.2g} (statistic {statistic:.4f})"]
 
 
+def compare_corrupted_data(paths: dict, scenario: dict) -> tuple[dict, list[str]]:
+    """Gain or leakage statistics of both implementations against their
+    twins (`corruption_stats.py`)."""
+    from casatools import table
+
+    tb = table()
+    kind = scenario["data"]
+    stats, failures = {}, []
+    for side in ("casa", "casa-rs"):
+        corrupted = main_columns(tb, paths[side])
+        twin = main_columns(tb, paths[side + "-twin"])
+        if corrupted["data"].shape != twin["data"].shape:
+            failures.append(f"{side}: the twin's DATA has another shape")
+            continue
+        side_failures = non_finite("DATA", corrupted["data"]) + non_finite("twin DATA", twin["data"])
+        if not side_failures and kind == "gains":
+            # CASA's defects: its unit-gain antennas, reported but not
+            # checked, and the checks its gains fail (corruption_stats.py).
+            unit = None if side == "casa" else []
+            checks = scenario.get("casa_gain_checks", GAIN_CHECKS) if side == "casa" else GAIN_CHECKS
+            stats[side], side_failures = gain_statistics(corrupted, twin, scenario["gain_scale"], checks, unit)
+        elif not side_failures:
+            stats[side], side_failures = leakage_statistics(corrupted, twin, scenario["leakage_amplitude"])
+        failures += [f"{side} {kind}: {failure}" for failure in side_failures]
+    if kind == "gains" and "casa" in stats and "casa-rs" in stats:
+        stats["structure"], structure = structure_failures(stats["casa"], stats["casa-rs"])
+        failures += structure
+    return stats, failures
+
+
 def compare_data(tb, scenario: dict, paths: dict, limit: float) -> tuple[dict, list[str]]:
-    """DATA by the scenario's kind: zero, model or noisy."""
+    """DATA by the scenario's kind: zero, model, noisy, gains or leakage."""
     kind = scenario.get("data") or "zero"
     if kind == "zero":
         failures = []
@@ -660,6 +718,9 @@ def compare_data(tb, scenario: dict, paths: dict, limit: float) -> tuple[dict, l
             stats, failures = compare_tsys_noise(paths, term)
             return dict(stats, kind=kind, noise="tsys-manual"), failures
         stats, failures = compare_noisy_data(paths, scenario.get("noise_variance"))
+        return dict(stats, kind=kind), failures
+    if kind in ("gains", "leakage"):
+        stats, failures = compare_corrupted_data(paths, scenario)
         return dict(stats, kind=kind), failures
     return {"kind": kind}, [f"unknown data kind {kind!r}"]
 
@@ -744,7 +805,96 @@ def compare_scenario(
                 report["largest"][qualified] = largest
             if aspect is not None:
                 differ(f"{qualified}:{aspect}", f"{qualified}: {note}")
+    for name in scenario.get("tables", []):
+        rows = {}
+        for side, ms in (("casa", casa_ms), ("casa-rs", casars_ms)):
+            path = os.path.join(os.path.dirname(ms), name)
+            if not os.path.isdir(path):
+                differ(f"{name}:missing", f"calibration table {name}: missing from {side}")
+                break
+            rows[side] = calibration_table(tb, path)
+        else:
+            for message in table_differences(rows["casa"], rows["casa-rs"]):
+                differ(f"{name}:table", f"calibration table {name}: {message}")
     return report
+
+
+# The calibration-table columns compared exactly: what a simulated table's
+# rows are, whatever the draws (`write_simulated_jones_table`).
+TABLE_ID_COLUMNS = (
+    "FIELD_ID",
+    "SPECTRAL_WINDOW_ID",
+    "ANTENNA1",
+    "ANTENNA2",
+    "INTERVAL",
+    "SCAN_NUMBER",
+    "OBSERVATION_ID",
+)
+
+
+def calibration_table(tb, path: str) -> dict:
+    """A calibration table's keywords, columns, TIME and identifying
+    columns, its CPARAM and FLAG cell shapes, and its SPECTRAL_WINDOW
+    channels."""
+    tb.open(path)
+    try:
+        keywords = {
+            key: value
+            for key, value in tb.getkeywords().items()
+            if key in ("VisCal", "ParType", "PolBasis")
+        }
+        rows = tb.nrows()
+        found = {
+            "keywords": keywords,
+            "subtype": tb.info().get("subType"),
+            "columns": sorted(tb.colnames()),
+            "TIME": np.asarray(tb.getcol("TIME")) if rows else np.zeros(0),
+            "shapes": [tb.getcell("CPARAM", row).shape for row in range(rows)],
+            "flags": [bool(np.any(tb.getcell("FLAG", row))) for row in range(rows)],
+        }
+        for column in TABLE_ID_COLUMNS:
+            found[column] = np.asarray(tb.getcol(column)) if rows else np.zeros(0)
+    finally:
+        tb.close()
+    # CASA reduces each window to one channel (`makeSpwSingleChan`), which
+    # its `applycal` needs.
+    tb.open(os.path.join(path, "SPECTRAL_WINDOW"))
+    try:
+        found["windows"] = [
+            (
+                int(tb.getcell("NUM_CHAN", row)),
+                [float(value) for value in tb.getcell("CHAN_FREQ", row)],
+                [float(value) for value in tb.getcell("CHAN_WIDTH", row)],
+            )
+            for row in range(tb.nrows())
+        ]
+    finally:
+        tb.close()
+    return found
+
+
+def table_differences(casa: dict, casars: dict) -> list[str]:
+    """How casa-rs's calibration table differs from CASA's in what is not
+    drawn: its keywords and subtype, columns, rows, TIME (within
+    `TOLERANCES['TIME']`), identifying columns, cell shapes and flags."""
+    found = []
+    for key in ("subtype", "keywords", "columns"):
+        if casa[key] != casars[key]:
+            found.append(f"{key} {casa[key]!r} against {casars[key]!r}")
+    if len(casa["TIME"]) != len(casars["TIME"]):
+        return found + [f"{len(casa['TIME'])} rows against {len(casars['TIME'])}"]
+    if casa["TIME"].size and not np.all(np.abs(casa["TIME"] - casars["TIME"]) <= TOLERANCES["TIME"]):
+        found.append(f"TIME differs by up to {np.max(np.abs(casa['TIME'] - casars['TIME'])):.3g} s")
+    for column in TABLE_ID_COLUMNS:
+        if not np.array_equal(casa[column], casars[column]):
+            row = int(np.argmax(casa[column] != casars[column]))
+            found.append(f"{column} row {row}: {casa[column][row]} against {casars[column][row]}")
+    for key in ("shapes", "flags"):
+        if casa[key] != casars[key]:
+            found.append(f"{key} differ")
+    if casa.get("windows") != casars.get("windows"):
+        found.append(f"SPECTRAL_WINDOW {casa.get('windows')} against {casars.get('windows')}")
+    return found
 
 
 def describe_data(data: dict) -> str:
@@ -788,6 +938,24 @@ def describe_data(data: dict) -> str:
             f"; noise cross re/im variance CASA [{variances('casa')}], casa-rs [{variances('casa-rs')}]"
             + (f", KS p {ks['p_value']:.2g}" if ks else "")
         )
+    if kind == "gains" and "casa" in data and "casa-rs" in data:
+        scales = lambda side: ", ".join(  # noqa: E731
+            f"{entry['amplitude_scale']:.3f}/{entry['phase_scale']:.3f}"
+            for key, entry in data[side].items()
+            if key.startswith("corr")
+        )
+        structure = data.get("structure", {})
+        lags = lambda side: ", ".join(f"{value:.3f}" for value in structure.get(side, []))  # noqa: E731
+        return (
+            f"; gain amplitude/phase scale CASA [{scales('casa')}], casa-rs [{scales('casa-rs')}]"
+            f"; screen autocorrelation at lags {structure.get('lags')} CASA [{lags('casa')}], casa-rs [{lags('casa-rs')}]"
+            f"; CASA's unit-gain antennas {data['casa'].get('unit_antennas')}"
+        )
+    if kind == "leakage" and "casa" in data and "casa-rs" in data:
+        squares = lambda side: ", ".join(  # noqa: E731
+            f"{data[side][key]['square_scale']:.3f}" for key in ("XY_re", "XY_im", "YX_re", "YX_im")
+        )
+        return f"; leakage XY/YX re/im mean-square scale CASA [{squares('casa')}], casa-rs [{squares('casa-rs')}]"
     return ""
 
 

@@ -442,6 +442,14 @@ impl Simulator {
                 images.len()
             )));
         }
+        // The plan corrupts by gains and leakage after every prediction
+        // (`session::plan`).
+        if spec.incremental && self.data_plan.corrupts_by_jones() {
+            return Err(SimulatorError::not_yet_implemented(
+                "an incremental predict after a corrupt with setgain or setleakage terms is not \
+                 yet implemented in casa-rs (simulation Phase 3)",
+            ));
+        }
         let list = spec
             .component_list
             .as_deref()

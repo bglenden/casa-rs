@@ -43,6 +43,20 @@ pub(super) fn published_row_count(table_dir: &Path) -> u64 {
 }
 
 impl Table {
+    /// The rows the plain table at `table_dir` holds on disk, counted as
+    /// [`Table::open`] counts them, read from `table.dat` and `table.lock`
+    /// without loading a row: for a caller that admits the memory an open
+    /// will take before it opens.
+    ///
+    /// # Errors
+    ///
+    /// The control file cannot be read, or the table is not a plain table.
+    pub fn rows_on_disk(table_dir: &Path) -> Result<usize, TableError> {
+        let control = table_dir.join(crate::storage::TABLE_CONTROL_FILE);
+        let table_dat = crate::storage::table_control::read_table_dat(&control)?;
+        Ok(persisted_row_count(table_dir, &table_dat) as usize)
+    }
+
     /// Check that a partial in-place save may write the table at
     /// `table_dir`, whose `table.dat` is `table_dat`, and return the rows the
     /// table holds there.

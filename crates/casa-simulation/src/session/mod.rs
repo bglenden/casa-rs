@@ -31,12 +31,14 @@
 //! Where CASA crashes, writes garbage or corrupts data, the session refuses
 //! or diverges, as recorded in `docs/CASA (C++) bugs.md`.
 
+mod apply;
 pub mod array;
 mod corruption;
 pub mod error;
 mod feeds;
 pub mod fields;
 mod from_ms;
+mod gains;
 mod mosaic;
 pub mod observe;
 pub(crate) mod plan;
@@ -47,7 +49,9 @@ pub mod spectral;
 #[cfg(test)]
 mod tests;
 
+pub use apply::ApplySpec;
 pub use corruption::{DEFAULT_SEED, NoiseSpec, TsysParameters};
+pub use gains::{GainSpec, LeakageSpec};
 pub use prediction::{PredictSpec, PredictionOptions, VoltagePatternSpec};
 pub use resources::{BackendRequest, ExecutionControls, SessionResources, UnknownBackend};
 
@@ -58,6 +62,7 @@ use casa_imaging_operator::PaddingFactor;
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::{EpochRef, MEpoch, MeasFrame, MeasuresProvider};
 
+use crate::corrupt::jones::HeldTerm;
 use crate::predict::SingleDishKernel;
 use crate::write;
 use array::{Antenna, ArrayConfig};
@@ -143,6 +148,12 @@ pub struct Simulator {
     seed: i32,
     /// The noise terms `setnoise` set, until `reset`.
     noise_terms: Vec<NoiseTerm>,
+    /// The antenna-based terms `setgain`, `setleakage` and `setapply` set,
+    /// in the order they were set, until `reset`.
+    jones_terms: Vec<apply::JonesSource>,
+    /// The calibration tables `close` writes, each with its term (a
+    /// `table` given to `setgain` or `setleakage`); `reset` keeps them.
+    jones_tables: Vec<(PathBuf, Arc<HeldTerm>)>,
     /// `predict`'s `GridFT` grid padding (`setoptions`).
     padding: PaddingFactor,
     /// `setoptions(ftmachine='wproject', wprojplanes=…)`: the planes
@@ -194,6 +205,8 @@ impl Simulator {
             scans: Vec::new(),
             seed: DEFAULT_SEED,
             noise_terms: Vec::new(),
+            jones_terms: Vec::new(),
+            jones_tables: Vec::new(),
             padding: PaddingFactor::SIMULATOR,
             w_projection_planes: None,
             mosaic: false,
@@ -509,17 +522,20 @@ impl Simulator {
     }
 
     /// `sm.close()` / `sm.done()`: write the MeasurementSet, or, after
-    /// `openfromms`, patch the rows the DATA steps rewrite in place.
+    /// `openfromms`, patch the rows the DATA steps rewrite in place; then
+    /// write the calibration tables `setgain` and `setleakage` named.
     ///
     /// # Errors
     ///
-    /// A failure to create, read or write the MeasurementSet.
+    /// A failure to create, read or write the MeasurementSet or a
+    /// calibration table.
     pub fn close(self) -> SimulatorResult<()> {
         if self.opened.is_some() {
-            write::patch_measurement_set(&self)
+            write::patch_measurement_set(&self)?;
         } else {
-            write::write_measurement_set(&self)
+            write::write_measurement_set(&self)?;
         }
+        self.write_jones_tables()
     }
 
     /// `direction` in J2000, as `[ra, dec]` radians with the longitude in

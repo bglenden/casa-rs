@@ -120,8 +120,10 @@
   ],
   "casa-atmosphere": [],
   "casa-simulation": [
+   "casa-calibration",
    "casa-components",
    "casa-coordinates",
+   "casa-fft",
    "casa-images",
    "casa-imaging-model",
    "casa-imaging-operator",

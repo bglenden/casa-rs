@@ -30,7 +30,8 @@ before the scenario's clock starts at `open`, so its `seconds` (and each
 call's) time only CASA's `sm` work. A scenario's `data` (`zero`, `model` or `noisy`), `twin`
 (the noise-free scenario a noisy one is compared with) and `noise_variance`
 (the variance its noise should have, Jy²) are copied to the manifest for
-`compare_sm_ms.py`.
+`compare_sm_ms.py`, as are a corrupted scenario's `CORRUPTION_KEYS`
+(`sm_corrupt_scenarios.json`).
 
 A two-stage scenario (`sm_openfromms_scenarios.json`) calls `close` and then
 `openfromms` among its calls: the first stage's MS is copied to
@@ -62,6 +63,15 @@ from casatasks.private import simutil
 from casatools import componentlist, measures, quanta, simulator
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+
+# What compare_sm_ms.py's `gains` and `leakage` comparisons read from a
+# scenario (corruption_stats.py).
+CORRUPTION_KEYS = (
+    "gain_scale",
+    "casa_gain_checks",
+    "leakage_amplitude",
+    "tables",
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -235,6 +245,15 @@ def run_scenario(
                 # the oracle wrote.
                 path = os.path.join(os.path.abspath(args.out), "complists", kwargs["complist"])
                 kwargs["complist"] = resolved["complist"] = path
+        if op in ("setgain", "setleakage") and kwargs.get("table"):
+            # CASA writes the table under the oracle's output; the manifest
+            # keeps its name, which the casa-rs driver writes under its own.
+            kwargs["table"] = os.path.join(os.path.abspath(args.out), kwargs["table"])
+        if op == "setapply" and kwargs.get("table"):
+            # A table an earlier scenario's setgain or setleakage wrote under
+            # the oracle's output: both sides apply CASA's.
+            path = os.path.join(os.path.abspath(args.out), kwargs["table"])
+            kwargs["table"] = resolved["table"] = path
         resolved_calls.append((op, kwargs, resolved))
     sm = simulator()
     calls = []
@@ -276,6 +295,7 @@ def run_scenario(
         "openfromms_ms": scenario.get("openfromms_ms", "casa-rs"),
         "calls": calls,
         "seconds": time.perf_counter() - started,
+        **{key: scenario[key] for key in CORRUPTION_KEYS if key in scenario},
     }
     if record_path is not None:
         with open(record_path, "w", encoding="utf-8") as handle:

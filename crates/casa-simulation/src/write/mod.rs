@@ -145,6 +145,22 @@ fn cell_shape(session: &Simulator) -> SimulatorResult<Option<(usize, usize)>> {
     Ok(shape)
 }
 
+/// `[window]`: the receptors of each correlation of the session's spectral
+/// windows (`Stokes::receptor1`, `receptor2`), which gains and leakage take.
+pub(super) fn window_receptors(session: &Simulator) -> Vec<Vec<[usize; 2]>> {
+    session
+        .spectral_windows()
+        .iter()
+        .map(|window| {
+            window
+                .correlation_products()
+                .iter()
+                .map(|pair| pair.map(|receptor| usize::try_from(receptor).unwrap_or(0)))
+                .collect()
+        })
+        .collect()
+}
+
 /// MAIN as the session's planned scans make it, with cells of
 /// `(correlations, channels)`.
 fn main_shape<'s>(
@@ -211,7 +227,11 @@ fn write_main<'s>(
         &geometry,
         &team,
         (prediction, session.data_plan(), NoiseContext::of(session)),
-        (shape.correlations, shape.channels),
+        (
+            shape.correlations,
+            shape.channels,
+            window_receptors(session),
+        ),
     );
     let integrations = planned
         .iter()

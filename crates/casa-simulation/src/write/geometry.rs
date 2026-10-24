@@ -45,6 +45,8 @@ pub(crate) struct RowGeometry {
     pub(crate) flagged: bool,
     pub(crate) sigma: f32,
     pub(crate) weight: f32,
+    /// TIME, seconds: where gains and leakage take their solution.
+    pub(crate) time_s: f64,
     /// The airmasses of ANTENNA1 and ANTENNA2 at the phase centre, when the
     /// geometry computes them ([`ArrayGeometry::with_airmass`]); NaN
     /// otherwise.
@@ -174,6 +176,7 @@ impl<'a> ArrayGeometry<'a> {
                 flagged: false,
                 sigma,
                 weight,
+                time_s,
                 airmass: [f32::NAN; 2],
                 exposure_s: planned.integration_s,
             };

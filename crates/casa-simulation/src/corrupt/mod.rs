@@ -56,6 +56,7 @@
 //! backend or platform; the tests hold a few cells to the bits they had
 //! before the generator moved to casa-numerics (#855).
 
+pub(crate) mod jones;
 #[cfg(test)]
 mod tests;
 pub(crate) mod tsys;

@@ -513,8 +513,10 @@ dependencies = [
 name = "casa-simulation"
 version = "0.27.0"
 dependencies = [
+ "casa-calibration",
  "casa-components",
  "casa-coordinates",
+ "casa-fft",
  "casa-images",
  "casa-imaging-model",
  "casa-imaging-operator",

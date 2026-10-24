@@ -269,13 +269,19 @@ pub fn predict_spec(image: &Path, incremental: bool) -> PredictSpec {
 /// A component list at `path` of one point at `direction` (J2000), of
 /// `flux_jy` Jy at every frequency.
 pub fn write_point_list(path: &Path, direction: [f64; 2], flux_jy: f64) {
+    write_stokes_point_list(path, direction, [flux_jy, 0.0, 0.0, 0.0]);
+}
+
+/// A component list at `path` of one point at `direction` (J2000), of
+/// Stokes `[I, Q, U, V]` Jy at every frequency.
+pub fn write_stokes_point_list(path: &Path, direction: [f64; 2], [i, q, u, v]: [f64; 4]) {
     use casa_components::{
         ComponentList, ComponentShape, Flux, SkyComponent, SpectralKind, SpectralModel,
     };
     use casa_types::measures::frequency::MFrequency;
     let mut list = ComponentList::new();
     list.push(SkyComponent::new(
-        Flux::stokes_jy(flux_jy, 0.0, 0.0, 0.0),
+        Flux::stokes_jy(i, q, u, v),
         ComponentShape::point(MDirection::from_angles(
             direction[0],
             direction[1],
