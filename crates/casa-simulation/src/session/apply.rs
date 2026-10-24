@@ -23,7 +23,7 @@ use num_complex::Complex32;
 
 use super::Simulator;
 use super::error::{SimulatorError, SimulatorResult};
-use crate::corrupt::jones::{Chunks, JonesKind, JonesTerm, applied};
+use crate::corrupt::jones::{Chunks, HeldTerm, JonesKind, TermBytes, applied};
 
 /// The arguments of `sm.setapply`.
 #[derive(Debug, Clone, PartialEq)]
@@ -51,7 +51,7 @@ pub struct ApplySpec {
 /// evaluated over the scans observed at each `corrupt`.
 #[derive(Debug, Clone)]
 pub(crate) enum JonesSource {
-    Simulated(Arc<JonesTerm>),
+    Simulated(Arc<HeldTerm>),
     Applied(AppliedTable),
 }
 
@@ -149,31 +149,38 @@ impl Simulator {
     }
 
     /// The term `source` is at this `corrupt`: a simulated one as it was
-    /// set, a table's evaluated over the scans observed so far.
-    pub(super) fn jones_term(&self, source: &JonesSource) -> SimulatorResult<Arc<JonesTerm>> {
+    /// set, a table's evaluated over the scans observed so far. An
+    /// evaluated term is admitted as a simulated one is, before it is
+    /// formed, and keeps its share while a step applies it.
+    pub(super) fn jones_term(&self, source: &JonesSource) -> SimulatorResult<Arc<HeldTerm>> {
         match source {
             JonesSource::Simulated(term) => Ok(Arc::clone(term)),
             JonesSource::Applied(table) => {
+                let antennas = self.antennas.len();
+                let (per_window, _) = self.integration_counts();
+                let bytes = TermBytes::per_chunk(&per_window, antennas);
+                let mut reservation = self.admit_term(bytes)?;
                 let lookup =
                     CalibrationTableLookup::open(&table.path, table.interp).map_err(raised)?;
-                let (chunks, values) = self.applied_solutions(&lookup, &table.spwmap)?;
-                Ok(Arc::new(applied(
-                    table.kind,
-                    self.antennas.len(),
-                    chunks,
-                    values,
+                let (chunks, values) =
+                    self.applied_solutions(&lookup, &table.spwmap, &per_window)?;
+                reservation.retain(bytes.kept);
+                Ok(Arc::new(HeldTerm::new(
+                    applied(table.kind, antennas, chunks, values),
+                    reservation,
                 )))
             }
         }
     }
 
-    /// Each integration observed so far as a chunk, with each antenna's
-    /// solution from `lookup` at its time, field and window (mapped by
-    /// `spwmap`).
+    /// Each integration observed so far as a chunk, counted `per_window`,
+    /// with each antenna's solution from `lookup` at its time, field and
+    /// window (mapped by `spwmap`).
     fn applied_solutions(
         &self,
         lookup: &CalibrationTableLookup,
         spwmap: &[i64],
+        per_window: &[usize],
     ) -> SimulatorResult<(Chunks, Vec<[Complex32; 2]>)> {
         let table_window = |window: usize| {
             spwmap
@@ -181,8 +188,8 @@ impl Simulator {
                 .and_then(|&mapped| usize::try_from(mapped).ok())
                 .unwrap_or(window)
         };
-        let mut chunks = Chunks::default();
-        let mut values = Vec::new();
+        let mut chunks = Chunks::with_capacity(per_window);
+        let mut values = Vec::with_capacity(per_window.iter().sum::<usize>() * self.antennas.len());
         for (index, scan) in self.scans.iter().enumerate() {
             let window = table_window(scan.spectral_window_id);
             for time_s in self.integration_times_s(index) {

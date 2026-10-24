@@ -62,7 +62,7 @@ use casa_imaging_operator::PaddingFactor;
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::{EpochRef, MEpoch, MeasFrame, MeasuresProvider};
 
-use crate::corrupt::jones::JonesTerm;
+use crate::corrupt::jones::HeldTerm;
 use crate::predict::SingleDishKernel;
 use crate::write;
 use array::{Antenna, ArrayConfig};
@@ -153,7 +153,7 @@ pub struct Simulator {
     jones_terms: Vec<apply::JonesSource>,
     /// The calibration tables `close` writes, each with its term (a
     /// `table` given to `setgain` or `setleakage`); `reset` keeps them.
-    jones_tables: Vec<(PathBuf, Arc<JonesTerm>)>,
+    jones_tables: Vec<(PathBuf, Arc<HeldTerm>)>,
     /// `predict`'s `GridFT` grid padding (`setoptions`).
     padding: PaddingFactor,
     /// `setoptions(ftmachine='wproject', wprojplanes=…)`: the planes

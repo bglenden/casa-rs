@@ -184,7 +184,6 @@ fn main_shape<'s>(
             .max()
             .unwrap_or(0),
         generated_bytes: subtables::generated_bytes(planned),
-        term_bytes: session.jones_term_bytes(),
     }
 }
 

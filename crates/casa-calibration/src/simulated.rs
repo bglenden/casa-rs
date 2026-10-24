@@ -11,10 +11,15 @@
 //! WEIGHT left undefined; the OBSERVATION, ANTENNA, FIELD and HISTORY
 //! subtables are the MeasurementSet's, and its SPECTRAL_WINDOW with each
 //! window reduced to one channel. As CASA's `NewCalTable::writeToDisk`, a
-//! table already at the output is replaced.
+//! table already at the output is replaced; the new table is built beside
+//! it and the old one removed only once the new one is in place. An output
+//! that is the MeasurementSet, lies inside it, or contains it is refused
+//! before anything is touched (#891 review).
+//!
+//! The table is built in memory and saved: [`simulated_table_bytes`] is
+//! what that holds, for the caller to admit.
 
-use std::fs;
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 
 use casa_ms::ms::MeasurementSet;
 use casa_ms::schema::SubtableId;
@@ -68,24 +73,98 @@ pub struct SimulatedSolution {
     pub receptors: [Complex32; 2],
 }
 
-/// Write `solutions` of `kind` as the calibration table `output` of the
-/// MeasurementSet `ms`, replacing a table already there.
+/// Heap a simulated table holds for each row while it is built in memory
+/// and saved: the row's record (twelve named cells, four of them arrays)
+/// and its share of the columns the save forms. Measured at about 2,050
+/// bytes (the #891 review's 36,000-row probe, and the table law in
+/// `casa-simulation`'s `session_memory/jones.rs`); a quarter more is kept
+/// for the allocator.
+pub const SIMULATED_TABLE_ROW_BYTES: u64 = 2_560;
+
+/// Heap writing a simulated table of `rows` rows holds beyond its fixed
+/// metadata.
+#[must_use]
+pub const fn simulated_table_bytes(rows: u64) -> u64 {
+    rows * SIMULATED_TABLE_ROW_BYTES
+}
+
+/// Refuse `output` as a simulated table of the MeasurementSet at
+/// `measurement_set` when it is that MeasurementSet, lies inside it (a
+/// subtable), or contains it: replacing it would remove the data the table
+/// is written from. Paths are compared after resolving symbolic links and
+/// `..` in the part of each that exists, so an alias is caught as well.
 ///
 /// # Errors
 ///
-/// `output` exists and is not a table, or the table cannot be written.
+/// [`CalibrationTableWriteError::Prepare`] naming the conflict.
+pub fn check_simulated_table_destination(
+    measurement_set: &Path,
+    output: &Path,
+) -> Result<(), CalibrationTableWriteError> {
+    let (table, ms) = (resolved(output), resolved(measurement_set));
+    let conflict = if table == ms {
+        "is the MeasurementSet it is written from"
+    } else if table.starts_with(&ms) {
+        "lies inside the MeasurementSet it is written from"
+    } else if ms.starts_with(&table) {
+        "contains the MeasurementSet it is written from"
+    } else {
+        return Ok(());
+    };
+    Err(CalibrationTableWriteError::Prepare {
+        path: output.display().to_string(),
+        reason: format!("{conflict} ({})", measurement_set.display()),
+    })
+}
+
+/// `path` made absolute, with the longest part of it that exists resolved
+/// (symbolic links and `..`) and the rest normalised lexically.
+fn resolved(path: &Path) -> PathBuf {
+    let absolute = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+    let mut base = PathBuf::new();
+    let mut exists = true;
+    for component in absolute.components() {
+        match component {
+            Component::CurDir => continue,
+            Component::ParentDir if !exists => {
+                base.pop();
+                continue;
+            }
+            other => base.push(other),
+        }
+        if exists {
+            match base.canonicalize() {
+                Ok(canonical) => base = canonical,
+                Err(_) => exists = false,
+            }
+        }
+    }
+    base
+}
+
+/// Write `solutions` of `kind` as the calibration table `output` of the
+/// MeasurementSet `ms`, replacing a table already there once the new one is
+/// saved. The rows are formed one at a time from `solutions`.
+///
+/// # Errors
+///
+/// `output` is, lies inside or contains the MeasurementSet
+/// ([`check_simulated_table_destination`]); `output` exists and is not a
+/// table; or the table cannot be written.
 pub fn write_simulated_jones_table(
     ms: &MeasurementSet,
     output: &Path,
     kind: SimulatedJones,
-    solutions: &[SimulatedSolution],
+    solutions: impl IntoIterator<Item = SimulatedSolution>,
 ) -> Result<(), CalibrationTableWriteError> {
-    replace_existing_table(output)?;
+    if let Some(path) = ms.path() {
+        check_simulated_table_destination(path, output)?;
+    }
     let measurement_set_name = ms.path().and_then(Path::file_name).map_or_else(
         || "<in-memory>".to_string(),
         |name| name.to_string_lossy().into_owned(),
     );
-    let mut writer = CalibrationTableWriter::create(
+    let mut writer = CalibrationTableWriter::create_replacing(
         ms,
         CalibrationTableDescriptor {
             output,
@@ -98,7 +177,7 @@ pub fn write_simulated_jones_table(
         },
     )?;
     for solution in solutions {
-        writer.append(row(solution))?;
+        writer.append(row(&solution))?;
     }
     writer.copy_subtables(&[
         (SubtableId::Observation, "OBSERVATION"),
@@ -167,22 +246,6 @@ fn make_windows_single_channel(path: &Path) -> Result<(), CalibrationTableWriteE
         }
     }
     table.flush().map_err(failed)
-}
-
-/// Remove the table at `output`, as CASA's `writeToDisk` replaces it;
-/// refuse anything there that is not a table.
-fn replace_existing_table(output: &Path) -> Result<(), CalibrationTableWriteError> {
-    if !output.exists() {
-        return Ok(());
-    }
-    let refuse = |reason: String| CalibrationTableWriteError::Prepare {
-        path: output.display().to_string(),
-        reason,
-    };
-    if !output.join("table.dat").is_file() {
-        return Err(refuse("exists and is not a table".to_string()));
-    }
-    fs::remove_dir_all(output).map_err(|error| refuse(format!("cannot replace it: {error}")))
 }
 
 fn schema() -> TableSchema {

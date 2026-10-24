@@ -31,7 +31,7 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use super::prediction::Prediction;
-use crate::corrupt::jones::JonesTerm;
+use crate::corrupt::jones::HeldTerm;
 use crate::corrupt::{NoiseApplication, NoiseLevel};
 use crate::predict::{ComponentPrediction, SingleDishPrediction};
 
@@ -108,7 +108,7 @@ pub(crate) struct DataPlan {
     /// Every corruption's applications, in the order they were taken.
     noise: Vec<NoiseApplication>,
     /// Every corruption's antenna-based terms, in the order they were taken.
-    jones: Vec<Arc<JonesTerm>>,
+    jones: Vec<Arc<HeldTerm>>,
     /// Whether a replacing `predict` cleared the plan. Every step covers
     /// every scan of a MeasurementSet `openfromms` opened, so its DATA
     /// then starts from zero, else from the DATA on disk.
@@ -148,7 +148,7 @@ impl DataPlan {
     pub(crate) fn corrupt(
         &mut self,
         applications: impl IntoIterator<Item = NoiseApplication>,
-        jones: impl IntoIterator<Item = Arc<JonesTerm>>,
+        jones: impl IntoIterator<Item = Arc<HeldTerm>>,
         scans: usize,
     ) {
         let start = self.noise.len();
@@ -188,11 +188,6 @@ impl DataPlan {
         !self.jones.is_empty()
     }
 
-    /// The antenna-based terms the steps apply.
-    pub(crate) fn jones_terms(&self) -> &[Arc<JonesTerm>] {
-        &self.jones
-    }
-
     /// Whether a step covering scan `scan` corrupts it by an antenna-based
     /// term: its noise then follows each step's terms
     /// ([`Self::corruptions_for_scan`]) rather than adding at once.
@@ -207,7 +202,7 @@ impl DataPlan {
     pub(crate) fn corruptions_for_scan(
         &self,
         scan: usize,
-    ) -> impl Iterator<Item = (&[NoiseApplication], &[Arc<JonesTerm>])> {
+    ) -> impl Iterator<Item = (&[NoiseApplication], &[Arc<HeldTerm>])> {
         self.steps_for_scan(scan)
             .iter()
             .filter_map(|step| match step {
