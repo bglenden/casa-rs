@@ -111,6 +111,46 @@ and replace superseded runs rather than accumulating them.
   `nm BIN | grep -c n1fv_` for NEON codelets) before comparing timings, and
   link both sides of an A/B against the same FFTW.
 
+## Cloud Sessions
+
+Claude Code cloud sessions run in a Linux container prepared by
+`.claude/hooks/session-start.sh`. Variables in the cloud environment's settings
+extend it; a session reads them when it starts.
+
+- `TS_AUTHKEY` joins the session to the owner's tailnet in the background
+  (`.claude/hooks/tailscale-up.sh`; log in `/var/log/tailscale-up.log`). Use an
+  ephemeral key. The container has no UDP, so peers are reached through
+  Tailscale's relays: fine for SSH and small files, slow for bulk data.
+- `CASA_RS_MAC_SSH_KEY` lets the session work on the Mac mini (`bg-mac-mini`)
+  as the owner: the macOS-only crates and Metal tests, the CASA oracle, or a
+  second build beside the local one. `scripts/mac-run.sh COMMAND` mirrors the
+  working tree to the mini and runs COMMAND there (`--help` for details).
+  - The value is a private key without a passphrase whose public half is in
+    the owner's `~/.ssh/authorized_keys` on the mini, base64-encoded onto one
+    line (`base64 -i KEY | tr -d '\n'` on macOS). `CASA_RS_MAC_USER` overrides
+    the login name (default `brianglendenning`).
+  - Copies live in `~/ext/SoftwareProjects/casa-rs-cloud/src/<branch>/` on
+    the mini (the top of the `~/ext` volume is owned by root) and share one
+    `target/` beside `src/`; `CASA_RS_MAC_ROOT` overrides the location.
+    Remove a branch's copy with `scripts/mac-run.sh --clean` once its work is
+    merged or pushed.
+  - Commands run in a login shell, which reads `~/.zprofile` and `~/.zshenv`
+    but not `~/.zshrc`; settings the tests need, such as
+    `CASA_RS_MEASURESPATH`, belong in the former. `~/.zshenv` must print
+    nothing, or rsync fails with "is your shell clean?". Stopping the script
+    does not stop the command at once; it ends when it next writes output.
+  - The script uses Homebrew's rsync on the mini when it is installed and the
+    system openrsync otherwise; if openrsync refuses a transfer,
+    `brew install rsync` there.
+  - Run work that reads large data on the mini, next to the NAS and
+    GLENDENNING, and bring back only results.
+- The NAS is not mounted in cloud sessions: the container's kernel has no SMB
+  support and the NAS needs its own login. Reach its data from the mini, which
+  does not mount it by default: the owner mounts it there (Finder or screen
+  sharing) when a run needs it, and SSH logins see it under `/Volumes` while it
+  stays mounted. Non-public datasets stay off the cloud container
+  (`AGENTS.md`).
+
 ## Release And Installation
 
 - Smoke/release gate: `just smoke`
