@@ -71,6 +71,11 @@
 //! admitted, and nothing beyond that grows with the rows, or with the
 //! scans when each row is a scan of its own.
 //!
+//! Two more, in `session_memory/tsys.rs` and `session_memory/patch.rs`,
+//! repeat the first law's base and ten-times-the-rows cases, and the
+//! patch's rows law, with `tsys-manual` noise (#841 Phase 3), whose σ takes
+//! each row's airmasses and exposure.
+//!
 //! This binary's global allocator counts the live heap; the counters are
 //! the process's, so each law runs alone in a process of its own
 //! ([`alone`]).
@@ -80,6 +85,8 @@ mod mosaic;
 mod pass_summary;
 #[path = "session_memory/patch.rs"]
 mod patch;
+#[path = "session_memory/tsys.rs"]
+mod tsys;
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::path::{Path, PathBuf};
@@ -102,7 +109,7 @@ use casa_imaging_runtime::{
 use casa_simulation::{
     ArrayConfig, BackendRequest, CoordinateSystem, NoiseSpec, ObserveSpec, PredictSpec,
     PredictionOptions, SessionResources, Simulator, SimulatorOptions, SpectralWindowSpec,
-    StateSpec, VoltagePatternSpec,
+    StateSpec, TsysParameters, VoltagePatternSpec,
 };
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::frequency::{FrequencyRef, MFrequency};
@@ -425,9 +432,18 @@ fn simulate(case: Case, ms: &Path, model: &Path, measures: &Arc<dyn MeasuresProv
     sm.close().expect("close");
 }
 
-/// 0.1 Jy of simple noise.
+/// Whether [`noise`] is `tsys-manual` rather than `simplenoise`: the Tsys
+/// laws set it, each alone in its process ([`alone`]).
+static TSYS_NOISE: AtomicBool = AtomicBool::new(false);
+
+/// 0.1 Jy of simple noise, or `tsys-manual` noise with CASA's defaults once
+/// a Tsys law sets [`TSYS_NOISE`].
 fn noise() -> NoiseSpec {
-    NoiseSpec::simple(0.1)
+    if TSYS_NOISE.load(Ordering::Relaxed) {
+        NoiseSpec::tsys_manual(TsysParameters::default())
+    } else {
+        NoiseSpec::simple(0.1)
+    }
 }
 
 /// A session writing `ms` within `budget`, with its 12 m antennas, a window

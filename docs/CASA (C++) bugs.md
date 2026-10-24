@@ -1162,7 +1162,10 @@ on CASA 6.7.6 (the probe scripts and their results are on the NAS under
 variances over 32 to 128 channels):
 the formula holds to 4·10⁻⁴ (cross 0.99999 ± 0.00036, autocorrelations
 1.0003 ± 0.0009, 12+12, 12+7 and 7+7 m pairs alike, and to 6·10⁻⁴ with every
-parameter away from its default), but four inputs are not the row's own:
+parameter away from its default), and CASA's `T` table, written with
+integrations of 120 s so that the cache below refreshes at each, gives every
+row's σ within 1.9·10⁻⁶ of casa-rs's (5,040 rows, two windows). But four
+inputs are not the row's own:
 
 - **The airmass is up to 100 s stale.** `simPar` caches each antenna's
   airmass and `setCurrTime` recomputes it only when the solution time has
@@ -1198,7 +1201,9 @@ precision below the horizon, airmass 1000): that antenna scales by 1.
 ## A `tsys-manual` term scales every noise term
 
 - Date noted: 2026-10-24
-- Status: CASA bug; casa-rs does not follow it (#841 Phase 3)
+- Status: CASA bug; casa-rs does not follow it, pending the owner's
+  decision, since the Phase 3 plan asks for CASA's collapse order (#841
+  Phase 3)
 - Affected code: `synthesis/MeasurementEquations/VisEquation.cc`
   (`collapseForSim`)
 
