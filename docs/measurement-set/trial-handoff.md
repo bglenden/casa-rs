@@ -7,7 +7,8 @@ Design review: [PR #878](https://github.com/bglenden/casa-rs/pull/878)
 Design branch: `codex/ms-v4-architecture-plan`
 
 The owner has agreed to proceed with a trial implemented by another agent and
-reviewed by the design agent, starting with two small worked examples. Establish
+reviewed by the design agent, starting with two small worked examples and an
+early bidirectional XRADIO interoperability check. Establish
 the fixtures and baselines needed by each example, try the interfaces in real
 code, and revise them together before expanding to the full M0/M1 checklist.
 This authorizes trial implementation and
@@ -71,10 +72,11 @@ Implement only the source/schema/codec and measure cases needed by these
 examples, with explicit unsupported cases and a documented coverage matrix.
 Use real I/O and existing numerical consumers, not two new toy kernels or an
 in-memory array labelled MSv4. Build the smallest shared API needed to run both;
-do not implement all future abstraction hooks before trying them. The first
-pass need not implement writes, source-free creation, every Measures family's
-bulk route, the full fault-injection suite or all performance workloads.
-Those remain mandatory for full M1 acceptance.
+do not implement all future abstraction hooks before trying them. Include the
+narrow Rust writer needed for the interoperability check below. The first pass
+need not implement general selected updates, production source-free creation,
+every Measures family's bulk route, the full fault-injection suite or all
+performance workloads. Those remain mandatory for full M1 acceptance.
 
 Submit example A for a design review once it runs, then example B and their
 shared API for another review. For each, publish a short Rust usage example,
@@ -84,10 +86,40 @@ missing context, ownership friction and any proposed contract change. These
 measurements diagnose the interface; they do not establish production support
 or release-level performance acceptance.
 
-After the two examples, summarize what to keep, change or discard and review
-the revised contracts with the design agent and owner. Do not automatically
+After the two examples and the interoperability check, summarize what to keep,
+change or discard and review the revised contracts with the design agent and
+owner. Do not automatically
 continue into the entire M1 programme. This is the deliberate learning point
 before committing to the larger implementation.
+
+### Early MSv4 interoperability check
+
+Run this alongside the worked examples, before accepting the exploratory pass:
+
+1. **XRADIO writes, Rust reads.** Use the pinned XRADIO writer/converter and
+   locked Python dependencies to create the tiny MSv4 fixture. Read it through
+   the trial Rust backend into the common batch and compare against independently
+   loaded expected arrays and metadata.
+2. **Rust writes, XRADIO reads.** Have Rust create and encode a fresh, known-shape
+   MSv4 dataset for the narrow declared profile. Reopen it with actual XRADIO,
+   run its applicable schema validation, and force loading of the arrays. Merely
+   opening lazy metadata or copying an existing Zarr store does not prove writer
+   interoperability. Python is the test oracle, not part of Rust's writer.
+
+Use a tiny fixture spanning more than one physical chunk, with distinguishable
+coordinates, complex cross-hand values and nontrivial flags and weights.
+Compare dimensions, axis order, dtypes, every selected value/flag/weight, UVW,
+time representation/scale, frequency units/frame, antenna/baseline and field
+associations, and data-group references. Preserve missing/fill semantics for
+the cases admitted by the fixture. Use exact comparisons for lossless
+serialization and explicit scientific tolerances where a declared conversion
+requires them; schema validity or aggregate sums alone are insufficient.
+
+Publish both commands, software/schema/Zarr/codec versions, fixture recipe,
+comparison results and unsupported cases. A missing XRADIO run keeps this check
+incomplete. This proves the narrow tested profile; general update, append,
+conversion-loss, corruption and failure guarantees still require the later
+M1 evidence. Keep ordinary CASA/casacore MSv2 interoperability gates intact.
 
 ## GitHub workflow and subsequent checkpoints
 

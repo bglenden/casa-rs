@@ -14,7 +14,8 @@ and measured performance remain acceptance requirements.
 The owner agreed on 2026-10-24 to proceed with a separately implemented,
 independently reviewed trial. Start with the [trial handoff](trial-handoff.md).
 The first assignment is two small worked examples—image channel planes and a
-gain solve—followed by review and interface revision before expanding M1.
+gain solve—plus an early bidirectional XRADIO interoperability check, followed
+by review and interface revision before expanding M1.
 This accepts D1–D6 as the working direction for M0/M1; interface stabilization,
 production migration and merging still require the trial evidence and review.
 

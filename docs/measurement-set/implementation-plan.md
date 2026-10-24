@@ -54,14 +54,20 @@ crossing batch boundaries. Both use real v2/v4 inputs, the same common batch
 types and existing production numerical consumers. Establish the affected
 paths' fixtures, dependencies and baseline before modifying them. Review the
 first working example, try the second, then revise the shared API with the
-owner before expanding implementation.
+owner before expanding implementation. Alongside these examples, run the
+[early MSv4 interoperability check](trial-handoff.md#early-msv4-interoperability-check):
+Rust reads XRADIO-written data, and XRADIO independently opens, validates and
+loads a fresh Rust-written dataset. Compare actual arrays and coordinate/group
+semantics, not just schema validity or aggregates. This requires a narrow
+known-shape Rust writer for the tested profile during the first pass.
 
-The initial pass is intentionally partial. It need not complete writes,
-creation, all-family Measures coverage, failure injection or the full benchmark
-matrix. Record unsupported cases and missing evidence rather than constructing
+The initial pass is intentionally partial. Beyond that narrow writer, it need
+not complete general updates/creation, all-family Measures coverage, failure
+injection or the full benchmark matrix. Record unsupported cases and missing
+evidence rather than constructing
 unexercised abstractions. Preserve all M0/M1 acceptance requirements below;
-neither milestone is complete merely because the two examples run. After the
-learning review, complete M0 and the remaining M1 packets before stabilization
+neither milestone is complete merely because the examples and interoperability
+probe run. After the learning review, complete M0 and the remaining M1 packets before stabilization
 or production migration.
 
 ## 2. M0 — establish facts and immutable baselines
