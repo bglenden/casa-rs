@@ -458,32 +458,65 @@ fn solve_gain_t_uses_casa_correlation_independent_flags() {
     }
 }
 
-#[test]
-fn solve_gain_excludes_a_row_whose_flag_row_is_set_and_flag_clear() {
-    // CASA flags every sample of a FLAG_ROW row before solving
-    // (`VisEquation::divideCorrByModel`). Accumulated, this outlier on
-    // baseline 0-1 at t=100 s would move the solved phases by about 17 degrees.
+/// Solve G around an outlier flagged only by `FLAG_ROW`, optionally through a
+/// unit prior table so the solve reads its flags from the pre-applied rows,
+/// and check that every other row corrects to the unit model. CASA flags
+/// every sample of a `FLAG_ROW` row before solving
+/// (`VisEquation::divideCorrByModel`); accumulated, this outlier on baseline
+/// 0-1 at t=100 s would move the solved phases by about 17 degrees.
+fn assert_flag_row_outlier_is_excluded(with_prior_table: bool) {
     let dir = TempDir::new().expect("tempdir");
     let ms_path =
         common::create_gain_solve_fixture_ms(dir.path(), common::SyntheticGainFixtureKind::G);
     common::make_row_flag_only_outlier(&ms_path, 0, casa_types::Complex32::from_polar(3.0, 0.6));
+    let prior_tables = if with_prior_table {
+        let rows = (0..3)
+            .map(|antenna_id| common::SyntheticGainSolutionRow {
+                time_seconds: 100.0,
+                field_id: 0,
+                spectral_window_id: 0,
+                antenna_id,
+                gains: vec![casa_types::Complex32::new(1.0, 0.0); 2],
+                flags: vec![false, false],
+            })
+            .collect::<Vec<_>>();
+        let prior_table =
+            common::create_apply_gain_caltable(&dir.path().join("prior.gcal"), &["TARGET0"], &rows);
+        vec![ApplyCalibrationTableSpec::new(&prior_table)]
+    } else {
+        Vec::new()
+    };
     let caltable_path = dir.path().join("row-flagged.gcal");
+    let mut request = phase_gain_request(caltable_path.clone());
+    request.prior_calibration_tables = prior_tables.clone();
 
-    let report = run_gain_solve(&ms_path, &phase_gain_request(caltable_path.clone()))
-        .expect("solve G gains around a FLAG_ROW outlier");
+    let report =
+        run_gain_solve(&ms_path, &request).expect("solve G gains around a FLAG_ROW outlier");
 
     assert_eq!(report.solution_row_count, 3);
+    let mut calibration_tables = prior_tables;
+    calibration_tables.push(ApplyCalibrationTableSpec::new(&caltable_path));
     execute_apply_from_path(
         &ms_path,
         &ApplyPlanRequest {
             selection: MsSelection::new(),
             apply_mode: ApplyMode::CalOnly,
             parang: false,
-            calibration_tables: vec![ApplyCalibrationTableSpec::new(&caltable_path)],
+            calibration_tables,
         },
     )
     .expect("apply solved G table");
     common::assert_corrected_rows_are_unit_model_except(&ms_path, &[0]);
+}
+
+#[test]
+fn solve_gain_excludes_a_row_whose_flag_row_is_set_and_flag_clear() {
+    assert_flag_row_outlier_is_excluded(false);
+}
+
+#[test]
+fn solve_gain_with_prior_caltable_excludes_a_row_whose_flag_row_is_set_and_flag_clear() {
+    assert_flag_row_outlier_is_excluded(true);
 }
 
 #[test]
