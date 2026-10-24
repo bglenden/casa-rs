@@ -411,11 +411,11 @@ impl PySimulator {
         setup::setspwindow(self, py, &request)
     }
 
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(signature = (ms = None), text_signature = "($self, ms='')")]
-    fn openfromms(&self, ms: Option<&Bound<'_, PyAny>>) -> PyResult<bool> {
-        stubs::not_yet_implemented("openfromms")
+    /// Open the existing MeasurementSet `ms`, closing (writing) any open
+    /// one; `predict` and `corrupt` then rewrite its rows at `close`.
+    #[pyo3(signature = (ms = ""), text_signature = "($self, ms='')")]
+    fn openfromms(&self, py: Python<'_>, ms: &str) -> PyResult<bool> {
+        lifecycle::openfromms(self, py, ms)
     }
 
     /// Plan several pointings: a scan for each run of pointings of one

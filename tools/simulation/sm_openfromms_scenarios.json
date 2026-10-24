@@ -1,0 +1,164 @@
+{
+  "schema_version": 1,
+  "purpose": "simulation Phase 2 (#841): sm.openfromms scenarios run by CASA and by casa-rs, in two stages",
+  "notes": [
+    "Each scenario observes, closes and reopens its MS with openfromms; the calls after openfromms rewrite its rows. An openfromms_ms of casa has casa-rs reopen a copy of CASA's first stage (<name>.stage1.ms), so only the later calls' DATA differs; otherwise casa-rs reopens its own.",
+    "Model images are named relative to the oracle's --model-root, as in sm_predict_scenarios.json: alma/model4 is 256 pixels of 0.05 arcsec centred on 10h -30d with one plane per channel of the 4-channel 230 GHz band; alma-mosaic/model1 is that file's make_bench_model.py image.",
+    "openfromms-mosaic-het-casa-ms reopens CASA's observed heterogeneous mosaic and predicts through the mosaic machine; CASA 6.7.6's close then aborts (close_aborts), as after any mosaic predict.",
+    "CASA's VisSet adds MODEL_DATA and CORRECTED_DATA to an MS without them; casa-rs creates neither (plan decision 6) and keeps the ones there are in step with DATA, which its laws check (crates/casa-simulation/tests/open_from_ms.rs). CORRECTED_DATA is not compared here.",
+    "The moved-pointing scenarios observe a second pointing of 'target' moved 10.4 arcsec east, which keeps target's FIELD row: CASA phases it on the field, and so does casa-rs after openfromms. A point at the field predicts unit amplitude and zero phase in both pointings."
+  ],
+  "complists": {
+    "point-at-field.cl": [
+      {"flux": [1.0, 0.0, 0.0, 0.0], "fluxunit": "Jy", "polarization": "Stokes", "dir": ["J2000", "10h00m00.0", "-30d00m00.0"], "shape": "point", "freq": "230GHz"}
+    ],
+    "shapes.cl": [
+      {"flux": [1.0, 0.0, 0.0, 0.0], "fluxunit": "Jy", "polarization": "Stokes", "dir": ["J2000", "10h00m00.1540", "-30d00m00.0"], "shape": "point", "freq": "230GHz"},
+      {"flux": [0.5, 0.0, 0.0, 0.0], "fluxunit": "Jy", "polarization": "Stokes", "dir": ["J2000", "09h59m59.7690", "-29d59m59.0"], "shape": "gaussian", "majoraxis": "1arcsec", "minoraxis": "0.5arcsec", "positionangle": "30deg", "freq": "230GHz", "spectrumtype": "spectral index", "index": -0.7},
+      {"flux": [0.3, 0.0, 0.0, 0.0], "fluxunit": "Jy", "polarization": "Stokes", "dir": ["J2000", "10h00m00.0770", "-30d00m02.0"], "shape": "disk", "majoraxis": "2arcsec", "minoraxis": "1.5arcsec", "positionangle": "60deg", "freq": "230GHz"}
+    ]
+  },
+  "scenarios": [
+    {
+      "name": "openfromms-predict-casa-ms",
+      "data": "model",
+      "openfromms_ms": "casa",
+      "ignore": ["MAIN.CORRECTED_DATA"],
+      "config": {"cfg": "alma.cycle10.3.cfg", "mount": "alt-az"},
+      "calls": [
+        {"op": "setspwindow", "spwname": "band6", "freq": "230GHz", "deltafreq": "15.625MHz", "freqresolution": "15.625MHz", "refcode": "TOPO", "nchannels": 4, "stokes": "XX YY"},
+        {"op": "setfeed", "mode": "perfect X Y"},
+        {"op": "setauto", "autocorrwt": 0.0},
+        {"op": "settimes", "integrationtime": "30s", "usehourangle": true, "referencetime": ["UTC", "2026/03/21/00:00:00"]},
+        {"op": "setfield", "sourcename": "target", "sourcedirection": ["J2000", "10h00m00.0", "-30d00m00.0"]},
+        {"op": "observe", "sourcename": "target", "spwname": "band6", "starttime": "-300s", "stoptime": "300s"},
+        {"op": "close"},
+        {"op": "openfromms"},
+        {"op": "predict", "imagename": "alma/model4.input.image"}
+      ]
+    },
+    {
+      "name": "openfromms-predict-own-ms",
+      "data": "model",
+      "ignore": ["MAIN.CORRECTED_DATA"],
+      "config": {"cfg": "alma.cycle10.3.cfg", "mount": "alt-az"},
+      "calls": [
+        {"op": "setspwindow", "spwname": "band6", "freq": "230GHz", "deltafreq": "15.625MHz", "freqresolution": "15.625MHz", "refcode": "TOPO", "nchannels": 4, "stokes": "XX YY"},
+        {"op": "setfeed", "mode": "perfect X Y"},
+        {"op": "setauto", "autocorrwt": 0.0},
+        {"op": "settimes", "integrationtime": "30s", "usehourangle": true, "referencetime": ["UTC", "2026/03/21/00:00:00"]},
+        {"op": "setfield", "sourcename": "target", "sourcedirection": ["J2000", "10h00m00.0", "-30d00m00.0"]},
+        {"op": "observe", "sourcename": "target", "spwname": "band6", "starttime": "-300s", "stoptime": "300s"},
+        {"op": "close"},
+        {"op": "openfromms"},
+        {"op": "predict", "imagename": "alma/model4.input.image"}
+      ]
+    },
+    {
+      "name": "openfromms-vp-incremental-components-casa-ms",
+      "data": "model",
+      "openfromms_ms": "casa",
+      "ignore": ["MAIN.CORRECTED_DATA"],
+      "config": {"cfg": "alma.cycle10.3.cfg", "mount": "alt-az"},
+      "calls": [
+        {"op": "setspwindow", "spwname": "band6", "freq": "230GHz", "deltafreq": "15.625MHz", "freqresolution": "15.625MHz", "refcode": "TOPO", "nchannels": 4, "stokes": "XX YY"},
+        {"op": "setfeed", "mode": "perfect X Y"},
+        {"op": "setauto", "autocorrwt": 0.0},
+        {"op": "settimes", "integrationtime": "30s", "usehourangle": true, "referencetime": ["UTC", "2026/03/21/00:00:00"]},
+        {"op": "setfield", "sourcename": "target", "sourcedirection": ["J2000", "10h00m00.0", "-30d00m00.0"]},
+        {"op": "observe", "sourcename": "target", "spwname": "band6", "starttime": "-300s", "stoptime": "300s"},
+        {"op": "predict", "imagename": "alma/model4.input.image"},
+        {"op": "close"},
+        {"op": "openfromms"},
+        {"op": "setvp", "dovp": true, "usedefaultvp": false},
+        {"op": "predict", "complist": "shapes.cl", "incremental": true}
+      ]
+    },
+    {
+      "name": "openfromms-corrupt-casa-ms",
+      "data": "noisy",
+      "twin": "openfromms-predict-casa-ms",
+      "noise_variance": 0.01,
+      "openfromms_ms": "casa",
+      "ignore": ["MAIN.CORRECTED_DATA"],
+      "config": {"cfg": "alma.cycle10.3.cfg", "mount": "alt-az"},
+      "calls": [
+        {"op": "setspwindow", "spwname": "band6", "freq": "230GHz", "deltafreq": "15.625MHz", "freqresolution": "15.625MHz", "refcode": "TOPO", "nchannels": 4, "stokes": "XX YY"},
+        {"op": "setfeed", "mode": "perfect X Y"},
+        {"op": "setauto", "autocorrwt": 0.0},
+        {"op": "settimes", "integrationtime": "30s", "usehourangle": true, "referencetime": ["UTC", "2026/03/21/00:00:00"]},
+        {"op": "setfield", "sourcename": "target", "sourcedirection": ["J2000", "10h00m00.0", "-30d00m00.0"]},
+        {"op": "observe", "sourcename": "target", "spwname": "band6", "starttime": "-300s", "stoptime": "300s"},
+        {"op": "predict", "imagename": "alma/model4.input.image"},
+        {"op": "close"},
+        {"op": "openfromms"},
+        {"op": "setseed", "seed": 4321},
+        {"op": "setnoise", "mode": "simplenoise", "simplenoise": "0.1Jy"},
+        {"op": "corrupt"}
+      ]
+    },
+    {
+      "name": "openfromms-moved-pointing-casa-ms",
+      "data": "model",
+      "openfromms_ms": "casa",
+      "ignore": ["MAIN.CORRECTED_DATA"],
+      "config": {"cfg": "alma.cycle10.3.cfg", "mount": "alt-az"},
+      "calls": [
+        {"op": "setspwindow", "spwname": "band6", "freq": "230GHz", "deltafreq": "15.625MHz", "freqresolution": "15.625MHz", "refcode": "TOPO", "nchannels": 4, "stokes": "XX YY"},
+        {"op": "setfeed", "mode": "perfect X Y"},
+        {"op": "setauto", "autocorrwt": 0.0},
+        {"op": "settimes", "integrationtime": "30s", "usehourangle": true, "referencetime": ["UTC", "2026/03/21/00:00:00"]},
+        {"op": "setfield", "sourcename": "target", "sourcedirection": ["J2000", "10h00m00.0", "-30d00m00.0"]},
+        {"op": "observemany", "sourcenames": ["target", "target"], "spwname": "band6", "starttimes": ["-120s", "0s"], "stoptimes": ["0s", "120s"], "directions": ["", "J2000 10h00m00.8 -30d00m00.0"]},
+        {"op": "close"},
+        {"op": "openfromms"},
+        {"op": "predict", "complist": "point-at-field.cl"}
+      ]
+    },
+    {
+      "name": "openfromms-moved-pointing-own-ms",
+      "data": "model",
+      "ignore": ["MAIN.CORRECTED_DATA"],
+      "config": {"cfg": "alma.cycle10.3.cfg", "mount": "alt-az"},
+      "calls": [
+        {"op": "setspwindow", "spwname": "band6", "freq": "230GHz", "deltafreq": "15.625MHz", "freqresolution": "15.625MHz", "refcode": "TOPO", "nchannels": 4, "stokes": "XX YY"},
+        {"op": "setfeed", "mode": "perfect X Y"},
+        {"op": "setauto", "autocorrwt": 0.0},
+        {"op": "settimes", "integrationtime": "30s", "usehourangle": true, "referencetime": ["UTC", "2026/03/21/00:00:00"]},
+        {"op": "setfield", "sourcename": "target", "sourcedirection": ["J2000", "10h00m00.0", "-30d00m00.0"]},
+        {"op": "observemany", "sourcenames": ["target", "target"], "spwname": "band6", "starttimes": ["-120s", "0s"], "stoptimes": ["0s", "120s"], "directions": ["", "J2000 10h00m00.8 -30d00m00.0"]},
+        {"op": "close"},
+        {"op": "openfromms"},
+        {"op": "predict", "complist": "point-at-field.cl"}
+      ]
+    },
+    {
+      "name": "openfromms-mosaic-het-casa-ms",
+      "data": "model",
+      "openfromms_ms": "casa",
+      "close_aborts": true,
+      "ignore": ["MAIN.CORRECTED_DATA"],
+      "config": {"local": {"telescopename": "ALMA", "x": [0, 35, -30, 20, -45, 60, 15, -15, 45, -60, 75, -5], "y": [0, 20, 25, -40, -10, 5, 50, -55, -25, 40, -35, 70], "z": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], "dishdiameter": [12, 12, 12, 12, 12, 12, 7, 7, 7, 7, 7, 7], "antname": ["A00", "A01", "A02", "A03", "A04", "A05", "A06", "A07", "A08", "A09", "A10", "A11"], "padname": ["P00", "P01", "P02", "P03", "P04", "P05", "P06", "P07", "P08", "P09", "P10", "P11"], "referencelocation": "ALMA"}, "mount": "alt-az"},
+      "calls": [
+        {"op": "setspwindow", "spwname": "band6", "freq": "230GHz", "deltafreq": "15.625MHz", "freqresolution": "15.625MHz", "refcode": "TOPO", "nchannels": 4, "stokes": "XX YY"},
+        {"op": "setfeed", "mode": "perfect X Y"},
+        {"op": "setauto", "autocorrwt": 0.0},
+        {"op": "settimes", "integrationtime": "10s", "usehourangle": true, "referencetime": ["UTC", "2026/03/20/00:00:00"]},
+        {"op": "setfield", "sourcename": "F0", "sourcedirection": ["J2000", "09h59m59.2302", "-30d00m00.0"]},
+        {"op": "setfield", "sourcename": "F1", "sourcedirection": ["J2000", "10h00m00.7698", "-30d00m00.0"]},
+        {"op": "setfield", "sourcename": "F2", "sourcedirection": ["J2000", "10h00m00.0", "-29d59m43.0"]},
+        {"op": "observe", "sourcename": "F0", "spwname": "band6", "starttime": "-900s", "stoptime": "-780s"},
+        {"op": "observe", "sourcename": "F1", "spwname": "band6", "starttime": "-780s", "stoptime": "-660s"},
+        {"op": "observe", "sourcename": "F2", "spwname": "band6", "starttime": "-660s", "stoptime": "-540s"},
+        {"op": "observe", "sourcename": "F0", "spwname": "band6", "starttime": "-540s", "stoptime": "-420s"},
+        {"op": "observe", "sourcename": "F1", "spwname": "band6", "starttime": "-420s", "stoptime": "-300s"},
+        {"op": "observe", "sourcename": "F2", "spwname": "band6", "starttime": "-300s", "stoptime": "-180s"},
+        {"op": "close"},
+        {"op": "openfromms"},
+        {"op": "setvp", "dovp": true, "usedefaultvp": false},
+        {"op": "setoptions", "ftmachine": "mosaic"},
+        {"op": "predict", "imagename": "alma-mosaic/model1.input.image"}
+      ]
+    }
+  ]
+}

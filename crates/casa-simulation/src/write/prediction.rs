@@ -19,7 +19,9 @@
 //! On Metal the stage also corrupts the rows it predicts: the device adds
 //! their scans' noise to the model in its memory, with the draws of
 //! `casa_numerics::cell_noise`, before the model is copied into DATA, so
-//! the host makes no pass of its own over those cells (#855).
+//! the host makes no pass of its own over those cells (#855). Noise comes
+//! last in a row's DATA, so the device adds it only when nothing is added
+//! to the row after the prediction ([`device_noise`]).
 //!
 //! The rows are as `observe` writes them: the row flag is FLAG_ROW, every
 //! sample is unflagged with unit weight, and an autocorrelation predicts the
@@ -44,6 +46,24 @@ use crate::predict::FtMachine;
 use crate::session::Simulator;
 use crate::session::error::{SimulatorError, SimulatorResult};
 use crate::session::observe::Scan;
+use crate::session::plan::DataPlan;
+
+/// The noise of scan `scan` in `plan` that a stage predicting the scan may
+/// add on the device ([`PredictionStage::predict`]): none when visibilities
+/// are added to its rows after the prediction (a component list's, total
+/// power's, or with `from_disk` the DATA on disk), whose noise the host
+/// adds after them. Noise comes last, as on the CPU: a large value added
+/// after it would round it away (#886 review).
+pub(super) fn device_noise(plan: &DataPlan, scan: usize, from_disk: bool) -> &[NoiseApplication] {
+    let added_after = from_disk
+        || plan.components_for_scan(scan).next().is_some()
+        || plan.single_dish_for_scan(scan).next().is_some();
+    if added_after {
+        &[]
+    } else {
+        plan.noise_for_scan(scan)
+    }
+}
 
 /// Bytes of the native rows of one prediction block, about, when the budget
 /// cannot hold a whole write batch's ([`super::resources`]). A block ends
@@ -293,7 +313,8 @@ impl<'s> PredictionStage<'s> {
     /// and on Metal the device copy of every model grid
     /// ([`casa_imaging_operator::PreparedModelGrids::device_copy`]) and a
     /// block's noise rows and the most noise terms of a scan, here and in
-    /// the predictor ([`BlockPredictor::noise_bytes`]).
+    /// the predictor ([`BlockPredictor::noise_bytes`]); and what it keeps
+    /// across blocks ([`Self::state_bytes`]).
     pub(super) fn bytes(&self, rows: usize, workers: usize) -> u64 {
         let predictor = self
             .segments
@@ -322,7 +343,31 @@ impl<'s> PredictionStage<'s> {
                     + BlockPredictor::noise_bytes(self.backend, shape, terms)
             }
         };
-        predictor + shape.shared_bytes() + projections + device
+        predictor + shape.shared_bytes() + projections + device + self.state_bytes()
+    }
+
+    /// Bytes the stage keeps across blocks: each scan's segment, of which an
+    /// opened MeasurementSet may have one a row (#886 review), each
+    /// segment's domains, the windows' channel frequencies and the antennas'
+    /// dish classes.
+    fn state_bytes(&self) -> u64 {
+        let domain = size_of::<PredictionDomain<'_>>()
+            + size_of::<GridFtProjection>()
+            + size_of::<[f64; 2]>();
+        let segments: usize = self
+            .segments
+            .iter()
+            .map(|segment| size_of::<Segment<'_>>() + segment.domains.len() * domain)
+            .sum();
+        let frequencies: usize = self
+            .frequencies
+            .iter()
+            .map(|window| size_of::<Vec<f64>>() + window.len() * size_of::<f64>())
+            .sum();
+        (self.scan_segments.len() * size_of::<Option<usize>>()
+            + segments
+            + frequencies
+            + self.antenna_types.len()) as u64
     }
 
     /// Allocate the block of `rows` rows, predicted with `workers` workers,
@@ -352,12 +397,20 @@ impl<'s> PredictionStage<'s> {
                 .all(|application| metal_draws_exactly(application.noise().sigma()))
     }
 
+    /// Whether the stage added `noise`, the [`device_noise`] it was given
+    /// for a run of scan `scan`, as it predicted the run: the host then
+    /// adds none.
+    pub(super) fn noised(&self, scan: usize, noise: &[NoiseApplication]) -> bool {
+        !noise.is_empty() && self.predicts(scan) && self.noises_on_device(noise)
+    }
+
     /// Predict each run of `runs`, (scan, first row, rows) of `rows`, into
     /// `data` (`correlations × channels` samples a row, the rows of `rows`
     /// from the first); the batch's first row is MAIN row `first_row`. Runs
     /// of scans no step covers are left as they are. When the stage
     /// [`Self::noises_on_device`], a predicted run also gets its scan's
-    /// noise, `noise(scan)`, on the device before it is copied out.
+    /// [`device_noise`], `noise(scan)`, on the device before it is copied
+    /// out.
     pub(super) fn predict<'n>(
         &mut self,
         team: &WorkerTeam,

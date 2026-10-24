@@ -20,8 +20,9 @@
 //!
 //! Divergences: CASA rewrites the model image's spectral units and frame in
 //! place; casa-rs never writes it (`docs/CASA (C++) bugs.md`). MODEL_DATA
-//! and CORRECTED_DATA are not written (plan decision 6), even for an
-//! incremental predict, whose sum CASA forms through MODEL_DATA.
+//! and CORRECTED_DATA are not created (plan decision 6), even for an
+//! incremental predict, whose sum CASA forms through MODEL_DATA; a
+//! MeasurementSet `openfromms` opened keeps those it has in step with DATA.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -475,6 +476,17 @@ impl Simulator {
         }
         let correlations = self.predicted_correlations()?;
         let beam = self.voltage_pattern_beam()?;
+        // Each of these points a scan at its phase centre, which on an
+        // opened MeasurementSet POINTING must agree with.
+        if self.mosaic && model.is_some() {
+            self.require_pointings_at_phase_centres("setoptions(ftmachine='mosaic')")?;
+        }
+        if beam.is_some() {
+            self.require_pointings_at_phase_centres("setvp(dovp=True)")?;
+        }
+        if self.single_dish.is_some() {
+            self.require_pointings_at_phase_centres("setoptions(ftmachine='sd')")?;
+        }
         // The model's grids are prepared per field under an image-plane
         // beam, and once for the mosaic machine, whose kernels point each
         // scan; a component list is predicted at each scan's own pointing.
@@ -716,8 +728,8 @@ impl Simulator {
     }
 
     /// The primary beam `setvp` asks for: the default pattern of OBSERVATION
-    /// row 0's telescope at spectral window 0's REF_FREQUENCY, its start
-    /// frequency (`VPSkyJones`).
+    /// row 0's telescope at spectral window 0's REF_FREQUENCY
+    /// (`VPSkyJones`).
     fn voltage_pattern_beam(&self) -> SimulatorResult<Option<PrimaryBeam>> {
         if !self.voltage_pattern {
             return Ok(None);
@@ -743,12 +755,12 @@ impl Simulator {
             })
     }
 
-    /// Spectral window 0's reference frequency, which picks the VLA's
-    /// pattern by band (`VPSkyJones`), Hz.
+    /// Spectral window 0's REF_FREQUENCY, which picks the VLA's pattern by
+    /// band (`VPSkyJones`), Hz.
     pub(super) fn reference_frequency_hz(&self) -> f64 {
         self.spectral_windows
             .first()
-            .map_or(0.0, |window| window.start_frequency_hz)
+            .map_or(0.0, |window| window.reference_frequency_hz)
     }
 
     /// That every scan points at its field, as a model image predicted

@@ -82,6 +82,31 @@ pub(super) fn open(tool: &PySimulator, py: Python<'_>, ms: &str) -> PyResult<boo
     Ok(true)
 }
 
+/// `sm.openfromms(ms)`: close (write) any open session, as CASA's tool
+/// does, then start one on the existing MeasurementSet `ms`, whose rows the
+/// following `predict` and `corrupt` rewrite at `close`. A MeasurementSet
+/// that cannot be read raises, as CASA's table open does. The GIL is
+/// released while the previous session writes and `ms` is read.
+pub(super) fn openfromms(tool: &PySimulator, py: Python<'_>, ms: &str) -> PyResult<bool> {
+    let resources = tool.resources;
+    let path = PathBuf::from(ms);
+    py.detach(move || -> SimulatorResult<()> {
+        let mut state = tool.lock();
+        if let Some(previous) = state.take() {
+            previous.simulator.close()?;
+        }
+        let options = SimulatorOptions::from_system(resources)?;
+        let measures = Arc::clone(&options.measures);
+        *state = Some(Session {
+            simulator: Simulator::open_from_ms(path, options)?,
+            measures,
+        });
+        Ok(())
+    })
+    .map_err(|error| raised(&error))?;
+    Ok(true)
+}
+
 /// `sm.close()` and `sm.done()`: write the MeasurementSet and end the session.
 /// `True` even when nothing is open; a write failure raises. The GIL is
 /// released while writing.

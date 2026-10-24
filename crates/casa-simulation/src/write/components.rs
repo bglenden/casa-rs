@@ -15,7 +15,10 @@ use crate::session::observe::Scan;
 use crate::session::plan::DataPlan;
 
 /// Rows of one job.
-const JOB_ROWS: usize = 256;
+pub(super) const JOB_ROWS: usize = 256;
+
+/// Bytes of one job.
+pub(super) const JOB_BYTES: usize = size_of::<Job<'static>>();
 
 struct Job<'a> {
     /// The scan's index in the session.
@@ -35,7 +38,15 @@ pub(super) fn add_components(
     runs: &[(usize, usize, usize)],
     (data, samples): (&mut [Complex32], usize),
 ) -> SimulatorResult<()> {
-    let mut jobs = Vec::new();
+    let predicted = |scan| plan.components_for_scan(scan).next().is_some();
+    // As many jobs as there are, at most a run's plus one every `JOB_ROWS`
+    // rows (the patch's admission).
+    let mut jobs = Vec::with_capacity(
+        runs.iter()
+            .filter(|&&(scan, _, _)| predicted(scan))
+            .map(|&(_, _, count)| count.div_ceil(JOB_ROWS))
+            .sum(),
+    );
     let mut rest = data;
     let mut position = 0;
     for &(scan, start, count) in runs {
@@ -48,7 +59,7 @@ pub(super) fn add_components(
             let (cells, tail) = std::mem::take(&mut rest).split_at_mut(take * samples);
             rest = tail;
             position += take;
-            if plan.components_for_scan(scan).next().is_some() {
+            if predicted(scan) {
                 jobs.push(Job {
                     index: scan,
                     scan: &scans[scan],

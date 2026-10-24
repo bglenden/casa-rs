@@ -19,7 +19,7 @@ use casa_tables::{
 use casa_types::{ArrayValue, ScalarValue};
 use ndarray::ArrayD;
 
-use crate::session::observe::Scan;
+use crate::session::observe::PlannedScan;
 
 /// What POINTING needs of a scan.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -34,16 +34,16 @@ pub(super) struct PointingScan {
 }
 
 impl PointingScan {
-    pub(super) fn of(scan: &Scan) -> Self {
+    pub(super) fn of(PlannedScan { scan, rows }: PlannedScan<'_>) -> Self {
         let pointing = Self {
-            antennas: scan.antenna_count,
-            integrations: scan.integration_count,
-            start_s: scan.start_s,
-            integration_s: scan.integration_s,
+            antennas: rows.antenna_count,
+            integrations: rows.integration_count,
+            start_s: rows.start_s,
+            integration_s: rows.integration_s,
             direction_rad: scan.phase_center_rad,
         };
         debug_assert!(
-            scan.integration_times_s()
+            rows.integration_times_s()
                 .eq(pointing.integration_times_s()),
             "POINTING's TIME follows the scan's integration times"
         );
@@ -54,7 +54,8 @@ impl PointingScan {
         self.antennas * self.integrations
     }
 
-    /// The integrations' centres, as [`Scan::integration_times_s`]
+    /// The integrations' centres, as
+    /// [`PlannedRows::integration_times_s`](crate::session::observe::PlannedRows::integration_times_s)
     /// accumulates them.
     fn integration_times_s(&self) -> impl Iterator<Item = f64> + '_ {
         let mut time = self.start_s;
@@ -159,10 +160,10 @@ fn direction(direction_rad: [f64; 2]) -> ArrayValue {
 /// [`pointing_overrides`], and for each scan with rows its place in the
 /// layout and its runs of DIRECTION and TARGET (each a `[2, 1]` cell) and
 /// of INTERVAL and TIME_ORIGIN.
-pub(super) fn overrides_bytes(scans: &[Scan]) -> u64 {
+pub(super) fn overrides_bytes(scans: &[PlannedScan<'_>]) -> u64 {
     let with_rows = scans
         .iter()
-        .filter(|scan| PointingScan::of(scan).rows() > 0)
+        .filter(|scan| PointingScan::of(**scan).rows() > 0)
         .count();
     let per_scan = size_of::<PointingScan>();
     let per_scan_with_rows = size_of::<PointingScan>()

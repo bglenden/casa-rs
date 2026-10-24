@@ -34,6 +34,10 @@ pub(crate) struct SpectralWindow {
     pub(crate) channel_count: usize,
     pub(crate) start_frequency_hz: f64,
     pub(crate) channel_width_hz: f64,
+    /// REF_FREQUENCY, Hz, which picks window 0's beams (`VPSkyJones`):
+    /// `setspwindow` writes the start frequency, and `openfromms` reads it
+    /// back, whatever the channels are.
+    pub(crate) reference_frequency_hz: f64,
     pub(crate) frame: FrequencyRef,
     /// casacore `Stokes::StokesTypes` codes, one per correlation.
     pub(crate) correlations: Vec<i32>,
@@ -50,6 +54,7 @@ impl SpectralWindow {
             channel_count: spec.channel_count,
             start_frequency_hz: spec.start_frequency_hz,
             channel_width_hz: spec.channel_width_hz,
+            reference_frequency_hz: spec.start_frequency_hz,
             frame: spec.frame,
             correlations: parse_stokes(&spec.stokes),
         })

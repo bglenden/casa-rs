@@ -66,6 +66,11 @@
 //! cells, one set of grids, and a pointing for each phase centre), however
 //! many pointings it keeps.
 //!
+//! Two laws, in `session_memory/patch.rs`, patch a MeasurementSet
+//! `openfromms` opened (#841 Phase 2): `close` holds no more than it is
+//! admitted, and nothing beyond that grows with the rows, or with the
+//! scans when each row is a scan of its own.
+//!
 //! This binary's global allocator counts the live heap; the counters are
 //! the process's, so each law runs alone in a process of its own
 //! ([`alone`]).
@@ -73,6 +78,8 @@
 #[path = "session_memory/mosaic.rs"]
 mod mosaic;
 mod pass_summary;
+#[path = "session_memory/patch.rs"]
+mod patch;
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::path::{Path, PathBuf};

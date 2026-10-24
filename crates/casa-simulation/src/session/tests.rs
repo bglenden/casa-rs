@@ -9,8 +9,14 @@ use casa_types::measures::EpochRef;
 use casa_types::measures::frequency::FrequencyRef;
 use casa_types::{ScalarValue, Value};
 
+use super::observe::PlannedRows;
 use super::*;
 use crate::{CasaOutcome, CoordinateSystem};
+
+/// `scan`'s planned rows.
+fn planned(scan: &Scan) -> &PlannedRows {
+    scan.planned().expect("observe plans its rows")
+}
 
 /// 2024-06-01 00:00 UTC.
 const REFERENCE_MJD: f64 = 60_462.0;
@@ -218,7 +224,13 @@ fn scans_count_up_and_observations_follow_add_observation() {
     let numbers = session
         .scans
         .iter()
-        .map(|scan| (scan.scan_number, scan.observation_id, scan.field_id))
+        .map(|scan| {
+            (
+                scan.scan_number,
+                planned(scan).observation_id,
+                scan.field_id,
+            )
+        })
         .collect::<Vec<_>>();
     assert_eq!(numbers, vec![(1, 0, 0), (2, 0, 1), (3, 1, 0)]);
     assert_eq!(session.observations.len(), 2);
@@ -266,20 +278,20 @@ fn observemany_numbers_a_scan_per_run_of_one_field() {
     let south = session.fields[1].direction_rad;
     let moved_rad = [151.0_f64.to_radians(), 35.0_f64.to_radians()];
     let reference_s = REFERENCE_MJD * 86_400.0;
-    let planned = session.scans[1..]
+    let pointings = session.scans[1..]
         .iter()
         .map(|scan| {
             (
                 scan.scan_number,
                 scan.field_id,
-                scan.start_s - reference_s,
-                scan.integration_count,
+                planned(scan).start_s - reference_s,
+                planned(scan).integration_count,
                 scan.phase_center_rad,
             )
         })
         .collect::<Vec<_>>();
     assert_eq!(
-        planned,
+        pointings,
         vec![
             (2, 0, 0.0, 1, north),
             (2, 0, 10.0, 2, moved_rad),
@@ -299,7 +311,7 @@ fn observemany_numbers_a_scan_per_run_of_one_field() {
     assert!(
         session.scans[6..]
             .iter()
-            .all(|scan| scan.observation_id == 1)
+            .all(|scan| planned(scan).observation_id == 1)
     );
 }
 
@@ -417,7 +429,7 @@ fn identical_states_share_a_row() {
     let state_ids = session
         .scans
         .iter()
-        .map(|scan| scan.state_id)
+        .map(|scan| planned(scan).state_id)
         .collect::<Vec<_>>();
     assert_eq!(state_ids, vec![0, 1, 0]);
     assert_eq!(session.states.len(), 2);
@@ -445,6 +457,7 @@ fn a_scan_keeps_the_settings_in_force_when_it_was_observed() {
     let [first, second] = session.scans.as_slice() else {
         panic!("two scans");
     };
+    let (first, second) = (planned(first), planned(second));
     assert_eq!(
         (first.antenna_count, first.autocorrelation_weight),
         (4, 1.0)
@@ -475,7 +488,9 @@ fn integrations_are_stored_at_their_centres() {
     let mut session = ready(Path::new("unused.ms"));
     session.observe(&scan("north", 0.0, 30.0)).expect("observe");
     let reference_s = REFERENCE_MJD * 86_400.0;
-    let times = session.scans[0].integration_times_s().collect::<Vec<_>>();
+    let times = planned(&session.scans[0])
+        .integration_times_s()
+        .collect::<Vec<_>>();
     assert_eq!(
         times,
         vec![reference_s + 5.0, reference_s + 15.0, reference_s + 25.0]
@@ -499,7 +514,8 @@ fn the_hour_angle_offset_comes_from_the_first_source_after_settimes() {
         "later sources keep the first source's offset"
     );
     assert_eq!(
-        session.scans[1].start_s, session.scans[0].start_s,
+        planned(&session.scans[1]).start_s,
+        planned(&session.scans[0]).start_s,
         "both scans start at the first source's transit"
     );
 

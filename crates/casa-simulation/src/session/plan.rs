@@ -98,6 +98,10 @@ pub(crate) struct DataPlan {
     steps: Vec<DataStep>,
     /// Every corruption's applications, in the order they were taken.
     noise: Vec<NoiseApplication>,
+    /// Whether a replacing `predict` cleared the plan. Every step covers
+    /// every scan of a MeasurementSet `openfromms` opened, so its DATA
+    /// then starts from zero, else from the DATA on disk.
+    replaced: bool,
 }
 
 impl DataPlan {
@@ -152,10 +156,35 @@ impl DataPlan {
         self.steps.push(step);
     }
 
-    /// Forget every step: a replacing `predict` overwrites what they did.
+    /// Forget every step: a replacing `predict` overwrites what they did,
+    /// and the DATA on disk.
     pub(crate) fn clear(&mut self) {
         self.steps.clear();
         self.noise.clear();
+        self.replaced = true;
+    }
+
+    /// Whether a replacing `predict` cleared the plan; see the `replaced`
+    /// field.
+    pub(crate) fn replaced(&self) -> bool {
+        self.replaced
+    }
+
+    /// Whether no step was taken (or every one was replaced by nothing).
+    pub(crate) fn is_empty(&self) -> bool {
+        self.steps.is_empty()
+    }
+
+    /// Whether any step predicts: CASA's `predict` sets MODEL_DATA to 1.
+    pub(crate) fn predicts(&self) -> bool {
+        self.steps.iter().any(|step| {
+            matches!(
+                step,
+                DataStep::Predict { .. }
+                    | DataStep::PredictComponents { .. }
+                    | DataStep::PredictSingleDish { .. }
+            )
+        })
     }
 
     /// The steps covering scan `scan`, in the order they were taken: the

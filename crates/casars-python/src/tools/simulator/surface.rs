@@ -134,7 +134,10 @@ const METHODS: &[Method] = &[
         mutating: true,
         ..method("open", &MS, Implemented)
     },
-    method("openfromms", &MS, NotYetImplemented),
+    Method {
+        mutating: true,
+        ..method("openfromms", &MS, Implemented)
+    },
     Method {
         mutating: true,
         ..method("close", &[], Implemented)

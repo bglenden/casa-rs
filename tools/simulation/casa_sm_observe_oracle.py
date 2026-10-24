@@ -31,6 +31,13 @@ call's) time only CASA's `sm` work. A scenario's `data` (`zero`, `model` or `noi
 (the variance its noise should have, Jy²) are copied to the manifest for
 `compare_sm_ms.py`.
 
+A two-stage scenario (`sm_openfromms_scenarios.json`) calls `close` and then
+`openfromms` among its calls: the first stage's MS is copied to
+`<out>/<scenario>.stage1.ms` before `openfromms` reopens it, and the later
+calls rewrite its rows. Its `openfromms_ms` (`casa-rs` by default) tells the
+casa-rs driver which first stage to reopen: its own, or (`casa`) a copy of
+CASA's, so that only the later calls' DATA differs.
+
 A scenario with `close_aborts` runs in a child process (`run_in_child`):
 CASA 6.7.6's `sm.close()` aborts the process after a mosaic predict, once
 DATA is written. The child turns the abort into a quiet exit, so macOS
@@ -238,7 +245,20 @@ def run_scenario(
         call_started = time.perf_counter()
         record = {"op": op, "resolved": resolved}
         try:
-            record["returned"] = bool(getattr(sm, op)(**kwargs))
+            if op == "close":
+                # A two-stage scenario's first stage: its MS is kept as
+                # `<name>.stage1.ms`, which casa-rs reopens for an
+                # `openfromms_ms: casa` scenario.
+                record["returned"] = bool(sm.close())
+                stage_one = ms[: -len(".ms")] + ".stage1.ms"
+                shutil.rmtree(stage_one, ignore_errors=True)
+                shutil.copytree(ms, stage_one)
+                record["resolved"] = {"stage1": stage_one}
+            elif op == "openfromms":
+                record["returned"] = bool(sm.openfromms(ms))
+                record["resolved"] = {"ms": ms}
+            else:
+                record["returned"] = bool(getattr(sm, op)(**kwargs))
         except RuntimeError as error:
             record["returned"] = None
             record["raised"] = str(error).split("\n", 1)[0]
@@ -251,6 +271,7 @@ def run_scenario(
         "data": scenario.get("data", "zero"),
         "twin": scenario.get("twin"),
         "noise_variance": scenario.get("noise_variance"),
+        "openfromms_ms": scenario.get("openfromms_ms", "casa-rs"),
         "calls": calls,
         "seconds": time.perf_counter() - started,
     }

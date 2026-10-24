@@ -22,6 +22,7 @@ use ndarray::ArrayD;
 
 use crate::session::Simulator;
 use crate::session::error::{SimulatorError, SimulatorResult};
+use crate::session::observe::PlannedScan;
 
 /// A scalar or fixed-shape cell value.
 pub(crate) fn scalar_i32(value: i32) -> Value {
@@ -263,7 +264,7 @@ fn write_spectral_windows(ms: &mut MeasurementSet, session: &Simulator) -> Simul
                 ("NAME", scalar_string(&window.name)),
                 ("NET_SIDEBAND", scalar_i32(1)),
                 ("NUM_CHAN", scalar_i32(channels as i32)),
-                ("REF_FREQUENCY", scalar_f64(window.start_frequency_hz)),
+                ("REF_FREQUENCY", scalar_f64(window.reference_frequency_hz)),
                 ("RESOLUTION", f64_array(&[channels], widths)),
                 (
                     "TOTAL_BANDWIDTH",
@@ -458,11 +459,12 @@ fn write_states(ms: &mut MeasurementSet, session: &Simulator) -> SimulatorResult
 /// The subtables the MeasurementSet's save writes from generated columns:
 /// POINTING, one row per antenna per integration, which is not held as rows
 /// (see [`pointing`]).
-pub(crate) fn subtable_overrides(session: &Simulator) -> SimulatorResult<SubtableColumnOverrides> {
-    let scans = session
-        .scans()
+pub(crate) fn subtable_overrides(
+    planned: &[PlannedScan<'_>],
+) -> SimulatorResult<SubtableColumnOverrides> {
+    let scans = planned
         .iter()
-        .map(pointing::PointingScan::of)
+        .map(|scan| pointing::PointingScan::of(*scan))
         .collect::<Vec<_>>();
     let pointing = pointing::pointing_overrides(&scans)
         .map_err(|error| SimulatorError::raised(format!("POINTING columns: {error}")))?;
@@ -471,8 +473,8 @@ pub(crate) fn subtable_overrides(session: &Simulator) -> SimulatorResult<Subtabl
     Ok(overrides)
 }
 
-/// Heap the [`subtable_overrides`] of `session` hold while the save runs:
+/// Heap the [`subtable_overrides`] of `planned` hold while the save runs:
 /// POINTING's, which grows with the scans.
-pub(crate) fn generated_bytes(session: &Simulator) -> u64 {
-    pointing::overrides_bytes(session.scans())
+pub(crate) fn generated_bytes(planned: &[PlannedScan<'_>]) -> u64 {
+    pointing::overrides_bytes(planned)
 }

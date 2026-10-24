@@ -164,12 +164,32 @@ pub(crate) struct Observation {
     pub(crate) project: String,
 }
 
-/// One scan's rows, as `observe` planned them.
+/// One scan: a run of MAIN rows of one field and spectral window, which the
+/// DATA steps cover as a whole. Its rows are either planned by `observe`,
+/// for `close` to generate, or already on disk in the MeasurementSet
+/// `openfromms` opened.
 #[derive(Debug, Clone)]
 pub(crate) struct Scan {
     pub(crate) scan_number: i32,
     pub(crate) field_id: usize,
     pub(crate) spectral_window_id: usize,
+    /// The J2000 phase centre, radians.
+    pub(crate) phase_center_rad: [f64; 2],
+    pub(crate) rows: ScanRows,
+}
+
+/// Where a scan's rows come from.
+#[derive(Debug, Clone)]
+pub(crate) enum ScanRows {
+    /// Rows `observe` planned, which `close` generates.
+    Planned(PlannedRows),
+    /// MAIN rows already in the MeasurementSet `openfromms` opened.
+    OnDisk(std::ops::Range<usize>),
+}
+
+/// The rows of a scan `observe` planned.
+#[derive(Debug, Clone)]
+pub(crate) struct PlannedRows {
     /// The scan's start (CASA's `Tstart`), UTC seconds.
     pub(crate) start_s: f64,
     pub(crate) integration_s: f64,
@@ -178,8 +198,6 @@ pub(crate) struct Scan {
     pub(crate) state_id: usize,
     /// Antennas and feeds defined when `observe` was called.
     pub(crate) antenna_count: usize,
-    /// The J2000 phase centre, radians.
-    pub(crate) phase_center_rad: [f64; 2],
     /// Autocorrelation rows are written when the weight is positive.
     pub(crate) autocorrelation_weight: f32,
     pub(crate) elevation_limit_rad: f64,
@@ -187,6 +205,32 @@ pub(crate) struct Scan {
 }
 
 impl Scan {
+    /// MAIN rows of the scan.
+    pub(crate) fn row_count(&self) -> usize {
+        match &self.rows {
+            ScanRows::Planned(planned) => planned.row_count(),
+            ScanRows::OnDisk(rows) => rows.len(),
+        }
+    }
+
+    /// The scan's planned rows, `None` for rows already on disk.
+    pub(crate) fn planned(&self) -> Option<&PlannedRows> {
+        match &self.rows {
+            ScanRows::Planned(planned) => Some(planned),
+            ScanRows::OnDisk(_) => None,
+        }
+    }
+
+    /// The scan's MAIN rows on disk, `None` for planned rows.
+    pub(crate) fn on_disk(&self) -> Option<std::ops::Range<usize>> {
+        match &self.rows {
+            ScanRows::OnDisk(rows) => Some(rows.clone()),
+            ScanRows::Planned(_) => None,
+        }
+    }
+}
+
+impl PlannedRows {
     /// Baselines per integration, autocorrelations included when written.
     pub(crate) fn baseline_count(&self) -> usize {
         let n = self.antenna_count;
@@ -211,6 +255,24 @@ impl Scan {
             time += self.integration_s;
             centre
         })
+    }
+}
+
+/// A scan whose rows `observe` planned, as `close` generates them.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct PlannedScan<'a> {
+    pub(crate) scan: &'a Scan,
+    pub(crate) rows: &'a PlannedRows,
+}
+
+impl<'a> PlannedScan<'a> {
+    /// `scans` with their planned rows, `None` when any scan's rows are on
+    /// disk.
+    pub(crate) fn of_all(scans: &'a [Scan]) -> Option<Vec<Self>> {
+        scans
+            .iter()
+            .map(|scan| scan.planned().map(|rows| Self { scan, rows }))
+            .collect()
     }
 }
 
@@ -320,16 +382,18 @@ impl super::Simulator {
                 scan_number,
                 field_id,
                 spectral_window_id,
-                start_s,
-                integration_s,
-                integration_count,
-                observation_id,
-                state_id,
-                antenna_count: self.antennas.len(),
                 phase_center_rad,
-                autocorrelation_weight: self.autocorrelation_weight,
-                elevation_limit_rad: self.elevation_limit_rad,
-                shadow_fraction_limit: self.shadow_fraction_limit,
+                rows: ScanRows::Planned(PlannedRows {
+                    start_s,
+                    integration_s,
+                    integration_count,
+                    observation_id,
+                    state_id,
+                    antenna_count: self.antennas.len(),
+                    autocorrelation_weight: self.autocorrelation_weight,
+                    elevation_limit_rad: self.elevation_limit_rad,
+                    shadow_fraction_limit: self.shadow_fraction_limit,
+                }),
             });
         }
         tracing::info!("Calculating a total of {integrations} integrations");
@@ -386,7 +450,7 @@ impl super::Simulator {
         });
         self.scans
             .iter()
-            .map(|scan| scan.observation_id)
+            .filter_map(|scan| scan.planned().map(|rows| rows.observation_id))
             .max()
             .map_or(0, |largest| largest + 1)
     }
