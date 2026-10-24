@@ -27,17 +27,17 @@
 <a href=#27 id=27 data-nosnippet>27</a><span class="kw">use </span>std::sync::Arc;
 <a href=#28 id=28 data-nosnippet>28</a>
 <a href=#29 id=29 data-nosnippet>29</a><span class="kw">use </span><span class="kw">super</span>::prediction::Prediction;
-<a href=#30 id=30 data-nosnippet>30</a><span class="kw">use </span><span class="kw">crate</span>::corrupt::NoiseApplication;
+<a href=#30 id=30 data-nosnippet>30</a><span class="kw">use </span><span class="kw">crate</span>::corrupt::{NoiseApplication, NoiseLevel};
 <a href=#31 id=31 data-nosnippet>31</a><span class="kw">use </span><span class="kw">crate</span>::predict::{ComponentPrediction, SingleDishPrediction};
 <a href=#32 id=32 data-nosnippet>32</a>
-<a href=#33 id=33 data-nosnippet>33</a><span class="doccomment">/// One `setnoise` term: CASA's `ANoise` calibration term, kept until
-<a href=#34 id=34 data-nosnippet>34</a>/// `reset`.
+<a href=#33 id=33 data-nosnippet>33</a><span class="doccomment">/// One `setnoise` term: CASA's `ANoise` calibration term (with, for
+<a href=#34 id=34 data-nosnippet>34</a>/// `tsys-manual`, the `T` that scales it), kept until `reset`.
 <a href=#35 id=35 data-nosnippet>35</a></span><span class="attr">#[derive(Debug, Clone, Copy, PartialEq)]
 <a href=#36 id=36 data-nosnippet>36</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>NoiseTerm {
 <a href=#37 id=37 data-nosnippet>37</a>    <span class="doccomment">/// The seed in force at `setnoise`.
 <a href=#38 id=38 data-nosnippet>38</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) seed: i32,
-<a href=#39 id=39 data-nosnippet>39</a>    <span class="doccomment">/// σ of each real and imaginary draw, Jy.
-<a href=#40 id=40 data-nosnippet>40</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) sigma_jy: f32,
+<a href=#39 id=39 data-nosnippet>39</a>    <span class="doccomment">/// How large its draws are.
+<a href=#40 id=40 data-nosnippet>40</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) level: NoiseLevel,
 <a href=#41 id=41 data-nosnippet>41</a>    <span class="doccomment">/// How many `corrupt` calls have applied the term.
 <a href=#42 id=42 data-nosnippet>42</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) applications: u32,
 <a href=#43 id=43 data-nosnippet>43</a>}
@@ -289,7 +289,7 @@
 <a href=#289 id=289 data-nosnippet>289</a>    <span class="kw">fn </span>noise(seed: i32, ordinal: u32) -&gt; NoiseApplication {
 <a href=#290 id=290 data-nosnippet>290</a>        NoiseApplication {
 <a href=#291 id=291 data-nosnippet>291</a>            seed,
-<a href=#292 id=292 data-nosnippet>292</a>            sigma_jy: <span class="number">0.5</span>,
+<a href=#292 id=292 data-nosnippet>292</a>            level: NoiseLevel::Simple(<span class="number">0.5</span>),
 <a href=#293 id=293 data-nosnippet>293</a>            ordinal,
 <a href=#294 id=294 data-nosnippet>294</a>        }
 <a href=#295 id=295 data-nosnippet>295</a>    }
