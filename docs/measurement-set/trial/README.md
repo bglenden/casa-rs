@@ -82,7 +82,8 @@ external data.
 | --- | --- | --- |
 | Adapter laws | `cargo test -p casa-ms --features msv4 --test observation_io` | Rust only |
 | Example A | `cargo test -p casa-imaging-application --test ms_trial_imaging -- --nocapture --test-threads 1` | Rust only |
-| Example A timings | the same with `--release` | Rust only |
+| Example A timings | `cargo test --release -p casa-imaging-application --test ms_trial_imaging narrow_timings -- --ignored --nocapture` | Rust only |
+| Example B | `cargo test -p casa-calibration --lib batch_trial -- --nocapture --test-threads 1` | Rust only |
 | Shared types | `cargo test -p casa-observation -p casa-types --lib` | Rust only |
 | Fixtures | `tools/ms-trial/make_fixtures.sh` | cargo, uv, network for the first `uv sync` |
 
@@ -193,7 +194,66 @@ decode still allocates inside zarrs.
 
 ## Example B: gain solve
 
-Not yet run.
+[`crates/casa-calibration/src/solve/batch_trial.rs`](../../../crates/casa-calibration/src/solve/batch_trial.rs)
+(crate-internal, test-only). The request is `gaincal(gaintype='G',
+calmode='ap', solint='60s', refant=0, minsnr=3, minblperant=4)` against a
+1 Jy point source. Production's `SolveAccumulator` and solver
+(`solve_closed_group`, split out of `solve_gain` unchanged) consume batch
+fragments. The `[sample, channel, correlation]` views are transposed to the
+accumulator's `[correlation, channel]` without copying. For the comparison,
+`solve_gain` was split into `solve_gain_rows` plus the caltable write; the
+production run still writes its caltable (10 rows).
+
+To feed both paths, `SolveAccumulator::observe` was split into its MAIN-cell
+reads and `observe_samples`, which accumulates arrays from any source. The
+arithmetic and its order are unchanged, and all 134 existing casa-calibration
+tests pass. The split also brought `observe` under the function-length limit,
+so its grandfathered `too_many_lines` exception is removed.
+
+| Realization | Batch sizes | Closure | Gains vs production | SNR / weight vs production | Live groups | Accumulator entries |
+| --- | --- | --- | --- | --- | --- | --- |
+| Sequential, v2 | 1, 7, 25, 60, 120 rows | at delivery and deferred | identical | ≤ 1.5e-7 relative | ≤ 2 | ≤ 64 |
+| Sequential, v4 | 10, 30, 40, 70, 120 samples | at delivery and deferred | identical | ≤ 1.5e-7 | ≤ 2 | ≤ 64 |
+| Concurrent fragments, first held back 50 ms, v2 / v4 | 25 / 30 | both | ≤ 1.9e-7 absolute | ≤ 6.1e-6 | 2 | — |
+| Production against itself | — | — | identical | ≤ 1.5e-7 | — | — |
+
+- **Groups cross batches.** At 7 rows per batch, each 60-sample group spans
+  up to ten batches (19 fragments over 18 batches). At one row per batch, a
+  group spans 60 batches, with one 688-byte buffer and one group's
+  sufficient statistics (32 entries) resident. Accumulator state depends on
+  the group's distinct times, antennas and baseline-correlations, not its
+  samples. No visibility is retained across batches.
+- **Closure is exact.** Each group closes exactly once: two `Last`/`Whole`
+  fragments at delivery, or two `GroupEnd` events under deferred closure.
+  In the concurrent realization, both groups' closures arrived while
+  fragment work was pending (`closed_with_pending = 2`), and each group was
+  solved only after its partial accumulations had joined and merged.
+- **Agreement.** The sequential solves match production as closely as
+  production matches itself: its solver iterates hash maps in a per-run
+  order. Merged partial sums change summation order, hence the 1e-7 gain
+  differences in the concurrent run.
+- **Science check.** The solutions recover the fixture's known gains,
+  referred to antenna 0, to 0.092 rad in phase and 10.7 % in amplitude; the
+  point-source model omits the 0.1 Jy offset source.
+
+### Gaps example B exposed
+
+- The batch carries neither `TIME_CENTROID`, `INTERVAL`/`EXPOSURE` nor scan.
+  The solve needs all three: the centroid weights the solution time,
+  `INTERVAL` gives the solution interval, and scan both keys the group and
+  labels the solution row. The trial supplies time as the centroid (equal in
+  this fixture), a 10 s interval, and no scan (solution scans are not
+  compared). Proposed: the time auxiliaries the contract already lists
+  (centroid, interval, exposure) become optional roles, and scan becomes a
+  per-time or per-sample coordinate with a group-key rule.
+- Antenna identities are the adapters' own; the trial relies on both
+  catalogues listing the stations in the same order. A `CalibrationBinding`
+  between observation and caltable namespaces (contracts §2) is still
+  untested.
+- The consumer owns closure bookkeeping: pending work per key, closed keys,
+  and joins. `GroupEnd` and `Last` say only that input is complete. A small
+  helper owned by calibration (not the source) could own this bookkeeping
+  once the contract settles.
 
 ## MSv4 interoperability
 
