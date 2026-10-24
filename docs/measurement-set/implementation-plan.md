@@ -10,7 +10,9 @@ Design inputs: [architecture](architecture.md), [draft contracts](contracts.md)
 The owner authorized proceeding with the trial on 2026-10-24. The
 [trial handoff](trial-handoff.md) defines how another agent starts M0/M1 and
 submits checkpoints to the design reviewer. D1–D6 are its working direction;
-concrete interfaces remain subject to trial evidence and review.
+concrete interfaces remain subject to trial evidence and review. The initial
+assignment is the two-example exploration below, followed by design iteration;
+the full M1 checklist is the eventual gate, not the first coding assignment.
 
 Prove the shared representation before distributing broad implementation.
 Use competent, lower-cost agents for bounded implementation packets with
@@ -43,6 +45,24 @@ invent slightly different versions of the common batch contract. M4 packets
 may begin when their required backend operations are accepted. Per the owner's
 2026-10-23 decision, MSv3 is deferred until a concrete dataset/producer requires
 it. It is not a completion dependency for this MSv2 + MSv4 programme.
+
+### Early exploration: two worked examples
+
+Begin with the [handoff's two examples](trial-handoff.md#first-assignment-two-examples-then-adjust):
+a few small dirty-image channel planes and a gain solve with solution groups
+crossing batch boundaries. Both use real v2/v4 inputs, the same common batch
+types and existing production numerical consumers. Establish the affected
+paths' fixtures, dependencies and baseline before modifying them. Review the
+first working example, try the second, then revise the shared API with the
+owner before expanding implementation.
+
+The initial pass is intentionally partial. It need not complete writes,
+creation, all-family Measures coverage, failure injection or the full benchmark
+matrix. Record unsupported cases and missing evidence rather than constructing
+unexercised abstractions. Preserve all M0/M1 acceptance requirements below;
+neither milestone is complete merely because the two examples run. After the
+learning review, complete M0 and the remaining M1 packets before stabilization
+or production migration.
 
 ## 2. M0 — establish facts and immutable baselines
 

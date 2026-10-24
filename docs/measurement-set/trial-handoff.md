@@ -7,8 +7,10 @@ Design review: [PR #878](https://github.com/bglenden/casa-rs/pull/878)
 Design branch: `codex/ms-v4-architecture-plan`
 
 The owner has agreed to proceed with a trial implemented by another agent and
-reviewed by the design agent. Start with M0's facts, fixtures and baseline, then
-implement M1's executable contracts. This authorizes trial implementation and
+reviewed by the design agent, starting with two small worked examples. Establish
+the fixtures and baselines needed by each example, try the interfaces in real
+code, and revise them together before expanding to the full M0/M1 checklist.
+This authorizes trial implementation and
 the agreed internal refactoring; it does not freeze the interfaces, waive
 evidence, approve a merge, or start M2–M5's broad production migration.
 
@@ -52,7 +54,42 @@ Read, in order:
    Pro/Fable reviews. Current documents incorporate the selected review input;
    old review suggestions do not supersede the revised contract.
 
-## Implementation and review checkpoints
+## First assignment: two examples, then adjust
+
+The first assignment is an exploratory pass, not completion of all M1 packets.
+Use tiny reproducible MSv2 and actual XRADIO-written MSv4 fixtures describing
+the same selected data. Establish a runnable current-path baseline and the
+required oracle/build dependencies before changing each affected path. This is
+the relevant part of M0, not a claim that the full M0 inventory is complete.
+
+| Example | Smallest useful experiment | What we want to learn |
+| --- | --- | --- |
+| A — a few image channel planes | Feed the same existing imaging operator from v2 and v4 through the common batch, with a request for channel-local windows. Form two or a few small dirty-image planes; compare with the current v2 route. Delay one channel work unit and let another finish, measuring reuse and shared-allocation retention. | Can the algorithm express its access pattern? Are the actual arrays, native Measures and `ndarray` views convenient? Which copies are necessary? Does factored v4 data reach the consumer efficiently? Can work retire safely at different rates? |
+| B — a small gain solve | Feed the existing calibration accumulation/solve path through the same batch types. Use a few antennas and two solution intervals whose groups cross batch boundaries. Vary batch/window sizes and compare solutions with the current path. Exercise explicit group closure and pending work. | Does a different consumer need a different layout or grouping? Can it consume the same Measures/weights/flags naturally? Can it accumulate and finalize correctly without retaining every visibility or reconstructing per-row objects? |
+
+Implement only the source/schema/codec and measure cases needed by these
+examples, with explicit unsupported cases and a documented coverage matrix.
+Use real I/O and existing numerical consumers, not two new toy kernels or an
+in-memory array labelled MSv4. Build the smallest shared API needed to run both;
+do not implement all future abstraction hooks before trying them. The first
+pass need not implement writes, source-free creation, every Measures family's
+bulk route, the full fault-injection suite or all performance workloads.
+Those remain mandatory for full M1 acceptance.
+
+Submit example A for a design review once it runs, then example B and their
+shared API for another review. For each, publish a short Rust usage example,
+exact rerun command, scientific comparison, allocations/copies and retained
+bytes, and narrow matched timing measurements. Explain awkward signatures,
+missing context, ownership friction and any proposed contract change. These
+measurements diagnose the interface; they do not establish production support
+or release-level performance acceptance.
+
+After the two examples, summarize what to keep, change or discard and review
+the revised contracts with the design agent and owner. Do not automatically
+continue into the entire M1 programme. This is the deliberate learning point
+before committing to the larger implementation.
+
+## GitHub workflow and subsequent checkpoints
 
 The implementing agent owns execution and evidence collection. The design
 agent independently reviews the checkpoint diff and results through GitHub.
@@ -63,13 +100,14 @@ Do not mark either PR ready or merge without the owner's later instruction.
 
 | Checkpoint | Implementer supplies | Review boundary |
 | --- | --- | --- |
-| 0 — M0 facts and baseline | Caller/Measures inventory; supported profiles; locked XRADIO/Python and Rust store/codec graph; reproducible small fixtures and independent readers; current production baselines and noise bands; exact commands and prerequisite status. | Review before replacing production paths. Missing prerequisites remain explicit blockers, not successful skips. |
+| 0 — full M0 facts and baseline | Expand the examples' evidence to the full caller/Measures inventory, profiles, dependency/codec locks, fixtures, independent readers, production baselines and noise bands. | Review before broad refactoring and expanded M1 work. Missing prerequisites remain explicit blockers, not successful skips. |
 | 1 — executable shared types | Minimal `casa-observation`, native Measures/quanta and `ndarray` views; compilable imaging/solve/update/creation examples; owner/borrow APIs, layouts, typed errors and proposed dependency/ADR changes. | Review concrete public contracts before expanding adapter and consumer work. Keep subsequent API changes focused and accompanied by motivating cases. |
 | 2 — real reads and consumers | Actual local v2/v4 reads into the common arrays; the same production imaging operator, calibration grouping/closure and cube/work-unit lifetime probes; system-wide bulk Measures coverage. | Review science, copies, retained memory and W1/admitted parallel execution. A synthetic tensor demonstration alone does not satisfy this checkpoint. |
 | 3 — writes, creation and failure | Addressed full/partial writes, aliases/fallbacks and mixed ownership; source-free producer seam; independent CASA/XRADIO reopen; conversion fidelity, store retention and object-failure tests. | Review persistent mappings, unselected/unknown data preservation, failure guarantees and bounded resources. |
 | 4 — M1 acceptance | Every M1 packet mapped to passing evidence, real workload comparisons, unresolved findings and a proposed first stable contract revision. | Independent milestone review plus owner acceptance before M2/M3. No production MSv4-support claim from the trial alone. |
 
-These checkpoints sequence the existing plan; they do not reduce its scope.
+These subsequent checkpoints follow review of the first two examples and
+sequence the existing plan; they do not reduce its eventual scope.
 Every row of the [M1 exit checklist](implementation-plan.md#m1-exit-checklist-and-packet-ownership)
 is still required, including `production-access-cost`. Intermediate reviews may
 examine partial work, but partial evidence cannot close M1. Prepare exact fixture

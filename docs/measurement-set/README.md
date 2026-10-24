@@ -13,6 +13,8 @@ and measured performance remain acceptance requirements.
 
 The owner agreed on 2026-10-24 to proceed with a separately implemented,
 independently reviewed trial. Start with the [trial handoff](trial-handoff.md).
+The first assignment is two small worked examples—image channel planes and a
+gain solve—followed by review and interface revision before expanding M1.
 This accepts D1–D6 as the working direction for M0/M1; interface stabilization,
 production migration and merging still require the trial evidence and review.
 
@@ -27,7 +29,7 @@ detailed proposal; the walkthrough does not finalize any decision.
 
 | Document | Review focus |
 | --- | --- |
-| [Trial handoff](trial-handoff.md) | Branch setup, authorized scope, implementation/review checkpoints and required evidence; start here to implement the trial. |
+| [Trial handoff](trial-handoff.md) | Two initial worked examples, branch setup, review checkpoints and subsequent M1 evidence; start here to implement the trial. |
 | [Architecture](architecture.md) | Boundaries, decisions, format scope, and alternatives; start here for the overall design. |
 | [Intermediate contracts](contracts.md) | The arrays and metadata shared by storage, imaging, calibration, and flagging; the principal design review. |
 | [Implementation plan](implementation-plan.md) | Sequenced work packets, evidence, agent responsibilities, and change control. |
