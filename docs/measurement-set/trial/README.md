@@ -42,6 +42,17 @@ results.
 | Catalogue rebinding | The calibration comparison maps antennas by station and position and fields by phase centre, refusing unmatched or ambiguous entries, instead of relying on list order. | example B tests |
 | `decode_units` wording | Documented as chunks the selection touches, modelled from the chunk grid (the realization and the counter use the same model), not decodes observed inside zarrs. | adapter laws |
 
+## Revision 2: the design walkthrough's decisions
+
+After revision 1 the owner walked through the design chunk by chunk. The 25
+decisions, the principle behind them (MSv4 is the future; MSv2 is assembled
+into its structures), the vocabulary (batch shape, traversal order, payload
+order), the facts verified against the pinned XRADIO source and a suggested
+implementation order are recorded in
+[revision-2-design.md](revision-2-design.md). Every open question listed at
+the end of this document is resolved there. Nothing of revision 2 is
+implemented yet.
+
 ## Provenance
 
 | Item | Value |
@@ -454,6 +465,10 @@ asked for (table at the top). What remains open:
   opening.
 
 ### Open questions for the next iteration
+
+Each of these has a decision in
+[revision-2-design.md](revision-2-design.md) (D12, D17, D16, D5, D25, D18 and
+D23 in order); they are kept here as the record of what revision 1 left open.
 
 1. **End of stream without a buffer.** `next_owned` returns the buffer at
    the end, as the review asked, but still needs one to ask; with an
