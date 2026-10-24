@@ -432,3 +432,193 @@ fn realization_reports_chunk_amplification() {
     while cursor.next(&mut buffers).expect("read").is_some() {}
     assert_eq!(cursor.counters().decode_units, 9);
 }
+
+/// A dataset spec for the trial writer from `catalogue` and the times,
+/// baselines and fields a traversal of `cursor` delivers, with XRADIO's
+/// converter naming applied when `rename` (antennas `NAME_STATION`, fields
+/// `NAME_ID`).
+fn writer_spec(
+    catalogue: &casa_observation::Catalogue,
+    cursor: &mut impl VisibilityCursor,
+    rename: bool,
+) -> casa_ms::observation_io::Msv4DatasetSpec {
+    let mut times = Vec::<f64>::new();
+    let mut baselines = Vec::new();
+    let mut fields = Vec::new();
+    let mut buffers = BatchBuffers::default();
+    while let Some(event) = cursor.next(&mut buffers).expect("read") {
+        let ReadEvent::Batch(batch) = event else {
+            continue;
+        };
+        let unix = MjdHighPrec::new(40_587.0, 0.0);
+        for sample in 0..batch.samples() {
+            let coordinate = batch.topology.sample(sample);
+            let slot = match batch.topology {
+                SampleTopology::Irregular(_) => sample,
+                SampleTopology::TimeBaseline(t) => sample / t.baselines.len(),
+            };
+            let time = batch.topology.time().seconds_since(slot, unix);
+            if times.last() != Some(&time) {
+                times.push(time);
+                fields.push(coordinate.field);
+            }
+            if !baselines.contains(&coordinate.baseline) {
+                baselines.push(coordinate.baseline);
+            }
+        }
+    }
+    let mut antennas = catalogue.antennas.clone();
+    let mut field_entries = catalogue.fields.clone();
+    if rename {
+        for antenna in &mut antennas {
+            antenna.name = format!("{}_{}", antenna.name, antenna.station);
+        }
+        for (index, field) in field_entries.iter_mut().enumerate() {
+            field.name = format!("{}_{index}", field.name);
+        }
+    }
+    let partition = &catalogue.partitions[0];
+    casa_ms::observation_io::Msv4DatasetSpec {
+        name: "ms_trial_0".to_string(),
+        creator: "casa-rs".to_string(),
+        creation_date: "2026-10-24T00:00:00+00:00".to_string(),
+        telescope: catalogue.telescope.clone(),
+        observers: catalogue.observers.clone(),
+        project: catalogue.project.clone(),
+        antennas,
+        fields: field_entries,
+        baselines,
+        scan_per_time: vec!["1".to_string(); times.len()],
+        times_unix_s: times,
+        time_scale: casa_types::measures::EpochRef::UTC,
+        integration_time_s: 10.0,
+        field_per_time: fields,
+        scan_intents: vec!["TARGET.ON_SOURCE".to_string()],
+        spectral_window: partition.spectral_window.clone(),
+        frequencies_hz: partition.frequencies_hz.clone(),
+        channel_width_hz: partition.channel_widths_hz[0],
+        frequency_frame: partition.frequency_frame,
+        correlations: partition.correlations.clone(),
+        units: partition.data_groups[0].units.clone(),
+        uvw_frame: DirectionRef::J2000,
+        chunks: [5, 10, 4, 4],
+        codec: casa_ms::observation_io::Msv4Codec::BloscLz4,
+    }
+}
+
+/// The trial writer creates a fresh MSv4 from either store's batches that
+/// reads back, through the trial reader, sample for sample equal to the
+/// MSv2: from listed MSv2 rows (placed into time × baseline order, the
+/// per-correlation weight written per channel) and from factored MSv4
+/// batches (encoded straight from their views), with batches that straddle
+/// the five-time chunks. XRADIO's own check of such a store is
+/// `tools/ms-trial/check_interop.sh`.
+#[test]
+fn rust_written_msv4_reads_back_equal_to_the_msv2() {
+    use casa_ms::observation_io::Msv4Writer;
+    let root = tempfile::tempdir().expect("root");
+    let v2 = Msv2Observation::open(fixture(root.path(), "ms_trial.ms")).expect("v2");
+    let v4 = Msv4Observation::open(fixture(root.path(), "ms_trial.ps.zarr")).expect("v4");
+    let reference = samples(
+        &mut v2.bind_read(&request(0..8, 120)).expect("bind"),
+        &stations(v2.catalogue()),
+    )
+    .expect("v2");
+    for (label, batch_samples) in [("v2", 40), ("v2", 120), ("v4", 40), ("v4", 120)] {
+        let out = root.path().join(format!("{label}-{batch_samples}.ps.zarr"));
+        let (counters, written) = if label == "v2" {
+            let spec = writer_spec(
+                v2.catalogue(),
+                &mut v2.bind_read(&request(0..8, 120)).expect("bind"),
+                true,
+            );
+            let mut writer = Msv4Writer::create(&out, &spec).expect("create");
+            let mut cursor = v2.bind_read(&request(0..8, batch_samples)).expect("bind");
+            let mut buffers = BatchBuffers::default();
+            while let Some(ReadEvent::Batch(batch)) = cursor.next(&mut buffers).expect("read") {
+                writer.write_batch(&batch).expect("write");
+            }
+            let counters = writer.counters();
+            (counters, writer.finish().expect("finish"))
+        } else {
+            let spec = writer_spec(
+                v4.catalogue(),
+                &mut v4.bind_read(&request(0..8, 120)).expect("bind"),
+                false,
+            );
+            let mut writer = Msv4Writer::create(&out, &spec).expect("create");
+            let mut cursor = v4.bind_read(&request(0..8, batch_samples)).expect("bind");
+            let mut buffers = BatchBuffers::default();
+            while let Some(ReadEvent::Batch(batch)) = cursor.next(&mut buffers).expect("read") {
+                writer.write_batch(&batch).expect("write");
+            }
+            let counters = writer.counters();
+            (counters, writer.finish().expect("finish"))
+        };
+        let reopened = Msv4Observation::open(&written).expect("reopen");
+        let read = samples(
+            &mut reopened.bind_read(&request(0..8, 120)).expect("bind"),
+            &stations(reopened.catalogue()),
+        )
+        .expect("read back");
+        assert_eq!(read, reference, "{label}, {batch_samples} per batch");
+        assert_eq!(
+            reopened.catalogue().antennas[3].name,
+            v4.catalogue().antennas[3].name
+        );
+        if label == "v4" {
+            assert_eq!(
+                counters.packed_elements, 0,
+                "factored batches encode from their views"
+            );
+        } else {
+            assert!(counters.packed_elements > 0);
+        }
+    }
+}
+
+/// Nothing is published until every time is written; a writer dropped or
+/// failing leaves only its staging directory, and a time is written once.
+#[test]
+fn the_writer_publishes_only_complete_datasets() {
+    use casa_ms::observation_io::Msv4Writer;
+    let root = tempfile::tempdir().expect("root");
+    let v4 = Msv4Observation::open(fixture(root.path(), "ms_trial.ps.zarr")).expect("v4");
+    let spec = writer_spec(
+        v4.catalogue(),
+        &mut v4.bind_read(&request(0..8, 120)).expect("bind"),
+        false,
+    );
+    let out = root.path().join("partial.ps.zarr");
+    let mut writer = Msv4Writer::create(&out, &spec).expect("create");
+    let mut cursor = v4.bind_read(&request(0..8, 40)).expect("bind");
+    let mut buffers = BatchBuffers::default();
+    let Some(ReadEvent::Batch(batch)) = cursor.next(&mut buffers).expect("read") else {
+        panic!("a batch");
+    };
+    writer.write_batch(&batch).expect("first write");
+    assert!(
+        writer.write_batch(&batch).is_err(),
+        "a time is written once"
+    );
+    assert!(!out.exists(), "nothing is published before finish");
+    assert!(
+        writer.finish().is_err(),
+        "eight of twelve times are missing"
+    );
+    assert!(!out.exists(), "an incomplete dataset is never published");
+    let window = AccessRequest {
+        channels: 2..4,
+        ..request(2..4, 40)
+    };
+    let mut writer =
+        Msv4Writer::create(&root.path().join("window.ps.zarr"), &spec).expect("create");
+    let mut cursor = v4.bind_read(&window).expect("bind");
+    let Some(ReadEvent::Batch(batch)) = cursor.next(&mut buffers).expect("read") else {
+        panic!("a batch");
+    };
+    assert!(matches!(
+        writer.write_batch(&batch),
+        Err(ObservationError::Unsupported { .. })
+    ));
+}

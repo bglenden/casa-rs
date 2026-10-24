@@ -1,0 +1,108 @@
+{
+ "mode": "rust-read",
+ "checks": 20,
+ "failed": 0,
+ "results": [
+  {
+   "check": "rust read VISIBILITY equals XRADIO load",
+   "ok": true
+  },
+  {
+   "check": "rust read FLAG equals XRADIO load",
+   "ok": true
+  },
+  {
+   "check": "rust read WEIGHT equals XRADIO load",
+   "ok": true
+  },
+  {
+   "check": "rust read UVW equals XRADIO load",
+   "ok": true
+  },
+  {
+   "check": "rust read time equals XRADIO load",
+   "ok": true
+  },
+  {
+   "check": "rust read frequency equals XRADIO load",
+   "ok": true
+  },
+  {
+   "check": "polarization",
+   "ok": true
+  },
+  {
+   "check": "baseline_antenna1_name",
+   "ok": true
+  },
+  {
+   "check": "baseline_antenna2_name",
+   "ok": true
+  },
+  {
+   "check": "field_name per time",
+   "ok": true
+  },
+  {
+   "check": "time origin is the Unix epoch, MJD 40587",
+   "ok": true
+  },
+  {
+   "check": "time scale",
+   "ok": true,
+   "detail": {
+    "xradio": "utc",
+    "rust": "UTC"
+   }
+  },
+  {
+   "check": "frequency frame",
+   "ok": true,
+   "detail": {
+    "xradio": "lsrk",
+    "rust": "LSRK"
+   }
+  },
+  {
+   "check": "UVW frame",
+   "ok": true,
+   "detail": {
+    "xradio": "fk5",
+    "rust": "J2000"
+   }
+  },
+  {
+   "check": "visibility units kept as declared, not taken for Jy",
+   "ok": true,
+   "detail": {
+    "xradio": "unkown",
+    "rust": "Declared(\"unkown\")"
+   }
+  },
+  {
+   "check": "data group",
+   "ok": true,
+   "detail": {
+    "groups": [
+     "base"
+    ]
+   }
+  },
+  {
+   "check": "channel width",
+   "ok": true
+  },
+  {
+   "check": "phase centre of trial_0",
+   "ok": true
+  },
+  {
+   "check": "antenna names",
+   "ok": true
+  },
+  {
+   "check": "antenna positions",
+   "ok": true
+  }
+ ]
+}

@@ -77,15 +77,7 @@ impl Msv2Observation {
     }
 
     fn from_measurement_set(ms: MeasurementSet) -> Result<Self, ObservationError> {
-        let antenna = ms.antenna().map_err(storage)?;
-        let antennas = (0..antenna.row_count())
-            .map(|row| {
-                Ok(AntennaEntry {
-                    name: antenna.name(row).map_err(storage)?,
-                    station: antenna.station(row).map_err(storage)?,
-                })
-            })
-            .collect::<Result<_, ObservationError>>()?;
+        let antennas = read_antennas(&ms)?;
         let field = ms.field().map_err(storage)?;
         let field_table = ms
             .subtable(crate::SubtableId::Field)
@@ -102,9 +94,11 @@ impl Msv2Observation {
             .map(|row| {
                 let (longitude, latitude) =
                     phase_dir.get_direction(row).map_err(storage)?.as_angles();
+                let source = field.source_id(row).map_err(storage)?;
                 Ok(FieldEntry {
                     name: field.name(row).map_err(storage)?,
                     phase_centre: MDirection::from_angles(longitude, latitude, phase_frame),
+                    source_name: source_name(&ms, source)?,
                 })
             })
             .collect::<Result<_, ObservationError>>()?;
@@ -120,8 +114,21 @@ impl Msv2Observation {
         let spectral_weights = main
             .schema()
             .is_some_and(|schema| schema.contains_column("WEIGHT_SPECTRUM"));
+        let observation = ms.observation().map_err(storage)?;
+        let (telescope, observers, project) = if observation.row_count() > 0 {
+            (
+                observation.string(0, "TELESCOPE_NAME").map_err(storage)?,
+                vec![observation.string(0, "OBSERVER").map_err(storage)?],
+                observation.string(0, "PROJECT").map_err(storage)?,
+            )
+        } else {
+            (String::new(), Vec::new(), String::new())
+        };
         Ok(Self {
             catalogue: Catalogue {
+                telescope,
+                observers,
+                project,
                 antennas,
                 fields,
                 partitions: entries,
@@ -244,6 +251,59 @@ impl Msv2Observation {
             counters: IoCounters::default(),
         })
     }
+}
+
+/// Every `ANTENNA` row, with its first `FEED` row's receptors.
+fn read_antennas(ms: &MeasurementSet) -> Result<Vec<AntennaEntry>, ObservationError> {
+    let antenna = ms.antenna().map_err(storage)?;
+    let feed = ms.feed().map_err(storage)?;
+    let mut receptors = vec![(Vec::new(), Vec::new()); antenna.row_count()];
+    for row in (0..feed.row_count()).rev() {
+        let id = usize::try_from(feed.i32(row, "ANTENNA_ID").map_err(storage)?)
+            .map_err(|_| invalid("negative FEED ANTENNA_ID"))?;
+        let Some(slot) = receptors.get_mut(id) else {
+            continue;
+        };
+        let types = match feed.array(row, "POLARIZATION_TYPE").map_err(storage)? {
+            casa_types::ArrayValue::String(types) => types.iter().cloned().collect(),
+            _ => return Err(invalid("FEED POLARIZATION_TYPE is not a string array")),
+        };
+        let angles = match feed.array(row, "RECEPTOR_ANGLE").map_err(storage)? {
+            casa_types::ArrayValue::Float64(angles) => angles.iter().copied().collect(),
+            _ => return Err(invalid("FEED RECEPTOR_ANGLE is not a Float64 array")),
+        };
+        *slot = (types, angles);
+    }
+    (0..antenna.row_count())
+        .zip(receptors)
+        .map(|(row, (receptors, receptor_angles_rad))| {
+            Ok(AntennaEntry {
+                name: antenna.name(row).map_err(storage)?,
+                station: antenna.station(row).map_err(storage)?,
+                position_m: antenna.position(row).map_err(storage)?,
+                mount: antenna.mount(row).map_err(storage)?,
+                dish_diameter_m: antenna.dish_diameter(row).map_err(storage)?,
+                receptors,
+                receptor_angles_rad,
+            })
+        })
+        .collect()
+}
+
+/// The `SOURCE` name of source `id`, if the MeasurementSet has one.
+fn source_name(ms: &MeasurementSet, id: i32) -> Result<Option<String>, ObservationError> {
+    if id < 0 {
+        return Ok(None);
+    }
+    let Ok(source) = ms.source() else {
+        return Ok(None);
+    };
+    for row in 0..source.row_count() {
+        if source.i32(row, "SOURCE_ID").map_err(storage)? == id {
+            return source.string(row, "NAME").map(Some).map_err(storage);
+        }
+    }
+    Ok(None)
 }
 
 fn invalid(reason: impl Into<String>) -> ObservationError {

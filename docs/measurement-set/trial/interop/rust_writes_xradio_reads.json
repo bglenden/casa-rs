@@ -1,0 +1,442 @@
+{
+ "mode": "rust-written",
+ "checks": 59,
+ "failed": 0,
+ "results": [
+  {
+   "check": "XRADIO schema check of the Rust store",
+   "ok": true
+  },
+  {
+   "check": "dataset type and schema version",
+   "ok": true
+  },
+  {
+   "check": "VISIBILITY equals XRADIO's conversion",
+   "ok": true
+  },
+  {
+   "check": "VISIBILITY dims and dtype",
+   "ok": true,
+   "detail": {
+    "rust": [
+     [
+      "time",
+      "baseline_id",
+      "frequency",
+      "polarization"
+     ],
+     "complex64"
+    ],
+    "xradio": [
+     [
+      "time",
+      "baseline_id",
+      "frequency",
+      "polarization"
+     ],
+     "complex64"
+    ]
+   }
+  },
+  {
+   "check": "FLAG equals XRADIO's conversion",
+   "ok": true
+  },
+  {
+   "check": "FLAG dims and dtype",
+   "ok": true,
+   "detail": {
+    "rust": [
+     [
+      "time",
+      "baseline_id",
+      "frequency",
+      "polarization"
+     ],
+     "bool"
+    ],
+    "xradio": [
+     [
+      "time",
+      "baseline_id",
+      "frequency",
+      "polarization"
+     ],
+     "bool"
+    ]
+   }
+  },
+  {
+   "check": "WEIGHT equals XRADIO's conversion",
+   "ok": true
+  },
+  {
+   "check": "WEIGHT dims and dtype",
+   "ok": true,
+   "detail": {
+    "rust": [
+     [
+      "time",
+      "baseline_id",
+      "frequency",
+      "polarization"
+     ],
+     "float32"
+    ],
+    "xradio": [
+     [
+      "time",
+      "baseline_id",
+      "frequency",
+      "polarization"
+     ],
+     "float32"
+    ]
+   }
+  },
+  {
+   "check": "UVW equals XRADIO's conversion",
+   "ok": true
+  },
+  {
+   "check": "UVW dims and dtype",
+   "ok": true,
+   "detail": {
+    "rust": [
+     [
+      "time",
+      "baseline_id",
+      "uvw_label"
+     ],
+     "float64"
+    ],
+    "xradio": [
+     [
+      "time",
+      "baseline_id",
+      "uvw_label"
+     ],
+     "float64"
+    ]
+   }
+  },
+  {
+   "check": "coordinate time",
+   "ok": true
+  },
+  {
+   "check": "coordinate baseline_id",
+   "ok": true
+  },
+  {
+   "check": "coordinate frequency",
+   "ok": true
+  },
+  {
+   "check": "coordinate polarization",
+   "ok": true
+  },
+  {
+   "check": "coordinate baseline_antenna1_name",
+   "ok": true
+  },
+  {
+   "check": "coordinate baseline_antenna2_name",
+   "ok": true
+  },
+  {
+   "check": "coordinate field_name",
+   "ok": true
+  },
+  {
+   "check": "coordinate scan_name",
+   "ok": true
+  },
+  {
+   "check": "coordinate uvw_label",
+   "ok": true
+  },
+  {
+   "check": "time.type",
+   "ok": true,
+   "detail": {
+    "rust": "time",
+    "xradio": "time"
+   }
+  },
+  {
+   "check": "time.units",
+   "ok": true,
+   "detail": {
+    "rust": "s",
+    "xradio": "s"
+   }
+  },
+  {
+   "check": "time.scale",
+   "ok": true,
+   "detail": {
+    "rust": "utc",
+    "xradio": "utc"
+   }
+  },
+  {
+   "check": "time.format",
+   "ok": true,
+   "detail": {
+    "rust": "unix",
+    "xradio": "unix"
+   }
+  },
+  {
+   "check": "time.integration_time",
+   "ok": true,
+   "detail": {
+    "rust": {
+     "data": 10.0,
+     "dims": [],
+     "attrs": {
+      "units": "s",
+      "type": "quantity"
+     }
+    },
+    "xradio": {
+     "data": 10.0,
+     "dims": [],
+     "attrs": {
+      "units": "s",
+      "type": "quantity"
+     }
+    }
+   }
+  },
+  {
+   "check": "frequency.type",
+   "ok": true,
+   "detail": {
+    "rust": "spectral_coord",
+    "xradio": "spectral_coord"
+   }
+  },
+  {
+   "check": "frequency.units",
+   "ok": true,
+   "detail": {
+    "rust": "Hz",
+    "xradio": "Hz"
+   }
+  },
+  {
+   "check": "frequency.observer",
+   "ok": true,
+   "detail": {
+    "rust": "lsrk",
+    "xradio": "lsrk"
+   }
+  },
+  {
+   "check": "frequency.spectral_window_name",
+   "ok": true,
+   "detail": {
+    "rust": "trial_0",
+    "xradio": "trial_0"
+   }
+  },
+  {
+   "check": "frequency.channel_width",
+   "ok": true,
+   "detail": {
+    "rust": {
+     "data": 128000000.0,
+     "dims": [],
+     "attrs": {
+      "units": "Hz",
+      "type": "quantity"
+     }
+    },
+    "xradio": {
+     "data": 128000000.0,
+     "dims": [],
+     "attrs": {
+      "units": "Hz",
+      "type": "quantity"
+     }
+    }
+   }
+  },
+  {
+   "check": "frequency.reference_frequency",
+   "ok": true,
+   "detail": {
+    "rust": {
+     "data": 44512000000.0,
+     "dims": [],
+     "attrs": {
+      "units": "Hz",
+      "observer": "lsrk",
+      "type": "spectral_coord"
+     }
+    },
+    "xradio": {
+     "attrs": {
+      "units": "Hz",
+      "observer": "lsrk",
+      "type": "spectral_coord"
+     },
+     "data": 44512000000.0,
+     "dims": []
+    }
+   }
+  },
+  {
+   "check": "UVW.type",
+   "ok": true,
+   "detail": {
+    "rust": "uvw",
+    "xradio": "uvw"
+   }
+  },
+  {
+   "check": "UVW.units",
+   "ok": true,
+   "detail": {
+    "rust": "m",
+    "xradio": "m"
+   }
+  },
+  {
+   "check": "UVW.frame",
+   "ok": true,
+   "detail": {
+    "rust": "fk5",
+    "xradio": "fk5"
+   }
+  },
+  {
+   "check": "VISIBILITY.units",
+   "ok": true,
+   "detail": {
+    "rust": "unkown"
+   }
+  },
+  {
+   "check": "scan_name.scan_intents",
+   "ok": true
+  },
+  {
+   "check": "data group base roles",
+   "ok": true
+  },
+  {
+   "check": "antenna_xds/antenna_name",
+   "ok": true
+  },
+  {
+   "check": "antenna_xds/station_name",
+   "ok": true
+  },
+  {
+   "check": "antenna_xds/mount",
+   "ok": true
+  },
+  {
+   "check": "antenna_xds/telescope_name",
+   "ok": true
+  },
+  {
+   "check": "antenna_xds/receptor_label",
+   "ok": true
+  },
+  {
+   "check": "antenna_xds/polarization_type",
+   "ok": true
+  },
+  {
+   "check": "antenna_xds/ANTENNA_POSITION",
+   "ok": true
+  },
+  {
+   "check": "antenna_xds/ANTENNA_DISH_DIAMETER",
+   "ok": true
+  },
+  {
+   "check": "antenna_xds/ANTENNA_RECEPTOR_ANGLE",
+   "ok": true
+  },
+  {
+   "check": "antenna_xds/ANTENNA_POSITION measure attributes",
+   "ok": true
+  },
+  {
+   "check": "field_and_source_base_xds/field_name",
+   "ok": true
+  },
+  {
+   "check": "field_and_source_base_xds/source_name",
+   "ok": true
+  },
+  {
+   "check": "field_and_source_base_xds/sky_dir_label",
+   "ok": true
+  },
+  {
+   "check": "field_and_source_base_xds/FIELD_PHASE_CENTER_DIRECTION",
+   "ok": true
+  },
+  {
+   "check": "field_and_source_base_xds/FIELD_PHASE_CENTER_DIRECTION measure attributes",
+   "ok": true
+  },
+  {
+   "check": "variables XRADIO wrote that the trial writer does not",
+   "ok": true,
+   "detail": {
+    "not written": [
+     "EFFECTIVE_INTEGRATION_TIME",
+     "TIME_CENTROID"
+    ]
+   }
+  },
+  {
+   "check": "every MSv2 row has its own slot",
+   "ok": true
+  },
+  {
+   "check": "VISIBILITY equals MSv2 DATA",
+   "ok": true
+  },
+  {
+   "check": "FLAG equals MSv2 FLAG",
+   "ok": true
+  },
+  {
+   "check": "WEIGHT equals MSv2 WEIGHT broadcast",
+   "ok": true
+  },
+  {
+   "check": "UVW equals MSv2 UVW",
+   "ok": true
+  },
+  {
+   "check": "every slot is an MSv2 row (no padding)",
+   "ok": true
+  },
+  {
+   "check": "VISIBILITY layout",
+   "ok": true,
+   "detail": {
+    "chunks": [
+     5,
+     10,
+     4,
+     4
+    ],
+    "codecs": [
+     "bytes",
+     "blosc"
+    ]
+   }
+  }
+ ]
+}

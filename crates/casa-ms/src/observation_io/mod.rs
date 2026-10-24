@@ -14,4 +14,6 @@ mod msv4;
 
 pub use msv2::{Msv2Cursor, Msv2Observation};
 #[cfg(feature = "msv4")]
-pub use msv4::{Msv4Cursor, Msv4Observation};
+pub use msv4::{
+    Msv4Codec, Msv4Cursor, Msv4DatasetSpec, Msv4Observation, Msv4WriteCounters, Msv4Writer,
+};

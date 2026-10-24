@@ -1,6 +1,6 @@
 # MSv2/MSv4 trial evidence
 
-Status: exploratory first pass in progress; interfaces not frozen; not M0/M1 acceptance
+Status: exploratory first pass complete, stopped for design review; interfaces not frozen; not M0/M1 acceptance
 Truth class: trial evidence
 Date: 2026-10-24
 Handoff: [trial-handoff.md](../trial-handoff.md)
@@ -85,11 +85,13 @@ external data.
 | Example A timings | `cargo test --release -p casa-imaging-application --test ms_trial_imaging narrow_timings -- --ignored --nocapture` | Rust only |
 | Example B | `cargo test -p casa-calibration --lib batch_trial -- --nocapture --test-threads 1` | Rust only |
 | Shared types | `cargo test -p casa-observation -p casa-types --lib` | Rust only |
+| Interoperability, both directions | `tools/ms-trial/check_interop.sh` | cargo, uv (pinned XRADIO environment) |
 | Fixtures | `tools/ms-trial/make_fixtures.sh` | cargo, uv, network for the first `uv sync` |
 
 ## Adapter laws
 
-`crates/casa-ms/tests/observation_io.rs`, 6 tests, all passing:
+`crates/casa-ms/tests/observation_io.rs`, 8 tests, all passing (the two
+writer laws are described under interoperability):
 
 - Both catalogues describe the same observation in each store's own names
   (antennas, field, phase centre, frequencies and widths, LSRK, correlation
@@ -257,56 +259,161 @@ so its grandfathered `too_many_lines` exception is removed.
 
 ## MSv4 interoperability
 
-- **XRADIO writes, Rust reads**: the adapter laws above compare Rust's read
-  against the original MSv2. The independent comparison against XRADIO's own
-  load has not been run yet.
-- **Rust writes, XRADIO reads**: not yet run.
+`tools/ms-trial/check_interop.sh` runs both directions on the committed
+fixtures and writes the reports in [`interop/`](interop/). Rust does all the
+reading and writing; Python is only the oracle
+([`check_interop.py`](../../../tools/ms-trial/check_interop.py), in the pinned
+environment).
 
-A missing run is not a pass.
+| Direction | What runs | Checks | Result |
+| --- | --- | --- | --- |
+| XRADIO writes, Rust reads | `ms_trial_interop dump` reads XRADIO's store through the trial reader and dumps every array the batch delivers. XRADIO's `open_processing_set` loads the same store, and the oracle compares the two. | 20 | **all pass** ([report](interop/xradio_writes_rust_reads.json)) |
+| Rust writes, XRADIO reads | `ms_trial_interop write` converts the MSv2 through 40-sample batches (which straddle the five-time chunks) into a fresh store with the trial writer. XRADIO opens it, `check_datatree` validates it and `.load()` forces every array. The oracle compares it with XRADIO's own conversion and with the MSv2 rows read through casacore. | 59 | **all pass** ([report](interop/rust_writes_xradio_reads.json)) |
 
-## Findings and proposed contract changes (so far)
+Comparisons are exact; nothing in these conversions is lossy.
 
-1. **Owned batches for handoff (added).** `VisibilityBatch` borrows its
-   buffers, so it cannot move to another work unit. The trial added
-   `FilledBatch` (buffers plus shape, `Send + Sync`), `next_owned`, and
-   `FilledBatch::pack` for accounted packing. To make this possible, a cursor
-   now implements `fill() -> Fill` and the trait provides `next` and
-   `next_owned`. Proposed: keep this split.
-2. **End of stream needs a buffer.** `next_owned` must be given buffers even
-   to learn that a traversal has ended, so the producer stops by counting the
-   realization's batches. Proposed: a cursor `exhausted()`, or
+- **XRADIO writes, Rust reads.** The oracle compares every value, flag and
+  weight; UVW, time and frequency coordinates; polarization labels, baseline
+  antennas and the per-time field; and the time origin and scale, frequency
+  frame, UVW frame, visibility units, data group, channel width, phase
+  centre, and antenna names and positions.
+- **Rust writes, XRADIO reads.** `VISIBILITY`, `FLAG`, `WEIGHT` and `UVW`
+  match in dims, dtype and every element. Every coordinate matches, as do
+  the time, frequency and UVW measure attributes and the visibility units.
+  The `antenna_xds` and `field_and_source_base_xds` variables match, with
+  their measure attributes, as do the scan intents and the `base` data
+  group's roles. Against the MSv2: every row has its own slot, with no
+  padding; DATA, FLAG, the broadcast WEIGHT and UVW are equal.
+- **Rust-only laws.** `observation_io` also has two Rust-only tests, run in
+  CI. Stores written from MSv2 rows (packed into time × baseline order) and
+  from MSv4 batches (encoded straight from their views, 0 elements packed)
+  read back equal to the MSv2. And nothing is published until every time is
+  written: a time is written once, an incomplete dataset stays in staging,
+  and a channel window is refused.
+
+**Writer profile.** It writes the main dataset's coordinates and the `base`
+group (`complex64`, `bool`, `float32`, `float64`), an `antenna_xds` and a
+`field_and_source_base_xds`. Chunks are regular (here `[5, 10, 4, 4]`).
+Payload variables use Blosc-LZ4, none or Zstandard; coordinates use
+Zstandard. The writer builds the store in a sibling staging directory and
+renames it into place on `finish`. It does not write `TIME_CENTROID` or
+`EFFECTIVE_INTEGRATION_TIME` (XRADIO does; the batch lacks them), pointing,
+system-calibration or weather datasets, or consolidated metadata, so
+XRADIO warns that it fell back to non-consolidated reads. It writes no
+dataset larger than one partition, and offers no update, append or resize.
+
+**Conversion conventions applied explicitly.** XRADIO names antennas
+`NAME_STATION`, fields and spectral windows `NAME_ID`, and an absent source
+`Unknown`. It relabels MSv2's ITRF UVW as fk5, and spells undeclared
+visibility units `"unkown"`. The trial's MSv2 → MSv4 conversion applies the
+same conventions as stated mappings, so the stores compare equal. These are
+conversion policy, not the contract. Scans and intents come from MAIN
+`SCAN_NUMBER` and `STATE::OBS_MODE` directly, because the batch does not
+carry them.
+
+### Interop findings
+
+- **zarrs writes a configuration-less codec as a bare name.** zarr-python
+  3.4.1 refuses to open it (`Expected dict, got str`), so the writer always
+  gives the bytes codec its `endian`. zarrs also adds a `_zarrs` provenance
+  attribute unless `include_zarrs_metadata(false)` is set per call; the
+  writer sets it.
+- **Zarr stores edge chunks at full size.** Reading the twelve times of
+  five-time chunks decodes fifteen (amplification 1.25). Writing batches that
+  straddle chunk boundaries makes zarrs read, modify and rewrite the partial
+  chunks in place. That is fine for creation in staging, but it is not the
+  contract's atomic object replacement for updates.
+- **XRADIO's own outputs need care.** Without a UVW reference it writes
+  `frame: null`; its pointing dataset fails its own schema; and it writes
+  visibility units `"unkown"`.
+
+## Keep, change or discard: the trial's summary for design review
+
+### Keep
+
+- **One batch for both stores and both consumers.** The same
+  `VisibilityBatch` fed the production imaging pass and the production gain
+  accumulator from MSv2 and MSv4 with bit-identical science. No consumer
+  branched on the format. A listed or factored `SampleTopology`, read through
+  one `sample(i)` accessor, was enough for both.
+- **`ndarray` views under thin types.** Channel windows, sample windows of
+  whole times, transposes for the calibration layout and the factored `[T·B,
+  F, P]` view all borrow without copying; the MSv4 view is the decode buffer
+  itself. Fixed-rank `ArrayView2/3` were all the consumers needed.
+- **Binding reports cost before reading.** `Realization` gave decode units and
+  amplification that the counters then confirmed. It caught both the
+  edge-chunk padding and the wave rereads.
+- **Group fragments with explicit closure.** Positions plus `GroupEnd` were
+  enough for batch-size-independent grouping, at-delivery and deferred
+  closure, and concurrent fragments. The rule that input completion is not
+  work completion held in practice.
+- **Native Measures views.** The epoch view keeps each store's origin, so MSv2
+  MJD seconds and MSv4 Unix seconds re-express each other exactly. The
+  frequency and UVW views carry their frames.
+
+### Change (proposed)
+
+1. **Owned batches for handoff: already changed in the trial.** Cursors
+   implement `fill() -> Fill`; the trait provides `next` (borrowed) and
+   `next_owned` (`FilledBatch`, `Send + Sync`). `FilledBatch::pack` gives a
+   window storage of its own, with the copy counted. Proposal: keep. A shared
+   `FilledBatch` pins its whole allocation until the slowest user lets go,
+   and the probes measured it.
+2. **End of stream without a buffer.** `next_owned` needs buffers just to
+   learn the traversal has ended. Proposal: `exhausted()`, or
    `next_owned(Option<BatchBuffers>)`.
-3. **Correlation routing is part of the consumer's access pattern.** The
-   production imager routes every stored correlation, so a flagged cross hand
-   drops its sample from Stokes I, as CASA does. Selecting only XX and YY
-   changed `sumwt` by 0.86 %. The request should name the correlations the
-   consumer reads, and the flag policy over unread ones, rather than leave
-   them to glue code.
-4. **The kernel-facing block is a second owned copy.** The runtime's
-   `NativeBlock` owns its arrays, so every batch is copied into it once, as
-   the production source's buffer is today. Proposed for M2: let the pass
-   place directly from a batch view (`NativeRow` already borrows slices), and
-   delete `NativeBlock`'s copy.
-5. **Per-correlation weights broadcast by hand.** Packing a `NativeBlock`
-   writes a v2 per-correlation weight once per channel. `WeightView::get`
-   hides the broadcast, but a contiguous-slice consumer must still expand it.
-6. **UVW frame labels differ by convention.** The v2 batch reports the
-   stored ITRF; the v4 batch reports XRADIO's fk5 (J2000). The values agree
-   exactly. Proposed: carry the stored label and the effective frame
-   separately, or define the effective frame at binding.
-7. **Duplicated vocabulary.** `casa-observation` has its own `Correlation`
-   because it cannot depend on `casa-imaging-model`'s `CorrelationType`.
-   Proposed: move the one definition down to `casa-observation` (or
-   `casa-types`).
-8. **No native UVW measure.** casa-types has no `MUvw`; `UvwView` uses
-   `DirectionRef` for its frame, as casacore's `Muvw` shares the direction
-   frames.
-9. **Batch size.** A `VisibilityBatch` is about 480 bytes of views, returned
-   by value once per batch; this is harmless at batch granularity.
-10. **zarrs concurrency.** zarrs' default codec concurrency is the global
-    rayon pool. The adapter sets the target to 1, so decoding runs on the
-    caller's thread. Whether W4 can drive zarrs from the admitted team is
-    untested.
+3. **Correlations and flag policy in the request.** Production imaging routes
+   every stored correlation, so a flagged cross hand drops the Stokes I
+   sample, as CASA does; gaincal flags a channel if any correlation is
+   flagged. The request should name the correlations a consumer reads and
+   the flag policy over unread ones.
+4. **Time auxiliaries and scan.** `TIME_CENTROID`, `INTERVAL`/`EXPOSURE`
+   and scan are missing from the trial batch. The solve needs all of them,
+   and the writer cannot emit `TIME_CENTROID` or `EFFECTIVE_INTEGRATION_TIME`
+   without them. Proposal: optional per-sample (or per-time) roles, and scan
+   as a coordinate with a group-key rule.
+5. **Stored and effective UVW frame.** MSv2 stores ITRF; XRADIO writes fk5
+   for the same values. Carry both, or define the effective frame at binding.
+6. **Catalogue rebinding.** Antenna identity across stores relied on the
+   order of each store's catalogue; XRADIO renames antennas, fields and
+   spectral windows. The design's `CalibrationBinding` and explicit
+   cross-format naming rules are needed before any cross-format solve/apply.
+7. **One vocabulary.** Move `CorrelationType` from the imaging model into
+   `casa-observation` (or casa-types), and add a UVW measure to casa-types.
+8. **Writer creation spec.** `Msv4DatasetSpec` collects facts no batch
+   carries: antennas with positions, mounts and receptors; telescope;
+   observers; fields with sources; scans; intents. It is the design's
+   `CatalogueBuilder` in miniature. Proposal: make it the source-free creation
+   catalogue for both formats.
+
+### Discard or defer
+
+- `Closure::Deferred` as a request knob: it exists only to exercise
+  `GroupEnd`. A source should mark closure at delivery when it can, and use
+  `GroupEnd` only where it cannot (interleaved partitions, streaming input).
+- The runtime's `NativeBlock` copy: the trial kept it so the production pass
+  ran unchanged. M2 should let the pass place directly from batch views
+  (`NativeRow` already borrows slices).
+- The index of every row at MSv2 binding (time, field and data description
+  per row, three words per row) is acceptable for the trial. M2's bounded
+  source plan should replace it.
+
+## M1 coverage of this pass
+
+This pass touches parts of the M1 checklist and completes none of it.
+
+| M1 packet | Touched here | Still required |
+| --- | --- | --- |
+| `layout-precision` | Sample-major views from both stores, factored axes, Hz/m/s views, `complex64` | Channel-major layout, precision narrowing, unit requests and conversions, Jy/weight scaling |
+| `measures-bulk` | Native epoch, frequency and UVW array views only | Every family's prepared bulk conversion, ordered interpolation, scalar/CASA agreement, performance |
+| `group-lifecycle` | Time-bin groups, closure, concurrent fragments, one SPW | Interleaved SPWs, late samples, solve → caltable → reopen → apply, namespace rebinding |
+| `work-unit-lifetimes` | Unequal channel units, shared pinning against packing, bounded pools | Cooperating workers on the admitted team, cancellation in flight, cube minor-cycle separation |
+| `native-role-updates` | — | All |
+| `conversion-fidelity` | One loss-free MSv2 → MSv4 profile, both converters | Every audited loss row, rejection policies |
+| `source-free-create` | `Msv4DatasetSpec` plus the narrow writer; staged publication | v2 creation, producer seam, backpressure, publication failure |
+| `store-retention-executor` | zarrs pinned; concurrency target 1 | Key/handle retention plateau, W1/W4 thread and buffer counts |
+| `object-failure` | — | All |
+| `production-access-cost` | Narrow diagnostics on a tiny fixture | The named MFS/cube/bandpass rows on both chunk geometries, noise bands |
 
 ## Unsupported in the trial (typed refusals)
 

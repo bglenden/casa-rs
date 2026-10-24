@@ -120,13 +120,40 @@ impl Msv4Observation {
                 what: "an MSv4 schema version other than 4.0.1",
             });
         }
-        let antenna_names = strings(store, &format!("{path}/antenna_xds/antenna_name"))?;
-        let stations = strings(store, &format!("{path}/antenna_xds/station_name"))?;
-        let antenna_ids = antenna_names
+        let antennas = read_antennas(store, &format!("{path}/antenna_xds"))?;
+        let antenna_names: Vec<String> = antennas
             .iter()
-            .zip(&stations)
-            .map(|(name, station)| self.antenna(name, station))
+            .map(|antenna| antenna.name.clone())
+            .collect();
+        let antenna_ids = antennas
+            .into_iter()
+            .map(|antenna| self.antenna(antenna))
             .collect::<Vec<_>>();
+        if self.catalogue.telescope.is_empty() {
+            self.catalogue.telescope =
+                strings(store, &format!("{path}/antenna_xds/telescope_name"))?
+                    .into_iter()
+                    .next()
+                    .unwrap_or_default();
+            if let Some(info) = attributes.get("observation_info") {
+                self.catalogue.project = info
+                    .get("project_UID")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+                    .to_string();
+                self.catalogue.observers = info
+                    .get("observer")
+                    .and_then(serde_json::Value::as_array)
+                    .map(|observers| {
+                        observers
+                            .iter()
+                            .filter_map(serde_json::Value::as_str)
+                            .map(str::to_string)
+                            .collect()
+                    })
+                    .unwrap_or_default();
+            }
+        }
         let baseline_antenna = |which: &str| -> Result<Vec<AntennaId>, ObservationError> {
             strings(store, &format!("{path}/baseline_antenna{which}_name"))?
                 .iter()
@@ -222,17 +249,15 @@ impl Msv4Observation {
         Ok(())
     }
 
-    /// The catalogue antenna named `name` at `station`, added if new.
-    fn antenna(&mut self, name: &str, station: &str) -> AntennaId {
+    /// The catalogue antenna `antenna` describes, by name and station, added
+    /// if new.
+    fn antenna(&mut self, antenna: AntennaEntry) -> AntennaId {
         let antennas = &mut self.catalogue.antennas;
         let index = antennas
             .iter()
-            .position(|known| known.name == name && known.station == station)
+            .position(|known| known.name == antenna.name && known.station == antenna.station)
             .unwrap_or_else(|| {
-                antennas.push(AntennaEntry {
-                    name: name.to_string(),
-                    station: station.to_string(),
-                });
+                antennas.push(antenna);
                 antennas.len() - 1
             });
         AntennaId(u32::try_from(index).expect("few antennas"))
@@ -247,6 +272,7 @@ impl Msv4Observation {
         per_time: &[String],
     ) -> Result<Vec<u32>, ObservationError> {
         let names = strings(store, &format!("{path}/field_name"))?;
+        let sources = strings(store, &format!("{path}/source_name"))?;
         let (centres, attributes) =
             numbers::<f64>(store, &format!("{path}/FIELD_PHASE_CENTER_DIRECTION"))?;
         super::metadata::require_units(&attributes, "rad", "FIELD_PHASE_CENTER_DIRECTION")?;
@@ -260,6 +286,7 @@ impl Msv4Observation {
                     centres[2 * row + 1],
                     frame,
                 ),
+                source_name: sources.get(row).cloned(),
             };
             let fields = &mut self.catalogue.fields;
             let index = fields
@@ -331,7 +358,7 @@ impl Msv4Observation {
             });
         }
         let baselines = dataset.baselines.len();
-        let times_per_batch = request.max_samples / baselines.max(1);
+        let times_per_batch = (request.max_samples / baselines.max(1)).min(dataset.times.len());
         if times_per_batch == 0 {
             return Err(ObservationError::InvalidRequest {
                 reason: format!(
@@ -367,6 +394,43 @@ impl Msv4Observation {
             counters: IoCounters::default(),
         })
     }
+}
+
+/// The antennas of the `antenna_xds` at `path`.
+fn read_antennas(
+    store: &Arc<FilesystemStore>,
+    path: &str,
+) -> Result<Vec<AntennaEntry>, ObservationError> {
+    let names = strings(store, &format!("{path}/antenna_name"))?;
+    let stations = strings(store, &format!("{path}/station_name"))?;
+    let mounts = strings(store, &format!("{path}/mount"))?;
+    let types = strings(store, &format!("{path}/polarization_type"))?;
+    let (positions, attributes) = numbers::<f64>(store, &format!("{path}/ANTENNA_POSITION"))?;
+    super::metadata::require_units(&attributes, "m", "ANTENNA_POSITION")?;
+    if text(&attributes, "frame", "ANTENNA_POSITION")? != "ITRS" {
+        return Err(ObservationError::Unsupported {
+            what: "MSv4 antenna positions in other than ITRS",
+        });
+    }
+    let (diameters, _) = numbers::<f64>(store, &format!("{path}/ANTENNA_DISH_DIAMETER"))?;
+    let (angles, _) = numbers::<f64>(store, &format!("{path}/ANTENNA_RECEPTOR_ANGLE"))?;
+    let count = names.len();
+    let receptors = types.len() / count.max(1);
+    Ok((0..count)
+        .map(|index| AntennaEntry {
+            name: names[index].clone(),
+            station: stations[index].clone(),
+            position_m: [
+                positions[3 * index],
+                positions[3 * index + 1],
+                positions[3 * index + 2],
+            ],
+            mount: mounts[index].clone(),
+            dish_diameter_m: diameters[index],
+            receptors: types[receptors * index..receptors * (index + 1)].to_vec(),
+            receptor_angles_rad: angles[receptors * index..receptors * (index + 1)].to_vec(),
+        })
+        .collect())
 }
 
 /// Check that every payload variable has the dataset's dimensions.
@@ -431,7 +495,8 @@ fn realization(
         factored: true,
         samples_per_batch: times_per_batch * baselines,
         batches,
-        batch_payload_bytes: times_per_batch * baselines * (per_sample * (8 + 1 + 4) + 3 * 8),
+        batch_payload_bytes: (times_per_batch * baselines)
+            .saturating_mul(per_sample * (8 + 1 + 4) + 3 * 8),
         decode_units,
         decoded_elements: decoded,
         selected_elements: selected,

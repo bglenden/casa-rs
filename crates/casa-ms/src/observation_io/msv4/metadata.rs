@@ -81,6 +81,25 @@ pub(crate) fn time_reference(
     Ok((scale, MjdHighPrec::new(UNIX_EPOCH_MJD, 0.0)))
 }
 
+/// The time measure attributes the writer records for `scale`.
+pub(crate) fn time_attributes(scale: EpochRef) -> Result<Map<String, Value>, ObservationError> {
+    let scale = match scale {
+        EpochRef::UTC => "utc",
+        EpochRef::TAI => "tai",
+        _ => {
+            return Err(ObservationError::Unsupported {
+                what: "writing an MSv4 time scale other than utc or tai",
+            });
+        }
+    };
+    let mut attributes = Map::new();
+    attributes.insert("type".into(), "time".into());
+    attributes.insert("units".into(), "s".into());
+    attributes.insert("scale".into(), scale.into());
+    attributes.insert("format".into(), "unix".into());
+    Ok(attributes)
+}
+
 /// XRADIO's spelling of a spectral frame (`observer`) and back. Lowercase
 /// names are astropy's; XRADIO keeps the frames astropy lacks in upper case.
 const FREQUENCY_FRAMES: [(&str, FrequencyRef); 9] = [
@@ -108,6 +127,14 @@ pub(crate) fn frequency_frame(
         .ok_or_else(|| invalid(format!("{of} has unknown observer {observer}")))
 }
 
+pub(crate) fn frequency_observer(frame: FrequencyRef) -> &'static str {
+    FREQUENCY_FRAMES
+        .iter()
+        .find(|(_, known)| *known == frame)
+        .map(|(name, _)| *name)
+        .expect("every frequency frame has an MSv4 name")
+}
+
 /// XRADIO's `frame` for a direction or UVW measure.
 const DIRECTION_FRAMES: [(&str, DirectionRef); 2] =
     [("fk5", DirectionRef::J2000), ("icrs", DirectionRef::ICRS)];
@@ -123,6 +150,16 @@ pub(crate) fn direction_frame(
         .map(|(_, reference)| *reference)
         .ok_or(ObservationError::Unsupported {
             what: "an MSv4 direction or UVW frame other than fk5 or icrs",
+        })
+}
+
+pub(crate) fn direction_name(reference: DirectionRef) -> Result<&'static str, ObservationError> {
+    DIRECTION_FRAMES
+        .iter()
+        .find(|(_, known)| *known == reference)
+        .map(|(name, _)| *name)
+        .ok_or(ObservationError::Unsupported {
+            what: "writing an MSv4 direction or UVW frame other than J2000 (fk5) or ICRS",
         })
 }
 

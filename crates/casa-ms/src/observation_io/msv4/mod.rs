@@ -10,5 +10,7 @@
 
 mod metadata;
 mod read;
+mod write;
 
 pub use read::{Msv4Cursor, Msv4Observation};
+pub use write::{Msv4Codec, Msv4DatasetSpec, Msv4WriteCounters, Msv4Writer};

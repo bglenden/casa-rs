@@ -171,6 +171,16 @@ pub struct AntennaEntry {
     pub name: String,
     /// Station or pad name.
     pub station: String,
+    /// Geocentric ITRF position in metres.
+    pub position_m: [f64; 3],
+    /// Mount type as stored (`ALT-AZ`).
+    pub mount: String,
+    /// Dish diameter in metres.
+    pub dish_diameter_m: f64,
+    /// Receptor polarization types in receptor order (`X`, `Y`).
+    pub receptors: Vec<String>,
+    /// Receptor angles in radians, in the same order.
+    pub receptor_angles_rad: Vec<f64>,
 }
 
 /// One field of the catalogue.
@@ -181,6 +191,8 @@ pub struct FieldEntry {
     pub name: String,
     /// The phase-tracking centre.
     pub phase_centre: MDirection,
+    /// The source observed, when the store names one.
+    pub source_name: Option<String>,
 }
 
 /// One named data group of a partition: which stored variables hold its
@@ -222,6 +234,12 @@ pub struct PartitionEntry {
 /// What an opened observation holds, without its payload.
 #[derive(Clone, Debug, Default)]
 pub struct Catalogue {
+    /// Telescope name (MSv2 `OBSERVATION::TELESCOPE_NAME`).
+    pub telescope: String,
+    /// Observers (MSv2 `OBSERVATION::OBSERVER`).
+    pub observers: Vec<String>,
+    /// Project code (MSv2 `OBSERVATION::PROJECT`).
+    pub project: String,
     /// Antennas; [`AntennaId`] indexes them.
     pub antennas: Vec<AntennaEntry>,
     /// Fields; [`FieldId`] indexes them.
