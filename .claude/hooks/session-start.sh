@@ -16,6 +16,10 @@
 # When the environment defines TS_AUTHKEY it also joins the session to the
 # owner's tailnet (see tailscale-up.sh), in the background and before anything
 # else, so the slower steps cannot delay or prevent it.
+#
+# When the environment defines CASA_RS_MAC_SSH_KEY it also sets up SSH to the
+# owner's Mac mini for scripts/mac-run.sh (docs/agent-reference.md, "Cloud
+# Sessions").
 
 set -euo pipefail
 
@@ -91,6 +95,40 @@ export_var RUST_MIN_STACK 33554432
 # Repository git hooks (SPDX pre-commit check).
 git config core.hooksPath .githooks
 
+# SSH to the owner's Mac mini. CASA_RS_MAC_SSH_KEY holds a private key without
+# a passphrase, either as ssh-keygen wrote it or base64-encoded onto one line.
+mac_key="$HOME/.ssh/casa-rs-mac"
+if [[ -n "${CASA_RS_MAC_SSH_KEY:-}" ]]; then
+  install -d -m 700 "$HOME/.ssh"
+  (
+    umask 077
+    if [[ "$CASA_RS_MAC_SSH_KEY" == -----BEGIN* ]]; then
+      printf '%s\n' "$CASA_RS_MAC_SSH_KEY" >"$mac_key"
+    else
+      printf '%s' "$CASA_RS_MAC_SSH_KEY" | tr -d ' \t\r\n' | base64 -d >"$mac_key" 2>/dev/null
+    fi
+  ) || {
+    log "CASA_RS_MAC_SSH_KEY is neither a key nor base64; skipping SSH to the Mac"
+    rm -f "$mac_key"
+  }
+fi
+if [[ -f "$mac_key" ]]; then
+  cat >"$HOME/.ssh/casa-rs-mac.conf" <<EOF
+Host ${CASA_RS_MAC_HOST:-bg-mac-mini}
+  User ${CASA_RS_MAC_USER:-brianglendenning}
+  IdentityFile $mac_key
+  IdentitiesOnly yes
+  BatchMode yes
+  StrictHostKeyChecking accept-new
+  ConnectTimeout 30
+  ServerAliveInterval 30
+EOF
+  if ! grep -qx 'Include casa-rs-mac.conf' "$HOME/.ssh/config" 2>/dev/null; then
+    { echo 'Include casa-rs-mac.conf'; cat "$HOME/.ssh/config" 2>/dev/null || true; } >"$HOME/.ssh/config.new"
+    mv "$HOME/.ssh/config.new" "$HOME/.ssh/config"
+  fi
+fi
+
 # Network steps, most needed first.
 
 # System packages: FFTW (casa-fft links it through pkg-config) and just.
@@ -98,12 +136,20 @@ missing_pkgs=()
 dpkg -s libfftw3-dev >/dev/null 2>&1 || missing_pkgs+=(libfftw3-dev)
 dpkg -s pkg-config >/dev/null 2>&1 || missing_pkgs+=(pkg-config)
 command -v just >/dev/null 2>&1 || missing_pkgs+=(just)
+if [[ -f "$mac_key" ]]; then
+  command -v ssh >/dev/null 2>&1 || missing_pkgs+=(openssh-client)
+  command -v rsync >/dev/null 2>&1 || missing_pkgs+=(rsync)
+fi
 if ((${#missing_pkgs[@]})); then
   log "installing ${missing_pkgs[*]}"
   bounded 180 "apt-get install ${missing_pkgs[*]}" bash -c '
     apt-get update -qq &&
       DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends "$@" >/dev/null
   ' apt-get "${missing_pkgs[@]}"
+fi
+if [[ -f "$mac_key" ]] && command -v ssh-keygen >/dev/null 2>&1 &&
+  ! ssh-keygen -y -f "$mac_key" </dev/null >/dev/null 2>&1; then
+  log "CASA_RS_MAC_SSH_KEY is not a private key without a passphrase; SSH to the Mac will fail"
 fi
 
 # Rust: the workspace needs rust-version 1.99 or newer.
