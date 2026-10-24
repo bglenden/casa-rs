@@ -74,13 +74,19 @@ fn point(directory: &Path) -> std::path::PathBuf {
 /// Rows of one integration, autocorrelations included.
 const INTEGRATION_ROWS: usize = ANTENNAS * (ANTENNAS + 1) / 2;
 
-/// Gains are antenna-based: on a 1 Jy point at the phase centre each
-/// integration's first correlation is `g_p·conj(g_q)`, so phases close
-/// around triangles and amplitudes around quadrilaterals, and an
-/// autocorrelation is `|g_p|²`. Every antenna has its gains, the last one
-/// included (CASA's autocorrelation row leaves it unit gain).
+/// Gains are antenna-based, in both modes: on a 1 Jy point at the phase
+/// centre each integration's first correlation is `g_p·conj(g_q)`, so
+/// phases close around triangles and amplitudes around quadrilaterals,
+/// and an autocorrelation is `|g_p|²`. Every antenna has its gains, the
+/// last one included (CASA's autocorrelation row leaves it unit gain).
 #[test]
 fn gains_are_antenna_based() {
+    for mode in ["fbm", "random"] {
+        gains_are_antenna_based_in(mode);
+    }
+}
+
+fn gains_are_antenna_based_in(mode: &str) {
     let directory = tempfile::tempdir().expect("temporary directory");
     let point = point(directory.path());
     let rows = simulate(
@@ -88,7 +94,10 @@ fn gains_are_antenna_based() {
         "XX YY",
         Some(&point),
         &|sm| {
-            sm.set_gain(&gain(0.05))?;
+            sm.set_gain(&GainSpec {
+                mode: mode.to_string(),
+                ..gain(0.05)
+            })?;
             sm.corrupt()
         },
     );
@@ -120,7 +129,7 @@ fn gains_are_antenna_based() {
     }
     assert!(
         moved > rows.len() / INTEGRATION_ROWS * (ANTENNAS - 1),
-        "the gains move"
+        "{mode}: the gains move"
     );
 }
 
@@ -198,6 +207,36 @@ fn leakage_moves_the_cross_hands_and_needs_them() {
     assert!(refused.message().contains("JonesGenLin"), "{refused}");
 }
 
+/// A leakage is drawn once per spectral window for the whole run (CASA's
+/// infinite solution interval spans the scans): a later scan's cross hands
+/// repeat the first's.
+#[test]
+fn leakage_holds_through_the_scans() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let point = point(directory.path());
+    let path = directory.path().join("scans.ms");
+    let mut sm = session(&path, "ALMA", "XX XY YX YY", resources(2, 2 << 30));
+    sm.observe(&scan("target", 0.0, 60.0)).expect("observe");
+    sm.observe(&scan("target", 120.0, 180.0))
+        .expect("a second scan");
+    sm.predict(&PredictSpec {
+        images: Vec::new(),
+        component_list: Some(point),
+        incremental: false,
+    })
+    .expect("predict");
+    sm.set_leakage(&leakage()).expect("setleakage");
+    sm.corrupt().expect("corrupt");
+    sm.close().expect("close");
+    let rows = read_main(&path).0;
+    let (first, later) = rows.split_at(rows.len() / 2);
+    assert_eq!(first.len(), later.len());
+    for (first, later) in first.iter().zip(later) {
+        assert_eq!(first.antennas, later.antennas);
+        assert_eq!(bits([&first.data]), bits([&later.data]));
+    }
+}
+
 /// `reset` removes the gains and leakage: a later `corrupt` leaves DATA as
 /// predicted.
 #[test]
@@ -239,7 +278,6 @@ fn gains_and_leakage_refuse_what_casa_or_casa_rs_cannot_do() {
     );
     sm.observe(&scan("target", 0.0, 60.0)).expect("observe");
     for (mode, expected) in [
-        ("random", CasaOutcome::NotYetImplemented),
         ("table", CasaOutcome::ReturnsFalse),
         ("drift", CasaOutcome::ReturnsFalse),
     ] {

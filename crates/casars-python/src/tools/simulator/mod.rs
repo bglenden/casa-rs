@@ -634,9 +634,9 @@ impl PySimulator {
     }
 
     /// Simulate antenna gains over the rows observed so far, as fractional
-    /// Brownian motion of `amplitude` (`mode='fbm'`), for `corrupt` to
-    /// apply. `mode='random'` and writing `table` raise
-    /// `NotImplementedError`.
+    /// Brownian motion of `amplitude` (`mode='fbm'`) or drawn afresh each
+    /// integration about one (`mode='random'`), for `corrupt` to apply.
+    /// Writing `table` raises `NotImplementedError`.
     #[pyo3(
         signature = (
             mode = "fbm", table = "", interval = Variant::Empty,

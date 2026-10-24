@@ -18,13 +18,14 @@
 //! | the model image `sm.predict` reads | [`predict::SkyModel`] |
 //! | `sm.setvp(dovp=True)` with an Airy voltage pattern | [`Simulator::set_vp`], [`predict::PrimaryBeam`] |
 //! | `sm.setseed`, `sm.setnoise(mode='simplenoise')`, `sm.corrupt`, `sm.reset` | [`Simulator::set_seed`], [`Simulator::set_noise`], [`Simulator::corrupt`], [`Simulator::reset`] |
+//! | `sm.setgain(mode='fbm' or 'random')`, `sm.setleakage`, without a table | [`Simulator::set_gain`], [`Simulator::set_leakage`] |
 //! | `simutil.readantenna(antab)` | [`readantenna::read_antenna_config`] |
 //!
 //! CASA's `sm` has no execution controls; a session's memory budget, workers
 //! and backend ([`ExecutionControls`], [`SessionResources`]) are the Python
 //! tool's constructor arguments. `close` predicts a model on the CPU or the
-//! host's Metal device (on the CPU only through `WProjectFT`) and draws
-//! noise on the CPU. Where the session departs
+//! host's Metal device (on the CPU only through `WProjectFT`), and draws
+//! noise and applies gains and leakage on the CPU. Where the session departs
 //! from CASA is recorded in `docs/CASA (C++) bugs.md`.
 
 mod corrupt;

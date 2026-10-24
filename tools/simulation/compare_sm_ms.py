@@ -36,8 +36,15 @@ oracle's manifest, the comparison opens `<casa>/<name>.ms` and
     zero, and a two-sample Kolmogorov-Smirnov test compares the two
     implementations' normalized cross-correlation noise.
 
-  A NaN or infinite DATA or noise sample fails a `model` or `noisy`
-  scenario, as does a statistic that is not a number (#853 review).
+  - `gains` and `leakage` (`sm.setgain` or `sm.setleakage`, then
+    `corrupt`; Phase 3): the draws differ, so each implementation's DATA
+    is checked against what CASA's corruptors simulate, from its quotient
+    or difference with its noise-free `twin` (`corruption_stats.py`
+    says how).
+
+  A NaN or infinite DATA or noise sample fails a `model`, `noisy`, `gains`
+  or `leakage` scenario, as does a statistic that is not a number (#853
+  review).
 
 Data managers are not compared; the plan lets them differ. A scenario's
 `ignore` entries (`TABLE.COLUMN`) are skipped. The exit status is 1 if any
@@ -56,6 +63,12 @@ import os
 import sys
 
 import numpy as np
+
+from corruption_stats import gain_statistics, leakage_statistics, structure_failures
+
+# What a `gains` scenario checks: on casa-rs always, on CASA unless the
+# scenario's `casa_gain_checks` says otherwise.
+GAIN_CHECKS = ["closure", "amplitude", "phase"]
 
 # Absolute tolerances by column, added to RELATIVE_TOLERANCE times the
 # value; other float columns use DEFAULT_TOLERANCE. Times are seconds near
@@ -239,16 +252,27 @@ def normalise_keywords(value):
 
 
 def main_columns(tb, path: str) -> dict:
-    """MAIN's DATA as [row, corr, chan], FLAG_ROW, and which rows are
-    autocorrelations."""
+    """MAIN's DATA as [row, corr, chan], FLAG_ROW, which rows are
+    autocorrelations, and the antennas, TIME and DATA_DESC_ID."""
     tb.open(path)
     try:
         data = np.transpose(tb.getcol("DATA"), (2, 0, 1))
         flag_row = np.asarray(tb.getcol("FLAG_ROW"), dtype=bool)
-        auto = np.asarray(tb.getcol("ANTENNA1")) == np.asarray(tb.getcol("ANTENNA2"))
+        antenna1 = np.asarray(tb.getcol("ANTENNA1"))
+        antenna2 = np.asarray(tb.getcol("ANTENNA2"))
+        time = np.asarray(tb.getcol("TIME"))
+        data_desc = np.asarray(tb.getcol("DATA_DESC_ID"))
     finally:
         tb.close()
-    return {"data": data.astype(np.complex128), "flag_row": flag_row, "auto": auto}
+    return {
+        "data": data.astype(np.complex128),
+        "flag_row": flag_row,
+        "auto": antenna1 == antenna2,
+        "antenna1": antenna1,
+        "antenna2": antenna2,
+        "time": time,
+        "data_desc": data_desc,
+    }
 
 
 def non_finite(label: str, values: np.ndarray) -> list[str]:
@@ -394,8 +418,38 @@ def ks_failures(statistic: float, p_value: float) -> list[str]:
     return [f"noise: two-sample KS p-value {p_value:.2g} (statistic {statistic:.4f})"]
 
 
+def compare_corrupted_data(paths: dict, scenario: dict) -> tuple[dict, list[str]]:
+    """Gain or leakage statistics of both implementations against their
+    twins (`corruption_stats.py`)."""
+    from casatools import table
+
+    tb = table()
+    kind = scenario["data"]
+    stats, failures = {}, []
+    for side in ("casa", "casa-rs"):
+        corrupted = main_columns(tb, paths[side])
+        twin = main_columns(tb, paths[side + "-twin"])
+        if corrupted["data"].shape != twin["data"].shape:
+            failures.append(f"{side}: the twin's DATA has another shape")
+            continue
+        side_failures = non_finite("DATA", corrupted["data"]) + non_finite("twin DATA", twin["data"])
+        if not side_failures and kind == "gains":
+            # CASA's defects: its unit-gain antennas, and the checks its
+            # gains fail (the scenario's notes say why).
+            unit = scenario.get("casa_unit_antennas", []) if side == "casa" else []
+            checks = scenario.get("casa_gain_checks", GAIN_CHECKS) if side == "casa" else GAIN_CHECKS
+            stats[side], side_failures = gain_statistics(corrupted, twin, scenario["gain_scale"], checks, unit)
+        elif not side_failures:
+            stats[side], side_failures = leakage_statistics(corrupted, twin, scenario["leakage_amplitude"])
+        failures += [f"{side} {kind}: {failure}" for failure in side_failures]
+    if kind == "gains" and "casa" in stats and "casa-rs" in stats:
+        stats["structure"], structure = structure_failures(stats["casa"], stats["casa-rs"])
+        failures += structure
+    return stats, failures
+
+
 def compare_data(tb, scenario: dict, paths: dict, limit: float) -> tuple[dict, list[str]]:
-    """DATA by the scenario's kind: zero, model or noisy."""
+    """DATA by the scenario's kind: zero, model, noisy, gains or leakage."""
     kind = scenario.get("data") or "zero"
     if kind == "zero":
         failures = []
@@ -411,6 +465,9 @@ def compare_data(tb, scenario: dict, paths: dict, limit: float) -> tuple[dict, l
         return dict(stats, kind=kind), failures
     if kind == "noisy":
         stats, failures = compare_noisy_data(paths, scenario.get("noise_variance"))
+        return dict(stats, kind=kind), failures
+    if kind in ("gains", "leakage"):
+        stats, failures = compare_corrupted_data(paths, scenario)
         return dict(stats, kind=kind), failures
     return {"kind": kind}, [f"unknown data kind {kind!r}"]
 
@@ -523,6 +580,23 @@ def describe_data(data: dict) -> str:
             f"; noise cross re/im variance CASA [{variances('casa')}], casa-rs [{variances('casa-rs')}]"
             + (f", KS p {ks['p_value']:.2g}" if ks else "")
         )
+    if kind == "gains" and "casa" in data and "casa-rs" in data:
+        scales = lambda side: ", ".join(  # noqa: E731
+            f"{entry['amplitude_scale']:.3f}/{entry['phase_scale']:.3f}"
+            for key, entry in data[side].items()
+            if key.startswith("corr")
+        )
+        structure = data.get("structure", {})
+        lags = lambda side: ", ".join(f"{value:.3f}" for value in structure.get(side, []))  # noqa: E731
+        return (
+            f"; gain amplitude/phase scale CASA [{scales('casa')}], casa-rs [{scales('casa-rs')}]"
+            f"; screen autocorrelation at lags {structure.get('lags')} CASA [{lags('casa')}], casa-rs [{lags('casa-rs')}]"
+        )
+    if kind == "leakage" and "casa" in data and "casa-rs" in data:
+        squares = lambda side: ", ".join(  # noqa: E731
+            f"{data[side][key]['square_scale']:.3f}" for key in ("XY_re", "XY_im", "YX_re", "YX_im")
+        )
+        return f"; leakage XY/YX re/im mean-square scale CASA [{squares('casa')}], casa-rs [{squares('casa-rs')}]"
     return ""
 
 

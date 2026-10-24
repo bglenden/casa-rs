@@ -706,8 +706,9 @@ def test_setgain_and_setleakage_follow_casa(
     with caplog.at_level(logging.ERROR, logger=LOGGER):
         assert sm.setgain(mode="table") is False
     assert caplog.messages == ["Cannot yet read from table"]
-    with pytest.raises(NotImplementedError, match="mode='random'"):
-        sm.setgain(mode="random")
+    with caplog.at_level(logging.ERROR, logger=LOGGER):
+        assert sm.setgain(mode="drift") is False
+    assert caplog.messages[-1] == "Caught exception: unsupported mode drift in setgain()"
     with pytest.raises(NotImplementedError, match="writes the simulated term"):
         sm.setleakage(table="d.cal")
     # A second corrupt gains the first one's noise: DATA differs from the
@@ -716,6 +717,7 @@ def test_setgain_and_setleakage_follow_casa(
     assert sm.setnoise(mode="simplenoise", simplenoise="0.1Jy") is True
     assert sm.corrupt() is True
     assert sm.setgain(amplitude=[0.05]) is True
+    assert sm.setgain(mode="random", amplitude=[0.02, 0.01]) is True
     assert sm.corrupt() is True
     sm.close()
     gained = np.asarray(Table.open(tmp_path / "x.ms").get_column("DATA"))

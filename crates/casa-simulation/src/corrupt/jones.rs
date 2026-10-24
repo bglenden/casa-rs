@@ -21,9 +21,13 @@
 //!   root-mean-square about its mean, the mean kept; the gain is
 //!   `(1 + s·a/rms(a)) · exp(i·π·s·p/rms(p))` (CASA writes π as 3.141592,
 //!   2·10⁻⁷ short), and a chunk takes the slot nearest its time.
-//! - **D.** The chunks are the scans (an infinite interval). Each takes,
-//!   per antenna and receptor, `d = camp.re·n₁ + i·camp.im·n₂ + offset`,
-//!   the second receptor's offset with its real part negated.
+//! - **G, `mode='random'`.** The chunks are the integrations; each draws
+//!   `camp.re·n₁ + i·camp.im·n₂` per antenna and receptor.
+//! - **D.** The interval is infinite: one chunk per spectral window,
+//!   spanning every scan and field (CASA's table has one solution per
+//!   window and antenna). Each takes, per antenna and receptor,
+//!   `d = camp.re·n₁ + i·camp.im·n₂ + offset`, the second receptor's
+//!   offset with its real part negated.
 //!
 //! `corrupt` applies a term's solution nearest in time within the row's
 //! spectral window (`tInterpType = "nearest"`):
@@ -40,13 +44,21 @@
 //! (as thermal noise's, [`super`]), so the realisations differ from CASA's
 //! and are compared statistically. CASA's defects in the simulation are
 //! not followed (`docs/CASA (C++) bugs.md`):
+//! - `fBM::initialize` copies a screen's last two or three slots from past
+//!   the end of its transform's output, and the screen's normalisation
+//!   includes them, so CASA's scale varies from run to run; casa-rs
+//!   transforms every slot;
 //! - CASA seeds antenna `a`'s second receptor and antenna `a+1`'s first
 //!   with the same `seed + a + 1`, so their screens coincide; casa-rs keys
 //!   every screen apart;
+//! - `random` gains are `1 + camp.re·n₁ + i·camp.im·n₂` in casa-rs; CASA
+//!   leaves out the 1, so its gains scatter about zero;
 //! - with autocorrelations written, the autocorrelation row resets its
 //!   antenna's solution to 1 after the cross rows set it, which leaves the
 //!   last antenna with unit gain or a leakage of 1; casa-rs simulates every
-//!   antenna.
+//!   antenna;
+//! - CASA simulates leakage for the first two spectral windows only and
+//!   leaves later windows uncorrupted; casa-rs simulates every window.
 
 use casa_fft::RealFft2;
 use casa_numerics::cell_noise::philox4x32_10;
@@ -57,6 +69,9 @@ const PURPOSE_GAIN_SCREEN: u32 = 0x02;
 
 /// The purpose byte of leakages' streams.
 const PURPOSE_LEAKAGE: u32 = 0x03;
+
+/// The purpose byte of `setgain(mode='random')` gains' streams.
+const PURPOSE_RANDOM_GAIN: u32 = 0x04;
 
 /// `GJones::createCorruptor`'s spectral exponent of the screens.
 const SCREEN_BETA: f64 = 1.1;
@@ -257,7 +272,8 @@ pub(crate) fn fbm_gains(seed: i32, scale: f64, antennas: usize, chunks: Chunks) 
 }
 
 /// A `setleakage` term of `camp` and `offset` for `antennas` antennas, a
-/// leakage per chunk (one per scan), drawn from `seed`'s streams.
+/// leakage per chunk (one per spectral window), drawn from `seed`'s
+/// streams.
 pub(crate) fn leakages(
     seed: i32,
     (camp, offset): (Complex64, Complex64),
@@ -285,6 +301,39 @@ pub(crate) fn leakages(
     }
     JonesTerm {
         kind: JonesKind::Leakage,
+        antennas,
+        solutions: chunks.by_window,
+        values,
+    }
+}
+
+/// A `setgain(mode='random')` term of `camp` for `antennas` antennas: per
+/// chunk (one per integration), antenna and receptor, the gain
+/// `1 + camp.re·n₁ + i·camp.im·n₂`, drawn from `seed`'s streams. CASA's
+/// `GJonesCorruptor::simPar` leaves out the 1, so its gains scatter about
+/// zero; casa-rs does not follow it (`docs/CASA (C++) bugs.md`).
+pub(crate) fn random_gains(
+    seed: i32,
+    camp: Complex64,
+    antennas: usize,
+    chunks: Chunks,
+) -> JonesTerm {
+    let mut values = Vec::with_capacity(chunks.count as usize * antennas);
+    for chunk in 0..chunks.count {
+        for antenna in 0..antennas {
+            let draw = |receptor: u32| {
+                let [n1, n2] = normal_pair(
+                    [seed as u32, PURPOSE_RANDOM_GAIN << 24],
+                    [chunk, antenna as u32, receptor, 0],
+                );
+                let gain = Complex64::new(1.0 + n1 * camp.re, n2 * camp.im);
+                Complex32::new(gain.re as f32, gain.im as f32)
+            };
+            values.push([draw(0), draw(1)]);
+        }
+    }
+    JonesTerm {
+        kind: JonesKind::Gain,
         antennas,
         solutions: chunks.by_window,
         values,

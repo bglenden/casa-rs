@@ -13,12 +13,14 @@ use num_complex::Complex64;
 
 use super::Simulator;
 use super::error::{SimulatorError, SimulatorResult};
-use crate::corrupt::jones::{Chunks, MAXIMUM_GAIN_SCALE, fbm_gains, leakages};
+use crate::corrupt::jones::{Chunks, MAXIMUM_GAIN_SCALE, fbm_gains, leakages, random_gains};
 
 /// The arguments of `sm.setgain`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct GainSpec {
-    /// `mode`: `fbm` is implemented; `random` is not yet, and `table` CASA
+    /// `mode`: `fbm`, gains drifting as fractional Brownian motion, or
+    /// `random`, gains drawn afresh each integration about one (CASA's
+    /// scatter about zero, `docs/CASA (C++) bugs.md`); `table` CASA
     /// refuses.
     pub mode: String,
     /// `table`: a calibration table CASA writes the simulated gains to;
@@ -64,41 +66,40 @@ impl Simulator {
     /// - `mode='table'`: CASA logs "Cannot yet read from table" and returns
     ///   `False`; another unknown mode is refused as CASA's "unsupported
     ///   mode".
-    /// - `mode='random'`, a `table` to write, or a session `openfromms`
-    ///   opened: not yet implemented.
+    /// - A `table` to write, or a session `openfromms` opened: not yet
+    ///   implemented.
     /// - No rows observed yet, or no `amplitude`: refused.
     pub fn set_gain(&mut self, spec: &GainSpec) -> SimulatorResult<()> {
-        match spec.mode.as_str() {
-            "fbm" => {}
+        let random = match spec.mode.as_str() {
+            "fbm" => false,
+            "random" => true,
             "table" => {
                 return Err(SimulatorError::refused("Cannot yet read from table"));
-            }
-            "random" => {
-                return Err(SimulatorError::not_yet_implemented(
-                    "setgain(mode='random') is not yet implemented in casa-rs (simulation \
-                     Phase 3): CASA draws those gains about zero rather than one \
-                     (docs/CASA (C++) bugs.md); mode='fbm' is implemented",
-                ));
             }
             other => {
                 return Err(SimulatorError::refused(format!(
                     "Caught exception: unsupported mode {other} in setgain()"
                 )));
             }
-        }
+        };
         self.refuse_after_openfromms("setgain")?;
         Self::refuse_table("setgain", &spec.table)?;
         let camp = pair(&spec.amplitude, "setgain's amplitude")?;
         tracing::info!("Gain corruption with complex RMS amplitude = {camp}");
         self.require_rows()?;
-        let mut scale = camp.norm();
-        if scale >= MAXIMUM_GAIN_SCALE {
-            tracing::warn!(" decreasing gain fluctuations from {scale} to 0.9 ");
-            scale = MAXIMUM_GAIN_SCALE;
-        }
         tracing::info!("Creating G JONES Calibration structure for data corruption.");
         let chunks = self.integration_chunks();
-        let term = fbm_gains(self.seed, scale, self.antennas.len(), chunks);
+        let antennas = self.antennas.len();
+        let term = if random {
+            random_gains(self.seed, camp, antennas, chunks)
+        } else {
+            let mut scale = camp.norm();
+            if scale >= MAXIMUM_GAIN_SCALE {
+                tracing::warn!(" decreasing gain fluctuations from {scale} to 0.9 ");
+                scale = MAXIMUM_GAIN_SCALE;
+            }
+            fbm_gains(self.seed, scale, antennas, chunks)
+        };
         self.jones_terms.push(Arc::new(term));
         Ok(())
     }
@@ -118,7 +119,7 @@ impl Simulator {
         let offset = pair(&spec.offset, "setleakage's offset")?;
         self.require_rows()?;
         tracing::info!("Creating D Calibration structure for data corruption.");
-        let chunks = self.scan_chunks();
+        let chunks = self.window_chunks();
         let term = leakages(self.seed, (camp, offset), self.antennas.len(), chunks);
         self.jones_terms.push(Arc::new(term));
         Ok(())
@@ -163,23 +164,32 @@ impl Simulator {
         sorted(chunks)
     }
 
-    /// The solution chunks of a leakage term: one per scan observed so
-    /// far, at the middle of its first and last TIME, in its spectral
-    /// window.
-    fn scan_chunks(&self) -> Chunks {
-        let mut chunks = Chunks::default();
+    /// The solution chunks of a leakage term: one per spectral window
+    /// observed so far, at its earliest TIME. CASA's infinite solution
+    /// interval spans every scan and field of a window: its table has one
+    /// solution per window and antenna.
+    fn window_chunks(&self) -> Chunks {
+        let mut first: Vec<Option<f64>> = Vec::new();
         for scan in &self.scans {
-            let Some(planned) = scan.planned() else {
+            let Some(time_s) = scan
+                .planned()
+                .and_then(|planned| planned.integration_times_s().next())
+            else {
                 continue;
             };
-            let mut times = planned.integration_times_s();
-            let Some(first) = times.next() else {
-                continue;
-            };
-            let last = times.last().unwrap_or(first);
-            chunks.push(scan.spectral_window_id, 0.5 * (first + last));
+            let window = scan.spectral_window_id;
+            if first.len() <= window {
+                first.resize(window + 1, None);
+            }
+            first[window] = Some(first[window].map_or(time_s, |earlier| earlier.min(time_s)));
         }
-        sorted(chunks)
+        let mut chunks = Chunks::default();
+        for (window, time_s) in first.into_iter().enumerate() {
+            if let Some(time_s) = time_s {
+                chunks.push(window, time_s);
+            }
+        }
+        chunks
     }
 }
 

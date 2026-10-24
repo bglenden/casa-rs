@@ -155,14 +155,42 @@ fn leakage_moves_only_the_cross_hands_to_first_order() {
     assert_eq!(cell[2], yx + (p[1] * xx + q[0].conj() * yy));
 }
 
+/// A random gain is one plus normal draws scaled by the complex
+/// amplitude, drawn afresh each integration, every antenna and receptor
+/// apart.
+#[test]
+fn random_gains_scatter_about_one() {
+    let camp = Complex64::new(0.04, 0.02);
+    let term = random_gains(9, camp, 10, integrations(100));
+    assert_eq!(term.kind, JonesKind::Gain);
+    for receptor in 0..2 {
+        let values = term.values.iter().map(|values| values[receptor]);
+        let (re_mean, re_rms) = mean_and_rms(values.clone().map(|g| f64::from(g.re)));
+        let (im_mean, im_rms) = mean_and_rms(values.map(|g| f64::from(g.im)));
+        // 1,000 draws: means within 5 standard errors.
+        assert!((re_mean - 1.0).abs() < 5.0 * camp.re / 1000_f64.sqrt());
+        assert!(im_mean.abs() < 5.0 * camp.im / 1000_f64.sqrt());
+        assert!((re_rms / camp.re - 1.0).abs() < 0.1, "re rms {re_rms}");
+        assert!((im_rms / camp.im - 1.0).abs() < 0.1, "im rms {im_rms}");
+    }
+    assert_ne!(term.values[0][0], term.values[0][1], "receptors draw apart");
+    assert_ne!(term.values[0], term.values[1], "antennas draw apart");
+    assert_ne!(term.values[0], term.values[10], "integrations draw apart");
+    assert_ne!(
+        term.values,
+        random_gains(10, camp, 10, integrations(100)).values,
+        "seeds draw apart"
+    );
+}
+
 /// A leakage is the offset plus normal draws scaled by the complex
 /// amplitude, the second receptor's offset with its real part negated,
-/// and a scan's draws apart from another's.
+/// and a chunk's draws apart from another's.
 #[test]
 fn leakages_scatter_about_their_offsets() {
     let mut chunks = Chunks::default();
-    for scan in 0..200 {
-        chunks.push(0, f64::from(scan));
+    for window in 0..200 {
+        chunks.push(window, 0.0);
     }
     let camp = Complex64::new(0.05, 0.02);
     let offset = Complex64::new(0.03, 0.01);
@@ -177,5 +205,5 @@ fn leakages_scatter_about_their_offsets() {
         assert!((re_rms / camp.re - 1.0).abs() < 0.1, "re rms {re_rms}");
         assert!((im_rms / camp.im - 1.0).abs() < 0.1, "im rms {im_rms}");
     }
-    assert_ne!(term.values[0], term.values[10], "scans draw apart");
+    assert_ne!(term.values[0], term.values[10], "chunks draw apart");
 }
