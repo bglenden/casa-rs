@@ -1312,6 +1312,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#smpredict-phases-a-moved-observemany-pointing-on-its-field" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        sm.predict phases a moved observemany pointing on its field
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1365,7 +1376,9 @@ Simulator behaviours casa-rs does not follow:
 <a href="#observemany-adds-rows-before-it-looks-up-later-fields"><code>observemany</code>'s rows before an unknown field</a>,
 <a href="#smpredict-through-wprojectft-without-planes-crashes-the-simulator">W projection without planes</a>,
 <a href="#sdgrid-predicts-total-power-into-cross-correlations-with-no-positive-uvw">total power in cross-correlations</a>,
-<a href="#smclose-aborts-the-process-after-a-mosaic-predict"><code>close</code> after a mosaic predict</a>.
+<a href="#smclose-aborts-the-process-after-a-mosaic-predict"><code>close</code> after a mosaic predict</a>,
+<a href="#smpredict-phases-a-moved-observemany-pointing-on-its-field">a moved pointing phased on its field</a>,
+<a href="#predict-and-corrupt-add-scratch-columns-to-a-measurementset-without-them">scratch columns added at <code>predict</code> and <code>corrupt</code></a>.
 Measures behaviours casa-rs follows for parity:
 <a href="#iau-2000-keeps-the-iau-1980-sidereal-time-and-ecliptic-obliquities">IAU 1980 sidereal time and obliquities under IAU 2000</a>.
 Measures behaviours casa-rs does not follow:
@@ -2286,6 +2299,49 @@ rotation. At offsets of 10–17″ the two differ by a few 1e-4 cells, which
 flips the fine offset of a sample near a rounding boundary; with the
 mosaic's ten offsets a cell, such a sample moved by up to 10% (#841: 33 of
 4,752 rows, until the simulator took <code>girarUVW</code> too).</p>
+<h2 id="smpredict-phases-a-moved-observemany-pointing-on-its-field"><code>sm.predict</code> phases a moved <code>observemany</code> pointing on its field<a class="headerlink" href="#smpredict-phases-a-moved-observemany-pointing-on-its-field" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-10-23</li>
+<li>Status: CASA bug; casa-rs's own session does not follow it (#861), and
+  after <code>openfromms</code> casa-rs predicts as CASA does (#841 Phase 2)</li>
+<li>Affected code: casacore <code>ms/MSOper/NewMSSimulator.cc</code> (<code>observe</code>, the
+  vector form <code>observemany</code> calls) and <code>msvis/MSVis/VisBuffer.cc</code>
+  (<code>phaseCenter</code>, from FIELD)</li>
+</ul>
+<p>A pointing <code>observemany</code> gives a direction keeps its field's FIELD row:
+<code>NewMSSimulator</code> computes its UVW at the direction and writes that direction
+to POINTING, but leaves FIELD as it was. <code>predict</code> reads the MeasurementSet
+through a <code>VisBuffer</code>, whose phase centre is FIELD's PHASE_DIR, so it
+phases the pointing on the field while its UVW belong to the moved
+direction. Measured on CASA 6.7.6 (twelve ALMA antennas, a second pointing
+moved 10.4″ east): a 1 Jy point at the field's direction predicts 1 Jy at
+zero phase in both pointings, and one at the moved direction predicts
+phases spread over ±180° (rms 101°) in the pointing centred on it.</p>
+<p>casa-rs's session phases a moved pointing on its direction, where its UVW
+are (#861), so a model predicted there is the sky that pointing sees. A
+MeasurementSet records only FIELD as the phase centre, and POINTING may
+point elsewhere for other reasons (tracking errors, offset pointings), so
+after <code>openfromms</code> casa-rs phases every scan on its FIELD's PHASE_DIR as
+CASA does: the <code>openfromms-moved-pointing-*</code> scenarios agree with CASA to
+0 and 7e-11 normalized RMS (<code>tools/simulation/sm_openfromms_scenarios.json</code>).
+Whether the session should phase as CASA does, or keep its correction, is</p>
+<h1 id="884">884.<a class="headerlink" href="#884" title="Permanent link">&para;</a></h1>
+<h2 id="predict-and-corrupt-add-scratch-columns-to-a-measurementset-without-them"><code>predict</code> and <code>corrupt</code> add scratch columns to a MeasurementSet without them<a class="headerlink" href="#predict-and-corrupt-add-scratch-columns-to-a-measurementset-without-them" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-10-23</li>
+<li>Status: CASA behaviour casa-rs does not follow (plan decision 6)</li>
+<li>Affected code: <code>synthesis/MeasurementEquations/Simulator.cc</code> (<code>predict</code>
+  and <code>corrupt</code> build a <code>VisSet</code>) and <code>msvis/MSVis/VisSet.cc</code> (its
+  constructor's <code>addCalSet2</code> and <code>initCalSet</code>)</li>
+</ul>
+<p>CASA's simulator writes its steps' results through a <code>VisSet</code>, whose
+constructor adds MODEL_DATA (1) and CORRECTED_DATA (DATA) to a
+MeasurementSet without CORRECTED_DATA. <code>predict</code> then sets CORRECTED_DATA to
+the new DATA and MODEL_DATA to 1, and <code>corrupt</code> sets CORRECTED_DATA to the
+corrupted DATA. casa-rs's simulator writes DATA only (plan decision 6), and
+after <code>openfromms</code> it creates neither column: it keeps those MAIN already
+has in step with DATA as CASA does, and leaves a MeasurementSet without
+them without them.</p>
 
 
 

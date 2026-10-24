@@ -411,11 +411,11 @@
 <a href=#411 id=411 data-nosnippet>411</a>        setup::setspwindow(<span class="self">self</span>, py, <span class="kw-2">&amp;</span>request)
 <a href=#412 id=412 data-nosnippet>412</a>    }
 <a href=#413 id=413 data-nosnippet>413</a>
-<a href=#414 id=414 data-nosnippet>414</a>    <span class="doccomment">/// Not yet implemented in casa-rs.
-<a href=#415 id=415 data-nosnippet>415</a>    </span><span class="attr">#[allow(unused_variables)]
-<a href=#416 id=416 data-nosnippet>416</a>    #[pyo3(signature = (ms = <span class="prelude-val">None</span>), text_signature = <span class="string">"($self, ms='')"</span>)]
-<a href=#417 id=417 data-nosnippet>417</a>    </span><span class="kw">fn </span>openfromms(<span class="kw-2">&amp;</span><span class="self">self</span>, ms: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;) -&gt; PyResult&lt;bool&gt; {
-<a href=#418 id=418 data-nosnippet>418</a>        stubs::not_yet_implemented(<span class="string">"openfromms"</span>)
+<a href=#414 id=414 data-nosnippet>414</a>    <span class="doccomment">/// Open the existing MeasurementSet `ms`, closing (writing) any open
+<a href=#415 id=415 data-nosnippet>415</a>    /// one; `predict` and `corrupt` then rewrite its rows at `close`.
+<a href=#416 id=416 data-nosnippet>416</a>    </span><span class="attr">#[pyo3(signature = (ms = <span class="string">""</span>), text_signature = <span class="string">"($self, ms='')"</span>)]
+<a href=#417 id=417 data-nosnippet>417</a>    </span><span class="kw">fn </span>openfromms(<span class="kw-2">&amp;</span><span class="self">self</span>, py: Python&lt;<span class="lifetime">'_</span>&gt;, ms: <span class="kw-2">&amp;</span>str) -&gt; PyResult&lt;bool&gt; {
+<a href=#418 id=418 data-nosnippet>418</a>        lifecycle::openfromms(<span class="self">self</span>, py, ms)
 <a href=#419 id=419 data-nosnippet>419</a>    }
 <a href=#420 id=420 data-nosnippet>420</a>
 <a href=#421 id=421 data-nosnippet>421</a>    <span class="doccomment">/// Plan several pointings: a scan for each run of pointings of one

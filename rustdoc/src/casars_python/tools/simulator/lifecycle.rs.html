@@ -82,48 +82,73 @@
 <a href=#82 id=82 data-nosnippet>82</a>    <span class="prelude-val">Ok</span>(<span class="bool-val">true</span>)
 <a href=#83 id=83 data-nosnippet>83</a>}
 <a href=#84 id=84 data-nosnippet>84</a>
-<a href=#85 id=85 data-nosnippet>85</a><span class="doccomment">/// `sm.close()` and `sm.done()`: write the MeasurementSet and end the session.
-<a href=#86 id=86 data-nosnippet>86</a>/// `True` even when nothing is open; a write failure raises. The GIL is
-<a href=#87 id=87 data-nosnippet>87</a>/// released while writing.
-<a href=#88 id=88 data-nosnippet>88</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>close(tool: <span class="kw-2">&amp;</span>PySimulator, py: Python&lt;<span class="lifetime">'_</span>&gt;) -&gt; PyResult&lt;bool&gt; {
-<a href=#89 id=89 data-nosnippet>89</a>    py.detach(|| <span class="kw">match </span>tool.lock().take() {
-<a href=#90 id=90 data-nosnippet>90</a>        <span class="prelude-val">Some</span>(session) =&gt; session.simulator.close(),
-<a href=#91 id=91 data-nosnippet>91</a>        <span class="prelude-val">None </span>=&gt; <span class="prelude-val">Ok</span>(()),
-<a href=#92 id=92 data-nosnippet>92</a>    })
-<a href=#93 id=93 data-nosnippet>93</a>    .map_err(|error| raised(<span class="kw-2">&amp;</span>error))<span class="question-mark">?</span>;
-<a href=#94 id=94 data-nosnippet>94</a>    <span class="prelude-val">Ok</span>(<span class="bool-val">true</span>)
-<a href=#95 id=95 data-nosnippet>95</a>}
-<a href=#96 id=96 data-nosnippet>96</a>
-<a href=#97 id=97 data-nosnippet>97</a><span class="doccomment">/// `sm.name()`: the MeasurementSet's path as given to `open`, or `''`.
-<a href=#98 id=98 data-nosnippet>98</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>name(tool: <span class="kw-2">&amp;</span>PySimulator, py: Python&lt;<span class="lifetime">'_</span>&gt;) -&gt; String {
-<a href=#99 id=99 data-nosnippet>99</a>    tool.lock_attached(py)
-<a href=#100 id=100 data-nosnippet>100</a>        .as_ref()
-<a href=#101 id=101 data-nosnippet>101</a>        .map(|session| session.simulator.name().to_string_lossy().into_owned())
-<a href=#102 id=102 data-nosnippet>102</a>        .unwrap_or_default()
-<a href=#103 id=103 data-nosnippet>103</a>}
-<a href=#104 id=104 data-nosnippet>104</a>
-<a href=#105 id=105 data-nosnippet>105</a><span class="doccomment">/// `sm.summary()`: a few INFO lines about the session; `False` before
-<a href=#106 id=106 data-nosnippet>106</a>/// `open`. CASA's summary also lists the configuration, windows and fields.
-<a href=#107 id=107 data-nosnippet>107</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>summary(tool: <span class="kw-2">&amp;</span>PySimulator, py: Python&lt;<span class="lifetime">'_</span>&gt;) -&gt; PyResult&lt;bool&gt; {
-<a href=#108 id=108 data-nosnippet>108</a>    <span class="kw">let </span>lines = tool.lock_attached(py).as_ref().map(|session| {
-<a href=#109 id=109 data-nosnippet>109</a>        <span class="kw">let </span>simulator = <span class="kw-2">&amp;</span>session.simulator;
-<a href=#110 id=110 data-nosnippet>110</a>        <span class="macro">vec!</span>[
-<a href=#111 id=111 data-nosnippet>111</a>            LogLine::info(<span class="macro">format!</span>(
-<a href=#112 id=112 data-nosnippet>112</a>                <span class="string">"Simulator summary for MeasurementSet {}"</span>,
-<a href=#113 id=113 data-nosnippet>113</a>                simulator.name().display()
-<a href=#114 id=114 data-nosnippet>114</a>            )),
-<a href=#115 id=115 data-nosnippet>115</a>            LogLine::info(<span class="macro">format!</span>(
-<a href=#116 id=116 data-nosnippet>116</a>                <span class="string">"     {} scan(s) planned; the MeasurementSet is written at close or done"</span>,
-<a href=#117 id=117 data-nosnippet>117</a>                simulator.scan_count()
-<a href=#118 id=118 data-nosnippet>118</a>            )),
-<a href=#119 id=119 data-nosnippet>119</a>        ]
-<a href=#120 id=120 data-nosnippet>120</a>    });
-<a href=#121 id=121 data-nosnippet>121</a>    <span class="kw">match </span>lines {
-<a href=#122 id=122 data-nosnippet>122</a>        <span class="prelude-val">Some</span>(lines) =&gt; {
-<a href=#123 id=123 data-nosnippet>123</a>            emit(py, LOGGER, <span class="kw-2">&amp;</span>lines)<span class="question-mark">?</span>;
-<a href=#124 id=124 data-nosnippet>124</a>            <span class="prelude-val">Ok</span>(<span class="bool-val">true</span>)
-<a href=#125 id=125 data-nosnippet>125</a>        }
-<a href=#126 id=126 data-nosnippet>126</a>        <span class="prelude-val">None </span>=&gt; <span class="prelude-val">Ok</span>(<span class="bool-val">false</span>),
-<a href=#127 id=127 data-nosnippet>127</a>    }
+<a href=#85 id=85 data-nosnippet>85</a><span class="doccomment">/// `sm.openfromms(ms)`: close (write) any open session, as CASA's tool
+<a href=#86 id=86 data-nosnippet>86</a>/// does, then start one on the existing MeasurementSet `ms`, whose rows the
+<a href=#87 id=87 data-nosnippet>87</a>/// following `predict` and `corrupt` rewrite at `close`. A MeasurementSet
+<a href=#88 id=88 data-nosnippet>88</a>/// that cannot be read raises, as CASA's table open does. The GIL is
+<a href=#89 id=89 data-nosnippet>89</a>/// released while the previous session writes and `ms` is read.
+<a href=#90 id=90 data-nosnippet>90</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>openfromms(tool: <span class="kw-2">&amp;</span>PySimulator, py: Python&lt;<span class="lifetime">'_</span>&gt;, ms: <span class="kw-2">&amp;</span>str) -&gt; PyResult&lt;bool&gt; {
+<a href=#91 id=91 data-nosnippet>91</a>    <span class="kw">let </span>resources = tool.resources;
+<a href=#92 id=92 data-nosnippet>92</a>    <span class="kw">let </span>path = PathBuf::from(ms);
+<a href=#93 id=93 data-nosnippet>93</a>    py.detach(<span class="kw">move </span>|| -&gt; SimulatorResult&lt;()&gt; {
+<a href=#94 id=94 data-nosnippet>94</a>        <span class="kw">let </span><span class="kw-2">mut </span>state = tool.lock();
+<a href=#95 id=95 data-nosnippet>95</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(previous) = state.take() {
+<a href=#96 id=96 data-nosnippet>96</a>            previous.simulator.close()<span class="question-mark">?</span>;
+<a href=#97 id=97 data-nosnippet>97</a>        }
+<a href=#98 id=98 data-nosnippet>98</a>        <span class="kw">let </span>options = SimulatorOptions::from_system(resources)<span class="question-mark">?</span>;
+<a href=#99 id=99 data-nosnippet>99</a>        <span class="kw">let </span>measures = Arc::clone(<span class="kw-2">&amp;</span>options.measures);
+<a href=#100 id=100 data-nosnippet>100</a>        <span class="kw-2">*</span>state = <span class="prelude-val">Some</span>(Session {
+<a href=#101 id=101 data-nosnippet>101</a>            simulator: Simulator::open_from_ms(path, options)<span class="question-mark">?</span>,
+<a href=#102 id=102 data-nosnippet>102</a>            measures,
+<a href=#103 id=103 data-nosnippet>103</a>        });
+<a href=#104 id=104 data-nosnippet>104</a>        <span class="prelude-val">Ok</span>(())
+<a href=#105 id=105 data-nosnippet>105</a>    })
+<a href=#106 id=106 data-nosnippet>106</a>    .map_err(|error| raised(<span class="kw-2">&amp;</span>error))<span class="question-mark">?</span>;
+<a href=#107 id=107 data-nosnippet>107</a>    <span class="prelude-val">Ok</span>(<span class="bool-val">true</span>)
+<a href=#108 id=108 data-nosnippet>108</a>}
+<a href=#109 id=109 data-nosnippet>109</a>
+<a href=#110 id=110 data-nosnippet>110</a><span class="doccomment">/// `sm.close()` and `sm.done()`: write the MeasurementSet and end the session.
+<a href=#111 id=111 data-nosnippet>111</a>/// `True` even when nothing is open; a write failure raises. The GIL is
+<a href=#112 id=112 data-nosnippet>112</a>/// released while writing.
+<a href=#113 id=113 data-nosnippet>113</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>close(tool: <span class="kw-2">&amp;</span>PySimulator, py: Python&lt;<span class="lifetime">'_</span>&gt;) -&gt; PyResult&lt;bool&gt; {
+<a href=#114 id=114 data-nosnippet>114</a>    py.detach(|| <span class="kw">match </span>tool.lock().take() {
+<a href=#115 id=115 data-nosnippet>115</a>        <span class="prelude-val">Some</span>(session) =&gt; session.simulator.close(),
+<a href=#116 id=116 data-nosnippet>116</a>        <span class="prelude-val">None </span>=&gt; <span class="prelude-val">Ok</span>(()),
+<a href=#117 id=117 data-nosnippet>117</a>    })
+<a href=#118 id=118 data-nosnippet>118</a>    .map_err(|error| raised(<span class="kw-2">&amp;</span>error))<span class="question-mark">?</span>;
+<a href=#119 id=119 data-nosnippet>119</a>    <span class="prelude-val">Ok</span>(<span class="bool-val">true</span>)
+<a href=#120 id=120 data-nosnippet>120</a>}
+<a href=#121 id=121 data-nosnippet>121</a>
+<a href=#122 id=122 data-nosnippet>122</a><span class="doccomment">/// `sm.name()`: the MeasurementSet's path as given to `open`, or `''`.
+<a href=#123 id=123 data-nosnippet>123</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>name(tool: <span class="kw-2">&amp;</span>PySimulator, py: Python&lt;<span class="lifetime">'_</span>&gt;) -&gt; String {
+<a href=#124 id=124 data-nosnippet>124</a>    tool.lock_attached(py)
+<a href=#125 id=125 data-nosnippet>125</a>        .as_ref()
+<a href=#126 id=126 data-nosnippet>126</a>        .map(|session| session.simulator.name().to_string_lossy().into_owned())
+<a href=#127 id=127 data-nosnippet>127</a>        .unwrap_or_default()
 <a href=#128 id=128 data-nosnippet>128</a>}
+<a href=#129 id=129 data-nosnippet>129</a>
+<a href=#130 id=130 data-nosnippet>130</a><span class="doccomment">/// `sm.summary()`: a few INFO lines about the session; `False` before
+<a href=#131 id=131 data-nosnippet>131</a>/// `open`. CASA's summary also lists the configuration, windows and fields.
+<a href=#132 id=132 data-nosnippet>132</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>summary(tool: <span class="kw-2">&amp;</span>PySimulator, py: Python&lt;<span class="lifetime">'_</span>&gt;) -&gt; PyResult&lt;bool&gt; {
+<a href=#133 id=133 data-nosnippet>133</a>    <span class="kw">let </span>lines = tool.lock_attached(py).as_ref().map(|session| {
+<a href=#134 id=134 data-nosnippet>134</a>        <span class="kw">let </span>simulator = <span class="kw-2">&amp;</span>session.simulator;
+<a href=#135 id=135 data-nosnippet>135</a>        <span class="macro">vec!</span>[
+<a href=#136 id=136 data-nosnippet>136</a>            LogLine::info(<span class="macro">format!</span>(
+<a href=#137 id=137 data-nosnippet>137</a>                <span class="string">"Simulator summary for MeasurementSet {}"</span>,
+<a href=#138 id=138 data-nosnippet>138</a>                simulator.name().display()
+<a href=#139 id=139 data-nosnippet>139</a>            )),
+<a href=#140 id=140 data-nosnippet>140</a>            LogLine::info(<span class="macro">format!</span>(
+<a href=#141 id=141 data-nosnippet>141</a>                <span class="string">"     {} scan(s) planned; the MeasurementSet is written at close or done"</span>,
+<a href=#142 id=142 data-nosnippet>142</a>                simulator.scan_count()
+<a href=#143 id=143 data-nosnippet>143</a>            )),
+<a href=#144 id=144 data-nosnippet>144</a>        ]
+<a href=#145 id=145 data-nosnippet>145</a>    });
+<a href=#146 id=146 data-nosnippet>146</a>    <span class="kw">match </span>lines {
+<a href=#147 id=147 data-nosnippet>147</a>        <span class="prelude-val">Some</span>(lines) =&gt; {
+<a href=#148 id=148 data-nosnippet>148</a>            emit(py, LOGGER, <span class="kw-2">&amp;</span>lines)<span class="question-mark">?</span>;
+<a href=#149 id=149 data-nosnippet>149</a>            <span class="prelude-val">Ok</span>(<span class="bool-val">true</span>)
+<a href=#150 id=150 data-nosnippet>150</a>        }
+<a href=#151 id=151 data-nosnippet>151</a>        <span class="prelude-val">None </span>=&gt; <span class="prelude-val">Ok</span>(<span class="bool-val">false</span>),
+<a href=#152 id=152 data-nosnippet>152</a>    }
+<a href=#153 id=153 data-nosnippet>153</a>}
 </code></pre></div></section></main></body></html>
