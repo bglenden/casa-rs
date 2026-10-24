@@ -1,339 +1,488 @@
 <!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `crates/casa-simulation/src/corrupt/batch_scales.rs`."><title>batch_scales.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-0c87338a.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="casa_simulation" data-themes="" data-resource-suffix="" data-rustdoc-version="1.99.1 (58cf8f9c3 2026-10-13)" data-channel="1.99.1" data-search-js="search-cf4fc35e.js" data-stringdex-js="stringdex-b5109af9.js" data-settings-js="settings-170eb4bf.js" ><script src="../../../static.files/storage-41dd4d93.js"></script><script defer src="../../../static.files/src-script-813739b1.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-417ebf0a.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-9f56287d.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><h1><div class="sub-heading">casa_simulation/corrupt/</div>batch_scales.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-3"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// SPDX-License-Identifier: LGPL-3.0-or-later
-<a href=#2 id=2 data-nosnippet>2</a></span><span class="doccomment">//! The antenna scales of a write batch's `tsys-atm` noise.
-<a href=#3 id=3 data-nosnippet>3</a>//!
-<a href=#4 id=4 data-nosnippet>4</a>//! A `tsys-atm` row's σ in channel `c` is `s_i(c) · s_j(c)`, each antenna's
-<a href=#5 id=5 data-nosnippet>5</a>//! scale from its Tsys at its airmass ([`TsysAtm::antenna_scales`]), so an
-<a href=#6 id=6 data-nosnippet>6</a>//! antenna's scales belong to the antenna and the integration, as a Jones
-<a href=#7 id=7 data-nosnippet>7</a>//! term does, not to the row. A batch's scales are worked out once, on the
-<a href=#8 id=8 data-nosnippet>8</a>//! workers, before the noise jobs that read them: each costs a line of
-<a href=#9 id=9 data-nosnippet>9</a>//! sight through the atmosphere's layers per channel, and a job of its own
-<a href=#10 id=10 data-nosnippet>10</a>//! for every run of rows would repeat it as many times as an integration's
-<a href=#11 id=11 data-nosnippet>11</a>//! rows are split into jobs.
-<a href=#12 id=12 data-nosnippet>12</a>//!
-<a href=#13 id=13 data-nosnippet>13</a>//! An entry is keyed by what its scales depend on (the term, the window,
-<a href=#14 id=14 data-nosnippet>14</a>//! and the antenna's dish, airmass and the row's exposure), never by where
-<a href=#15 id=15 data-nosnippet>15</a>//! the batch starts, so an integration that two batches share gets the
-<a href=#16 id=16 data-nosnippet>16</a>//! same scales in both.
+<a href=#2 id=2 data-nosnippet>2</a></span><span class="doccomment">//! What a write batch's corruptions take from each antenna, channel by
+<a href=#3 id=3 data-nosnippet>3</a>//! channel: the antenna scales of `tsys-atm` noise and the phasors of a
+<a href=#4 id=4 data-nosnippet>4</a>//! tropospheric (`settrop`) term.
+<a href=#5 id=5 data-nosnippet>5</a>//!
+<a href=#6 id=6 data-nosnippet>6</a>//! A `tsys-atm` row's σ in channel `c` is `s_i(c) · s_j(c)`, each antenna's
+<a href=#7 id=7 data-nosnippet>7</a>//! scale from its Tsys at its airmass ([`TsysAtm::antenna_scales`]), and a
+<a href=#8 id=8 data-nosnippet>8</a>//! tropospheric term multiplies a row by `g_i(c) · conj(g_j(c))`, each
+<a href=#9 id=9 data-nosnippet>9</a>//! antenna's phasor from the water vapour above it
+<a href=#10 id=10 data-nosnippet>10</a>//! ([`TroposphericPhase::phasors`]). Both belong to the antenna and the
+<a href=#11 id=11 data-nosnippet>11</a>//! integration, as a Jones term does, not to the row. A batch's are worked
+<a href=#12 id=12 data-nosnippet>12</a>//! out once, on the workers, before the jobs that read them: each costs a
+<a href=#13 id=13 data-nosnippet>13</a>//! line of sight through the atmosphere's layers, or a sine and cosine, per
+<a href=#14 id=14 data-nosnippet>14</a>//! channel, and a job of its own for every run of rows would repeat it as
+<a href=#15 id=15 data-nosnippet>15</a>//! many times as an integration's rows are split into jobs (for phasors,
+<a href=#16 id=16 data-nosnippet>16</a>//! once per baseline rather than per antenna).
 <a href=#17 id=17 data-nosnippet>17</a>//!
-<a href=#18 id=18 data-nosnippet>18</a>//! A table reserves room for the most entries its batch can need before any
-<a href=#19 id=19 data-nosnippet>19</a>//! is added ([`BatchScalesBuilder::with_capacity`]): a vector or index that
-<a href=#20 id=20 data-nosnippet>20</a>//! grew as entries came would hold its old allocation and its new one
-<a href=#21 id=21 data-nosnippet>21</a>//! together while it moved (#897 review).
-<a href=#22 id=22 data-nosnippet>22</a>
-<a href=#23 id=23 data-nosnippet>23</a></span><span class="kw">use </span>std::collections::HashMap;
-<a href=#24 id=24 data-nosnippet>24</a>
-<a href=#25 id=25 data-nosnippet>25</a><span class="kw">use </span><span class="kw">super</span>::tsys::RowNoise;
-<a href=#26 id=26 data-nosnippet>26</a><span class="kw">use </span><span class="kw">super</span>::tsys_atm::{TsysAtm, WindowAtmosphere};
+<a href=#18 id=18 data-nosnippet>18</a>//! An entry is keyed by what its values depend on (the term, the window,
+<a href=#19 id=19 data-nosnippet>19</a>//! and the antenna's dish, airmass and the row's exposure, or the antenna
+<a href=#20 id=20 data-nosnippet>20</a>//! and the term's solution), never by where the batch starts, so an
+<a href=#21 id=21 data-nosnippet>21</a>//! integration that two batches share gets the same values in both.
+<a href=#22 id=22 data-nosnippet>22</a>//!
+<a href=#23 id=23 data-nosnippet>23</a>//! A table reserves room for the most entries its batch can need before any
+<a href=#24 id=24 data-nosnippet>24</a>//! is added ([`BatchScalesBuilder::with_capacity`]): a vector or index that
+<a href=#25 id=25 data-nosnippet>25</a>//! grew as entries came would hold its old allocation and its new one
+<a href=#26 id=26 data-nosnippet>26</a>//! together while it moved (#897 review).
 <a href=#27 id=27 data-nosnippet>27</a>
-<a href=#28 id=28 data-nosnippet>28</a><span class="doccomment">/// Bytes of the index beside its buckets: its control group, and the
-<a href=#29 id=29 data-nosnippet>29</a>/// alignment of the control bytes after the buckets.
-<a href=#30 id=30 data-nosnippet>30</a></span><span class="kw">const </span>INDEX_GROUP_BYTES: usize = <span class="number">32</span>;
-<a href=#31 id=31 data-nosnippet>31</a>
-<a href=#32 id=32 data-nosnippet>32</a><span class="doccomment">/// What an antenna's scales depend on. The term is its model's address: a
-<a href=#33 id=33 data-nosnippet>33</a>/// batch's terms are alive, and distinct, while it runs, and two
-<a href=#34 id=34 data-nosnippet>34</a>/// applications of one term share their model.
-<a href=#35 id=35 data-nosnippet>35</a></span><span class="attr">#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-<a href=#36 id=36 data-nosnippet>36</a></span><span class="kw">struct </span>ScaleKey {
-<a href=#37 id=37 data-nosnippet>37</a>    model: usize,
-<a href=#38 id=38 data-nosnippet>38</a>    window: usize,
-<a href=#39 id=39 data-nosnippet>39</a>    <span class="doccomment">/// The dish diameter, airmass and exposure, as bits.
-<a href=#40 id=40 data-nosnippet>40</a>    </span>antenna: [u64; <span class="number">3</span>],
-<a href=#41 id=41 data-nosnippet>41</a>}
-<a href=#42 id=42 data-nosnippet>42</a>
-<a href=#43 id=43 data-nosnippet>43</a><span class="kw">impl </span>ScaleKey {
-<a href=#44 id=44 data-nosnippet>44</a>    <span class="doccomment">/// The key of antenna `end` (0 or 1) of `row` for `model` in spectral
-<a href=#45 id=45 data-nosnippet>45</a>    /// window `window`.
-<a href=#46 id=46 data-nosnippet>46</a>    </span><span class="kw">fn </span>new(model: <span class="kw-2">&amp;</span>TsysAtm, window: usize, row: <span class="kw-2">&amp;</span>RowNoise, end: usize) -&gt; <span class="self">Self </span>{
-<a href=#47 id=47 data-nosnippet>47</a>        <span class="self">Self </span>{
-<a href=#48 id=48 data-nosnippet>48</a>            model: std::ptr::from_ref(model) <span class="kw">as </span>usize,
-<a href=#49 id=49 data-nosnippet>49</a>            window,
-<a href=#50 id=50 data-nosnippet>50</a>            antenna: [
-<a href=#51 id=51 data-nosnippet>51</a>                row.diameters_m[end].to_bits(),
-<a href=#52 id=52 data-nosnippet>52</a>                u64::from(row.airmass[end].to_bits()),
-<a href=#53 id=53 data-nosnippet>53</a>                row.exposure_s.to_bits(),
-<a href=#54 id=54 data-nosnippet>54</a>            ],
-<a href=#55 id=55 data-nosnippet>55</a>        }
-<a href=#56 id=56 data-nosnippet>56</a>    }
-<a href=#57 id=57 data-nosnippet>57</a>}
-<a href=#58 id=58 data-nosnippet>58</a>
-<a href=#59 id=59 data-nosnippet>59</a><span class="doccomment">/// An entry still to be worked out.
-<a href=#60 id=60 data-nosnippet>60</a></span><span class="attr">#[derive(Debug)]
-<a href=#61 id=61 data-nosnippet>61</a></span><span class="kw">struct </span>Pending&lt;<span class="lifetime">'a</span>&gt; {
-<a href=#62 id=62 data-nosnippet>62</a>    model: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>TsysAtm,
-<a href=#63 id=63 data-nosnippet>63</a>    window: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>WindowAtmosphere,
-<a href=#64 id=64 data-nosnippet>64</a>    <span class="doccomment">/// The antenna's dish diameter and airmass.
-<a href=#65 id=65 data-nosnippet>65</a>    </span>antenna: (f64, f32),
-<a href=#66 id=66 data-nosnippet>66</a>    <span class="doccomment">/// The window's channel bandwidth and the row's exposure.
-<a href=#67 id=67 data-nosnippet>67</a>    </span>integration: (f64, f64),
-<a href=#68 id=68 data-nosnippet>68</a>    <span class="doccomment">/// Where its scales start in the table.
-<a href=#69 id=69 data-nosnippet>69</a>    </span>offset: usize,
-<a href=#70 id=70 data-nosnippet>70</a>}
-<a href=#71 id=71 data-nosnippet>71</a>
-<a href=#72 id=72 data-nosnippet>72</a><span class="doccomment">/// The scales a batch's `tsys-atm` noise reads, by antenna and integration.
-<a href=#73 id=73 data-nosnippet>73</a></span><span class="attr">#[derive(Debug, Default)]
-<a href=#74 id=74 data-nosnippet>74</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>BatchScales {
-<a href=#75 id=75 data-nosnippet>75</a>    <span class="doccomment">/// Each entry's first scale in `values`.
-<a href=#76 id=76 data-nosnippet>76</a>    </span>index: HashMap&lt;ScaleKey, usize&gt;,
-<a href=#77 id=77 data-nosnippet>77</a>    values: Vec&lt;f32&gt;,
-<a href=#78 id=78 data-nosnippet>78</a>}
-<a href=#79 id=79 data-nosnippet>79</a>
-<a href=#80 id=80 data-nosnippet>80</a><span class="kw">impl </span>BatchScales {
-<a href=#81 id=81 data-nosnippet>81</a>    <span class="doccomment">/// The most a table with room for `entries` entries of at most
-<a href=#82 id=82 data-nosnippet>82</a>    /// `channels` channels holds while it is built and read: their scales,
-<a href=#83 id=83 data-nosnippet>83</a>    /// and the room reserved for them.
-<a href=#84 id=84 data-nosnippet>84</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>bytes(entries: usize, channels: usize) -&gt; u64 {
-<a href=#85 id=85 data-nosnippet>85</a>        (entries * channels * size_of::&lt;f32&gt;()) <span class="kw">as </span>u64 + BatchScalesBuilder::reserved_bytes(entries)
-<a href=#86 id=86 data-nosnippet>86</a>    }
-<a href=#87 id=87 data-nosnippet>87</a>
-<a href=#88 id=88 data-nosnippet>88</a>    <span class="doccomment">/// The most entries a batch of `rows` rows needs for `terms` `tsys-atm`
-<a href=#89 id=89 data-nosnippet>89</a>    /// terms: two a row, and no more than each integration's antennas, for
-<a href=#90 id=90 data-nosnippet>90</a>    /// integrations of at least `smallest_integration` rows of at most
-<a href=#91 id=91 data-nosnippet>91</a>    /// `antennas` antennas (`None` when the rows need not come in whole
-<a href=#92 id=92 data-nosnippet>92</a>    /// integrations). Two integrations may be partly in the batch.
-<a href=#93 id=93 data-nosnippet>93</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>most_entries(
-<a href=#94 id=94 data-nosnippet>94</a>        terms: usize,
-<a href=#95 id=95 data-nosnippet>95</a>        rows: usize,
-<a href=#96 id=96 data-nosnippet>96</a>        integrations: <span class="prelude-ty">Option</span>&lt;(usize, usize)&gt;,
-<a href=#97 id=97 data-nosnippet>97</a>    ) -&gt; usize {
-<a href=#98 id=98 data-nosnippet>98</a>        <span class="kw">let </span>by_rows = <span class="number">2 </span>* rows;
-<a href=#99 id=99 data-nosnippet>99</a>        <span class="kw">let </span>by_integrations = integrations.map_or(by_rows, |(smallest, antennas)| {
-<a href=#100 id=100 data-nosnippet>100</a>            (rows / smallest.max(<span class="number">1</span>) + <span class="number">2</span>) * antennas
-<a href=#101 id=101 data-nosnippet>101</a>        });
-<a href=#102 id=102 data-nosnippet>102</a>        terms * by_rows.min(by_integrations)
-<a href=#103 id=103 data-nosnippet>103</a>    }
-<a href=#104 id=104 data-nosnippet>104</a>
-<a href=#105 id=105 data-nosnippet>105</a>    <span class="doccomment">/// The scales of antenna `end` (0 or 1) of `row` for `model` in
-<a href=#106 id=106 data-nosnippet>106</a>    /// `window`, spectral window `window_id`.
-<a href=#107 id=107 data-nosnippet>107</a>    ///
-<a href=#108 id=108 data-nosnippet>108</a>    /// # Panics
-<a href=#109 id=109 data-nosnippet>109</a>    ///
-<a href=#110 id=110 data-nosnippet>110</a>    /// When the batch's table was not built with the row
-<a href=#111 id=111 data-nosnippet>111</a>    /// ([`BatchScalesBuilder::add_rows`]).
-<a href=#112 id=112 data-nosnippet>112</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>get(
-<a href=#113 id=113 data-nosnippet>113</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#114 id=114 data-nosnippet>114</a>        (model, window_id, window): (<span class="kw-2">&amp;</span>TsysAtm, usize, <span class="kw-2">&amp;</span>WindowAtmosphere),
-<a href=#115 id=115 data-nosnippet>115</a>        row: <span class="kw-2">&amp;</span>RowNoise,
-<a href=#116 id=116 data-nosnippet>116</a>        end: usize,
-<a href=#117 id=117 data-nosnippet>117</a>    ) -&gt; <span class="kw-2">&amp;</span>[f32] {
-<a href=#118 id=118 data-nosnippet>118</a>        <span class="kw">let </span>offset = <span class="self">self</span>.index[<span class="kw-2">&amp;</span>ScaleKey::new(model, window_id, row, end)];
-<a href=#119 id=119 data-nosnippet>119</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.values[offset..offset + window.channels()]
-<a href=#120 id=120 data-nosnippet>120</a>    }
-<a href=#121 id=121 data-nosnippet>121</a>}
-<a href=#122 id=122 data-nosnippet>122</a>
-<a href=#123 id=123 data-nosnippet>123</a><span class="doccomment">/// A batch's table as its rows are added, before the scales are worked
-<a href=#124 id=124 data-nosnippet>124</a>/// out.
-<a href=#125 id=125 data-nosnippet>125</a></span><span class="attr">#[derive(Debug)]
-<a href=#126 id=126 data-nosnippet>126</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>BatchScalesBuilder&lt;<span class="lifetime">'a</span>&gt; {
-<a href=#127 id=127 data-nosnippet>127</a>    index: HashMap&lt;ScaleKey, usize&gt;,
-<a href=#128 id=128 data-nosnippet>128</a>    pending: Vec&lt;Pending&lt;<span class="lifetime">'a</span>&gt;&gt;,
-<a href=#129 id=129 data-nosnippet>129</a>    values: usize,
+<a href=#28 id=28 data-nosnippet>28</a></span><span class="kw">use </span>std::collections::HashMap;
+<a href=#29 id=29 data-nosnippet>29</a><span class="kw">use </span>std::hash::Hash;
+<a href=#30 id=30 data-nosnippet>30</a>
+<a href=#31 id=31 data-nosnippet>31</a><span class="kw">use </span>num_complex::Complex32;
+<a href=#32 id=32 data-nosnippet>32</a>
+<a href=#33 id=33 data-nosnippet>33</a><span class="kw">use </span><span class="kw">super</span>::jones::JonesTerm;
+<a href=#34 id=34 data-nosnippet>34</a><span class="kw">use </span><span class="kw">super</span>::troposphere::TroposphericPhase;
+<a href=#35 id=35 data-nosnippet>35</a><span class="kw">use </span><span class="kw">super</span>::tsys::RowNoise;
+<a href=#36 id=36 data-nosnippet>36</a><span class="kw">use </span><span class="kw">super</span>::tsys_atm::{TsysAtm, WindowAtmosphere};
+<a href=#37 id=37 data-nosnippet>37</a>
+<a href=#38 id=38 data-nosnippet>38</a><span class="doccomment">/// Bytes of an index beside its buckets: its control group, and the
+<a href=#39 id=39 data-nosnippet>39</a>/// alignment of the control bytes after the buckets.
+<a href=#40 id=40 data-nosnippet>40</a></span><span class="kw">const </span>INDEX_GROUP_BYTES: usize = <span class="number">32</span>;
+<a href=#41 id=41 data-nosnippet>41</a>
+<a href=#42 id=42 data-nosnippet>42</a><span class="doccomment">/// An entry still to be worked out: where its values start in its table,
+<a href=#43 id=43 data-nosnippet>43</a>/// how many there are (one a channel), and how to work them out.
+<a href=#44 id=44 data-nosnippet>44</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">trait </span>Entry: Sync {
+<a href=#45 id=45 data-nosnippet>45</a>    <span class="kw">type </span>Value: Copy + Default + Send;
+<a href=#46 id=46 data-nosnippet>46</a>
+<a href=#47 id=47 data-nosnippet>47</a>    <span class="kw">fn </span>offset(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize;
+<a href=#48 id=48 data-nosnippet>48</a>
+<a href=#49 id=49 data-nosnippet>49</a>    <span class="kw">fn </span>width(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize;
+<a href=#50 id=50 data-nosnippet>50</a>
+<a href=#51 id=51 data-nosnippet>51</a>    <span class="kw">fn </span>work_out(<span class="kw-2">&amp;</span><span class="self">self</span>, values: <span class="kw-2">&amp;mut </span>[<span class="self">Self</span>::Value]);
+<a href=#52 id=52 data-nosnippet>52</a>}
+<a href=#53 id=53 data-nosnippet>53</a>
+<a href=#54 id=54 data-nosnippet>54</a><span class="doccomment">/// What an antenna's scales depend on. The term is its model's address: a
+<a href=#55 id=55 data-nosnippet>55</a>/// batch's terms are alive, and distinct, while it runs, and two
+<a href=#56 id=56 data-nosnippet>56</a>/// applications of one term share their model.
+<a href=#57 id=57 data-nosnippet>57</a></span><span class="attr">#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+<a href=#58 id=58 data-nosnippet>58</a></span><span class="kw">struct </span>ScaleKey {
+<a href=#59 id=59 data-nosnippet>59</a>    model: usize,
+<a href=#60 id=60 data-nosnippet>60</a>    window: usize,
+<a href=#61 id=61 data-nosnippet>61</a>    <span class="doccomment">/// The dish diameter, airmass and exposure, as bits.
+<a href=#62 id=62 data-nosnippet>62</a>    </span>antenna: [u64; <span class="number">3</span>],
+<a href=#63 id=63 data-nosnippet>63</a>}
+<a href=#64 id=64 data-nosnippet>64</a>
+<a href=#65 id=65 data-nosnippet>65</a><span class="kw">impl </span>ScaleKey {
+<a href=#66 id=66 data-nosnippet>66</a>    <span class="doccomment">/// The key of antenna `end` (0 or 1) of `row` for `model` in spectral
+<a href=#67 id=67 data-nosnippet>67</a>    /// window `window`.
+<a href=#68 id=68 data-nosnippet>68</a>    </span><span class="kw">fn </span>new(model: <span class="kw-2">&amp;</span>TsysAtm, window: usize, row: <span class="kw-2">&amp;</span>RowNoise, end: usize) -&gt; <span class="self">Self </span>{
+<a href=#69 id=69 data-nosnippet>69</a>        <span class="self">Self </span>{
+<a href=#70 id=70 data-nosnippet>70</a>            model: std::ptr::from_ref(model) <span class="kw">as </span>usize,
+<a href=#71 id=71 data-nosnippet>71</a>            window,
+<a href=#72 id=72 data-nosnippet>72</a>            antenna: [
+<a href=#73 id=73 data-nosnippet>73</a>                row.diameters_m[end].to_bits(),
+<a href=#74 id=74 data-nosnippet>74</a>                u64::from(row.airmass[end].to_bits()),
+<a href=#75 id=75 data-nosnippet>75</a>                row.exposure_s.to_bits(),
+<a href=#76 id=76 data-nosnippet>76</a>            ],
+<a href=#77 id=77 data-nosnippet>77</a>        }
+<a href=#78 id=78 data-nosnippet>78</a>    }
+<a href=#79 id=79 data-nosnippet>79</a>}
+<a href=#80 id=80 data-nosnippet>80</a>
+<a href=#81 id=81 data-nosnippet>81</a><span class="doccomment">/// An antenna's scales still to be worked out.
+<a href=#82 id=82 data-nosnippet>82</a></span><span class="attr">#[derive(Debug)]
+<a href=#83 id=83 data-nosnippet>83</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>ScaleEntry&lt;<span class="lifetime">'a</span>&gt; {
+<a href=#84 id=84 data-nosnippet>84</a>    model: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>TsysAtm,
+<a href=#85 id=85 data-nosnippet>85</a>    window: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>WindowAtmosphere,
+<a href=#86 id=86 data-nosnippet>86</a>    <span class="doccomment">/// The antenna's dish diameter and airmass.
+<a href=#87 id=87 data-nosnippet>87</a>    </span>antenna: (f64, f32),
+<a href=#88 id=88 data-nosnippet>88</a>    <span class="doccomment">/// The window's channel bandwidth and the row's exposure.
+<a href=#89 id=89 data-nosnippet>89</a>    </span>integration: (f64, f64),
+<a href=#90 id=90 data-nosnippet>90</a>    offset: usize,
+<a href=#91 id=91 data-nosnippet>91</a>}
+<a href=#92 id=92 data-nosnippet>92</a>
+<a href=#93 id=93 data-nosnippet>93</a><span class="kw">impl </span>Entry <span class="kw">for </span>ScaleEntry&lt;<span class="lifetime">'_</span>&gt; {
+<a href=#94 id=94 data-nosnippet>94</a>    <span class="kw">type </span>Value = f32;
+<a href=#95 id=95 data-nosnippet>95</a>
+<a href=#96 id=96 data-nosnippet>96</a>    <span class="kw">fn </span>offset(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
+<a href=#97 id=97 data-nosnippet>97</a>        <span class="self">self</span>.offset
+<a href=#98 id=98 data-nosnippet>98</a>    }
+<a href=#99 id=99 data-nosnippet>99</a>
+<a href=#100 id=100 data-nosnippet>100</a>    <span class="kw">fn </span>width(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
+<a href=#101 id=101 data-nosnippet>101</a>        <span class="self">self</span>.window.channels()
+<a href=#102 id=102 data-nosnippet>102</a>    }
+<a href=#103 id=103 data-nosnippet>103</a>
+<a href=#104 id=104 data-nosnippet>104</a>    <span class="kw">fn </span>work_out(<span class="kw-2">&amp;</span><span class="self">self</span>, values: <span class="kw-2">&amp;mut </span>[f32]) {
+<a href=#105 id=105 data-nosnippet>105</a>        <span class="self">self</span>.model
+<a href=#106 id=106 data-nosnippet>106</a>            .antenna_scales(<span class="self">self</span>.window, <span class="self">self</span>.antenna, <span class="self">self</span>.integration, values);
+<a href=#107 id=107 data-nosnippet>107</a>    }
+<a href=#108 id=108 data-nosnippet>108</a>}
+<a href=#109 id=109 data-nosnippet>109</a>
+<a href=#110 id=110 data-nosnippet>110</a><span class="doccomment">/// What an antenna's phasors depend on: the term (its address, as for
+<a href=#111 id=111 data-nosnippet>111</a>/// [`ScaleKey`]), the window, the term's solution (its block) and the
+<a href=#112 id=112 data-nosnippet>112</a>/// antenna.
+<a href=#113 id=113 data-nosnippet>113</a></span><span class="attr">#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+<a href=#114 id=114 data-nosnippet>114</a></span><span class="kw">struct </span>PhaseKey {
+<a href=#115 id=115 data-nosnippet>115</a>    term: usize,
+<a href=#116 id=116 data-nosnippet>116</a>    window: usize,
+<a href=#117 id=117 data-nosnippet>117</a>    block: u32,
+<a href=#118 id=118 data-nosnippet>118</a>    antenna: u32,
+<a href=#119 id=119 data-nosnippet>119</a>}
+<a href=#120 id=120 data-nosnippet>120</a>
+<a href=#121 id=121 data-nosnippet>121</a><span class="kw">impl </span>PhaseKey {
+<a href=#122 id=122 data-nosnippet>122</a>    <span class="kw">fn </span>new(term: <span class="kw-2">&amp;</span>JonesTerm, (window, block): (usize, usize), antenna: usize) -&gt; <span class="self">Self </span>{
+<a href=#123 id=123 data-nosnippet>123</a>        <span class="self">Self </span>{
+<a href=#124 id=124 data-nosnippet>124</a>            term: std::ptr::from_ref(term) <span class="kw">as </span>usize,
+<a href=#125 id=125 data-nosnippet>125</a>            window,
+<a href=#126 id=126 data-nosnippet>126</a>            block: block <span class="kw">as </span>u32,
+<a href=#127 id=127 data-nosnippet>127</a>            antenna: antenna <span class="kw">as </span>u32,
+<a href=#128 id=128 data-nosnippet>128</a>        }
+<a href=#129 id=129 data-nosnippet>129</a>    }
 <a href=#130 id=130 data-nosnippet>130</a>}
 <a href=#131 id=131 data-nosnippet>131</a>
-<a href=#132 id=132 data-nosnippet>132</a><span class="kw">impl</span>&lt;<span class="lifetime">'a</span>&gt; BatchScalesBuilder&lt;<span class="lifetime">'a</span>&gt; {
-<a href=#133 id=133 data-nosnippet>133</a>    <span class="doccomment">/// A table with room for `entries` entries, reserved at once
-<a href=#134 id=134 data-nosnippet>134</a>    /// ([`BatchScales::most_entries`] of its batch), so adding them moves
-<a href=#135 id=135 data-nosnippet>135</a>    /// nothing.
-<a href=#136 id=136 data-nosnippet>136</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>with_capacity(entries: usize) -&gt; <span class="self">Self </span>{
-<a href=#137 id=137 data-nosnippet>137</a>        <span class="self">Self </span>{
-<a href=#138 id=138 data-nosnippet>138</a>            index: HashMap::with_capacity(entries),
-<a href=#139 id=139 data-nosnippet>139</a>            pending: Vec::with_capacity(entries),
-<a href=#140 id=140 data-nosnippet>140</a>            values: <span class="number">0</span>,
-<a href=#141 id=141 data-nosnippet>141</a>        }
-<a href=#142 id=142 data-nosnippet>142</a>    }
+<a href=#132 id=132 data-nosnippet>132</a><span class="doccomment">/// An antenna's phasors still to be worked out.
+<a href=#133 id=133 data-nosnippet>133</a></span><span class="attr">#[derive(Debug)]
+<a href=#134 id=134 data-nosnippet>134</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>PhaseEntry&lt;<span class="lifetime">'a</span>&gt; {
+<a href=#135 id=135 data-nosnippet>135</a>    phase: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>TroposphericPhase,
+<a href=#136 id=136 data-nosnippet>136</a>    <span class="doccomment">/// The window and the solution's block.
+<a href=#137 id=137 data-nosnippet>137</a>    </span>solution: (usize, usize),
+<a href=#138 id=138 data-nosnippet>138</a>    <span class="doccomment">/// The antenna, and the term's antennas.
+<a href=#139 id=139 data-nosnippet>139</a>    </span>antenna: (usize, usize),
+<a href=#140 id=140 data-nosnippet>140</a>    width: usize,
+<a href=#141 id=141 data-nosnippet>141</a>    offset: usize,
+<a href=#142 id=142 data-nosnippet>142</a>}
 <a href=#143 id=143 data-nosnippet>143</a>
-<a href=#144 id=144 data-nosnippet>144</a>    <span class="doccomment">/// What room for `entries` entries holds beside their scales: the
-<a href=#145 id=145 data-nosnippet>145</a>    /// index's buckets, a power of two at least 8/7 of the entries (std's
-<a href=#146 id=146 data-nosnippet>146</a>    /// `HashMap`), each with a control byte, and its control group; each
-<a href=#147 id=147 data-nosnippet>147</a>    /// entry's pending computation; and the jobs, at most one an entry,
-<a href=#148 id=148 data-nosnippet>148</a>    /// they are worked out in.
-<a href=#149 id=149 data-nosnippet>149</a>    </span><span class="kw">fn </span>reserved_bytes(entries: usize) -&gt; u64 {
-<a href=#150 id=150 data-nosnippet>150</a>        <span class="kw">if </span>entries == <span class="number">0 </span>{
-<a href=#151 id=151 data-nosnippet>151</a>            <span class="kw">return </span><span class="number">0</span>;
-<a href=#152 id=152 data-nosnippet>152</a>        }
-<a href=#153 id=153 data-nosnippet>153</a>        <span class="kw">let </span>buckets = (entries * <span class="number">8</span>).div_ceil(<span class="number">7</span>).next_power_of_two().max(<span class="number">4</span>);
-<a href=#154 id=154 data-nosnippet>154</a>        (buckets * (size_of::&lt;(ScaleKey, usize)&gt;() + <span class="number">1</span>)
-<a href=#155 id=155 data-nosnippet>155</a>            + INDEX_GROUP_BYTES
-<a href=#156 id=156 data-nosnippet>156</a>            + entries * (size_of::&lt;Pending&lt;<span class="lifetime">'static</span>&gt;&gt;() + size_of::&lt;ScalesJob&lt;<span class="lifetime">'static</span>, <span class="lifetime">'static</span>&gt;&gt;()))
-<a href=#157 id=157 data-nosnippet>157</a>            <span class="kw">as </span>u64
-<a href=#158 id=158 data-nosnippet>158</a>    }
+<a href=#144 id=144 data-nosnippet>144</a><span class="kw">impl </span>Entry <span class="kw">for </span>PhaseEntry&lt;<span class="lifetime">'_</span>&gt; {
+<a href=#145 id=145 data-nosnippet>145</a>    <span class="kw">type </span>Value = Complex32;
+<a href=#146 id=146 data-nosnippet>146</a>
+<a href=#147 id=147 data-nosnippet>147</a>    <span class="kw">fn </span>offset(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
+<a href=#148 id=148 data-nosnippet>148</a>        <span class="self">self</span>.offset
+<a href=#149 id=149 data-nosnippet>149</a>    }
+<a href=#150 id=150 data-nosnippet>150</a>
+<a href=#151 id=151 data-nosnippet>151</a>    <span class="kw">fn </span>width(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
+<a href=#152 id=152 data-nosnippet>152</a>        <span class="self">self</span>.width
+<a href=#153 id=153 data-nosnippet>153</a>    }
+<a href=#154 id=154 data-nosnippet>154</a>
+<a href=#155 id=155 data-nosnippet>155</a>    <span class="kw">fn </span>work_out(<span class="kw-2">&amp;</span><span class="self">self</span>, values: <span class="kw-2">&amp;mut </span>[Complex32]) {
+<a href=#156 id=156 data-nosnippet>156</a>        <span class="self">self</span>.phase.phasors(<span class="self">self</span>.solution, <span class="self">self</span>.antenna, values);
+<a href=#157 id=157 data-nosnippet>157</a>    }
+<a href=#158 id=158 data-nosnippet>158</a>}
 <a href=#159 id=159 data-nosnippet>159</a>
-<a href=#160 id=160 data-nosnippet>160</a>    <span class="doccomment">/// Add the scales both antennas of each of `rows` need for `model` in
-<a href=#161 id=161 data-nosnippet>161</a>    /// `window`, spectral window `window_id`, whose channels are
-<a href=#162 id=162 data-nosnippet>162</a>    /// `channel_bandwidth_hz` wide.
-<a href=#163 id=163 data-nosnippet>163</a>    ///
-<a href=#164 id=164 data-nosnippet>164</a>    /// The entries must fit the room reserved for them
-<a href=#165 id=165 data-nosnippet>165</a>    /// ([`Self::with_capacity`]); a debug build asserts it.
-<a href=#166 id=166 data-nosnippet>166</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>add_rows(
-<a href=#167 id=167 data-nosnippet>167</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-<a href=#168 id=168 data-nosnippet>168</a>        (model, window_id, window): (<span class="kw-2">&amp;</span><span class="lifetime">'a </span>TsysAtm, usize, <span class="kw-2">&amp;</span><span class="lifetime">'a </span>WindowAtmosphere),
-<a href=#169 id=169 data-nosnippet>169</a>        channel_bandwidth_hz: f64,
-<a href=#170 id=170 data-nosnippet>170</a>        rows: <span class="kw">impl </span>Iterator&lt;Item = RowNoise&gt;,
-<a href=#171 id=171 data-nosnippet>171</a>    ) {
-<a href=#172 id=172 data-nosnippet>172</a>        <span class="kw">for </span>row <span class="kw">in </span>rows {
-<a href=#173 id=173 data-nosnippet>173</a>            <span class="kw">for </span>end <span class="kw">in </span><span class="number">0</span>..<span class="number">2 </span>{
-<a href=#174 id=174 data-nosnippet>174</a>                <span class="kw">let </span>key = ScaleKey::new(model, window_id, <span class="kw-2">&amp;</span>row, end);
-<a href=#175 id=175 data-nosnippet>175</a>                <span class="kw">if </span><span class="self">self</span>.index.contains_key(<span class="kw-2">&amp;</span>key) {
-<a href=#176 id=176 data-nosnippet>176</a>                    <span class="kw">continue</span>;
-<a href=#177 id=177 data-nosnippet>177</a>                }
-<a href=#178 id=178 data-nosnippet>178</a>                <span class="macro">debug_assert!</span>(
-<a href=#179 id=179 data-nosnippet>179</a>                    <span class="self">self</span>.pending.len() &lt; <span class="self">self</span>.pending.capacity(),
-<a href=#180 id=180 data-nosnippet>180</a>                    <span class="string">"a batch needs no more entries than were reserved for it"
-<a href=#181 id=181 data-nosnippet>181</a>                </span>);
-<a href=#182 id=182 data-nosnippet>182</a>                <span class="self">self</span>.index.insert(key, <span class="self">self</span>.values);
-<a href=#183 id=183 data-nosnippet>183</a>                <span class="self">self</span>.pending.push(Pending {
-<a href=#184 id=184 data-nosnippet>184</a>                    model,
-<a href=#185 id=185 data-nosnippet>185</a>                    window,
-<a href=#186 id=186 data-nosnippet>186</a>                    antenna: (row.diameters_m[end], row.airmass[end]),
-<a href=#187 id=187 data-nosnippet>187</a>                    integration: (channel_bandwidth_hz, row.exposure_s),
-<a href=#188 id=188 data-nosnippet>188</a>                    offset: <span class="self">self</span>.values,
-<a href=#189 id=189 data-nosnippet>189</a>                });
-<a href=#190 id=190 data-nosnippet>190</a>                <span class="self">self</span>.values += window.channels();
-<a href=#191 id=191 data-nosnippet>191</a>            }
-<a href=#192 id=192 data-nosnippet>192</a>        }
-<a href=#193 id=193 data-nosnippet>193</a>    }
-<a href=#194 id=194 data-nosnippet>194</a>
-<a href=#195 id=195 data-nosnippet>195</a>    <span class="doccomment">/// Whether no row needs scales.
-<a href=#196 id=196 data-nosnippet>196</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>is_empty(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
-<a href=#197 id=197 data-nosnippet>197</a>        <span class="self">self</span>.pending.is_empty()
-<a href=#198 id=198 data-nosnippet>198</a>    }
-<a href=#199 id=199 data-nosnippet>199</a>
-<a href=#200 id=200 data-nosnippet>200</a>    <span class="doccomment">/// Work the scales out, in about `jobs` jobs run by `run_jobs`.
-<a href=#201 id=201 data-nosnippet>201</a>    ///
-<a href=#202 id=202 data-nosnippet>202</a>    /// # Errors
-<a href=#203 id=203 data-nosnippet>203</a>    ///
-<a href=#204 id=204 data-nosnippet>204</a>    /// What `run_jobs` returns.
-<a href=#205 id=205 data-nosnippet>205</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>build&lt;E&gt;(
-<a href=#206 id=206 data-nosnippet>206</a>        <span class="self">self</span>,
-<a href=#207 id=207 data-nosnippet>207</a>        jobs: usize,
-<a href=#208 id=208 data-nosnippet>208</a>        run_jobs: <span class="kw">impl </span>FnOnce(<span class="kw-2">&amp;mut </span>[ScalesJob&lt;<span class="lifetime">'_</span>, <span class="lifetime">'a</span>&gt;]) -&gt; <span class="prelude-ty">Result</span>&lt;(), E&gt;,
-<a href=#209 id=209 data-nosnippet>209</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;BatchScales, E&gt; {
-<a href=#210 id=210 data-nosnippet>210</a>        <span class="kw">let </span><span class="kw-2">mut </span>values = <span class="macro">vec!</span>[<span class="number">0.0</span>; <span class="self">self</span>.values];
-<a href=#211 id=211 data-nosnippet>211</a>        <span class="kw">let </span>per_job = <span class="self">self</span>.pending.len().div_ceil(jobs.max(<span class="number">1</span>)).max(<span class="number">1</span>);
-<a href=#212 id=212 data-nosnippet>212</a>        <span class="kw">let </span><span class="kw-2">mut </span>work = Vec::with_capacity(<span class="self">self</span>.pending.len().div_ceil(per_job));
-<a href=#213 id=213 data-nosnippet>213</a>        <span class="kw">let </span><span class="kw-2">mut </span>rest = values.as_mut_slice();
-<a href=#214 id=214 data-nosnippet>214</a>        <span class="kw">for </span>pending <span class="kw">in </span><span class="self">self</span>.pending.chunks(per_job) {
-<a href=#215 id=215 data-nosnippet>215</a>            <span class="kw">let </span>last = pending.last().expect(<span class="string">"chunks are not empty"</span>);
-<a href=#216 id=216 data-nosnippet>216</a>            <span class="kw">let </span>length = last.offset + last.window.channels() - pending[<span class="number">0</span>].offset;
-<a href=#217 id=217 data-nosnippet>217</a>            <span class="kw">let </span>(scales, after) = std::mem::take(<span class="kw-2">&amp;mut </span>rest).split_at_mut(length);
-<a href=#218 id=218 data-nosnippet>218</a>            work.push(ScalesJob { pending, scales });
-<a href=#219 id=219 data-nosnippet>219</a>            rest = after;
-<a href=#220 id=220 data-nosnippet>220</a>        }
-<a href=#221 id=221 data-nosnippet>221</a>        run_jobs(<span class="kw-2">&amp;mut </span>work)<span class="question-mark">?</span>;
-<a href=#222 id=222 data-nosnippet>222</a>        drop(work);
-<a href=#223 id=223 data-nosnippet>223</a>        <span class="prelude-val">Ok</span>(BatchScales {
-<a href=#224 id=224 data-nosnippet>224</a>            index: <span class="self">self</span>.index,
-<a href=#225 id=225 data-nosnippet>225</a>            values,
-<a href=#226 id=226 data-nosnippet>226</a>        })
-<a href=#227 id=227 data-nosnippet>227</a>    }
-<a href=#228 id=228 data-nosnippet>228</a>}
-<a href=#229 id=229 data-nosnippet>229</a>
-<a href=#230 id=230 data-nosnippet>230</a><span class="doccomment">/// Consecutive entries of a batch's table, worked out in one job.
-<a href=#231 id=231 data-nosnippet>231</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>ScalesJob&lt;<span class="lifetime">'p</span>, <span class="lifetime">'a</span>&gt; {
-<a href=#232 id=232 data-nosnippet>232</a>    pending: <span class="kw-2">&amp;</span><span class="lifetime">'p </span>[Pending&lt;<span class="lifetime">'a</span>&gt;],
-<a href=#233 id=233 data-nosnippet>233</a>    scales: <span class="kw-2">&amp;</span><span class="lifetime">'p </span><span class="kw-2">mut </span>[f32],
-<a href=#234 id=234 data-nosnippet>234</a>}
-<a href=#235 id=235 data-nosnippet>235</a>
-<a href=#236 id=236 data-nosnippet>236</a><span class="kw">impl </span>ScalesJob&lt;<span class="lifetime">'_</span>, <span class="lifetime">'_</span>&gt; {
-<a href=#237 id=237 data-nosnippet>237</a>    <span class="doccomment">/// Work the job's scales out.
-<a href=#238 id=238 data-nosnippet>238</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>run(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
-<a href=#239 id=239 data-nosnippet>239</a>        <span class="kw">let </span>first = <span class="self">self</span>.pending.first().map_or(<span class="number">0</span>, |pending| pending.offset);
-<a href=#240 id=240 data-nosnippet>240</a>        <span class="kw">for </span>pending <span class="kw">in </span><span class="self">self</span>.pending {
-<a href=#241 id=241 data-nosnippet>241</a>            <span class="kw">let </span>start = pending.offset - first;
-<a href=#242 id=242 data-nosnippet>242</a>            pending.model.antenna_scales(
-<a href=#243 id=243 data-nosnippet>243</a>                pending.window,
-<a href=#244 id=244 data-nosnippet>244</a>                pending.antenna,
-<a href=#245 id=245 data-nosnippet>245</a>                pending.integration,
-<a href=#246 id=246 data-nosnippet>246</a>                <span class="kw-2">&amp;mut </span><span class="self">self</span>.scales[start..start + pending.window.channels()],
-<a href=#247 id=247 data-nosnippet>247</a>            );
-<a href=#248 id=248 data-nosnippet>248</a>        }
-<a href=#249 id=249 data-nosnippet>249</a>    }
-<a href=#250 id=250 data-nosnippet>250</a>}
-<a href=#251 id=251 data-nosnippet>251</a>
-<a href=#252 id=252 data-nosnippet>252</a><span class="attr">#[cfg(test)]
-<a href=#253 id=253 data-nosnippet>253</a></span><span class="kw">mod </span>tests {
-<a href=#254 id=254 data-nosnippet>254</a>    <span class="kw">use </span>casa_atmosphere::{AbsorptionProfile, AtmosphereProfile, ProfileParameters};
-<a href=#255 id=255 data-nosnippet>255</a>    <span class="kw">use </span>casa_imaging_runtime::Reservation;
-<a href=#256 id=256 data-nosnippet>256</a>
-<a href=#257 id=257 data-nosnippet>257</a>    <span class="kw">use super</span>::{BatchScales, BatchScalesBuilder, INDEX_GROUP_BYTES, Pending, ScaleKey, ScalesJob};
-<a href=#258 id=258 data-nosnippet>258</a>    <span class="kw">use </span><span class="kw">crate</span>::corrupt::TsysParameters;
-<a href=#259 id=259 data-nosnippet>259</a>    <span class="kw">use </span><span class="kw">crate</span>::corrupt::tsys::RowNoise;
-<a href=#260 id=260 data-nosnippet>260</a>    <span class="kw">use </span><span class="kw">crate</span>::corrupt::tsys_atm::{<span class="self">self</span>, TsysAtm, WindowAtmosphere};
-<a href=#261 id=261 data-nosnippet>261</a>
-<a href=#262 id=262 data-nosnippet>262</a>    <span class="doccomment">/// A `tsys-atm` model of one window of one channel at 230 GHz.
-<a href=#263 id=263 data-nosnippet>263</a>    </span><span class="kw">fn </span>one_channel_model() -&gt; TsysAtm {
-<a href=#264 id=264 data-nosnippet>264</a>        <span class="kw">let </span>atmosphere = AtmosphereProfile::new(<span class="kw-2">&amp;</span>ProfileParameters::default()).expect(<span class="string">"profile"</span>);
-<a href=#265 id=265 data-nosnippet>265</a>        <span class="kw">let </span>channels = [<span class="number">230e9</span>];
-<a href=#266 id=266 data-nosnippet>266</a>        <span class="kw">let </span>grid = tsys_atm::window_grid(<span class="kw-2">&amp;</span>channels).expect(<span class="string">"grid"</span>);
-<a href=#267 id=267 data-nosnippet>267</a>        <span class="kw">let </span>totals = tsys_atm::channel_totals(<span class="kw-2">&amp;</span>atmosphere, <span class="kw-2">&amp;</span>channels);
-<a href=#268 id=268 data-nosnippet>268</a>        <span class="kw">let </span>profile =
-<a href=#269 id=269 data-nosnippet>269</a>            AbsorptionProfile::from_channels(atmosphere, grid, totals).expect(<span class="string">"absorption"</span>);
-<a href=#270 id=270 data-nosnippet>270</a>        <span class="kw">let </span>window = WindowAtmosphere::new(<span class="kw-2">&amp;</span>profile, <span class="number">1e-3</span>, (<span class="number">0.95</span>, <span class="number">270.0</span>)).expect(<span class="string">"window"</span>);
-<a href=#271 id=271 data-nosnippet>271</a>        TsysAtm::new(
-<a href=#272 id=272 data-nosnippet>272</a>            <span class="kw-2">&amp;</span>TsysParameters::default(),
-<a href=#273 id=273 data-nosnippet>273</a>            <span class="macro">vec!</span>[<span class="prelude-val">Some</span>(window)],
-<a href=#274 id=274 data-nosnippet>274</a>            Reservation::none(),
-<a href=#275 id=275 data-nosnippet>275</a>        )
-<a href=#276 id=276 data-nosnippet>276</a>    }
-<a href=#277 id=277 data-nosnippet>277</a>
-<a href=#278 id=278 data-nosnippet>278</a>    <span class="doccomment">/// The #897 review's case: 2,731 integrations of three antennas, three
-<a href=#279 id=279 data-nosnippet>279</a>    /// baselines each, in one channel for one term, so 8,193 entries, just
-<a href=#280 id=280 data-nosnippet>280</a>    /// past a power of two. Reserved for its batch, the table moves neither
-<a href=#281 id=281 data-nosnippet>281</a>    /// its index nor its pending computations as they are added (growing,
-<a href=#282 id=282 data-nosnippet>282</a>    /// each would hold its old allocation and a new one twice the size),
-<a href=#283 id=283 data-nosnippet>283</a>    /// and what it allocates is within what it is admitted.
-<a href=#284 id=284 data-nosnippet>284</a>    </span><span class="attr">#[test]
-<a href=#285 id=285 data-nosnippet>285</a>    </span><span class="kw">fn </span>a_table_reserved_for_its_batch_moves_nothing_and_allocates_its_admission() {
-<a href=#286 id=286 data-nosnippet>286</a>        <span class="kw">let </span>model = one_channel_model();
-<a href=#287 id=287 data-nosnippet>287</a>        <span class="kw">let </span>window = model.window(<span class="number">0</span>);
-<a href=#288 id=288 data-nosnippet>288</a>        <span class="kw">let </span>(integrations, antennas) = (<span class="number">2_731</span>, <span class="number">3</span>);
-<a href=#289 id=289 data-nosnippet>289</a>        <span class="kw">let </span>entries = BatchScales::most_entries(<span class="number">1</span>, <span class="number">3 </span>* integrations, <span class="prelude-val">Some</span>((<span class="number">3</span>, antennas)));
-<a href=#290 id=290 data-nosnippet>290</a>        <span class="kw">let </span><span class="kw-2">mut </span>builder = BatchScalesBuilder::with_capacity(entries);
-<a href=#291 id=291 data-nosnippet>291</a>        <span class="kw">let </span>room = (builder.index.capacity(), builder.pending.capacity());
-<a href=#292 id=292 data-nosnippet>292</a>        <span class="kw">for </span>integration <span class="kw">in </span><span class="number">0</span>..integrations {
-<a href=#293 id=293 data-nosnippet>293</a>            <span class="comment">// Each antenna of each integration at an airmass of its own.
-<a href=#294 id=294 data-nosnippet>294</a>            </span><span class="kw">let </span>airmass = |antenna: usize| <span class="number">1.0 </span>+ (integration * antennas + antenna) <span class="kw">as </span>f32 * <span class="number">1e-4</span>;
-<a href=#295 id=295 data-nosnippet>295</a>            <span class="kw">let </span>rows = [(<span class="number">0</span>, <span class="number">1</span>), (<span class="number">0</span>, <span class="number">2</span>), (<span class="number">1</span>, <span class="number">2</span>)].map(|(i, j)| RowNoise {
-<a href=#296 id=296 data-nosnippet>296</a>                diameters_m: [<span class="number">12.0</span>; <span class="number">2</span>],
-<a href=#297 id=297 data-nosnippet>297</a>                airmass: [airmass(i), airmass(j)],
-<a href=#298 id=298 data-nosnippet>298</a>                exposure_s: <span class="number">10.0</span>,
-<a href=#299 id=299 data-nosnippet>299</a>            });
-<a href=#300 id=300 data-nosnippet>300</a>            builder.add_rows((<span class="kw-2">&amp;</span>model, <span class="number">0</span>, window), <span class="number">1e6</span>, rows.into_iter());
-<a href=#301 id=301 data-nosnippet>301</a>        }
-<a href=#302 id=302 data-nosnippet>302</a>        <span class="macro">assert_eq!</span>(builder.pending.len(), integrations * antennas);
-<a href=#303 id=303 data-nosnippet>303</a>        <span class="macro">assert_eq!</span>(
-<a href=#304 id=304 data-nosnippet>304</a>            (builder.index.capacity(), builder.pending.capacity()),
-<a href=#305 id=305 data-nosnippet>305</a>            room,
-<a href=#306 id=306 data-nosnippet>306</a>            <span class="string">"adding the entries moved nothing"
-<a href=#307 id=307 data-nosnippet>307</a>        </span>);
-<a href=#308 id=308 data-nosnippet>308</a>        <span class="comment">// std's `HashMap` fills 7/8 of its buckets, a power of two.
-<a href=#309 id=309 data-nosnippet>309</a>        </span><span class="kw">let </span>buckets = (room.<span class="number">0 </span>* <span class="number">8</span>).div_ceil(<span class="number">7</span>).next_power_of_two();
-<a href=#310 id=310 data-nosnippet>310</a>        <span class="kw">let </span>allocated = buckets * (size_of::&lt;(ScaleKey, usize)&gt;() + <span class="number">1</span>)
-<a href=#311 id=311 data-nosnippet>311</a>            + INDEX_GROUP_BYTES
-<a href=#312 id=312 data-nosnippet>312</a>            + room.<span class="number">1 </span>* size_of::&lt;Pending&lt;<span class="lifetime">'_</span>&gt;&gt;()
-<a href=#313 id=313 data-nosnippet>313</a>            + builder.pending.len() * size_of::&lt;ScalesJob&lt;<span class="lifetime">'_</span>, <span class="lifetime">'_</span>&gt;&gt;()
-<a href=#314 id=314 data-nosnippet>314</a>            + builder.values * size_of::&lt;f32&gt;();
-<a href=#315 id=315 data-nosnippet>315</a>        <span class="macro">assert!</span>(
-<a href=#316 id=316 data-nosnippet>316</a>            allocated <span class="kw">as </span>u64 &lt;= BatchScales::bytes(entries, <span class="number">1</span>),
-<a href=#317 id=317 data-nosnippet>317</a>            <span class="string">"the table allocates {allocated} bytes, beyond the {} admitted"</span>,
-<a href=#318 id=318 data-nosnippet>318</a>            BatchScales::bytes(entries, <span class="number">1</span>)
-<a href=#319 id=319 data-nosnippet>319</a>        );
-<a href=#320 id=320 data-nosnippet>320</a>        <span class="kw">let </span>scales = builder
-<a href=#321 id=321 data-nosnippet>321</a>            .build(<span class="number">4</span>, |jobs| {
-<a href=#322 id=322 data-nosnippet>322</a>                jobs.iter_mut().for_each(ScalesJob::run);
-<a href=#323 id=323 data-nosnippet>323</a>                <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, ()&gt;(())
-<a href=#324 id=324 data-nosnippet>324</a>            })
-<a href=#325 id=325 data-nosnippet>325</a>            .expect(<span class="string">"built"</span>);
-<a href=#326 id=326 data-nosnippet>326</a>        <span class="kw">let </span>last = RowNoise {
-<a href=#327 id=327 data-nosnippet>327</a>            diameters_m: [<span class="number">12.0</span>; <span class="number">2</span>],
-<a href=#328 id=328 data-nosnippet>328</a>            airmass: [<span class="number">1.0 </span>+ <span class="number">8_192.0 </span>* <span class="number">1e-4</span>; <span class="number">2</span>],
-<a href=#329 id=329 data-nosnippet>329</a>            exposure_s: <span class="number">10.0</span>,
-<a href=#330 id=330 data-nosnippet>330</a>        };
-<a href=#331 id=331 data-nosnippet>331</a>        <span class="kw">let </span>[scale] = scales.get((<span class="kw-2">&amp;</span>model, <span class="number">0</span>, window), <span class="kw-2">&amp;</span>last, <span class="number">0</span>) <span class="kw">else </span>{
-<a href=#332 id=332 data-nosnippet>332</a>            <span class="macro">panic!</span>(<span class="string">"one channel"</span>);
-<a href=#333 id=333 data-nosnippet>333</a>        };
-<a href=#334 id=334 data-nosnippet>334</a>        <span class="kw">let </span><span class="kw-2">mut </span>expected = [<span class="number">0.0</span>];
-<a href=#335 id=335 data-nosnippet>335</a>        model.antenna_scales(window, (<span class="number">12.0</span>, last.airmass[<span class="number">0</span>]), (<span class="number">1e6</span>, <span class="number">10.0</span>), <span class="kw-2">&amp;mut </span>expected);
-<a href=#336 id=336 data-nosnippet>336</a>        <span class="macro">assert_eq!</span>(<span class="kw-2">*</span>scale, expected[<span class="number">0</span>]);
+<a href=#160 id=160 data-nosnippet>160</a><span class="doccomment">/// One kind's table: each entry's values, found by its key.
+<a href=#161 id=161 data-nosnippet>161</a></span><span class="attr">#[derive(Debug)]
+<a href=#162 id=162 data-nosnippet>162</a></span><span class="kw">struct </span>Table&lt;K, V&gt; {
+<a href=#163 id=163 data-nosnippet>163</a>    <span class="doccomment">/// Each entry's first value in `values`.
+<a href=#164 id=164 data-nosnippet>164</a>    </span>index: HashMap&lt;K, usize&gt;,
+<a href=#165 id=165 data-nosnippet>165</a>    values: Vec&lt;V&gt;,
+<a href=#166 id=166 data-nosnippet>166</a>}
+<a href=#167 id=167 data-nosnippet>167</a>
+<a href=#168 id=168 data-nosnippet>168</a><span class="kw">impl</span>&lt;K, V&gt; Default <span class="kw">for </span>Table&lt;K, V&gt; {
+<a href=#169 id=169 data-nosnippet>169</a>    <span class="kw">fn </span>default() -&gt; <span class="self">Self </span>{
+<a href=#170 id=170 data-nosnippet>170</a>        <span class="self">Self </span>{
+<a href=#171 id=171 data-nosnippet>171</a>            index: HashMap::new(),
+<a href=#172 id=172 data-nosnippet>172</a>            values: Vec::new(),
+<a href=#173 id=173 data-nosnippet>173</a>        }
+<a href=#174 id=174 data-nosnippet>174</a>    }
+<a href=#175 id=175 data-nosnippet>175</a>}
+<a href=#176 id=176 data-nosnippet>176</a>
+<a href=#177 id=177 data-nosnippet>177</a><span class="kw">impl</span>&lt;K: Eq + Hash, V&gt; Table&lt;K, V&gt; {
+<a href=#178 id=178 data-nosnippet>178</a>    <span class="doccomment">/// The `width` values of the entry of `key`.
+<a href=#179 id=179 data-nosnippet>179</a>    </span><span class="kw">fn </span>get(<span class="kw-2">&amp;</span><span class="self">self</span>, key: <span class="kw-2">&amp;</span>K, width: usize) -&gt; <span class="kw-2">&amp;</span>[V] {
+<a href=#180 id=180 data-nosnippet>180</a>        <span class="kw">let </span>offset = <span class="self">self</span>.index[key];
+<a href=#181 id=181 data-nosnippet>181</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.values[offset..offset + width]
+<a href=#182 id=182 data-nosnippet>182</a>    }
+<a href=#183 id=183 data-nosnippet>183</a>}
+<a href=#184 id=184 data-nosnippet>184</a>
+<a href=#185 id=185 data-nosnippet>185</a><span class="doccomment">/// The scales and phasors a batch's corruptions read, by antenna and
+<a href=#186 id=186 data-nosnippet>186</a>/// integration.
+<a href=#187 id=187 data-nosnippet>187</a></span><span class="attr">#[derive(Debug, Default)]
+<a href=#188 id=188 data-nosnippet>188</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>BatchScales {
+<a href=#189 id=189 data-nosnippet>189</a>    scales: Table&lt;ScaleKey, f32&gt;,
+<a href=#190 id=190 data-nosnippet>190</a>    phasors: Table&lt;PhaseKey, Complex32&gt;,
+<a href=#191 id=191 data-nosnippet>191</a>}
+<a href=#192 id=192 data-nosnippet>192</a>
+<a href=#193 id=193 data-nosnippet>193</a><span class="kw">impl </span>BatchScales {
+<a href=#194 id=194 data-nosnippet>194</a>    <span class="doccomment">/// The most a table with room for `entries` entries, (scales,
+<a href=#195 id=195 data-nosnippet>195</a>    /// phasors), of at most `channels` channels holds while it is built and
+<a href=#196 id=196 data-nosnippet>196</a>    /// read: their values, and the room reserved for them.
+<a href=#197 id=197 data-nosnippet>197</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>bytes((scales, phasors): (usize, usize), channels: usize) -&gt; u64 {
+<a href=#198 id=198 data-nosnippet>198</a>        ((scales * size_of::&lt;f32&gt;() + phasors * size_of::&lt;Complex32&gt;()) * channels) <span class="kw">as </span>u64
+<a href=#199 id=199 data-nosnippet>199</a>            + TableBuilder::&lt;ScaleKey, ScaleEntry&lt;<span class="lifetime">'static</span>&gt;&gt;::reserved_bytes(scales)
+<a href=#200 id=200 data-nosnippet>200</a>            + TableBuilder::&lt;PhaseKey, PhaseEntry&lt;<span class="lifetime">'static</span>&gt;&gt;::reserved_bytes(phasors)
+<a href=#201 id=201 data-nosnippet>201</a>    }
+<a href=#202 id=202 data-nosnippet>202</a>
+<a href=#203 id=203 data-nosnippet>203</a>    <span class="doccomment">/// The most entries a batch of `rows` rows needs for `terms` terms: two
+<a href=#204 id=204 data-nosnippet>204</a>    /// a row, and no more than each integration's antennas, for
+<a href=#205 id=205 data-nosnippet>205</a>    /// integrations of at least `smallest_integration` rows of at most
+<a href=#206 id=206 data-nosnippet>206</a>    /// `antennas` antennas (`None` when the rows need not come in whole
+<a href=#207 id=207 data-nosnippet>207</a>    /// integrations). Two integrations may be partly in the batch.
+<a href=#208 id=208 data-nosnippet>208</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>most_entries(
+<a href=#209 id=209 data-nosnippet>209</a>        terms: usize,
+<a href=#210 id=210 data-nosnippet>210</a>        rows: usize,
+<a href=#211 id=211 data-nosnippet>211</a>        integrations: <span class="prelude-ty">Option</span>&lt;(usize, usize)&gt;,
+<a href=#212 id=212 data-nosnippet>212</a>    ) -&gt; usize {
+<a href=#213 id=213 data-nosnippet>213</a>        <span class="kw">let </span>by_rows = <span class="number">2 </span>* rows;
+<a href=#214 id=214 data-nosnippet>214</a>        <span class="kw">let </span>by_integrations = integrations.map_or(by_rows, |(smallest, antennas)| {
+<a href=#215 id=215 data-nosnippet>215</a>            (rows / smallest.max(<span class="number">1</span>) + <span class="number">2</span>) * antennas
+<a href=#216 id=216 data-nosnippet>216</a>        });
+<a href=#217 id=217 data-nosnippet>217</a>        terms * by_rows.min(by_integrations)
+<a href=#218 id=218 data-nosnippet>218</a>    }
+<a href=#219 id=219 data-nosnippet>219</a>
+<a href=#220 id=220 data-nosnippet>220</a>    <span class="doccomment">/// The scales of antenna `end` (0 or 1) of `row` for `model` in
+<a href=#221 id=221 data-nosnippet>221</a>    /// `window`, spectral window `window_id`.
+<a href=#222 id=222 data-nosnippet>222</a>    ///
+<a href=#223 id=223 data-nosnippet>223</a>    /// # Panics
+<a href=#224 id=224 data-nosnippet>224</a>    ///
+<a href=#225 id=225 data-nosnippet>225</a>    /// When the batch's table was not built with the row
+<a href=#226 id=226 data-nosnippet>226</a>    /// ([`BatchScalesBuilder::add_rows`]).
+<a href=#227 id=227 data-nosnippet>227</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>get(
+<a href=#228 id=228 data-nosnippet>228</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#229 id=229 data-nosnippet>229</a>        (model, window_id, window): (<span class="kw-2">&amp;</span>TsysAtm, usize, <span class="kw-2">&amp;</span>WindowAtmosphere),
+<a href=#230 id=230 data-nosnippet>230</a>        row: <span class="kw-2">&amp;</span>RowNoise,
+<a href=#231 id=231 data-nosnippet>231</a>        end: usize,
+<a href=#232 id=232 data-nosnippet>232</a>    ) -&gt; <span class="kw-2">&amp;</span>[f32] {
+<a href=#233 id=233 data-nosnippet>233</a>        <span class="self">self</span>.scales.get(
+<a href=#234 id=234 data-nosnippet>234</a>            <span class="kw-2">&amp;</span>ScaleKey::new(model, window_id, row, end),
+<a href=#235 id=235 data-nosnippet>235</a>            window.channels(),
+<a href=#236 id=236 data-nosnippet>236</a>        )
+<a href=#237 id=237 data-nosnippet>237</a>    }
+<a href=#238 id=238 data-nosnippet>238</a>
+<a href=#239 id=239 data-nosnippet>239</a>    <span class="doccomment">/// Antenna `antenna`'s phasors of the tropospheric `term` in its block
+<a href=#240 id=240 data-nosnippet>240</a>    /// `block` of spectral window `window`.
+<a href=#241 id=241 data-nosnippet>241</a>    ///
+<a href=#242 id=242 data-nosnippet>242</a>    /// # Panics
+<a href=#243 id=243 data-nosnippet>243</a>    ///
+<a href=#244 id=244 data-nosnippet>244</a>    /// When the batch's table was not built with them
+<a href=#245 id=245 data-nosnippet>245</a>    /// ([`BatchScalesBuilder::add_phase_rows`]).
+<a href=#246 id=246 data-nosnippet>246</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>phasors(
+<a href=#247 id=247 data-nosnippet>247</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#248 id=248 data-nosnippet>248</a>        term: <span class="kw-2">&amp;</span>JonesTerm,
+<a href=#249 id=249 data-nosnippet>249</a>        (window, block): (usize, usize),
+<a href=#250 id=250 data-nosnippet>250</a>        antenna: usize,
+<a href=#251 id=251 data-nosnippet>251</a>    ) -&gt; <span class="kw-2">&amp;</span>[Complex32] {
+<a href=#252 id=252 data-nosnippet>252</a>        <span class="kw">let </span>width = term
+<a href=#253 id=253 data-nosnippet>253</a>            .tropospheric_phase()
+<a href=#254 id=254 data-nosnippet>254</a>            .and_then(|phase| phase.channels(window))
+<a href=#255 id=255 data-nosnippet>255</a>            .unwrap_or(<span class="number">0</span>);
+<a href=#256 id=256 data-nosnippet>256</a>        <span class="self">self</span>.phasors
+<a href=#257 id=257 data-nosnippet>257</a>            .get(<span class="kw-2">&amp;</span>PhaseKey::new(term, (window, block), antenna), width)
+<a href=#258 id=258 data-nosnippet>258</a>    }
+<a href=#259 id=259 data-nosnippet>259</a>}
+<a href=#260 id=260 data-nosnippet>260</a>
+<a href=#261 id=261 data-nosnippet>261</a><span class="doccomment">/// One kind's table as its entries are added, before they are worked out.
+<a href=#262 id=262 data-nosnippet>262</a></span><span class="attr">#[derive(Debug)]
+<a href=#263 id=263 data-nosnippet>263</a></span><span class="kw">struct </span>TableBuilder&lt;K, P&gt; {
+<a href=#264 id=264 data-nosnippet>264</a>    index: HashMap&lt;K, usize&gt;,
+<a href=#265 id=265 data-nosnippet>265</a>    pending: Vec&lt;P&gt;,
+<a href=#266 id=266 data-nosnippet>266</a>    values: usize,
+<a href=#267 id=267 data-nosnippet>267</a>}
+<a href=#268 id=268 data-nosnippet>268</a>
+<a href=#269 id=269 data-nosnippet>269</a><span class="kw">impl</span>&lt;K: Eq + Hash, P: Entry&gt; TableBuilder&lt;K, P&gt; {
+<a href=#270 id=270 data-nosnippet>270</a>    <span class="doccomment">/// Room for `entries` entries, reserved at once.
+<a href=#271 id=271 data-nosnippet>271</a>    </span><span class="kw">fn </span>with_capacity(entries: usize) -&gt; <span class="self">Self </span>{
+<a href=#272 id=272 data-nosnippet>272</a>        <span class="self">Self </span>{
+<a href=#273 id=273 data-nosnippet>273</a>            index: HashMap::with_capacity(entries),
+<a href=#274 id=274 data-nosnippet>274</a>            pending: Vec::with_capacity(entries),
+<a href=#275 id=275 data-nosnippet>275</a>            values: <span class="number">0</span>,
+<a href=#276 id=276 data-nosnippet>276</a>        }
+<a href=#277 id=277 data-nosnippet>277</a>    }
+<a href=#278 id=278 data-nosnippet>278</a>
+<a href=#279 id=279 data-nosnippet>279</a>    <span class="doccomment">/// What room for `entries` entries holds beside their values: the
+<a href=#280 id=280 data-nosnippet>280</a>    /// index's buckets, a power of two at least 8/7 of the entries (std's
+<a href=#281 id=281 data-nosnippet>281</a>    /// `HashMap`), each with a control byte, and its control group; each
+<a href=#282 id=282 data-nosnippet>282</a>    /// entry's pending computation; and the jobs, at most one an entry,
+<a href=#283 id=283 data-nosnippet>283</a>    /// they are worked out in.
+<a href=#284 id=284 data-nosnippet>284</a>    </span><span class="kw">fn </span>reserved_bytes(entries: usize) -&gt; u64 {
+<a href=#285 id=285 data-nosnippet>285</a>        <span class="kw">if </span>entries == <span class="number">0 </span>{
+<a href=#286 id=286 data-nosnippet>286</a>            <span class="kw">return </span><span class="number">0</span>;
+<a href=#287 id=287 data-nosnippet>287</a>        }
+<a href=#288 id=288 data-nosnippet>288</a>        <span class="kw">let </span>buckets = (entries * <span class="number">8</span>).div_ceil(<span class="number">7</span>).next_power_of_two().max(<span class="number">4</span>);
+<a href=#289 id=289 data-nosnippet>289</a>        (buckets * (size_of::&lt;(K, usize)&gt;() + <span class="number">1</span>)
+<a href=#290 id=290 data-nosnippet>290</a>            + INDEX_GROUP_BYTES
+<a href=#291 id=291 data-nosnippet>291</a>            + entries * (size_of::&lt;P&gt;() + size_of::&lt;BatchJob&lt;<span class="lifetime">'static</span>, <span class="lifetime">'static</span>&gt;&gt;())) <span class="kw">as </span>u64
+<a href=#292 id=292 data-nosnippet>292</a>    }
+<a href=#293 id=293 data-nosnippet>293</a>
+<a href=#294 id=294 data-nosnippet>294</a>    <span class="doccomment">/// Add the entry of `key`, `width` values worked out by what `entry`
+<a href=#295 id=295 data-nosnippet>295</a>    /// makes of its offset, unless it is in the table already.
+<a href=#296 id=296 data-nosnippet>296</a>    </span><span class="kw">fn </span>add(<span class="kw-2">&amp;mut </span><span class="self">self</span>, key: K, width: usize, entry: <span class="kw">impl </span>FnOnce(usize) -&gt; P) {
+<a href=#297 id=297 data-nosnippet>297</a>        <span class="kw">if </span><span class="self">self</span>.index.contains_key(<span class="kw-2">&amp;</span>key) {
+<a href=#298 id=298 data-nosnippet>298</a>            <span class="kw">return</span>;
+<a href=#299 id=299 data-nosnippet>299</a>        }
+<a href=#300 id=300 data-nosnippet>300</a>        <span class="macro">debug_assert!</span>(
+<a href=#301 id=301 data-nosnippet>301</a>            <span class="self">self</span>.pending.len() &lt; <span class="self">self</span>.pending.capacity(),
+<a href=#302 id=302 data-nosnippet>302</a>            <span class="string">"a batch needs no more entries than were reserved for it"
+<a href=#303 id=303 data-nosnippet>303</a>        </span>);
+<a href=#304 id=304 data-nosnippet>304</a>        <span class="self">self</span>.index.insert(key, <span class="self">self</span>.values);
+<a href=#305 id=305 data-nosnippet>305</a>        <span class="self">self</span>.pending.push(entry(<span class="self">self</span>.values));
+<a href=#306 id=306 data-nosnippet>306</a>        <span class="self">self</span>.values += width;
+<a href=#307 id=307 data-nosnippet>307</a>    }
+<a href=#308 id=308 data-nosnippet>308</a>
+<a href=#309 id=309 data-nosnippet>309</a>    <span class="doccomment">/// The values, and the pending entries in about `jobs` runs of
+<a href=#310 id=310 data-nosnippet>310</a>    /// consecutive ones.
+<a href=#311 id=311 data-nosnippet>311</a>    </span><span class="kw">fn </span>runs(<span class="kw-2">&amp;</span><span class="self">self</span>, jobs: usize) -&gt; (Vec&lt;P::Value&gt;, <span class="kw">impl </span>Iterator&lt;Item = <span class="kw-2">&amp;</span>[P]&gt;) {
+<a href=#312 id=312 data-nosnippet>312</a>        <span class="kw">let </span>per_job = <span class="self">self</span>.pending.len().div_ceil(jobs.max(<span class="number">1</span>)).max(<span class="number">1</span>);
+<a href=#313 id=313 data-nosnippet>313</a>        (
+<a href=#314 id=314 data-nosnippet>314</a>            <span class="macro">vec!</span>[P::Value::default(); <span class="self">self</span>.values],
+<a href=#315 id=315 data-nosnippet>315</a>            <span class="self">self</span>.pending.chunks(per_job),
+<a href=#316 id=316 data-nosnippet>316</a>        )
+<a href=#317 id=317 data-nosnippet>317</a>    }
+<a href=#318 id=318 data-nosnippet>318</a>}
+<a href=#319 id=319 data-nosnippet>319</a>
+<a href=#320 id=320 data-nosnippet>320</a><span class="doccomment">/// A batch's table as its rows are added, before the values are worked
+<a href=#321 id=321 data-nosnippet>321</a>/// out.
+<a href=#322 id=322 data-nosnippet>322</a></span><span class="attr">#[derive(Debug)]
+<a href=#323 id=323 data-nosnippet>323</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>BatchScalesBuilder&lt;<span class="lifetime">'a</span>&gt; {
+<a href=#324 id=324 data-nosnippet>324</a>    scales: TableBuilder&lt;ScaleKey, ScaleEntry&lt;<span class="lifetime">'a</span>&gt;&gt;,
+<a href=#325 id=325 data-nosnippet>325</a>    phasors: TableBuilder&lt;PhaseKey, PhaseEntry&lt;<span class="lifetime">'a</span>&gt;&gt;,
+<a href=#326 id=326 data-nosnippet>326</a>}
+<a href=#327 id=327 data-nosnippet>327</a>
+<a href=#328 id=328 data-nosnippet>328</a><span class="kw">impl</span>&lt;<span class="lifetime">'a</span>&gt; BatchScalesBuilder&lt;<span class="lifetime">'a</span>&gt; {
+<a href=#329 id=329 data-nosnippet>329</a>    <span class="doccomment">/// A table with room for `entries` entries, (scales, phasors), reserved
+<a href=#330 id=330 data-nosnippet>330</a>    /// at once ([`BatchScales::most_entries`] of its batch), so adding them
+<a href=#331 id=331 data-nosnippet>331</a>    /// moves nothing.
+<a href=#332 id=332 data-nosnippet>332</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>with_capacity((scales, phasors): (usize, usize)) -&gt; <span class="self">Self </span>{
+<a href=#333 id=333 data-nosnippet>333</a>        <span class="self">Self </span>{
+<a href=#334 id=334 data-nosnippet>334</a>            scales: TableBuilder::with_capacity(scales),
+<a href=#335 id=335 data-nosnippet>335</a>            phasors: TableBuilder::with_capacity(phasors),
+<a href=#336 id=336 data-nosnippet>336</a>        }
 <a href=#337 id=337 data-nosnippet>337</a>    }
-<a href=#338 id=338 data-nosnippet>338</a>}
+<a href=#338 id=338 data-nosnippet>338</a>
+<a href=#339 id=339 data-nosnippet>339</a>    <span class="doccomment">/// Add the scales both antennas of each of `rows` need for `model` in
+<a href=#340 id=340 data-nosnippet>340</a>    /// `window`, spectral window `window_id`, whose channels are
+<a href=#341 id=341 data-nosnippet>341</a>    /// `channel_bandwidth_hz` wide.
+<a href=#342 id=342 data-nosnippet>342</a>    ///
+<a href=#343 id=343 data-nosnippet>343</a>    /// The entries must fit the room reserved for them
+<a href=#344 id=344 data-nosnippet>344</a>    /// ([`Self::with_capacity`]); a debug build asserts it.
+<a href=#345 id=345 data-nosnippet>345</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>add_rows(
+<a href=#346 id=346 data-nosnippet>346</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+<a href=#347 id=347 data-nosnippet>347</a>        (model, window_id, window): (<span class="kw-2">&amp;</span><span class="lifetime">'a </span>TsysAtm, usize, <span class="kw-2">&amp;</span><span class="lifetime">'a </span>WindowAtmosphere),
+<a href=#348 id=348 data-nosnippet>348</a>        channel_bandwidth_hz: f64,
+<a href=#349 id=349 data-nosnippet>349</a>        rows: <span class="kw">impl </span>Iterator&lt;Item = RowNoise&gt;,
+<a href=#350 id=350 data-nosnippet>350</a>    ) {
+<a href=#351 id=351 data-nosnippet>351</a>        <span class="kw">for </span>row <span class="kw">in </span>rows {
+<a href=#352 id=352 data-nosnippet>352</a>            <span class="kw">for </span>end <span class="kw">in </span><span class="number">0</span>..<span class="number">2 </span>{
+<a href=#353 id=353 data-nosnippet>353</a>                <span class="kw">let </span>key = ScaleKey::new(model, window_id, <span class="kw-2">&amp;</span>row, end);
+<a href=#354 id=354 data-nosnippet>354</a>                <span class="self">self</span>.scales
+<a href=#355 id=355 data-nosnippet>355</a>                    .add(key, window.channels(), |offset| ScaleEntry {
+<a href=#356 id=356 data-nosnippet>356</a>                        model,
+<a href=#357 id=357 data-nosnippet>357</a>                        window,
+<a href=#358 id=358 data-nosnippet>358</a>                        antenna: (row.diameters_m[end], row.airmass[end]),
+<a href=#359 id=359 data-nosnippet>359</a>                        integration: (channel_bandwidth_hz, row.exposure_s),
+<a href=#360 id=360 data-nosnippet>360</a>                        offset,
+<a href=#361 id=361 data-nosnippet>361</a>                    });
+<a href=#362 id=362 data-nosnippet>362</a>            }
+<a href=#363 id=363 data-nosnippet>363</a>        }
+<a href=#364 id=364 data-nosnippet>364</a>    }
+<a href=#365 id=365 data-nosnippet>365</a>
+<a href=#366 id=366 data-nosnippet>366</a>    <span class="doccomment">/// Add the phasors both antennas of each of `rows`, (TIME, ANTENNA1,
+<a href=#367 id=367 data-nosnippet>367</a>    /// ANTENNA2), need for the tropospheric `term` in spectral window
+<a href=#368 id=368 data-nosnippet>368</a>    /// `window`.
+<a href=#369 id=369 data-nosnippet>369</a>    ///
+<a href=#370 id=370 data-nosnippet>370</a>    /// The entries must fit the room reserved for them
+<a href=#371 id=371 data-nosnippet>371</a>    /// ([`Self::with_capacity`]); a debug build asserts it.
+<a href=#372 id=372 data-nosnippet>372</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>add_phase_rows(
+<a href=#373 id=373 data-nosnippet>373</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+<a href=#374 id=374 data-nosnippet>374</a>        (term, window): (<span class="kw-2">&amp;</span><span class="lifetime">'a </span>JonesTerm, usize),
+<a href=#375 id=375 data-nosnippet>375</a>        rows: <span class="kw">impl </span>Iterator&lt;Item = (f64, usize, usize)&gt;,
+<a href=#376 id=376 data-nosnippet>376</a>    ) {
+<a href=#377 id=377 data-nosnippet>377</a>        <span class="kw">let </span><span class="prelude-val">Some</span>(phase) = term.tropospheric_phase() <span class="kw">else </span>{
+<a href=#378 id=378 data-nosnippet>378</a>            <span class="kw">return</span>;
+<a href=#379 id=379 data-nosnippet>379</a>        };
+<a href=#380 id=380 data-nosnippet>380</a>        <span class="kw">let </span>width = phase.channels(window).unwrap_or(<span class="number">0</span>);
+<a href=#381 id=381 data-nosnippet>381</a>        <span class="kw">for </span>(time_s, antenna1, antenna2) <span class="kw">in </span>rows {
+<a href=#382 id=382 data-nosnippet>382</a>            <span class="kw">let </span>block = term.block_at(window, time_s);
+<a href=#383 id=383 data-nosnippet>383</a>            <span class="kw">for </span>antenna <span class="kw">in </span>[antenna1, antenna2] {
+<a href=#384 id=384 data-nosnippet>384</a>                <span class="kw">let </span>key = PhaseKey::new(term, (window, block), antenna);
+<a href=#385 id=385 data-nosnippet>385</a>                <span class="self">self</span>.phasors.add(key, width, |offset| PhaseEntry {
+<a href=#386 id=386 data-nosnippet>386</a>                    phase,
+<a href=#387 id=387 data-nosnippet>387</a>                    solution: (window, block),
+<a href=#388 id=388 data-nosnippet>388</a>                    antenna: (antenna, term.antennas()),
+<a href=#389 id=389 data-nosnippet>389</a>                    width,
+<a href=#390 id=390 data-nosnippet>390</a>                    offset,
+<a href=#391 id=391 data-nosnippet>391</a>                });
+<a href=#392 id=392 data-nosnippet>392</a>            }
+<a href=#393 id=393 data-nosnippet>393</a>        }
+<a href=#394 id=394 data-nosnippet>394</a>    }
+<a href=#395 id=395 data-nosnippet>395</a>
+<a href=#396 id=396 data-nosnippet>396</a>    <span class="doccomment">/// Whether no row needs scales or phasors.
+<a href=#397 id=397 data-nosnippet>397</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>is_empty(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
+<a href=#398 id=398 data-nosnippet>398</a>        <span class="self">self</span>.scales.pending.is_empty() &amp;&amp; <span class="self">self</span>.phasors.pending.is_empty()
+<a href=#399 id=399 data-nosnippet>399</a>    }
+<a href=#400 id=400 data-nosnippet>400</a>
+<a href=#401 id=401 data-nosnippet>401</a>    <span class="doccomment">/// Work the values out, in about `jobs` jobs of each kind run by
+<a href=#402 id=402 data-nosnippet>402</a>    /// `run_jobs`.
+<a href=#403 id=403 data-nosnippet>403</a>    ///
+<a href=#404 id=404 data-nosnippet>404</a>    /// # Errors
+<a href=#405 id=405 data-nosnippet>405</a>    ///
+<a href=#406 id=406 data-nosnippet>406</a>    /// What `run_jobs` returns.
+<a href=#407 id=407 data-nosnippet>407</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>build&lt;E&gt;(
+<a href=#408 id=408 data-nosnippet>408</a>        <span class="self">self</span>,
+<a href=#409 id=409 data-nosnippet>409</a>        jobs: usize,
+<a href=#410 id=410 data-nosnippet>410</a>        run_jobs: <span class="kw">impl </span>FnOnce(<span class="kw-2">&amp;mut </span>[BatchJob&lt;<span class="lifetime">'_</span>, <span class="lifetime">'a</span>&gt;]) -&gt; <span class="prelude-ty">Result</span>&lt;(), E&gt;,
+<a href=#411 id=411 data-nosnippet>411</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;BatchScales, E&gt; {
+<a href=#412 id=412 data-nosnippet>412</a>        <span class="kw">let </span>(<span class="kw-2">mut </span>scales, scale_runs) = <span class="self">self</span>.scales.runs(jobs);
+<a href=#413 id=413 data-nosnippet>413</a>        <span class="kw">let </span>(<span class="kw-2">mut </span>phasors, phase_runs) = <span class="self">self</span>.phasors.runs(jobs);
+<a href=#414 id=414 data-nosnippet>414</a>        <span class="kw">let </span><span class="kw-2">mut </span>work: Vec&lt;BatchJob&lt;<span class="lifetime">'_</span>, <span class="lifetime">'a</span>&gt;&gt; = Vec::with_capacity(<span class="number">2 </span>* jobs.max(<span class="number">1</span>));
+<a href=#415 id=415 data-nosnippet>415</a>        split(<span class="kw-2">&amp;mut </span>scales, scale_runs, |job| {
+<a href=#416 id=416 data-nosnippet>416</a>            work.push(BatchJob::Scales(job))
+<a href=#417 id=417 data-nosnippet>417</a>        });
+<a href=#418 id=418 data-nosnippet>418</a>        split(<span class="kw-2">&amp;mut </span>phasors, phase_runs, |job| {
+<a href=#419 id=419 data-nosnippet>419</a>            work.push(BatchJob::Phasors(job));
+<a href=#420 id=420 data-nosnippet>420</a>        });
+<a href=#421 id=421 data-nosnippet>421</a>        run_jobs(<span class="kw-2">&amp;mut </span>work)<span class="question-mark">?</span>;
+<a href=#422 id=422 data-nosnippet>422</a>        drop(work);
+<a href=#423 id=423 data-nosnippet>423</a>        <span class="prelude-val">Ok</span>(BatchScales {
+<a href=#424 id=424 data-nosnippet>424</a>            scales: Table {
+<a href=#425 id=425 data-nosnippet>425</a>                index: <span class="self">self</span>.scales.index,
+<a href=#426 id=426 data-nosnippet>426</a>                values: scales,
+<a href=#427 id=427 data-nosnippet>427</a>            },
+<a href=#428 id=428 data-nosnippet>428</a>            phasors: Table {
+<a href=#429 id=429 data-nosnippet>429</a>                index: <span class="self">self</span>.phasors.index,
+<a href=#430 id=430 data-nosnippet>430</a>                values: phasors,
+<a href=#431 id=431 data-nosnippet>431</a>            },
+<a href=#432 id=432 data-nosnippet>432</a>        })
+<a href=#433 id=433 data-nosnippet>433</a>    }
+<a href=#434 id=434 data-nosnippet>434</a>}
+<a href=#435 id=435 data-nosnippet>435</a>
+<a href=#436 id=436 data-nosnippet>436</a><span class="doccomment">/// `values` split along `runs` of consecutive entries, each run's share a
+<a href=#437 id=437 data-nosnippet>437</a>/// job handed to `push`.
+<a href=#438 id=438 data-nosnippet>438</a></span><span class="kw">fn </span>split&lt;<span class="lifetime">'p</span>, P: Entry + <span class="lifetime">'p</span>&gt;(
+<a href=#439 id=439 data-nosnippet>439</a>    values: <span class="kw-2">&amp;</span><span class="lifetime">'p </span><span class="kw-2">mut </span>[P::Value],
+<a href=#440 id=440 data-nosnippet>440</a>    runs: <span class="kw">impl </span>Iterator&lt;Item = <span class="kw-2">&amp;</span><span class="lifetime">'p </span>[P]&gt;,
+<a href=#441 id=441 data-nosnippet>441</a>    <span class="kw-2">mut </span>push: <span class="kw">impl </span>FnMut(EntryJob&lt;<span class="lifetime">'p</span>, P&gt;),
+<a href=#442 id=442 data-nosnippet>442</a>) {
+<a href=#443 id=443 data-nosnippet>443</a>    <span class="kw">let </span><span class="kw-2">mut </span>rest = values;
+<a href=#444 id=444 data-nosnippet>444</a>    <span class="kw">for </span>pending <span class="kw">in </span>runs {
+<a href=#445 id=445 data-nosnippet>445</a>        <span class="kw">let </span>last = pending.last().expect(<span class="string">"runs are not empty"</span>);
+<a href=#446 id=446 data-nosnippet>446</a>        <span class="kw">let </span>length = last.offset() + last.width() - pending[<span class="number">0</span>].offset();
+<a href=#447 id=447 data-nosnippet>447</a>        <span class="kw">let </span>(values, after) = std::mem::take(<span class="kw-2">&amp;mut </span>rest).split_at_mut(length);
+<a href=#448 id=448 data-nosnippet>448</a>        push(EntryJob { pending, values });
+<a href=#449 id=449 data-nosnippet>449</a>        rest = after;
+<a href=#450 id=450 data-nosnippet>450</a>    }
+<a href=#451 id=451 data-nosnippet>451</a>}
+<a href=#452 id=452 data-nosnippet>452</a>
+<a href=#453 id=453 data-nosnippet>453</a><span class="doccomment">/// Consecutive entries of one kind, worked out in one job.
+<a href=#454 id=454 data-nosnippet>454</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>EntryJob&lt;<span class="lifetime">'p</span>, P: Entry&gt; {
+<a href=#455 id=455 data-nosnippet>455</a>    pending: <span class="kw-2">&amp;</span><span class="lifetime">'p </span>[P],
+<a href=#456 id=456 data-nosnippet>456</a>    values: <span class="kw-2">&amp;</span><span class="lifetime">'p </span><span class="kw-2">mut </span>[P::Value],
+<a href=#457 id=457 data-nosnippet>457</a>}
+<a href=#458 id=458 data-nosnippet>458</a>
+<a href=#459 id=459 data-nosnippet>459</a><span class="kw">impl</span>&lt;P: Entry&gt; EntryJob&lt;<span class="lifetime">'_</span>, P&gt; {
+<a href=#460 id=460 data-nosnippet>460</a>    <span class="kw">fn </span>run(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
+<a href=#461 id=461 data-nosnippet>461</a>        <span class="kw">let </span>first = <span class="self">self</span>.pending.first().map_or(<span class="number">0</span>, Entry::offset);
+<a href=#462 id=462 data-nosnippet>462</a>        <span class="kw">for </span>pending <span class="kw">in </span><span class="self">self</span>.pending {
+<a href=#463 id=463 data-nosnippet>463</a>            <span class="kw">let </span>start = pending.offset() - first;
+<a href=#464 id=464 data-nosnippet>464</a>            pending.work_out(<span class="kw-2">&amp;mut </span><span class="self">self</span>.values[start..start + pending.width()]);
+<a href=#465 id=465 data-nosnippet>465</a>        }
+<a href=#466 id=466 data-nosnippet>466</a>    }
+<a href=#467 id=467 data-nosnippet>467</a>}
+<a href=#468 id=468 data-nosnippet>468</a>
+<a href=#469 id=469 data-nosnippet>469</a><span class="doccomment">/// A job of a batch's table: consecutive entries of one kind.
+<a href=#470 id=470 data-nosnippet>470</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">enum </span>BatchJob&lt;<span class="lifetime">'p</span>, <span class="lifetime">'a</span>&gt; {
+<a href=#471 id=471 data-nosnippet>471</a>    Scales(EntryJob&lt;<span class="lifetime">'p</span>, ScaleEntry&lt;<span class="lifetime">'a</span>&gt;&gt;),
+<a href=#472 id=472 data-nosnippet>472</a>    Phasors(EntryJob&lt;<span class="lifetime">'p</span>, PhaseEntry&lt;<span class="lifetime">'a</span>&gt;&gt;),
+<a href=#473 id=473 data-nosnippet>473</a>}
+<a href=#474 id=474 data-nosnippet>474</a>
+<a href=#475 id=475 data-nosnippet>475</a><span class="kw">impl </span>BatchJob&lt;<span class="lifetime">'_</span>, <span class="lifetime">'_</span>&gt; {
+<a href=#476 id=476 data-nosnippet>476</a>    <span class="doccomment">/// Work the job's values out.
+<a href=#477 id=477 data-nosnippet>477</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>run(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
+<a href=#478 id=478 data-nosnippet>478</a>        <span class="kw">match </span><span class="self">self </span>{
+<a href=#479 id=479 data-nosnippet>479</a>            <span class="self">Self</span>::Scales(job) =&gt; job.run(),
+<a href=#480 id=480 data-nosnippet>480</a>            <span class="self">Self</span>::Phasors(job) =&gt; job.run(),
+<a href=#481 id=481 data-nosnippet>481</a>        }
+<a href=#482 id=482 data-nosnippet>482</a>    }
+<a href=#483 id=483 data-nosnippet>483</a>}
+<a href=#484 id=484 data-nosnippet>484</a>
+<a href=#485 id=485 data-nosnippet>485</a><span class="attr">#[cfg(test)]
+<a href=#486 id=486 data-nosnippet>486</a>#[path = <span class="string">"batch_scales_tests.rs"</span>]
+<a href=#487 id=487 data-nosnippet>487</a></span><span class="kw">mod </span>tests;
 </code></pre></div></section></main></body></html>

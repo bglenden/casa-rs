@@ -1118,7 +1118,7 @@ and run them dramatically faster:</p>
      allowed.</li>
 <li><strong>Port ATM to Rust</strong> as <code>casa-atmosphere</code>, in its own phase. Until it lands,
    <code>tsys-atm</code> and <code>settrop</code> raise a clear "not yet implemented" error.
-   (<code>tsys-atm</code> landed in Phase 4c; <code>settrop</code> waits for 4d.)</li>
+   (<code>tsys-atm</code> landed in Phase 4c and <code>settrop</code> in 4d.)</li>
 <li><strong>TIME honours the requested UTC.</strong></li>
 <li>The divergence is recorded.</li>
 <li>CASA computed its geometry at the requested time + (TAI − UTC). A parity
@@ -1413,7 +1413,15 @@ touches science, persistence or interop.</p>
 <p><strong>Acceptance.</strong>
 - Tebb and opacity agree with CASA's ATM, through the <code>at</code> tool, to about
   1e-6 relative across its bands.
-- <code>tsys-atm</code> noise agrees with CASA statistically.</p>
+- <code>tsys-atm</code> noise agrees with CASA statistically.
+- <code>settrop</code> (added in 4d, where CASA's phase is the dispersive wet delay
+  alone and casa-rs's the whole one, <code>docs/CASA (C++) bugs.md</code>): each
+  implementation's <code>Tf Jones</code> table is one water-vapour excess per
+  solution times its own delay model, through the <code>at</code> tool, to single
+  precision; DATA is the table's <code>g_p·conj(g_q)</code>; CASA applies casa-rs's
+  table (<code>setapply</code>) to the same DATA; casa-rs's <code>individual</code> series have
+  the root-mean-square <code>deltapwv</code>, and the screens' statistics are
+  reported.</p>
 <h3 id="phase-5-simutil-and-simobserve">Phase 5: <code>simutil</code> and <code>simobserve</code><a class="headerlink" href="#phase-5-simutil-and-simobserve" title="Permanent link">&para;</a></h3>
 <p><strong>Scope.</strong>
 - The CASA-signature <code>simobserve</code> (decision 2), built on the Rust session.

@@ -133,7 +133,7 @@
 <a href=#133 id=133 data-nosnippet>133</a>/// keeps: its channel frequencies, the profile of its channels' totals
 <a href=#134 id=134 data-nosnippet>134</a>/// (grid and the atmosphere's copy included), and the jobs, with their
 <a href=#135 id=135 data-nosnippet>135</a>/// vectors and the one they are gathered into.
-<a href=#136 id=136 data-nosnippet>136</a></span><span class="kw">fn </span>building_bytes(channels: usize, layers: usize) -&gt; u64 {
+<a href=#136 id=136 data-nosnippet>136</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>building_bytes(channels: usize, layers: usize) -&gt; u64 {
 <a href=#137 id=137 data-nosnippet>137</a>    AbsorptionProfile::&lt;ChannelTotals&gt;::shape_bytes(<span class="number">1</span>, channels, layers)
 <a href=#138 id=138 data-nosnippet>138</a>        + (channels * (size_of::&lt;f64&gt;() + <span class="number">2 </span>* size_of::&lt;ChannelTotals&gt;())) <span class="kw">as </span>u64
 <a href=#139 id=139 data-nosnippet>139</a>        + (channels.div_ceil(CHANNELS_PER_JOB) * size_of::&lt;(<span class="kw-2">&amp;</span>[f64], Vec&lt;ChannelTotals&gt;)&gt;()) <span class="kw">as </span>u64
@@ -141,7 +141,7 @@
 <a href=#141 id=141 data-nosnippet>141</a>
 <a href=#142 id=142 data-nosnippet>142</a><span class="doccomment">/// Each channel's totals of `atmosphere` at `channels`, computed on `team`
 <a href=#143 id=143 data-nosnippet>143</a>/// in jobs of [`CHANNELS_PER_JOB`] channels.
-<a href=#144 id=144 data-nosnippet>144</a></span><span class="kw">fn </span>window_totals(
+<a href=#144 id=144 data-nosnippet>144</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>window_totals(
 <a href=#145 id=145 data-nosnippet>145</a>    team: <span class="kw-2">&amp;</span>WorkerTeam,
 <a href=#146 id=146 data-nosnippet>146</a>    atmosphere: <span class="kw-2">&amp;</span>AtmosphereProfile,
 <a href=#147 id=147 data-nosnippet>147</a>    channels: <span class="kw-2">&amp;</span>[f64],
