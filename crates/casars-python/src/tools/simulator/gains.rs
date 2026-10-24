@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Antenna gains and polarization leakage: `setgain` and `setleakage`,
-//! converted as casatools' `simulator_cmpt.cc` converts them and handed to
-//! the session (#841 Phase 3).
+//! Antenna gains and polarization leakage: `setgain`, `setleakage` and
+//! `setapply`, converted as casatools' `simulator_cmpt.cc` converts them
+//! and handed to the session (#841 Phase 3).
 //!
 //! Before `open` each returns `False` without converting its arguments, as
 //! CASA does. `corrupt` applies the terms when `close` writes the
 //! MeasurementSet.
 
-use casa_simulation::{GainSpec, LeakageSpec};
+use casa_simulation::{ApplySpec, GainSpec, LeakageSpec};
 use pyo3::prelude::*;
 
 use super::{PySimulator, outcome};
@@ -38,6 +38,15 @@ pub(super) fn setgain(
             amplitude: request.amplitude.clone(),
         };
         outcome(session.simulator.set_gain(&spec), lines)
+    })?;
+    Ok(result.unwrap_or(false))
+}
+
+/// `sm.setapply(...)`: corrupt by a calibration table. CASA does not read
+/// `field`.
+pub(super) fn setapply(tool: &PySimulator, py: Python<'_>, spec: ApplySpec) -> PyResult<bool> {
+    let result = tool.on_session(py, |session, lines| {
+        outcome(session.simulator.set_apply(&spec), lines)
     })?;
     Ok(result.unwrap_or(false))
 }

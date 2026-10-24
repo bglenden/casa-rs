@@ -44,10 +44,10 @@ IMPLEMENTED = {
     "open", "openfromms", "close", "done", "name", "type", "summary", "setconfig",
     "setfeed", "setspwindow", "setfield", "setmosaicfield", "settimes", "setlimits",
     "setauto", "observe", "observemany", "setdata", "setseed", "setnoise", "corrupt",
-    "reset", "predict", "setoptions", "setvp", "setgain", "setleakage",
+    "reset", "predict", "setoptions", "setvp", "setgain", "setleakage", "setapply",
 }
 NOT_YET_IMPLEMENTED = {
-    "setapply", "settrop",
+    "settrop",
 }
 DISABLED_IN_CASA = {"setbandpass", "setpa", "setpointingerror"}
 
@@ -737,6 +737,18 @@ def test_setgain_and_setleakage_follow_casa(
     table = Table.open(tmp_path / "g.cal")
     assert table.keywords["VisCal"] == "G Jones"
     assert table.row_count == 6 * 4
+    # setapply of that table corrupts as its gains did.
+    sm = simulator()
+    sm.open(str(tmp_path / "applied.ms"))
+    configure(sm)
+    assert sm.observe("F", "L", starttime="0s", stoptime="60s")
+    assert sm.setapply(table=str(tmp_path / "g.cal"), type="G", interp="nearest") is True
+    with pytest.raises(RuntimeError, match="aipslin"):
+        sm.setapply(table=str(tmp_path / "g.cal"), interp="aipslin")
+    with pytest.raises(NotImplementedError, match="calwt"):
+        sm.setapply(table=str(tmp_path / "g.cal"), calwt=True)
+    assert sm.corrupt() is True
+    sm.close()
     sm = simulator()
     sm.open(str(tmp_path / "plain.ms"))
     configure(sm)

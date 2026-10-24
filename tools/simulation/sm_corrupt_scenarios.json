@@ -192,6 +192,55 @@
         {"op": "observe", "sourcename": "target", "spwname": "band6", "starttime": "-120s", "stoptime": "-60s"},
         {"op": "predict", "complist": "point.cl"}
       ]
+    },
+    {
+      "name": "corrupt-setapply-gain-linear",
+      "data": "model",
+      "config": {"cfg": "alma.cycle10.3.cfg", "mount": "alt-az"},
+      "calls": [
+        {"op": "setspwindow", "spwname": "band6", "freq": "230GHz", "deltafreq": "15.625MHz", "freqresolution": "15.625MHz", "refcode": "TOPO", "nchannels": 2, "stokes": "XX YY"},
+        {"op": "setfeed", "mode": "perfect X Y"},
+        {"op": "setauto", "autocorrwt": 0.0},
+        {"op": "settimes", "integrationtime": "5s", "usehourangle": true, "referencetime": ["UTC", "2026/03/21/00:00:00"]},
+        {"op": "setfield", "sourcename": "target", "sourcedirection": ["J2000", "10h00m00.0", "-30d00m00.0"]},
+        {"op": "observe", "sourcename": "target", "spwname": "band6", "starttime": "-300s", "stoptime": "300s"},
+        {"op": "predict", "complist": "point.cl"},
+        {"op": "setapply", "table": "corrupt-gain-table.gcal", "type": "G", "interp": "linear"},
+        {"op": "corrupt"}
+      ]
+    },
+    {
+      "name": "corrupt-setapply-gain-nearest",
+      "data": "model",
+      "config": {"cfg": "alma.cycle10.3.cfg", "mount": "alt-az"},
+      "calls": [
+        {"op": "setspwindow", "spwname": "band6", "freq": "230GHz", "deltafreq": "15.625MHz", "freqresolution": "15.625MHz", "refcode": "TOPO", "nchannels": 2, "stokes": "XX YY"},
+        {"op": "setfeed", "mode": "perfect X Y"},
+        {"op": "setauto", "autocorrwt": 0.0},
+        {"op": "settimes", "integrationtime": "5s", "usehourangle": true, "referencetime": ["UTC", "2026/03/21/00:00:00"]},
+        {"op": "setfield", "sourcename": "target", "sourcedirection": ["J2000", "10h00m00.0", "-30d00m00.0"]},
+        {"op": "observe", "sourcename": "target", "spwname": "band6", "starttime": "-300s", "stoptime": "300s"},
+        {"op": "predict", "complist": "point.cl"},
+        {"op": "setapply", "table": "corrupt-gain-table.gcal", "type": "G", "interp": "nearest"},
+        {"op": "corrupt"}
+      ]
+    },
+    {
+      "name": "corrupt-setapply-leakage",
+      "data": "model",
+      "config": {"cfg": "alma.cycle10.3.cfg", "mount": "alt-az"},
+      "calls": [
+        {"op": "setspwindow", "spwname": "band6", "freq": "230GHz", "deltafreq": "15.625MHz", "freqresolution": "15.625MHz", "refcode": "TOPO", "nchannels": 1, "stokes": "XX XY YX YY"},
+        {"op": "setfeed", "mode": "perfect X Y"},
+        {"op": "setauto", "autocorrwt": 0.0},
+        {"op": "settimes", "integrationtime": "10s", "usehourangle": true, "referencetime": ["UTC", "2026/03/21/00:00:00"]},
+        {"op": "setfield", "sourcename": "target", "sourcedirection": ["J2000", "10h00m00.0", "-30d00m00.0"]},
+        {"op": "observe", "sourcename": "target", "spwname": "band6", "starttime": "-300s", "stoptime": "-240s"},
+        {"op": "observe", "sourcename": "target", "spwname": "band6", "starttime": "-120s", "stoptime": "-60s"},
+        {"op": "predict", "complist": "point.cl"},
+        {"op": "setapply", "table": "corrupt-leakage-openfromms.dcal", "type": "D"},
+        {"op": "corrupt"}
+      ]
     }
   ]
 }

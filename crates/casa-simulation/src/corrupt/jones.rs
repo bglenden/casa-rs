@@ -513,6 +513,24 @@ pub(crate) fn random_gains(
     }
 }
 
+/// A term of `kind` for `antennas` antennas whose values are given rather
+/// than drawn (`sm.setapply`): `values[chunk · antennas + antenna]`, one
+/// block per chunk.
+pub(crate) fn applied(
+    kind: JonesKind,
+    antennas: usize,
+    chunks: Chunks,
+    values: Vec<[Complex32; 2]>,
+) -> JonesTerm {
+    debug_assert_eq!(values.len(), chunks.count as usize * antennas);
+    JonesTerm {
+        kind,
+        antennas,
+        solutions: chunks.by_window,
+        values,
+    }
+}
+
 /// Two independent standard normal draws from counter `counter` of stream
 /// `key`, by Box–Muller in double precision.
 fn normal_pair(key: [u32; 2], counter: [u32; 4]) -> [f64; 2] {

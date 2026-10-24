@@ -25,6 +25,7 @@ use casa_ms::MeasurementSet;
 use num_complex::Complex64;
 
 use super::Simulator;
+use super::apply::JonesSource;
 use super::error::{SimulatorError, SimulatorResult};
 use crate::corrupt::jones::{
     Chunks, HeldTerm, JonesKind, JonesTerm, MAXIMUM_GAIN_SCALE, TermBytes, fbm_gains, leakages,
@@ -169,7 +170,7 @@ impl Simulator {
     }
 
     /// Admit a term's memory before it is formed.
-    fn admit_term(&self, bytes: TermBytes) -> SimulatorResult<Reservation> {
+    pub(super) fn admit_term(&self, bytes: TermBytes) -> SimulatorResult<Reservation> {
         let resources = &self.options.resources;
         admit(
             resources.host(),
@@ -199,12 +200,12 @@ impl Simulator {
             tracing::info!("Writing calTable = {} at close", path.display());
             self.jones_tables.push((path, Arc::clone(&term)));
         }
-        self.jones_terms.push(term);
+        self.jones_terms.push(JonesSource::Simulated(term));
     }
 
     /// CASA's `create_corrupt` cannot size a term on an empty
     /// MeasurementSet.
-    fn require_rows(&self) -> SimulatorResult<()> {
+    pub(super) fn require_rows(&self) -> SimulatorResult<()> {
         if self.planned_rows() == 0 {
             return Err(SimulatorError::refused(
                 "Caught exception: Error in Simulator::create_corrupt: MSIter::construct - \
@@ -288,7 +289,7 @@ impl Simulator {
 
     /// Scan `scan`'s integrations, their TIMEs in order: as planned, or as
     /// the opened MeasurementSet has them.
-    fn integration_times_s(&self, scan: usize) -> impl Iterator<Item = f64> + '_ {
+    pub(super) fn integration_times_s(&self, scan: usize) -> impl Iterator<Item = f64> + '_ {
         let planned = self.scans[scan].planned();
         let opened: &[f64] = if planned.is_some() {
             &[]
@@ -308,7 +309,7 @@ impl Simulator {
     /// The integrations of the scans observed so far in each spectral
     /// window, and the span of their times: what a gain term's chunks
     /// number, counted before they are formed.
-    fn integration_counts(&self) -> (Vec<usize>, Option<[f64; 2]>) {
+    pub(super) fn integration_counts(&self) -> (Vec<usize>, Option<[f64; 2]>) {
         let mut per_window = Vec::new();
         let mut span: Option<[f64; 2]> = None;
         for (index, scan) in self.scans.iter().enumerate() {

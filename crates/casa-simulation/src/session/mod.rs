@@ -31,6 +31,7 @@
 //! Where CASA crashes, writes garbage or corrupts data, the session refuses
 //! or diverges, as recorded in `docs/CASA (C++) bugs.md`.
 
+mod apply;
 pub mod array;
 mod corruption;
 pub mod error;
@@ -48,6 +49,7 @@ pub mod spectral;
 #[cfg(test)]
 mod tests;
 
+pub use apply::ApplySpec;
 pub use corruption::{DEFAULT_SEED, NoiseSpec, TsysParameters};
 pub use gains::{GainSpec, LeakageSpec};
 pub use prediction::{PredictSpec, PredictionOptions, VoltagePatternSpec};
@@ -146,9 +148,9 @@ pub struct Simulator {
     seed: i32,
     /// The noise terms `setnoise` set, until `reset`.
     noise_terms: Vec<NoiseTerm>,
-    /// The antenna-based terms `setgain` and `setleakage` set, in the order
-    /// they were set, until `reset`.
-    jones_terms: Vec<Arc<HeldTerm>>,
+    /// The antenna-based terms `setgain`, `setleakage` and `setapply` set,
+    /// in the order they were set, until `reset`.
+    jones_terms: Vec<apply::JonesSource>,
     /// The calibration tables `close` writes, each with its term (a
     /// `table` given to `setgain` or `setleakage`); `reset` keeps them.
     jones_tables: Vec<(PathBuf, Arc<HeldTerm>)>,

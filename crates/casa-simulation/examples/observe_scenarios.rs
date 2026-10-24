@@ -47,10 +47,10 @@ use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use casa_simulation::{
-    ArrayConfig, BackendRequest, CasaOutcome, CoordinateSystem, ExecutionControls, GainSpec,
-    LeakageSpec, NoiseSpec, ObserveManySpec, ObserveSpec, Pointing, PredictSpec, PredictionOptions,
-    SessionResources, Simulator, SimulatorOptions, SimulatorResult, SpectralWindowSpec, StateSpec,
-    TsysParameters, VoltagePatternSpec,
+    ApplySpec, ArrayConfig, BackendRequest, CasaOutcome, CoordinateSystem, ExecutionControls,
+    GainSpec, LeakageSpec, NoiseSpec, ObserveManySpec, ObserveSpec, Pointing, PredictSpec,
+    PredictionOptions, SessionResources, Simulator, SimulatorOptions, SimulatorResult,
+    SpectralWindowSpec, StateSpec, TsysParameters, VoltagePatternSpec,
 };
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::frequency::FrequencyRef;
@@ -266,6 +266,23 @@ fn set_data(session: &mut Simulator, call: &Value) -> SimulatorResult<()> {
     session.set_data(&ids("spwid"), &ids("fieldid"), text(call, "msselect", ""))
 }
 
+/// `setapply` of the table the manifest names (CASA's, which both sides
+/// apply), with CASA's defaults.
+fn set_apply(session: &mut Simulator, call: &Value) -> SimulatorResult<()> {
+    session.set_apply(&ApplySpec {
+        table: text(call, "table", "").to_string(),
+        kind: text(call, "type", "").to_string(),
+        interval_s: call.get("t").and_then(Value::as_f64).unwrap_or(0.0),
+        interp: text(call, "interp", "linear").to_string(),
+        calwt: flag(call, "calwt", false),
+        spwmap: numbers_or(call, "spwmap", &[-1.0])
+            .into_iter()
+            .map(|window| window as i64)
+            .collect(),
+        opacity: call.get("opacity").and_then(Value::as_f64).unwrap_or(0.0),
+    })
+}
+
 /// A `setgain` or `setleakage` table, named in the manifest, under `out`.
 fn table_under(call: &Value, out: &Path) -> String {
     match text(call, "table", "") {
@@ -465,6 +482,7 @@ fn run_scenario(
             "setseed" => session.set_seed(number(call, "seed") as i32),
             "setnoise" => expect_casas_outcome(entry, set_noise(session, call)),
             "setdata" => expect_casas_outcome(entry, set_data(session, call)),
+            "setapply" => expect_casas_outcome(entry, set_apply(session, call)),
             "setgain" => expect_casas_outcome(entry, set_gain(session, call, out)),
             "setleakage" => expect_casas_outcome(entry, set_leakage(session, call, out)),
             "corrupt" => expect_casas_outcome(entry, session.corrupt()),

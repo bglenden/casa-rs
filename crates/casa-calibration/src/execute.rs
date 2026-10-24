@@ -3110,7 +3110,7 @@ pub(crate) struct LoadedCalibrationTable {
     interp: ApplyInterpolationMode,
     supports_calwt: bool,
     engine: Option<Arc<MsCalEngine>>,
-    solutions: HashMap<(i32, i32, i32), Vec<CalibrationSolution>>,
+    pub(crate) solutions: HashMap<(i32, i32, i32), Vec<CalibrationSolution>>,
 }
 
 #[derive(Clone, Copy)]

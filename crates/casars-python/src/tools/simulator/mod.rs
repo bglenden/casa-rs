@@ -37,7 +37,9 @@ pub(crate) mod surface;
 use std::ffi::CString;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use casa_simulation::{CasaOutcome, SessionResources, Simulator, SimulatorError, SimulatorResult};
+use casa_simulation::{
+    ApplySpec, CasaOutcome, SessionResources, Simulator, SimulatorError, SimulatorResult,
+};
 use casa_types::measures::MeasuresProvider;
 use pyo3::exceptions::{PyNotImplementedError, PyResourceWarning, PyRuntimeError};
 use pyo3::prelude::*;
@@ -701,27 +703,41 @@ impl PySimulator {
         stubs::disabled_in_casa(self, py)
     }
 
-    /// Not yet implemented in casa-rs.
+    /// Corrupt by the calibration table `table` (a `G` or `D` table) at
+    /// each later `corrupt`, its solutions taken at each integration
+    /// observed by then and interpolated in time by `interp` (`linear`,
+    /// amplitude and phase apart, or `nearest`); `spwmap` maps each data
+    /// window to the table's. `field` is not read, as in CASA.
     #[allow(unused_variables, clippy::too_many_arguments)]
     #[pyo3(
         signature = (
-            table = None, r#type = None, t = None, field = None, interp = None, calwt = None,
-            spwmap = None, opacity = None
+            table = "", r#type = "", t = 0.0, field = Variant::Empty, interp = "linear",
+            calwt = false, spwmap = IntList::of(&[-1]), opacity = 0.0
         ),
         text_signature = "($self, table='', type='', t=0.0, field=[], interp='linear', calwt=False, spwmap=[-1], opacity=0.0)"
     )]
     fn setapply(
         &self,
-        table: Option<&Bound<'_, PyAny>>,
-        r#type: Option<&Bound<'_, PyAny>>,
-        t: Option<&Bound<'_, PyAny>>,
-        field: Option<&Bound<'_, PyAny>>,
-        interp: Option<&Bound<'_, PyAny>>,
-        calwt: Option<&Bound<'_, PyAny>>,
-        spwmap: Option<&Bound<'_, PyAny>>,
-        opacity: Option<&Bound<'_, PyAny>>,
+        py: Python<'_>,
+        table: &str,
+        r#type: &str,
+        t: f64,
+        field: Variant,
+        interp: &str,
+        calwt: bool,
+        spwmap: IntList,
+        opacity: f64,
     ) -> PyResult<bool> {
-        stubs::not_yet_implemented("setapply")
+        let spec = ApplySpec {
+            table: table.to_string(),
+            kind: r#type.to_string(),
+            interval_s: t,
+            interp: interp.to_string(),
+            calwt,
+            spwmap: spwmap.0,
+            opacity,
+        };
+        gains::setapply(self, py, spec)
     }
 
     /// Not yet implemented in casa-rs.
