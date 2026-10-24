@@ -1612,10 +1612,16 @@ its integration's time and takes the slot nearest it, as CASA does when
 
 HCN's rotational lines are spaced by about 88.6 GHz: the table runs 88.63,
 177.26, …, 974.49 GHz, then gives the J=12–11 line as `106.298069519`
-before continuing at 1151.45 GHz. The line belongs at 1062.98 GHz; the
-decimal point moved. ATM therefore sums a J=12–11-strength HCN line at
-106.3 GHz and none at 1063 GHz. HCN is a trace gas (a few 1e-4 ppmv), so the
-effect on any total opacity is negligible.
+before continuing at 1151.45 GHz. The line belongs at 1062.98 GHz (as the
+JPL catalogue has it, `c027001.cat`); the decimal point moved. ATM
+therefore sums a J=12–11-strength HCN line at 106.3 GHz and none at
+1063 GHz. HCN is a trace gas (a few 1e-4 ppmv), but near 106.3 GHz the
+misplaced line is not negligible: with the default Chajnantor profile, the
+compiled C++ gives a zenith opacity of 0.029368 at 106.298 GHz, of which
+HCN is 4.5·10⁻⁴; with the line moved to 1062.98 GHz it gives 0.028919, HCN
+1.3·10⁻⁷, so the total is 1.5 % high there (measured in the #894 review).
+Away from 106.3 GHz the line's wings fall off, and at 1063 GHz the
+missing line is lost among water's.
 
 ## ATM's reference air densities drop a digit at sea level
 
@@ -1630,11 +1636,13 @@ tabulated air density. For the mid-latitude, subarctic and US Standard
 atmospheres the sea-level entry has lost its leading digit: `.496E+19`,
 `.711E+19`, `.549E+19`, `.855E+19`, `.548E+19` cm⁻³ where the next entries
 (2.26e19 and so on at 1 km) and the tropical profile's 2.450e19 show about
-2.5e19 was meant. The parabola `st76` fits through 0, 1 and 2 km then gives
-about half the true density at 250 m, so O3, N2O, CO, NO2, SO2, HCl and HCN
-are up to about twice too scarce in layers whose middle is below 1 km. Only
-sea-level-to-1-km sites with those atmospheres see it, and those gases'
-columns lie mostly higher.
+2.5e19 was meant. The parabola `st76` fits through 0, 1 and 2 km then
+falls far below the true density near the ground: in the committed
+sea-level mid-latitude summer case, restoring the digit raises the first
+layer's interpolated density 4.075 times (#894 review). So O3, N2O, CO,
+NO2, SO2, HCl and HCN are up to about four times too scarce in layers whose
+middle is below 1 km. Only sea-level-to-1-km sites with those atmospheres
+see it, and those gases' columns lie mostly higher.
 
 ## ATM weights H2(17)O by the (18)O abundance
 
@@ -1668,9 +1676,12 @@ are 5.45 times too strong.
 - Affected code: `atmosphere/ATM/ATMProfile.cc:1429` (`st76`, `hcn[50]`)
 
 `hcn[50]` is initialised with 45 values, so C++ zero-fills its last five
-levels (100 to 120 km) and the interpolated HCN falls to zero over them. Only
-profiles topped above 95 km reach these levels; `tools/atmosphere/
-extract_atm_tables.py` reports the gap whenever it regenerates the tables.
+levels (100 to 120 km) and the interpolated HCN falls to zero over them. A
+layer whose middle is above 90 km already interpolates toward the zero at
+100 km: the tropical fixture keeps, under a 95 km top, a layer with its
+middle at 90.8 km and its top at 94.1 km (#894 review). So profiles topped
+above about 90 km see the gap; `tools/atmosphere/extract_atm_tables.py`
+reports it whenever it regenerates the tables.
 
 ## Copying an AtmProfile copies its top pressures as bottom pressures
 
