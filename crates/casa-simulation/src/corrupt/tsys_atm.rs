@@ -68,7 +68,8 @@ const BACKGROUND_K: f64 = 2.73;
 
 /// The site and atmosphere arguments of `setnoise(mode='tsys-atm')`, as
 /// the user gives them: unset values (at or below CASA's thresholds) take
-/// CASA's defaults ([`AtmosphereSpec::resolved`]).
+/// CASA's defaults, and every value is held in single precision, as CASA's
+/// corruptor holds it.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AtmosphereSpec {
     /// `pground`: the ground pressure, hPa (mbar); 560 when at most 100.
