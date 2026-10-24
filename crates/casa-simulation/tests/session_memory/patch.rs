@@ -31,9 +31,9 @@ use casa_types::ScalarValue;
 
 use super::{
     ALLOWANCE_BYTES, BUDGET_32, Closed, EpochRef, MEASURED_RUNS, MEpoch, MeasuresProvider,
-    PredictSpec, REFERENCE_MJD, ROWS_ALLOWANCE_BYTES, SCANS_ALLOWANCE_BYTES, Simulator,
-    SimulatorOptions, alone, charge_process_caches, configured, measured_close, noise, resources,
-    scan, write_model,
+    Ordering, PredictSpec, REFERENCE_MJD, ROWS_ALLOWANCE_BYTES, SCANS_ALLOWANCE_BYTES, Simulator,
+    SimulatorOptions, TSYS_NOISE, alone, charge_process_caches, configured, measured_close, noise,
+    resources, scan, write_model,
 };
 
 /// Integrations of the patch law's cases: ten times the rows.
@@ -173,6 +173,24 @@ fn patching_an_opened_measurement_set_holds_its_admission_and_no_more_for_more_r
     ) {
         return;
     }
+    patches_hold_their_admission_for_more_rows();
+}
+
+/// The rows law with `tsys-manual` noise (#841 Phase 3): the patch also
+/// reads TIME and EXPOSURE and computes each integration's airmasses, which
+/// it admits with its batch and its antennas.
+#[test]
+fn patching_with_tsys_noise_holds_its_admission_and_no_more_for_more_rows() {
+    if !alone("patch::patching_with_tsys_noise_holds_its_admission_and_no_more_for_more_rows") {
+        return;
+    }
+    TSYS_NOISE.store(true, Ordering::Relaxed);
+    patches_hold_their_admission_for_more_rows();
+}
+
+/// Patches of [`PATCH_INTEGRATIONS`] each hold at most their admission and
+/// the allowance, and ten times the rows no more beyond it but a little.
+fn patches_hold_their_admission_for_more_rows() {
     casa_tables::set_table_cache_budget_bytes(0);
     let resources = resources(BUDGET_32);
     charge_process_caches(resources.host(), resources.policy()).expect("the process caches");

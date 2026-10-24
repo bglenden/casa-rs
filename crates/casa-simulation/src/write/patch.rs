@@ -8,7 +8,10 @@
 //! time:
 //! 1. **Rows.** The batch's ANTENNA1, ANTENNA2, FLAG_ROW and UVW are read,
 //!    and its DATA when the fold starts from it: when no replacing
-//!    `predict` cleared the plan.
+//!    `predict` cleared the plan. A `tsys-manual` term's σ also reads TIME
+//!    and EXPOSURE, and each row's antennas' airmasses at its scan's phase
+//!    centre are computed once per integration, as a new MeasurementSet's
+//!    geometry computes them.
 //! 2. **Prediction and noise**, as for a new MeasurementSet
 //!    ([`super::pipeline`]): the steps covering the batch's scans are
 //!    predicted into zeroed DATA and the component lists' and total
@@ -50,14 +53,15 @@ use casa_tables::{
     RequiredScalarColumnDestination, RequiredScalarColumnValuesMut,
     STREAMING_TILED_COLUMN_BUFFER_BYTES, SelectedArray1DCellsMut, SelectedArray2DCellsMut,
 };
+use casa_types::measures::MPosition;
 use casa_types::{ArrayValue, Complex32};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 
 use super::components::{self, add_components};
-use super::geometry::RowGeometry;
-use super::pipeline::{MINIMUM_NOISE_JOB_ROWS, NoiseJob, noise_jobs};
+use super::geometry::{ArrayGeometry, RowGeometry};
+use super::pipeline::{MINIMUM_NOISE_JOB_ROWS, NoiseContext, NoiseJob, noise_jobs};
 use super::prediction::{PredictionStage, device_noise};
-use super::{cell_shape, write_error};
+use super::{cell_shape, noise_varies_by_row, write_error};
 use crate::session::SessionResources;
 use crate::session::Simulator;
 use crate::session::error::{SimulatorError, SimulatorResult};
@@ -80,6 +84,11 @@ struct PatchShape {
     reads_data: bool,
     /// Columns written: DATA and the scratch columns kept in step.
     columns: usize,
+    /// Antennas of the MeasurementSet.
+    antennas: usize,
+    /// Whether the noise needs each row's airmasses and exposure
+    /// (`tsys-manual`).
+    airmass: bool,
 }
 
 impl PatchShape {
@@ -140,6 +149,8 @@ pub(crate) fn patch_measurement_set(session: &Simulator) -> SimulatorResult<()> 
         channels,
         reads_data: !plan.replaced(),
         columns: columns.len(),
+        antennas: session.antennas().len(),
+        airmass: noise_varies_by_row(plan),
     };
     let admission = admit_patch(resources, &shape, &columns, prediction.as_ref())?;
     let mut ms = MeasurementSet::open(session.path())
@@ -158,12 +169,23 @@ pub(crate) fn patch_measurement_set(session: &Simulator) -> SimulatorResult<()> 
     let team = WorkerTeam::new(admission.cores.streaming_workers)
         .map_err(|error| SimulatorError::raised(format!("the worker team: {error}")))?;
     let batch_rows = admission.plan.batch_rows().max(1);
+    let array = shape
+        .airmass
+        .then(|| {
+            ArrayGeometry::new(
+                session.telescope(),
+                session.antennas(),
+                session.options().measures.clone(),
+            )
+        })
+        .transpose()?;
     let mut patch = Patch {
         session,
         shape,
         columns: &columns,
         team: &team,
         prediction,
+        array,
         reader: BatchReader::default(),
         data: Vec::new(),
         // As many runs as a batch can have, as admitted.
@@ -224,6 +246,9 @@ struct Patch<'s> {
     columns: &'s [&'static str],
     team: &'s WorkerTeam,
     prediction: Option<PredictionStage<'s>>,
+    /// The array's geometry, which gives each row's airmasses when the
+    /// noise needs them.
+    array: Option<ArrayGeometry<'s>>,
     reader: BatchReader,
     /// The batch's new DATA, `[row][channel][correlation]`.
     data: Vec<Complex32>,
@@ -254,6 +279,13 @@ impl Patch<'_> {
         self.data.clear();
         self.data.resize(count * samples, Complex32::new(0.0, 0.0));
         self.find_runs(first, count);
+        if let Some(array) = &self.array {
+            self.reader.fill_airmass(
+                array,
+                (self.session.scans(), &self.runs),
+                self.shape.antennas,
+            )?;
+        }
         let runs = &self.runs;
         let (session, team) = (self.session, self.team);
         let (scans, plan) = (session.scans(), session.data_plan());
@@ -299,7 +331,7 @@ impl Patch<'_> {
                 .is_some_and(|stage| stage.noised(scan, device_noise(plan, scan, reads_data)))
         };
         let mut jobs = noise_jobs(
-            (plan, team),
+            (plan, NoiseContext::of(session), team),
             (geometry, runs),
             (first as u64, &mut self.data),
             samples,
@@ -385,9 +417,16 @@ struct BatchReader {
     antenna2: Vec<i32>,
     flag_row: Vec<bool>,
     uvw: Vec<f64>,
+    /// TIME and EXPOSURE, when the noise needs them.
+    time: Vec<f64>,
+    exposure: Vec<f64>,
     /// DATA, `[row][channel][correlation]`, when the fold starts from it.
     data: Vec<Complex32>,
     geometry: Vec<RowGeometry>,
+    /// The antennas' airmasses at the last integration `fill_airmass`
+    /// computed, and its scan and TIME.
+    airmasses: Vec<f32>,
+    airmass_at: Option<(usize, u64)>,
 }
 
 impl BatchReader {
@@ -427,6 +466,24 @@ impl BatchReader {
             ],
         )
         .map_err(error("ANTENNA1, ANTENNA2 and FLAG_ROW"))?;
+        self.time.clear();
+        self.exposure.clear();
+        if shape.airmass {
+            main.required_scalar_columns_for_rows_into(
+                rows,
+                &mut [
+                    RequiredScalarColumnDestination::new(
+                        "TIME",
+                        RequiredScalarColumnValuesMut::Float64(&mut self.time),
+                    ),
+                    RequiredScalarColumnDestination::new(
+                        "EXPOSURE",
+                        RequiredScalarColumnValuesMut::Float64(&mut self.exposure),
+                    ),
+                ],
+            )
+            .map_err(error("TIME and EXPOSURE"))?;
+        }
         self.uvw.clear();
         main.column_accessor("UVW")
             .and_then(|column| {
@@ -477,8 +534,35 @@ impl BatchReader {
                 antenna2: antenna(self.antenna2[index])?,
                 uvw_m: [uvw[0], uvw[1], uvw[2]],
                 flagged: self.flag_row[index],
+                airmass: [f32::NAN; 2],
+                exposure_s: self.exposure.get(index).copied().unwrap_or(0.0),
                 ..RowGeometry::default()
             });
+        }
+        Ok(())
+    }
+
+    /// Give each row of the batch's `runs` the airmasses of its antennas,
+    /// of the first `antennas`, at its scan's phase centre at its TIME,
+    /// from `array`: computed once for each integration (scan and TIME)
+    /// the rows follow one another in.
+    fn fill_airmass(
+        &mut self,
+        array: &ArrayGeometry<'_>,
+        (scans, runs): (&[Scan], &[Run]),
+        antennas: usize,
+    ) -> SimulatorResult<()> {
+        for &(scan, start, count) in runs {
+            for index in start..start + count {
+                let time_s = self.time[index];
+                if self.airmass_at != Some((scan, time_s.to_bits())) {
+                    self.airmasses =
+                        array.airmasses(scans[scan].phase_center_rad, time_s, antennas)?;
+                    self.airmass_at = Some((scan, time_s.to_bits()));
+                }
+                let row = &mut self.geometry[index];
+                row.airmass = [self.airmasses[row.antenna1], self.airmasses[row.antenna2]];
+            }
         }
         Ok(())
     }
@@ -659,20 +743,41 @@ const MUTATION_CELL_COPIES: u64 = 3;
 /// cells it reorders into the output's layout (measured as above).
 const READ_CELL_COPIES: u64 = 1;
 
+/// Per antenna, when the noise needs airmasses: the array geometry's
+/// position, and one integration's elevation and airmass, with room for the
+/// measures frame of the conversion (as `close`'s geometry charges its
+/// antennas' scratch).
+const AIRMASS_ANTENNA_BYTES: u64 = size_of::<MPosition>() as u64 + 64;
+
 /// Bytes the patch holds beside its writer for batches of `batch_rows`
 /// rows writing `columns` columns: the columns read (ANTENNA1, ANTENNA2,
-/// FLAG_ROW, UVW, and DATA when the fold starts from it, or FLAG while it
-/// is checked) and their staging, the rows' geometry, the new DATA, the
-/// mutation's copies of the cells written, the tiled managers' I/O, and
-/// the batch's runs and jobs.
+/// FLAG_ROW, UVW, TIME and EXPOSURE when the noise needs airmasses, and
+/// DATA when the fold starts from it, or FLAG while it is checked) and
+/// their staging, the rows' geometry, the new DATA, the mutation's copies
+/// of the cells written, the tiled managers' I/O, the batch's runs and
+/// jobs, and the airmasses' antennas.
 fn pipeline_bytes(shape: &PatchShape, columns: usize, batch_rows: usize) -> u64 {
     let samples = shape.samples() as u64;
     let cell = samples * size_of::<Complex32>() as u64;
     let staged = 1 + READ_CELL_COPIES;
     let read = staged * if shape.reads_data { cell } else { 0 }.max(samples);
+    let times = if shape.airmass { staged * 2 * 8 } else { 0 };
     let written = columns as u64 * MUTATION_CELL_COPIES * (cell + size_of::<ArrayValue>() as u64);
-    let row = 4 + 4 + 1 + staged * 3 * 8 + read + size_of::<RowGeometry>() as u64 + cell + written;
-    batch_rows as u64 * row + TILED_IO_BYTES + run_bytes(shape.scans, batch_rows)
+    let row = 4
+        + 4
+        + 1
+        + staged * 3 * 8
+        + times
+        + read
+        + size_of::<RowGeometry>() as u64
+        + cell
+        + written;
+    let antennas = if shape.airmass {
+        shape.antennas as u64 * AIRMASS_ANTENNA_BYTES
+    } else {
+        0
+    };
+    batch_rows as u64 * row + TILED_IO_BYTES + run_bytes(shape.scans, batch_rows) + antennas
 }
 
 /// Bytes of a batch's runs, and of the noise and component-list jobs they

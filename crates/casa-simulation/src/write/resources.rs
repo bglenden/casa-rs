@@ -47,8 +47,10 @@ const WRITER_LIVE_BATCHES: usize = 2;
 /// from a plan that cannot be made.
 const UNBOUNDED_WRITER_BYTES: usize = 1 << 50;
 
-/// Scratch of one worker's integration, per antenna: the antennas' uvw, and
-/// their shadow and elevation flags, with room for the measures frames.
+/// Scratch of one worker's integration, per antenna: the antennas' uvw,
+/// their shadow flags and elevations, and for `tsys-manual` noise their
+/// airmasses (and elevations at a moved pointing's phase centre), with room
+/// for the measures frames.
 const ANTENNA_SCRATCH_BYTES: u64 = 64;
 
 /// The MAIN table `close` writes.

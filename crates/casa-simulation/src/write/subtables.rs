@@ -266,10 +266,7 @@ fn write_spectral_windows(ms: &mut MeasurementSet, session: &Simulator) -> Simul
                 ("NUM_CHAN", scalar_i32(channels as i32)),
                 ("REF_FREQUENCY", scalar_f64(window.reference_frequency_hz)),
                 ("RESOLUTION", f64_array(&[channels], widths)),
-                (
-                    "TOTAL_BANDWIDTH",
-                    scalar_f64(channels as f64 * window.channel_width_hz),
-                ),
+                ("TOTAL_BANDWIDTH", scalar_f64(window.total_bandwidth_hz)),
             ],
         ));
         let correlations = window.correlations.len();

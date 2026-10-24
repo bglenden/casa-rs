@@ -291,12 +291,7 @@ fn noise_only(path: &Path, backend: BackendRequest) -> String {
     let mut sm: Simulator =
         session_with_channels(path, "ALMA", "XX XY YX YY", 4, resources(backend));
     sm.observe(&scan("target", 0.0, 200.0)).expect("observe");
-    sm.set_noise(&NoiseSpec {
-        mode: "simplenoise".to_string(),
-        simple_noise_jy: 0.1,
-        on_the_fly: true,
-    })
-    .expect("setnoise");
+    sm.set_noise(&NoiseSpec::simple(0.1)).expect("setnoise");
     sm.corrupt().expect("corrupt");
     sm.observe(&scan("offset", 200.0, 300.0)).expect("observe");
     sm.close().expect("close");
@@ -341,12 +336,8 @@ fn predicted_and_corrupted(
         sm.predict(&predict_spec(model, false)).expect("predict");
     }
     if let Some(simple_noise_jy) = noise_jy {
-        sm.set_noise(&NoiseSpec {
-            mode: "simplenoise".to_string(),
-            simple_noise_jy,
-            on_the_fly: true,
-        })
-        .expect("setnoise");
+        sm.set_noise(&NoiseSpec::simple(simple_noise_jy))
+            .expect("setnoise");
         sm.corrupt().expect("corrupt");
     }
     sm.observe(&scan("offset", long_s, long_s + 500.0))
@@ -432,12 +423,8 @@ const CANCELLED_NOISE_JY: f64 = 0.25;
 /// `sm.setnoise(simplenoise=σ)` of [`CANCELLED_NOISE_JY`], then
 /// `sm.corrupt()`.
 fn corrupt_cancelled(sm: &mut Simulator) {
-    sm.set_noise(&NoiseSpec {
-        mode: "simplenoise".to_string(),
-        simple_noise_jy: CANCELLED_NOISE_JY,
-        on_the_fly: true,
-    })
-    .expect("setnoise");
+    sm.set_noise(&NoiseSpec::simple(CANCELLED_NOISE_JY))
+        .expect("setnoise");
     sm.corrupt().expect("corrupt");
 }
 

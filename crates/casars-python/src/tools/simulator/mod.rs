@@ -768,8 +768,12 @@ impl PySimulator {
     }
 
     /// Add a noise term with the current seed. `mode='simplenoise'` adds
-    /// σ = `simplenoise` (Jy) to each real and imaginary part; the Tsys
-    /// modes, and `OTF=False`, raise `NotImplementedError`.
+    /// σ = `simplenoise` (Jy) to each real and imaginary part;
+    /// `mode='tsys-manual'` adds the σ of each row's system temperature
+    /// (`tau`, `tatmos`, the efficiencies, `trx`, `tground`, `tcmb`,
+    /// `senscoeff`, `rxtype`, the row's dishes, elevations, channel width
+    /// and integration time). `tsys-atm`, `OTF=False`, and `tsys-manual`
+    /// with a `table`, raise `NotImplementedError`.
     #[allow(unused_variables, non_snake_case, clippy::too_many_arguments)]
     #[pyo3(
         signature = (
@@ -806,11 +810,24 @@ impl PySimulator {
     ) -> PyResult<bool> {
         let request = corruption::NoiseRequest {
             mode,
+            table,
             simple_noise: simplenoise,
             ground_pressure: pground,
             altitude,
             water_height: waterheight,
             water_vapour: pwv,
+            tsys: casa_simulation::TsysParameters {
+                tau,
+                atmosphere_k: tatmos,
+                antenna_efficiency: antefficiency,
+                spillover_efficiency: spillefficiency,
+                correlator_efficiency: correfficiency,
+                receiver_k: trx,
+                ground_k: tground,
+                cmb_k: tcmb,
+                sensitivity: senscoeff,
+                receiver_type: rxtype,
+            },
             on_the_fly: OTF,
         };
         corruption::setnoise(self, py, &request)

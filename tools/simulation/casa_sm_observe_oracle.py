@@ -4,7 +4,8 @@
 
 Run with CASA's Python (for example `/Applications/CASA.app/Contents/MacOS/python3`).
 For each scenario in a scenario file (`sm_observe_scenarios.json` by default,
-`sm_predict_scenarios.json` for prediction and noise) the script creates an MS
+`sm_predict_scenarios.json` for prediction and noise, `sm_noise_scenarios.json`
+for `tsys-manual` noise) the script creates an MS
 with CASA's `sm` tool: `setconfig` (from a CASA `.cfg` through
 `simutil.readantenna`, or local coordinates), then the scenario's calls, then
 `close`. It writes `<out>/<scenario>.ms` and `<out>/manifest.json`.
@@ -98,6 +99,7 @@ QUANTITY_UNITS = {
     "stoptime": "s",
     "elevationlimit": "rad",
     "simplenoise": "Jy",
+    "pwv": "mm",
 }
 
 
