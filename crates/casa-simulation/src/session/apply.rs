@@ -9,21 +9,37 @@
 //! `calibrater` applies them, at each row's time, scans observed after the
 //! `setapply` included (measured on CASA 6.7.6: `interp='linear'`
 //! interpolates amplitude and phase apart, `'nearest'` takes the nearest).
-//! casa-rs keeps the table and, at each `corrupt`, finds its solutions
-//! through `casa-calibration`'s [`CalibrationTableLookup`] for each
-//! integration observed by then and antenna, and applies them as the terms
-//! `setgain` and `setleakage` simulate. CASA's `setapply` ignores its
-//! `field`.
+//! casa-rs loads the table at `setapply`, as CASA does, and keeps it; at
+//! each `corrupt` it finds the table's solutions through `casa-calibration`'s
+//! [`CalibrationTableLookup`] for each integration observed by then and
+//! antenna, and applies them as the terms `setgain` and `setleakage`
+//! simulate. A table changed or moved after `setapply` does not change the
+//! term (#893 review).
+//!
+//! CASA's `setapply` ignores its `field`, and its interpolation does not
+//! partition the table by field: a row takes the solutions of every field
+//! as one series in time ([`FieldSelection::AnyField`]; measured on CASA
+//! 6.7.6, #893 review).
+//!
+//! Loading a table is admitted against the session's resource policy
+//! before it is read, and the loaded table keeps its share for as long as
+//! the term does; each `corrupt` admits the term it evaluates, as
+//! `setgain` admits one it simulates.
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use casa_calibration::{ApplyInterpolationMode, CalibrationTableLookup};
+use casa_calibration::{ApplyInterpolationMode, CalibrationTableLookup, FieldSelection};
+use casa_imaging_runtime::{Demand, Reservation, admit};
 use num_complex::Complex32;
 
 use super::Simulator;
 use super::error::{SimulatorError, SimulatorResult};
 use crate::corrupt::jones::{Chunks, HeldTerm, JonesKind, TermBytes, applied};
+
+/// The phase loading a `setapply` table is admitted as: the table as it is
+/// read, and what the loaded lookup keeps.
+const LOOKUP_PHASE: &str = "loading a setapply calibration table";
 
 /// The arguments of `sm.setapply`.
 #[derive(Debug, Clone, PartialEq)]
@@ -55,13 +71,30 @@ pub(crate) enum JonesSource {
     Applied(AppliedTable),
 }
 
-/// A table `setapply` set: where it is and how to apply it.
-#[derive(Debug, Clone)]
+/// A table `setapply` set: the table as it was loaded, and how to apply it.
+#[derive(Clone)]
 pub(crate) struct AppliedTable {
     path: PathBuf,
-    interp: ApplyInterpolationMode,
+    lookup: Arc<HeldLookup>,
     kind: JonesKind,
     spwmap: Vec<i64>,
+}
+
+impl std::fmt::Debug for AppliedTable {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("AppliedTable")
+            .field("path", &self.path)
+            .field("kind", &self.kind)
+            .field("spwmap", &self.spwmap)
+            .finish_non_exhaustive()
+    }
+}
+
+/// A loaded table with the memory admitted for what it keeps.
+struct HeldLookup {
+    lookup: CalibrationTableLookup,
+    _reservation: Reservation,
 }
 
 /// `Simulator::setapply`'s refusal: CASA logs the reason and raises.
@@ -116,15 +149,15 @@ impl Simulator {
             return Err(raised("No calibration table given."));
         }
         let path = std::path::absolute(&spec.table).map_err(raised)?;
-        let lookup = CalibrationTableLookup::open(&path, interp).map_err(raised)?;
-        let table_kind = table_type(lookup.subtype());
+        let lookup = self.load_table(&path, interp)?;
+        let table_kind = table_type(lookup.lookup.subtype());
         let kind = match spec.kind.to_uppercase() {
             requested if requested.is_empty() || requested == table_kind => table_kind,
             requested => {
                 return Err(raised(format!(
                     "{} is a {} table, not {requested}.",
                     spec.table,
-                    lookup.subtype()
+                    lookup.lookup.subtype()
                 )));
             }
         };
@@ -137,15 +170,44 @@ impl Simulator {
         tracing::info!(
             "Arranging to CORRUPT with: {} ({})",
             spec.table,
-            lookup.subtype()
+            lookup.lookup.subtype()
         );
         self.jones_terms.push(JonesSource::Applied(AppliedTable {
             path,
-            interp,
+            lookup: Arc::new(lookup),
             kind,
             spwmap: spec.spwmap.clone(),
         }));
         Ok(())
+    }
+
+    /// Load the table at `path` to look its solutions up across its fields
+    /// with `interp`, its memory admitted before it is read: what reading
+    /// it holds, and what the lookup keeps, which it holds on to.
+    fn load_table(
+        &self,
+        path: &std::path::Path,
+        interp: ApplyInterpolationMode,
+    ) -> SimulatorResult<HeldLookup> {
+        let rows = CalibrationTableLookup::rows_on_disk(path).map_err(raised)?;
+        let kept = CalibrationTableLookup::kept_bytes(rows);
+        let resources = &self.options.resources;
+        let mut reservation = admit(
+            resources.host(),
+            resources.policy(),
+            &Demand {
+                phase: LOOKUP_PHASE,
+                memory: CalibrationTableLookup::loading_bytes(rows) + kept,
+            },
+        )
+        .map_err(SimulatorError::admission)?;
+        let lookup = CalibrationTableLookup::open_with(path, interp, FieldSelection::AnyField)
+            .map_err(raised)?;
+        reservation.retain(kept);
+        Ok(HeldLookup {
+            lookup,
+            _reservation: reservation,
+        })
     }
 
     /// The term `source` is at this `corrupt`: a simulated one as it was
@@ -160,10 +222,8 @@ impl Simulator {
                 let (per_window, _) = self.integration_counts();
                 let bytes = TermBytes::per_chunk(&per_window, antennas);
                 let mut reservation = self.admit_term(bytes)?;
-                let lookup =
-                    CalibrationTableLookup::open(&table.path, table.interp).map_err(raised)?;
                 let (chunks, values) =
-                    self.applied_solutions(&lookup, &table.spwmap, &per_window)?;
+                    self.applied_solutions(&table.lookup.lookup, &table.spwmap, &per_window)?;
                 reservation.retain(bytes.kept);
                 Ok(Arc::new(HeldTerm::new(
                     applied(table.kind, antennas, chunks, values),

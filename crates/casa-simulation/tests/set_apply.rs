@@ -9,7 +9,10 @@ mod predict_support;
 
 use std::path::{Path, PathBuf};
 
-use casa_calibration::{ApplyInterpolationMode, CalibrationTableLookup};
+use casa_calibration::{
+    ApplyInterpolationMode, CalibrationTableLookup, SimulatedJones, SimulatedSolution,
+    write_simulated_jones_table,
+};
 use casa_simulation::{
     ApplySpec, CasaOutcome, GainSpec, LeakageSpec, PredictSpec, Simulator, SimulatorOptions,
     SimulatorResult,
@@ -17,7 +20,7 @@ use casa_simulation::{
 use casa_types::Complex32;
 use casa_types::measures::{EpochRef, MEpoch};
 use predict_support::{
-    CENTRE_RAD, REFERENCE_MJD, Row, bits, data, read_main, resources, scan, session,
+    ANTENNAS, CENTRE_RAD, REFERENCE_MJD, Row, bits, data, read_main, resources, scan, session,
     write_point_list,
 };
 
@@ -285,6 +288,115 @@ fn setapply_refuses_what_casa_or_casa_rs_cannot_apply() {
         assert!(message.contains(says), "{message}");
     }
     sm.close().expect("close");
+}
+
+/// A gain table of `solutions` (time, field, gain) for every antenna,
+/// written against the MeasurementSet at `ms`.
+fn write_gains(ms: &Path, output: &Path, solutions: &[(f64, i32, f32)]) {
+    let ms = casa_ms::MeasurementSet::open(ms).expect("open the MeasurementSet");
+    let rows = solutions.iter().flat_map(|&(time_s, field_id, gain)| {
+        (0..ANTENNAS as i32).map(move |antenna| SimulatedSolution {
+            time_s,
+            field_id,
+            spectral_window_id: 0,
+            antenna,
+            receptors: [Complex32::new(gain, 0.0); 2],
+        })
+    });
+    write_simulated_jones_table(&ms, output, SimulatedJones::Gain, rows).expect("write the table");
+}
+
+/// The first and last integration times of a session `observed` makes.
+fn observed_times(directory: &Path, point: &Path) -> (PathBuf, [f64; 2]) {
+    let reference = directory.join("reference.ms");
+    observed(&reference, "XX YY", point, 10.0)
+        .close()
+        .expect("close");
+    let times = read_times(&reference);
+    let first = times.iter().copied().fold(f64::INFINITY, f64::min);
+    let last = times.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    (reference, [first, last])
+}
+
+/// CASA's `setapply` takes every field's solutions as one series in time
+/// (#893 review, whose CASA 6.7.6 reproduction this is): a table solved on
+/// FIELD 0 early (gains 1) and on FIELD 1 late (gains 2) leaves the first
+/// scan of rows on FIELD 0 as it was and multiplies the second by
+/// |2|² = 4.
+#[test]
+fn setapply_takes_every_fields_solutions_as_one_series() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let point = point(directory.path());
+    let path = |name: &str| directory.path().join(name);
+    let (reference, [first, last]) = observed_times(directory.path(), &point);
+    write_gains(
+        &reference,
+        &path("fields.cal"),
+        &[(first, 0, 1.0), (last, 1, 2.0)],
+    );
+    let rows = corrupted(&path("applied.ms"), "XX YY", &point, &|sm| {
+        sm.set_apply(&apply(&path("fields.cal"), "nearest"))
+    });
+    let times = read_times(&path("applied.ms"));
+    let middle = (first + last) / 2.0;
+    for (row, time) in rows.iter().zip(&times) {
+        assert_eq!(row.field, 0, "the rows are on FIELD 0");
+        let expected = if *time < middle { 1.0 } else { 4.0 };
+        assert!(
+            (row.data[0] - Complex32::new(expected, 0.0)).norm() < 1e-5,
+            "at {time}: {} for {expected}",
+            row.data[0]
+        );
+    }
+}
+
+/// `setapply` loads the table, as CASA's does (#893 review): moving the
+/// table after the call, and writing another in its place, leave the term
+/// as it was.
+#[test]
+fn setapply_keeps_the_table_it_loaded() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let point = point(directory.path());
+    let path = |name: &str| directory.path().join(name);
+    let (reference, [first, last]) = observed_times(directory.path(), &point);
+    let table = path("gains.cal");
+    write_gains(&reference, &table, &[(first, 0, 1.0), (last, 0, 2.0)]);
+    let expected = corrupted(&path("expected.ms"), "XX YY", &point, &|sm| {
+        sm.set_apply(&apply(&table, "linear"))
+    });
+    let moved = corrupted(&path("moved.ms"), "XX YY", &point, &|sm| {
+        sm.set_apply(&apply(&table, "linear"))?;
+        std::fs::rename(&table, path("moved.cal")).expect("move the table");
+        write_gains(&reference, &table, &[(first, 0, 3.0), (last, 0, 3.0)]);
+        Ok(())
+    });
+    assert_eq!(bits(&data(&moved)), bits(&data(&expected)));
+}
+
+/// Loading a table is admitted before the table is read (#893 review,
+/// whose probe this is): within a 2 MiB budget a table of 9,996 rows is
+/// refused as an admission.
+#[test]
+fn a_table_beyond_the_budget_is_refused_before_it_is_loaded() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let point = point(directory.path());
+    let path = |name: &str| directory.path().join(name);
+    let (reference, [first, _]) = observed_times(directory.path(), &point);
+    let solutions: Vec<(f64, i32, f32)> = (0..9_996 / ANTENNAS)
+        .map(|index| (first + index as f64, 0, 1.0))
+        .collect();
+    write_gains(&reference, &path("large.cal"), &solutions);
+    let mut sm = session(&path("small.ms"), "ALMA", "XX YY", resources(2, 2 << 20));
+    sm.observe(&scan("target", 0.0, 60.0)).expect("observe");
+    let refused = sm
+        .set_apply(&apply(&path("large.cal"), "linear"))
+        .expect_err("a table beyond the budget");
+    assert!(
+        refused
+            .message()
+            .contains("loading a setapply calibration table"),
+        "{refused}"
+    );
 }
 
 /// The options `session` opens with.

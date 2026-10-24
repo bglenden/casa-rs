@@ -60,7 +60,10 @@ pub use fluxscale::{
     fluxscale,
 };
 pub use gencal::{GencalError, GencalReport, GencalRequest, GencalType, gencal};
-pub use lookup::{CalibrationTableLookup, ComplexSolution};
+pub use lookup::{
+    CalibrationTableLookup, ComplexSolution, FieldSelection, LOOKUP_KEPT_ROW_BYTES,
+    LOOKUP_LOADING_ROW_BYTES,
+};
 pub use managed_output::{CalibrationTaskResult, ManagedCalibrationOutput};
 pub use model::{
     CalibrationColumnSummary, CalibrationIssueSeverity, CalibrationKeywordSummary,
