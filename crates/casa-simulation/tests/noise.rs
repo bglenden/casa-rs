@@ -147,11 +147,7 @@ fn configured(path: &Path, stokes: &str, resources: SessionResources) -> Simulat
 }
 
 fn simple_noise(sigma_jy: f64) -> NoiseSpec {
-    NoiseSpec {
-        mode: "simplenoise".to_string(),
-        simple_noise_jy: sigma_jy,
-        on_the_fly: true,
-    }
+    NoiseSpec::simple(sigma_jy)
 }
 
 /// MAIN as the tests read it.
@@ -502,14 +498,13 @@ fn setnoise_refuses_as_casa_does_and_names_later_phases() {
             "Caught exception: unsupported mode bogus in setnoise()".to_string()
         )
     );
-    for (name, phase) in [("tsys-manual", "Phase 3"), ("tsys-atm", "Phase 4")] {
-        let (outcome, message) = outcome(session.set_noise(&mode(name)));
-        assert_eq!(outcome, CasaOutcome::NotYetImplemented);
-        assert!(
-            message.contains(name) && message.contains(phase),
-            "{message}"
-        );
-    }
+    // `tsys-manual` is implemented (`tests/tsys_noise.rs`).
+    let (refused, message) = outcome(session.set_noise(&mode("tsys-atm")));
+    assert_eq!(refused, CasaOutcome::NotYetImplemented);
+    assert!(
+        message.contains("tsys-atm") && message.contains("Phase 4"),
+        "{message}"
+    );
     let table = NoiseSpec {
         on_the_fly: false,
         ..simple_noise(SIGMA_JY)

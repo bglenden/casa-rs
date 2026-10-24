@@ -38,11 +38,7 @@ use predict_support::{
 const XX_YY: [CorrelationType; 2] = [CorrelationType::LinearXx, CorrelationType::LinearYy];
 
 fn simple_noise(sigma_jy: f64) -> NoiseSpec {
-    NoiseSpec {
-        mode: "simplenoise".to_string(),
-        simple_noise_jy: sigma_jy,
-        on_the_fly: true,
-    }
+    NoiseSpec::simple(sigma_jy)
 }
 
 /// Write a session of two scans: `first` runs after the first scan is

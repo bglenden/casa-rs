@@ -44,11 +44,7 @@ fn observed(path: &Path) -> Simulator {
 }
 
 fn simple_noise(sigma_jy: f64) -> NoiseSpec {
-    NoiseSpec {
-        mode: "simplenoise".to_string(),
-        simple_noise_jy: sigma_jy,
-        on_the_fly: true,
-    }
+    NoiseSpec::simple(sigma_jy)
 }
 
 /// `sm.setnoise(simplenoise=…)` then `sm.corrupt()`.

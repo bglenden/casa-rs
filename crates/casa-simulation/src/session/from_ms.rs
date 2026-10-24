@@ -277,6 +277,7 @@ fn read_window(
         start_frequency_hz,
         channel_width_hz,
         reference_frequency_hz: windows.ref_frequency(row).map_err(&error)?,
+        total_bandwidth_hz: windows.total_bandwidth(row).map_err(&error)?,
         frame,
         correlations,
     };

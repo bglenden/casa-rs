@@ -48,7 +48,7 @@ pub mod spectral;
 #[cfg(test)]
 mod tests;
 
-pub use corruption::{DEFAULT_SEED, NoiseSpec};
+pub use corruption::{DEFAULT_SEED, NoiseSpec, TsysParameters};
 pub use gains::{GainSpec, LeakageSpec};
 pub use prediction::{PredictSpec, PredictionOptions, VoltagePatternSpec};
 pub use resources::{BackendRequest, ExecutionControls, SessionResources, UnknownBackend};

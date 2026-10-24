@@ -16,9 +16,23 @@ const N: usize = 1 << 20;
 fn application(seed: i32, ordinal: u32) -> NoiseApplication {
     NoiseApplication {
         seed,
-        sigma_jy: 1.0,
+        level: NoiseLevel::Simple(1.0),
         ordinal,
     }
+}
+
+/// Add `noise`, a `simplenoise` application, to the cell of `row`.
+fn add(
+    noise: &NoiseApplication,
+    row: u64,
+    autocorrelation: bool,
+    correlations: usize,
+    cell: &mut [Complex32],
+) {
+    noise
+        .uniform()
+        .expect("a simplenoise application")
+        .add_to_row(row, autocorrelation, correlations, cell);
 }
 
 /// The sample variance of `values` within five standard errors of
@@ -53,10 +67,11 @@ fn the_key_is_the_seed_then_the_purpose_byte_above_the_ordinal() {
     );
     let noise = NoiseApplication {
         seed: 7,
-        sigma_jy: 0.25,
+        level: NoiseLevel::Simple(0.25),
         ordinal: 2,
     }
-    .noise();
+    .uniform()
+    .expect("a simplenoise application");
     assert_eq!((noise.key(), noise.sigma()), ([7, 0x0100_0002], 0.25));
 }
 
@@ -67,8 +82,8 @@ fn the_same_seed_and_ordinal_draw_the_same_values() {
     for row in [0, 7, 1 << 40] {
         let mut one = vec![Complex32::new(0.0, 0.0); 6 * 4];
         let mut other = one.clone();
-        first.add_to_row(row, false, 4, &mut one);
-        second.add_to_row(row, false, 4, &mut other);
+        add(&first, row, false, 4, &mut one);
+        add(&second, row, false, 4, &mut other);
         assert!(
             one.iter()
                 .all(|sample| sample.re != 0.0 && sample.im != 0.0)
@@ -87,11 +102,11 @@ fn one_seed_adds_coherently_and_a_repeated_application_independently() {
     let mut repeated = Vec::with_capacity(N);
     for row in 0..(N / CHANNELS) as u64 {
         let mut same = [Complex32::new(0.0, 0.0); CHANNELS];
-        first.add_to_row(row, false, 1, &mut same);
-        again.add_to_row(row, false, 1, &mut same);
+        add(&first, row, false, 1, &mut same);
+        add(&again, row, false, 1, &mut same);
         let mut twice = [Complex32::new(0.0, 0.0); CHANNELS];
-        first.add_to_row(row, false, 1, &mut twice);
-        next.add_to_row(row, false, 1, &mut twice);
+        add(&first, row, false, 1, &mut twice);
+        add(&next, row, false, 1, &mut twice);
         coherent.extend(same.iter().map(|sample| f64::from(sample.re)));
         repeated.extend(twice.iter().map(|sample| f64::from(sample.im)));
     }
@@ -123,11 +138,11 @@ fn a_known_cell_gets_its_known_bits_on_every_platform() {
     ];
     let noise = NoiseApplication {
         seed: 11_111,
-        sigma_jy: 0.1,
+        level: NoiseLevel::Simple(0.1),
         ordinal: 3,
     };
     let mut cell = vec![Complex32::new(0.0, 0.0); 3 * 4];
-    noise.add_to_row((1 << 32) + 5, false, 4, &mut cell);
+    add(&noise, (1 << 32) + 5, false, 4, &mut cell);
     assert_eq!(bits(&cell), KNOWN);
 }
 
@@ -154,7 +169,7 @@ fn more_known_cells_keep_their_bits() {
         KnownCell {
             noise: NoiseApplication {
                 seed: i32::MIN,
-                sigma_jy: 2.5,
+                level: NoiseLevel::Simple(2.5),
                 ordinal: MAXIMUM_APPLICATIONS - 1,
             },
             row: u64::MAX,
@@ -184,7 +199,7 @@ fn more_known_cells_keep_their_bits() {
         KnownCell {
             noise: NoiseApplication {
                 seed: -11_111,
-                sigma_jy: 0.1,
+                level: NoiseLevel::Simple(0.1),
                 ordinal: 0,
             },
             row: 999,
@@ -200,7 +215,7 @@ fn more_known_cells_keep_their_bits() {
         KnownCell {
             noise: NoiseApplication {
                 seed: 0,
-                sigma_jy: 3.7e-3,
+                level: NoiseLevel::Simple(3.7e-3),
                 ordinal: 1,
             },
             row: (1 << 32) - 1,
@@ -220,7 +235,7 @@ fn more_known_cells_keep_their_bits() {
     for known in cells {
         let mut cell = vec![Complex32::new(0.0, 0.0); known.bits.len()];
         let (row, auto, correlations) = (known.row, known.autocorrelation, known.correlations);
-        known.noise.add_to_row(row, auto, correlations, &mut cell);
+        add(&known.noise, row, auto, correlations, &mut cell);
         assert_eq!(bits(&cell), known.bits, "{:?}, row {row}", known.noise);
     }
 }

@@ -35,11 +35,7 @@ fn leakage() -> LeakageSpec {
 }
 
 fn simple_noise() -> NoiseSpec {
-    NoiseSpec {
-        mode: "simplenoise".to_string(),
-        simple_noise_jy: 0.1,
-        on_the_fly: true,
-    }
+    NoiseSpec::simple(0.1)
 }
 
 /// A session of `stokes` observing the field `target` for a minute, with a

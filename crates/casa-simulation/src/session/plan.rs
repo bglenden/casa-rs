@@ -31,18 +31,18 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use super::prediction::Prediction;
-use crate::corrupt::NoiseApplication;
 use crate::corrupt::jones::JonesTerm;
+use crate::corrupt::{NoiseApplication, NoiseLevel};
 use crate::predict::{ComponentPrediction, SingleDishPrediction};
 
-/// One `setnoise` term: CASA's `ANoise` calibration term, kept until
-/// `reset`.
+/// One `setnoise` term: CASA's `ANoise` calibration term (with, for
+/// `tsys-manual`, the `T` that scales it), kept until `reset`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct NoiseTerm {
     /// The seed in force at `setnoise`.
     pub(crate) seed: i32,
-    /// σ of each real and imaginary draw, Jy.
-    pub(crate) sigma_jy: f32,
+    /// How large its draws are.
+    pub(crate) level: NoiseLevel,
     /// How many `corrupt` calls have applied the term.
     pub(crate) applications: u32,
 }
@@ -345,7 +345,7 @@ mod tests {
     fn noise(seed: i32, ordinal: u32) -> NoiseApplication {
         NoiseApplication {
             seed,
-            sigma_jy: 0.5,
+            level: NoiseLevel::Simple(0.5),
             ordinal,
         }
     }

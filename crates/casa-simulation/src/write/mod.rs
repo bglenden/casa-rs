@@ -45,9 +45,10 @@ use casa_types::ScalarValue;
 use crate::session::Simulator;
 use crate::session::error::{SimulatorError, SimulatorResult};
 use crate::session::observe::PlannedScan;
+use crate::session::plan::DataPlan;
 use geometry::{ArrayGeometry, RowGeometry};
 pub(crate) use patch::patch_measurement_set;
-use pipeline::Pipeline;
+use pipeline::{NoiseContext, Pipeline};
 use prediction::PredictionStage;
 use resources::{MainAdmission, MainShape};
 
@@ -217,14 +218,15 @@ fn write_main<'s>(
         session.telescope(),
         session.antennas(),
         session.options().measures.clone(),
-    )?;
+    )?
+    .with_airmass(noise_varies_by_row(session.data_plan()));
     let team = WorkerTeam::new(admission.cores.streaming_workers)
         .map_err(|error| SimulatorError::raised(format!("the worker team: {error}")))?;
     let mut pipeline = Pipeline::new(
         (session.scans(), planned),
         &geometry,
         &team,
-        (prediction, session.data_plan()),
+        (prediction, session.data_plan(), NoiseContext::of(session)),
         (
             shape.correlations,
             shape.channels,
@@ -271,6 +273,15 @@ fn write_main<'s>(
         "simulation pass"
     );
     Ok(())
+}
+
+/// Whether any noise of `plan` has a σ that varies by row (`tsys-manual`),
+/// whose rows then need their antennas' airmasses and exposure. Every
+/// `corrupt` covers scan 0, so its noise is all the plan's.
+fn noise_varies_by_row(plan: &DataPlan) -> bool {
+    plan.noise_for_scan(0)
+        .iter()
+        .any(crate::corrupt::NoiseApplication::varies_by_row)
 }
 
 /// The resolved MAIN scalar columns.

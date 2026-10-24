@@ -393,14 +393,17 @@ impl<'s> PredictionStage<'s> {
     /// Whether the stage adds `noise`, a predicted run's, itself, on the
     /// device, as it predicts the run ([`Self::predict`]). That happens on
     /// Metal, where the model is formed in device memory, when every term
-    /// draws there exactly as on the host
-    /// ([`casa_numerics::cell_noise::metal_draws_exactly`]); otherwise the
-    /// host adds it after.
+    /// has one σ for every row (`simplenoise`) and draws there exactly as on
+    /// the host ([`casa_numerics::cell_noise::metal_draws_exactly`]);
+    /// otherwise the host adds it after. A `tsys-manual` term, whose σ
+    /// varies by row, is the host's: the device's terms hold one σ each.
     pub(super) fn noises_on_device(&self, noise: &[NoiseApplication]) -> bool {
         self.backend == BackendChoice::Metal
-            && noise
-                .iter()
-                .all(|application| metal_draws_exactly(application.noise().sigma()))
+            && noise.iter().all(|application| {
+                application
+                    .uniform()
+                    .is_some_and(|noise| metal_draws_exactly(noise.sigma()))
+            })
     }
 
     /// Whether the stage added `noise`, the [`device_noise`] it was given
@@ -438,7 +441,7 @@ impl<'s> PredictionStage<'s> {
                 self.noise_terms.extend(
                     noise(scan)
                         .iter()
-                        .map(NoiseApplication::noise)
+                        .filter_map(NoiseApplication::uniform)
                         .filter(|noise| noise.sigma() != 0.0)
                         .map(|noise| MetalNoiseTerm {
                             key: noise.key(),
