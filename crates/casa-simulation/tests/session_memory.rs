@@ -80,6 +80,8 @@
 //! the process's, so each law runs alone in a process of its own
 //! ([`alone`]).
 
+#[path = "session_memory/gain_setters.rs"]
+mod gain_setters;
 #[path = "session_memory/jones.rs"]
 mod jones;
 #[path = "session_memory/mosaic.rs"]

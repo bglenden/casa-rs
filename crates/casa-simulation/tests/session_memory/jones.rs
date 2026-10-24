@@ -3,7 +3,8 @@
 //! and ten-times-the-rows cases, and the patch's rows law, with an `fbm`
 //! and a `random` gain term set before the `corrupt`. A row takes its
 //! solution at its TIME, which the patch then reads and admits with its
-//! batch; the terms themselves are the session's, set before `close`. Each
+//! batch; the terms themselves are the session's, admitted when they are
+//! set (`session_memory/gain_setters.rs`) and held through `close`. Each
 //! law shares the binary's counting heap and runs alone as its other laws
 //! do ([`super::alone`]).
 
@@ -68,18 +69,19 @@ fn a_gain_session_holds_its_admission_and_no_more_for_more_rows() {
             session.admitted
         );
     }
-    // The terms grow with the integrations, and `close` admits them: ten
-    // times the rows hold no more beyond what grew admitted but a little.
+    // The terms grow with the integrations and hold their admission from
+    // `setgain` (#890 review), so `close`'s writer takes its share of what
+    // is left and batches smaller: the session's admission need not grow.
+    // Ten times the rows hold no more beyond whatever more was admitted
+    // but a little.
     let ([few, many], [_, many_pass]) = (held, passes);
     let allowance = ROWS_ALLOWANCE_BYTES + write_batch_bytes(cases[1], &many_pass);
-    let admitted_growth = many.admitted - few.admitted;
+    let admitted_growth = many.admitted.saturating_sub(few.admitted);
     println!(
-        "rows x10 - base with gains: {} bytes, {admitted_growth} more admitted (allowed {allowance})",
-        many.least as i64 - few.least as i64
-    );
-    assert!(
-        admitted_growth > 0,
-        "the terms, which grow with the integrations, are admitted"
+        "rows x10 - base with gains: {} bytes, {} admitted beside {} (allowed {allowance})",
+        many.least as i64 - few.least as i64,
+        many.admitted,
+        few.admitted
     );
     assert!(
         many.least <= few.least + admitted_growth + allowance,

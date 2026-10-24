@@ -178,7 +178,9 @@ fn the_noise_follows_the_gains(noise_spec: &NoiseSpec) {
 }
 
 /// Leakage moves only the cross hands of four correlations (CASA's
-/// linearised `D`), and CASA's `JonesGenLin` raises on two.
+/// linearised `D`), and CASA's `JonesGenLin` raises on two, whether the
+/// parallel hands or the cross hands (#890 review: `XY YX` alone was let
+/// through and left uncorrupted).
 #[test]
 fn leakage_moves_the_cross_hands_and_needs_them() {
     let directory = tempfile::tempdir().expect("temporary directory");
@@ -202,17 +204,57 @@ fn leakage_moves_the_cross_hands_and_needs_them() {
     }
     assert!(cross > 0.01, "the cross hands leak: {cross}");
 
+    for (name, stokes) in [("parallel.ms", "XX YY"), ("cross.ms", "XY YX")] {
+        let mut sm = session(
+            &directory.path().join(name),
+            "ALMA",
+            stokes,
+            resources(2, 2 << 30),
+        );
+        sm.observe(&scan("target", 0.0, 60.0)).expect("observe");
+        sm.set_leakage(&leakage()).expect("setleakage");
+        let refused = sm
+            .corrupt()
+            .expect_err("leakage without all four correlations");
+        assert_eq!(refused.outcome(), CasaOutcome::Raises, "{stokes}");
+        assert!(
+            refused.message().contains("JonesGenLin"),
+            "{stokes}: {refused}"
+        );
+    }
+}
+
+/// `setgain` and `setleakage` admit their term before they form it (#890
+/// review, whose probe this is): over 100,000 integrations within a 2 MiB
+/// budget each gain mode is refused as an admission and the session goes
+/// on; a leakage, one value per window and antenna, fits.
+#[test]
+fn a_gain_term_beyond_the_budget_is_refused_before_it_is_formed() {
+    let directory = tempfile::tempdir().expect("temporary directory");
     let mut sm = session(
-        &directory.path().join("two.ms"),
+        &directory.path().join("budget.ms"),
         "ALMA",
         "XX YY",
-        resources(2, 2 << 30),
+        resources(2, 2 << 20),
     );
-    sm.observe(&scan("target", 0.0, 60.0)).expect("observe");
-    sm.set_leakage(&leakage()).expect("setleakage");
-    let refused = sm.corrupt().expect_err("leakage without the cross hands");
-    assert_eq!(refused.outcome(), CasaOutcome::Raises);
-    assert!(refused.message().contains("JonesGenLin"), "{refused}");
+    sm.observe(&scan("target", 0.0, 1.0e6)).expect("observe");
+    for mode in ["fbm", "random"] {
+        let refused = sm
+            .set_gain(&GainSpec {
+                mode: mode.to_string(),
+                table: String::new(),
+                amplitude: vec![0.05],
+            })
+            .expect_err("a term beyond the budget");
+        assert!(
+            refused
+                .message()
+                .contains("a simulated gain or leakage term"),
+            "{mode}: {refused}"
+        );
+    }
+    sm.set_leakage(&leakage())
+        .expect("a leakage per window fits");
 }
 
 /// A leakage is drawn once per spectral window for the whole run (CASA's
