@@ -1452,10 +1452,12 @@ channels':
   temperature within a band (B. Svoboda, *Special Topics: Spectral Lines*,
   NRAO Synthesis Imaging Workshop 2026, slide 18).
 - **A one-channel window after the first gets no Tsys.** For n = 1 the
-  later windows' channel map points past the grid (CASA's log reads
-  "ch 972849296/20"); the term's `T` comes out bad, `setMatByOk` applies it
-  as 1, and the probe's 2 GHz continuum window at 230 GHz got unscaled 1 Jy
-  noise (variance 0.996 Jy²).
+  later windows' channel map is read past its end, which is undefined
+  behaviour. In CASA 6.7.6 on macOS the index it read pointed past the grid
+  (the log reads "ch 972849296/20"); the term's `T` came out bad,
+  `setMatByOk` applied it as 1, and the probe's 2 GHz continuum window at
+  230 GHz got unscaled 1 Jy noise (variance 0.996 Jy²). Another build may
+  read something else.
 
 casa-rs evaluates ATM at each channel's CHAN_FREQ, for every window and a
 one-channel window alike, so a channel's σ follows the sky it observes. As

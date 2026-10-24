@@ -919,13 +919,17 @@ fn tsys_atm_refusals_add_no_term() {
     let (refused, message) = outcome(sm.set_noise(&high));
     assert_eq!(refused, CasaOutcome::ReturnsFalse);
     assert!(message.contains("error in ATM setup"), "{message}");
-    let hot = spec(&|spec| spec.tsys.receiver_k = 2e6);
-    let (refused, message) = outcome(sm.set_noise(&hot));
-    assert_eq!(refused, CasaOutcome::ReturnsFalse);
-    assert!(
-        message.contains("Tsys") && message.ends_with("poorly defined - check inputs"),
-        "{message}"
-    );
+    // A zenith Tsys too hot, or not a number at all (which CASA's check lets
+    // through).
+    for receiver_k in [2e6, f64::NAN] {
+        let bad = spec(&|spec| spec.tsys.receiver_k = receiver_k);
+        let (refused, message) = outcome(sm.set_noise(&bad));
+        assert_eq!(refused, CasaOutcome::ReturnsFalse, "Trx {receiver_k}");
+        assert!(
+            message.contains("Tsys") && message.ends_with("poorly defined - check inputs"),
+            "{message}"
+        );
+    }
     sm.corrupt().expect("corrupt");
     sm.close().expect("close");
     assert!(

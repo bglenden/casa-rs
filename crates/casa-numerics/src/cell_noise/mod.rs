@@ -176,7 +176,9 @@ impl CellNoise {
     /// [`Self::add_to_row`] with σ scaled per channel: channel `c`'s samples
     /// get σ·`channel_scale[c]` (a noise whose σ depends on frequency, as a
     /// system temperature does). The draws are [`Self::add_to_row`]'s, so a
-    /// scale of 1 everywhere adds bit for bit the same noise.
+    /// scale of 1 everywhere adds bit for bit the same noise; another scale
+    /// gives its unit draws times σ·`channel_scale[c]` to the rounding of
+    /// that product, which scales each draw's radius.
     ///
     /// # Panics
     ///

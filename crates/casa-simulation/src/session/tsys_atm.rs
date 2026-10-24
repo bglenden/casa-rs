@@ -47,11 +47,14 @@ impl Simulator {
             SimulatorError::refused(format!("Caught exception: error in ATM setup - {error}"))
         })?;
         let layers = atmosphere.layers().len();
-        let kept: u64 = self
-            .spectral_windows
-            .iter()
-            .map(|window| WindowAtmosphere::bytes(window.channel_count, layers))
-            .sum();
+        // The windows' vector, and each window's channels (#897 review).
+        let kept: u64 = (self.spectral_windows.len() * size_of::<Option<WindowAtmosphere>>())
+            as u64
+            + self
+                .spectral_windows
+                .iter()
+                .map(|window| WindowAtmosphere::bytes(window.channel_count, layers))
+                .sum::<u64>();
         let building = self
             .spectral_windows
             .iter()
@@ -128,11 +131,12 @@ fn check_zenith_tsys(model: &TsysAtm, spec: &NoiseSpec, pwv_mm: f64) -> Simulato
 
 /// What building a window of `channels` channels holds beside what it
 /// keeps: its channel frequencies, the profile of its channels' totals
-/// (grid and the atmosphere's copy included), and the jobs' vectors with
-/// the one they are gathered into.
+/// (grid and the atmosphere's copy included), and the jobs, with their
+/// vectors and the one they are gathered into.
 fn building_bytes(channels: usize, layers: usize) -> u64 {
     AbsorptionProfile::<ChannelTotals>::shape_bytes(1, channels, layers)
         + (channels * (size_of::<f64>() + 2 * size_of::<ChannelTotals>())) as u64
+        + (channels.div_ceil(CHANNELS_PER_JOB) * size_of::<(&[f64], Vec<ChannelTotals>)>()) as u64
 }
 
 /// Each channel's totals of `atmosphere` at `channels`, computed on `team`

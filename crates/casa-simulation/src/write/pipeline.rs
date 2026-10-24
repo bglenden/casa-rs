@@ -51,6 +51,7 @@ use super::MainWriter;
 use super::components::add_components;
 use super::geometry::{ArrayGeometry, RowGeometry};
 use super::prediction::{PredictionStage, device_noise};
+use super::resources::NoiseScales;
 use crate::corrupt::{
     BatchScales, BatchScalesBuilder, NoiseApplication, NoiseScratch, WindowNoise,
 };
@@ -129,6 +130,8 @@ struct Rows<'s> {
     plan: &'s DataPlan,
     /// What the noise reads beside the plan.
     noise: NoiseContext<'s>,
+    /// The room a batch's `tsys-atm` antenna scales are admitted.
+    scales: NoiseScales,
     /// `[window]`: each correlation's receptors, which gains and leakage
     /// take.
     receptors: Vec<Vec<[usize; 2]>>,
@@ -154,13 +157,19 @@ pub(super) struct Pipeline<'s> {
 impl<'s> Pipeline<'s> {
     /// The pipeline for `scans`, whose planned rows are `planned`,
     /// predicting with `prediction` and corrupting by `plan` (reading
-    /// `noise`), on cells of `(correlations, channels)` whose correlations
-    /// have the receptors `receptors` (`[window]`).
+    /// `noise`, with a batch's antenna scales admitted `scales`), on cells
+    /// of `(correlations, channels)` whose correlations have the receptors
+    /// `receptors` (`[window]`).
     pub(super) fn new(
         (scans, planned): (&'s [Scan], &'s [PlannedScan<'s>]),
         geometry: &'s ArrayGeometry<'s>,
         team: &'s WorkerTeam,
-        (prediction, plan, noise): (Option<PredictionStage<'s>>, &'s DataPlan, NoiseContext<'s>),
+        (prediction, plan, noise, scales): (
+            Option<PredictionStage<'s>>,
+            &'s DataPlan,
+            NoiseContext<'s>,
+            NoiseScales,
+        ),
         (correlations, channels, receptors): (usize, usize, Vec<Vec<[usize; 2]>>),
     ) -> Self {
         Self {
@@ -171,6 +180,7 @@ impl<'s> Pipeline<'s> {
                 team,
                 plan,
                 noise,
+                scales,
                 receptors,
                 correlations,
                 samples: correlations * channels,
@@ -326,6 +336,7 @@ impl Rows<'_> {
             (self.plan, self.noise, self.team),
             (&self.rows, &runs),
             noised,
+            &self.scales,
         )?;
         let mut jobs = vec![BatchJob::Columns(ColumnsJob {
             writer,
@@ -520,7 +531,8 @@ fn noised_here(plan: &DataPlan, scan: usize, noised: &dyn Fn(usize) -> bool) -> 
 /// The antenna scales the `tsys-atm` noise of a batch's jobs reads
 /// ([`noise_jobs`], with the same arguments): for each run they take, those
 /// its rows need for each `tsys-atm` application of its scan, worked out
-/// on `team` before the jobs run. Empty when no run needs any.
+/// on `team` before the jobs run, in a table with the room `bound` admits
+/// for the batch's rows. Empty when no run needs any.
 ///
 /// # Errors
 ///
@@ -529,8 +541,10 @@ pub(super) fn batch_scales(
     (plan, context, team): (&DataPlan, NoiseContext<'_>, &WorkerTeam),
     (rows, runs): (&[RowGeometry], &[(usize, usize, usize)]),
     noised: &dyn Fn(usize) -> bool,
+    bound: &NoiseScales,
 ) -> SimulatorResult<BatchScales> {
-    let mut scales = BatchScalesBuilder::default();
+    let batch_rows = runs.iter().map(|&(_, _, count)| count).sum();
+    let mut scales = BatchScalesBuilder::with_capacity(bound.entries(batch_rows));
     for &(scan, start, count) in runs {
         if !noised_here(plan, scan, noised) {
             continue;

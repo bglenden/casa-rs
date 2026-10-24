@@ -45,9 +45,9 @@
 //!   half a band below channel `c`. casa-rs evaluates the atmosphere at each
 //!   channel's own frequency (CHAN_FREQ).
 //! - For a window of one channel after the first, CASA reads its channel map
-//!   past its end and the term's `T` comes out bad: those rows get unscaled,
-//!   1 Jy noise. casa-rs evaluates the atmosphere at the channel's frequency
-//!   as for the first window.
+//!   past its end, which is undefined; in CASA 6.7.6 the term's `T` came out
+//!   bad and those rows got unscaled, 1 Jy noise. casa-rs evaluates the
+//!   atmosphere at the channel's frequency as for the first window.
 //! - As for `tsys-manual`, casa-rs takes each row's own airmasses and
 //!   EXPOSURE, where CASA caches airmasses for 100 s and uses the first
 //!   row's EXPOSURE.
@@ -177,10 +177,10 @@ impl WindowAtmosphere {
         let mut h_nu_over_k = Vec::with_capacity(channels);
         for (channel, frequency_hz) in profile.grid().frequencies_hz().enumerate() {
             columns.push(profile.sky_column(channel, &sky)?);
-            // `AtmosCorruptor::opac`: dry plus wet, each held as a `Float`.
-            opacity.push(
-                profile.dry_opacity(channel) as f32 + profile.wet_opacity(channel, pwv_m) as f32,
-            );
+            // `AtmosCorruptor::opac`: dry plus wet in double precision, the
+            // sum held as a `Float`.
+            opacity
+                .push((profile.dry_opacity(channel) + profile.wet_opacity(channel, pwv_m)) as f32);
             h_nu_over_k.push(PLANCK_OVER_BOLTZMANN * frequency_hz);
         }
         Ok(Self {

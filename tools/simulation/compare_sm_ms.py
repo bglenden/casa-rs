@@ -508,9 +508,6 @@ def tsys_manual_sigma(
 # Tebb; AtmosCorruptor's, K/Hz, for hν/k.
 ATM_H_OVER_K_PER_GHZ = 0.04799274551
 CORRUPTOR_H_OVER_K_PER_HZ = 4.80145e-11
-# Airmasses at which `tsys_atm_sigma` evaluates ATM, interpolating between
-# them: Tsys is smooth in the airmass, and the comparison statistical.
-ATM_AIRMASS_SAMPLES = 64
 
 
 def atm_site(term: dict) -> dict:
@@ -636,9 +633,11 @@ def tsys_atm_sigma(term: dict, geometry: dict, mapping: str, sky=at_tool_sky) ->
             continue
         order = np.argsort(frequencies)
         masses = airmass[rows]
-        above = masses[masses < 1000.0]
-        samples = np.linspace(above.min(), above.max(), ATM_AIRMASS_SAMPLES) if above.size else np.empty(0)
-        samples = np.unique(np.append(samples, 1000.0))
+        # ATM at every distinct airmass, exactly: Tsys grows as e^(τA), so
+        # interpolating between samples would make one row's σ depend on
+        # the others' airmasses (#897 review).
+        samples, where = np.unique(masses, return_inverse=True)
+        where = where.reshape(masses.shape)
         tau, sky_tebb = sky(site, frequencies[order], samples)
         inverse = np.argsort(order)
         tau, sky_tebb = tau[inverse], sky_tebb[inverse]
@@ -656,16 +655,8 @@ def tsys_atm_sigma(term: dict, geometry: dict, mapping: str, sky=at_tool_sky) ->
             grid = h_nu_k * np.exp(tau[:, None] * samples[None, :]) * (
                 1.0 / np.expm1(h_nu_k / tebb) + site["trx"] / h_nu_k
             ) * (1 + max(int(site["rxtype"]), 0))
-        # Below the horizon (airmass 1000, the last sample) exactly; above
-        # it, interpolated between the samples there.
         n = frequencies.size
-        tsys = np.empty((2, n, masses.shape[0]))
-        for end in range(2):
-            low = masses[:, end] < 1000.0
-            for ch in range(n):
-                if low.any():
-                    tsys[end, ch, low] = np.interp(masses[low, end], samples[:-1], grid[ch, :-1])
-                tsys[end, ch, ~low] = grid[ch, -1]
+        tsys = np.stack([grid[:, where[:, end]] for end in range(2)])
         factor = c * a / np.sqrt(np.asarray(geometry["bandwidth"])[rows] * np.asarray(geometry["exposure"])[rows])
         with np.errstate(over="ignore", invalid="ignore"):
             scale = np.sqrt(factor[None, None, :] * tsys) / np.asarray(geometry["diameters"])[rows].T[:, None, :]

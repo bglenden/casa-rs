@@ -245,6 +245,30 @@ class TsysAtmSigmaTests(unittest.TestCase):
         airmass = 1.0 / np.sin(np.radians(60.0))
         self.assertTrue(np.allclose(opaque[0] / found[0], np.exp(0.1 * airmass), rtol=1e-6))
 
+    def test_each_row_takes_its_own_airmass_whatever_the_others(self) -> None:
+        # Tsys grows as e^(τA): a row at airmass 1.5 is evaluated there,
+        # and a flagged row low in the sky (airmass 100) in the same window
+        # changes no other row's σ.
+        sky, asked = flat_sky(100.0, tau=0.5)
+        chan = 183.0e9 + 1.0e5 * np.arange(4)
+
+        def geometry(elevations_deg: list) -> dict:
+            one = atm_geometry([(chan, chan[0])], [90.0, 90.0])
+            rows = len(elevations_deg)
+            for key in ("spw", "bandwidth", "exposure"):
+                one[key] = np.repeat(one[key], rows)
+            one["diameters"] = np.repeat(one["diameters"], rows, axis=0)
+            one["elevations"] = np.radians(np.array([[e, e] for e in elevations_deg]))
+            return one
+
+        airmass_15 = float(np.degrees(np.arcsin(1.0 / 1.5)))
+        alone = tsys_atm_sigma({"mode": "tsys-atm"}, geometry([90.0, airmass_15]), "channel", sky)
+        self.assertTrue(np.allclose(alone[1] / alone[0], np.exp(0.5 * 0.5), rtol=1e-12))
+        low = float(np.degrees(np.arcsin(0.01)))
+        beside = tsys_atm_sigma({"mode": "tsys-atm"}, geometry([90.0, airmass_15, low]), "channel", sky)
+        self.assertTrue(np.array_equal(beside[:2], alone))
+        self.assertTrue(np.allclose(asked[-1][2], [1.0, 1.5, 100.0], rtol=1e-12))
+
     def test_casas_mapping_asks_atm_below_and_a_late_continuum_window_is_unscaled(self) -> None:
         sky, asked = flat_sky(100.0, tau=0.05)
         chan = 183.0e9 + 1.0e5 * np.arange(4)

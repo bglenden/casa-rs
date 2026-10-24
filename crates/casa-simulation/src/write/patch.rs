@@ -349,6 +349,7 @@ impl Patch<'_> {
             (plan, NoiseContext::of(session), team),
             (geometry, runs),
             &noised,
+            &self.shape.noise_scales,
         )?;
         let mut jobs = noise_jobs(
             (plan, NoiseContext::of(session), team),

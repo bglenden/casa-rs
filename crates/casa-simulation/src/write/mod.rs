@@ -243,7 +243,12 @@ fn write_main<'s>(
         (session.scans(), planned),
         &geometry,
         &team,
-        (prediction, session.data_plan(), NoiseContext::of(session)),
+        (
+            prediction,
+            session.data_plan(),
+            NoiseContext::of(session),
+            shape.noise_scales,
+        ),
         (
             shape.correlations,
             shape.channels,

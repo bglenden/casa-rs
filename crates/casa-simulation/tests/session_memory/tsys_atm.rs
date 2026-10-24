@@ -5,9 +5,11 @@
 //! channel's line of sight through ATM's layers, which grows with the
 //! channels. It admits what the windows keep, and what building the largest
 //! holds, before it builds anything, and keeps the windows' share for as
-//! long as the term lives. Over a window of 4,096 channels the heap stays
-//! within what the reservations hold at every allocation of `setnoise`,
-//! what it leaves live is what they keep, and `reset` drops both.
+//! long as the term lives. Over a window of 4,096 channels, and over 4,096
+//! windows of a channel each (whose vector the term keeps too, #897
+//! review), the heap stays within what the reservations hold at every
+//! allocation of `setnoise`, what it leaves live is what they keep, and
+//! `reset` drops both.
 //!
 //! `close` then draws each row's noise channel by channel from each
 //! antenna's scales, which it works out once a batch for each antenna and
@@ -15,7 +17,8 @@
 //! channels a batch's scales hold megabytes, and what `close` holds more for
 //! `tsys-atm` than for `tsys-manual` is within what it is admitted more
 //! (without that admission the law fails: 4.8 MB more held, none
-//! admitted). The first law's base and ten-times-the-rows cases with
+//! admitted); so it is at one channel with 65,544 entries in a batch. The
+//! first law's base and ten-times-the-rows cases with
 //! `tsys-atm` noise hold their admission, and ten times the rows no more
 //! beyond it but a little ([`super::tsys`]'s law), as does the patch of an
 //! opened MeasurementSet ([`super::patch`]'s rows law).
@@ -23,11 +26,13 @@
 //! Each law runs alone in its process, as the binary's other laws do
 //! ([`super::alone`]).
 
-use casa_simulation::{AtmosphereSpec, NoiseSpec, TsysParameters};
+use casa_simulation::{AtmosphereSpec, NoiseSpec, ObserveSpec, SpectralWindowSpec, TsysParameters};
+use casa_types::measures::frequency::FrequencyRef;
+use casa_types::measures::{EpochRef, MEpoch};
 
 use super::{
-    ATM_NOISE, EXCESS, LIVE, Ordering, PEAK, ReservationWindow, alone, charge_process_caches,
-    configured, excess_now, reserved_memory, resources, scan,
+    ATM_NOISE, EXCESS, LIVE, Ordering, PEAK, REFERENCE_MJD, ReservationWindow, alone,
+    charge_process_caches, configured, excess_now, reserved_memory, resources, scan,
 };
 
 /// The session's budget beside the process caches: ample for the
@@ -51,11 +56,45 @@ fn setnoise_admits_the_atmosphere_it_builds_and_keeps_it_with_the_term() {
     if !alone("tsys_atm::setnoise_admits_the_atmosphere_it_builds_and_keeps_it_with_the_term") {
         return;
     }
+    setnoise_holds_its_admission(1, CHANNELS);
+}
+
+/// Spectral windows of one channel each, whose atmospheres the term keeps
+/// in a vector of its own.
+const NARROW_WINDOWS: usize = 4_096;
+
+/// The setnoise law over [`NARROW_WINDOWS`] windows of a channel each:
+/// what grows with the windows (the term's vector of them, and each one's
+/// atmosphere) is charged as it is kept (#897 review).
+#[test]
+fn setnoise_charges_every_window_it_keeps() {
+    if !alone("tsys_atm::setnoise_charges_every_window_it_keeps") {
+        return;
+    }
+    setnoise_holds_its_admission(NARROW_WINDOWS, 1);
+}
+
+/// `setnoise` over `windows` windows of `channels` channels holds within
+/// its reservations at every allocation, leaves live what they keep, and
+/// `reset` drops both.
+fn setnoise_holds_its_admission(windows: usize, channels: usize) {
     let resources = resources(BUDGET);
     charge_process_caches(resources.host(), resources.policy()).expect("the process caches");
     let measures = casa_test_support::deterministic_measures_provider();
     let root = tempfile::tempdir().expect("temporary directory");
-    let mut sm = configured(&root.path().join("atm.ms"), &measures, BUDGET, CHANNELS);
+    let mut sm = configured(&root.path().join("atm.ms"), &measures, BUDGET, channels);
+    for window in 1..windows {
+        sm.set_spectral_window(&SpectralWindowSpec {
+            name: format!("narrow{window}"),
+            start_frequency_hz: 230e9 + 1e6 * window as f64,
+            channel_width_hz: 1e6,
+            resolution_hz: 1e6,
+            frame: FrequencyRef::TOPO,
+            channel_count: channels,
+            stokes: "XX YY".to_string(),
+        })
+        .expect("setspwindow");
+    }
     sm.observe(&scan(10)).expect("observe");
     // Once unmeasured, so the log's callsites and the worker team's state
     // are the process's before anything is measured.
@@ -75,8 +114,8 @@ fn setnoise_admits_the_atmosphere_it_builds_and_keeps_it_with_the_term() {
     let kept = reserved_memory() - unset;
     drop(window);
     println!(
-        "setnoise of {CHANNELS} channels: heap peak {peak}, admitted {admitted}, at most \
-         {beyond} beyond; left {left}, kept {kept}"
+        "setnoise of {windows} windows of {channels} channels: heap peak {peak}, admitted \
+         {admitted}, at most {beyond} beyond; left {left}, kept {kept}"
     );
     assert!(
         beyond <= SETNOISE_ALLOWANCE_BYTES as i64,
@@ -91,7 +130,7 @@ fn setnoise_admits_the_atmosphere_it_builds_and_keeps_it_with_the_term() {
         "the term keeps charged what it keeps ({kept} for {left} live)"
     );
     assert!(
-        kept > 100 * CHANNELS as u64,
+        kept > 100 * (windows * channels) as u64,
         "the atmosphere is charged ({kept} bytes)"
     );
     sm.reset();
@@ -140,13 +179,57 @@ fn close_admits_each_batchs_antenna_scales() {
     if !alone("tsys_atm::close_admits_each_batchs_antenna_scales") {
         return;
     }
+    close_holds_what_it_is_admitted_more((CHANNELS, 10.0), [20, 200], true);
+}
+
+/// Integrations of the narrow law: 65,544 entries, just past a power of
+/// two.
+const NARROW_INTEGRATIONS: usize = 10_924;
+
+/// The close law for many antenna scales of one channel (#897 review):
+/// [`NARROW_INTEGRATIONS`] one-second integrations of six antennas, one
+/// batch of 163,860 rows. The scales themselves are small, and what the
+/// table holds beside them (its index and its pending computations) is
+/// most of it; `close` holds within what it is admitted more. The writer's
+/// room for batches it does not hold leaves megabytes to spare here, so
+/// this law alone would pass a table that grew as its entries came;
+/// `corrupt::batch_scales`' unit test holds the table to its reserved room.
+#[test]
+fn close_admits_a_narrow_batchs_many_antenna_scales() {
+    if !alone("tsys_atm::close_admits_a_narrow_batchs_many_antenna_scales") {
+        return;
+    }
+    close_holds_what_it_is_admitted_more((1, 1.0), [20, NARROW_INTEGRATIONS], false);
+}
+
+/// `close` of sessions of `channels` channels and `integrations` (warmed,
+/// measured) integrations of `integration_s`, with `tsys-atm` noise and
+/// then `tsys-manual`: what it holds more for `tsys-atm`, on the least of
+/// [`CLOSE_RUNS`] runs, is within what it is admitted more, and the heap is
+/// within the reservations at every allocation of either. `batched`: the
+/// measured sessions are written in several batches.
+fn close_holds_what_it_is_admitted_more(
+    (channels, integration_s): (usize, f64),
+    [warm, measured]: [usize; 2],
+    batched: bool,
+) {
     let resources = resources(WIDE_BUDGET);
     charge_process_caches(resources.host(), resources.policy()).expect("the process caches");
     let measures = casa_test_support::deterministic_measures_provider();
     let root = tempfile::tempdir().expect("temporary directory");
     let close = |name: &str, noise: &NoiseSpec, integrations: usize| {
-        let mut sm = configured(&root.path().join(name), &measures, WIDE_BUDGET, CHANNELS);
-        sm.observe(&scan(integrations)).expect("observe");
+        let mut sm = configured(&root.path().join(name), &measures, WIDE_BUDGET, channels);
+        sm.set_times(
+            integration_s,
+            false,
+            MEpoch::from_mjd(REFERENCE_MJD, EpochRef::UTC),
+        )
+        .expect("settimes");
+        sm.observe(&ObserveSpec {
+            stop_s: integration_s * integrations as f64,
+            ..scan(0)
+        })
+        .expect("observe");
         sm.set_noise(noise).expect("setnoise");
         sm.corrupt().expect("corrupt");
         let unset = reserved_memory();
@@ -170,15 +253,15 @@ fn close_admits_each_batchs_antenna_scales() {
     let manual = NoiseSpec::tsys_manual(TsysParameters::default());
     // Once unmeasured each, so what a process keeps once it has written is
     // the process's before anything is measured.
-    close("warm-manual.ms", &manual, 20);
-    close("warm-atm.ms", &tsys_atm(), 20);
+    close("warm-manual.ms", &manual, warm);
+    close("warm-atm.ms", &tsys_atm(), warm);
     let mut least = [u64::MAX; 2];
     let mut admitted = [0; 2];
     for run in 0..CLOSE_RUNS {
         for (index, noise) in [&manual, &tsys_atm()].into_iter().enumerate() {
-            let closed = close(&format!("{run}-{index}.ms"), noise, 200);
+            let closed = close(&format!("{run}-{index}.ms"), noise, measured);
             println!(
-                "{}: {} batches of {} at {CHANNELS} channels: heap peak {}, admitted {}, at \
+                "{}: {} batches of {} at {channels} channels: heap peak {}, admitted {}, at \
                  most {} beyond",
                 noise.mode,
                 closed.batches,
@@ -188,7 +271,7 @@ fn close_admits_each_batchs_antenna_scales() {
                 closed.beyond
             );
             assert!(
-                closed.batches > 1,
+                !batched || closed.batches > 1,
                 "the session is written in several batches"
             );
             assert!(

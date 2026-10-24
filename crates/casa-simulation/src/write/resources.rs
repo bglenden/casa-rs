@@ -110,13 +110,18 @@ impl NoiseScales {
         }
     }
 
+    /// The most antenna-scale entries a batch of `rows` rows needs: the room
+    /// its table reserves.
+    pub(super) fn entries(&self, rows: usize) -> usize {
+        BatchScales::most_entries(self.terms, rows, self.integrations)
+    }
+
     /// The most a batch of `rows` rows holds with `workers` workers.
     pub(super) fn bytes(&self, rows: usize, workers: usize) -> u64 {
         if self.terms == 0 {
             return 0;
         }
-        let entries = BatchScales::most_entries(self.terms, rows, self.integrations);
-        BatchScales::bytes(entries, self.channels)
+        BatchScales::bytes(self.entries(rows), self.channels)
             + workers as u64 * NoiseScratch::bytes(self.channels)
     }
 }
