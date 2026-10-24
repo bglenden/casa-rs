@@ -19,9 +19,9 @@
 //! On Metal the stage also corrupts the rows it predicts: the device adds
 //! their scans' noise to the model in its memory, with the draws of
 //! `casa_numerics::cell_noise`, before the model is copied into DATA, so
-//! the host makes no pass of its own over those cells (#855). Noise comes
-//! last in a row's DATA, so the device adds it only when nothing is added
-//! to the row after the prediction ([`device_noise`]).
+//! the host makes no pass of its own over those cells (#855). A patch after
+//! `openfromms` adds the DATA on disk after the prediction, and the host
+//! adds that noise after it ([`device_noise`]).
 //!
 //! The rows are as `observe` writes them: the row flag is FLAG_ROW, every
 //! sample is unflagged with unit weight, and an autocorrelation predicts the
@@ -49,16 +49,20 @@ use crate::session::observe::Scan;
 use crate::session::plan::DataPlan;
 
 /// The noise of scan `scan` in `plan` that a stage predicting the scan may
-/// add on the device ([`PredictionStage::predict`]): none when visibilities
-/// are added to its rows after the prediction (a component list's, total
-/// power's, or with `from_disk` the DATA on disk), whose noise the host
-/// adds after them. Noise comes last, as on the CPU: a large value added
-/// after it would round it away (#886 review).
+/// add on the device ([`PredictionStage::predict`]): all of it, but none
+/// when `from_disk`, the DATA on disk being added after the prediction (a
+/// patch after `openfromms`), whose noise the host adds after it (#886
+/// review).
+///
+/// Noise added before a value that is then cancelled keeps only the
+/// precision of the sum: beside visibilities of 2²³ σ and more it is
+/// rounded to steps of σ, or lost. The DATA on disk may hold such a value. The component lists' and
+/// total power's visibilities, which the host adds after the device's
+/// noise, are a sky model's, far below that: adding them after the noise
+/// rounds each sample once, independently, and the device's noise saves
+/// the host's pass (#886 follow-up: 0.34 s of a 2.1 s Metal `close`).
 pub(super) fn device_noise(plan: &DataPlan, scan: usize, from_disk: bool) -> &[NoiseApplication] {
-    let added_after = from_disk
-        || plan.components_for_scan(scan).next().is_some()
-        || plan.single_dish_for_scan(scan).next().is_some();
-    if added_after {
+    if from_disk {
         &[]
     } else {
         plan.noise_for_scan(scan)
