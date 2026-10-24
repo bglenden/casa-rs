@@ -1194,7 +1194,9 @@ antenna's and receptor's screens apart.
 ## `setgain(mode='random')` draws gains about zero
 
 - Date noted: 2026-10-24
-- Status: CASA bug; casa-rs does not follow it (#841 Phase 3)
+- Status: CASA bug; casa-rs does not follow it (owner, 2026-10-24: follow
+  CASA only if there is a good reason for its behaviour, which there is
+  not; #841 Phase 3)
 - Affected code: `synthesis/MeasurementComponents/CalCorruptor.cc`
   (`GJonesCorruptor::simPar`)
 
@@ -1205,7 +1207,14 @@ hundredths, which all but erase the data. Measured with CASA 6.7.6,
 `amplitude=[0.05]` on a 1 Jy point: the table's gains have a mean modulus
 of 0.065, real parts of mean 0.0000 and standard deviation 0.048, and DATA
 a mean modulus of 0.0046 Jy. The `fbm` gains scatter about one, and the
-amplitude is documented as the gain variations' scale. casa-rs draws
+amplitude is documented as the gain variations' scale. Gain errors are
+multiplicative and near unity: a well-designed array's gains factor into
+antenna gains to within a per cent, and simulations of gain errors draw
+deviations of a per cent and a degree about one (Synthesis Imaging in Radio
+Astronomy II, pp. 122 and 354; Heywood, *Calibration II*, NRAO Synthesis
+Imaging Workshop 2024, slide 22). Nothing in CASA adds the one back for
+`random`; it appears in `GJonesCorruptor::simPar` and
+`GJones::createCorruptor` only. casa-rs draws
 `1 + camp.re·n₁ + i·camp.im·n₂`.
 
 ## An autocorrelation row resets its antenna's simulated term
