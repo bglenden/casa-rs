@@ -13,9 +13,11 @@ twin (a 1 Jy point at the phase centre):
   simulator defaults). CASA's `φ` is ATM's dispersive part on its grid
   half a band below each channel (`atm_frequencies(..., 'casa')`);
   casa-rs's is the dispersive and non-dispersive parts together at each
-  channel's CHAN_FREQ. Both come from casatools' `at` tool, whose delays
-  are for its profile's own water column and are scaled to `pwv` (as
-  ATM's `SkyStatus` scales them). δ recovered channel by channel must be
+  channel's CHAN_FREQ. CASA's comes from casatools' `at` tool
+  (`at_tool_wet_delays`), whose delays are for its profile's own water
+  column and are scaled to `pwv` (as ATM's `SkyStatus` scales them);
+  casa-rs's from casa-atmosphere at `pwv` (`atm_model.casars_wet_delays`),
+  which corrects ATM's data errors. δ recovered channel by channel must be
   one value per row within `MODEL_TOLERANCE` (single precision), on the
   channels whose delay is at least a twentieth of the window's largest.
 - **data** (`data_failures`). DATA over the twin is `g_p(c) · conj(g_q(c))`
@@ -49,7 +51,7 @@ DELAY_FLOOR = 0.05
 
 # casa-rs's `individual` series' root-mean-square, relative to `deltapwv`:
 # the series are normalised to it exactly, so this checks the excess read
-# back through the `at` tool's delays, and so the delays' absolute size
+# back through casa-rs's own delays, and so the delays' absolute size
 # (2.6e-8 measured in sm_trop_scenarios.json).
 RMS_TOLERANCE = 1e-5
 
