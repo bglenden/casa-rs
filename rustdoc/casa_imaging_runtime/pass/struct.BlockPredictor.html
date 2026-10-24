@@ -2,16 +2,16 @@
 (<code>SIMapperCollection::degrid</code>), for a caller that is not a major cycle:
 the simulator, which predicts the rows it writes. It is the major-cycle
 pass’s own prediction (<a href="struct.MajorCyclePass.html" title="struct casa_imaging_runtime::pass::MajorCyclePass"><code>super::MajorCyclePass</code></a>): each row as
-[<code>SpectralResampler::predict_row</code>] predicts it, a flagged row, a flagged
+<a href="../../casa_imaging_operator/resample/struct.SpectralResampler.html#method.predict_row" title="method casa_imaging_operator::resample::SpectralResampler::predict_row"><code>SpectralResampler::predict_row</code></a> predicts it, a flagged row, a flagged
 sample and an autocorrelation (unless the domain’s resampler is
-[<code>SpectralResampler::predicting_autocorrelations</code>]) predicting zero.</p>
+<a href="../../casa_imaging_operator/resample/struct.SpectralResampler.html#method.predicting_autocorrelations" title="method casa_imaging_operator::resample::SpectralResampler::predicting_autocorrelations"><code>SpectralResampler::predicting_autocorrelations</code></a>) predicting zero.</p>
 <p>The rows are predicted in row chunks on a <a href="struct.WorkerTeam.html" title="struct casa_imaging_runtime::pass::WorkerTeam"><code>WorkerTeam</code></a>, on the CPU or
 on Metal (<a href="enum.BackendChoice.html" title="enum casa_imaging_runtime::pass::BackendChoice"><code>BackendChoice</code></a>). Each chunk keeps one prediction batch and
 one backend per domain, so a predictor holds <a href="struct.BlockPredictor.html#method.bytes" title="associated function casa_imaging_runtime::pass::BlockPredictor::bytes"><code>Self::bytes</code></a> whatever
 blocks within its <a href="struct.BlockShape.html" title="struct casa_imaging_runtime::pass::BlockShape"><code>BlockShape</code></a> it predicts; on Metal the model at the
 block’s native cells is formed in device memory and copied out. A
 domain’s model grids, and on Metal their device copy, are the caller’s
-to admit ([<code>PreparedModelGrids::bytes</code>]).</p>
+to admit (<a href="../../casa_imaging_operator/backend/struct.PreparedModelGrids.html#method.bytes" title="method casa_imaging_operator::backend::PreparedModelGrids::bytes"><code>PreparedModelGrids::bytes</code></a>).</p>
 <p>The CPU’s predictions do not depend on the workers, the chunking or how
 the rows are split into blocks; Metal’s agree with them to the device’s
 <code>f32</code> arithmetic.</p>
@@ -23,7 +23,7 @@ the rows are split into blocks; Metal’s agree with them to the device’s
 ) -&gt; <a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.u64.html">u64</a></h4></section></summary><div class="docblock"><p>Bytes <a href="struct.BlockPredictor.html#method.new" title="associated function casa_imaging_runtime::pass::BlockPredictor::new"><code>Self::new</code></a> holds, and <a href="struct.BlockPredictor.html#method.predict_into" title="method casa_imaging_runtime::pass::BlockPredictor::predict_into"><code>Self::predict_into</code></a> while it runs,
 for the same arguments: each chunk’s prediction batch and record,
 each chunk’s backend per domain with what it keeps
-([<code>CpuBackend::batch_bytes</code>] and its per-sample buffers; on Metal
+(<a href="../../casa_imaging_operator/cpu/struct.CpuBackend.html#method.batch_bytes" title="associated function casa_imaging_operator::cpu::CpuBackend::batch_bytes"><code>CpuBackend::batch_bytes</code></a> and its per-sample buffers; on Metal
 [<code>casa_imaging_metal::ring_bytes</code>], [<code>casa_imaging_metal::batch_bytes</code>]
 and [<code>casa_imaging_metal::kernel_bytes</code>]), on Metal the model at the
 largest block’s native cells in device memory, and a call’s hand-off
