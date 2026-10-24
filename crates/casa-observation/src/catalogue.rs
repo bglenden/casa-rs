@@ -2,8 +2,10 @@
 //! The catalogue of an opened observation: its antennas, fields and
 //! partitions, with identities scoped to that opening.
 
-use casa_types::measures::direction::MDirection;
+use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::frequency::FrequencyRef;
+use casa_types::measures::position::MPosition;
+use casa_types::quanta::Quantity;
 
 /// An antenna of one opened observation.
 ///
@@ -17,6 +19,10 @@ pub struct AntennaId(pub u32);
 /// A field of one opened observation: an index into [`Catalogue::fields`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct FieldId(pub u32);
+
+/// A scan of one opened observation: an index into [`Catalogue::scans`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ScanId(pub u32);
 
 /// A partition of one opened observation: an index into
 /// [`Catalogue::partitions`]. A partition has one spectral window and one
@@ -152,7 +158,7 @@ impl Correlation {
 ///
 /// Jy only where the store says so; anything else is kept as the store
 /// spells it and never assumed to be a calibrated flux density.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum VisibilityUnits {
     /// Janskys.
     Jansky,
@@ -160,27 +166,30 @@ pub enum VisibilityUnits {
     /// verbatim (XRADIO's converter writes `"unkown"`).
     Declared(String),
     /// The store declares none (MSv2 `DATA` has no unit keyword).
+    #[default]
     Undeclared,
 }
 
-/// One antenna of the catalogue.
-#[derive(Clone, Debug, PartialEq)]
+/// One antenna of the catalogue, in native Measures and Quanta types: the
+/// adapter checks the stored units and frame once, and no consumer handles
+/// raw coordinates.
+#[derive(Clone, Debug)]
 pub struct AntennaEntry {
     /// Antenna name as stored (`ANTENNA::NAME`; in MSv4 the
     /// `antenna_name` coordinate, which XRADIO forms as `NAME_STATION`).
     pub name: String,
     /// Station or pad name.
     pub station: String,
-    /// Geocentric ITRF position in metres.
-    pub position_m: [f64; 3],
+    /// Position (geocentric ITRF in both trial stores).
+    pub position: MPosition,
     /// Mount type as stored (`ALT-AZ`).
     pub mount: String,
-    /// Dish diameter in metres.
-    pub dish_diameter_m: f64,
+    /// Dish diameter.
+    pub dish_diameter: Quantity,
     /// Receptor polarization types in receptor order (`X`, `Y`).
     pub receptors: Vec<String>,
-    /// Receptor angles in radians, in the same order.
-    pub receptor_angles_rad: Vec<f64>,
+    /// Receptor angles, in the same order.
+    pub receptor_angles: Vec<Quantity>,
 }
 
 /// One field of the catalogue.
@@ -193,6 +202,37 @@ pub struct FieldEntry {
     pub phase_centre: MDirection,
     /// The source observed, when the store names one.
     pub source_name: Option<String>,
+}
+
+/// One scan of the catalogue.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ScanEntry {
+    /// The scan's name as stored: MSv4 `scan_name`; for MSv2 the decimal
+    /// `SCAN_NUMBER`, which is how XRADIO names it.
+    pub name: String,
+    /// The casacore scan number: MSv2 `SCAN_NUMBER`, or an MSv4 scan name
+    /// that is a decimal integer (XRADIO's convention); `None` otherwise.
+    pub number: Option<i32>,
+    /// Scan intents (MSv2 `STATE::OBS_MODE` of the scan's rows; MSv4
+    /// `scan_name.scan_intents`).
+    pub intents: Vec<String>,
+}
+
+/// The frame a data group's UVW are in, and the label the store wrote.
+///
+/// The batch's [`UvwView`](casa_types::measures::UvwView) carries only the
+/// effective frame: an adapter resolves the store's convention once, at
+/// opening, and refuses a store whose label it cannot resolve. For MSv2
+/// that convention is CASA's: `UVW` is computed in the phase centre's frame
+/// whatever its `MEASINFO` says (simulators and fillers commonly label it
+/// `ITRF`, the casacore default; `fixvis` notes the label is usually wrong,
+/// and XRADIO's converter relabels it the same way). MSv4 states the frame.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct UvwFrame {
+    /// The frame the UVW values are in.
+    pub effective: DirectionRef,
+    /// The frame the store's label names, when it names one.
+    pub stored_label: Option<DirectionRef>,
 }
 
 /// One named data group of a partition: which stored variables hold its
@@ -212,6 +252,8 @@ pub struct DataGroupEntry {
     pub uvw: String,
     /// The visibilities' units.
     pub units: VisibilityUnits,
+    /// The UVW frame.
+    pub uvw_frame: UvwFrame,
 }
 
 /// One partition: one spectral window and correlation setup.
@@ -244,6 +286,8 @@ pub struct Catalogue {
     pub antennas: Vec<AntennaEntry>,
     /// Fields; [`FieldId`] indexes them.
     pub fields: Vec<FieldEntry>,
+    /// Scans; [`ScanId`] indexes them.
+    pub scans: Vec<ScanEntry>,
     /// Partitions; [`PartitionId`] indexes them.
     pub partitions: Vec<PartitionEntry>,
 }
@@ -257,6 +301,16 @@ impl Catalogue {
     #[must_use]
     pub fn partition(&self, id: PartitionId) -> &PartitionEntry {
         &self.partitions[id.0 as usize]
+    }
+
+    /// Data group `name` of partition `id`, if it has one.
+    #[must_use]
+    pub fn data_group(&self, id: PartitionId, name: &str) -> Option<&DataGroupEntry> {
+        self.partitions
+            .get(id.0 as usize)?
+            .data_groups
+            .iter()
+            .find(|group| group.name == name)
     }
 }
 

@@ -6,9 +6,10 @@ use std::collections::{BTreeMap, VecDeque};
 use std::ops::Range;
 
 use casa_observation::{
-    Closure, FieldId, FragmentPosition, GroupFragment, GroupKey, Grouping, ObservationError,
-    PartitionId,
+    FieldId, FragmentPosition, GroupFragment, GroupKey, Grouping, ObservationError, PartitionId,
 };
+
+use super::GroupClosure as Closure;
 
 /// The group of every traversal unit (an MSv2 row, an MSv4 time) and where
 /// each group starts and ends, computed once at binding from the unit

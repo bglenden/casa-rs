@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! The trial's imaging source: the production major-cycle pass reads
-//! [`VisibilityBatch`]es from either adapter through the runtime's
-//! [`BoundedSource`] seam.
+//! [`VisibilityBatch`]es through the runtime's [`BoundedSource`] seam.
+//!
+//! This module is the reusable consumer: it sees only the shared
+//! [`Observation`] interface, binds one [`AccessRequest`] per wave and
+//! reads batches. It imports no MSv2 or MSv4 type; the test setup opens the
+//! store (`ms_trial_imaging.rs`, `open`).
 
 use std::ops::Range;
 use std::time::{Duration, Instant};
@@ -11,63 +15,10 @@ use casa_imaging_runtime::pass::{
     BlockShape, BoundedSource, DomainProjection, NativeBlock, NativeRowHeader, RowAddress,
     SampleContent, SourceError,
 };
-use casa_ms::observation_io::{Msv2Observation, Msv4Observation};
 use casa_observation::{
-    AccessRequest, BatchBuffers, Closure, Correlation, Fill, Grouping, IoCounters, Layout,
-    ObservationError, PartitionId, Precision, ReadEvent, Realization, Roles, VisibilityBatch,
-    VisibilityCursor,
+    AccessRequest, BatchBuffers, BoundCursor, Correlation, Grouping, IoCounters, Layout,
+    Observation, PartitionId, Precision, ReadEvent, Roles, VisibilityBatch, VisibilityCursor,
 };
-
-/// One of the two opened fixtures.
-pub enum Observation {
-    V2(Box<Msv2Observation>),
-    V4(Msv4Observation),
-}
-
-/// A bound traversal of either: static dispatch per batch.
-pub enum Cursor<'o> {
-    V2(casa_ms::observation_io::Msv2Cursor<'o>),
-    V4(casa_ms::observation_io::Msv4Cursor<'o>),
-}
-
-impl VisibilityCursor for Cursor<'_> {
-    fn realization(&self) -> &Realization {
-        match self {
-            Self::V2(cursor) => cursor.realization(),
-            Self::V4(cursor) => cursor.realization(),
-        }
-    }
-
-    fn fill(&mut self, buffers: &mut BatchBuffers) -> Result<Option<Fill>, ObservationError> {
-        match self {
-            Self::V2(cursor) => cursor.fill(buffers),
-            Self::V4(cursor) => cursor.fill(buffers),
-        }
-    }
-
-    fn counters(&self) -> IoCounters {
-        match self {
-            Self::V2(cursor) => cursor.counters(),
-            Self::V4(cursor) => cursor.counters(),
-        }
-    }
-}
-
-impl Observation {
-    pub fn catalogue(&self) -> &casa_observation::Catalogue {
-        match self {
-            Self::V2(observation) => observation.catalogue(),
-            Self::V4(observation) => observation.catalogue(),
-        }
-    }
-
-    pub fn bind(&self, request: &AccessRequest) -> Result<Cursor<'_>, ObservationError> {
-        Ok(match self {
-            Self::V2(observation) => Cursor::V2(observation.bind_read(request)?),
-            Self::V4(observation) => Cursor::V4(observation.bind_read(request)?),
-        })
-    }
-}
 
 /// The request one wave of the pass binds: the native channels `channels`,
 /// with or without the visibilities.
@@ -77,7 +28,7 @@ pub fn request(channels: Range<usize>, values: bool, max_samples: usize) -> Acce
         data_group: "base".to_string(),
         roles: Roles {
             values,
-            ..Roles::ALL
+            ..Roles::PAYLOAD
         },
         channels,
         layout: Layout::SampleMajor,
@@ -85,7 +36,6 @@ pub fn request(channels: Range<usize>, values: bool, max_samples: usize) -> Acce
             allow_narrowing: false,
         },
         grouping: Grouping::None,
-        closure: Closure::AtDelivery,
         max_samples,
     }
 }
@@ -108,16 +58,17 @@ pub struct SourceTrace {
     pub buffer_bytes: usize,
 }
 
-/// The production pass's view of a trial observation.
+/// The production pass's view of an observation.
 ///
 /// Each wave binds a new [`AccessRequest`] for the native channels that
 /// reach its planes (the pass's `restrict`), so the adapter decodes only
 /// those channels' chunks. The pass's [`NativeBlock`] owns its arrays, so
 /// every batch is copied into it once: the correlations the operator routes
-/// (here XX and YY of four) are gathered and a per-correlation weight is
-/// written for each channel. That copy is the seam's cost today.
+/// are gathered, a per-correlation weight is written for each channel, and
+/// each cell's flag is the batch's [`Validity`](casa_observation::Validity)
+/// rule. That copy is the seam's cost today.
 pub struct BatchSource<'o> {
-    observation: &'o Observation,
+    observation: &'o dyn Observation,
     /// Native channels the image selects, and their frequencies.
     selected: Range<usize>,
     frequencies: Vec<f64>,
@@ -126,7 +77,7 @@ pub struct BatchSource<'o> {
     /// Indices of the routed correlations within the batch's.
     routed: Vec<usize>,
     max_samples: usize,
-    cursor: Option<Cursor<'o>>,
+    cursor: Option<BoundCursor<'o>>,
     buffers: BatchBuffers,
     pub trace: SourceTrace,
 }
@@ -136,7 +87,7 @@ impl<'o> BatchSource<'o> {
     /// `axis`, routing correlations `routed` (in operator order), at most
     /// `max_samples` samples per batch.
     pub fn new(
-        observation: &'o Observation,
+        observation: &'o dyn Observation,
         selected: Range<usize>,
         axis: SpectralAxis,
         routed: &[Correlation],
@@ -199,7 +150,7 @@ impl<'o> BatchSource<'o> {
         let channel_indices: Vec<u32> = (first..first + channels).map(|c| c as u32).collect();
         let correlation_indices: Vec<u32> = self.routed.iter().map(|&c| c as u32).collect();
         block.reset(1, &channel_indices, &correlation_indices);
-        let flags = batch.group.flags.expect("flags");
+        let validity = batch.validity();
         let weights = batch.group.weights.expect("weights");
         let uvw = batch.group.uvw.expect("uvw");
         let row_flags = batch.group.row_flags;
@@ -259,7 +210,8 @@ impl<'o> BatchSource<'o> {
                                     row_values[cell] = data[[sample, channel, correlation]];
                                 }
                                 row_weights[cell] = weights.get(sample, channel, correlation);
-                                row_flags_out[cell] = flags[[sample, channel, correlation]];
+                                row_flags_out[cell] =
+                                    validity.excluded(sample, channel, correlation);
                             }
                         }
                         Ok::<_, std::convert::Infallible>(())
@@ -284,10 +236,11 @@ impl BoundedSource for BatchSource<'_> {
         let window = self.window(planes, restrict);
         let values = content == SampleContent::Visibilities;
         self.trace.traversals.push((window.clone(), values));
-        self.cursor = Some(
-            self.observation
-                .bind(&request(window, values, self.max_samples))?,
-        );
+        self.cursor = Some(self.observation.bind_read(&request(
+            window,
+            values,
+            self.max_samples,
+        ))?);
         Ok(())
     }
 

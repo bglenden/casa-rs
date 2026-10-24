@@ -5,8 +5,10 @@ use std::ops::Range;
 
 use crate::catalogue::PartitionId;
 
-/// Which roles of a data group a traversal reads. A role left out is not
-/// read at all: a flags-and-weights traversal decodes no visibilities.
+/// Which roles a traversal reads: the data group's payload and the
+/// samples' time auxiliaries and scan. A role left out is not read at all
+/// (a flags-and-weights traversal decodes no visibilities); a role asked for
+/// that the store does not hold fails binding, never a later read.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Roles {
     /// Visibilities.
@@ -17,6 +19,16 @@ pub struct Roles {
     pub weights: bool,
     /// UVW.
     pub uvw: bool,
+    /// Time centroids (MSv2 `TIME_CENTROID`, MSv4 `TIME_CENTROID`).
+    pub time_centroid: bool,
+    /// Integration intervals (MSv2 `INTERVAL`, MSv4
+    /// `time.integration_time`).
+    pub interval: bool,
+    /// Effective integration times (MSv2 `EXPOSURE`, MSv4
+    /// `EFFECTIVE_INTEGRATION_TIME`).
+    pub exposure: bool,
+    /// Scans (MSv2 `SCAN_NUMBER`, MSv4 `scan_name`).
+    pub scan: bool,
 }
 
 impl Roles {
@@ -26,6 +38,22 @@ impl Roles {
         flags: true,
         weights: true,
         uvw: true,
+        time_centroid: true,
+        interval: true,
+        exposure: true,
+        scan: true,
+    };
+
+    /// The data group's payload only: values, flags, weights and UVW.
+    pub const PAYLOAD: Self = Self {
+        values: true,
+        flags: true,
+        weights: true,
+        uvw: true,
+        time_centroid: false,
+        interval: false,
+        exposure: false,
+        scan: false,
     };
 }
 
@@ -69,20 +97,6 @@ pub enum Grouping {
     },
 }
 
-/// When a source announces that a group is complete.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Closure {
-    /// Mark the closing fragment `Last` or `Whole` whenever the traversal
-    /// can already prove it at delivery.
-    AtDelivery,
-    /// Never mark fragments closing; send [`ReadEvent::GroupEnd`] once the
-    /// traversal has read past the group. A trial knob that exercises the
-    /// deferred path a source without lookahead must take.
-    ///
-    /// [`ReadEvent::GroupEnd`]: crate::ReadEvent::GroupEnd
-    Deferred,
-}
-
 /// What a consumer asks one traversal to deliver.
 #[derive(Clone, Debug, PartialEq)]
 pub struct AccessRequest {
@@ -98,10 +112,12 @@ pub struct AccessRequest {
     pub layout: Layout,
     /// The visibility precision.
     pub precision: Precision,
-    /// Scientific groups.
+    /// Scientific groups. Whether a group's completion arrives on its last
+    /// fragment or as a later [`ReadEvent::GroupEnd`] is the source's
+    /// choice, not the consumer's: a consumer handles both.
+    ///
+    /// [`ReadEvent::GroupEnd`]: crate::ReadEvent::GroupEnd
     pub grouping: Grouping,
-    /// When groups are announced complete.
-    pub closure: Closure,
     /// The most samples one batch may hold. A source may deliver fewer; a
     /// factored source rounds down to whole times and fails binding if one
     /// time does not fit.
@@ -122,10 +138,14 @@ pub struct Realization {
     pub batches: usize,
     /// Payload bytes of one full batch the caller's buffers hold.
     pub batch_payload_bytes: usize,
-    /// Physical read units (casacore cells, Zarr chunks) one traversal
-    /// decodes, and the elements they hold.
+    /// Physical read units (casacore rows, Zarr chunks) one traversal
+    /// touches, as modelled from the store's layout at binding: the chunk
+    /// grid's chunks that intersect each batch's selection. A model, not a
+    /// measurement: the cursor's [`IoCounters::decode_units`] applies the
+    /// same model to what it reads.
     pub decode_units: usize,
-    /// Elements the decoded units hold, over every role read.
+    /// Elements the touched units hold, over every role read, by the same
+    /// model.
     pub decoded_elements: usize,
     /// Elements the request selects, over every role read; the ratio to
     /// `decoded_elements` is the read amplification.
@@ -151,8 +171,10 @@ pub struct IoCounters {
     pub batches: usize,
     /// Storage read calls issued (one per column or variable per batch).
     pub read_calls: usize,
-    /// Physical units decoded (Zarr chunks; casacore cells are not counted
-    /// separately and equal the selected rows).
+    /// Physical units touched by the reads issued, modelled from the chunk
+    /// grid as [`Realization::decode_units`] is (Zarr chunks; casacore rows).
+    /// It counts what the selections intersect, not decodes observed inside
+    /// the storage library.
     pub decode_units: usize,
     /// Payload bytes written into the caller's buffers.
     pub delivered_bytes: usize,

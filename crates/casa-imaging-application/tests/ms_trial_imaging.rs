@@ -31,11 +31,11 @@ use casa_imaging_runtime::pass::{
     BackendChoice, CHUNK_PLACEMENTS, Cancel, MajorCyclePass, Partition, PassDomain, Residency,
     WorkerTeam, run_major_cycle,
 };
-use casa_ms::observation_io::{Msv2Observation, Msv4Observation};
-use casa_observation::Correlation;
+use casa_ms::observation_io::{OpenOptions, open as open_store};
+use casa_observation::{Correlation, Observation};
 use flate2::read::GzDecoder;
 use ndarray::{Array2, ArrayD, Axis};
-use source::{BatchSource, Observation, SourceTrace};
+use source::{BatchSource, SourceTrace};
 use tar::Archive;
 
 /// Image size and cell: the fixture's natural beam spans about four cells.
@@ -162,7 +162,7 @@ fn operator(planes: u32) -> MeasurementOperator {
 }
 
 /// The output axis: the native channels' centres and width.
-fn axis(observation: &Observation) -> SpectralAxis {
+fn axis(observation: &dyn Observation) -> SpectralAxis {
     let partition = &observation.catalogue().partitions[0];
     SpectralAxis::new(
         partition.frequencies_hz[CHANNELS.start],
@@ -182,7 +182,7 @@ struct TrialRun {
 
 /// The production pass over `observation` through the batch source.
 fn trial(
-    observation: &Observation,
+    observation: &dyn Observation,
     residency: Residency,
     max_samples: usize,
     workers: usize,
@@ -258,36 +258,116 @@ fn trial(
     }
 }
 
-/// RMS of `a - b` over the RMS of `a`.
+/// RMS of `a - b` over the RMS of `a`. A NaN or infinite pixel in either
+/// plane, or a non-zero difference from an all-zero reference, gives
+/// infinity: a comparison can never read a missing or poisoned value as
+/// agreement.
+///
+/// # Panics
+///
+/// If the planes' shapes differ.
 fn nrms(a: &Array2<f32>, b: &Array2<f32>) -> f64 {
+    assert_eq!(a.shape(), b.shape(), "plane shapes");
+    if a.iter().chain(b).any(|value| !value.is_finite()) {
+        return f64::INFINITY;
+    }
     let (mut error, mut scale) = (0.0, 0.0);
     for (x, y) in a.iter().zip(b) {
         error += (f64::from(*x) - f64::from(*y)).powi(2);
         scale += f64::from(*x).powi(2);
     }
+    if scale == 0.0 {
+        return if error == 0.0 { 0.0 } else { f64::INFINITY };
+    }
     (error / scale).sqrt()
 }
 
+/// `|a - b| / |a|`, infinite unless both are finite and comparable.
+fn relative(a: f64, b: f64) -> f64 {
+    if !(a.is_finite() && b.is_finite()) {
+        f64::INFINITY
+    } else if a == b {
+        0.0
+    } else if a == 0.0 {
+        f64::INFINITY
+    } else {
+        ((a - b) / a).abs()
+    }
+}
+
+/// The larger error, a NaN counting as the largest: `f64::max` would keep
+/// the other operand and let a NaN through as zero.
+fn worse(a: f64, b: f64) -> f64 {
+    if a.is_nan() || b.is_nan() {
+        f64::INFINITY
+    } else {
+        a.max(b)
+    }
+}
+
+/// The worst image NRMS, PSF NRMS and relative `sumwt` over planes.
+///
+/// # Panics
+///
+/// If the plane counts or any plane's shape differ.
 fn worst(a: &[Plane], b: &[Plane]) -> (f64, f64, f64) {
-    assert_eq!(a.len(), b.len());
+    assert_eq!(a.len(), b.len(), "plane counts");
     a.iter()
         .zip(b)
         .fold((0.0_f64, 0.0_f64, 0.0_f64), |(i, p, s), (a, b)| {
             (
-                i.max(nrms(&a.image, &b.image)),
-                p.max(nrms(&a.psf, &b.psf)),
-                s.max(((a.sumwt - b.sumwt) / a.sumwt).abs()),
+                worse(i, nrms(&a.image, &b.image)),
+                worse(p, nrms(&a.psf, &b.psf)),
+                worse(s, relative(a.sumwt, b.sumwt)),
             )
         })
 }
 
-fn open(root: &Path) -> (Observation, Observation) {
+/// Open both fixtures through the one store-choosing entry point; nothing
+/// past here knows which format each is.
+fn open(root: &Path) -> (Box<dyn Observation>, Box<dyn Observation>) {
+    let options = OpenOptions::default();
     (
-        Observation::V2(Box::new(
-            Msv2Observation::open(fixture(root, "ms_trial.ms")).expect("v2"),
-        )),
-        Observation::V4(Msv4Observation::open(fixture(root, "ms_trial.ps.zarr")).expect("v4")),
+        open_store(fixture(root, "ms_trial.ms"), &options).expect("v2"),
+        open_store(fixture(root, "ms_trial.ps.zarr"), &options).expect("v4"),
     )
+}
+
+/// The comparators fail rather than pass on what they cannot compare: one
+/// NaN pixel, a NaN `sumwt`, a mismatched plane shape or plane count.
+#[test]
+fn comparators_never_pass_a_nan_or_a_mismatch() {
+    let plane = |value: f32| Plane {
+        image: Array2::from_elem((4, 4), value),
+        psf: Array2::from_elem((4, 4), 1.0),
+        sumwt: 2.0,
+    };
+    let reference = vec![plane(1.0), plane(2.0)];
+    assert_eq!(worst(&reference, &reference), (0.0, 0.0, 0.0));
+    let mut poisoned = reference.clone();
+    poisoned[1].image[[2, 3]] = f32::NAN;
+    assert_eq!(worst(&reference, &poisoned).0, f64::INFINITY, "a NaN pixel");
+    let mut poisoned = reference.clone();
+    poisoned[0].sumwt = f64::NAN;
+    assert_eq!(worst(&reference, &poisoned).2, f64::INFINITY, "a NaN sumwt");
+    let mut misshapen = reference.clone();
+    misshapen[0].image = Array2::zeros((4, 5));
+    assert!(std::panic::catch_unwind(|| worst(&reference, &misshapen)).is_err());
+    assert!(std::panic::catch_unwind(|| worst(&reference, &reference[..1])).is_err());
+}
+
+/// The reusable consumer modules see only the shared interface: they name
+/// no adapter, cursor or crate of either store.
+#[test]
+fn consumer_modules_import_no_store_type() {
+    for (module, text) in [
+        ("source.rs", include_str!("ms_trial/source.rs")),
+        ("work_units.rs", include_str!("ms_trial/work_units.rs")),
+    ] {
+        for store in ["casa_ms", "Msv2", "Msv4"] {
+            assert!(!text.contains(store), "{module} names {store}");
+        }
+    }
 }
 
 /// The dirty planes from both stores through the shared batch equal the
@@ -307,7 +387,7 @@ fn dirty_planes_from_both_stores_equal_the_production_imager() {
         ("one-plane waves", Residency::Waves { planes_per_wave: 1 }),
     ] {
         let mut runs = Vec::new();
-        for (store, observation) in [("v2", &v2), ("v4", &v4)] {
+        for (store, observation) in [("v2", &*v2), ("v4", &*v4)] {
             let run = trial(observation, residency, 40, 1);
             let (image, psf, sumwt) = worst(&production, &run.planes);
             println!(
@@ -343,8 +423,8 @@ fn dirty_planes_from_both_stores_equal_the_production_imager() {
 fn dirty_planes_do_not_depend_on_batch_size() {
     let root = tempfile::tempdir().expect("root");
     let (v2, v4) = open(root.path());
-    let reference = trial(&v2, Residency::All, 120, 1).planes;
-    for (store, observation, sizes) in [("v2", &v2, [1, 7, 37]), ("v4", &v4, [10, 30, 70])] {
+    let reference = trial(&*v2, Residency::All, 120, 1).planes;
+    for (store, observation, sizes) in [("v2", &*v2, [1, 7, 37]), ("v4", &*v4, [10, 30, 70])] {
         for max_samples in sizes {
             let run = trial(observation, Residency::All, max_samples, 2);
             let (image, psf, sumwt) = worst(&reference, &run.planes);
@@ -366,8 +446,8 @@ fn dirty_planes_do_not_depend_on_batch_size() {
 fn channel_work_units_retire_independently() {
     let root = tempfile::tempdir().expect("root");
     let (v2, v4) = open(root.path());
-    let reference = trial(&v2, Residency::All, 120, 1).planes;
-    for (store, observation) in [("v2", &v2), ("v4", &v4)] {
+    let reference = trial(&*v2, Residency::All, 120, 1).planes;
+    for (store, observation) in [("v2", &*v2), ("v4", &*v4)] {
         for strategy in [
             work_units::Strategy::SharedBatch,
             work_units::Strategy::PackedPieces,
@@ -387,7 +467,7 @@ fn channel_work_units_retire_independently() {
                     nrms(&reference.image, image) < 1e-6,
                     "{store} {strategy:?} plane {plane}"
                 );
-                assert!(((reference.sumwt - sumwt) / reference.sumwt).abs() < 1e-9);
+                assert!(relative(reference.sumwt, *sumwt) < 1e-9);
             }
             report.check(strategy);
         }
@@ -472,7 +552,7 @@ fn narrow_timings() {
     let (median, min) = spread(production_phase);
     println!("production dirty pass phase: median {median:?}, min {min:?}");
     let (v2, v4) = open(root.path());
-    for (store, observation) in [("v2", &v2), ("v4", &v4)] {
+    for (store, observation) in [("v2", &*v2), ("v4", &*v4)] {
         let runs: Vec<TrialRun> = (0..RUNS)
             .map(|_| trial(observation, Residency::All, 120, 1))
             .collect();

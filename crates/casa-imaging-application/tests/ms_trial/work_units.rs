@@ -22,10 +22,12 @@ use casa_imaging_operator::{
     CpuBackend, GridBackend, MeasurementOperator, Mode, ModeSet, NativeRow, PlaneRange, RowContext,
     SampleBuffer, SpectralAxis, SpectralKernel, SpectralResampler, WeightingGeneration, Work,
 };
-use casa_observation::{BatchBuffers, FilledBatch, OwnedEvent, VisibilityBatch, VisibilityCursor};
+use casa_observation::{
+    BatchBuffers, FilledBatch, Observation, OwnedEvent, VisibilityBatch, VisibilityCursor,
+};
 use ndarray::Array2;
 
-use crate::source::{Observation, request};
+use crate::source::request;
 
 /// How long the held-back unit waits before each batch.
 const DELAY: Duration = Duration::from_millis(60);
@@ -163,7 +165,7 @@ impl Unit {
             .expect("values")
             .as_complex32()
             .expect("c64");
-        let flags = batch.group.flags.expect("flags");
+        let validity = batch.validity();
         let weights = batch.group.weights.expect("weights");
         let uvw = batch.group.uvw.expect("uvw");
         let frequency = [batch.frequency.hz()[0]];
@@ -173,7 +175,7 @@ impl Unit {
             let coordinate = batch.topology.sample(sample);
             let row_values = routed.map(|c| values[[sample, 0, c]]);
             let row_weights = routed.map(|c| weights.get(sample, 0, c));
-            let row_flags = routed.map(|c| flags[[sample, 0, c]]);
+            let row_flags = routed.map(|c| validity.excluded(sample, 0, c));
             let row = NativeRow {
                 uvw_m: uvw.get(sample),
                 phase_shift_m: 0.0,
@@ -238,7 +240,7 @@ struct Ledger {
 /// Run every channel of `channels` as a work unit over `observation`,
 /// holding unit 0 back by [`DELAY`] before each batch.
 pub fn run(
-    observation: &Observation,
+    observation: &dyn Observation,
     strategy: Strategy,
     template: &MeasurementOperator,
     axis: &SpectralAxis,
@@ -247,7 +249,7 @@ pub fn run(
     let units = channels.len();
     let ledger = Arc::new(Mutex::new(Ledger::default()));
     let mut cursor = observation
-        .bind(&request(channels.clone(), true, BATCH_SAMPLES))
+        .bind_read(&request(channels.clone(), true, BATCH_SAMPLES))
         .expect("bind");
     let (free_tx, free_rx) = mpsc::channel::<BatchBuffers>();
     let started = Instant::now();
@@ -314,9 +316,9 @@ pub fn run(
         let mut pool: Vec<BatchBuffers> = Vec::new();
         let mut pieces: Vec<Vec<BatchBuffers>> = (0..units).map(|_| Vec::new()).collect();
         let mut pieces_out = vec![0_usize; units];
-        // The producer stops after the bound batches: asking the cursor
-        // for one more would need a buffer just to learn that none remain.
-        while cursor.counters().batches < cursor.realization().batches {
+        // The producer runs until the cursor hands its buffer back at the
+        // end: no batch count is needed in advance.
+        loop {
             // A batch buffer: from the pool, a new one while the pool may
             // grow, else wait for one to come back.
             let limit = match strategy {
@@ -340,11 +342,16 @@ pub fn run(
             if ledger.lock().expect("ledger").held > 0 {
                 report.fills_while_held += 1;
             }
-            let Some(event) = cursor.next_owned(buffers).expect("read") else {
-                break;
-            };
-            let OwnedEvent::Batch(filled) = event else {
-                continue;
+            let filled = match cursor.next_owned(buffers).expect("read") {
+                OwnedEvent::Batch(filled) => filled,
+                OwnedEvent::GroupEnd(_, returned) => {
+                    pool.push(returned);
+                    continue;
+                }
+                OwnedEvent::End(returned) => {
+                    pool.push(returned);
+                    break;
+                }
             };
             report.batch_buffer_bytes = report.batch_buffer_bytes.max(filled.capacity_bytes());
             match strategy {

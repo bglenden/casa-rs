@@ -3,15 +3,22 @@
 //! (`docs/measurement-set/trial/README.md`): the MSv4 store XRADIO wrote
 //! from the MSv2, read through both adapters into the same batches.
 
+#[path = "observation_io/refusals.rs"]
+mod refusals;
+#[path = "observation_io/work.rs"]
+mod work;
+#[path = "observation_io/writer.rs"]
+mod writer;
+
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::path::{Path, PathBuf};
 
-use casa_ms::observation_io::{Msv2Observation, Msv4Observation};
+use casa_ms::observation_io::{GroupClosure, Msv2Observation, Msv4Observation, OpenOptions};
 use casa_observation::{
-    AccessRequest, BatchBuffers, Closure, Correlation, FragmentPosition, GroupKey, Grouping,
-    Layout, ObservationError, Occupancy, PartitionId, Precision, ReadEvent, Roles, SampleTopology,
-    VisibilityCursor, VisibilityUnits, WeightView,
+    AccessRequest, BatchBuffers, Catalogue, Correlation, FragmentPosition, GroupKey, Grouping,
+    Layout, Observation, ObservationError, Occupancy, PartitionId, Precision, ReadEvent, Roles,
+    SampleTopology, VisibilityCursor, VisibilityUnits, WeightView,
 };
 use casa_types::measures::MjdHighPrec;
 use casa_types::measures::direction::DirectionRef;
@@ -21,7 +28,7 @@ use num_complex::Complex32;
 use tar::Archive;
 
 /// Unpack fixture `name` (`ms_trial.ms` or `ms_trial.ps.zarr`).
-fn fixture(root: &Path, name: &str) -> PathBuf {
+pub(crate) fn fixture(root: &Path, name: &str) -> PathBuf {
     let archive = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/ms_trial")
         .join(format!("{name}.tgz"));
@@ -31,7 +38,7 @@ fn fixture(root: &Path, name: &str) -> PathBuf {
     root.join(name)
 }
 
-fn request(channels: std::ops::Range<usize>, max_samples: usize) -> AccessRequest {
+pub(crate) fn request(channels: std::ops::Range<usize>, max_samples: usize) -> AccessRequest {
     AccessRequest {
         partition: PartitionId(0),
         data_group: "base".to_string(),
@@ -42,29 +49,35 @@ fn request(channels: std::ops::Range<usize>, max_samples: usize) -> AccessReques
             allow_narrowing: false,
         },
         grouping: Grouping::None,
-        closure: Closure::AtDelivery,
         max_samples,
     }
 }
 
-/// One sample's payload, keyed by MJD seconds and the two antennas'
-/// stations, so the formats' different antenna and field naming does not
-/// decide the match.
+/// One sample's payload and time auxiliaries, keyed by MJD seconds and
+/// the two antennas' stations, so the formats' different antenna and field
+/// naming does not decide the match.
 #[derive(Debug, PartialEq)]
-struct Sample {
+pub(crate) struct Sample {
     values: Vec<Complex32>,
     flags: Vec<bool>,
     weights: Vec<f32>,
     uvw: [f64; 3],
+    /// MJD seconds of the time centroid.
+    centroid: f64,
+    interval: f64,
+    exposure: f64,
+    scan: String,
 }
 
-type Key = (u64, String, String);
+pub(crate) type Key = (u64, String, String);
 
 /// Every sample a traversal delivers, keyed.
-fn samples(
-    cursor: &mut impl VisibilityCursor,
-    stations: &[String],
+pub(crate) fn samples(
+    cursor: &mut dyn VisibilityCursor,
+    catalogue: &Catalogue,
 ) -> Result<BTreeMap<Key, Sample>, ObservationError> {
+    let stations = stations(catalogue);
+    let mjd_zero = MjdHighPrec::new(0.0, 0.0);
     let mut buffers = BatchBuffers::default();
     let mut all = BTreeMap::new();
     while let Some(event) = cursor.next(&mut buffers)? {
@@ -81,11 +94,12 @@ fn samples(
         let weights = batch.group.weights.expect("weights");
         let uvw = batch.group.uvw.expect("uvw");
         let time = batch.topology.time();
+        let centroid = batch.timing.centroid.expect("centroid");
+        let per_time = batch.topology.samples_per_time();
         for sample in 0..batch.samples() {
             let coordinate = batch.topology.sample(sample);
-            let seconds = time.origin().day() * 86_400.0 + coordinate.time_offset_s;
             let key = (
-                seconds.to_bits(),
+                time.seconds_since(sample / per_time, mjd_zero).to_bits(),
                 stations[coordinate.baseline.antenna1.0 as usize].clone(),
                 stations[coordinate.baseline.antenna2.0 as usize].clone(),
             );
@@ -95,6 +109,7 @@ fn samples(
                     sample_weights.push(weights.get(sample, channel, correlation));
                 }
             }
+            let scan = batch.scan(sample).expect("scan");
             let previous = all.insert(
                 key,
                 Sample {
@@ -110,6 +125,10 @@ fn samples(
                         .collect(),
                     weights: sample_weights,
                     uvw: uvw.get(sample),
+                    centroid: centroid.seconds_since(sample, mjd_zero),
+                    interval: batch.interval_s(sample).expect("interval"),
+                    exposure: batch.exposure_s(sample).expect("exposure"),
+                    scan: catalogue.scans[scan.0 as usize].name.clone(),
                 },
             );
             assert!(previous.is_none(), "one acquisition per time and baseline");
@@ -118,7 +137,7 @@ fn samples(
     Ok(all)
 }
 
-fn stations(catalogue: &casa_observation::Catalogue) -> Vec<String> {
+pub(crate) fn stations(catalogue: &Catalogue) -> Vec<String> {
     catalogue
         .antennas
         .iter()
@@ -126,22 +145,33 @@ fn stations(catalogue: &casa_observation::Catalogue) -> Vec<String> {
         .collect()
 }
 
+pub(crate) fn open_both(root: &Path) -> (Msv2Observation, Msv4Observation) {
+    (
+        Msv2Observation::open(fixture(root, "ms_trial.ms")).expect("v2"),
+        Msv4Observation::open(fixture(root, "ms_trial.ps.zarr")).expect("v4"),
+    )
+}
+
 /// The two catalogues describe the same observation, in each store's own
-/// names: XRADIO names antennas `NAME_STATION` and fields `NAME_ID`, labels
-/// the UVW frame as the phase centre's (CASA `fixvis`'s reading of the
-/// mislabelled ITRF), and declares the visibility unit `unkown`.
+/// names: XRADIO names antennas `NAME_STATION` and fields `NAME_ID`,
+/// declares the visibility unit `unkown`, and states the UVW frame as the
+/// phase centre's, which is the frame the MSv2 adapter resolves for MSv2's
+/// `ITRF`-labelled UVW. Positions, diameters and angles are native
+/// Measures and Quanta values.
 #[test]
 fn catalogues_describe_the_same_observation() {
     let root = tempfile::tempdir().expect("root");
-    let v2 = Msv2Observation::open(fixture(root.path(), "ms_trial.ms")).expect("v2");
-    let v4 = Msv4Observation::open(fixture(root.path(), "ms_trial.ps.zarr")).expect("v4");
+    let (v2, v4) = open_both(root.path());
     let (a, b) = (v2.catalogue(), v4.catalogue());
     assert_eq!(stations(a), stations(b));
     for (v2, v4) in a.antennas.iter().zip(&b.antennas) {
         assert_eq!(format!("{}_{}", v2.name, v2.station), v4.name);
+        assert_eq!(v2.position.values(), v4.position.values());
+        assert_eq!(v2.dish_diameter.value(), v4.dish_diameter.value());
+        assert_eq!(v2.dish_diameter.unit().name(), "m");
+        assert_eq!(v2.receptors, v4.receptors);
     }
-    assert_eq!(a.fields.len(), 1);
-    assert_eq!(b.fields.len(), 1);
+    assert_eq!((a.fields.len(), b.fields.len()), (1, 1));
     assert_eq!(format!("{}_0", a.fields[0].name), b.fields[0].name);
     assert_eq!(
         a.fields[0].phase_centre.as_angles(),
@@ -149,6 +179,9 @@ fn catalogues_describe_the_same_observation() {
     );
     assert_eq!(a.fields[0].phase_centre.refer(), DirectionRef::J2000);
     assert_eq!(b.fields[0].phase_centre.refer(), DirectionRef::J2000);
+    assert_eq!(a.scans, b.scans, "scan 1, named by its number, its intents");
+    assert_eq!(a.scans[0].number, Some(1));
+    assert_eq!(a.scans[0].intents, ["TARGET.ON_SOURCE"]);
     let (p2, p4) = (&a.partitions[0], &b.partitions[0]);
     assert_eq!(p2.frequencies_hz, p4.frequencies_hz);
     assert_eq!(p2.channel_widths_hz, p4.channel_widths_hz);
@@ -162,29 +195,29 @@ fn catalogues_describe_the_same_observation() {
     ];
     assert_eq!(p2.correlations, linear);
     assert_eq!(p4.correlations, linear);
-    assert_eq!(p2.data_groups[0].units, VisibilityUnits::Undeclared);
-    assert_eq!(
-        p4.data_groups[0].units,
-        VisibilityUnits::Declared("unkown".to_string())
-    );
-    assert_eq!(p4.data_groups[0].visibilities, "VISIBILITY");
+    let (g2, g4) = (&p2.data_groups[0], &p4.data_groups[0]);
+    assert_eq!(g2.units, VisibilityUnits::Undeclared);
+    assert_eq!(g4.units, VisibilityUnits::Declared("unkown".to_string()));
+    assert_eq!(g4.visibilities, "VISIBILITY");
+    assert_eq!(g2.uvw_frame.effective, DirectionRef::J2000);
+    assert_eq!(g2.uvw_frame.stored_label, Some(DirectionRef::ITRF));
+    assert_eq!(g4.uvw_frame.effective, DirectionRef::J2000);
 }
 
 /// Every sample XRADIO wrote equals its MSv2 row exactly: visibilities,
 /// flags, weights (MSv2's per-correlation `WEIGHT` broadcast over
-/// channels, MSv4's spectral `WEIGHT`), UVW and time, over the whole band
-/// and a channel window, whatever the batch size. The v4 store holds
-/// exactly the v2 acquisitions: none padded, none lost.
+/// channels, MSv4's spectral `WEIGHT`), UVW, time, and the time centroid,
+/// interval, exposure and scan, over the whole band and channel windows,
+/// whatever the batch size. The v4 store holds exactly the v2
+/// acquisitions: none padded, none lost.
 #[test]
 fn xradio_samples_equal_their_msv2_rows() {
     let root = tempfile::tempdir().expect("root");
-    let v2 = Msv2Observation::open(fixture(root.path(), "ms_trial.ms")).expect("v2");
-    let v4 = Msv4Observation::open(fixture(root.path(), "ms_trial.ps.zarr")).expect("v4");
-    let (s2, s4) = (stations(v2.catalogue()), stations(v4.catalogue()));
+    let (v2, v4) = open_both(root.path());
     for channels in [0..8, 2..6, 7..8] {
         let reference = samples(
             &mut v2.bind_read(&request(channels.clone(), 120)).expect("bind"),
-            &s2,
+            v2.catalogue(),
         )
         .expect("v2 read");
         assert_eq!(reference.len(), 120);
@@ -193,7 +226,7 @@ fn xradio_samples_equal_their_msv2_rows() {
                 &mut v4
                     .bind_read(&request(channels.clone(), max_samples))
                     .expect("bind"),
-                &s4,
+                v4.catalogue(),
             )
             .expect("v4 read");
             assert_eq!(
@@ -206,7 +239,7 @@ fn xradio_samples_equal_their_msv2_rows() {
                 &mut v2
                     .bind_read(&request(channels.clone(), max_samples))
                     .expect("bind"),
-                &s2,
+                v2.catalogue(),
             )
             .expect("v2 read");
             assert_eq!(
@@ -217,16 +250,63 @@ fn xradio_samples_equal_their_msv2_rows() {
     }
 }
 
+/// The time auxiliaries the v2 batch delivers are MAIN's columns, as the
+/// production typed column accessors read them cell by cell (not the
+/// adapter's bulk fill), not values the adapter makes up.
+#[test]
+fn time_auxiliaries_are_main_columns() {
+    let root = tempfile::tempdir().expect("root");
+    let path = fixture(root.path(), "ms_trial.ms");
+    let ms = casa_ms::MeasurementSet::open(&path).expect("ms");
+    let main = ms.main_table();
+    let v2 = Msv2Observation::open(&path).expect("v2");
+    let mut cursor = v2.bind_read(&request(0..8, 120)).expect("bind");
+    let mut buffers = BatchBuffers::default();
+    let Some(ReadEvent::Batch(batch)) = cursor.next(&mut buffers).expect("read") else {
+        panic!("a batch");
+    };
+    let mjd_zero = MjdHighPrec::new(0.0, 0.0);
+    let centroid = batch.timing.centroid.expect("centroid");
+    for row in 0..main.row_count() {
+        use casa_ms::columns::exposure_interval::{ExposureColumn, IntervalColumn};
+        use casa_ms::columns::time_columns::TimeColumn;
+        assert_eq!(
+            centroid.seconds_since(row, mjd_zero),
+            TimeColumn::centroid(main)
+                .get_mjd_seconds(row)
+                .expect("centroid")
+        );
+        assert_eq!(
+            batch.interval_s(row),
+            Some(IntervalColumn::new(main).get(row).expect("interval"))
+        );
+        assert_eq!(
+            batch.exposure_s(row),
+            Some(ExposureColumn::new(main).get(row).expect("exposure"))
+        );
+        let scan = batch.scan(row).expect("scan");
+        assert_eq!(
+            v2.catalogue().scans[scan.0 as usize].number,
+            Some(
+                casa_ms::columns::main_ids::scan_number(main)
+                    .get(row)
+                    .expect("scan")
+            )
+        );
+    }
+}
+
 /// The adapters keep each store's shapes: MSv2 rows are listed samples
 /// with a per-correlation weight and known occupancy; MSv4 is a factored
 /// time × baseline batch with spectral weights and unknown occupancy, whose
-/// rank-three sample-major view borrows the decoded buffer directly. Times
-/// keep their store's origin: seconds from MJD 0, or Unix seconds.
+/// rank-three sample-major view borrows the decoded buffer directly, an
+/// interval shared by the whole batch and scans shared per time. Times keep
+/// their store's origin: seconds from MJD 0, or Unix seconds. Both deliver
+/// UVW in the resolved effective frame.
 #[test]
 fn batches_keep_their_store_shapes() {
     let root = tempfile::tempdir().expect("root");
-    let v2 = Msv2Observation::open(fixture(root.path(), "ms_trial.ms")).expect("v2");
-    let v4 = Msv4Observation::open(fixture(root.path(), "ms_trial.ps.zarr")).expect("v4");
+    let (v2, v4) = open_both(root.path());
     let mut buffers = BatchBuffers::default();
     let mut cursor = v2.bind_read(&request(0..8, 40)).expect("bind");
     let Some(ReadEvent::Batch(batch)) = cursor.next(&mut buffers).expect("read") else {
@@ -242,7 +322,7 @@ fn batches_keep_their_store_shapes() {
     assert_eq!(batch.topology.time().origin().day(), 0.0);
     assert_eq!(
         batch.group.uvw.expect("uvw").reference(),
-        DirectionRef::ITRF
+        DirectionRef::J2000
     );
 
     let mut buffers = BatchBuffers::default();
@@ -258,6 +338,14 @@ fn batches_keep_their_store_shapes() {
     assert_eq!(batch.topology.occupancy(), Occupancy::Unknown);
     assert!(matches!(batch.group.weights, Some(WeightView::Spectral(_))));
     assert!(batch.group.row_flags.is_none());
+    assert!(matches!(
+        batch.timing.interval_s,
+        Some(casa_observation::Shared::Constant(10.0))
+    ));
+    assert!(matches!(
+        batch.scan,
+        Some(casa_observation::Shared::PerTime(_))
+    ));
     assert_eq!(topology.time.origin().day(), 40_587.0);
     assert_eq!(
         batch.group.uvw.expect("uvw").reference(),
@@ -281,7 +369,7 @@ fn batches_keep_their_store_shapes() {
         batch.frequency.hz().slice(ndarray::s![2..]).as_ptr()
     );
     // The view was the decode buffer itself.
-    assert_eq!(view, buffers.values.as_ptr());
+    assert_eq!(view, buffers.arrays().values.as_ptr());
 }
 
 /// The MSv4 time origin re-expresses the MSv2 time exactly: XRADIO's
@@ -289,8 +377,7 @@ fn batches_keep_their_store_shapes() {
 #[test]
 fn time_origins_re_express_each_other_exactly() {
     let root = tempfile::tempdir().expect("root");
-    let v2 = Msv2Observation::open(fixture(root.path(), "ms_trial.ms")).expect("v2");
-    let v4 = Msv4Observation::open(fixture(root.path(), "ms_trial.ps.zarr")).expect("v4");
+    let (v2, v4) = open_both(root.path());
     let mjd_zero = MjdHighPrec::new(0.0, 0.0);
     let first_time = |cursor: &mut dyn VisibilityCursor| {
         let mut buffers = BatchBuffers::default();
@@ -306,39 +393,36 @@ fn time_origins_re_express_each_other_exactly() {
 
 /// The fragments of every 60 s bin, whatever the batch size: each bin's
 /// samples once, in order, its first fragment `First` or `Whole`, its last
-/// `Last` or `Whole`, and under deferred closure one `GroupEnd` after its
-/// last fragment instead.
+/// `Last` or `Whole`, and, from a store opened to defer closure, one
+/// `GroupEnd` after its last fragment instead. The deferral is an opening
+/// option, not part of the request: a consumer handles both.
 #[test]
 fn group_fragments_do_not_depend_on_batch_size() {
     let root = tempfile::tempdir().expect("root");
-    let v2 = Msv2Observation::open(fixture(root.path(), "ms_trial.ms")).expect("v2");
-    let v4 = Msv4Observation::open(fixture(root.path(), "ms_trial.ps.zarr")).expect("v4");
-    let grouped = |max_samples: usize, closure: Closure| AccessRequest {
+    let v2_path = fixture(root.path(), "ms_trial.ms");
+    let v4_path = fixture(root.path(), "ms_trial.ps.zarr");
+    let grouped = |max_samples: usize| AccessRequest {
         grouping: Grouping::TimeBins {
             width_s: 60.0,
             combine_fields: false,
         },
-        closure,
         ..request(0..8, max_samples)
     };
-    for closure in [Closure::AtDelivery, Closure::Deferred] {
+    for closure in [GroupClosure::AtDelivery, GroupClosure::Deferred] {
+        let options = OpenOptions {
+            group_closure: closure,
+        };
+        let v2 = casa_ms::observation_io::open(&v2_path, &options).expect("v2");
+        let v4 = casa_ms::observation_io::open(&v4_path, &options).expect("v4");
         for max_samples in [10, 30, 40, 60, 70, 120] {
             let label = format!("{closure:?}, {max_samples} per batch");
-            let v4_groups = groups(
-                &mut v4.bind_read(&grouped(max_samples, closure)).expect("bind"),
-                closure,
-                &label,
-            );
+            let v4_groups = groups(&*v4, &grouped(max_samples), closure, &label);
             assert_eq!(v4_groups.len(), 2, "{label}");
             assert!(
                 v4_groups.values().all(|samples| *samples == 60),
                 "{label}: {v4_groups:?}"
             );
-            let v2_groups = groups(
-                &mut v2.bind_read(&grouped(max_samples, closure)).expect("bind"),
-                closure,
-                &label,
-            );
+            let v2_groups = groups(&*v2, &grouped(max_samples), closure, &label);
             assert_eq!(
                 v2_groups.values().collect::<Vec<_>>(),
                 v4_groups.values().collect::<Vec<_>>(),
@@ -351,10 +435,12 @@ fn group_fragments_do_not_depend_on_batch_size() {
 /// Samples per group, checking each group's fragment positions and
 /// announcements as they arrive.
 fn groups(
-    cursor: &mut impl VisibilityCursor,
-    closure: Closure,
+    observation: &dyn Observation,
+    request: &AccessRequest,
+    closure: GroupClosure,
     label: &str,
 ) -> BTreeMap<GroupKey, usize> {
+    let mut cursor = observation.bind_read(request).expect("bind");
     let mut buffers = BatchBuffers::default();
     let mut samples = BTreeMap::<GroupKey, usize>::new();
     let mut closed = Vec::<GroupKey>::new();
@@ -380,14 +466,14 @@ fn groups(
                     );
                     assert_eq!(first, expect_first, "{label}: {fragment:?}");
                     if fragment.position.closes() {
-                        assert_eq!(closure, Closure::AtDelivery, "{label}");
+                        assert_eq!(closure, GroupClosure::AtDelivery, "{label}");
                         closed.push(fragment.key);
                     }
                 }
                 assert_eq!(covered, batch.samples(), "{label}");
             }
             ReadEvent::GroupEnd(key) => {
-                assert_eq!(closure, Closure::Deferred, "{label}");
+                assert_eq!(closure, GroupClosure::Deferred, "{label}");
                 assert!(
                     samples.contains_key(&key) && !closed.contains(&key),
                     "{label}"
@@ -404,23 +490,29 @@ fn groups(
     samples
 }
 
-/// Reads decode whole chunks, and Zarr stores an edge chunk at full size:
-/// the twelve times in five-time chunks decode fifteen. A channel window
-/// decodes whole frequency chunks too: two of the eight channels from
-/// four-channel chunks decode twice the selected channels. The realization
-/// reports both before any read.
+/// Reads touch whole chunks, and Zarr stores an edge chunk at full size:
+/// the twelve times in five-time chunks touch fifteen. A channel window
+/// touches whole frequency chunks too: two of the eight channels from
+/// four-channel chunks touch twice the selected channels. The realization
+/// models both from the chunk grid before any read, and the cursor counts
+/// what its reads touch by the same model (a model of touched chunks, not
+/// decodes observed inside zarrs).
 #[test]
 fn realization_reports_chunk_amplification() {
     let root = tempfile::tempdir().expect("root");
     let v4 = Msv4Observation::open(fixture(root.path(), "ms_trial.ps.zarr")).expect("v4");
-    let whole = v4.bind_read(&request(0..8, 120)).expect("bind");
+    let payload = |channels, max_samples| AccessRequest {
+        roles: Roles::PAYLOAD,
+        ..request(channels, max_samples)
+    };
+    let whole = v4.bind_read(&payload(0..8, 120)).expect("bind");
     assert_eq!(whole.realization().amplification(), 15.0 / 12.0);
     let narrow = AccessRequest {
         roles: Roles {
             uvw: false,
-            ..Roles::ALL
+            ..Roles::PAYLOAD
         },
-        ..request(2..4, 120)
+        ..payload(2..4, 120)
     };
     let mut cursor = v4.bind_read(&narrow).expect("bind");
     let realization = cursor.realization().clone();
@@ -431,194 +523,4 @@ fn realization_reports_chunk_amplification() {
     let mut buffers = BatchBuffers::default();
     while cursor.next(&mut buffers).expect("read").is_some() {}
     assert_eq!(cursor.counters().decode_units, 9);
-}
-
-/// A dataset spec for the trial writer from `catalogue` and the times,
-/// baselines and fields a traversal of `cursor` delivers, with XRADIO's
-/// converter naming applied when `rename` (antennas `NAME_STATION`, fields
-/// `NAME_ID`).
-fn writer_spec(
-    catalogue: &casa_observation::Catalogue,
-    cursor: &mut impl VisibilityCursor,
-    rename: bool,
-) -> casa_ms::observation_io::Msv4DatasetSpec {
-    let mut times = Vec::<f64>::new();
-    let mut baselines = Vec::new();
-    let mut fields = Vec::new();
-    let mut buffers = BatchBuffers::default();
-    while let Some(event) = cursor.next(&mut buffers).expect("read") {
-        let ReadEvent::Batch(batch) = event else {
-            continue;
-        };
-        let unix = MjdHighPrec::new(40_587.0, 0.0);
-        for sample in 0..batch.samples() {
-            let coordinate = batch.topology.sample(sample);
-            let slot = match batch.topology {
-                SampleTopology::Irregular(_) => sample,
-                SampleTopology::TimeBaseline(t) => sample / t.baselines.len(),
-            };
-            let time = batch.topology.time().seconds_since(slot, unix);
-            if times.last() != Some(&time) {
-                times.push(time);
-                fields.push(coordinate.field);
-            }
-            if !baselines.contains(&coordinate.baseline) {
-                baselines.push(coordinate.baseline);
-            }
-        }
-    }
-    let mut antennas = catalogue.antennas.clone();
-    let mut field_entries = catalogue.fields.clone();
-    if rename {
-        for antenna in &mut antennas {
-            antenna.name = format!("{}_{}", antenna.name, antenna.station);
-        }
-        for (index, field) in field_entries.iter_mut().enumerate() {
-            field.name = format!("{}_{index}", field.name);
-        }
-    }
-    let partition = &catalogue.partitions[0];
-    casa_ms::observation_io::Msv4DatasetSpec {
-        name: "ms_trial_0".to_string(),
-        creator: "casa-rs".to_string(),
-        creation_date: "2026-10-24T00:00:00+00:00".to_string(),
-        telescope: catalogue.telescope.clone(),
-        observers: catalogue.observers.clone(),
-        project: catalogue.project.clone(),
-        antennas,
-        fields: field_entries,
-        baselines,
-        scan_per_time: vec!["1".to_string(); times.len()],
-        times_unix_s: times,
-        time_scale: casa_types::measures::EpochRef::UTC,
-        integration_time_s: 10.0,
-        field_per_time: fields,
-        scan_intents: vec!["TARGET.ON_SOURCE".to_string()],
-        spectral_window: partition.spectral_window.clone(),
-        frequencies_hz: partition.frequencies_hz.clone(),
-        channel_width_hz: partition.channel_widths_hz[0],
-        frequency_frame: partition.frequency_frame,
-        correlations: partition.correlations.clone(),
-        units: partition.data_groups[0].units.clone(),
-        uvw_frame: DirectionRef::J2000,
-        chunks: [5, 10, 4, 4],
-        codec: casa_ms::observation_io::Msv4Codec::BloscLz4,
-    }
-}
-
-/// The trial writer creates a fresh MSv4 from either store's batches that
-/// reads back, through the trial reader, sample for sample equal to the
-/// MSv2: from listed MSv2 rows (placed into time × baseline order, the
-/// per-correlation weight written per channel) and from factored MSv4
-/// batches (encoded straight from their views), with batches that straddle
-/// the five-time chunks. XRADIO's own check of such a store is
-/// `tools/ms-trial/check_interop.sh`.
-#[test]
-fn rust_written_msv4_reads_back_equal_to_the_msv2() {
-    use casa_ms::observation_io::Msv4Writer;
-    let root = tempfile::tempdir().expect("root");
-    let v2 = Msv2Observation::open(fixture(root.path(), "ms_trial.ms")).expect("v2");
-    let v4 = Msv4Observation::open(fixture(root.path(), "ms_trial.ps.zarr")).expect("v4");
-    let reference = samples(
-        &mut v2.bind_read(&request(0..8, 120)).expect("bind"),
-        &stations(v2.catalogue()),
-    )
-    .expect("v2");
-    for (label, batch_samples) in [("v2", 40), ("v2", 120), ("v4", 40), ("v4", 120)] {
-        let out = root.path().join(format!("{label}-{batch_samples}.ps.zarr"));
-        let (counters, written) = if label == "v2" {
-            let spec = writer_spec(
-                v2.catalogue(),
-                &mut v2.bind_read(&request(0..8, 120)).expect("bind"),
-                true,
-            );
-            let mut writer = Msv4Writer::create(&out, &spec).expect("create");
-            let mut cursor = v2.bind_read(&request(0..8, batch_samples)).expect("bind");
-            let mut buffers = BatchBuffers::default();
-            while let Some(ReadEvent::Batch(batch)) = cursor.next(&mut buffers).expect("read") {
-                writer.write_batch(&batch).expect("write");
-            }
-            let counters = writer.counters();
-            (counters, writer.finish().expect("finish"))
-        } else {
-            let spec = writer_spec(
-                v4.catalogue(),
-                &mut v4.bind_read(&request(0..8, 120)).expect("bind"),
-                false,
-            );
-            let mut writer = Msv4Writer::create(&out, &spec).expect("create");
-            let mut cursor = v4.bind_read(&request(0..8, batch_samples)).expect("bind");
-            let mut buffers = BatchBuffers::default();
-            while let Some(ReadEvent::Batch(batch)) = cursor.next(&mut buffers).expect("read") {
-                writer.write_batch(&batch).expect("write");
-            }
-            let counters = writer.counters();
-            (counters, writer.finish().expect("finish"))
-        };
-        let reopened = Msv4Observation::open(&written).expect("reopen");
-        let read = samples(
-            &mut reopened.bind_read(&request(0..8, 120)).expect("bind"),
-            &stations(reopened.catalogue()),
-        )
-        .expect("read back");
-        assert_eq!(read, reference, "{label}, {batch_samples} per batch");
-        assert_eq!(
-            reopened.catalogue().antennas[3].name,
-            v4.catalogue().antennas[3].name
-        );
-        if label == "v4" {
-            assert_eq!(
-                counters.packed_elements, 0,
-                "factored batches encode from their views"
-            );
-        } else {
-            assert!(counters.packed_elements > 0);
-        }
-    }
-}
-
-/// Nothing is published until every time is written; a writer dropped or
-/// failing leaves only its staging directory, and a time is written once.
-#[test]
-fn the_writer_publishes_only_complete_datasets() {
-    use casa_ms::observation_io::Msv4Writer;
-    let root = tempfile::tempdir().expect("root");
-    let v4 = Msv4Observation::open(fixture(root.path(), "ms_trial.ps.zarr")).expect("v4");
-    let spec = writer_spec(
-        v4.catalogue(),
-        &mut v4.bind_read(&request(0..8, 120)).expect("bind"),
-        false,
-    );
-    let out = root.path().join("partial.ps.zarr");
-    let mut writer = Msv4Writer::create(&out, &spec).expect("create");
-    let mut cursor = v4.bind_read(&request(0..8, 40)).expect("bind");
-    let mut buffers = BatchBuffers::default();
-    let Some(ReadEvent::Batch(batch)) = cursor.next(&mut buffers).expect("read") else {
-        panic!("a batch");
-    };
-    writer.write_batch(&batch).expect("first write");
-    assert!(
-        writer.write_batch(&batch).is_err(),
-        "a time is written once"
-    );
-    assert!(!out.exists(), "nothing is published before finish");
-    assert!(
-        writer.finish().is_err(),
-        "eight of twelve times are missing"
-    );
-    assert!(!out.exists(), "an incomplete dataset is never published");
-    let window = AccessRequest {
-        channels: 2..4,
-        ..request(2..4, 40)
-    };
-    let mut writer =
-        Msv4Writer::create(&root.path().join("window.ps.zarr"), &spec).expect("create");
-    let mut cursor = v4.bind_read(&window).expect("bind");
-    let Some(ReadEvent::Batch(batch)) = cursor.next(&mut buffers).expect("read") else {
-        panic!("a batch");
-    };
-    assert!(matches!(
-        writer.write_batch(&batch),
-        Err(ObservationError::Unsupported { .. })
-    ));
 }

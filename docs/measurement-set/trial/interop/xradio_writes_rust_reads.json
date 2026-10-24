@@ -1,6 +1,6 @@
 {
  "mode": "rust-read",
- "checks": 20,
+ "checks": 26,
  "failed": 0,
  "results": [
   {
@@ -21,6 +21,14 @@
   },
   {
    "check": "rust read time equals XRADIO load",
+   "ok": true
+  },
+  {
+   "check": "rust read TIME_CENTROID equals XRADIO load",
+   "ok": true
+  },
+  {
+   "check": "rust read EFFECTIVE_INTEGRATION_TIME equals XRADIO load",
    "ok": true
   },
   {
@@ -45,6 +53,32 @@
   },
   {
    "check": "time origin is the Unix epoch, MJD 40587",
+   "ok": true
+  },
+  {
+   "check": "time instants Rust represents equal astropy's reading of XRADIO's",
+   "ok": true,
+   "detail": {
+    "worst_s": 9.592326932761353e-12
+   }
+  },
+  {
+   "check": "TIME_CENTROID instants Rust represents equal astropy's reading",
+   "ok": true,
+   "detail": {
+    "worst_s": 9.592326932761353e-12
+   }
+  },
+  {
+   "check": "interval is time.integration_time",
+   "ok": true,
+   "detail": {
+    "rust": 10.0,
+    "xradio": 10.0
+   }
+  },
+  {
+   "check": "scan per time",
    "ok": true
   },
   {

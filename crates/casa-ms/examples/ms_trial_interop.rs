@@ -15,19 +15,16 @@
 //! array the batch delivers as raw little-endian files with a JSON
 //! manifest, for the oracle to compare with XRADIO's own load.
 
-use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use casa_ms::MeasurementSet;
 use casa_ms::observation_io::{
-    Msv2Observation, Msv4Codec, Msv4DatasetSpec, Msv4Observation, Msv4Writer,
+    Msv4Codec, Msv4Observation, Msv4StorageOptions, Msv4Writer, OpenOptions,
 };
 use casa_observation::{
-    AccessRequest, BatchBuffers, Closure, FieldId, Grouping, Layout, OrderedBaseline, PartitionId,
-    Precision, ReadEvent, Roles, SampleTopology, VisibilityCursor, WeightView,
+    AccessRequest, BatchBuffers, Grouping, Layout, PartitionId, Precision, ReadEvent, Roles,
+    SampleTopology, TimeBaselineGrid, VisibilityCursor, WeightView,
 };
-use casa_types::measures::MjdHighPrec;
 use serde_json::json;
 
 type Error = Box<dyn std::error::Error>;
@@ -41,101 +38,41 @@ fn request(max_samples: usize) -> AccessRequest {
         layout: Layout::SampleMajor,
         precision: Precision::Native,
         grouping: Grouping::None,
-        closure: Closure::AtDelivery,
         max_samples,
     }
 }
 
-/// The scans and intents the trial batch does not carry, read from MAIN
-/// `SCAN_NUMBER` and `STATE::OBS_MODE` directly.
-fn scans(path: &Path, times: &[f64]) -> Result<(Vec<String>, Vec<String>), Error> {
-    let ms = MeasurementSet::open(path)?;
-    let main = ms.main_table();
-    let mut per_time = vec![String::new(); times.len()];
-    for row in 0..main.row_count() {
-        let time = casa_ms::columns::time_columns::TimeColumn::new(main).get_mjd_seconds(row)?;
-        let scan = casa_ms::columns::main_ids::scan_number(main).get(row)?;
-        if let Some(index) = times.iter().position(|known| *known == time) {
-            per_time[index] = scan.to_string();
-        }
-    }
-    let state = ms.state()?;
-    let intents = (0..state.row_count())
-        .map(|row| state.string(row, "OBS_MODE"))
-        .collect::<Result<BTreeSet<_>, _>>()?;
-    Ok((per_time, intents.into_iter().collect()))
-}
-
+/// Convert the MSv2 at `ms` through batches into a new MSv4 at `out`.
+///
+/// The declaration is the source's own catalogue with XRADIO's converter
+/// naming applied as an explicit policy (antennas `NAME_STATION`, fields
+/// and spectral windows `NAME_ID`), and the grid of one traversal. The
+/// UVW frame is the catalogue's effective one, which the MSv2 adapter
+/// resolved at opening: no relabelling happens here.
 fn write(ms: &Path, out: &Path) -> Result<(), Error> {
-    let observation = Msv2Observation::open(ms)?;
-    let catalogue = observation.catalogue();
-    let partition = &catalogue.partitions[0];
-    // The axes, from one traversal of the batch coordinates.
-    let mut times = Vec::<f64>::new();
-    let mut baselines = Vec::<OrderedBaseline>::new();
-    let mut fields = Vec::<FieldId>::new();
-    let mut cursor = observation.bind_read(&request(1_000))?;
-    let mut buffers = BatchBuffers::default();
-    while let Some(event) = cursor.next(&mut buffers)? {
-        let ReadEvent::Batch(batch) = event else {
-            continue;
-        };
-        for sample in 0..batch.samples() {
-            let coordinate = batch.topology.sample(sample);
-            if times.last() != Some(&coordinate.time_offset_s) {
-                times.push(coordinate.time_offset_s);
-                fields.push(coordinate.field);
-            }
-            if !baselines.contains(&coordinate.baseline) {
-                baselines.push(coordinate.baseline);
-            }
-        }
-    }
-    let (scan_per_time, scan_intents) = scans(ms, &times)?;
-    // XRADIO's converter conventions: antenna NAME_STATION, field and
-    // spectral window NAME_ID, Unix-second times.
-    let mut antennas = catalogue.antennas.clone();
-    for antenna in &mut antennas {
+    let observation = casa_ms::observation_io::open(ms, &OpenOptions::default())?;
+    let mut catalogue = observation.catalogue().clone();
+    for antenna in &mut catalogue.antennas {
         antenna.name = format!("{}_{}", antenna.name, antenna.station);
     }
-    let mut field_entries = catalogue.fields.clone();
-    for (index, field) in field_entries.iter_mut().enumerate() {
+    for (index, field) in catalogue.fields.iter_mut().enumerate() {
         field.name = format!("{}_{index}", field.name);
     }
-    let unix = MjdHighPrec::new(40_587.0, 0.0);
-    let spec = Msv4DatasetSpec {
-        name: "ms_trial_0".to_string(),
+    for (index, partition) in catalogue.partitions.iter_mut().enumerate() {
+        partition.spectral_window = format!("{}_{index}", partition.spectral_window);
+    }
+    let grid = TimeBaselineGrid::from_traversal(&mut *observation.bind_read(&request(1_000))?)?;
+    let options = Msv4StorageOptions {
+        dataset_name: "ms_trial_0".to_string(),
         creator: "casa-rs".to_string(),
         creation_date: "2026-10-24T00:00:00.000000+00:00".to_string(),
-        telescope: catalogue.telescope.clone(),
-        observers: catalogue.observers.clone(),
-        project: catalogue.project.clone(),
-        antennas,
-        fields: field_entries,
-        baselines,
-        times_unix_s: times
-            .iter()
-            .map(|mjd_seconds| mjd_seconds - unix.day() * 86_400.0)
-            .collect(),
-        time_scale: casa_types::measures::EpochRef::UTC,
-        integration_time_s: 10.0,
-        field_per_time: fields,
-        scan_per_time,
-        scan_intents,
-        spectral_window: format!("{}_0", partition.spectral_window),
-        frequencies_hz: partition.frequencies_hz.clone(),
-        channel_width_hz: partition.channel_widths_hz[0],
-        frequency_frame: partition.frequency_frame,
-        correlations: partition.correlations.clone(),
-        units: partition.data_groups[0].units.clone(),
-        // XRADIO relabels MSv2's ITRF UVW as the phase centre's frame.
-        uvw_frame: catalogue.fields[0].phase_centre.refer(),
         chunks: [5, 10, 4, 4],
         codec: Msv4Codec::BloscLz4,
     };
-    let mut writer = Msv4Writer::create(out, &spec)?;
+    let mut writer = Msv4Writer::create(out, &catalogue, PartitionId(0), "base", &grid, &options)?;
     // Four times per batch, so batches straddle the five-time chunks.
     let mut cursor = observation.bind_read(&request(40))?;
+    let mut buffers = BatchBuffers::default();
     while let Some(event) = cursor.next(&mut buffers)? {
         let ReadEvent::Batch(batch) = event else {
             continue;
@@ -258,6 +195,30 @@ fn dump(store: &Path, out: &Path) -> Result<(), Error> {
         "time",
         topology.time.offsets_s().as_slice().ok_or("layout")?,
     )?;
+    let centroid = batch.timing.centroid.ok_or("centroid")?;
+    raw(
+        out,
+        "TIME_CENTROID",
+        centroid.offsets_s().as_slice().ok_or("layout")?,
+    )?;
+    let exposure: Vec<f64> = (0..batch.samples())
+        .map(|sample| batch.exposure_s(sample).ok_or("exposure"))
+        .collect::<Result<_, _>>()?;
+    raw(out, "EFFECTIVE_INTEGRATION_TIME", &exposure)?;
+    // The represented instants, as the epoch views give them: two-part MJD
+    // in the delivered scale, for the oracle to compare with astropy's
+    // reading of XRADIO's attributes.
+    let instants = |view: casa_types::measures::EpochView<'_>| {
+        let epochs: Vec<_> = (0..view.len())
+            .map(|index| view.get(index).value())
+            .collect();
+        (
+            epochs.iter().map(|epoch| epoch.day()).collect::<Vec<_>>(),
+            epochs.iter().map(|epoch| epoch.frac()).collect::<Vec<_>>(),
+        )
+    };
+    let (time_day, time_frac) = instants(topology.time);
+    let (centroid_day, centroid_frac) = instants(centroid);
     raw(
         out,
         "frequency",
@@ -273,10 +234,16 @@ fn dump(store: &Path, out: &Path) -> Result<(), Error> {
             "WEIGHT": {"dtype": "<f4", "shape": [times, baselines, channels, correlations]},
             "UVW": {"dtype": "<f8", "shape": [times, baselines, 3]},
             "time": {"dtype": "<f8", "shape": [times]},
+            "TIME_CENTROID": {"dtype": "<f8", "shape": [times, baselines]},
+            "EFFECTIVE_INTEGRATION_TIME": {"dtype": "<f8", "shape": [times, baselines]},
             "frequency": {"dtype": "<f8", "shape": [channels]},
         },
         "time_origin_mjd": topology.time.origin().day() + topology.time.origin().frac(),
         "time_scale": format!("{:?}", topology.time.reference()),
+        "time_instant_mjd": {"day": time_day, "frac": time_frac},
+        "centroid_instant_mjd": {"day": centroid_day, "frac": centroid_frac},
+        "interval_s": batch.interval_s(0),
+        "scan_name": (0..times).map(|t| batch.scan(t * baselines).map(|scan| catalogue.scans[scan.0 as usize].name.clone())).collect::<Vec<_>>(),
         "frequency_frame": format!("{:?}", batch.frequency.reference()),
         "uvw_frame": format!("{:?}", group.uvw.ok_or("uvw")?.reference()),
         "units": format!("{:?}", group.units),
@@ -292,8 +259,8 @@ fn dump(store: &Path, out: &Path) -> Result<(), Error> {
         "spectral_window": partition.spectral_window,
         "channel_width_hz": partition.channel_widths_hz,
         "antennas": catalogue.antennas.iter().map(|a| json!({
-            "name": a.name, "station": a.station, "position_m": a.position_m, "mount": a.mount,
-            "dish_diameter_m": a.dish_diameter_m, "receptors": a.receptors,
+            "name": a.name, "station": a.station, "position_m": a.position.values(), "mount": a.mount,
+            "dish_diameter_m": a.dish_diameter.value(), "receptors": a.receptors,
         })).collect::<Vec<_>>(),
         "realization": realization,
         "counters": format!("{:?}", cursor.counters()),

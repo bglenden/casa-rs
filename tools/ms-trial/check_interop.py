@@ -22,6 +22,7 @@ from pathlib import Path
 
 import numpy as np
 from arcae.lib.arrow_tables import Table
+from astropy.time import Time
 from xradio.measurement_set import open_processing_set
 from xradio.schema.check import check_datatree
 
@@ -47,6 +48,26 @@ def exact(check, expected, actual):
     )
 
 
+def instants(check, expected, actual, tolerance_s=1e-6):
+    """The represented instants, not raw numbers and scale strings: both are
+    astropy Times; their difference must be within `tolerance_s`."""
+    difference = np.abs((expected - actual).to_value("s"))
+    worst = float(np.max(difference)) if difference.size else 0.0
+    record(check, expected.shape == actual.shape and worst <= tolerance_s, {"worst_s": worst})
+
+
+def xradio_time(variable):
+    """An XRADIO time variable as astropy reads its attributes (XRADIO's
+    schema defines them by astropy's Time)."""
+    return Time(np.asarray(variable.values), format=variable.attrs["format"], scale=variable.attrs["scale"])
+
+
+def rust_instants(manifest, name):
+    """Rust's epoch views' two-part MJD, in the scale it delivered."""
+    part = manifest[name]
+    return Time(np.asarray(part["day"]), np.asarray(part["frac"]), format="mjd", scale=manifest["time_scale"].lower())
+
+
 def dataset(ps):
     name = sorted(ps.children)[0]
     return name, ps[name]
@@ -65,6 +86,18 @@ def rust_read(store, dump):
     exact("baseline_antenna2_name", ds.baseline_antenna2_name.values, manifest["baseline_antenna2_name"])
     exact("field_name per time", ds.field_name.values, manifest["field_name"])
     record("time origin is the Unix epoch, MJD 40587", manifest["time_origin_mjd"] == 40587.0)
+    instants("time instants Rust represents equal astropy's reading of XRADIO's", xradio_time(ds.time), rust_instants(manifest, "time_instant_mjd"))
+    instants(
+        "TIME_CENTROID instants Rust represents equal astropy's reading",
+        xradio_time(ds.TIME_CENTROID).ravel(),
+        rust_instants(manifest, "centroid_instant_mjd"),
+    )
+    record(
+        "interval is time.integration_time",
+        manifest["interval_s"] == ds.time.attrs["integration_time"]["data"],
+        {"rust": manifest["interval_s"], "xradio": ds.time.attrs["integration_time"]["data"]},
+    )
+    exact("scan per time", ds.scan_name.values, manifest["scan_name"])
     record(
         "time scale",
         manifest["time_scale"] == ds.time.attrs["scale"].upper(),
@@ -117,7 +150,7 @@ def rust_written(store, reference, ms):
     _, expected_node = dataset(open_processing_set(str(reference)).load())
     ds, expected = node.ds, expected_node.ds
     record("dataset type and schema version", (node.attrs["type"], node.attrs["schema_version"]) == ("visibility", "4.0.1"))
-    for var in ["VISIBILITY", "FLAG", "WEIGHT", "UVW"]:
+    for var in ["VISIBILITY", "FLAG", "WEIGHT", "UVW", "TIME_CENTROID", "EFFECTIVE_INTEGRATION_TIME"]:
         exact(f"{var} equals XRADIO's conversion", expected[var].values, ds[var].values)
         record(
             f"{var} dims and dtype",
@@ -132,6 +165,9 @@ def rust_written(store, reference, ms):
         record(f"frequency.{attr}", ds.frequency.attrs.get(attr) == expected.frequency.attrs.get(attr), {"rust": ds.frequency.attrs.get(attr), "xradio": expected.frequency.attrs.get(attr)})
     for attr in ["type", "units", "frame"]:
         record(f"UVW.{attr}", ds.UVW.attrs.get(attr) == expected.UVW.attrs.get(attr), {"rust": ds.UVW.attrs.get(attr), "xradio": expected.UVW.attrs.get(attr)})
+    for var in ["TIME_CENTROID", "EFFECTIVE_INTEGRATION_TIME"]:
+        for attr in ["type", "units", "scale", "format"]:
+            record(f"{var}.{attr}", ds[var].attrs.get(attr) == expected[var].attrs.get(attr), {"rust": ds[var].attrs.get(attr), "xradio": expected[var].attrs.get(attr)})
     record("VISIBILITY.units", ds.VISIBILITY.attrs.get("units") == expected.VISIBILITY.attrs.get("units"), {"rust": ds.VISIBILITY.attrs.get("units")})
     record("scan_name.scan_intents", ds.scan_name.attrs.get("scan_intents") == expected.scan_name.attrs.get("scan_intents"))
     roles = ["correlated_data", "flag", "weight", "uvw", "field_and_source"]
@@ -159,7 +195,10 @@ def rust_written(store, reference, ms):
     flag = np.asarray(main.getcol("FLAG"))
     weight = np.asarray(main.getcol("WEIGHT"))
     uvw = np.asarray(main.getcol("UVW"))
-    time = np.asarray(main.getcol("TIME")) - 40587.0 * 86400.0
+    mjd_seconds = np.asarray(main.getcol("TIME"))
+    centroid_seconds = np.asarray(main.getcol("TIME_CENTROID"))
+    exposure = np.asarray(main.getcol("EXPOSURE"))
+    time = mjd_seconds - 40587.0 * 86400.0
     names = np.asarray(Table.from_filename(str(ms) + "::ANTENNA").getcol("NAME"))
     stations = np.asarray(Table.from_filename(str(ms) + "::ANTENNA").getcol("STATION"))
     label = [f"{n}_{s}" for n, s in zip(names, stations)]
@@ -174,6 +213,14 @@ def rust_written(store, reference, ms):
     exact("FLAG equals MSv2 FLAG", flag, ds.FLAG.values[t, b])
     exact("WEIGHT equals MSv2 WEIGHT broadcast", np.broadcast_to(weight[:, None, :], data.shape), ds.WEIGHT.values[t, b])
     exact("UVW equals MSv2 UVW", uvw, ds.UVW.values[t, b])
+    exact("EFFECTIVE_INTEGRATION_TIME equals MSv2 EXPOSURE", exposure, ds.EFFECTIVE_INTEGRATION_TIME.values[t, b])
+
+    def mjd(seconds):
+        day = np.floor(seconds / 86400.0)
+        return Time(day, (seconds - day * 86400.0) / 86400.0, format="mjd", scale="utc")
+
+    instants("time instants equal the MSv2 TIME instants (UTC)", mjd(mjd_seconds), xradio_time(ds.time)[t])
+    instants("TIME_CENTROID instants equal the MSv2 TIME_CENTROID instants", mjd(centroid_seconds), xradio_time(ds.TIME_CENTROID)[t, b])
     record("every slot is an MSv2 row (no padding)", len(rows) == ds.time.size * ds.baseline_id.size)
     meta = json.loads((Path(store) / name / "VISIBILITY" / "zarr.json").read_text())
     record("VISIBILITY layout", True, {"chunks": meta["chunk_grid"]["configuration"]["chunk_shape"], "codecs": [c["name"] for c in meta["codecs"]]})

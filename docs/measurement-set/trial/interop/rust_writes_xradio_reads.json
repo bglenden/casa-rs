@@ -1,6 +1,6 @@
 {
  "mode": "rust-written",
- "checks": 59,
+ "checks": 74,
  "failed": 0,
  "results": [
   {
@@ -116,6 +116,54 @@
       "time",
       "baseline_id",
       "uvw_label"
+     ],
+     "float64"
+    ]
+   }
+  },
+  {
+   "check": "TIME_CENTROID equals XRADIO's conversion",
+   "ok": true
+  },
+  {
+   "check": "TIME_CENTROID dims and dtype",
+   "ok": true,
+   "detail": {
+    "rust": [
+     [
+      "time",
+      "baseline_id"
+     ],
+     "float64"
+    ],
+    "xradio": [
+     [
+      "time",
+      "baseline_id"
+     ],
+     "float64"
+    ]
+   }
+  },
+  {
+   "check": "EFFECTIVE_INTEGRATION_TIME equals XRADIO's conversion",
+   "ok": true
+  },
+  {
+   "check": "EFFECTIVE_INTEGRATION_TIME dims and dtype",
+   "ok": true,
+   "detail": {
+    "rust": [
+     [
+      "time",
+      "baseline_id"
+     ],
+     "float64"
+    ],
+    "xradio": [
+     [
+      "time",
+      "baseline_id"
      ],
      "float64"
     ]
@@ -314,6 +362,70 @@
    }
   },
   {
+   "check": "TIME_CENTROID.type",
+   "ok": true,
+   "detail": {
+    "rust": "time",
+    "xradio": "time"
+   }
+  },
+  {
+   "check": "TIME_CENTROID.units",
+   "ok": true,
+   "detail": {
+    "rust": "s",
+    "xradio": "s"
+   }
+  },
+  {
+   "check": "TIME_CENTROID.scale",
+   "ok": true,
+   "detail": {
+    "rust": "utc",
+    "xradio": "utc"
+   }
+  },
+  {
+   "check": "TIME_CENTROID.format",
+   "ok": true,
+   "detail": {
+    "rust": "unix",
+    "xradio": "unix"
+   }
+  },
+  {
+   "check": "EFFECTIVE_INTEGRATION_TIME.type",
+   "ok": true,
+   "detail": {
+    "rust": "quantity",
+    "xradio": "quantity"
+   }
+  },
+  {
+   "check": "EFFECTIVE_INTEGRATION_TIME.units",
+   "ok": true,
+   "detail": {
+    "rust": "s",
+    "xradio": "s"
+   }
+  },
+  {
+   "check": "EFFECTIVE_INTEGRATION_TIME.scale",
+   "ok": true,
+   "detail": {
+    "rust": null,
+    "xradio": null
+   }
+  },
+  {
+   "check": "EFFECTIVE_INTEGRATION_TIME.format",
+   "ok": true,
+   "detail": {
+    "rust": null,
+    "xradio": null
+   }
+  },
+  {
    "check": "VISIBILITY.units",
    "ok": true,
    "detail": {
@@ -392,10 +504,7 @@
    "check": "variables XRADIO wrote that the trial writer does not",
    "ok": true,
    "detail": {
-    "not written": [
-     "EFFECTIVE_INTEGRATION_TIME",
-     "TIME_CENTROID"
-    ]
+    "not written": []
    }
   },
   {
@@ -417,6 +526,24 @@
   {
    "check": "UVW equals MSv2 UVW",
    "ok": true
+  },
+  {
+   "check": "EFFECTIVE_INTEGRATION_TIME equals MSv2 EXPOSURE",
+   "ok": true
+  },
+  {
+   "check": "time instants equal the MSv2 TIME instants (UTC)",
+   "ok": true,
+   "detail": {
+    "worst_s": 9.592326932761353e-12
+   }
+  },
+  {
+   "check": "TIME_CENTROID instants equal the MSv2 TIME_CENTROID instants",
+   "ok": true,
+   "detail": {
+    "worst_s": 9.592326932761353e-12
+   }
   },
   {
    "check": "every slot is an MSv2 row (no padding)",

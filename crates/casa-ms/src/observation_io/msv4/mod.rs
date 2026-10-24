@@ -8,9 +8,11 @@
 //! Blosc or Zstandard bytes codecs, `unix`-format times and the units the
 //! schema requires. Anything else is refused with a typed error.
 
+mod cursor;
 mod metadata;
 mod read;
 mod write;
 
-pub use read::{Msv4Cursor, Msv4Observation};
-pub use write::{Msv4Codec, Msv4DatasetSpec, Msv4WriteCounters, Msv4Writer};
+pub use cursor::Msv4Cursor;
+pub use read::Msv4Observation;
+pub use write::{Msv4Codec, Msv4StorageOptions, Msv4WriteCounters, Msv4Writer};

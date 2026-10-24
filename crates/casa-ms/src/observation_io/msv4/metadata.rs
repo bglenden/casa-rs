@@ -9,7 +9,7 @@ use casa_types::measures::direction::DirectionRef;
 use casa_types::measures::frequency::FrequencyRef;
 use casa_types::measures::{EpochRef, MjdHighPrec};
 use serde_json::{Map, Value};
-use zarrs::array::{Array, ArraySubset};
+use zarrs::array::{Array, ArrayMetadata, ArraySubset};
 use zarrs::filesystem::FilesystemStore;
 
 /// The schema version this profile reads and writes.
@@ -57,47 +57,84 @@ pub(crate) fn require_units(
     }
 }
 
-/// The time scale and origin of a `time` measure: `scale` names the scale,
-/// and `format: unix` counts seconds from 1970-01-01.
+/// The time scale and origin of a `time` measure.
+///
+/// XRADIO defines its time attributes by astropy's `Time` (schema
+/// `measures.py`, `TimeArray`), and astropy's `unix` format counts seconds
+/// from 1970-01-01 00:00:00 *UTC* whatever the requested scale: with
+/// `scale: tai`, the represented instant is not the Unix epoch read as TAI
+/// plus the offset, and re-expressing it needs the leap-second table. The
+/// trial profile reads `format: unix` with `scale: utc` only, where the
+/// origin is the Unix epoch in UTC and the offsets are UTC seconds, and
+/// refuses the rest rather than mislabel the instant.
 pub(crate) fn time_reference(
     attributes: &Map<String, Value>,
     of: &str,
 ) -> Result<(EpochRef, MjdHighPrec), ObservationError> {
     require_units(attributes, "s", of)?;
-    let scale = match text(attributes, "scale", of)? {
-        "utc" => EpochRef::UTC,
-        "tai" => EpochRef::TAI,
-        _ => {
-            return Err(ObservationError::Unsupported {
-                what: "an MSv4 time scale other than utc or tai",
-            });
-        }
-    };
     if text(attributes, "format", of)? != "unix" {
         return Err(ObservationError::Unsupported {
             what: "an MSv4 time format other than unix",
         });
     }
-    Ok((scale, MjdHighPrec::new(UNIX_EPOCH_MJD, 0.0)))
+    if text(attributes, "scale", of)? != "utc" {
+        return Err(ObservationError::Unsupported {
+            what: "an MSv4 unix-format time in a scale other than utc (astropy's unix epoch is UTC)",
+        });
+    }
+    Ok((EpochRef::UTC, MjdHighPrec::new(UNIX_EPOCH_MJD, 0.0)))
 }
 
-/// The time measure attributes the writer records for `scale`.
+/// The time measure attributes the writer records: `format: unix`,
+/// `scale: utc`, the only pair whose instant the writer's arithmetic
+/// represents ([`time_reference`]).
 pub(crate) fn time_attributes(scale: EpochRef) -> Result<Map<String, Value>, ObservationError> {
-    let scale = match scale {
-        EpochRef::UTC => "utc",
-        EpochRef::TAI => "tai",
-        _ => {
-            return Err(ObservationError::Unsupported {
-                what: "writing an MSv4 time scale other than utc or tai",
-            });
-        }
-    };
+    if scale != EpochRef::UTC {
+        return Err(ObservationError::Unsupported {
+            what: "writing MSv4 times in a scale other than UTC",
+        });
+    }
     let mut attributes = Map::new();
     attributes.insert("type".into(), "time".into());
     attributes.insert("units".into(), "s".into());
-    attributes.insert("scale".into(), scale.into());
+    attributes.insert("scale".into(), "utc".into());
     attributes.insert("format".into(), "unix".into());
     Ok(attributes)
+}
+
+/// Require `array` to have Zarr data type `data_type` and dimensions
+/// `dimensions`, as the profile defines the variable at `path`. Anything
+/// else is refused before a byte is decoded: the reader's decode is a raw
+/// byte copy, which would reinterpret a same-width type silently.
+pub(crate) fn require_layout(
+    array: &Array<FilesystemStore>,
+    path: &str,
+    data_type: &str,
+    dimensions: &[&str],
+) -> Result<(), ObservationError> {
+    let ArrayMetadata::V3(metadata) = array.metadata() else {
+        return Err(ObservationError::Unsupported {
+            what: "an MSv4 variable that is not Zarr v3",
+        });
+    };
+    let stored = metadata.data_type.name();
+    if stored != data_type {
+        return Err(invalid(format!(
+            "{path} is {stored}; the trial profile reads it only as {data_type}"
+        )));
+    }
+    let names: Option<Vec<&str>> = metadata.dimension_names.as_ref().map(|names| {
+        names
+            .iter()
+            .map(|name| name.as_deref().unwrap_or(""))
+            .collect()
+    });
+    if names.as_deref() != Some(dimensions) {
+        return Err(invalid(format!(
+            "{path} has dimensions {names:?}, not {dimensions:?}"
+        )));
+    }
+    Ok(())
 }
 
 /// XRADIO's spelling of a spectral frame (`observer`) and back. Lowercase

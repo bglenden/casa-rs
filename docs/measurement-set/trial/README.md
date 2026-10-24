@@ -1,6 +1,6 @@
 # MSv2/MSv4 trial evidence
 
-Status: exploratory first pass complete, stopped for design review; interfaces not frozen; not M0/M1 acceptance
+Status: revision 1 after the design review, stopped for review again; interfaces not frozen; not M0/M1 acceptance
 Truth class: trial evidence
 Date: 2026-10-24
 Handoff: [trial-handoff.md](../trial-handoff.md)
@@ -12,6 +12,35 @@ showed, including what is missing. Nothing here claims M0 or M1 complete:
 the full caller and Measures inventory, every Measures family's bulk route,
 general updates and creation, failure injection and the benchmark matrix
 remain later requirements.
+
+## Revision 1: what the design review changed
+
+Astra's review of the first pass (PR #898) asked for a smaller, cleaner
+boundary and for refusals where the first pass accepted inputs it then
+mishandled. Each change below has a test; the sections that follow give the
+results.
+
+| Review item | Change | Test |
+| --- | --- | --- |
+| One shared boundary | `casa_observation::Observation` (catalogue + `bind_read`) is all algorithm code sees; `casa_ms::observation_io::open` chooses the adapter once. The imaging source, its work-unit probe and the calibration feed take `&dyn Observation` and import no store type. | `consumer_modules_import_no_store_type`, `the_feed_imports_no_store_type` |
+| Metadata the consumers need | Requestable roles for time centroid, interval, exposure and scan, each in its stored sharing (per sample, per time, or one per batch); a role the store lacks fails binding. The gain solve now takes its solution times, intervals and scans from the batch, and the comparison asserts them. | `time_auxiliaries_are_main_columns`, `missing_metadata_fails_binding` |
+| One validity rule | `VisibilityBatch::validity()`: a value is excluded when its stored flag or row flag is set or its value or weight is not finite. Stored flags stay separate. Both consumers use it. | adapter and example tests |
+| MSv2 `TIME` reference | Read from `MEASINFO`, kept when fixed (TAI is delivered as TAI), refused when variable or when `TIME_CENTROID` disagrees. | `the_msv2_time_reference_is_read_not_assumed` |
+| MSv4 `unix` + `tai` | Refused: astropy's Unix epoch is UTC in every scale. The writer writes `unix`/`utc` only. The oracle compares represented instants. | `an_msv4_unix_time_in_tai_is_refused`; interop instant checks |
+| UVW convention | Resolved once at opening into `UvwFrame { effective, stored_label }`; the batch carries the effective frame. MSv2 `ITRF`-labelled UVW is the phase centres' frame (CASA's convention), a different celestial label is refused; no consumer or writer relabels. | `catalogues_describe_the_same_observation` |
+| Units | MSv2 `DATA` units read from `QuantumUnits`; time, UVW, position, diameter, angle and frequency units checked in both adapters. Catalogue positions are `MPosition`, diameters and angles `Quantity`. | catalogue test |
+| Exact MSv4 dtypes and dimensions | `complex64`, `bool`, `float32`, `float64` and the dimension order checked at opening, and again at each decode. | `msv4_payload_types_and_dimensions_are_checked_at_opening` |
+| Per-group context | Each data group keeps its own fields (from its `field_and_source` dataset) and UVW frame; fields merge only when name, phase centre and source agree. | `each_data_group_keeps_its_own_field_context` |
+| Checked batch construction | `BatchBuffers` arrays are private; a cursor fills them through `begin` and `BatchFill::finish`, which checks lengths (overflow-checked), antenna/field/scan identities and fragment tiling once, and keeps the one `BatchHeader` the batch is built from. Packing goes through the same check. | `casa-observation` unit tests |
+| End of stream | `next_owned` hands the buffers back at the end (`OwnedEvent::End`) and on error (`Reclaimed`): no batch count or extra state. | work-unit probe, calibration feed |
+| Channel windows and closure | Windows carry no fragments, so a split batch announces a group's end once; `GroupCompletion` joins input completion with work completion. | `split_channel_windows_complete_each_group_once` |
+| `Closure::Deferred` | Removed from `AccessRequest`; deferral is an opening option (`OpenOptions::group_closure`), a test mechanism. | grouping laws |
+| Creation metadata vs storage | The writer takes the common `Catalogue`, a partition, a data group and a `TimeBaselineGrid`; `Msv4StorageOptions` holds name, provenance, chunks and codec. | writer tests |
+| Writer validation | Every batch is checked against the declaration before any byte is written: partition, frequencies and frame, correlation products, units, UVW frame, time scale, and each sample's time, baseline, field, scan and interval. A row flag is refused. | `the_writer_refuses_batches_that_disagree_with_the_declaration` |
+| Exclusive staging | Each writer creates its own uniquely named staging directory and publishes with a no-replace rename; a dropped or failed writer removes its staging. | `writers_stage_apart_and_never_replace_a_published_dataset` |
+| Comparators | Shape, count and finiteness are checked before any reduction; a NaN is the worst difference; every claimed metric, calibration weights included, is asserted. | `comparators_never_pass_a_nan_or_a_mismatch`, `agreement_never_passes_a_nan_or_a_mismatch` |
+| Catalogue rebinding | The calibration comparison maps antennas by station and position and fields by phase centre, refusing unmatched or ambiguous entries, instead of relying on list order. | example B tests |
+| `decode_units` wording | Documented as chunks the selection touches, modelled from the chunk grid (the realization and the counter use the same model), not decodes observed inside zarrs. | adapter laws |
 
 ## Provenance
 
@@ -80,40 +109,51 @@ external data.
 
 | What | Command | Needs |
 | --- | --- | --- |
-| Adapter laws | `cargo test -p casa-ms --features msv4 --test observation_io` | Rust only |
+| Adapter laws, refusals, writer, work units | `cargo test -p casa-ms --features msv4 --test observation_io` | Rust only |
 | Example A | `cargo test -p casa-imaging-application --test ms_trial_imaging -- --nocapture --test-threads 1` | Rust only |
 | Example A timings | `cargo test --release -p casa-imaging-application --test ms_trial_imaging narrow_timings -- --ignored --nocapture` | Rust only |
 | Example B | `cargo test -p casa-calibration --lib batch_trial -- --nocapture --test-threads 1` | Rust only |
-| Shared types | `cargo test -p casa-observation -p casa-types --lib` | Rust only |
+| Shared types | `cargo test -p casa-observation -p casa-types` | Rust only |
 | Interoperability, both directions | `tools/ms-trial/check_interop.sh` | cargo, uv (pinned XRADIO environment) |
 | Fixtures | `tools/ms-trial/make_fixtures.sh` | cargo, uv, network for the first `uv sync` |
 
 ## Adapter laws
 
-`crates/casa-ms/tests/observation_io.rs`, 8 tests, all passing (the two
-writer laws are described under interoperability):
+`crates/casa-ms/tests/observation_io.rs` and its modules `refusals`,
+`writer` and `work`: 17 tests, all passing (the writer laws are described
+under interoperability, the refusals in revision 1's table). The shared
+types have 6 unit tests of their own (`cargo test -p casa-observation`).
 
 - Both catalogues describe the same observation in each store's own names
-  (antennas, field, phase centre, frequencies and widths, LSRK, correlation
-  order, data-group roles and units).
+  (antennas with equal positions, field, phase centre, scan 1 with its
+  intent, frequencies and widths, LSRK, correlation order, data-group roles,
+  units and UVW frames: effective J2000 in both, stored `ITRF` in MSv2).
 - **Every sample XRADIO wrote equals its MSv2 row exactly**: visibilities,
   flags, weights (MSv2's per-correlation `WEIGHT` broadcast, MSv4's
-  spectral `WEIGHT`), UVW and time. This holds for the whole band and for
-  channel windows 2–5 and 7, at v4 batch sizes of 10, 20, 50 and 120
-  samples and v2 sizes of 1, 7, 25 and 120. The v4 store holds exactly the
-  120 v2 acquisitions.
+  spectral `WEIGHT`), UVW, time, time centroid, interval, exposure and scan.
+  This holds for the whole band and for channel windows 2–5 and 7, at v4
+  batch sizes of 10, 20, 50 and 120 samples and v2 sizes of 1, 7, 25 and
+  120. The v4 store holds exactly the 120 v2 acquisitions.
+- The v2 batch's time auxiliaries equal MAIN's `TIME_CENTROID`,
+  `INTERVAL`, `EXPOSURE` and `SCAN_NUMBER` as the production typed column
+  accessors read them cell by cell.
 - The MSv2 batch is listed (`Irregular`), with per-correlation weights,
-  `FLAG_ROW` and known occupancy. The MSv4 batch is factored
-  (`TimeBaseline`, 4 times × 10 baselines), with spectral weights and
-  unknown occupancy, and its `[40, 8, 4]` view is the decode buffer itself
-  (same pointer).
+  `FLAG_ROW`, known occupancy and per-sample auxiliaries. The MSv4 batch is
+  factored (`TimeBaseline`, 4 times × 10 baselines), with spectral weights,
+  unknown occupancy, one interval for the batch and scans per time, and its
+  `[40, 8, 4]` view is the decode buffer itself (same pointer).
 - MSv4 Unix-second times re-express the MSv2 MJD-second times exactly.
 - 60 s groups: each bin's 60 samples arrive once, in order, whatever the batch
   size (10–120). Closure is announced exactly once, either as a `Last`/`Whole`
-  fragment or, under deferred closure, as a later `GroupEnd`.
-- The binding reports read amplification before reading: 15/12 for the whole
-  band (Zarr stores the ragged last time chunk at full size), and twice that
-  for a two-channel window of four-channel chunks. The decode count matches.
+  fragment or, from a store opened to defer it, as a later `GroupEnd`.
+- A grouped batch split into two channel windows on two threads, one held
+  back, completes each group's input once and finalizes each group once,
+  after both windows' work; per-group sums equal a sequential traversal's,
+  from both stores.
+- The binding models read amplification from the chunk grid before
+  reading: 15/12 for the whole band (Zarr stores the ragged last time chunk
+  at full size), and twice that for a two-channel window of four-channel
+  chunks. The cursor's count of touched chunks, by the same model, matches.
 
 ## Example A: dirty-image channel planes
 
@@ -122,10 +162,14 @@ LSRK cube (native channels 2–5) of 64 × 64 cells of 0.012″, natural
 weighting, standard gridder, Stokes I. The production `MeasurementOperator`,
 spectral resampler (linear) and major-cycle pass (`run_major_cycle`) read
 `VisibilityBatch`es through a trial `BoundedSource`
-(`crates/casa-imaging-application/tests/ms_trial/source.rs`).
-Each wave binds its own `AccessRequest` for the native channels that reach its
-planes. The baseline is the production imager (`casa_imaging_application::execute`,
-`niter=0`) on the MSv2.
+(`crates/casa-imaging-application/tests/ms_trial/source.rs`), which takes
+`&dyn Observation` and imports no store type; the test opens both fixtures
+through `casa_ms::observation_io::open`. Each wave binds its own
+`AccessRequest` for the native channels that reach its planes. Each cell's
+flag is the batch's validity rule. The baseline is the production imager
+(`casa_imaging_application::execute`, `niter=0`) on the MSv2. The
+comparators check shapes, counts and finiteness first, so a NaN can never
+read as agreement.
 
 | Run | Image NRMS vs production | PSF NRMS | `sumwt` | Traversal windows | Decode units |
 | --- | --- | --- | --- | --- | --- |
@@ -150,13 +194,24 @@ before each batch. Every unit's plane equals the pass's (NRMS < 1e-6).
 
 | Strategy | Fast units done | Slow unit done | Producer stall | Batch buffers | Peak pinned | Copied |
 | --- | --- | --- | --- | --- | --- | --- |
-| Shared batch (`Arc<FilledBatch>`, pool of 2), v2 | 61.1 ms | 181.2 ms | 60.4 ms | 2 × 8.4 KB | 16.9 KB of batches | 0 |
-| Packed pieces (`FilledBatch::pack`, 2 per unit), v2 | 0.6 ms | 181.2 ms | 60.2 ms | 1 × 8.4 KB | 8.4 KB batch + 19.6 KB pieces | 7,680 elements |
-| Shared batch, v4 | 62.4 ms | 181.7 ms | 59.5 ms | 2 × 9.8 KB | 19.7 KB of batches | 0 |
-| Packed pieces, v4 | 2.3 ms | 181.8 ms | 59.3 ms | 1 × 9.8 KB | 9.8 KB batch + 16.0 KB pieces | 7,200 elements |
+| Shared batch (`Arc<FilledBatch>`, pool of 2), v2 | 61.4 ms | 181.4 ms | 120.6 ms | 2 × 8.4 KB | 16.9 KB of batches | 0 |
+| Packed pieces (`FilledBatch::pack`, 2 per unit), v2 | 1.4 ms | 181.4 ms | 59.8 ms | 1 × 8.4 KB | 8.4 KB batch + 23.5 KB pieces | 7,680 elements |
+| Shared batch, v4 | 63.7 ms | 182.7 ms | 118.2 ms | 2 × 9.8 KB | 19.7 KB of batches | 0 |
+| Packed pieces, v4 | 4.1 ms | 182.7 ms | 58.1 ms | 1 × 9.8 KB | 9.8 KB batch + 12.8 KB pieces | 7,200 elements |
 
-Release build, one run. The slow unit's 3 × 60 ms delay dominates its time
-by design.
+Revision 1, debug build, one run (the first pass's release-build run gave
+the same pattern: fast units at 61–62 ms shared and 0.6–2.3 ms packed). The
+slow unit's 3 × 60 ms delay dominates its time by design. The piece bytes
+now include the time auxiliaries the request reads.
+
+The producer now stops when the cursor hands its buffer back
+(`OwnedEvent::End`), not after a precomputed batch count. **Finding:**
+asking for the next event still takes a buffer, so with the shared pool
+exhausted the producer waits for one even when the answer is the end; that
+is the extra 60 ms of shared-batch stall against the first pass. A
+`next_owned(Option<BatchBuffers>)` that answers `End` without a buffer
+would remove it; this revision follows the review and leaves it as an open
+question.
 
 Sharing costs no copy, but a slow unit pins every batch it has not finished,
 and once the pool is used up the fast units wait for its buffers. Packing
@@ -168,7 +223,9 @@ waits only for storage, never for a scheduler, and every queue is bounded.
 ### Narrow timings
 
 `cargo test --release -p casa-imaging-application --test ms_trial_imaging narrow_timings -- --ignored --nocapture`,
-25 runs each, one worker, warm page cache:
+25 runs each, one worker, warm page cache. **Measured on the first pass
+(`21e0dde`) and not rerun for revision 1**, whose batch construction check
+and per-element validity rule may change them slightly:
 
 | Path | Median | Minimum |
 | --- | --- | --- |
@@ -196,13 +253,17 @@ decode still allocates inside zarrs.
 
 ## Example B: gain solve
 
-`crates/casa-calibration/src/solve/batch_trial.rs`
-(crate-internal, test-only). The request is `gaincal(gaintype='G',
-calmode='ap', solint='60s', refant=0, minsnr=3, minblperant=4)` against a
-1 Jy point source. Production's `SolveAccumulator` and solver
-(`solve_closed_group`, split out of `solve_gain` unchanged) consume batch
-fragments. The `[sample, channel, correlation]` views are transposed to the
-accumulator's `[correlation, channel]` without copying. For the comparison,
+`crates/casa-calibration/src/solve/batch_trial.rs` (setup and tests) and
+`batch_trial/feed.rs` (the consumer, which takes `&dyn Observation` and
+imports no store type); crate-internal, test-only. The request is
+`gaincal(gaintype='G', calmode='ap', solint='60s', refant=0, minsnr=3,
+minblperant=4)` against a 1 Jy point source. Production's
+`SolveAccumulator` and solver (`solve_closed_group`, split out of
+`solve_gain` unchanged) consume batch fragments. The `[sample, channel,
+correlation]` views are transposed to the accumulator's `[correlation,
+channel]` without copying; the flags are the batch's validity rule,
+written into one small array per fragment. Each sample's time, time
+centroid, interval and scan come from the batch. For the comparison,
 `solve_gain` was split into `solve_gain_rows` plus the caltable write; the
 production run still writes its caltable (10 rows).
 
@@ -212,24 +273,36 @@ arithmetic and its order are unchanged, and all 134 existing casa-calibration
 tests pass. The split also brought `observe` under the function-length limit,
 so its grandfathered `too_many_lines` exception is removed.
 
-| Realization | Batch sizes | Closure | Gains vs production | SNR / weight vs production | Live groups | Accumulator entries |
-| --- | --- | --- | --- | --- | --- | --- |
-| Sequential, v2 | 1, 7, 25, 60, 120 rows | at delivery and deferred | identical | ≤ 1.5e-7 relative | ≤ 2 | ≤ 64 |
-| Sequential, v4 | 10, 30, 40, 70, 120 samples | at delivery and deferred | identical | ≤ 1.5e-7 | ≤ 2 | ≤ 64 |
-| Concurrent fragments, first held back 50 ms, v2 / v4 | 25 / 30 | both | ≤ 1.9e-7 absolute | ≤ 6.1e-6 | 2 | — |
-| Production against itself | — | — | identical | ≤ 1.5e-7 | — | — |
+The comparison renumbers each solve's antennas and fields into the
+production MeasurementSet's by context (antenna station and position, field
+phase centre), refusing unmatched or ambiguous entries, and asserts every
+row's antenna, field, spectral window, reference antenna, observation, scan
+and interval, then the gains, SNRs, weights and flags, with NaN as the
+worst difference.
+
+| Realization | Batch sizes | Closure | Gains vs production | SNR vs production | Weights vs production |
+| --- | --- | --- | --- | --- | --- |
+| Sequential, v2 | 1, 7, 25, 60, 120 rows | at delivery and deferred | identical | ≤ 1.2e-7 relative | ≤ 1.6e-7 relative |
+| Sequential, v4 | 10, 30, 40, 70, 120 samples | at delivery and deferred | identical | ≤ 1.2e-7 | ≤ 1.6e-7 |
+| Concurrent fragments, first held back 50 ms, v2 / v4 | 25 / 30 | both | ≤ 1.9e-7 absolute | ≤ 6.1e-6 | ≤ 2.1e-7 |
+| Production against itself | — | — | identical | ≤ 1.1e-7 | ≤ 1.6e-7 |
+
+Scans, intervals and identities are equal in every row of every run; times
+are equal in the sequential runs and within 1e-6 s in the concurrent v2
+run (merged sums of times change their order).
 
 - **Groups cross batches.** At 7 rows per batch, each 60-sample group spans
   up to ten batches (19 fragments over 18 batches). At one row per batch, a
-  group spans 60 batches, with one 688-byte buffer and one group's
+  group spans 60 batches, with one 800-byte buffer and one group's
   sufficient statistics (32 entries) resident. Accumulator state depends on
   the group's distinct times, antennas and baseline-correlations, not its
   samples. No visibility is retained across batches.
 - **Closure is exact.** Each group closes exactly once: two `Last`/`Whole`
-  fragments at delivery, or two `GroupEnd` events under deferred closure.
-  In the concurrent realization, both groups' closures arrived while
-  fragment work was pending (`closed_with_pending = 2`), and each group was
-  solved only after its partial accumulations had joined and merged.
+  fragments at delivery, or two `GroupEnd` events from a store opened to
+  defer closure. In the concurrent realization `GroupCompletion` joins the
+  two completions: both groups' input completed while fragment work was
+  pending (`closed_with_pending = 2`), and each group was solved only after
+  its partial accumulations had joined and merged.
 - **Agreement.** The sequential solves match production as closely as
   production matches itself: its solver iterates hash maps in a per-run
   order. Merged partial sums change summation order, hence the 1e-7 gain
@@ -238,24 +311,22 @@ so its grandfathered `too_many_lines` exception is removed.
   referred to antenna 0, to 0.092 rad in phase and 10.7 % in amplitude; the
   point-source model omits the 0.1 Jy offset source.
 
-### Gaps example B exposed
+### Gaps example B exposed, and what revision 1 did
 
-- The batch carries neither `TIME_CENTROID`, `INTERVAL`/`EXPOSURE` nor scan.
-  The solve needs all three: the centroid weights the solution time,
-  `INTERVAL` gives the solution interval, and scan both keys the group and
-  labels the solution row. The trial supplies time as the centroid (equal in
-  this fixture), a 10 s interval, and no scan (solution scans are not
-  compared). Proposed: the time auxiliaries the contract already lists
-  (centroid, interval, exposure) become optional roles, and scan becomes a
-  per-time or per-sample coordinate with a group-key rule.
-- Antenna identities are the adapters' own; the trial relies on both
-  catalogues listing the stations in the same order. A `CalibrationBinding`
-  between observation and caltable namespaces (contracts §2) is still
-  untested.
-- The consumer owns closure bookkeeping: pending work per key, closed keys,
-  and joins. `GroupEnd` and `Last` say only that input is complete. A small
-  helper owned by calibration (not the source) could own this bookkeeping
-  once the contract settles.
+- *Time auxiliaries and scan* (first pass: missing, supplied by the trial):
+  now requested roles, delivered from both stores and asserted against
+  production.
+- *Antenna identity* (first pass: list order): now rebound by context in
+  the comparison. A `CalibrationBinding` between observation and caltable
+  namespaces (contracts §2) is still untested.
+- *Closure bookkeeping* (first pass: hand-written in the consumer): now
+  `casa_observation::GroupCompletion`, shared with the work-unit law.
+- **Finding:** production `gaincal` accumulates from `FLAG` and does not
+  read `FLAG_ROW`; the batch's validity rule excludes row-flagged samples.
+  On a row with `FLAG_ROW` set and its element flags clear the two would
+  differ. The fixture's `FLAG_ROW` is false everywhere, so this comparison
+  does not exercise the case; whether CASA excludes such rows is to be
+  checked separately.
 
 ## MSv4 interoperability
 
@@ -267,49 +338,70 @@ environment).
 
 | Direction | What runs | Checks | Result |
 | --- | --- | --- | --- |
-| XRADIO writes, Rust reads | `ms_trial_interop dump` reads XRADIO's store through the trial reader and dumps every array the batch delivers. XRADIO's `open_processing_set` loads the same store, and the oracle compares the two. | 20 | **all pass** ([report](interop/xradio_writes_rust_reads.json)) |
-| Rust writes, XRADIO reads | `ms_trial_interop write` converts the MSv2 through 40-sample batches (which straddle the five-time chunks) into a fresh store with the trial writer. XRADIO opens it, `check_datatree` validates it and `.load()` forces every array. The oracle compares it with XRADIO's own conversion and with the MSv2 rows read through casacore. | 59 | **all pass** ([report](interop/rust_writes_xradio_reads.json)) |
+| XRADIO writes, Rust reads | `ms_trial_interop dump` reads XRADIO's store through the trial reader and dumps every array the batch delivers, with each time's instant as the epoch views represent it. XRADIO's `open_processing_set` loads the same store, and the oracle compares the two. | 26 | **all pass** ([report](interop/xradio_writes_rust_reads.json)) |
+| Rust writes, XRADIO reads | `ms_trial_interop write` converts the MSv2 through 40-sample batches (which straddle the five-time chunks) into a fresh store with the trial writer. XRADIO opens it, `check_datatree` validates it and `.load()` forces every array. The oracle compares it with XRADIO's own conversion and with the MSv2 rows read through casacore. | 74 | **all pass** ([report](interop/rust_writes_xradio_reads.json)) |
 
-Comparisons are exact; nothing in these conversions is lossy.
+Array comparisons are exact; nothing in these conversions is lossy. Time
+comparisons are of the represented instants, as astropy (XRADIO's
+reference for its time attributes) reads each side: they agree to
+1e-11 s, the two-part MJD's rounding.
 
 - **XRADIO writes, Rust reads.** The oracle compares every value, flag and
-  weight; UVW, time and frequency coordinates; polarization labels, baseline
-  antennas and the per-time field; and the time origin and scale, frequency
-  frame, UVW frame, visibility units, data group, channel width, phase
-  centre, and antenna names and positions.
-- **Rust writes, XRADIO reads.** `VISIBILITY`, `FLAG`, `WEIGHT` and `UVW`
-  match in dims, dtype and every element. Every coordinate matches, as do
-  the time, frequency and UVW measure attributes and the visibility units.
-  The `antenna_xds` and `field_and_source_base_xds` variables match, with
-  their measure attributes, as do the scan intents and the `base` data
-  group's roles. Against the MSv2: every row has its own slot, with no
-  padding; DATA, FLAG, the broadcast WEIGHT and UVW are equal.
-- **Rust-only laws.** `observation_io` also has two Rust-only tests, run in
-  CI. Stores written from MSv2 rows (packed into time × baseline order) and
+  weight; `TIME_CENTROID` and `EFFECTIVE_INTEGRATION_TIME`; UVW, time and
+  frequency coordinates; polarization labels, baseline antennas, the
+  per-time field and scan; the instants of every time and time centroid;
+  the interval against `time.integration_time`; and the time origin and
+  scale, frequency frame, UVW frame, visibility units, data group, channel
+  width, phase centre, and antenna names and positions.
+- **Rust writes, XRADIO reads.** `VISIBILITY`, `FLAG`, `WEIGHT`, `UVW`,
+  `TIME_CENTROID` and `EFFECTIVE_INTEGRATION_TIME` match in dims, dtype and
+  every element. Every coordinate matches, as do the time, frequency, UVW
+  and time-auxiliary measure attributes and the visibility units. The
+  `antenna_xds` and `field_and_source_base_xds` variables match, with their
+  measure attributes, as do the scan intents and the `base` data group's
+  roles. The store now holds every main-dataset variable XRADIO's own
+  conversion writes. Against the MSv2: every row has its own slot, with no
+  padding; DATA, FLAG, the broadcast WEIGHT, UVW and EXPOSURE are equal,
+  and the time and time-centroid instants equal the MSv2's (UTC).
+- **Rust-only laws.** `observation_io`'s `writer` module, run in CI:
+  stores written from MSv2 rows (packed into time × baseline order) and
   from MSv4 batches (encoded straight from their views, 0 elements packed)
-  read back equal to the MSv2. And nothing is published until every time is
-  written: a time is written once, an incomplete dataset stays in staging,
-  and a channel window is refused.
+  read back equal to the MSv2, time auxiliaries and scans included; nothing
+  is published until every time is written, a time is written once, a
+  channel window is refused and a dropped writer removes its staging; a
+  batch that disagrees with the declaration in value (reversed correlation
+  labels, a shifted frequency, another field at a time, other units, a row
+  flag) is refused before anything of it is written, on the listed and
+  factored paths; two live writers stage apart and the second finish is
+  refused rather than replacing the first's dataset; and stale staging
+  directories with another dataset inside are never adopted.
 
-**Writer profile.** It writes the main dataset's coordinates and the `base`
-group (`complex64`, `bool`, `float32`, `float64`), an `antenna_xds` and a
-`field_and_source_base_xds`. Chunks are regular (here `[5, 10, 4, 4]`).
-Payload variables use Blosc-LZ4, none or Zstandard; coordinates use
-Zstandard. The writer builds the store in a sibling staging directory and
-renames it into place on `finish`. It does not write `TIME_CENTROID` or
-`EFFECTIVE_INTEGRATION_TIME` (XRADIO does; the batch lacks them), pointing,
-system-calibration or weather datasets, or consolidated metadata, so
-XRADIO warns that it fell back to non-consolidated reads. It writes no
-dataset larger than one partition, and offers no update, append or resize.
+**Writer profile.** The writer takes the common `Catalogue`, a partition,
+a data group and a `TimeBaselineGrid` (the scientific declaration) and
+`Msv4StorageOptions` (dataset name, provenance, chunks, codec). It writes
+the main dataset's coordinates, the data group (`complex64`, `bool`,
+`float32`, `float64`), `TIME_CENTROID` and `EFFECTIVE_INTEGRATION_TIME`, an
+`antenna_xds` and a `field_and_source_<group>_xds`. Chunks are regular
+(here `[5, 10, 4, 4]`). Payload variables use Blosc-LZ4, none or
+Zstandard; coordinates use Zstandard. Each writer creates its own staging
+directory beside the destination (exclusively, under a name no other
+writer or later retry uses) and publishes with a rename that refuses to
+replace (`renameat2(RENAME_NOREPLACE)` on Linux, `renamex_np(RENAME_EXCL)`
+on macOS, a checked rename elsewhere). It does not write pointing,
+system-calibration or weather datasets, `EFFECTIVE_CHANNEL_WIDTH`, or
+consolidated metadata, so XRADIO warns that it fell back to
+non-consolidated reads. It writes no dataset larger than one partition,
+only `unix`/`utc` times, and offers no update, append or resize.
 
 **Conversion conventions applied explicitly.** XRADIO names antennas
 `NAME_STATION`, fields and spectral windows `NAME_ID`, and an absent source
-`Unknown`. It relabels MSv2's ITRF UVW as fk5, and spells undeclared
-visibility units `"unkown"`. The trial's MSv2 → MSv4 conversion applies the
-same conventions as stated mappings, so the stores compare equal. These are
-conversion policy, not the contract. Scans and intents come from MAIN
-`SCAN_NUMBER` and `STATE::OBS_MODE` directly, because the batch does not
-carry them.
+`Unknown`, and spells undeclared visibility units `"unkown"`. The trial's
+MSv2 → MSv4 conversion renames antennas, fields and the spectral window in
+its copy of the catalogue, as a stated policy, so the stores compare equal.
+It does not relabel UVW: the MSv2 adapter already resolved MSv2's
+`ITRF`-labelled UVW to the phase centres' J2000, which the writer checks
+each batch against. Scans and intents come from the batch and the
+catalogue.
 
 ### Interop findings
 
@@ -326,77 +418,77 @@ carry them.
 - **XRADIO's own outputs need care.** Without a UVW reference it writes
   `frame: null`; its pointing dataset fails its own schema; and it writes
   visibility units `"unkown"`.
+- **`unix` times are UTC-based in every scale.** XRADIO defines its time
+  attributes by astropy, whose `unix` format counts from 1970-01-01 UTC
+  whatever the scale: `Time(1700000000., format="unix", scale="tai")` is
+  22:13:57 TAI, while "Unix epoch in TAI plus the offset" gives 22:13:20.
+  The first pass made exactly that error for `tai`; revision 1 reads and
+  writes `unix`/`utc` only, and the oracle now compares instants.
 
 ## Keep, change or discard: the trial's summary for design review
 
+Revision 1 kept what the review asked to keep and made the changes it
+asked for (table at the top). What remains open:
+
 ### Keep
 
-- **One batch for both stores and both consumers.** The same
-  `VisibilityBatch` fed the production imaging pass and the production gain
-  accumulator from MSv2 and MSv4 with bit-identical science. No consumer
-  branched on the format. A listed or factored `SampleTopology`, read through
-  one `sample(i)` accessor, was enough for both.
+- **One boundary, one interchange structure.** `Observation` (catalogue
+  plus `bind_read`) is the only thing the two consumers see; behind it the
+  same `VisibilityBatch` fed the production imaging pass and the production
+  gain accumulator from MSv2 and MSv4 with bit-identical science.
+  Dispatch is one virtual call per bind and per batch.
 - **`ndarray` views under thin types.** Channel windows, sample windows of
   whole times, transposes for the calibration layout and the factored `[T·B,
   F, P]` view all borrow without copying; the MSv4 view is the decode buffer
-  itself. Fixed-rank `ArrayView2/3` were all the consumers needed.
-- **Binding reports cost before reading.** `Realization` gave decode units and
-  amplification that the counters then confirmed. It caught both the
-  edge-chunk padding and the wave rereads.
-- **Group fragments with explicit closure.** Positions plus `GroupEnd` were
-  enough for batch-size-independent grouping, at-delivery and deferred
-  closure, and concurrent fragments. The rule that input completion is not
-  work completion held in practice.
-- **Native Measures views.** The epoch view keeps each store's origin, so MSv2
-  MJD seconds and MSv4 Unix seconds re-express each other exactly. The
-  frequency and UVW views carry their frames.
+  itself.
+- **Shared quantities in their stored form.** `Shared::{PerSample, PerTime,
+  Constant}` carries an MSv4 interval once per batch and a scan once per
+  time without expanding them, and `batch.interval_s(sample)` resolves any
+  form, so consumers need no format rule.
+- **One checked construction path.** Every batch, including packed
+  windows, is built through `BatchFill::finish`, the one place lengths,
+  identities and fragments are checked.
+- **Input completion separate from work completion,** joined by
+  `GroupCompletion` in the consumer.
+- **Native Measures views** whose references are resolved, or refused, at
+  opening.
 
-### Change (proposed)
+### Open questions for the next iteration
 
-1. **Owned batches for handoff: already changed in the trial.** Cursors
-   implement `fill() -> Fill`; the trait provides `next` (borrowed) and
-   `next_owned` (`FilledBatch`, `Send + Sync`). `FilledBatch::pack` gives a
-   window storage of its own, with the copy counted. Proposal: keep. A shared
-   `FilledBatch` pins its whole allocation until the slowest user lets go,
-   and the probes measured it.
-2. **End of stream without a buffer.** `next_owned` needs buffers just to
-   learn the traversal has ended. Proposal: `exhausted()`, or
-   `next_owned(Option<BatchBuffers>)`.
-3. **Correlations and flag policy in the request.** Production imaging routes
-   every stored correlation, so a flagged cross hand drops the Stokes I
-   sample, as CASA does; gaincal flags a channel if any correlation is
+1. **End of stream without a buffer.** `next_owned` returns the buffer at
+   the end, as the review asked, but still needs one to ask; with an
+   exhausted pool that costs a wait (measured above). `next_owned(Option<…>)`
+   would answer `End` without one.
+2. **Correlations and flag policy in the request.** Production imaging
+   routes every stored correlation, so a flagged cross hand drops the Stokes
+   I sample, as CASA does; gaincal flags a channel if any correlation is
    flagged. The request should name the correlations a consumer reads and
    the flag policy over unread ones.
-4. **Time auxiliaries and scan.** `TIME_CENTROID`, `INTERVAL`/`EXPOSURE`
-   and scan are missing from the trial batch. The solve needs all of them,
-   and the writer cannot emit `TIME_CENTROID` or `EFFECTIVE_INTEGRATION_TIME`
-   without them. Proposal: optional per-sample (or per-time) roles, and scan
-   as a coordinate with a group-key rule.
-5. **Stored and effective UVW frame.** MSv2 stores ITRF; XRADIO writes fk5
-   for the same values. Carry both, or define the effective frame at binding.
-6. **Catalogue rebinding.** Antenna identity across stores relied on the
-   order of each store's catalogue; XRADIO renames antennas, fields and
-   spectral windows. The design's `CalibrationBinding` and explicit
-   cross-format naming rules are needed before any cross-format solve/apply.
-7. **One vocabulary.** Move `CorrelationType` from the imaging model into
-   `casa-observation` (or casa-types), and add a UVW measure to casa-types.
-8. **Writer creation spec.** `Msv4DatasetSpec` collects facts no batch
-   carries: antennas with positions, mounts and receptors; telescope;
-   observers; fields with sources; scans; intents. It is the design's
-   `CatalogueBuilder` in miniature. Proposal: make it the source-free creation
-   catalogue for both formats.
+3. **Validity cost.** `Validity::excluded` is evaluated per element, with
+   up to four optional checks. That is fine at this size; a consumer's hot
+   loop may want a per-batch mask or the rule folded into the fill.
+4. **`FLAG_ROW` in production `gaincal`** (example B finding).
+5. **Cross-store rebinding as a contract.** The calibration comparison
+   rebinds by context in test code; the design's `CalibrationBinding` is
+   still to be built and tested with a caltable.
+6. **One vocabulary.** Move `CorrelationType` from the imaging model into
+   `casa-observation` (or casa-types), and add a UVW measure to casa-types;
+   `UvwView` still carries a `DirectionRef`.
+7. **Creation catalogue for MSv2.** The writer's declaration is the common
+   `Catalogue` plus a `TimeBaselineGrid`; an MSv2 creator needs a rows
+   description in its place.
 
 ### Discard or defer
 
-- `Closure::Deferred` as a request knob: it exists only to exercise
-  `GroupEnd`. A source should mark closure at delivery when it can, and use
-  `GroupEnd` only where it cannot (interleaved partitions, streaming input).
 - The runtime's `NativeBlock` copy: the trial kept it so the production pass
   ran unchanged. M2 should let the pass place directly from batch views
   (`NativeRow` already borrows slices).
 - The index of every row at MSv2 binding (time, field and data description
-  per row, three words per row) is acceptable for the trial. M2's bounded
-  source plan should replace it.
+  per row, three words per row, plus the scan of every row at opening) is
+  acceptable for the trial. M2's bounded source plan should replace it.
+- Retained-byte figures (`capacity_bytes`, the work-unit ledger) count the
+  batch buffers only, not allocations inside zarrs or casacore: they are
+  probes, not admission bounds.
 
 ## M1 coverage of this pass
 
@@ -406,11 +498,11 @@ This pass touches parts of the M1 checklist and completes none of it.
 | --- | --- | --- |
 | `layout-precision` | Sample-major views from both stores, factored axes, Hz/m/s views, `complex64` | Channel-major layout, precision narrowing, unit requests and conversions, Jy/weight scaling |
 | `measures-bulk` | Native epoch, frequency and UVW array views only | Every family's prepared bulk conversion, ordered interpolation, scalar/CASA agreement, performance |
-| `group-lifecycle` | Time-bin groups, closure, concurrent fragments, one SPW | Interleaved SPWs, late samples, solve → caltable → reopen → apply, namespace rebinding |
-| `work-unit-lifetimes` | Unequal channel units, shared pinning against packing, bounded pools | Cooperating workers on the admitted team, cancellation in flight, cube minor-cycle separation |
+| `group-lifecycle` | Time-bin groups, closure, concurrent fragments, split channel windows, `GroupCompletion`, one SPW | Interleaved SPWs, late samples, solve → caltable → reopen → apply, namespace rebinding |
+| `work-unit-lifetimes` | Unequal channel units, shared pinning against packing, bounded pools, buffers returned at the end | Cooperating workers on the admitted team, cancellation in flight, cube minor-cycle separation |
 | `native-role-updates` | — | All |
 | `conversion-fidelity` | One loss-free MSv2 → MSv4 profile, both converters | Every audited loss row, rejection policies |
-| `source-free-create` | `Msv4DatasetSpec` plus the narrow writer; staged publication | v2 creation, producer seam, backpressure, publication failure |
+| `source-free-create` | Common catalogue + grid declaration, storage options, the narrow writer with per-batch validation, exclusive staging and no-replace publication | v2 creation, producer seam, backpressure, publication failure injection |
 | `store-retention-executor` | zarrs pinned; concurrency target 1 | Key/handle retention plateau, W1/W4 thread and buffer counts |
 | `object-failure` | — | All |
 | `production-access-cost` | Narrow diagnostics on a tiny fixture | The named MFS/cube/bandpass rows on both chunk geometries, noise bands |
@@ -418,9 +510,16 @@ This pass touches parts of the M1 checklist and completes none of it.
 ## Unsupported in the trial (typed refusals)
 
 The channel-major layout; `complex128` and narrowing; more than one
-partition or data group per traversal; MSv4 time formats other than `unix`
-and scales other than UTC/TAI; frames other than fk5/icrs for directions and
-UVW; units other than the schema's; groups over traversals that are not in
-time order; scan-based group keys; per-cell `WEIGHT_SPECTRUM` fallback;
-`SIGMA`, `FLAG_CATEGORY`, row-flag writes; MSv4 sharding (not exercised);
+partition or data group per traversal; MSv4 time formats other than `unix`,
+`unix` times in a scale other than UTC, and MSv4 writes in other than
+`unix`/`utc`; MSv2 measure columns with a variable reference, and `TIME`
+and `TIME_CENTROID` in different scales; MSv2 UVW labelled with a celestial
+frame other than the phase centres'; MSv4 groups whose UVW frame is not
+their phase centres'; frames other than fk5/icrs for directions and UVW;
+units other than the schema's (none are converted); MSv4 variables of other
+data types or dimension orders (bitmask flags included); one antenna name
+with two positions; groups over traversals that are not in time order;
+scan-based group keys; per-cell `WEIGHT_SPECTRUM` fallback; `SIGMA`,
+`FLAG_CATEGORY`; writing row flags, channel windows, incomplete times, or
+batches that disagree with the declaration; MSv4 sharding (not exercised);
 remote stores.
