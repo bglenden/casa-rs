@@ -1,8 +1,8 @@
 # MeasurementSet architecture review
 
-Status: draft revision 4; owner iteration pending, not implementation authorization
+Status: revision 5; authorized for M0/M1 trial, interfaces not frozen
 Truth class: design proposal
-Date: 2026-10-23
+Date: 2026-10-24
 Repository baseline: `221ec71545fe36a758ab0869e7512349b5db7c0e`
 
 This proposal gives MSv2 and XRADIO MSv4
@@ -11,10 +11,15 @@ and memory layout; each backend realizes that request with bounded I/O. Existing
 Rust interfaces may change completely. Persistent interoperability, science,
 and measured performance remain acceptance requirements.
 
+The owner agreed on 2026-10-24 to proceed with a separately implemented,
+independently reviewed trial. Start with the [trial handoff](trial-handoff.md).
+This accepts D1–D6 as the working direction for M0/M1; interface stabilization,
+production migration and merging still require the trial evidence and review.
+
 ## Reading order
 
 For a guided introduction, open the standalone [HTML walkthrough](walkthrough.html)
-in a browser (download the file when reading on GitHub). It builds the revision 4
+in a browser (download the file when reading on GitHub). It builds the revision 5
 proposal in twelve steps, with interactive layout/completion examples, review
 questions, and links to the exact draft sources. It works offline; optional notes
 stay in the browser and can be exported. The Markdown contracts below remain the
@@ -22,6 +27,7 @@ detailed proposal; the walkthrough does not finalize any decision.
 
 | Document | Review focus |
 | --- | --- |
+| [Trial handoff](trial-handoff.md) | Branch setup, authorized scope, implementation/review checkpoints and required evidence; start here to implement the trial. |
 | [Architecture](architecture.md) | Boundaries, decisions, format scope, and alternatives; start here for the overall design. |
 | [Intermediate contracts](contracts.md) | The arrays and metadata shared by storage, imaging, calibration, and flagging; the principal design review. |
 | [Implementation plan](implementation-plan.md) | Sequenced work packets, evidence, agent responsibilities, and change control. |
@@ -57,7 +63,7 @@ coverage matrix, including scalar/vector and nonlinear operations.
 The documents and PR remain provisional: neither addressing a comment nor an
 agent recommendation finalizes the design. The MSv2 + MSv4 scope, MSv3 deferral,
 Measures requirement and use of `ndarray` are owner directions; they do not
-approve the remaining contracts or authorize broad implementation before review.
+freeze the concrete APIs or authorize broad implementation before M1 review.
 
 ## Decisions for the owner and independent reviewers
 
@@ -93,18 +99,18 @@ approve the remaining contracts or authorize broad implementation before review.
    across imaging, calibration, writes, and source-free creation before broad migration. Freeze
    semantics after that trial, with reviewed changes still possible.
 
-Approval can accept some decisions and request changes to others. The owner
-confirmed the MSv2 + MSv4 scope and deferral of MSv3 on 2026-10-23. The detailed
-contracts and other decisions remain proposed. MSv3 is a beta specification
-with producer-specific variants; no generic MSv3 interoperability is promised.
+The owner confirmed the MSv2 + MSv4 scope and deferral of MSv3 on 2026-10-23,
+and agreed to trial the remaining design on 2026-10-24. D1–D6 guide that trial;
+the concrete contracts remain open to evidence-led revision. MSv3 is a beta
+specification with producer-specific variants; no generic MSv3 interoperability is promised.
 The interface should accommodate a future adapter without making it a
 completion dependency now.
 
-The main choices for the next owner discussion are D2's concurrent grouping and
+The trial must challenge D2's concurrent grouping and
 closure, D3's object-replacement/durability boundary, D4's shared primitive owner,
 and the proposed creation/conversion policies (frequency chunking for cubes and
 explicit loss/rejection rules). Dependency versions, exact chunk extents and
-performance feasibility remain M0/M1 evidence questions. The updated plan makes
+performance feasibility remain M0/M1 evidence questions. The plan makes
 those experiments mandatory rather than treating them as settled by prose.
 
 ## GitHub review protocol

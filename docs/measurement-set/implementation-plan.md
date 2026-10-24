@@ -1,11 +1,16 @@
 # MeasurementSet implementation plan
 
-Status: draft revision 4; owner iteration pending, no final design approval
+Status: revision 5; M0/M1 trial authorized, production migration awaits acceptance
 Truth class: design proposal
-Date: 2026-10-23
+Date: 2026-10-24
 Design inputs: [architecture](architecture.md), [draft contracts](contracts.md)
 
 ## 1. Delivery strategy
+
+The owner authorized proceeding with the trial on 2026-10-24. The
+[trial handoff](trial-handoff.md) defines how another agent starts M0/M1 and
+submits checkpoints to the design reviewer. D1–D6 are its working direction;
+concrete interfaces remain subject to trial evidence and review.
 
 Prove the shared representation before distributing broad implementation.
 Use competent, lower-cost agents for bounded implementation packets with
@@ -317,7 +322,8 @@ Measure early overhead against the M0 path before investing in broad migration.
 These trials need not satisfy the entire release matrix yet.
 
 **Gate:** independent contract + science/format reviews, first performance
-comparison, and owner approval of D1–D6 and any proposed ADR changes. Record an
+comparison, and owner acceptance of the resulting D1–D6 contract revision and
+any proposed ADR changes. Record an
 accepted contract revision. All blocking findings resolved before M2/M3
 parallel implementation. No claim of production v4 support at this checkpoint.
 
@@ -536,10 +542,11 @@ that does not authorize runtime payload hashes or source sidecars.
 
 ## 10. Review and change control
 
-This draft remains open for owner iteration after Pro/Fable review. Updating
-text or passing documentation checks neither finalizes D1–D6 nor authorizes the
-implementation programme. Keep the PR draft and external discussion visible;
-owner acceptance is an explicit later step.
+The owner has authorized M0/M1 trial implementation using D1–D6 as its working
+direction. Updating text or passing documentation checks does not stabilize
+the interfaces or authorize M2–M5 production migration. Keep the design and
+trial PRs draft and the external discussion visible. M1 acceptance, subsequent
+milestone authorization and permission to merge remain explicit later steps.
 
 Every implementation packet/PR includes:
 

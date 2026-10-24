@@ -1,19 +1,20 @@
 # Native observation I/O for MSv2 and MSv4
 
-Status: proposed; scope and native Measures requirements confirmed, detailed D1–D6 decisions await review
+Status: revision 5; working design authorized for M0/M1 trial, not frozen
 Truth class: design proposal
-Date: 2026-10-23
+Date: 2026-10-24
 Companion documents: [contracts](contracts.md), [implementation plan](implementation-plan.md)
 
-Draft revision 4 incorporates Pro and Fable's reviews and owner discussion of
+Revision 5 retains Pro and Fable's review changes and owner discussion of
 independent lifetimes, guaranteed units, the `VisibilityBatch` name and explicit
 access-pattern negotiation from processing planners to adapters. Native Measures
 types and bulk conversion are now owner requirements; this changes the proposed
 type ownership and adds a prerequisite Measures trial to M1.
 The owner also agrees to `ndarray` numerical arrays/views under thin domain
 types; concrete ownership APIs remain subject to M1 evidence and review.
-Recommendations below remain open
-for owner iteration; no review response constitutes acceptance or finalization.
+On 2026-10-24 the owner agreed to proceed with the [M0/M1 trial](trial-handoff.md).
+The detailed APIs remain open to trial evidence and owner iteration; interface
+stabilization and broad production migration follow the M1 acceptance gate.
 
 ## 1. Outcome and boundaries
 

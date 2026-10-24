@@ -1,12 +1,12 @@
 # Intermediate observation contracts
 
-Status: draft revision 4; incorporates review input, not accepted or frozen
+Status: revision 5; authorized as the M0/M1 trial contract, not frozen
 Truth class: design proposal
-Date: 2026-10-23
+Date: 2026-10-24
 
 This is the interface between persistent observations and numerical consumers.
 The names and Rust sketches are provisional; the semantics below are the design
-to review with the owner. Neither the external reviews nor this revision
+authorized for the [M0/M1 trial](trial-handoff.md). Trial authorization does not
 finalize the design. M1 must turn the sketches into a minimal compilable API
 with worked imaging, solve, update, and source-free creation examples before
 broad implementation starts.
