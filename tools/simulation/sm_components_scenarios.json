@@ -6,7 +6,7 @@
     "Image models are named relative to the oracle's --model-root, as in sm_predict_scenarios.json (alma/ is 256 pixels of 0.05 arcsec centred on 10h -30d, alma-big/ 512 of 0.15 arcsec centred on (0.0007615435494667714, -0.0001523087098933758) rad).",
     "Two CASA defects are kept out of these scenarios, as casa-rs does not follow them (docs/CASA (C++) bugs.md): a negative flux under the beam, which CASA's full-spectral beam turns positive, and a polarised component with a single spectral index, whose Stokes indices CASA's matrix sampler reads out of bounds.",
     "Times and the configuration keep every scenario free of shadowing and elevation flags.",
-    "The moved-pointing scenarios observe a second pointing of 'target' that observemany moves 10.4 arcsec east, keeping target's FIELD row (#884): CASA phases its rows on the field, from FIELD's PHASE_DIR, and centres the beam on POINTING's direction, where the antennas point. at-moved.cl's point sits there, where ALMA's 230 GHz beam centred on the field is about 0.6 of its peak."
+    "The moved-pointing scenarios observe a second pointing of 'target' that observemany moves 10.4 arcsec east, keeping target's FIELD row (#884). CASA 6.7.6 phases its rows on the field, from FIELD's PHASE_DIR, and centres the primary beam on the field too, for a component list and for a model image, although POINTING has the moved direction. at-moved.cl's point sits at the moved direction, where ALMA's 230 GHz beam centred on the field is about 0.65 of its peak, in both pointings."
   ],
   "complists": {
     "shapes.cl": [
@@ -160,6 +160,21 @@
         {"op": "observemany", "sourcenames": ["target", "target"], "spwname": "band6", "starttimes": ["-300s", "0s"], "stoptimes": ["0s", "300s"], "directions": ["", "J2000 10h00m00.8 -30d00m00.0"]},
         {"op": "setvp", "dovp": true, "usedefaultvp": false},
         {"op": "predict", "complist": "at-moved.cl"}
+      ]
+    },
+    {
+      "name": "moved-pointing-image-vp",
+      "data": "model",
+      "config": {"cfg": "alma.cycle10.3.cfg", "mount": "alt-az"},
+      "calls": [
+        {"op": "setspwindow", "spwname": "band6", "freq": "230GHz", "deltafreq": "15.625MHz", "freqresolution": "15.625MHz", "refcode": "TOPO", "nchannels": 4, "stokes": "XX YY"},
+        {"op": "setfeed", "mode": "perfect X Y"},
+        {"op": "setauto", "autocorrwt": 0.0},
+        {"op": "settimes", "integrationtime": "30s", "usehourangle": true, "referencetime": ["UTC", "2026/03/21/00:00:00"]},
+        {"op": "setfield", "sourcename": "target", "sourcedirection": ["J2000", "10h00m00.0", "-30d00m00.0"]},
+        {"op": "observemany", "sourcenames": ["target", "target"], "spwname": "band6", "starttimes": ["-300s", "0s"], "stoptimes": ["0s", "300s"], "directions": ["", "J2000 10h00m00.8 -30d00m00.0"]},
+        {"op": "setvp", "dovp": true, "usedefaultvp": false},
+        {"op": "predict", "imagename": "alma/model4.input.image"}
       ]
     }
   ]

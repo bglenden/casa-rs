@@ -232,11 +232,13 @@ fn predict_refuses_as_casa_does() {
     );
 }
 
-/// CASA centres the voltage pattern on each pointing's direction, which
-/// casa-rs does not yet do for a pointing `observemany` moved off its
-/// field: `predict` with `setvp` refuses it, and predicts it without one.
+/// A model image under the beam is predicted on a pointing `observemany`
+/// moved off its field with the beam centred on the field, as CASA 6.7.6
+/// centres it (measured, #884): its DATA is the per-row reference's, phased
+/// and beamed on the field. The mosaic machine, whose kernels point each
+/// scan, refuses it.
 #[test]
-fn predict_with_a_beam_refuses_pointings_moved_off_their_field() {
+fn a_beam_on_a_moved_pointing_is_centred_on_its_field() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let model = extended_model(directory.path(), "model.image");
     let mut sm = session(
@@ -262,21 +264,34 @@ fn predict_with_a_beam_refuses_pointings_moved_off_their_field() {
         project: base.project.clone(),
     })
     .expect("observemany");
-    sm.set_vp(&VoltagePatternSpec::default())
-        .expect("setvp records");
+    sm.set_vp(&VoltagePatternSpec::default()).expect("setvp");
+    sm.set_options(&PredictionOptions {
+        ftmachine: "mosaic".to_string(),
+        ..PredictionOptions::default()
+    })
+    .expect("setoptions");
     let (outcome, message) = refusal(sm.predict(&spec(&[&model])));
     assert_eq!(outcome, CasaOutcome::NotYetImplemented);
     assert!(
         message.contains("pointed away") && message.contains("Phase 2"),
         "{message}"
     );
-    sm.set_vp(&VoltagePatternSpec {
-        dovp: false,
-        ..VoltagePatternSpec::default()
-    })
-    .expect("setvp");
-    sm.predict(&spec(&[&model])).expect("no beam: predicted");
+    sm.set_options(&PredictionOptions::default())
+        .expect("setoptions");
+    sm.predict(&spec(&[&model]))
+        .expect("under the beam: predicted");
     sm.close().expect("close");
+    let (rows, _) = read_main(&directory.path().join("moved.ms"));
+    assert_eq!(
+        bits(&data(&rows)),
+        bits(&reference(
+            &rows,
+            &model,
+            &XX_YY,
+            Some(casa_simulation::predict::PrimaryBeam::ALMA)
+        )),
+        "the moved pointing is phased, and its beam centred, on its field"
+    );
 }
 
 /// A pointing `observemany` moved off its field is phased on its field, as
@@ -417,12 +432,12 @@ fn write_points(path: &Path) {
     list.write_table(path).expect("write the list");
 }
 
-/// A component list under the beam is predicted with each scan's beam
-/// centred where its antennas point, as CASA's `VPSkyJones` centres it on
-/// POINTING (#872), and its rows phased on their field (#884). A point at
-/// the direction `observemany` moved a pointing to has the beam's peak
-/// there, as in a field at the moved direction, but the phases of a source
-/// off the field's phase centre, where the field there has none.
+/// A component list under the beam is phased, and the beam centred, on each
+/// scan's field, even on a pointing `observemany` moved off it, as CASA
+/// 6.7.6 predicts it (measured, #884: the `components-moved-pointing-vp`
+/// scenario). A point at the moved direction keeps the beam's attenuation
+/// at the field in the moved pointing, as in one not moved, and the phases
+/// of a source off the field's phase centre.
 #[test]
 fn components_are_predicted_at_a_moved_pointing() {
     let directory = tempfile::tempdir().expect("temporary directory");
@@ -433,7 +448,6 @@ fn components_are_predicted_at_a_moved_pointing() {
     let observed = |name: &str, second: Pointing| {
         let path = directory.path().join(name);
         let mut sm = session(&path, "ALMA", "XX YY", resources(2, 2 << 30));
-        sm.set_field("moved", &moved, "", 0.0).expect("setfield");
         let base = scan("target", 0.0, 20.0);
         sm.observe_many(&ObserveManySpec {
             pointings: vec![
@@ -471,29 +485,29 @@ fn components_are_predicted_at_a_moved_pointing() {
             direction: Some(moved.clone()),
         },
     );
-    let field = observed(
-        "field.ms",
+    let unmoved = observed(
+        "unmoved.ms",
         Pointing {
-            source: "moved".to_string(),
+            source: "target".to_string(),
             start_s: 20.0,
             stop_s: 40.0,
             direction: None,
         },
     );
-    assert_eq!(pointed.len(), field.len(), "rows");
+    assert_eq!(pointed.len(), unmoved.len(), "rows");
     // The second pointing's rows: the two pointings have as many each.
     let second = pointed.len() / 2;
     let mut phased = false;
-    for (row, (pointed, field)) in pointed[second..].iter().zip(&field[second..]).enumerate() {
-        assert_eq!(pointed.uvw_m, field.uvw_m, "row {row}: the same UVW");
-        for (found, there) in pointed.data.iter().zip(&field.data) {
+    for (row, (pointed, unmoved)) in pointed[second..].iter().zip(&unmoved[second..]).enumerate() {
+        for (found, there) in pointed.data.iter().zip(&unmoved.data) {
+            // The point is 1.7″ from the field: 0.996 of the beam's peak.
             assert!(
-                (there.re - 1.0).abs() < 1e-5 && there.im.abs() < 1e-5,
-                "row {row}: the field at the point predicts its flux at zero phase: {there}"
+                there.norm() > 0.9 && there.norm() < 0.999,
+                "row {row}: the beam centred on the field attenuates the point: {there}"
             );
             assert!(
                 (found.norm() - there.norm()).abs() < 1e-5,
-                "row {row}: the beam is centred on the moved pointing: {found} against {there}"
+                "row {row}: the beam is centred on the field: {found} against {there}"
             );
             phased |= found.arg().abs() > 0.1;
         }

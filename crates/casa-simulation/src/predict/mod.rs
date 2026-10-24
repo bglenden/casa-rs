@@ -54,7 +54,7 @@ mod single_dish;
 pub(crate) use beam::BeamPattern;
 pub use beam::PrimaryBeam;
 pub(crate) use components::{
-    ComponentPointing, ComponentPrediction, ComponentRefusal, ComponentTargets, ComponentWindow,
+    ComponentPrediction, ComponentRefusal, ComponentTargets, ComponentWindow,
 };
 pub use model::SkyModel;
 pub use single_dish::SingleDishKernel;
