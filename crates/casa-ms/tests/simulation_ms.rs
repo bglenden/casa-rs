@@ -17,6 +17,7 @@ use casa_test_support::{discover_casa_python, tutorial_dataset_path};
 use casa_types::measures::frequency::FrequencyRef;
 use casa_types::measures::position::MPosition;
 use casa_types::{ArrayValue, ScalarValue, Value};
+use num_complex::Complex64;
 use std::process::Command;
 
 fn antennas() -> Vec<SyntheticAntenna> {
@@ -140,6 +141,24 @@ fn generates_vla_ppdisk_synthetic_ms_skeleton() {
         }
         other => panic!("expected Float64 UVW array, got {other:?}"),
     }
+}
+
+#[test]
+fn uvw_measinfo_carries_casacore_default_itrf_reference() {
+    let temp = tempfile::tempdir().unwrap();
+    let request = request(temp.path());
+    generate_synthetic_observation_ms(&request).unwrap();
+
+    // casacore's MS definition gives UVW Muvw's default reference, ITRF
+    // (`MSTableImpl::addMeasColumn`), and CASA's simulator keeps it.
+    let ms = MeasurementSet::open(&request.output_ms).unwrap();
+    let keywords = ms.main_table().column_keywords("UVW").unwrap();
+    let Some(Value::Record(measinfo)) = keywords.get("MEASINFO") else {
+        panic!("UVW has no MEASINFO record: {keywords:?}");
+    };
+    let string = |text: &str| Value::Scalar(ScalarValue::String(text.to_string()));
+    assert_eq!(measinfo.get("type"), Some(&string("uvw")));
+    assert_eq!(measinfo.get("Ref"), Some(&string("ITRF")));
 }
 
 #[test]
@@ -604,6 +623,173 @@ fn common_bandpass_and_leakage_corruptions_are_reported_and_change_data() {
     assert_ne!(corrupted_data[0], corrupted_data[1]);
 }
 
+/// Four linear correlations and a polarized source whose Stokes V keeps the
+/// cross hands at least a tenth of I at every parallactic angle.
+fn four_correlation_setup() -> SyntheticPolarizationSetup {
+    SyntheticPolarizationSetup {
+        basis: SyntheticPolarizationBasis::Linear,
+        correlation_count: 4,
+        source_stokes_fractional_quv: [0.08, -0.05, 0.1],
+    }
+}
+
+/// fBM gains and a bandpass, with simple noise of `noise_jy` if given.
+fn gain_corruption(noise_jy: Option<f32>) -> SyntheticCorruptionConfig {
+    SyntheticCorruptionConfig {
+        seed: 7,
+        noise: noise_jy.map(|simplenoise_jy| SyntheticNoiseCorruption {
+            mode: SyntheticNoiseMode::SimpleNoise,
+            simplenoise_jy,
+        }),
+        gain: Some(SyntheticGainCorruption {
+            mode: SyntheticGainMode::Fbm,
+            interval_seconds: 10.0,
+            amplitude: [0.1, 0.1],
+        }),
+        bandpass: Some(SyntheticBandpassCorruption {
+            mode: SyntheticBandpassMode::Calculate,
+            interval_seconds: 3600.0,
+            amplitude: [0.05, 0.05],
+        }),
+        leakage: None,
+        pointing: None,
+    }
+}
+
+/// The test request under `root` with polarization `setup` and `corruption`.
+fn polarized_request(
+    root: &std::path::Path,
+    setup: &SyntheticPolarizationSetup,
+    corruption: Option<SyntheticCorruptionConfig>,
+) -> SyntheticObservationRequest {
+    std::fs::create_dir_all(root).unwrap();
+    let mut request = request(root);
+    request.polarization_setup = setup.clone();
+    request.corruption = corruption;
+    request
+}
+
+/// Generate `request`'s MS and return its path.
+fn generated(request: SyntheticObservationRequest) -> std::path::PathBuf {
+    generate_synthetic_observation_ms(&request).unwrap();
+    request.output_ms
+}
+
+#[test]
+fn four_correlation_corruption_applies_receptor_pair_gains() {
+    let temp = tempfile::tempdir().unwrap();
+    let four = four_correlation_setup();
+    let clean = generated(polarized_request(&temp.path().join("clean"), &four, None));
+    let gained = generated(polarized_request(
+        &temp.path().join("gained"),
+        &four,
+        Some(gain_corruption(None)),
+    ));
+
+    // Correlation (p, q) of baseline (a, b) is multiplied by
+    // g_a[p] · conj(g_b[q]) · B_ab(channel), so per channel the four ratios
+    // to the clean data close, YX/XX is g_a[Y]/g_a[X] whatever b is, and
+    // XY/XX is conj(g_b[Y]/g_b[X]) whatever a is. Rows 0 to 2 are the first
+    // sample's baselines.
+    let ms = MeasurementSet::open(&gained).unwrap();
+    let baselines = (0..3)
+        .map(|row| {
+            (
+                main_i32_cell(&ms, row, "ANTENNA1"),
+                main_i32_cell(&ms, row, "ANTENNA2"),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(baselines, vec![(0, 1), (0, 2), (1, 2)]);
+    let ratios = (0..3)
+        .map(|row| data_ratios(&gained, &clean, row))
+        .collect::<Vec<_>>();
+    let close = |left: Complex64, right: Complex64| (left - right).norm() <= 1.0e-4 * right.norm();
+    for channel in 0..4 {
+        for (row, ratio) in ratios.iter().enumerate() {
+            let &[xx, xy, yx, yy] = ratio[channel].as_slice() else {
+                panic!("row {row}: {ratio:?}");
+            };
+            assert!(
+                close(xx * yy, xy * yx),
+                "row {row} channel {channel}: {ratio:?}"
+            );
+        }
+        let antenna1_ratio = |row: usize| ratios[row][channel][2] / ratios[row][channel][0];
+        let antenna2_ratio = |row: usize| ratios[row][channel][1] / ratios[row][channel][0];
+        assert!(close(antenna1_ratio(0), antenna1_ratio(1)));
+        assert!(close(antenna2_ratio(1), antenna2_ratio(2)));
+        // The receptors' gains differ, so the cross hands see them.
+        assert!((antenna1_ratio(0) - 1.0).norm() > 1.0e-3);
+        assert!((antenna2_ratio(1) - 1.0).norm() > 1.0e-3);
+    }
+
+    // The draws do not depend on the correlations, so the parallel hands
+    // match a two-correlation run's. That shows the two paths agree, not
+    // which antenna is conjugated: conjugated gains are an equally valid
+    // draw. The unit test `corruption_tests` pins the conjugation with gains
+    // written out by hand.
+    let two = SyntheticPolarizationSetup::new(SyntheticPolarizationBasis::Linear, 2).unwrap();
+    let two_clean = generated(polarized_request(
+        &temp.path().join("two-clean"),
+        &two,
+        None,
+    ));
+    let two_gained = generated(polarized_request(
+        &temp.path().join("two-gained"),
+        &two,
+        Some(gain_corruption(None)),
+    ));
+    for (row, ratio) in ratios.iter().enumerate() {
+        let parallel = data_ratios(&two_gained, &two_clean, row);
+        for channel in 0..4 {
+            assert!(close(ratio[channel][0], parallel[channel][0]));
+            assert!(close(ratio[channel][3], parallel[channel][1]));
+        }
+    }
+}
+
+#[test]
+fn four_correlation_noise_reaches_every_correlation_and_leakage_is_refused() {
+    let temp = tempfile::tempdir().unwrap();
+    let four = four_correlation_setup();
+    let gained = generated(polarized_request(
+        &temp.path().join("gained"),
+        &four,
+        Some(gain_corruption(None)),
+    ));
+    let noisy = polarized_request(
+        &temp.path().join("noisy"),
+        &four,
+        Some(gain_corruption(Some(0.01))),
+    );
+    let report = generate_synthetic_observation_ms(&noisy).unwrap();
+    assert_eq!(report.correlation_count, 4);
+    assert_eq!(report.applied_corruptions, ["noise", "gain", "bandpass"]);
+    let noisy_data = data_cell(&noisy.output_ms, 0).concat();
+    let gained_data = data_cell(&gained, 0).concat();
+    for (noisy, gained) in noisy_data.iter().zip(&gained_data) {
+        assert_ne!(noisy, gained);
+    }
+
+    // The leakage mixes the two parallel hands only, so four correlations
+    // refuse it rather than report it applied.
+    let mut leaky = gain_corruption(None);
+    leaky.leakage = Some(SyntheticPolarizationLeakageCorruption {
+        mode: SyntheticPolarizationLeakageMode::Constant,
+        amplitude: [0.02, 0.01],
+        offset: [0.0, 0.0],
+    });
+    let leaky = polarized_request(&temp.path().join("leaky"), &four, Some(leaky));
+    let error = generate_synthetic_observation_ms(&leaky)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("setleakage needs exactly two correlations"),
+        "{error}"
+    );
+}
+
 #[test]
 fn pointing_corruption_shifts_primary_beam_prediction_when_model_has_direction() {
     let temp = tempfile::tempdir().unwrap();
@@ -852,6 +1038,8 @@ tb = table()
 tb.open(path)
 try:
     data = tb.getcell("DATA", 0)
+    uvw_info = tb.getcolkeyword("UVW", "MEASINFO")
+    assert uvw_info["type"] == "uvw" and uvw_info["Ref"] == "ITRF", uvw_info
     result = {
         "rows": tb.nrows(),
         "nonzero": int((abs(data) > 0).sum()),
@@ -979,6 +1167,52 @@ fn row_data(path: &std::path::Path, row: usize) -> Vec<(f32, f32)> {
             .collect::<Vec<_>>(),
         other => panic!("expected Complex32 DATA array, got {other:?}"),
     }
+}
+
+/// DATA of `row` as `[correlation][channel]`.
+fn data_cell(path: &std::path::Path, row: usize) -> Vec<Vec<Complex64>> {
+    let ms = MeasurementSet::open(path).unwrap();
+    let data = ms
+        .main_table()
+        .cell_accessor(row, "DATA")
+        .unwrap()
+        .value()
+        .unwrap();
+    let Some(Value::Array(ArrayValue::Complex32(values))) = data else {
+        panic!("expected Complex32 DATA array, got {data:?}");
+    };
+    let [correlations, channels] = values.shape() else {
+        panic!("DATA cell shape {:?}", values.shape());
+    };
+    (0..*correlations)
+        .map(|correlation| {
+            (0..*channels)
+                .map(|channel| {
+                    let value = values[[correlation, channel].as_slice()];
+                    Complex64::new(value.re.into(), value.im.into())
+                })
+                .collect()
+        })
+        .collect()
+}
+
+/// `corrupted / clean` of `row`, as `[channel][correlation]`.
+fn data_ratios(
+    corrupted: &std::path::Path,
+    clean: &std::path::Path,
+    row: usize,
+) -> Vec<Vec<Complex64>> {
+    let corrupted = data_cell(corrupted, row);
+    let clean = data_cell(clean, row);
+    (0..corrupted[0].len())
+        .map(|channel| {
+            corrupted
+                .iter()
+                .zip(&clean)
+                .map(|(corrupted, clean)| corrupted[channel] / clean[channel])
+                .collect()
+        })
+        .collect()
 }
 
 fn main_i32_cell(ms: &MeasurementSet, row: usize, column: &str) -> i32 {

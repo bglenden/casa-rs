@@ -44,6 +44,8 @@ use crate::shadowing::{
 use crate::write_session::{MeasurementSetCreateTarget, MeasurementSetWriteSession};
 use crate::{MeasurementSet, MeasurementSetBuilder, OptionalMainColumn};
 
+#[cfg(test)]
+mod corruption_tests;
 mod main_columns;
 
 use main_columns::MainArrayWriter;
@@ -403,13 +405,25 @@ impl SyntheticPolarizationSetup {
         }
     }
 
-    fn correlation_products(&self) -> Vec<i32> {
+    /// Each correlation's receptor pair `[p, q]`, the correlation being
+    /// `e_p · conj(e_q)`: casacore's `Stokes::receptor1`/`receptor2` of
+    /// [`Self::correlation_types`], and the order CASA's `VisVector` assumes.
+    fn correlation_receptors(&self) -> &'static [[usize; 2]] {
         match self.correlation_count {
-            1 => vec![0, 0],
-            2 => vec![0, 1, 0, 1],
-            4 => vec![0, 0, 1, 1, 0, 1, 0, 1],
-            _ => Vec::new(),
+            1 => &[[0, 0]],
+            2 => &[[0, 0], [1, 1]],
+            4 => &[[0, 0], [0, 1], [1, 0], [1, 1]],
+            _ => &[],
         }
+    }
+
+    /// `CORR_PRODUCT`, shape `[2, correlations]`: the first receptors, then
+    /// the second.
+    fn correlation_products(&self) -> Vec<i32> {
+        let receptors = self.correlation_receptors();
+        (0..2)
+            .flat_map(|side| receptors.iter().map(move |pair| pair[side] as i32))
+            .collect()
     }
 
     fn receptor_types(&self) -> [&'static str; 2] {
@@ -830,6 +844,7 @@ pub struct SyntheticCorruptionConfig {
     #[serde(default)]
     pub bandpass: Option<SyntheticBandpassCorruption>,
     /// Approximate parallel-hand polarization leakage corruption, parameterized like CASA `setleakage`.
+    /// It needs exactly two correlations; other layouts are refused.
     #[serde(default)]
     pub leakage: Option<SyntheticPolarizationLeakageCorruption>,
     /// Global primary-beam pointing offset applied during model prediction, using CASA `setpointingerror` names where CASA has them.
@@ -1624,7 +1639,7 @@ fn validate_request(request: &SyntheticObservationRequest) -> MsResult<()> {
         }
     }
     if let Some(corruption) = &request.corruption {
-        validate_corruption(corruption)?;
+        validate_corruption(corruption, request.polarization_setup.correlation_count)?;
     }
     if let Some(model_peak_jy_per_pixel) = request.model_peak_jy_per_pixel
         && !(model_peak_jy_per_pixel.is_finite() && model_peak_jy_per_pixel > 0.0)
@@ -1636,7 +1651,10 @@ fn validate_request(request: &SyntheticObservationRequest) -> MsResult<()> {
     Ok(())
 }
 
-fn validate_corruption(corruption: &SyntheticCorruptionConfig) -> MsResult<()> {
+fn validate_corruption(
+    corruption: &SyntheticCorruptionConfig,
+    correlation_count: usize,
+) -> MsResult<()> {
     if let Some(noise) = &corruption.noise {
         if noise.mode != SyntheticNoiseMode::SimpleNoise {
             return Err(MsError::SyntheticObservation(
@@ -1705,6 +1723,13 @@ fn validate_corruption(corruption: &SyntheticCorruptionConfig) -> MsResult<()> {
             return Err(MsError::SyntheticObservation(
                 "setleakage offset values must be finite".to_string(),
             ));
+        }
+        // The leakage mixes the two parallel hands; with any other layout it
+        // would be reported as applied without changing the data.
+        if correlation_count != 2 {
+            return Err(MsError::SyntheticObservation(format!(
+                "setleakage needs exactly two correlations; this observation has {correlation_count}"
+            )));
         }
     }
     if let Some(pointing) = &corruption.pointing {
@@ -2122,6 +2147,7 @@ fn populate_main_rows(
             request.antennas.len(),
             request.total_channel_count(),
             sample_times.len(),
+            request.polarization_setup.correlation_receptors(),
         )
     });
     let mut nonzero_visibility_count = 0usize;
@@ -3968,6 +3994,8 @@ struct SyntheticCorruptionState {
     bandpass_gains: Vec<Vec<Complex32>>,
     total_channel_count: usize,
     leakage_terms: Vec<[Complex32; 2]>,
+    /// Each correlation's receptor pair `[p, q]`.
+    receptors: &'static [[usize; 2]],
 }
 
 impl SyntheticCorruptionState {
@@ -3976,6 +4004,7 @@ impl SyntheticCorruptionState {
         antenna_count: usize,
         total_channel_count: usize,
         sample_count: usize,
+        receptors: &'static [[usize; 2]],
     ) -> Self {
         let mut rng = DeterministicRng::new(config.seed);
         let gains_by_sample = build_gain_terms(
@@ -4019,6 +4048,7 @@ impl SyntheticCorruptionState {
             bandpass_gains,
             total_channel_count,
             leakage_terms,
+            receptors,
         }
     }
 
@@ -4034,18 +4064,24 @@ impl SyntheticCorruptionState {
     ) {
         let channel_count = window.setup.channel_count;
         let gains = &self.gains_by_sample[sample_index % self.gains_by_sample.len()];
-        let Some(correlation_count) = values.len().checked_div(channel_count) else {
+        let correlation_count = self.receptors.len();
+        if correlation_count == 0 || channel_count == 0 {
             return;
-        };
-        if correlation_count == 0 {
-            return;
+        }
+        assert_eq!(values.len(), correlation_count * channel_count);
+        // Correlation `[p, q]` takes `g_p · conj(g_q)`: CASA's
+        // `VisCal::corrupt` applies the term through `VisJones::applyCal`,
+        // antenna 1's Jones matrix from the right and antenna 2's from the
+        // left. A row has at most four correlations.
+        let mut receptor_gains = [Complex32::new(1.0, 0.0); 4];
+        for (gain, &[p, q]) in receptor_gains.iter_mut().zip(self.receptors) {
+            *gain = gains[antenna1][p] * gains[antenna2][q].conj();
         }
         for (index, value) in values.iter_mut().enumerate() {
             let channel = window.first_channel + index / correlation_count;
             let correlation = index % correlation_count;
             let logical_index = correlation * self.total_channel_count + channel;
-            let baseline_gain = gains[antenna1][correlation]
-                * gains[antenna2][correlation].conj()
+            let baseline_gain = receptor_gains[correlation]
                 * self.bandpass_gains[antenna1][channel]
                 * self.bandpass_gains[antenna2][channel].conj();
             *value *= baseline_gain;
@@ -5429,7 +5465,7 @@ mod tests {
             }),
             pointing: None,
         };
-        let corruption = SyntheticCorruptionState::new(&config, 8, 16, 5);
+        let corruption = SyntheticCorruptionState::new(&config, 8, 16, 5, &[[0, 0], [1, 1]]);
         let row_specs = (0..7)
             .flat_map(|antenna1| {
                 ((antenna1 + 1)..8).map(move |antenna2| MainRowVisibilitySpec {

@@ -194,10 +194,13 @@ pub const REQUIRED_COLUMNS: &[ColumnDef] = &[
         data_type: PrimitiveType::Float64,
         column_kind: ColumnKind::FixedArray { shape: &[3] },
         unit: "m",
-        // C++ uses Muvw measure type, but we map to Direction as the
-        // closest available. The UVW measure reference is handled specially.
+        // casacore's measure is Muvw, which `MeasureType` does not model;
+        // `metadata::measure_type_name_for` writes its type, "uvw". The
+        // reference is `MSTableImpl::addMeasColumn`'s `Muvw::DEFAULT`, ITRF,
+        // which a casacore-created MS keeps unless its writer sets another
+        // (importvla sets J2000) (#847).
         measure_type: None,
-        measure_ref: "",
+        measure_ref: "ITRF",
         comment: "Vector with uvw coordinates (in meters)",
     },
     ColumnDef {
