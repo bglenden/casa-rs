@@ -232,21 +232,81 @@ fn predict_refuses_as_casa_does() {
     );
 }
 
-/// A model image under the beam is predicted on a pointing `observemany`
-/// moved off its field with the beam centred on the field, as CASA 6.7.6
-/// centres it (measured, #884): its DATA is the per-row reference's, phased
-/// and beamed on the field. The mosaic machine, whose kernels point each
-/// scan, refuses it.
+/// CASA's primary beam on a pointing `observemany` moved off its field is
+/// centred where the first row of the field it visits points, and kept
+/// there for the field's other rows (`BeamSkyJones`, #884): measured on
+/// CASA 6.7.6, a field-first sequence keeps the beam on the field and a
+/// moved-first one on the moved direction. casa-rs does not follow that
+/// yet, so a beam over a model image, a component list or total power, and
+/// the mosaic machine, refuse a moved pointing; each predicts it without.
 #[test]
-fn a_beam_on_a_moved_pointing_is_centred_on_its_field() {
+fn a_beam_on_a_moved_pointing_is_refused() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let model = extended_model(directory.path(), "model.image");
-    let mut sm = session(
-        &directory.path().join("moved.ms"),
-        "ALMA",
-        "XX YY",
-        resources(2, 2 << 30),
+    let points = directory.path().join("points.cl");
+    write_points(&points);
+    let list = PredictSpec {
+        images: Vec::new(),
+        component_list: Some(points),
+        incremental: false,
+    };
+    let mosaic = PredictionOptions {
+        ftmachine: "mosaic".to_string(),
+        ..PredictionOptions::default()
+    };
+    let single_dish = PredictionOptions {
+        ftmachine: "sd".to_string(),
+        grid_function: "PB".to_string(),
+        ..PredictionOptions::default()
+    };
+    let no_beam = VoltagePatternSpec {
+        dovp: false,
+        ..VoltagePatternSpec::default()
+    };
+    let cases = [
+        ("an image under the beam", None, spec(&[&model])),
+        ("a list under the beam", None, list),
+        (
+            "total power under the beam",
+            Some(&single_dish),
+            spec(&[&model]),
+        ),
+    ];
+    for (index, (what, options, predict)) in cases.into_iter().enumerate() {
+        let mut sm = moved_pointing(&directory.path().join(format!("beam-{index}.ms")));
+        if let Some(options) = options {
+            sm.set_options(options).expect("setoptions");
+        }
+        sm.set_vp(&VoltagePatternSpec::default()).expect("setvp");
+        let (outcome, message) = refusal(sm.predict(&predict));
+        assert_eq!(outcome, CasaOutcome::NotYetImplemented, "{what}");
+        assert!(
+            message.contains("pointed away") && message.contains("#884"),
+            "{what}: {message}"
+        );
+        sm.set_vp(&no_beam).expect("setvp");
+        sm.predict(&predict)
+            .unwrap_or_else(|error| panic!("{what} without the beam: {error}"));
+    }
+    let mut sm = moved_pointing(&directory.path().join("mosaic.ms"));
+    sm.set_options(&mosaic).expect("setoptions");
+    let (outcome, message) = refusal(sm.predict(&spec(&[&model])));
+    assert_eq!(
+        outcome,
+        CasaOutcome::NotYetImplemented,
+        "the mosaic machine"
     );
+    assert!(message.contains("pointed away"), "{message}");
+    sm.set_options(&PredictionOptions::default())
+        .expect("setoptions");
+    sm.predict(&spec(&[&model]))
+        .expect("GridFT predicts the moved pointing");
+}
+
+/// An ALMA session observing `target` and then a pointing of it moved
+/// 1.7″ east, to `path`.
+fn moved_pointing(path: &Path) -> Simulator {
+    let mut sm = session(path, "ALMA", "XX YY", resources(2, 2 << 30));
     let base = scan("target", 0.0, 20.0);
     let pointing = |start_s: f64, direction: Option<MDirection>| Pointing {
         source: "target".to_string(),
@@ -257,41 +317,14 @@ fn a_beam_on_a_moved_pointing_is_centred_on_its_field() {
     let moved = MDirection::from_angles(CENTRE_RAD[0] + 1.0e-5, CENTRE_RAD[1], DirectionRef::J2000);
     sm.observe_many(&ObserveManySpec {
         pointings: vec![pointing(0.0, None), pointing(20.0, Some(moved))],
-        spectral_window: base.spectral_window.clone(),
+        spectral_window: base.spectral_window,
         add_observation: false,
-        state: base.state.clone(),
-        observer: base.observer.clone(),
-        project: base.project.clone(),
+        state: base.state,
+        observer: base.observer,
+        project: base.project,
     })
     .expect("observemany");
-    sm.set_vp(&VoltagePatternSpec::default()).expect("setvp");
-    sm.set_options(&PredictionOptions {
-        ftmachine: "mosaic".to_string(),
-        ..PredictionOptions::default()
-    })
-    .expect("setoptions");
-    let (outcome, message) = refusal(sm.predict(&spec(&[&model])));
-    assert_eq!(outcome, CasaOutcome::NotYetImplemented);
-    assert!(
-        message.contains("pointed away") && message.contains("Phase 2"),
-        "{message}"
-    );
-    sm.set_options(&PredictionOptions::default())
-        .expect("setoptions");
-    sm.predict(&spec(&[&model]))
-        .expect("under the beam: predicted");
-    sm.close().expect("close");
-    let (rows, _) = read_main(&directory.path().join("moved.ms"));
-    assert_eq!(
-        bits(&data(&rows)),
-        bits(&reference(
-            &rows,
-            &model,
-            &XX_YY,
-            Some(casa_simulation::predict::PrimaryBeam::ALMA)
-        )),
-        "the moved pointing is phased, and its beam centred, on its field"
-    );
+    sm
 }
 
 /// A pointing `observemany` moved off its field is phased on its field, as
@@ -432,90 +465,35 @@ fn write_points(path: &Path) {
     list.write_table(path).expect("write the list");
 }
 
-/// A component list under the beam is phased, and the beam centred, on each
-/// scan's field, even on a pointing `observemany` moved off it, as CASA
-/// 6.7.6 predicts it (measured, #884: the `components-moved-pointing-vp`
-/// scenario). A point at the moved direction keeps the beam's attenuation
-/// at the field in the moved pointing, as in one not moved, and the phases
-/// of a source off the field's phase centre.
+/// A component list on a pointing `observemany` moved off its field is
+/// phased on the field, as CASA predicts it (#884, the
+/// `components-moved-pointing` scenario): a point at the field's direction
+/// predicts its flux at zero phase in both pointings, though the moved
+/// pointing's UVW are the moved direction's.
 #[test]
 fn components_are_predicted_at_a_moved_pointing() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let points = directory.path().join("points.cl");
-    let moved_rad = [CENTRE_RAD[0] + 1.0e-5, CENTRE_RAD[1]];
-    write_point_list(&points, moved_rad, 1.0);
-    let moved = MDirection::from_angles(moved_rad[0], moved_rad[1], DirectionRef::J2000);
-    let observed = |name: &str, second: Pointing| {
-        let path = directory.path().join(name);
-        let mut sm = session(&path, "ALMA", "XX YY", resources(2, 2 << 30));
-        let base = scan("target", 0.0, 20.0);
-        sm.observe_many(&ObserveManySpec {
-            pointings: vec![
-                Pointing {
-                    source: "target".to_string(),
-                    start_s: 0.0,
-                    stop_s: 20.0,
-                    direction: None,
-                },
-                second,
-            ],
-            spectral_window: base.spectral_window,
-            add_observation: false,
-            state: base.state,
-            observer: base.observer,
-            project: base.project,
-        })
-        .expect("observemany");
-        sm.set_vp(&VoltagePatternSpec::default()).expect("setvp");
-        sm.predict(&PredictSpec {
-            images: Vec::new(),
-            component_list: Some(points.clone()),
-            incremental: false,
-        })
-        .expect("predict");
-        sm.close().expect("close");
-        read_main(&path).0
-    };
-    let pointed = observed(
-        "pointed.ms",
-        Pointing {
-            source: "target".to_string(),
-            start_s: 20.0,
-            stop_s: 40.0,
-            direction: Some(moved.clone()),
-        },
-    );
-    let unmoved = observed(
-        "unmoved.ms",
-        Pointing {
-            source: "target".to_string(),
-            start_s: 20.0,
-            stop_s: 40.0,
-            direction: None,
-        },
-    );
-    assert_eq!(pointed.len(), unmoved.len(), "rows");
-    // The second pointing's rows: the two pointings have as many each.
-    let second = pointed.len() / 2;
-    let mut phased = false;
-    for (row, (pointed, unmoved)) in pointed[second..].iter().zip(&unmoved[second..]).enumerate() {
-        for (found, there) in pointed.data.iter().zip(&unmoved.data) {
-            // The point is 1.7″ from the field: 0.996 of the beam's peak.
+    write_point_list(&points, CENTRE_RAD, 1.0);
+    let path = directory.path().join("moved.ms");
+    let mut sm = moved_pointing(&path);
+    sm.predict(&PredictSpec {
+        images: Vec::new(),
+        component_list: Some(points),
+        incremental: false,
+    })
+    .expect("predict");
+    sm.close().expect("close");
+    let rows = read_main(&path).0;
+    assert!(!rows.is_empty());
+    for (row, cells) in rows.iter().enumerate() {
+        for value in &cells.data {
             assert!(
-                there.norm() > 0.9 && there.norm() < 0.999,
-                "row {row}: the beam centred on the field attenuates the point: {there}"
+                (value.re - 1.0).abs() < 1e-6 && value.im.abs() < 1e-6,
+                "row {row}: the point at the field: {value}"
             );
-            assert!(
-                (found.norm() - there.norm()).abs() < 1e-5,
-                "row {row}: the beam is centred on the field: {found} against {there}"
-            );
-            phased |= found.arg().abs() > 0.1;
         }
     }
-    assert!(
-        phased,
-        "the moved pointing is phased on its field, off the point"
-    );
 }
 
 /// CASA squints the VLA's and the EVLA's beams for a component list, moving

@@ -81,9 +81,9 @@ pub(crate) enum ComponentRefusal {
 /// What a component list is predicted into: the session's windows, the
 /// distinct pointings of its scans (`(pointing, J2000 phase centre rad)`),
 /// each scan's pointing, and the primary beam with `setvp(dovp=True)`. A
-/// scan is phased, and the beam centred, on its field's phase centre, as
-/// CASA 6.7.6 centres them even on a pointing `observemany` moved off the
-/// field (measured, #884).
+/// scan is phased, and the beam centred, on its field's phase centre; the
+/// session refuses a beam on a pointing `observemany` moved off the field
+/// (#884).
 #[derive(Clone, Copy)]
 pub(crate) struct ComponentTargets<'a> {
     pub(crate) windows: &'a [ComponentWindow],

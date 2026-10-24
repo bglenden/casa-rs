@@ -487,12 +487,15 @@ impl Simulator {
         if self.single_dish.is_some() {
             self.require_pointings_at_phase_centres("setoptions(ftmachine='sd')")?;
         }
-        // The model's grids are prepared per field under an image-plane
-        // beam centred on the field, as CASA centres it even on a pointing
-        // `observemany` moved (measured, #884); and once for the mosaic
-        // machine, whose kernels point each scan.
+        // A primary beam, over a model image, a component list or total
+        // power, and the mosaic machine's kernels are centred on each
+        // scan's field here, which a pointing `observemany` moved does not
+        // point at (#884).
         if model.is_some() && self.mosaic {
             self.check_pointings_on_fields("setoptions(ftmachine='mosaic')")?;
+        }
+        if beam.is_some() {
+            self.check_pointings_on_fields("setvp(dovp=True)")?;
         }
         if let Some(kernel) = self.single_dish {
             // Total power samples a model image; `SDGrid` with a component
@@ -639,9 +642,10 @@ impl Simulator {
             })
             .collect();
         let pattern = beam.map(PrimaryBeam::pattern);
-        // A scan is phased, and the beam centred, on its field's phase
-        // centre, even where `observemany` moved its antennas off the field
-        // (CASA 6.7.6, measured: #884). Scans at one centre share a pointing.
+        // A scan is phased on its field's phase centre, as CASA's
+        // `VisBuffer` phases it, and the beam centred there: a beam on a
+        // pointing `observemany` moved was refused above (#884). Scans at
+        // one centre share a pointing.
         let mut pointings: Vec<(usize, [f64; 2])> = Vec::new();
         let pointing_of_scan: Vec<usize> = self
             .scans
@@ -760,11 +764,12 @@ impl Simulator {
             .map_or(0.0, |window| window.reference_frequency_hz)
     }
 
-    /// That every scan points at its field, as a model image predicted
-    /// through `what`, the mosaic machine, needs here: its kernels point
-    /// each scan, and where CASA's point those of a pointing `observemany`
-    /// moved off its field has not been measured. (CASA centres a primary
-    /// beam on the field even there, as casa-rs does: #884.)
+    /// That every scan points at its field, as `what` needs here: a primary
+    /// beam, or the mosaic machine's kernels, centred on each scan's field.
+    /// CASA's beam on a pointing `observemany` moved off its field is
+    /// centred where the first row of the field it visits points, which
+    /// `BeamSkyJones` keeps for the field's other rows (#884, `docs/CASA
+    /// (C++) bugs.md`); casa-rs does not follow it yet.
     fn check_pointings_on_fields(&self, what: &str) -> SimulatorResult<()> {
         let moved = self
             .scans
@@ -773,8 +778,8 @@ impl Simulator {
         match moved {
             Some(scan) => Err(SimulatorError::not_yet_implemented(format!(
                 "predict with {what} for scan {} pointed away from its field {} is not yet \
-                 implemented in casa-rs (simulation Phase 2); pointings at their fields' \
-                 centres are",
+                 implemented in casa-rs (simulation Phase 2, #884); pointings at their \
+                 fields' centres are",
                 scan.scan_number, self.fields[scan.field_id].name
             ))),
             None => Ok(()),
