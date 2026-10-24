@@ -68,6 +68,9 @@ pub(crate) struct OpenedMs {
     /// Each scan's first and last TIME, seconds: a POINTING row valid
     /// during that span points the scan.
     pub(crate) scan_times_s: Vec<[f64; 2]>,
+    /// Each scan's distinct TIMEs in order, seconds: its integrations,
+    /// which `setgain` solves one by one.
+    pub(crate) integration_times_s: Vec<Vec<f64>>,
 }
 
 fn read_error(what: &'static str) -> impl Fn(casa_ms::MsError) -> SimulatorError {
@@ -107,8 +110,11 @@ impl Simulator {
         // them, is refused after `openfromms`.
         session.feeds_set = true;
         session.fields = read_fields(&session, &ms)?;
-        let (scans, scan_times_s) =
-            read_scans(&ms, &session.fields, session.spectral_windows.len())?;
+        let ReadScans {
+            scans,
+            times_s: scan_times_s,
+            integrations,
+        } = read_scans(&ms, &session.fields, session.spectral_windows.len())?;
         session.scans = scans;
         let main = ms.main_table();
         let has = |column: &str| {
@@ -119,6 +125,7 @@ impl Simulator {
             model_data: has("MODEL_DATA"),
             corrected_data: has("CORRECTED_DATA"),
             scan_times_s,
+            integration_times_s: integrations,
         });
         tracing::info!(
             rows = ms.row_count(),
@@ -340,22 +347,20 @@ fn read_fields(session: &Simulator, ms: &MeasurementSet) -> SimulatorResult<Vec<
 
 /// MAIN's rows as scans: each run of consecutive rows with one SCAN_NUMBER,
 /// FIELD_ID and DATA_DESC_ID, phased on its field's PHASE_DIR, as CASA's
-/// `VisBuffer` phases it; and each scan's first and last TIME.
+/// `VisBuffer` phases it; each scan's first and last TIME; and each scan's
+/// integrations, its distinct TIMEs in order.
 ///
 /// A pointing `observemany` moved off its field keeps its field's FIELD
 /// row, so it is phased on the field: CASA predicts a source at the field's
 /// direction with zero phase there although the pointing's UVW were
 /// computed at the moved direction (measured on CASA 6.7.6;
 /// `docs/CASA (C++) bugs.md`).
-fn read_scans(
-    ms: &MeasurementSet,
-    fields: &[Field],
-    windows: usize,
-) -> SimulatorResult<(Vec<Scan>, Vec<[f64; 2]>)> {
+fn read_scans(ms: &MeasurementSet, fields: &[Field], windows: usize) -> SimulatorResult<ReadScans> {
     let main = ms.main_table();
     let rows = main.row_count();
     let mut scans: Vec<Scan> = Vec::new();
     let mut times_s: Vec<[f64; 2]> = Vec::new();
+    let mut integrations: Vec<Vec<f64>> = Vec::new();
     let (mut numbers, mut field_ids, mut descriptions) = (Vec::new(), Vec::new(), Vec::new());
     let mut row_times = Vec::new();
     let mut indices = Vec::with_capacity(SCAN_READ_ROWS.min(rows));
@@ -403,9 +408,13 @@ fn read_scans(
                     == (number, field_id, window)
                 && let ScanRows::OnDisk(scan_rows) = &mut scan.rows
                 && let Some(span) = times_s.last_mut()
+                && let Some(times) = integrations.last_mut()
             {
                 scan_rows.end = row + 1;
                 *span = [span[0].min(time_s), span[1].max(time_s)];
+                if times.last() != Some(&time_s) {
+                    times.push(time_s);
+                }
                 continue;
             }
             scans.push(Scan {
@@ -419,9 +428,27 @@ fn read_scans(
                 rows: ScanRows::OnDisk(row..row + 1),
             });
             times_s.push([time_s, time_s]);
+            integrations.push(vec![time_s]);
         }
     }
-    Ok((scans, times_s))
+    for times in &mut integrations {
+        times.sort_by(f64::total_cmp);
+        times.dedup();
+    }
+    Ok(ReadScans {
+        scans,
+        times_s,
+        integrations,
+    })
+}
+
+/// MAIN's scans as `read_scans` reads them.
+struct ReadScans {
+    scans: Vec<Scan>,
+    /// Each scan's first and last TIME.
+    times_s: Vec<[f64; 2]>,
+    /// Each scan's distinct TIMEs in order.
+    integrations: Vec<Vec<f64>>,
 }
 
 /// `value`, MAIN row `row`'s `column`, as an index below `count`.

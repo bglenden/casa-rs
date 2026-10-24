@@ -8,7 +8,7 @@ const LINEAR: [[usize; 2]; 4] = [[0, 0], [0, 1], [1, 0], [1, 1]];
 fn integrations(integrations: usize) -> Chunks {
     let mut chunks = Chunks::default();
     for index in 0..integrations {
-        chunks.push(0, 1000.0 + 10.0 * index as f64 + 5.0);
+        chunks.push(0, 1000.0 + 10.0 * index as f64 + 5.0, 0);
     }
     chunks
 }
@@ -81,10 +81,11 @@ fn rows_take_the_nearest_solution() {
     // Integration centres 1005, 1015, …; slots at 1005 + 2.5 + 5k: the
     // chunk at 1015 s is 2.5 s from slots 1 (1012.5) and 2 (1017.5) and
     // takes slot 1.
-    assert_eq!(term.solutions[0][1], (1015.0, 1));
-    assert_eq!(term.solutions[0][0], (1005.0, 0));
+    let solution = |index: usize| term.solutions[0][index];
+    assert_eq!((solution(1).time_s, solution(1).block), (1015.0, 1));
+    assert_eq!((solution(0).time_s, solution(0).block), (1005.0, 0));
     let at = |time_s: f64| term.at(0, time_s, 1);
-    let chunk = |index: usize| term.values[term.solutions[0][index].1 as usize * 2 + 1];
+    let chunk = |index: usize| term.values[solution(index).block as usize * 2 + 1];
     assert_eq!(at(1015.0)[0], chunk(1)[0]);
     assert_eq!(at(1019.9)[0], chunk(1)[0]);
     // Halfway between chunks 1 and 2: the earlier.
@@ -99,7 +100,7 @@ fn rows_take_the_nearest_solution() {
 #[test]
 fn a_gain_multiplies_each_correlation_by_its_receptors_gains() {
     let mut chunks = Chunks::default();
-    chunks.push(0, 0.0);
+    chunks.push(0, 0.0, 0);
     let term = JonesTerm {
         kind: JonesKind::Gain,
         antennas: 2,
@@ -130,7 +131,7 @@ fn a_gain_multiplies_each_correlation_by_its_receptors_gains() {
 #[test]
 fn leakage_moves_only_the_cross_hands_to_first_order() {
     let mut chunks = Chunks::default();
-    chunks.push(0, 0.0);
+    chunks.push(0, 0.0, 0);
     let term = JonesTerm {
         kind: JonesKind::Leakage,
         antennas: 2,
@@ -190,7 +191,7 @@ fn random_gains_scatter_about_one() {
 fn leakages_scatter_about_their_offsets() {
     let mut chunks = Chunks::default();
     for window in 0..200 {
-        chunks.push(window, 0.0);
+        chunks.push(window, 0.0, 0);
     }
     let camp = Complex64::new(0.05, 0.02);
     let offset = Complex64::new(0.03, 0.01);

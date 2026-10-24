@@ -82,6 +82,8 @@
 
 #[path = "session_memory/gain_setters.rs"]
 mod gain_setters;
+#[path = "session_memory/jones.rs"]
+mod jones;
 #[path = "session_memory/mosaic.rs"]
 mod mosaic;
 mod pass_summary;
@@ -430,6 +432,7 @@ fn simulate(case: Case, ms: &Path, model: &Path, measures: &Arc<dyn MeasuresProv
     })
     .expect("predict");
     sm.set_noise(&noise()).expect("setnoise");
+    jones::set_gains(&mut sm);
     sm.corrupt().expect("corrupt");
     sm.close().expect("close");
 }

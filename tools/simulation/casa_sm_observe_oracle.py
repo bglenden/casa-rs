@@ -66,7 +66,12 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 
 # What compare_sm_ms.py's `gains` and `leakage` comparisons read from a
 # scenario (corruption_stats.py).
-CORRUPTION_KEYS = ("gain_scale", "casa_gain_checks", "casa_unit_antennas", "leakage_amplitude")
+CORRUPTION_KEYS = (
+    "gain_scale",
+    "casa_gain_checks",
+    "leakage_amplitude",
+    "tables",
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -240,6 +245,10 @@ def run_scenario(
                 # the oracle wrote.
                 path = os.path.join(os.path.abspath(args.out), "complists", kwargs["complist"])
                 kwargs["complist"] = resolved["complist"] = path
+        if op in ("setgain", "setleakage") and kwargs.get("table"):
+            # CASA writes the table under the oracle's output; the manifest
+            # keeps its name, which the casa-rs driver writes under its own.
+            kwargs["table"] = os.path.join(os.path.abspath(args.out), kwargs["table"])
         resolved_calls.append((op, kwargs, resolved))
     sm = simulator()
     calls = []

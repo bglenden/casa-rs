@@ -10,23 +10,34 @@
 //! A term grows with the integrations observed, so each call counts them
 //! first, admits what the term keeps and what forming it holds against the
 //! session's resource policy, and only then forms it; the term keeps its
-//! share for as long as it, or a corruption recorded with it, lives.
+//! share for as long as it, a corruption recorded with it, or a table still
+//! to be written from it lives.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
+use casa_calibration::{
+    SimulatedJones, SimulatedSolution, check_simulated_table_destination, simulated_table_bytes,
+    write_simulated_jones_table,
+};
 use casa_imaging_runtime::{Demand, Reservation, admit};
+use casa_ms::MeasurementSet;
 use num_complex::Complex64;
 
 use super::Simulator;
 use super::error::{SimulatorError, SimulatorResult};
 use crate::corrupt::jones::{
-    Chunks, HeldTerm, JonesTerm, MAXIMUM_GAIN_SCALE, TermBytes, fbm_gains, leakages, random_gains,
-    screen_slots,
+    Chunks, HeldTerm, JonesKind, JonesTerm, MAXIMUM_GAIN_SCALE, TermBytes, fbm_gains, leakages,
+    random_gains, screen_slots,
 };
 
 /// The phase a gain or leakage term is admitted as, at `setgain` or
 /// `setleakage`: what it keeps for the session, and what forming it holds.
 const JONES_TERM_PHASE: &str = "a simulated gain or leakage term";
+
+/// The phase writing the calibration tables of the terms is admitted as, at
+/// `close`: the largest table built in memory and saved.
+const JONES_TABLE_PHASE: &str = "writing a simulated calibration table";
 
 /// The arguments of `sm.setgain`.
 #[derive(Debug, Clone, PartialEq)]
@@ -36,8 +47,8 @@ pub struct GainSpec {
     /// scatter about zero, `docs/CASA (C++) bugs.md`); `table` CASA
     /// refuses.
     pub mode: String,
-    /// `table`: a calibration table CASA writes the simulated gains to;
-    /// casa-rs does not write it yet.
+    /// `table`: the calibration table the simulated gains are written to,
+    /// or `''` for none. CASA writes it at once; casa-rs at `close`.
     pub table: String,
     /// `amplitude`: one value `a` for the complex scale `(a, a)`, or two,
     /// `(a₀, a₁)`. The fluctuations' scale is its modulus.
@@ -47,8 +58,9 @@ pub struct GainSpec {
 /// The arguments of `sm.setleakage`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LeakageSpec {
-    /// `table`: a calibration table CASA writes the simulated leakages to;
-    /// casa-rs does not write it yet. (`mode` CASA does not read.)
+    /// `table`: the calibration table the simulated leakages are written
+    /// to, or `''` for none. CASA writes it at once; casa-rs at `close`.
+    /// (`mode` CASA does not read.)
     pub table: String,
     /// `amplitude`: one value `a` for the complex scale `(a, a)` of the
     /// leakages' real and imaginary parts, or two.
@@ -79,9 +91,9 @@ impl Simulator {
     /// - `mode='table'`: CASA logs "Cannot yet read from table" and returns
     ///   `False`; another unknown mode is refused as CASA's "unsupported
     ///   mode".
-    /// - A `table` to write, or a session `openfromms` opened: not yet
-    ///   implemented.
     /// - No rows observed yet, or no `amplitude`: refused.
+    /// - A `table` path that cannot be made absolute, or that is, lies
+    ///   inside or contains the session's MeasurementSet: raised.
     /// - The term's memory does not fit the session's resource policy: an
     ///   admission error, before anything is formed.
     pub fn set_gain(&mut self, spec: &GainSpec) -> SimulatorResult<()> {
@@ -97,8 +109,7 @@ impl Simulator {
                 )));
             }
         };
-        self.refuse_after_openfromms("setgain")?;
-        Self::refuse_table("setgain", &spec.table)?;
+        let table = self.table_path(&spec.table)?;
         let camp = pair(&spec.amplitude, "setgain's amplitude")?;
         tracing::info!("Gain corruption with complex RMS amplitude = {camp}");
         self.require_rows()?;
@@ -123,7 +134,37 @@ impl Simulator {
             }
             fbm_gains(self.seed, scale, antennas, chunks)
         };
-        self.hold_term(term, reservation, bytes);
+        self.hold_term(term, (reservation, bytes), table);
+        Ok(())
+    }
+
+    /// `sm.setleakage(...)`: simulate polarization leakages over the rows
+    /// observed so far and add them to the terms `corrupt` applies.
+    ///
+    /// # Errors
+    ///
+    /// No rows observed yet, or no `amplitude` or `offset`: refused. A
+    /// `table` path that cannot be made absolute, or that is, lies inside
+    /// or contains the session's MeasurementSet: raised. The term's memory
+    /// does not fit the session's resource policy: an admission error,
+    /// before anything is formed.
+    pub fn set_leakage(&mut self, spec: &LeakageSpec) -> SimulatorResult<()> {
+        let table = self.table_path(&spec.table)?;
+        let camp = pair(&spec.amplitude, "setleakage's amplitude")?;
+        let offset = pair(&spec.offset, "setleakage's offset")?;
+        self.require_rows()?;
+        tracing::info!("Creating D Calibration structure for data corruption.");
+        let antennas = self.antennas.len();
+        let first = self.first_integrations();
+        let per_window: Vec<usize> = first
+            .iter()
+            .map(|first| usize::from(first.is_some()))
+            .collect();
+        let bytes = TermBytes::per_chunk(&per_window, antennas);
+        let reservation = self.admit_term(bytes)?;
+        let chunks = window_chunks(&first, &per_window);
+        let term = leakages(self.seed, (camp, offset), antennas, chunks);
+        self.hold_term(term, (reservation, bytes), table);
         Ok(())
     }
 
@@ -141,54 +182,24 @@ impl Simulator {
         .map_err(SimulatorError::admission)
     }
 
-    /// Add `term` to the terms `corrupt` applies, keeping of `reservation`
-    /// what it keeps, for as long as the term lives.
-    fn hold_term(&mut self, term: JonesTerm, mut reservation: Reservation, bytes: TermBytes) {
+    /// Add `term` to those `corrupt` applies, keeping of its reservation
+    /// what it keeps for as long as it lives, and to the calibration tables
+    /// `close` writes when it names one. CASA writes the table at once;
+    /// casa-rs writes it at `close`, beside the MeasurementSet whose
+    /// subtables it copies. `reset` does not remove it.
+    fn hold_term(
+        &mut self,
+        term: JonesTerm,
+        (mut reservation, bytes): (Reservation, TermBytes),
+        table: Option<PathBuf>,
+    ) {
         reservation.retain(bytes.kept);
-        self.jones_terms
-            .push(Arc::new(HeldTerm::new(term, reservation)));
-    }
-
-    /// `sm.setleakage(...)`: simulate polarization leakages over the rows
-    /// observed so far and add them to the terms `corrupt` applies.
-    ///
-    /// # Errors
-    ///
-    /// A `table` to write, or a session `openfromms` opened: not yet
-    /// implemented. No rows observed yet, or no `amplitude` or `offset`:
-    /// refused. The term's memory does not fit the session's resource
-    /// policy: an admission error, before anything is formed.
-    pub fn set_leakage(&mut self, spec: &LeakageSpec) -> SimulatorResult<()> {
-        self.refuse_after_openfromms("setleakage")?;
-        Self::refuse_table("setleakage", &spec.table)?;
-        let camp = pair(&spec.amplitude, "setleakage's amplitude")?;
-        let offset = pair(&spec.offset, "setleakage's offset")?;
-        self.require_rows()?;
-        tracing::info!("Creating D Calibration structure for data corruption.");
-        let antennas = self.antennas.len();
-        let first = self.first_times();
-        let per_window: Vec<usize> = first
-            .iter()
-            .map(|time| usize::from(time.is_some()))
-            .collect();
-        let bytes = TermBytes::per_chunk(&per_window, antennas);
-        let reservation = self.admit_term(bytes)?;
-        let chunks = window_chunks(&first, &per_window);
-        let term = leakages(self.seed, (camp, offset), antennas, chunks);
-        self.hold_term(term, reservation, bytes);
-        Ok(())
-    }
-
-    /// Refuse `call` writing its simulated term to `table`, which casa-rs
-    /// does not yet do.
-    fn refuse_table(call: &str, table: &str) -> SimulatorResult<()> {
-        if table.is_empty() {
-            return Ok(());
+        let term = Arc::new(HeldTerm::new(term, reservation));
+        if let Some(path) = table {
+            tracing::info!("Writing calTable = {} at close", path.display());
+            self.jones_tables.push((path, Arc::clone(&term)));
         }
-        Err(SimulatorError::not_yet_implemented(format!(
-            "{call}(table='{table}'), which writes the simulated term as a calibration table, is \
-             not yet implemented in casa-rs (simulation Phase 3); table='' is"
-        )))
+        self.jones_terms.push(term);
     }
 
     /// CASA's `create_corrupt` cannot size a term on an empty
@@ -203,21 +214,109 @@ impl Simulator {
         Ok(())
     }
 
+    /// Write the calibration tables `setgain` and `setleakage` named, from
+    /// the MeasurementSet `close` wrote: one row per solution and antenna,
+    /// by spectral window, time and antenna, as CASA's
+    /// `NewCalTable::writeToDisk` sorts them.
+    ///
+    /// The terms hold their own admission; a table is built in memory and
+    /// saved, one at a time, so the largest table's build is admitted
+    /// before any is written, and each row is formed from its term as it
+    /// is added (#891 review).
+    pub(super) fn write_jones_tables(&self) -> SimulatorResult<()> {
+        let Some(rows) = self
+            .jones_tables
+            .iter()
+            .map(|(_, term)| term.table_rows())
+            .max()
+        else {
+            return Ok(());
+        };
+        let resources = &self.options.resources;
+        let _building = admit(
+            resources.host(),
+            resources.policy(),
+            &Demand {
+                phase: JONES_TABLE_PHASE,
+                memory: simulated_table_bytes(rows),
+            },
+        )
+        .map_err(SimulatorError::admission)?;
+        let ms = MeasurementSet::open(self.path()).map_err(|error| {
+            SimulatorError::raised(format!("reopen the MeasurementSet: {error}"))
+        })?;
+        for (path, term) in &self.jones_tables {
+            let kind = match term.kind {
+                JonesKind::Gain => SimulatedJones::Gain,
+                JonesKind::Leakage => SimulatedJones::Leakage,
+            };
+            let rows = term.solutions().flat_map(|(window, solution, values)| {
+                values
+                    .iter()
+                    .enumerate()
+                    .map(move |(antenna, &receptors)| SimulatedSolution {
+                        time_s: solution.time_s,
+                        field_id: solution.field as i32,
+                        spectral_window_id: window as i32,
+                        antenna: antenna as i32,
+                        receptors,
+                    })
+            });
+            write_simulated_jones_table(&ms, path, kind, rows).map_err(|error| {
+                SimulatorError::raised(format!(
+                    "write the calibration table {}: {error}",
+                    path.display()
+                ))
+            })?;
+        }
+        Ok(())
+    }
+
+    /// `table` as the absolute path `close` writes it to, or `None` for
+    /// none; refused when it is, lies inside or contains the session's
+    /// MeasurementSet, which writing it would replace.
+    fn table_path(&self, table: &str) -> SimulatorResult<Option<PathBuf>> {
+        if table.is_empty() {
+            return Ok(None);
+        }
+        let path = std::path::absolute(table)
+            .map_err(|error| SimulatorError::raised(format!("table {table}: {error}")))?;
+        check_simulated_table_destination(self.path(), &path)
+            .map_err(|error| SimulatorError::raised(error.to_string()))?;
+        Ok(Some(path))
+    }
+
+    /// Scan `scan`'s integrations, their TIMEs in order: as planned, or as
+    /// the opened MeasurementSet has them.
+    fn integration_times_s(&self, scan: usize) -> impl Iterator<Item = f64> + '_ {
+        let planned = self.scans[scan].planned();
+        let opened: &[f64] = if planned.is_some() {
+            &[]
+        } else {
+            self.opened
+                .as_ref()
+                .and_then(|opened| opened.integration_times_s.get(scan))
+                .map_or(&[], Vec::as_slice)
+        };
+        planned
+            .map(|planned| planned.integration_times_s())
+            .into_iter()
+            .flatten()
+            .chain(opened.iter().copied())
+    }
+
     /// The integrations of the scans observed so far in each spectral
     /// window, and the span of their times: what a gain term's chunks
     /// number, counted before they are formed.
     fn integration_counts(&self) -> (Vec<usize>, Option<[f64; 2]>) {
         let mut per_window = Vec::new();
         let mut span: Option<[f64; 2]> = None;
-        for scan in &self.scans {
-            let Some(planned) = scan.planned() else {
-                continue;
-            };
+        for (index, scan) in self.scans.iter().enumerate() {
             let window = scan.spectral_window_id;
             if per_window.len() <= window {
                 per_window.resize(window + 1, 0);
             }
-            for time_s in planned.integration_times_s() {
+            for time_s in self.integration_times_s(index) {
                 per_window[window] += 1;
                 span = Some(span.map_or([time_s, time_s], |[low, high]| {
                     [low.min(time_s), high.max(time_s)]
@@ -228,57 +327,48 @@ impl Simulator {
     }
 
     /// The solution chunks of a gain term: one per integration of each scan
-    /// observed so far, at its TIME, in its spectral window, counted
-    /// `per_window` ([`Self::integration_counts`]).
+    /// observed so far, at its TIME, in its spectral window and field,
+    /// counted `per_window` ([`Self::integration_counts`]).
     fn integration_chunks(&self, per_window: &[usize]) -> Chunks {
         let mut chunks = Chunks::with_capacity(per_window);
-        for scan in &self.scans {
-            let Some(planned) = scan.planned() else {
-                continue;
-            };
-            for time_s in planned.integration_times_s() {
-                chunks.push(scan.spectral_window_id, time_s);
+        for (index, scan) in self.scans.iter().enumerate() {
+            for time_s in self.integration_times_s(index) {
+                chunks.push(scan.spectral_window_id, time_s, scan.field_id);
             }
         }
-        // Each window's in time order, as `corrupt` looks them up; equal
-        // times keep the order they were observed in. Sorting in place
-        // holds nothing beside the chunks.
-        for times in &mut chunks.by_window {
-            times.sort_unstable_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
-        }
-        chunks
+        chunks.sorted()
     }
 
-    /// Each spectral window's earliest TIME among the scans observed so
-    /// far, if any. CASA's infinite leakage solution interval spans every
-    /// scan and field of a window: its table has one solution per window
-    /// and antenna.
-    fn first_times(&self) -> Vec<Option<f64>> {
-        let mut first: Vec<Option<f64>> = Vec::new();
-        for scan in &self.scans {
-            let Some(time_s) = scan
-                .planned()
-                .and_then(|planned| planned.integration_times_s().next())
-            else {
+    /// Each spectral window's earliest TIME among the scans observed so far
+    /// and the field of that integration, if any. CASA's infinite leakage
+    /// solution interval spans every scan and field of a window: its table
+    /// has one solution per window and antenna.
+    fn first_integrations(&self) -> Vec<Option<(f64, usize)>> {
+        let mut first: Vec<Option<(f64, usize)>> = Vec::new();
+        for (index, scan) in self.scans.iter().enumerate() {
+            let Some(time_s) = self.integration_times_s(index).next() else {
                 continue;
             };
             let window = scan.spectral_window_id;
             if first.len() <= window {
                 first.resize(window + 1, None);
             }
-            first[window] = Some(first[window].map_or(time_s, |earlier| earlier.min(time_s)));
+            if first[window].is_none_or(|(earlier, _)| time_s < earlier) {
+                first[window] = Some((time_s, scan.field_id));
+            }
         }
         first
     }
 }
 
 /// The solution chunks of a leakage term: one per spectral window observed
-/// so far, at its earliest TIME (`first`), counted `per_window`.
-fn window_chunks(first: &[Option<f64>], per_window: &[usize]) -> Chunks {
+/// so far, at its earliest TIME and on that integration's field (`first`),
+/// counted `per_window`.
+fn window_chunks(first: &[Option<(f64, usize)>], per_window: &[usize]) -> Chunks {
     let mut chunks = Chunks::with_capacity(per_window);
-    for (window, time_s) in first.iter().enumerate() {
-        if let Some(time_s) = *time_s {
-            chunks.push(window, time_s);
+    for (window, first) in first.iter().enumerate() {
+        if let Some((time_s, field)) = *first {
+            chunks.push(window, time_s, field);
         }
     }
     chunks

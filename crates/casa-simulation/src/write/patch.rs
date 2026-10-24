@@ -11,13 +11,14 @@
 //!    `predict` cleared the plan. A `tsys-manual` term's σ also reads TIME
 //!    and EXPOSURE, and each row's antennas' airmasses at its scan's phase
 //!    centre are computed once per integration, as a new MeasurementSet's
-//!    geometry computes them.
-//! 2. **Prediction and noise**, as for a new MeasurementSet
+//!    geometry computes them; gains and leakage read TIME, where they take
+//!    their solution.
+//! 2. **Prediction and corruption**, as for a new MeasurementSet
 //!    ([`super::pipeline`]): the steps covering the batch's scans are
 //!    predicted into zeroed DATA and the component lists' and total
 //!    power's visibilities added; then the DATA read from disk; then each
-//!    scan's noise, whose draws depend only on the term, the MAIN row, the
-//!    channel and the correlation.
+//!    scan's corruptions, gains and leakage then noise, whose draws depend
+//!    only on the term, the MAIN row, the channel and the correlation.
 //! 3. **Write.** DATA, and the scratch columns MAIN has, as CASA's steps
 //!    leave them: CORRECTED_DATA equal to DATA, and MODEL_DATA 1 after a
 //!    `predict`. casa-rs creates neither where CASA's `VisSet` would add
@@ -89,6 +90,10 @@ struct PatchShape {
     /// Whether the noise needs each row's airmasses and exposure
     /// (`tsys-manual`).
     airmass: bool,
+    /// Whether the corruption needs each row's TIME: gains, leakage or
+    /// `tsys-manual`. (The gain and leakage terms it reads hold their own
+    /// admission, from `setgain` and `setleakage`.)
+    times: bool,
 }
 
 impl PatchShape {
@@ -151,6 +156,7 @@ pub(crate) fn patch_measurement_set(session: &Simulator) -> SimulatorResult<()> 
         columns: columns.len(),
         antennas: session.antennas().len(),
         airmass: noise_varies_by_row(plan),
+        times: noise_varies_by_row(plan) || plan.corrupts_by_jones(),
     };
     let admission = admit_patch(resources, &shape, &columns, prediction.as_ref())?;
     let mut ms = MeasurementSet::open(session.path())
@@ -487,6 +493,15 @@ impl BatchReader {
                 ],
             )
             .map_err(error("TIME and EXPOSURE"))?;
+        } else if shape.times {
+            main.required_scalar_columns_for_rows_into(
+                rows,
+                &mut [RequiredScalarColumnDestination::new(
+                    "TIME",
+                    RequiredScalarColumnValuesMut::Float64(&mut self.time),
+                )],
+            )
+            .map_err(error("TIME"))?;
         }
         self.uvw.clear();
         main.column_accessor("UVW")
@@ -538,6 +553,7 @@ impl BatchReader {
                 antenna2: antenna(self.antenna2[index])?,
                 uvw_m: [uvw[0], uvw[1], uvw[2]],
                 flagged: self.flag_row[index],
+                time_s: self.time.get(index).copied().unwrap_or(0.0),
                 airmass: [f32::NAN; 2],
                 exposure_s: self.exposure.get(index).copied().unwrap_or(0.0),
                 ..RowGeometry::default()
@@ -755,8 +771,9 @@ const AIRMASS_ANTENNA_BYTES: u64 = size_of::<MPosition>() as u64 + 64;
 
 /// Bytes the patch holds beside its writer for batches of `batch_rows`
 /// rows writing `columns` columns: the columns read (ANTENNA1, ANTENNA2,
-/// FLAG_ROW, UVW, TIME and EXPOSURE when the noise needs airmasses, and
-/// DATA when the fold starts from it, or FLAG while it is checked) and
+/// FLAG_ROW, UVW, TIME when the corruption needs it, EXPOSURE when the
+/// noise needs airmasses, and DATA when the fold starts from it, or FLAG
+/// while it is checked) and
 /// their staging, the rows' geometry, the new DATA, the mutation's copies
 /// of the cells written, the tiled managers' I/O, the batch's runs and
 /// jobs, and the airmasses' antennas.
@@ -765,7 +782,7 @@ fn pipeline_bytes(shape: &PatchShape, columns: usize, batch_rows: usize) -> u64 
     let cell = samples * size_of::<Complex32>() as u64;
     let staged = 1 + READ_CELL_COPIES;
     let read = staged * if shape.reads_data { cell } else { 0 }.max(samples);
-    let times = if shape.airmass { staged * 2 * 8 } else { 0 };
+    let times = staged * 8 * (u64::from(shape.times) + u64::from(shape.airmass));
     let written = columns as u64 * MUTATION_CELL_COPIES * (cell + size_of::<ArrayValue>() as u64);
     let row = 4
         + 4

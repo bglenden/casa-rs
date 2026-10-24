@@ -19,7 +19,7 @@
 //! | `sm.setvp(dovp=True)` with an Airy voltage pattern | [`Simulator::set_vp`], [`predict::PrimaryBeam`] |
 //! | `sm.setseed`, `sm.setnoise(mode='simplenoise')`, `sm.corrupt`, `sm.reset` | [`Simulator::set_seed`], [`Simulator::set_noise`], [`Simulator::corrupt`], [`Simulator::reset`] |
 //! | `sm.setnoise(mode='tsys-manual')`: σ per row from a system temperature (CASA's `AtmosCorruptor`) | [`Simulator::set_noise`], [`NoiseSpec::tsys_manual`], [`TsysParameters`] |
-//! | `sm.setgain(mode='fbm' or 'random')`, `sm.setleakage`, without a table | [`Simulator::set_gain`], [`Simulator::set_leakage`] |
+//! | `sm.setgain(mode='fbm' or 'random')`, `sm.setleakage`, and the calibration tables they write | [`Simulator::set_gain`], [`Simulator::set_leakage`] |
 //! | `simutil.readantenna(antab)` | [`readantenna::read_antenna_config`] |
 //!
 //! CASA's `sm` has no execution controls; a session's memory budget, workers

@@ -636,7 +636,8 @@ impl PySimulator {
     /// Simulate antenna gains over the rows observed so far, as fractional
     /// Brownian motion of `amplitude` (`mode='fbm'`) or drawn afresh each
     /// integration about one (`mode='random'`), for `corrupt` to apply.
-    /// Writing `table` raises `NotImplementedError`.
+    /// A `table` is written as CASA's `G Jones` calibration table at
+    /// `close`.
     #[pyo3(
         signature = (
             mode = "fbm", table = "", interval = Variant::Empty,
@@ -662,8 +663,8 @@ impl PySimulator {
     }
 
     /// Simulate polarization leakages over the rows observed so far, of
-    /// `amplitude` about `offset`, for `corrupt` to apply. Writing `table`
-    /// raises `NotImplementedError`.
+    /// `amplitude` about `offset`, for `corrupt` to apply. A `table` is
+    /// written as CASA's `D Jones` calibration table at `close`.
     #[allow(unused_variables)]
     #[pyo3(
         signature = (

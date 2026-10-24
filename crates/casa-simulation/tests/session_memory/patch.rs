@@ -78,6 +78,7 @@ fn patch(case: PatchCase<'_>, ms: &Path, measures: &Arc<dyn MeasuresProvider>) -
         .expect("predict");
     }
     sm.set_noise(&noise()).expect("setnoise");
+    super::jones::set_gains(&mut sm);
     sm.corrupt().expect("corrupt");
     measured_close(sm, ms, false).0
 }
@@ -190,7 +191,7 @@ fn patching_with_tsys_noise_holds_its_admission_and_no_more_for_more_rows() {
 
 /// Patches of [`PATCH_INTEGRATIONS`] each hold at most their admission and
 /// the allowance, and ten times the rows no more beyond it but a little.
-fn patches_hold_their_admission_for_more_rows() {
+pub(super) fn patches_hold_their_admission_for_more_rows() {
     casa_tables::set_table_cache_budget_bytes(0);
     let resources = resources(BUDGET_32);
     charge_process_caches(resources.host(), resources.policy()).expect("the process caches");

@@ -25,6 +25,7 @@ from compare_sm_ms import (
     grouped_variance_ratios,
     ks_failures,
     noise_classes,
+    table_differences,
     tsys_manual_sigma,
     tsys_term,
 )
@@ -190,6 +191,49 @@ class GroupedVarianceTests(unittest.TestCase):
         ours = rng.normal(size=(500, 2, 16))
         self.assertEqual(grouped_variance_ratios(casa, ours, groups)[1], [])
         self.assertEqual(len(grouped_variance_ratios(casa, 1.2 * ours, groups)[1]), 1)
+
+
+def simulated_table(rows: int = 4) -> dict:
+    """A calibration table as `calibration_table` reads it: two solutions
+    of two antennas."""
+    table = {
+        "keywords": {"VisCal": "G Jones", "ParType": "Complex", "PolBasis": "unknown"},
+        "subtype": "G Jones",
+        "columns": ["ANTENNA1", "CPARAM", "TIME"],
+        "TIME": np.repeat([5.0e9, 5.0e9 + 10.0], 2)[:rows],
+        "shapes": [(2, 1)] * rows,
+        "flags": [False] * rows,
+    }
+    for column, values in (
+        ("FIELD_ID", [0] * rows),
+        ("SPECTRAL_WINDOW_ID", [0] * rows),
+        ("ANTENNA1", [0, 1, 0, 1][:rows]),
+        ("ANTENNA2", [-1] * rows),
+        ("INTERVAL", [0.0] * rows),
+        ("SCAN_NUMBER", [-1] * rows),
+        ("OBSERVATION_ID", [0] * rows),
+    ):
+        table[column] = np.asarray(values)
+    return table
+
+
+class CalibrationTableTests(unittest.TestCase):
+    def test_tables_alike_but_for_the_draws_agree(self) -> None:
+        self.assertEqual(table_differences(simulated_table(), simulated_table()), [])
+
+    def test_each_structural_difference_is_found(self) -> None:
+        def differs(change) -> list[str]:
+            table = simulated_table()
+            change(table)
+            return table_differences(simulated_table(), table)
+
+        self.assertTrue(differs(lambda t: t.update(subtype="D Jones")))
+        self.assertTrue(differs(lambda t: t["TIME"].__setitem__(3, 5.0e9 + 11.0)))
+        self.assertTrue(differs(lambda t: t["ANTENNA1"].__setitem__(1, 2)))
+        self.assertTrue(differs(lambda t: t["shapes"].__setitem__(0, (2, 2))))
+        self.assertEqual(
+            table_differences(simulated_table(), simulated_table(rows=2)), ["4 rows against 2"]
+        )
 
 
 if __name__ == "__main__":

@@ -47,7 +47,8 @@ Simulator behaviours casa-rs does not follow:
 [gain screens sharing a seed](#gain-screens-of-neighbouring-antennas-share-a-seed),
 [random gains about zero](#setgainmoderandom-draws-gains-about-zero),
 [the last antenna's unit gain or leakage](#an-autocorrelation-row-resets-its-antennas-simulated-term),
-[leakage for two windows only](#setleakage-simulates-only-the-first-two-spectral-windows).
+[leakage for two windows only](#setleakage-simulates-only-the-first-two-spectral-windows),
+[a simulated term's table written when it is set](#a-simulated-terms-table-is-written-when-the-term-is-set).
 Measures behaviours casa-rs follows for parity:
 [IAU 1980 sidereal time and obliquities under IAU 2000](#iau-2000-keeps-the-iau-1980-sidereal-time-and-ecliptic-obliquities).
 Measures behaviours casa-rs does not follow:
@@ -1171,12 +1172,15 @@ What lies past the end changes from run to run. Measured with CASA 6.7.6:
 - in a six-antenna probe with `amplitude=[0.1]`, the phases' scale was
   0.15 to 0.22 of it in one run and 1.0 in another;
 - with a table written, one run's last solution was unit gain, as zeros
-  past the end would make it.
+  past the end would make it;
+- in one run of `corrupt-gain-table`, antennas 0–6 and 10 of 12 had unit
+  gain throughout, their screens normalised by a value large enough to
+  flatten them.
 
 casa-rs transforms every slot, so its screens have the documented scale.
-The CASA comparison holds CASA's gains to closure only and compares the
-two implementations' screens by their autocorrelations, which a screen's
-scale does not change.
+The CASA comparison holds CASA's gains to closure only, reports rather than
+checks CASA's unit-gain antennas, and compares the two implementations'
+screens by their autocorrelations, which a screen's scale does not change.
 
 ## Gain screens of neighbouring antennas share a seed
 
@@ -1266,6 +1270,24 @@ scans of two windows). `corrupt` applies it as the linearised
 with VisVector." on data with two correlations. casa-rs follows both, and
 likewise does not read `setgain`'s `interval`, whose documentation says it
 is not used: CASA's gains are solved per integration.
+
+## A simulated term's table is written when the term is set
+
+- Date noted: 2026-10-24
+- Status: CASA behaviour casa-rs does not follow (#841 Phase 3)
+- Affected code: `synthesis/MeasurementComponents/SolvableVisCal.cc`
+  (`setSimulate`, `storeNCT`) and `NewCalTable::writeToDisk`
+
+`setgain(table=...)` and `setleakage(table=...)` write the term's
+calibration table as soon as they simulate it, replacing a table of that
+name, its subtables copied from the MeasurementSet as it then is. casa-rs
+writes the MeasurementSet only at `close`, so it writes the table there, from
+the MeasurementSet it wrote: its rows, sorted by spectral window, time and
+antenna as CASA sorts them, are the same (`tables` in
+`tools/simulation/sm_corrupt_scenarios.json` compares them with CASA's), but
+the table appears at `close`, after `reset` too, and its subtables include
+what was observed after the call. casa-rs replaces only a table at the path;
+anything else there is refused.
 
 ## `tsys-manual` noise takes stale or borrowed system temperatures
 

@@ -87,6 +87,9 @@ class GainTests(unittest.TestCase):
         self.assertEqual(stats["corr0"]["unit_antennas"], [ANTENNAS - 1])
         _, failures = gain_statistics(side, twin, SCALE, CHECKS, [])
         self.assertEqual(failures, [f"unit-gain antennas [{ANTENNAS - 1}], expected []"])
+        # CASA's are reported, not checked.
+        stats, failures = gain_statistics(side, twin, SCALE, CHECKS, None)
+        self.assertEqual((failures, stats["unit_antennas"]), ([], [ANTENNAS - 1]))
 
     def test_screens_of_another_structure_differ(self) -> None:
         reference = gain_statistics(*gain_side(gains(seed=1)), SCALE, CHECKS, [])[0]

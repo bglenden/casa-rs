@@ -66,6 +66,8 @@ pub(crate) struct CalibrationTableWriter<'a> {
     final_output: PathBuf,
     output: PathBuf,
     table: Table,
+    /// Whether publishing replaces a table already at the destination.
+    replaces: bool,
 }
 
 impl<'a> CalibrationTableWriter<'a> {
@@ -74,6 +76,35 @@ impl<'a> CalibrationTableWriter<'a> {
         descriptor: CalibrationTableDescriptor<'_>,
     ) -> Result<Self, CalibrationTableWriteError> {
         let output = prepare_output_root(descriptor.output)?;
+        Ok(Self::staged(measurement_set, descriptor, output, false))
+    }
+
+    /// As [`Self::create`], for a destination that may hold a table the
+    /// new one replaces (CASA's `NewCalTable::writeToDisk`). The table
+    /// there stays until the new one has been saved beside it
+    /// ([`Self::save_main`]); anything there that is not a table is
+    /// refused.
+    pub(crate) fn create_replacing(
+        measurement_set: &'a MeasurementSet,
+        descriptor: CalibrationTableDescriptor<'_>,
+    ) -> Result<Self, CalibrationTableWriteError> {
+        let destination = descriptor.output;
+        if destination.exists() && !is_table(destination) {
+            return Err(CalibrationTableWriteError::Prepare {
+                path: destination.display().to_string(),
+                reason: "exists and is not a table".to_string(),
+            });
+        }
+        let output = prepare_staging(destination)?;
+        Ok(Self::staged(measurement_set, descriptor, output, true))
+    }
+
+    fn staged(
+        measurement_set: &'a MeasurementSet,
+        descriptor: CalibrationTableDescriptor<'_>,
+        output: PathBuf,
+        replaces: bool,
+    ) -> Self {
         let mut table = Table::with_schema(descriptor.schema);
         table.set_info(TableInfo {
             table_type: TABLE_INFO_TYPE.to_string(),
@@ -113,12 +144,13 @@ impl<'a> CalibrationTableWriter<'a> {
                 Value::table_ref(strip_directory(&output.join(name), &output)),
             );
         }
-        Ok(Self {
+        Self {
             measurement_set,
             final_output: descriptor.output.to_path_buf(),
             output,
             table,
-        })
+            replaces,
+        }
     }
 
     /// Staging root used for family-specific subtables before publication.
@@ -172,21 +204,71 @@ impl<'a> CalibrationTableWriter<'a> {
                 path: self.output.display().to_string(),
                 source: Box::new(source),
             })?;
-        if self.final_output.exists() {
-            return Err(CalibrationTableWriteError::Publish {
-                staging: self.output.display().to_string(),
-                output: self.final_output.display().to_string(),
-                reason: "destination appeared while the table was being built".to_string(),
-            });
+        let publish_error = |reason: String| CalibrationTableWriteError::Publish {
+            staging: self.output.display().to_string(),
+            output: self.final_output.display().to_string(),
+            reason,
+        };
+        if !self.final_output.exists() {
+            return fs::rename(&self.output, &self.final_output)
+                .map_err(|error| publish_error(error.to_string()));
         }
-        fs::rename(&self.output, &self.final_output).map_err(|error| {
-            CalibrationTableWriteError::Publish {
-                staging: self.output.display().to_string(),
-                output: self.final_output.display().to_string(),
-                reason: error.to_string(),
-            }
+        if !self.replaces {
+            return Err(publish_error(
+                "destination appeared while the table was being built".to_string(),
+            ));
+        }
+        if !is_table(&self.final_output) {
+            return Err(publish_error(
+                "destination is no longer a table; it is left as it is".to_string(),
+            ));
+        }
+        // Move the old table aside, put the new one in its place, and only
+        // then remove the old one; put it back if the new one cannot go in.
+        let replaced = sibling(&self.final_output, "casa-rs-replaced")
+            .map_err(|error| publish_error(error.to_string()))?;
+        fs::rename(&self.final_output, &replaced).map_err(|error| {
+            publish_error(format!("cannot move the table it replaces aside: {error}"))
+        })?;
+        if let Err(error) = fs::rename(&self.output, &self.final_output) {
+            let restored = fs::rename(&replaced, &self.final_output);
+            return Err(publish_error(format!(
+                "{error}; the table it replaces was {}",
+                if restored.is_ok() {
+                    "restored".to_string()
+                } else {
+                    format!("left at {}", replaced.display())
+                }
+            )));
+        }
+        fs::remove_dir_all(&replaced).map_err(|error| {
+            publish_error(format!(
+                "the new table is in place, but the one it replaced is left at {}: {error}",
+                replaced.display()
+            ))
         })
     }
+}
+
+/// Whether `path` is a table directory.
+fn is_table(path: &Path) -> bool {
+    path.join("table.dat").is_file()
+}
+
+/// A hidden sibling of `path` marked `what` and this process.
+fn sibling(path: &Path, what: &str) -> Result<PathBuf, CalibrationTableWriteError> {
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let name = path
+        .file_name()
+        .ok_or_else(|| CalibrationTableWriteError::Prepare {
+            path: path.display().to_string(),
+            reason: "output path must name a table".to_string(),
+        })?
+        .to_string_lossy();
+    Ok(parent.join(format!(".{name}.{what}-{}", std::process::id())))
 }
 
 fn prepare_output_root(path: &Path) -> Result<PathBuf, CalibrationTableWriteError> {
@@ -196,6 +278,11 @@ fn prepare_output_root(path: &Path) -> Result<PathBuf, CalibrationTableWriteErro
             reason: "output already exists".to_string(),
         });
     }
+    prepare_staging(path)
+}
+
+/// Reserve the staging directory a table for `path` is built in.
+fn prepare_staging(path: &Path) -> Result<PathBuf, CalibrationTableWriteError> {
     let parent = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
@@ -204,14 +291,7 @@ fn prepare_output_root(path: &Path) -> Result<PathBuf, CalibrationTableWriteErro
         path: path.display().to_string(),
         reason: error.to_string(),
     })?;
-    let name = path
-        .file_name()
-        .ok_or_else(|| CalibrationTableWriteError::Prepare {
-            path: path.display().to_string(),
-            reason: "output path must name a table".to_string(),
-        })?
-        .to_string_lossy();
-    let staging = parent.join(format!(".{name}.casa-rs-incomplete-{}", std::process::id()));
+    let staging = sibling(path, "casa-rs-incomplete")?;
     fs::create_dir(&staging).map_err(|error| CalibrationTableWriteError::Prepare {
         path: path.display().to_string(),
         reason: format!(
