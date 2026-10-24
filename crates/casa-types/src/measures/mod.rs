@@ -67,6 +67,7 @@ pub mod position;
 pub mod provider;
 pub mod radial_velocity;
 pub mod record;
+pub mod views;
 
 // Re-exports for convenience.
 pub use baseline::UvwFrame;
@@ -84,3 +85,4 @@ pub use record::{
     position_from_record, position_to_record, radial_velocity_from_record,
     radial_velocity_to_record,
 };
+pub use views::{EpochView, FrequencyView, UvwView};

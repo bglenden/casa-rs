@@ -13,12 +13,14 @@
 //! should be CASA-compatible on disk and should yield corrected visibilities
 //! close to CASA's own `gaincal` when applied.
 
+#[cfg(test)]
+mod batch_trial;
 pub(crate) mod grouping;
 pub(crate) mod kernel;
 mod trace;
 pub(crate) mod writer;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use casa_ms::MsError;
@@ -286,6 +288,16 @@ pub(crate) fn solve_gain(
     ms: &MeasurementSet,
     request: &GainSolveRequest,
 ) -> Result<GainSolveReport, GainSolveError> {
+    let (solution_rows, refant_id) = solve_gain_rows(ms, request)?;
+    write_gain_caltable(ms, request, refant_id, &solution_rows)
+}
+
+/// The solution rows of [`solve_gain`] and the resolved reference antenna,
+/// before the caltable is written.
+pub(crate) fn solve_gain_rows(
+    ms: &MeasurementSet,
+    request: &GainSolveRequest,
+) -> Result<(Vec<kernel::SolutionRow>, i32), GainSolveError> {
     if matches!(request.model_source, GainSolveModelSource::PointSource) {
         validate_smodel(request.smodel)?;
     } else if !ms
@@ -324,20 +336,12 @@ pub(crate) fn solve_gain(
     for ((base_key, bucket_key), mut group) in groups {
         group.finalize_for_solve(request.solve_mode);
         trace::trace_group(&base_key, &bucket_key, &group, request);
-        let mut group_rows = solve_group(
+        let group_rows = solve_closed_group(
             group,
             &context.available_antennas,
-            request.gain_type,
-            request.solve_mode,
+            request,
             context.refant_id,
-            request.min_snr,
-            request.min_baselines_per_antenna,
         )?;
-        if matches!(request.solve_mode, GainSolveMode::AmplitudePhase)
-            && request.normalize_average_amplitude
-        {
-            normalize_gain_solution_amplitudes(&mut group_rows);
-        }
         trace::trace_solution_rows(
             &base_key,
             &bucket_key,
@@ -348,10 +352,35 @@ pub(crate) fn solve_gain(
         solution_rows.extend(group_rows);
     }
     apply_flex_refant(&mut solution_rows, context.refant_id);
-    write_gain_caltable(ms, request, context.refant_id, &solution_rows)
+    Ok((solution_rows, context.refant_id))
 }
 
-fn apply_flex_refant(rows: &mut [kernel::SolutionRow], preferred_refant_id: i32) {
+/// Solve one complete group whose accumulation is finalized
+/// ([`grouping::SolveAccumulator::finalize_for_solve`]).
+pub(crate) fn solve_closed_group(
+    group: grouping::SolveAccumulator,
+    available_antennas: &BTreeSet<i32>,
+    request: &GainSolveRequest,
+    refant_id: i32,
+) -> Result<Vec<kernel::SolutionRow>, GainSolveError> {
+    let mut group_rows = solve_group(
+        group,
+        available_antennas,
+        request.gain_type,
+        request.solve_mode,
+        refant_id,
+        request.min_snr,
+        request.min_baselines_per_antenna,
+    )?;
+    if matches!(request.solve_mode, GainSolveMode::AmplitudePhase)
+        && request.normalize_average_amplitude
+    {
+        normalize_gain_solution_amplitudes(&mut group_rows);
+    }
+    Ok(group_rows)
+}
+
+pub(crate) fn apply_flex_refant(rows: &mut [kernel::SolutionRow], preferred_refant_id: i32) {
     let mut group_indices = BTreeMap::<(i32, u64, i32), Vec<usize>>::new();
     for (index, row) in rows.iter().enumerate() {
         group_indices

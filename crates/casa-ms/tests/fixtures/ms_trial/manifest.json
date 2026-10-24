@@ -1,0 +1,1106 @@
+{
+ "recipe": "tools/ms-trial/make_fixtures.py",
+ "versions": {
+  "xradio": "1.3.1",
+  "zarr": "3.4.1",
+  "numcodecs": "0.17.1",
+  "xarray": "2026.9.0",
+  "numpy": "2.5.4",
+  "arcae": "0.5.8",
+  "dask": "2026.8.0",
+  "toolviper": "0.1.12",
+  "xradio_commit": "3ed765867515095d852eb68c073165c1f6c58761",
+  "python": "3.13.17"
+ },
+ "main_chunksize": {
+  "time": 5,
+  "frequency": 4
+ },
+ "corruption": {
+  "seed": 20261024,
+  "noise_jy_per_component": 0.02,
+  "gain_interval_s": 60.0,
+  "receptor_pairs": [
+   [
+    0,
+    0
+   ],
+   [
+    0,
+    1
+   ],
+   [
+    1,
+    0
+   ],
+   [
+    1,
+    1
+   ]
+  ],
+  "flagged_elements": 62,
+  "elements": 3840,
+  "true_gains": {
+   "shape": [
+    "interval",
+    "antenna",
+    "receptor"
+   ],
+   "re": [
+    [
+     [
+      0.9177595478298685,
+      0.8340052961399657
+     ],
+     [
+      1.089080205043948,
+      0.8978099846333352
+     ],
+     [
+      0.8724123015071675,
+      1.0263962580877544
+     ],
+     [
+      0.9488790550281189,
+      0.9161261395270139
+     ],
+     [
+      0.9280627626739867,
+      0.8146795686556078
+     ]
+    ],
+    [
+     [
+      0.7506836626849697,
+      0.7949522728722456
+     ],
+     [
+      0.8680141102456518,
+      0.9408873493324466
+     ],
+     [
+      0.957235381787154,
+      0.7567457303683899
+     ],
+     [
+      1.0321169674061024,
+      1.1109093145047366
+     ],
+     [
+      0.9998378759370322,
+      1.0644355124855678
+     ]
+    ]
+   ],
+   "im": [
+    [
+     [
+      0.4251994680880314,
+      -0.46467024986661
+     ],
+     [
+      0.2057106470385148,
+      0.5371649296667876
+     ],
+     [
+      0.464151603544794,
+      0.1277533498078001
+     ],
+     [
+      -0.2627226992667755,
+      0.31816442541726264
+     ],
+     [
+      0.1300702616794247,
+      0.321911537836447
+     ]
+    ],
+    [
+     [
+      0.2505984084362528,
+      -0.5061853965320249
+     ],
+     [
+      -0.20636924715540056,
+      -0.3680904331122073
+     ],
+     [
+      0.34610426879245243,
+      -0.20089587508960471
+     ],
+     [
+      0.21239701155614782,
+      0.12489384521501241
+     ],
+     [
+      0.2363991786344705,
+      0.0009892765383907934
+     ]
+    ]
+   ]
+  }
+ },
+ "store": {
+  "ms_trial_0/EFFECTIVE_INTEGRATION_TIME": {
+   "shape": [
+    12,
+    10
+   ],
+   "chunks": [
+    5,
+    10
+   ],
+   "data_type": "float64",
+   "codecs": [
+    {
+     "name": "bytes",
+     "configuration": {
+      "endian": "little"
+     }
+    },
+    {
+     "name": "blosc",
+     "configuration": {
+      "typesize": 8,
+      "cname": "lz4",
+      "clevel": 5,
+      "shuffle": "noshuffle",
+      "blocksize": 0
+     }
+    }
+   ],
+   "fill_value": "NaN",
+   "dimension_names": [
+    "time",
+    "baseline_id"
+   ]
+  },
+  "ms_trial_0/FLAG": {
+   "shape": [
+    12,
+    10,
+    8,
+    4
+   ],
+   "chunks": [
+    5,
+    10,
+    4,
+    4
+   ],
+   "data_type": "bool",
+   "codecs": [
+    {
+     "name": "bytes"
+    },
+    {
+     "name": "blosc",
+     "configuration": {
+      "typesize": 1,
+      "cname": "lz4",
+      "clevel": 5,
+      "shuffle": "noshuffle",
+      "blocksize": 0
+     }
+    }
+   ],
+   "fill_value": false,
+   "dimension_names": [
+    "time",
+    "baseline_id",
+    "frequency",
+    "polarization"
+   ]
+  },
+  "ms_trial_0/TIME_CENTROID": {
+   "shape": [
+    12,
+    10
+   ],
+   "chunks": [
+    5,
+    10
+   ],
+   "data_type": "float64",
+   "codecs": [
+    {
+     "name": "bytes",
+     "configuration": {
+      "endian": "little"
+     }
+    },
+    {
+     "name": "blosc",
+     "configuration": {
+      "typesize": 8,
+      "cname": "lz4",
+      "clevel": 5,
+      "shuffle": "noshuffle",
+      "blocksize": 0
+     }
+    }
+   ],
+   "fill_value": "NaN",
+   "dimension_names": [
+    "time",
+    "baseline_id"
+   ]
+  },
+  "ms_trial_0/UVW": {
+   "shape": [
+    12,
+    10,
+    3
+   ],
+   "chunks": [
+    5,
+    10,
+    3
+   ],
+   "data_type": "float64",
+   "codecs": [
+    {
+     "name": "bytes",
+     "configuration": {
+      "endian": "little"
+     }
+    },
+    {
+     "name": "blosc",
+     "configuration": {
+      "typesize": 8,
+      "cname": "lz4",
+      "clevel": 5,
+      "shuffle": "noshuffle",
+      "blocksize": 0
+     }
+    }
+   ],
+   "fill_value": "NaN",
+   "dimension_names": [
+    "time",
+    "baseline_id",
+    "uvw_label"
+   ]
+  },
+  "ms_trial_0/VISIBILITY": {
+   "shape": [
+    12,
+    10,
+    8,
+    4
+   ],
+   "chunks": [
+    5,
+    10,
+    4,
+    4
+   ],
+   "data_type": "complex64",
+   "codecs": [
+    {
+     "name": "bytes",
+     "configuration": {
+      "endian": "little"
+     }
+    },
+    {
+     "name": "blosc",
+     "configuration": {
+      "typesize": 8,
+      "cname": "lz4",
+      "clevel": 5,
+      "shuffle": "noshuffle",
+      "blocksize": 0
+     }
+    }
+   ],
+   "fill_value": [
+    0.0,
+    0.0
+   ],
+   "dimension_names": [
+    "time",
+    "baseline_id",
+    "frequency",
+    "polarization"
+   ]
+  },
+  "ms_trial_0/WEIGHT": {
+   "shape": [
+    12,
+    10,
+    8,
+    4
+   ],
+   "chunks": [
+    5,
+    10,
+    4,
+    4
+   ],
+   "data_type": "float32",
+   "codecs": [
+    {
+     "name": "bytes",
+     "configuration": {
+      "endian": "little"
+     }
+    },
+    {
+     "name": "blosc",
+     "configuration": {
+      "typesize": 4,
+      "cname": "lz4",
+      "clevel": 5,
+      "shuffle": "noshuffle",
+      "blocksize": 0
+     }
+    }
+   ],
+   "fill_value": "NaN",
+   "dimension_names": [
+    "time",
+    "baseline_id",
+    "frequency",
+    "polarization"
+   ]
+  },
+  "ms_trial_0/antenna_xds/ANTENNA_DISH_DIAMETER": {
+   "shape": [
+    5
+   ],
+   "chunks": [
+    5
+   ],
+   "data_type": "float64",
+   "codecs": [
+    {
+     "name": "bytes",
+     "configuration": {
+      "endian": "little"
+     }
+    },
+    {
+     "name": "zstd",
+     "configuration": {
+      "level": 0,
+      "checksum": false
+     }
+    }
+   ],
+   "fill_value": "NaN",
+   "dimension_names": [
+    "antenna_name"
+   ]
+  },
+  "ms_trial_0/antenna_xds/ANTENNA_POSITION": {
+   "shape": [
+    5,
+    3
+   ],
+   "chunks": [
+    5,
+    3
+   ],
+   "data_type": "float64",
+   "codecs": [
+    {
+     "name": "bytes",
+     "configuration": {
+      "endian": "little"
+     }
+    },
+    {
+     "name": "zstd",
+     "configuration": {
+      "level": 0,
+      "checksum": false
+     }
+    }
+   ],
+   "fill_value": "NaN",
+   "dimension_names": [
+    "antenna_name",
+    "cartesian_pos_label"
+   ]
+  },
+  "ms_trial_0/antenna_xds/ANTENNA_RECEPTOR_ANGLE": {
+   "shape": [
+    5,
+    2
+   ],
+   "chunks": [
+    5,
+    2
+   ],
+   "data_type": "float64",
+   "codecs": [
+    {
+     "name": "bytes",
+     "configuration": {
+      "endian": "little"
+     }
+    },
+    {
+     "name": "zstd",
+     "configuration": {
+      "level": 0,
+      "checksum": false
+     }
+    }
+   ],
+   "fill_value": "NaN",
+   "dimension_names": [
+    "antenna_name",
+    "receptor_label"
+   ]
+  },
+  "ms_trial_0/antenna_xds/antenna_name": {
+   "shape": [
+    5
+   ],
+   "chunks": [
+    5
+   ],
+   "data_type": {
+    "name": "fixed_length_utf32",
+    "configuration": {
+     "length_bytes": 28
+    }
+   },
+   "codecs": [
+    {
+     "name": "bytes",
+     "configuration": {
+      "endian": "little"
+     }
+    },
+    {
+     "name": "zstd",
+     "configuration": {
+      "level": 0,
+      "checksum": false
+     }
+    }
+   ],
+   "fill_value": "",
+   "dimension_names": [
+    "antenna_name"
+   ]
+  },
+  "ms_trial_0/antenna_xds/cartesian_pos_label": {
+   "shape": [
+    3
+   ],
+   "chunks": [
+    3
+   ],
+   "data_type": {
+    "name": "fixed_length_utf32",
+    "configuration": {
+     "length_bytes": 4
+    }
+   },
+   "codecs": [
+    {
+     "name": "bytes",
+     "configuration": {
+      "endian": "little"
+     }
+    },
+    {
+     "name": "zstd",
+     "configuration": {
+      "level": 0,
+      "checksum": false
+     }
+    }
+   ],
+   "fill_value": "",
+   "dimension_names": [
+    "cartesian_pos_label"
+   ]
+  },
+  "ms_trial_0/antenna_xds/mount": {
+   "shape": [
+    5
+   ],
+   "chunks": [
+    5
+   ],
+   "data_type": {
+    "name": "fixed_length_utf32",
+    "configuration": {
+     "length_bytes": 24
+    }
+   },
+   "codecs": [
+    {
+     "name": "bytes",
+     "configuration": {
+      "endian": "little"
+     }
+    },
+    {
+     "name": "zstd",
+     "configuration": {
+      "level": 0,
+      "checksum": false
+     }
+    }
+   ],
+   "fill_value": "",
+   "dimension_names": [
+    "antenna_name"
+   ]
+  },
+  "ms_trial_0/antenna_xds/polarization_type": {
+   "shape": [
+    5,
+    2
+   ],
+   "chunks": [
+    5,
+    2
+   ],
+   "data_type": {
+    "name": "fixed_length_utf32",
+    "configuration": {
+     "length_bytes": 4
+    }
+   },
+   "codecs": [
+    {
+     "name": "bytes",
+     "configuration": {
+      "endian": "little"
+     }
+    },
+    {
+     "name": "zstd",
+     "configuration": {
+      "level": 0,
+      "checksum": false
+     }
+    }
+   ],
+   "fill_value": "",
+   "dimension_names": [
+    "antenna_name",
+    "receptor_label"
+   ]
+  },
+  "ms_trial_0/antenna_xds/receptor_label": {
+   "shape": [
+    2
+   ],
+   "chunks": [
+    2
+   ],
+   "data_type": {
+    "name": "fixed_length_utf32",
+    "configuration": {
+     "length_bytes": 20
+    }
+   },
+   "codecs": [
+    {
+     "name": "bytes",
+     "configuration": {
+      "endian": "little"
+     }
+    },
+    {
+     "name": "zstd",
+     "configuration": {
+      "level": 0,
+      "checksum": false
+     }
+    }
+   ],
+   "fill_value": "",
+   "dimension_names": [
+    "receptor_label"
+   ]
+  },
+  "ms_trial_0/antenna_xds/station_name": {
+   "shape": [
+    5
+   ],
+   "chunks": [
+    5
+   ],
+   "data_type": {
+    "name": "fixed_length_utf32",
+    "configuration": {
+     "length_bytes": 12
+    }
+   },
+   "codecs": [
+    {
+     "name": "bytes",
+     "configuration": {
+      "endian": "little"
+     }
+    },
+    {
+     "name": "zstd",
+     "configuration": {
+      "level": 0,
+      "checksum": false
+     }
+    }
+   ],
+   "fill_value": "",
+   "dimension_names": [
+    "antenna_name"
+   ]
+  },
+  "ms_trial_0/antenna_xds/telescope_name": {
+   "shape": [
+    5
+   ],
+   "chunks": [
+    5
+   ],
+   "data_type": {
+    "name": "fixed_length_utf32",
+    "configuration": {
+     "length_bytes": 12
+    }
+   },
+   "codecs": [
+    {
+     "name": "bytes",
+     "configuration": {
+      "endian": "little"
+     }
+    },
+    {
+     "name": "zstd",
+     "configuration": {
+      "level": 0,
+      "checksum": false
+     }
+    }
+   ],
+   "fill_value": "",
+   "dimension_names": [
+    "antenna_name"
+   ]
+  },
+  "ms_trial_0/baseline_antenna1_name": {
+   "shape": [
+    10
+   ],
+   "chunks": [
+    10
+   ],
+   "data_type": {
+    "name": "fixed_length_utf32",
+    "configuration": {
+     "length_bytes": 28
+    }
+   },
+   "codecs": [
+    {
+     "name": "bytes",
+     "configuration": {
+      "endian": "little"
+     }
+    },
+    {
+     "name": "zstd",
+     "configuration": {
+      "level": 0,
+      "checksum": false
+     }
+    }
+   ],
+   "fill_value": "",
+   "dimension_names": [
+    "baseline_id"
+   ]
+  },
+  "ms_trial_0/baseline_antenna2_name": {
+   "shape": [
+    10
+   ],
+   "chunks": [
+    10
+   ],
+   "data_type": {
+    "name": "fixed_length_utf32",
+    "configuration": {
+     "length_bytes": 28
+    }
+   },
+   "codecs": [
+    {
+     "name": "bytes",
+     "configuration": {
+      "endian": "little"
+     }
+    },
+    {
+     "name": "zstd",
+     "configuration": {
+      "level": 0,
+      "checksum": false
+     }
+    }
+   ],
+   "fill_value": "",
+   "dimension_names": [
+    "baseline_id"
+   ]
+  },
+  "ms_trial_0/baseline_id": {
+   "shape": [
+    10
+   ],
+   "chunks": [
+    10
+   ],
+   "data_type": "int64",
+   "codecs": [
+    {
+     "name": "bytes",
+     "configuration": {
+      "endian": "little"
+     }
+    },
+    {
+     "name": "zstd",
+     "configuration": {
+      "level": 0,
+      "checksum": false
+     }
+    }
+   ],
+   "fill_value": 0,
+   "dimension_names": [
+    "baseline_id"
+   ]
+  },
+  "ms_trial_0/field_and_source_base_xds/FIELD_PHASE_CENTER_DIRECTION": {
+   "shape": [
+    1,
+    2
+   ],
+   "chunks": [
+    1,
+    2
+   ],
+   "data_type": "float64",
+   "codecs": [
+    {
+     "name": "bytes",
+     "configuration": {
+      "endian": "little"
+     }
+    },
+    {
+     "name": "zstd",
+     "configuration": {
+      "level": 0,
+      "checksum": false
+     }
+    }
+   ],
+   "fill_value": "NaN",
+   "dimension_names": [
+    "field_name",
+    "sky_dir_label"
+   ]
+  },
+  "ms_trial_0/field_and_source_base_xds/field_name": {
+   "shape": [
+    1
+   ],
+   "chunks": [
+    1
+   ],
+   "data_type": {
+    "name": "fixed_length_utf32",
+    "configuration": {
+     "length_bytes": 108
+    }
+   },
+   "codecs": [
+    {
+     "name": "bytes",
+     "configuration": {
+      "endian": "little"
+     }
+    },
+    {
+     "name": "zstd",
+     "configuration": {
+      "level": 0,
+      "checksum": false
+     }
+    }
+   ],
+   "fill_value": "",
+   "dimension_names": [
+    "field_name"
+   ]
+  },
+  "ms_trial_0/field_and_source_base_xds/sky_dir_label": {
+   "shape": [
+    2
+   ],
+   "chunks": [
+    2
+   ],
+   "data_type": {
+    "name": "fixed_length_utf32",
+    "configuration": {
+     "length_bytes": 12
+    }
+   },
+   "codecs": [
+    {
+     "name": "bytes",
+     "configuration": {
+      "endian": "little"
+     }
+    },
+    {
+     "name": "zstd",
+     "configuration": {
+      "level": 0,
+      "checksum": false
+     }
+    }
+   ],
+   "fill_value": "",
+   "dimension_names": [
+    "sky_dir_label"
+   ]
+  },
+  "ms_trial_0/field_and_source_base_xds/source_name": {
+   "shape": [
+    1
+   ],
+   "chunks": [
+    1
+   ],
+   "data_type": {
+    "name": "fixed_length_utf32",
+    "configuration": {
+     "length_bytes": 28
+    }
+   },
+   "codecs": [
+    {
+     "name": "bytes",
+     "configuration": {
+      "endian": "little"
+     }
+    },
+    {
+     "name": "zstd",
+     "configuration": {
+      "level": 0,
+      "checksum": false
+     }
+    }
+   ],
+   "fill_value": "",
+   "dimension_names": [
+    "field_name"
+   ]
+  },
+  "ms_trial_0/field_name": {
+   "shape": [
+    12
+   ],
+   "chunks": [
+    12
+   ],
+   "data_type": {
+    "name": "fixed_length_utf32",
+    "configuration": {
+     "length_bytes": 108
+    }
+   },
+   "codecs": [
+    {
+     "name": "bytes",
+     "configuration": {
+      "endian": "little"
+     }
+    },
+    {
+     "name": "zstd",
+     "configuration": {
+      "level": 0,
+      "checksum": false
+     }
+    }
+   ],
+   "fill_value": "",
+   "dimension_names": [
+    "time"
+   ]
+  },
+  "ms_trial_0/frequency": {
+   "shape": [
+    8
+   ],
+   "chunks": [
+    8
+   ],
+   "data_type": "float64",
+   "codecs": [
+    {
+     "name": "bytes",
+     "configuration": {
+      "endian": "little"
+     }
+    },
+    {
+     "name": "zstd",
+     "configuration": {
+      "level": 0,
+      "checksum": false
+     }
+    }
+   ],
+   "fill_value": "NaN",
+   "dimension_names": [
+    "frequency"
+   ]
+  },
+  "ms_trial_0/polarization": {
+   "shape": [
+    4
+   ],
+   "chunks": [
+    4
+   ],
+   "data_type": {
+    "name": "fixed_length_utf32",
+    "configuration": {
+     "length_bytes": 8
+    }
+   },
+   "codecs": [
+    {
+     "name": "bytes",
+     "configuration": {
+      "endian": "little"
+     }
+    },
+    {
+     "name": "zstd",
+     "configuration": {
+      "level": 0,
+      "checksum": false
+     }
+    }
+   ],
+   "fill_value": "",
+   "dimension_names": [
+    "polarization"
+   ]
+  },
+  "ms_trial_0/scan_name": {
+   "shape": [
+    12
+   ],
+   "chunks": [
+    12
+   ],
+   "data_type": {
+    "name": "fixed_length_utf32",
+    "configuration": {
+     "length_bytes": 84
+    }
+   },
+   "codecs": [
+    {
+     "name": "bytes",
+     "configuration": {
+      "endian": "little"
+     }
+    },
+    {
+     "name": "zstd",
+     "configuration": {
+      "level": 0,
+      "checksum": false
+     }
+    }
+   ],
+   "fill_value": "",
+   "dimension_names": [
+    "time"
+   ]
+  },
+  "ms_trial_0/time": {
+   "shape": [
+    12
+   ],
+   "chunks": [
+    12
+   ],
+   "data_type": "float64",
+   "codecs": [
+    {
+     "name": "bytes",
+     "configuration": {
+      "endian": "little"
+     }
+    },
+    {
+     "name": "zstd",
+     "configuration": {
+      "level": 0,
+      "checksum": false
+     }
+    }
+   ],
+   "fill_value": "NaN",
+   "dimension_names": [
+    "time"
+   ]
+  },
+  "ms_trial_0/uvw_label": {
+   "shape": [
+    3
+   ],
+   "chunks": [
+    3
+   ],
+   "data_type": {
+    "name": "fixed_length_utf32",
+    "configuration": {
+     "length_bytes": 4
+    }
+   },
+   "codecs": [
+    {
+     "name": "bytes",
+     "configuration": {
+      "endian": "little"
+     }
+    },
+    {
+     "name": "zstd",
+     "configuration": {
+      "level": 0,
+      "checksum": false
+     }
+    }
+   ],
+   "fill_value": "",
+   "dimension_names": [
+    "uvw_label"
+   ]
+  }
+ }
+}

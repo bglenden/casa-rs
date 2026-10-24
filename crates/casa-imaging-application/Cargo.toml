@@ -30,6 +30,10 @@ tempfile = "3"
 thiserror.workspace = true
 
 [dev-dependencies]
+casa-ms = { path = "../casa-ms", features = ["msv4"] }
+casa-observation = { path = "../casa-observation" }
+flate2 = "1"
+tar = "0.4"
 casa-imaging-metal = { path = "../casa-imaging-metal" }
 casa-provider-contracts = { path = "../casa-provider-contracts" }
 casa-task-runtime = { path = "../casa-task-runtime" }
