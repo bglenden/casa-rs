@@ -249,6 +249,13 @@ pub enum GainSolveError {
         spw_id: i32,
     },
 
+    /// No solution interval could be solved, so there is no caltable to
+    /// write; CASA logs "No output calibration table written." here.
+    #[error(
+        "gain solve found no solution in any interval (no usable data, too few baselines per antenna, or no convergence); no caltable written"
+    )]
+    NoSolutions,
+
     /// Persisting the output caltable failed.
     #[error("failed to save caltable {path}: {source}")]
     SaveCalibrationTable {
@@ -313,6 +320,7 @@ pub(crate) fn solve_gain(
             stokes_i: request.smodel[0],
             solve_interval: request.solve_interval,
             combine: request.combine,
+            channelized: false,
         },
     )?;
 
@@ -324,7 +332,9 @@ pub(crate) fn solve_gain(
     for ((base_key, bucket_key), mut group) in groups {
         group.finalize_for_solve(request.solve_mode);
         trace::trace_group(&base_key, &bucket_key, &group, request);
-        let mut group_rows = solve_group(
+        // An interval CASA cannot solve gets no rows (`Calibrater::genericGatherAndSolve`
+        // keeps a solution only after one succeeds).
+        let Some(mut group_rows) = solve_group(
             group,
             &context.available_antennas,
             request.gain_type,
@@ -332,7 +342,9 @@ pub(crate) fn solve_gain(
             context.refant_id,
             request.min_snr,
             request.min_baselines_per_antenna,
-        )?;
+        ) else {
+            continue;
+        };
         if matches!(request.solve_mode, GainSolveMode::AmplitudePhase)
             && request.normalize_average_amplitude
         {
@@ -347,11 +359,74 @@ pub(crate) fn solve_gain(
         );
         solution_rows.extend(group_rows);
     }
-    apply_flex_refant(&mut solution_rows, context.refant_id);
+    if solution_rows.is_empty() {
+        return Err(GainSolveError::NoSolutions);
+    }
+    apply_flex_refant(
+        &mut solution_rows,
+        context.refant_id,
+        &refant_distance_order(ms, context.refant_id)?,
+    );
     write_gain_caltable(ms, request, context.refant_id, &solution_rows)
 }
 
-fn apply_flex_refant(rows: &mut [kernel::SolutionRow], preferred_refant_id: i32) {
+/// The antennas other than `refant_id`, nearest it first: the alternates
+/// `SolvableVisJones::applyRefAnt` tries when the reference antenna is flagged.
+fn refant_distance_order(ms: &MeasurementSet, refant_id: i32) -> Result<Vec<i32>, GainSolveError> {
+    let antenna = ms
+        .antenna()
+        .map_err(|source| GainSolveError::OpenMeasurementSet {
+            path: ms
+                .path()
+                .map(|path| path.display().to_string())
+                .unwrap_or_else(|| "<in-memory>".to_string()),
+            source,
+        })?;
+    let positions = (0..antenna.row_count())
+        .map(|row| antenna.position(row))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|source| GainSolveError::OpenMeasurementSet {
+            path: "ANTENNA POSITION".to_string(),
+            source,
+        })?;
+    let origin = usize::try_from(refant_id)
+        .ok()
+        .and_then(|row| positions.get(row))
+        .copied()
+        .unwrap_or_default();
+    let mut order = (0..positions.len())
+        .filter(|row| i32::try_from(*row).ok() != Some(refant_id))
+        .map(|row| {
+            let distance = positions[row]
+                .iter()
+                .zip(origin)
+                .map(|(value, origin)| (value - origin).powi(2))
+                .sum::<f64>();
+            (distance, row)
+        })
+        .collect::<Vec<_>>();
+    order.sort_by(|left, right| left.0.total_cmp(&right.0).then(left.1.cmp(&right.1)));
+    Ok(order
+        .into_iter()
+        .map(|(_, row)| i32::try_from(row).expect("antenna row count fits in i32"))
+        .collect())
+}
+
+/// Refer each solution interval's phases to a reference antenna, as
+/// `SolvableVisJones::applyRefAnt` does with `refantmode='flex'`. Intervals
+/// go in time order within each spectral window. The reference is the first
+/// of: the preferred antenna, the one used last, then the others nearest the
+/// preferred first, that has every receptor unflagged both here and in the
+/// last referred interval (only the first receptor when the window's second
+/// is never solved). Its phase change since that interval is removed from
+/// every antenna, so an alternate is held at constant phase. An interval
+/// with no such antenna is flagged entirely and leaves the last referred
+/// interval in place for the next.
+fn apply_flex_refant(
+    rows: &mut [kernel::SolutionRow],
+    preferred_refant_id: i32,
+    alternates: &[i32],
+) {
     let mut group_indices = BTreeMap::<(i32, u64, i32), Vec<usize>>::new();
     for (index, row) in rows.iter().enumerate() {
         group_indices
@@ -359,19 +434,17 @@ fn apply_flex_refant(rows: &mut [kernel::SolutionRow], preferred_refant_id: i32)
             .or_default()
             .push(index);
     }
+    let mut receptor_counts = BTreeMap::<i32, usize>::new();
+    for row in rows.iter() {
+        let count = receptor_counts.entry(row.spw_id).or_insert(1);
+        if row.flags.get(1).is_some_and(|flag| !*flag) {
+            *count = 2;
+        }
+    }
 
-    let all_antennas = rows
-        .iter()
-        .map(|row| row.antenna_id)
-        .collect::<std::collections::BTreeSet<_>>();
-    let mut choices = Vec::with_capacity(all_antennas.len() + 2);
-    choices.push(preferred_refant_id);
-    choices.push(preferred_refant_id);
-    choices.extend(
-        all_antennas
-            .into_iter()
-            .filter(|antenna_id| *antenna_id != preferred_refant_id),
-    );
+    let mut choices = Vec::with_capacity(alternates.len() + 2);
+    choices.extend([preferred_refant_id, preferred_refant_id]);
+    choices.extend_from_slice(alternates);
 
     let mut previous = None::<Vec<usize>>;
     let mut last_spw = None::<i32>;
@@ -381,24 +454,26 @@ fn apply_flex_refant(rows: &mut [kernel::SolutionRow], preferred_refant_id: i32)
             choices[1] = preferred_refant_id;
             last_spw = Some(spw_id);
         }
-
+        let receptors = receptor_counts[&spw_id];
         let previous_indices = previous.as_ref().unwrap_or(&current);
-        let Some((choice_index, current_ref_index, previous_ref_index)) =
-            find_flex_refant(rows, &choices, &current, previous_indices)
+        let Some((current_ref_index, previous_ref_index)) =
+            find_flex_refant(rows, &choices, &current, previous_indices, receptors)
         else {
             for index in &current {
                 rows[*index].flags.iter_mut().for_each(|flag| *flag = true);
+                rows[*index]
+                    .gains
+                    .iter_mut()
+                    .for_each(|gain| *gain = Complex32::new(1.0, 0.0));
             }
-            previous = Some(current);
             continue;
         };
 
-        let current_ref = rows[current_ref_index].gains.clone();
-        let previous_ref = rows[previous_ref_index].gains.clone();
         let first = previous.is_none();
-        let ref_phasor = current_ref
+        let ref_phasor = rows[current_ref_index]
+            .gains
             .iter()
-            .zip(previous_ref.iter())
+            .zip(rows[previous_ref_index].gains.iter())
             .map(|(current_gain, previous_gain)| {
                 let current_phase = phase_only(*current_gain);
                 if first {
@@ -410,7 +485,6 @@ fn apply_flex_refant(rows: &mut [kernel::SolutionRow], preferred_refant_id: i32)
             .collect::<Vec<_>>();
 
         let current_refant = rows[current_ref_index].antenna_id;
-        let _used_alternate = choice_index > 0;
         choices[1] = current_refant;
         for index in &current {
             for (gain, phasor) in rows[*index].gains.iter_mut().zip(ref_phasor.iter()) {
@@ -434,23 +508,23 @@ fn find_flex_refant(
     choices: &[i32],
     current: &[usize],
     previous: &[usize],
-) -> Option<(usize, usize, usize)> {
-    choices
-        .iter()
-        .enumerate()
-        .find_map(|(choice_index, antenna_id)| {
-            let current_index = current.iter().copied().find(|index| {
-                rows[*index].antenna_id == *antenna_id && any_unflagged(&rows[*index])
-            })?;
-            let previous_index = previous.iter().copied().find(|index| {
-                rows[*index].antenna_id == *antenna_id && any_unflagged(&rows[*index])
-            })?;
-            Some((choice_index, current_index, previous_index))
-        })
-}
-
-fn any_unflagged(row: &kernel::SolutionRow) -> bool {
-    row.flags.iter().any(|flag| !*flag)
+    receptors: usize,
+) -> Option<(usize, usize)> {
+    let usable = |index: &usize, antenna_id: i32| {
+        let row = &rows[*index];
+        row.antenna_id == antenna_id && row.flags.iter().take(receptors).all(|flag| !*flag)
+    };
+    choices.iter().find_map(|&antenna_id| {
+        let current_index = current
+            .iter()
+            .copied()
+            .find(|index| usable(index, antenna_id))?;
+        let previous_index = previous
+            .iter()
+            .copied()
+            .find(|index| usable(index, antenna_id))?;
+        Some((current_index, previous_index))
+    })
 }
 
 fn phase_only(gain: Complex32) -> Complex32 {

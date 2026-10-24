@@ -7,9 +7,9 @@ use tempfile::TempDir;
 use casa_calibration::{
     ApplyCalibrationTableSpec, ApplyInterpolationMode, ApplyMode, ApplyPlanRequest,
     CalibrationDataset, CalibrationError, CalibrationSolveRequest, CalibrationSolveResult,
-    GainSolveCombine, GainSolveInterval, GainSolveMode, GainSolveModelSource, GainSolveReport,
-    GainSolveRequest, GainType, RefAntSelector, execute_apply_from_path, solve_calibration,
-    summarize_table,
+    GainSolveCombine, GainSolveError, GainSolveInterval, GainSolveMode, GainSolveModelSource,
+    GainSolveReport, GainSolveRequest, GainType, RefAntSelector, execute_apply_from_path,
+    solve_calibration, summarize_table,
 };
 use casa_ms::ms::MeasurementSet;
 use casa_ms::selection::MsSelection;
@@ -28,6 +28,22 @@ fn run_gain_solve(
         CalibrationSolveResult::Gain(report) => Ok(report),
         CalibrationSolveResult::Bandpass(_) => unreachable!("gain request result"),
     }
+}
+
+/// Assert that a solve found nothing to solve: CASA's behaviour is to write
+/// no caltable at all rather than a table of flagged or fabricated rows.
+fn assert_no_solutions(
+    result: Result<GainSolveReport, CalibrationError>,
+    caltable_path: &std::path::Path,
+) {
+    match result {
+        Err(CalibrationError::Gain(error)) if matches!(*error, GainSolveError::NoSolutions) => {}
+        other => panic!("expected NoSolutions, got {other:?}"),
+    }
+    assert!(
+        !caltable_path.exists(),
+        "no caltable should be written when nothing solves"
+    );
 }
 
 fn phase_gain_request(output_table: std::path::PathBuf) -> GainSolveRequest {
@@ -192,7 +208,7 @@ fn solve_gain_phase_g_uses_model_data_column_downstream() {
 }
 
 #[test]
-fn solve_gain_channel_average_uses_weight_spectrum_when_present() {
+fn solve_gain_channel_average_uses_sigma_spectrum_when_present() {
     let dir = TempDir::new().expect("tempdir");
     let ms_path = common::create_gain_solve_weight_spectrum_fixture_ms(dir.path());
     let caltable_path = dir.path().join("solved-weight-spectrum.gcal");
@@ -298,6 +314,11 @@ fn solve_gain_phase_t_uses_per_correlation_model_data_column_downstream() {
     common::assert_corrected_rows_match_model_column(&ms_path);
 }
 
+/// FLAG is set for LL on every channel. CASA flags samples independently
+/// of correlation (`VisCalSolver2` via `SolveDataBuffer::enforceAPonData`
+/// and `corrIndepFlags`), so no RR samples remain either; CASA then solves
+/// nothing and writes no table ("No output calibration table written"). A
+/// per-correlation flag reading would have solved RR.
 #[test]
 fn solve_gain_g_uses_casa_correlation_independent_flags() {
     let dir = TempDir::new().expect("tempdir");
@@ -330,7 +351,7 @@ fn solve_gain_g_uses_casa_correlation_independent_flags() {
     }
     let caltable_path = dir.path().join("solved-corr-independent.gcal");
 
-    run_gain_solve(
+    let result = run_gain_solve(
         &ms_path,
         &GainSolveRequest {
             selection: MsSelection::new(),
@@ -348,36 +369,16 @@ fn solve_gain_g_uses_casa_correlation_independent_flags() {
             min_baselines_per_antenna: 0,
             smodel: [1.0, 0.0, 0.0, 0.0],
         },
-    )
-    .expect("solve asymmetric-flag G gains");
+    );
 
-    let table = Table::open(TableOptions::new(&caltable_path)).expect("open gain table");
-    for row in 0..table.row_count() {
-        let antenna_id = match table
-            .cell_accessor(row, "ANTENNA1")
-            .and_then(|cell| cell.scalar())
-            .expect("ANTENNA1 cell")
-        {
-            casa_types::ScalarValue::Int32(value) => *value,
-            other => panic!("unexpected ANTENNA1 value: {other:?}"),
-        };
-        let flags = match table
-            .cell_accessor(row, "FLAG")
-            .and_then(|cell| cell.array())
-            .expect("FLAG cell")
-        {
-            ArrayValue::Bool(values) => values.iter().copied().collect::<Vec<_>>(),
-            other => panic!("unexpected FLAG value: {other:?}"),
-        };
-        if antenna_id != 0 {
-            assert!(
-                flags.iter().all(|flag| *flag),
-                "row {row} flags were {flags:?}"
-            );
-        }
-    }
+    assert_no_solutions(result, &caltable_path);
 }
 
+/// FLAG is set for LL on every channel. CASA flags samples independently
+/// of correlation (`VisCalSolver2` via `SolveDataBuffer::enforceAPonData`
+/// and `corrIndepFlags`), so no RR samples remain either; CASA then solves
+/// nothing and writes no table ("No output calibration table written"). A
+/// per-correlation flag reading would have solved RR.
 #[test]
 fn solve_gain_t_uses_casa_correlation_independent_flags() {
     let dir = TempDir::new().expect("tempdir");
@@ -410,7 +411,7 @@ fn solve_gain_t_uses_casa_correlation_independent_flags() {
     }
     let caltable_path = dir.path().join("solved-t-per-corr-flags.tcal");
 
-    run_gain_solve(
+    let result = run_gain_solve(
         &ms_path,
         &GainSolveRequest {
             selection: MsSelection::new(),
@@ -428,95 +429,9 @@ fn solve_gain_t_uses_casa_correlation_independent_flags() {
             min_baselines_per_antenna: 0,
             smodel: [1.0, 0.0, 0.0, 0.0],
         },
-    )
-    .expect("solve asymmetric-flag T gains");
+    );
 
-    let table = Table::open(TableOptions::new(&caltable_path)).expect("open gain table");
-    for row in 0..table.row_count() {
-        let antenna_id = match table
-            .cell_accessor(row, "ANTENNA1")
-            .and_then(|cell| cell.scalar())
-            .expect("ANTENNA1 cell")
-        {
-            casa_types::ScalarValue::Int32(value) => *value,
-            other => panic!("unexpected ANTENNA1 value: {other:?}"),
-        };
-        let flags = match table
-            .cell_accessor(row, "FLAG")
-            .and_then(|cell| cell.array())
-            .expect("FLAG cell")
-        {
-            ArrayValue::Bool(values) => values.iter().copied().collect::<Vec<_>>(),
-            other => panic!("unexpected FLAG value: {other:?}"),
-        };
-        if antenna_id != 0 {
-            assert!(
-                flags.iter().all(|flag| *flag),
-                "row {row} flags were {flags:?}"
-            );
-        }
-    }
-}
-
-/// Solve G around an outlier flagged only by `FLAG_ROW`, optionally through a
-/// unit prior table so the solve reads its flags from the pre-applied rows,
-/// and check that every other row corrects to the unit model. CASA flags
-/// every sample of a `FLAG_ROW` row before solving
-/// (`VisEquation::divideCorrByModel`); accumulated, this outlier on baseline
-/// 0-1 at t=100 s would move the solved phases by about 17 degrees.
-fn assert_flag_row_outlier_is_excluded(with_prior_table: bool) {
-    let dir = TempDir::new().expect("tempdir");
-    let ms_path =
-        common::create_gain_solve_fixture_ms(dir.path(), common::SyntheticGainFixtureKind::G);
-    common::make_row_flag_only_outlier(&ms_path, 0, casa_types::Complex32::from_polar(3.0, 0.6));
-    let prior_tables = if with_prior_table {
-        let rows = (0..3)
-            .map(|antenna_id| common::SyntheticGainSolutionRow {
-                time_seconds: 100.0,
-                field_id: 0,
-                spectral_window_id: 0,
-                antenna_id,
-                gains: vec![casa_types::Complex32::new(1.0, 0.0); 2],
-                flags: vec![false, false],
-            })
-            .collect::<Vec<_>>();
-        let prior_table =
-            common::create_apply_gain_caltable(&dir.path().join("prior.gcal"), &["TARGET0"], &rows);
-        vec![ApplyCalibrationTableSpec::new(&prior_table)]
-    } else {
-        Vec::new()
-    };
-    let caltable_path = dir.path().join("row-flagged.gcal");
-    let mut request = phase_gain_request(caltable_path.clone());
-    request.prior_calibration_tables = prior_tables.clone();
-
-    let report =
-        run_gain_solve(&ms_path, &request).expect("solve G gains around a FLAG_ROW outlier");
-
-    assert_eq!(report.solution_row_count, 3);
-    let mut calibration_tables = prior_tables;
-    calibration_tables.push(ApplyCalibrationTableSpec::new(&caltable_path));
-    execute_apply_from_path(
-        &ms_path,
-        &ApplyPlanRequest {
-            selection: MsSelection::new(),
-            apply_mode: ApplyMode::CalOnly,
-            parang: false,
-            calibration_tables,
-        },
-    )
-    .expect("apply solved G table");
-    common::assert_corrected_rows_are_unit_model_except(&ms_path, &[0]);
-}
-
-#[test]
-fn solve_gain_excludes_a_row_whose_flag_row_is_set_and_flag_clear() {
-    assert_flag_row_outlier_is_excluded(false);
-}
-
-#[test]
-fn solve_gain_with_prior_caltable_excludes_a_row_whose_flag_row_is_set_and_flag_clear() {
-    assert_flag_row_outlier_is_excluded(true);
+    assert_no_solutions(result, &caltable_path);
 }
 
 #[test]

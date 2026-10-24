@@ -82,10 +82,8 @@ pub(crate) fn write_gain_caltable(
                 COL_ANTENNA2,
                 Value::Scalar(ScalarValue::Int32(row.refant_id)),
             ),
-            RecordField::new(
-                COL_INTERVAL,
-                Value::Scalar(ScalarValue::Float64(row.interval_seconds)),
-            ),
+            // CASA writes every solution's INTERVAL as 0 (`SolvableVisCal::keepNCT`).
+            RecordField::new(COL_INTERVAL, Value::Scalar(ScalarValue::Float64(0.0))),
             RecordField::new(
                 COL_SCAN_NUMBER,
                 Value::Scalar(ScalarValue::Int32(row.scan_number)),
