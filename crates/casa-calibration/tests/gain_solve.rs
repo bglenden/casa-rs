@@ -459,6 +459,34 @@ fn solve_gain_t_uses_casa_correlation_independent_flags() {
 }
 
 #[test]
+fn solve_gain_excludes_a_row_whose_flag_row_is_set_and_flag_clear() {
+    // CASA flags every sample of a FLAG_ROW row before solving
+    // (`VisEquation::divideCorrByModel`). Accumulated, this outlier on
+    // baseline 0-1 at t=100 s would move the solved phases by about 17 degrees.
+    let dir = TempDir::new().expect("tempdir");
+    let ms_path =
+        common::create_gain_solve_fixture_ms(dir.path(), common::SyntheticGainFixtureKind::G);
+    common::make_row_flag_only_outlier(&ms_path, 0, casa_types::Complex32::from_polar(3.0, 0.6));
+    let caltable_path = dir.path().join("row-flagged.gcal");
+
+    let report = run_gain_solve(&ms_path, &phase_gain_request(caltable_path.clone()))
+        .expect("solve G gains around a FLAG_ROW outlier");
+
+    assert_eq!(report.solution_row_count, 3);
+    execute_apply_from_path(
+        &ms_path,
+        &ApplyPlanRequest {
+            selection: MsSelection::new(),
+            apply_mode: ApplyMode::CalOnly,
+            parang: false,
+            calibration_tables: vec![ApplyCalibrationTableSpec::new(&caltable_path)],
+        },
+    )
+    .expect("apply solved G table");
+    common::assert_corrected_rows_are_unit_model_except(&ms_path, &[0]);
+}
+
+#[test]
 fn solve_gain_min_snr_flags_low_snr_solutions_and_writes_diagnostics() {
     let dir = TempDir::new().expect("tempdir");
     let ms_path =

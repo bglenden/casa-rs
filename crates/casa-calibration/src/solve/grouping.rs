@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Selection, bucketing, and accumulation for limited `gaincal`.
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use casa_ms::ChannelSelection;
@@ -222,6 +223,7 @@ pub(crate) fn collect_selected_rows(
                 time_centroid_seconds: get_f64(ms.main_table(), row.row_index, "TIME_CENTROID")?,
                 interval_seconds: get_f64(ms.main_table(), row.row_index, "INTERVAL")?,
                 scan_number: get_i32(ms.main_table(), row.row_index, "SCAN_NUMBER")?,
+                flag_row: row.flag_row,
             })
         })
         .collect()
@@ -297,6 +299,7 @@ pub(crate) struct SelectedSolveRow {
     pub(crate) time_centroid_seconds: f64,
     pub(crate) interval_seconds: f64,
     pub(crate) scan_number: i32,
+    pub(crate) flag_row: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -484,6 +487,7 @@ impl SolveAccumulator {
                 shape: flags.shape().to_vec(),
             });
         };
+        let flags = &*solve_flags(row, flags);
         let ArrayValue::Float32(weights) = weights else {
             return Err(GainSolveError::UnsupportedParameterShape {
                 path: "<measurement-set WEIGHT>".to_string(),
@@ -705,6 +709,22 @@ fn selected_channels(
                 })
         }
         None => Ok((0..channel_count).collect()),
+    }
+}
+
+/// The sample flags a solve uses for `row`: its `FLAG` cell, or every sample
+/// flagged when the row's `FLAG_ROW` is set, whatever `FLAG` holds. CASA's
+/// solve does the same: `CalSolvingVi2::calibrateCurrentVB` calls
+/// `VisEquation::collapse2`, whose `divideCorrByModel` flags the whole cube
+/// of such a row and zeroes its weights before G, T or B accumulates it.
+pub(crate) fn solve_flags<'a>(
+    row: &SelectedSolveRow,
+    flags: &'a ArrayD<bool>,
+) -> Cow<'a, ArrayD<bool>> {
+    if row.flag_row {
+        Cow::Owned(ArrayD::from_elem(flags.raw_dim(), true))
+    } else {
+        Cow::Borrowed(flags)
     }
 }
 

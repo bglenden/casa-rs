@@ -36,7 +36,9 @@ use crate::constants::{
 };
 use crate::execute::EvaluatedApplyRow;
 use crate::session::prepare_calibration_solve;
-use crate::solve::grouping::{SelectedSolveRow, correlation_types_for_ddid, validate_smodel};
+use crate::solve::grouping::{
+    SelectedSolveRow, correlation_types_for_ddid, solve_flags, validate_smodel,
+};
 use crate::solve::kernel::{SolveGraphOptions, solve_graph};
 use crate::solve::{GainSolveMode, RefAntSelector, correlation_receptors, stokes_name};
 use crate::writer::{
@@ -399,6 +401,7 @@ impl BandpassAccumulator {
                 shape: flags.shape().to_vec(),
             });
         };
+        let flags = &*solve_flags(row, flags);
         let ArrayValue::Float32(weights) = weights else {
             return Err(BandpassSolveError::UnsupportedParameterShape {
                 path: "<measurement-set WEIGHT>".to_string(),
