@@ -513,95 +513,113 @@
 <a href=#513 id=513 data-nosnippet>513</a>    }
 <a href=#514 id=514 data-nosnippet>514</a>}
 <a href=#515 id=515 data-nosnippet>515</a>
-<a href=#516 id=516 data-nosnippet>516</a><span class="doccomment">/// Two independent standard normal draws from counter `counter` of stream
-<a href=#517 id=517 data-nosnippet>517</a>/// `key`, by Box–Muller in double precision.
-<a href=#518 id=518 data-nosnippet>518</a></span><span class="kw">fn </span>normal_pair(key: [u32; <span class="number">2</span>], counter: [u32; <span class="number">4</span>]) -&gt; [f64; <span class="number">2</span>] {
-<a href=#519 id=519 data-nosnippet>519</a>    <span class="kw">let </span>words = philox4x32_10(counter, key);
-<a href=#520 id=520 data-nosnippet>520</a>    <span class="kw">let </span>uniform = |high: u32, low: u32| {
-<a href=#521 id=521 data-nosnippet>521</a>        <span class="comment">// 53 bits, never 0: (n + 0.5) / 2⁵³.
-<a href=#522 id=522 data-nosnippet>522</a>        </span><span class="kw">let </span>bits = (u64::from(high) &lt;&lt; <span class="number">21</span>) ^ u64::from(low &gt;&gt; <span class="number">11</span>);
-<a href=#523 id=523 data-nosnippet>523</a>        (bits <span class="kw">as </span>f64 + <span class="number">0.5</span>) / (<span class="number">1_u64 </span>&lt;&lt; <span class="number">53</span>) <span class="kw">as </span>f64
-<a href=#524 id=524 data-nosnippet>524</a>    };
-<a href=#525 id=525 data-nosnippet>525</a>    <span class="kw">let </span>(u1, u2) = (uniform(words[<span class="number">0</span>], words[<span class="number">1</span>]), uniform(words[<span class="number">2</span>], words[<span class="number">3</span>]));
-<a href=#526 id=526 data-nosnippet>526</a>    <span class="kw">let </span>radius = (-<span class="number">2.0 </span>* u1.ln()).sqrt();
-<a href=#527 id=527 data-nosnippet>527</a>    <span class="kw">let </span>angle = <span class="number">2.0 </span>* std::f64::consts::PI * u2;
-<a href=#528 id=528 data-nosnippet>528</a>    [radius * angle.cos(), radius * angle.sin()]
-<a href=#529 id=529 data-nosnippet>529</a>}
-<a href=#530 id=530 data-nosnippet>530</a>
-<a href=#531 id=531 data-nosnippet>531</a><span class="doccomment">/// One uniform draw in [0, 1) from counter `counter` of stream `key`.
-<a href=#532 id=532 data-nosnippet>532</a></span><span class="kw">fn </span>uniform(key: [u32; <span class="number">2</span>], counter: [u32; <span class="number">4</span>]) -&gt; f64 {
-<a href=#533 id=533 data-nosnippet>533</a>    <span class="kw">let </span>words = philox4x32_10(counter, key);
-<a href=#534 id=534 data-nosnippet>534</a>    <span class="kw">let </span>bits = (u64::from(words[<span class="number">0</span>]) &lt;&lt; <span class="number">21</span>) ^ u64::from(words[<span class="number">1</span>] &gt;&gt; <span class="number">11</span>);
-<a href=#535 id=535 data-nosnippet>535</a>    bits <span class="kw">as </span>f64 / (<span class="number">1_u64 </span>&lt;&lt; <span class="number">53</span>) <span class="kw">as </span>f64
-<a href=#536 id=536 data-nosnippet>536</a>}
-<a href=#537 id=537 data-nosnippet>537</a>
-<a href=#538 id=538 data-nosnippet>538</a><span class="doccomment">/// The real transform of one screen's length, reused across screens.
-<a href=#539 id=539 data-nosnippet>539</a></span><span class="kw">struct </span>ScreenFft {
-<a href=#540 id=540 data-nosnippet>540</a>    slots: usize,
-<a href=#541 id=541 data-nosnippet>541</a>    fft: <span class="prelude-ty">Option</span>&lt;RealFft2&lt;f64&gt;&gt;,
-<a href=#542 id=542 data-nosnippet>542</a>    storage: Vec&lt;Complex64&gt;,
-<a href=#543 id=543 data-nosnippet>543</a>}
-<a href=#544 id=544 data-nosnippet>544</a>
-<a href=#545 id=545 data-nosnippet>545</a><span class="kw">impl </span>ScreenFft {
-<a href=#546 id=546 data-nosnippet>546</a>    <span class="kw">fn </span>new(slots: usize) -&gt; <span class="self">Self </span>{
-<a href=#547 id=547 data-nosnippet>547</a>        <span class="kw">let </span>fft = (slots &gt;= MINIMUM_SCREEN_SLOTS).then(|| {
-<a href=#548 id=548 data-nosnippet>548</a>            RealFft2::with_threads([<span class="number">1</span>, slots], <span class="number">1</span>)
-<a href=#549 id=549 data-nosnippet>549</a>                .expect(<span class="string">"a one-row real transform"</span>)
-<a href=#550 id=550 data-nosnippet>550</a>                .with_estimated_plan()
-<a href=#551 id=551 data-nosnippet>551</a>                .with_owned_plan()
-<a href=#552 id=552 data-nosnippet>552</a>        });
-<a href=#553 id=553 data-nosnippet>553</a>        <span class="kw">let </span>storage = <span class="macro">vec!</span>[Complex64::new(<span class="number">0.0</span>, <span class="number">0.0</span>); slots / <span class="number">2 </span>+ <span class="number">1</span>];
-<a href=#554 id=554 data-nosnippet>554</a>        <span class="self">Self </span>{
-<a href=#555 id=555 data-nosnippet>555</a>            slots,
-<a href=#556 id=556 data-nosnippet>556</a>            fft,
-<a href=#557 id=557 data-nosnippet>557</a>            storage,
-<a href=#558 id=558 data-nosnippet>558</a>        }
-<a href=#559 id=559 data-nosnippet>559</a>    }
-<a href=#560 id=560 data-nosnippet>560</a>
-<a href=#561 id=561 data-nosnippet>561</a>    <span class="doccomment">/// A fractional-Brownian-motion screen of the slots (`fBM::initialize`
-<a href=#562 id=562 data-nosnippet>562</a>    /// in one dimension), drawn from `seed`'s gain-screen stream at
-<a href=#563 id=563 data-nosnippet>563</a>    /// `counter`, scaled to `scale` over its root-mean-square about its
-<a href=#564 id=564 data-nosnippet>564</a>    /// mean, the mean kept (`GJonesCorruptor::initialize`).
-<a href=#565 id=565 data-nosnippet>565</a>    </span><span class="kw">fn </span>normalised_fbm(<span class="kw-2">&amp;mut </span><span class="self">self</span>, seed: i32, counter: [u32; <span class="number">4</span>], scale: f64) -&gt; Vec&lt;f64&gt; {
-<a href=#566 id=566 data-nosnippet>566</a>        <span class="kw">let </span>key = [seed <span class="kw">as </span>u32, PURPOSE_GAIN_SCREEN &lt;&lt; <span class="number">24</span>];
-<a href=#567 id=567 data-nosnippet>567</a>        <span class="kw">let </span><span class="prelude-val">Some</span>(fft) = <span class="kw-2">&amp;mut </span><span class="self">self</span>.fft <span class="kw">else </span>{
-<a href=#568 id=568 data-nosnippet>568</a>            <span class="comment">// Too few slots for a spectrum: CASA's screen is flat.
-<a href=#569 id=569 data-nosnippet>569</a>            </span><span class="kw">return </span><span class="macro">vec!</span>[<span class="number">0.0</span>; <span class="self">self</span>.slots];
-<a href=#570 id=570 data-nosnippet>570</a>        };
-<a href=#571 id=571 data-nosnippet>571</a>        <span class="self">self</span>.storage.fill(Complex64::new(<span class="number">0.0</span>, <span class="number">0.0</span>));
-<a href=#572 id=572 data-nosnippet>572</a>        <span class="comment">// `F(i)` for `i &lt; N/2 - 1`, the rest zero.
-<a href=#573 id=573 data-nosnippet>573</a>        </span><span class="kw">for </span>bin <span class="kw">in </span><span class="number">0</span>..<span class="self">self</span>.slots / <span class="number">2 </span>- <span class="number">1 </span>{
-<a href=#574 id=574 data-nosnippet>574</a>            <span class="kw">let </span><span class="kw-2">mut </span>bin_counter = counter;
-<a href=#575 id=575 data-nosnippet>575</a>            bin_counter[<span class="number">2</span>] = bin <span class="kw">as </span>u32;
-<a href=#576 id=576 data-nosnippet>576</a>            <span class="kw">let </span>phase = <span class="number">2.0 </span>* std::f64::consts::PI * uniform(key, bin_counter);
-<a href=#577 id=577 data-nosnippet>577</a>            bin_counter[<span class="number">3</span>] = <span class="number">1</span>;
-<a href=#578 id=578 data-nosnippet>578</a>            <span class="kw">let </span>[normal, <span class="kw">_</span>] = normal_pair(key, bin_counter);
-<a href=#579 id=579 data-nosnippet>579</a>            <span class="kw">let </span>amplitude = ((bin + <span class="number">1</span>) <span class="kw">as </span>f64).powf(-<span class="number">0.5 </span>* SCREEN_BETA) * normal;
-<a href=#580 id=580 data-nosnippet>580</a>            <span class="self">self</span>.storage[bin] = Complex64::from_polar(amplitude, phase);
-<a href=#581 id=581 data-nosnippet>581</a>        }
-<a href=#582 id=582 data-nosnippet>582</a>        fft.inverse(<span class="kw-2">&amp;mut </span><span class="self">self</span>.storage)
-<a href=#583 id=583 data-nosnippet>583</a>            .expect(<span class="string">"a one-row real transform"</span>);
-<a href=#584 id=584 data-nosnippet>584</a>        <span class="kw">let </span>reals: Vec&lt;f64&gt; = <span class="self">self
-<a href=#585 id=585 data-nosnippet>585</a>            </span>.storage
-<a href=#586 id=586 data-nosnippet>586</a>            .iter()
-<a href=#587 id=587 data-nosnippet>587</a>            .flat_map(|value| [value.re, value.im])
-<a href=#588 id=588 data-nosnippet>588</a>            .take(<span class="self">self</span>.slots)
-<a href=#589 id=589 data-nosnippet>589</a>            .collect();
-<a href=#590 id=590 data-nosnippet>590</a>        <span class="kw">let </span>mean = reals.iter().sum::&lt;f64&gt;() / <span class="self">self</span>.slots <span class="kw">as </span>f64;
-<a href=#591 id=591 data-nosnippet>591</a>        <span class="kw">let </span>rms = (reals
-<a href=#592 id=592 data-nosnippet>592</a>            .iter()
-<a href=#593 id=593 data-nosnippet>593</a>            .map(|value| (value - mean).powi(<span class="number">2</span>))
-<a href=#594 id=594 data-nosnippet>594</a>            .sum::&lt;f64&gt;()
-<a href=#595 id=595 data-nosnippet>595</a>            / <span class="self">self</span>.slots <span class="kw">as </span>f64)
-<a href=#596 id=596 data-nosnippet>596</a>            .sqrt();
-<a href=#597 id=597 data-nosnippet>597</a>        <span class="kw">if </span>rms == <span class="number">0.0 </span>{
-<a href=#598 id=598 data-nosnippet>598</a>            <span class="kw">return </span><span class="macro">vec!</span>[<span class="number">0.0</span>; <span class="self">self</span>.slots];
+<a href=#516 id=516 data-nosnippet>516</a><span class="doccomment">/// A term of `kind` for `antennas` antennas whose values are given rather
+<a href=#517 id=517 data-nosnippet>517</a>/// than drawn (`sm.setapply`): `values[chunk · antennas + antenna]`, one
+<a href=#518 id=518 data-nosnippet>518</a>/// block per chunk.
+<a href=#519 id=519 data-nosnippet>519</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>applied(
+<a href=#520 id=520 data-nosnippet>520</a>    kind: JonesKind,
+<a href=#521 id=521 data-nosnippet>521</a>    antennas: usize,
+<a href=#522 id=522 data-nosnippet>522</a>    chunks: Chunks,
+<a href=#523 id=523 data-nosnippet>523</a>    values: Vec&lt;[Complex32; <span class="number">2</span>]&gt;,
+<a href=#524 id=524 data-nosnippet>524</a>) -&gt; JonesTerm {
+<a href=#525 id=525 data-nosnippet>525</a>    <span class="macro">debug_assert_eq!</span>(values.len(), chunks.count <span class="kw">as </span>usize * antennas);
+<a href=#526 id=526 data-nosnippet>526</a>    JonesTerm {
+<a href=#527 id=527 data-nosnippet>527</a>        kind,
+<a href=#528 id=528 data-nosnippet>528</a>        antennas,
+<a href=#529 id=529 data-nosnippet>529</a>        solutions: chunks.by_window,
+<a href=#530 id=530 data-nosnippet>530</a>        values,
+<a href=#531 id=531 data-nosnippet>531</a>    }
+<a href=#532 id=532 data-nosnippet>532</a>}
+<a href=#533 id=533 data-nosnippet>533</a>
+<a href=#534 id=534 data-nosnippet>534</a><span class="doccomment">/// Two independent standard normal draws from counter `counter` of stream
+<a href=#535 id=535 data-nosnippet>535</a>/// `key`, by Box–Muller in double precision.
+<a href=#536 id=536 data-nosnippet>536</a></span><span class="kw">fn </span>normal_pair(key: [u32; <span class="number">2</span>], counter: [u32; <span class="number">4</span>]) -&gt; [f64; <span class="number">2</span>] {
+<a href=#537 id=537 data-nosnippet>537</a>    <span class="kw">let </span>words = philox4x32_10(counter, key);
+<a href=#538 id=538 data-nosnippet>538</a>    <span class="kw">let </span>uniform = |high: u32, low: u32| {
+<a href=#539 id=539 data-nosnippet>539</a>        <span class="comment">// 53 bits, never 0: (n + 0.5) / 2⁵³.
+<a href=#540 id=540 data-nosnippet>540</a>        </span><span class="kw">let </span>bits = (u64::from(high) &lt;&lt; <span class="number">21</span>) ^ u64::from(low &gt;&gt; <span class="number">11</span>);
+<a href=#541 id=541 data-nosnippet>541</a>        (bits <span class="kw">as </span>f64 + <span class="number">0.5</span>) / (<span class="number">1_u64 </span>&lt;&lt; <span class="number">53</span>) <span class="kw">as </span>f64
+<a href=#542 id=542 data-nosnippet>542</a>    };
+<a href=#543 id=543 data-nosnippet>543</a>    <span class="kw">let </span>(u1, u2) = (uniform(words[<span class="number">0</span>], words[<span class="number">1</span>]), uniform(words[<span class="number">2</span>], words[<span class="number">3</span>]));
+<a href=#544 id=544 data-nosnippet>544</a>    <span class="kw">let </span>radius = (-<span class="number">2.0 </span>* u1.ln()).sqrt();
+<a href=#545 id=545 data-nosnippet>545</a>    <span class="kw">let </span>angle = <span class="number">2.0 </span>* std::f64::consts::PI * u2;
+<a href=#546 id=546 data-nosnippet>546</a>    [radius * angle.cos(), radius * angle.sin()]
+<a href=#547 id=547 data-nosnippet>547</a>}
+<a href=#548 id=548 data-nosnippet>548</a>
+<a href=#549 id=549 data-nosnippet>549</a><span class="doccomment">/// One uniform draw in [0, 1) from counter `counter` of stream `key`.
+<a href=#550 id=550 data-nosnippet>550</a></span><span class="kw">fn </span>uniform(key: [u32; <span class="number">2</span>], counter: [u32; <span class="number">4</span>]) -&gt; f64 {
+<a href=#551 id=551 data-nosnippet>551</a>    <span class="kw">let </span>words = philox4x32_10(counter, key);
+<a href=#552 id=552 data-nosnippet>552</a>    <span class="kw">let </span>bits = (u64::from(words[<span class="number">0</span>]) &lt;&lt; <span class="number">21</span>) ^ u64::from(words[<span class="number">1</span>] &gt;&gt; <span class="number">11</span>);
+<a href=#553 id=553 data-nosnippet>553</a>    bits <span class="kw">as </span>f64 / (<span class="number">1_u64 </span>&lt;&lt; <span class="number">53</span>) <span class="kw">as </span>f64
+<a href=#554 id=554 data-nosnippet>554</a>}
+<a href=#555 id=555 data-nosnippet>555</a>
+<a href=#556 id=556 data-nosnippet>556</a><span class="doccomment">/// The real transform of one screen's length, reused across screens.
+<a href=#557 id=557 data-nosnippet>557</a></span><span class="kw">struct </span>ScreenFft {
+<a href=#558 id=558 data-nosnippet>558</a>    slots: usize,
+<a href=#559 id=559 data-nosnippet>559</a>    fft: <span class="prelude-ty">Option</span>&lt;RealFft2&lt;f64&gt;&gt;,
+<a href=#560 id=560 data-nosnippet>560</a>    storage: Vec&lt;Complex64&gt;,
+<a href=#561 id=561 data-nosnippet>561</a>}
+<a href=#562 id=562 data-nosnippet>562</a>
+<a href=#563 id=563 data-nosnippet>563</a><span class="kw">impl </span>ScreenFft {
+<a href=#564 id=564 data-nosnippet>564</a>    <span class="kw">fn </span>new(slots: usize) -&gt; <span class="self">Self </span>{
+<a href=#565 id=565 data-nosnippet>565</a>        <span class="kw">let </span>fft = (slots &gt;= MINIMUM_SCREEN_SLOTS).then(|| {
+<a href=#566 id=566 data-nosnippet>566</a>            RealFft2::with_threads([<span class="number">1</span>, slots], <span class="number">1</span>)
+<a href=#567 id=567 data-nosnippet>567</a>                .expect(<span class="string">"a one-row real transform"</span>)
+<a href=#568 id=568 data-nosnippet>568</a>                .with_estimated_plan()
+<a href=#569 id=569 data-nosnippet>569</a>                .with_owned_plan()
+<a href=#570 id=570 data-nosnippet>570</a>        });
+<a href=#571 id=571 data-nosnippet>571</a>        <span class="kw">let </span>storage = <span class="macro">vec!</span>[Complex64::new(<span class="number">0.0</span>, <span class="number">0.0</span>); slots / <span class="number">2 </span>+ <span class="number">1</span>];
+<a href=#572 id=572 data-nosnippet>572</a>        <span class="self">Self </span>{
+<a href=#573 id=573 data-nosnippet>573</a>            slots,
+<a href=#574 id=574 data-nosnippet>574</a>            fft,
+<a href=#575 id=575 data-nosnippet>575</a>            storage,
+<a href=#576 id=576 data-nosnippet>576</a>        }
+<a href=#577 id=577 data-nosnippet>577</a>    }
+<a href=#578 id=578 data-nosnippet>578</a>
+<a href=#579 id=579 data-nosnippet>579</a>    <span class="doccomment">/// A fractional-Brownian-motion screen of the slots (`fBM::initialize`
+<a href=#580 id=580 data-nosnippet>580</a>    /// in one dimension), drawn from `seed`'s gain-screen stream at
+<a href=#581 id=581 data-nosnippet>581</a>    /// `counter`, scaled to `scale` over its root-mean-square about its
+<a href=#582 id=582 data-nosnippet>582</a>    /// mean, the mean kept (`GJonesCorruptor::initialize`).
+<a href=#583 id=583 data-nosnippet>583</a>    </span><span class="kw">fn </span>normalised_fbm(<span class="kw-2">&amp;mut </span><span class="self">self</span>, seed: i32, counter: [u32; <span class="number">4</span>], scale: f64) -&gt; Vec&lt;f64&gt; {
+<a href=#584 id=584 data-nosnippet>584</a>        <span class="kw">let </span>key = [seed <span class="kw">as </span>u32, PURPOSE_GAIN_SCREEN &lt;&lt; <span class="number">24</span>];
+<a href=#585 id=585 data-nosnippet>585</a>        <span class="kw">let </span><span class="prelude-val">Some</span>(fft) = <span class="kw-2">&amp;mut </span><span class="self">self</span>.fft <span class="kw">else </span>{
+<a href=#586 id=586 data-nosnippet>586</a>            <span class="comment">// Too few slots for a spectrum: CASA's screen is flat.
+<a href=#587 id=587 data-nosnippet>587</a>            </span><span class="kw">return </span><span class="macro">vec!</span>[<span class="number">0.0</span>; <span class="self">self</span>.slots];
+<a href=#588 id=588 data-nosnippet>588</a>        };
+<a href=#589 id=589 data-nosnippet>589</a>        <span class="self">self</span>.storage.fill(Complex64::new(<span class="number">0.0</span>, <span class="number">0.0</span>));
+<a href=#590 id=590 data-nosnippet>590</a>        <span class="comment">// `F(i)` for `i &lt; N/2 - 1`, the rest zero.
+<a href=#591 id=591 data-nosnippet>591</a>        </span><span class="kw">for </span>bin <span class="kw">in </span><span class="number">0</span>..<span class="self">self</span>.slots / <span class="number">2 </span>- <span class="number">1 </span>{
+<a href=#592 id=592 data-nosnippet>592</a>            <span class="kw">let </span><span class="kw-2">mut </span>bin_counter = counter;
+<a href=#593 id=593 data-nosnippet>593</a>            bin_counter[<span class="number">2</span>] = bin <span class="kw">as </span>u32;
+<a href=#594 id=594 data-nosnippet>594</a>            <span class="kw">let </span>phase = <span class="number">2.0 </span>* std::f64::consts::PI * uniform(key, bin_counter);
+<a href=#595 id=595 data-nosnippet>595</a>            bin_counter[<span class="number">3</span>] = <span class="number">1</span>;
+<a href=#596 id=596 data-nosnippet>596</a>            <span class="kw">let </span>[normal, <span class="kw">_</span>] = normal_pair(key, bin_counter);
+<a href=#597 id=597 data-nosnippet>597</a>            <span class="kw">let </span>amplitude = ((bin + <span class="number">1</span>) <span class="kw">as </span>f64).powf(-<span class="number">0.5 </span>* SCREEN_BETA) * normal;
+<a href=#598 id=598 data-nosnippet>598</a>            <span class="self">self</span>.storage[bin] = Complex64::from_polar(amplitude, phase);
 <a href=#599 id=599 data-nosnippet>599</a>        }
-<a href=#600 id=600 data-nosnippet>600</a>        reals.iter().map(|value| value * scale / rms).collect()
-<a href=#601 id=601 data-nosnippet>601</a>    }
-<a href=#602 id=602 data-nosnippet>602</a>}
-<a href=#603 id=603 data-nosnippet>603</a>
-<a href=#604 id=604 data-nosnippet>604</a><span class="attr">#[cfg(test)]
-<a href=#605 id=605 data-nosnippet>605</a>#[path = <span class="string">"jones_tests.rs"</span>]
-<a href=#606 id=606 data-nosnippet>606</a></span><span class="kw">mod </span>tests;
+<a href=#600 id=600 data-nosnippet>600</a>        fft.inverse(<span class="kw-2">&amp;mut </span><span class="self">self</span>.storage)
+<a href=#601 id=601 data-nosnippet>601</a>            .expect(<span class="string">"a one-row real transform"</span>);
+<a href=#602 id=602 data-nosnippet>602</a>        <span class="kw">let </span>reals: Vec&lt;f64&gt; = <span class="self">self
+<a href=#603 id=603 data-nosnippet>603</a>            </span>.storage
+<a href=#604 id=604 data-nosnippet>604</a>            .iter()
+<a href=#605 id=605 data-nosnippet>605</a>            .flat_map(|value| [value.re, value.im])
+<a href=#606 id=606 data-nosnippet>606</a>            .take(<span class="self">self</span>.slots)
+<a href=#607 id=607 data-nosnippet>607</a>            .collect();
+<a href=#608 id=608 data-nosnippet>608</a>        <span class="kw">let </span>mean = reals.iter().sum::&lt;f64&gt;() / <span class="self">self</span>.slots <span class="kw">as </span>f64;
+<a href=#609 id=609 data-nosnippet>609</a>        <span class="kw">let </span>rms = (reals
+<a href=#610 id=610 data-nosnippet>610</a>            .iter()
+<a href=#611 id=611 data-nosnippet>611</a>            .map(|value| (value - mean).powi(<span class="number">2</span>))
+<a href=#612 id=612 data-nosnippet>612</a>            .sum::&lt;f64&gt;()
+<a href=#613 id=613 data-nosnippet>613</a>            / <span class="self">self</span>.slots <span class="kw">as </span>f64)
+<a href=#614 id=614 data-nosnippet>614</a>            .sqrt();
+<a href=#615 id=615 data-nosnippet>615</a>        <span class="kw">if </span>rms == <span class="number">0.0 </span>{
+<a href=#616 id=616 data-nosnippet>616</a>            <span class="kw">return </span><span class="macro">vec!</span>[<span class="number">0.0</span>; <span class="self">self</span>.slots];
+<a href=#617 id=617 data-nosnippet>617</a>        }
+<a href=#618 id=618 data-nosnippet>618</a>        reals.iter().map(|value| value * scale / rms).collect()
+<a href=#619 id=619 data-nosnippet>619</a>    }
+<a href=#620 id=620 data-nosnippet>620</a>}
+<a href=#621 id=621 data-nosnippet>621</a>
+<a href=#622 id=622 data-nosnippet>622</a><span class="attr">#[cfg(test)]
+<a href=#623 id=623 data-nosnippet>623</a>#[path = <span class="string">"jones_tests.rs"</span>]
+<a href=#624 id=624 data-nosnippet>624</a></span><span class="kw">mod </span>tests;
 </code></pre></div></section></main></body></html>

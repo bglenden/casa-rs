@@ -1908,6 +1908,13 @@ epoch. The geometry is computed with the stored number read as UT1 (line
 the geometry, so its uvw agree with CASA's at equal stored TIME. A parity run
 requests a start 37 s later on the casa-rs side and compares rows at equal
 TIME (<code>tools/simulation/compare_sm_ms.py</code>).</p>
+<p>The same offset separates the calibration tables the two simulators write
+(<code>setgain</code> and <code>setleakage</code> with <code>table=</code>): CASA's TIME is TAI under the UTC
+label. <code>sm.setapply</code> of a CASA-simulated table to a casa-rs MeasurementSet,
+or the reverse, therefore takes its solutions 37 s away, several solutions
+of 10 s integrations. The <code>corrupt-setapply-*</code> scenarios agree with CASA
+because their runs are shifted as above; tables solved from real data carry
+true UTC and are not affected.</p>
 <h2 id="the-simulator-charges-shadowing-to-the-antenna-in-front">The simulator charges shadowing to the antenna in front<a class="headerlink" href="#the-simulator-charges-shadowing-to-the-antenna-in-front" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-10-21</li>
