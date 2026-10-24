@@ -39,7 +39,10 @@ Simulator behaviours casa-rs does not follow:
 [total power in cross-correlations](#sdgrid-predicts-total-power-into-cross-correlations-with-no-positive-uvw),
 [`close` after a mosaic predict](#smclose-aborts-the-process-after-a-mosaic-predict),
 [the beam on a moved pointing](#the-beam-on-a-moved-pointing-stays-where-the-fields-first-row-points),
-[scratch columns added at `predict` and `corrupt`](#predict-and-corrupt-add-scratch-columns-to-a-measurementset-without-them).
+[scratch columns added at `predict` and `corrupt`](#predict-and-corrupt-add-scratch-columns-to-a-measurementset-without-them),
+[`tsys-manual`'s stale and borrowed system temperatures](#tsys-manual-noise-takes-stale-or-borrowed-system-temperatures),
+[`tsys-manual` scaling every noise term](#a-tsys-manual-term-scales-every-noise-term),
+[the noise term a refused `tsys-manual` leaves](#a-refused-tsys-manual-setnoise-leaves-a-unit-noise-term).
 Measures behaviours casa-rs follows for parity:
 [IAU 1980 sidereal time and obliquities under IAU 2000](#iau-2000-keeps-the-iau-1980-sidereal-time-and-ecliptic-obliquities).
 Measures behaviours casa-rs does not follow:
@@ -1137,3 +1140,89 @@ corrupted DATA. casa-rs's simulator writes DATA only (plan decision 6), and
 after `openfromms` it creates neither column: it keeps those MAIN already
 has in step with DATA as CASA does, and leaves a MeasurementSet without
 them without them.
+
+## `tsys-manual` noise takes stale or borrowed system temperatures
+
+- Date noted: 2026-10-24
+- Status: CASA bugs; casa-rs does not follow them (#841 Phase 3)
+- Affected code: `synthesis/MeasurementComponents/CalCorruptor.cc`
+  (`AtmosCorruptor::setCurrTime` and `simPar`),
+  `synthesis/MeasurementComponents/SolvableVisCal.cc` (`setSimulate`) and
+  `synthesis/MeasurementComponents/Jones.cc` (`JonesScal::invert`,
+  `setMatByOk`)
+
+`setnoise(mode='tsys-manual')` adds a unit-amplitude `ANoise` term and a `T`
+term flagged `NoiseScale`, whose inverse scales the noise:
+σ_ij = c a / sqrt(Δν t) · sqrt(Tsys(A_i) Tsys(A_j)) / (D_i D_j)
+(`casa_simulation`'s `corrupt::tsys` has the whole formula). CASA computes
+the `T` table when `setnoise` is called, one solution per integration and
+spectral window, and applies it at `corrupt` by the nearest time. Measured
+on CASA 6.7.6 (the probe scripts and their results are on the NAS under
+`casa-rs/issue-841-tsys-3a/probes`; seven antennas of 12 m and 7 m, per-row
+variances over 32 to 128 channels):
+the formula holds to 4·10⁻⁴ (cross 0.99999 ± 0.00036, autocorrelations
+1.0003 ± 0.0009, 12+12, 12+7 and 7+7 m pairs alike, and to 6·10⁻⁴ with every
+parameter away from its default), but four inputs are not the row's own:
+
+- **The airmass is up to 100 s stale.** `simPar` caches each antenna's
+  airmass and `setCurrTime` recomputes it only when the solution time has
+  moved more than 100 s since (the comment's intent is a 1 % tolerance at
+  elevations above 5°). At 10 to 14° elevation with τ₀ = 1 and 2 s
+  integrations, CASA's per-integration variance against the formula at the
+  integration's own time rises in a sawtooth with a 102 s period from 1.01
+  to 1.56, 1.176 ± 0.0014 on average. The cache is not reset at a field
+  change either.
+- **Rows observed after `setnoise` take another integration's solution.**
+  The table holds only the integrations observed by then; a scan observed
+  later is scaled by the nearest one. A scan at 51.6° elevation observed
+  after `setnoise` got the noise of the earlier scan's last integration at
+  72.7°: 0.666 ± 0.002 of its own variance (τ₀ = 0.5).
+- **Every row takes the first row's EXPOSURE** (`exposure()(0)`): after
+  `settimes` changed the integration time from 10 s to 2 s, the 2 s scan's
+  variance was 0.1999 of its own, 0.9994 of the first row's.
+- **An antenna without an unflagged row applies as 1.** `setSimulate` skips
+  fully flagged rows, so a shadowed or low antenna gets no solution;
+  `JonesScal::invert` marks it bad and `setMatByOk` applies it as 1. Its
+  rows get the unit noise times the other antenna's scale (variance 1.0006
+  of 1 Jy² when both are bad, 1.009 of s_j² when one is).
+
+casa-rs computes each row's σ from its own integration: each antenna's
+airmass at the phase centre at the row's TIME, the row's EXPOSURE, its
+window and dishes, whatever the flags and whenever the row was observed.
+The CASA comparison scenarios (`tools/simulation/sm_noise_scenarios.json`)
+observe above 40° elevation with one integration time and no flagged rows,
+where the stale airmass moves Tsys by under 0.1 %. casa-rs keeps CASA's
+rule for a `T` that is not finite and positive (Tsys overflowing single
+precision below the horizon, airmass 1000): that antenna scales by 1.
+
+## A `tsys-manual` term scales every noise term
+
+- Date noted: 2026-10-24
+- Status: CASA bug; casa-rs does not follow it (#841 Phase 3)
+- Affected code: `synthesis/MeasurementEquations/VisEquation.cc`
+  (`collapseForSim`)
+
+`collapseForSim` first adds every `ANoise` term's noise to DATA, then
+applies every `NoiseScale` `T` term to DATA, in correct mode. So each
+`tsys-manual` term's scale multiplies the noise of every term, its own
+and the others'. Measured on CASA 6.7.6: two `tsys-manual` terms of one
+seed gave variance 4 σ⁴ (1.004 of it) rather than 4 σ², in Jy⁴, and a
+0.5 Jy `simplenoise` term with a `tsys-manual` term gave (0.25 + 1) σ²
+(0.998 of it) rather than 0.25 + σ²: the 0.5 Jy noise came out scaled by
+the system temperature. casa-rs adds each term's noise with its own σ, as
+`simplenoise` terms add, so `simplenoise`'s σ stays in Jy whatever else is
+set; terms of one seed still add coherently. `simobserve` sets one noise
+term and never reaches this.
+
+## A refused `tsys-manual` `setnoise` leaves a unit noise term
+
+- Date noted: 2026-10-24
+- Status: CASA bug; casa-rs does not follow it (#841 Phase 3)
+- Affected code: `synthesis/MeasurementEquations/Simulator.cc` (`setnoise`)
+
+`setnoise` creates the unit-amplitude `ANoise` term before it checks the
+Tsys parameters. A water vapour above 100 mm, or a zenith Tsys that is not
+positive or above 10⁶ K, then makes it return `False`, but the `ANoise` stays:
+the next `corrupt` adds 1 Jy of noise (CASA 6.7.6, `pwv='200mm'`: variance
+0.872 over cross- and autocorrelations, where 1 Jy gives 0.875). casa-rs
+refuses such a `setnoise` without adding a term.
