@@ -828,8 +828,9 @@ extend it; a session reads them when it starts.</p>
     the owner's <code>~/.ssh/authorized_keys</code> on the mini, base64-encoded onto one
     line (<code>base64 -i KEY | tr -d '\n'</code> on macOS). <code>CASA_RS_MAC_USER</code> overrides
     the login name (default <code>brianglendenning</code>).</li>
-<li>Copies live in <code>~/ext/casa-rs-cloud/src/&lt;branch&gt;/</code> on the mini (or
-    <code>~/casa-rs-cloud/</code> without <code>~/ext</code>) and share one <code>target/</code> beside <code>src/</code>.
+<li>Copies live in <code>~/ext/SoftwareProjects/casa-rs-cloud/src/&lt;branch&gt;/</code> on
+    the mini (the top of the <code>~/ext</code> volume is owned by root) and share one
+    <code>target/</code> beside <code>src/</code>; <code>CASA_RS_MAC_ROOT</code> overrides the location.
     Remove a branch's copy with <code>scripts/mac-run.sh --clean</code> once its work is
     merged or pushed.</li>
 <li>Commands run in a login shell, which reads <code>~/.zprofile</code> and <code>~/.zshenv</code>
