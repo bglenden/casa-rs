@@ -735,8 +735,8 @@ def test_setgain_and_setleakage_follow_casa(
     # The fbm gains' table, written at close: a G Jones row for each of the
     # 6 integrations and 4 antennas.
     table = Table.open(tmp_path / "g.cal")
-    assert table.keywords()["VisCal"] == "G Jones"
-    assert table.row_count() == 6 * 4
+    assert table.keywords["VisCal"] == "G Jones"
+    assert table.row_count == 6 * 4
     sm = simulator()
     sm.open(str(tmp_path / "plain.ms"))
     configure(sm)
