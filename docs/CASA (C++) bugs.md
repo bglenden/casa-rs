@@ -11,7 +11,8 @@ CASA behaviours casa-rs follows for parity:
 [multi-term weight normalization](#the-multi-term-weight-normalization-override-is-never-called),
 [the Airy beam's blockage term](#the-airy-beams-blockage-term-uses-the-inverse-length-ratio),
 [the EVLA's 11052 MHz fit](#the-evlas-beam-table-has-no-11052-mhz-fit),
-[the simulator's and tclean's two mosaic machines](#the-simulators-mosaic-machine-is-not-tcleans).
+[the simulator's and tclean's two mosaic machines](#the-simulators-mosaic-machine-is-not-tcleans),
+[a moved pointing phased and beamed on its field](#smpredict-phases-and-beams-a-moved-observemany-pointing-on-its-field).
 CASA behaviours casa-rs does not follow:
 [odd-size scale convolutions](#multiscale-and-multi-term-scale-convolutions-shift-by-a-pixel-on-odd-image-sizes),
 [MatrixCleaner's step residual](#matrixcleaners-step-residual-forgets-earlier-steps),
@@ -37,7 +38,6 @@ Simulator behaviours casa-rs does not follow:
 [W projection without planes](#smpredict-through-wprojectft-without-planes-crashes-the-simulator),
 [total power in cross-correlations](#sdgrid-predicts-total-power-into-cross-correlations-with-no-positive-uvw),
 [`close` after a mosaic predict](#smclose-aborts-the-process-after-a-mosaic-predict),
-[a moved pointing phased on its field](#smpredict-phases-a-moved-observemany-pointing-on-its-field),
 [scratch columns added at `predict` and `corrupt`](#predict-and-corrupt-add-scratch-columns-to-a-measurementset-without-them).
 Measures behaviours casa-rs follows for parity:
 [IAU 1980 sidereal time and obliquities under IAU 2000](#iau-2000-keeps-the-iau-1980-sidereal-time-and-ecliptic-obliquities).
@@ -1046,34 +1046,57 @@ flips the fine offset of a sample near a rounding boundary; with the
 mosaic's ten offsets a cell, such a sample moved by up to 10% (#841: 33 of
 4,752 rows, until the simulator took `girarUVW` too).
 
-## `sm.predict` phases a moved `observemany` pointing on its field
+## `sm.predict` phases and beams a moved `observemany` pointing on its field
 
 - Date noted: 2026-10-23
-- Status: CASA bug; casa-rs's own session does not follow it (#861), and
-  after `openfromms` casa-rs predicts as CASA does (#841 Phase 2)
+- Status: CASA behaviour casa-rs follows for parity (#884, which corrected
+  the session's own phasing of #861 and component beam of #872)
 - Affected code: casacore `ms/MSOper/NewMSSimulator.cc` (`observe`, the
   vector form `observemany` calls) and `msvis/MSVis/VisBuffer.cc`
   (`phaseCenter`, from FIELD)
 
-A pointing `observemany` gives a direction keeps its field's FIELD row:
-`NewMSSimulator` computes its UVW at the direction and writes that direction
-to POINTING, but leaves FIELD as it was. `predict` reads the MeasurementSet
-through a `VisBuffer`, whose phase centre is FIELD's PHASE_DIR, so it
-phases the pointing on the field while its UVW belong to the moved
-direction. Measured on CASA 6.7.6 (twelve ALMA antennas, a second pointing
-moved 10.4″ east): a 1 Jy point at the field's direction predicts 1 Jy at
-zero phase in both pointings, and one at the moved direction predicts
-phases spread over ±180° (rms 101°) in the pointing centred on it.
+A pointing `observemany` gives a direction keeps its field's FIELD row.
+`NewMSSimulator` computes its UVW and elevation at the direction and writes
+that direction to POINTING, but leaves FIELD as it was. `predict` reads the
+MeasurementSet through a `VisBuffer`, whose phase centre is FIELD's
+PHASE_DIR, so it phases the pointing on the field while its UVW belong to
+the moved direction. It centres the primary beam on the field too, for a
+component list and for a model image, although POINTING says the antennas
+point elsewhere. Measured on CASA 6.7.6 (ALMA, a second pointing moved
+10.4″ east):
+- a 1 Jy point at the field's direction predicts 1 Jy at zero phase in both
+  pointings, and one at the moved direction predicts phases spread over
+  ±180° (rms 101°) in the pointing centred on it;
+- under the beam, a point at the moved direction keeps 0.652 of the beam's
+  peak in both pointings, as if neither had moved.
 
-casa-rs's session phases a moved pointing on its direction, where its UVW
-are (#861), so a model predicted there is the sky that pointing sees. A
-MeasurementSet records only FIELD as the phase centre, and POINTING may
-point elsewhere for other reasons (tracking errors, offset pointings), so
-after `openfromms` casa-rs phases every scan on its FIELD's PHASE_DIR as
-CASA does: the `openfromms-moved-pointing-*` scenarios agree with CASA to
-0 and 7e-11 normalized RMS (`tools/simulation/sm_openfromms_scenarios.json`).
-Whether the session should phase as CASA does, or keep its correction, is
-#884.
+casa-rs follows both. A moved pointing's UVW, elevation limit and POINTING
+are at the moved direction (`Scan::pointing_rad`), and its DATA is phased,
+and its beam centred, on its field (`Scan::phase_center_rad`). Total power
+samples where POINTING points (#874), as CASA's `SDGrid` does. The mosaic
+machine refuses a moved pointing, since where CASA's kernels point there has
+not been measured.
+
+The phasing is what every imager and calibrator reading the MeasurementSet
+assumes: FIELD is the only phase centre it records, so DATA phased on the
+moved direction would image shifted by the offset. The UVW at the moved
+direction are CASA's inconsistency. They distort the geometry only at second
+order, in the offset times a source's distance from the phase centre. The
+beam centred on the field ignores where the antennas point. casa-rs keeps
+CASA's beam for parity, so a moved pointing predicts as CASA's does.
+
+Evidence: the moved-pointing scenarios of
+`tools/simulation/sm_components_scenarios.json` agree with CASA on the CPU
+and on Metal:
+
+| scenario | DATA NRMS |
+|---|---:|
+| an image and a component list | 8.36e-6 |
+| a point at the moved direction under the beam | 1.11e-4 |
+| an image under the beam | 8.79e-6 |
+
+So do the `openfromms-moved-pointing-*` scenarios of
+`sm_openfromms_scenarios.json` (0 and 7e-11).
 
 ## `predict` and `corrupt` add scratch columns to a MeasurementSet without them
 
