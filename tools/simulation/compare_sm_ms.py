@@ -60,12 +60,19 @@ oracle's manifest, the comparison opens `<casa>/<name>.ms` and
     is checked against what CASA's corruptors simulate, from its quotient
     or difference with its noise-free `twin` (`corruption_stats.py`
     says how).
+  - `troposphere` (`sm.settrop`, then `corrupt`; Phase 4d): the draws and
+    the delay models differ (CASA's dispersive wet delay half a band below
+    each channel, casa-rs's whole wet delay at CHAN_FREQ), so each
+    implementation's `Tf Jones` table is checked against its own model
+    through casatools' `at` tool, and its DATA over the twin against its
+    table (`troposphere_stats.py` says how).
 
   A NaN or infinite DATA or noise sample fails a `model`, `noisy`, `gains`
   or `leakage` scenario, as does a statistic that is not a number (#853
   review).
-- **calibration tables**: a scenario's `tables`, written by `setgain` or
-  `setleakage` beside each side's MS, must agree in what is not drawn
+- **calibration tables**: a scenario's `tables`, written by `setgain`,
+  `setleakage` or `settrop` beside each side's MS, must agree in what is
+  not drawn
   (`table_differences`): keywords and subtype, columns, rows, TIME,
   the identifying columns, CPARAM's shapes and FLAG, and the
   SPECTRAL_WINDOW subtable's channels.
@@ -89,6 +96,15 @@ import sys
 import numpy as np
 
 from corruption_stats import gain_statistics, leakage_statistics, structure_failures
+from troposphere_stats import (
+    MODEL_TOLERANCE,
+    at_tool_wet_delays,
+    data_failures,
+    excess_from_table,
+    excess_statistics,
+    rms_failures,
+    slot_of,
+)
 
 # What a `gains` scenario checks: on casa-rs always, on CASA unless the
 # scenario's `casa_gain_checks` says otherwise.
@@ -896,8 +912,122 @@ def compare_corrupted_data(paths: dict, scenario: dict) -> tuple[dict, list[str]
     return stats, failures
 
 
+def windows_of(tb, path: str) -> tuple[dict, np.ndarray]:
+    """Each spectral window's CHAN_FREQ, REF_FREQUENCY and TOTAL_BANDWIDTH
+    (as `atm_frequencies` reads them), and each data description's window."""
+    tb.open(os.path.join(path, "SPECTRAL_WINDOW"))
+    try:
+        windows = {
+            "chan_freq": [np.asarray(tb.getcell("CHAN_FREQ", row)) for row in range(tb.nrows())],
+            "ref_freq": np.asarray(tb.getcol("REF_FREQUENCY")),
+            "total_bandwidth": np.asarray(tb.getcol("TOTAL_BANDWIDTH")),
+        }
+    finally:
+        tb.close()
+    tb.open(os.path.join(path, "DATA_DESCRIPTION"))
+    try:
+        spw_of_ddid = np.asarray(tb.getcol("SPECTRAL_WINDOW_ID"))
+    finally:
+        tb.close()
+    return windows, spw_of_ddid
+
+
+def tf_table(tb, path: str) -> dict:
+    """A `Tf Jones` table's TIME, SPECTRAL_WINDOW_ID and ANTENNA1, and each
+    row's CPARAM (one parameter, `[row, channel]`, by window)."""
+    tb.open(path)
+    try:
+        rows = tb.nrows()
+        found = {
+            "time": np.asarray(tb.getcol("TIME")),
+            "spw": np.asarray(tb.getcol("SPECTRAL_WINDOW_ID")),
+            "antenna": np.asarray(tb.getcol("ANTENNA1")),
+            "cparam": [np.asarray(tb.getcell("CPARAM", row))[0] for row in range(rows)],
+        }
+    finally:
+        tb.close()
+    return found
+
+
+def compare_troposphere(paths: dict, scenario: dict) -> tuple[dict, list[str]]:
+    """`settrop` of both implementations, each against its own model: its
+    table's phases and its DATA over its twin (`troposphere_stats.py`)."""
+    from casatools import table
+
+    tb = table()
+    # The manifest's call, its arguments as resolved (the defaults are
+    # `settrop`'s).
+    call = next(call for call in scenario["calls"] if call["op"] == "settrop")["resolved"]
+    pwv = float(call.get("pwv", 3.0))
+    delta_pwv = min(float(call.get("deltapwv", 0.15)), 1.0)
+    name = scenario["tables"][0]
+    stats, failures = {}, []
+    for side, mapping in (("casa", "casa"), ("casa-rs", "channel")):
+        solutions = tf_table(tb, os.path.join(os.path.dirname(paths[side]), name))
+        windows, spw_of_ddid = windows_of(tb, paths[side])
+        excess = np.full(solutions["time"].size, np.nan)
+        spread = np.zeros_like(excess)
+        # Under the other side's model, which the check must tell apart.
+        other_spread = np.zeros_like(excess)
+        for spw in np.unique(solutions["spw"]):
+            rows = np.flatnonzero(solutions["spw"] == spw)
+            phases = np.angle(np.array([solutions["cparam"][row] for row in rows]))
+            models = {}
+            for model_mapping in ("casa", "channel"):
+                frequencies = atm_frequencies(windows, int(spw), model_mapping)
+                if frequencies is not None:
+                    dispersive, continuum = at_tool_wet_delays(pwv, frequencies)
+                    models[model_mapping] = dispersive if model_mapping == "casa" else dispersive + continuum
+            if mapping not in models:
+                continue
+            excess[rows], spread[rows] = excess_from_table(phases, models[mapping])
+            other = "channel" if mapping == "casa" else "casa"
+            if other in models:
+                other_spread[rows] = excess_from_table(phases, models[other])[1]
+        side_failures = non_finite("excess", excess)
+        if np.max(spread) > MODEL_TOLERANCE:
+            side_failures.append(f"model: the excess spreads {np.max(spread):.3g} across a row's channels")
+        # DATA over the twin's parallel hands against g_p·conj(g_q).
+        corrupted = main_columns(tb, paths[side])
+        twin = main_columns(tb, paths[side + "-twin"])
+        gains = {
+            (time, spw, antenna): values
+            for time, spw, antenna, values in zip(
+                solutions["time"], solutions["spw"], solutions["antenna"], solutions["cparam"]
+            )
+        }
+        cross = ~corrupted["auto"]
+        expected = np.array(
+            [
+                gains[(t, spw_of_ddid[d], p)] * np.conj(gains[(t, spw_of_ddid[d], q)])
+                for t, d, p, q in zip(
+                    corrupted["time"][cross],
+                    corrupted["data_desc"][cross],
+                    corrupted["antenna1"][cross],
+                    corrupted["antenna2"][cross],
+                )
+            ]
+        )
+        parallel = [0, corrupted["data"].shape[1] - 1]
+        ratio = corrupted["data"][cross][:, parallel, :] / twin["data"][cross][:, parallel, :]
+        worst, data_failed = data_failures(ratio, np.repeat(expected[:, None, :], 2, axis=1))
+        side_failures += data_failed
+        statistics = excess_statistics(excess, solutions["antenna"], slot_of(solutions["time"]))
+        if side == "casa-rs" and call.get("mode", "screen") == "individual":
+            side_failures += rms_failures(statistics, delta_pwv)
+        stats[side] = {
+            "model_spread": float(np.max(spread)),
+            "other_model_spread": float(np.median(other_spread)),
+            "data_worst": worst,
+            "excess": statistics,
+        }
+        failures += [f"{side} troposphere: {failure}" for failure in side_failures]
+    return stats, failures
+
+
 def compare_data(tb, scenario: dict, paths: dict, limit: float) -> tuple[dict, list[str]]:
-    """DATA by the scenario's kind: zero, model, noisy, gains or leakage."""
+    """DATA by the scenario's kind: zero, model, noisy, gains, leakage or
+    troposphere."""
     kind = scenario.get("data") or "zero"
     if kind == "zero":
         failures = []
@@ -920,6 +1050,9 @@ def compare_data(tb, scenario: dict, paths: dict, limit: float) -> tuple[dict, l
         return dict(stats, kind=kind), failures
     if kind in ("gains", "leakage"):
         stats, failures = compare_corrupted_data(paths, scenario)
+        return dict(stats, kind=kind), failures
+    if kind == "troposphere":
+        stats, failures = compare_troposphere(paths, scenario)
         return dict(stats, kind=kind), failures
     return {"kind": kind}, [f"unknown data kind {kind!r}"]
 
@@ -1160,6 +1293,17 @@ def describe_data(data: dict) -> str:
             f"{data[side][key]['square_scale']:.3f}" for key in ("XY_re", "XY_im", "YX_re", "YX_im")
         )
         return f"; leakage XY/YX re/im mean-square scale CASA [{squares('casa')}], casa-rs [{squares('casa-rs')}]"
+    if kind == "troposphere" and "casa" in data and "casa-rs" in data:
+
+        def side(name: str) -> str:
+            found = data[name]
+            rms = [entry["rms"] for entry in found["excess"].values()]
+            return (
+                f"model spread {found['model_spread']:.1e} (the other's {found['other_model_spread']:.2g}),"
+                f" DATA against table {found['data_worst']:.1e}, excess rms {min(rms):.4g}-{max(rms):.4g}"
+            )
+
+        return f"; troposphere CASA [{side('casa')}], casa-rs [{side('casa-rs')}]"
     return ""
 
 

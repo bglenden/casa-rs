@@ -44,11 +44,9 @@ IMPLEMENTED = {
     "open", "openfromms", "close", "done", "name", "type", "summary", "setconfig",
     "setfeed", "setspwindow", "setfield", "setmosaicfield", "settimes", "setlimits",
     "setauto", "observe", "observemany", "setdata", "setseed", "setnoise", "corrupt",
-    "reset", "predict", "setoptions", "setvp", "setgain", "setleakage", "setapply",
+    "reset", "predict", "setoptions", "setvp", "setgain", "setleakage", "setapply", "settrop",
 }
-NOT_YET_IMPLEMENTED = {
-    "settrop",
-}
+NOT_YET_IMPLEMENTED: set[str] = set()
 DISABLED_IN_CASA = {"setbandpass", "setpa", "setpointingerror"}
 
 
@@ -810,6 +808,37 @@ def test_setgain_and_setleakage_follow_casa(
     assert sm.setleakage(amplitude=[0.05], offset=[0.01]) is True
     with pytest.raises(RuntimeError, match="JonesGenLin"):
         sm.corrupt()
+
+
+@needs_measures
+def test_settrop_follows_casa(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    sm = opened(tmp_path)
+    configure(sm)
+    assert sm.observe("F", "L", starttime="0s", stoptime="60s")
+    with caplog.at_level(logging.ERROR, logger=LOGGER):
+        assert sm.settrop(mode="1d") is False
+    assert caplog.messages[-1] == "Caught exception: unsupported mode 1d in settrop()"
+    with caplog.at_level(logging.ERROR, logger=LOGGER):
+        assert sm.settrop(mode="individual", pwv=0.0) is False
+    assert "undefined PWV" in caplog.messages[-1]
+    with caplog.at_level(logging.ERROR, logger=LOGGER):
+        assert sm.settrop(mode="individual", simint=120.0) is False
+    assert "setEvenSlots" in caplog.messages[-1]
+    with pytest.raises(NotImplementedError, match="debugging ramp"):
+        sm.settrop(mode="test")
+    assert sm.settrop(mode="individual", table=str(tmp_path / "t.cal"), pwv=1.0) is True
+    assert sm.settrop(pwv=1.0, deltapwv=0.01) is True
+    assert sm.corrupt() is True
+    sm.close()
+    # The individual term's table, written at close: a Tf Jones row for each
+    # of the 6 integrations and 4 antennas, phase only, a value a channel.
+    table = Table.open(tmp_path / "t.cal")
+    assert table.keywords["VisCal"] == "Tf Jones"
+    assert table.row_count == 6 * 4
+    cparam = np.asarray(table.get_column("CPARAM"))
+    assert cparam.size == 6 * 4 * 4
+    assert np.allclose(np.abs(cparam), 1.0, atol=1e-6)
+    assert np.any(np.angle(cparam) != 0)
 
 
 @needs_measures

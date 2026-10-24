@@ -32,8 +32,9 @@
 //!    for a water column, airmass, sky coupling and spillover.
 //!
 //! The simulator's `tsys-atm` noise needs the dry and wet opacity and the
-//! sky brightness; its tropospheric phase screens (`settrop`) need the
-//! dispersive wet phase delay per unit water column.
+//! sky brightness; its tropospheric phase screens (`settrop`) need the wet
+//! phase delay per unit water column, dispersive and non-dispersive (CASA's
+//! takes the dispersive part alone, `docs/CASA (C++) bugs.md`).
 //!
 //! # Agreement with the C++
 //!

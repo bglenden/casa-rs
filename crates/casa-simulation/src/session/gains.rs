@@ -17,7 +17,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use casa_calibration::{
-    SimulatedJones, SimulatedSolution, check_simulated_table_destination, simulated_table_bytes,
+    SimulatedJones, check_simulated_table_destination, simulated_table_bytes,
     write_simulated_jones_table,
 };
 use casa_imaging_runtime::{Demand, Reservation, admit};
@@ -188,7 +188,7 @@ impl Simulator {
     /// `close` writes when it names one. CASA writes the table at once;
     /// casa-rs writes it at `close`, beside the MeasurementSet whose
     /// subtables it copies. `reset` does not remove it.
-    fn hold_term(
+    pub(super) fn hold_term(
         &mut self,
         term: JonesTerm,
         (mut reservation, bytes): (Reservation, TermBytes),
@@ -215,9 +215,9 @@ impl Simulator {
         Ok(())
     }
 
-    /// Write the calibration tables `setgain` and `setleakage` named, from
-    /// the MeasurementSet `close` wrote: one row per solution and antenna,
-    /// by spectral window, time and antenna, as CASA's
+    /// Write the calibration tables `setgain`, `setleakage` and `settrop`
+    /// named, from the MeasurementSet `close` wrote: one row per solution
+    /// and antenna, by spectral window, time and antenna, as CASA's
     /// `NewCalTable::writeToDisk` sorts them.
     ///
     /// The terms hold their own admission; a table is built in memory and
@@ -225,10 +225,10 @@ impl Simulator {
     /// before any is written, and each row is formed from its term as it
     /// is added (#891 review).
     pub(super) fn write_jones_tables(&self) -> SimulatorResult<()> {
-        let Some(rows) = self
+        let Some(memory) = self
             .jones_tables
             .iter()
-            .map(|(_, term)| term.table_rows())
+            .map(|(_, term)| simulated_table_bytes(term.table_rows(), term.table_values()))
             .max()
         else {
             return Ok(());
@@ -239,7 +239,7 @@ impl Simulator {
             resources.policy(),
             &Demand {
                 phase: JONES_TABLE_PHASE,
-                memory: simulated_table_bytes(rows),
+                memory,
             },
         )
         .map_err(SimulatorError::admission)?;
@@ -250,25 +250,16 @@ impl Simulator {
             let kind = match term.kind {
                 JonesKind::Gain => SimulatedJones::Gain,
                 JonesKind::Leakage => SimulatedJones::Leakage,
+                JonesKind::Troposphere => SimulatedJones::Troposphere,
             };
-            let rows = term.solutions().flat_map(|(window, solution, values)| {
-                values
-                    .iter()
-                    .enumerate()
-                    .map(move |(antenna, &receptors)| SimulatedSolution {
-                        time_s: solution.time_s,
-                        field_id: solution.field as i32,
-                        spectral_window_id: window as i32,
-                        antenna: antenna as i32,
-                        receptors,
-                    })
-            });
-            write_simulated_jones_table(&ms, path, kind, rows).map_err(|error| {
-                SimulatorError::raised(format!(
-                    "write the calibration table {}: {error}",
-                    path.display()
-                ))
-            })?;
+            write_simulated_jones_table(&ms, path, kind, term.table_solutions()).map_err(
+                |error| {
+                    SimulatorError::raised(format!(
+                        "write the calibration table {}: {error}",
+                        path.display()
+                    ))
+                },
+            )?;
         }
         Ok(())
     }
@@ -276,7 +267,7 @@ impl Simulator {
     /// `table` as the absolute path `close` writes it to, or `None` for
     /// none; refused when it is, lies inside or contains the session's
     /// MeasurementSet, which writing it would replace.
-    fn table_path(&self, table: &str) -> SimulatorResult<Option<PathBuf>> {
+    pub(super) fn table_path(&self, table: &str) -> SimulatorResult<Option<PathBuf>> {
         if table.is_empty() {
             return Ok(None);
         }
@@ -330,7 +321,7 @@ impl Simulator {
     /// The solution chunks of a gain term: one per integration of each scan
     /// observed so far, at its TIME, in its spectral window and field,
     /// counted `per_window` ([`Self::integration_counts`]).
-    fn integration_chunks(&self, per_window: &[usize]) -> Chunks {
+    pub(super) fn integration_chunks(&self, per_window: &[usize]) -> Chunks {
         let mut chunks = Chunks::with_capacity(per_window);
         for (index, scan) in self.scans.iter().enumerate() {
             for time_s in self.integration_times_s(index) {

@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Methods casa-rs does not implement yet, and those CASA itself disables or
-//! deprecates.
+//! Methods CASA itself disables or deprecates.
 
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
@@ -11,11 +10,6 @@ use crate::tools::{LogLine, emit};
 /// CASA's message for the corruption methods it disabled in 2020.
 const DISABLED: &str =
     "Caught exception: Corruption by simulated errors temporarily disabled (06Nov20 gmoellen)";
-
-/// A method a later simulation phase implements (#841).
-pub(super) fn not_yet_implemented(method: &str) -> PyResult<bool> {
-    crate::tools::not_yet_implemented("simulator", method)
-}
 
 /// `setbandpass`, `setpa` and `setpointingerror`, which CASA disables: after
 /// `open` they log CASA's error and return `False`; before it, `False`.

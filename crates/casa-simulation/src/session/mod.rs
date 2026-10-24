@@ -48,6 +48,7 @@ mod single_dish;
 pub mod spectral;
 #[cfg(test)]
 mod tests;
+mod troposphere;
 mod tsys_atm;
 
 pub use apply::ApplySpec;
@@ -55,6 +56,7 @@ pub use corruption::{AtmosphereSpec, DEFAULT_SEED, NoiseSpec, TsysParameters};
 pub use gains::{GainSpec, LeakageSpec};
 pub use prediction::{PredictSpec, PredictionOptions, VoltagePatternSpec};
 pub use resources::{BackendRequest, ExecutionControls, SessionResources, UnknownBackend};
+pub use troposphere::TroposphereSpec;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

@@ -331,9 +331,9 @@ impl Simulator {
                 }
                 if !term.covers(scan.spectral_window_id) {
                     return Err(SimulatorError::not_yet_implemented(format!(
-                        "corrupt of spectral window {}, observed after a setgain or setleakage \
-                         term was set, is not yet implemented in casa-rs (simulation Phase 3): \
-                         CASA leaves it uncorrupted",
+                        "corrupt of spectral window {}, observed after a setgain, setleakage or \
+                         settrop term was set, is not yet implemented in casa-rs (simulation \
+                         Phases 3 and 4): CASA leaves it uncorrupted",
                         window.name
                     )));
                 }

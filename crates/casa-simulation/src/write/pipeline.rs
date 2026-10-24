@@ -12,14 +12,17 @@
 //!    the rows of scans a `predict` covers are predicted into it, in blocks
 //!    on the team ([`super::prediction`]); then the visibilities of the
 //!    component lists covering them are added ([`super::components`]).
-//! 3. **Cells and columns.** For `tsys-atm` noise, each antenna's scales
-//!    for each integration the batch reaches are worked out first, on the
-//!    team ([`batch_scales`]). Then, on the team at once:
-//!    - each scan's noise is added to its rows, a run of rows per job: a
-//!      draw depends only on the term, the MAIN row, the channel and the
-//!      correlation ([`crate::corrupt`]), and its σ on the term and, for
-//!      the Tsys modes, the row's window, dishes, airmasses and exposure
-//!      (for `tsys-atm`, through those scales, and per channel);
+//! 3. **Cells and columns.** For `tsys-atm` noise, each antenna's scales,
+//!    and for a `settrop` term, each antenna's phasors, for each
+//!    integration the batch reaches are worked out first, on the team
+//!    ([`batch_scales`]). Then, on the team at once:
+//!    - each scan's gains, leakage and troposphere are applied to its rows
+//!      (the troposphere through those phasors) and its noise added, a run
+//!      of rows per job: a draw depends only on the term, the MAIN row, the
+//!      channel and the correlation ([`crate::corrupt`]), and its σ on the
+//!      term and, for the Tsys modes, the row's window, dishes, airmasses
+//!      and exposure (for `tsys-atm`, through those scales, and per
+//!      channel);
 //!    - one job copies FLAG_ROW, UVW, WEIGHT and SIGMA from the geometry and
 //!      pushes the scalar columns of the integrations computed for the
 //!      batch, in MAIN order.
@@ -556,6 +559,15 @@ pub(super) fn batch_scales(
                 .map(|row| row.noise(context.antennas));
             application.add_scales(&window, rows, &mut scales);
         }
+        let window_id = context.scans[scan].spectral_window_id;
+        for (_, jones) in plan.corruptions_for_scan(scan) {
+            for term in jones {
+                let rows = rows[start..start + count]
+                    .iter()
+                    .map(|row| (row.time_s, row.antenna1, row.antenna2));
+                scales.add_phase_rows((term, window_id), rows);
+            }
+        }
     }
     if scales.is_empty() {
         return Ok(BatchScales::default());
@@ -614,7 +626,7 @@ impl NoiseJob<'_> {
                     term.apply(
                         (corruption.window, row.time_s),
                         (row.antenna1, row.antenna2),
-                        corruption.receptors,
+                        (corruption.receptors, self.scales),
                         cell,
                     );
                 }

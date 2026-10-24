@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 use casa_calibration::{
     ApplyInterpolationMode, CalibrationTableLookup, SimulatedJones, SimulatedSolution,
-    write_simulated_jones_table,
+    SolutionValues, write_simulated_jones_table,
 };
 use casa_simulation::{
     ApplySpec, CasaOutcome, GainSpec, LeakageSpec, PredictSpec, Simulator, SimulatorOptions,
@@ -300,7 +300,7 @@ fn write_gains(ms: &Path, output: &Path, solutions: &[(f64, i32, f32)]) {
             field_id,
             spectral_window_id: 0,
             antenna,
-            receptors: [Complex32::new(gain, 0.0); 2],
+            values: SolutionValues::Receptors([Complex32::new(gain, 0.0); 2]),
         })
     });
     write_simulated_jones_table(&ms, output, SimulatedJones::Gain, rows).expect("write the table");

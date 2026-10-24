@@ -1,0 +1,468 @@
+{
+ "schema_version": 1,
+ "purpose": "simulation Phase 4d (#841): sm.settrop then sm.corrupt, run by CASA and by casa-rs",
+ "notes": [
+  "Each scenario predicts a 1 Jy point at the phase centre, so its noise-free twin's parallel hands are 1: DATA over the twin is each row's g_p(c) conj(g_q(c)), which compare_sm_ms.py checks against the scenario's Tf Jones table, channel by channel, on each side.",
+  "CASA's phase in channel c is the fractional water-vapour excess delta times ATM's dispersive wet phase delay on its grid half a band below the channel; casa-rs's is delta times the whole wet phase delay at CHAN_FREQ (docs/CASA (C++) bugs.md). compare_sm_ms.py recovers delta from each side's table through its own model, with the delays casatools' at tool gives, and checks that it is one value per solution across the channels; casa-rs's is held to the documented deltapwv, CASA's reported (its series normalise with values read past their transforms).",
+  "1 mm of water vapour fluctuating by 1 % keeps casa-rs's phases well inside half a turn across the 183 GHz line, so the excess is read without unwrapping.",
+  "No autocorrelations: CASA's autocorrelation rows reset their antenna's T to 1, which casa-rs does not follow.",
+  "Two windows of 64 channels: across the 183.31 GHz line (from 180 GHz, 100 MHz) and at 230 GHz (15.625 MHz); casa-rs does not yet write windows of different shapes in one MeasurementSet.",
+  "Seven 12 m antennas in sm_atm_scenarios.json's layout: CASA 6.7.6's sm.predict of a component list segfaults on that layout's mix of 12 m and 7 m dishes, before any settrop."
+ ],
+ "complists": {
+  "point.cl": [
+   {
+    "flux": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "fluxunit": "Jy",
+    "polarization": "Stokes",
+    "dir": [
+     "J2000",
+     "10h00m00.0",
+     "-30d00m00.0"
+    ],
+    "shape": "point",
+    "freq": "230GHz"
+   }
+  ]
+ },
+ "scenarios": [
+  {
+   "name": "trop-individual",
+   "data": "troposphere",
+   "twin": "trop-twin",
+   "tables": [
+    "trop-individual.tcal"
+   ],
+   "config": {
+    "local": {
+     "telescopename": "ALMA",
+     "x": [
+      0.0,
+      120.0,
+      -80.0,
+      300.0,
+      50.0,
+      -200.0,
+      210.0
+     ],
+     "y": [
+      0.0,
+      40.0,
+      150.0,
+      -60.0,
+      -250.0,
+      -90.0,
+      310.0
+     ],
+     "z": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "dishdiameter": [
+      12.0,
+      12.0,
+      12.0,
+      12.0,
+      12.0,
+      12.0,
+      12.0
+     ],
+     "antname": [
+      "A00",
+      "A01",
+      "A02",
+      "A03",
+      "A04",
+      "A05",
+      "A06"
+     ],
+     "padname": [
+      "A00",
+      "A01",
+      "A02",
+      "A03",
+      "A04",
+      "A05",
+      "A06"
+     ],
+     "referencelocation": "ALMA"
+    },
+    "mount": "alt-az"
+   },
+   "calls": [
+    {
+     "op": "setspwindow",
+     "spwname": "water183",
+     "freq": "180GHz",
+     "deltafreq": "100MHz",
+     "freqresolution": "100MHz",
+     "refcode": "TOPO",
+     "nchannels": 64,
+     "stokes": "XX YY"
+    },
+    {
+     "op": "setspwindow",
+     "spwname": "band6",
+     "freq": "230GHz",
+     "deltafreq": "15.625MHz",
+     "freqresolution": "15.625MHz",
+     "refcode": "TOPO",
+     "nchannels": 64,
+     "stokes": "XX YY"
+    },
+    {
+     "op": "setfeed",
+     "mode": "perfect X Y"
+    },
+    {
+     "op": "setauto",
+     "autocorrwt": 0.0
+    },
+    {
+     "op": "settimes",
+     "integrationtime": "2s",
+     "usehourangle": true,
+     "referencetime": [
+      "UTC",
+      "2026/03/21/00:00:00"
+     ]
+    },
+    {
+     "op": "setfield",
+     "sourcename": "target",
+     "sourcedirection": [
+      "J2000",
+      "10h00m00.0",
+      "-30d00m00.0"
+     ]
+    },
+    {
+     "op": "observe",
+     "sourcename": "target",
+     "spwname": "water183",
+     "starttime": "-300s",
+     "stoptime": "0s"
+    },
+    {
+     "op": "observe",
+     "sourcename": "target",
+     "spwname": "band6",
+     "starttime": "0s",
+     "stoptime": "300s"
+    },
+    {
+     "op": "predict",
+     "complist": "point.cl"
+    },
+    {
+     "op": "setseed",
+     "seed": 4242
+    },
+    {
+     "op": "settrop",
+     "mode": "individual",
+     "table": "trop-individual.tcal",
+     "pwv": 1.0,
+     "deltapwv": 0.01,
+     "beta": 1.1,
+     "windspeed": 7.0
+    },
+    {
+     "op": "corrupt"
+    }
+   ]
+  },
+  {
+   "name": "trop-screen",
+   "data": "troposphere",
+   "twin": "trop-twin",
+   "tables": [
+    "trop-screen.tcal"
+   ],
+   "config": {
+    "local": {
+     "telescopename": "ALMA",
+     "x": [
+      0.0,
+      120.0,
+      -80.0,
+      300.0,
+      50.0,
+      -200.0,
+      210.0
+     ],
+     "y": [
+      0.0,
+      40.0,
+      150.0,
+      -60.0,
+      -250.0,
+      -90.0,
+      310.0
+     ],
+     "z": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "dishdiameter": [
+      12.0,
+      12.0,
+      12.0,
+      12.0,
+      12.0,
+      12.0,
+      12.0
+     ],
+     "antname": [
+      "A00",
+      "A01",
+      "A02",
+      "A03",
+      "A04",
+      "A05",
+      "A06"
+     ],
+     "padname": [
+      "A00",
+      "A01",
+      "A02",
+      "A03",
+      "A04",
+      "A05",
+      "A06"
+     ],
+     "referencelocation": "ALMA"
+    },
+    "mount": "alt-az"
+   },
+   "calls": [
+    {
+     "op": "setspwindow",
+     "spwname": "water183",
+     "freq": "180GHz",
+     "deltafreq": "100MHz",
+     "freqresolution": "100MHz",
+     "refcode": "TOPO",
+     "nchannels": 64,
+     "stokes": "XX YY"
+    },
+    {
+     "op": "setspwindow",
+     "spwname": "band6",
+     "freq": "230GHz",
+     "deltafreq": "15.625MHz",
+     "freqresolution": "15.625MHz",
+     "refcode": "TOPO",
+     "nchannels": 64,
+     "stokes": "XX YY"
+    },
+    {
+     "op": "setfeed",
+     "mode": "perfect X Y"
+    },
+    {
+     "op": "setauto",
+     "autocorrwt": 0.0
+    },
+    {
+     "op": "settimes",
+     "integrationtime": "2s",
+     "usehourangle": true,
+     "referencetime": [
+      "UTC",
+      "2026/03/21/00:00:00"
+     ]
+    },
+    {
+     "op": "setfield",
+     "sourcename": "target",
+     "sourcedirection": [
+      "J2000",
+      "10h00m00.0",
+      "-30d00m00.0"
+     ]
+    },
+    {
+     "op": "observe",
+     "sourcename": "target",
+     "spwname": "water183",
+     "starttime": "-300s",
+     "stoptime": "0s"
+    },
+    {
+     "op": "observe",
+     "sourcename": "target",
+     "spwname": "band6",
+     "starttime": "0s",
+     "stoptime": "300s"
+    },
+    {
+     "op": "predict",
+     "complist": "point.cl"
+    },
+    {
+     "op": "setseed",
+     "seed": 4242
+    },
+    {
+     "op": "settrop",
+     "mode": "screen",
+     "table": "trop-screen.tcal",
+     "pwv": 1.0,
+     "deltapwv": 0.01,
+     "beta": 1.1,
+     "windspeed": 7.0
+    },
+    {
+     "op": "corrupt"
+    }
+   ]
+  },
+  {
+   "name": "trop-twin",
+   "data": "model",
+   "config": {
+    "local": {
+     "telescopename": "ALMA",
+     "x": [
+      0.0,
+      120.0,
+      -80.0,
+      300.0,
+      50.0,
+      -200.0,
+      210.0
+     ],
+     "y": [
+      0.0,
+      40.0,
+      150.0,
+      -60.0,
+      -250.0,
+      -90.0,
+      310.0
+     ],
+     "z": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "dishdiameter": [
+      12.0,
+      12.0,
+      12.0,
+      12.0,
+      12.0,
+      12.0,
+      12.0
+     ],
+     "antname": [
+      "A00",
+      "A01",
+      "A02",
+      "A03",
+      "A04",
+      "A05",
+      "A06"
+     ],
+     "padname": [
+      "A00",
+      "A01",
+      "A02",
+      "A03",
+      "A04",
+      "A05",
+      "A06"
+     ],
+     "referencelocation": "ALMA"
+    },
+    "mount": "alt-az"
+   },
+   "calls": [
+    {
+     "op": "setspwindow",
+     "spwname": "water183",
+     "freq": "180GHz",
+     "deltafreq": "100MHz",
+     "freqresolution": "100MHz",
+     "refcode": "TOPO",
+     "nchannels": 64,
+     "stokes": "XX YY"
+    },
+    {
+     "op": "setspwindow",
+     "spwname": "band6",
+     "freq": "230GHz",
+     "deltafreq": "15.625MHz",
+     "freqresolution": "15.625MHz",
+     "refcode": "TOPO",
+     "nchannels": 64,
+     "stokes": "XX YY"
+    },
+    {
+     "op": "setfeed",
+     "mode": "perfect X Y"
+    },
+    {
+     "op": "setauto",
+     "autocorrwt": 0.0
+    },
+    {
+     "op": "settimes",
+     "integrationtime": "2s",
+     "usehourangle": true,
+     "referencetime": [
+      "UTC",
+      "2026/03/21/00:00:00"
+     ]
+    },
+    {
+     "op": "setfield",
+     "sourcename": "target",
+     "sourcedirection": [
+      "J2000",
+      "10h00m00.0",
+      "-30d00m00.0"
+     ]
+    },
+    {
+     "op": "observe",
+     "sourcename": "target",
+     "spwname": "water183",
+     "starttime": "-300s",
+     "stoptime": "0s"
+    },
+    {
+     "op": "observe",
+     "sourcename": "target",
+     "spwname": "band6",
+     "starttime": "0s",
+     "stoptime": "300s"
+    },
+    {
+     "op": "predict",
+     "complist": "point.cl"
+    }
+   ]
+  }
+ ]
+}

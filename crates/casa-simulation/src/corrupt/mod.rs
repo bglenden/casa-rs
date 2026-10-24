@@ -60,6 +60,7 @@ mod batch_scales;
 pub(crate) mod jones;
 #[cfg(test)]
 mod tests;
+pub(crate) mod troposphere;
 pub(crate) mod tsys;
 pub(crate) mod tsys_atm;
 
