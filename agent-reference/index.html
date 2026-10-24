@@ -662,6 +662,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#cloud-sessions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cloud Sessions
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#release-and-installation" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -799,6 +810,41 @@ and replace superseded runs rather than accumulating them.</p>
   <code>target/release/build/casa-fft-*/output</code> link path, or
   <code>nm BIN | grep -c n1fv_</code> for NEON codelets) before comparing timings, and
   link both sides of an A/B against the same FFTW.</li>
+</ul>
+<h2 id="cloud-sessions">Cloud Sessions<a class="headerlink" href="#cloud-sessions" title="Permanent link">&para;</a></h2>
+<p>Claude Code cloud sessions run in a Linux container prepared by
+<code>.claude/hooks/session-start.sh</code>. Variables in the cloud environment's settings
+extend it; a session reads them when it starts.</p>
+<ul>
+<li><code>TS_AUTHKEY</code> joins the session to the owner's tailnet in the background
+  (<code>.claude/hooks/tailscale-up.sh</code>; log in <code>/var/log/tailscale-up.log</code>). Use an
+  ephemeral key. The container has no UDP, so peers are reached through
+  Tailscale's relays: fine for SSH and small files, slow for bulk data.</li>
+<li><code>CASA_RS_MAC_SSH_KEY</code> lets the session work on the Mac mini (<code>bg-mac-mini</code>)
+  as the owner: the macOS-only crates and Metal tests, the CASA oracle, or a
+  second build beside the local one. <code>scripts/mac-run.sh COMMAND</code> mirrors the
+  working tree to the mini and runs COMMAND there (<code>--help</code> for details).</li>
+<li>The value is a private key without a passphrase whose public half is in
+    the owner's <code>~/.ssh/authorized_keys</code> on the mini, base64-encoded onto one
+    line (<code>base64 -i KEY | tr -d '\n'</code> on macOS). <code>CASA_RS_MAC_USER</code> overrides
+    the login name (default <code>brianglendenning</code>).</li>
+<li>Copies live in <code>~/ext/casa-rs-cloud/src/&lt;branch&gt;/</code> on the mini (or
+    <code>~/casa-rs-cloud/</code> without <code>~/ext</code>) and share one <code>target/</code> beside <code>src/</code>.
+    Remove a branch's copy with <code>scripts/mac-run.sh --clean</code> once its work is
+    merged or pushed.</li>
+<li>Commands run in a login shell, which reads <code>~/.zprofile</code> and <code>~/.zshenv</code>
+    but not <code>~/.zshrc</code>; settings the tests need, such as
+    <code>CASA_RS_MEASURESPATH</code>, belong in the former. <code>~/.zshenv</code> must print
+    nothing, or rsync fails with "is your shell clean?". Stopping the script
+    does not stop the command at once; it ends when it next writes output.</li>
+<li>The script uses Homebrew's rsync on the mini when it is installed and the
+    system openrsync otherwise; if openrsync refuses a transfer,
+    <code>brew install rsync</code> there.</li>
+<li>Run work that reads large data on the mini, next to the NAS and
+    GLENDENNING, and bring back only results.</li>
+<li>The NAS is not mounted in cloud sessions: the container's kernel has no SMB
+  support and the NAS needs its own login. Reach its data from the mini.
+  Non-public datasets stay off the cloud container (<code>AGENTS.md</code>).</li>
 </ul>
 <h2 id="release-and-installation">Release And Installation<a class="headerlink" href="#release-and-installation" title="Permanent link">&para;</a></h2>
 <ul>
