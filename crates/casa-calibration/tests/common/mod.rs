@@ -899,7 +899,8 @@ pub fn create_gain_solve_weight_spectrum_fixture_ms(root: &Path) -> PathBuf {
     let ms_path = root.join("gain_solve_weight_spectrum_fixture.ms");
     let builder = MeasurementSetBuilder::new()
         .with_main_column(OptionalMainColumn::Data)
-        .with_main_column(OptionalMainColumn::WeightSpectrum);
+        .with_main_column(OptionalMainColumn::WeightSpectrum)
+        .with_main_column(OptionalMainColumn::SigmaSpectrum);
     let mut ms =
         MeasurementSet::create(&ms_path, builder).expect("create weight-spectrum gain solve MS");
 
@@ -1093,6 +1094,15 @@ fn add_custom_gain_solve_row_with_weight_spectrum(
                 ),
                 "WEIGHT_SPECTRUM" => RecordField::new(
                     "WEIGHT_SPECTRUM",
+                    Value::Array(ArrayValue::Float32(
+                        ArrayD::from_shape_vec(IxDyn(&[2, 2]).f(), vec![1.0, 1.0, 0.0, 0.0])
+                            .unwrap(),
+                    )),
+                ),
+                // CASA's solver weights come from SIGMA_SPECTRUM when both
+                // spectrum columns exist; a zero sigma gives a zero weight.
+                "SIGMA_SPECTRUM" => RecordField::new(
+                    "SIGMA_SPECTRUM",
                     Value::Array(ArrayValue::Float32(
                         ArrayD::from_shape_vec(IxDyn(&[2, 2]).f(), vec![1.0, 1.0, 0.0, 0.0])
                             .unwrap(),

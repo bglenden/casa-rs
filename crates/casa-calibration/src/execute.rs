@@ -379,6 +379,9 @@ pub struct ApplyExecutionTimings {
 pub(crate) struct EvaluatedApplyRow {
     pub(crate) corrected_data: ArrayValue,
     pub(crate) flags: ArrayValue,
+    /// `[correlation, channel]` factors the `calwt` tables scale weights by,
+    /// when any table applies with `calwt`.
+    pub(crate) weight_factors: Option<ArrayD<f32>>,
 }
 
 /// Errors returned while executing an apply plan.
@@ -518,6 +521,7 @@ pub(crate) fn evaluate_apply_rows(
         None
     };
 
+    let any_calwt = plan.calibration_tables.iter().any(|table| table.calwt);
     let mut evaluated_rows = HashMap::new();
     let mut main_rows = ms
         .main_table()
@@ -559,6 +563,10 @@ pub(crate) fn evaluate_apply_rows(
                 source: MsError::from(source),
             }
         })?;
+        // Unit weights through the calwt update leave its factors.
+        let unit_weight = any_calwt.then(|| {
+            ArrayValue::Float32(ArrayD::from_elem(IxDyn(&[correlation_types.len()]), 1.0))
+        });
 
         let result = apply_row(
             row,
@@ -566,8 +574,8 @@ pub(crate) fn evaluate_apply_rows(
                 correlation_types,
                 data,
                 original_flags: Some(original_flags),
-                original_weight: None,
-                has_weight_spectrum: false,
+                original_weight: unit_weight.as_ref(),
+                has_weight_spectrum: any_calwt,
             },
             plan,
             &loaded_tables,
@@ -582,6 +590,10 @@ pub(crate) fn evaluate_apply_rows(
                 flags: result
                     .updated_flags
                     .unwrap_or_else(|| original_flags.clone()),
+                weight_factors: match result.updated_weight_spectrum {
+                    Some(ArrayValue::Float32(factors)) => Some(factors),
+                    _ => None,
+                },
             },
         );
     }

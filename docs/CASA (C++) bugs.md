@@ -84,6 +84,8 @@ ATM behaviours casa-rs follows for parity with the `at` tool:
 [(16)O(17)O](#atm-omits-16o17o).
 ATM behaviours casa-rs does not follow:
 [the averaged non-dispersive wet phase](#refractiveindexprofiles-averaged-non-dispersive-wet-phase-reads-a-channel-as-a-water-column).
+Calibration behaviours casa-rs does not follow:
+[a solve that fits exactly](#viscalsolver2-fails-a-solve-whose-chi-square-is-exactly-zero).
 
 ## AW-projection pairs the partner hand's visibility with the conjugate-baseline cell
 
@@ -1738,3 +1740,22 @@ mean is a few degrees (`casa-atmosphere`'s `oracle_absorption` test
 reproduces ATM's number exactly). CASA's `at` tool does not reach this
 function: its averages go through `SkyStatus`, whose override is correct.
 `casa-atmosphere` takes the mean of the channels' phases.
+
+## VisCalSolver2 fails a solve whose chi-square is exactly zero
+
+- Date noted: 2026-10-24
+- Status: CASA behaviour casa-rs does not follow (#903, #905)
+- Affected code: `synthesis/MeasurementComponents/VisCalSolver2.cc:180–185`
+  (and `:353–358`, the other `solve` overload), CASA 6.7.5.18
+
+Each Levenberg-Marquardt iteration recomputes chi-square and, if it is
+exactly `0.0`, prints "CHI2 IS SPURIOUSLY ZERO!" and returns `False`, so
+`Calibrater::genericGatherAndSolve` records no solution for the interval
+(and writes no table when no interval solves). Chi-square is exactly zero
+only when the current gains reproduce every unflagged sample to the last
+bit, which in practice means noise-free synthetic data whose first guess is
+already the answer. That is an exact fit, not a failure; CASA's oracle runs
+on the casa-rs gain fixtures had to add noise to get a table at all. casa-rs's `solve_graphs` keeps an exact fit as a solution. A
+chi-square that is small but not zero follows CASA's convergence rule
+unchanged, so noise-free data that converge only linearly can still reach
+CASA's 50-iteration limit and fail as CASA's would.

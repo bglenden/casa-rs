@@ -1143,7 +1143,9 @@ fn solve_gain_phase_g_combine_scan_and_field_writes_one_solution_group_across_fi
             model_source: GainSolveModelSource::PointSource,
             normalize_average_amplitude: false,
             min_snr: 0.0,
-            min_baselines_per_antenna: 4,
+            // Each of the fixture's three antennas has two baselines; CASA's
+            // default minblperant=4 would fail every solve, as CASA's does.
+            min_baselines_per_antenna: 2,
             smodel: [1.0, 0.0, 0.0, 0.0],
         },
     )
