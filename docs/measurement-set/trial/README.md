@@ -23,16 +23,16 @@ remain later requirements.
 | Toolchain | rustc 1.99.1 (58cf8f9c3 2026-10-13), cargo 1.99.1 |
 | FFTW | Ubuntu `libfftw3-dev` 3.3.10-1ubuntu3 through pkg-config (not the SIMD release build) |
 | Rust Zarr stack | `zarrs =0.23.14` with features `filesystem`, `blosc`, `zstd` (no default features); `zarrs_filesystem 0.3.14`, `zarrs_codec 0.2.1`, `blosc-src 0.3.8` (c-blosc with lz4), `zstd-sys 2.1.2+zstd.1.5.7`, `unsafe_cell_slice =0.2.2`. Exact versions are in `Cargo.lock`. Optional, behind `casa-ms`'s `msv4` feature. |
-| Oracle environment | XRADIO at commit `3ed765867515095d852eb68c073165c1f6c58761` (v1.3.0 plus 7 commits; package version 1.3.1, schema 4.0.1), zarr 3.4.1, numcodecs 0.17.1, xarray 2026.9.0, numpy 2.5.4, arcae 0.5.8, dask 2026.8.0, toolviper 0.1.12, CPython 3.13.17; the full lock is [`tools/ms-trial/uv.lock`](../../../tools/ms-trial/uv.lock). Python is used only to build fixtures and as an oracle. |
+| Oracle environment | XRADIO at commit `3ed765867515095d852eb68c073165c1f6c58761` (v1.3.0 plus 7 commits; package version 1.3.1, schema 4.0.1), zarr 3.4.1, numcodecs 0.17.1, xarray 2026.9.0, numpy 2.5.4, arcae 0.5.8, dask 2026.8.0, toolviper 0.1.12, CPython 3.13.17; the full lock is `tools/ms-trial/uv.lock`. Python is used only to build fixtures and as an oracle. |
 | Workers | One unless a row says otherwise; the work-unit probe uses one thread per channel |
 | Cache state | Fixtures unpacked to a fresh temporary directory per test; the page cache is warm after the first read. Timings are diagnostics, not performance acceptance. |
 
 ## Fixtures
 
 Both fixtures describe the same observation and live in
-[`crates/casa-ms/tests/fixtures/ms_trial/`](../../../crates/casa-ms/tests/fixtures/ms_trial/)
+`crates/casa-ms/tests/fixtures/ms_trial/`
 (53 KB and 43 KB compressed), with
-[`manifest.json`](../../../crates/casa-ms/tests/fixtures/ms_trial/manifest.json)
+`crates/casa-ms/tests/fixtures/ms_trial/manifest.json`
 recording the oracle versions, the true gains and every array's shape,
 chunks, codecs and fill value as XRADIO wrote them.
 
@@ -122,7 +122,7 @@ LSRK cube (native channels 2–5) of 64 × 64 cells of 0.012″, natural
 weighting, standard gridder, Stokes I. The production `MeasurementOperator`,
 spectral resampler (linear) and major-cycle pass (`run_major_cycle`) read
 `VisibilityBatch`es through a trial `BoundedSource`
-([`tests/ms_trial/source.rs`](../../../crates/casa-imaging-application/tests/ms_trial/source.rs)).
+(`crates/casa-imaging-application/tests/ms_trial/source.rs`).
 Each wave binds its own `AccessRequest` for the native channels that reach its
 planes. The baseline is the production imager (`casa_imaging_application::execute`,
 `niter=0`) on the MSv2.
@@ -143,7 +143,7 @@ predicted amplification, measured.
 
 ### Work units with unequal completion
 
-[`tests/ms_trial/work_units.rs`](../../../crates/casa-imaging-application/tests/ms_trial/work_units.rs):
+`crates/casa-imaging-application/tests/ms_trial/work_units.rs`:
 each of the four channels is a work unit gridding its one-channel window of
 every batch (40 samples, three batches) on its own thread. Unit 0 waits 60 ms
 before each batch. Every unit's plane equals the pass's (NRMS < 1e-6).
@@ -196,7 +196,7 @@ decode still allocates inside zarrs.
 
 ## Example B: gain solve
 
-[`crates/casa-calibration/src/solve/batch_trial.rs`](../../../crates/casa-calibration/src/solve/batch_trial.rs)
+`crates/casa-calibration/src/solve/batch_trial.rs`
 (crate-internal, test-only). The request is `gaincal(gaintype='G',
 calmode='ap', solint='60s', refant=0, minsnr=3, minblperant=4)` against a
 1 Jy point source. Production's `SolveAccumulator` and solver
@@ -262,7 +262,7 @@ so its grandfathered `too_many_lines` exception is removed.
 `tools/ms-trial/check_interop.sh` runs both directions on the committed
 fixtures and writes the reports in [`interop/`](interop/). Rust does all the
 reading and writing; Python is only the oracle
-([`check_interop.py`](../../../tools/ms-trial/check_interop.py), in the pinned
+(`tools/ms-trial/check_interop.py`, in the pinned
 environment).
 
 | Direction | What runs | Checks | Result |
