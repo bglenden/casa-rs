@@ -20,12 +20,15 @@ import numpy as np
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 from compare_sm_ms import (
+    atm_frequencies,
+    atm_site,
     compare_model_data,
     data_differences,
     grouped_variance_ratios,
     ks_failures,
     noise_classes,
     table_differences,
+    tsys_atm_sigma,
     tsys_manual_sigma,
     tsys_term,
 )
@@ -162,6 +165,122 @@ class TsysManualSigmaTests(unittest.TestCase):
         self.assertEqual(tsys_term({"calls": [refused, tsys]}), {"mode": "tsys-manual", "tau": 0.2})
         self.assertIsNone(tsys_term({"calls": [tsys, simple]}))
         self.assertIsNone(tsys_term({"calls": [simple]}))
+        atm = {"op": "setnoise", "resolved": {"mode": "tsys-atm", "pwv": 2.0}, "returned": True}
+        self.assertEqual(tsys_term({"calls": [atm]}), {"mode": "tsys-atm", "pwv": 2.0})
+
+
+def flat_sky(tebb_k: float, tau: float = 0.0):
+    """A sky of one zenith opacity and sky-only Tebb at every frequency and
+    airmass, in place of the at tool; it records what it was asked."""
+    asked = []
+
+    def sky(site: dict, frequencies_hz: np.ndarray, airmasses: np.ndarray) -> tuple:
+        asked.append((site, frequencies_hz.copy(), airmasses.copy()))
+        return np.full(frequencies_hz.size, tau), np.full((frequencies_hz.size, airmasses.size), tebb_k)
+
+    return sky, asked
+
+
+def atm_geometry(windows: list, elevations_deg: list) -> dict:
+    """A row in each window of (CHAN_FREQ, REF_FREQUENCY), 12 m dishes,
+    100 kHz channels and 10 s."""
+    rows = len(windows)
+    return {
+        "chan_freq": [np.asarray(chan, dtype=float) for chan, _ in windows],
+        "ref_freq": np.array([ref for _, ref in windows]),
+        "total_bandwidth": np.array([1.0e5 * len(chan) for chan, _ in windows]),
+        "spw": np.arange(rows),
+        "bandwidth": np.full(rows, 1.0e5),
+        "exposure": np.full(rows, 10.0),
+        "diameters": np.full((rows, 2), 12.0),
+        "elevations": np.radians(np.array([elevations_deg] * rows)),
+    }
+
+
+class TsysAtmSigmaTests(unittest.TestCase):
+    """The tsys-atm σ of `compare_sm_ms.tsys_atm_sigma` (#841 Phase 4c)."""
+
+    def test_unset_site_values_take_casas_defaults(self) -> None:
+        site = atm_site({"mode": "tsys-atm", "pground": 100.0, "relhum": 0.0, "pwv": 0.0})
+        self.assertEqual(
+            (site["pressure_mbar"], site["humidity"], site["altitude_m"], site["h0_km"], site["pwv_mm"]),
+            (560.0, 20.0, 5000.0, 2.0, 1.0),
+        )
+        site = atm_site({"pground": 555.0, "relhum": 25.0, "altitude": 5050.0, "waterheight": 1800.0, "pwv": 2.0})
+        self.assertEqual(
+            (site["pressure_mbar"], site["humidity"], site["altitude_m"], site["h0_km"], site["pwv_mm"]),
+            (555.0, 25.0, 5050.0, 1.8, 2.0),
+        )
+
+    def test_casa_takes_atm_half_a_band_below_each_channel(self) -> None:
+        chan = 100.0e9 + 1.0e5 * np.arange(8)
+        geometry = atm_geometry([(chan, chan[0]), (chan, chan[0]), (chan[:1], chan[0])], [60.0, 60.0])
+        self.assertTrue(np.array_equal(atm_frequencies(geometry, 0, "channel"), chan))
+        self.assertTrue(np.allclose(atm_frequencies(geometry, 0, "casa"), chan - 4 * 1.0e5))
+        self.assertTrue(np.allclose(atm_frequencies(geometry, 1, "casa"), chan - 5 * 1.0e5))
+        # A later window of one channel has none in CASA's map.
+        self.assertIsNone(atm_frequencies(geometry, 2, "casa"))
+        geometry = atm_geometry([(chan[:1], chan[0])], [60.0, 60.0])
+        self.assertTrue(np.array_equal(atm_frequencies(geometry, 0, "casa"), chan[:1]))
+
+    def test_a_transparent_sky_gives_the_formula(self) -> None:
+        # With no opacity, and the sky at the ground's temperature, Tebb is
+        # the ground's whatever the spillover, and
+        # Tsys = hν/k (1/(e^(hν/k/T) - 1) + Trx/(hν/k)).
+        sky, asked = flat_sky(270.0)
+        chan = 230.0e9 + 1.0e5 * np.arange(4)
+        geometry = atm_geometry([(chan, chan[0])], [60.0, 60.0])
+        found = tsys_atm_sigma({"mode": "tsys-atm"}, geometry, "channel", sky)
+        h_nu_k = 4.80145e-11 * chan
+        tebb = 0.04799274551 * chan * 1e-9 / np.log1p(np.expm1(0.04799274551 * chan * 1e-9 / 270.0))
+        tsys = h_nu_k * (1.0 / np.expm1(h_nu_k / tebb) + 50.0 / h_nu_k)
+        a = 8 * 1.38062e-16 * 1e23 * 1e-4 / (0.8 * 0.88 * np.pi) / np.sqrt(2.0)
+        expected = a / np.sqrt(1.0e5 * 10.0) * tsys / 144.0
+        self.assertTrue(np.allclose(found[0], expected, rtol=1e-12))
+        self.assertEqual(asked[0][0]["pwv_mm"], 1.0)
+        self.assertTrue(np.array_equal(asked[0][1], chan))
+        # Opacity raises Tsys as e^(τA), from each antenna's own airmass.
+        sky, _ = flat_sky(270.0, tau=0.1)
+        opaque = tsys_atm_sigma({"mode": "tsys-atm"}, geometry, "channel", sky)
+        airmass = 1.0 / np.sin(np.radians(60.0))
+        self.assertTrue(np.allclose(opaque[0] / found[0], np.exp(0.1 * airmass), rtol=1e-6))
+
+    def test_each_row_takes_its_own_airmass_whatever_the_others(self) -> None:
+        # Tsys grows as e^(τA): a row at airmass 1.5 is evaluated there,
+        # and a flagged row low in the sky (airmass 100) in the same window
+        # changes no other row's σ.
+        sky, asked = flat_sky(100.0, tau=0.5)
+        chan = 183.0e9 + 1.0e5 * np.arange(4)
+
+        def geometry(elevations_deg: list) -> dict:
+            one = atm_geometry([(chan, chan[0])], [90.0, 90.0])
+            rows = len(elevations_deg)
+            for key in ("spw", "bandwidth", "exposure"):
+                one[key] = np.repeat(one[key], rows)
+            one["diameters"] = np.repeat(one["diameters"], rows, axis=0)
+            one["elevations"] = np.radians(np.array([[e, e] for e in elevations_deg]))
+            return one
+
+        airmass_15 = float(np.degrees(np.arcsin(1.0 / 1.5)))
+        alone = tsys_atm_sigma({"mode": "tsys-atm"}, geometry([90.0, airmass_15]), "channel", sky)
+        self.assertTrue(np.allclose(alone[1] / alone[0], np.exp(0.5 * 0.5), rtol=1e-12))
+        low = float(np.degrees(np.arcsin(0.01)))
+        beside = tsys_atm_sigma({"mode": "tsys-atm"}, geometry([90.0, airmass_15, low]), "channel", sky)
+        self.assertTrue(np.array_equal(beside[:2], alone))
+        self.assertTrue(np.allclose(asked[-1][2], [1.0, 1.5, 100.0], rtol=1e-12))
+
+    def test_casas_mapping_asks_atm_below_and_a_late_continuum_window_is_unscaled(self) -> None:
+        sky, asked = flat_sky(100.0, tau=0.05)
+        chan = 183.0e9 + 1.0e5 * np.arange(4)
+        geometry = atm_geometry([(chan, chan[0]), (chan[:1], chan[0])], [50.0, 70.0])
+        found = tsys_atm_sigma({"mode": "tsys-atm"}, geometry, "casa", sky)
+        self.assertTrue(np.allclose(asked[0][1], chan - 2 * 1.0e5))
+        self.assertEqual(len(asked), 1)
+        self.assertEqual(found[1, 0], 1.0)
+        # Below the horizon an overflowing Tsys applies as 1.
+        sky, _ = flat_sky(100.0, tau=1.0)
+        below = tsys_atm_sigma({"mode": "tsys-atm"}, atm_geometry([(chan, chan[0])], [-5.0, -5.0]), "channel", sky)
+        self.assertTrue(np.all(below == 1.0))
 
 
 class GroupedVarianceTests(unittest.TestCase):

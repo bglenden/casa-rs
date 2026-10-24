@@ -43,6 +43,7 @@ Simulator behaviours casa-rs does not follow:
 [`tsys-manual`'s stale and borrowed system temperatures](#tsys-manual-noise-takes-stale-or-borrowed-system-temperatures),
 [`tsys-manual` scaling every noise term](#a-tsys-manual-term-scales-every-noise-term),
 [the noise term a refused `tsys-manual` leaves](#a-refused-tsys-manual-setnoise-leaves-a-unit-noise-term),
+[`tsys-atm`'s atmosphere half a band away](#tsys-atm-noise-takes-its-atmosphere-half-a-band-below-each-channel),
 [gain screens read past their transform](#casas-gain-screens-read-past-their-transform),
 [gain screens sharing a seed](#gain-screens-of-neighbouring-antennas-share-a-seed),
 [random gains about zero](#setgainmoderandom-draws-gains-about-zero),
@@ -1405,7 +1406,66 @@ Tsys parameters. A water vapour above 100 mm, or a zenith Tsys that is not
 positive or above 10⁶ K, then makes it return `False`, but the `ANoise` stays:
 the next `corrupt` adds 1 Jy of noise (CASA 6.7.6, `pwv='200mm'`: variance
 0.872 over cross- and autocorrelations, where 1 Jy gives 0.875). casa-rs
-refuses such a `setnoise` without adding a term.
+refuses such a `setnoise` without adding a term. `tsys-atm` takes the same
+path in `setnoise` (the `ANoise` is created before either Tsys mode's
+checks; read from the source, not measured), and casa-rs refuses it the
+same way.
+
+## `tsys-atm` noise takes its atmosphere half a band below each channel
+
+- Date noted: 2026-10-24
+- Status: CASA bugs; casa-rs does not follow them (#841 Phase 4c)
+- Affected code: `synthesis/MeasurementComponents/CalCorruptor.cc`
+  (`AtmosCorruptor::initAtm`, `tsys`, `opac`) and
+  `synthesis/MeasurementComponents/SolvableVisCal.cc` (`setSimulate`)
+
+`setnoise(mode='tsys-atm')` scales a unit `ANoise` by a `Tf` term ("TF
+NOISE") whose Tsys comes from ATM for each channel:
+Tsys(A, c) = (hν/k) e^(τA) (1/(e^(hν/k/T_ebb(A)) − 1) + T_rx/(hν/k)) (1 + g),
+τ the zenith opacity and T_ebb the sky's equivalent blackbody temperature
+at airmass A, with hν/k from the channel's frequency (`casa_simulation`'s
+`corrupt::tsys_atm` has the whole model). Measured on CASA 6.7.6 (ALMA's
+site defaults, 1 mm of water, 64-channel windows of 100 MHz from 180 GHz,
+across the 183 GHz line, and from 321 GHz, 2 s integrations; the probe
+scripts and results are on the NAS under `casa-rs/issue-841-tsys-4c`),
+every channel's noise variance agrees with that formula, through
+`casa-atmosphere`, with no free parameter (ratio 1.0000 and 1.0027, rms
+0.0106 and 0.0100 per channel, against a statistical 1σ of 0.0149) once the
+atmosphere is taken at the frequencies CASA gives ATM, which are not the
+channels':
+
+- **The atmosphere is half a band below the channel.** `initAtm` builds
+  each window's ATM grid from `REF_FREQUENCY`, which the simulator sets to
+  the first channel's frequency, with the reference at the middle channel:
+  ATM's channel i is at `REF + (i − n/2)·Δν` for the first window and
+  `REF + (i − n/2 − 1)·Δν` for the others, and `opac` and `tsys` read
+  channel c of that grid. So channel c's τ and T_ebb are those of a
+  frequency half the band below it (3.2 GHz for the probe's windows), while
+  hν/k is the channel's own. Against the atmosphere at each channel's own
+  frequency, CASA's variance across the 183 GHz line is off by a mean factor
+  of 6.1 and up to 103; at 321 GHz by 0.39 on average and up to 5.5. The
+  shift grows with the window's width and matters wherever the atmosphere
+  changes across it: the 183 GHz line's brightness changes by tens of
+  kelvin over a few GHz at a 5,000 m site (Thompson, Moran & Swenson,
+  *Interferometry and Synthesis in Radio Astronomy*, 3rd ed., p. 746,
+  Fig. 13.21), and an ozone line at 231.7 GHz nearly doubles ALMA's system
+  temperature within a band (B. Svoboda, *Special Topics: Spectral Lines*,
+  NRAO Synthesis Imaging Workshop 2026, slide 18).
+- **A one-channel window after the first gets no Tsys.** For n = 1 the
+  later windows' channel map is read past its end, which is undefined
+  behaviour. In CASA 6.7.6 on macOS the index it read pointed past the grid
+  (the log reads "ch 972849296/20"); the term's `T` came out bad,
+  `setMatByOk` applied it as 1, and the probe's 2 GHz continuum window at
+  230 GHz got unscaled 1 Jy noise (variance 0.996 Jy²). Another build may
+  read something else.
+
+casa-rs evaluates ATM at each channel's CHAN_FREQ, for every window and a
+one-channel window alike, so a channel's σ follows the sky it observes. As
+for `tsys-manual`, each row takes its own integration's airmasses and
+EXPOSURE ([stale and borrowed system
+temperatures](#tsys-manual-noise-takes-stale-or-borrowed-system-temperatures));
+the term is also refused when its zenith Tsys at the first window's centre
+is not a number, which CASA's check (> 10⁶ K or ≤ 0) lets through.
 
 ## ATM's HCN catalogue misplaces a line at 106 GHz
 

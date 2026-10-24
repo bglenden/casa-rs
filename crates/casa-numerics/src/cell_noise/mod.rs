@@ -164,30 +164,87 @@ impl CellNoise {
         if self.sigma == 0.0 || correlations == 0 {
             return;
         }
-        // The common cross-correlation shapes, each compiled with its
-        // correlation count fixed so that the additions into the cell
-        // vectorise; every arm runs the same code.
+        self.add_shapes(
+            row,
+            autocorrelation,
+            correlations,
+            Uniform(self.sigma),
+            cell,
+        );
+    }
+
+    /// [`Self::add_to_row`] with σ scaled per channel: channel `c`'s samples
+    /// get σ·`channel_scale[c]` (a noise whose σ depends on frequency, as a
+    /// system temperature does). The draws are [`Self::add_to_row`]'s, so a
+    /// scale of 1 everywhere adds bit for bit the same noise; another scale
+    /// gives its unit draws times σ·`channel_scale[c]` to the rounding of
+    /// that product, which scales each draw's radius.
+    ///
+    /// # Panics
+    ///
+    /// When `channel_scale` has fewer values than the cell has whole
+    /// channels.
+    pub fn add_to_row_scaled(
+        &self,
+        row: u64,
+        autocorrelation: bool,
+        correlations: usize,
+        channel_scale: &[f32],
+        cell: &mut [Complex32],
+    ) {
+        if self.sigma == 0.0 || correlations == 0 {
+            return;
+        }
+        assert!(
+            channel_scale.len() >= cell.len() / correlations,
+            "a scale for every channel of the cell"
+        );
+        self.add_shapes(
+            row,
+            autocorrelation,
+            correlations,
+            Scaled {
+                sigma: self.sigma,
+                channel_scale,
+            },
+            cell,
+        );
+    }
+
+    /// The common cross-correlation shapes, each compiled with its
+    /// correlation count fixed so that the additions into the cell
+    /// vectorise; every arm runs the same code.
+    #[inline(always)]
+    fn add_shapes<S: LaneSigma>(
+        &self,
+        row: u64,
+        autocorrelation: bool,
+        correlations: usize,
+        sigma: S,
+        cell: &mut [Complex32],
+    ) {
         match (correlations, autocorrelation) {
-            (1, false) => self.add_batches(row, 1, false, cell),
-            (2, false) => self.add_batches(row, 2, false, cell),
-            (4, false) => self.add_batches(row, 4, false, cell),
-            _ => self.add_batches(row, correlations, autocorrelation, cell),
+            (1, false) => self.add_batches(row, 1, false, sigma, cell),
+            (2, false) => self.add_batches(row, 2, false, sigma, cell),
+            (4, false) => self.add_batches(row, 4, false, sigma, cell),
+            _ => self.add_batches(row, correlations, autocorrelation, sigma, cell),
         }
     }
 
     /// [`Self::add_to_row`] in batches of [`LANES`] channels, and a last,
     /// partial batch.
     #[inline(always)]
-    fn add_batches(
+    fn add_batches<S: LaneSigma>(
         &self,
         row: u64,
         correlations: usize,
         autocorrelation: bool,
+        sigma: S,
         cell: &mut [Complex32],
     ) {
         let batch = Batch {
             key: self.key,
-            sigma: self.sigma,
+            sigma,
             row,
             correlations,
             autocorrelation,
@@ -204,12 +261,48 @@ impl CellNoise {
     }
 }
 
+/// σ of each of a batch's [`LANES`] channels.
+trait LaneSigma: Copy {
+    /// σ of the channels from `first`.
+    fn lanes(self, first: usize) -> [f32; LANES];
+}
+
+/// One σ for every channel.
+#[derive(Clone, Copy)]
+struct Uniform(f32);
+
+impl LaneSigma for Uniform {
+    #[inline(always)]
+    fn lanes(self, _first: usize) -> [f32; LANES] {
+        [self.0; LANES]
+    }
+}
+
+/// σ times each channel's scale; channels past the scales (a partial
+/// batch's draws beyond the cell) get 0.
+#[derive(Clone, Copy)]
+struct Scaled<'a> {
+    sigma: f32,
+    channel_scale: &'a [f32],
+}
+
+impl LaneSigma for Scaled<'_> {
+    #[inline(always)]
+    fn lanes(self, first: usize) -> [f32; LANES] {
+        std::array::from_fn(|lane| {
+            self.channel_scale
+                .get(first + lane)
+                .map_or(0.0, |scale| self.sigma * scale)
+        })
+    }
+}
+
 /// What every batch of one row's noise shares.
-struct Batch {
+struct Batch<S> {
     /// The stream key.
     key: philox::Key,
     /// σ of each draw.
-    sigma: f32,
+    sigma: S,
     /// The row.
     row: u64,
     /// Correlations per channel.
@@ -218,7 +311,7 @@ struct Batch {
     autocorrelation: bool,
 }
 
-impl Batch {
+impl<S: LaneSigma> Batch<S> {
     /// Add the noise of the `lanes` channels from `first`, at most
     /// [`LANES`], to their `samples`: the draws of each correlation pair in
     /// all the channels, then the additions, both correlations of the pair
@@ -226,12 +319,13 @@ impl Batch {
     #[inline(always)]
     fn add(&self, first: usize, samples: &mut [Complex32], lanes: usize) {
         let correlations = self.correlations;
+        let sigma = self.sigma.lanes(first);
         for pair in 0..correlations.div_ceil(2) {
             let words = philox::philox4x32_10_lanes(counters(self.row, first, pair), self.key);
             let both = correlations - 2 * pair >= 2;
-            let [re0, im0] = scaled_draws(&words[0], &words[1], self.sigma);
+            let [re0, im0] = scaled_draws(&words[0], &words[1], &sigma);
             let [re1, im1] = if both {
-                scaled_draws(&words[2], &words[3], self.sigma)
+                scaled_draws(&words[2], &words[3], &sigma)
             } else {
                 [[0.0; LANES]; 2]
             };
@@ -284,10 +378,10 @@ fn counters(row: u64, first: usize, pair: usize) -> philox::Lanes<LANES> {
 fn scaled_draws<const LANES: usize>(
     first: &[u32; LANES],
     second: &[u32; LANES],
-    sigma: f32,
+    sigma: &[f32; LANES],
 ) -> [[f32; LANES]; 2] {
     let mut radii = [0.0; LANES];
-    for (radius, &word) in radii.iter_mut().zip(first) {
+    for ((radius, &word), &sigma) in radii.iter_mut().zip(first).zip(sigma) {
         *radius = normal::radius(word) * sigma;
     }
     let mut draws = [[0.0; LANES]; 2];

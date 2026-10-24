@@ -72,7 +72,7 @@ mod spectral_grid;
 
 pub use absorption::{AbsorptionProfile, ChannelAbsorption, ChannelTotals};
 pub use profile::{AtmosphereProfile, AtmosphereType, Layer, ProfileParameters};
-pub use sky::Sky;
+pub use sky::{Sky, SkyColumn};
 pub use spectral_grid::{SpectralGrid, SpectralWindow};
 
 /// Errors building atmospheric models.

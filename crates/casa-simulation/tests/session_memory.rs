@@ -74,7 +74,9 @@
 //! Two more, in `session_memory/tsys.rs` and `session_memory/patch.rs`,
 //! repeat the first law's base and ten-times-the-rows cases, and the
 //! patch's rows law, with `tsys-manual` noise (#841 Phase 3), whose σ takes
-//! each row's airmasses and exposure.
+//! each row's airmasses and exposure; `session_memory/tsys_atm.rs` holds
+//! `tsys-atm`'s (Phase 4c): `setnoise` builds its atmosphere within what it
+//! is admitted, and `close` holds its admission.
 //!
 //! This binary's global allocator counts the live heap; the counters are
 //! the process's, so each law runs alone in a process of its own
@@ -93,6 +95,8 @@ mod pass_summary;
 mod patch;
 #[path = "session_memory/tsys.rs"]
 mod tsys;
+#[path = "session_memory/tsys_atm.rs"]
+mod tsys_atm;
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::path::{Path, PathBuf};
@@ -113,9 +117,9 @@ use casa_imaging_runtime::{
     reserved_memory,
 };
 use casa_simulation::{
-    ArrayConfig, BackendRequest, CoordinateSystem, NoiseSpec, ObserveSpec, PredictSpec,
-    PredictionOptions, SessionResources, Simulator, SimulatorOptions, SpectralWindowSpec,
-    StateSpec, TsysParameters, VoltagePatternSpec,
+    ArrayConfig, AtmosphereSpec, BackendRequest, CoordinateSystem, NoiseSpec, ObserveSpec,
+    PredictSpec, PredictionOptions, SessionResources, Simulator, SimulatorOptions,
+    SpectralWindowSpec, StateSpec, TsysParameters, VoltagePatternSpec,
 };
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::frequency::{FrequencyRef, MFrequency};
@@ -443,10 +447,15 @@ fn simulate(case: Case, ms: &Path, model: &Path, measures: &Arc<dyn MeasuresProv
 /// laws set it, each alone in its process ([`alone`]).
 static TSYS_NOISE: AtomicBool = AtomicBool::new(false);
 
-/// 0.1 Jy of simple noise, or `tsys-manual` noise with CASA's defaults once
-/// a Tsys law sets [`TSYS_NOISE`].
+/// Whether [`noise`] is `tsys-atm`, as [`TSYS_NOISE`].
+static ATM_NOISE: AtomicBool = AtomicBool::new(false);
+
+/// 0.1 Jy of simple noise, or Tsys noise with CASA's defaults once a Tsys
+/// law sets [`TSYS_NOISE`] or [`ATM_NOISE`].
 fn noise() -> NoiseSpec {
-    if TSYS_NOISE.load(Ordering::Relaxed) {
+    if ATM_NOISE.load(Ordering::Relaxed) {
+        NoiseSpec::tsys_atm(TsysParameters::default(), 0.0, AtmosphereSpec::default())
+    } else if TSYS_NOISE.load(Ordering::Relaxed) {
         NoiseSpec::tsys_manual(TsysParameters::default())
     } else {
         NoiseSpec::simple(0.1)

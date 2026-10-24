@@ -56,16 +56,23 @@
 //! backend or platform; the tests hold a few cells to the bits they had
 //! before the generator moved to casa-numerics (#855).
 
+mod batch_scales;
 pub(crate) mod jones;
 #[cfg(test)]
 mod tests;
 pub(crate) mod tsys;
+pub(crate) mod tsys_atm;
+
+use std::sync::Arc;
 
 use casa_numerics::cell_noise::CellNoise;
 use num_complex::Complex32;
 
+pub(crate) use batch_scales::{BatchScales, BatchScalesBuilder};
 pub use tsys::TsysParameters;
 pub(crate) use tsys::{RowNoise, TsysManual, WindowNoise, airmass};
+pub use tsys_atm::AtmosphereSpec;
+pub(crate) use tsys_atm::TsysAtm;
 
 /// The top byte of the key's second word names what the stream is for, so
 /// later corruptions (gains, fBM screens) draw from streams disjoint from
@@ -77,18 +84,34 @@ const PURPOSE_THERMAL_NOISE: u32 = 0x01;
 pub(crate) const MAXIMUM_APPLICATIONS: u32 = 1 << 24;
 
 /// How large a noise term's draws are.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone)]
 pub(crate) enum NoiseLevel {
     /// `simplenoise`: σ of each real and imaginary draw, Jy, held as CASA
     /// holds it.
     Simple(f32),
     /// `tsys-manual`: σ of each row from the model ([`tsys`]).
     TsysManual(TsysManual),
+    /// `tsys-atm`: σ of each row and channel from the atmosphere
+    /// ([`tsys_atm`]), shared by the term and the corruptions applying it.
+    TsysAtm(Arc<TsysAtm>),
+}
+
+impl PartialEq for NoiseLevel {
+    /// Equal levels; two `tsys-atm` levels are equal when they are the same
+    /// term's.
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Simple(left), Self::Simple(right)) => left == right,
+            (Self::TsysManual(left), Self::TsysManual(right)) => left == right,
+            (Self::TsysAtm(left), Self::TsysAtm(right)) => Arc::ptr_eq(left, right),
+            _ => false,
+        }
+    }
 }
 
 /// One application of a noise term: the noise one `corrupt` adds for one
 /// `setnoise` term.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct NoiseApplication {
     /// The seed in force when the term was set (`sm.setseed`).
     pub(crate) seed: i32,
@@ -112,72 +135,155 @@ impl NoiseApplication {
 
     /// This application's noise when every row has the same σ
     /// (`simplenoise`): σ under [`Self::key`]; `None` when σ depends on the
-    /// row (`tsys-manual`).
+    /// row (the Tsys modes).
     pub(crate) fn uniform(&self) -> Option<CellNoise> {
         match self.level {
             NoiseLevel::Simple(sigma_jy) => Some(CellNoise::new(self.key(), sigma_jy)),
-            NoiseLevel::TsysManual(_) => None,
+            NoiseLevel::TsysManual(_) | NoiseLevel::TsysAtm(_) => None,
         }
     }
 
-    /// Whether σ depends on the row (`tsys-manual`), which then needs each
+    /// Whether σ depends on the row (the Tsys modes), which then needs each
     /// row's [`RowNoise`].
     pub(crate) fn varies_by_row(&self) -> bool {
-        matches!(self.level, NoiseLevel::TsysManual(_))
+        !matches!(self.level, NoiseLevel::Simple(_))
+    }
+
+    /// The `tsys-atm` model, if the term is one.
+    pub(crate) fn tsys_atm(&self) -> Option<&TsysAtm> {
+        match &self.level {
+            NoiseLevel::TsysAtm(model) => Some(model),
+            NoiseLevel::Simple(_) | NoiseLevel::TsysManual(_) => None,
+        }
     }
 
     /// This application for the rows of a scan in spectral window `window`.
-    pub(crate) fn for_window(&self, window: &WindowNoise) -> ScanNoise {
+    pub(crate) fn for_window(&self, window: &WindowNoise) -> ScanNoise<'_> {
         ScanNoise {
             key: self.key(),
             level: match &self.level {
                 NoiseLevel::Simple(sigma_jy) => ScanLevel::Simple(*sigma_jy),
                 NoiseLevel::TsysManual(model) => ScanLevel::TsysManual(model.for_window(window)),
+                NoiseLevel::TsysAtm(model) => ScanLevel::TsysAtm {
+                    model,
+                    window_id: window.spectral_window_id,
+                    window: model.window(window.spectral_window_id),
+                },
             },
+        }
+    }
+
+    /// Add to `scales` what a `tsys-atm` application needs for `rows` of a
+    /// scan in spectral window `window`; nothing for the other modes.
+    pub(crate) fn add_scales<'a>(
+        &'a self,
+        window: &WindowNoise,
+        rows: impl Iterator<Item = RowNoise>,
+        scales: &mut BatchScalesBuilder<'a>,
+    ) {
+        if let NoiseLevel::TsysAtm(model) = &self.level {
+            let id = window.spectral_window_id;
+            scales.add_rows(
+                (model, id, model.window(id)),
+                window.channel_bandwidth_hz,
+                rows,
+            );
         }
     }
 }
 
 /// A noise application for the rows of one spectral window.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct ScanNoise {
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ScanNoise<'a> {
     key: [u32; 2],
-    level: ScanLevel,
+    level: ScanLevel<'a>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum ScanLevel {
+#[derive(Debug, Clone, Copy)]
+enum ScanLevel<'a> {
     Simple(f32),
     TsysManual(tsys::WindowTsys),
+    TsysAtm {
+        model: &'a TsysAtm,
+        window_id: usize,
+        window: &'a tsys_atm::WindowAtmosphere,
+    },
 }
 
-impl ScanNoise {
-    /// σ of each real and imaginary draw of a row of `row`'s antennas,
-    /// airmasses and integration time, Jy.
-    pub(crate) fn sigma(&self, row: &RowNoise) -> f32 {
-        match &self.level {
-            ScanLevel::Simple(sigma_jy) => *sigma_jy,
-            ScanLevel::TsysManual(model) => model.sigma(row),
+/// What a noise job reads and keeps between rows for `tsys-atm`: its
+/// batch's antenna scales, and a row's σ per channel, at most
+/// [`NoiseScratch::bytes`].
+#[derive(Debug)]
+pub(crate) struct NoiseScratch<'s> {
+    scales: &'s BatchScales,
+    sigma: Vec<f32>,
+}
+
+impl<'s> NoiseScratch<'s> {
+    /// A scratch reading `scales`.
+    pub(crate) fn new(scales: &'s BatchScales) -> Self {
+        Self {
+            scales,
+            sigma: Vec::new(),
         }
     }
 
+    /// The most a scratch for windows of at most `channels` channels holds.
+    pub(crate) fn bytes(channels: usize) -> u64 {
+        (channels * size_of::<f32>()) as u64
+    }
+
+    /// σ per channel of a row of `row`'s antennas: s_i(c)·s_j(c).
+    fn row_sigma(
+        &mut self,
+        noise: (&TsysAtm, usize, &tsys_atm::WindowAtmosphere),
+        row: &RowNoise,
+    ) -> &[f32] {
+        let scales = self.scales;
+        let (first, second) = (scales.get(noise, row, 0), scales.get(noise, row, 1));
+        self.sigma.clear();
+        self.sigma
+            .extend(first.iter().zip(second).map(|(s_i, s_j)| s_i * s_j));
+        &self.sigma
+    }
+}
+
+impl ScanNoise<'_> {
     /// Add this application's noise to the cell of MAIN row `row`, whose
     /// antennas, airmasses and integration time are `inputs`:
     /// `correlations × channels` samples, correlation fastest. An
     /// autocorrelation row gets real draws only; samples past the last
-    /// whole channel are left alone ([`CellNoise::add_to_row`]).
+    /// whole channel are left alone ([`CellNoise::add_to_row`]). A
+    /// `tsys-atm` term's σ differs by channel: `scratch` reads it from the
+    /// batch's antenna scales.
     pub(crate) fn add_to_row(
         &self,
         (row, inputs): (u64, &RowNoise),
-        autocorrelation: bool,
-        correlations: usize,
+        (autocorrelation, correlations): (bool, usize),
         cell: &mut [Complex32],
+        scratch: &mut NoiseScratch<'_>,
     ) {
-        CellNoise::new(self.key, self.sigma(inputs)).add_to_row(
-            row,
-            autocorrelation,
-            correlations,
-            cell,
-        );
+        let sigma = match &self.level {
+            ScanLevel::Simple(sigma_jy) => *sigma_jy,
+            ScanLevel::TsysManual(model) => model.sigma(inputs),
+            ScanLevel::TsysAtm {
+                model,
+                window_id,
+                window,
+            } => {
+                let sigma = scratch.row_sigma((model, *window_id, window), inputs);
+                // The draws of a unit term, scaled channel by channel, as
+                // CASA's `T` scales its unit `ANoise`.
+                CellNoise::new(self.key, 1.0).add_to_row_scaled(
+                    row,
+                    autocorrelation,
+                    correlations,
+                    sigma,
+                    cell,
+                );
+                return;
+            }
+        };
+        CellNoise::new(self.key, sigma).add_to_row(row, autocorrelation, correlations, cell);
     }
 }

@@ -44,7 +44,7 @@ mod opacity;
 pub use opacity::Absorber;
 
 use crate::refractivity::{Species, h2o_per_path, o2_per_path, specific_refractivity};
-use crate::{AtmosphereError, AtmosphereProfile, Layer, SpectralGrid};
+use crate::{AtmosphereError, AtmosphereProfile, Layer, SpectralGrid, SpectralWindow};
 use num_complex::Complex64;
 
 /// One layer's refractivity per unit path at one frequency, by species,
@@ -474,10 +474,18 @@ impl<C: AbsorptionChannel> AbsorptionProfile<C> {
     /// each layer is formed in place. The `allocation` tests measure both.
     #[must_use]
     pub fn bytes(grid: &SpectralGrid, layers: usize) -> u64 {
-        let channels = grid.total_channels() as u64;
+        Self::shape_bytes(grid.windows().len(), grid.total_channels(), layers)
+    }
+
+    /// [`Self::bytes`] of a grid of `windows` windows and `channels`
+    /// channels in all, without the grid: what a caller admits before it
+    /// forms anything.
+    #[must_use]
+    pub fn shape_bytes(windows: usize, channels: usize, layers: usize) -> u64 {
+        let channels = channels as u64;
         channels * (size_of::<C>() as u64 + C::heap_bytes(layers))
             + channels * size_of::<f64>() as u64
-            + size_of_val(grid.windows()) as u64
+            + (windows * size_of::<SpectralWindow>()) as u64
             + (layers * size_of::<Layer>()) as u64
     }
 

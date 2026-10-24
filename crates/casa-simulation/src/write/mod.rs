@@ -50,7 +50,7 @@ use geometry::{ArrayGeometry, RowGeometry};
 pub(crate) use patch::patch_measurement_set;
 use pipeline::{NoiseContext, Pipeline};
 use prediction::PredictionStage;
-use resources::{MainAdmission, MainShape};
+use resources::{MainAdmission, MainShape, NoiseScales};
 
 /// The readme CASA's simulator gives MAIN.
 const MAIN_README: [&str; 2] = [
@@ -184,6 +184,23 @@ fn main_shape<'s>(
             .max()
             .unwrap_or(0),
         generated_bytes: subtables::generated_bytes(planned),
+        noise_scales: NoiseScales::of(
+            session.data_plan(),
+            channels,
+            Some((
+                planned
+                    .iter()
+                    .map(|scan| scan.rows.baseline_count())
+                    .filter(|&rows| rows > 0)
+                    .min()
+                    .unwrap_or(1),
+                planned
+                    .iter()
+                    .map(|scan| scan.rows.antenna_count)
+                    .max()
+                    .unwrap_or(0),
+            )),
+        ),
     }
 }
 
@@ -226,7 +243,12 @@ fn write_main<'s>(
         (session.scans(), planned),
         &geometry,
         &team,
-        (prediction, session.data_plan(), NoiseContext::of(session)),
+        (
+            prediction,
+            session.data_plan(),
+            NoiseContext::of(session),
+            shape.noise_scales,
+        ),
         (
             shape.correlations,
             shape.channels,
@@ -275,9 +297,9 @@ fn write_main<'s>(
     Ok(())
 }
 
-/// Whether any noise of `plan` has a σ that varies by row (`tsys-manual`),
-/// whose rows then need their antennas' airmasses and exposure. Every
-/// `corrupt` covers scan 0, so its noise is all the plan's.
+/// Whether any noise of `plan` has a σ that varies by row (the Tsys
+/// modes), whose rows then need their antennas' airmasses and exposure.
+/// Every `corrupt` covers scan 0, so its noise is all the plan's.
 fn noise_varies_by_row(plan: &DataPlan) -> bool {
     plan.noise_for_scan(0)
         .iter()

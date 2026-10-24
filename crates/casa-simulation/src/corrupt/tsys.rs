@@ -165,6 +165,8 @@ struct Band {
 /// What a spectral window gives its rows' noise.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct WindowNoise {
+    /// The window's id, which picks a `tsys-atm` term's atmosphere.
+    pub(crate) spectral_window_id: usize,
     /// REF_FREQUENCY, Hz.
     pub(crate) reference_frequency_hz: f64,
     /// |TOTAL_BANDWIDTH| / NUM_CHAN, Hz.
@@ -236,6 +238,17 @@ impl TsysManual {
     /// The zenith opacity τ₀ the model holds.
     pub(crate) fn tau(&self) -> f32 {
         self.tau
+    }
+
+    /// `senscoeff() · amp()`, single precision: c · a, Jy m² per kelvin,
+    /// which `tsys-atm` shares.
+    pub(crate) fn jansky_per_kelvin(&self) -> f32 {
+        self.jansky_per_kelvin
+    }
+
+    /// 1 + g, which `tsys-atm` shares.
+    pub(crate) fn sidebands(&self) -> f64 {
+        self.sidebands
     }
 
     /// The band at frequency `frequency_hz`.
@@ -330,6 +343,7 @@ mod tests {
     }
 
     const BAND6: WindowNoise = WindowNoise {
+        spectral_window_id: 0,
         reference_frequency_hz: 230e9,
         channel_bandwidth_hz: 15.625e6,
     };

@@ -5,7 +5,8 @@
 Run with CASA's Python (for example `/Applications/CASA.app/Contents/MacOS/python3`).
 For each scenario in a scenario file (`sm_observe_scenarios.json` by default,
 `sm_predict_scenarios.json` for prediction and noise, `sm_noise_scenarios.json`
-for `tsys-manual` noise) the script creates an MS
+for `tsys-manual` noise, `sm_atm_scenarios.json` for `tsys-atm` noise) the
+script creates an MS
 with CASA's `sm` tool: `setconfig` (from a CASA `.cfg` through
 `simutil.readantenna`, or local coordinates), then the scenario's calls, then
 `close`. It writes `<out>/<scenario>.ms` and `<out>/manifest.json`.
@@ -28,10 +29,11 @@ CASA predicts from a copy in `<out>/`, and the manifest records the pristine
 image for casa-rs. The copies are made, and every call's arguments resolved,
 before the scenario's clock starts at `open`, so its `seconds` (and each
 call's) time only CASA's `sm` work. A scenario's `data` (`zero`, `model` or `noisy`), `twin`
-(the noise-free scenario a noisy one is compared with) and `noise_variance`
-(the variance its noise should have, Jy²) are copied to the manifest for
-`compare_sm_ms.py`, as are a corrupted scenario's `CORRUPTION_KEYS`
-(`sm_corrupt_scenarios.json`).
+(the noise-free scenario a noisy one is compared with), `noise_variance`
+(the variance its noise should have, Jy²) and `direct_spws` (the windows
+whose `tsys-atm` noise is also compared directly) are copied to the
+manifest for `compare_sm_ms.py`, as are a corrupted scenario's
+`CORRUPTION_KEYS` (`sm_corrupt_scenarios.json`).
 
 A two-stage scenario (`sm_openfromms_scenarios.json`) calls `close` and then
 `openfromms` among its calls: the first stage's MS is copied to
@@ -110,6 +112,9 @@ QUANTITY_UNITS = {
     "elevationlimit": "rad",
     "simplenoise": "Jy",
     "pwv": "mm",
+    "pground": "mbar",
+    "altitude": "m",
+    "waterheight": "m",
 }
 
 
@@ -292,6 +297,7 @@ def run_scenario(
         "data": scenario.get("data", "zero"),
         "twin": scenario.get("twin"),
         "noise_variance": scenario.get("noise_variance"),
+        "direct_spws": scenario.get("direct_spws"),
         "openfromms_ms": scenario.get("openfromms_ms", "casa-rs"),
         "calls": calls,
         "seconds": time.perf_counter() - started,

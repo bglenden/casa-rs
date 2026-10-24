@@ -199,6 +199,7 @@ Requirements:
      allowed.
 4. **Port ATM to Rust** as `casa-atmosphere`, in its own phase. Until it lands,
    `tsys-atm` and `settrop` raise a clear "not yet implemented" error.
+   (`tsys-atm` landed in Phase 4c; `settrop` waits for 4d.)
 5. **TIME honours the requested UTC.**
    - The divergence is recorded.
    - CASA computed its geometry at the requested time + (TAI − UTC). A parity

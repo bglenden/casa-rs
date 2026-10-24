@@ -14,7 +14,8 @@
 //! hour-angle offset and SOURCE.TIME stay the same.
 //!
 //! Scenarios may also call `setseed`, `setnoise` (`simplenoise` in Jy, or
-//! `tsys-manual` with its parameters; `pwv` in mm),
+//! `tsys-manual` or `tsys-atm` with their parameters; `pwv` in mm, `pground`
+//! in mbar, `altitude` and `waterheight` in m),
 //! `corrupt`, `reset`, `setoptions`, `setvp` and `predict` (Phase 1d;
 //! `tools/simulation/sm_predict_scenarios.json`), and, in two stages,
 //! `close` and then `openfromms` (Phase 2;
@@ -47,9 +48,9 @@ use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use casa_simulation::{
-    ApplySpec, ArrayConfig, BackendRequest, CasaOutcome, CoordinateSystem, ExecutionControls,
-    GainSpec, LeakageSpec, NoiseSpec, ObserveManySpec, ObserveSpec, Pointing, PredictSpec,
-    PredictionOptions, SessionResources, Simulator, SimulatorOptions, SimulatorResult,
+    ApplySpec, ArrayConfig, AtmosphereSpec, BackendRequest, CasaOutcome, CoordinateSystem,
+    ExecutionControls, GainSpec, LeakageSpec, NoiseSpec, ObserveManySpec, ObserveSpec, Pointing,
+    PredictSpec, PredictionOptions, SessionResources, Simulator, SimulatorOptions, SimulatorResult,
     SpectralWindowSpec, StateSpec, TsysParameters, VoltagePatternSpec,
 };
 use casa_types::measures::direction::{DirectionRef, MDirection};
@@ -218,7 +219,8 @@ fn simple_noise(sigma_jy: f64) -> NoiseSpec {
 }
 
 /// `setnoise` with the call's arguments, CASA's defaults for the others:
-/// `simplenoise` in Jy, `pwv` in mm, the Tsys parameters as numbers.
+/// `simplenoise` in Jy, `pwv` in mm, `pground` in mbar, `altitude` and
+/// `waterheight` in m, the other parameters as numbers.
 fn set_noise(session: &mut Simulator, call: &Value) -> SimulatorResult<()> {
     let or = |key: &str, default: f64| call.get(key).and_then(Value::as_f64).unwrap_or(default);
     let defaults = TsysParameters::default();
@@ -227,6 +229,12 @@ fn set_noise(session: &mut Simulator, call: &Value) -> SimulatorResult<()> {
         simple_noise_jy: or("simplenoise", 0.0),
         table: text(call, "table", "").to_string(),
         water_vapour_mm: or("pwv", 0.0),
+        atmosphere: AtmosphereSpec {
+            ground_pressure_hpa: or("pground", 0.0),
+            relative_humidity_percent: or("relhum", 20.0),
+            altitude_m: or("altitude", 0.0),
+            water_scale_height_m: or("waterheight", 0.0),
+        },
         tsys: TsysParameters {
             tau: or("tau", defaults.tau),
             atmosphere_k: or("tatmos", defaults.atmosphere_k),
