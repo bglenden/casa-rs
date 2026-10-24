@@ -191,6 +191,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "casa-atmosphere"
+version = "0.27.0"
+dependencies = [
+ "num-complex",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "casa-calibration"
 version = "0.27.0"
 dependencies = [

@@ -59,6 +59,7 @@
   "casa-imaging-metal": "backend",
   "casa-simulation-synthesis": "science",
   "casa-simulation": "application",
+  "casa-atmosphere": "science",
   "casars": "frontend",
   "casars-frontend-services": "frontend",
   "casars-imager": "frontend",
@@ -117,6 +118,7 @@
    "casa-fft",
    "casa-numerics"
   ],
+  "casa-atmosphere": [],
   "casa-simulation": [
    "casa-calibration",
    "casa-components",

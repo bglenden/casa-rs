@@ -68,6 +68,15 @@ Component-list behaviours casa-rs does not follow:
 Component-list behaviours casa-rs follows:
 [`addcomponent`'s polarization](#claddcomponent-stores-four-flux-values-as-stokes),
 [a shape `addcomponent` cannot make](#claddcomponent-keeps-a-point-for-a-shape-it-cannot-make).
+ATM behaviours casa-rs follows for parity with the `at` tool:
+[HCN's misplaced line](#atms-hcn-catalogue-misplaces-a-line-at-106-ghz),
+[sea-level air densities](#atms-reference-air-densities-drop-a-digit-at-sea-level),
+[the H2(17)O weight](#atm-weights-h217o-by-the-18o-abundance),
+[the HDO weight](#atms-hdo-weight-divides-by-three),
+[HCN above 100 km](#atms-hcn-profile-stops-at-100-km),
+[copied bottom pressures](#copying-an-atmprofile-copies-its-top-pressures-as-bottom-pressures),
+[unpadded ozone isotopologue layers](#atm-leaves-the-ozone-isotopologue-layers-unpadded),
+[(16)O(17)O](#atm-omits-16o17o).
 
 ## AW-projection pairs the partner hand's visibility with the conjugate-baseline cell
 
@@ -1395,3 +1404,123 @@ positive or above 10⁶ K, then makes it return `False`, but the `ANoise` stays:
 the next `corrupt` adds 1 Jy of noise (CASA 6.7.6, `pwv='200mm'`: variance
 0.872 over cross- and autocorrelations, where 1 Jy gives 0.875). casa-rs
 refuses such a `setnoise` without adding a term.
+
+## ATM's HCN catalogue misplaces a line at 106 GHz
+
+- Date noted: 2026-10-24
+- Status: likely ATM data error; casa-rs follows it (#841 Phase 4,
+  `casa-atmosphere`), kept for parity with the `at` tool; the owner may
+  choose to fix it later
+- Affected code: `atmosphere/ATM/ATMRefractiveIndex.cc:796`
+  (`mkSpecificRefractivity_hcn`, `fre[18]`)
+
+HCN's rotational lines are spaced by about 88.6 GHz: the table runs 88.63,
+177.26, …, 974.49 GHz, then gives the J=12–11 line as `106.298069519`
+before continuing at 1151.45 GHz. The line belongs at 1062.98 GHz (as the
+JPL catalogue has it, `c027001.cat`); the decimal point moved. ATM
+therefore sums a J=12–11-strength HCN line at 106.3 GHz and none at
+1063 GHz. HCN is a trace gas (a few 1e-4 ppmv), but near 106.3 GHz the
+misplaced line is not negligible: with the default Chajnantor profile, the
+compiled C++ gives a zenith opacity of 0.029368 at 106.298 GHz, of which
+HCN is 4.5·10⁻⁴; with the line moved to 1062.98 GHz it gives 0.028919, HCN
+1.3·10⁻⁷, so the total is 1.5 % high there (measured in the #894 review).
+Away from 106.3 GHz the line's wings fall off, and at 1063 GHz the
+missing line is lost among water's.
+
+## ATM's reference air densities drop a digit at sea level
+
+- Date noted: 2026-10-24
+- Status: likely ATM data error; casa-rs follows it (#841 Phase 4), kept for
+  parity with the `at` tool; the owner may choose to fix it later
+- Affected code: `atmosphere/ATM/ATMProfile.cc:1360`, `:1367`, `:1374`,
+  `:1381`, `:1388` (`st76`, `den[6][50]`)
+
+`st76` converts the minor gases' mixing ratios to number densities with a
+tabulated air density. For the mid-latitude, subarctic and US Standard
+atmospheres the sea-level entry has lost its leading digit: `.496E+19`,
+`.711E+19`, `.549E+19`, `.855E+19`, `.548E+19` cm⁻³ where the next entries
+(2.26e19 and so on at 1 km) and the tropical profile's 2.450e19 show about
+2.5e19 was meant. The parabola `st76` fits through 0, 1 and 2 km then
+falls far below the true density near the ground: in the committed
+sea-level mid-latitude summer case, restoring the digit raises the first
+layer's interpolated density 4.075 times (#894 review). So O3, N2O, CO,
+NO2, SO2, HCl and HCN are up to about four times too scarce in layers whose
+middle is below 1 km. Only sea-level-to-1-km sites with those atmospheres
+see it, and those gases' columns lie mostly higher.
+
+## ATM weights H2(17)O by the (18)O abundance
+
+- Date noted: 2026-10-24
+- Status: likely ATM bug; casa-rs follows it (#841 Phase 4), kept for parity
+  with the `at` tool; the owner may choose to fix it later
+- Affected code: `atmosphere/ATM/ATMRefractiveIndex.cc:449`
+  (`mkEarthSpecificRefractivity`, `ratiohh17o`)
+
+`ratiohh17o = abun_18o/(1+abun_18o+abun_17o+2.0*abun_d)` uses the (18)O/(16)O
+ratio (0.0020439) where the (17)O ratio (0.000375) belongs, so H2(17)O lines
+are 5.45 times too strong.
+
+## ATM's HDO weight divides by three
+
+- Date noted: 2026-10-24
+- Status: likely ATM typo; casa-rs follows it (#841 Phase 4), kept for parity
+  with the `at` tool; the owner may choose to fix it later
+- Affected code: `atmosphere/ATM/ATMRefractiveIndex.cc:450`
+  (`mkEarthSpecificRefractivity`, `ratiohdo`)
+
+`ratiohdo = 2.0*abun_d/(1+abun_18o+abun_17o+2-0*abun_d)` reads `2-0*abun_d`
+(that is, 2) where every sibling ratio has `2.0*abun_d`. The denominator is
+3.0024 instead of 1.0030, so HDO lines are about three times too weak.
+
+## ATM's HCN profile stops at 100 km
+
+- Date noted: 2026-10-24
+- Status: ATM data gap; casa-rs follows it (#841 Phase 4), kept for parity
+  with the `at` tool
+- Affected code: `atmosphere/ATM/ATMProfile.cc:1429` (`st76`, `hcn[50]`)
+
+`hcn[50]` is initialised with 45 values, so C++ zero-fills its last five
+levels (100 to 120 km) and the interpolated HCN falls to zero over them. A
+layer whose middle is above 90 km already interpolates toward the zero at
+100 km: the tropical fixture keeps, under a 95 km top, a layer with its
+middle at 90.8 km and its top at 94.1 km (#894 review). So profiles topped
+above about 90 km see the gap; `tools/atmosphere/extract_atm_tables.py`
+reports it whenever it regenerates the tables.
+
+## Copying an AtmProfile copies its top pressures as bottom pressures
+
+- Date noted: 2026-10-24
+- Status: ATM bug; no effect on what casa-rs ports
+- Affected code: `atmosphere/ATM/ATMProfile.cc:567` (copy constructor)
+
+The copy constructor fills `v_layerPressure0_` from `a.v_layerPressure1_`.
+`RefractiveIndexProfile` (and so `SkyStatus`) copies its `AtmProfile` this
+way, so their `getLayerBottomPressure` returns each layer's top pressure and
+`setAltitude` would take a wrong ground pressure. No opacity, path or
+brightness calculation reads bottom pressures. `casa-atmosphere` keeps one
+profile and never copies it through such a path.
+
+## ATM leaves the ozone isotopologue layers unpadded
+
+- Date noted: 2026-10-24
+- Status: latent ATM bug; does not arise with ATM's own profiles
+- Affected code: `atmosphere/ATM/ATMRefractiveIndexProfile.cc:723–725`
+  (`mkRefractiveIndexProfile`)
+
+For a layer without ozone, `mkRefractiveIndexProfile` pushes a zero onto the
+total-ozone vector only. The eight ozone state and isotopologue vectors get
+nothing, so they become shorter than the layer count and later layers' values
+shift down one place. ATM's standard profiles have ozone in every layer, so
+this needs a user profile with zero ozone.
+
+## ATM omits (16)O(17)O
+
+- Date noted: 2026-10-24
+- Status: deliberate in ATM; casa-rs follows it
+- Affected code: `atmosphere/ATM/ATMRefractiveIndex.cc:3252`
+  (`mkSpecificRefractivity_16o17o`)
+
+The (16)O(17)O function returns zero before its line loop. The comment says
+the isotope was removed in 2024 while its catalogue is reviewed, because it
+gave lines that do not exist. The port returns zero too and keeps the
+catalogue in its tables for the record.
