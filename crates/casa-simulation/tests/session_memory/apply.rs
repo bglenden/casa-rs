@@ -14,7 +14,9 @@
 
 use std::path::Path;
 
-use casa_calibration::{SimulatedJones, SimulatedSolution, write_simulated_jones_table};
+use casa_calibration::{
+    SimulatedJones, SimulatedSolution, SolutionValues, write_simulated_jones_table,
+};
 use casa_simulation::{ApplySpec, Simulator};
 use num_complex::Complex32;
 
@@ -79,7 +81,7 @@ fn write_table(ms: &Path, output: &Path) {
             field_id: 0,
             spectral_window_id: 0,
             antenna,
-            receptors: [Complex32::new(1.0, 0.01 * index as f32); 2],
+            values: SolutionValues::Receptors([Complex32::new(1.0, 0.01 * index as f32); 2]),
         })
     });
     write_simulated_jones_table(&ms, output, SimulatedJones::Gain, rows).expect("write the table");

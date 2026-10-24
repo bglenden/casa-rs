@@ -2,7 +2,8 @@
 //! Antenna-based corruption: CASA's `G` (`sm.setgain`) and `D`
 //! (`sm.setleakage`) terms, simulated as CASA's `SolvableVisCal` simulates
 //! them and applied by `corrupt` as `VisEquation::collapseForSim` applies
-//! them.
+//! them. `sm.settrop`'s `Tf` term shares their solutions and how `corrupt`
+//! finds them; its phases are [`super::troposphere`]'s.
 //!
 //! # What CASA simulates
 //!
@@ -62,10 +63,14 @@
 
 use std::ops::Deref;
 
+use casa_calibration::{SimulatedSolution, SolutionValues};
 use casa_fft::RealFft2;
 use casa_imaging_runtime::Reservation;
 use casa_numerics::cell_noise::philox4x32_10;
 use num_complex::{Complex32, Complex64};
+
+use super::BatchScales;
+use super::troposphere::TroposphericPhase;
 
 /// The purpose byte of fractional-Brownian-motion gain screens' streams.
 const PURPOSE_GAIN_SCREEN: u32 = 0x02;
@@ -87,13 +92,26 @@ pub(crate) const SCREEN_SLOT_S: f64 = 5.0;
 pub(crate) const MAXIMUM_GAIN_SCALE: f64 = 0.9;
 
 /// Which CASA calibration type a term is. Within one `corrupt`, CASA
-/// corrupts the model from the sky side in: D before G.
+/// corrupts the model from the sky side in: T before D before G.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum JonesKind {
     /// `G Jones`: antenna gains.
     Gain,
     /// `D`: polarization leakage.
     Leakage,
+    /// `Tf Jones`: tropospheric phase, per channel
+    /// ([`super::troposphere`]).
+    Troposphere,
+}
+
+/// A term's values, by block and antenna.
+#[derive(Debug, Clone, PartialEq)]
+enum JonesValues {
+    /// G and D: `[block · antennas + antenna]`, the receptors' values.
+    Receptors(Vec<[Complex32; 2]>),
+    /// Tf: each block's water-vapour excess per antenna, and each window's
+    /// wet phase delay per channel.
+    Troposphere(TroposphericPhase),
 }
 
 /// One solution of a term: a time in a spectral window, its block of
@@ -107,20 +125,21 @@ pub(crate) struct Solution {
 }
 
 /// One simulated antenna-based term: per spectral window, its solutions in
-/// time order, each a block of one value per antenna and receptor.
+/// time order, each a block of one value per antenna and receptor (G, D),
+/// or of one water-vapour excess per antenna (Tf).
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct JonesTerm {
     pub(crate) kind: JonesKind,
     antennas: usize,
     /// `[window]`: the solutions in time order.
     solutions: Vec<Vec<Solution>>,
-    /// `[block · antennas + antenna]`: the receptors' values.
-    values: Vec<[Complex32; 2]>,
+    values: JonesValues,
 }
 
 impl JonesTerm {
     /// The heap the term keeps: its solutions and values, which grow with
-    /// the integrations (gains) or windows (leakage) times the antennas.
+    /// the integrations (gains, troposphere) or windows (leakage) times the
+    /// antennas, and a tropospheric term's delays, with the channels.
     pub(crate) fn bytes(&self) -> u64 {
         self.solutions.capacity() as u64 * WINDOW_BYTES
             + self
@@ -128,7 +147,20 @@ impl JonesTerm {
                 .iter()
                 .map(|times| times.capacity() as u64 * SOLUTION_BYTES)
                 .sum::<u64>()
-            + self.values.capacity() as u64 * VALUE_BYTES
+            + match &self.values {
+                JonesValues::Receptors(values) => values.capacity() as u64 * VALUE_BYTES,
+                JonesValues::Troposphere(phase) => phase.bytes(),
+            }
+    }
+
+    /// The receptors' values, `[block · antennas + antenna]`, of a gain or
+    /// leakage term.
+    #[cfg(test)]
+    pub(crate) fn receptor_values(&self) -> &[[Complex32; 2]] {
+        match &self.values {
+            JonesValues::Receptors(values) => values,
+            JonesValues::Troposphere(_) => panic!("a tropospheric term has no receptors' values"),
+        }
     }
 
     /// Whether the term has a solution in spectral window `window`: CASA
@@ -145,25 +177,61 @@ impl JonesTerm {
         (solutions * self.antennas) as u64
     }
 
-    /// Every solution, by window and in time order, with the receptors'
-    /// values of each antenna: the rows of its calibration table.
-    pub(crate) fn solutions(
-        &self,
-    ) -> impl Iterator<Item = (usize, &Solution, &[[Complex32; 2]])> + '_ {
+    /// The values its calibration table's CPARAMs hold: two receptors' a
+    /// row for gains and leakage, a value per channel of the row's window
+    /// for the troposphere.
+    pub(crate) fn table_values(&self) -> u64 {
+        match &self.values {
+            JonesValues::Receptors(_) => 2 * self.table_rows(),
+            JonesValues::Troposphere(phase) => self
+                .solutions
+                .iter()
+                .enumerate()
+                .map(|(window, solutions)| {
+                    (solutions.len() * self.antennas * phase.channels(window).unwrap_or(0)) as u64
+                })
+                .sum(),
+        }
+    }
+
+    /// Every solution of each antenna, by window, in time order and by
+    /// antenna: the rows of its calibration table, each formed as it is
+    /// taken.
+    pub(crate) fn table_solutions(&self) -> impl Iterator<Item = SimulatedSolution> + '_ {
         self.solutions
             .iter()
             .enumerate()
             .flat_map(move |(window, solutions)| {
-                solutions.iter().map(move |solution| {
-                    let first = solution.block as usize * self.antennas;
-                    (window, solution, &self.values[first..first + self.antennas])
+                solutions.iter().flat_map(move |solution| {
+                    (0..self.antennas).map(move |antenna| SimulatedSolution {
+                        time_s: solution.time_s,
+                        field_id: solution.field as i32,
+                        spectral_window_id: window as i32,
+                        antenna: antenna as i32,
+                        values: self.solution_values(window, solution.block as usize, antenna),
+                    })
                 })
             })
     }
 
-    /// The receptors' values of `antenna` at the solution nearest `time_s`
-    /// in `window`, the earlier of two as near (`CalCorruptor::setCurrTime`).
-    fn at(&self, window: usize, time_s: f64, antenna: usize) -> [Complex32; 2] {
+    /// Antenna `antenna`'s CPARAM in block `block` of window `window`.
+    fn solution_values(&self, window: usize, block: usize, antenna: usize) -> SolutionValues {
+        match &self.values {
+            JonesValues::Receptors(values) => {
+                SolutionValues::Receptors(values[block * self.antennas + antenna])
+            }
+            JonesValues::Troposphere(phase) => {
+                let mut phasors =
+                    vec![Complex32::new(1.0, 0.0); phase.channels(window).unwrap_or(0)];
+                phase.phasors((window, block), (antenna, self.antennas), &mut phasors);
+                SolutionValues::Channels(phasors)
+            }
+        }
+    }
+
+    /// The block of the solution nearest `time_s` in `window`, the earlier
+    /// of two as near (`CalCorruptor::setCurrTime`).
+    pub(crate) fn block_at(&self, window: usize, time_s: f64) -> usize {
         let times = &self.solutions[window];
         let after = times.partition_point(|solution| solution.time_s < time_s);
         let nearest = match (after.checked_sub(1), times.get(after)) {
@@ -177,24 +245,54 @@ impl JonesTerm {
             (Some(before), None) => before,
             (None, _) => 0,
         };
-        let block = times[nearest].block as usize;
-        self.values[block * self.antennas + antenna]
+        times[nearest].block as usize
+    }
+
+    /// The term's antennas.
+    pub(crate) fn antennas(&self) -> usize {
+        self.antennas
+    }
+
+    /// A tropospheric term's phases; `None` for gains and leakage.
+    pub(crate) fn tropospheric_phase(&self) -> Option<&TroposphericPhase> {
+        match &self.values {
+            JonesValues::Receptors(_) => None,
+            JonesValues::Troposphere(phase) => Some(phase),
+        }
     }
 
     /// Corrupt `cell`, a row of `antennas` at `time_s` in `window`, whose
     /// correlations have the receptors `receptors`, as CASA's `corrupt`
-    /// applies the term.
+    /// applies the term. A tropospheric term's antennas' values come from
+    /// the batch's `table` ([`BatchScales::phasors`]).
     pub(crate) fn apply(
         &self,
         (window, time_s): (usize, f64),
         (antenna1, antenna2): (usize, usize),
-        receptors: &[[usize; 2]],
+        (receptors, table): (&[[usize; 2]], &BatchScales),
         cell: &mut [Complex32],
     ) {
-        let p = self.at(window, time_s, antenna1);
-        let q = self.at(window, time_s, antenna2);
+        let block = self.block_at(window, time_s);
         let correlations = receptors.len();
+        let values = match &self.values {
+            JonesValues::Receptors(values) => values,
+            JonesValues::Troposphere(_) => {
+                // A scalar per channel, the same for every correlation.
+                let p = table.phasors(self, (window, block), antenna1);
+                let q = table.phasors(self, (window, block), antenna2);
+                for ((sample, p), q) in cell.chunks_exact_mut(correlations).zip(p).zip(q) {
+                    let factor = *p * q.conj();
+                    for value in sample {
+                        *value *= factor;
+                    }
+                }
+                return;
+            }
+        };
+        let p = values[block * self.antennas + antenna1];
+        let q = values[block * self.antennas + antenna2];
         match self.kind {
+            JonesKind::Troposphere => unreachable!("a tropospheric term has its own values"),
             JonesKind::Gain => {
                 // A cell has at most four correlations.
                 let mut factors = [Complex32::new(1.0, 0.0); 4];
@@ -306,6 +404,23 @@ impl TermBytes {
             forming: 0,
         }
     }
+
+    /// [`tropospheric`] for chunks counted `per_window` on `slots` slots,
+    /// with windows of `channels` channels: it keeps the chunks as its
+    /// solutions, an excess per slot and antenna, and each window's delays
+    /// ([`TroposphericPhase::bytes_for`]); `forming` is what forming the
+    /// excess and delays holds, the caller's.
+    pub(crate) fn troposphere(
+        (per_window, channels): (&[usize], &[usize]),
+        (slots, antennas): (usize, usize),
+        forming: u64,
+    ) -> Self {
+        Self {
+            kept: solutions_bytes(per_window)
+                + TroposphericPhase::bytes_for(slots, antennas, channels),
+            forming,
+        }
+    }
 }
 
 /// Heap bytes of the solutions of chunks counted `per_window`, in vectors
@@ -315,11 +430,41 @@ fn solutions_bytes(per_window: &[usize]) -> u64 {
         + per_window.iter().sum::<usize>() as u64 * SOLUTION_BYTES
 }
 
-/// The slots of the screens spanning chunk times `span`
-/// (`CalCorruptor::setEvenSlots`).
+/// The even slots of a screen of fractional Brownian motion
+/// (`CalCorruptor::setEvenSlots`): `count` slots `width_s` wide from
+/// `start_s`, slot `i` centred at `start_s + (i + ½)·width_s`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct Slots {
+    pub(crate) start_s: f64,
+    pub(crate) width_s: f64,
+    pub(crate) count: usize,
+}
+
+impl Slots {
+    /// The slots `width_s` wide spanning chunk times `span`: as many as
+    /// whole widths fit in it, and one more.
+    pub(crate) fn spanning(span: Option<[f64; 2]>, width_s: f64) -> Self {
+        let [start, stop] = span.unwrap_or([0.0, 0.0]);
+        Self {
+            start_s: start,
+            width_s,
+            count: (((stop - start) / width_s + 1.0) as usize).max(1),
+        }
+    }
+
+    /// The slot nearest `time_s`, the earlier of two as near
+    /// (`CalCorruptor::setCurrTime`).
+    pub(crate) fn nearest(&self, time_s: f64) -> usize {
+        let position = (time_s - self.start_s) / self.width_s - 0.5;
+        let slot = (position - 0.5).ceil().max(0.0) as usize;
+        slot.min(self.count - 1)
+    }
+}
+
+/// The slots of `setgain(mode='fbm')`'s screens spanning chunk times
+/// `span`.
 pub(crate) fn screen_slots(span: Option<[f64; 2]>) -> usize {
-    let [start, stop] = span.unwrap_or([0.0, 0.0]);
-    (((stop - start) / SCREEN_SLOT_S + 1.0) as usize).max(1)
+    Slots::spanning(span, SCREEN_SLOT_S).count
 }
 
 /// The fewest slots a screen has a spectrum for; on fewer CASA's screen is
@@ -374,8 +519,24 @@ impl Chunks {
         self
     }
 
+    /// Each chunk as a solution of the block of the slot nearest its time.
+    fn on_slots(self, slots: &Slots) -> Vec<Vec<Solution>> {
+        self.by_window
+            .into_iter()
+            .map(|solutions| {
+                solutions
+                    .into_iter()
+                    .map(|solution| Solution {
+                        block: slots.nearest(solution.time_s) as u32,
+                        ..solution
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+
     /// The earliest and latest chunk times.
-    fn span(&self) -> Option<[f64; 2]> {
+    pub(crate) fn span(&self) -> Option<[f64; 2]> {
         self.by_window
             .iter()
             .flatten()
@@ -392,17 +553,17 @@ impl Chunks {
 /// [`MAXIMUM_GAIN_SCALE`]) for `antennas` antennas, with the solution
 /// `chunks` (one per integration), drawn from `seed`'s streams.
 pub(crate) fn fbm_gains(seed: i32, scale: f64, antennas: usize, chunks: Chunks) -> JonesTerm {
-    let span = chunks.span();
-    let start = span.map_or(0.0, |[start, _]| start);
-    let slots = screen_slots(span);
-    let mut fft = ScreenFft::new(slots);
+    let slots = Slots::spanning(chunks.span(), SCREEN_SLOT_S);
+    let mut fft = ScreenFft::new(slots.count);
+    let key = [seed as u32, PURPOSE_GAIN_SCREEN << 24];
     // `[slot · antennas + antenna]`.
-    let mut screens = vec![[Complex32::new(1.0, 0.0); 2]; slots * antennas];
+    let mut screens = vec![[Complex32::new(1.0, 0.0); 2]; slots.count * antennas];
     for antenna in 0..antennas {
         let gains = [0_u32, 1].map(|receptor| {
             let counter = |kind: u32| [antenna as u32, receptor | (kind << 8), 0, 0];
-            let amplitude = fft.normalised_fbm(seed, counter(0), scale);
-            let phase = fft.normalised_fbm(seed, counter(1), scale * std::f64::consts::PI);
+            let amplitude = fft.normalised_fbm(key, counter(0), (SCREEN_BETA, scale));
+            let phase =
+                fft.normalised_fbm(key, counter(1), (SCREEN_BETA, scale * std::f64::consts::PI));
             amplitude
                 .iter()
                 .zip(&phase)
@@ -416,31 +577,27 @@ pub(crate) fn fbm_gains(seed: i32, scale: f64, antennas: usize, chunks: Chunks) 
             values[antenna] = [gains[0][slot], gains[1][slot]];
         }
     }
-    // Each chunk takes the slot nearest its time, the earlier of two as
-    // near (`CalCorruptor::setCurrTime`).
-    let slot_of = |time_s: f64| {
-        let position = (time_s - start) / SCREEN_SLOT_S - 0.5;
-        let slot = (position - 0.5).ceil().max(0.0) as usize;
-        slot.min(slots - 1) as u32
-    };
-    let solutions = chunks
-        .by_window
-        .into_iter()
-        .map(|solutions| {
-            solutions
-                .into_iter()
-                .map(|solution| Solution {
-                    block: slot_of(solution.time_s),
-                    ..solution
-                })
-                .collect()
-        })
-        .collect();
     JonesTerm {
         kind: JonesKind::Gain,
         antennas,
-        solutions,
-        values: screens,
+        solutions: chunks.on_slots(&slots),
+        values: JonesValues::Receptors(screens),
+    }
+}
+
+/// A `settrop` term for `antennas` antennas with the solution `chunks`
+/// (one per integration): each takes the slot of `slots` nearest its time,
+/// and its antennas' phases from `phase`, whose blocks are the slots.
+pub(crate) fn tropospheric(
+    antennas: usize,
+    (chunks, slots): (Chunks, &Slots),
+    phase: TroposphericPhase,
+) -> JonesTerm {
+    JonesTerm {
+        kind: JonesKind::Troposphere,
+        antennas,
+        solutions: chunks.on_slots(slots),
+        values: JonesValues::Troposphere(phase),
     }
 }
 
@@ -476,7 +633,7 @@ pub(crate) fn leakages(
         kind: JonesKind::Leakage,
         antennas,
         solutions: chunks.by_window,
-        values,
+        values: JonesValues::Receptors(values),
     }
 }
 
@@ -509,7 +666,7 @@ pub(crate) fn random_gains(
         kind: JonesKind::Gain,
         antennas,
         solutions: chunks.by_window,
-        values,
+        values: JonesValues::Receptors(values),
     }
 }
 
@@ -527,13 +684,13 @@ pub(crate) fn applied(
         kind,
         antennas,
         solutions: chunks.by_window,
-        values,
+        values: JonesValues::Receptors(values),
     }
 }
 
 /// Two independent standard normal draws from counter `counter` of stream
 /// `key`, by Box–Muller in double precision.
-fn normal_pair(key: [u32; 2], counter: [u32; 4]) -> [f64; 2] {
+pub(super) fn normal_pair(key: [u32; 2], counter: [u32; 4]) -> [f64; 2] {
     let words = philox4x32_10(counter, key);
     let uniform = |high: u32, low: u32| {
         // 53 bits, never 0: (n + 0.5) / 2⁵³.
@@ -547,21 +704,22 @@ fn normal_pair(key: [u32; 2], counter: [u32; 4]) -> [f64; 2] {
 }
 
 /// One uniform draw in [0, 1) from counter `counter` of stream `key`.
-fn uniform(key: [u32; 2], counter: [u32; 4]) -> f64 {
+pub(super) fn uniform(key: [u32; 2], counter: [u32; 4]) -> f64 {
     let words = philox4x32_10(counter, key);
     let bits = (u64::from(words[0]) << 21) ^ u64::from(words[1] >> 11);
     bits as f64 / (1_u64 << 53) as f64
 }
 
 /// The real transform of one screen's length, reused across screens.
-struct ScreenFft {
+pub(super) struct ScreenFft {
     slots: usize,
     fft: Option<RealFft2<f64>>,
     storage: Vec<Complex64>,
 }
 
 impl ScreenFft {
-    fn new(slots: usize) -> Self {
+    /// The transform of screens of `slots` slots.
+    pub(super) fn new(slots: usize) -> Self {
         let fft = (slots >= MINIMUM_SCREEN_SLOTS).then(|| {
             RealFft2::with_threads([1, slots], 1)
                 .expect("a one-row real transform")
@@ -577,11 +735,16 @@ impl ScreenFft {
     }
 
     /// A fractional-Brownian-motion screen of the slots (`fBM::initialize`
-    /// in one dimension), drawn from `seed`'s gain-screen stream at
-    /// `counter`, scaled to `scale` over its root-mean-square about its
-    /// mean, the mean kept (`GJonesCorruptor::initialize`).
-    fn normalised_fbm(&mut self, seed: i32, counter: [u32; 4], scale: f64) -> Vec<f64> {
-        let key = [seed as u32, PURPOSE_GAIN_SCREEN << 24];
+    /// in one dimension) of spectral exponent `beta`, drawn from stream
+    /// `key` at `counter`, scaled to `scale` over its root-mean-square
+    /// about its mean, the mean kept (`GJonesCorruptor::initialize`,
+    /// `AtmosCorruptor::initialize`).
+    pub(super) fn normalised_fbm(
+        &mut self,
+        key: [u32; 2],
+        counter: [u32; 4],
+        (beta, scale): (f64, f64),
+    ) -> Vec<f64> {
         let Some(fft) = &mut self.fft else {
             // Too few slots for a spectrum: CASA's screen is flat.
             return vec![0.0; self.slots];
@@ -594,7 +757,7 @@ impl ScreenFft {
             let phase = 2.0 * std::f64::consts::PI * uniform(key, bin_counter);
             bin_counter[3] = 1;
             let [normal, _] = normal_pair(key, bin_counter);
-            let amplitude = ((bin + 1) as f64).powf(-0.5 * SCREEN_BETA) * normal;
+            let amplitude = ((bin + 1) as f64).powf(-0.5 * beta) * normal;
             self.storage[bin] = Complex64::from_polar(amplitude, phase);
         }
         fft.inverse(&mut self.storage)

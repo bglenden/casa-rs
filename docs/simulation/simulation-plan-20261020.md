@@ -199,7 +199,7 @@ Requirements:
      allowed.
 4. **Port ATM to Rust** as `casa-atmosphere`, in its own phase. Until it lands,
    `tsys-atm` and `settrop` raise a clear "not yet implemented" error.
-   (`tsys-atm` landed in Phase 4c; `settrop` waits for 4d.)
+   (`tsys-atm` landed in Phase 4c and `settrop` in 4d.)
 5. **TIME honours the requested UTC.**
    - The divergence is recorded.
    - CASA computed its geometry at the requested time + (TAI − UTC). A parity
@@ -491,6 +491,14 @@ This is delivered as four PRs, in order.
 - Tebb and opacity agree with CASA's ATM, through the `at` tool, to about
   1e-6 relative across its bands.
 - `tsys-atm` noise agrees with CASA statistically.
+- `settrop` (added in 4d, where CASA's phase is the dispersive wet delay
+  alone and casa-rs's the whole one, `docs/CASA (C++) bugs.md`): each
+  implementation's `Tf Jones` table is one water-vapour excess per
+  solution times its own delay model, through the `at` tool, to single
+  precision; DATA is the table's `g_p·conj(g_q)`; CASA applies casa-rs's
+  table (`setapply`) to the same DATA; casa-rs's `individual` series have
+  the root-mean-square `deltapwv`, and the screens' statistics are
+  reported.
 
 ### Phase 5: `simutil` and `simobserve`
 

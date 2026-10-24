@@ -39,6 +39,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use casa_simulation::{
     ApplySpec, CasaOutcome, SessionResources, Simulator, SimulatorError, SimulatorResult,
+    TroposphereSpec,
 };
 use casa_types::measures::MeasuresProvider;
 use pyo3::exceptions::{PyNotImplementedError, PyResourceWarning, PyRuntimeError};
@@ -740,26 +741,45 @@ impl PySimulator {
         gains::setapply(self, py, spec)
     }
 
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables, clippy::too_many_arguments)]
+    /// Simulate the troposphere's phase over the rows observed so far, a
+    /// screen of water vapour above the array (`mode='screen'`) or a series
+    /// above each antenna (`'individual'`), of mean `pwv` mm fluctuating by
+    /// `deltapwv` of it, for `corrupt` to apply channel by channel. A
+    /// `table` is written as CASA's `Tf Jones` calibration table at
+    /// `close`. casa-rs takes the whole wet phase delay, where CASA takes
+    /// its dispersive part alone (`docs/CASA (C++) bugs.md`).
+    #[allow(clippy::too_many_arguments)]
     #[pyo3(
         signature = (
-            mode = None, table = None, pwv = None, deltapwv = None, beta = None,
-            windspeed = None, simint = None
+            mode = "screen", table = "", pwv = 3.0, deltapwv = 0.15, beta = 1.1,
+            windspeed = 7.0, simint = -1.0
         ),
         text_signature = "($self, mode='screen', table='', pwv=3.0, deltapwv=0.15, beta=1.1, windspeed=7.0, simint=-1.0)"
     )]
     fn settrop(
         &self,
-        mode: Option<&Bound<'_, PyAny>>,
-        table: Option<&Bound<'_, PyAny>>,
-        pwv: Option<&Bound<'_, PyAny>>,
-        deltapwv: Option<&Bound<'_, PyAny>>,
-        beta: Option<&Bound<'_, PyAny>>,
-        windspeed: Option<&Bound<'_, PyAny>>,
-        simint: Option<&Bound<'_, PyAny>>,
+        py: Python<'_>,
+        mode: &str,
+        table: &str,
+        pwv: f64,
+        deltapwv: f64,
+        beta: f64,
+        windspeed: f64,
+        simint: f64,
     ) -> PyResult<bool> {
-        stubs::not_yet_implemented("settrop")
+        gains::settrop(
+            self,
+            py,
+            TroposphereSpec {
+                mode: mode.to_string(),
+                table: table.to_string(),
+                water_vapour_mm: pwv,
+                delta_pwv: deltapwv,
+                beta,
+                windspeed_m_s: windspeed,
+                simint_s: simint,
+            },
+        )
     }
 
     /// Disabled in CASA: logs CASA's error and returns `False`.

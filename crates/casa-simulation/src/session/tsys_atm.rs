@@ -133,7 +133,7 @@ fn check_zenith_tsys(model: &TsysAtm, spec: &NoiseSpec, pwv_mm: f64) -> Simulato
 /// keeps: its channel frequencies, the profile of its channels' totals
 /// (grid and the atmosphere's copy included), and the jobs, with their
 /// vectors and the one they are gathered into.
-fn building_bytes(channels: usize, layers: usize) -> u64 {
+pub(super) fn building_bytes(channels: usize, layers: usize) -> u64 {
     AbsorptionProfile::<ChannelTotals>::shape_bytes(1, channels, layers)
         + (channels * (size_of::<f64>() + 2 * size_of::<ChannelTotals>())) as u64
         + (channels.div_ceil(CHANNELS_PER_JOB) * size_of::<(&[f64], Vec<ChannelTotals>)>()) as u64
@@ -141,7 +141,7 @@ fn building_bytes(channels: usize, layers: usize) -> u64 {
 
 /// Each channel's totals of `atmosphere` at `channels`, computed on `team`
 /// in jobs of [`CHANNELS_PER_JOB`] channels.
-fn window_totals(
+pub(super) fn window_totals(
     team: &WorkerTeam,
     atmosphere: &AtmosphereProfile,
     channels: &[f64],

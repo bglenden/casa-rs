@@ -31,6 +31,7 @@ use casa_types::Complex32;
 use super::geometry::RowGeometry;
 use super::pipeline::Integration;
 use super::prediction::PredictionStage;
+use crate::corrupt::jones::JonesTerm;
 use crate::corrupt::{BatchScales, NoiseScratch, TsysAtm};
 use crate::session::SessionResources;
 use crate::session::error::{SimulatorError, SimulatorResult};
@@ -73,13 +74,15 @@ pub(super) struct MainShape<'a> {
     pub(super) noise_scales: NoiseScales,
 }
 
-/// What a batch's `tsys-atm` noise holds beside the cells: its antenna
-/// scales ([`BatchScales`]) and each worker's σ of a row
-/// ([`NoiseScratch`]).
+/// What a batch's `tsys-atm` noise and `settrop` terms hold beside the
+/// cells: their antenna scales and phasors ([`BatchScales`]), and each
+/// worker's σ of a row ([`NoiseScratch`]).
 #[derive(Debug, Clone, Copy, Default)]
 pub(super) struct NoiseScales {
     /// The plan's `tsys-atm` terms.
     terms: usize,
+    /// The plan's `settrop` terms.
+    tropospheric_terms: usize,
     /// Channels of the cells.
     channels: usize,
     /// Rows of the smallest integration, and antennas of the largest, when
@@ -88,9 +91,9 @@ pub(super) struct NoiseScales {
 }
 
 impl NoiseScales {
-    /// What `plan`'s noise holds, for cells of `channels` channels and the
-    /// rows' `integrations`. Every `corrupt` covers scan 0, so its noise is
-    /// all the plan's.
+    /// What `plan`'s corruptions hold, for cells of `channels` channels and
+    /// the rows' `integrations`. Every `corrupt` covers scan 0, so its
+    /// corruptions are all the plan's.
     pub(super) fn of(
         plan: &DataPlan,
         channels: usize,
@@ -103,26 +106,39 @@ impl NoiseScales {
             .collect();
         models.sort_unstable();
         models.dedup();
+        let mut tropospheric: Vec<*const JonesTerm> = plan
+            .corruptions_for_scan(0)
+            .flat_map(|(_, jones)| jones)
+            .filter(|term| term.tropospheric_phase().is_some())
+            .map(|term| std::ptr::from_ref::<JonesTerm>(term))
+            .collect();
+        tropospheric.sort_unstable();
+        tropospheric.dedup();
         Self {
             terms: models.len(),
+            tropospheric_terms: tropospheric.len(),
             channels,
             integrations,
         }
     }
 
-    /// The most antenna-scale entries a batch of `rows` rows needs: the room
-    /// its table reserves.
-    pub(super) fn entries(&self, rows: usize) -> usize {
-        BatchScales::most_entries(self.terms, rows, self.integrations)
+    /// The most antenna-scale and phasor entries a batch of `rows` rows
+    /// needs: the room its table reserves.
+    pub(super) fn entries(&self, rows: usize) -> (usize, usize) {
+        (
+            BatchScales::most_entries(self.terms, rows, self.integrations),
+            BatchScales::most_entries(self.tropospheric_terms, rows, self.integrations),
+        )
     }
 
     /// The most a batch of `rows` rows holds with `workers` workers.
     pub(super) fn bytes(&self, rows: usize, workers: usize) -> u64 {
-        if self.terms == 0 {
-            return 0;
-        }
-        BatchScales::bytes(self.entries(rows), self.channels)
-            + workers as u64 * NoiseScratch::bytes(self.channels)
+        let scratch = if self.terms == 0 {
+            0
+        } else {
+            workers as u64 * NoiseScratch::bytes(self.channels)
+        };
+        BatchScales::bytes(self.entries(rows), self.channels) + scratch
     }
 }
 

@@ -21,6 +21,7 @@
 //! | `sm.setnoise(mode='tsys-manual')`: σ per row from a system temperature (CASA's `AtmosCorruptor`) | [`Simulator::set_noise`], [`NoiseSpec::tsys_manual`], [`TsysParameters`] |
 //! | `sm.setnoise(mode='tsys-atm')`: σ per row and channel from a system temperature the ATM atmosphere model gives | [`Simulator::set_noise`], [`NoiseSpec::tsys_atm`], [`AtmosphereSpec`] |
 //! | `sm.setgain(mode='fbm' or 'random')`, `sm.setleakage`, and the calibration tables they write | [`Simulator::set_gain`], [`Simulator::set_leakage`] |
+//! | `sm.settrop(mode='individual' or 'screen')`: tropospheric phase per channel from a water-vapour screen and ATM, and its `Tf Jones` table | [`Simulator::set_trop`], [`TroposphereSpec`] |
 //! | `sm.setapply` of a `G` or `D` table | [`Simulator::set_apply`] |
 //! | `simutil.readantenna(antab)` | [`readantenna::read_antenna_config`] |
 //!
@@ -44,5 +45,5 @@ pub use session::spectral::SpectralWindowSpec;
 pub use session::{
     ApplySpec, AtmosphereSpec, BackendRequest, DEFAULT_SEED, ExecutionControls, GainSpec,
     LeakageSpec, NoiseSpec, PredictSpec, PredictionOptions, SessionResources, Simulator,
-    SimulatorOptions, TsysParameters, UnknownBackend, VoltagePatternSpec,
+    SimulatorOptions, TroposphereSpec, TsysParameters, UnknownBackend, VoltagePatternSpec,
 };

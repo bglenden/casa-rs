@@ -22,7 +22,8 @@
 //! `tools/simulation/sm_openfromms_scenarios.json`): the first stage is
 //! closed, and its MS, or a copy of CASA's when the scenario's
 //! `openfromms_ms` is `casa`, reopened; and `setdata`, `setgain` and
-//! `setleakage` (Phase 3; `tools/simulation/sm_corrupt_scenarios.json`),
+//! `setleakage` (Phase 3; `tools/simulation/sm_corrupt_scenarios.json`)
+//! and `settrop` (Phase 4d; `tools/simulation/sm_trop_scenarios.json`),
 //! whose `table` is written under the output directory, as the oracle
 //! writes CASA's under its own. Each of those must end as
 //! CASA's did: `True`, `False`, or raised, as the manifest records; a call
@@ -51,7 +52,7 @@ use casa_simulation::{
     ApplySpec, ArrayConfig, AtmosphereSpec, BackendRequest, CasaOutcome, CoordinateSystem,
     ExecutionControls, GainSpec, LeakageSpec, NoiseSpec, ObserveManySpec, ObserveSpec, Pointing,
     PredictSpec, PredictionOptions, SessionResources, Simulator, SimulatorOptions, SimulatorResult,
-    SpectralWindowSpec, StateSpec, TsysParameters, VoltagePatternSpec,
+    SpectralWindowSpec, StateSpec, TroposphereSpec, TsysParameters, VoltagePatternSpec,
 };
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::frequency::FrequencyRef;
@@ -307,6 +308,20 @@ fn set_gain(session: &mut Simulator, call: &Value, out: &Path) -> SimulatorResul
     })
 }
 
+fn set_trop(session: &mut Simulator, call: &Value, out: &Path) -> SimulatorResult<()> {
+    let defaults = TroposphereSpec::default();
+    let value = |key: &str, default: f64| call.get(key).and_then(Value::as_f64).unwrap_or(default);
+    session.set_trop(&TroposphereSpec {
+        mode: text(call, "mode", &defaults.mode).to_string(),
+        table: table_under(call, out),
+        water_vapour_mm: value("pwv", defaults.water_vapour_mm),
+        delta_pwv: value("deltapwv", defaults.delta_pwv),
+        beta: value("beta", defaults.beta),
+        windspeed_m_s: value("windspeed", defaults.windspeed_m_s),
+        simint_s: value("simint", defaults.simint_s),
+    })
+}
+
 fn set_leakage(session: &mut Simulator, call: &Value, out: &Path) -> SimulatorResult<()> {
     session.set_leakage(&LeakageSpec {
         table: table_under(call, out),
@@ -493,6 +508,7 @@ fn run_scenario(
             "setapply" => expect_casas_outcome(entry, set_apply(session, call)),
             "setgain" => expect_casas_outcome(entry, set_gain(session, call, out)),
             "setleakage" => expect_casas_outcome(entry, set_leakage(session, call, out)),
+            "settrop" => expect_casas_outcome(entry, set_trop(session, call, out)),
             "corrupt" => expect_casas_outcome(entry, session.corrupt()),
             "reset" => session.reset(),
             "setoptions" => expect_casas_outcome(entry, set_options(session, call)),

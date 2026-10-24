@@ -15,7 +15,7 @@ fn integrations(integrations: usize) -> Chunks {
 
 /// Every slot's value of `antenna`'s receptor `receptor`.
 fn screen(term: &JonesTerm, antenna: usize, receptor: usize) -> Vec<Complex32> {
-    term.values
+    term.receptor_values()
         .chunks_exact(term.antennas)
         .map(|values| values[antenna][receptor])
         .collect()
@@ -36,7 +36,7 @@ fn gain_screens_fluctuate_by_the_scale_over_even_slots() {
     let scale = 0.05;
     let term = fbm_gains(11_111, scale, 4, integrations(60));
     // From 1005 s to 1595 s: 119 slots of 5 s.
-    assert_eq!(term.values.len(), 119 * 4);
+    assert_eq!(term.receptor_values().len(), 119 * 4);
     for antenna in 0..4 {
         for receptor in 0..2 {
             let values = screen(&term, antenna, receptor);
@@ -70,7 +70,10 @@ fn gain_screens_are_keyed_by_seed_antenna_and_receptor() {
         }
     }
     assert_eq!(fbm_gains(7, 0.1, 3, integrations(40)), term);
-    assert_ne!(fbm_gains(8, 0.1, 3, integrations(40)).values, term.values);
+    assert_ne!(
+        fbm_gains(8, 0.1, 3, integrations(40)).receptor_values(),
+        term.receptor_values()
+    );
 }
 
 /// A chunk takes the even slot nearest its time, and a row the chunk
@@ -84,8 +87,8 @@ fn rows_take_the_nearest_solution() {
     let solution = |index: usize| term.solutions[0][index];
     assert_eq!((solution(1).time_s, solution(1).block), (1015.0, 1));
     assert_eq!((solution(0).time_s, solution(0).block), (1005.0, 0));
-    let at = |time_s: f64| term.at(0, time_s, 1);
-    let chunk = |index: usize| term.values[solution(index).block as usize * 2 + 1];
+    let at = |time_s: f64| term.receptor_values()[term.block_at(0, time_s) * 2 + 1];
+    let chunk = |index: usize| term.receptor_values()[solution(index).block as usize * 2 + 1];
     assert_eq!(at(1015.0)[0], chunk(1)[0]);
     assert_eq!(at(1019.9)[0], chunk(1)[0]);
     // Halfway between chunks 1 and 2: the earlier.
@@ -105,10 +108,10 @@ fn a_gain_multiplies_each_correlation_by_its_receptors_gains() {
         kind: JonesKind::Gain,
         antennas: 2,
         solutions: chunks.by_window,
-        values: vec![
+        values: JonesValues::Receptors(vec![
             [Complex32::new(1.1, 0.2), Complex32::new(0.9, -0.1)],
             [Complex32::new(0.8, 0.3), Complex32::new(1.2, 0.4)],
-        ],
+        ]),
     };
     let model = [
         Complex32::new(1.0, 0.5),
@@ -117,8 +120,13 @@ fn a_gain_multiplies_each_correlation_by_its_receptors_gains() {
         Complex32::new(2.0, 0.0),
     ];
     let mut cell: Vec<Complex32> = model.iter().chain(&model).copied().collect();
-    term.apply((0, 0.0), (0, 1), &LINEAR, &mut cell);
-    let [p, q] = [term.values[0], term.values[1]];
+    term.apply(
+        (0, 0.0),
+        (0, 1),
+        (&LINEAR, &BatchScales::default()),
+        &mut cell,
+    );
+    let [p, q] = [term.receptor_values()[0], term.receptor_values()[1]];
     for (index, value) in cell.iter().enumerate() {
         let [r1, r2] = LINEAR[index % 4];
         assert_eq!(*value, model[index % 4] * (p[r1] * q[r2].conj()));
@@ -136,10 +144,10 @@ fn leakage_moves_only_the_cross_hands_to_first_order() {
         kind: JonesKind::Leakage,
         antennas: 2,
         solutions: chunks.by_window,
-        values: vec![
+        values: JonesValues::Receptors(vec![
             [Complex32::new(0.03, -0.01), Complex32::new(-0.02, 0.04)],
             [Complex32::new(0.05, 0.02), Complex32::new(0.01, -0.03)],
-        ],
+        ]),
     };
     let (xx, xy, yx, yy) = (
         Complex32::new(1.3, 0.0),
@@ -148,8 +156,13 @@ fn leakage_moves_only_the_cross_hands_to_first_order() {
         Complex32::new(0.7, 0.0),
     );
     let mut cell = vec![xx, xy, yx, yy];
-    term.apply((0, 0.0), (0, 1), &LINEAR, &mut cell);
-    let [p, q] = [term.values[0], term.values[1]];
+    term.apply(
+        (0, 0.0),
+        (0, 1),
+        (&LINEAR, &BatchScales::default()),
+        &mut cell,
+    );
+    let [p, q] = [term.receptor_values()[0], term.receptor_values()[1]];
     assert_eq!(cell[0], xx);
     assert_eq!(cell[3], yy);
     assert_eq!(cell[1], xy + (p[0] * yy + q[1].conj() * xx));
@@ -165,7 +178,7 @@ fn random_gains_scatter_about_one() {
     let term = random_gains(9, camp, 10, integrations(100));
     assert_eq!(term.kind, JonesKind::Gain);
     for receptor in 0..2 {
-        let values = term.values.iter().map(|values| values[receptor]);
+        let values = term.receptor_values().iter().map(|values| values[receptor]);
         let (re_mean, re_rms) = mean_and_rms(values.clone().map(|g| f64::from(g.re)));
         let (im_mean, im_rms) = mean_and_rms(values.map(|g| f64::from(g.im)));
         // 1,000 draws: means within 5 standard errors.
@@ -174,12 +187,24 @@ fn random_gains_scatter_about_one() {
         assert!((re_rms / camp.re - 1.0).abs() < 0.1, "re rms {re_rms}");
         assert!((im_rms / camp.im - 1.0).abs() < 0.1, "im rms {im_rms}");
     }
-    assert_ne!(term.values[0][0], term.values[0][1], "receptors draw apart");
-    assert_ne!(term.values[0], term.values[1], "antennas draw apart");
-    assert_ne!(term.values[0], term.values[10], "integrations draw apart");
     assert_ne!(
-        term.values,
-        random_gains(10, camp, 10, integrations(100)).values,
+        term.receptor_values()[0][0],
+        term.receptor_values()[0][1],
+        "receptors draw apart"
+    );
+    assert_ne!(
+        term.receptor_values()[0],
+        term.receptor_values()[1],
+        "antennas draw apart"
+    );
+    assert_ne!(
+        term.receptor_values()[0],
+        term.receptor_values()[10],
+        "integrations draw apart"
+    );
+    assert_ne!(
+        term.receptor_values(),
+        random_gains(10, camp, 10, integrations(100)).receptor_values(),
         "seeds draw apart"
     );
 }
@@ -197,7 +222,7 @@ fn leakages_scatter_about_their_offsets() {
     let offset = Complex64::new(0.03, 0.01);
     let term = leakages(5, (camp, offset), 10, chunks);
     for (receptor, expected) in [(0, offset), (1, Complex64::new(-0.03, 0.01))] {
-        let values = term.values.iter().map(|values| values[receptor]);
+        let values = term.receptor_values().iter().map(|values| values[receptor]);
         let (re_mean, re_rms) = mean_and_rms(values.clone().map(|d| f64::from(d.re)));
         let (im_mean, im_rms) = mean_and_rms(values.map(|d| f64::from(d.im)));
         // 2,000 draws: means within 5 standard errors.
@@ -206,5 +231,9 @@ fn leakages_scatter_about_their_offsets() {
         assert!((re_rms / camp.re - 1.0).abs() < 0.1, "re rms {re_rms}");
         assert!((im_rms / camp.im - 1.0).abs() < 0.1, "im rms {im_rms}");
     }
-    assert_ne!(term.values[0], term.values[10], "chunks draw apart");
+    assert_ne!(
+        term.receptor_values()[0],
+        term.receptor_values()[10],
+        "chunks draw apart"
+    );
 }

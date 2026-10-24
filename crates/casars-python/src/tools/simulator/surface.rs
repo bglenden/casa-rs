@@ -20,7 +20,7 @@ const fn method(name: &'static str, parameters: &'static [Parameter], status: St
 
 use CasaDefault::{Bool, Empty, Float, Floats, Int, Ints, Text, Texts};
 use Kind as K;
-use Status::{DeprecatedInCasa, DisabledInCasa, Implemented, NotYetImplemented};
+use Status::{DeprecatedInCasa, DisabledInCasa, Implemented};
 
 /// The keyword-only constructor controls CASA lacks (ADR-0019 item 3), with
 /// casa-rs's defaults: CASA's constructor takes none.
@@ -319,7 +319,7 @@ const METHODS: &[Method] = &[
             param("windspeed", K::Float, Float(7.0)),
             param("simint", K::Float, Float(-1.0)),
         ],
-        NotYetImplemented,
+        Implemented,
     ),
     method(
         "setpointingerror",

@@ -117,6 +117,10 @@ QUANTITY_UNITS = {
     "waterheight": "m",
 }
 
+# Calls whose arguments are plain numbers, not quantities: `settrop`'s
+# `pwv` is in mm already, where a bare number would resolve to metres.
+PLAIN_NUMBER_OPS = {"settrop"}
+
 
 def resolve_config(config: dict, args: argparse.Namespace, me) -> dict:
     """The setconfig arguments, and their resolved form."""
@@ -198,7 +202,7 @@ def resolve_call(call: dict, me, qa) -> tuple[str, dict, dict]:
     kwargs = {key: value for key, value in call.items() if key != "op"}
     resolved = dict(kwargs)
     for key, unit in QUANTITY_UNITS.items():
-        if key in kwargs:
+        if key in kwargs and op not in PLAIN_NUMBER_OPS:
             resolved[key] = qa.convert(qa.quantity(kwargs[key]), unit)["value"]
     if "sourcedirection" in kwargs:
         direction = me.direction(*kwargs["sourcedirection"])
@@ -250,7 +254,7 @@ def run_scenario(
                 # the oracle wrote.
                 path = os.path.join(os.path.abspath(args.out), "complists", kwargs["complist"])
                 kwargs["complist"] = resolved["complist"] = path
-        if op in ("setgain", "setleakage") and kwargs.get("table"):
+        if op in ("setgain", "setleakage", "settrop") and kwargs.get("table"):
             # CASA writes the table under the oracle's output; the manifest
             # keeps its name, which the casa-rs driver writes under its own.
             kwargs["table"] = os.path.join(os.path.abspath(args.out), kwargs["table"])

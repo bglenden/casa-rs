@@ -44,6 +44,10 @@ Simulator behaviours casa-rs does not follow:
 [`tsys-manual` scaling every noise term](#a-tsys-manual-term-scales-every-noise-term),
 [the noise term a refused `tsys-manual` leaves](#a-refused-tsys-manual-setnoise-leaves-a-unit-noise-term),
 [`tsys-atm`'s atmosphere half a band away](#tsys-atm-noise-takes-its-atmosphere-half-a-band-below-each-channel),
+[`settrop`'s dispersive delay alone](#settrop-turns-the-phase-by-the-dispersive-wet-delay-alone),
+[`settrop`'s atmosphere half a band away](#settrop-takes-its-atmosphere-half-a-band-below-each-channel),
+[`settrop`'s anisotropic screen](#settrops-screen-has-an-anisotropic-spectrum),
+[`settrop`'s solutions stamped halfway](#settrop-with-simint-stamps-a-solution-halfway-to-its-intervals-start),
 [gain screens read past their transform](#casas-gain-screens-read-past-their-transform),
 [gain screens sharing a seed](#gain-screens-of-neighbouring-antennas-share-a-seed),
 [random gains about zero](#setgainmoderandom-draws-gains-about-zero),
@@ -1202,6 +1206,11 @@ The CASA comparison holds CASA's gains to closure only, reports rather than
 checks CASA's unit-gain antennas, and compares the two implementations'
 screens by their autocorrelations, which a screen's scale does not change.
 
+`settrop(mode='individual')`'s water-vapour series come from the same
+`fBM::initialize` and normalise the same way (#841 Phase 4d): in one
+probe, antenna 0's phases were all below 5·10⁻¹⁰ rad. casa-rs transforms
+every slot there too.
+
 ## Gain screens of neighbouring antennas share a seed
 
 - Date noted: 2026-10-24
@@ -1256,7 +1265,9 @@ for the last antenna, which is ANTENNA1 only of its autocorrelation. So
 with autocorrelations written, CASA's default, the last antenna has unit
 gain throughout (`setgain`) and a leakage of 1 on both receptors
 (`setleakage`); measured, antenna 42 of 43 in `corrupt-gain`. casa-rs
-simulates every antenna's term.
+simulates every antenna's term. `settrop`'s `Tf` term takes the same loop
+(its modes are not ones whose autocorrelations CASA simulates), and casa-rs
+simulates every antenna's there too (#841 Phase 4d).
 
 ## `setleakage` simulates only the first two spectral windows
 
@@ -1466,6 +1477,123 @@ EXPOSURE ([stale and borrowed system
 temperatures](#tsys-manual-noise-takes-stale-or-borrowed-system-temperatures));
 the term is also refused when its zenith Tsys at the first window's centre
 is not a number, which CASA's check (> 10⁶ K or ≤ 0) lets through.
+
+## `settrop` turns the phase by the dispersive wet delay alone
+
+- Date noted: 2026-10-24
+- Status: CASA bug; casa-rs does not follow it (#841 Phase 4d)
+- Affected code: `synthesis/MeasurementComponents/CalCorruptor.cc`
+  (`AtmosCorruptor::cphase`)
+
+`sm.settrop` adds a `Tf Jones` term whose value for antenna a in channel c
+is `exp(i·δ_a·φ(c))`: δ the fractional excess of water vapour over `pwv`
+above the antenna (fractional Brownian motion of rms `deltapwv`) and φ
+ATM's zenith wet phase delay for `pwv` (`casa_simulation`'s
+`corrupt::troposphere` has the whole model). `cphase` takes φ from
+`SkyStatus::getDispersiveH2OPhaseDelay`: the *dispersive* part alone, the
+refraction the water lines add. Measured on CASA 6.7.6 (seven antennas, 1 mm
+of water, 64-channel windows of 100 MHz from 180 GHz, across the 183 GHz
+line, and of 15.625 MHz at 230 GHz; `tools/simulation/sm_trop_scenarios.json`,
+probes on the NAS under `casa-rs/issue-841-trop-4d`), each row of CASA's
+table is one δ times that dispersive delay (on CASA's grid, below) to
+2.2·10⁻⁵ (single precision), where the whole wet delay at the channels'
+frequencies leaves δ spread across a row by 0.17 of itself (median).
+
+The path a column of water vapour adds is mostly its non-dispersive part,
+the refractivity of the water molecule's permanent dipole: `ℒ_V ≃ 6.3w`,
+"an excellent approximation for frequencies below 100 GHz", rising to
+about 8w in the windows above (Thompson, Moran & Swenson, *Interferometry
+and Synthesis in Radio Astronomy*, 3rd ed., eq. 13.19, p. 702). At
+`settrop`'s site ATM gives 7.0 mm of path per mm of water at 100 GHz, and
+the whole wet delay is 940, 119, 36, 23 and 8.5 times the dispersive part
+at 43, 100, 183, 230 and 345 GHz. With `settrop`'s defaults (3 mm of water
+fluctuating by 15 %), CASA's phases have an rms of 3° at 100 GHz and 39° at
+230 GHz where a fluctuation that size in the water column turns the phase
+by about 380° and 910°.
+
+casa-rs takes the whole wet delay, the dispersive and non-dispersive parts
+together, so `deltapwv` means the fluctuation of the water column it
+names. With CASA's defaults the phases are then fully scrambled at
+millimetre wavelengths; a `deltapwv` of 1 % of 3 mm (30 µm of water) turns
+them by about 60° rms at 230 GHz.
+
+## `settrop` takes its atmosphere half a band below each channel
+
+- Date noted: 2026-10-24
+- Status: CASA bug; casa-rs does not follow it (#841 Phase 4d)
+- Affected code: `synthesis/MeasurementComponents/CalCorruptor.cc`
+  (`AtmosCorruptor::initAtm`, `cphase`)
+
+`settrop`'s delays come from the same ATM grid as `tsys-atm`'s noise, and
+`cphase` reads channel c of it through the same channel map: each
+channel's φ is the atmosphere's half a band below it, and a one-channel
+window after the first reads the map past its end ([`tsys-atm`'s
+atmosphere half a band
+away](#tsys-atm-noise-takes-its-atmosphere-half-a-band-below-each-channel)).
+In the Phase 4d probe's CASA table, δ (a row's phase over the dispersive
+delay) is one value across the row to 2.8·10⁻⁶ of itself with the delay on
+that grid, and spreads by 2.5 of itself across the 183 GHz line with the
+delay at the channels' own frequencies. casa-rs evaluates ATM at each
+channel's CHAN_FREQ.
+
+## `settrop`'s screen has an anisotropic spectrum
+
+- Date noted: 2026-10-24
+- Status: CASA bugs; casa-rs does not follow them (#841 Phase 4d)
+- Affected code: `synthesis/MeasurementComponents/CalCorruptor.cc`
+  (`fBM::initialize`, two dimensions)
+
+`settrop(mode='screen')` blows one two-dimensional screen of fractional
+Brownian motion across the array. `fBM::initialize` fills a half spectrum
+`F2(i, j)`, i along the wind (the half axis) and j across it, with
+amplitudes `|(i, j)|^−(β+½)/2` times a normal draw (its comment: "still
+something not quite right with exponent"; an earlier line, left commented
+out, had `−(β+1)/2`):
+
+- **The wavenumbers are indices.** The screen is long along the wind
+  (CASA's probe screen was 1,359 by 271 pixels), so an index along it is a
+  fifth of the wavenumber of an index across it: the spectrum is stretched
+  along the wind, and the screen is not isotropic.
+- **The full axis is not wrapped.** j runs to the screen's width, where
+  the indices past half of it are negative wavenumbers; taking them as
+  large ones gives the negative wavenumbers the smallest amplitudes.
+- **The exponent.** A two-dimensional fractional Brownian motion whose
+  cuts have the spectral exponent β (as `individual` mode's series, and
+  `beta`'s documentation, have it) has amplitudes `|k|^−(β+1)/2`.
+- **Out of bounds.** It sets the imaginary parts of `F2(s0/2, 0)` and
+  `F2(s0/2, s1/2)`, one past the end of the half axis's `s0/2` entries, and
+  a half axis of `s0/2` entries transforms to `s0 − 2` real pixels along
+  the wind, of which it copies `s0`: the last two from past the end of the
+  output, as the one-dimensional series do ([gain screens read past their
+  transform](#casas-gain-screens-read-past-their-transform)). CASA's own
+  `settrop` test is skipped for "intermittent failures".
+
+Isotropic turbulence's phase spectrum depends only on the spatial
+frequency's size, `|q|^−11/3` in two dimensions (Thompson, Moran & Swenson,
+3rd ed., sec. 13.1.7, p. 725). casa-rs draws `|k|^−(β+1)/2` on the
+wavenumbers in cycles per pixel, the full axis wrapped, and transforms
+every pixel: on a screen five times as long as wide its structure function
+is the same along the wind and across it, where CASA's differ by five
+(`corrupt::troposphere`'s unit tests).
+
+## `settrop` with `simint` stamps a solution halfway to its interval's start
+
+- Date noted: 2026-10-24
+- Status: CASA bug; casa-rs does not follow it (#841 Phase 4d)
+- Affected code: `synthesis/MeasurementComponents/SolvableVisCal.cc`
+  (`setSimulate`)
+
+With `simint` longer than an integration, `setSimulate` iterates the
+MeasurementSet in intervals of `simint` and keeps a solution for each
+integration, stamped `(t₀ + t)/2`, t₀ the interval's first integration's
+time and t its own, and takes the screen's slot nearest that stamp. Measured
+on CASA 6.7.6 (`simint=6` on 2 s integrations): the table's times are 0, 1,
+2, 6, 7, 8, … s for integrations at 0, 2, 4, 6, 8, 10 s, and `corrupt`,
+applying the solution nearest each row's time, gives an interval's later
+integrations a slot from earlier in it. casa-rs stamps each solution with
+its integration's time and takes the slot nearest it, as CASA does when
+`simint` is not set (each integration its own interval). The slots are
+`simint` wide either way.
 
 ## ATM's HCN catalogue misplaces a line at 106 GHz
 
