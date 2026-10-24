@@ -427,11 +427,7 @@ fn simulate(case: Case, ms: &Path, model: &Path, measures: &Arc<dyn MeasuresProv
 
 /// 0.1 Jy of simple noise.
 fn noise() -> NoiseSpec {
-    NoiseSpec {
-        mode: "simplenoise".to_string(),
-        simple_noise_jy: 0.1,
-        on_the_fly: true,
-    }
+    NoiseSpec::simple(0.1)
 }
 
 /// A session writing `ms` within `budget`, with its 12 m antennas, a window

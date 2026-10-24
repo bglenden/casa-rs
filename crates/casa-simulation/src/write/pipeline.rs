@@ -15,7 +15,8 @@
 //! 3. **Cells and columns.** Then, on the team at once:
 //!    - each scan's noise is added to its rows, a run of rows per job: a
 //!      draw depends only on the term, the MAIN row, the channel and the
-//!      correlation ([`crate::corrupt`]);
+//!      correlation ([`crate::corrupt`]), and its σ on the term and, for
+//!      `tsys-manual`, the row's window, dishes, airmasses and exposure;
 //!    - one job copies FLAG_ROW, UVW, WEIGHT and SIGMA from the geometry and
 //!      pushes the scalar columns of the integrations computed for the
 //!      batch, in MAIN order.
@@ -47,10 +48,13 @@ use super::MainWriter;
 use super::components::add_components;
 use super::geometry::{ArrayGeometry, RowGeometry};
 use super::prediction::{PredictionStage, device_noise};
-use crate::corrupt::NoiseApplication;
+use crate::corrupt::{NoiseApplication, WindowNoise};
+use crate::session::Simulator;
+use crate::session::array::Antenna;
 use crate::session::error::{SimulatorError, SimulatorResult};
 use crate::session::observe::{PlannedScan, Scan};
 use crate::session::plan::DataPlan;
+use crate::session::spectral::SpectralWindow;
 
 /// Jobs per worker a batch's noise is split into, so that workers
 /// finishing early take more.
@@ -58,6 +62,31 @@ const NOISE_JOBS_PER_WORKER: usize = 4;
 
 /// The fewest rows of one noise job.
 pub(super) const MINIMUM_NOISE_JOB_ROWS: usize = 16;
+
+/// What a batch's noise reads beside the plan and the rows: each scan's
+/// spectral window, and the antennas' dishes.
+#[derive(Clone, Copy)]
+pub(super) struct NoiseContext<'a> {
+    pub(super) scans: &'a [Scan],
+    pub(super) windows: &'a [SpectralWindow],
+    pub(super) antennas: &'a [Antenna],
+}
+
+impl<'a> NoiseContext<'a> {
+    /// `session`'s scans, windows and antennas.
+    pub(super) fn of(session: &'a Simulator) -> Self {
+        Self {
+            scans: session.scans(),
+            windows: session.spectral_windows(),
+            antennas: session.antennas(),
+        }
+    }
+
+    /// What scan `scan`'s window gives its noise.
+    fn window(&self, scan: usize) -> WindowNoise {
+        self.windows[self.scans[scan].spectral_window_id].noise()
+    }
+}
 
 /// One integration a batch computes the geometry of.
 #[derive(Debug, Clone, Copy)]
@@ -92,6 +121,8 @@ struct Rows<'s> {
     team: &'s WorkerTeam,
     /// The session's DATA steps, which give each scan's noise.
     plan: &'s DataPlan,
+    /// What the noise reads beside the plan.
+    noise: NoiseContext<'s>,
     correlations: usize,
     samples: usize,
     /// Rows of the integrations in hand: those the last batch left
@@ -113,13 +144,13 @@ pub(super) struct Pipeline<'s> {
 
 impl<'s> Pipeline<'s> {
     /// The pipeline for `scans`, whose planned rows are `planned`,
-    /// predicting with `prediction` and adding the noise of `plan`, on
-    /// cells of `(correlations, channels)`.
+    /// predicting with `prediction` and adding the noise of `plan` (reading
+    /// `noise`), on cells of `(correlations, channels)`.
     pub(super) fn new(
         (scans, planned): (&'s [Scan], &'s [PlannedScan<'s>]),
         geometry: &'s ArrayGeometry<'s>,
         team: &'s WorkerTeam,
-        (prediction, plan): (Option<PredictionStage<'s>>, &'s DataPlan),
+        (prediction, plan, noise): (Option<PredictionStage<'s>>, &'s DataPlan, NoiseContext<'s>),
         (correlations, channels): (usize, usize),
     ) -> Self {
         Self {
@@ -129,6 +160,7 @@ impl<'s> Pipeline<'s> {
                 geometry,
                 team,
                 plan,
+                noise,
                 correlations,
                 samples: correlations * channels,
                 rows: Vec::new(),
@@ -309,7 +341,7 @@ impl Rows<'_> {
         let runs = self.segments(rows);
         jobs.extend(
             noise_jobs(
-                (self.plan, self.team),
+                (self.plan, self.noise, self.team),
                 (&self.rows, &runs),
                 (first_row, data),
                 self.samples,
@@ -399,9 +431,9 @@ impl ColumnsJob<'_> {
 /// `runs`, (scan, first row, rows) of `rows` covering it in order, split
 /// into jobs of about [`NOISE_JOBS_PER_WORKER`] a worker of `team`, each
 /// adding its scan's noise in `plan` to its rows of `data` (`samples` a
-/// row), but for the scans `noised` already has.
+/// row), reading `context`, but for the scans `noised` already has.
 pub(super) fn noise_jobs<'a>(
-    (plan, team): (&'a DataPlan, &WorkerTeam),
+    (plan, context, team): (&'a DataPlan, NoiseContext<'a>, &WorkerTeam),
     (rows, runs): (&'a [RowGeometry], &[(usize, usize, usize)]),
     (first_row, data): (u64, &'a mut [Complex32]),
     samples: usize,
@@ -428,6 +460,7 @@ pub(super) fn noise_jobs<'a>(
             continue;
         }
         let noise = plan.noise_for_scan(scan);
+        let window = context.window(scan);
         for (index, cells) in segment.chunks_mut(job_rows * samples).enumerate() {
             let start = start + index * job_rows;
             jobs.push(NoiseJob {
@@ -435,6 +468,8 @@ pub(super) fn noise_jobs<'a>(
                 cells,
                 rows: &rows[start..],
                 noise,
+                window,
+                antennas: context.antennas,
             });
         }
     }
@@ -449,21 +484,28 @@ pub(super) struct NoiseJob<'a> {
     /// The geometry of the rows, from the first.
     rows: &'a [RowGeometry],
     noise: &'a [NoiseApplication],
+    /// What the scan's spectral window gives the noise.
+    window: WindowNoise,
+    /// The antennas, whose dishes a `tsys-manual` σ takes.
+    antennas: &'a [Antenna],
 }
 
 impl NoiseJob<'_> {
     /// Add the noise to every cell of `samples` samples of `correlations`
-    /// correlations.
+    /// correlations. Each application is prepared for the scan's window
+    /// once, then added to every row; every sample still gets the
+    /// applications in their order.
     pub(super) fn run(&mut self, correlations: usize, samples: usize) {
-        for (offset, (cell, row)) in self
-            .cells
-            .chunks_exact_mut(samples)
-            .zip(self.rows)
-            .enumerate()
-        {
-            for application in self.noise {
-                application.add_to_row(
-                    self.first_row + offset as u64,
+        for application in self.noise {
+            let noise = application.for_window(&self.window);
+            for (offset, (cell, row)) in self
+                .cells
+                .chunks_exact_mut(samples)
+                .zip(self.rows)
+                .enumerate()
+            {
+                noise.add_to_row(
+                    (self.first_row + offset as u64, &row.noise(self.antennas)),
                     row.antenna1 == row.antenna2,
                     correlations,
                     cell,

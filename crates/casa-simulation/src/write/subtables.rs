@@ -268,7 +268,7 @@ fn write_spectral_windows(ms: &mut MeasurementSet, session: &Simulator) -> Simul
                 ("RESOLUTION", f64_array(&[channels], widths)),
                 (
                     "TOTAL_BANDWIDTH",
-                    scalar_f64(channels as f64 * window.channel_width_hz),
+                    scalar_f64(window.total_bandwidth_hz),
                 ),
             ],
         ));
