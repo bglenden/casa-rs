@@ -68,6 +68,9 @@ fn profiles_match_atm_layer_by_layer() {
     let cases = json("profiles.json");
     let mut summary = Agreement::new("profile scalars", REL);
     let mut layers = Agreement::new("profile layers", REL);
+    // Every case the oracle wrote, so a truncated fixture fails rather than
+    // covers less (#894 review).
+    assert_eq!(cases.as_array().unwrap().len(), 29, "profile cases");
     for case in cases.as_array().unwrap() {
         let name = format!(
             "{} (type {})",
@@ -109,6 +112,7 @@ fn profiles_match_atm_layer_by_layer() {
         }
         for (field, get) in FIELDS {
             let expected = nums(&case[field]);
+            assert_eq!(expected.len(), count, "{name}: {field} has a value a layer");
             for (j, (layer, cpp)) in profile.layers().iter().zip(&expected).enumerate() {
                 layers.check(get(layer), *cpp, 0.0, || {
                     format!("{name} layer {j} {field}")
@@ -147,6 +151,23 @@ fn invalid_parameters_are_refused() {
             "{parameters:?} was accepted"
         );
     }
+    // A user temperature level that is not finite or not positive, or
+    // levels whose mean overflows (#894 review), refused as the parameters
+    // are.
+    let levels: [&[(f64, f64)]; 5] = [
+        &[(5_000.0, f64::INFINITY)],
+        &[(f64::NAN, 250.0)],
+        &[(5_000.0, 0.0)],
+        &[(5_000.0, -20.0)],
+        &[(5_000.0, f64::MAX), (5_001.0, f64::MAX)],
+    ];
+    for levels in levels {
+        assert!(
+            AtmosphereProfile::with_temperature_levels(&good, levels).is_err(),
+            "{levels:?} was accepted"
+        );
+    }
+    assert!(AtmosphereProfile::with_temperature_levels(&good, &[(5_000.0, 260.0)]).is_ok());
 }
 
 #[test]

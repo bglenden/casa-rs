@@ -39,6 +39,8 @@ fn species_refractivities_match_atm() {
     let frequencies = nums(&meta["frequencies_ghz"]);
     let conditions = meta["conditions"].as_array().unwrap();
     let values = f64_le("refractivity.bin");
+    // Every condition and frequency the oracle wrote (#894 review).
+    assert_eq!((conditions.len(), frequencies.len()), (4, 431));
     assert_eq!(values.len(), conditions.len() * 25 * frequencies.len() * 2);
     let mut agreement = Agreement::new("species refractivity", REL);
     let mut at = 0;
@@ -67,6 +69,8 @@ fn layer_refractivities_match_atm() {
     let o3 = num(&fixture["o3_per_m3"]);
     let co = num(&fixture["co_per_m3"]);
     let mut agreement = Agreement::new("layer refractivity", REL);
+    // Four conditions at eight frequencies (#894 review).
+    assert_eq!(fixture["rows"].as_array().unwrap().len(), 32, "layer rows");
     for row in fixture["rows"].as_array().unwrap() {
         let (t, p, e, nu) = (
             num(&row["t"]),
@@ -85,6 +89,7 @@ fn layer_refractivities_match_atm() {
             density_refractivity(Species::Co, t, p, nu, co),
         ];
         let expected = row["values"].as_array().unwrap();
+        assert_eq!(expected.len(), rust.len(), "a value a helper");
         for (k, (rust, cpp)) in rust.iter().zip(expected).enumerate() {
             let cpp = Complex64::new(num(&cpp[0]), num(&cpp[1]));
             let floor = 1e-13 * cpp.re.abs().max(cpp.im.abs());

@@ -81,11 +81,12 @@ impl Agreement {
     }
 
     /// Compares one value; `floor` is the absolute tolerance below which
-    /// differences are rounding of a near-zero (cancelled) quantity.
+    /// differences are rounding of a near-zero (cancelled) quantity. The
+    /// fixtures are finite, so a NaN on either side fails.
     pub fn check(&mut self, rust: f64, cpp: f64, floor: f64, at: impl Fn() -> String) {
         self.compared += 1;
         let diff = (rust - cpp).abs();
-        let ok = diff <= self.rel * cpp.abs() + floor || (rust.is_nan() && cpp.is_nan());
+        let ok = diff <= self.rel * cpp.abs() + floor;
         if floor > 0.0 {
             self.worst_floor_fraction = self.worst_floor_fraction.max(diff / floor);
         }
