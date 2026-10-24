@@ -129,8 +129,9 @@ extend it; a session reads them when it starts.
     the owner's `~/.ssh/authorized_keys` on the mini, base64-encoded onto one
     line (`base64 -i KEY | tr -d '\n'` on macOS). `CASA_RS_MAC_USER` overrides
     the login name (default `brianglendenning`).
-  - Copies live in `~/ext/casa-rs-cloud/src/<branch>/` on the mini (or
-    `~/casa-rs-cloud/` without `~/ext`) and share one `target/` beside `src/`.
+  - Copies live in `~/ext/SoftwareProjects/casa-rs-cloud/src/<branch>/` on
+    the mini (the top of the `~/ext` volume is owned by root) and share one
+    `target/` beside `src/`; `CASA_RS_MAC_ROOT` overrides the location.
     Remove a branch's copy with `scripts/mac-run.sh --clean` once its work is
     merged or pushed.
   - Commands run in a login shell, which reads `~/.zprofile` and `~/.zshenv`

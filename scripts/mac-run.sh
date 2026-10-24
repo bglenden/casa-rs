@@ -27,8 +27,9 @@ Environment:
                     session, .claude/hooks/session-start.sh configures its
                     user and key from CASA_RS_MAC_USER and CASA_RS_MAC_SSH_KEY.
   CASA_RS_MAC_ROOT  directory on the Mac, absolute or relative to the home
-                    directory (default ext/casa-rs-cloud when ~/ext exists,
-                    else casa-rs-cloud)
+                    directory. By default, when ~/ext exists, the first of
+                    ext/SoftwareProjects/casa-rs-cloud and ext/casa-rs-cloud
+                    that exists or can be created; else casa-rs-cloud.
 
 Examples:
   scripts/mac-run.sh cargo nextest run -p casa-imaging-metal
@@ -69,17 +70,45 @@ name="$(printf '%s' "$branch" | tr -c 'A-Za-z0-9._-' '-')"
 
 q() { printf '%q' "$1"; }
 
-# Remote shell code that sets $root to the absolute ROOT; it runs from the
-# home directory, in whatever shell the owner logs in with.
-resolve_root="root=$(q "${CASA_RS_MAC_ROOT:-}")
-if [ -z \"\$root\" ]; then
-  if [ -d ext ]; then root=ext/casa-rs-cloud; else root=casa-rs-cloud; fi
+# Runs on the Mac from the home directory, in whatever shell the owner logs in
+# with, after `verb=setup|clean mac_root=... name=...`. It finds ROOT without
+# creating anything; setup then creates ROOT if needed (never on the small
+# internal disk while ~/ext exists) and prints its absolute path and the rsync
+# to use, preferring Homebrew's over the system openrsync. clean removes this
+# branch's copy.
+# shellcheck disable=SC2016 # It expands on the Mac, not here.
+remote_program='root=$mac_root
+if [ -z "$root" ]; then
+  if [ -d ext ]; then set -- ext/SoftwareProjects/casa-rs-cloud ext/casa-rs-cloud
+  else set -- casa-rs-cloud; fi
+  for c in "$@"; do
+    if [ -d "$c" ]; then root=$c; break; fi
+  done
+  if [ -z "$root" ] && [ "$verb" = setup ]; then
+    for c in "$@"; do
+      if mkdir -p "$c" 2>/dev/null; then root=$c; break; fi
+    done
+    if [ -z "$root" ]; then
+      echo "mac-run: cannot create any of $* under $HOME; set CASA_RS_MAC_ROOT" >&2
+      exit 3
+    fi
+  fi
 fi
-mkdir -p \"\$root\" && root=\$(cd \"\$root\" && pwd)"
+if [ "$verb" = clean ]; then
+  if [ -n "$root" ] && [ -d "$root/src/$name" ]; then
+    rm -rf "$root/src/$name" && echo "mac-run: removed $root/src/$name"
+  else
+    echo "mac-run: no copy of $name to remove"
+  fi
+  exit
+fi
+mkdir -p "$root/src/$name" "$root/target" && cd "$root" && pwd || exit 3
+if [ -x /opt/homebrew/bin/rsync ]; then echo /opt/homebrew/bin/rsync; else echo rsync; fi'
 
 remote() {
   local status=0
-  ssh -n "$host" "$1" || status=$?
+  ssh -n "$host" "verb=$1 mac_root=$(q "${CASA_RS_MAC_ROOT:-}") name=$(q "$name"); $remote_program" ||
+    status=$?
   if ((status == 255)); then
     echo "mac-run: cannot reach $host over SSH. In a cloud session, check that the" \
       "tailnet is up (tailscale status) and that CASA_RS_MAC_SSH_KEY is set" \
@@ -89,14 +118,11 @@ remote() {
 }
 
 if [[ "$mode" == "clean" ]]; then
-  remote "$resolve_root && rm -rf \"\$root/src/$name\" && echo \"removed $host:\$root/src/$name\""
+  remote clean
   exit 0
 fi
 
-# One round trip: create the directories, report ROOT, and prefer Homebrew's
-# rsync over the system openrsync when it is installed.
-probe="$(remote "$resolve_root && mkdir -p \"\$root/src/$name\" \"\$root/target\" && echo \"\$root\" &&
-if [ -x /opt/homebrew/bin/rsync ]; then echo /opt/homebrew/bin/rsync; else echo rsync; fi")"
+probe="$(remote setup)"
 root="$(tail -n 2 <<<"$probe" | head -n 1)"
 remote_rsync="$(tail -n 1 <<<"$probe")"
 dest="$root/src/$name"
