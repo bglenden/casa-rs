@@ -12,10 +12,13 @@
 //   refractivity.bin         its values: little-endian f64, (re, im) for
 //                            condition, species 1..25, frequency, innermost last
 //   layer_refractivity.json  ATM's per-unit-path layer refractivities
+//   absorption.json, sky.json  RefractiveIndexProfile and SkyStatus
+//                            (atm_oracle_sky.cc)
 //
 // With `--time <channels>` it instead times the species refractivities for
 // a Chajnantor profile, to compare with casa-atmosphere's
-// `refractivity_timing` example.
+// `refractivity_timing` example; `--time-profile <channels>` times
+// building a RefractiveIndexProfile (the `profile_timing` example).
 
 #include <chrono>
 #include <cmath>
@@ -269,15 +272,22 @@ int time_refractivity(unsigned int channels) {
 
 }  // namespace
 
+// In atm_oracle_sky.cc.
+void write_sky_fixtures(const std::string& dir);
+int time_profile(unsigned int channels);
+
 int main(int argc, char** argv) {
   if (argc == 3 && std::string(argv[1]) == "--time") return time_refractivity(std::stoul(argv[2]));
+  if (argc == 3 && std::string(argv[1]) == "--time-profile") return time_profile(std::stoul(argv[2]));
   if (argc != 2) {
-    std::fprintf(stderr, "usage: %s <fixture directory> | --time <channels>\n", argv[0]);
+    std::fprintf(stderr, "usage: %s <fixture directory> | --time <channels> | --time-profile <channels>\n",
+                 argv[0]);
     return 2;
   }
   std::string dir = argv[1];
   write_profiles(dir);
   write_refractivity(dir);
   write_layer_refractivity(dir);
+  write_sky_fixtures(dir);
   return 0;
 }

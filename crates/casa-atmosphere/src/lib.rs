@@ -23,10 +23,17 @@
 //!    and dry continua are empirical.
 //! 3. A [`SpectralGrid`] lists the frequencies (spectral windows of
 //!    channels) at which the refractivities are evaluated.
+//! 4. An [`AbsorptionProfile`] (ATM's `RefractiveIndexProfile`) holds every
+//!    layer's refractivity in every channel and integrates them into zenith
+//!    opacities, phase delays and path lengths, dry and wet, dispersive and
+//!    not, scaled to any water column.
+//! 5. Radiative transfer through the layers ([`Sky`], ATM's `SkyStatus`)
+//!    gives the sky's equivalent blackbody and Rayleigh–Jeans temperatures
+//!    for a water column, airmass, sky coupling and spillover.
 //!
-//! Integrating the layer refractivities over the profile gives the zenith
-//! opacity and path delay, and radiative transfer through the layers gives
-//! the sky brightness; those build on this crate's types.
+//! The simulator's `tsys-atm` noise needs the dry and wet opacity and the
+//! sky brightness; its tropospheric phase screens (`settrop`) need the
+//! dispersive wet phase delay per unit water column.
 //!
 //! # Agreement with the C++
 //!
@@ -38,11 +45,17 @@
 //!
 //! # Cost and parallelism
 //!
-//! The refractivity of every (layer, channel) pair is independent, and all
-//! functions here are pure. A caller evaluating many channels can spread
-//! them over threads; the crate itself starts none. ATM works in double
-//! precision throughout, which rules out GPU backends without native
-//! fp64 (Apple's).
+//! Building an [`AbsorptionProfile`] costs about 0.155 ms per channel for a
+//! 27-layer atmosphere on one core (an Apple M4), against 0.62 ms for ATM's
+//! C++ `RefractiveIndexProfile`, which evaluates most species twice (once
+//! for each total, once for its parts). Every channel is independent and
+//! computed by a pure function ([`absorption::channel_absorption`],
+//! [`absorption::channel_totals`]), so a caller can compute channels on its
+//! own threads and assemble them with [`AbsorptionProfile::from_channels`];
+//! the crate itself starts none. The compact form ([`ChannelTotals`]) keeps
+//! 64 bytes a layer instead of 448, and [`AbsorptionProfile::bytes`] gives
+//! a profile's memory before it is built. ATM works in double precision
+//! throughout, which rules out GPU backends without native fp64 (Apple's).
 //!
 //! # Units
 //!
@@ -51,11 +64,15 @@
 //! name says kilometres, frequencies in hertz in the spectral grid and in
 //! GHz in the refractivity functions (as in ATM).
 
+pub mod absorption;
 mod profile;
 pub mod refractivity;
+mod sky;
 mod spectral_grid;
 
+pub use absorption::{AbsorptionProfile, ChannelAbsorption, ChannelTotals};
 pub use profile::{AtmosphereProfile, AtmosphereType, Layer, ProfileParameters};
+pub use sky::Sky;
 pub use spectral_grid::{SpectralGrid, SpectralWindow};
 
 /// Errors building atmospheric models.
