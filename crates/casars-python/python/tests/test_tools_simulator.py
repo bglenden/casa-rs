@@ -681,19 +681,60 @@ def test_setnoise_outcomes_follow_casa(tmp_path: Path, caplog: pytest.LogCapture
         assert sm.setnoise(mode="bogus") is False
     assert caplog.messages[0].startswith("Caught exception: Error in Simulator::create_corrupt")
     assert caplog.messages[1:] == ["Caught exception: unsupported mode bogus in setnoise()"]
-    with pytest.raises(NotImplementedError, match="tsys-manual.*Phase 3"):
-        sm.setnoise(mode="tsys-manual")
     with pytest.raises(NotImplementedError, match="tsys-atm.*Phase 4"):
         sm.setnoise(mode="tsys-atm")
     with pytest.raises(NotImplementedError, match="OTF=False"):
         sm.setnoise(simplenoise="0.1Jy", OTF=False)
+    # CASA writes tsys-manual's T term to <table>.T.cal; casa-rs not yet.
+    with pytest.raises(NotImplementedError, match=r"noisy\.T\.cal"):
+        sm.setnoise(mode="tsys-manual", table="noisy.cal")
+    caplog.clear()
+    with caplog.at_level(logging.ERROR, logger=LOGGER):
+        assert sm.setnoise(mode="tsys-manual", pwv="200mm") is False
+        # A pwv without units is metres, as in CASA.
+        assert sm.setnoise(mode="tsys-manual", pwv=5) is False
+        assert sm.setnoise(mode="tsys-manual", tau=50.0) is False
+    assert caplog.messages[0].startswith("Caught exception:  you input PWV=200mm")
+    assert caplog.messages[1].startswith("Caught exception:  you input PWV=5000mm")
+    assert "Tsys" in caplog.messages[2] and "poorly defined" in caplog.messages[2]
+    with pytest.raises(RuntimeError, match="Cannot convert Jy to mm"):
+        sm.setnoise(mode="tsys-manual", pwv="1Jy")
     # None of those added a term; `[]` is 0 Jy.
     assert sm.setnoise() is True
+    assert sm.setnoise(mode="tsys-manual") is True
     assert sm.reset() is True
     assert sm.corrupt() is True
     sm.close()
     data = np.asarray(Table.open(tmp_path / "x.ms").get_column("DATA"))
     assert np.all(data == 0)
+
+
+@needs_measures
+def test_setnoise_tsys_manual_scales_the_unit_draws_by_each_rows_sigma(tmp_path: Path) -> None:
+    # A tsys-manual term draws a 1 Jy simplenoise term's values of the same
+    # seed, scaled by each row's σ (CASA's unit ANoise scaled by its T).
+    def run(name: str, **noise: Any) -> np.ndarray:
+        sm = simulator()
+        sm.open(str(tmp_path / name))
+        configure(sm)
+        assert sm.observe("F", "L", starttime="0s", stoptime="300s")
+        assert sm.setseed(5) is True
+        assert sm.setnoise(**noise) is True
+        assert sm.corrupt() is True
+        sm.close()
+        return np.asarray(Table.open(tmp_path / name).get_column("DATA"))
+
+    unit = run("unit.ms", mode="simplenoise", simplenoise="1Jy")
+    tsys = run("tsys.ms", mode="tsys-manual", tau=0.1)
+    sigma = (tsys.real * unit.real).sum(axis=(1, 2)) / (unit.real**2).sum(axis=(1, 2))
+    assert np.allclose(tsys, sigma[:, None, None] * unit, rtol=1e-5, atol=0)
+    # 25 m dishes near the zenith, Tsys about 124 K, in 1 MHz and 10 s:
+    # about 0.22 Jy.
+    assert np.all((sigma > 0.15) & (sigma < 0.3))
+    # The parameters reach the model: a double-sideband receiver doubles
+    # Tsys and so σ.
+    double = run("double.ms", mode="tsys-manual", tau=0.1, rxtype=1)
+    assert np.allclose(double, 2 * tsys, rtol=1e-5, atol=0)
 
 
 @needs_measures
