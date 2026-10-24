@@ -483,6 +483,14 @@ the geometry, so its uvw agree with CASA's at equal stored TIME. A parity run
 requests a start 37 s later on the casa-rs side and compares rows at equal
 TIME (`tools/simulation/compare_sm_ms.py`).
 
+The same offset separates the calibration tables the two simulators write
+(`setgain` and `setleakage` with `table=`): CASA's TIME is TAI under the UTC
+label. `sm.setapply` of a CASA-simulated table to a casa-rs MeasurementSet,
+or the reverse, therefore takes its solutions 37 s away, several solutions
+of 10 s integrations. The `corrupt-setapply-*` scenarios agree with CASA
+because their runs are shifted as above; tables solved from real data carry
+true UTC and are not affected.
+
 ## The simulator charges shadowing to the antenna in front
 
 - Date noted: 2026-10-21

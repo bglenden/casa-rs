@@ -15,6 +15,7 @@ use casa_ms::MeasurementSet;
 use num_complex::Complex64;
 
 use super::Simulator;
+use super::apply::JonesSource;
 use super::error::{SimulatorError, SimulatorResult};
 use crate::corrupt::jones::{
     Chunks, JonesKind, JonesTerm, MAXIMUM_GAIN_SCALE, fbm_gains, leakages, random_gains,
@@ -136,7 +137,7 @@ impl Simulator {
             tracing::info!("Writing calTable = {} at close", path.display());
             self.jones_tables.push((path, Arc::clone(&term)));
         }
-        self.jones_terms.push(term);
+        self.jones_terms.push(JonesSource::Simulated(term));
     }
 
     /// CASA's `create_corrupt` cannot size a term on an empty
@@ -154,11 +155,16 @@ impl Simulator {
     /// The heap of the gain and leakage terms the session holds through
     /// `close` (set, applied by a step, or to be written as a table), each
     /// counted once: they grow with the integrations or windows times the
-    /// antennas, and `close` admits them.
+    /// antennas, and `close` admits them. A table `setapply` set is held
+    /// as its path until a `corrupt` evaluates it into a step's term.
     pub(crate) fn jones_term_bytes(&self) -> u64 {
         let mut seen = std::collections::HashSet::new();
         self.jones_terms
             .iter()
+            .filter_map(|source| match source {
+                JonesSource::Simulated(term) => Some(term),
+                JonesSource::Applied(_) => None,
+            })
             .chain(self.data_plan().jones_terms())
             .chain(self.jones_tables.iter().map(|(_, term)| term))
             .filter(|term| seen.insert(Arc::as_ptr(term)))

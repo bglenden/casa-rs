@@ -703,11 +703,11 @@ impl PySimulator {
         stubs::disabled_in_casa(self, py)
     }
 
-    /// Corrupt by the calibration table `table` (a `G`, `T` or `D` table),
-    /// its solutions taken at each integration observed so far and
-    /// interpolated in time by `interp` (`linear`, amplitude and phase
-    /// apart, or `nearest`); `spwmap` maps each data window to the table's.
-    /// `field` is not read, as in CASA.
+    /// Corrupt by the calibration table `table` (a `G` or `D` table) at
+    /// each later `corrupt`, its solutions taken at each integration
+    /// observed by then and interpolated in time by `interp` (`linear`,
+    /// amplitude and phase apart, or `nearest`); `spwmap` maps each data
+    /// window to the table's. `field` is not read, as in CASA.
     #[allow(unused_variables, clippy::too_many_arguments)]
     #[pyo3(
         signature = (

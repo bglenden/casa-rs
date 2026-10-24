@@ -3,30 +3,34 @@
 //!
 //! CASA's `Simulator::setapply` adds the table's term to those `corrupt`
 //! applies; the term corrupts the model as a simulated one of its type
-//! does (`VisEquation::collapseForSim`: a `G` or `T` table multiplies each
+//! does (`VisEquation::collapseForSim`: a `G` table multiplies each
 //! correlation by `g_p·conj(g_q)`, a `D` table leaks into the cross hands),
 //! with the table's solutions found and interpolated in time as
-//! `calibrater` applies them (measured on CASA 6.7.6: `interp='linear'`
+//! `calibrater` applies them, at each row's time, scans observed after the
+//! `setapply` included (measured on CASA 6.7.6: `interp='linear'`
 //! interpolates amplitude and phase apart, `'nearest'` takes the nearest).
-//! casa-rs finds them through `casa-calibration`'s
-//! [`CalibrationTableLookup`], once for each integration observed so far
-//! and antenna, and applies them as the terms `setgain` and `setleakage`
-//! simulate. CASA's `setapply` ignores its `field`.
+//! casa-rs keeps the table and, at each `corrupt`, finds its solutions
+//! through `casa-calibration`'s [`CalibrationTableLookup`] for each
+//! integration observed by then and antenna, and applies them as the terms
+//! `setgain` and `setleakage` simulate. CASA's `setapply` ignores its
+//! `field`.
+
+use std::path::PathBuf;
+use std::sync::Arc;
 
 use casa_calibration::{ApplyInterpolationMode, CalibrationTableLookup};
 use num_complex::Complex32;
 
 use super::Simulator;
 use super::error::{SimulatorError, SimulatorResult};
-use crate::corrupt::jones::{Chunks, JonesKind, applied};
+use crate::corrupt::jones::{Chunks, JonesKind, JonesTerm, applied};
 
 /// The arguments of `sm.setapply`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ApplySpec {
     /// `table`: the calibration table to corrupt by.
     pub table: String,
-    /// `type`: its calibration type (`G`, `T`, `D`, …); empty takes the
-    /// table's.
+    /// `type`: its calibration type (`G` or `D`); empty takes the table's.
     pub kind: String,
     /// `t`: the interpolation interval, seconds; casa-rs takes 0 only.
     pub interval_s: f64,
@@ -40,6 +44,24 @@ pub struct ApplySpec {
     pub spwmap: Vec<i64>,
     /// `opacity` (for `type='TOPAC'`); casa-rs takes 0 only.
     pub opacity: f64,
+}
+
+/// A gain or leakage term `corrupt` applies: simulated when it was set
+/// (`setgain`, `setleakage`), or a calibration table's (`setapply`),
+/// evaluated over the scans observed at each `corrupt`.
+#[derive(Debug, Clone)]
+pub(crate) enum JonesSource {
+    Simulated(Arc<JonesTerm>),
+    Applied(AppliedTable),
+}
+
+/// A table `setapply` set: where it is and how to apply it.
+#[derive(Debug, Clone)]
+pub(crate) struct AppliedTable {
+    path: PathBuf,
+    interp: ApplyInterpolationMode,
+    kind: JonesKind,
+    spwmap: Vec<i64>,
 }
 
 /// `Simulator::setapply`'s refusal: CASA logs the reason and raises.
@@ -64,19 +86,20 @@ fn table_type(subtype: &str) -> String {
 }
 
 impl Simulator {
-    /// `sm.setapply(...)`: corrupt by the calibration table `spec.table`,
-    /// its solutions taken at each integration observed so far.
+    /// `sm.setapply(...)`: corrupt by the calibration table `spec.table`
+    /// at each later `corrupt`, its solutions taken at each integration
+    /// observed by then.
     ///
     /// # Errors
     ///
     /// - The table cannot be read, its type is not the `type` asked for,
     ///   or `interp` is CASA's deprecated `aipslin`: raised, as CASA
     ///   raises.
-    /// - A table of other than `G`, `T` or `D` solutions, of solutions per
-    ///   channel, or with no solution or a flagged one for an antenna and
-    ///   integration observed; `calwt`, a nonzero `t` or `opacity`, or an
-    ///   interpolation other than `linear` or `nearest`: not yet
-    ///   implemented.
+    /// - A table of other than `G` or `D` solutions; `calwt`, a nonzero `t`
+    ///   or `opacity`, or an interpolation other than `linear` or
+    ///   `nearest`: not yet implemented. (A table without a solution, or
+    ///   with a flagged one, for an antenna and integration is refused at
+    ///   `corrupt`.)
     /// - No rows observed yet: refused, as `setgain` refuses.
     pub fn set_apply(&mut self, spec: &ApplySpec) -> SimulatorResult<()> {
         let interp = apply_interpolation(&spec.interp)?;
@@ -92,7 +115,8 @@ impl Simulator {
         if spec.table.is_empty() {
             return Err(raised("No calibration table given."));
         }
-        let lookup = CalibrationTableLookup::open(&spec.table, interp).map_err(raised)?;
+        let path = std::path::absolute(&spec.table).map_err(raised)?;
+        let lookup = CalibrationTableLookup::open(&path, interp).map_err(raised)?;
         let table_kind = table_type(lookup.subtype());
         let kind = match spec.kind.to_uppercase() {
             requested if requested.is_empty() || requested == table_kind => table_kind,
@@ -105,7 +129,7 @@ impl Simulator {
             }
         };
         let kind = match kind.as_str() {
-            "G" | "T" => JonesKind::Gain,
+            "G" => JonesKind::Gain,
             "D" => JonesKind::Leakage,
             other => return Err(not_yet(format!("of a {other} table"))),
         };
@@ -115,14 +139,37 @@ impl Simulator {
             spec.table,
             lookup.subtype()
         );
-        let (chunks, values) = self.applied_solutions(&lookup, &spec.spwmap)?;
-        self.add_jones_term(applied(kind, self.antennas.len(), chunks, values), None);
+        self.jones_terms.push(JonesSource::Applied(AppliedTable {
+            path,
+            interp,
+            kind,
+            spwmap: spec.spwmap.clone(),
+        }));
         Ok(())
+    }
+
+    /// The term `source` is at this `corrupt`: a simulated one as it was
+    /// set, a table's evaluated over the scans observed so far.
+    pub(super) fn jones_term(&self, source: &JonesSource) -> SimulatorResult<Arc<JonesTerm>> {
+        match source {
+            JonesSource::Simulated(term) => Ok(Arc::clone(term)),
+            JonesSource::Applied(table) => {
+                let lookup =
+                    CalibrationTableLookup::open(&table.path, table.interp).map_err(raised)?;
+                let (chunks, values) = self.applied_solutions(&lookup, &table.spwmap)?;
+                Ok(Arc::new(applied(
+                    table.kind,
+                    self.antennas.len(),
+                    chunks,
+                    values,
+                )))
+            }
+        }
     }
 
     /// Each integration observed so far as a chunk, with each antenna's
     /// solution from `lookup` at its time, field and window (mapped by
-    /// `spwmap`): the receptors' values, a scalar `T` solution for both.
+    /// `spwmap`).
     fn applied_solutions(
         &self,
         lookup: &CalibrationTableLookup,
@@ -156,13 +203,13 @@ impl Simulator {
                     if solution.flags.iter().any(|&flag| flag) {
                         return Err(not_yet("of a table with flagged solutions"));
                     }
-                    values.push(match solution.receptors {
-                        1 => [solution.value(0, 0); 2],
-                        2 => [solution.value(0, 0), solution.value(1, 0)],
-                        receptors => {
-                            return Err(not_yet(format!("of {receptors}-receptor solutions")));
-                        }
-                    });
+                    if solution.receptors != 2 {
+                        return Err(not_yet(format!(
+                            "of {}-receptor solutions",
+                            solution.receptors
+                        )));
+                    }
+                    values.push([solution.value(0, 0), solution.value(1, 0)]);
                 }
             }
         }

@@ -247,7 +247,13 @@ impl Simulator {
             return Ok(());
         }
         self.check_visibility_correlations("corrupted")?;
-        self.check_jones_coverage()?;
+        // A `setapply` table is evaluated over the scans observed by now.
+        let terms = self
+            .jones_terms
+            .iter()
+            .map(|source| self.jones_term(source))
+            .collect::<SimulatorResult<Vec<_>>>()?;
+        self.check_jones_coverage(&terms)?;
         if self
             .noise_terms
             .iter()
@@ -270,13 +276,9 @@ impl Simulator {
         // CASA corrupts the model from the sky side in: leakage before
         // gains, and of one kind the term set last first
         // (`VisEquation::collapseForSim`).
-        let mut jones: Vec<(usize, &Arc<JonesTerm>)> =
-            self.jones_terms.iter().enumerate().collect();
+        let mut jones: Vec<(usize, Arc<JonesTerm>)> = terms.into_iter().enumerate().collect();
         jones.sort_by(|a, b| b.1.kind.cmp(&a.1.kind).then(b.0.cmp(&a.0)));
-        let jones: Vec<Arc<JonesTerm>> = jones
-            .into_iter()
-            .map(|(_, term)| Arc::clone(term))
-            .collect();
+        let jones: Vec<Arc<JonesTerm>> = jones.into_iter().map(|(_, term)| term).collect();
         self.data_plan
             .corrupt(applications, jones, self.scans.len());
         Ok(())
@@ -286,12 +288,12 @@ impl Simulator {
     /// corrupt as CASA does: leakage without the cross hands, which CASA's
     /// `JonesGenLin` raises on, and a spectral window a term has no solution
     /// for, which CASA leaves wholly uncorrupted.
-    fn check_jones_coverage(&self) -> SimulatorResult<()> {
+    fn check_jones_coverage(&self, terms: &[Arc<JonesTerm>]) -> SimulatorResult<()> {
         for scan in &self.scans {
             let window = &self.spectral_windows[scan.spectral_window_id];
             let products = window.correlation_products();
             let cross = products.contains(&[0, 1]) && products.contains(&[1, 0]);
-            for term in &self.jones_terms {
+            for term in terms {
                 if term.kind == JonesKind::Leakage && !cross {
                     return Err(SimulatorError::raised(
                         "JonesGenLin matrix apply (J::aR) incompatible with VisVector.",

@@ -173,6 +173,65 @@ fn rows_between_solutions_take_the_interpolated_gains() {
     assert!(between > 0, "some rows fall between the table's solutions");
 }
 
+/// A scan observed after `setapply` takes the table's gains at its own
+/// times, as CASA's does (measured): the table is evaluated at `corrupt`,
+/// over the scans observed by then.
+#[test]
+fn a_scan_observed_after_setapply_takes_the_tables_gains() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let point = point(directory.path());
+    let path = |name: &str| directory.path().join(name);
+    let gains = path("coarse.cal");
+    let mut sm = observed(&path("coarse.ms"), "XX YY", &point, 30.0);
+    sm.set_gain(&GainSpec {
+        mode: "fbm".to_string(),
+        table: gains.to_string_lossy().into_owned(),
+        amplitude: vec![0.1],
+    })
+    .expect("setgain");
+    sm.close().expect("close");
+
+    let later = path("later.ms");
+    let mut sm = session(&later, "ALMA", "XX YY", resources(2, 2 << 30));
+    sm.observe(&scan("target", 0.0, 60.0)).expect("observe");
+    sm.set_apply(&apply(&gains, "linear")).expect("setapply");
+    sm.observe(&scan("target", 120.0, 180.0))
+        .expect("a scan after the setapply");
+    sm.predict(&PredictSpec {
+        images: Vec::new(),
+        component_list: Some(point.clone()),
+        incremental: false,
+    })
+    .expect("predict");
+    sm.corrupt().expect("corrupt");
+    sm.close().expect("close");
+
+    let lookup =
+        CalibrationTableLookup::open(&gains, ApplyInterpolationMode::Linear).expect("open");
+    let rows = read_main(&later).0;
+    let times = read_times(&later);
+    let first_scan_end = times[0] + 60.0;
+    let mut after = 0;
+    for (row, &time) in rows.iter().zip(&times) {
+        let gain = |antenna: u32| {
+            lookup
+                .solution(0, 0, antenna as i32, time)
+                .expect("lookup")
+                .expect("a solution")
+                .value(0, 0)
+        };
+        let [p, q] = row.antennas;
+        let expected: Complex32 = gain(p) * gain(q).conj();
+        assert!(
+            (row.data[0] - expected).norm() < 1e-5,
+            "{} against {expected}",
+            row.data[0]
+        );
+        after += usize::from(time > first_scan_end);
+    }
+    assert!(after > 0, "rows of the later scan");
+}
+
 /// What `setapply` refuses, as CASA raises or as not yet implemented.
 #[test]
 fn setapply_refuses_what_casa_or_casa_rs_cannot_apply() {

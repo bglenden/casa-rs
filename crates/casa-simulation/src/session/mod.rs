@@ -148,9 +148,9 @@ pub struct Simulator {
     seed: i32,
     /// The noise terms `setnoise` set, until `reset`.
     noise_terms: Vec<NoiseTerm>,
-    /// The antenna-based terms `setgain` and `setleakage` set, in the order
-    /// they were set, until `reset`.
-    jones_terms: Vec<Arc<JonesTerm>>,
+    /// The antenna-based terms `setgain`, `setleakage` and `setapply` set,
+    /// in the order they were set, until `reset`.
+    jones_terms: Vec<apply::JonesSource>,
     /// The calibration tables `close` writes, each with its term (a
     /// `table` given to `setgain` or `setleakage`); `reset` keeps them.
     jones_tables: Vec<(PathBuf, Arc<JonesTerm>)>,
