@@ -1,6 +1,6 @@
 # MSv2/MSv4 trial: revision 2 design record
 
-Status: design decisions for revision 2, agreed with the owner on 2026-10-24, implemented on the trial branch on 2026-10-25 (deviations listed under "What the implementation did with each decision"; D18 completed after the ADR-0016 amendment of the same day); PR #898 stays a draft and the interfaces are not frozen
+Status: design decisions for revision 2, agreed with the owner on 2026-10-24, implemented on the trial branch on 2026-10-25 (deviations listed under "What the implementation did with each decision"; D18 completed after the ADR-0016 amendment of the same day); refined in revision 3 ("Revision 3 refinements"); PR #898 stays a draft and the interfaces are not frozen
 Truth class: proposed design
 Date: 2026-10-25
 Evidence index: [README.md](README.md)
@@ -451,6 +451,24 @@ The evidence is in [README.md](README.md), "Revision 2".
   not built in revision 2.
 - **D25.** `Catalogue::bind_to` with an explicit `BindingTolerance`;
   example B's comparison uses it in place of its test-code `rebind`.
+
+## Revision 3 refinements
+
+Revision 3 (README, "Revision 3") kept every decision and changed the form
+of four of them where revision 2's implementation proved awkward:
+
+- **D1.** Batches still borrow the per-partition constants, now through an
+  `Arc<Catalogue>` the buffers keep from `BatchFill::finish`: a batch is
+  self-contained and cannot be paired with another observation's catalogue.
+- **D10.** The byte budget counts the cursor's decode scratch
+  (`scratch_bytes_per_sample`), so `batch_bytes` bounds what a batch and its
+  decode hold, not only the delivered products.
+- **D12.** `next_owned(Option<BatchBuffers>)` and `NeedBuffers` are replaced
+  by a bounded `BufferPool`: a buffer is taken only for a batch, the producer
+  waits while none is free, and a `FilledBatch` returns its buffer when
+  dropped. Nothing is lent at the end, as D12 required.
+- **D14.** `GroupCompletion` hands out move-only `WorkToken`s, so the join of
+  a group's input and its work cannot be miscounted.
 
 ## Provenance
 

@@ -1,6 +1,6 @@
 # MSv2/MSv4 trial evidence
 
-Status: revision 2 (the design walkthrough's decisions implemented), stopped for review again; interfaces not frozen; not M0/M1 acceptance
+Status: revision 3 (the walkthrough's decisions plus the cleanups revision 2 exposed), stopped for review; interfaces not frozen; not M0/M1 acceptance
 Truth class: trial evidence
 Date: 2026-10-25
 Handoff: [trial-handoff.md](../trial-handoff.md)
@@ -12,6 +12,33 @@ showed, including what is missing. Nothing here claims M0 or M1 complete:
 the full caller and Measures inventory, every Measures family's bulk route,
 general updates and creation, failure injection and the benchmark matrix
 remain later requirements.
+
+## Revision 3: the weak spots revision 2 exposed
+
+Revision 2's own review (this document's "What revision 2 taught", the scale
+check below, and the owner's questions on performance and memory) found
+places where the boundary was right in substance but awkward or unsafe in
+form. Revision 3 changes them, and nothing else; the examples, the
+interoperability checks and every adapter law are unchanged in what they
+assert.
+
+| Change | What it replaces | Evidence |
+| --- | --- | --- |
+| **A batch carries its catalogue.** `BatchFill::finish` keeps an `Arc<Catalogue>` in the buffers; `BatchBuffers::batch()`, `FilledBatch::batch()` and `BatchBuffers::pack(batch)` take no catalogue, and `VisibilityBatch::catalogue` names it. `Observation::catalogue()` returns the shared `Arc`. | Every consumer passing the observation's catalogue back in; another observation's catalogue gave a panic or silently wrong frequencies. | `buffers.rs` unit tests, every adapter law |
+| **A bounded `BufferPool` for owned batches.** `next_owned(&pool)` takes a free buffer only for a batch and waits while none is free (the backpressure); a `FilledBatch` returns its buffer when dropped, or when its last `Arc` is. `BufferPool::pack` copies a window into a pooled piece. `OwnedEvent` is `Batch`, `GroupEnd` or `End`. | `next_owned(Option<BatchBuffers>)` with `NeedBuffers`, buffers handed back in every variant, and a boxed `Reclaimed` error: each consumer kept its own pool and handshake, and one development bug was an infinite loop in it. | `pool.rs` unit tests (a full pool waits; failures return the buffer), `the_budget_fits_whole_times_or_refuses_binding`, the work-unit probe and example B's concurrent solve (every buffer back at the end) |
+| **Work tokens.** `GroupCompletion::begin` returns a `WorkToken`, which `finish` consumes. | `begin(key)` / `finish(key)` counting: a unit could finish work it never began, or twice. | grouping unit test, `split_channel_windows_complete_each_group_once`, example B |
+| **The budget counts decode scratch.** `PartitionEstimate::scratch_bytes_per_sample` is what the cursor's own scratch holds per sample (MSv4: the flag bytes, and every stored product of values and weights when a subset is delivered; MSv2: each present row's number, sample, `FLAG_ROW` and time auxiliaries, and every stored product when a time has padding or a subset is delivered). `times_per_batch` budgets `held_bytes_per_sample()`; `Estimate::peak_held_bytes()` is what a pool buffer and its cursor hold. | A budget that counted only the delivered products: a two-of-four subset roughly doubled real use. | `the_estimate_is_the_bound_realization_and_models_the_store`, `a_correlation_subset_carries_the_flags_it_is_asked_for` |
+| **The writer validates into a `Checked` batch** holding the views it proved present (payload, centroid, exposure, scan) and its placement. | Checks followed by `expect("checked")` where the views were used. | writer laws |
+| **`Traversal` turns are an enum**, not an `Err` carrying a group end. | `Result<Option<usize>, Step>` with `unreachable!` arms. | every traversal |
+| **The MSv2 opening index is built in row chunks** (`msv2/index.rs`, earlier on this branch). | 75–80 bytes per MAIN row at opening. | `the_index_does_not_depend_on_the_chunk_size`, scale check |
+
+Gates for revision 3: clippy `-D warnings` on `casa-observation`, `casa-ms`
+(`msv4`), `casa-imaging-application` and `casa-calibration`, every target;
+`casa-observation` 8 unit tests and its doctest; `casa-ms` library and
+adapter laws, 458 pass; example A, 5 pass, with the work-unit probe below
+re-measured; example B, 5 pass; `tools/ms-trial/check_interop.sh` 26/26 and
+74/74 with the committed reports unchanged; rustdoc with broken and private
+links denied.
 
 ## Revision 1: what the design review changed
 
@@ -234,9 +261,10 @@ the adapters' group index 3.
   the values and weights of those products and flags either their own or
   the OR over all four, from both stores; the fixture flags some cross hands
   alone, so the two policies differ on it.
-- One time that does not fit the byte budget fails binding; `next_owned`
-  without buffers answers `NeedBuffers` for a batch and `End` without one
-  at the end.
+- One time that does not fit the byte budget fails binding; a traversal
+  read through a pool of one buffer gets each batch in that buffer, has it
+  back whenever the batch is dropped, and takes none at the end (revision 3;
+  revision 2 asked without buffers, `NeedBuffers`).
 - An MSv2 row removed from the fixture leaves a padded cell: flagged, NaN
   values, UVW and auxiliaries, weight 0, excluded by the validity rule; the
   other 119 samples are unchanged, the batch count is the grid's and the
@@ -299,22 +327,22 @@ before each batch. Every unit's plane equals the pass's (NRMS < 1e-6).
 
 | Strategy | Fast units done | Slow unit done | Producer stall | Batch buffers | Peak pinned | Copied |
 | --- | --- | --- | --- | --- | --- | --- |
-| Shared batch (`Arc<FilledBatch>`, pool of 2), v2 | 61.3 ms | 181.3 ms | 60.5 ms | 2 × 7.4 KB | 14.8 KB of batches | 0 |
-| Packed pieces (`FilledBatch::pack`, 2 per unit), v2 | 1.1 ms | 181.3 ms | 60.0 ms | 1 × 7.4 KB | 7.4 KB batch + 15.4 KB pieces | 7,200 elements |
-| Shared batch, v4 | 63.4 ms | 182.6 ms | 59.3 ms | 2 × 9.7 KB | 19.4 KB of batches | 0 |
-| Packed pieces, v4 | 3.6 ms | 182.4 ms | 58.6 ms | 1 × 9.7 KB | 9.7 KB batch + 12.4 KB pieces | 7,200 elements |
+| Shared batch (`Arc<FilledBatch>`, `BufferPool` of 2), v2 | 61.5 ms | 181.6 ms | 60.5 ms | 2 × 7.4 KB | 14.8 KB of batches | 0 |
+| Packed pieces (`BufferPool::pack`, a pool of 2 per unit), v2 | 1.1 ms | 181.8 ms | 60.2 ms | 1 × 7.4 KB | 7.4 KB batch + 12.4 KB pieces | 7,200 elements |
+| Shared batch, v4 | 64.3 ms | 183.5 ms | 60.6 ms | 2 × 9.7 KB | 19.4 KB of batches | 0 |
+| Packed pieces, v4 | 4.7 ms | 183.1 ms | 58.0 ms | 1 × 9.7 KB | 9.7 KB batch + 15.4 KB pieces | 7,200 elements |
 
-Revision 2, debug build, one run. The slow unit's 3 × 60 ms delay dominates
+Revision 3, debug build, one run. The slow unit's 3 × 60 ms delay dominates
 its time by design. The v2 batch is smaller than in revision 1: it no
 longer carries frequencies, correlations, antennas, a group name or row
 flags, and its weight is one per correlation (its packed pieces keep that
 per-correlation weight, so a v2 piece is a different size from a v4 one
 while holding the same values).
 
-The producer asks what comes next before lending a buffer
-(`next_owned(None)`), so the shared-batch stall is the one 60 ms wait for
-the slow unit's buffer: revision 1's extra wait for a buffer that only
-learned the traversal was over is gone, as the open question predicted.
+The producer draws on the pool, which hands out a buffer only for a batch,
+so the shared-batch stall is the one 60 ms wait for the slow unit's buffer
+and nothing is lent at the end; every buffer of every pool is back when the
+run finishes, which the probe asserts.
 
 Sharing costs no copy, but a slow unit pins every batch it has not finished,
 and once the pool is used up the fast units wait for its buffers. Packing

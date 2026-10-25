@@ -171,8 +171,16 @@ _Avoid_: Missing row, absent slot, occupancy
 **Batch Shape**:
 What one batch covers: the partition set, the channel window, the roles read,
 the correlation products delivered, and the number of whole times the byte
-budget admits. The estimate costs a batch shape before anything is read.
+budget admits. The budget counts the batch and the cursor's decode scratch
+for it. The estimate costs a batch shape before anything is read.
 _Avoid_: Cursor shape, chunk size, block size
+
+**Buffer Pool**:
+The bounded set of batch buffers a traversal's owned batches are filled
+into: a buffer is taken only for a batch, the producer waits while none is
+free, and an owned batch returns its buffer when it is dropped. Its size
+times the estimate's held bytes per batch is what owned batches can hold.
+_Avoid_: Buffer cache, free list, lending
 
 **Traversal Order**:
 The order batches arrive. Within one cursor it is fixed: whole times of one

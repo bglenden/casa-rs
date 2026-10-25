@@ -1,8 +1,8 @@
 # Native observation I/O for MSv2 and MSv4
 
-Status: revision 5; working design authorized for M0/M1 trial, not frozen
+Status: revision 6; working design authorized for M0/M1 trial, not frozen
 Truth class: design proposal
-Date: 2026-10-24
+Date: 2026-10-25
 Companion documents: [contracts](contracts.md), [implementation plan](implementation-plan.md)
 
 Revision 5 retains Pro and Fable's review changes and owner discussion of
@@ -15,6 +15,16 @@ types; concrete ownership APIs remain subject to M1 evidence and review.
 On 2026-10-24 the owner agreed to proceed with the [M0/M1 trial](trial-handoff.md).
 The detailed APIs remain open to trial evidence and owner iteration; interface
 stabilization and broad production migration follow the M1 acceptance gate.
+
+Revision 6 (2026-10-25) records what the trial settled with the owner. MSv4
+is the future: the shared interface takes MSv4's native shape, and the MSv2
+adapter assembles MSv2 data into it at opening. The decisions are D1 to D25
+of the [trial's design record](trial/revision-2-design.md), refined by the
+trial's revision 3 ([README](trial/README.md)); the [contracts](contracts.md)
+mark the passages they changed. On the same day ADR-0016 was amended so that
+every imaging crate may depend on the definitional crates (`casa-values`,
+`casa-types`, `casa-coordinates`), and the imaging model now shares the
+observation boundary's `Correlation`.
 
 ## 1. Outcome and boundaries
 
@@ -260,7 +270,7 @@ resource authorities.
 
 | Consumer | Typical request, not a universal mandate |
 | --- | --- |
-| Continuum imaging | Selected groups/SPWs; UVW, frequency, correlation, validity and weights; bounded sample/channel-major views with irregular or factored coordinates. Revisit selection each major cycle. |
+| Continuum imaging | Selected groups/SPWs; UVW, frequency, correlation, validity and weights; bounded `[sample, channel, correlation]` views of whole times of the time × baseline grid, channel windows as views (Revision 6). Revisit selection each major cycle. |
 | Cube imaging | Frequency-local work with many samples per channel and explicit spectral mapping. Full-frequency storage chunks may be decoded repeatedly across plane waves; bind reports that cost and admits feasible traversal alternatives. |
 | Gain/bandpass solve | Scientific grouping by solution interval and configured field/SPW rules; correlations/channels arranged for the solver; sequential or bounded concurrent fragments feed admitted accumulators. |
 | Apply calibration | Streaming visibility/flag/weight updates, with gains interpolated by the calibration owner. No need to materialize a whole solve group. |

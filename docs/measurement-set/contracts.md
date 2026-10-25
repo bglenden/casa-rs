@@ -1,8 +1,8 @@
 # Intermediate observation contracts
 
-Status: revision 5; authorized as the M0/M1 trial contract, not frozen
+Status: revision 6; authorized as the M0/M1 trial contract, not frozen
 Truth class: design proposal
-Date: 2026-10-24
+Date: 2026-10-25
 
 This is the interface between persistent observations and numerical consumers.
 The names and Rust sketches are provisional; the semantics below are the design
@@ -10,6 +10,16 @@ authorized for the [M0/M1 trial](trial-handoff.md). Trial authorization does not
 finalize the design. M1 must turn the sketches into a minimal compilable API
 with worked imaging, solve, update, and source-free creation examples before
 broad implementation starts.
+
+**Revision 6** folds in what the trial settled with the owner: the
+decisions D1 to D25 of [the trial's design record](trial/revision-2-design.md)
+and the refinements of its revision 3 ([trial README](trial/README.md),
+"Revision 3"). The governing principle is that MSv4 is the future: the
+interface takes MSv4's native shape and the MSv2 adapter assembles MSv2 data
+into it. Passages that the decisions changed are marked "Revision 6" below;
+the trial's `casa-observation` crate is the executable form of them. Where
+this document and the decisions still disagree, the decisions are what the
+trial implements and what review should hold the code to.
 
 The bounded intermediate is provisionally named `VisibilityBatch`. Reserve
 chunk/tile for physical storage and compute window for a kernel's view. The name
@@ -91,52 +101,43 @@ in the same time/baseline cell. The
 observed upstream behavior from the proposed preservation contract.
 
 ```rust
-// Semantic sketch; private constructors validate dimensions and scope.
-enum SampleTopology<'a> {
-    Irregular { samples: SampleCoordinates<'a> },
-    TimeBaseline {
-        times: EpochView<'a>, // native Measures view, retaining split precision
-        baselines: &'a [OrderedBaseline],
-        occupancy: OccupancyView<'a>,
-    },
-}
-
+// Semantic sketch of the trial's shape (Revision 6); casa-observation has it.
 struct VisibilityBatch<'a> {
-    context: BatchContext<'a>,
-    topology: SampleTopology<'a>,
-    coordinates: CoordinateViews<'a>,
-    groups: &'a [DataGroupView<'a>],
-    grouping: GroupedSamples<'a>, // optional ranges/index views, no payload copy
-    update_maps: Option<RoleUpdateMaps<'a>>, // lends a checked map per native role
+    catalogue: &'a Arc<Catalogue>, // per-partition constants live there once (D1)
+    partition: PartitionId,
+    time: EpochView<'a>,              // whole times of the partition's grid (D3)
+    baselines: &'a [OrderedBaseline], // the partition's table, from the catalogue
+    field: ArrayView1<'a, FieldId>,   // per time
+    scan: Option<ArrayView1<'a, ScanId>>,
+    timing: SampleTiming<'a>,         // time centroid, interval, exposure
+    frequency: FrequencyView<'a>,     // a window of the catalogue's
+    correlations: &'a [Correlation],  // the delivered products (D17, D18)
+    group: DataGroupView<'a>,         // [sample, channel, correlation] payload, UVW
+    fragments: &'a [GroupFragment],   // scientific groups (section 4)
+    // Update maps (section 7) are not part of the trial.
 }
 ```
 
-`Irregular` is a sample list with axis-labelled coordinates, usually one entry
-per integration and ordered baseline. Each sample still carries a
-channel-by-correlation array. Repeated baseline/time coordinates are distinct
-acquisitions; equality of coordinates does not imply identity. Do not discard
-duplicates or average them while opening. Variable row shapes are split into
-compatible batches. This does not impose the historical physical row order.
-
-`TimeBaseline` factors coordinates and can carry large native v4 arrays without
-replicating timestamps and antenna pairs for every slot. It is a coordinate
-topology, not a separate element order or numerical kernel. A compatible
-contiguous `[time, baseline, channel, correlation]` window binds as sample-major
-with `sample = time_index * baseline_count + baseline_index`, without copying
-values or materializing one coordinate header per slot. Check strides and
-selection first: not every sliced/permuted window permits that view.
-Dense-to-irregular packing is permissible
-when requested and budgeted. Irregular-to-dense conversion is allowed only if
-the destination can represent duplicates and holes under the declared policy;
-otherwise it is rejected. The initial rectangular form has one slot per
-time/baseline coordinate, so duplicate acquisitions require irregular form or
-separate fragments with distinct identity.
+**Revision 6 (D3): one topology.** A batch is whole times of its
+partition's time × baseline grid, MSv4's own: `sample = time_index ×
+baseline_count + baseline_index`, field and scan per time, timestamps and
+baseline pairs held once (O(T+B), not O(T×B)). There is no irregular
+topology. The MSv2 adapter places rows on the grid when the
+MeasurementSet is opened; a cell no acquisition fills is **padding** (flag
+true, weight 0, values, UVW and time auxiliaries NaN), which the validity
+rule excludes. Two rows claiming one cell are distinct acquisitions the
+partition keys failed to separate: opening refuses them, naming both rows,
+rather than discarding or averaging either. Partitions are content keys as
+XRADIO's converter forms them (D2, D4), so the same observation opens as
+the same partition set from either store.
 
 Keep three different facts separate:
 
 - **Selection:** which logical elements the request includes.
 - **Acquisition occupancy:** known present, known absent, or unknown; may be a
   constant or a compact view, without requiring a byte for every element.
+  (Revision 6: a batch carries absence only as padding, flagged; the
+  estimate reports each partition's padded fraction before reading.)
 - **Validity and flags:** numerical validity of requested values and native
   scientific flag state, potentially varying by channel/correlation.
 
@@ -352,18 +353,21 @@ current scalar and already-prepared production paths for the affected families.
 ### Layouts and scalar precision
 
 Expose typed views with checked extents, axis labels, element strides and
-contiguity guarantees. The initial numerical layouts are a small closed set:
+contiguity guarantees.
 
-| Layout | Logical dimensions | Typical use |
-| --- | --- | --- |
-| Sample-major | `[sample, channel, correlation]` | Existing row-compatible bulk path, streaming application |
-| Channel-major | `[channel, sample, correlation]` | Channel-local imaging and some solves |
+**Revision 6 (D9, D22): one payload order.** Every payload view is
+`[sample, channel, correlation]`, correlation fastest, the order both stores
+hold, so no adapter transposes. A consumer that wants channel-major or a
+calibration layout takes a permuted or sliced `ndarray` view of the batch;
+there is no layout choice in the request. The payload is `Complex<f32>`;
+the other value kinds below are not realized by the trial. The paragraph
+below is kept for the strides and gathers it describes.
 
-These name element order as well as axes; a request also declares which strides
-are acceptable. Arbitrary sparse gathers are represented by explicit index
-views or packed by the backend, never disguised as a contiguous slice. Either
-layout may retain `TimeBaseline` coordinates; a rank-four view is a compatible
-factoring of its axes, not a v4-specific operator path. M1 must choose only the
+Arbitrary sparse gathers are represented by explicit index
+views or packed by the backend, never disguised as a contiguous slice. Arbitrary sparse gathers are represented by explicit index
+views or packed by the backend, never disguised as a contiguous slice. A
+rank-four view is a compatible factoring of the sample axis into time and
+baseline, not a v4-specific operator path. M1 must choose only the
 stride/permutation forms real kernels need and match them once per batch.
 Arbitrary-rank tensors, negative
 strides, and unrestricted permutations are not initial requirements. A kernel
@@ -497,15 +501,17 @@ groups[0].flags[sample, channel, correlation] = bool
   sample 1, channel 0: [false, false, false, false]
   sample 1, channel 1: [ true, false, false, false]
 
-groups[0].weights[sample, correlation] = f32
+groups[0].weights[sample, channel, correlation] = f32, channel stride 0
   sample 0: [ 4, 2, 2,  4]
   sample 1: [16, 8, 8, 16]
-// Declared inverse-variance weights in Jy^-2 for this example;
-// broadcast across channel, without expanding the eight stored numbers.
+// Declared inverse-variance weights in Jy^-2 for this example: one per
+// correlation (MSv2 WEIGHT), seen through every channel by a zero channel
+// stride, without expanding the eight stored numbers (Revision 6, D5).
 ```
 
 Both acquisitions are known present; all values are finite, both samples are
-selected, and row flags are false. The illustrative consumer excludes flagged
+selected, and no row flag is set (Revision 6, D5: an MSv2 `FLAG_ROW` is
+folded into every flag of its row when the batch is filled). The illustrative consumer excludes flagged
 elements. At `(sample=1, channel=0, correlation=XX)` it reads `3+4i`, flag=false,
 weight=16, frequency=1 GHz and UVW=(100,-40,20) m. The XX value at channel 1
 remains `4+3i` in the buffer but is excluded by its flag. Data are not replaced
@@ -595,7 +601,9 @@ inside either storage adapter or an imaging-specific Measures implementation.
 ### Flags and weights
 
 `NativeFlagView` retains boolean or unsigned bitmask dtype/width, reason-bit
-definitions, legacy row flags, and requested category flags. A separate
+definitions, legacy row flags, and requested category flags. (Revision 6, D5:
+the trial delivers boolean flags with `FLAG_ROW` folded in and no separate
+row-flag view; bitmask and category flags are not realized.) A separate
 effective-validity projection combines requested role validity and flag policy
 for computation. MSv4 nonzero bitmasks are flagged; policy must not quietly
 ignore unknown bits. A boolean projection is insufficient for lossless writes.
@@ -673,6 +681,19 @@ enum GroupRealization {
 }
 ```
 
+**Revision 6: what the trial's request holds.** `AccessRequest` names the
+partition set (selected by content from the catalogue), one data group, the
+roles (payload, UVW, time auxiliaries, scan), a channel window, a
+`CorrelationRequest` (the products delivered and whether their flags are
+their own or the OR over every product, D17), the scientific grouping keyed
+by field and scan as production `gaincal` keys solutions (D13 to D15), and a
+byte budget. The budget admits whole times and counts the batch and the
+cursor's decode scratch for it (D7, D10, revision 3);
+`Observation::estimate` costs that batch shape without reading payload and
+binding returns the same estimate. Layout and precision requests are gone
+(D9, D22); revisits and compute-window requirements are realized as views
+and repeated traversals rather than request fields.
+
 Hard requirements include requested data/selection, semantics of solution bins,
 ordering needed for an algorithm, allowed numeric conversions, accepted layouts
 and stride constraints. Preferences include target aggregation size and locality
@@ -737,6 +758,9 @@ that no more input will arrive; it does not establish that earlier worker jobs
 have completed. The consumer finalizes only after all prior fragments/windows
 for that key have been consumed/joined under the existing executor. M1 tests
 split windows, delayed completion and empty groups without another scheduler.
+(Revision 6: `GroupCompletion` joins the two, handing out a move-only
+`WorkToken` per unit of work, so a unit ends once and only begun work can
+end.)
 
 A solver declaring splittable accumulation consumes fragments and retains only
 its admitted sufficient state. If a scientific algorithm genuinely needs all
@@ -766,6 +790,15 @@ arrays and retained context; safe Rust prevents refill or mutation while views
 remain borrowed. Pipelining uses a bounded admitted pool of buffers and transfers
 exclusive ownership; no `Arc` clone is permission to retain unlimited batches.
 Coordinate/group catalogue references can be shared without cloning payloads.
+
+Revision 6 realizes both. A batch's buffers keep a shared reference to the
+catalogue they were checked against, so an owned batch is self-contained
+(D1). Owned batches are filled into a bounded `BufferPool`: a buffer is
+taken only for a batch, the producer waits while none is free, and a
+`FilledBatch` returns its buffer when dropped, or when its last `Arc` is
+(D12, revision 3). A pool of `n` buffers holds at most `n` times the
+estimate's held bytes per batch, the figure admission reserves; connecting
+the pool to the runtime's admission is M2 work.
 
 ### Independent work-unit lifetimes
 
