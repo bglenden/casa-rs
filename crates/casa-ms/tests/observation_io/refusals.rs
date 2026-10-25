@@ -10,7 +10,7 @@ use casa_ms::MeasurementSet;
 use casa_ms::observation_io::{Msv2Observation, Msv4Observation, Msv4Writer};
 use casa_observation::{
     AccessRequest, BatchBuffers, FieldId, Grouping, ObservationError, PartitionId, ReadEvent,
-    Roles, TimeBaselineGrid, VisibilityCursor,
+    Roles, TimeBaselineGrid,
 };
 use casa_types::measures::EpochRef;
 use casa_types::{ScalarValue, Value};
@@ -39,12 +39,14 @@ fn edit_json(path: &Path, edit: impl FnOnce(&mut serde_json::Value)) {
 }
 
 fn first_batch_time_scale(observation: &dyn casa_observation::Observation) -> EpochRef {
-    let mut cursor = observation.bind_read(&request(0..8, 10)).expect("bind");
+    let mut traversal = observation
+        .bind_read(&request(0..8, usize::MAX))
+        .expect("bind");
     let mut buffers = BatchBuffers::default();
-    let Some(ReadEvent::Batch(batch)) = cursor.next(&mut buffers).expect("read") else {
+    let Some(ReadEvent::Batch(batch)) = traversal.next(&mut buffers).expect("read") else {
         panic!("a batch");
     };
-    let scale = batch.topology.time().reference();
+    let scale = batch.time.reference();
     assert_eq!(
         batch.timing.centroid.expect("centroid").reference(),
         scale,
@@ -115,8 +117,9 @@ fn msv4_payload_types_and_dimensions_are_checked_at_opening() {
     ));
 }
 
-/// A role the request reads but the store lacks fails binding, never a
-/// later read or a made-up value; a request that does not read it binds.
+/// A role the request reads but the store lacks fails the estimate and the
+/// binding, never a later read or a made-up value; a request that does not
+/// read it binds.
 #[test]
 fn missing_metadata_fails_binding() {
     for variable in ["TIME_CENTROID", "EFFECTIVE_INTEGRATION_TIME", "scan_name"] {
@@ -124,11 +127,16 @@ fn missing_metadata_fails_binding() {
         let store = fixture(root.path(), "ms_trial.ps.zarr");
         std::fs::remove_dir_all(dataset(&store).join(variable)).expect("remove");
         let v4 = Msv4Observation::open(&store).expect("open without it");
-        match v4.bind_read(&request(0..8, 40)) {
-            Err(ObservationError::InvalidRequest { reason }) => {
-                assert!(reason.contains(variable), "{reason}");
+        for result in [
+            v4.estimate(&request(0..8, usize::MAX)).map(|_| ()),
+            v4.bind_read(&request(0..8, usize::MAX)).map(|_| ()),
+        ] {
+            match result {
+                Err(ObservationError::InvalidRequest { reason }) => {
+                    assert!(reason.contains(variable), "{reason}");
+                }
+                other => panic!("{variable}: {other:?}"),
             }
-            other => panic!("{variable}: {:?}", other.map(|_| ())),
         }
         let without = AccessRequest {
             roles: Roles {
@@ -137,11 +145,11 @@ fn missing_metadata_fails_binding() {
                 scan: variable != "scan_name",
                 ..Roles::ALL
             },
-            ..request(0..8, 40)
+            ..request(0..8, usize::MAX)
         };
-        let mut cursor = v4.bind_read(&without).expect("bind without it");
+        let mut traversal = v4.bind_read(&without).expect("bind without it");
         let mut buffers = BatchBuffers::default();
-        assert!(cursor.next(&mut buffers).expect("read").is_some());
+        assert!(traversal.next(&mut buffers).expect("read").is_some());
     }
 }
 
@@ -180,10 +188,10 @@ fn the_msv2_time_reference_is_read_not_assumed() {
     );
     set_measinfo(&path, "TIME_CENTROID", tai);
     let v2 = Msv2Observation::open(&path).expect("TAI throughout");
+    assert_eq!(v2.catalogue().partitions[0].time_scale, EpochRef::TAI);
     assert_eq!(first_batch_time_scale(&v2), EpochRef::TAI);
-    let grid =
-        TimeBaselineGrid::from_traversal(&mut v2.bind_read(&request(0..8, 120)).expect("bind"))
-            .expect("grid");
+    let mut traversal = v2.bind_read(&request(0..8, usize::MAX)).expect("bind");
+    let grid = TimeBaselineGrid::from_cursor(traversal.cursors[0].as_mut()).expect("grid");
     assert_eq!(grid.time_scale, EpochRef::TAI);
     assert!(
         matches!(
@@ -280,15 +288,17 @@ fn each_data_group_keeps_its_own_field_context() {
             grouping: Grouping::TimeBins {
                 width_s: 60.0,
                 combine_fields: false,
+                combine_scans: false,
             },
-            ..request(0..8, 40)
+            ..request(0..8, usize::MAX)
         };
-        let mut cursor = v4.bind_read(&grouped).expect("bind");
+        let mut traversal = v4.bind_read(&grouped).expect("bind");
         let mut buffers = BatchBuffers::default();
-        let Some(ReadEvent::Batch(batch)) = cursor.next(&mut buffers).expect("read") else {
+        let Some(ReadEvent::Batch(batch)) = traversal.next(&mut buffers).expect("read") else {
             panic!("a batch");
         };
-        assert_eq!(batch.topology.sample(0).field, field, "{group}");
+        assert_eq!(batch.sample(0).field, field, "{group}");
+        assert_eq!(batch.group.entry.name, group);
         assert_eq!(batch.fragments[0].key.field, Some(field), "{group}");
     }
     edit_json(

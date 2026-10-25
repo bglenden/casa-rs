@@ -6,10 +6,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use casa_observation::{
-    AntennaEntry, Correlation, DataGroupEntry, FieldEntry, ObservationError, PartitionEntry,
-    ScanEntry, UvwFrame, VisibilityUnits,
+    AntennaEntry, Correlation, FieldEntry, ObservationEntry, ObservationError, ScanEntry, ScanId,
+    UvwFrame, VisibilityUnits,
 };
-use casa_tables::{RequiredScalarColumnDestination, RequiredScalarColumnValuesMut, Table};
+use casa_tables::Table;
 use casa_types::measures::EpochRef;
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::frequency::FrequencyRef;
@@ -17,7 +17,7 @@ use casa_types::measures::position::MPosition;
 use casa_types::quanta::Quantity;
 use casa_types::{ArrayValue, ScalarValue, Value};
 
-use super::{Partition, invalid, storage, table_error};
+use super::{invalid, storage};
 use crate::columns::direction_columns::DirectionColumn;
 use crate::{MeasurementSet, SubtableId};
 
@@ -115,10 +115,17 @@ pub(super) fn time_scale(main: &Table) -> Result<EpochRef, ObservationError> {
     }
 }
 
-/// The phase centres' frame, and the UVW convention it resolves.
-pub(super) fn fields_and_uvw(
-    ms: &MeasurementSet,
-) -> Result<(Vec<FieldEntry>, UvwFrame), ObservationError> {
+/// The `FIELD` subtable as the catalogue needs it.
+pub(super) struct Fields {
+    pub(super) entries: Vec<FieldEntry>,
+    /// Each field's `EPHEMERIS_ID`, when the optional column is present.
+    pub(super) ephemerides: Vec<Option<i32>>,
+    /// The UVW convention the phase centres' frame resolves.
+    pub(super) uvw_frame: UvwFrame,
+}
+
+/// The fields, their ephemerides, and the UVW convention.
+pub(super) fn fields_and_uvw(ms: &MeasurementSet) -> Result<Fields, ObservationError> {
     let field = ms.field().map_err(storage)?;
     let field_table = ms
         .subtable(SubtableId::Field)
@@ -143,6 +150,9 @@ pub(super) fn fields_and_uvw(
             })
         })
         .collect::<Result<_, ObservationError>>()?;
+    let ephemerides = (0..field.row_count())
+        .map(|row| field.ephemeris_id(row).map_err(storage))
+        .collect::<Result<_, ObservationError>>()?;
     let main = ms.main_table();
     require_units(main, "UVW", "m")?;
     let stored_label = measure_reference(main, "UVW")?
@@ -163,13 +173,55 @@ pub(super) fn fields_and_uvw(
             });
         }
     }
-    Ok((
-        fields,
-        UvwFrame {
+    Ok(Fields {
+        entries: fields,
+        ephemerides,
+        uvw_frame: UvwFrame {
             effective: phase_frame,
             stored_label,
         },
-    ))
+    })
+}
+
+/// Every `OBSERVATION` row. A MeasurementSet without one gets a single
+/// empty entry, which every row's `OBSERVATION_ID` 0 then names.
+pub(super) fn read_observations(
+    ms: &MeasurementSet,
+) -> Result<Vec<ObservationEntry>, ObservationError> {
+    let observation = ms.observation().map_err(storage)?;
+    if observation.row_count() == 0 {
+        return Ok(vec![ObservationEntry::default()]);
+    }
+    (0..observation.row_count())
+        .map(|row| {
+            Ok(ObservationEntry {
+                telescope: observation.string(row, "TELESCOPE_NAME").map_err(storage)?,
+                observers: vec![observation.string(row, "OBSERVER").map_err(storage)?],
+                project: observation.string(row, "PROJECT").map_err(storage)?,
+            })
+        })
+        .collect()
+}
+
+/// `STATE::OBS_MODE` of every state row: the intents a `STATE_ID` names.
+pub(super) fn read_state_modes(ms: &MeasurementSet) -> Result<Vec<String>, ObservationError> {
+    match ms.state() {
+        Ok(state) => (0..state.row_count())
+            .map(|row| state.string(row, "OBS_MODE").map_err(storage))
+            .collect(),
+        Err(_) => Ok(Vec::new()),
+    }
+}
+
+/// The intents an `OBS_MODE` string lists, sorted and deduplicated.
+pub(super) fn intents(mode: &str) -> Vec<String> {
+    let set: BTreeSet<String> = mode
+        .split(',')
+        .map(str::trim)
+        .filter(|intent| !intent.is_empty())
+        .map(str::to_string)
+        .collect();
+    set.into_iter().collect()
 }
 
 /// Every `ANTENNA` row, with its first `FEED` row's receptors.
@@ -252,54 +304,28 @@ fn source_name(ms: &MeasurementSet, id: i32) -> Result<Option<String>, Observati
 
 /// The scans: MAIN's distinct `SCAN_NUMBER`s in ascending order, named by
 /// their decimal number as XRADIO names them, with the `STATE::OBS_MODE`
-/// intents of their rows; and each row's scan.
-pub(super) fn read_scans(
-    ms: &MeasurementSet,
-) -> Result<(Vec<ScanEntry>, Vec<u32>), ObservationError> {
-    let main = ms.main_table();
-    let rows = (0..main.row_count()).collect::<Vec<_>>();
-    let (mut numbers, mut states) = (Vec::new(), Vec::new());
-    main.required_scalar_columns_for_rows_into(
-        &rows,
-        &mut [
-            RequiredScalarColumnDestination::new(
-                "SCAN_NUMBER",
-                RequiredScalarColumnValuesMut::Int32(&mut numbers),
-            ),
-            RequiredScalarColumnDestination::new(
-                "STATE_ID",
-                RequiredScalarColumnValuesMut::Int32(&mut states),
-            ),
-        ],
-    )
-    .map_err(table_error)?;
-    let modes = match ms.state() {
-        Ok(state) => (0..state.row_count())
-            .map(|row| state.string(row, "OBS_MODE").map_err(storage))
-            .collect::<Result<Vec<_>, _>>()?,
-        Err(_) => Vec::new(),
-    };
-    let mut intents = BTreeMap::<i32, BTreeSet<String>>::new();
-    for (&number, &state) in numbers.iter().zip(&states) {
-        let entry = intents.entry(number).or_default();
+/// intents of their rows; and the scan of each `SCAN_NUMBER`.
+pub(super) fn scans(
+    numbers: &[i32],
+    states: &[i32],
+    modes: &[String],
+) -> (Vec<ScanEntry>, BTreeMap<i32, ScanId>) {
+    let mut by_number = BTreeMap::<i32, BTreeSet<String>>::new();
+    for (&number, &state) in numbers.iter().zip(states) {
+        let entry = by_number.entry(number).or_default();
         if let Some(mode) = usize::try_from(state)
             .ok()
             .and_then(|state| modes.get(state))
         {
-            entry.extend(
-                mode.split(',')
-                    .map(str::trim)
-                    .filter(|intent| !intent.is_empty())
-                    .map(str::to_string),
-            );
+            entry.extend(intents(mode));
         }
     }
-    let index: BTreeMap<i32, u32> = intents
+    let index: BTreeMap<i32, ScanId> = by_number
         .keys()
         .enumerate()
-        .map(|(index, number)| (*number, index as u32))
+        .map(|(index, number)| (*number, ScanId(index as u32)))
         .collect();
-    let scans = intents
+    let scans = by_number
         .into_iter()
         .map(|(number, intents)| ScanEntry {
             name: number.to_string(),
@@ -307,14 +333,20 @@ pub(super) fn read_scans(
             intents: intents.into_iter().collect(),
         })
         .collect();
-    Ok((scans, numbers.iter().map(|number| index[number]).collect()))
+    (scans, index)
 }
 
-pub(super) fn read_partitions(
-    ms: &MeasurementSet,
-    units: &VisibilityUnits,
-    uvw_frame: UvwFrame,
-) -> Result<(Vec<Partition>, Vec<PartitionEntry>), ObservationError> {
+/// The spectral window and correlation products of one data description.
+pub(super) struct SpectralSetup {
+    pub(super) spectral_window: String,
+    pub(super) frequencies_hz: Vec<f64>,
+    pub(super) frequency_frame: FrequencyRef,
+    pub(super) channel_widths_hz: Vec<f64>,
+    pub(super) correlations: Vec<Correlation>,
+}
+
+/// Every `DATA_DESCRIPTION` row's spectral setup.
+pub(super) fn spectral_setups(ms: &MeasurementSet) -> Result<Vec<SpectralSetup>, ObservationError> {
     let descriptions = ms.data_description().map_err(storage)?;
     let windows = ms.spectral_window().map_err(storage)?;
     if let Some(window_table) = ms.subtable(SubtableId::SpectralWindow) {
@@ -322,54 +354,31 @@ pub(super) fn read_partitions(
         require_units(window_table, "CHAN_WIDTH", "Hz")?;
     }
     let polarizations = ms.polarization().map_err(storage)?;
-    let weights = if ms
-        .main_table()
-        .schema()
-        .is_some_and(|schema| schema.contains_column("WEIGHT_SPECTRUM"))
-    {
-        "WEIGHT_SPECTRUM"
-    } else {
-        "WEIGHT"
-    };
-    let mut partitions = Vec::new();
-    let mut entries = Vec::new();
-    for row in 0..descriptions.row_count() {
-        let window = usize::try_from(descriptions.spectral_window_id(row).map_err(storage)?)
-            .map_err(|_| invalid("negative SPECTRAL_WINDOW_ID"))?;
-        let polarization = usize::try_from(descriptions.polarization_id(row).map_err(storage)?)
-            .map_err(|_| invalid("negative POLARIZATION_ID"))?;
-        let frame_code = windows.meas_freq_ref(window).map_err(storage)?;
-        let frequency_frame = FrequencyRef::from_casacore_code(frame_code)
-            .ok_or_else(|| invalid(format!("unknown MEAS_FREQ_REF {frame_code}")))?;
-        let correlations = polarizations
-            .corr_type(polarization)
-            .map_err(storage)?
-            .into_iter()
-            .map(|code| {
-                Correlation::from_casacore_code(code)
-                    .ok_or_else(|| invalid(format!("unsupported CORR_TYPE {code}")))
+    (0..descriptions.row_count())
+        .map(|row| {
+            let window = usize::try_from(descriptions.spectral_window_id(row).map_err(storage)?)
+                .map_err(|_| invalid("negative SPECTRAL_WINDOW_ID"))?;
+            let polarization = usize::try_from(descriptions.polarization_id(row).map_err(storage)?)
+                .map_err(|_| invalid("negative POLARIZATION_ID"))?;
+            let frame_code = windows.meas_freq_ref(window).map_err(storage)?;
+            let frequency_frame = FrequencyRef::from_casacore_code(frame_code)
+                .ok_or_else(|| invalid(format!("unknown MEAS_FREQ_REF {frame_code}")))?;
+            let correlations = polarizations
+                .corr_type(polarization)
+                .map_err(storage)?
+                .into_iter()
+                .map(|code| {
+                    Correlation::from_casacore_code(code)
+                        .ok_or_else(|| invalid(format!("unsupported CORR_TYPE {code}")))
+                })
+                .collect::<Result<_, _>>()?;
+            Ok(SpectralSetup {
+                spectral_window: windows.name(window).map_err(storage)?,
+                frequencies_hz: windows.chan_freq(window).map_err(storage)?,
+                frequency_frame,
+                channel_widths_hz: windows.chan_width(window).map_err(storage)?,
+                correlations,
             })
-            .collect::<Result<_, _>>()?;
-        partitions.push(Partition {
-            data_description: i32::try_from(row)
-                .map_err(|_| invalid("too many data descriptions"))?,
-        });
-        entries.push(PartitionEntry {
-            spectral_window: windows.name(window).map_err(storage)?,
-            frequencies_hz: windows.chan_freq(window).map_err(storage)?,
-            frequency_frame,
-            channel_widths_hz: windows.chan_width(window).map_err(storage)?,
-            correlations,
-            data_groups: vec![DataGroupEntry {
-                name: "base".to_string(),
-                visibilities: "DATA".to_string(),
-                flags: "FLAG".to_string(),
-                weights: weights.to_string(),
-                uvw: "UVW".to_string(),
-                units: units.clone(),
-                uvw_frame,
-            }],
-        });
-    }
-    Ok((partitions, entries))
+        })
+        .collect()
 }

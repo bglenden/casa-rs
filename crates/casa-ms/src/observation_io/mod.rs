@@ -9,7 +9,10 @@
 //! and imports neither concrete adapter.
 //!
 //! **Trial status.** These adapters implement the cases the MSv2/MSv4
-//! trial's examples need (`docs/measurement-set/trial/README.md`); the
+//! trial's examples need (`docs/measurement-set/trial/README.md`), at the
+//! trial's second revision (`revision-2-design.md`): the MSv2 adapter grids
+//! rows onto time × baseline at opening and partitions them as XRADIO's
+//! converter does, so both adapters deliver the same batches. The
 //! production readers and writers are unchanged.
 
 mod grouping;
@@ -43,11 +46,26 @@ pub enum GroupClosure {
     Deferred,
 }
 
+/// How the MSv2 adapter divides MAIN rows into partitions, beyond the keys
+/// every partition has: data description, intents (`STATE::OBS_MODE`),
+/// observation, ephemeris and feed pair (XRADIO's mandatory
+/// `partition_scheme`, plus the feed pair MSv4 has no axis for). An MSv4
+/// store is already partitioned and ignores this.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PartitionScheme {
+    /// Also split by `FIELD_ID`, as XRADIO's `partition_scheme=["FIELD_ID"]`.
+    pub fields: bool,
+    /// Also split by `SCAN_NUMBER`.
+    pub scans: bool,
+}
+
 /// Options fixed when a store is opened, outside any algorithm.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct OpenOptions {
     /// How group completion is announced; see [`GroupClosure`].
     pub group_closure: GroupClosure,
+    /// How an MSv2 is partitioned; see [`PartitionScheme`].
+    pub partition_scheme: PartitionScheme,
 }
 
 /// Open the observation at `path`, choosing its adapter from the store:

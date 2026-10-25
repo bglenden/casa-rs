@@ -2,29 +2,28 @@
 //! Caller-owned reusable storage that a cursor fills and a batch borrows,
 //! and the one checked path from filled arrays to a batch.
 
-use casa_types::measures::direction::DirectionRef;
-use casa_types::measures::frequency::FrequencyRef;
-use casa_types::measures::{EpochRef, EpochView, FrequencyView, MjdHighPrec, UvwView};
-use ndarray::{ArrayView1, ArrayView2, ArrayView3};
+use casa_types::Correlation;
+use casa_types::measures::{EpochView, FrequencyView, UvwView};
+use ndarray::{ArrayView1, ArrayView2, ArrayView3, Axis, ShapeBuilder};
 use num_complex::Complex32;
 
-use crate::batch::{
-    DataGroupView, IrregularSamples, Occupancy, SampleTiming, SampleTopology, Shared,
-    TimeBaselineSamples, VisibilityBatch, VisibilityValues, WeightView,
-};
-use crate::catalogue::{Correlation, OrderedBaseline, PartitionId};
+use crate::ObservationError;
+use crate::batch::{DataGroupView, SampleTiming, Shared, VisibilityBatch};
+use crate::catalogue::{Catalogue, FieldId, PartitionEntry, PartitionId, ScanId};
 use crate::grouping::GroupFragment;
 use crate::request::Roles;
-use crate::{ObservationError, VisibilityUnits};
 
 /// The storage behind one [`VisibilityBatch`].
 ///
 /// Owned by the caller (or a work unit), filled in place by a cursor and
 /// lent to the batch. Its arrays are private: a cursor fills them through
 /// [`Self::begin`], and [`BatchFill::finish`] checks them against the
-/// batch's [`BatchHeader`] once, which the buffers then keep. The batch is
-/// built from that header and nothing else, so no second description of
-/// the same data can drift from the arrays.
+/// batch's [`BatchHeader`] and the observation's [`Catalogue`] once, which
+/// the buffers then keep. The batch is built from that header, the arrays
+/// and the catalogue's partition entry and nothing else, so no second
+/// description of the same data can drift from the arrays: the per-partition
+/// constants (frequencies, correlations, baselines, time system, data group)
+/// are never copied into a batch.
 ///
 /// Clearing keeps capacity, so after the first fill of the largest batch a
 /// traversal allocates nothing. The buffers are `Send`: a pool of them can
@@ -43,13 +42,12 @@ pub struct BatchArrays {
     pub values: Vec<Complex32>,
     /// Flags, the same shape.
     pub flags: Vec<bool>,
-    /// `FLAG_ROW` per sample, for stores that have one.
-    pub row_flags: Vec<bool>,
-    /// Weights, `[sample][correlation]` or `[sample][channel][correlation]`.
+    /// Weights, `[sample][channel][correlation]`, or `[sample][correlation]`
+    /// when the header says they are not per channel.
     pub weights: Vec<f32>,
     /// UVW, `[sample][3]`.
     pub uvw: Vec<f64>,
-    /// Time offsets in seconds: per sample, or per time of a rectangle.
+    /// Time offsets in seconds from the partition's origin, per time.
     pub time_offsets_s: Vec<f64>,
     /// Time-centroid offsets in seconds, per sample.
     pub centroid_offsets_s: Vec<f64>,
@@ -57,26 +55,12 @@ pub struct BatchArrays {
     pub interval_s: Vec<f64>,
     /// Exposures in seconds, in the header's sharing.
     pub exposure_s: Vec<f64>,
-    /// Scans, in the header's sharing.
-    pub scan: Vec<u32>,
-    /// First antenna per sample (irregular topology).
-    pub antenna1: Vec<u32>,
-    /// Second antenna per sample (irregular topology).
-    pub antenna2: Vec<u32>,
-    /// Field per sample, or per time of a rectangle.
-    pub field: Vec<u32>,
-    /// Baselines of a rectangle.
-    pub baselines: Vec<OrderedBaseline>,
-    /// Channel frequencies in hertz.
-    pub frequency_hz: Vec<f64>,
-    /// Correlation products.
-    pub correlations: Vec<Correlation>,
+    /// Field per time.
+    pub field: Vec<FieldId>,
+    /// Scan per time, when the roles include it.
+    pub scan: Vec<ScanId>,
     /// Scientific-group fragments.
     pub fragments: Vec<GroupFragment>,
-    /// The data group's name.
-    pub group_name: String,
-    /// The data group's units.
-    pub units: VisibilityUnits,
 }
 
 /// How a per-sample quantity is stored in a batch ([`Shared`]).
@@ -84,74 +68,40 @@ pub struct BatchArrays {
 pub enum Sharing<T> {
     /// One value per sample.
     PerSample,
-    /// One value per time of a factored batch.
+    /// One value per time.
     PerTime,
     /// One value for every sample; the arrays hold none.
     Constant(T),
 }
 
-/// The sample layout of a batch.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TopologyShape {
-    /// `samples` listed samples.
-    Irregular {
-        /// Samples.
-        samples: usize,
-    },
-    /// `times × baselines` samples; the baselines are the arrays'.
-    TimeBaseline {
-        /// Times.
-        times: usize,
-        /// Whether every slot is a measured acquisition.
-        occupancy: Occupancy,
-    },
-}
-
-/// Everything about a batch except its arrays' contents: what a cursor
-/// decides before it fills, and what [`BatchFill::finish`] checks the
-/// arrays against.
+/// Everything about a batch except its arrays' contents and what the
+/// catalogue already states: what a cursor decides before it fills, and
+/// what [`BatchFill::finish`] checks the arrays against.
 #[derive(Clone, Debug, PartialEq)]
 pub struct BatchHeader {
     /// The partition.
     pub partition: PartitionId,
-    /// Listed or factored samples.
-    pub topology: TopologyShape,
+    /// The data group: an index into the partition's
+    /// [`data_groups`](PartitionEntry::data_groups).
+    pub data_group: usize,
+    /// Whole times in the batch; the samples are these times by the
+    /// partition's baselines.
+    pub times: usize,
     /// The partition's native channel of the first channel.
     pub first_channel: usize,
+    /// Channels.
+    pub channels: usize,
+    /// The delivered correlation products, in the partition's order.
+    pub correlations: Vec<Correlation>,
     /// The roles filled.
     pub roles: Roles,
-    /// Whether weights are per channel.
-    pub spectral_weights: bool,
-    /// Whether `row_flags` is filled.
-    pub row_flags: bool,
-    /// Time scale of the times and centroids.
-    pub time_scale: EpochRef,
-    /// Origin of the time offsets.
-    pub time_origin: MjdHighPrec,
-    /// Spectral frame of the frequencies.
-    pub frequency_frame: FrequencyRef,
-    /// Effective frame of UVW.
-    pub uvw_frame: DirectionRef,
+    /// Whether the weights are per channel (`[sample][channel][correlation]`)
+    /// or one per correlation shared by every channel.
+    pub weights_per_channel: bool,
     /// How intervals are stored, when the roles include them.
     pub interval: Sharing<f64>,
     /// How exposures are stored, when the roles include them.
     pub exposure: Sharing<f64>,
-    /// How scans are stored, when the roles include them.
-    pub scan: Sharing<u32>,
-    /// One more than the largest valid antenna, field and scan number: the
-    /// catalogue's counts.
-    pub limits: IdLimits,
-}
-
-/// The catalogue's counts, against which a batch's identities are checked.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct IdLimits {
-    /// Antennas.
-    pub antennas: usize,
-    /// Fields.
-    pub fields: usize,
-    /// Scans.
-    pub scans: usize,
 }
 
 /// A batch being filled: the arrays, cleared, and the header they must
@@ -169,22 +119,15 @@ impl BatchBuffers {
         let arrays = &mut self.arrays;
         arrays.values.clear();
         arrays.flags.clear();
-        arrays.row_flags.clear();
         arrays.weights.clear();
         arrays.uvw.clear();
         arrays.time_offsets_s.clear();
         arrays.centroid_offsets_s.clear();
         arrays.interval_s.clear();
         arrays.exposure_s.clear();
-        arrays.scan.clear();
-        arrays.antenna1.clear();
-        arrays.antenna2.clear();
         arrays.field.clear();
-        arrays.baselines.clear();
-        arrays.frequency_hz.clear();
-        arrays.correlations.clear();
+        arrays.scan.clear();
         arrays.fragments.clear();
-        arrays.group_name.clear();
     }
 
     /// Start filling a batch described by `header`: the arrays are cleared
@@ -214,70 +157,59 @@ impl BatchBuffers {
     pub fn capacity_bytes(&self) -> usize {
         let arrays = &self.arrays;
         arrays.values.capacity() * size_of::<Complex32>()
-            + (arrays.flags.capacity() + arrays.row_flags.capacity()) * size_of::<bool>()
+            + arrays.flags.capacity() * size_of::<bool>()
             + arrays.weights.capacity() * size_of::<f32>()
             + (arrays.uvw.capacity()
                 + arrays.time_offsets_s.capacity()
                 + arrays.centroid_offsets_s.capacity()
                 + arrays.interval_s.capacity()
-                + arrays.exposure_s.capacity()
-                + arrays.frequency_hz.capacity())
+                + arrays.exposure_s.capacity())
                 * size_of::<f64>()
-            + (arrays.antenna1.capacity()
-                + arrays.antenna2.capacity()
-                + arrays.field.capacity()
-                + arrays.scan.capacity())
-                * size_of::<u32>()
-            + arrays.baselines.capacity() * size_of::<OrderedBaseline>()
-            + arrays.correlations.capacity() * size_of::<Correlation>()
+            + arrays.field.capacity() * size_of::<FieldId>()
+            + arrays.scan.capacity() * size_of::<ScanId>()
             + arrays.fragments.capacity() * size_of::<GroupFragment>()
     }
 
-    /// The batch the buffers hold, if a fill finished.
+    /// The batch the buffers hold, if a fill finished: views of the arrays
+    /// and of `catalogue`'s entry for the batch's partition, which must be
+    /// the catalogue the fill was checked against.
+    ///
+    /// # Panics
+    ///
+    /// If `catalogue` lacks the batch's partition: another observation's
+    /// catalogue was passed.
     #[must_use]
-    pub fn batch(&self) -> Option<VisibilityBatch<'_>> {
+    pub fn batch<'c>(&'c self, catalogue: &'c Catalogue) -> Option<VisibilityBatch<'c>> {
         let header = self.header.as_ref()?;
+        let entry = catalogue
+            .partitions
+            .get(header.partition.0 as usize)
+            .expect("the batch's partition is in the catalogue it was checked against");
         let arrays = &self.arrays;
-        let channels = arrays.frequency_hz.len();
-        let correlations = arrays.correlations.len();
-        let time = EpochView::new(
-            header.time_scale,
-            header.time_origin,
-            ArrayView1::from(&arrays.time_offsets_s[..]),
-        );
-        let (topology, samples) = match header.topology {
-            TopologyShape::Irregular { samples } => (
-                SampleTopology::Irregular(IrregularSamples {
-                    time,
-                    antenna1: ArrayView1::from(&arrays.antenna1[..]),
-                    antenna2: ArrayView1::from(&arrays.antenna2[..]),
-                    field: ArrayView1::from(&arrays.field[..]),
-                }),
-                samples,
-            ),
-            TopologyShape::TimeBaseline { times, occupancy } => (
-                SampleTopology::TimeBaseline(TimeBaselineSamples {
-                    time,
-                    baselines: &arrays.baselines,
-                    field: ArrayView1::from(&arrays.field[..]),
-                    occupancy,
-                }),
-                times * arrays.baselines.len(),
-            ),
-        };
+        let baselines = entry.baselines.len();
+        let samples = header.times * baselines;
+        let channels = header.channels;
+        let correlations = header.correlations.len();
         let cube = [samples, channels, correlations];
         let roles = header.roles;
+        let epochs = |offsets: &'c [f64]| {
+            EpochView::new(
+                entry.time_scale,
+                entry.time_origin,
+                ArrayView1::from(offsets),
+            )
+        };
+        let group = &entry.data_groups[header.data_group];
         Some(VisibilityBatch {
             partition: header.partition,
-            topology,
+            time: epochs(&arrays.time_offsets_s),
+            baselines: &entry.baselines,
+            field: ArrayView1::from(&arrays.field[..]),
+            scan: roles.scan.then(|| ArrayView1::from(&arrays.scan[..])),
             timing: SampleTiming {
-                centroid: roles.time_centroid.then(|| {
-                    EpochView::new(
-                        header.time_scale,
-                        header.time_origin,
-                        ArrayView1::from(&arrays.centroid_offsets_s[..]),
-                    )
-                }),
+                centroid: roles
+                    .time_centroid
+                    .then(|| epochs(&arrays.centroid_offsets_s)),
                 interval_s: roles
                     .interval
                     .then(|| shared(header.interval, &arrays.interval_s)),
@@ -285,36 +217,34 @@ impl BatchBuffers {
                     .exposure
                     .then(|| shared(header.exposure, &arrays.exposure_s)),
             },
-            scan: roles.scan.then(|| shared(header.scan, &arrays.scan)),
             first_channel: header.first_channel,
             frequency: FrequencyView::new(
-                header.frequency_frame,
-                ArrayView1::from(&arrays.frequency_hz[..]),
+                entry.frequency_frame,
+                ArrayView1::from(
+                    &entry.frequencies_hz[header.first_channel..header.first_channel + channels],
+                ),
             ),
-            correlations: &arrays.correlations,
+            correlations: &header.correlations,
             group: DataGroupView {
-                name: &arrays.group_name,
-                units: &arrays.units,
-                values: roles
-                    .values
-                    .then(|| VisibilityValues::Complex32(cube_view(cube, &arrays.values))),
+                entry: group,
+                values: roles.values.then(|| cube_view(cube, &arrays.values)),
                 flags: roles.flags.then(|| cube_view(cube, &arrays.flags)),
-                row_flags: header
-                    .row_flags
-                    .then(|| ArrayView1::from(&arrays.row_flags[..])),
                 weights: roles.weights.then(|| {
-                    if header.spectral_weights {
-                        WeightView::Spectral(cube_view(cube, &arrays.weights))
+                    if header.weights_per_channel {
+                        cube_view(cube, &arrays.weights)
                     } else {
-                        WeightView::PerCorrelation(
-                            ArrayView2::from_shape([samples, correlations], &arrays.weights[..])
-                                .expect("checked weights"),
+                        // One weight per correlation, shared by every
+                        // channel: the same view with a zero channel stride.
+                        ArrayView3::from_shape(
+                            cube.strides([correlations, 0, 1]),
+                            &arrays.weights[..],
                         )
+                        .expect("length checked at finish")
                     }
                 }),
                 uvw: roles.uvw.then(|| {
                     UvwView::new(
-                        header.uvw_frame,
+                        group.uvw_frame.effective,
                         ArrayView2::from_shape([samples, 3], &arrays.uvw[..]).expect("checked uvw"),
                     )
                 }),
@@ -351,30 +281,36 @@ impl BatchFill<'_> {
         &self.header
     }
 
-    /// Check every array against the header, once, and keep the header:
-    /// lengths (with overflow-checked sizes), antenna, field and scan
-    /// identities against the catalogue's counts, and the fragments, which
-    /// must tile the samples in order with factored batches split only at
-    /// whole times.
+    /// Check every array against the header and `catalogue`, once, and
+    /// keep the header: the partition, data group, channel window and
+    /// correlations exist in the catalogue; lengths (with overflow-checked
+    /// sizes); field and scan identities against the catalogue's counts;
+    /// and the fragments, which must tile the samples in order by whole
+    /// times.
     ///
     /// # Errors
     ///
     /// [`ObservationError::Shape`] or [`ObservationError::InvalidBatch`]: a
     /// cursor bug or a store the adapter should have refused, never a
     /// property a consumer must handle. The buffers then hold no batch.
-    pub fn finish(self) -> Result<(), ObservationError> {
+    pub fn finish(self, catalogue: &Catalogue) -> Result<(), ObservationError> {
         let Self { buffers, header } = self;
-        check(&buffers.arrays, &header)?;
+        check(&buffers.arrays, &header, catalogue)?;
         buffers.header = Some(header);
         Ok(())
     }
 }
 
+fn invalid(reason: impl Into<String>) -> ObservationError {
+    ObservationError::InvalidBatch {
+        reason: reason.into(),
+    }
+}
+
 /// `a × b`, or a shape error naming `array`.
 fn product(array: &'static str, a: usize, b: usize) -> Result<usize, ObservationError> {
-    a.checked_mul(b).ok_or(ObservationError::InvalidBatch {
-        reason: format!("{array} size overflows"),
-    })
+    a.checked_mul(b)
+        .ok_or_else(|| invalid(format!("{array} size overflows")))
 }
 
 fn length(array: &'static str, actual: usize, expected: usize) -> Result<(), ObservationError> {
@@ -395,59 +331,91 @@ fn identities(
     limit: usize,
 ) -> Result<(), ObservationError> {
     match ids.into_iter().find(|id| *id as usize >= limit) {
-        Some(id) => Err(ObservationError::InvalidBatch {
-            reason: format!("{what} {id} is not in the catalogue's {limit}"),
-        }),
+        Some(id) => Err(invalid(format!(
+            "{what} {id} is not in the catalogue's {limit}"
+        ))),
         None => Ok(()),
     }
 }
 
-fn check(arrays: &BatchArrays, header: &BatchHeader) -> Result<(), ObservationError> {
-    let channels = arrays.frequency_hz.len();
-    let correlations = arrays.correlations.len();
-    if channels == 0 || correlations == 0 {
-        return Err(ObservationError::InvalidBatch {
-            reason: "a batch has at least one channel and one correlation".to_string(),
-        });
+/// The header's partition, data group, channel window and correlations, as
+/// the catalogue describes them.
+fn context<'c>(
+    header: &BatchHeader,
+    catalogue: &'c Catalogue,
+) -> Result<&'c PartitionEntry, ObservationError> {
+    let entry = catalogue
+        .partitions
+        .get(header.partition.0 as usize)
+        .ok_or_else(|| invalid(format!("no partition {:?}", header.partition)))?;
+    if header.data_group >= entry.data_groups.len() {
+        return Err(invalid(format!("no data group {}", header.data_group)));
     }
-    let limits = header.limits;
-    let (samples, times) = match header.topology {
-        TopologyShape::Irregular { samples } => {
-            length("antenna1", arrays.antenna1.len(), samples)?;
-            length("antenna2", arrays.antenna2.len(), samples)?;
-            identities("antenna", arrays.antenna1.iter().copied(), limits.antennas)?;
-            identities("antenna", arrays.antenna2.iter().copied(), limits.antennas)?;
-            (samples, samples)
+    if header.channels == 0
+        || header
+            .first_channel
+            .checked_add(header.channels)
+            .is_none_or(|end| end > entry.frequencies_hz.len())
+    {
+        return Err(invalid(format!(
+            "channels {}..{} outside the partition's {}",
+            header.first_channel,
+            header.first_channel.saturating_add(header.channels),
+            entry.frequencies_hz.len()
+        )));
+    }
+    let mut last = None;
+    for correlation in &header.correlations {
+        let index = entry
+            .correlation_index(*correlation)
+            .ok_or_else(|| invalid(format!("{correlation:?} is not in the partition")))?;
+        if last.is_some_and(|last| index <= last) {
+            return Err(invalid("correlations are not in the partition's order"));
         }
-        TopologyShape::TimeBaseline { times, .. } => {
-            identities(
-                "antenna",
-                arrays
-                    .baselines
-                    .iter()
-                    .flat_map(|b| [b.antenna1.0, b.antenna2.0]),
-                limits.antennas,
-            )?;
-            (product("samples", times, arrays.baselines.len())?, times)
-        }
-    };
+        last = Some(index);
+    }
+    if header.correlations.is_empty() || header.times == 0 || entry.baselines.is_empty() {
+        return Err(invalid(
+            "a batch has at least one time, one baseline and one correlation",
+        ));
+    }
+    Ok(entry)
+}
+
+fn check(
+    arrays: &BatchArrays,
+    header: &BatchHeader,
+    catalogue: &Catalogue,
+) -> Result<(), ObservationError> {
+    let entry = context(header, catalogue)?;
+    let times = header.times;
+    let samples = product("samples", times, entry.baselines.len())?;
+    let correlations = header.correlations.len();
     length("time", arrays.time_offsets_s.len(), times)?;
     length("field", arrays.field.len(), times)?;
-    identities("field", arrays.field.iter().copied(), limits.fields)?;
-    let cell = product("cube", samples, product("cube", channels, correlations)?)?;
+    identities(
+        "field",
+        arrays.field.iter().map(|field| field.0),
+        catalogue.fields.len(),
+    )?;
     let roles = header.roles;
     let sized = |wanted: bool, name: &'static str, actual: usize, expected: usize| {
         length(name, actual, if wanted { expected } else { 0 })
     };
+    sized(roles.scan, "scan", arrays.scan.len(), times)?;
+    identities(
+        "scan",
+        arrays.scan.iter().map(|scan| scan.0),
+        catalogue.scans.len(),
+    )?;
+    let cell = product(
+        "cube",
+        samples,
+        product("cube", header.channels, correlations)?,
+    )?;
     sized(roles.values, "values", arrays.values.len(), cell)?;
     sized(roles.flags, "flags", arrays.flags.len(), cell)?;
-    sized(
-        header.row_flags,
-        "row flags",
-        arrays.row_flags.len(),
-        samples,
-    )?;
-    let weights = if header.spectral_weights {
+    let weights = if header.weights_per_channel {
         cell
     } else {
         product("weights", samples, correlations)?
@@ -465,67 +433,37 @@ fn check(arrays: &BatchArrays, header: &BatchHeader) -> Result<(), ObservationEr
         arrays.centroid_offsets_s.len(),
         samples,
     )?;
-    let shared = |sharing: Sharing<()>, name: &'static str| match sharing {
-        Sharing::PerSample => Ok(samples),
-        Sharing::PerTime if matches!(header.topology, TopologyShape::TimeBaseline { .. }) => {
-            Ok(times)
-        }
-        Sharing::PerTime => Err(ObservationError::InvalidBatch {
-            reason: format!("{name} per time in a batch of listed samples"),
-        }),
-        Sharing::Constant(()) => Ok(0),
-    };
-    let unit = |sharing: Sharing<f64>| match sharing {
-        Sharing::PerSample => Sharing::PerSample,
-        Sharing::PerTime => Sharing::PerTime,
-        Sharing::Constant(_) => Sharing::Constant(()),
+    let shared = |sharing: Sharing<f64>| match sharing {
+        Sharing::PerSample => samples,
+        Sharing::PerTime => times,
+        Sharing::Constant(_) => 0,
     };
     sized(
         roles.interval,
         "interval",
         arrays.interval_s.len(),
-        shared(unit(header.interval), "interval")?,
+        shared(header.interval),
     )?;
     sized(
         roles.exposure,
         "exposure",
         arrays.exposure_s.len(),
-        shared(unit(header.exposure), "exposure")?,
+        shared(header.exposure),
     )?;
-    let scan_sharing = match header.scan {
-        Sharing::PerSample => Sharing::PerSample,
-        Sharing::PerTime => Sharing::PerTime,
-        Sharing::Constant(scan) => {
-            if roles.scan {
-                identities("scan", [scan], limits.scans)?;
-            }
-            Sharing::Constant(())
-        }
-    };
-    sized(
-        roles.scan,
-        "scan",
-        arrays.scan.len(),
-        shared(scan_sharing, "scan")?,
-    )?;
-    identities("scan", arrays.scan.iter().copied(), limits.scans)?;
-    fragments(arrays, header, samples)
+    fragments(arrays, header, entry.baselines.len(), samples)
 }
 
-/// The fragments tile `0..samples` in order, each non-empty, and split a
-/// factored batch only between times.
+/// The fragments tile `0..samples` in order, each non-empty, split only
+/// between times, all of this partition.
 fn fragments(
     arrays: &BatchArrays,
     header: &BatchHeader,
+    per_time: usize,
     samples: usize,
 ) -> Result<(), ObservationError> {
     if arrays.fragments.is_empty() {
         return Ok(());
     }
-    let per_time = match header.topology {
-        TopologyShape::Irregular { .. } => 1,
-        TopologyShape::TimeBaseline { .. } => arrays.baselines.len().max(1),
-    };
     let mut covered = 0;
     for fragment in &arrays.fragments {
         let range = &fragment.samples;
@@ -534,18 +472,18 @@ fn fragments(
             || !range.end.is_multiple_of(per_time)
             || fragment.key.partition != header.partition
         {
-            return Err(ObservationError::InvalidBatch {
-                reason: format!("fragment {fragment:?} does not continue the batch at {covered}"),
-            });
+            return Err(invalid(format!(
+                "fragment {fragment:?} does not continue the batch at {covered}"
+            )));
         }
         covered = range.end;
     }
     if covered == samples {
         Ok(())
     } else {
-        Err(ObservationError::InvalidBatch {
-            reason: format!("fragments cover {covered} of {samples} samples"),
-        })
+        Err(invalid(format!(
+            "fragments cover {covered} of {samples} samples"
+        )))
     }
 }
 
@@ -554,33 +492,39 @@ impl BatchBuffers {
     /// these buffers, replacing what they held, through the same checked
     /// fill a cursor uses, and return the payload elements copied: the
     /// explicit, accounted packing that gives a window storage of its own.
-    /// Strided views are gathered into standard order; a per-correlation
-    /// weight stays per-correlation; shared quantities keep their sharing.
+    /// Strided views are gathered into standard order; a weight shared by
+    /// every channel stays one per correlation; shared quantities keep
+    /// their sharing. `catalogue` is the batch's observation's.
     ///
     /// # Errors
     ///
-    /// When `batch` holds `Complex<f64>` visibilities, which these buffers
-    /// do not store.
-    pub fn pack(&mut self, batch: &VisibilityBatch<'_>) -> Result<usize, ObservationError> {
+    /// When the batch's data group is not in the catalogue's partition.
+    pub fn pack(
+        &mut self,
+        batch: &VisibilityBatch<'_>,
+        catalogue: &Catalogue,
+    ) -> Result<usize, ObservationError> {
         let group = &batch.group;
-        let time = batch.topology.time();
+        let data_group = catalogue
+            .partition(batch.partition)
+            .data_group(&group.entry.name)
+            .map(|(index, _)| index)
+            .ok_or_else(|| invalid(format!("no data group {}", group.entry.name)))?;
         let sharing = |shared: Option<Shared<'_, f64>>| match shared {
             Some(Shared::PerTime(_)) => Sharing::PerTime,
             Some(Shared::Constant(value)) => Sharing::Constant(value),
             Some(Shared::PerSample(_)) | None => Sharing::PerSample,
         };
+        let weights_per_channel = group
+            .weights
+            .is_none_or(|weights| weights.strides()[1] != 0);
         let header = BatchHeader {
             partition: batch.partition,
-            topology: match batch.topology {
-                SampleTopology::Irregular(samples) => TopologyShape::Irregular {
-                    samples: samples.time.len(),
-                },
-                SampleTopology::TimeBaseline(samples) => TopologyShape::TimeBaseline {
-                    times: samples.time.len(),
-                    occupancy: samples.occupancy,
-                },
-            },
+            data_group,
+            times: batch.times(),
             first_channel: batch.first_channel,
+            channels: batch.channel_count(),
+            correlations: batch.correlations.to_vec(),
             roles: Roles {
                 values: group.values.is_some(),
                 flags: group.flags.is_some(),
@@ -591,44 +535,17 @@ impl BatchBuffers {
                 exposure: batch.timing.exposure_s.is_some(),
                 scan: batch.scan.is_some(),
             },
-            spectral_weights: matches!(group.weights, Some(WeightView::Spectral(_))),
-            row_flags: group.row_flags.is_some(),
-            time_scale: time.reference(),
-            time_origin: time.origin(),
-            frequency_frame: batch.frequency.reference(),
-            uvw_frame: group.uvw.map_or(DirectionRef::J2000, |uvw| uvw.reference()),
+            weights_per_channel,
             interval: sharing(batch.timing.interval_s),
             exposure: sharing(batch.timing.exposure_s),
-            scan: match batch.scan {
-                Some(Shared::PerTime(_)) => Sharing::PerTime,
-                Some(Shared::Constant(scan)) => Sharing::Constant(scan),
-                Some(Shared::PerSample(_)) | None => Sharing::PerSample,
-            },
-            // The batch's identities were checked when it was filled.
-            limits: IdLimits {
-                antennas: usize::MAX,
-                fields: usize::MAX,
-                scans: usize::MAX,
-            },
         };
         let mut fill = self.begin(header);
         let arrays = fill.arrays();
-        arrays.group_name.push_str(group.name);
-        arrays.units.clone_from(group.units);
-        arrays.correlations.extend_from_slice(batch.correlations);
-        arrays.frequency_hz.extend(batch.frequency.hz().iter());
         arrays.fragments.extend_from_slice(batch.fragments);
-        arrays.time_offsets_s.extend(time.offsets_s().iter());
-        match batch.topology {
-            SampleTopology::Irregular(samples) => {
-                arrays.antenna1.extend(samples.antenna1.iter());
-                arrays.antenna2.extend(samples.antenna2.iter());
-                arrays.field.extend(samples.field.iter());
-            }
-            SampleTopology::TimeBaseline(samples) => {
-                arrays.baselines.extend_from_slice(samples.baselines);
-                arrays.field.extend(samples.field.iter());
-            }
+        arrays.time_offsets_s.extend(batch.time.offsets_s().iter());
+        arrays.field.extend(batch.field.iter());
+        if let Some(scan) = batch.scan {
+            arrays.scan.extend(scan.iter());
         }
         if let Some(centroid) = batch.timing.centroid {
             arrays
@@ -643,16 +560,8 @@ impl BatchBuffers {
                 target.extend(values.iter());
             }
         }
-        if let Some(Shared::PerSample(scans) | Shared::PerTime(scans)) = batch.scan {
-            arrays.scan.extend(scans.iter());
-        }
         let mut copied = 0;
         if let Some(values) = group.values {
-            let VisibilityValues::Complex32(values) = values else {
-                return Err(ObservationError::Unsupported {
-                    what: "packing Complex<f64> visibilities",
-                });
-            };
             arrays.values.extend(values.iter());
             copied += values.len();
         }
@@ -660,64 +569,115 @@ impl BatchBuffers {
             arrays.flags.extend(flags.iter());
             copied += flags.len();
         }
-        if let Some(row_flags) = group.row_flags {
-            arrays.row_flags.extend(row_flags.iter());
-            copied += row_flags.len();
-        }
-        match group.weights {
-            Some(WeightView::Spectral(weights)) => {
+        if let Some(weights) = group.weights {
+            if weights_per_channel {
                 arrays.weights.extend(weights.iter());
                 copied += weights.len();
+            } else {
+                let per_correlation = weights.index_axis(Axis(1), 0);
+                arrays.weights.extend(per_correlation.iter());
+                copied += per_correlation.len();
             }
-            Some(WeightView::PerCorrelation(weights)) => {
-                arrays.weights.extend(weights.iter());
-                copied += weights.len();
-            }
-            None => {}
         }
         if let Some(uvw) = group.uvw {
             arrays.uvw.extend(uvw.metres().iter());
             copied += uvw.metres().len();
         }
-        fill.finish()?;
+        fill.finish(catalogue)?;
         Ok(copied)
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use casa_types::measures::EpochRef;
+    use casa_types::measures::MjdHighPrec;
+    use casa_types::measures::direction::DirectionRef;
+    use casa_types::measures::frequency::FrequencyRef;
+
     use super::*;
-    use crate::catalogue::AntennaId;
+    use crate::catalogue::{
+        AntennaId, DataGroupEntry, FieldEntry, ObservationId, OrderedBaseline, ScanEntry, UvwFrame,
+        VisibilityUnits,
+    };
     use crate::grouping::{FragmentPosition, GroupKey};
+
+    /// Three antennas, two baselines, two channels, one correlation.
+    pub(crate) fn catalogue() -> Catalogue {
+        let baseline = |a, b| OrderedBaseline {
+            antenna1: AntennaId(a),
+            antenna2: AntennaId(b),
+        };
+        let antenna = |name: &str| crate::AntennaEntry {
+            name: name.to_string(),
+            station: name.to_string(),
+            position: casa_types::measures::position::MPosition::new_itrf(0.0, 0.0, 0.0),
+            mount: "ALT-AZ".to_string(),
+            dish_diameter: casa_types::quanta::Quantity::new(25.0, "m").expect("quantity"),
+            receptors: vec!["X".to_string()],
+            receptor_angles: Vec::new(),
+        };
+        Catalogue {
+            antennas: vec![antenna("A"), antenna("B"), antenna("C")],
+            fields: vec![FieldEntry {
+                name: "f".to_string(),
+                phase_centre: casa_types::measures::direction::MDirection::from_angles(
+                    0.0,
+                    0.0,
+                    DirectionRef::J2000,
+                ),
+                source_name: None,
+            }],
+            scans: vec![ScanEntry {
+                name: "1".to_string(),
+                number: Some(1),
+                intents: Vec::new(),
+            }],
+            observations: vec![crate::ObservationEntry::default()],
+            partitions: vec![PartitionEntry {
+                spectral_window: "spw".to_string(),
+                frequencies_hz: vec![1.0e9, 1.1e9],
+                frequency_frame: FrequencyRef::LSRK,
+                channel_widths_hz: vec![1.0e8; 2],
+                correlations: vec![Correlation::XX, Correlation::YY],
+                intents: Vec::new(),
+                observation: ObservationId(0),
+                feeds: None,
+                baselines: vec![baseline(0, 1), baseline(1, 2)],
+                time_scale: EpochRef::UTC,
+                time_origin: MjdHighPrec::new(40_587.0, 0.0),
+                data_groups: vec![DataGroupEntry {
+                    name: "base".to_string(),
+                    visibilities: "VISIBILITY".to_string(),
+                    flags: "FLAG".to_string(),
+                    weights: "WEIGHT".to_string(),
+                    uvw: "UVW".to_string(),
+                    units: VisibilityUnits::Undeclared,
+                    uvw_frame: UvwFrame {
+                        effective: DirectionRef::J2000,
+                        stored_label: None,
+                    },
+                }],
+            }],
+        }
+    }
 
     fn header(times: usize) -> BatchHeader {
         BatchHeader {
             partition: PartitionId(0),
-            topology: TopologyShape::TimeBaseline {
-                times,
-                occupancy: Occupancy::Unknown,
-            },
+            data_group: 0,
+            times,
             first_channel: 0,
+            channels: 2,
+            correlations: vec![Correlation::XX],
             roles: Roles {
                 values: false,
-                weights: false,
                 uvw: false,
                 ..Roles::ALL
             },
-            spectral_weights: true,
-            row_flags: false,
-            time_scale: EpochRef::UTC,
-            time_origin: MjdHighPrec::new(40_587.0, 0.0),
-            frequency_frame: FrequencyRef::LSRK,
-            uvw_frame: DirectionRef::J2000,
+            weights_per_channel: false,
             interval: Sharing::Constant(10.0),
             exposure: Sharing::PerSample,
-            scan: Sharing::PerTime,
-            limits: IdLimits {
-                antennas: 3,
-                fields: 1,
-                scans: 1,
-            },
         }
     }
 
@@ -725,6 +685,7 @@ mod tests {
         GroupKey {
             partition: PartitionId(0),
             field: None,
+            scan: None,
             bin: 0,
         }
     }
@@ -733,79 +694,94 @@ mod tests {
     /// its group in one fragment.
     fn fill(
         buffers: &mut BatchBuffers,
-        tweak: impl FnOnce(&mut BatchArrays),
+        tweak: impl FnOnce(&mut BatchHeader, &mut BatchArrays),
     ) -> Result<(), ObservationError> {
-        let mut fill = buffers.begin(header(2));
-        let arrays = fill.arrays();
-        let baseline = |a, b| OrderedBaseline {
-            antenna1: AntennaId(a),
-            antenna2: AntennaId(b),
-        };
-        arrays.baselines.extend([baseline(0, 1), baseline(1, 2)]);
+        let mut header = header(2);
+        let mut arrays = BatchArrays::default();
         arrays.time_offsets_s.extend([0.0, 10.0]);
-        arrays.field.extend([0, 0]);
-        arrays.frequency_hz.extend([1.0e9, 1.1e9]);
-        arrays.correlations.push(Correlation::XX);
+        arrays.field.extend([FieldId(0), FieldId(0)]);
         arrays.flags.extend([false; 8]);
+        arrays.weights.extend([1.0, 2.0, 3.0, 4.0]);
         arrays.centroid_offsets_s.extend([0.0, 0.0, 10.0, 10.0]);
         arrays.exposure_s.extend([10.0; 4]);
-        arrays.scan.extend([0, 0]);
+        arrays.scan.extend([ScanId(0), ScanId(0)]);
         arrays.fragments.push(GroupFragment {
             key: key(),
             samples: 0..4,
             position: FragmentPosition::Whole,
         });
-        tweak(arrays);
-        fill.finish()
+        tweak(&mut header, &mut arrays);
+        let mut fill = buffers.begin(header);
+        *fill.arrays() = arrays;
+        fill.finish(&catalogue())
     }
 
     #[test]
     fn a_checked_fill_builds_the_batch_its_header_describes() {
+        let catalogue = catalogue();
         let mut buffers = BatchBuffers::default();
-        fill(&mut buffers, |_| {}).expect("fill");
-        let batch = buffers.batch().expect("batch");
+        fill(&mut buffers, |_, _| {}).expect("fill");
+        let batch = buffers.batch(&catalogue).expect("batch");
         assert_eq!(batch.samples(), 4);
+        assert_eq!(batch.shape(), [4, 2, 1]);
         assert_eq!(batch.interval_s(3), Some(10.0));
-        assert_eq!(batch.scan(3), Some(crate::ScanId(0)));
+        assert_eq!(batch.scan(3), Some(ScanId(0)));
         assert_eq!(batch.timing.centroid.expect("centroid").len(), 4);
         assert_eq!(batch.fragments.len(), 1);
+        assert_eq!(batch.frequency.hz()[1], 1.1e9, "from the catalogue");
+        assert_eq!(batch.baselines.len(), 2, "from the catalogue");
+        let weights = batch.group.weights.expect("weights");
+        assert_eq!(
+            weights.strides(),
+            [1, 0, 1],
+            "one weight per correlation, every channel"
+        );
+        assert_eq!(weights[[2, 1, 0]], 3.0);
+        assert!(weights.as_slice().is_none());
         let window = batch.channel_window(1..2).expect("window");
         assert!(window.fragments.is_empty(), "a window never closes a group");
-        assert_eq!(window.scan(3), Some(crate::ScanId(0)));
+        assert_eq!(window.scan(3), Some(ScanId(0)));
+        assert_eq!(window.frequency.hz()[0], 1.1e9);
         let times = batch.sample_window(2..4).expect("one time");
         assert!(times.fragments.is_empty());
         assert_eq!(
             times.timing.centroid.expect("centroid").offsets_s()[0],
             10.0
         );
+        assert!(batch.sample_window(1..3).is_err(), "splits a time");
     }
 
     #[test]
-    fn a_fill_that_disagrees_with_its_header_is_refused() {
+    fn a_fill_that_disagrees_with_its_header_or_catalogue_is_refused() {
+        let catalogue = catalogue();
         let mut buffers = BatchBuffers::default();
-        type Tweak = fn(&mut BatchArrays);
-        let cases: [(&str, Tweak); 6] = [
-            ("short flags", |a| {
+        type Tweak = fn(&mut BatchHeader, &mut BatchArrays);
+        let cases: [(&str, Tweak); 8] = [
+            ("short flags", |_, a| {
                 a.flags.pop();
             }),
-            ("antenna out of the catalogue", |a| {
-                a.baselines[1].antenna2 = AntennaId(3)
-            }),
-            ("scan out of the catalogue", |a| a.scan[1] = 1),
-            ("a gap before the fragment", |a| {
+            ("scan out of the catalogue", |_, a| a.scan[1] = ScanId(1)),
+            ("field out of the catalogue", |_, a| a.field[0] = FieldId(1)),
+            ("a gap before the fragment", |_, a| {
                 a.fragments[0].samples = 2..4
             }),
-            ("a fragment inside a time", |a| {
+            ("a fragment inside a time", |_, a| {
                 a.fragments[0].samples = 0..3
             }),
-            ("a short exposure", |a| {
+            ("a short exposure", |_, a| {
                 a.exposure_s.pop();
+            }),
+            ("a channel window past the partition", |h, _| {
+                h.first_channel = 1
+            }),
+            ("a correlation the partition lacks", |h, _| {
+                h.correlations = vec![Correlation::RR]
             }),
         ];
         for (label, tweak) in cases {
             assert!(fill(&mut buffers, tweak).is_err(), "{label}");
             assert!(
-                buffers.batch().is_none(),
+                buffers.batch(&catalogue).is_none(),
                 "{label}: no batch after a refused fill"
             );
         }
@@ -813,17 +789,18 @@ mod tests {
 
     #[test]
     fn packing_goes_through_the_same_checks_and_keeps_sharing() {
+        let catalogue = catalogue();
         let mut buffers = BatchBuffers::default();
-        fill(&mut buffers, |_| {}).expect("fill");
-        let batch = buffers.batch().expect("batch");
+        fill(&mut buffers, |_, _| {}).expect("fill");
+        let batch = buffers.batch(&catalogue).expect("batch");
         let mut packed = BatchBuffers::default();
         let copied = packed
-            .pack(&batch.channel_window(0..1).expect("window"))
+            .pack(&batch.channel_window(0..1).expect("window"), &catalogue)
             .expect("pack");
-        assert_eq!(copied, 4, "four flags");
-        let piece = packed.batch().expect("piece");
+        assert_eq!(copied, 4 + 4, "four flags and four per-correlation weights");
+        let piece = packed.batch(&catalogue).expect("piece");
         assert_eq!(piece.channel_count(), 1);
-        assert!(matches!(piece.scan, Some(Shared::PerTime(_))));
+        assert_eq!(piece.group.weights.expect("weights")[[3, 0, 0]], 4.0);
         assert!(matches!(
             piece.timing.interval_s,
             Some(Shared::Constant(10.0))

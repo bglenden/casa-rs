@@ -6,8 +6,8 @@
 //! so these views pair a borrowed [`ndarray`] view of the numbers with the
 //! reference and unit they share, stated once. They are the same Measures
 //! vocabulary as the scalar types, not an observation-specific copy of it:
-//! [`EpochView::get`] and [`FrequencyView::get`] give the scalar measure of
-//! one element on the stack, and the references are the scalar types' own
+//! [`EpochView::get`], [`FrequencyView::get`] and [`UvwView::get`] give the
+//! scalar measure of one element on the stack, and the references are the scalar types' own
 //! [`EpochRef`], [`FrequencyRef`] and [`DirectionRef`].
 //!
 //! The unit of each view is fixed by its type: frequencies are hertz, epoch
@@ -45,6 +45,7 @@ use ndarray::{ArrayView1, ArrayView2, Axis, s};
 use super::direction::DirectionRef;
 use super::epoch::{EpochRef, MEpoch, MjdHighPrec};
 use super::frequency::{FrequencyRef, MFrequency};
+use super::uvw::MUvw;
 
 /// Seconds per day.
 const SECONDS_PER_DAY: f64 = 86_400.0;
@@ -218,10 +219,7 @@ impl<'a> FrequencyView<'a> {
 }
 
 /// Baseline coordinates `[u, v, w]` in metres, one row per sample, in one
-/// reference frame.
-///
-/// casacore's `Muvw` frames are the direction frames, so the reference is a
-/// [`DirectionRef`]; casa-types has no scalar UVW measure yet.
+/// reference frame: many [`MUvw`] sharing one reference.
 #[derive(Clone, Copy, Debug)]
 pub struct UvwView<'a> {
     reference: DirectionRef,
@@ -258,9 +256,19 @@ impl<'a> UvwView<'a> {
     ///
     /// If `index` is out of range.
     #[must_use]
-    pub fn get(&self, index: usize) -> [f64; 3] {
+    pub fn metres_at(&self, index: usize) -> [f64; 3] {
         let row = self.metres.row(index);
         [row[0], row[1], row[2]]
+    }
+
+    /// Sample `index` as a scalar measure.
+    ///
+    /// # Panics
+    ///
+    /// If `index` is out of range.
+    #[must_use]
+    pub fn get(&self, index: usize) -> MUvw {
+        MUvw::new(self.metres_at(index), self.reference)
     }
 
     /// Number of samples.
@@ -320,6 +328,7 @@ mod tests {
 
         let uvw = array![[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]];
         let view = UvwView::new(DirectionRef::J2000, uvw.view());
-        assert_eq!(view.slice(1..2).get(0), [4.0, 5.0, 6.0]);
+        assert_eq!(view.slice(1..2).metres_at(0), [4.0, 5.0, 6.0]);
+        assert_eq!(view.get(1), MUvw::new([4.0, 5.0, 6.0], DirectionRef::J2000));
     }
 }

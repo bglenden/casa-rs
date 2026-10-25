@@ -3,36 +3,58 @@
 
 //! Shared observation contracts for MeasurementSet v2 and MSv4: the
 //! [`VisibilityBatch`] that storage adapters fill and numerical consumers
-//! read, the [`AccessRequest`] consumers bind, and the [`VisibilityCursor`]
-//! that delivers batches.
+//! read, the [`AccessRequest`] consumers estimate and bind, and the
+//! [`Traversal`] of [`VisibilityCursor`]s that delivers batches.
 //!
 //! **Trial status.** This crate is the executable sketch of
 //! `docs/measurement-set/contracts.md` for the MSv2/MSv4 trial
-//! (`docs/measurement-set/trial/README.md`). It implements only what the
-//! trial's two examples need: one partition and one data group per
-//! traversal, the sample-major layout, `Complex<f32>` visibilities,
-//! time-ordered traversals and time-bin groups. Its interfaces are not
-//! frozen.
+//! (`docs/measurement-set/trial/README.md`), at its second revision
+//! (`docs/measurement-set/trial/revision-2-design.md`). Its interfaces are
+//! not frozen.
+//!
+//! # The principle
+//!
+//! MSv4 is the future: the interface takes MSv4's native shape, and the
+//! MSv2 adapter assembles MSv2 data into it once, at opening. A consumer
+//! cannot tell the stores apart from a batch.
 //!
 //! # The pieces
 //!
 //! - An [`Observation`] is the boundary algorithm code sees, whatever
-//!   stores the data: its [`Catalogue`] names the antennas, fields, scans
-//!   and partitions with identities scoped to that opening, and it binds
-//!   traversals. Backend choice happens when the observation is opened.
+//!   stores the data: its [`Catalogue`] names the antennas, fields, scans,
+//!   observing sessions and partitions with identities scoped to that
+//!   opening, and holds every per-partition constant once (channel
+//!   frequencies and frame, correlation products, the baseline table, the
+//!   time system, the data groups). Backend choice happens when the
+//!   observation is opened.
+//! - A **partition** is a store unit described by its content: spectral
+//!   window, correlation products, intents, observing session, feed pair.
+//!   The MSv2 adapter partitions rows the way XRADIO's converter does, so
+//!   the same observation opens as the same partition set from either
+//!   store.
 //! - An [`AccessRequest`] says what a traversal must deliver: the
-//!   partition, data group, roles (payload, time auxiliaries, scan),
-//!   channel window, layout, precision, scientific grouping and the largest
-//!   batch. The adapter binds it once, refusing a role the store lacks, and
-//!   reports its [`Realization`]: what it will read.
+//!   partition set, data group, roles (payload, time auxiliaries, scan),
+//!   channel window, correlation products and flag policy, scientific
+//!   grouping and the byte budget of one batch. [`Observation::estimate`]
+//!   costs it from the catalogue and the store's geometry alone (the
+//!   **batch shape**: times per batch, bytes, read amplification, natural
+//!   blocks, padding); [`Observation::bind_read`] binds it, refusing a role
+//!   the store lacks, and returns one cursor per partition with the same
+//!   [`Estimate`].
 //! - A [`VisibilityCursor`] fills caller-owned [`BatchBuffers`] through one
 //!   checked path ([`BatchBuffers::begin`], [`BatchFill::finish`]) and lends
 //!   them as a [`VisibilityBatch`], or announces a [`ReadEvent::GroupEnd`].
-//! - A batch holds the actual numbers as [`ndarray`] views, with the
-//!   samples' coordinates in a [`SampleTopology`] (listed, as MSv2 rows, or
-//!   factored time × baseline, as MSv4), its times, frequencies and UVW in
-//!   native Measures views ([`casa_types::measures::EpochView`] and friends),
-//!   and one [`Validity`] rule over its stored flags.
+//!   Within a cursor the **traversal order** is fixed: whole times of one
+//!   channel window of one partition, in time order; across cursors it is
+//!   the consumer's.
+//! - A batch is whole times of the partition's time × baseline grid:
+//!   sample `t × B + b`, with the field and scan per time, its times,
+//!   frequencies and UVW in native Measures views
+//!   ([`casa_types::measures::EpochView`] and friends), the payload as
+//!   [`ndarray`] views in the **payload order** `[sample, channel,
+//!   correlation]`, and one [`Validity`] rule over its stored flags. A
+//!   grid cell no acquisition filled is padding: flag true, weight 0,
+//!   values NaN.
 //!
 //! # Example
 //!
@@ -46,19 +68,20 @@
 //!     observation: &dyn Observation,
 //!     request: &AccessRequest,
 //! ) -> Result<f64, ObservationError> {
-//!     let mut cursor = observation.bind_read(request)?;
+//!     let mut traversal = observation.bind_read(request)?;
 //!     let mut buffers = BatchBuffers::default();
 //!     let mut total = 0.0;
-//!     while let Some(event) = cursor.next(&mut buffers)? {
+//!     while let Some(event) = traversal.next(&mut buffers)? {
 //!         let ReadEvent::Batch(batch) = event else { continue };
 //!         let (Some(weights), validity) = (batch.group.weights, batch.validity()) else {
 //!             continue;
 //!         };
-//!         for sample in 0..batch.samples() {
-//!             for channel in 0..batch.channel_count() {
-//!                 for correlation in 0..batch.correlations.len() {
+//!         let [samples, channels, correlations] = batch.shape();
+//!         for sample in 0..samples {
+//!             for channel in 0..channels {
+//!                 for correlation in 0..correlations {
 //!                     if !validity.excluded(sample, channel, correlation) {
-//!                         total += f64::from(weights.get(sample, channel, correlation));
+//!                         total += f64::from(weights[[sample, channel, correlation]]);
 //!                     }
 //!                 }
 //!             }
@@ -76,24 +99,24 @@ mod cursor;
 mod grouping;
 mod request;
 
-pub use batch::{
-    DataGroupView, IrregularSamples, Occupancy, SampleCoordinate, SampleTiming, SampleTopology,
-    Shared, TimeBaselineSamples, Validity, VisibilityBatch, VisibilityValues, WeightView,
-};
-pub use buffers::{
-    BatchArrays, BatchBuffers, BatchFill, BatchHeader, IdLimits, Sharing, TopologyShape,
-};
-pub use casa_types::measures::{EpochView, FrequencyView, UvwView};
+pub use batch::{DataGroupView, SampleCoordinate, SampleTiming, Shared, Validity, VisibilityBatch};
+pub use buffers::{BatchArrays, BatchBuffers, BatchFill, BatchHeader, Sharing};
+pub use casa_types::Correlation;
+pub use casa_types::measures::{EpochView, FrequencyView, MUvw, UvwView};
 pub use catalogue::{
-    AntennaEntry, AntennaId, Catalogue, Correlation, DataGroupEntry, FieldEntry, FieldId,
-    OrderedBaseline, PartitionEntry, PartitionId, ScanEntry, ScanId, UvwFrame, VisibilityUnits,
+    AntennaEntry, AntennaId, Binding, BindingTolerance, Catalogue, DataGroupEntry, FieldEntry,
+    FieldId, ObservationEntry, ObservationId, OrderedBaseline, PartitionEntry, PartitionId,
+    ScanEntry, ScanId, UvwFrame, VisibilityUnits,
 };
 pub use creation::TimeBaselineGrid;
 pub use cursor::{
-    BoundCursor, Fill, FilledBatch, Observation, OwnedEvent, Reclaimed, VisibilityCursor,
+    BoundCursor, FilledBatch, Observation, OwnedEvent, Reclaimed, Step, Traversal, VisibilityCursor,
 };
 pub use grouping::{FragmentPosition, GroupCompletion, GroupFragment, GroupKey, ReadEvent};
-pub use request::{AccessRequest, Grouping, IoCounters, Layout, Precision, Realization, Roles};
+pub use request::{
+    AccessRequest, CorrelationRequest, Deliver, Estimate, FlagsFrom, Grouping, IoCounters,
+    NaturalBlocks, PartitionEstimate, ResolvedRequest, Roles, times_per_batch,
+};
 
 /// Why a request could not be bound or a traversal failed.
 #[derive(Debug, thiserror::Error)]

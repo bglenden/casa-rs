@@ -1,32 +1,26 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! The writer's payload: each batch checked against the declaration before
-//! any byte is written, placed into the stored layout when it is not
-//! already in it, and the dataset published from a staging directory of
-//! its own.
+//! any byte is written, encoded from its views where they are already in
+//! the stored layout, and the dataset published from a staging directory
+//! of its own.
 
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use casa_observation::{ObservationError, SampleTopology, Shared, VisibilityBatch, WeightView};
+use casa_observation::{ObservationError, VisibilityBatch};
 use casa_types::measures::MjdHighPrec;
-use num_complex::Complex32;
 use zarrs::array::ArraySubset;
 
 use super::{Msv4Writer, request_error};
 use crate::observation_io::msv4::metadata::{UNIX_EPOCH_MJD, invalid, storage};
 
-/// Reusable working storage: each sample's slot in the dataset, and dense
-/// staging for batches that need reordering.
+/// Reusable working storage for what is not encoded straight from a view:
+/// the time centroids re-expressed from the Unix epoch, the exposures per
+/// sample, and a weight shared by every channel written for each channel.
 #[derive(Default)]
 pub(super) struct Scratch {
-    /// `(time - first time) × baselines + baseline` of each sample.
-    slots: Vec<usize>,
-    filled: Vec<bool>,
-    values: Vec<Complex32>,
-    flags: Vec<bool>,
     weights: Vec<f32>,
-    uvw: Vec<f64>,
     centroid: Vec<f64>,
     exposure: Vec<f64>,
 }
@@ -36,8 +30,15 @@ pub(super) struct Scratch {
 struct Placement {
     first_time: usize,
     times: usize,
-    /// Whether every sample is already at its slot.
-    in_order: bool,
+}
+
+/// `view`'s elements as the one slice they occupy in standard layout.
+fn contiguous<'a, T>(
+    view: ndarray::ArrayView3<'a, T>,
+    name: &str,
+) -> Result<&'a [T], ObservationError> {
+    view.to_slice()
+        .ok_or_else(|| request_error(format!("the batch's {name} are not contiguous")))
 }
 
 fn mismatch(what: &str) -> ObservationError {
@@ -47,23 +48,22 @@ fn mismatch(what: &str) -> ObservationError {
 }
 
 impl Msv4Writer {
-    /// Write `batch`: every sample of whole times, each time's baselines
-    /// complete, every channel, every role.
+    /// Write `batch`: whole times of the declared grid, every channel,
+    /// every product, every role.
     ///
     /// Before any byte is written the batch is checked against the
-    /// declaration: its partition, channel frequencies and frame,
-    /// correlation products, visibility units and UVW frame must be the
-    /// declared ones (not merely the same counts); each sample's time,
-    /// baseline, field, scan and interval must be the grid's; and no sample
-    /// may carry a row flag, which MSv4 cannot represent. A batch already in
-    /// the dataset's order is encoded straight from its views; any other is
-    /// first placed into dense time × baseline order, a per-correlation
-    /// weight written for each channel (both counted as packed).
+    /// declaration: its partition, baseline table, channel frequencies and
+    /// frame, correlation products, visibility units and UVW frame must be
+    /// the declared ones (not merely the same counts); each time's instant,
+    /// field, scan and interval must be the grid's. The batch's grid is the
+    /// dataset's, so its visibilities and flags are encoded straight from
+    /// their views; a weight shared by every channel is written for each
+    /// channel (counted as packed).
     ///
     /// # Errors
     ///
-    /// When a check fails, a time is written twice or incompletely, or the
-    /// batch is a channel window. Nothing of the batch is then written.
+    /// When a check fails, a time is written twice, or the batch is a
+    /// channel window. Nothing of the batch is then written.
     pub fn write_batch(&mut self, batch: &VisibilityBatch<'_>) -> Result<(), ObservationError> {
         self.check_context(batch)?;
         let placement = self.place(batch)?;
@@ -73,18 +73,7 @@ impl Msv4Writer {
         else {
             return Err(request_error("a written batch carries every role"));
         };
-        let values = values.as_complex32().ok_or(ObservationError::Unsupported {
-            what: "writing complex128",
-        })?;
-        let direct = placement.in_order
-            && matches!(batch.topology, SampleTopology::TimeBaseline(_))
-            && matches!(weights, WeightView::Spectral(_))
-            && values.is_standard_layout()
-            && flags.is_standard_layout();
-        if !direct {
-            self.pack(batch)?;
-        }
-        self.gather_times(batch, direct);
+        self.gather_times(batch);
         let [_, baselines, channels, correlations] = self.shape;
         let rows = placement.first_time as u64..(placement.first_time + placement.times) as u64;
         let cube = ArraySubset::new_with_ranges(&[
@@ -97,56 +86,38 @@ impl Msv4Writer {
         let plane = ArraySubset::new_with_ranges(&[rows, 0..baselines as u64]);
         let options = &self.options;
         let payload = self.payload.as_ref().expect("created");
-        let scratch = &self.scratch;
-        if direct {
-            let WeightView::Spectral(weights) = weights else {
-                unreachable!("checked spectral")
-            };
-            payload
-                .values
-                .store_array_subset_opt(&cube, values.as_slice().expect("standard layout"), options)
-                .map_err(storage)?;
-            payload
-                .flags
-                .store_array_subset_opt(&cube, flags.as_slice().expect("standard layout"), options)
-                .map_err(storage)?;
+        let scratch = &mut self.scratch;
+        payload
+            .values
+            .store_array_subset_opt(&cube, contiguous(values, "visibilities")?, options)
+            .map_err(storage)?;
+        payload
+            .flags
+            .store_array_subset_opt(&cube, contiguous(flags, "flags")?, options)
+            .map_err(storage)?;
+        if weights.is_standard_layout() {
             payload
                 .weights
-                .store_array_subset_opt(
-                    &cube,
-                    weights.as_standard_layout().as_slice().expect("standard"),
-                    options,
-                )
-                .map_err(storage)?;
-            payload
-                .uvw
-                .store_array_subset_opt(
-                    &triple,
-                    uvw.metres()
-                        .as_standard_layout()
-                        .as_slice()
-                        .expect("standard"),
-                    options,
-                )
+                .store_array_subset_opt(&cube, weights.to_slice().expect("standard"), options)
                 .map_err(storage)?;
         } else {
-            payload
-                .values
-                .store_array_subset_opt(&cube, scratch.values.as_slice(), options)
-                .map_err(storage)?;
-            payload
-                .flags
-                .store_array_subset_opt(&cube, scratch.flags.as_slice(), options)
-                .map_err(storage)?;
+            scratch.weights.clear();
+            scratch.weights.extend(weights.iter());
+            self.counters.packed_elements += scratch.weights.len();
             payload
                 .weights
                 .store_array_subset_opt(&cube, scratch.weights.as_slice(), options)
                 .map_err(storage)?;
-            payload
-                .uvw
-                .store_array_subset_opt(&triple, scratch.uvw.as_slice(), options)
-                .map_err(storage)?;
         }
+        let metres = uvw.metres();
+        payload
+            .uvw
+            .store_array_subset_opt(
+                &triple,
+                metres.as_standard_layout().as_slice().expect("standard"),
+                options,
+            )
+            .map_err(storage)?;
         payload
             .centroid
             .store_array_subset_opt(&plane, scratch.centroid.as_slice(), options)
@@ -170,6 +141,9 @@ impl Msv4Writer {
         if batch.partition != target.partition {
             return Err(mismatch("partition"));
         }
+        if batch.baselines != target.grid.baselines.as_slice() {
+            return Err(mismatch("baseline table"));
+        }
         if batch.first_channel != 0 || batch.channel_count() != entry.frequencies_hz.len() {
             return Err(ObservationError::Unsupported {
                 what: "writing a channel window",
@@ -189,7 +163,7 @@ impl Msv4Writer {
             return Err(mismatch("correlation products"));
         }
         let group = &batch.group;
-        if *group.units != target.group.units {
+        if group.entry.units != target.group.units {
             return Err(mismatch("visibility units"));
         }
         if group
@@ -198,17 +172,8 @@ impl Msv4Writer {
         {
             return Err(mismatch("UVW frame"));
         }
-        if batch.topology.time().reference() != target.grid.time_scale {
+        if batch.time.reference() != target.grid.time_scale {
             return Err(mismatch("time scale"));
-        }
-        if group
-            .row_flags
-            .is_some_and(|flags| flags.iter().any(|flagged| *flagged))
-        {
-            return Err(ObservationError::Unsupported {
-                what: "writing a row flag, which MSv4 cannot represent: fold it into the \
-                       element flags first, deliberately",
-            });
         }
         let timing = &batch.timing;
         if timing.centroid.is_none()
@@ -223,66 +188,42 @@ impl Msv4Writer {
         Ok(())
     }
 
-    /// Each sample's slot, with its time, baseline, field, scan and
-    /// interval checked against the grid, and the times it covers: whole,
-    /// contiguous, complete and not yet written.
-    fn place(&mut self, batch: &VisibilityBatch<'_>) -> Result<Placement, ObservationError> {
+    /// The batch's times in the dataset, with each time's field, scan and
+    /// interval checked against the grid: contiguous and not yet written.
+    fn place(&self, batch: &VisibilityBatch<'_>) -> Result<Placement, ObservationError> {
         let target = &self.target;
         let grid = &target.grid;
-        let baselines = self.shape[1];
-        let time = batch.topology.time();
-        let per_time = batch.topology.samples_per_time();
         let unix = MjdHighPrec::new(UNIX_EPOCH_MJD, 0.0);
-        let samples = batch.samples();
-        if samples == 0 || !samples.is_multiple_of(baselines) {
-            return Err(ObservationError::Unsupported {
-                what: "writing an incomplete time: every baseline of a time is required",
-            });
+        let times = batch.times();
+        if times == 0 {
+            return Err(request_error("an empty batch"));
         }
-        let times = samples / baselines;
-        let scratch = &mut self.scratch;
-        scratch.slots.clear();
-        scratch.filled.clear();
-        scratch.filled.resize(samples, false);
+        let per_time = batch.samples_per_time();
+        let scan = batch.scan.expect("checked");
         let mut first_time = None;
-        for sample in 0..samples {
-            let coordinate = batch.topology.sample(sample);
-            let seconds = time.seconds_since(sample / per_time, unix);
-            let t = *target
+        for t in 0..times {
+            let seconds = batch.time.seconds_since(t, unix);
+            let index = *target
                 .times
                 .get(&seconds.to_bits())
                 .ok_or_else(|| invalid(format!("time {seconds} is not in the dataset")))?;
-            let b = *target
-                .baselines
-                .get(&coordinate.baseline)
-                .ok_or_else(|| mismatch("baseline"))?;
-            if coordinate.field != grid.field_per_time[t] {
+            if batch.field[t] != grid.field_per_time[index] {
                 return Err(mismatch("field at a time"));
             }
-            if batch.scan(sample) != Some(grid.scan_per_time[t]) {
+            if scan[t] != grid.scan_per_time[index] {
                 return Err(mismatch("scan at a time"));
             }
-            if batch.interval_s(sample) != Some(grid.interval_s) {
+            if (t * per_time..(t + 1) * per_time)
+                .any(|sample| batch.interval_s(sample) != Some(grid.interval_s))
+            {
                 return Err(mismatch("integration interval"));
             }
-            let first = *first_time.get_or_insert(t);
-            if t < first || t >= first + times {
-                return Err(invalid("a batch's times are not contiguous"));
+            let first = *first_time.get_or_insert(index);
+            if index != first + t {
+                return Err(invalid("a batch's times are not contiguous in the dataset"));
             }
-            let slot = (t - first) * baselines + b;
-            if std::mem::replace(&mut scratch.filled[slot], true) {
-                return Err(ObservationError::Unsupported {
-                    what: "two acquisitions in one time/baseline slot",
-                });
-            }
-            scratch.slots.push(slot);
         }
-        let first_time = first_time.expect("samples");
-        if scratch.filled.iter().any(|filled| !filled) {
-            return Err(ObservationError::Unsupported {
-                what: "writing an incomplete time: every baseline of a time is required",
-            });
-        }
+        let first_time = first_time.expect("times");
         if first_time + times > self.written.len()
             || self.written[first_time..first_time + times]
                 .iter()
@@ -290,80 +231,31 @@ impl Msv4Writer {
         {
             return Err(invalid("a time is written twice or beyond the dataset"));
         }
-        let in_order = scratch
-            .slots
-            .iter()
-            .enumerate()
-            .all(|(sample, slot)| sample == *slot);
-        Ok(Placement {
-            first_time,
-            times,
-            in_order,
-        })
+        Ok(Placement { first_time, times })
     }
 
-    /// Place `batch`'s payload at its slots ([`Self::place`]) in dense
-    /// `[time, baseline]` order.
-    fn pack(&mut self, batch: &VisibilityBatch<'_>) -> Result<(), ObservationError> {
-        let [_, _, channels, correlations] = self.shape;
-        let cell = channels * correlations;
-        let slots = batch.samples();
-        let scratch = &mut self.scratch;
-        scratch.values.clear();
-        scratch
-            .values
-            .resize(slots * cell, Complex32::new(f32::NAN, f32::NAN));
-        scratch.flags.clear();
-        scratch.flags.resize(slots * cell, false);
-        scratch.weights.clear();
-        scratch.weights.resize(slots * cell, f32::NAN);
-        scratch.uvw.clear();
-        scratch.uvw.resize(slots * 3, f64::NAN);
-        let group = &batch.group;
-        let values = group
-            .values
-            .and_then(|v| v.as_complex32())
-            .expect("checked");
-        let flags = group.flags.expect("checked");
-        let weights = group.weights.expect("checked");
-        let uvw = group.uvw.expect("checked");
-        for (sample, &slot) in scratch.slots.iter().enumerate() {
-            for channel in 0..channels {
-                for correlation in 0..correlations {
-                    let index = slot * cell + channel * correlations + correlation;
-                    scratch.values[index] = values[[sample, channel, correlation]];
-                    scratch.flags[index] = flags[[sample, channel, correlation]];
-                    scratch.weights[index] = weights.get(sample, channel, correlation);
-                }
-            }
-            scratch.uvw[slot * 3..slot * 3 + 3].copy_from_slice(&uvw.get(sample));
-        }
-        self.counters.packed_elements += 3 * slots * cell + 3 * slots;
-        Ok(())
-    }
-
-    /// The time centroids (in Unix seconds) and exposures at their slots.
-    /// They are copied unless the batch is in order, its centroids already
-    /// count from the Unix epoch and its exposures are per sample: then the
-    /// copies are the views' own values and nothing is counted as packed.
-    fn gather_times(&mut self, batch: &VisibilityBatch<'_>, direct: bool) {
+    /// The time centroids (in Unix seconds) and exposures per sample,
+    /// counted as packed unless the batch already holds them that way.
+    fn gather_times(&mut self, batch: &VisibilityBatch<'_>) {
         let unix = MjdHighPrec::new(UNIX_EPOCH_MJD, 0.0);
         let centroid = batch.timing.centroid.expect("checked");
-        let in_place = direct
-            && centroid.origin() == unix
-            && matches!(batch.timing.exposure_s, Some(Shared::PerSample(_)));
+        let in_place = centroid.origin() == unix
+            && matches!(
+                batch.timing.exposure_s,
+                Some(casa_observation::Shared::PerSample(_))
+            );
         let scratch = &mut self.scratch;
-        let slots = scratch.slots.len();
+        let samples = batch.samples();
         scratch.centroid.clear();
-        scratch.centroid.resize(slots, f64::NAN);
         scratch.exposure.clear();
-        scratch.exposure.resize(slots, f64::NAN);
-        for (sample, &slot) in scratch.slots.iter().enumerate() {
-            scratch.centroid[slot] = centroid.seconds_since(sample, unix);
-            scratch.exposure[slot] = batch.exposure_s(sample).expect("checked");
+        for sample in 0..samples {
+            scratch.centroid.push(centroid.seconds_since(sample, unix));
+            scratch
+                .exposure
+                .push(batch.exposure_s(sample).expect("checked"));
         }
         if !in_place {
-            self.counters.packed_elements += 2 * slots;
+            self.counters.packed_elements += 2 * samples;
         }
     }
 

@@ -23,11 +23,11 @@ use casa_imaging_operator::{
     SampleBuffer, SpectralAxis, SpectralKernel, SpectralResampler, WeightingGeneration, Work,
 };
 use casa_observation::{
-    BatchBuffers, FilledBatch, Observation, OwnedEvent, VisibilityBatch, VisibilityCursor,
+    BatchBuffers, FilledBatch, Observation, OwnedEvent, PartitionId, VisibilityBatch,
 };
 use ndarray::Array2;
 
-use crate::source::request;
+use crate::source::{per_times, request};
 
 /// How long the held-back unit waits before each batch.
 const DELAY: Duration = Duration::from_millis(60);
@@ -35,8 +35,8 @@ const DELAY: Duration = Duration::from_millis(60);
 const SHARED_POOL: usize = 2;
 /// Pieces each unit may hold under the packed strategy.
 const PIECES_PER_UNIT: usize = 2;
-/// Samples per batch: four times of ten baselines, three batches.
-const BATCH_SAMPLES: usize = 40;
+/// Whole times per batch: four of the twelve, three batches.
+const BATCH_TIMES: usize = 4;
 
 /// How units get their windows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -159,12 +159,7 @@ impl Unit {
     /// Grid `batch`'s only channel, every correlation.
     fn grid(&mut self, batch: &VisibilityBatch<'_>) {
         assert_eq!(batch.channel_count(), 1);
-        let values = batch
-            .group
-            .values
-            .expect("values")
-            .as_complex32()
-            .expect("c64");
+        let values = batch.group.values.expect("values");
         let validity = batch.validity();
         let weights = batch.group.weights.expect("weights");
         let uvw = batch.group.uvw.expect("uvw");
@@ -172,19 +167,19 @@ impl Unit {
         let routed = [0, 1, 2, 3];
         self.samples.clear();
         for sample in 0..batch.samples() {
-            let coordinate = batch.topology.sample(sample);
+            let coordinate = batch.sample(sample);
             let row_values = routed.map(|c| values[[sample, 0, c]]);
-            let row_weights = routed.map(|c| weights.get(sample, 0, c));
+            let row_weights = routed.map(|c| weights[[sample, 0, c]]);
             let row_flags = routed.map(|c| validity.excluded(sample, 0, c));
             let row = NativeRow {
-                uvw_m: uvw.get(sample),
+                uvw_m: uvw.metres_at(sample),
                 phase_shift_m: 0.0,
                 pointing_offset_rad: [0.0; 2],
                 frequencies_hz: &frequency,
                 values: &row_values,
                 weights: &row_weights,
                 flags: &row_flags,
-                row_flag: batch.group.row_flags.is_some_and(|flags| flags[sample]),
+                row_flag: false,
                 context: RowContext {
                     original_uvw_m: None,
                     time_s: coordinate.time_offset_s,
@@ -247,9 +242,14 @@ pub fn run(
     channels: std::ops::Range<usize>,
 ) -> Report {
     let units = channels.len();
+    let catalogue = observation.catalogue();
     let ledger = Arc::new(Mutex::new(Ledger::default()));
-    let mut cursor = observation
-        .bind_read(&request(channels.clone(), true, BATCH_SAMPLES))
+    let mut traversal = observation
+        .bind_read(&per_times(
+            observation,
+            request(PartitionId(0), channels.clone(), true, 0),
+            BATCH_TIMES,
+        ))
         .expect("bind");
     let (free_tx, free_rx) = mpsc::channel::<BatchBuffers>();
     let started = Instant::now();
@@ -287,7 +287,7 @@ pub fn run(
                     }
                     match item {
                         Item::Shared(filled) => {
-                            let batch = filled.batch();
+                            let batch = filled.batch(catalogue);
                             let window = batch.channel_window(unit..unit + 1).expect("window");
                             state.grid(&window);
                             if let Some(filled) = Arc::into_inner(filled) {
@@ -298,7 +298,7 @@ pub fn run(
                         }
                         Item::Piece(piece) => {
                             let piece = *piece;
-                            state.grid(&piece.batch());
+                            state.grid(&piece.batch(catalogue));
                             let bytes = piece.capacity_bytes();
                             ledger.lock().expect("ledger").piece_bytes -= bytes;
                             let _ = piece_tx.send(piece.into_buffers());
@@ -316,9 +316,15 @@ pub fn run(
         let mut pool: Vec<BatchBuffers> = Vec::new();
         let mut pieces: Vec<Vec<BatchBuffers>> = (0..units).map(|_| Vec::new()).collect();
         let mut pieces_out = vec![0_usize; units];
-        // The producer runs until the cursor hands its buffer back at the
-        // end: no batch count is needed in advance.
+        // The producer asks what comes next before lending a buffer, so no
+        // batch count is needed in advance and nothing is lent at the end.
         loop {
+            match traversal.next_owned(None).expect("step") {
+                OwnedEvent::NeedBuffers => {}
+                OwnedEvent::GroupEnd(..) => continue,
+                OwnedEvent::End(_) => break,
+                OwnedEvent::Batch(_) => unreachable!("no buffers were lent"),
+            }
             // A batch buffer: from the pool, a new one while the pool may
             // grow, else wait for one to come back.
             let limit = match strategy {
@@ -342,16 +348,9 @@ pub fn run(
             if ledger.lock().expect("ledger").held > 0 {
                 report.fills_while_held += 1;
             }
-            let filled = match cursor.next_owned(buffers).expect("read") {
-                OwnedEvent::Batch(filled) => filled,
-                OwnedEvent::GroupEnd(_, returned) => {
-                    pool.push(returned);
-                    continue;
-                }
-                OwnedEvent::End(returned) => {
-                    pool.push(returned);
-                    break;
-                }
+            let OwnedEvent::Batch(filled) = traversal.next_owned(Some(buffers)).expect("read")
+            else {
+                unreachable!("a batch was announced");
             };
             report.batch_buffer_bytes = report.batch_buffer_bytes.max(filled.capacity_bytes());
             match strategy {
@@ -369,7 +368,7 @@ pub fn run(
                     }
                 }
                 Strategy::PackedPieces => {
-                    let batch = filled.batch();
+                    let batch = filled.batch(catalogue);
                     // Fast units first, so a full slow queue holds back no one else.
                     for unit in (1..units).chain([0]) {
                         while let Ok(buffers) = piece_returns[unit].try_recv() {
@@ -388,7 +387,8 @@ pub fn run(
                             storage
                         };
                         let window = batch.channel_window(unit..unit + 1).expect("window");
-                        let (piece, copied) = FilledBatch::pack(&window, storage).expect("pack");
+                        let (piece, copied) =
+                            FilledBatch::pack(&window, storage, catalogue).expect("pack");
                         report.copied_elements += copied;
                         pieces_out[unit] += 1;
                         let mut ledger = ledger.lock().expect("ledger");

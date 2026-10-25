@@ -21,7 +21,7 @@ use casa_ms::ms::MeasurementSet;
 use casa_ms::observation_io::{GroupClosure, OpenOptions};
 use casa_ms::selection::MsSelection;
 use casa_observation::{
-    AccessRequest, Catalogue, Grouping, Layout, Observation, PartitionId, Precision, Roles,
+    AccessRequest, Binding, BindingTolerance, CorrelationRequest, Grouping, Observation, Roles,
 };
 
 use super::kernel::SolutionRow;
@@ -64,80 +64,40 @@ fn gain_request(output_table: PathBuf) -> GainSolveRequest {
     }
 }
 
-/// The traversal the solve binds: every channel and role (time centroid,
-/// interval and scan included), 60 s bins.
-fn access(max_samples: usize) -> AccessRequest {
-    AccessRequest {
-        partition: PartitionId(0),
+/// The traversal the solve binds: every partition, channel and role (time
+/// centroid, interval and scan included), 60 s bins per field and scan,
+/// `times` whole times per batch.
+fn access(observation: &dyn Observation, times: usize) -> AccessRequest {
+    let request = AccessRequest {
+        partitions: observation.catalogue().partition_ids(),
         data_group: "base".to_string(),
         roles: Roles::ALL,
         channels: 0..8,
-        layout: Layout::SampleMajor,
-        precision: Precision::Complex32 {
-            allow_narrowing: false,
-        },
+        correlations: CorrelationRequest::ALL,
         grouping: Grouping::TimeBins {
             width_s: 60.0,
             combine_fields: false,
+            combine_scans: false,
         },
-        max_samples,
+        batch_bytes: usize::MAX,
+    };
+    let estimate = observation.estimate(&request).expect("estimate");
+    let partition = &estimate.partitions[0];
+    AccessRequest {
+        batch_bytes: partition.bytes_per_sample * partition.baselines * times,
+        ..request
     }
 }
 
-/// Each of `from`'s antennas as `to` numbers it, matched by station and
-/// position; each of `from`'s fields by phase centre (frame and angles).
-/// Identity is checked context, never names or list order: XRADIO renames
-/// antennas and fields and names an absent source `Unknown`, and an
-/// unmatched or ambiguous entry is a failure.
-fn rebind(from: &Catalogue, to: &Catalogue) -> (Vec<i32>, Vec<i32>) {
-    let antennas = from
-        .antennas
-        .iter()
-        .map(|antenna| {
-            let matches: Vec<usize> = to
-                .antennas
-                .iter()
-                .enumerate()
-                .filter(|(_, known)| {
-                    known.station == antenna.station
-                        && known.position.values() == antenna.position.values()
-                })
-                .map(|(index, _)| index)
-                .collect();
-            assert_eq!(matches.len(), 1, "antenna {} binds once", antenna.name);
-            matches[0] as i32
-        })
-        .collect();
-    let fields = from
-        .fields
-        .iter()
-        .map(|field| {
-            let matches: Vec<usize> = to
-                .fields
-                .iter()
-                .enumerate()
-                .filter(|(_, known)| {
-                    known.phase_centre.refer() == field.phase_centre.refer()
-                        && known.phase_centre.as_angles() == field.phase_centre.as_angles()
-                })
-                .map(|(index, _)| index)
-                .collect();
-            assert_eq!(matches.len(), 1, "field {} binds once", field.name);
-            matches[0] as i32
-        })
-        .collect();
-    (antennas, fields)
-}
-
 /// `rows`, renumbered from their observation's antennas and fields to the
-/// production MeasurementSet's.
-fn renumbered(rows: Vec<SolutionRow>, map: &(Vec<i32>, Vec<i32>)) -> Vec<SolutionRow> {
+/// production MeasurementSet's through the catalogue binding.
+fn renumbered(rows: Vec<SolutionRow>, binding: &Binding) -> Vec<SolutionRow> {
     let mut rows: Vec<SolutionRow> = rows
         .into_iter()
         .map(|mut row| {
-            row.antenna_id = map.0[row.antenna_id as usize];
-            row.refant_id = map.0[row.refant_id as usize];
-            row.field_id = map.1[row.field_id as usize];
+            row.antenna_id = binding.antennas[row.antenna_id as usize].0 as i32;
+            row.refant_id = binding.antennas[row.refant_id as usize].0 as i32;
+            row.field_id = binding.fields[row.field_id as usize].0 as i32;
             row
         })
         .collect();
@@ -269,6 +229,7 @@ fn open(root: &Path, closure: GroupClosure) -> Stores {
     let v2 = fixture(root, "ms_trial.ms");
     let options = OpenOptions {
         group_closure: closure,
+        ..OpenOptions::default()
     };
     let open = |path: PathBuf| casa_ms::observation_io::open(path, &options).expect("open");
     Stores {
@@ -281,10 +242,16 @@ fn open(root: &Path, closure: GroupClosure) -> Stores {
 }
 
 impl Stores {
-    /// The rebinding of `observation` to the production numbering: the v2
+    /// The binding of `observation` to the production numbering: the v2
     /// trial observation's catalogue numbers like the MeasurementSet.
-    fn rebinding(&self, observation: &dyn Observation) -> (Vec<i32>, Vec<i32>) {
-        rebind(observation.catalogue(), self.observations[0].1.catalogue())
+    /// Identity is checked content (station and position, phase centre),
+    /// never names or list order: XRADIO renames antennas and fields, and
+    /// an unmatched or ambiguous entry is a failure.
+    fn binding(&self, observation: &dyn Observation) -> Binding {
+        observation
+            .catalogue()
+            .bind_to(self.observations[0].1.catalogue(), &BindingTolerance::EXACT)
+            .expect("binds by content")
     }
 }
 
@@ -297,10 +264,14 @@ fn production(ms: &MeasurementSet, root: &Path) -> Vec<SolutionRow> {
     solve_gain_rows(ms, &request).expect("production rows").0
 }
 
-/// The production refant (antenna 0 of the MeasurementSet) in `map`'s
+/// The production refant (antenna 0 of the MeasurementSet) in `binding`'s
 /// observation numbering.
-fn refant(map: &(Vec<i32>, Vec<i32>)) -> i32 {
-    map.0.iter().position(|&id| id == 0).expect("refant binds") as i32
+fn refant(binding: &Binding) -> i32 {
+    binding
+        .antennas
+        .iter()
+        .position(|id| id.0 == 0)
+        .expect("refant binds") as i32
 }
 
 /// Sequentially fed from either store, at any batch size and under either
@@ -331,18 +302,17 @@ fn batch_fed_solves_equal_the_production_gaincal() {
     for closure in [GroupClosure::AtDelivery, GroupClosure::Deferred] {
         let stores = open(root.path(), closure);
         for (store, observation) in &stores.observations {
-            let sizes: &[usize] = if *store == "v2" {
-                &[1, 7, 25, 60, 120]
-            } else {
-                &[10, 30, 40, 70, 120]
-            };
-            let map = stores.rebinding(&**observation);
-            for &max_samples in sizes {
-                let (rows, trace) =
-                    solve_sequential(&**observation, &request, &access(max_samples), refant(&map));
-                let agreement = agreement(&expected, &renumbered(rows, &map));
+            let binding = stores.binding(&**observation);
+            for times in [1, 3, 4, 7, 12] {
+                let (rows, trace) = solve_sequential(
+                    &**observation,
+                    &request,
+                    &access(&**observation, times),
+                    refant(&binding),
+                );
+                let agreement = agreement(&expected, &renumbered(rows, &binding));
                 println!(
-                    "{store} sequential {closure:?} {max_samples}/batch: {agreement:?}; {trace:?}"
+                    "{store} sequential {closure:?} {times} times/batch: {agreement:?}; {trace:?}"
                 );
                 assert!(agreement.flags_equal, "{store}");
                 assert!(
@@ -378,14 +348,15 @@ fn concurrent_fragments_close_only_after_their_work_joins() {
     for closure in [GroupClosure::AtDelivery, GroupClosure::Deferred] {
         let stores = open(root.path(), closure);
         for (store, observation) in &stores.observations {
-            let max_samples = if *store == "v2" { 25 } else { 30 };
-            let map = stores.rebinding(&**observation);
-            let (rows, trace) =
-                solve_concurrent(&**observation, &request, &access(max_samples), refant(&map));
-            let agreement = agreement(&expected, &renumbered(rows, &map));
-            println!(
-                "{store} concurrent {closure:?} {max_samples}/batch: {agreement:?}; {trace:?}"
+            let binding = stores.binding(&**observation);
+            let (rows, trace) = solve_concurrent(
+                &**observation,
+                &request,
+                &access(&**observation, 3),
+                refant(&binding),
             );
+            let agreement = agreement(&expected, &renumbered(rows, &binding));
+            println!("{store} concurrent {closure:?} 3 times/batch: {agreement:?}; {trace:?}");
             assert!(agreement.flags_equal);
             assert!(
                 agreement.gain < 1e-4

@@ -8,12 +8,11 @@ use std::sync::Arc;
 
 use casa_observation::{
     AccessRequest, AntennaEntry, AntennaId, BoundCursor, Catalogue, Correlation, DataGroupEntry,
-    FieldEntry, Observation, ObservationError, OrderedBaseline, PartitionEntry, ScanEntry,
-    UvwFrame,
+    Estimate, FieldEntry, FieldId, Observation, ObservationEntry, ObservationError, ObservationId,
+    OrderedBaseline, PartitionEntry, PartitionId, ScanEntry, ScanId, Traversal, UvwFrame,
 };
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::position::MPosition;
-use casa_types::measures::{EpochRef, MjdHighPrec};
 use zarrs::array::{Array, CodecOptions};
 use zarrs::filesystem::FilesystemStore;
 use zarrs::group::Group;
@@ -41,17 +40,15 @@ pub(super) struct GroupArrays {
     pub(super) weights: Array<FilesystemStore>,
     pub(super) uvw: Array<FilesystemStore>,
     /// Catalogue field at each time.
-    pub(super) fields: Vec<u32>,
+    pub(super) fields: Vec<FieldId>,
     pub(super) uvw_frame: UvwFrame,
 }
 
-/// One `VisibilityXds` dataset of the processing set.
+/// One `VisibilityXds` dataset of the processing set: what its partition
+/// entry does not already state.
 pub(super) struct Dataset {
-    /// `time` coordinate: seconds from `time_origin`.
+    /// `time` coordinate: seconds from the partition's origin.
     pub(super) times: Vec<f64>,
-    pub(super) time_scale: EpochRef,
-    pub(super) time_origin: MjdHighPrec,
-    pub(super) baselines: Vec<OrderedBaseline>,
     /// `time.integration_time`, when stated.
     pub(super) interval_s: Option<f64>,
     /// `TIME_CENTROID`, when present.
@@ -59,15 +56,17 @@ pub(super) struct Dataset {
     /// `EFFECTIVE_INTEGRATION_TIME`, when present.
     pub(super) exposure: Option<Array<FilesystemStore>>,
     /// Catalogue scan at each time, when `scan_name` is present.
-    pub(super) scans: Option<Vec<u32>>,
+    pub(super) scans: Option<Vec<ScanId>>,
     pub(super) groups: Vec<GroupArrays>,
 }
 
 /// An opened MSv4 processing set (XRADIO `VisibilityXds` schema 4.0.1 on
 /// local Zarr v3) and its catalogue.
 ///
-/// Each visibility dataset is one partition. Antennas are the union of the
-/// datasets' `antenna_xds` entries, one per name, station and position.
+/// Each visibility dataset is one partition, described by its content
+/// (spectral window, correlations, the intents of its `scan_name`, its
+/// `observation_info`). Antennas are the union of the datasets'
+/// `antenna_xds` entries, one per name, station and position.
 /// Fields come from each data group's own `field_and_source` dataset and
 /// are distinct unless name, phase centre and source all agree: two groups
 /// with different phase centres keep their own fields and UVW frames, and a
@@ -156,9 +155,7 @@ impl Msv4Observation {
             });
         }
         let baselines = self.baselines(store, path)?;
-        if self.catalogue.telescope.is_empty() {
-            self.observation_info(store, path, attributes)?;
-        }
+        let observation = self.observation_info(store, path, attributes)?;
         let (times, time_attributes) = numbers::<f64>(store, &format!("{path}/time"))?;
         let (time_scale, time_origin) = time_reference(&time_attributes, "time")?;
         let interval_s = time_attributes
@@ -200,7 +197,7 @@ impl Msv4Observation {
         };
         let centroid = auxiliary("TIME_CENTROID", true)?;
         let exposure = auxiliary("EFFECTIVE_INTEGRATION_TIME", false)?;
-        let scans = self.scans(store, root, path)?;
+        let (scans, intents) = self.scans(store, root, path)?;
         let partition = self.partition(store, path)?;
         let field_names = strings(store, &format!("{path}/field_name"))?;
         let cube = [
@@ -211,7 +208,7 @@ impl Msv4Observation {
         ];
         let mut groups = Vec::new();
         let mut entries = Vec::new();
-        let mut contexts = BTreeMap::<String, (Vec<u32>, DirectionRef)>::new();
+        let mut contexts = BTreeMap::<String, (Vec<FieldId>, DirectionRef)>::new();
         for record in data_groups(attributes)? {
             let context = match contexts.get(&record.field_and_source) {
                 Some(context) => context.clone(),
@@ -241,14 +238,17 @@ impl Msv4Observation {
             return Err(invalid("no data group"));
         }
         self.catalogue.partitions.push(PartitionEntry {
+            intents,
+            observation,
+            feeds: None,
+            baselines,
+            time_scale,
+            time_origin,
             data_groups: entries,
             ..partition
         });
         self.datasets.push(Dataset {
             times,
-            time_scale,
-            time_origin,
-            baselines,
             interval_s,
             centroid,
             exposure,
@@ -258,24 +258,28 @@ impl Msv4Observation {
         Ok(())
     }
 
+    /// The catalogue's observing session for this dataset's
+    /// `observation_info` and telescope, added if new.
     fn observation_info(
         &mut self,
         store: &Arc<FilesystemStore>,
         path: &str,
         attributes: &serde_json::Map<String, serde_json::Value>,
-    ) -> Result<(), ObservationError> {
-        self.catalogue.telescope = strings(store, &format!("{path}/antenna_xds/telescope_name"))?
+    ) -> Result<ObservationId, ObservationError> {
+        let telescope = strings(store, &format!("{path}/antenna_xds/telescope_name"))?
             .into_iter()
             .next()
             .unwrap_or_default();
-        if let Some(info) = attributes.get("observation_info") {
-            self.catalogue.project = info
-                .get("project_UID")
+        let info = attributes.get("observation_info");
+        let entry = ObservationEntry {
+            telescope,
+            project: info
+                .and_then(|info| info.get("project_UID"))
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or_default()
-                .to_string();
-            self.catalogue.observers = info
-                .get("observer")
+                .to_string(),
+            observers: info
+                .and_then(|info| info.get("observer"))
                 .and_then(serde_json::Value::as_array)
                 .map(|observers| {
                     observers
@@ -284,9 +288,35 @@ impl Msv4Observation {
                         .map(str::to_string)
                         .collect()
                 })
-                .unwrap_or_default();
+                .unwrap_or_default(),
+        };
+        let observations = &mut self.catalogue.observations;
+        let index = observations
+            .iter()
+            .position(|known| *known == entry)
+            .unwrap_or_else(|| {
+                observations.push(entry);
+                observations.len() - 1
+            });
+        Ok(ObservationId(
+            u32::try_from(index).expect("few observations"),
+        ))
+    }
+
+    /// The dataset of partition `id` and its entry.
+    pub(super) fn dataset(
+        &self,
+        id: PartitionId,
+    ) -> Result<(&Dataset, &PartitionEntry), ObservationError> {
+        match (
+            self.datasets.get(id.0 as usize),
+            self.catalogue.partitions.get(id.0 as usize),
+        ) {
+            (Some(dataset), Some(entry)) => Ok((dataset, entry)),
+            _ => Err(ObservationError::InvalidRequest {
+                reason: format!("no partition {id:?}"),
+            }),
         }
-        Ok(())
     }
 
     /// The dataset's baselines, resolved through its `antenna_xds`.
@@ -362,24 +392,31 @@ impl Msv4Observation {
             frequencies_hz,
             frequency_frame,
             correlations,
+            // The caller fills what the rest of the dataset states.
+            intents: Vec::new(),
+            observation: ObservationId(0),
+            feeds: None,
+            baselines: Vec::new(),
+            time_scale: casa_types::measures::EpochRef::UTC,
+            time_origin: casa_types::measures::MjdHighPrec::new(0.0, 0.0),
             data_groups: Vec::new(),
         })
     }
 
     /// The catalogue scan of each time, when the dataset has `scan_name`,
-    /// with the dataset's intents.
+    /// and the dataset's intents (`scan_intents`, sorted).
     fn scans(
         &mut self,
         store: &Arc<FilesystemStore>,
         root: &Path,
         path: &str,
-    ) -> Result<Option<Vec<u32>>, ObservationError> {
+    ) -> Result<(Option<Vec<ScanId>>, Vec<String>), ObservationError> {
         let variable = format!("{path}/scan_name");
         if !exists(root, &variable) {
-            return Ok(None);
+            return Ok((None, Vec::new()));
         }
         let names = strings(store, &variable)?;
-        let intents: Vec<String> = open_array(store, &variable)?
+        let mut intents: Vec<String> = open_array(store, &variable)?
             .attributes()
             .get("scan_intents")
             .and_then(serde_json::Value::as_array)
@@ -391,6 +428,8 @@ impl Msv4Observation {
                     .collect()
             })
             .unwrap_or_default();
+        intents.sort();
+        intents.dedup();
         let scans = &mut self.catalogue.scans;
         let ids = names
             .iter()
@@ -411,10 +450,10 @@ impl Msv4Observation {
                         scans[index].intents.push(intent.clone());
                     }
                 }
-                u32::try_from(index).expect("few scans")
+                ScanId(u32::try_from(index).expect("few scans"))
             })
             .collect();
-        Ok(Some(ids))
+        Ok((Some(ids), intents))
     }
 
     /// The catalogue antenna `antenna` describes, added if new. One name
@@ -446,7 +485,7 @@ impl Msv4Observation {
         store: &Arc<FilesystemStore>,
         path: &str,
         per_time: &[String],
-    ) -> Result<(Vec<u32>, DirectionRef), ObservationError> {
+    ) -> Result<(Vec<FieldId>, DirectionRef), ObservationError> {
         let names = strings(store, &format!("{path}/field_name"))?;
         let sources = strings(store, &format!("{path}/source_name"))?;
         let (centres, attributes) =
@@ -475,7 +514,7 @@ impl Msv4Observation {
                     fields.push(entry);
                     fields.len() - 1
                 });
-            indices.push(u32::try_from(index).expect("few fields"));
+            indices.push(FieldId(u32::try_from(index).expect("few fields")));
         }
         let per_time = per_time
             .iter()
@@ -514,7 +553,7 @@ fn open_group(
     path: &str,
     record: DataGroupRecord,
     cube: [usize; 4],
-    (fields, phase_frame): (Vec<u32>, DirectionRef),
+    (fields, phase_frame): (Vec<FieldId>, DirectionRef),
 ) -> Result<GroupArrays, ObservationError> {
     let open = |name: &str, data_type: &str, dimensions: &[&str], shape: &[usize]| {
         let variable = format!("{path}/{name}");
@@ -610,23 +649,52 @@ impl Observation for Msv4Observation {
         &self.catalogue
     }
 
-    fn bind_read(&self, request: &AccessRequest) -> Result<BoundCursor<'_>, ObservationError> {
-        Ok(Box::new(Msv4Observation::bind_read(self, request)?))
+    fn estimate(&self, request: &AccessRequest) -> Result<Estimate, ObservationError> {
+        Msv4Observation::estimate(self, request)
+    }
+
+    fn bind_read(&self, request: &AccessRequest) -> Result<Traversal<'_>, ObservationError> {
+        Msv4Observation::bind_read(self, request)
     }
 }
 
 impl Msv4Observation {
-    /// Bind a traversal of `request`: whole times per batch, as many as
-    /// `request.max_samples` admits.
+    /// What `request` costs ([`Observation::estimate`]), from the chunk
+    /// grids alone.
     ///
     /// # Errors
     ///
-    /// When the request names an unknown partition, data group or channel,
-    /// asks for a role the dataset does not hold (`TIME_CENTROID`,
-    /// `EFFECTIVE_INTEGRATION_TIME`, `time.integration_time` or
-    /// `scan_name`), the channel-major layout or a precision the store
-    /// cannot deliver, or one time's baselines exceed `max_samples`.
-    pub fn bind_read(&self, request: &AccessRequest) -> Result<Msv4Cursor<'_>, ObservationError> {
-        Msv4Cursor::bind(self, request)
+    /// When the request names an unknown partition, data group, channel or
+    /// correlation product, asks for a role a dataset does not hold
+    /// (`TIME_CENTROID`, `EFFECTIVE_INTEGRATION_TIME`,
+    /// `time.integration_time` or `scan_name`), or budgets less than one
+    /// time.
+    pub fn estimate(&self, request: &AccessRequest) -> Result<Estimate, ObservationError> {
+        Ok(Estimate {
+            partitions: request
+                .partitions
+                .iter()
+                .map(|&id| super::cursor::estimate(self, request, id))
+                .collect::<Result<_, _>>()?,
+        })
+    }
+
+    /// Bind a traversal of `request`: one cursor per dataset, whole times
+    /// per batch as the byte budget admits.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::estimate`].
+    pub fn bind_read(&self, request: &AccessRequest) -> Result<Traversal<'_>, ObservationError> {
+        let estimate = self.estimate(request)?;
+        let cursors = estimate
+            .partitions
+            .iter()
+            .map(|estimate| {
+                Msv4Cursor::bind(self, request, estimate.clone())
+                    .map(|cursor| Box::new(cursor) as BoundCursor<'_>)
+            })
+            .collect::<Result<_, _>>()?;
+        Ok(Traversal::new(cursors, estimate))
     }
 }

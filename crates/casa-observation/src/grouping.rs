@@ -6,18 +6,26 @@ use std::ops::Range;
 
 use crate::ObservationError;
 use crate::batch::VisibilityBatch;
-use crate::catalogue::{FieldId, PartitionId};
+use crate::catalogue::{FieldId, PartitionId, ScanId};
 
 /// A scientific group: the samples a consumer treats together, such as one
 /// gain solution interval. Batches and storage chunks do not bound it.
+///
+/// Keyed as production `gaincal` keys solutions: by partition (spectral
+/// window, observation and intent), field unless the request combines
+/// fields, scan unless it combines scans, and the time bin counted from the
+/// first time of the (field, scan) run.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct GroupKey {
-    /// The partition (calibration does not combine spectral windows in the
-    /// trial).
+    /// The partition. Groups never span partitions; a consumer that
+    /// combines spectral windows merges groups by (field, scan, bin) across
+    /// cursors.
     pub partition: PartitionId,
     /// The field, unless the request combines fields.
     pub field: Option<FieldId>,
-    /// The time bin, counted from the request's bin origin.
+    /// The scan, unless the request combines scans.
+    pub scan: Option<ScanId>,
+    /// The time bin within the (field, scan) run.
     pub bin: u64,
 }
 
@@ -42,13 +50,13 @@ impl FragmentPosition {
     }
 }
 
-/// The samples of one group within one batch.
+/// The samples of one group within one batch: whole times, so a contiguous
+/// range of the batch's samples.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GroupFragment {
     /// The group.
     pub key: GroupKey,
-    /// The batch's samples that belong to it: a contiguous range in the
-    /// trial, which delivers time-ordered traversals only.
+    /// The batch's samples that belong to it: whole times, in order.
     pub samples: Range<usize>,
     /// Where the fragment lies in its group. `Last` or `Whole` is given only
     /// when the source has proven no later sample belongs to the group;
@@ -56,7 +64,7 @@ pub struct GroupFragment {
     ///
     /// Fragments belong to the delivered batch, never to compute windows of
     /// it: [`VisibilityBatch::channel_window`] and
-    /// [`VisibilityBatch::sample_window`] carry none, so a closing position
+    /// [`VisibilityBatch::time_window`] carry none, so a closing position
     /// is seen once, however many work units share the batch.
     pub position: FragmentPosition,
 }
@@ -155,6 +163,21 @@ impl GroupCompletion {
     }
 }
 
+/// What a cursor delivers.
+#[derive(Debug)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "a batch is a few hundred bytes of views, returned once per batch; boxing it would allocate per batch"
+)]
+pub enum ReadEvent<'a> {
+    /// The next batch.
+    Batch(VisibilityBatch<'a>),
+    /// No further samples of this group will arrive. The group's earlier
+    /// fragments may still be in a consumer's work units: input is complete,
+    /// the work need not be.
+    GroupEnd(GroupKey),
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -163,6 +186,7 @@ mod tests {
         GroupKey {
             partition: PartitionId(0),
             field: None,
+            scan: None,
             bin,
         }
     }
@@ -184,19 +208,4 @@ mod tests {
         assert!(completion.is_idle());
         assert!(completion.finish(key(2)).is_err());
     }
-}
-
-/// What a cursor delivers.
-#[derive(Debug)]
-#[expect(
-    clippy::large_enum_variant,
-    reason = "a batch is a few hundred bytes of views, returned once per batch; boxing it would allocate per batch"
-)]
-pub enum ReadEvent<'a> {
-    /// The next batch.
-    Batch(VisibilityBatch<'a>),
-    /// No further samples of this group will arrive. The group's earlier
-    /// fragments may still be in a consumer's work units: input is complete,
-    /// the work need not be.
-    GroupEnd(GroupKey),
 }

@@ -1,8 +1,8 @@
 # MSv2/MSv4 trial: revision 2 design record
 
-Status: design decisions for revision 2, agreed with the owner on 2026-10-24; nothing here is implemented; PR #898 stays a draft and the interfaces are not frozen
+Status: design decisions for revision 2, agreed with the owner on 2026-10-24, implemented on the trial branch on 2026-10-25 (deviations listed under "What the implementation did with each decision"); PR #898 stays a draft and the interfaces are not frozen
 Truth class: proposed design
-Date: 2026-10-24
+Date: 2026-10-25
 Evidence index: [README.md](README.md)
 Design branch: [architecture.md](../architecture.md), [contracts.md](../contracts.md)
 
@@ -401,6 +401,45 @@ The trial at `2b07a37`:
 
 Each step keeps the two examples and the interop checks green before the
 next; the PR stays a draft until the owner says otherwise.
+
+## What the implementation did with each decision
+
+Revision 2 implemented every decision as recorded, with these qualifications.
+The evidence is in [README.md](README.md), "Revision 2".
+
+- **D2, D4 grid.** Times on an MSv2 grid are the exact distinct `TIME`
+  values; XRADIO merges times within a quarter of the smallest step. An MS
+  whose times jitter opens with more times (and padding) than XRADIO's
+  conversion of it would; no fixture exercises this, and a tolerance is a
+  policy the record should take explicitly if it is wanted.
+- **D2 partition keys.** `EPHEMERIS_ID` splits MSv2 partitions but is not
+  exposed in `PartitionEntry` (the MSv4 reader does not read ephemerides);
+  two partitions that differ only by ephemeris have the same content keys
+  and `bind_to` refuses them as ambiguous until it does.
+- **D8 MSv2 natural blocks.** The tile shape of the data group's
+  visibility column, read through a new `casa-tables` accessor
+  (`Table::array_column_tile_shape`); the time extent reported is the
+  tile's rows divided by the baselines, which is exact only when the
+  partition's rows are stored by whole times.
+- **D10 MSv2 amplification.** Not modelled: decoded elements are the rows
+  read, as before; the tile-level amplification of a channel window on a
+  tiled column is a later refinement.
+- **D17 subsets.** Both adapters read the whole correlation axis and
+  gather the delivered products (MSv4 decodes the full cube into scratch);
+  a strided in-place decode per product is a later optimization, to be
+  measured.
+- **D18 vocabulary.** `Correlation` and `MUvw` live in `casa-types`;
+  `casa-observation` uses them. `casa-imaging-model` keeps its
+  `CorrelationType`: the ADR-0016 dependency policy
+  (`resources/imaging-architecture/dependency-policy.json`) requires it to
+  depend on no workspace crate, and changing that is an Ask First item. The
+  imaging example maps between the two at its boundary, as before.
+- **D23 one declaration.** The common declaration (`Catalogue` plus
+  `TimeBaselineGrid` per partition) and the rule for padded cells are in
+  place and the MSv4 creator uses them; an MSv2 creator from batches was
+  not built in revision 2.
+- **D25.** `Catalogue::bind_to` with an explicit `BindingTolerance`;
+  example B's comparison uses it in place of its test-code `rebind`.
 
 ## Provenance
 

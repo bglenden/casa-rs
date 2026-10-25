@@ -16,27 +16,49 @@ use casa_imaging_runtime::pass::{
     SampleContent, SourceError,
 };
 use casa_observation::{
-    AccessRequest, BatchBuffers, BoundCursor, Correlation, Grouping, IoCounters, Layout,
-    Observation, PartitionId, Precision, ReadEvent, Roles, VisibilityBatch, VisibilityCursor,
+    AccessRequest, BatchBuffers, Correlation, CorrelationRequest, Grouping, IoCounters,
+    Observation, PartitionId, ReadEvent, Roles, Traversal, VisibilityBatch,
 };
 
-/// The request one wave of the pass binds: the native channels `channels`,
-/// with or without the visibilities.
-pub fn request(channels: Range<usize>, values: bool, max_samples: usize) -> AccessRequest {
+/// The request one wave of the pass binds: the native channels `channels`
+/// of partition `partition`, with or without the visibilities, under
+/// `batch_bytes`.
+pub fn request(
+    partition: PartitionId,
+    channels: Range<usize>,
+    values: bool,
+    batch_bytes: usize,
+) -> AccessRequest {
     AccessRequest {
-        partition: PartitionId(0),
+        partitions: vec![partition],
         data_group: "base".to_string(),
         roles: Roles {
             values,
             ..Roles::PAYLOAD
         },
         channels,
-        layout: Layout::SampleMajor,
-        precision: Precision::Complex32 {
-            allow_narrowing: false,
-        },
+        correlations: CorrelationRequest::ALL,
         grouping: Grouping::None,
-        max_samples,
+        batch_bytes,
+    }
+}
+
+/// `request` budgeted for `times` whole times per batch on `observation`,
+/// from the estimate alone.
+pub fn per_times(
+    observation: &dyn Observation,
+    request: AccessRequest,
+    times: usize,
+) -> AccessRequest {
+    let probe = AccessRequest {
+        batch_bytes: usize::MAX,
+        ..request.clone()
+    };
+    let estimate = observation.estimate(&probe).expect("estimate");
+    let partition = &estimate.partitions[0];
+    AccessRequest {
+        batch_bytes: partition.bytes_per_sample * partition.baselines * times,
+        ..request
     }
 }
 
@@ -64,11 +86,12 @@ pub struct SourceTrace {
 /// reach its planes (the pass's `restrict`), so the adapter decodes only
 /// those channels' chunks. The pass's [`NativeBlock`] owns its arrays, so
 /// every batch is copied into it once: the correlations the operator routes
-/// are gathered, a per-correlation weight is written for each channel, and
-/// each cell's flag is the batch's [`Validity`](casa_observation::Validity)
-/// rule. That copy is the seam's cost today.
+/// are gathered, and each cell's flag is the batch's
+/// [`Validity`](casa_observation::Validity) rule. That copy is the seam's
+/// cost today.
 pub struct BatchSource<'o> {
     observation: &'o dyn Observation,
+    partition: PartitionId,
     /// Native channels the image selects, and their frequencies.
     selected: Range<usize>,
     frequencies: Vec<f64>,
@@ -76,42 +99,52 @@ pub struct BatchSource<'o> {
     axis: SpectralAxis,
     /// Indices of the routed correlations within the batch's.
     routed: Vec<usize>,
+    batch_bytes: usize,
+    /// The most samples one batch of any wave holds under the budget, from
+    /// the estimate of the narrowest window.
     max_samples: usize,
-    cursor: Option<BoundCursor<'o>>,
+    traversal: Option<Traversal<'o>>,
     buffers: BatchBuffers,
     pub trace: SourceTrace,
 }
 
 impl<'o> BatchSource<'o> {
-    /// A source of `observation`'s channels `selected` for an image on
-    /// `axis`, routing correlations `routed` (in operator order), at most
-    /// `max_samples` samples per batch.
+    /// A source of `observation`'s channels `selected` of its first
+    /// partition for an image on `axis`, routing correlations `routed` (in
+    /// operator order), at most `batch_bytes` of payload per batch.
     pub fn new(
         observation: &'o dyn Observation,
         selected: Range<usize>,
         axis: SpectralAxis,
         routed: &[Correlation],
-        max_samples: usize,
+        batch_bytes: usize,
     ) -> Self {
-        let partition = &observation.catalogue().partitions[0];
+        let partition = PartitionId(0);
+        let entry = observation.catalogue().partition(partition);
         let routed = routed
             .iter()
             .map(|wanted| {
-                partition
-                    .correlations
-                    .iter()
-                    .position(|have| have == wanted)
+                entry
+                    .correlation_index(*wanted)
                     .expect("routed correlation present")
             })
             .collect();
+        // The most samples any wave's batch can hold: under a byte budget
+        // the narrowest window (one channel) fits the most times.
+        let narrowest = selected.start..selected.start + 1;
+        let estimate = observation
+            .estimate(&request(partition, narrowest, true, batch_bytes))
+            .expect("estimate");
         Self {
             observation,
-            frequencies: partition.frequencies_hz[selected.clone()].to_vec(),
+            partition,
+            frequencies: entry.frequencies_hz[selected.clone()].to_vec(),
             selected,
             axis,
             routed,
-            max_samples,
-            cursor: None,
+            batch_bytes,
+            max_samples: estimate.partitions[0].samples_per_batch(),
+            traversal: None,
             buffers: BatchBuffers::default(),
             trace: SourceTrace::default(),
         }
@@ -153,25 +186,18 @@ impl<'o> BatchSource<'o> {
         let validity = batch.validity();
         let weights = batch.group.weights.expect("weights");
         let uvw = batch.group.uvw.expect("uvw");
-        let row_flags = batch.group.row_flags;
-        let data = values.then(|| {
-            batch
-                .group
-                .values
-                .expect("values")
-                .as_complex32()
-                .expect("c64")
-        });
-        let time = batch.topology.time();
+        let data = values.then(|| batch.group.values.expect("values"));
         let routed = &self.routed;
         let cells = channels * routed.len();
         for sample in 0..batch.samples() {
-            let coordinate = batch.topology.sample(sample);
+            let coordinate = batch.sample(sample);
             let header = NativeRowHeader {
-                row_flag: row_flags.is_some_and(|flags| flags[sample]),
+                // Row flags do not exist at this boundary: MSv2 FLAG_ROW is
+                // folded into the flags, which the validity rule reads.
+                row_flag: false,
                 context: RowContext {
                     original_uvw_m: None,
-                    time_s: time.origin().day() * 86_400.0 + coordinate.time_offset_s,
+                    time_s: batch.time.origin().day() * 86_400.0 + coordinate.time_offset_s,
                     antennas: [
                         coordinate.baseline.antenna1.0,
                         coordinate.baseline.antenna2.0,
@@ -189,7 +215,7 @@ impl<'o> BatchSource<'o> {
             // The image is centred on the field's phase centre, so the
             // projection is the stored UVW with no shift.
             let projection = [DomainProjection {
-                uvw_m: uvw.get(sample),
+                uvw_m: uvw.metres_at(sample),
                 phase_shift_m: 0.0,
                 pointing_offset_rad: [0.0; 2],
             }];
@@ -209,7 +235,7 @@ impl<'o> BatchSource<'o> {
                                 if let Some(data) = data {
                                     row_values[cell] = data[[sample, channel, correlation]];
                                 }
-                                row_weights[cell] = weights.get(sample, channel, correlation);
+                                row_weights[cell] = weights[[sample, channel, correlation]];
                                 row_flags_out[cell] =
                                     validity.excluded(sample, channel, correlation);
                             }
@@ -230,27 +256,28 @@ impl BoundedSource for BatchSource<'_> {
         restrict: bool,
         content: SampleContent,
     ) -> Result<(), SourceError> {
-        if let Some(cursor) = self.cursor.take() {
-            add(&mut self.trace.io, cursor.counters());
+        if let Some(traversal) = self.traversal.take() {
+            self.trace.io.add(traversal.counters());
         }
         let window = self.window(planes, restrict);
         let values = content == SampleContent::Visibilities;
         self.trace.traversals.push((window.clone(), values));
-        self.cursor = Some(self.observation.bind_read(&request(
+        self.traversal = Some(self.observation.bind_read(&request(
+            self.partition,
             window,
             values,
-            self.max_samples,
+            self.batch_bytes,
         ))?);
         Ok(())
     }
 
     fn fill(&mut self, block: &mut NativeBlock) -> Result<bool, SourceError> {
-        let mut cursor = self.cursor.take().expect("a traversal has begun");
+        let mut traversal = self.traversal.take().expect("a traversal has begun");
         let values = self.trace.traversals.last().expect("traversal").1;
         let mut buffers = std::mem::take(&mut self.buffers);
         let result = loop {
             let started = Instant::now();
-            let event = cursor.next(&mut buffers)?;
+            let event = traversal.next(&mut buffers)?;
             self.trace.read += started.elapsed();
             match event {
                 None => break false,
@@ -266,9 +293,9 @@ impl BoundedSource for BatchSource<'_> {
         self.trace.buffer_bytes = self.trace.buffer_bytes.max(buffers.capacity_bytes());
         self.buffers = buffers;
         if result {
-            self.cursor = Some(cursor);
+            self.traversal = Some(traversal);
         } else {
-            add(&mut self.trace.io, cursor.counters());
+            self.trace.io.add(traversal.counters());
         }
         Ok(result)
     }
@@ -286,13 +313,4 @@ impl BoundedSource for BatchSource<'_> {
             domains: 1,
         }
     }
-}
-
-fn add(total: &mut IoCounters, more: IoCounters) {
-    total.batches += more.batches;
-    total.read_calls += more.read_calls;
-    total.decode_units += more.decode_units;
-    total.delivered_bytes += more.delivered_bytes;
-    total.copied_elements += more.copied_elements;
-    total.buffer_growths += more.buffer_growths;
 }

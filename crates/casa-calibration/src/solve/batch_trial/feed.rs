@@ -15,10 +15,10 @@ use std::time::Duration;
 
 use casa_observation::{
     AccessRequest, BatchBuffers, Catalogue, GroupCompletion, GroupKey, Observation, OwnedEvent,
-    ReadEvent, VisibilityBatch, WeightView,
+    ReadEvent, VisibilityBatch,
 };
 use casa_types::measures::MjdHighPrec;
-use ndarray::{Array2, Axis, s};
+use ndarray::{Array2, s};
 
 use crate::solve::grouping::{SolveAccumulator, SolveSampleRow, SolveSamples, SolveWeights};
 use crate::solve::kernel::SolutionRow;
@@ -32,7 +32,8 @@ fn accumulator(key: GroupKey) -> SolveAccumulator {
 
 /// Accumulate `batch`'s samples `samples` into `group`. Visibilities and
 /// weights are views of the batch, transposed to the `[correlation,
-/// channel]` order the accumulator reads; the flags are the batch's
+/// channel]` order the accumulator reads (a weight shared by every channel
+/// is the same view with a zero channel stride); the flags are the batch's
 /// validity rule, written into one small reusable array per call.
 ///
 /// # Panics
@@ -46,12 +47,7 @@ fn observe(
     catalogue: &Catalogue,
     request: &GainSolveRequest,
 ) {
-    let values = batch
-        .group
-        .values
-        .expect("values")
-        .as_complex32()
-        .expect("c64");
+    let values = batch.group.values.expect("values");
     let weights = batch.group.weights.expect("weights");
     let validity = batch.validity();
     let codes: Vec<i32> = batch
@@ -62,11 +58,10 @@ fn observe(
     let channels: Vec<usize> = (0..batch.channel_count()).collect();
     let mut flags = Array2::from_elem((codes.len(), channels.len()), false);
     let mjd_zero = MjdHighPrec::new(0.0, 0.0);
-    let time = batch.topology.time();
     let centroid = batch.timing.centroid.expect("time centroid");
-    let per_time = batch.topology.samples_per_time();
+    let per_time = batch.samples_per_time();
     for sample in samples {
-        let coordinate = batch.topology.sample(sample);
+        let coordinate = batch.sample(sample);
         if coordinate.baseline.is_auto() {
             continue;
         }
@@ -81,7 +76,7 @@ fn observe(
                         data_desc_id: 0,
                         antenna1: coordinate.baseline.antenna1.0 as i32,
                         antenna2: coordinate.baseline.antenna2.0 as i32,
-                        time_seconds: time.seconds_since(sample / per_time, mjd_zero),
+                        time_seconds: batch.time.seconds_since(sample / per_time, mjd_zero),
                         time_centroid_seconds: centroid.seconds_since(sample, mjd_zero),
                         interval_seconds: batch.interval_s(sample).expect("interval"),
                         scan_number: catalogue.scans[scan.0 as usize]
@@ -90,14 +85,9 @@ fn observe(
                     },
                     data: values.slice(s![sample, .., ..]).reversed_axes(),
                     flags: flags.view(),
-                    weights: match weights {
-                        WeightView::PerCorrelation(weights) => {
-                            SolveWeights::Row(weights.index_axis_move(Axis(0), sample))
-                        }
-                        WeightView::Spectral(weights) => SolveWeights::Spectrum(
-                            weights.slice_move(s![sample, .., ..]).reversed_axes(),
-                        ),
-                    },
+                    weights: SolveWeights::Spectrum(
+                        weights.slice(s![sample, .., ..]).reversed_axes(),
+                    ),
                     model: None,
                     correlation_types: &codes,
                     selected_channels: &channels,
@@ -154,12 +144,12 @@ pub(super) fn solve_sequential(
 ) -> (Vec<SolutionRow>, SolveTrace) {
     let catalogue = observation.catalogue();
     let available = antennas(catalogue);
-    let mut cursor = observation.bind_read(access).expect("bind");
+    let mut traversal = observation.bind_read(access).expect("bind");
     let mut buffers = BatchBuffers::default();
     let mut live = BTreeMap::<GroupKey, SolveAccumulator>::new();
     let mut rows = Vec::new();
     let mut trace = SolveTrace::default();
-    while let Some(event) = cursor.next(&mut buffers).expect("read") {
+    while let Some(event) = traversal.next(&mut buffers).expect("read") {
         let closed: Vec<GroupKey> = match event {
             ReadEvent::GroupEnd(key) => {
                 trace.closed_by_end += 1;
@@ -205,8 +195,8 @@ const CONCURRENT_POOL: usize = 4;
 /// The first is held back, so its group's input completes while its work
 /// is pending; [`GroupCompletion`] releases the group for solving only
 /// when every fragment's work has joined. A batch's buffers return to the
-/// pool when its last fragment's work lets go of them, and at the end the
-/// cursor hands the last buffers back.
+/// pool when its last fragment's work lets go of them; the producer asks
+/// what comes next before lending a buffer, so none is lent at the end.
 pub(super) fn solve_concurrent(
     observation: &dyn Observation,
     request: &GainSolveRequest,
@@ -215,7 +205,7 @@ pub(super) fn solve_concurrent(
 ) -> (Vec<SolutionRow>, SolveTrace) {
     let catalogue = observation.catalogue();
     let available = antennas(catalogue);
-    let mut cursor = observation.bind_read(access).expect("bind");
+    let mut traversal = observation.bind_read(access).expect("bind");
     let mut trace = SolveTrace::default();
     let mut rows = Vec::new();
     let mut partial = BTreeMap::<GroupKey, SolveAccumulator>::new();
@@ -254,18 +244,10 @@ pub(super) fn solve_concurrent(
         let mut spare: Option<BatchBuffers> = None;
         let mut first = true;
         loop {
-            let buffers = match spare.take().or_else(|| free_rx.try_recv().ok()) {
-                Some(buffers) => buffers,
-                None if allocated < CONCURRENT_POOL => {
-                    allocated += 1;
-                    BatchBuffers::default()
-                }
-                None => free_rx.recv().expect("a buffer comes back"),
-            };
-            let filled = match cursor.next_owned(buffers).expect("read") {
+            // Ask what comes next before lending a buffer.
+            let filled = match traversal.next_owned(None).expect("step") {
                 OwnedEvent::End(_) => break,
-                OwnedEvent::GroupEnd(key, returned) => {
-                    spare = Some(returned);
+                OwnedEvent::GroupEnd(key, _) => {
                     trace.closed_by_end += 1;
                     if completion.pending(key) > 0 {
                         trace.closed_with_pending += 1;
@@ -276,11 +258,25 @@ pub(super) fn solve_concurrent(
                     join(&mut completion, &mut partial, &mut ready, false);
                     continue;
                 }
-                OwnedEvent::Batch(filled) => Arc::new(filled),
+                OwnedEvent::Batch(_) => unreachable!("no buffers were lent"),
+                OwnedEvent::NeedBuffers => {
+                    let buffers = match spare.take().or_else(|| free_rx.try_recv().ok()) {
+                        Some(buffers) => buffers,
+                        None if allocated < CONCURRENT_POOL => {
+                            allocated += 1;
+                            BatchBuffers::default()
+                        }
+                        None => free_rx.recv().expect("a buffer comes back"),
+                    };
+                    match traversal.next_owned(Some(buffers)).expect("read") {
+                        OwnedEvent::Batch(filled) => Arc::new(filled),
+                        _ => unreachable!("a batch was announced"),
+                    }
+                }
             };
             trace.batches += 1;
             trace.buffer_bytes = trace.buffer_bytes.max(filled.capacity_bytes());
-            for fragment in filled.batch().fragments.to_vec() {
+            for fragment in filled.batch(catalogue).fragments.to_vec() {
                 trace.fragments += 1;
                 completion.begin(fragment.key).expect("an open group");
                 let (filled, done_tx, free_tx) = (filled.clone(), done_tx.clone(), free_tx.clone());
@@ -292,7 +288,7 @@ pub(super) fn solve_concurrent(
                     let mut group = accumulator(fragment.key);
                     observe(
                         &mut group,
-                        &filled.batch(),
+                        &filled.batch(catalogue),
                         fragment.samples.clone(),
                         catalogue,
                         request,

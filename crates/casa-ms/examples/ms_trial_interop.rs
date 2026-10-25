@@ -22,24 +22,32 @@ use casa_ms::observation_io::{
     Msv4Codec, Msv4Observation, Msv4StorageOptions, Msv4Writer, OpenOptions,
 };
 use casa_observation::{
-    AccessRequest, BatchBuffers, Grouping, Layout, PartitionId, Precision, ReadEvent, Roles,
-    SampleTopology, TimeBaselineGrid, VisibilityCursor, WeightView,
+    AccessRequest, BatchBuffers, CorrelationRequest, Grouping, Observation, PartitionId, ReadEvent,
+    Roles, TimeBaselineGrid,
 };
 use serde_json::json;
 
 type Error = Box<dyn std::error::Error>;
 
-fn request(max_samples: usize) -> AccessRequest {
+fn request(batch_bytes: usize) -> AccessRequest {
     AccessRequest {
-        partition: PartitionId(0),
+        partitions: vec![PartitionId(0)],
         data_group: "base".to_string(),
         roles: Roles::ALL,
         channels: 0..8,
-        layout: Layout::SampleMajor,
-        precision: Precision::Native,
+        correlations: CorrelationRequest::ALL,
         grouping: Grouping::None,
-        max_samples,
+        batch_bytes,
     }
+}
+
+/// `request` budgeted for `times` whole times per batch.
+fn per_times(observation: &dyn Observation, times: usize) -> Result<AccessRequest, Error> {
+    let estimate = observation.estimate(&request(usize::MAX))?;
+    let partition = &estimate.partitions[0];
+    Ok(request(
+        partition.bytes_per_sample * partition.baselines * times,
+    ))
 }
 
 /// Convert the MSv2 at `ms` through batches into a new MSv4 at `out`.
@@ -61,7 +69,8 @@ fn write(ms: &Path, out: &Path) -> Result<(), Error> {
     for (index, partition) in catalogue.partitions.iter_mut().enumerate() {
         partition.spectral_window = format!("{}_{index}", partition.spectral_window);
     }
-    let grid = TimeBaselineGrid::from_traversal(&mut *observation.bind_read(&request(1_000))?)?;
+    let mut traversal = observation.bind_read(&request(usize::MAX))?;
+    let grid = TimeBaselineGrid::from_cursor(traversal.cursors[0].as_mut())?;
     let options = Msv4StorageOptions {
         dataset_name: "ms_trial_0".to_string(),
         creator: "casa-rs".to_string(),
@@ -71,9 +80,9 @@ fn write(ms: &Path, out: &Path) -> Result<(), Error> {
     };
     let mut writer = Msv4Writer::create(out, &catalogue, PartitionId(0), "base", &grid, &options)?;
     // Four times per batch, so batches straddle the five-time chunks.
-    let mut cursor = observation.bind_read(&request(40))?;
+    let mut traversal = observation.bind_read(&per_times(&*observation, 4)?)?;
     let mut buffers = BatchBuffers::default();
-    while let Some(event) = cursor.next(&mut buffers)? {
+    while let Some(event) = traversal.next(&mut buffers)? {
         let ReadEvent::Batch(batch) = event else {
             continue;
         };
@@ -140,25 +149,17 @@ fn dump(store: &Path, out: &Path) -> Result<(), Error> {
     let observation = Msv4Observation::open(store)?;
     let catalogue = observation.catalogue();
     let partition = &catalogue.partitions[0];
-    let mut cursor = observation.bind_read(&request(usize::MAX))?;
-    let realization = format!("{:?}", cursor.realization());
+    let mut traversal = observation.bind_read(&request(usize::MAX))?;
+    let estimate = format!("{:?}", traversal.estimate);
     let mut buffers = BatchBuffers::default();
-    let Some(ReadEvent::Batch(batch)) = cursor.next(&mut buffers)? else {
+    let Some(ReadEvent::Batch(batch)) = traversal.next(&mut buffers)? else {
         return Err("no batch".into());
     };
-    let SampleTopology::TimeBaseline(topology) = batch.topology else {
-        return Err("an MSv4 batch is factored".into());
-    };
-    let (times, baselines) = (topology.time.len(), topology.baselines.len());
+    let (times, baselines) = (batch.times(), batch.samples_per_time());
     let (channels, correlations) = (batch.channel_count(), batch.correlations.len());
     let group = batch.group;
-    let values = group
-        .values
-        .and_then(|v| v.as_complex32())
-        .ok_or("values")?;
-    let Some(WeightView::Spectral(weights)) = group.weights else {
-        return Err("MSv4 weights are spectral".into());
-    };
+    let values = group.values.ok_or("values")?;
+    let weights = group.weights.ok_or("weights")?;
     raw(
         out,
         "VISIBILITY",
@@ -193,7 +194,7 @@ fn dump(store: &Path, out: &Path) -> Result<(), Error> {
     raw(
         out,
         "time",
-        topology.time.offsets_s().as_slice().ok_or("layout")?,
+        batch.time.offsets_s().as_slice().ok_or("layout")?,
     )?;
     let centroid = batch.timing.centroid.ok_or("centroid")?;
     raw(
@@ -217,7 +218,7 @@ fn dump(store: &Path, out: &Path) -> Result<(), Error> {
             epochs.iter().map(|epoch| epoch.frac()).collect::<Vec<_>>(),
         )
     };
-    let (time_day, time_frac) = instants(topology.time);
+    let (time_day, time_frac) = instants(batch.time);
     let (centroid_day, centroid_frac) = instants(centroid);
     raw(
         out,
@@ -226,6 +227,7 @@ fn dump(store: &Path, out: &Path) -> Result<(), Error> {
     )?;
     let name =
         |antenna: casa_observation::AntennaId| catalogue.antennas[antenna.0 as usize].name.clone();
+    let observation_info = catalogue.observation(partition.observation);
     let manifest = json!({
         "shape": [times, baselines, channels, correlations],
         "arrays": {
@@ -238,32 +240,34 @@ fn dump(store: &Path, out: &Path) -> Result<(), Error> {
             "EFFECTIVE_INTEGRATION_TIME": {"dtype": "<f8", "shape": [times, baselines]},
             "frequency": {"dtype": "<f8", "shape": [channels]},
         },
-        "time_origin_mjd": topology.time.origin().day() + topology.time.origin().frac(),
-        "time_scale": format!("{:?}", topology.time.reference()),
+        "time_origin_mjd": batch.time.origin().day() + batch.time.origin().frac(),
+        "time_scale": format!("{:?}", batch.time.reference()),
         "time_instant_mjd": {"day": time_day, "frac": time_frac},
         "centroid_instant_mjd": {"day": centroid_day, "frac": centroid_frac},
         "interval_s": batch.interval_s(0),
         "scan_name": (0..times).map(|t| batch.scan(t * baselines).map(|scan| catalogue.scans[scan.0 as usize].name.clone())).collect::<Vec<_>>(),
         "frequency_frame": format!("{:?}", batch.frequency.reference()),
         "uvw_frame": format!("{:?}", group.uvw.ok_or("uvw")?.reference()),
-        "units": format!("{:?}", group.units),
-        "data_group": group.name,
+        "units": format!("{:?}", group.entry.units),
+        "data_group": group.entry.name,
         "polarization": batch.correlations.iter().map(|c| c.label()).collect::<Vec<_>>(),
-        "baseline_antenna1_name": topology.baselines.iter().map(|b| name(b.antenna1)).collect::<Vec<_>>(),
-        "baseline_antenna2_name": topology.baselines.iter().map(|b| name(b.antenna2)).collect::<Vec<_>>(),
-        "field_name": topology.field.iter().map(|f| catalogue.fields[*f as usize].name.clone()).collect::<Vec<_>>(),
+        "baseline_antenna1_name": batch.baselines.iter().map(|b| name(b.antenna1)).collect::<Vec<_>>(),
+        "baseline_antenna2_name": batch.baselines.iter().map(|b| name(b.antenna2)).collect::<Vec<_>>(),
+        "field_name": batch.field.iter().map(|f| catalogue.fields[f.0 as usize].name.clone()).collect::<Vec<_>>(),
         "field_phase_centre": catalogue.fields.iter().map(|f| {
             let (longitude, latitude) = f.phase_centre.as_angles();
             json!({"name": f.name, "rad": [longitude, latitude], "frame": format!("{:?}", f.phase_centre.refer())})
         }).collect::<Vec<_>>(),
         "spectral_window": partition.spectral_window,
         "channel_width_hz": partition.channel_widths_hz,
+        "intents": partition.intents,
+        "observation": {"telescope": observation_info.telescope, "project": observation_info.project, "observers": observation_info.observers},
         "antennas": catalogue.antennas.iter().map(|a| json!({
             "name": a.name, "station": a.station, "position_m": a.position.values(), "mount": a.mount,
             "dish_diameter_m": a.dish_diameter.value(), "receptors": a.receptors,
         })).collect::<Vec<_>>(),
-        "realization": realization,
-        "counters": format!("{:?}", cursor.counters()),
+        "estimate": estimate,
+        "counters": format!("{:?}", traversal.counters()),
     });
     fs::write(
         out.join("manifest.json"),

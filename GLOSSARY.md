@@ -143,6 +143,49 @@ canonical names, adopting current defaults for omitted optional values without
 aliases, migrations, or fallback interpretation.
 _Avoid_: Compatibility profile, historical run replay
 
+## Observation access
+
+The vocabulary of the MSv2/MSv4 observation boundary
+(`crates/casa-observation`, `docs/measurement-set/trial/revision-2-design.md`).
+
+**Partition**:
+One store unit of an opened observation, described by its content: spectral
+window, correlation products, intents, observing session and feed pair. An
+MSv4 dataset is one; the MSv2 adapter divides MAIN rows the same way XRADIO's
+converter does, so the same observation opens as the same partition set from
+either store. A batch never spans two.
+_Avoid_: Data description, SPW index, dataset path
+
+**Sample**:
+One (time, baseline) point of a partition's time × baseline grid: an MSv4
+`[time, baseline]` cell, or an MSv2 row placed on that grid. Payload arrays are
+`[sample, channel, correlation]`, sample `t × B + b`.
+_Avoid_: Row, visibility (which is one value of a sample)
+
+**Padding**:
+A grid cell no acquisition fills (an antenna that dropped out, a baseline not
+written): delivered as flag true, weight zero, NaN values and auxiliaries. The
+validity rule excludes it; nothing is read from disk for it.
+_Avoid_: Missing row, absent slot, occupancy
+
+**Batch Shape**:
+What one batch covers: the partition set, the channel window, the roles read,
+the correlation products delivered, and the number of whole times the byte
+budget admits. The estimate costs a batch shape before anything is read.
+_Avoid_: Cursor shape, chunk size, block size
+
+**Traversal Order**:
+The order batches arrive. Within one cursor it is fixed: whole times of one
+channel window of one partition, in time order. Across the observation it is
+the consumer's, expressed by which cursors it binds and runs, and when.
+_Avoid_: Iteration order, row order
+
+**Payload Order**:
+The element order inside one batch, `[sample, channel, correlation]`,
+correlation fastest, as both stores deliver it without a transpose. A
+channel-major view of the same memory is free; contiguity per plane is not.
+_Avoid_: Layout, memory order
+
 ## Imaging execution
 
 **Resource Policy**:

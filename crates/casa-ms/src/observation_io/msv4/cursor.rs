@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Traversals of an MSv4 dataset: factored time × baseline batches decoded
-//! straight into the caller's buffers.
+//! Traversals of an MSv4 dataset: whole times decoded straight into the
+//! caller's buffers.
 
 use std::ops::Range;
 
 use casa_observation::{
-    AccessRequest, BatchArrays, BatchBuffers, BatchHeader, Fill, IdLimits, IoCounters, Layout,
-    ObservationError, Occupancy, Precision, Realization, Sharing, TopologyShape, VisibilityCursor,
+    AccessRequest, BatchArrays, BatchBuffers, BatchHeader, Catalogue, IoCounters, NaturalBlocks,
+    ObservationError, PartitionEstimate, PartitionId, ResolvedRequest, Roles, Sharing, Step,
+    VisibilityCursor, times_per_batch,
 };
 use num_complex::Complex32;
 use zarrs::array::{
@@ -19,113 +20,62 @@ use super::metadata::{invalid, storage};
 use super::read::{Dataset, GroupArrays, Msv4Observation};
 use crate::observation_io::grouping::GroupIndex;
 
+/// Reusable decode storage for what cannot be decoded in place: the flag
+/// bytes before their conversion to `bool`, and the full correlation axis
+/// when a subset is delivered.
+#[derive(Default)]
+struct Scratch {
+    flag_bytes: Vec<u8>,
+    values: Vec<Complex32>,
+    weights: Vec<f32>,
+}
+
 /// A bound traversal of one MSv4 dataset: whole times in time order.
 pub struct Msv4Cursor<'o> {
     observation: &'o Msv4Observation,
     dataset: &'o Dataset,
     arrays: &'o GroupArrays,
-    request: AccessRequest,
-    times_per_batch: usize,
+    partition: PartitionId,
+    roles: Roles,
+    channels: Range<usize>,
+    resolved: ResolvedRequest,
     next_time: usize,
     groups: Option<GroupIndex>,
-    /// Decoded flag bytes, checked and converted to `bool`.
-    flag_bytes: Vec<u8>,
-    realization: Realization,
+    estimate: PartitionEstimate,
     counters: IoCounters,
+    scratch: Scratch,
 }
 
 impl<'o> Msv4Cursor<'o> {
     pub(super) fn bind(
         observation: &'o Msv4Observation,
         request: &AccessRequest,
+        estimate: PartitionEstimate,
     ) -> Result<Self, ObservationError> {
-        let dataset = observation
-            .datasets
-            .get(request.partition.0 as usize)
-            .ok_or_else(|| ObservationError::InvalidRequest {
-                reason: format!("no partition {:?}", request.partition),
-            })?;
-        if request.layout != Layout::SampleMajor {
-            return Err(ObservationError::Unsupported {
-                what: "the channel-major layout",
-            });
-        }
-        let arrays = dataset
-            .groups
-            .iter()
-            .find(|group| group.record.name == request.data_group)
-            .ok_or_else(|| ObservationError::InvalidRequest {
-                reason: format!("no data group {}", request.data_group),
-            })?;
-        // The visibilities were checked to be complex64 at opening.
-        let (Precision::Native | Precision::Complex32 { .. }) = request.precision;
-        let roles = request.roles;
-        for (wanted, present, variable) in [
-            (
-                roles.time_centroid,
-                dataset.centroid.is_some(),
-                "TIME_CENTROID",
-            ),
-            (
-                roles.exposure,
-                dataset.exposure.is_some(),
-                "EFFECTIVE_INTEGRATION_TIME",
-            ),
-            (
-                roles.interval,
-                dataset.interval_s.is_some(),
-                "time.integration_time",
-            ),
-            (roles.scan, dataset.scans.is_some(), "scan_name"),
-        ] {
-            if wanted && !present {
-                return Err(ObservationError::InvalidRequest {
-                    reason: format!("the dataset has no {variable}, which the request reads"),
-                });
-            }
-        }
-        let channel_total = observation
-            .catalogue
-            .partition(request.partition)
-            .frequencies_hz
-            .len();
-        if request.channels.is_empty() || request.channels.end > channel_total {
-            return Err(ObservationError::InvalidRequest {
-                reason: format!(
-                    "channels {:?} outside the partition's {channel_total}",
-                    request.channels
-                ),
-            });
-        }
-        let baselines = dataset.baselines.len();
-        let times_per_batch = (request.max_samples / baselines.max(1)).min(dataset.times.len());
-        if times_per_batch == 0 {
-            return Err(ObservationError::InvalidRequest {
-                reason: format!(
-                    "one time holds {baselines} samples, more than the {} a batch admits",
-                    request.max_samples
-                ),
-            });
-        }
+        let (dataset, entry) = observation.dataset(estimate.partition)?;
+        let resolved = request.resolve(entry)?;
+        let arrays = &dataset.groups[resolved.data_group];
         let groups = GroupIndex::new(
-            request.partition,
+            estimate.partition,
             request.grouping,
             observation.open.group_closure,
             &dataset.times,
             &arrays.fields,
+            dataset.scans.as_deref().unwrap_or(&[]),
         )?;
-        let realization = realization(dataset, arrays, request, times_per_batch)?;
         Ok(Self {
             observation,
             dataset,
             arrays,
-            request: request.clone(),
-            times_per_batch,
+            partition: estimate.partition,
+            roles: request.roles,
+            channels: request.channels.clone(),
+            resolved,
             next_time: 0,
             groups,
-            flag_bytes: Vec::new(),
-            realization,
+            estimate,
             counters: IoCounters::default(),
+            scratch: Scratch::default(),
         })
     }
 }
@@ -142,9 +92,8 @@ enum Extent {
 fn requested<'a>(
     dataset: &'a Dataset,
     arrays: &'a GroupArrays,
-    request: &AccessRequest,
+    roles: Roles,
 ) -> Vec<(&'a Array<FilesystemStore>, Extent)> {
-    let roles = request.roles;
     let mut read = Vec::new();
     for (wanted, array, extent) in [
         (roles.values, Some(&arrays.values), Extent::Cube),
@@ -169,21 +118,64 @@ fn requested<'a>(
     read
 }
 
-/// The chunks a traversal touches and the elements they hold, modelled
-/// from the chunk grid.
-fn realization(
-    dataset: &Dataset,
-    arrays: &GroupArrays,
+/// What `request` costs on partition `id`: the chunks the traversal
+/// touches and the elements they hold, modelled from the chunk grid, and
+/// the grid's shape.
+///
+/// # Errors
+///
+/// When the request names an unknown partition, data group, channel or
+/// product, asks for a role the dataset does not hold (`TIME_CENTROID`,
+/// `EFFECTIVE_INTEGRATION_TIME`, `time.integration_time` or `scan_name`),
+/// or budgets less than one time.
+pub(super) fn estimate(
+    observation: &Msv4Observation,
     request: &AccessRequest,
-    times_per_batch: usize,
-) -> Result<Realization, ObservationError> {
-    let times = dataset.times.len();
-    let baselines = dataset.baselines.len();
-    let mut decode_units = 0;
-    let mut decoded = 0;
-    let mut selected = 0;
-    let batches = times.div_ceil(times_per_batch);
-    let variables = requested(dataset, arrays, request);
+    id: PartitionId,
+) -> Result<PartitionEstimate, ObservationError> {
+    let (dataset, entry) = observation.dataset(id)?;
+    let resolved = request.resolve(entry)?;
+    let arrays = &dataset.groups[resolved.data_group];
+    let roles = request.roles;
+    for (wanted, present, variable) in [
+        (
+            roles.time_centroid,
+            dataset.centroid.is_some(),
+            "TIME_CENTROID",
+        ),
+        (
+            roles.exposure,
+            dataset.exposure.is_some(),
+            "EFFECTIVE_INTEGRATION_TIME",
+        ),
+        (
+            roles.interval,
+            dataset.interval_s.is_some(),
+            "time.integration_time",
+        ),
+        (roles.scan, dataset.scans.is_some(), "scan_name"),
+    ] {
+        if wanted && !present {
+            return Err(ObservationError::InvalidRequest {
+                reason: format!("the dataset has no {variable}, which the request reads"),
+            });
+        }
+    }
+    let (times, baselines) = (dataset.times.len(), entry.baselines.len());
+    let channels = request.channels.len();
+    let scalars = [roles.time_centroid, roles.exposure]
+        .into_iter()
+        .filter(|wanted| *wanted)
+        .count();
+    let bytes_per_sample = roles.sample_bytes(channels, resolved.correlations.len(), true, scalars);
+    let times_per_batch = times_per_batch(request.batch_bytes, bytes_per_sample, baselines, times)?;
+    let batches = if times_per_batch == 0 {
+        0
+    } else {
+        times.div_ceil(times_per_batch)
+    };
+    let (mut decode_units, mut decoded, mut selected) = (0, 0, 0);
+    let variables = requested(dataset, arrays, roles);
     for batch in 0..batches {
         let rows = batch * times_per_batch..((batch + 1) * times_per_batch).min(times);
         for &(array, extent) in &variables {
@@ -191,20 +183,30 @@ fn realization(
             let (units, elements) = chunk_cost(array, &subset)?;
             decode_units += units;
             decoded += elements;
-            selected += subset.num_elements_usize();
+            selected += match (extent, &resolved.correlation_indices) {
+                (Extent::Cube, Some(indices)) => {
+                    subset.num_elements_usize() / entry.correlations.len() * indices.len()
+                }
+                _ => subset.num_elements_usize(),
+            };
         }
     }
-    let per_sample = request.channels.len() * arrays.values.shape()[3] as usize;
-    Ok(Realization {
-        layout: Layout::SampleMajor,
-        factored: true,
-        samples_per_batch: times_per_batch * baselines,
+    let chunk = arrays.values.chunk_shape(&[0, 0, 0, 0]).map_err(storage)?;
+    Ok(PartitionEstimate {
+        partition: id,
+        times,
+        baselines,
+        bytes_per_sample,
+        times_per_batch,
         batches,
-        batch_payload_bytes: (times_per_batch * baselines)
-            .saturating_mul(per_sample * (8 + 1 + 4) + 3 * 8 + 2 * 8),
         decode_units,
         decoded_elements: decoded,
         selected_elements: selected,
+        natural_blocks: NaturalBlocks {
+            times: chunk[0].get() as usize,
+            channels: chunk[2].get() as usize,
+        },
+        padded_fraction: 0.0,
     })
 }
 
@@ -297,32 +299,28 @@ fn decode_into<T: bytemuck::Pod>(
         .map_err(storage)
 }
 
+/// Keep products `keep` of every `[channel][stored]` cell of `source`.
+fn gather<T: Copy>(source: &[T], stored: usize, keep: &[usize], target: &mut Vec<T>) {
+    target.clear();
+    target.reserve(source.len() / stored * keep.len());
+    for cell in source.chunks_exact(stored) {
+        target.extend(keep.iter().map(|&product| cell[product]));
+    }
+}
+
 impl Msv4Cursor<'_> {
     fn header(&self, times: usize) -> BatchHeader {
-        let dataset = self.dataset;
-        let catalogue = &self.observation.catalogue;
         BatchHeader {
-            partition: self.request.partition,
-            topology: TopologyShape::TimeBaseline {
-                times,
-                occupancy: Occupancy::Unknown,
-            },
-            first_channel: self.request.channels.start,
-            roles: self.request.roles,
-            spectral_weights: true,
-            row_flags: false,
-            time_scale: dataset.time_scale,
-            time_origin: dataset.time_origin,
-            frequency_frame: catalogue.partition(self.request.partition).frequency_frame,
-            uvw_frame: self.arrays.uvw_frame.effective,
-            interval: Sharing::Constant(dataset.interval_s.unwrap_or(f64::NAN)),
+            partition: self.partition,
+            data_group: self.resolved.data_group,
+            times,
+            first_channel: self.channels.start,
+            channels: self.channels.len(),
+            correlations: self.resolved.correlations.clone(),
+            roles: self.roles,
+            weights_per_channel: true,
+            interval: Sharing::Constant(self.dataset.interval_s.unwrap_or(f64::NAN)),
             exposure: Sharing::PerSample,
-            scan: Sharing::PerTime,
-            limits: IdLimits {
-                antennas: catalogue.antennas.len(),
-                fields: catalogue.fields.len(),
-                scans: catalogue.scans.len(),
-            },
         }
     }
 
@@ -333,41 +331,33 @@ impl Msv4Cursor<'_> {
     ) -> Result<(), ObservationError> {
         let dataset = self.dataset;
         let arrays = self.arrays;
-        let entry = self.observation.catalogue.partition(self.request.partition);
+        let catalogue = &self.observation.catalogue;
         let capacity = buffers.capacity_bytes();
         let header = self.header(rows.len());
         let mut fill = buffers.begin(header);
         let batch = fill.arrays();
-        batch.group_name.clone_from(&self.request.data_group);
-        let group_entry = entry
-            .data_groups
-            .iter()
-            .find(|group| group.name == self.request.data_group)
-            .expect("bound data group");
-        batch.units.clone_from(&group_entry.units);
-        batch.correlations.extend_from_slice(&entry.correlations);
-        batch
-            .frequency_hz
-            .extend_from_slice(&entry.frequencies_hz[self.request.channels.clone()]);
         batch
             .time_offsets_s
             .extend_from_slice(&dataset.times[rows.clone()]);
         batch.field.extend_from_slice(&arrays.fields[rows.clone()]);
-        batch.baselines.extend_from_slice(&dataset.baselines);
-        if self.request.roles.scan {
+        if self.roles.scan {
             let scans = dataset.scans.as_ref().expect("checked at binding");
             batch.scan.extend_from_slice(&scans[rows.clone()]);
         }
         self.decode_batch(batch, &rows)?;
         if let Some(groups) = self.groups.as_mut() {
-            groups.fragments(rows, dataset.baselines.len(), &mut batch.fragments);
+            groups.fragments(
+                rows,
+                catalogue.partition(self.partition).baselines.len(),
+                &mut batch.fragments,
+            );
         }
         self.counters.delivered_bytes += batch.values.len() * size_of::<Complex32>()
             + batch.flags.len()
             + batch.weights.len() * size_of::<f32>()
             + (batch.uvw.len() + batch.centroid_offsets_s.len() + batch.exposure_s.len())
                 * size_of::<f64>();
-        fill.finish()?;
+        fill.finish(catalogue)?;
         if buffers.capacity_bytes() > capacity {
             self.counters.buffer_growths += 1;
         }
@@ -375,7 +365,8 @@ impl Msv4Cursor<'_> {
     }
 
     /// Decode each requested variable's subset of times `rows` into
-    /// `batch`.
+    /// `batch`: in place when every product is delivered, else the whole
+    /// correlation axis into scratch and the delivered products gathered.
     fn decode_batch(
         &mut self,
         batch: &mut BatchArrays,
@@ -383,9 +374,12 @@ impl Msv4Cursor<'_> {
     ) -> Result<(), ObservationError> {
         let (dataset, arrays) = (self.dataset, self.arrays);
         let options = &self.observation.options;
-        let roles = self.request.roles;
-        let channels = &self.request.channels;
+        let roles = self.roles;
+        let channels = &self.channels;
+        let stored = arrays.values.shape()[3] as usize;
+        let keep = self.resolved.correlation_indices.as_deref();
         let counters = &mut self.counters;
+        let scratch = &mut self.scratch;
         let mut prepare = |wanted: bool,
                            array: Option<&Array<FilesystemStore>>,
                            extent: Extent|
@@ -399,36 +393,69 @@ impl Msv4Cursor<'_> {
             Ok(Some(subset))
         };
         if let Some(subset) = prepare(roles.values, Some(&arrays.values), Extent::Cube)? {
-            batch
-                .values
-                .resize(subset.num_elements_usize(), Complex32::default());
-            decode_into(
-                &arrays.values,
-                "complex64",
-                &subset,
-                &mut batch.values,
-                options,
-            )?;
+            let target = match keep {
+                None => &mut batch.values,
+                Some(_) => &mut scratch.values,
+            };
+            target.resize(subset.num_elements_usize(), Complex32::default());
+            decode_into(&arrays.values, "complex64", &subset, target, options)?;
+            if let Some(keep) = keep {
+                gather(&scratch.values, stored, keep, &mut batch.values);
+                counters.copied_elements += batch.values.len();
+            }
         }
         if let Some(subset) = prepare(roles.flags, Some(&arrays.flags), Extent::Cube)? {
-            self.flag_bytes.resize(subset.num_elements_usize(), 0);
+            scratch.flag_bytes.resize(subset.num_elements_usize(), 0);
             decode_into(
                 &arrays.flags,
                 "bool",
                 &subset,
-                &mut self.flag_bytes,
+                &mut scratch.flag_bytes,
                 options,
             )?;
-            for &byte in &self.flag_bytes {
-                batch.flags.push(match byte {
-                    0 => false,
-                    1 => true,
-                    _ => return Err(invalid(format!("FLAG byte {byte} is not a boolean"))),
-                });
+            let flag = |byte: u8| match byte {
+                0 => Ok(false),
+                1 => Ok(true),
+                _ => Err(invalid(format!("FLAG byte {byte} is not a boolean"))),
+            };
+            match keep {
+                None => {
+                    for &byte in &scratch.flag_bytes {
+                        batch.flags.push(flag(byte)?);
+                    }
+                }
+                Some(keep) if self.resolved.flags_from_all => {
+                    for cell in scratch.flag_bytes.chunks_exact(stored) {
+                        let mut any = false;
+                        for &byte in cell {
+                            any |= flag(byte)?;
+                        }
+                        batch.flags.extend(std::iter::repeat_n(any, keep.len()));
+                    }
+                }
+                Some(keep) => {
+                    for cell in scratch.flag_bytes.chunks_exact(stored) {
+                        for &product in keep {
+                            batch.flags.push(flag(cell[product])?);
+                        }
+                    }
+                }
             }
-            counters.copied_elements += self.flag_bytes.len();
+            counters.copied_elements += scratch.flag_bytes.len();
         }
-        let float64 = [
+        if let Some(subset) = prepare(roles.weights, Some(&arrays.weights), Extent::Cube)? {
+            let target = match keep {
+                None => &mut batch.weights,
+                Some(_) => &mut scratch.weights,
+            };
+            target.resize(subset.num_elements_usize(), 0.0);
+            decode_into(&arrays.weights, "float32", &subset, target, options)?;
+            if let Some(keep) = keep {
+                gather(&scratch.weights, stored, keep, &mut batch.weights);
+                counters.copied_elements += batch.weights.len();
+            }
+        }
+        for (wanted, array, extent, target) in [
             (roles.uvw, Some(&arrays.uvw), Extent::Uvw, &mut batch.uvw),
             (
                 roles.time_centroid,
@@ -442,18 +469,7 @@ impl Msv4Cursor<'_> {
                 Extent::TimeBaseline,
                 &mut batch.exposure_s,
             ),
-        ];
-        if let Some(subset) = prepare(roles.weights, Some(&arrays.weights), Extent::Cube)? {
-            batch.weights.resize(subset.num_elements_usize(), 0.0);
-            decode_into(
-                &arrays.weights,
-                "float32",
-                &subset,
-                &mut batch.weights,
-                options,
-            )?;
-        }
-        for (wanted, array, extent, target) in float64 {
+        ] {
             if let Some(subset) = prepare(wanted, array, extent)? {
                 target.resize(subset.num_elements_usize(), 0.0);
                 decode_into(
@@ -470,24 +486,37 @@ impl Msv4Cursor<'_> {
 }
 
 impl VisibilityCursor for Msv4Cursor<'_> {
-    fn realization(&self) -> &Realization {
-        &self.realization
+    fn catalogue(&self) -> &Catalogue {
+        &self.observation.catalogue
     }
 
-    fn fill(&mut self, buffers: &mut BatchBuffers) -> Result<Option<Fill>, ObservationError> {
+    fn estimate(&self) -> &PartitionEstimate {
+        &self.estimate
+    }
+
+    fn step(&mut self) -> Step {
         if let Some(key) = self.groups.as_mut().and_then(GroupIndex::pop_end) {
-            buffers.clear();
-            return Ok(Some(Fill::GroupEnd(key)));
+            return Step::GroupEnd(key);
         }
+        if self.next_time == self.dataset.times.len() {
+            Step::End
+        } else {
+            Step::Batch
+        }
+    }
+
+    fn fill(&mut self, buffers: &mut BatchBuffers) -> Result<(), ObservationError> {
         let times = self.dataset.times.len();
         if self.next_time == times {
-            return Ok(None);
+            return Err(ObservationError::InvalidRequest {
+                reason: "fill after the end of the traversal".to_string(),
+            });
         }
-        let rows = self.next_time..(self.next_time + self.times_per_batch).min(times);
+        let rows = self.next_time..(self.next_time + self.estimate.times_per_batch).min(times);
         self.fill_batch(buffers, rows.clone())?;
         self.next_time = rows.end;
         self.counters.batches += 1;
-        Ok(Some(Fill::Batch))
+        Ok(())
     }
 
     fn counters(&self) -> IoCounters {

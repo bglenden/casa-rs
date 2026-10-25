@@ -1,8 +1,8 @@
 # MSv2/MSv4 trial evidence
 
-Status: revision 1 after the design review, stopped for review again; interfaces not frozen; not M0/M1 acceptance
+Status: revision 2 (the design walkthrough's decisions implemented), stopped for review again; interfaces not frozen; not M0/M1 acceptance
 Truth class: trial evidence
-Date: 2026-10-24
+Date: 2026-10-25
 Handoff: [trial-handoff.md](../trial-handoff.md)
 
 This is the evidence index for the trial's first assignment: two worked
@@ -42,16 +42,74 @@ results.
 | Catalogue rebinding | The calibration comparison maps antennas by station and position and fields by phase centre, refusing unmatched or ambiguous entries, instead of relying on list order. | example B tests |
 | `decode_units` wording | Documented as chunks the selection touches, modelled from the chunk grid (the realization and the counter use the same model), not decodes observed inside zarrs. | adapter laws |
 
-## Revision 2: the design walkthrough's decisions
+## Revision 2: the design walkthrough's decisions, implemented
 
 After revision 1 the owner walked through the design chunk by chunk. The 25
 decisions, the principle behind them (MSv4 is the future; MSv2 is assembled
 into its structures), the vocabulary (batch shape, traversal order, payload
-order), the facts verified against the pinned XRADIO source and a suggested
-implementation order are recorded in
-[revision-2-design.md](revision-2-design.md). Every open question listed at
-the end of this document is resolved there. Nothing of revision 2 is
-implemented yet.
+order; now in `GLOSSARY.md`), the facts verified against the pinned XRADIO
+source and the implementation order are recorded in
+[revision-2-design.md](revision-2-design.md), whose last section says what
+the implementation did with each decision. Revision 2 implemented them all,
+with the qualifications listed there (an MSv2 creator from batches was not
+built; `casa-imaging-model` keeps its own correlation type under the
+ADR-0016 dependency policy). Every open question listed at the end of this
+document is resolved. Both examples run unchanged in their science: the
+planes and the gains are bit-identical to production from both stores.
+
+What changed at the boundary:
+
+| Decision | Change | Test |
+| --- | --- | --- |
+| D1 | Per-partition constants (frequencies and frame, correlations, baseline table, time system, data groups with units and UVW frame) live once in `PartitionEntry`; a batch's views borrow them (`buffers.batch(&catalogue)`) and copy nothing; `BatchFill::finish` checks the batch against the catalogue. | `both_stores_deliver_one_batch_shape` (frequency and baseline pointers are the catalogue's) |
+| D2, D4 | A partition is a store unit described by content (spectral setup, intents, observing session, feed pair). The MSv2 adapter partitions MAIN rows as XRADIO does (`DATA_DESC_ID` × `OBS_MODE` × `OBSERVATION_ID` × `EPHEMERIS_ID` × feed pair, plus `OpenOptions::partition_scheme`); duplicate (time, baseline) rows and several `PROCESSOR_ID`s are refused at opening. | `catalogues_describe_the_same_observation`, `duplicate_rows_are_refused_at_opening` |
+| D3 | One topology: the MSv2 adapter places rows on the time × baseline grid at opening (`msv2/index.rs`); a cell no row fills is padding (flag true, weight 0, NaN values and auxiliaries). `Irregular`, `Occupancy` and the row-order refusal are gone. | `msv2_cells_no_row_fills_are_padding` |
+| D5 | `FLAG_ROW` is folded into the flags at fill; `row_flags` is gone. One weight view `[sample, channel, correlation]`: MSv2 `WEIGHT` is seen through a zero channel stride. | `flag_row_is_folded_into_the_flags`, `both_stores_deliver_one_batch_shape` |
+| D6, D11 | The request names a partition set; `bind_read` returns a `Traversal` of one `Send` cursor per partition with the estimate. | `the_estimate_is_the_bound_realization_and_models_the_store` |
+| D7, D10 | A byte budget (`batch_bytes`) replaces `max_samples`; `Observation::estimate` costs a batch shape from the catalogue and the store's geometry (times, baselines, bytes per sample, whole times per batch, batches, decode units, amplification, natural blocks, padded fraction) without reading payload, and binding returns the same `Estimate`. | same, `the_budget_fits_whole_times_or_refuses_binding` |
+| D8 | `NaturalBlocks`: the Zarr chunk shape (5 times × 4 channels) and the casacore tile shape, through a new `Table::array_column_tile_shape`. | same |
+| D9, D22 | `Layout` and `Precision` are gone: payload order follows the store; visibilities are `Complex<f32>`. | compile-time |
+| D12 | `next_owned(Option<BatchBuffers>)`: without buffers the cursor answers `End`, `GroupEnd` or `NeedBuffers`; nothing is lent at the end. | `the_budget_fits_whole_times_or_refuses_binding`, both examples' producers |
+| D13–D15 | `GroupKey` carries the scan; `Grouping::{TimeBins {combine_fields, combine_scans}, PerScan, PerIntegration}` with the clock of each (field, scan) key starting at its first time, as production `gaincal`. | `group_fragments_do_not_depend_on_batch_size`, grouping unit tests |
+| D16 | `Validity` stays inline; `mask_into` for multi-pass consumers. | consumers |
+| D17 | `CorrelationRequest { deliver, flags_from }`: a subset is delivered in the partition's order with its own flags or the OR over every product. | `a_correlation_subset_carries_the_flags_it_is_asked_for` |
+| D18, D21 | `Correlation` and `MUvw` in `casa-types`; `UvwView::get` is an `MUvw`. | casa-types unit tests |
+| D19, D20 | Measure views are built from the buffers and the catalogue entry; times stay offsets in the store's scale from the partition's origin. | `time_origins_re_express_each_other_exactly` |
+| D23, D24 | One declaration (`Catalogue` + `TimeBaselineGrid::from_cursor`); the writer's fill values are the padding convention and its row-flag refusal is gone; a batch's grid is the dataset's, so the writer's scatter path is gone. | writer laws |
+| D25 | `Catalogue::bind_to(&other, &BindingTolerance) -> Binding`; example B binds with it. | `catalogues_describe_the_same_observation`, example B |
+
+### What revision 2 taught
+
+- **The grid removes code everywhere it reaches.** Deleting `Irregular`
+  removed every topology `match` from the consumers, the writer's scatter
+  path and the "rows not in time order" refusal; the MSv2 cursor's only new
+  code is the placement of present rows (and padding) when a time is
+  incomplete or a correlation subset is delivered. The complete, all-product
+  case still reads straight into the batch arrays.
+- **Linking to the catalogue removed a class of disagreement.** Two writer
+  refusal tests (reversed correlation labels, a shifted frequency in a batch)
+  became impossible to write: a batch can no longer carry those values, so
+  the writer checks only what a batch states (its times, intervals,
+  baseline table) and what the declaration states (correlations, units).
+- **A byte budget changes a consumer's bookkeeping.** The imaging source
+  sized its maximum block from the full window and the pass's own assertion
+  caught the narrower one-plane wave fitting more times; the block is now
+  sized from the narrowest window's estimate. The estimate made that a
+  one-line fix, which is what D10 is for.
+- **Asking before lending** (`next_owned(None)`) removed the extra buffer
+  wait at the end of a traversal from both producers; the work-unit probe
+  and the concurrent solve ask first and lend only for a batch.
+- **The estimate equals the realization by construction**, since binding
+  computes it once and the cursors carry it; the test asserts equality
+  rather than re-deriving it.
+- **Subset gathering costs a copy** on both adapters (MSv4 decodes the full
+  correlation axis into scratch; MSv2 reads full cells), counted in
+  `copied_elements`. A strided in-place decode per product is the next
+  measurement, not a design question.
+- **The dependency policy bounds vocabulary unification.** `casa-types` now
+  owns `Correlation` and `MUvw`, but `casa-imaging-model` may depend on no
+  workspace crate (ADR-0016), so it keeps `CorrelationType`; changing that
+  is an Ask First item.
 
 ## Provenance
 
@@ -131,40 +189,66 @@ external data.
 ## Adapter laws
 
 `crates/casa-ms/tests/observation_io.rs` and its modules `refusals`,
-`writer` and `work`: 17 tests, all passing (the writer laws are described
+`writer` and `work`: 22 tests, all passing (the writer laws are described
 under interoperability, the refusals in revision 1's table). The shared
-types have 6 unit tests of their own (`cargo test -p casa-observation`).
+types have 6 unit tests of their own (`cargo test -p casa-observation`) and
+the adapters' group index 3.
 
 - Both catalogues describe the same observation in each store's own names
   (antennas with equal positions, field, phase centre, scan 1 with its
-  intent, frequencies and widths, LSRK, correlation order, data-group roles,
-  units and UVW frames: effective J2000 in both, stored `ITRF` in MSv2).
+  intent, one observing session, one partition of the same content:
+  frequencies and widths, LSRK, correlation order, intent; data-group roles,
+  units and UVW frames: effective J2000 in both, stored `ITRF` in MSv2; the
+  MSv2 partition keys its feed pair, the MSv4 one has none), and bind to
+  each other by content.
 - **Every sample XRADIO wrote equals its MSv2 row exactly**: visibilities,
-  flags, weights (MSv2's per-correlation `WEIGHT` broadcast, MSv4's
-  spectral `WEIGHT`), UVW, time, time centroid, interval, exposure and scan.
-  This holds for the whole band and for channel windows 2–5 and 7, at v4
-  batch sizes of 10, 20, 50 and 120 samples and v2 sizes of 1, 7, 25 and
-  120. The v4 store holds exactly the 120 v2 acquisitions.
+  flags, weights (MSv2's per-correlation `WEIGHT` seen through every
+  channel, MSv4's spectral `WEIGHT`), UVW, time, time centroid, interval,
+  exposure and scan. This holds for the whole band and for channel windows
+  2–5 and 7, at 1, 2, 5 and 12 whole times per v4 batch and 1, 3 and 5 per
+  v2 batch. The v4 store holds exactly the 120 v2 acquisitions.
 - The v2 batch's time auxiliaries equal MAIN's `TIME_CENTROID`,
   `INTERVAL`, `EXPOSURE` and `SCAN_NUMBER` as the production typed column
-  accessors read them cell by cell.
-- The MSv2 batch is listed (`Irregular`), with per-correlation weights,
-  `FLAG_ROW`, known occupancy and per-sample auxiliaries. The MSv4 batch is
-  factored (`TimeBaseline`, 4 times × 10 baselines), with spectral weights,
-  unknown occupancy, one interval for the batch and scans per time, and its
-  `[40, 8, 4]` view is the decode buffer itself (same pointer).
+  accessors read them cell by cell, each sample finding its row by time and
+  antennas (the grid, not MAIN's row order, orders the batch).
+- Both stores deliver one batch shape: 4 times × 10 baselines under a
+  four-time budget, field and scan per time, frequencies and baselines
+  borrowed from the catalogue, the `[40, 8, 4]` value view the decode
+  buffer itself. The stores differ only in sharing and strides: MSv2
+  `WEIGHT` has strides `[4, 0, 1]` and its interval is per sample; MSv4
+  weights are standard layout and its interval one constant.
 - MSv4 Unix-second times re-express the MSv2 MJD-second times exactly.
-- 60 s groups: each bin's 60 samples arrive once, in order, whatever the batch
-  size (10–120). Closure is announced exactly once, either as a `Last`/`Whole`
-  fragment or, from a store opened to defer it, as a later `GroupEnd`.
+- 60 s groups keyed by field and scan: each bin's 60 samples arrive once, in
+  order, whatever the batch size (1–12 times). Closure is announced exactly
+  once, either as a `Last`/`Whole` fragment or, from a store opened to defer
+  it, as a later `GroupEnd`.
+- A correlation subset (`These([YY, XX])`) is delivered as `[XX, YY]` with
+  the values and weights of those products and flags either their own or
+  the OR over all four, from both stores; the fixture flags some cross hands
+  alone, so the two policies differ on it.
+- One time that does not fit the byte budget fails binding; `next_owned`
+  without buffers answers `NeedBuffers` for a batch and `End` without one
+  at the end.
+- An MSv2 row removed from the fixture leaves a padded cell: flagged, NaN
+  values, UVW and auxiliaries, weight 0, excluded by the validity rule; the
+  other 119 samples are unchanged, the batch count is the grid's and the
+  estimate reports the padded fraction (1/120). A duplicated row is refused
+  at opening, naming both rows. A row with `FLAG_ROW` set has every value
+  flagged in the batch, its values untouched, and writes to MSv4 without
+  refusal.
 - A grouped batch split into two channel windows on two threads, one held
   back, completes each group's input once and finalizes each group once,
   after both windows' work; per-group sums equal a sequential traversal's,
   from both stores.
-- The binding models read amplification from the chunk grid before
+- The estimate models read amplification from the chunk grid before
   reading: 15/12 for the whole band (Zarr stores the ragged last time chunk
   at full size), and twice that for a two-channel window of four-channel
-  chunks. The cursor's count of touched chunks, by the same model, matches.
+  chunks; it reports the natural blocks (5 times × 4 channels for MSv4, the
+  tile shape for MSv2), the bytes per sample of the roles (352 for the MSv2
+  batch with its per-correlation weight and three per-sample scalars, 456
+  for the MSv4 batch) and the padded fraction. Binding returns the same
+  estimate, and the cursor's count of touched chunks, by the same model,
+  matches.
 
 ## Example A: dirty-image channel planes
 
@@ -187,42 +271,42 @@ read as agreement.
 | v2 batches, every plane resident | 0 | 0 | equal | 2–5 | 120 rows |
 | v4 batches, every plane resident | 0 | 0 | equal | 2–5 | 35 chunks |
 | v2 batches, one-plane waves | 0 | 0 | equal | 2–3, 2–4, 3–5, 4–5 | 480 rows |
-| v4 batches, one-plane waves | 0 | 0 | equal | same | 110 chunks |
-| either, batch sizes 1–120, 2 workers | 0 vs 120-sample run | 0 | equal | 2–5 | — |
+| v4 batches, one-plane waves | 0 | 0 | equal | same | 74 chunks |
+| either, 1, 3 or 7 times per batch, 2 workers | 0 vs 12-time run | 0 | equal | 2–5 | — |
 
 The planes are bit-identical to the production imager's: the same samples
 reach the same operator in the same order. A cube in waves on full-height
 time chunks decodes each frequency chunk once per wave that reaches it, so
-the v4 waves decode 110 chunks against 35 resident. This is the design's
-predicted amplification, measured.
+the v4 waves decode 74 chunks against 35 resident (revision 1 decoded 110:
+under a byte budget a narrower wave carries more times per batch, so fewer
+batches straddle the five-time chunks). This is the design's predicted
+amplification, measured, and the estimate reports it before the wave binds.
 
 ### Work units with unequal completion
 
 `crates/casa-imaging-application/tests/ms_trial/work_units.rs`:
 each of the four channels is a work unit gridding its one-channel window of
-every batch (40 samples, three batches) on its own thread. Unit 0 waits 60 ms
+every batch (four times, three batches) on its own thread. Unit 0 waits 60 ms
 before each batch. Every unit's plane equals the pass's (NRMS < 1e-6).
 
 | Strategy | Fast units done | Slow unit done | Producer stall | Batch buffers | Peak pinned | Copied |
 | --- | --- | --- | --- | --- | --- | --- |
-| Shared batch (`Arc<FilledBatch>`, pool of 2), v2 | 61.4 ms | 181.4 ms | 120.6 ms | 2 × 8.4 KB | 16.9 KB of batches | 0 |
-| Packed pieces (`FilledBatch::pack`, 2 per unit), v2 | 1.4 ms | 181.4 ms | 59.8 ms | 1 × 8.4 KB | 8.4 KB batch + 23.5 KB pieces | 7,680 elements |
-| Shared batch, v4 | 63.7 ms | 182.7 ms | 118.2 ms | 2 × 9.8 KB | 19.7 KB of batches | 0 |
-| Packed pieces, v4 | 4.1 ms | 182.7 ms | 58.1 ms | 1 × 9.8 KB | 9.8 KB batch + 12.8 KB pieces | 7,200 elements |
+| Shared batch (`Arc<FilledBatch>`, pool of 2), v2 | 61.3 ms | 181.3 ms | 60.5 ms | 2 × 7.4 KB | 14.8 KB of batches | 0 |
+| Packed pieces (`FilledBatch::pack`, 2 per unit), v2 | 1.1 ms | 181.3 ms | 60.0 ms | 1 × 7.4 KB | 7.4 KB batch + 15.4 KB pieces | 7,200 elements |
+| Shared batch, v4 | 63.4 ms | 182.6 ms | 59.3 ms | 2 × 9.7 KB | 19.4 KB of batches | 0 |
+| Packed pieces, v4 | 3.6 ms | 182.4 ms | 58.6 ms | 1 × 9.7 KB | 9.7 KB batch + 12.4 KB pieces | 7,200 elements |
 
-Revision 1, debug build, one run (the first pass's release-build run gave
-the same pattern: fast units at 61–62 ms shared and 0.6–2.3 ms packed). The
-slow unit's 3 × 60 ms delay dominates its time by design. The piece bytes
-now include the time auxiliaries the request reads.
+Revision 2, debug build, one run. The slow unit's 3 × 60 ms delay dominates
+its time by design. The v2 batch is smaller than in revision 1: it no
+longer carries frequencies, correlations, antennas, a group name or row
+flags, and its weight is one per correlation (its packed pieces keep that
+per-correlation weight, so a v2 piece is a different size from a v4 one
+while holding the same values).
 
-The producer now stops when the cursor hands its buffer back
-(`OwnedEvent::End`), not after a precomputed batch count. **Finding:**
-asking for the next event still takes a buffer, so with the shared pool
-exhausted the producer waits for one even when the answer is the end; that
-is the extra 60 ms of shared-batch stall against the first pass. A
-`next_owned(Option<BatchBuffers>)` that answers `End` without a buffer
-would remove it; this revision follows the review and leaves it as an open
-question.
+The producer asks what comes next before lending a buffer
+(`next_owned(None)`), so the shared-batch stall is the one 60 ms wait for
+the slow unit's buffer: revision 1's extra wait for a buffer that only
+learned the traversal was over is gone, as the open question predicted.
 
 Sharing costs no copy, but a slow unit pins every batch it has not finished,
 and once the pool is used up the fast units wait for its buffers. Packing
@@ -255,7 +339,7 @@ measured; nothing here is a performance claim.
 | Path | Store → buffer | Buffer → kernel | Notes |
 | --- | --- | --- | --- |
 | Production v2 (`MeasurementSetSource`) | typed `[row][channel][correlation]` fill | one copy into `NativeBlock` | — |
-| Trial v2 batch | the same typed fills, straight into `BatchBuffers` | one copy into `NativeBlock` (5,760 elements resident) | antennas converted from i32 (240 elements) |
+| Trial v2 batch | the same typed fills, straight into `BatchBuffers` (a complete time, every product); present rows placed and padded otherwise | one copy into `NativeBlock` (5,760 elements resident) | time auxiliaries placed from scratch (0 copied elements counted for the payload) |
 | Trial v4 batch | zarrs decodes each chunk's selection straight into `BatchBuffers` (`retrieve_array_subset_into`) | one copy into `NativeBlock` | flags decoded as bytes, checked and converted to `bool` (1,920 elements); target zeroed before decode |
 
 Batch buffers grow once, on the first fill, and are reused after that; they
@@ -284,30 +368,32 @@ arithmetic and its order are unchanged, and all 134 existing casa-calibration
 tests pass. The split also brought `observe` under the function-length limit,
 so its grandfathered `too_many_lines` exception is removed.
 
-The comparison renumbers each solve's antennas and fields into the
-production MeasurementSet's by context (antenna station and position, field
-phase centre), refusing unmatched or ambiguous entries, and asserts every
-row's antenna, field, spectral window, reference antenna, observation, scan
-and interval, then the gains, SNRs, weights and flags, with NaN as the
-worst difference.
+The comparison binds each solve's antennas and fields to the production
+MeasurementSet's with `Catalogue::bind_to` (antenna station and position,
+field phase centre, exact), which refuses unmatched or ambiguous entries,
+and asserts every row's antenna, field, spectral window, reference antenna,
+observation, scan and interval, then the gains, SNRs, weights and flags,
+with NaN as the worst difference. The request names every partition of the
+catalogue, 60 s bins per field and scan, and a byte budget of whole times.
 
-| Realization | Batch sizes | Closure | Gains vs production | SNR vs production | Weights vs production |
+| Realization | Whole times per batch | Closure | Gains vs production | SNR vs production | Weights vs production |
 | --- | --- | --- | --- | --- | --- |
-| Sequential, v2 | 1, 7, 25, 60, 120 rows | at delivery and deferred | identical | ≤ 1.2e-7 relative | ≤ 1.6e-7 relative |
-| Sequential, v4 | 10, 30, 40, 70, 120 samples | at delivery and deferred | identical | ≤ 1.2e-7 | ≤ 1.6e-7 |
-| Concurrent fragments, first held back 50 ms, v2 / v4 | 25 / 30 | both | ≤ 1.9e-7 absolute | ≤ 6.1e-6 | ≤ 2.1e-7 |
-| Production against itself | — | — | identical | ≤ 1.1e-7 | ≤ 1.6e-7 |
+| Sequential, v2 | 1, 3, 4, 7, 12 | at delivery and deferred | identical | ≤ 1.2e-7 relative | ≤ 1.6e-7 relative |
+| Sequential, v4 | 1, 3, 4, 7, 12 | at delivery and deferred | identical | ≤ 1.2e-7 | ≤ 1.6e-7 |
+| Concurrent fragments, first held back 50 ms, v2 / v4 | 3 | both | ≤ 1.9e-7 absolute | ≤ 6.2e-6 | ≤ 1.6e-7 |
+| Production against itself | — | — | identical | ≤ 1.2e-7 | ≤ 1.2e-7 |
 
-Scans, intervals and identities are equal in every row of every run; times
-are equal in the sequential runs and within 1e-6 s in the concurrent v2
-run (merged sums of times change their order).
+Scans, intervals, identities and times are equal in every row of every
+run. The two stores now give the same traces batch for batch (12, 4, 3, 2
+and 1 batches; at most two groups live), differing only in buffer bytes
+(3.8–42.7 KB for v2 with its per-correlation weight, 5.0–55.4 KB for v4).
 
-- **Groups cross batches.** At 7 rows per batch, each 60-sample group spans
-  up to ten batches (19 fragments over 18 batches). At one row per batch, a
-  group spans 60 batches, with one 800-byte buffer and one group's
-  sufficient statistics (32 entries) resident. Accumulator state depends on
-  the group's distinct times, antennas and baseline-correlations, not its
-  samples. No visibility is retained across batches.
+- **Groups cross batches.** At one time per batch a 60 s group spans six
+  batches with one group's sufficient statistics (32 entries) resident; at
+  four times per batch a group's two fragments straddle a batch boundary.
+  Accumulator state depends on the group's distinct times, antennas and
+  baseline-correlations, not its samples. No visibility is retained across
+  batches.
 - **Closure is exact.** Each group closes exactly once: two `Last`/`Whole`
   fragments at delivery, or two `GroupEnd` events from a store opened to
   defer closure. In the concurrent realization `GroupCompletion` joins the
@@ -327,17 +413,18 @@ run (merged sums of times change their order).
 - *Time auxiliaries and scan* (first pass: missing, supplied by the trial):
   now requested roles, delivered from both stores and asserted against
   production.
-- *Antenna identity* (first pass: list order): now rebound by context in
-  the comparison. A `CalibrationBinding` between observation and caltable
-  namespaces (contracts §2) is still untested.
+- *Antenna identity* (first pass: list order; revision 1: rebound by
+  context in test code): now `Catalogue::bind_to`, the contract's
+  `CalibrationBinding` over two opened observations. Binding a caltable's
+  own namespace is still untested.
 - *Closure bookkeeping* (first pass: hand-written in the consumer): now
   `casa_observation::GroupCompletion`, shared with the work-unit law.
 - **Finding:** production `gaincal` accumulates from `FLAG` and does not
-  read `FLAG_ROW`; the batch's validity rule excludes row-flagged samples.
-  On a row with `FLAG_ROW` set and its element flags clear the two would
-  differ. The fixture's `FLAG_ROW` is false everywhere, so this comparison
-  does not exercise the case; whether CASA excludes such rows is to be
-  checked separately.
+  read `FLAG_ROW`; the MSv2 adapter folds `FLAG_ROW` into the flags (D5),
+  so a row flagged only by it is excluded here and not in production. The
+  fixture's `FLAG_ROW` is false everywhere, so this comparison does not
+  exercise the case; whether CASA excludes such rows is to be checked
+  separately.
 
 ## MSv4 interoperability
 
@@ -350,12 +437,16 @@ environment).
 | Direction | What runs | Checks | Result |
 | --- | --- | --- | --- |
 | XRADIO writes, Rust reads | `ms_trial_interop dump` reads XRADIO's store through the trial reader and dumps every array the batch delivers, with each time's instant as the epoch views represent it. XRADIO's `open_processing_set` loads the same store, and the oracle compares the two. | 26 | **all pass** ([report](interop/xradio_writes_rust_reads.json)) |
-| Rust writes, XRADIO reads | `ms_trial_interop write` converts the MSv2 through 40-sample batches (which straddle the five-time chunks) into a fresh store with the trial writer. XRADIO opens it, `check_datatree` validates it and `.load()` forces every array. The oracle compares it with XRADIO's own conversion and with the MSv2 rows read through casacore. | 74 | **all pass** ([report](interop/rust_writes_xradio_reads.json)) |
+| Rust writes, XRADIO reads | `ms_trial_interop write` converts the MSv2 through four-time batches (which straddle the five-time chunks) into a fresh store with the trial writer. XRADIO opens it, `check_datatree` validates it and `.load()` forces every array. The oracle compares it with XRADIO's own conversion and with the MSv2 rows read through casacore. | 74 | **all pass** ([report](interop/rust_writes_xradio_reads.json)) |
 
 Array comparisons are exact; nothing in these conversions is lossy. Time
 comparisons are of the represented instants, as astropy (XRADIO's
 reference for its time attributes) reads each side: they agree to
-1e-11 s, the two-part MJD's rounding.
+1e-11 s, the two-part MJD's rounding. Revision 2's conversion packs 4,080
+elements where revision 1 packed 12,120
+([counters](interop/rust_write_counters.json)): the MSv2 batch is already on
+the dataset's grid, so only the per-correlation weight is written per
+channel and the time centroids re-expressed from MJD 0.
 
 - **XRADIO writes, Rust reads.** The oracle compares every value, flag and
   weight; `TIME_CENTROID` and `EFFECTIVE_INTEGRATION_TIME`; UVW, time and
@@ -375,25 +466,29 @@ reference for its time attributes) reads each side: they agree to
   padding; DATA, FLAG, the broadcast WEIGHT, UVW and EXPOSURE are equal,
   and the time and time-centroid instants equal the MSv2's (UTC).
 - **Rust-only laws.** `observation_io`'s `writer` module, run in CI:
-  stores written from MSv2 rows (packed into time × baseline order) and
-  from MSv4 batches (encoded straight from their views, 0 elements packed)
-  read back equal to the MSv2, time auxiliaries and scans included; nothing
+  stores written from MSv2 batches (their grid is the dataset's, so the
+  only packing left is the per-correlation weight written per channel and
+  the time centroids re-expressed from MJD 0, 4,080 elements) and from MSv4
+  batches (encoded straight from their views, 0 elements packed) read back
+  equal to the MSv2, time auxiliaries, scans and intents included; nothing
   is published until every time is written, a time is written once, a
   channel window is refused and a dropped writer removes its staging; a
-  batch that disagrees with the declaration in value (reversed correlation
-  labels, a shifted frequency, another field at a time, other units, a row
-  flag) is refused before anything of it is written, on the listed and
-  factored paths; two live writers stage apart and the second finish is
-  refused rather than replacing the first's dataset; and stale staging
-  directories with another dataset inside are never adopted.
+  batch that disagrees with the declaration in value (a time the dataset
+  lacks, another interval at a time) or a declaration that disagrees with
+  the batches (reversed correlation products, other units, a field the
+  catalogue lacks) is refused before anything of it is written, from either
+  store; two live writers stage apart and the second finish is refused
+  rather than replacing the first's dataset; and stale staging directories
+  with another dataset inside are never adopted.
 
 **Writer profile.** The writer takes the common `Catalogue`, a partition,
 a data group and a `TimeBaselineGrid` (the scientific declaration) and
 `Msv4StorageOptions` (dataset name, provenance, chunks, codec). It writes
 the main dataset's coordinates, the data group (`complex64`, `bool`,
 `float32`, `float64`), `TIME_CENTROID` and `EFFECTIVE_INTEGRATION_TIME`, an
-`antenna_xds` and a `field_and_source_<group>_xds`. Chunks are regular
-(here `[5, 10, 4, 4]`). Payload variables use Blosc-LZ4, none or
+`antenna_xds` and a `field_and_source_<group>_xds`. The payload variables'
+fill values are the padding convention (NaN, flag true, weight 0). Chunks
+are regular (here `[5, 10, 4, 4]`). Payload variables use Blosc-LZ4, none or
 Zstandard; coordinates use Zstandard. Each writer creates its own staging
 directory beside the destination (exclusively, under a name no other
 writer or later retry uses) and publishes with a rename that refuses to
@@ -439,7 +534,8 @@ catalogue.
 ## Keep, change or discard: the trial's summary for design review
 
 Revision 1 kept what the review asked to keep and made the changes it
-asked for (table at the top). What remains open:
+asked for (table at the top); revision 2 implemented the walkthrough's
+decisions (second table). What remains open:
 
 ### Keep
 
@@ -448,10 +544,10 @@ asked for (table at the top). What remains open:
   same `VisibilityBatch` fed the production imaging pass and the production
   gain accumulator from MSv2 and MSv4 with bit-identical science.
   Dispatch is one virtual call per bind and per batch.
-- **`ndarray` views under thin types.** Channel windows, sample windows of
-  whole times, transposes for the calibration layout and the factored `[T·B,
-  F, P]` view all borrow without copying; the MSv4 view is the decode buffer
-  itself.
+- **`ndarray` views under thin types.** Channel windows, time windows,
+  transposes for the calibration layout, the `[T·B, F, P]` view and the
+  zero-stride weight view all borrow without copying; the MSv4 view is the
+  decode buffer itself.
 - **Shared quantities in their stored form.** `Shared::{PerSample, PerTime,
   Constant}` carries an MSv4 interval once per batch and a scan once per
   time without expanding them, and `batch.interval_s(sample)` resolves any
@@ -466,9 +562,13 @@ asked for (table at the top). What remains open:
 
 ### Open questions for the next iteration
 
-Each of these has a decision in
-[revision-2-design.md](revision-2-design.md) (D12, D17, D16, D5, D25, D18 and
-D23 in order); they are kept here as the record of what revision 1 left open.
+Each of these was decided in [revision-2-design.md](revision-2-design.md)
+(D12, D17, D16, D5, D25, D18 and D23 in order) and implemented in revision
+2, with the qualifications recorded there; they are kept here as the record
+of what revision 1 left open. What revision 2 leaves open is in that
+record's last section: the time tolerance of the MSv2 grid, ephemeris as a
+content key, MSv2 tile-level amplification, strided subset decodes, the
+imaging model's correlation type, and an MSv2 creator from batches.
 
 1. **End of stream without a buffer.** `next_owned` returns the buffer at
    the end, as the review asked, but still needs one to ask; with an
@@ -498,9 +598,10 @@ D23 in order); they are kept here as the record of what revision 1 left open.
 - The runtime's `NativeBlock` copy: the trial kept it so the production pass
   ran unchanged. M2 should let the pass place directly from batch views
   (`NativeRow` already borrows slices).
-- The index of every row at MSv2 binding (time, field and data description
-  per row, three words per row, plus the scan of every row at opening) is
-  acceptable for the trial. M2's bounded source plan should replace it.
+- The MSv2 opening index (eleven key columns of every row while the grids
+  are built, then four bytes per grid cell) is acceptable for the trial;
+  its cost on a 10^8-row MeasurementSet is the measurement the design
+  record asks for before M2 keeps or replaces it.
 - Retained-byte figures (`capacity_bytes`, the work-unit ledger) count the
   batch buffers only, not allocations inside zarrs or casacore: they are
   probes, not admission bounds.
@@ -511,21 +612,24 @@ This pass touches parts of the M1 checklist and completes none of it.
 
 | M1 packet | Touched here | Still required |
 | --- | --- | --- |
-| `layout-precision` | Sample-major views from both stores, factored axes, Hz/m/s views, `complex64` | Channel-major layout, precision narrowing, unit requests and conversions, Jy/weight scaling |
+| `layout-precision` | One sample-major layout from both stores, the grid's axes, Hz/m/s views, `complex64`, correlation subsets with a flag policy | Unit requests and conversions, Jy/weight scaling, `complex128` when a store needs it |
 | `measures-bulk` | Native epoch, frequency and UVW array views only | Every family's prepared bulk conversion, ordered interpolation, scalar/CASA agreement, performance |
-| `group-lifecycle` | Time-bin groups, closure, concurrent fragments, split channel windows, `GroupCompletion`, one SPW | Interleaved SPWs, late samples, solve → caltable → reopen → apply, namespace rebinding |
+| `group-lifecycle` | Time-bin, per-scan and per-integration groups keyed by field and scan, closure, concurrent fragments, split channel windows, `GroupCompletion`, one cursor per partition, `Catalogue::bind_to` | Groups merged across partitions by a consumer, late samples, solve → caltable → reopen → apply |
 | `work-unit-lifetimes` | Unequal channel units, shared pinning against packing, bounded pools, buffers returned at the end | Cooperating workers on the admitted team, cancellation in flight, cube minor-cycle separation |
 | `native-role-updates` | — | All |
 | `conversion-fidelity` | One loss-free MSv2 → MSv4 profile, both converters | Every audited loss row, rejection policies |
-| `source-free-create` | Common catalogue + grid declaration, storage options, the narrow writer with per-batch validation, exclusive staging and no-replace publication | v2 creation, producer seam, backpressure, publication failure injection |
+| `source-free-create` | Common catalogue + grid declaration for both stores, padding fill values, storage options, the narrow writer with per-batch validation, exclusive staging and no-replace publication | v2 creation from batches, producer seam, backpressure, publication failure injection |
 | `store-retention-executor` | zarrs pinned; concurrency target 1 | Key/handle retention plateau, W1/W4 thread and buffer counts |
 | `object-failure` | — | All |
-| `production-access-cost` | Narrow diagnostics on a tiny fixture | The named MFS/cube/bandpass rows on both chunk geometries, noise bands |
+| `production-access-cost` | Narrow diagnostics on a tiny fixture; the estimate (bytes, batches, amplification, natural blocks, padding) as the planner's inquiry | The named MFS/cube/bandpass rows on both chunk geometries, noise bands |
 
 ## Unsupported in the trial (typed refusals)
 
-The channel-major layout; `complex128` and narrowing; more than one
-partition or data group per traversal; MSv4 time formats other than `unix`,
+`complex128` stores; more than one data group per traversal; MSv2 times
+merged by tolerance (distinct `TIME` values are distinct grid times); two
+rows of one time, baseline and partition, or several `PROCESSOR_ID`s in one
+partition; two fields or scans at one time of one partition; MSv4 time
+formats other than `unix`,
 `unix` times in a scale other than UTC, and MSv4 writes in other than
 `unix`/`utc`; MSv2 measure columns with a variable reference, and `TIME`
 and `TIME_CENTROID` in different scales; MSv2 UVW labelled with a celestial
@@ -533,8 +637,7 @@ frame other than the phase centres'; MSv4 groups whose UVW frame is not
 their phase centres'; frames other than fk5/icrs for directions and UVW;
 units other than the schema's (none are converted); MSv4 variables of other
 data types or dimension orders (bitmask flags included); one antenna name
-with two positions; groups over traversals that are not in time order;
-scan-based group keys; per-cell `WEIGHT_SPECTRUM` fallback; `SIGMA`,
-`FLAG_CATEGORY`; writing row flags, channel windows, incomplete times, or
-batches that disagree with the declaration; MSv4 sharding (not exercised);
-remote stores.
+with two positions; a batch budget smaller than one time; per-cell
+`WEIGHT_SPECTRUM` fallback; `SIGMA`, `FLAG_CATEGORY`; writing channel
+windows, correlation subsets, or batches that disagree with the
+declaration; MSv4 sharding (not exercised); remote stores.

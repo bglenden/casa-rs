@@ -32,10 +32,10 @@ use casa_imaging_runtime::pass::{
     WorkerTeam, run_major_cycle,
 };
 use casa_ms::observation_io::{OpenOptions, open as open_store};
-use casa_observation::{Correlation, Observation};
+use casa_observation::{Correlation, Observation, PartitionId};
 use flate2::read::GzDecoder;
 use ndarray::{Array2, ArrayD, Axis};
-use source::{BatchSource, SourceTrace};
+use source::{BatchSource, SourceTrace, per_times, request};
 use tar::Archive;
 
 /// Image size and cell: the fixture's natural beam spans about four cells.
@@ -180,11 +180,12 @@ struct TrialRun {
     waves: usize,
 }
 
-/// The production pass over `observation` through the batch source.
+/// The production pass over `observation` through the batch source, with
+/// `times` whole times per batch.
 fn trial(
     observation: &dyn Observation,
     residency: Residency,
-    max_samples: usize,
+    times: usize,
     workers: usize,
 ) -> TrialRun {
     let operator = operator(CHANNELS.len() as u32);
@@ -208,6 +209,12 @@ fn trial(
         chunk_placements: CHUNK_PLACEMENTS,
         chunk_sets: 1,
     };
+    let batch_bytes = per_times(
+        observation,
+        request(PartitionId(0), CHANNELS, true, 0),
+        times,
+    )
+    .batch_bytes;
     let mut source = BatchSource::new(
         observation,
         CHANNELS,
@@ -218,7 +225,7 @@ fn trial(
             Correlation::YX,
             Correlation::YY,
         ],
-        max_samples,
+        batch_bytes,
     );
     let mut waves: Vec<NormalImages> = Vec::new();
     let started = Instant::now();
@@ -374,7 +381,7 @@ fn consumer_modules_import_no_store_type() {
 /// production imager's on the MSv2, image, PSF and `sumwt`, with every
 /// plane resident and with one-plane waves that each bind their own
 /// channel window. The v2 and v4 batches carry the same values in the same
-/// order, so their images are identical.
+/// order (both are the partition's grid), so their images are identical.
 #[test]
 fn dirty_planes_from_both_stores_equal_the_production_imager() {
     let root = tempfile::tempdir().expect("root");
@@ -388,7 +395,7 @@ fn dirty_planes_from_both_stores_equal_the_production_imager() {
     ] {
         let mut runs = Vec::new();
         for (store, observation) in [("v2", &*v2), ("v4", &*v4)] {
-            let run = trial(observation, residency, 40, 1);
+            let run = trial(observation, residency, 4, 1);
             let (image, psf, sumwt) = worst(&production, &run.planes);
             println!(
                 "{store} {label}: waves {}, image NRMS {image:.2e}, PSF NRMS {psf:.2e}, sumwt {sumwt:.2e}; \
@@ -423,19 +430,19 @@ fn dirty_planes_from_both_stores_equal_the_production_imager() {
 fn dirty_planes_do_not_depend_on_batch_size() {
     let root = tempfile::tempdir().expect("root");
     let (v2, v4) = open(root.path());
-    let reference = trial(&*v2, Residency::All, 120, 1).planes;
-    for (store, observation, sizes) in [("v2", &*v2, [1, 7, 37]), ("v4", &*v4, [10, 30, 70])] {
-        for max_samples in sizes {
-            let run = trial(observation, Residency::All, max_samples, 2);
+    let reference = trial(&*v2, Residency::All, 12, 1).planes;
+    for (store, observation) in [("v2", &*v2), ("v4", &*v4)] {
+        for times in [1, 3, 7] {
+            let run = trial(observation, Residency::All, times, 2);
             let (image, psf, sumwt) = worst(&reference, &run.planes);
             println!(
-                "{store}, {max_samples} per batch, 2 workers: image NRMS {image:.2e}, PSF {psf:.2e}, \
+                "{store}, {times} times per batch, 2 workers: image NRMS {image:.2e}, PSF {psf:.2e}, \
                  sumwt {sumwt:.2e}; {} batches, {} decode units",
                 run.trace.io.batches, run.trace.io.decode_units
             );
             assert!(
                 image < 1e-6 && psf < 1e-6 && sumwt < 1e-9,
-                "{store} {max_samples}"
+                "{store} {times}"
             );
         }
     }
@@ -446,7 +453,7 @@ fn dirty_planes_do_not_depend_on_batch_size() {
 fn channel_work_units_retire_independently() {
     let root = tempfile::tempdir().expect("root");
     let (v2, v4) = open(root.path());
-    let reference = trial(&*v2, Residency::All, 120, 1).planes;
+    let reference = trial(&*v2, Residency::All, 12, 1).planes;
     for (store, observation) in [("v2", &*v2), ("v4", &*v4)] {
         for strategy in [
             work_units::Strategy::SharedBatch,
@@ -554,7 +561,7 @@ fn narrow_timings() {
     let (v2, v4) = open(root.path());
     for (store, observation) in [("v2", &*v2), ("v4", &*v4)] {
         let runs: Vec<TrialRun> = (0..RUNS)
-            .map(|_| trial(observation, Residency::All, 120, 1))
+            .map(|_| trial(observation, Residency::All, 12, 1))
             .collect();
         let (pass, pass_min) = spread(runs.iter().map(|run| run.pass).collect());
         let (read, read_min) = spread(runs.iter().map(|run| run.trace.read).collect());

@@ -14,10 +14,11 @@
 //! `antenna_xds` and a `field_and_source_<group>_xds`. It writes no
 //! pointing, system-calibration, weather or phase-calibration datasets and
 //! no `EFFECTIVE_CHANNEL_WIDTH`. Every time must be written exactly once,
-//! by whole times, from batches whose coordinates and context match the
-//! declaration ([`Msv4Writer::write_batch`]); the store is built in a
-//! staging directory of its own and published only by
-//! [`Msv4Writer::finish`].
+//! from batches whose coordinates and context match the declaration
+//! ([`Msv4Writer::write_batch`]); the payload variables' fill values are
+//! the padding convention (NaN, flag true, weight 0), so a cell never
+//! delivered reads back as padding; the store is built in a staging
+//! directory of its own and published only by [`Msv4Writer::finish`].
 
 mod payload;
 
@@ -26,8 +27,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use casa_observation::{
-    AntennaEntry, Catalogue, DataGroupEntry, FieldId, ObservationError, OrderedBaseline,
-    PartitionEntry, PartitionId, ScanId, TimeBaselineGrid, VisibilityUnits,
+    AntennaEntry, Catalogue, DataGroupEntry, FieldId, ObservationError, PartitionEntry,
+    PartitionId, ScanId, TimeBaselineGrid, VisibilityUnits,
 };
 use casa_types::measures::position::PositionRef;
 use casa_types::measures::{EpochView, MjdHighPrec};
@@ -93,7 +94,6 @@ struct Destination {
     grid: TimeBaselineGrid,
     /// The grid's times in Unix seconds, by bit pattern.
     times: HashMap<u64, usize>,
-    baselines: HashMap<OrderedBaseline, usize>,
 }
 
 /// The dataset's payload variables.
@@ -307,6 +307,11 @@ fn destination(
     if grid.field_per_time.len() != times || grid.scan_per_time.len() != times {
         return Err(request_error("the grid has one field and scan per time"));
     }
+    if grid.baselines.is_empty() || times == 0 {
+        return Err(request_error(
+            "the grid has at least one time and one baseline",
+        ));
+    }
     if !grid.times_s.windows(2).all(|pair| pair[0] < pair[1]) {
         return Err(request_error("the grid's times are strictly ascending"));
     }
@@ -352,12 +357,6 @@ fn destination(
                 .iter()
                 .enumerate()
                 .map(|(index, time)| (time.to_bits(), index))
-                .collect(),
-            baselines: grid
-                .baselines
-                .iter()
-                .enumerate()
-                .map(|(index, baseline)| (*baseline, index))
                 .collect(),
             grid: grid.clone(),
         },
@@ -414,9 +413,15 @@ impl Msv4Writer {
         create_group(&store, "/", json!({"type": "processing_set"}))?;
         let root = format!("/{}", options.dataset_name);
         let fields_xds = format!("field_and_source_{data_group}_xds");
-        writer.write_main_group(&store, &root, catalogue, options, &fields_xds)?;
+        let observation = catalogue.observation(writer.target.entry.observation);
+        writer.write_main_group(&store, &root, observation, options, &fields_xds)?;
         writer.write_coordinates(&store, &root, catalogue, &unix_times)?;
-        write_antennas(&store, &format!("{root}/antenna_xds"), catalogue)?;
+        write_antennas(
+            &store,
+            &format!("{root}/antenna_xds"),
+            catalogue,
+            &observation.telescope,
+        )?;
         writer.write_fields(&store, &format!("{root}/{fields_xds}"), catalogue)?;
         writer.payload = Some(writer.create_payload(&store, &root, options)?);
         Ok(writer)
@@ -426,7 +431,7 @@ impl Msv4Writer {
         &self,
         store: &Arc<FilesystemStore>,
         root: &str,
-        catalogue: &Catalogue,
+        observation: &casa_observation::ObservationEntry,
         options: &Msv4StorageOptions,
         fields_xds: &str,
     ) -> Result<(), ObservationError> {
@@ -454,9 +459,9 @@ impl Msv4Writer {
                 "type": "visibility",
                 "data_groups": groups,
                 "observation_info": {
-                    "observer": catalogue.observers,
+                    "observer": observation.observers,
                     "release_date": options.creation_date,
-                    "project_UID": catalogue.project,
+                    "project_UID": observation.project,
                 },
                 "processor_info": {"type": "", "sub_type": ""},
             }),
@@ -578,9 +583,10 @@ impl Msv4Writer {
             &["time"],
             &scans,
         )?;
-        // The scan intents are the scan coordinate's attribute: those of
-        // every scan written, in order of first use.
-        let mut intents = Vec::<String>::new();
+        // The scan intents are the scan coordinate's attribute: the
+        // partition's, then any further intent of a scan written, in order
+        // of first use.
+        let mut intents = entry.intents.clone();
         for ScanId(id) in &grid.scan_per_time {
             for intent in &catalogue.scans[*id as usize].intents {
                 if !intents.contains(intent) {
@@ -620,20 +626,22 @@ impl Msv4Writer {
             attributes,
         };
         let coordinates = json!(PAYLOAD_COORDINATES);
+        // Fill values are the padding convention: a cell never delivered
+        // reads back as a flagged NaN of weight zero.
         let values = create_array(
             store,
             &format!("{root}/VISIBILITY"),
             cube(
                 "complex64",
                 8,
-                json!([0.0, 0.0]),
+                json!(["NaN", "NaN"]),
                 json!({"type": "quanta", "units": units, "coordinates": coordinates}),
             ),
         )?;
         let flags = create_array(
             store,
             &format!("{root}/FLAG"),
-            cube("bool", 1, json!(false), json!({"coordinates": coordinates})),
+            cube("bool", 1, json!(true), json!({"coordinates": coordinates})),
         )?;
         let weights = create_array(
             store,
@@ -641,7 +649,7 @@ impl Msv4Writer {
             cube(
                 "float32",
                 4,
-                json!("NaN"),
+                json!(0.0),
                 json!({"coordinates": coordinates}),
             ),
         )?;
@@ -786,11 +794,12 @@ fn write_antennas(
     store: &Arc<FilesystemStore>,
     path: &str,
     catalogue: &Catalogue,
+    telescope: &str,
 ) -> Result<(), ObservationError> {
     create_group(
         store,
         path,
-        json!({"type": "antenna", "overall_telescope_name": catalogue.telescope, "relocatable_antennas": true}),
+        json!({"type": "antenna", "overall_telescope_name": telescope, "relocatable_antennas": true}),
     )?;
     let antennas = &catalogue.antennas;
     let count = antennas.len() as u64;
@@ -819,7 +828,7 @@ fn write_antennas(
         ("mount", column(|a| a.mount.clone())),
         (
             "telescope_name",
-            vec![catalogue.telescope.clone(); antennas.len()],
+            vec![telescope.to_string(); antennas.len()],
         ),
     ] {
         strings(

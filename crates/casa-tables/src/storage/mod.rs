@@ -3056,6 +3056,59 @@ impl CompositeStorage {
         }
     }
 
+    /// The tile shape of array column `column`'s tiled storage manager, in
+    /// casacore's axis order (the cell's axes, then rows), or `None` for a
+    /// column without a tiled manager.
+    pub(crate) fn array_column_tile_shape(
+        &self,
+        table_path: &Path,
+        column: &str,
+    ) -> Result<Option<Vec<usize>>, StorageError> {
+        let Some(dm) = self.array_column_tiled_manager(table_path, column)? else {
+            return Ok(None);
+        };
+        tiled_stman::tiled_tile_shape(table_path, dm)
+    }
+
+    /// The sequence number of `column`'s data manager when it is a tiled
+    /// one.
+    fn array_column_tiled_manager(
+        &self,
+        table_path: &Path,
+        column: &str,
+    ) -> Result<Option<u32>, StorageError> {
+        let control_path = table_path.join(TABLE_CONTROL_FILE);
+        if !table_path.exists() {
+            return Err(StorageError::MissingPath(table_path.to_path_buf()));
+        }
+        if !control_path.exists() {
+            return Err(StorageError::MissingControlFile(control_path));
+        }
+        let TableDatResult::Plain(table_dat) = read_table_dat_dispatch(&control_path)? else {
+            return Ok(None);
+        };
+        let Some(entry) = table_dat
+            .column_set
+            .columns
+            .iter()
+            .find(|entry| entry.original_name == column)
+        else {
+            return Ok(None);
+        };
+        let tiled = table_dat
+            .column_set
+            .data_managers
+            .iter()
+            .find(|dm| dm.seq_nr == entry.dm_seq_nr)
+            .is_some_and(|dm| {
+                matches!(
+                    dm.type_name.as_str(),
+                    "TiledColumnStMan" | "TiledShapeStMan" | "TiledCellStMan" | "TiledDataStMan"
+                )
+            });
+        Ok(tiled.then_some(entry.dm_seq_nr))
+    }
+
     pub(crate) fn array_column_2d_channel_tile_width(
         &self,
         table_path: &Path,
