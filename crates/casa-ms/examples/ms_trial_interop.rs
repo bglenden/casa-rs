@@ -76,7 +76,8 @@ fn write(ms: &Path, out: &Path) -> Result<(), Error> {
         codec: Msv4Codec::BloscLz4,
     };
     let mut writer = Msv4Writer::create(out, &catalogue, PartitionId(0), "base", &grid, &options)?;
-    // Four times per batch, so batches straddle the five-time chunks.
+    // Four times per batch, so batches straddle the five-time chunks and
+    // the writer holds their partial chunks.
     let mut traversal = observation.bind_read(&per_times(&*observation, 4)?)?;
     let mut buffers = BatchBuffers::default();
     while let Some(event) = traversal.next(&mut buffers)? {
@@ -94,6 +95,7 @@ fn write(ms: &Path, out: &Path) -> Result<(), Error> {
             "region_writes": counters.region_writes,
             "elements": counters.elements,
             "packed_elements": counters.packed_elements,
+            "held_elements": counters.held_elements,
             "partial_chunks": counters.partial_chunks,
         })
     );

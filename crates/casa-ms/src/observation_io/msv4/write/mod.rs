@@ -20,6 +20,7 @@
 //! delivered reads back as padding; the store is built in a staging
 //! directory of its own and published only by [`Msv4Writer::finish`].
 
+mod chunks;
 mod payload;
 
 use std::collections::HashMap;
@@ -83,10 +84,15 @@ pub struct Msv4WriteCounters {
     /// Elements copied to reorder or broadcast a batch into the stored
     /// layout before encoding.
     pub packed_elements: usize,
-    /// Chunks a batch covered only partly along time, counted for every
-    /// variable written: zarrs decodes, merges and re-encodes each, so a
-    /// batch aligned to [`Msv4Writer::chunk_times`] writes every chunk
-    /// once and counts none.
+    /// Elements held (copied) until their chunk was complete, because
+    /// their batch covered that chunk only partly; none when every batch
+    /// covers whole chunks of [`Msv4Writer::chunk_times`] times.
+    pub held_elements: usize,
+    /// Writes that covered a chunk only partly along time, counted for
+    /// every variable written: zarrs decodes, merges and re-encodes such a
+    /// chunk when its other times are written. Held times make this zero
+    /// for batches in time order; batches out of order, or a dataset
+    /// finished with times still held toward a chunk, count here.
     pub partial_chunks: usize,
 }
 
@@ -123,6 +129,8 @@ pub struct Msv4Writer {
     chunk_times: usize,
     options: CodecOptions,
     scratch: payload::Scratch,
+    /// Times held toward a chunk a batch covered only partly.
+    held: chunks::Held,
     counters: Msv4WriteCounters,
 }
 
@@ -422,6 +430,7 @@ impl Msv4Writer {
             target,
             options: CodecOptions::default().with_concurrent_target(1),
             scratch: payload::Scratch::default(),
+            held: chunks::Held::default(),
             counters: Msv4WriteCounters::default(),
         };
         // From here a failure drops the writer, which removes its staging.
@@ -814,10 +823,12 @@ impl Msv4Writer {
         self.counters
     }
 
-    /// Times per chunk ([`Msv4StorageOptions::chunks`]). A producer whose
-    /// batches hold a multiple of this many times, from a chunk boundary,
-    /// writes each chunk once; any other batch has its partly covered
-    /// chunks decoded and re-encoded ([`Msv4WriteCounters::partial_chunks`]).
+    /// Times per chunk ([`Msv4StorageOptions::chunks`]). Batches in time
+    /// order write each chunk once whatever their size: the times of a
+    /// chunk a batch covers only partly are held until the chunk is
+    /// complete ([`Self::buffer_bytes`]). A producer whose batches hold a
+    /// multiple of this many times, from a chunk boundary, makes the writer
+    /// hold nothing and copy nothing more.
     #[must_use]
     pub fn chunk_times(&self) -> usize {
         self.chunk_times

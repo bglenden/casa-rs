@@ -1,6 +1,6 @@
 # MSv2/MSv4 trial: revision 2 design record
 
-Status: design decisions for revision 2, agreed with the owner on 2026-10-24, implemented on the trial branch on 2026-10-25 (deviations listed under "What the implementation did with each decision"; D18 completed after the ADR-0016 amendment of the same day); refined in revisions 3 and 4 ("Revision 3 refinements", "Revision 4 refinements"); PR #898 stays a draft and the interfaces are not frozen
+Status: design decisions for revision 2, agreed with the owner on 2026-10-24, implemented on the trial branch on 2026-10-25 (deviations listed under "What the implementation did with each decision"; D18 completed after the ADR-0016 amendment of the same day); refined in revisions 3 and 4 ("Revision 3 refinements", "Revision 4 refinements"); the read contract frozen narrowly for M2 by the owner on 2026-10-25
 Truth class: proposed design
 Date: 2026-10-25
 Evidence index: [README.md](README.md)
@@ -499,7 +499,9 @@ revision 3. It keeps every decision; these changed form or gained a rule:
   per series, not every finalized group.
 - **D23.** The declaration comes from the boundary (`Observation::grid`),
   from the store's index; `TimeBaselineGrid::from_cursor` is gone. The writer
-  states its chunk extent and counts the chunks a batch covers only partly.
+  holds a batch's times in a chunk it covers only partly until the chunk is
+  complete (the owner's choice), so batches in time order encode every
+  chunk once, and it states the most it holds (`buffer_bytes`).
 - **Profile refusals.** `polarization_mixed` (a per-baseline basis) and,
   when centroids are requested, `TIME_CENTROID_EXTRA_PRECISION` are refused
   rather than read as something they are not; a grouping keyed by scan

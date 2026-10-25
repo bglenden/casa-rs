@@ -1,6 +1,6 @@
 # MSv2/MSv4 trial: review brief
 
-Status: revision 3 reviewed (Astra, Fable; 2026-10-25, at `a6852cc`); revision 4 answers both reviews and is open for re-review
+Status: revision 3 reviewed (Astra, Fable; 2026-10-25, at `a6852cc`); revision 4 answers both reviews; the owner waived a re-review and froze the read contract narrowly for M2 (2026-10-25)
 Truth class: review instructions
 Date: 2026-10-25
 
@@ -162,8 +162,9 @@ argue any of them should block the freeze:
   which does not, has been instrumented on such a row.
 - The buffer pool is bounded in bytes but not yet connected to the
   runtime's admission, and `zarrs`' internal codec scratch is not counted.
-- Unaligned MSv4 writes are counted (`partial_chunks`), not measured, and no
-  caller aligns its batches yet.
+- The MSv4 writer holds a batch's times in a chunk it covers only partly,
+  so batches in time order encode every chunk once; the held chunk
+  (`buffer_bytes`) is not yet admitted through the runtime.
 - The batch read was not compared with the production reader on the same
   large data; the trial's only like-for-like timings are on a 120-sample
   fixture.

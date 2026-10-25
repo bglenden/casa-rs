@@ -1,6 +1,6 @@
 # Native observation I/O for MSv2 and MSv4
 
-Status: revision 7; working design authorized for M0/M1 trial, not frozen
+Status: revision 7; working design; the read contract ([contracts](contracts.md) sections 1–6 and creation) frozen narrowly for M2 on 2026-10-25, the rest not frozen
 Truth class: design proposal
 Date: 2026-10-25
 Companion documents: [contracts](contracts.md), [implementation plan](implementation-plan.md)

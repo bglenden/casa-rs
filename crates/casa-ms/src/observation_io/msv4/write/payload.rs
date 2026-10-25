@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! The writer's payload: each batch checked against the declaration before
 //! any byte is written, encoded from its views where they are already in
-//! the stored layout, and the dataset published from a staging directory
-//! of its own.
+//! the stored layout and in whole chunks (`chunks`), and the dataset
+//! published from a staging directory of its own.
 
 use std::io;
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -12,9 +13,11 @@ use casa_observation::{ObservationError, ScanId, Shared, VisibilityBatch};
 use casa_types::measures::{EpochView, MjdHighPrec, UvwView};
 use ndarray::{ArrayView1, ArrayView3};
 use num_complex::Complex32;
-use zarrs::array::ArraySubset;
+use zarrs::array::{Array, ArraySubset, CodecOptions, Element};
+use zarrs::filesystem::FilesystemStore;
 
-use super::{Msv4Writer, request_error};
+use super::chunks::{self, Columns, Held, PerTime, Step};
+use super::{Msv4WriteCounters, Msv4Writer, Payload, request_error};
 use crate::observation_io::msv4::metadata::{UNIX_EPOCH_MJD, invalid, storage};
 
 /// Reusable working storage for what is not encoded straight from a view:
@@ -75,10 +78,20 @@ impl Msv4Writer {
     /// their views; a weight shared by every channel is written for each
     /// channel (counted as packed).
     ///
+    /// The chunks the batch covers whole are stored at once. Its times in a
+    /// chunk it covers only partly are held (copied) until the chunk's
+    /// other times arrive, and the chunk is then stored whole, so batches in
+    /// time order encode every chunk once whatever their size; at most one
+    /// chunk of times is held ([`Self::buffer_bytes`]). Held times that the
+    /// next batch does not continue are stored as they are, and that chunk
+    /// is decoded and re-encoded when its other times come
+    /// ([`Msv4WriteCounters::partial_chunks`]).
+    ///
     /// # Errors
     ///
     /// When a check fails, a time is written twice, or the batch is a
-    /// channel window. Nothing of the batch is then written.
+    /// channel window: nothing of the batch is then written or held. A
+    /// storage error leaves the dataset incomplete; drop the writer.
     pub fn write_batch(&mut self, batch: &VisibilityBatch<'_>) -> Result<(), ObservationError> {
         let Checked {
             values,
@@ -90,70 +103,79 @@ impl Msv4Writer {
             samples_per_time,
             placement,
         } = self.check(batch)?;
+        let values = contiguous(values, "visibilities")?;
+        let flags = contiguous(flags, "flags")?;
         self.gather_times(centroid, exposure, samples_per_time);
-        let [_, baselines, channels, correlations] = self.shape;
-        let rows = placement.first_time as u64..(placement.first_time + placement.times) as u64;
-        let cube = ArraySubset::new_with_ranges(&[
-            rows.clone(),
-            0..baselines as u64,
-            0..channels as u64,
-            0..correlations as u64,
-        ]);
-        let triple = ArraySubset::new_with_ranges(&[rows.clone(), 0..baselines as u64, 0..3]);
-        let plane = ArraySubset::new_with_ranges(&[rows, 0..baselines as u64]);
-        let options = &self.options;
-        let payload = self.payload.as_ref().expect("created");
-        let scratch = &mut self.scratch;
-        payload
-            .values
-            .store_array_subset_opt(&cube, contiguous(values, "visibilities")?, options)
-            .map_err(storage)?;
-        payload
-            .flags
-            .store_array_subset_opt(&cube, contiguous(flags, "flags")?, options)
-            .map_err(storage)?;
-        if weights.is_standard_layout() {
-            payload
-                .weights
-                .store_array_subset_opt(&cube, weights.to_slice().expect("standard"), options)
-                .map_err(storage)?;
-        } else {
-            scratch.weights.clear();
-            scratch.weights.extend(weights.iter());
-            self.counters.packed_elements += scratch.weights.len();
-            payload
-                .weights
-                .store_array_subset_opt(&cube, scratch.weights.as_slice(), options)
-                .map_err(storage)?;
+        if !weights.is_standard_layout() {
+            self.scratch.weights.clear();
+            self.scratch.weights.extend(weights.iter());
+            self.counters.packed_elements += self.scratch.weights.len();
         }
         let metres = uvw.metres();
-        payload
-            .uvw
-            .store_array_subset_opt(
-                &triple,
-                metres.as_standard_layout().as_slice().expect("standard"),
-                options,
-            )
-            .map_err(storage)?;
-        payload
-            .centroid
-            .store_array_subset_opt(&plane, scratch.centroid.as_slice(), options)
-            .map_err(storage)?;
-        payload
-            .exposure
-            .store_array_subset_opt(&plane, scratch.exposure.as_slice(), options)
-            .map_err(storage)?;
-        let samples = batch.samples();
-        self.counters.partial_chunks += 6 * partial_chunks(
-            placement.first_time..placement.first_time + placement.times,
-            self.chunk_times,
-            self.written.len(),
-        );
-        self.counters.region_writes += 6;
-        self.counters.elements += 3 * samples * channels * correlations + 5 * samples;
-        let rows = placement.first_time..placement.first_time + placement.times;
-        self.written[rows].iter_mut().for_each(|done| *done = true);
+        let metres = metres.as_standard_layout();
+        let scratch = &self.scratch;
+        let columns = Columns {
+            values,
+            flags,
+            weights: weights.to_slice().unwrap_or(scratch.weights.as_slice()),
+            uvw: metres.as_slice().expect("standard"),
+            centroid: &scratch.centroid,
+            exposure: &scratch.exposure,
+        };
+        let per = self.per_time();
+        let total = self.written.len();
+        let times = placement.first_time..placement.first_time + placement.times;
+        let in_batch =
+            |dataset: &Range<usize>| dataset.start - times.start..dataset.end - times.start;
+        let payload = self.payload.as_ref().expect("created");
+        for step in chunks::plan(self.held.times(), times.clone(), self.chunk_times, total) {
+            match step {
+                Step::Hold(held) => {
+                    self.counters.held_elements += held.len() * per.elements();
+                    let part = columns.times(&in_batch(&held), per);
+                    self.held.hold(held, part, per, self.chunk_times.min(total));
+                }
+                Step::Store(run) => {
+                    store(
+                        payload,
+                        &run,
+                        columns.times(&in_batch(&run), per),
+                        &self.options,
+                    )?;
+                    self.counters.region_writes += 6;
+                }
+                Step::Release => release(
+                    &mut self.held,
+                    payload,
+                    &self.options,
+                    &mut self.counters,
+                    self.chunk_times,
+                    total,
+                )?,
+            }
+        }
+        self.counters.elements += times.len() * per.elements();
+        self.written[times].iter_mut().for_each(|done| *done = true);
         Ok(())
+    }
+
+    /// The elements one time holds in each payload variable.
+    fn per_time(&self) -> PerTime {
+        let [_, baselines, channels, correlations] = self.shape;
+        PerTime {
+            baselines,
+            cube: baselines * channels * correlations,
+        }
+    }
+
+    /// The most the writer holds between batches: one chunk of times
+    /// ([`Self::chunk_times`]) of every payload variable, over every
+    /// baseline, channel and product. It is reserved when a batch first
+    /// covers a chunk only partly; batches that cover whole chunks hold
+    /// nothing.
+    #[must_use]
+    pub fn buffer_bytes(&self) -> usize {
+        self.chunk_times.min(self.written.len()) * self.per_time().bytes()
     }
 
     /// Everything the write needs of `batch`, checked against the
@@ -312,7 +334,8 @@ impl Msv4Writer {
         }
     }
 
-    /// Check every time was written and publish the processing set by
+    /// Check every time was written, store any times still held, and
+    /// publish the processing set by
     /// renaming this writer's staging directory to the destination, which
     /// must still not exist: the rename refuses to replace it (Linux
     /// `renameat2(RENAME_NOREPLACE)`, macOS `renamex_np(RENAME_EXCL)`). A
@@ -327,6 +350,16 @@ impl Msv4Writer {
     pub fn finish(mut self) -> Result<PathBuf, ObservationError> {
         if let Some(time) = self.written.iter().position(|done| !done) {
             return Err(invalid(format!("time {time} was never written")));
+        }
+        if !self.held.times().is_empty() {
+            release(
+                &mut self.held,
+                self.payload.as_ref().expect("created"),
+                &self.options,
+                &mut self.counters,
+                self.chunk_times,
+                self.written.len(),
+            )?;
         }
         drop(self.payload.take());
         let staging = self.staging.take().expect("staging until finish");
@@ -388,22 +421,56 @@ pub(super) fn create_staging(destination: &Path) -> Result<PathBuf, ObservationE
     }
 }
 
-/// Chunks of `chunk` times that `times` cover only partly, in a dataset of
-/// `total` times (the last chunk ends at `total`).
-fn partial_chunks(times: std::ops::Range<usize>, chunk: usize, total: usize) -> usize {
-    if times.is_empty() {
-        return 0;
+/// Store `columns`, the elements of dataset times `times`, into every
+/// payload variable.
+fn store(
+    payload: &Payload,
+    times: &Range<usize>,
+    columns: Columns<'_>,
+    options: &CodecOptions,
+) -> Result<(), ObservationError> {
+    let times = times.start as u64..times.end as u64;
+    store_times(&payload.values, &times, columns.values, options)?;
+    store_times(&payload.flags, &times, columns.flags, options)?;
+    store_times(&payload.weights, &times, columns.weights, options)?;
+    store_times(&payload.uvw, &times, columns.uvw, options)?;
+    store_times(&payload.centroid, &times, columns.centroid, options)?;
+    store_times(&payload.exposure, &times, columns.exposure, options)
+}
+
+/// Store `data` at `times` of `array`, over the whole of its other axes.
+fn store_times<T: Element>(
+    array: &Array<FilesystemStore>,
+    times: &Range<u64>,
+    data: &[T],
+    options: &CodecOptions,
+) -> Result<(), ObservationError> {
+    let ranges: Vec<Range<u64>> = std::iter::once(times.clone())
+        .chain(array.shape()[1..].iter().map(|&extent| 0..extent))
+        .collect();
+    array
+        .store_array_subset_opt(&ArraySubset::new_with_ranges(&ranges), data, options)
+        .map_err(storage)
+}
+
+/// Store the held times and hold none, counting their chunk as partly
+/// covered unless they are all of it.
+fn release(
+    held: &mut Held,
+    payload: &Payload,
+    options: &CodecOptions,
+    counters: &mut Msv4WriteCounters,
+    chunk: usize,
+    total: usize,
+) -> Result<(), ObservationError> {
+    let times = held.times();
+    store(payload, &times, held.columns(), options)?;
+    counters.region_writes += 6;
+    if times != chunks::chunk_of(times.start, chunk, total) {
+        counters.partial_chunks += 6;
     }
-    let (first, last) = (times.start / chunk, (times.end - 1) / chunk);
-    let partial = |index: usize| {
-        let whole = index * chunk..((index + 1) * chunk).min(total);
-        usize::from(times.start > whole.start || times.end < whole.end)
-    };
-    if first == last {
-        partial(first)
-    } else {
-        partial(first) + partial(last)
-    }
+    held.clear();
+    Ok(())
 }
 
 /// Rename `from` to `to`, failing with `AlreadyExists` rather than replace
@@ -468,20 +535,4 @@ fn checked_rename(from: &Path, to: &Path) -> io::Result<()> {
 fn c_path(path: &Path) -> io::Result<std::ffi::CString> {
     use std::os::unix::ffi::OsStrExt;
     Ok(std::ffi::CString::new(path.as_os_str().as_bytes())?)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::partial_chunks;
-
-    #[test]
-    fn a_batch_covers_whole_chunks_only_when_aligned() {
-        assert_eq!(partial_chunks(0..5, 5, 12), 0);
-        assert_eq!(partial_chunks(0..10, 5, 12), 0);
-        assert_eq!(partial_chunks(10..12, 5, 12), 0, "the short last chunk");
-        assert_eq!(partial_chunks(0..4, 5, 12), 1);
-        assert_eq!(partial_chunks(4..8, 5, 12), 2);
-        assert_eq!(partial_chunks(1..3, 5, 12), 1);
-        assert_eq!(partial_chunks(8..12, 5, 12), 1);
-    }
 }

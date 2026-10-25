@@ -1,7 +1,7 @@
 # Intermediate observation contracts
 
-Status: revision 7; the read contract the M0/M1 trial realizes, proposed for a
-narrow M2 freeze, not frozen
+Status: revision 7; the read contract the M0/M1 trial realizes, frozen
+narrowly for M2 by the owner on 2026-10-25
 Truth class: design proposal
 Date: 2026-10-25
 
@@ -11,8 +11,13 @@ native shape, and the MSv2 adapter assembles MSv2 data into it.
 
 Sections 1 to 6 and the creation part of section 7 are the **current
 contract**: what the trial's `casa-observation` crate and its `casa-ms`
-adapters implement, stated directly, with the profile's refusals. They are the
-candidate for a narrowly stated read-contract freeze for M2. Section 8 holds
+adapters implement, stated directly, with the profile's refusals. The owner
+froze them, narrowly, for M2 on 2026-10-25 (#898): M2 builds on them, and a
+change to them follows the implementation plan's change control (its section
+10). The freeze is narrower than the M1 gate. The M1 rows the trial did not
+complete (trial README, "M1 coverage") stay open, and porting the applications
+is expected to show where the design is not sufficient; such a finding
+reopens the section concerned through the same change control. Section 8 holds
 the **provisional capabilities**: designed but not realized or not proven,
 each with the acceptance obligation it must meet before it joins the contract.
 Updates (section 7) are provisional too. How the design got here (decisions D1
@@ -708,10 +713,15 @@ sub-dataset is written into a staging directory of the writer's own; the
 dataset is published by a rename that refuses to replace an existing one, and
 a dropped or failed writer removes its staging.
 
-A batch whose times are a multiple of the writer's `chunk_times`, from a chunk
-boundary, writes each chunk once; any other has its partly covered chunks
-decoded, merged and re-encoded by zarrs, which the writer counts
-(`partial_chunks`). Producers should align batches to it.
+Batches in time order encode every chunk once, whatever their size. The
+writer stores the chunks a batch covers whole straight from its views, and
+holds (copies) the batch's times in a chunk it covers only partly until the
+chunk's other times arrive, then stores that chunk whole. It holds at most one
+chunk of times of every variable (`buffer_bytes`), which a producer budgets
+beside its batches; batches of a multiple of `chunk_times` times, from a chunk
+boundary, make it hold nothing. Held times the next batch does not continue
+(batches out of time order) are stored as they are, and zarrs decodes, merges
+and re-encodes that chunk when its other times come (`partial_chunks`).
 
 An MSv2 creator from batches is not built: the declaration is designed to serve
 one (cells in time order become rows, padded cells flagged NaN rows), and that
@@ -834,7 +844,7 @@ when its acceptance obligation is met.
 | Baseline-dependent polarization (`polarization_mixed`) | Refused at opening | A checked per-baseline basis mapping in the common metadata |
 | Centroid extra precision (`TIME_CENTROID_EXTRA_PRECISION`) | Refused when centroids are requested | The residual carried through the epoch view, slicing, packing and writing; adding it to a large f64 is not a substitute |
 | Four-dimensional `EFFECTIVE_INTEGRATION_TIME` | Refused | Per-channel exposure in the batch's timing |
-| Resource admission | Pool envelope and estimate bounds; not connected | Pool allocations, cursor scratch, the opening index, packed pieces and queues admitted through `HostResources` (`Reservation`/`Admitted<T>`), with cancellation-compatible backpressure; zarrs codec scratch discovered or conservatively bounded before work, failing with the minimum requirement; caches bounded by bytes and plateauing over increasing prefixes of present and missing chunk keys (`zarrs_filesystem` and codecs audited, not just `zarrs`) |
+| Resource admission | Pool envelope, estimate and writer bounds; not connected | Pool allocations, cursor scratch, the opening index, packed pieces, the writer's held chunk and queues admitted through `HostResources` (`Reservation`/`Admitted<T>`), with cancellation-compatible backpressure; zarrs codec scratch discovered or conservatively bounded before work, failing with the minimum requirement; caches bounded by bytes and plateauing over increasing prefixes of present and missing chunk keys (`zarrs_filesystem` and codecs audited, not just `zarrs`) |
 | Decode on the admitted executor | zarrs' concurrency target set to one | Executing threads and simultaneously live codec buffers counted on the real decode path; no fall-through to a global pool |
 | Matched performance | Gross-cost checks on real data, a 120-sample like-for-like | Production-versus-batch timings on representative workloads, including sparse grids and restricted channel waves, before any no-loss claim |
 

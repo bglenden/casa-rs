@@ -1,6 +1,6 @@
 # MSv2/MSv4 trial evidence
 
-Status: revision 4 (the walkthrough's decisions, the cleanups revision 2 exposed, and the answers to the reviews of revision 3), stopped for review; interfaces not frozen; not M0/M1 acceptance
+Status: revision 4 (the walkthrough's decisions, the cleanups revision 2 exposed, and the answers to the reviews of revision 3); the read contract frozen narrowly for M2 by the owner, who waived a re-review (2026-10-25); not M0/M1 acceptance
 Truth class: trial evidence
 Date: 2026-10-25
 Handoff: [trial-handoff.md](../trial-handoff.md)
@@ -36,7 +36,7 @@ current contract directly ([contracts](../contracts.md), revision 7).
 | Fable: grouped read without `scan_name` panics | A grouping keyed by scan on a store that names none is refused at binding; `field_name` and `scan_name` lengths are checked at opening. | `a_grouping_needs_the_scans_it_keys_by` |
 | Fable: abandoned work hangs the join | A `WorkToken` dropped unfinished abandons its group; `finish`, `close` and `is_idle` report `WorkAbandoned`. The completion keeps each series' latest closed bin instead of every finalized group. | `abandoned_work_is_an_error_not_a_wait`, `a_group_is_ready_once_after_its_input_and_its_work` |
 | Fable: the pool's wait is unbounded | `BufferPool::waiting_at_most(limit)` fails with `PoolExhausted`; a refused `next_owned` consumes nothing. | `a_limited_take_reports_an_exhausted_pool`, the budget law (retry delivers the next time) |
-| Fable: chunk-straddling writes are unaligned | `Msv4Writer::chunk_times` and the `partial_chunks` counter. | writer law (24 partial chunks at four times per batch, none at twelve); interop write counters |
+| Fable: chunk-straddling writes are unaligned | The writer holds a batch's times in a chunk it covers only partly until the chunk is complete, then stores it whole; whole chunks are stored straight from the batch (the owner's choice of three: count only, refuse unaligned batches, or hold). `Msv4Writer::buffer_bytes` is the most it holds, one chunk of times; `held_elements` counts the copies and `partial_chunks` any chunk still stored partly. | writer law (four-time batches on five-time chunks: no partial chunk, times 0..10 held; twelve-time batches: nothing held), `batches_out_of_time_order_are_written_and_counted`, the plan's unit laws; interop write counters (partial chunks 24 → 0) |
 | Fable: padded and subset paths, parallel cursors unmeasured | The probe gains `--products` and `--parallel`, and `ms_trial_pad` pads a copy; the MSv2 cursor now spreads padded rows in place instead of decoding into scratch and copying. | scale check below; `spreading_in_place_is_placing` |
 | Fable: clippy fails on macOS | One `rename_noreplace` per platform, each ending in a tail expression. | clippy on the Mac mini |
 | Fable: request resolved twice; per-element validity in the examples; ignored `model_source`; `time_s` dropping the origin's fraction; `FlagsFrom` attribution; duplicated sentence | Resolved once per bind; `mask_into` once per batch or fragment; the parameter removed; the epoch view's own conversion; attributed to casa-rs's operator; contracts rewritten. | every law and example |
@@ -49,7 +49,25 @@ every target, on Linux and on the Mac mini (macOS 27.0.1); `casa-observation`
 `tools/ms-trial/check_interop.sh` 26/26 and 74/74 with both oracle reports
 unchanged (the write counters gain `partial_chunks`); imaging T0 and T1;
 `just arch-check`, `just docs-check`, strict MkDocs, rustdoc with broken and
-private links denied.
+private links denied. The held chunks came after: `casa-ms` library and
+adapter laws again (432 and 29 pass), the interoperability check
+again (26/26 and 74/74, oracle reports unchanged; the write counters gain
+`held_elements` and lose every partial chunk).
+
+### The owner's decisions on revision 4
+
+- **No re-review.** The owner waived an independent re-review of revision
+  4: what remains open is implementation, to be found as the applications
+  are ported, not design.
+- **A narrow freeze.** The read contract, [contracts](../contracts.md)
+  sections 1–6 and creation from batches, is frozen for M2; updates and the
+  provisional capabilities (its section 8) are not. Porting the applications
+  is expected to show where the design is not sufficient, and such a finding
+  reopens the contract concerned under the implementation plan's change
+  control.
+- **Whole-chunk writes.** Of counting partial chunks, refusing unaligned
+  batches, or holding partial chunks in the writer, the owner chose holding
+  (the Fable row above).
 
 ## Revision 3: the weak spots revision 2 exposed
 
@@ -584,7 +602,7 @@ environment).
 | Direction | What runs | Checks | Result |
 | --- | --- | --- | --- |
 | XRADIO writes, Rust reads | `ms_trial_interop dump` reads XRADIO's store through the trial reader and dumps every array the batch delivers, with each time's instant as the epoch views represent it. XRADIO's `open_processing_set` loads the same store, and the oracle compares the two. | 26 | **all pass** ([report](interop/xradio_writes_rust_reads.json)) |
-| Rust writes, XRADIO reads | `ms_trial_interop write` converts the MSv2 through four-time batches (which straddle the five-time chunks) into a fresh store with the trial writer. XRADIO opens it, `check_datatree` validates it and `.load()` forces every array. The oracle compares it with XRADIO's own conversion and with the MSv2 rows read through casacore. | 74 | **all pass** ([report](interop/rust_writes_xradio_reads.json)) |
+| Rust writes, XRADIO reads | `ms_trial_interop write` converts the MSv2 through four-time batches (which straddle the five-time chunks; the writer holds the partial ones) into a fresh store with the trial writer. XRADIO opens it, `check_datatree` validates it and `.load()` forces every array. The oracle compares it with XRADIO's own conversion and with the MSv2 rows read through casacore. | 74 | **all pass** ([report](interop/rust_writes_xradio_reads.json)) |
 
 Array comparisons are exact; nothing in these conversions is lossy. Time
 comparisons are of the represented instants, as astropy (XRADIO's
@@ -666,8 +684,10 @@ catalogue.
 - **Zarr stores edge chunks at full size.** Reading the twelve times of
   five-time chunks decodes fifteen (amplification 1.25). Writing batches that
   straddle chunk boundaries makes zarrs read, modify and rewrite the partial
-  chunks in place. That is fine for creation in staging, but it is not the
-  contract's atomic object replacement for updates.
+  chunks in place. Revision 4's writer holds a batch's times in such a chunk
+  until the chunk is complete, so creation in time order encodes each chunk
+  once; an update that covers a chunk partly still reads, modifies and
+  rewrites it, which is not the contract's atomic object replacement.
 - **XRADIO's own outputs need care.** Without a UVW reference it writes
   `frame: null`; its pointing dataset fails its own schema; and it writes
   visibility units `"unkown"`.
@@ -767,7 +787,7 @@ This pass touches parts of the M1 checklist and completes none of it.
 | `work-unit-lifetimes` | Unequal channel units, shared pinning against packing, pools bounded in buffers and bytes, buffers returned at the end, abandoned work reported, a pool wait that can be bounded | Cooperating workers on the admitted team, cancellation in flight, cube minor-cycle separation |
 | `native-role-updates` | — | All |
 | `conversion-fidelity` | One loss-free MSv2 → MSv4 profile, both converters | Every audited loss row, rejection policies |
-| `source-free-create` | Common catalogue + grid declaration for both stores (the grid from the store's index), padding fill values and padded partitions, storage options, the narrow writer with per-batch validation, chunk-alignment counts, exclusive staging and no-replace publication | v2 creation from batches, producer seam, backpressure, publication failure injection, measured cost of unaligned writes |
+| `source-free-create` | Common catalogue + grid declaration for both stores (the grid from the store's index), padding fill values and padded partitions, storage options, the narrow writer with per-batch validation, whole-chunk writes (partial chunks held), exclusive staging and no-replace publication | v2 creation from batches, producer seam, backpressure, publication failure injection, the held chunk admitted with the producer's batches |
 | `store-retention-executor` | zarrs pinned; concurrency target 1 | Key/handle retention plateau, W1/W4 thread and buffer counts |
 | `object-failure` | — | All |
 | `production-access-cost` | Narrow diagnostics on a tiny fixture; the estimate (bytes, batches, amplification, natural blocks, padding) as the planner's inquiry | The named MFS/cube/bandpass rows on both chunk geometries, noise bands |

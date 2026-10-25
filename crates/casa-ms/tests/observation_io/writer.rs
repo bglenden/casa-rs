@@ -64,9 +64,10 @@ fn write_all(writer: &mut Msv4Writer, observation: &dyn Observation, times: usiz
 /// MSv2, time auxiliaries and scans included. Both stores deliver the grid
 /// the dataset holds, so visibilities and flags are encoded straight from
 /// their views; the MSv2 weight shared by every channel is written for each
-/// channel (the one packing left), with batches that straddle the five-time
-/// chunks. XRADIO's own check of such a store is
-/// `tools/ms-trial/check_interop.sh`.
+/// channel (the one packing left). Four-time batches straddle the
+/// five-time chunks: their times in a chunk they cover partly are held
+/// until it is complete, so every chunk is still encoded once. XRADIO's
+/// own check of such a store is `tools/ms-trial/check_interop.sh`.
 #[test]
 fn rust_written_msv4_reads_back_equal_to_the_msv2() {
     let root = tempfile::tempdir().expect("root");
@@ -83,12 +84,26 @@ fn rust_written_msv4_reads_back_equal_to_the_msv2() {
         write_all(&mut writer, observation, times);
         let counters = writer.counters();
         assert_eq!(writer.chunk_times(), 5);
+        // Ten baselines of 8 channels × 4 products: 3 × 320 cube elements
+        // and 5 × 10 per-baseline ones at each time.
+        let per_time = 3 * 320 + 5 * 10;
+        assert_eq!(writer.buffer_bytes(), 5 * (320 * (8 + 1 + 4) + 10 * 5 * 8));
         assert_eq!(
-            counters.partial_chunks,
-            if times == 4 { 6 * (1 + 2 + 1) } else { 0 },
-            "{label}: four-time batches leave chunks 0..5 and 5..10 partly covered; \
-             twelve times cover every chunk whole"
+            counters.partial_chunks, 0,
+            "{label}: batches in time order never store a chunk partly"
         );
+        assert_eq!(
+            (counters.held_elements, counters.region_writes),
+            if times == 4 {
+                (10 * per_time, 6 * 3)
+            } else {
+                (0, 6)
+            },
+            "{label}: four-time batches hold times 0..10 and store chunks 0..5 and 5..10 \
+             when complete, and 10..12 straight from the last batch; twelve times are \
+             stored at once"
+        );
+        assert_eq!(counters.elements, 12 * per_time, "{label}");
         let written = writer.finish().expect("finish");
         let reopened = Msv4Observation::open(&written).expect("reopen");
         let read = samples(
@@ -169,6 +184,53 @@ fn a_padded_partition_is_declared_and_written() {
         }
     }
     assert_eq!(padded, 1);
+}
+
+/// Batches written out of time order (the last first) are still written
+/// whole and read back equal; the held times each batch does not continue
+/// are stored as they are, so their chunks are stored partly and counted.
+#[test]
+fn batches_out_of_time_order_are_written_and_counted() {
+    let root = tempfile::tempdir().expect("root");
+    let (_, v4) = open_both(root.path());
+    let reference = samples(
+        &mut v4.bind_read(&request(0..8, usize::MAX)).expect("bind"),
+        v4.catalogue(),
+    )
+    .expect("v4");
+    let mut traversal = v4
+        .bind_read(&per_times(&v4, request(0..8, 0), 4))
+        .expect("bind");
+    let mut buffers = BatchBuffers::default();
+    let mut owned = Vec::new();
+    while let Some(ReadEvent::Batch(batch)) = traversal.next(&mut buffers).expect("read") {
+        let mut copy = BatchBuffers::default();
+        copy.pack(&batch).expect("pack");
+        owned.push(copy);
+    }
+    assert_eq!(owned.len(), 3);
+    let out = root.path().join("reversed.ps.zarr");
+    let mut writer = create(&out, &v4, false);
+    for copy in owned.iter().rev() {
+        writer
+            .write_batch(&copy.batch().expect("batch"))
+            .expect("write");
+    }
+    assert_eq!(
+        writer.counters().partial_chunks,
+        6 * 3,
+        "8..10 stored before 5..8 arrives, 4..5 before 0..4, then 5..8 when 0..4 \
+         does not continue it; finish stores 0..4 partly too"
+    );
+    let reopened = Msv4Observation::open(writer.finish().expect("finish")).expect("reopen");
+    let read = samples(
+        &mut reopened
+            .bind_read(&request(0..8, usize::MAX))
+            .expect("bind"),
+        reopened.catalogue(),
+    )
+    .expect("read back");
+    assert_eq!(read, reference);
 }
 
 /// Staging directories beside `out`.
@@ -302,10 +364,11 @@ fn the_writer_refuses_batches_that_disagree_with_the_declaration() {
             let changed = edited(&batch, edit);
             let result = writer.write_batch(&changed.batch().expect("batch"));
             assert!(result.is_err(), "{store} {label}: refused");
+            let counters = writer.counters();
             assert_eq!(
-                writer.counters().region_writes,
-                0,
-                "{store} {label}: nothing written"
+                (counters.region_writes, counters.held_elements),
+                (0, 0),
+                "{store} {label}: nothing written or held"
             );
             writer
                 .write_batch(&batch)
@@ -348,7 +411,12 @@ fn the_writer_refuses_batches_that_disagree_with_the_declaration() {
             panic!("a batch");
         };
         assert!(writer.write_batch(&batch).is_err(), "{label}");
-        assert_eq!(writer.counters().region_writes, 0, "{label}");
+        let counters = writer.counters();
+        assert_eq!(
+            (counters.region_writes, counters.held_elements),
+            (0, 0),
+            "{label}"
+        );
     }
     let (catalogue, mut grid) = declaration(&v4, false);
     grid.field_per_time[0] = FieldId(7);

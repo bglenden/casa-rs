@@ -1,6 +1,6 @@
 # MeasurementSet architecture review
 
-Status: revision 5; authorized for M0/M1 trial, interfaces not frozen
+Status: revision 5; authorized for M0/M1 trial; the read contract frozen narrowly for M2 on 2026-10-25, the rest not frozen
 Truth class: design proposal
 Date: 2026-10-24
 Repository baseline: `221ec71545fe36a758ab0869e7512349b5db7c0e`
@@ -67,6 +67,10 @@ The documents and PR remain provisional: neither addressing a comment nor an
 agent recommendation finalizes the design. The MSv2 + MSv4 scope, MSv3 deferral,
 Measures requirement and use of `ndarray` are owner directions; they do not
 freeze the concrete APIs or authorize broad implementation before M1 review.
+After the trial, the owner froze the read contract narrowly for M2 on
+2026-10-25 ([contracts](contracts.md), sections 1–6 and creation from
+batches); the rest stays provisional
+([implementation plan](implementation-plan.md), section 10).
 
 ## Decisions for the owner and independent reviewers
 
