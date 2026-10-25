@@ -29,17 +29,30 @@ pub(super) struct GroupIndex {
 
 impl GroupIndex {
     /// Index the grid times `times` (seconds, ascending) with `fields` and
-    /// `scans` at each, or `None` when the request asks for no groups.
+    /// `scans` (when the store names scans) at each, or `None` when the
+    /// request asks for no groups.
     pub(super) fn new(
         partition: PartitionId,
         grouping: Grouping,
         closure: Closure,
         times: &[f64],
         fields: &[FieldId],
-        scans: &[ScanId],
+        scans: Option<&[ScanId]>,
     ) -> Result<Option<Self>, ObservationError> {
-        if matches!(grouping, Grouping::None) {
-            return Ok(None);
+        let keyed_by_scan = match grouping {
+            Grouping::None => return Ok(None),
+            Grouping::TimeBins { combine_scans, .. } => !combine_scans,
+            Grouping::PerScan { .. } | Grouping::PerIntegration => true,
+        };
+        if fields.len() != times.len() || scans.is_some_and(|scans| scans.len() != times.len()) {
+            return Err(ObservationError::InvalidStore {
+                reason: "the grid has not one field and scan per time".to_string(),
+            });
+        }
+        if keyed_by_scan && scans.is_none() {
+            return Err(ObservationError::InvalidRequest {
+                reason: "the grouping keys by scan, and the store names none".to_string(),
+            });
         }
         if let Grouping::TimeBins { width_s, .. } = grouping
             && width_s.partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater)
@@ -58,21 +71,14 @@ impl GroupIndex {
         let mut origins = BTreeMap::<(Option<FieldId>, Option<ScanId>), (f64, u64)>::new();
         let mut keys = Vec::with_capacity(times.len());
         let mut extent = BTreeMap::<GroupKey, Range<usize>>::new();
-        for (unit, ((&time, &field), &scan)) in times.iter().zip(fields).zip(scans).enumerate() {
-            let (field, scan) = match grouping {
+        for (unit, (&time, &field)) in times.iter().zip(fields).enumerate() {
+            // Present whenever the grouping keys by it, checked above.
+            let scan = scans.map(|scans| scans[unit]).filter(|_| keyed_by_scan);
+            let field = match grouping {
                 Grouping::None => unreachable!("handled above"),
-                Grouping::TimeBins {
-                    combine_fields,
-                    combine_scans,
-                    ..
-                } => (
-                    (!combine_fields).then_some(field),
-                    (!combine_scans).then_some(scan),
-                ),
-                Grouping::PerScan { combine_fields } => {
-                    ((!combine_fields).then_some(field), Some(scan))
-                }
-                Grouping::PerIntegration => (Some(field), Some(scan)),
+                Grouping::TimeBins { combine_fields, .. }
+                | Grouping::PerScan { combine_fields } => (!combine_fields).then_some(field),
+                Grouping::PerIntegration => Some(field),
             };
             let (origin, count) = origins.entry((field, scan)).or_insert((time, 0));
             let bin = match grouping {
@@ -167,7 +173,7 @@ mod tests {
             Closure::AtDelivery,
             &times,
             &fields,
-            &scans,
+            Some(&scans),
         )
         .expect("index")
         .expect("groups")

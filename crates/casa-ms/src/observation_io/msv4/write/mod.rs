@@ -83,6 +83,11 @@ pub struct Msv4WriteCounters {
     /// Elements copied to reorder or broadcast a batch into the stored
     /// layout before encoding.
     pub packed_elements: usize,
+    /// Chunks a batch covered only partly along time, counted for every
+    /// variable written: zarrs decodes, merges and re-encodes each, so a
+    /// batch aligned to [`Msv4Writer::chunk_times`] writes every chunk
+    /// once and counts none.
+    pub partial_chunks: usize,
 }
 
 /// What every batch written must agree with: the declaration, resolved
@@ -115,6 +120,7 @@ pub struct Msv4Writer {
     target: Destination,
     shape: [usize; 4],
     written: Vec<bool>,
+    chunk_times: usize,
     options: CodecOptions,
     scratch: payload::Scratch,
     counters: Msv4WriteCounters,
@@ -332,6 +338,13 @@ fn destination(
             "the grid names an identity the catalogue lacks",
         ));
     }
+    if crate::observation_io::distinct(&grid.field_per_time) != entry.fields
+        || crate::observation_io::distinct(&grid.scan_per_time) != entry.scans
+    {
+        return Err(request_error(
+            "the grid's fields and scans are not the partition's",
+        ));
+    }
     if entry
         .channel_widths_hz
         .iter()
@@ -391,6 +404,8 @@ impl Msv4Writer {
             )));
         }
         let (target, unix_times) = destination(catalogue, partition, data_group, grid)?;
+        let chunk_times = usize::try_from(options.chunks[0].max(1))
+            .map_err(|_| request_error("a chunk of more times than a usize holds"))?;
         let staging = payload::create_staging(processing_set)?;
         let mut writer = Self {
             staging: Some(staging.clone()),
@@ -403,6 +418,7 @@ impl Msv4Writer {
                 target.entry.correlations.len(),
             ],
             written: vec![false; grid.times_s.len()],
+            chunk_times,
             target,
             options: CodecOptions::default().with_concurrent_target(1),
             scratch: payload::Scratch::default(),
@@ -449,6 +465,20 @@ impl Msv4Writer {
                 "date": options.creation_date,
             }),
         );
+        let mut info = json!({
+            "observer": observation.observers,
+            "release_date": options.creation_date,
+            "project_UID": observation.project,
+        });
+        for (key, uid) in [
+            ("execution_block_UID", &observation.execution_block),
+            ("session_reference_UID", &observation.session_reference),
+            ("scheduling_block_UID", &observation.scheduling_block),
+        ] {
+            if let Some(uid) = uid {
+                info[key] = uid.clone().into();
+            }
+        }
         create_group(
             store,
             root,
@@ -458,11 +488,7 @@ impl Msv4Writer {
                 "creation_date": options.creation_date,
                 "type": "visibility",
                 "data_groups": groups,
-                "observation_info": {
-                    "observer": observation.observers,
-                    "release_date": options.creation_date,
-                    "project_UID": observation.project,
-                },
+                "observation_info": info,
                 "processor_info": {"type": "", "sub_type": ""},
             }),
         )
@@ -786,6 +812,15 @@ impl Msv4Writer {
     #[must_use]
     pub fn counters(&self) -> Msv4WriteCounters {
         self.counters
+    }
+
+    /// Times per chunk ([`Msv4StorageOptions::chunks`]). A producer whose
+    /// batches hold a multiple of this many times, from a chunk boundary,
+    /// writes each chunk once; any other batch has its partly covered
+    /// chunks decoded and re-encoded ([`Msv4WriteCounters::partial_chunks`]).
+    #[must_use]
+    pub fn chunk_times(&self) -> usize {
+        self.chunk_times
     }
 }
 

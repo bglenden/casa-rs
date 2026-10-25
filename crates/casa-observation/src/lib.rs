@@ -56,9 +56,10 @@
 //!   frequencies and UVW in native Measures views
 //!   ([`casa_types::measures::EpochView`] and friends), the payload as
 //!   [`ndarray`] views in the **payload order** `[sample, channel,
-//!   correlation]`, and one [`Validity`] rule over its stored flags. A
-//!   grid cell no acquisition filled is padding: flag true, weight 0,
-//!   values NaN.
+//!   correlation]`, and one [`Validity`] rule over its flags, values and
+//!   weights. A grid cell no acquisition filled is padding: flagged in
+//!   every store (the MSv4 adapter folds XRADIO's NaN weight into the
+//!   flag), its values and time auxiliaries NaN.
 //!
 //! # Example
 //!
@@ -120,8 +121,8 @@ pub use grouping::{
 };
 pub use pool::{BufferPool, FilledBatch};
 pub use request::{
-    AccessRequest, CorrelationRequest, Deliver, Estimate, FlagsFrom, Grouping, IoCounters,
-    NaturalBlocks, PartitionEstimate, ResolvedRequest, Roles, times_per_batch,
+    AccessRequest, CorrelationAxis, CorrelationRequest, Deliver, Estimate, FlagsFrom, Grouping,
+    IoCounters, NaturalBlocks, PartitionEstimate, ResolvedRequest, Roles, times_per_batch,
 };
 
 /// Why a request could not be bound or a traversal failed.
@@ -155,6 +156,22 @@ pub enum ObservationError {
         actual: usize,
         /// The length the header implies.
         expected: usize,
+    },
+    /// Every buffer of a [`BufferPool`] stayed in use for the wait limit
+    /// of the handle taking one ([`BufferPool::waiting_at_most`]). Nothing
+    /// was read: asking again continues the traversal where it was.
+    #[error("all {capacity} buffers of the pool stayed in use")]
+    PoolExhausted {
+        /// Buffers in the pool.
+        capacity: usize,
+    },
+    /// A unit of work on `group` ended without finishing its
+    /// [`WorkToken`]: it panicked, failed or was cancelled, so the group
+    /// cannot complete.
+    #[error("work on {group:?} was abandoned")]
+    WorkAbandoned {
+        /// The group.
+        group: GroupKey,
     },
     /// A batch's identities, fragments or sizes are inconsistent, or a
     /// consumer's completion bookkeeping was misused.

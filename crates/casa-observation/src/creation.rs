@@ -8,15 +8,16 @@
 
 use casa_types::measures::{EpochRef, MjdHighPrec};
 
-use crate::ObservationError;
-use crate::buffers::BatchBuffers;
 use crate::catalogue::{FieldId, OrderedBaseline, ScanId};
-use crate::cursor::VisibilityCursor;
-use crate::grouping::ReadEvent;
 
 /// The time × baseline rectangle of one partition, fixed before any payload
 /// is written: its baselines, its times with the field and scan of each,
 /// and the integration interval.
+///
+/// [`Observation::grid`](crate::Observation::grid) gives an opened
+/// partition's from the store's index, reading no payload. A cell no
+/// acquisition fills is still on the grid: it is written as padding, and
+/// its interval is not compared with the dataset's.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TimeBaselineGrid {
     /// Baselines, in dataset order.
@@ -31,61 +32,7 @@ pub struct TimeBaselineGrid {
     pub field_per_time: Vec<FieldId>,
     /// Scan at each time.
     pub scan_per_time: Vec<ScanId>,
-    /// Integration interval in seconds, one for the dataset.
+    /// Integration interval in seconds, one for the dataset: every
+    /// acquisition's.
     pub interval_s: f64,
-}
-
-impl TimeBaselineGrid {
-    /// The grid of everything one partition's cursor delivers: its times in
-    /// order with the field and scan at each, its baseline table, and its
-    /// one interval. The cursor must read the interval and scan roles.
-    ///
-    /// # Errors
-    ///
-    /// When the traversal fails, lacks the interval or scan, delivers no
-    /// time, or has more than one interval: a grid cannot represent that,
-    /// and the producer must say how to divide the samples first.
-    pub fn from_cursor(cursor: &mut dyn VisibilityCursor) -> Result<Self, ObservationError> {
-        let mut buffers = BatchBuffers::default();
-        let mut grid: Option<Self> = None;
-        while let Some(event) = cursor.next(&mut buffers)? {
-            let ReadEvent::Batch(batch) = event else {
-                continue;
-            };
-            let (Some(scan), Some(interval)) = (batch.scan, batch.timing.interval_s) else {
-                return Err(ObservationError::InvalidRequest {
-                    reason: "a grid needs the traversal's interval and scan roles".to_string(),
-                });
-            };
-            let grid = grid.get_or_insert_with(|| Self {
-                baselines: batch.baselines.to_vec(),
-                time_scale: batch.time.reference(),
-                time_origin: batch.time.origin(),
-                times_s: Vec::new(),
-                field_per_time: Vec::new(),
-                scan_per_time: Vec::new(),
-                interval_s: interval.get(0, batch.samples_per_time()),
-            });
-            for sample in 0..batch.samples() {
-                if batch.interval_s(sample) != Some(grid.interval_s) {
-                    return Err(ObservationError::Unsupported {
-                        what: "a grid with more than one integration interval",
-                    });
-                }
-            }
-            for (t, &offset) in batch.time.offsets_s().iter().enumerate() {
-                if grid.times_s.last().is_some_and(|last| *last >= offset) {
-                    return Err(ObservationError::InvalidStore {
-                        reason: format!("time {offset} does not follow the previous time"),
-                    });
-                }
-                grid.times_s.push(offset);
-                grid.field_per_time.push(batch.field[t]);
-                grid.scan_per_time.push(scan[t]);
-            }
-        }
-        grid.ok_or_else(|| ObservationError::InvalidRequest {
-            reason: "the traversal delivered no samples".to_string(),
-        })
-    }
 }

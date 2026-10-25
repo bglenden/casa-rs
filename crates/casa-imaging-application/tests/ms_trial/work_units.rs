@@ -58,8 +58,10 @@ pub struct Report {
     /// Time the producer spent asking a pool with no free buffer: waiting
     /// for storage to come back.
     pub producer_stall: Duration,
-    /// Batch buffers in the pool, and the capacity of the largest.
+    /// Batch buffers in the pool, the envelope of each (the estimate's
+    /// full batch) and the capacity of the largest.
     pub batch_buffers: usize,
+    pub envelope: usize,
     pub batch_buffer_bytes: usize,
     /// Most batch-buffer bytes not back in the pool at once.
     pub peak_batch_bytes: usize,
@@ -76,8 +78,9 @@ impl fmt::Display for Report {
         let ms = |d: Duration| d.as_secs_f64() * 1e3;
         write!(
             f,
-            "units done at [{}] ms; producer stalled {:.1} ms; {} batch buffers of {} B, \
-             peak {} B out of the pool; peak pieces {} B; copied {} elements; {} fills while held",
+            "units done at [{}] ms; producer stalled {:.1} ms; {} batch buffers of {} B \
+             (envelope {} B), peak {} B out of the pool; peak pieces {} B; copied {} elements; \
+             {} fills while held",
             self.unit_done
                 .iter()
                 .map(|d| format!("{:.1}", ms(*d)))
@@ -86,6 +89,7 @@ impl fmt::Display for Report {
             ms(self.producer_stall),
             self.batch_buffers,
             self.batch_buffer_bytes,
+            self.envelope,
             self.peak_batch_bytes,
             self.peak_piece_bytes,
             self.copied_elements,
@@ -103,6 +107,10 @@ impl Report {
         let slow = self.unit_done[0];
         let fast = *self.unit_done[1..].iter().max().expect("fast units");
         assert!(slow >= 3 * DELAY, "the held-back unit waits on every batch");
+        assert!(
+            self.batch_buffer_bytes <= self.envelope,
+            "a buffer stays within its envelope: {self}"
+        );
         match strategy {
             Strategy::SharedBatch => {
                 assert!(
@@ -110,7 +118,7 @@ impl Report {
                     "a fast unit waits for the slow unit's buffer: {self}"
                 );
                 assert!(self.batch_buffers <= SHARED_POOL);
-                assert!(self.peak_batch_bytes <= SHARED_POOL * self.batch_buffer_bytes);
+                assert!(self.peak_batch_bytes <= SHARED_POOL * self.envelope);
                 assert_eq!(self.copied_elements, 0);
                 assert!(self.producer_stall > Duration::ZERO);
                 assert!(self.fills_while_held >= 2, "{self}");
@@ -253,12 +261,17 @@ pub fn run(
             BATCH_TIMES,
         ))
         .expect("bind");
-    let batches = BufferPool::new(match strategy {
-        Strategy::SharedBatch => SHARED_POOL,
-        Strategy::PackedPieces => 1,
-    });
+    // A piece is a one-channel window of a batch: within a batch's envelope.
+    let envelope = traversal.estimate.peak_buffer_bytes();
+    let batches = BufferPool::new(
+        match strategy {
+            Strategy::SharedBatch => SHARED_POOL,
+            Strategy::PackedPieces => 1,
+        },
+        envelope,
+    );
     let pieces: Vec<BufferPool> = (0..units)
-        .map(|_| BufferPool::new(PIECES_PER_UNIT))
+        .map(|_| BufferPool::new(PIECES_PER_UNIT, envelope))
         .collect();
     let started = Instant::now();
     let mut report = Report {
@@ -266,6 +279,7 @@ pub fn run(
         unit_done: vec![Duration::ZERO; units],
         producer_stall: Duration::ZERO,
         batch_buffers: batches.capacity(),
+        envelope,
         batch_buffer_bytes: 0,
         peak_batch_bytes: 0,
         peak_piece_bytes: 0,

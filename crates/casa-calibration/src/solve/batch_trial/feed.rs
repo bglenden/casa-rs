@@ -18,7 +18,7 @@ use casa_observation::{
     OwnedEvent, ReadEvent, VisibilityBatch, WorkToken,
 };
 use casa_types::measures::MjdHighPrec;
-use ndarray::{Array2, s};
+use ndarray::{ArrayView2, s};
 
 use crate::solve::grouping::{SolveAccumulator, SolveSampleRow, SolveSamples, SolveWeights};
 use crate::solve::kernel::SolutionRow;
@@ -34,7 +34,9 @@ fn accumulator(key: GroupKey) -> SolveAccumulator {
 /// weights are views of the batch, transposed to the `[correlation,
 /// channel]` order the accumulator reads (a weight shared by every channel
 /// is the same view with a zero channel stride); the flags are the batch's
-/// validity rule, written into one small reusable array per call.
+/// validity rule, evaluated once over the samples
+/// ([`Validity::mask_into`](casa_observation::Validity::mask_into))
+/// and viewed the same way.
 ///
 /// # Panics
 ///
@@ -49,25 +51,33 @@ fn observe(
 ) {
     let values = batch.group.values.expect("values");
     let weights = batch.group.weights.expect("weights");
-    let validity = batch.validity();
+    let window = batch
+        .sample_window(samples.clone())
+        .expect("a fragment is whole times");
+    let mut mask = Vec::new();
+    window.validity().mask_into(&mut mask, window.shape());
     let codes: Vec<i32> = batch
         .correlations
         .iter()
         .map(|c| c.casacore_code())
         .collect();
     let channels: Vec<usize> = (0..batch.channel_count()).collect();
-    let mut flags = Array2::from_elem((codes.len(), channels.len()), false);
+    let cell = channels.len() * codes.len();
     let mjd_zero = MjdHighPrec::new(0.0, 0.0);
     let centroid = batch.timing.centroid.expect("time centroid");
     let per_time = batch.samples_per_time();
+    let first = samples.start;
     for sample in samples {
         let coordinate = batch.sample(sample);
         if coordinate.baseline.is_auto() {
             continue;
         }
-        for ((correlation, channel), flag) in flags.indexed_iter_mut() {
-            *flag = validity.excluded(sample, channel, correlation);
-        }
+        let flags = ArrayView2::from_shape(
+            (channels.len(), codes.len()),
+            &mask[(sample - first) * cell..(sample - first + 1) * cell],
+        )
+        .expect("one cell")
+        .reversed_axes();
         let scan = batch.scan(sample).expect("scan");
         group
             .observe_samples(
@@ -84,7 +94,7 @@ fn observe(
                             .expect("casacore scan numbers"),
                     },
                     data: values.slice(s![sample, .., ..]).reversed_axes(),
-                    flags: flags.view(),
+                    flags,
                     weights: SolveWeights::Spectrum(
                         weights.slice(s![sample, .., ..]).reversed_axes(),
                     ),
@@ -93,7 +103,6 @@ fn observe(
                     selected_channels: &channels,
                 },
                 request.gain_type,
-                request.model_source,
                 request.smodel[0],
             )
             .expect("observe");
@@ -212,6 +221,9 @@ pub(super) fn solve_concurrent(
     let mut partial = BTreeMap::<GroupKey, SolveAccumulator>::new();
     let mut completion = GroupCompletion::default();
     let (done_tx, done_rx) = mpsc::channel::<(WorkToken, SolveAccumulator)>();
+    // Dropped once production ends, so waiting for work ends when the
+    // last unit has sent or died.
+    let mut done_tx = Some(done_tx);
     let mut ready = |key: GroupKey, partial: &mut BTreeMap<GroupKey, SolveAccumulator>| {
         let group = partial.remove(&key).expect("group");
         finish(group, &available, request, refant, &mut rows);
@@ -234,13 +246,16 @@ pub(super) fn solve_concurrent(
                     partial.insert(key, group);
                 }
             }
-            if completion.finish(token) {
+            if completion
+                .finish(token)
+                .expect("no unit abandoned its work")
+            {
                 ready(key, partial);
             }
             next = done_rx.try_recv().ok();
         }
     };
-    let pool = BufferPool::new(CONCURRENT_POOL);
+    let pool = BufferPool::new(CONCURRENT_POOL, traversal.estimate.peak_buffer_bytes());
     std::thread::scope(|scope| {
         let mut first = true;
         loop {
@@ -264,7 +279,8 @@ pub(super) fn solve_concurrent(
             for fragment in filled.batch().fragments.to_vec() {
                 trace.fragments += 1;
                 let token = completion.begin(fragment.key).expect("an open group");
-                let (filled, done_tx) = (filled.clone(), done_tx.clone());
+                let filled = filled.clone();
+                let done_tx = done_tx.as_ref().expect("producing").clone();
                 let delay = std::mem::take(&mut first);
                 scope.spawn(move || {
                     if delay {
@@ -294,7 +310,8 @@ pub(super) fn solve_concurrent(
             drop(filled);
             join(&mut completion, &mut partial, &mut ready, false);
         }
-        while !completion.is_idle() {
+        done_tx = None;
+        while !completion.is_idle().expect("no unit abandoned its work") {
             join(&mut completion, &mut partial, &mut ready, true);
         }
     });

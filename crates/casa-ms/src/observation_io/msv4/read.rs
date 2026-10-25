@@ -9,7 +9,8 @@ use std::sync::Arc;
 use casa_observation::{
     AccessRequest, AntennaEntry, AntennaId, BoundCursor, Catalogue, Correlation, DataGroupEntry,
     Estimate, FieldEntry, FieldId, Observation, ObservationEntry, ObservationError, ObservationId,
-    OrderedBaseline, PartitionEntry, PartitionId, ScanEntry, ScanId, Traversal, UvwFrame,
+    OrderedBaseline, PartitionEntry, PartitionId, ScanEntry, ScanId, TimeBaselineGrid, Traversal,
+    UvwFrame,
 };
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::position::MPosition;
@@ -53,6 +54,10 @@ pub(super) struct Dataset {
     pub(super) interval_s: Option<f64>,
     /// `TIME_CENTROID`, when present.
     pub(super) centroid: Option<Array<FilesystemStore>>,
+    /// Whether `TIME_CENTROID_EXTRA_PRECISION` is present: the profile
+    /// carries one `f64` offset per centroid, so a request for centroids is
+    /// refused rather than truncated to the primary component.
+    pub(super) centroid_extra_precision: bool,
     /// `EFFECTIVE_INTEGRATION_TIME`, when present.
     pub(super) exposure: Option<Array<FilesystemStore>>,
     /// Catalogue scan at each time, when `scan_name` is present.
@@ -160,6 +165,15 @@ impl Msv4Observation {
                 what: "an MSv4 schema version other than 4.0.1",
             });
         }
+        if exists(root, &format!("{path}/polarization_mixed")) {
+            // The partition's correlations are one list for every baseline;
+            // a per-baseline basis under `PP`, `PQ`, `QP`, `QQ` would be
+            // lost (or misread as those labels' own types).
+            return Err(ObservationError::Unsupported {
+                what: "an MSv4 dataset whose polarization basis differs by baseline \
+                       (polarization_mixed)",
+            });
+        }
         let baselines = self.baselines(store, path)?;
         let observation = self.observation_info(store, path, attributes)?;
         let (times, time_attributes) = numbers::<f64>(store, &format!("{path}/time"))?;
@@ -202,10 +216,19 @@ impl Msv4Observation {
             Ok(Some(array))
         };
         let centroid = auxiliary("TIME_CENTROID", true)?;
+        let centroid_extra_precision =
+            exists(root, &format!("{path}/TIME_CENTROID_EXTRA_PRECISION"));
         let exposure = auxiliary("EFFECTIVE_INTEGRATION_TIME", false)?;
         let (scans, intents) = self.scans(store, root, path)?;
         let partition = self.partition(store, path)?;
         let field_names = strings(store, &format!("{path}/field_name"))?;
+        if field_names.len() != times.len()
+            || scans
+                .as_ref()
+                .is_some_and(|scans| scans.len() != times.len())
+        {
+            return Err(invalid("field_name and scan_name are not one per time"));
+        }
         let cube = [
             times.len(),
             baselines.len(),
@@ -243,10 +266,19 @@ impl Msv4Observation {
         if groups.is_empty() {
             return Err(invalid("no data group"));
         }
+        let fields: Vec<FieldId> = groups
+            .iter()
+            .flat_map(|group| group.fields.iter().copied())
+            .collect();
         self.catalogue_mut().partitions.push(PartitionEntry {
             intents,
             observation,
             feeds: None,
+            fields: crate::observation_io::distinct(&fields),
+            scans: scans
+                .as_deref()
+                .map(crate::observation_io::distinct)
+                .unwrap_or_default(),
             baselines,
             time_scale,
             time_origin,
@@ -257,6 +289,7 @@ impl Msv4Observation {
             times,
             interval_s,
             centroid,
+            centroid_extra_precision,
             exposure,
             scans,
             groups,
@@ -277,8 +310,16 @@ impl Msv4Observation {
             .next()
             .unwrap_or_default();
         let info = attributes.get("observation_info");
+        let uid = |key: &str| {
+            info.and_then(|info| info.get(key))
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string)
+        };
         let entry = ObservationEntry {
             telescope,
+            execution_block: uid("execution_block_UID"),
+            session_reference: uid("session_reference_UID"),
+            scheduling_block: uid("scheduling_block_UID"),
             project: info
                 .and_then(|info| info.get("project_UID"))
                 .and_then(serde_json::Value::as_str)
@@ -402,6 +443,8 @@ impl Msv4Observation {
             intents: Vec::new(),
             observation: ObservationId(0),
             feeds: None,
+            fields: Vec::new(),
+            scans: Vec::new(),
             baselines: Vec::new(),
             time_scale: casa_types::measures::EpochRef::UTC,
             time_origin: casa_types::measures::MjdHighPrec::new(0.0, 0.0),
@@ -662,6 +705,14 @@ impl Observation for Msv4Observation {
     fn bind_read(&self, request: &AccessRequest) -> Result<Traversal<'_>, ObservationError> {
         Msv4Observation::bind_read(self, request)
     }
+
+    fn grid(
+        &self,
+        id: PartitionId,
+        data_group: &str,
+    ) -> Result<TimeBaselineGrid, ObservationError> {
+        Msv4Observation::grid(self, id, data_group)
+    }
 }
 
 impl Msv4Observation {
@@ -674,14 +725,16 @@ impl Msv4Observation {
     /// correlation product, asks for a role a dataset does not hold
     /// (`TIME_CENTROID`, `EFFECTIVE_INTEGRATION_TIME`,
     /// `time.integration_time` or `scan_name`), or budgets less than one
-    /// time.
+    /// time. [`ObservationError::Unsupported`] when it asks for centroids
+    /// that a dataset splits into `TIME_CENTROID` and
+    /// `TIME_CENTROID_EXTRA_PRECISION`.
     pub fn estimate(&self, request: &AccessRequest) -> Result<Estimate, ObservationError> {
         Ok(Estimate {
             partitions: request
                 .partitions
                 .iter()
-                .map(|&id| super::cursor::estimate(self, request, id))
-                .collect::<Result<_, _>>()?,
+                .map(|&id| Ok(super::cursor::estimate(self, request, id)?.0))
+                .collect::<Result<_, ObservationError>>()?,
         })
     }
 
@@ -692,15 +745,57 @@ impl Msv4Observation {
     ///
     /// As [`Self::estimate`].
     pub fn bind_read(&self, request: &AccessRequest) -> Result<Traversal<'_>, ObservationError> {
-        let estimate = self.estimate(request)?;
-        let cursors = estimate
+        let bound = request
             .partitions
             .iter()
-            .map(|estimate| {
-                Msv4Cursor::bind(self, request, estimate.clone())
+            .map(|&id| super::cursor::estimate(self, request, id))
+            .collect::<Result<Vec<_>, _>>()?;
+        let estimate = Estimate {
+            partitions: bound.iter().map(|(estimate, _)| estimate.clone()).collect(),
+        };
+        let cursors = bound
+            .into_iter()
+            .map(|(estimate, resolved)| {
+                Msv4Cursor::bind(self, request, estimate, resolved)
                     .map(|cursor| Box::new(cursor) as BoundCursor<'_>)
             })
             .collect::<Result<_, _>>()?;
         Ok(Traversal::new(cursors, estimate))
+    }
+
+    /// Partition `id`'s grid ([`Observation::grid`]): the dataset's times,
+    /// `scan_name` and `time.integration_time`, and data group
+    /// `data_group`'s fields.
+    ///
+    /// # Errors
+    ///
+    /// As [`Observation::grid`]; also when the dataset lacks `scan_name` or
+    /// `time.integration_time`.
+    pub fn grid(
+        &self,
+        id: PartitionId,
+        data_group: &str,
+    ) -> Result<TimeBaselineGrid, ObservationError> {
+        let (dataset, entry) = self.dataset(id)?;
+        let lacks = |what: &str| ObservationError::InvalidRequest {
+            reason: format!("{id:?} has no {what}, which a grid needs"),
+        };
+        let (index, _) =
+            entry
+                .data_group(data_group)
+                .ok_or_else(|| ObservationError::InvalidRequest {
+                    reason: format!("no data group {data_group} in {id:?}"),
+                })?;
+        Ok(TimeBaselineGrid {
+            baselines: entry.baselines.clone(),
+            time_scale: entry.time_scale,
+            time_origin: entry.time_origin,
+            times_s: dataset.times.clone(),
+            field_per_time: dataset.groups[index].fields.clone(),
+            scan_per_time: dataset.scans.clone().ok_or_else(|| lacks("scan_name"))?,
+            interval_s: dataset
+                .interval_s
+                .ok_or_else(|| lacks("time.integration_time"))?,
+        })
     }
 }

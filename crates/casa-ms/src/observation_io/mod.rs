@@ -92,3 +92,12 @@ pub fn open(
     }
     Ok(Box::new(Msv2Observation::open_with(path, options)?))
 }
+
+/// The distinct `values`, sorted: a partition's fields or scans from its
+/// per-time identities.
+fn distinct<T: Ord + Copy>(values: &[T]) -> Vec<T> {
+    let mut distinct = values.to_vec();
+    distinct.sort_unstable();
+    distinct.dedup();
+    distinct
+}

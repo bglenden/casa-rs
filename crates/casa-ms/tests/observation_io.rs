@@ -13,12 +13,14 @@ mod writer;
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use casa_ms::observation_io::{GroupClosure, Msv2Observation, Msv4Observation, OpenOptions};
 use casa_observation::{
     AccessRequest, BatchBuffers, BindingTolerance, BufferPool, Catalogue, Correlation,
-    CorrelationRequest, Deliver, FlagsFrom, FragmentPosition, GroupKey, Grouping, Observation,
-    ObservationError, OwnedEvent, PartitionId, ReadEvent, Roles, Shared, Traversal,
+    CorrelationRequest, Deliver, FieldId, FlagsFrom, FragmentPosition, GroupKey, Grouping,
+    Observation, ObservationError, ObservationId, OwnedEvent, PartitionId, ReadEvent, Roles,
+    ScanId, Shared, Traversal,
 };
 use casa_types::measures::MjdHighPrec;
 use casa_types::measures::direction::DirectionRef;
@@ -52,8 +54,8 @@ pub(crate) fn request(channels: std::ops::Range<usize>, batch_bytes: usize) -> A
 }
 
 /// `request` budgeted for exactly `times` whole times per batch on
-/// `observation`: the estimate's held bytes per sample (the batch's and the
-/// cursor's scratch), which costs no I/O, by the grid's baselines.
+/// `observation`: the estimate's held bytes per time (the batch's and the
+/// cursor's scratch), which costs no I/O.
 pub(crate) fn per_times(
     observation: &dyn Observation,
     request: AccessRequest,
@@ -66,7 +68,7 @@ pub(crate) fn per_times(
     let estimate = observation.estimate(&probe).expect("estimate");
     let partition = &estimate.partitions[0];
     AccessRequest {
-        batch_bytes: partition.held_bytes_per_sample() * partition.baselines * times,
+        batch_bytes: partition.held_bytes_per_time() * times,
         ..request
     }
 }
@@ -221,6 +223,9 @@ fn catalogues_describe_the_same_observation() {
     assert_eq!(p4.intents, p2.intents);
     assert_eq!(p2.feeds, Some([0, 0]), "MSv2 keys the feed pair");
     assert_eq!(p4.feeds, None, "MSv4 has no feed axis");
+    assert_eq!(p2.fields, [FieldId(0)]);
+    assert_eq!((&p4.fields, &p4.scans), (&p2.fields, &p2.scans));
+    assert_eq!(p2.scans, [ScanId(0)]);
     assert_eq!(p2.baselines.len(), 10);
     let by_station = |catalogue: &Catalogue, partition: &casa_observation::PartitionEntry| {
         let stations = stations(catalogue);
@@ -252,6 +257,7 @@ fn catalogues_describe_the_same_observation() {
         .bind_to(b, &BindingTolerance::EXACT)
         .expect("v2 binds to v4");
     assert_eq!(binding.partitions, [PartitionId(0)]);
+    assert_eq!(binding.observations, [ObservationId(0)]);
     assert_eq!(binding.antennas.len(), 5);
     assert!(b.bind_to(a, &BindingTolerance::EXACT).is_ok());
 }
@@ -772,9 +778,67 @@ fn a_correlation_subset_carries_the_flags_it_is_asked_for() {
     }
 }
 
+/// D1: the correlation axis lives once. Every batch of an all-products
+/// traversal borrows the catalogue's list, every batch of a subset
+/// traversal shares the one axis resolved at binding, and a piece packed
+/// from a batch shares its batch's: no fill or pack copies the list.
+#[test]
+fn the_correlation_axis_is_shared_not_copied() {
+    let root = tempfile::tempdir().expect("root");
+    let (v2, v4) = open_both(root.path());
+    for (store, observation) in [("v2", &v2 as &dyn Observation), ("v4", &v4)] {
+        let listed = observation.catalogue().partitions[0].correlations.as_ptr();
+        let subset = CorrelationRequest {
+            deliver: Deliver::These(vec![Correlation::XX, Correlation::YY]),
+            flags_from: FlagsFrom::Delivered,
+        };
+        for (correlations, every) in [(CorrelationRequest::ALL, true), (subset, false)] {
+            let request = AccessRequest {
+                correlations,
+                ..per_times(observation, request(0..8, 0), 2)
+            };
+            let mut traversal = observation.bind_read(&request).expect("bind");
+            let pool = BufferPool::new(2, traversal.estimate.peak_buffer_bytes());
+            let mut axes = Vec::new();
+            loop {
+                match traversal.next_owned(&pool).expect("read") {
+                    OwnedEvent::Batch(filled) => {
+                        let batch = filled.batch();
+                        let (piece, _) = pool
+                            .pack(&batch.channel_window(0..4).expect("window"))
+                            .expect("pack");
+                        assert_eq!(
+                            piece.batch().correlations.as_ptr(),
+                            batch.correlations.as_ptr(),
+                            "{store}: a packed piece shares its batch's axis"
+                        );
+                        axes.push(batch.correlations.as_ptr());
+                    }
+                    OwnedEvent::GroupEnd(_) => {}
+                    OwnedEvent::End => break,
+                }
+            }
+            assert!(axes.len() > 1, "{store}: several batches");
+            assert!(
+                axes.iter().all(|axis| *axis == axes[0]),
+                "{store}: every batch shares one axis"
+            );
+            assert_eq!(
+                axes[0] == listed,
+                every,
+                "{store}: all products borrow the catalogue's list, a subset its own"
+            );
+        }
+    }
+}
+
 /// The budget admits whole times: one time that does not fit fails
 /// binding, never a later read. Owned batches drawn from a pool of one
-/// buffer each give it back when dropped, and the end takes none.
+/// buffer each give it back when dropped, and the end takes none. Each
+/// batch's buffer holds exactly the estimate's
+/// [`buffer_bytes`](casa_observation::PartitionEstimate::buffer_bytes), the
+/// pool's envelope; a pool whose envelope is a byte short refuses the
+/// first batch before allocating anything.
 #[test]
 fn the_budget_fits_whole_times_or_refuses_binding() {
     let root = tempfile::tempdir().expect("root");
@@ -794,9 +858,42 @@ fn the_budget_fits_whole_times_or_refuses_binding() {
         );
         let mut traversal = observation.bind_read(&one_time).expect("bind");
         assert_eq!(traversal.estimate.batches(), 12, "{store}");
+        let envelope = traversal.estimate.peak_buffer_bytes();
+        let tight = BufferPool::new(1, envelope - 1);
+        assert!(
+            matches!(
+                traversal.next_owned(&tight),
+                Err(ObservationError::InvalidRequest { .. })
+            ),
+            "{store}: a batch over the envelope is refused"
+        );
+        assert_eq!(
+            (tight.free(), tight.free_bytes()),
+            (1, 0),
+            "{store}: before anything is allocated"
+        );
+        // A take that finds the one buffer held fails at once and consumes
+        // nothing: asking again delivers the next time.
+        let mut traversal = observation.bind_read(&one_time).expect("bind");
+        let limited = BufferPool::new(1, envelope).waiting_at_most(Duration::ZERO);
+        let times = observation
+            .grid(PartitionId(0), "base")
+            .expect("grid")
+            .times_s;
+        let first = owned_batch(traversal.next_owned(&limited));
+        assert!(matches!(
+            traversal.next_owned(&limited),
+            Err(ObservationError::PoolExhausted { capacity: 1 })
+        ));
+        assert_eq!(first.batch().time.offsets_s()[0], times[0], "{store}");
+        drop(first);
+        let second = owned_batch(traversal.next_owned(&limited));
+        assert_eq!(second.batch().time.offsets_s()[0], times[1], "{store}");
+        drop(second);
+        let mut traversal = observation.bind_read(&one_time).expect("bind");
         // One buffer serves the traversal: each batch gives it back when
         // dropped, and the end takes none.
-        let pool = BufferPool::new(1);
+        let pool = BufferPool::new(1, envelope);
         let mut batches = 0;
         loop {
             match traversal.next_owned(&pool).expect("read") {
@@ -805,9 +902,14 @@ fn the_budget_fits_whole_times_or_refuses_binding() {
                 OwnedEvent::Batch(filled) => {
                     batches += 1;
                     assert_eq!(filled.batch().times(), 1);
+                    assert_eq!(
+                        filled.capacity_bytes(),
+                        envelope,
+                        "{store}: a batch's buffer holds what the estimate says"
+                    );
                     assert!(
-                        filled.capacity_bytes() <= one_time.batch_bytes,
-                        "{store}: a batch holds no more than the budget"
+                        envelope <= one_time.batch_bytes,
+                        "{store}: within the budget"
                     );
                 }
             }
@@ -818,6 +920,13 @@ fn the_budget_fits_whole_times_or_refuses_binding() {
             );
         }
         assert_eq!(batches, 12, "{store}");
+    }
+}
+
+fn owned_batch(event: Result<OwnedEvent, ObservationError>) -> casa_observation::FilledBatch {
+    match event.expect("read") {
+        OwnedEvent::Batch(filled) => filled,
+        other => panic!("a batch, not {other:?}"),
     }
 }
 

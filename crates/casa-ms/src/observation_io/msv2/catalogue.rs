@@ -194,13 +194,42 @@ pub(super) fn read_observations(
     }
     (0..observation.row_count())
         .map(|row| {
+            let schedule: Vec<String> = match observation
+                .optional_array(row, "SCHEDULE")
+                .map_err(storage)?
+            {
+                Some(ArrayValue::String(lines)) => lines.iter().cloned().collect(),
+                _ => Vec::new(),
+            };
+            let uid = |line: usize, label: &str| {
+                schedule
+                    .get(line)
+                    .filter(|_| schedule.len() == 2)
+                    .and_then(|line| scheduled_uid(line, label))
+            };
             Ok(ObservationEntry {
                 telescope: observation.string(row, "TELESCOPE_NAME").map_err(storage)?,
                 observers: vec![observation.string(row, "OBSERVER").map_err(storage)?],
                 project: observation.string(row, "PROJECT").map_err(storage)?,
+                execution_block: uid(1, "ExecBlock"),
+                session_reference: None,
+                scheduling_block: uid(0, "SchedulingBlock"),
             })
         })
         .collect()
+}
+
+/// The UID after `label` in a `SCHEDULE` line, as XRADIO's converter reads
+/// one `importasdm` writes (`[SchedulingBlock uid://A001/X3571/X122,
+/// ExecBlock uid://A002/X1003af4/X75a3]`, one entry per line): the word
+/// characters, `/` and `:` that follow `label` and a space.
+fn scheduled_uid(line: &str, label: &str) -> Option<String> {
+    let start = line.find(&format!("{label} "))? + label.len() + 1;
+    let uid: String = line[start..]
+        .chars()
+        .take_while(|c| c.is_alphanumeric() || matches!(c, '_' | '/' | ':'))
+        .collect();
+    (!uid.is_empty()).then_some(uid)
 }
 
 /// `STATE::OBS_MODE` of every state row: the intents a `STATE_ID` names.
@@ -383,4 +412,27 @@ pub(super) fn spectral_setups(ms: &MeasurementSet) -> Result<Vec<SpectralSetup>,
             })
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::scheduled_uid;
+
+    #[test]
+    fn schedule_lines_name_their_uids_as_xradio_reads_them() {
+        let lines = [
+            "[SchedulingBlock uid://A001/X3571/X122,",
+            "ExecBlock uid://A002/X1003af4/X75a3]",
+        ];
+        assert_eq!(
+            scheduled_uid(lines[0], "SchedulingBlock").as_deref(),
+            Some("uid://A001/X3571/X122")
+        );
+        assert_eq!(
+            scheduled_uid(lines[1], "ExecBlock").as_deref(),
+            Some("uid://A002/X1003af4/X75a3")
+        );
+        assert_eq!(scheduled_uid("default", "ExecBlock"), None);
+        assert_eq!(scheduled_uid("ExecBlock ", "ExecBlock"), None);
+    }
 }

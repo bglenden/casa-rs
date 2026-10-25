@@ -20,9 +20,9 @@ use super::index::{Grid, NO_ROW};
 use super::{Msv2Observation, invalid, table_error};
 use crate::observation_io::grouping::GroupIndex;
 
-/// Reusable working storage: the present rows of a batch and, for a fill
-/// that cannot read straight into the batch arrays (a padded time, or a
-/// correlation subset), their cells before placement.
+/// Reusable working storage: the present rows of a batch, their scalar
+/// columns and, for a correlation subset, their cells before the delivered
+/// products are gathered.
 #[derive(Default)]
 struct Scratch {
     /// MAIN rows of the batch's present cells, in cell order.
@@ -36,7 +36,6 @@ struct Scratch {
     values: Vec<Complex32>,
     flags: Vec<bool>,
     weights: Vec<f32>,
-    uvw: Vec<f64>,
 }
 
 /// A bound traversal of one MSv2 partition: whole times of its grid in
@@ -59,9 +58,9 @@ impl<'o> Msv2Cursor<'o> {
         observation: &'o Msv2Observation,
         request: &AccessRequest,
         estimate: PartitionEstimate,
+        resolved: ResolvedRequest,
     ) -> Result<Self, ObservationError> {
-        let (partition, entry) = observation.partition(estimate.partition)?;
-        let resolved = request.resolve(entry)?;
+        let (partition, _) = observation.partition(estimate.partition)?;
         let grid = &partition.grid;
         let groups = GroupIndex::new(
             estimate.partition,
@@ -69,7 +68,7 @@ impl<'o> Msv2Cursor<'o> {
             observation.options.group_closure,
             &grid.times_s,
             &grid.field_per_time,
-            &grid.scan_per_time,
+            Some(&grid.scan_per_time),
         )?;
         Ok(Self {
             observation,
@@ -134,7 +133,7 @@ impl<'o> Msv2Cursor<'o> {
             }
         }
         let samples = cells.len();
-        let mut fill = buffers.begin(header);
+        let mut fill = buffers.begin(header, &observation.catalogue)?;
         let arrays = fill.arrays();
         arrays
             .time_offsets_s
@@ -185,7 +184,7 @@ impl<'o> Msv2Cursor<'o> {
                 + arrays.interval_s.len()
                 + arrays.exposure_s.len())
                 * size_of::<f64>();
-        fill.finish(&observation.catalogue)?;
+        fill.finish()?;
         if buffers.capacity_bytes() > capacity {
             counters.buffer_growths += 1;
         }
@@ -238,11 +237,12 @@ struct Payload<'a> {
 }
 
 impl Payload<'_> {
-    /// Read the payload roles of the present rows: straight into `arrays`
-    /// when every cell is present and every product delivered (the typed
-    /// fills then write the batch's own storage), else into `scratch` and
-    /// then placed: padded where no row is, the delivered products
-    /// gathered. `FLAG_ROW` is folded into the flags either way.
+    /// Read the payload roles of the present rows. With every product
+    /// delivered, the typed fills write the batch's own arrays, and a batch
+    /// with padding has its rows spread to their samples in place
+    /// ([`spread`]). For a correlation subset, the whole stored axis is read
+    /// into `scratch` and the delivered products gathered around the
+    /// padding. `FLAG_ROW` is folded into the flags either way.
     fn fill(
         &self,
         scratch: &mut Scratch,
@@ -256,16 +256,13 @@ impl Payload<'_> {
             values,
             flags,
             weights,
-            uvw,
             ..
         } = scratch;
         let (main, roles, samples) = (self.main, self.roles, self.samples);
         let channels = self.channels.len();
-        let keep: Vec<usize> = match &self.resolved.correlation_indices {
-            Some(indices) => indices.clone(),
-            None => (0..self.stored).collect(),
-        };
-        let direct = rows.len() == samples && self.resolved.correlation_indices.is_none();
+        let keep = self.resolved.correlations.indices();
+        let delivered = keep.map_or(self.stored, <[usize]>::len);
+        let padded = rows.len() < samples;
         let cube = |column: &str, destination: SelectedArray2DCellsMut<'_>| {
             main.column_accessor(column)
                 .map_err(table_error)?
@@ -286,14 +283,10 @@ impl Payload<'_> {
                 .map_err(table_error)
         };
         let nan = Complex32::new(f32::NAN, f32::NAN);
+        let stored = self.stored;
         if roles.values {
             counters.read_calls += 1;
-            if direct {
-                cube(
-                    &self.group.visibilities,
-                    SelectedArray2DCellsMut::RowChannelComplex32(&mut arrays.values),
-                )?;
-            } else {
+            if let Some(keep) = keep {
                 values.clear();
                 cube(
                     &self.group.visibilities,
@@ -302,24 +295,26 @@ impl Payload<'_> {
                 gather(
                     values,
                     present,
-                    samples,
-                    channels,
-                    self.stored,
-                    &keep,
+                    [samples, channels, stored],
+                    keep,
                     nan,
                     &mut arrays.values,
                 );
                 counters.copied_elements += arrays.values.len();
+            } else {
+                cube(
+                    &self.group.visibilities,
+                    SelectedArray2DCellsMut::RowChannelComplex32(&mut arrays.values),
+                )?;
+                if padded {
+                    spread(&mut arrays.values, present, samples, channels * stored, nan);
+                    counters.copied_elements += arrays.values.len();
+                }
             }
         }
         if roles.flags {
             counters.read_calls += 1;
-            if direct {
-                cube(
-                    &self.group.flags,
-                    SelectedArray2DCellsMut::RowChannelBool(&mut arrays.flags),
-                )?;
-            } else {
+            if let Some(keep) = keep {
                 flags.clear();
                 cube(
                     &self.group.flags,
@@ -329,28 +324,33 @@ impl Payload<'_> {
                     gather_any(
                         flags,
                         present,
-                        samples,
-                        channels,
-                        self.stored,
-                        keep.len(),
+                        [samples, channels, stored],
+                        delivered,
                         &mut arrays.flags,
                     );
                 } else {
                     gather(
                         flags,
                         present,
-                        samples,
-                        channels,
-                        self.stored,
-                        &keep,
+                        [samples, channels, stored],
+                        keep,
                         true,
                         &mut arrays.flags,
                     );
                 }
                 counters.copied_elements += arrays.flags.len();
+            } else {
+                cube(
+                    &self.group.flags,
+                    SelectedArray2DCellsMut::RowChannelBool(&mut arrays.flags),
+                )?;
+                if padded {
+                    spread(&mut arrays.flags, present, samples, channels * stored, true);
+                    counters.copied_elements += arrays.flags.len();
+                }
             }
             // FLAG_ROW: the row's every value is flagged.
-            let cell = channels * keep.len();
+            let cell = channels * delivered;
             for (i, &sample) in present.iter().enumerate() {
                 if row_flags[i] {
                     arrays.flags[sample * cell..(sample + 1) * cell].fill(true);
@@ -359,55 +359,59 @@ impl Payload<'_> {
         }
         if roles.weights {
             counters.read_calls += 1;
-            if direct && self.weights_per_channel {
-                cube(
-                    &self.group.weights,
-                    SelectedArray2DCellsMut::RowChannelFloat32(&mut arrays.weights),
-                )?;
-            } else if direct {
-                per_row(
-                    &self.group.weights,
-                    SelectedArray1DCellsMut::Float32(&mut arrays.weights),
-                )?;
+            let weight_channels = if self.weights_per_channel {
+                channels
             } else {
-                weights.clear();
-                let weight_channels = if self.weights_per_channel {
+                1
+            };
+            let read = |target: &mut Vec<f32>| {
+                if self.weights_per_channel {
                     cube(
                         &self.group.weights,
-                        SelectedArray2DCellsMut::RowChannelFloat32(weights),
-                    )?;
-                    channels
+                        SelectedArray2DCellsMut::RowChannelFloat32(target),
+                    )
                 } else {
                     per_row(
                         &self.group.weights,
-                        SelectedArray1DCellsMut::Float32(weights),
-                    )?;
-                    1
-                };
+                        SelectedArray1DCellsMut::Float32(target),
+                    )
+                    .map(|_| ())
+                }
+            };
+            if let Some(keep) = keep {
+                weights.clear();
+                read(weights)?;
                 gather(
                     weights,
                     present,
-                    samples,
-                    weight_channels,
-                    self.stored,
-                    &keep,
+                    [samples, weight_channels, stored],
+                    keep,
                     0.0,
                     &mut arrays.weights,
                 );
                 counters.copied_elements += arrays.weights.len();
+            } else {
+                read(&mut arrays.weights)?;
+                if padded {
+                    spread(
+                        &mut arrays.weights,
+                        present,
+                        samples,
+                        weight_channels * stored,
+                        0.0,
+                    );
+                    counters.copied_elements += arrays.weights.len();
+                }
             }
         }
         if roles.uvw {
             counters.read_calls += 1;
-            if direct {
-                per_row(
-                    &self.group.uvw,
-                    SelectedArray1DCellsMut::Float64(&mut arrays.uvw),
-                )?;
-            } else {
-                uvw.clear();
-                per_row(&self.group.uvw, SelectedArray1DCellsMut::Float64(uvw))?;
-                place(uvw, present, samples, 3, f64::NAN, &mut arrays.uvw);
+            per_row(
+                &self.group.uvw,
+                SelectedArray1DCellsMut::Float64(&mut arrays.uvw),
+            )?;
+            if padded {
+                spread(&mut arrays.uvw, present, samples, 3, f64::NAN);
                 counters.copied_elements += arrays.uvw.len();
             }
         }
@@ -433,15 +437,38 @@ fn place<T: Copy>(
     }
 }
 
-/// [`place`] for cells of `channels` × `stored` products, keeping products
-/// `keep` of each.
-#[expect(clippy::too_many_arguments, reason = "one placement, every axis named")]
+/// Spread the cells of `present`'s rows, read in order to the front of
+/// `target` (`cell` elements each), to their samples of `samples`, with
+/// `pad` in every other: in place, the last run first, each run of
+/// consecutive samples moved as one block. One move of the data at most,
+/// and no copy of it elsewhere.
+fn spread<T: Copy>(target: &mut Vec<T>, present: &[usize], samples: usize, cell: usize, pad: T) {
+    target.resize(samples * cell, pad);
+    // Cells at and after `end` are placed.
+    let mut end = samples;
+    let mut run_end = present.len();
+    while run_end > 0 {
+        let mut start = run_end - 1;
+        while start > 0 && present[start - 1] + 1 == present[start] {
+            start -= 1;
+        }
+        let first = present[start];
+        // Rows before `run_end` lie before `run_end * cell <= last * cell`.
+        let last = first + (run_end - start);
+        target[last * cell..end * cell].fill(pad);
+        target.copy_within(start * cell..run_end * cell, first * cell);
+        end = first;
+        run_end = start;
+    }
+    target[..end * cell].fill(pad);
+}
+
+/// [`place`] for cells of `[channels, stored]`, keeping products `keep` of
+/// each.
 fn gather<T: Copy>(
     source: &[T],
     present: &[usize],
-    samples: usize,
-    channels: usize,
-    stored: usize,
+    [samples, channels, stored]: [usize; 3],
     keep: &[usize],
     pad: T,
     target: &mut Vec<T>,
@@ -466,9 +493,7 @@ fn gather<T: Copy>(
 fn gather_any(
     source: &[bool],
     present: &[usize],
-    samples: usize,
-    channels: usize,
-    stored: usize,
+    [samples, channels, stored]: [usize; 3],
     delivered: usize,
     target: &mut Vec<bool>,
 ) {
@@ -521,5 +546,34 @@ impl VisibilityCursor for Msv2Cursor<'_> {
 
     fn counters(&self) -> IoCounters {
         self.counters
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{place, spread};
+
+    /// Spreading in place gives what placing from a copy gives, wherever
+    /// the padding falls.
+    #[test]
+    fn spreading_in_place_is_placing() {
+        let samples = 9;
+        let cases: [&[usize]; 7] = [
+            &[0, 1, 2, 3, 4, 5, 6, 7, 8],
+            &[1, 2, 3, 4, 5, 6, 7, 8],
+            &[0, 1, 2, 3, 4, 5, 6, 7],
+            &[0, 1, 3, 4, 7, 8],
+            &[2, 6],
+            &[4],
+            &[],
+        ];
+        for present in cases {
+            let source: Vec<i32> = (0..present.len() as i32 * 2).collect();
+            let mut placed = Vec::new();
+            place(&source, present, samples, 2, -1, &mut placed);
+            let mut spread_in_place = source.clone();
+            spread(&mut spread_in_place, present, samples, 2, -1);
+            assert_eq!(spread_in_place, placed, "{present:?}");
+        }
     }
 }

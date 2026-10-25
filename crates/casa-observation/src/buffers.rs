@@ -4,7 +4,6 @@
 
 use std::sync::Arc;
 
-use casa_types::Correlation;
 use casa_types::measures::{EpochView, FrequencyView, UvwView};
 use ndarray::{ArrayView1, ArrayView2, ArrayView3, Axis, ShapeBuilder};
 use num_complex::Complex32;
@@ -13,15 +12,16 @@ use crate::ObservationError;
 use crate::batch::{DataGroupView, SampleTiming, Shared, VisibilityBatch};
 use crate::catalogue::{Catalogue, FieldId, PartitionEntry, PartitionId, ScanId};
 use crate::grouping::GroupFragment;
-use crate::request::Roles;
+use crate::request::{CorrelationAxis, Roles};
 
 /// The storage behind one [`VisibilityBatch`].
 ///
 /// Owned by the caller (or a [`BufferPool`](crate::BufferPool)), filled in
 /// place by a cursor and lent to the batch. Its arrays are private: a
-/// cursor fills them through [`Self::begin`], and [`BatchFill::finish`]
-/// checks them against the batch's [`BatchHeader`] and the observation's
-/// [`Catalogue`] once; the buffers then keep the header and a shared
+/// cursor fills them through [`Self::begin`], which checks the batch's
+/// [`BatchHeader`] against the observation's [`Catalogue`] and reserves
+/// exactly the arrays it describes, and [`BatchFill::finish`] checks the
+/// filled arrays once; the buffers then keep the header and a shared
 /// reference to that catalogue. The batch is built from the header, the
 /// arrays and the catalogue's partition entry and nothing else, so no
 /// second description of the same data can drift from the arrays: the
@@ -30,7 +30,9 @@ use crate::request::Roles;
 /// catalogue can be paired with the arrays.
 ///
 /// Clearing keeps capacity, so after the first fill of the largest batch a
-/// traversal allocates nothing. The buffers are `Send`: they can be handed
+/// traversal allocates nothing. Buffers made [`Self::with_envelope`] never
+/// hold more than their envelope, whatever sequence of batch shapes and
+/// roles they are filled with. The buffers are `Send`: they can be handed
 /// between work units whole, which is how a batch's lifetime is separated
 /// from a traversal's.
 #[derive(Debug, Default)]
@@ -38,6 +40,7 @@ pub struct BatchBuffers {
     arrays: BatchArrays,
     header: Option<BatchHeader>,
     catalogue: Option<Arc<Catalogue>>,
+    envelope: Option<usize>,
 }
 
 /// The arrays of one batch, as a cursor fills them.
@@ -96,8 +99,9 @@ pub struct BatchHeader {
     pub first_channel: usize,
     /// Channels.
     pub channels: usize,
-    /// The delivered correlation products, in the partition's order.
-    pub correlations: Vec<Correlation>,
+    /// The delivered correlation products: the traversal's resolved axis,
+    /// shared, never a copy of the list.
+    pub correlations: CorrelationAxis,
     /// The roles filled.
     pub roles: Roles,
     /// Whether the weights are per channel (`[sample][channel][correlation]`)
@@ -109,15 +113,161 @@ pub struct BatchHeader {
     pub exposure: Sharing<f64>,
 }
 
-/// A batch being filled: the arrays, cleared, and the header they must
-/// match. Dropping it without [`Self::finish`] leaves the buffers empty.
+/// A batch being filled: the arrays, cleared and reserved, and the header
+/// they must match. Dropping it without [`Self::finish`] leaves the buffers
+/// empty.
 #[derive(Debug)]
 pub struct BatchFill<'b> {
     buffers: &'b mut BatchBuffers,
     header: BatchHeader,
+    catalogue: Arc<Catalogue>,
+    lengths: Lengths,
+}
+
+/// The length of every array of the batch a header describes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Lengths {
+    values: usize,
+    flags: usize,
+    weights: usize,
+    uvw: usize,
+    times: usize,
+    centroid: usize,
+    interval: usize,
+    exposure: usize,
+    scan: usize,
+}
+
+impl Lengths {
+    /// The lengths for `header` over `baselines`, with overflow-checked
+    /// sizes; the fragments have room for one per time.
+    fn of(
+        header: &BatchHeader,
+        baselines: usize,
+        correlations: usize,
+    ) -> Result<Self, ObservationError> {
+        let times = header.times;
+        let samples = product("samples", times, baselines)?;
+        let cell = product(
+            "cube",
+            samples,
+            product("cube", header.channels, correlations)?,
+        )?;
+        let roles = header.roles;
+        let wanted = |role: bool, length: usize| if role { length } else { 0 };
+        let shared = |sharing: Sharing<f64>| match sharing {
+            Sharing::PerSample => samples,
+            Sharing::PerTime => times,
+            Sharing::Constant(_) => 0,
+        };
+        let weights = if header.weights_per_channel {
+            cell
+        } else {
+            product("weights", samples, correlations)?
+        };
+        Ok(Self {
+            values: wanted(roles.values, cell),
+            flags: wanted(roles.flags, cell),
+            weights: wanted(roles.weights, weights),
+            uvw: wanted(roles.uvw, product("uvw", samples, 3)?),
+            times,
+            centroid: wanted(roles.time_centroid, samples),
+            interval: wanted(roles.interval, shared(header.interval)),
+            exposure: wanted(roles.exposure, shared(header.exposure)),
+            scan: wanted(roles.scan, times),
+        })
+    }
+
+    /// Bytes the arrays hold at these lengths
+    /// ([`PartitionEstimate::buffer_bytes`](crate::PartitionEstimate::buffer_bytes)
+    /// for a full batch).
+    fn bytes(&self) -> usize {
+        // Saturating: a header too large to allocate exceeds any envelope.
+        [
+            (self.values, size_of::<Complex32>()),
+            (self.flags, size_of::<bool>()),
+            (self.weights, size_of::<f32>()),
+            (self.uvw, size_of::<f64>()),
+            (self.times, size_of::<f64>()),
+            (self.centroid, size_of::<f64>()),
+            (self.interval, size_of::<f64>()),
+            (self.exposure, size_of::<f64>()),
+            (
+                self.times,
+                size_of::<FieldId>() + size_of::<GroupFragment>(),
+            ),
+            (self.scan, size_of::<ScanId>()),
+        ]
+        .into_iter()
+        .fold(0, |total: usize, (length, size)| {
+            total.saturating_add(length.saturating_mul(size))
+        })
+    }
+
+    /// Bytes `arrays` would hold once reserved to these lengths, keeping
+    /// any larger capacity they have.
+    fn retained(&self, arrays: &BatchArrays) -> usize {
+        fn held<T>(array: &Vec<T>, length: usize) -> usize {
+            array.capacity().max(length).saturating_mul(size_of::<T>())
+        }
+        [
+            held(&arrays.values, self.values),
+            held(&arrays.flags, self.flags),
+            held(&arrays.weights, self.weights),
+            held(&arrays.uvw, self.uvw),
+            held(&arrays.time_offsets_s, self.times),
+            held(&arrays.centroid_offsets_s, self.centroid),
+            held(&arrays.interval_s, self.interval),
+            held(&arrays.exposure_s, self.exposure),
+            held(&arrays.field, self.times),
+            held(&arrays.scan, self.scan),
+            held(&arrays.fragments, self.times),
+        ]
+        .into_iter()
+        .fold(0, usize::saturating_add)
+    }
+
+    /// Reserve exactly these lengths in the cleared `arrays`; with `trim`,
+    /// first free every array whose capacity exceeds its length.
+    fn reserve(&self, arrays: &mut BatchArrays, trim: bool) {
+        fn exact<T>(array: &mut Vec<T>, length: usize, trim: bool) {
+            if trim && array.capacity() > length {
+                *array = Vec::new();
+            }
+            array.reserve_exact(length);
+        }
+        exact(&mut arrays.values, self.values, trim);
+        exact(&mut arrays.flags, self.flags, trim);
+        exact(&mut arrays.weights, self.weights, trim);
+        exact(&mut arrays.uvw, self.uvw, trim);
+        exact(&mut arrays.time_offsets_s, self.times, trim);
+        exact(&mut arrays.centroid_offsets_s, self.centroid, trim);
+        exact(&mut arrays.interval_s, self.interval, trim);
+        exact(&mut arrays.exposure_s, self.exposure, trim);
+        exact(&mut arrays.field, self.times, trim);
+        exact(&mut arrays.scan, self.scan, trim);
+        exact(&mut arrays.fragments, self.times, trim);
+    }
 }
 
 impl BatchBuffers {
+    /// Buffers that never hold more than `envelope` bytes: a fill whose
+    /// batch needs more is refused before anything is allocated, and arrays
+    /// kept from earlier fills are freed when keeping them would exceed it.
+    #[must_use]
+    pub fn with_envelope(envelope: usize) -> Self {
+        Self {
+            envelope: Some(envelope),
+            ..Self::default()
+        }
+    }
+
+    /// The bytes these buffers may hold, if bounded.
+    #[must_use]
+    pub fn envelope(&self) -> Option<usize> {
+        self.envelope
+    }
+
     /// Empty every array, keeping its capacity, and forget the batch.
     pub fn clear(&mut self) {
         self.header = None;
@@ -136,14 +286,49 @@ impl BatchBuffers {
         arrays.fragments.clear();
     }
 
-    /// Start filling a batch described by `header`: the arrays are cleared
-    /// (keeping capacity) and lent through the returned fill.
-    pub fn begin(&mut self, header: BatchHeader) -> BatchFill<'_> {
+    /// Start filling a batch described by `header`, for an observation
+    /// with `catalogue`: the header is checked against the catalogue (the
+    /// partition, data group, channel window and correlation axis exist),
+    /// and the arrays are cleared and reserved to exactly the batch's
+    /// lengths, then lent through the returned fill.
+    ///
+    /// # Errors
+    ///
+    /// [`ObservationError::InvalidBatch`] when the header does not fit the
+    /// catalogue; [`ObservationError::InvalidRequest`] when the batch needs
+    /// more than the buffers' envelope. Nothing has been allocated, and the
+    /// buffers hold no batch.
+    pub fn begin(
+        &mut self,
+        header: BatchHeader,
+        catalogue: &Arc<Catalogue>,
+    ) -> Result<BatchFill<'_>, ObservationError> {
         self.clear();
-        BatchFill {
+        let entry = context(&header, catalogue)?;
+        let lengths = Lengths::of(
+            &header,
+            entry.baselines.len(),
+            header.correlations.products(entry).len(),
+        )?;
+        let trim = match self.envelope {
+            Some(envelope) if lengths.bytes() > envelope => {
+                return Err(ObservationError::InvalidRequest {
+                    reason: format!(
+                        "a batch of {} B exceeds its buffer's {envelope} B envelope",
+                        lengths.bytes()
+                    ),
+                });
+            }
+            Some(envelope) => lengths.retained(&self.arrays) > envelope,
+            None => false,
+        };
+        lengths.reserve(&mut self.arrays, trim);
+        Ok(BatchFill {
             buffers: self,
             header,
-        }
+            catalogue: Arc::clone(catalogue),
+            lengths,
+        })
     }
 
     /// The arrays, read-only: what the batch's views borrow.
@@ -187,7 +372,8 @@ impl BatchBuffers {
         let baselines = entry.baselines.len();
         let samples = header.times * baselines;
         let channels = header.channels;
-        let correlations = header.correlations.len();
+        let products = header.correlations.products(entry);
+        let correlations = products.len();
         let cube = [samples, channels, correlations];
         let roles = header.roles;
         let epochs = |offsets: &'a [f64]| {
@@ -223,7 +409,8 @@ impl BatchBuffers {
                     &entry.frequencies_hz[header.first_channel..header.first_channel + channels],
                 ),
             ),
-            correlations: &header.correlations,
+            correlations: products,
+            axis: &header.correlations,
             group: DataGroupView {
                 entry: group,
                 values: roles.values.then(|| cube_view(cube, &arrays.values)),
@@ -280,23 +467,26 @@ impl BatchFill<'_> {
         &self.header
     }
 
-    /// Check every array against the header and `catalogue`, once, and
-    /// keep the header and the catalogue: the partition, data group, channel
-    /// window and correlations exist in the catalogue; lengths (with
-    /// overflow-checked sizes); field and scan identities against the
-    /// catalogue's counts; and the fragments, which must tile the samples in
-    /// order by whole times.
+    /// Check every array against the header, once, and keep the header and
+    /// the catalogue: the lengths [`BatchBuffers::begin`] reserved; field
+    /// and scan identities against the catalogue's counts; and the
+    /// fragments, which must tile the samples in order by whole times.
     ///
     /// # Errors
     ///
     /// [`ObservationError::Shape`] or [`ObservationError::InvalidBatch`]: a
     /// cursor bug or a store the adapter should have refused, never a
     /// property a consumer must handle. The buffers then hold no batch.
-    pub fn finish(self, catalogue: &Arc<Catalogue>) -> Result<(), ObservationError> {
-        let Self { buffers, header } = self;
-        check(&buffers.arrays, &header, catalogue)?;
+    pub fn finish(self) -> Result<(), ObservationError> {
+        let Self {
+            buffers,
+            header,
+            catalogue,
+            lengths,
+        } = self;
+        check(&buffers.arrays, &header, &catalogue, lengths)?;
         buffers.header = Some(header);
-        buffers.catalogue = Some(Arc::clone(catalogue));
+        buffers.catalogue = Some(catalogue);
         Ok(())
     }
 }
@@ -364,17 +554,13 @@ fn context<'c>(
             entry.frequencies_hz.len()
         )));
     }
-    let mut last = None;
-    for correlation in &header.correlations {
-        let index = entry
-            .correlation_index(*correlation)
-            .ok_or_else(|| invalid(format!("{correlation:?} is not in the partition")))?;
-        if last.is_some_and(|last| index <= last) {
-            return Err(invalid("correlations are not in the partition's order"));
-        }
-        last = Some(index);
+    if !header.correlations.fits(entry) {
+        return Err(invalid(format!(
+            "correlations {:?} are not the partition's {:?} in its order",
+            header.correlations, entry.correlations
+        )));
     }
-    if header.correlations.is_empty() || header.times == 0 || entry.baselines.is_empty() {
+    if header.times == 0 || entry.baselines.is_empty() {
         return Err(invalid(
             "a batch has at least one time, one baseline and one correlation",
         ));
@@ -386,71 +572,38 @@ fn check(
     arrays: &BatchArrays,
     header: &BatchHeader,
     catalogue: &Catalogue,
+    lengths: Lengths,
 ) -> Result<(), ObservationError> {
-    let entry = context(header, catalogue)?;
-    let times = header.times;
-    let samples = product("samples", times, entry.baselines.len())?;
-    let correlations = header.correlations.len();
-    length("time", arrays.time_offsets_s.len(), times)?;
-    length("field", arrays.field.len(), times)?;
+    for (array, actual, expected) in [
+        ("time", arrays.time_offsets_s.len(), lengths.times),
+        ("field", arrays.field.len(), lengths.times),
+        ("scan", arrays.scan.len(), lengths.scan),
+        ("values", arrays.values.len(), lengths.values),
+        ("flags", arrays.flags.len(), lengths.flags),
+        ("weights", arrays.weights.len(), lengths.weights),
+        ("uvw", arrays.uvw.len(), lengths.uvw),
+        (
+            "time centroid",
+            arrays.centroid_offsets_s.len(),
+            lengths.centroid,
+        ),
+        ("interval", arrays.interval_s.len(), lengths.interval),
+        ("exposure", arrays.exposure_s.len(), lengths.exposure),
+    ] {
+        length(array, actual, expected)?;
+    }
     identities(
         "field",
         arrays.field.iter().map(|field| field.0),
         catalogue.fields.len(),
     )?;
-    let roles = header.roles;
-    let sized = |wanted: bool, name: &'static str, actual: usize, expected: usize| {
-        length(name, actual, if wanted { expected } else { 0 })
-    };
-    sized(roles.scan, "scan", arrays.scan.len(), times)?;
     identities(
         "scan",
         arrays.scan.iter().map(|scan| scan.0),
         catalogue.scans.len(),
     )?;
-    let cell = product(
-        "cube",
-        samples,
-        product("cube", header.channels, correlations)?,
-    )?;
-    sized(roles.values, "values", arrays.values.len(), cell)?;
-    sized(roles.flags, "flags", arrays.flags.len(), cell)?;
-    let weights = if header.weights_per_channel {
-        cell
-    } else {
-        product("weights", samples, correlations)?
-    };
-    sized(roles.weights, "weights", arrays.weights.len(), weights)?;
-    sized(
-        roles.uvw,
-        "uvw",
-        arrays.uvw.len(),
-        product("uvw", samples, 3)?,
-    )?;
-    sized(
-        roles.time_centroid,
-        "time centroid",
-        arrays.centroid_offsets_s.len(),
-        samples,
-    )?;
-    let shared = |sharing: Sharing<f64>| match sharing {
-        Sharing::PerSample => samples,
-        Sharing::PerTime => times,
-        Sharing::Constant(_) => 0,
-    };
-    sized(
-        roles.interval,
-        "interval",
-        arrays.interval_s.len(),
-        shared(header.interval),
-    )?;
-    sized(
-        roles.exposure,
-        "exposure",
-        arrays.exposure_s.len(),
-        shared(header.exposure),
-    )?;
-    fragments(arrays, header, entry.baselines.len(), samples)
+    let per_time = catalogue.partition(header.partition).baselines.len();
+    fragments(arrays, header, per_time, lengths.times * per_time)
 }
 
 /// The fragments tile `0..samples` in order, each non-empty, split only
@@ -498,7 +651,8 @@ impl BatchBuffers {
     ///
     /// # Errors
     ///
-    /// When the batch's data group is not in the catalogue's partition.
+    /// When the batch's data group is not in the catalogue's partition, or
+    /// the piece needs more than the buffers' envelope.
     pub fn pack(&mut self, batch: &VisibilityBatch<'_>) -> Result<usize, ObservationError> {
         let catalogue = batch.catalogue;
         let group = &batch.group;
@@ -521,7 +675,7 @@ impl BatchBuffers {
             times: batch.times(),
             first_channel: batch.first_channel,
             channels: batch.channel_count(),
-            correlations: batch.correlations.to_vec(),
+            correlations: batch.axis.clone(),
             roles: Roles {
                 values: group.values.is_some(),
                 flags: group.flags.is_some(),
@@ -536,7 +690,7 @@ impl BatchBuffers {
             interval: sharing(batch.timing.interval_s),
             exposure: sharing(batch.timing.exposure_s),
         };
-        let mut fill = self.begin(header);
+        let mut fill = self.begin(header, catalogue)?;
         let arrays = fill.arrays();
         arrays.fragments.extend_from_slice(batch.fragments);
         arrays.time_offsets_s.extend(batch.time.offsets_s().iter());
@@ -580,13 +734,14 @@ impl BatchBuffers {
             arrays.uvw.extend(uvw.metres().iter());
             copied += uvw.metres().len();
         }
-        fill.finish(catalogue)?;
+        fill.finish()?;
         Ok(copied)
     }
 }
 
 #[cfg(test)]
 pub(crate) mod tests {
+    use casa_types::Correlation;
     use casa_types::measures::EpochRef;
     use casa_types::measures::MjdHighPrec;
     use casa_types::measures::direction::DirectionRef;
@@ -640,6 +795,8 @@ pub(crate) mod tests {
                 intents: Vec::new(),
                 observation: ObservationId(0),
                 feeds: None,
+                fields: vec![FieldId(0)],
+                scans: vec![ScanId(0)],
                 baselines: vec![baseline(0, 1), baseline(1, 2)],
                 time_scale: EpochRef::UTC,
                 time_origin: MjdHighPrec::new(40_587.0, 0.0),
@@ -666,7 +823,10 @@ pub(crate) mod tests {
             times,
             first_channel: 0,
             channels: 2,
-            correlations: vec![Correlation::XX],
+            correlations: CorrelationAxis::Subset {
+                products: [Correlation::XX].into(),
+                indices: [0].into(),
+            },
             roles: Roles {
                 values: false,
                 uvw: false,
@@ -708,9 +868,9 @@ pub(crate) mod tests {
             position: FragmentPosition::Whole,
         });
         tweak(&mut header, &mut arrays);
-        let mut fill = buffers.begin(header);
+        let mut fill = buffers.begin(header, &catalogue())?;
         *fill.arrays() = arrays;
-        fill.finish(&catalogue())
+        fill.finish()
     }
 
     #[test]
@@ -751,7 +911,7 @@ pub(crate) mod tests {
     fn a_fill_that_disagrees_with_its_header_or_catalogue_is_refused() {
         let mut buffers = BatchBuffers::default();
         type Tweak = fn(&mut BatchHeader, &mut BatchArrays);
-        let cases: [(&str, Tweak); 8] = [
+        let cases: [(&str, Tweak); 9] = [
             ("short flags", |_, a| {
                 a.flags.pop();
             }),
@@ -770,7 +930,16 @@ pub(crate) mod tests {
                 h.first_channel = 1
             }),
             ("a correlation the partition lacks", |h, _| {
-                h.correlations = vec![Correlation::RR]
+                h.correlations = CorrelationAxis::Subset {
+                    products: [Correlation::RR].into(),
+                    indices: [0].into(),
+                }
+            }),
+            ("products out of the partition's order", |h, _| {
+                h.correlations = CorrelationAxis::Subset {
+                    products: [Correlation::YY, Correlation::XX].into(),
+                    indices: [1, 0].into(),
+                }
             }),
         ];
         for (label, tweak) in cases {

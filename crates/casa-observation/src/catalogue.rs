@@ -130,6 +130,10 @@ pub struct ScanEntry {
 }
 
 /// One observing session (MSv2 `OBSERVATION` row; MSv4 `observation_info`).
+///
+/// The archive identifiers are MSv4's; an MSv2 holds them only where an
+/// importer recorded them, and the adapter reads them where XRADIO's
+/// converter does. A session lacking one is not distinguished by it.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ObservationEntry {
     /// Telescope name (`TELESCOPE_NAME`; MSv4 `antenna_xds.telescope_name`).
@@ -138,6 +142,35 @@ pub struct ObservationEntry {
     pub observers: Vec<String>,
     /// Project code (`PROJECT`; MSv4 `project_UID`).
     pub project: String,
+    /// The execution block's archive UID (MSv4 `execution_block_UID`; in
+    /// MSv2 the `ExecBlock` UID of `OBSERVATION::SCHEDULE`).
+    pub execution_block: Option<String>,
+    /// The observing session's reference (MSv4 `session_reference_UID`;
+    /// MSv2 keeps it only in the `ASDM_EXECBLOCK` table, which the trial
+    /// adapter does not read).
+    pub session_reference: Option<String>,
+    /// The scheduling block's archive UID (MSv4 `scheduling_block_UID`; in
+    /// MSv2 the `SchedulingBlock` UID of `OBSERVATION::SCHEDULE`).
+    pub scheduling_block: Option<String>,
+}
+
+impl ObservationEntry {
+    /// Whether `other` can be the same session: the same telescope, project
+    /// and observers, and the same archive identifier wherever both state
+    /// one.
+    #[must_use]
+    pub fn same_session(&self, other: &Self) -> bool {
+        let agree = |a: &Option<String>, b: &Option<String>| match (a, b) {
+            (Some(a), Some(b)) => a == b,
+            _ => true,
+        };
+        self.telescope == other.telescope
+            && self.project == other.project
+            && self.observers == other.observers
+            && agree(&self.execution_block, &other.execution_block)
+            && agree(&self.session_reference, &other.session_reference)
+            && agree(&self.scheduling_block, &other.scheduling_block)
+    }
 }
 
 /// The frame a data group's UVW are in, and the label the store wrote.
@@ -181,11 +214,12 @@ pub struct DataGroupEntry {
 /// One partition: a store unit and the content that defines it.
 ///
 /// The content keys (spectral window, correlation products, intents,
-/// observation, feed pair) are what two stores of one observation agree on;
-/// the MSv2 adapter partitions rows the way XRADIO's converter does by
-/// default (`DATA_DESC_ID` × `OBS_MODE` × `OBSERVATION_ID` × `EPHEMERIS_ID`,
-/// and the feed pair, which MSv4 has no axis for), so the same observation
-/// opens as the same partition set from either store. Cross-store matching
+/// observation, feed pair) and the fields and scans the partition's
+/// samples visit are what two stores of one observation agree on; the MSv2
+/// adapter partitions rows the way XRADIO's converter does by default
+/// (`DATA_DESC_ID` × `OBS_MODE` × `OBSERVATION_ID` × `EPHEMERIS_ID`, and the
+/// feed pair, which MSv4 has no axis for), so the same observation opens as
+/// the same partition set from either store. Cross-store matching
 /// ([`Catalogue::bind_to`]) compares content, never list positions.
 #[derive(Clone, Debug)]
 pub struct PartitionEntry {
@@ -207,6 +241,12 @@ pub struct PartitionEntry {
     /// The feed pair (MSv2 `FEED1`, `FEED2`) of every sample; `None` for a
     /// store without a feed axis (MSv4).
     pub feeds: Option<[u32; 2]>,
+    /// The fields the partition's samples are phased to, over every data
+    /// group, sorted.
+    pub fields: Vec<FieldId>,
+    /// The scans its samples belong to, sorted; empty for a store that
+    /// names none (an MSv4 dataset without `scan_name`).
+    pub scans: Vec<ScanId>,
     /// The baseline table: sample `t × baselines.len() + b` of every batch
     /// is baseline `b`.
     pub baselines: Vec<OrderedBaseline>,
@@ -235,20 +275,20 @@ impl PartitionEntry {
         self.correlations.iter().position(|c| *c == correlation)
     }
 
-    /// Whether `other` describes the same content: the same channel
-    /// frequencies (bit for bit) in the same frame, the same correlation
-    /// products in the same order and the same intents. Names, which
-    /// converters rewrite, and store-side keys with no counterpart in the
-    /// other format (the feed pair) take no part.
+    /// Whether `other` has the same spectral and product content: the same
+    /// channel frequencies and widths (bit for bit) in the same frame, the
+    /// same correlation products in the same order and the same intents.
+    /// Names, which converters rewrite, take no part; the keys that name
+    /// other entities (observation, fields, scans) and the feed pair are
+    /// compared by [`Catalogue::bind_to`] through the binding.
     #[must_use]
     pub fn same_content(&self, other: &Self) -> bool {
+        let bitwise = |a: &[f64], b: &[f64]| {
+            a.len() == b.len() && a.iter().zip(b).all(|(a, b)| a.to_bits() == b.to_bits())
+        };
         self.frequency_frame == other.frequency_frame
-            && self.frequencies_hz.len() == other.frequencies_hz.len()
-            && self
-                .frequencies_hz
-                .iter()
-                .zip(&other.frequencies_hz)
-                .all(|(a, b)| a.to_bits() == b.to_bits())
+            && bitwise(&self.frequencies_hz, &other.frequencies_hz)
+            && bitwise(&self.channel_widths_hz, &other.channel_widths_hz)
             && self.correlations == other.correlations
             && self.intents == other.intents
     }
@@ -300,6 +340,8 @@ pub struct Binding {
     pub fields: Vec<FieldId>,
     /// Each scan's identity in the other catalogue.
     pub scans: Vec<ScanId>,
+    /// Each observing session's identity in the other catalogue.
+    pub observations: Vec<ObservationId>,
     /// Each partition's identity in the other catalogue.
     pub partitions: Vec<PartitionId>,
 }
@@ -345,14 +387,23 @@ impl Catalogue {
     /// Bind this catalogue's entities to `other`'s by content: antennas by
     /// station and position within `tolerance`, fields by phase centre
     /// (frame and angles within `tolerance`), scans by casacore number (by
-    /// name when a scan has none), partitions by
-    /// [`PartitionEntry::same_content`]. Names and list positions decide
-    /// nothing: converters rename antennas and fields.
+    /// name when a scan has none), observing sessions by
+    /// [`ObservationEntry::same_session`], and partitions by
+    /// [`PartitionEntry::same_content`] together with the bound session, the
+    /// bound sets of fields and of scans (scans when both stores name
+    /// them) and the feed pair (when both stores have one). Names and list
+    /// positions decide nothing: converters rename antennas and fields.
+    ///
+    /// The binding is one to one: a key one store lacks (MSv4 has no feed
+    /// axis; an MSv2 may hold no archive identifiers) does not distinguish,
+    /// but two entities this catalogue keeps apart never bind to one entity
+    /// of `other`.
     ///
     /// # Errors
     ///
     /// When an entity of this catalogue matches none of `other`'s, or more
-    /// than one: an ambiguity is refused, never resolved by position.
+    /// than one, or two of them match the same one: an ambiguity is
+    /// refused, never resolved by position.
     pub fn bind_to(
         &self,
         other: &Self,
@@ -379,29 +430,55 @@ impl Catalogue {
             Some(number) => b.number == Some(number),
             None => b.number.is_none() && a.name == b.name,
         })?;
-        let partitions = bind_each(
-            "partition",
-            &self.partitions,
-            &other.partitions,
-            PartitionEntry::same_content,
+        let observations = bind_each(
+            "observation",
+            &self.observations,
+            &other.observations,
+            ObservationEntry::same_session,
         )?;
+        let partitions = bind_each("partition", &self.partitions, &other.partitions, |a, b| {
+            a.same_content(b)
+                && observations.get(a.observation.0 as usize) == Some(&b.observation.0)
+                && (a.feeds.is_none() || b.feeds.is_none() || a.feeds == b.feeds)
+                && same_set(&a.fields, &b.fields, |field| field.0, &fields)
+                && (a.scans.is_empty()
+                    || b.scans.is_empty()
+                    || same_set(&a.scans, &b.scans, |scan| scan.0, &scans))
+        })?;
         Ok(Binding {
             antennas: antennas.into_iter().map(AntennaId).collect(),
             fields: fields.into_iter().map(FieldId).collect(),
             scans: scans.into_iter().map(ScanId).collect(),
+            observations: observations.into_iter().map(ObservationId).collect(),
             partitions: partitions.into_iter().map(PartitionId).collect(),
         })
     }
 }
 
-/// The index in `others` of the one entry `matches` each of `entries`.
+/// Whether identities `ours`, renumbered through `binding`, are the sorted
+/// set `theirs`.
+fn same_set<T: Copy>(ours: &[T], theirs: &[T], id: fn(T) -> u32, binding: &[u32]) -> bool {
+    let renumbered: Option<Vec<u32>> = ours
+        .iter()
+        .map(|ours| binding.get(id(*ours) as usize).copied())
+        .collect();
+    renumbered.is_some_and(|mut renumbered| {
+        renumbered.sort_unstable();
+        renumbered
+            .into_iter()
+            .eq(theirs.iter().map(|theirs| id(*theirs)))
+    })
+}
+
+/// The index in `others` of the one entry `matches` each of `entries`, no
+/// two of them the same.
 fn bind_each<T>(
     what: &str,
     entries: &[T],
     others: &[T],
     matches: impl Fn(&T, &T) -> bool,
 ) -> Result<Vec<u32>, ObservationError> {
-    entries
+    let bound: Vec<u32> = entries
         .iter()
         .enumerate()
         .map(|(index, entry)| {
@@ -420,12 +497,190 @@ fn bind_each<T>(
                 }),
             }
         })
-        .collect()
+        .collect::<Result<_, _>>()?;
+    let mut first = std::collections::BTreeMap::new();
+    for (index, other) in bound.iter().enumerate() {
+        if let Some(earlier) = first.insert(*other, index) {
+            return Err(ObservationError::InvalidRequest {
+                reason: format!(
+                    "{what}s {earlier} and {index} both match {what} {other} of the other \
+                     catalogue, which does not keep them apart"
+                ),
+            });
+        }
+    }
+    Ok(bound)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn session(project: &str, execution_block: Option<&str>) -> ObservationEntry {
+        ObservationEntry {
+            telescope: "VLA".to_string(),
+            observers: vec!["someone".to_string()],
+            project: project.to_string(),
+            execution_block: execution_block.map(str::to_string),
+            ..ObservationEntry::default()
+        }
+    }
+
+    fn partition(observation: u32, fields: &[u32], scans: &[u32]) -> PartitionEntry {
+        PartitionEntry {
+            spectral_window: "spw".to_string(),
+            frequencies_hz: vec![1.0e9, 1.1e9],
+            frequency_frame: FrequencyRef::LSRK,
+            channel_widths_hz: vec![1.0e8; 2],
+            correlations: vec![Correlation::XX, Correlation::YY],
+            intents: vec!["TARGET".to_string()],
+            observation: ObservationId(observation),
+            feeds: None,
+            fields: fields.iter().copied().map(FieldId).collect(),
+            scans: scans.iter().copied().map(ScanId).collect(),
+            baselines: Vec::new(),
+            time_scale: EpochRef::UTC,
+            time_origin: MjdHighPrec::new(0.0, 0.0),
+            data_groups: Vec::new(),
+        }
+    }
+
+    fn field(longitude: f64) -> FieldEntry {
+        FieldEntry {
+            name: format!("f{longitude}"),
+            phase_centre: MDirection::from_angles(longitude, 0.0, DirectionRef::J2000),
+            source_name: None,
+        }
+    }
+
+    fn scan(number: i32) -> ScanEntry {
+        ScanEntry {
+            name: number.to_string(),
+            number: Some(number),
+            intents: Vec::new(),
+        }
+    }
+
+    /// Two fields, two scans, `observations` and `partitions`.
+    fn observed(observations: Vec<ObservationEntry>, partitions: Vec<PartitionEntry>) -> Catalogue {
+        Catalogue {
+            fields: vec![field(0.0), field(0.1)],
+            scans: vec![scan(1), scan(2)],
+            observations,
+            partitions,
+            ..Catalogue::default()
+        }
+    }
+
+    fn binds(a: &Catalogue, b: &Catalogue) -> Result<Vec<PartitionId>, ObservationError> {
+        a.bind_to(b, &BindingTolerance::EXACT)
+            .map(|binding| binding.partitions)
+    }
+
+    /// Equal spectral setups are told apart by everything else a partition
+    /// is keyed by: its session, the fields and scans it visits, its feed
+    /// pair where both stores have one, and its channel widths. A key one
+    /// store lacks does not distinguish, and two entities never bind to one.
+    #[test]
+    fn partitions_bind_by_session_fields_scans_feeds_and_widths() {
+        let one = observed(vec![session("p", None)], vec![partition(0, &[0], &[0])]);
+        assert_eq!(binds(&one, &one).expect("itself"), [PartitionId(0)]);
+
+        // Same spectrum, another session.
+        let other_project = observed(vec![session("q", None)], vec![partition(0, &[0], &[0])]);
+        assert!(binds(&one, &other_project).is_err(), "another project");
+        let two = observed(
+            vec![session("p", Some("uid://A")), session("p", Some("uid://B"))],
+            vec![partition(0, &[0], &[0]), partition(1, &[0], &[0])],
+        );
+        assert_eq!(
+            binds(&two, &two).expect("sessions apart"),
+            [PartitionId(0), PartitionId(1)]
+        );
+        let only_b = observed(
+            vec![session("p", Some("uid://B"))],
+            vec![partition(0, &[0], &[0])],
+        );
+        assert_eq!(
+            binds(&only_b, &two).expect("a subset binds to its own session"),
+            [PartitionId(1)]
+        );
+        assert!(
+            binds(&two, &only_b).is_err(),
+            "session A has no counterpart"
+        );
+        assert!(
+            binds(&two, &one).is_err(),
+            "two sessions told apart by their UIDs would collapse onto one"
+        );
+        assert_eq!(
+            binds(&one, &only_b).expect("a UID one store lacks does not distinguish"),
+            [PartitionId(0)]
+        );
+
+        // Same session and spectrum, split by field and by scan.
+        let by_field = observed(
+            vec![session("p", None)],
+            vec![partition(0, &[0], &[0, 1]), partition(0, &[1], &[0, 1])],
+        );
+        let both_fields = observed(
+            vec![session("p", None)],
+            vec![partition(0, &[0, 1], &[0, 1])],
+        );
+        assert!(binds(&by_field, &both_fields).is_err(), "field split");
+        assert!(binds(&both_fields, &by_field).is_err(), "field split");
+        let field_one = observed(vec![session("p", None)], vec![partition(0, &[1], &[0, 1])]);
+        assert_eq!(
+            binds(&field_one, &by_field).expect("asymmetric subset"),
+            [PartitionId(1)]
+        );
+        let by_scan = observed(
+            vec![session("p", None)],
+            vec![partition(0, &[0], &[0]), partition(0, &[0], &[1])],
+        );
+        assert_eq!(
+            binds(&by_scan, &by_scan).expect("scans apart"),
+            [PartitionId(0), PartitionId(1)]
+        );
+        let unscanned = observed(vec![session("p", None)], vec![partition(0, &[0], &[])]);
+        assert!(
+            binds(&by_scan, &unscanned).is_err(),
+            "two scan partitions would collapse onto one without scans"
+        );
+
+        // Feeds distinguish only where both stores have them.
+        let feeds = |pair: Option<[u32; 2]>| {
+            let mut entry = partition(0, &[0], &[0]);
+            entry.feeds = pair;
+            entry
+        };
+        let feed_split = observed(
+            vec![session("p", None)],
+            vec![feeds(Some([0, 0])), feeds(Some([1, 1]))],
+        );
+        assert_eq!(
+            binds(&feed_split, &feed_split).expect("feeds apart"),
+            [PartitionId(0), PartitionId(1)]
+        );
+        assert!(
+            binds(&feed_split, &one).is_err(),
+            "two feed pairs would collapse onto a store without feeds"
+        );
+        let feed_one = observed(vec![session("p", None)], vec![feeds(Some([1, 1]))]);
+        assert_eq!(
+            binds(&feed_one, &feed_split).expect("feed"),
+            [PartitionId(1)]
+        );
+        assert_eq!(
+            binds(&feed_one, &one).expect("no feed axis"),
+            [PartitionId(0)]
+        );
+
+        // Channel widths, bit for bit.
+        let mut narrow = observed(vec![session("p", None)], vec![partition(0, &[0], &[0])]);
+        narrow.partitions[0].channel_widths_hz[1] = 0.9e8;
+        assert!(binds(&narrow, &one).is_err(), "another channel width");
+    }
 
     fn antenna(station: &str, x: f64) -> AntennaEntry {
         AntennaEntry {

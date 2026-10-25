@@ -3,11 +3,13 @@
 //! will cost before anything is read.
 
 use std::ops::Range;
+use std::sync::Arc;
 
 use casa_types::Correlation;
 
 use crate::ObservationError;
-use crate::catalogue::{PartitionEntry, PartitionId};
+use crate::catalogue::{FieldId, PartitionEntry, PartitionId, ScanId};
+use crate::grouping::GroupFragment;
 
 /// Which roles a traversal reads: the data group's payload and the
 /// samples' time auxiliaries and scan. A role left out is not read at all
@@ -86,6 +88,19 @@ impl Roles {
             + usize::from(self.uvw) * 3 * 8
             + per_sample_scalars * 8
     }
+
+    /// Bytes one time of these roles occupies in a batch besides its
+    /// samples': the time offset, the field, the scan when asked for,
+    /// `per_time_scalars` eight-byte scalars shared by the time's samples,
+    /// and room for one group fragment (a batch has at most one per time).
+    #[must_use]
+    pub fn time_bytes(&self, per_time_scalars: usize) -> usize {
+        size_of::<f64>()
+            + size_of::<FieldId>()
+            + usize::from(self.scan) * size_of::<ScanId>()
+            + per_time_scalars * 8
+            + size_of::<GroupFragment>()
+    }
 }
 
 /// Which correlation products a traversal delivers.
@@ -104,10 +119,75 @@ pub enum FlagsFrom {
     /// The delivered products' own stored flags.
     Delivered,
     /// Every product's: a delivered product's flag is the OR over all the
-    /// partition's products at that sample and channel. Production Stokes I
-    /// from `XX` and `YY` uses this: a flagged cross hand drops the sample,
-    /// as it does when every product is read.
+    /// partition's products at that sample and channel. Stokes I from `XX`
+    /// and `YY` uses this as casa-rs's imaging operator does
+    /// (`casa-imaging-operator/src/resample.rs`): a flagged cross hand drops
+    /// the sample, as it does when every product is read. It is that
+    /// operator's choice, not CASA's general rule: CASA collapses flags over
+    /// polarization only on its frequency-interpolation path
+    /// (`FTMachine::interpolateFrequencyTogrid`), while `GridFT::put` tests
+    /// each hand's own flag.
     All,
+}
+
+/// The correlation products a traversal delivers, resolved once at
+/// binding ([`AccessRequest::resolve`]) and shared by every batch of the
+/// traversal and every piece packed from one: no batch copies the list.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CorrelationAxis {
+    /// Every product of the partition, in place: a batch's
+    /// [`correlations`](crate::VisibilityBatch::correlations) are the
+    /// catalogue's [`PartitionEntry::correlations`].
+    All,
+    /// Some of the partition's products, in its order.
+    Subset {
+        /// The delivered products.
+        products: Arc<[Correlation]>,
+        /// Their indices along the partition's correlation axis, strictly
+        /// increasing.
+        indices: Arc<[usize]>,
+    },
+}
+
+impl CorrelationAxis {
+    /// The delivered products of `entry`, the partition the axis was
+    /// resolved against.
+    #[must_use]
+    pub fn products<'a>(&'a self, entry: &'a PartitionEntry) -> &'a [Correlation] {
+        match self {
+            Self::All => &entry.correlations,
+            Self::Subset { products, .. } => products,
+        }
+    }
+
+    /// The subset's indices along the partition's axis, or `None` when
+    /// every product is delivered in place.
+    #[must_use]
+    pub fn indices(&self) -> Option<&[usize]> {
+        match self {
+            Self::All => None,
+            Self::Subset { indices, .. } => Some(indices),
+        }
+    }
+
+    /// Whether the axis describes products of `entry`: a subset is
+    /// non-empty, strictly increasing and names the products at its
+    /// indices. At most one comparison per product; nothing is allocated.
+    #[must_use]
+    pub fn fits(&self, entry: &PartitionEntry) -> bool {
+        match self {
+            Self::All => !entry.correlations.is_empty(),
+            Self::Subset { products, indices } => {
+                !indices.is_empty()
+                    && products.len() == indices.len()
+                    && indices.windows(2).all(|pair| pair[0] < pair[1])
+                    && indices
+                        .iter()
+                        .zip(products.iter())
+                        .all(|(&index, product)| entry.correlations.get(index) == Some(product))
+            }
+        }
+    }
 }
 
 /// The correlation axis of a request.
@@ -177,7 +257,7 @@ pub struct AccessRequest {
     /// [`ReadEvent::GroupEnd`]: crate::ReadEvent::GroupEnd
     pub grouping: Grouping,
     /// The most bytes one batch may hold, with the adapter's decode scratch
-    /// for it ([`PartitionEstimate::held_bytes_per_sample`]). A batch holds
+    /// for it ([`PartitionEstimate::held_bytes_per_time`]). A batch holds
     /// whole times; binding fails when one time does not fit.
     pub batch_bytes: usize,
 }
@@ -189,11 +269,8 @@ pub struct ResolvedRequest {
     /// The data group's index in the partition's
     /// [`data_groups`](PartitionEntry::data_groups).
     pub data_group: usize,
-    /// The delivered correlation products, in the partition's order.
-    pub correlations: Vec<Correlation>,
-    /// Their indices along the partition's correlation axis, or `None` when
-    /// every product is delivered in place.
-    pub correlation_indices: Option<Vec<usize>>,
+    /// The delivered correlation products, shared by every batch.
+    pub correlations: CorrelationAxis,
     /// Whether a delivered flag is the OR over every product's: true only
     /// when a subset is delivered with [`FlagsFrom::All`] (with every
     /// product delivered the policy changes nothing).
@@ -221,8 +298,8 @@ impl AccessRequest {
                 entry.frequencies_hz.len()
             )));
         }
-        let (correlations, correlation_indices) = match &self.correlations.deliver {
-            Deliver::All => (entry.correlations.clone(), None),
+        let correlations = match &self.correlations.deliver {
+            Deliver::All => CorrelationAxis::All,
             Deliver::These(wanted) => {
                 let mut indices = wanted
                     .iter()
@@ -237,17 +314,21 @@ impl AccessRequest {
                 if indices.is_empty() {
                     return Err(invalid("no correlation product requested".to_string()));
                 }
-                let correlations = indices.iter().map(|&i| entry.correlations[i]).collect();
-                let every = indices.len() == entry.correlations.len();
-                (correlations, (!every).then_some(indices))
+                if indices.len() == entry.correlations.len() {
+                    CorrelationAxis::All
+                } else {
+                    CorrelationAxis::Subset {
+                        products: indices.iter().map(|&i| entry.correlations[i]).collect(),
+                        indices: indices.into(),
+                    }
+                }
             }
         };
         Ok(ResolvedRequest {
             data_group,
-            flags_from_all: correlation_indices.is_some()
+            flags_from_all: correlations.indices().is_some()
                 && self.correlations.flags_from == FlagsFrom::All,
             correlations,
-            correlation_indices,
         })
     }
 }
@@ -276,6 +357,9 @@ pub struct PartitionEstimate {
     /// Bytes one sample of the requested roles holds in a batch
     /// ([`Roles::sample_bytes`]).
     pub bytes_per_sample: usize,
+    /// Bytes one time holds in a batch besides its samples'
+    /// ([`Roles::time_bytes`]).
+    pub bytes_per_time: usize,
     /// Bytes per sample the cursor's own scratch holds while it fills a
     /// batch: what it decodes before gathering a correlation subset,
     /// converting flags or placing rows around padding.
@@ -298,8 +382,11 @@ pub struct PartitionEstimate {
     pub selected_elements: usize,
     /// The store's natural blocks along time and frequency.
     pub natural_blocks: NaturalBlocks,
-    /// The fraction of grid cells no acquisition fills, which the adapter
-    /// pads: 0 for a store that holds every cell.
+    /// The fraction of grid cells the adapter pads because no acquisition
+    /// fills them: what an MSv2 adapter places rows around. An MSv4 store
+    /// holds its grid whole, so its adapter pads nothing and reports 0;
+    /// that says nothing of cells the store itself holds as padding
+    /// (XRADIO's NaN cells), which the delivered flags mark.
     pub padded_fraction: f64,
 }
 
@@ -310,24 +397,28 @@ impl PartitionEstimate {
         self.times_per_batch * self.baselines
     }
 
-    /// Payload bytes a full batch holds.
+    /// Bytes the arrays of a full batch hold, exactly as
+    /// [`BatchBuffers::begin`](crate::BatchBuffers::begin) reserves them:
+    /// the envelope a [`BufferPool`](crate::BufferPool) buffer needs for
+    /// this traversal.
     #[must_use]
-    pub fn batch_bytes(&self) -> usize {
-        self.samples_per_batch() * self.bytes_per_sample
+    pub fn buffer_bytes(&self) -> usize {
+        self.times_per_batch * (self.baselines * self.bytes_per_sample + self.bytes_per_time)
     }
 
-    /// Bytes per sample the budget counts: the batch's and the cursor's
-    /// scratch.
+    /// Bytes per time the budget counts: the batch's, samples and time,
+    /// and the cursor's scratch for it.
     #[must_use]
-    pub fn held_bytes_per_sample(&self) -> usize {
-        self.bytes_per_sample + self.scratch_bytes_per_sample
+    pub fn held_bytes_per_time(&self) -> usize {
+        self.baselines * (self.bytes_per_sample + self.scratch_bytes_per_sample)
+            + self.bytes_per_time
     }
 
     /// Bytes a full batch and the cursor's scratch for it hold: at most the
     /// request's budget.
     #[must_use]
     pub fn held_bytes(&self) -> usize {
-        self.samples_per_batch() * self.held_bytes_per_sample()
+        self.times_per_batch * self.held_bytes_per_time()
     }
 
     /// Decoded elements per selected element.
@@ -346,26 +437,23 @@ fn amplification(decoded: usize, selected: usize) -> f64 {
 }
 
 /// Whole times per batch under `batch_bytes`: as many as fit, at most
-/// `times`. `bytes_per_sample` is what the budget counts per sample
-/// ([`PartitionEstimate::held_bytes_per_sample`]).
+/// `times`, when the budget counts `held_bytes_per_time` per time
+/// ([`PartitionEstimate::held_bytes_per_time`]).
 ///
 /// # Errors
 ///
-/// When one time of `baselines` samples at `bytes_per_sample` exceeds the
-/// budget.
+/// When one time exceeds the budget.
 pub fn times_per_batch(
     batch_bytes: usize,
-    bytes_per_sample: usize,
-    baselines: usize,
+    held_bytes_per_time: usize,
     times: usize,
 ) -> Result<usize, ObservationError> {
-    let time_bytes = bytes_per_sample.saturating_mul(baselines).max(1);
-    let fit = (batch_bytes / time_bytes).min(times);
+    let fit = (batch_bytes / held_bytes_per_time.max(1)).min(times);
     if fit == 0 && times > 0 {
         return Err(ObservationError::InvalidRequest {
             reason: format!(
-                "one time holds {baselines} samples of {bytes_per_sample} B, more than the \
-                 {batch_bytes} B batch budget"
+                "one time holds {held_bytes_per_time} B, more than the {batch_bytes} B batch \
+                 budget"
             ),
         });
     }
@@ -393,20 +481,22 @@ impl Estimate {
         self.partitions.iter().map(|p| p.batches).sum()
     }
 
-    /// The largest full batch of the set, in payload bytes.
+    /// The largest full batch's arrays over the set
+    /// ([`PartitionEstimate::buffer_bytes`]): the envelope of a
+    /// [`BufferPool`](crate::BufferPool) that serves the whole traversal and
+    /// the pieces packed from its batches, so the pool retains at most its
+    /// capacity times this.
     #[must_use]
-    pub fn peak_batch_bytes(&self) -> usize {
+    pub fn peak_buffer_bytes(&self) -> usize {
         self.partitions
             .iter()
-            .map(PartitionEstimate::batch_bytes)
+            .map(PartitionEstimate::buffer_bytes)
             .max()
             .unwrap_or(0)
     }
 
-    /// The most one batch and its decode scratch hold over the set: what
-    /// each buffer of a [`BufferPool`](crate::BufferPool) and the cursor
-    /// filling it can hold, so a pool of `n` buffers is admitted as `n`
-    /// times this (plus one batch of scratch per cursor).
+    /// The most one batch and its cursor's decode scratch hold over the
+    /// set: at most the request's budget.
     #[must_use]
     pub fn peak_held_bytes(&self) -> usize {
         self.partitions
@@ -474,12 +564,11 @@ mod tests {
     fn the_budget_fits_whole_times_or_refuses() {
         let bytes = Roles::ALL.sample_bytes(8, 4, true, 3);
         assert_eq!(bytes, 32 * 8 + 32 + 32 * 4 + 24 + 24);
-        assert_eq!(
-            times_per_batch(10 * bytes * 4, bytes, 10, 12).expect("fit"),
-            4
-        );
-        assert_eq!(times_per_batch(usize::MAX, bytes, 10, 12).expect("fit"), 12);
-        assert!(times_per_batch(bytes * 9, bytes, 10, 12).is_err());
-        assert_eq!(times_per_batch(0, bytes, 10, 0).expect("empty"), 0);
+        let time = 10 * bytes + Roles::ALL.time_bytes(0);
+        assert_eq!(times_per_batch(time * 4, time, 12).expect("fit"), 4);
+        assert_eq!(times_per_batch(time * 5 - 1, time, 12).expect("fit"), 4);
+        assert_eq!(times_per_batch(usize::MAX, time, 12).expect("fit"), 12);
+        assert!(times_per_batch(time - 1, time, 12).is_err());
+        assert_eq!(times_per_batch(0, time, 0).expect("empty"), 0);
     }
 }

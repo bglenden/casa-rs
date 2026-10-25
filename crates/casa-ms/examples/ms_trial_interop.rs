@@ -23,7 +23,7 @@ use casa_ms::observation_io::{
 };
 use casa_observation::{
     AccessRequest, BatchBuffers, CorrelationRequest, Grouping, Observation, PartitionId, ReadEvent,
-    Roles, TimeBaselineGrid,
+    Roles,
 };
 use serde_json::json;
 
@@ -45,9 +45,7 @@ fn request(batch_bytes: usize) -> AccessRequest {
 fn per_times(observation: &dyn Observation, times: usize) -> Result<AccessRequest, Error> {
     let estimate = observation.estimate(&request(usize::MAX))?;
     let partition = &estimate.partitions[0];
-    Ok(request(
-        partition.held_bytes_per_sample() * partition.baselines * times,
-    ))
+    Ok(request(partition.held_bytes_per_time() * times))
 }
 
 /// Convert the MSv2 at `ms` through batches into a new MSv4 at `out`.
@@ -69,8 +67,7 @@ fn write(ms: &Path, out: &Path) -> Result<(), Error> {
     for (index, partition) in catalogue.partitions.iter_mut().enumerate() {
         partition.spectral_window = format!("{}_{index}", partition.spectral_window);
     }
-    let mut traversal = observation.bind_read(&request(usize::MAX))?;
-    let grid = TimeBaselineGrid::from_cursor(traversal.cursors[0].as_mut())?;
+    let grid = observation.grid(PartitionId(0), "base")?;
     let options = Msv4StorageOptions {
         dataset_name: "ms_trial_0".to_string(),
         creator: "casa-rs".to_string(),
@@ -97,6 +94,7 @@ fn write(ms: &Path, out: &Path) -> Result<(), Error> {
             "region_writes": counters.region_writes,
             "elements": counters.elements,
             "packed_elements": counters.packed_elements,
+            "partial_chunks": counters.partial_chunks,
         })
     );
     Ok(())

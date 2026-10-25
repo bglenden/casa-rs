@@ -6,7 +6,8 @@ use std::sync::Arc;
 
 use crate::ObservationError;
 use crate::buffers::BatchBuffers;
-use crate::catalogue::Catalogue;
+use crate::catalogue::{Catalogue, PartitionId};
+use crate::creation::TimeBaselineGrid;
 use crate::grouping::{GroupKey, ReadEvent};
 use crate::pool::{BufferPool, FilledBatch};
 use crate::request::{AccessRequest, Estimate, IoCounters, PartitionEstimate};
@@ -47,6 +48,18 @@ pub trait Observation: Sync {
     /// store's adapter does not implement, or budgets less than one time.
     /// Nothing has been read.
     fn bind_read(&self, request: &AccessRequest) -> Result<Traversal<'_>, ObservationError>;
+
+    /// The sample grid of partition `id` as data group `data_group` places
+    /// it (its fields), for a producer to declare when it writes the
+    /// partition elsewhere: from the store's index, reading no payload.
+    ///
+    /// # Errors
+    ///
+    /// When the observation has no such partition or data group, or the
+    /// partition is not one grid: no scan at each time, or acquisitions of
+    /// more than one integration interval.
+    fn grid(&self, id: PartitionId, data_group: &str)
+    -> Result<TimeBaselineGrid, ObservationError>;
 }
 
 /// A bound traversal of one partition of an [`Observation`].

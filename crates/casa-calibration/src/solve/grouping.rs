@@ -619,7 +619,6 @@ impl SolveAccumulator {
                 selected_channels: &selected_channels,
             },
             gain_type,
-            model_source,
             stokes_i,
         )
     }
@@ -633,7 +632,6 @@ impl SolveAccumulator {
         &mut self,
         samples: &SolveSamples<'_>,
         gain_type: GainType,
-        model_source: GainSolveModelSource,
         stokes_i: f32,
     ) -> Result<(), GainSolveError> {
         let SolveSamples {
@@ -708,10 +706,11 @@ impl SolveAccumulator {
                 if weight <= 0.0 {
                     continue;
                 }
-                let model = match (model_data.as_ref(), model_source) {
-                    (Some(model_data), _) => model_data[[corr_index, chan_index]],
-                    (None, _) => Complex32::new(stokes_i, 0.0),
-                };
+                let model = model_data
+                    .as_ref()
+                    .map_or(Complex32::new(stokes_i, 0.0), |model| {
+                        model[[corr_index, chan_index]]
+                    });
                 let model_norm_sqr = model.norm_sqr();
                 if model_norm_sqr <= f32::EPSILON {
                     continue;

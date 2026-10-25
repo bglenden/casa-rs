@@ -71,7 +71,7 @@ fn split_channel_windows_complete_each_group_once() {
         // Concurrently, in two channel windows, from a pool of two buffers:
         // the producer waits while both batches are still in use.
         let mut traversal = observation.bind_read(&grouped).expect("bind");
-        let pool = BufferPool::new(2);
+        let pool = BufferPool::new(2, traversal.estimate.peak_buffer_bytes());
         let mut completion = GroupCompletion::default();
         let mut partial = BTreeMap::<GroupKey, f64>::new();
         let mut finalized = BTreeMap::<GroupKey, f64>::new();
@@ -84,7 +84,7 @@ fn split_channel_windows_complete_each_group_once() {
                             partial: &mut BTreeMap<GroupKey, f64>| {
                 let key = token.key();
                 *partial.entry(key).or_default() += sum;
-                if completion.finish(token) {
+                if completion.finish(token).expect("no work abandoned") {
                     let total = partial.remove(&key).expect("partial");
                     assert!(finalized.insert(key, total).is_none(), "finalized once");
                 }
@@ -132,7 +132,10 @@ fn split_channel_windows_complete_each_group_once() {
             }
         });
         assert_eq!(pool.free(), 2, "{name}: every buffer came back");
-        assert!(completion.is_idle(), "{name}: every group finalized");
+        assert!(
+            completion.is_idle().expect("no work abandoned"),
+            "{name}: every group finalized"
+        );
         assert!(
             closed_with_pending >= 1,
             "{name}: a closure waited for work"

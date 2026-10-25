@@ -144,6 +144,11 @@ impl Msv4Writer {
             .store_array_subset_opt(&plane, scratch.exposure.as_slice(), options)
             .map_err(storage)?;
         let samples = batch.samples();
+        self.counters.partial_chunks += 6 * partial_chunks(
+            placement.first_time..placement.first_time + placement.times,
+            self.chunk_times,
+            self.written.len(),
+        );
         self.counters.region_writes += 6;
         self.counters.elements += 3 * samples * channels * correlations + 5 * samples;
         let rows = placement.first_time..placement.first_time + placement.times;
@@ -260,9 +265,12 @@ impl Msv4Writer {
             if scan[t] != grid.scan_per_time[index] {
                 return Err(mismatch("scan at a time"));
             }
-            if (t * per_time..(t + 1) * per_time)
-                .any(|sample| batch.interval_s(sample) != Some(grid.interval_s))
-            {
+            // An absent acquisition (padding) has no interval: NaN.
+            if (t * per_time..(t + 1) * per_time).any(|sample| {
+                batch
+                    .interval_s(sample)
+                    .is_none_or(|interval| !interval.is_nan() && interval != grid.interval_s)
+            }) {
                 return Err(mismatch("integration interval"));
             }
             if index != first_time + t {
@@ -380,54 +388,100 @@ pub(super) fn create_staging(destination: &Path) -> Result<PathBuf, ObservationE
     }
 }
 
+/// Chunks of `chunk` times that `times` cover only partly, in a dataset of
+/// `total` times (the last chunk ends at `total`).
+fn partial_chunks(times: std::ops::Range<usize>, chunk: usize, total: usize) -> usize {
+    if times.is_empty() {
+        return 0;
+    }
+    let (first, last) = (times.start / chunk, (times.end - 1) / chunk);
+    let partial = |index: usize| {
+        let whole = index * chunk..((index + 1) * chunk).min(total);
+        usize::from(times.start > whole.start || times.end < whole.end)
+    };
+    if first == last {
+        partial(first)
+    } else {
+        partial(first) + partial(last)
+    }
+}
+
 /// Rename `from` to `to`, failing with `AlreadyExists` rather than replace
-/// anything at `to`.
+/// anything at `to`: `renameat2(RENAME_NOREPLACE)`, or the checked rename
+/// where the filesystem does not offer it.
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
 fn rename_noreplace(from: &Path, to: &Path) -> io::Result<()> {
-    #[cfg(all(target_os = "linux", target_env = "gnu"))]
-    {
-        use std::os::unix::ffi::OsStrExt;
-        let from = std::ffi::CString::new(from.as_os_str().as_bytes())?;
-        let target = std::ffi::CString::new(to.as_os_str().as_bytes())?;
-        // SAFETY: both paths are NUL-terminated C strings that outlive the
-        // call; renameat2 reads them only.
-        let result = unsafe {
-            libc::renameat2(
-                libc::AT_FDCWD,
-                from.as_ptr(),
-                libc::AT_FDCWD,
-                target.as_ptr(),
-                libc::RENAME_NOREPLACE,
-            )
-        };
-        if result == 0 {
-            return Ok(());
-        }
-        let error = io::Error::last_os_error();
-        // A filesystem without RENAME_NOREPLACE falls through to the
-        // checked rename below.
-        if !matches!(error.raw_os_error(), Some(libc::EINVAL | libc::ENOSYS)) {
-            return Err(error);
-        }
+    let (c_from, c_to) = (c_path(from)?, c_path(to)?);
+    // SAFETY: both paths are NUL-terminated C strings that outlive the
+    // call; renameat2 reads them only.
+    let result = unsafe {
+        libc::renameat2(
+            libc::AT_FDCWD,
+            c_from.as_ptr(),
+            libc::AT_FDCWD,
+            c_to.as_ptr(),
+            libc::RENAME_NOREPLACE,
+        )
+    };
+    if result == 0 {
+        return Ok(());
     }
-    #[cfg(target_os = "macos")]
-    {
-        use std::os::unix::ffi::OsStrExt;
-        let from = std::ffi::CString::new(from.as_os_str().as_bytes())?;
-        let target = std::ffi::CString::new(to.as_os_str().as_bytes())?;
-        // SAFETY: as above, for renamex_np.
-        let result = unsafe { libc::renamex_np(from.as_ptr(), target.as_ptr(), libc::RENAME_EXCL) };
-        return if result == 0 {
-            Ok(())
-        } else {
-            Err(io::Error::last_os_error())
-        };
+    let error = io::Error::last_os_error();
+    if matches!(error.raw_os_error(), Some(libc::EINVAL | libc::ENOSYS)) {
+        checked_rename(from, to)
+    } else {
+        Err(error)
     }
-    // Elsewhere, a check and a rename: a narrow race this trial accepts.
-    #[cfg(not(target_os = "macos"))]
-    {
-        if to.exists() {
-            return Err(io::Error::from(io::ErrorKind::AlreadyExists));
-        }
-        std::fs::rename(from, to)
+}
+
+/// [`rename_noreplace`] through `renamex_np(RENAME_EXCL)`.
+#[cfg(target_os = "macos")]
+fn rename_noreplace(from: &Path, to: &Path) -> io::Result<()> {
+    let (c_from, c_to) = (c_path(from)?, c_path(to)?);
+    // SAFETY: as for renameat2: NUL-terminated paths, read only.
+    let result = unsafe { libc::renamex_np(c_from.as_ptr(), c_to.as_ptr(), libc::RENAME_EXCL) };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
+/// [`rename_noreplace`] where no exclusive rename is available.
+#[cfg(not(any(target_os = "macos", all(target_os = "linux", target_env = "gnu"))))]
+fn rename_noreplace(from: &Path, to: &Path) -> io::Result<()> {
+    checked_rename(from, to)
+}
+
+/// A check and a rename: a narrow race this trial accepts where the
+/// platform or filesystem offers no exclusive rename.
+#[cfg(not(target_os = "macos"))]
+fn checked_rename(from: &Path, to: &Path) -> io::Result<()> {
+    if to.exists() {
+        return Err(io::Error::from(io::ErrorKind::AlreadyExists));
+    }
+    std::fs::rename(from, to)
+}
+
+/// `path` as a C string.
+#[cfg(any(target_os = "macos", all(target_os = "linux", target_env = "gnu")))]
+fn c_path(path: &Path) -> io::Result<std::ffi::CString> {
+    use std::os::unix::ffi::OsStrExt;
+    Ok(std::ffi::CString::new(path.as_os_str().as_bytes())?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::partial_chunks;
+
+    #[test]
+    fn a_batch_covers_whole_chunks_only_when_aligned() {
+        assert_eq!(partial_chunks(0..5, 5, 12), 0);
+        assert_eq!(partial_chunks(0..10, 5, 12), 0);
+        assert_eq!(partial_chunks(10..12, 5, 12), 0, "the short last chunk");
+        assert_eq!(partial_chunks(0..4, 5, 12), 1);
+        assert_eq!(partial_chunks(4..8, 5, 12), 2);
+        assert_eq!(partial_chunks(1..3, 5, 12), 1);
+        assert_eq!(partial_chunks(8..12, 5, 12), 1);
     }
 }

@@ -22,8 +22,9 @@ use super::read::{Dataset, GroupArrays, Msv4Observation};
 use crate::observation_io::grouping::GroupIndex;
 
 /// Reusable decode storage for what cannot be decoded in place: the flag
-/// bytes before their conversion to `bool`, and the full correlation axis
-/// when a subset is delivered.
+/// bytes before their conversion to `bool`, the stored weights the flags
+/// read when weights are not delivered, and the full correlation axis when
+/// a subset is delivered.
 #[derive(Default)]
 struct Scratch {
     flag_bytes: Vec<u8>,
@@ -52,9 +53,9 @@ impl<'o> Msv4Cursor<'o> {
         observation: &'o Msv4Observation,
         request: &AccessRequest,
         estimate: PartitionEstimate,
+        resolved: ResolvedRequest,
     ) -> Result<Self, ObservationError> {
-        let (dataset, entry) = observation.dataset(estimate.partition)?;
-        let resolved = request.resolve(entry)?;
+        let (dataset, _) = observation.dataset(estimate.partition)?;
         let arrays = &dataset.groups[resolved.data_group];
         let groups = GroupIndex::new(
             estimate.partition,
@@ -62,7 +63,7 @@ impl<'o> Msv4Cursor<'o> {
             observation.open.group_closure,
             &dataset.times,
             &arrays.fields,
-            dataset.scans.as_deref().unwrap_or(&[]),
+            dataset.scans.as_deref(),
         )?;
         Ok(Self {
             observation,
@@ -81,8 +82,10 @@ impl<'o> Msv4Cursor<'o> {
     }
 }
 
-/// What a request reads: each requested variable and whether it spans
-/// frequency, or is UVW (its last axis whole), or is `[time, baseline]`.
+/// What a request reads: each variable decoded, whether it spans
+/// frequency, or is UVW (its last axis whole), or is `[time, baseline]`, and
+/// whether it is delivered (`WEIGHT` is decoded for the flags alone when
+/// flags are read without weights).
 #[derive(Clone, Copy)]
 enum Extent {
     Cube,
@@ -94,26 +97,33 @@ fn requested<'a>(
     dataset: &'a Dataset,
     arrays: &'a GroupArrays,
     roles: Roles,
-) -> Vec<(&'a Array<FilesystemStore>, Extent)> {
+) -> Vec<(&'a Array<FilesystemStore>, Extent, bool)> {
     let mut read = Vec::new();
-    for (wanted, array, extent) in [
-        (roles.values, Some(&arrays.values), Extent::Cube),
-        (roles.flags, Some(&arrays.flags), Extent::Cube),
-        (roles.weights, Some(&arrays.weights), Extent::Cube),
-        (roles.uvw, Some(&arrays.uvw), Extent::Uvw),
+    for (decoded, delivered, array, extent) in [
+        (roles.values, true, Some(&arrays.values), Extent::Cube),
+        (roles.flags, true, Some(&arrays.flags), Extent::Cube),
+        (
+            roles.weights || roles.flags,
+            roles.weights,
+            Some(&arrays.weights),
+            Extent::Cube,
+        ),
+        (roles.uvw, true, Some(&arrays.uvw), Extent::Uvw),
         (
             roles.time_centroid,
+            true,
             dataset.centroid.as_ref(),
             Extent::TimeBaseline,
         ),
         (
             roles.exposure,
+            true,
             dataset.exposure.as_ref(),
             Extent::TimeBaseline,
         ),
     ] {
-        if let (true, Some(array)) = (wanted, array) {
-            read.push((array, extent));
+        if let (true, Some(array)) = (decoded, array) {
+            read.push((array, extent, delivered));
         }
     }
     read
@@ -128,16 +138,23 @@ fn requested<'a>(
 /// When the request names an unknown partition, data group, channel or
 /// product, asks for a role the dataset does not hold (`TIME_CENTROID`,
 /// `EFFECTIVE_INTEGRATION_TIME`, `time.integration_time` or `scan_name`),
-/// or budgets less than one time.
+/// or budgets less than one time; unsupported when it asks for centroids
+/// the dataset splits with `TIME_CENTROID_EXTRA_PRECISION`.
 pub(super) fn estimate(
     observation: &Msv4Observation,
     request: &AccessRequest,
     id: PartitionId,
-) -> Result<PartitionEstimate, ObservationError> {
+) -> Result<(PartitionEstimate, ResolvedRequest), ObservationError> {
     let (dataset, entry) = observation.dataset(id)?;
     let resolved = request.resolve(entry)?;
     let arrays = &dataset.groups[resolved.data_group];
     let roles = request.roles;
+    if roles.time_centroid && dataset.centroid_extra_precision {
+        return Err(ObservationError::Unsupported {
+            what: "an MSv4 TIME_CENTROID split with TIME_CENTROID_EXTRA_PRECISION: \
+                   the profile carries one f64 offset per centroid",
+        });
+    }
     for (wanted, present, variable) in [
         (
             roles.time_centroid,
@@ -168,21 +185,24 @@ pub(super) fn estimate(
         .into_iter()
         .filter(|wanted| *wanted)
         .count();
-    let bytes_per_sample = roles.sample_bytes(channels, resolved.correlations.len(), true, scalars);
-    // The cursor's scratch: the flag bytes before their conversion, and,
-    // when a subset is delivered, the values and weights of every stored
-    // product before they are gathered.
+    let delivered = resolved.correlations.products(entry).len();
+    let bytes_per_sample = roles.sample_bytes(channels, delivered, true, scalars);
+    // The cursor's scratch: the flag bytes before their conversion; the
+    // values of every stored product when a subset is delivered; and the
+    // stored weights, unless they are decoded straight into the batch (the
+    // flags read them too).
     let stored = channels * entry.correlations.len();
-    let scratch_bytes_per_sample = usize::from(roles.flags) * stored
-        + if resolved.correlation_indices.is_some() {
-            stored * (usize::from(roles.values) * 8 + usize::from(roles.weights) * 4)
-        } else {
-            0
-        };
+    let gathered = resolved.correlations.indices().is_some();
+    let weights_in_scratch = (roles.flags && !roles.weights) || (roles.weights && gathered);
+    let scratch_bytes_per_sample = stored
+        * (usize::from(roles.flags)
+            + usize::from(roles.values && gathered) * 8
+            + usize::from(weights_in_scratch) * 4);
+    // `time.integration_time` is one constant: no interval array.
+    let bytes_per_time = roles.time_bytes(0);
     let times_per_batch = times_per_batch(
         request.batch_bytes,
-        bytes_per_sample + scratch_bytes_per_sample,
-        baselines,
+        baselines * (bytes_per_sample + scratch_bytes_per_sample) + bytes_per_time,
         times,
     )?;
     let batches = if times_per_batch == 0 {
@@ -194,25 +214,27 @@ pub(super) fn estimate(
     let variables = requested(dataset, arrays, roles);
     for batch in 0..batches {
         let rows = batch * times_per_batch..((batch + 1) * times_per_batch).min(times);
-        for &(array, extent) in &variables {
+        for &(array, extent, delivered) in &variables {
             let subset = subset(array, rows.clone(), &request.channels, extent);
             let (units, elements) = chunk_cost(array, &subset)?;
             decode_units += units;
             decoded += elements;
-            selected += match (extent, &resolved.correlation_indices) {
-                (Extent::Cube, Some(indices)) => {
+            selected += match (delivered, extent, resolved.correlations.indices()) {
+                (false, ..) => 0,
+                (true, Extent::Cube, Some(indices)) => {
                     subset.num_elements_usize() / entry.correlations.len() * indices.len()
                 }
-                _ => subset.num_elements_usize(),
+                (true, ..) => subset.num_elements_usize(),
             };
         }
     }
     let chunk = arrays.values.chunk_shape(&[0, 0, 0, 0]).map_err(storage)?;
-    Ok(PartitionEstimate {
+    let estimate = PartitionEstimate {
         partition: id,
         times,
         baselines,
         bytes_per_sample,
+        bytes_per_time,
         scratch_bytes_per_sample,
         times_per_batch,
         batches,
@@ -224,7 +246,8 @@ pub(super) fn estimate(
             channels: chunk[2].get() as usize,
         },
         padded_fraction: 0.0,
-    })
+    };
+    Ok((estimate, resolved))
 }
 
 /// The array subset of times `rows` and, for a cube, channels `channels`.
@@ -351,7 +374,7 @@ impl Msv4Cursor<'_> {
         let catalogue = &self.observation.catalogue;
         let capacity = buffers.capacity_bytes();
         let header = self.header(rows.len());
-        let mut fill = buffers.begin(header);
+        let mut fill = buffers.begin(header, catalogue)?;
         let batch = fill.arrays();
         batch
             .time_offsets_s
@@ -374,7 +397,7 @@ impl Msv4Cursor<'_> {
             + batch.weights.len() * size_of::<f32>()
             + (batch.uvw.len() + batch.centroid_offsets_s.len() + batch.exposure_s.len())
                 * size_of::<f64>();
-        fill.finish(catalogue)?;
+        fill.finish()?;
         if buffers.capacity_bytes() > capacity {
             self.counters.buffer_growths += 1;
         }
@@ -394,7 +417,7 @@ impl Msv4Cursor<'_> {
         let roles = self.roles;
         let channels = &self.channels;
         let stored = arrays.values.shape()[3] as usize;
-        let keep = self.resolved.correlation_indices.as_deref();
+        let keep = self.resolved.correlations.indices();
         let counters = &mut self.counters;
         let scratch = &mut self.scratch;
         let mut prepare = |wanted: bool,
@@ -421,6 +444,24 @@ impl Msv4Cursor<'_> {
                 counters.copied_elements += batch.values.len();
             }
         }
+        // The stored weights come first whenever flags are read: XRADIO pads
+        // a cell no row filled with NaN and leaves its FLAG false, so a
+        // non-finite stored weight marks an absent acquisition, and every
+        // delivered flag carries it.
+        let weights_in_place = roles.weights && keep.is_none();
+        if let Some(subset) = prepare(
+            roles.weights || roles.flags,
+            Some(&arrays.weights),
+            Extent::Cube,
+        )? {
+            let target = if weights_in_place {
+                &mut batch.weights
+            } else {
+                &mut scratch.weights
+            };
+            target.resize(subset.num_elements_usize(), 0.0);
+            decode_into(&arrays.weights, "float32", &subset, target, options)?;
+        }
         if let Some(subset) = prepare(roles.flags, Some(&arrays.flags), Extent::Cube)? {
             scratch.flag_bytes.resize(subset.num_elements_usize(), 0);
             decode_into(
@@ -430,47 +471,48 @@ impl Msv4Cursor<'_> {
                 &mut scratch.flag_bytes,
                 options,
             )?;
-            let flag = |byte: u8| match byte {
-                0 => Ok(false),
+            let weights: &[f32] = if weights_in_place {
+                &batch.weights
+            } else {
+                &scratch.weights
+            };
+            let flag = |byte: u8, weight: f32| match byte {
+                0 => Ok(!weight.is_finite()),
                 1 => Ok(true),
                 _ => Err(invalid(format!("FLAG byte {byte} is not a boolean"))),
             };
+            let cells = scratch
+                .flag_bytes
+                .chunks_exact(stored)
+                .zip(weights.chunks_exact(stored));
             match keep {
                 None => {
-                    for &byte in &scratch.flag_bytes {
-                        batch.flags.push(flag(byte)?);
+                    for (&byte, &weight) in scratch.flag_bytes.iter().zip(weights) {
+                        batch.flags.push(flag(byte, weight)?);
                     }
                 }
                 Some(keep) if self.resolved.flags_from_all => {
-                    for cell in scratch.flag_bytes.chunks_exact(stored) {
+                    for (bytes, weights) in cells {
                         let mut any = false;
-                        for &byte in cell {
-                            any |= flag(byte)?;
+                        for (&byte, &weight) in bytes.iter().zip(weights) {
+                            any |= flag(byte, weight)?;
                         }
                         batch.flags.extend(std::iter::repeat_n(any, keep.len()));
                     }
                 }
                 Some(keep) => {
-                    for cell in scratch.flag_bytes.chunks_exact(stored) {
+                    for (bytes, weights) in cells {
                         for &product in keep {
-                            batch.flags.push(flag(cell[product])?);
+                            batch.flags.push(flag(bytes[product], weights[product])?);
                         }
                     }
                 }
             }
             counters.copied_elements += scratch.flag_bytes.len();
         }
-        if let Some(subset) = prepare(roles.weights, Some(&arrays.weights), Extent::Cube)? {
-            let target = match keep {
-                None => &mut batch.weights,
-                Some(_) => &mut scratch.weights,
-            };
-            target.resize(subset.num_elements_usize(), 0.0);
-            decode_into(&arrays.weights, "float32", &subset, target, options)?;
-            if let Some(keep) = keep {
-                gather(&scratch.weights, stored, keep, &mut batch.weights);
-                counters.copied_elements += batch.weights.len();
-            }
+        if let (true, Some(keep)) = (roles.weights, keep) {
+            gather(&scratch.weights, stored, keep, &mut batch.weights);
+            counters.copied_elements += batch.weights.len();
         }
         for (wanted, array, extent, target) in [
             (roles.uvw, Some(&arrays.uvw), Extent::Uvw, &mut batch.uvw),

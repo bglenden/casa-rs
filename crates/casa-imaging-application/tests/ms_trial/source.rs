@@ -19,6 +19,7 @@ use casa_observation::{
     AccessRequest, BatchBuffers, Correlation, CorrelationRequest, Grouping, IoCounters,
     Observation, PartitionId, ReadEvent, Roles, Traversal, VisibilityBatch,
 };
+use casa_types::measures::MjdHighPrec;
 
 /// The request one wave of the pass binds: the native channels `channels`
 /// of partition `partition`, with or without the visibilities, under
@@ -57,7 +58,7 @@ pub fn per_times(
     let estimate = observation.estimate(&probe).expect("estimate");
     let partition = &estimate.partitions[0];
     AccessRequest {
-        batch_bytes: partition.held_bytes_per_sample() * partition.baselines * times,
+        batch_bytes: partition.held_bytes_per_time() * times,
         ..request
     }
 }
@@ -105,6 +106,8 @@ pub struct BatchSource<'o> {
     max_samples: usize,
     traversal: Option<Traversal<'o>>,
     buffers: BatchBuffers,
+    /// The validity rule over a batch, evaluated once per batch.
+    mask: Vec<bool>,
     pub trace: SourceTrace,
 }
 
@@ -146,6 +149,7 @@ impl<'o> BatchSource<'o> {
             max_samples: estimate.partitions[0].samples_per_batch(),
             traversal: None,
             buffers: BatchBuffers::default(),
+            mask: Vec::new(),
             trace: SourceTrace::default(),
         }
     }
@@ -183,7 +187,11 @@ impl<'o> BatchSource<'o> {
         let channel_indices: Vec<u32> = (first..first + channels).map(|c| c as u32).collect();
         let correlation_indices: Vec<u32> = self.routed.iter().map(|&c| c as u32).collect();
         block.reset(1, &channel_indices, &correlation_indices);
-        let validity = batch.validity();
+        let mut mask = std::mem::take(&mut self.mask);
+        batch.validity().mask_into(&mut mask, batch.shape());
+        let delivered = batch.correlations.len();
+        let per_time = batch.samples_per_time();
+        let mjd_zero = MjdHighPrec::new(0.0, 0.0);
         let weights = batch.group.weights.expect("weights");
         let uvw = batch.group.uvw.expect("uvw");
         let data = values.then(|| batch.group.values.expect("values"));
@@ -197,7 +205,7 @@ impl<'o> BatchSource<'o> {
                 row_flag: false,
                 context: RowContext {
                     original_uvw_m: None,
-                    time_s: batch.time.origin().day() * 86_400.0 + coordinate.time_offset_s,
+                    time_s: batch.time.seconds_since(sample / per_time, mjd_zero),
                     antennas: [
                         coordinate.baseline.antenna1.0,
                         coordinate.baseline.antenna2.0,
@@ -237,7 +245,7 @@ impl<'o> BatchSource<'o> {
                                 }
                                 row_weights[cell] = weights[[sample, channel, correlation]];
                                 row_flags_out[cell] =
-                                    validity.excluded(sample, channel, correlation);
+                                    mask[(sample * channels + channel) * delivered + correlation];
                             }
                         }
                         Ok::<_, std::convert::Infallible>(())
@@ -245,6 +253,7 @@ impl<'o> BatchSource<'o> {
                 )
                 .unwrap_or_else(|never| match never {});
         }
+        self.mask = mask;
         batch.samples() * cells * (usize::from(values) + 2)
     }
 }

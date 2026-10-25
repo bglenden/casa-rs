@@ -16,9 +16,10 @@ use std::sync::Arc;
 
 use casa_observation::{
     AccessRequest, BoundCursor, Catalogue, DataGroupEntry, Estimate, NaturalBlocks, Observation,
-    ObservationError, ObservationId, PartitionEntry, PartitionEstimate, PartitionId, Traversal,
-    times_per_batch,
+    ObservationError, ObservationId, PartitionEntry, PartitionEstimate, PartitionId,
+    ResolvedRequest, Roles, TimeBaselineGrid, Traversal, times_per_batch,
 };
+use casa_tables::{RequiredScalarColumnDestination, RequiredScalarColumnValuesMut};
 use casa_types::measures::{EpochRef, MjdHighPrec};
 
 use super::OpenOptions;
@@ -178,6 +179,8 @@ impl Msv2Observation {
                 intents: catalogue::intents(&key.obs_mode),
                 observation,
                 feeds: Some(feeds),
+                fields: super::distinct(&grid.field_per_time),
+                scans: super::distinct(&grid.scan_per_time),
                 baselines: grid.baselines.clone(),
                 time_scale,
                 time_origin: MjdHighPrec::new(0.0, 0.0),
@@ -244,12 +247,15 @@ impl Msv2Observation {
         &self,
         request: &AccessRequest,
         id: PartitionId,
-    ) -> Result<PartitionEstimate, ObservationError> {
+    ) -> Result<(PartitionEstimate, ResolvedRequest), ObservationError> {
         let (partition, entry) = self.partition(id)?;
         let resolved = request.resolve(entry)?;
         let roles = request.roles;
         let channels = request.channels.len();
-        let (delivered, stored) = (resolved.correlations.len(), entry.correlations.len());
+        let (delivered, stored) = (
+            resolved.correlations.products(entry).len(),
+            entry.correlations.len(),
+        );
         let scalars = [roles.time_centroid, roles.interval, roles.exposure]
             .into_iter()
             .filter(|wanted| *wanted)
@@ -258,15 +264,18 @@ impl Msv2Observation {
             roles.sample_bytes(channels, delivered, self.spectral_weights, scalars);
         let grid = &partition.grid;
         // The cursor's scratch: each present row's number, sample, FLAG_ROW
-        // and time auxiliaries; and, when a time has padding or a subset is
-        // delivered, every stored product of the payload, read before it is
-        // placed.
-        let placed = resolved.correlation_indices.is_some() || grid.padded_fraction() > 0.0;
+        // and time auxiliaries; and, when a subset is delivered, every stored
+        // product of the cube roles, read before the delivered ones are
+        // gathered. Padding needs none: rows are spread in place.
+        let gathered = Roles {
+            uvw: false,
+            ..roles
+        };
         let scratch_bytes_per_sample = 2 * size_of::<usize>()
             + usize::from(roles.flags)
             + 8 * scalars
-            + if placed {
-                roles.sample_bytes(channels, stored, self.spectral_weights, 0)
+            + if resolved.correlations.indices().is_some() {
+                gathered.sample_bytes(channels, stored, self.spectral_weights, 0)
             } else {
                 0
             };
@@ -283,10 +292,10 @@ impl Msv2Observation {
                 + scalars
         };
         let (times, baselines) = (grid.times(), grid.baselines.len());
+        let bytes_per_time = roles.time_bytes(0);
         let times_per_batch = times_per_batch(
             request.batch_bytes,
-            bytes_per_sample + scratch_bytes_per_sample,
-            baselines,
+            baselines * (bytes_per_sample + scratch_bytes_per_sample) + bytes_per_time,
             times,
         )?;
         let group = &entry.data_groups[resolved.data_group];
@@ -295,11 +304,12 @@ impl Msv2Observation {
             .main_table()
             .array_column_tile_shape(&group.visibilities)
             .map_err(table_error)?;
-        Ok(PartitionEstimate {
+        let estimate = PartitionEstimate {
             partition: id,
             times,
             baselines,
             bytes_per_sample,
+            bytes_per_time,
             scratch_bytes_per_sample,
             times_per_batch,
             batches: if times_per_batch == 0 {
@@ -322,7 +332,8 @@ impl Msv2Observation {
                 },
             },
             padded_fraction: grid.padded_fraction(),
-        })
+        };
+        Ok((estimate, resolved))
     }
 
     /// What `request` costs ([`Observation::estimate`]).
@@ -336,8 +347,8 @@ impl Msv2Observation {
             partitions: request
                 .partitions
                 .iter()
-                .map(|&id| self.estimate_partition(request, id))
-                .collect::<Result<_, _>>()?,
+                .map(|&id| Ok(self.estimate_partition(request, id)?.0))
+                .collect::<Result<_, ObservationError>>()?,
         })
     }
 
@@ -348,16 +359,81 @@ impl Msv2Observation {
     ///
     /// As [`Self::estimate`].
     pub fn bind_read(&self, request: &AccessRequest) -> Result<Traversal<'_>, ObservationError> {
-        let estimate = self.estimate(request)?;
-        let cursors = estimate
+        let bound = request
             .partitions
             .iter()
-            .map(|estimate| {
-                Msv2Cursor::bind(self, request, estimate.clone())
+            .map(|&id| self.estimate_partition(request, id))
+            .collect::<Result<Vec<_>, _>>()?;
+        let estimate = Estimate {
+            partitions: bound.iter().map(|(estimate, _)| estimate.clone()).collect(),
+        };
+        let cursors = bound
+            .into_iter()
+            .map(|(estimate, resolved)| {
+                Msv2Cursor::bind(self, request, estimate, resolved)
                     .map(|cursor| Box::new(cursor) as BoundCursor<'_>)
             })
             .collect::<Result<_, _>>()?;
         Ok(Traversal::new(cursors, estimate))
+    }
+
+    /// Partition `id`'s grid ([`Observation::grid`]): its times, fields and
+    /// scans from the opening index, and the one `INTERVAL` of its rows,
+    /// read in bounded row chunks. Padding has no row, so no interval.
+    ///
+    /// # Errors
+    ///
+    /// As [`Observation::grid`].
+    pub fn grid(
+        &self,
+        id: PartitionId,
+        data_group: &str,
+    ) -> Result<TimeBaselineGrid, ObservationError> {
+        let (partition, entry) = self.partition(id)?;
+        if entry.data_group(data_group).is_none() {
+            return Err(ObservationError::InvalidRequest {
+                reason: format!("no data group {data_group} in {id:?}"),
+            });
+        }
+        let grid = &partition.grid;
+        let rows: Vec<usize> = grid
+            .cells
+            .iter()
+            .filter(|&&row| row != index::NO_ROW)
+            .map(|&row| row as usize)
+            .collect();
+        let main = self.ms.main_table();
+        let mut interval = None;
+        let mut values = Vec::new();
+        for chunk in rows.chunks(ROWS_PER_CHUNK) {
+            values.clear();
+            main.required_scalar_columns_for_rows_into(
+                chunk,
+                &mut [RequiredScalarColumnDestination::new(
+                    "INTERVAL",
+                    RequiredScalarColumnValuesMut::Float64(&mut values),
+                )],
+            )
+            .map_err(table_error)?;
+            for value in &values {
+                if *interval.get_or_insert(*value) != *value {
+                    return Err(ObservationError::Unsupported {
+                        what: "a grid with more than one integration interval",
+                    });
+                }
+            }
+        }
+        Ok(TimeBaselineGrid {
+            baselines: grid.baselines.clone(),
+            time_scale: entry.time_scale,
+            time_origin: entry.time_origin,
+            times_s: grid.times_s.clone(),
+            field_per_time: grid.field_per_time.clone(),
+            scan_per_time: grid.scan_per_time.clone(),
+            interval_s: interval.ok_or_else(|| ObservationError::InvalidRequest {
+                reason: format!("{id:?} has no rows"),
+            })?,
+        })
     }
 }
 
@@ -372,5 +448,13 @@ impl Observation for Msv2Observation {
 
     fn bind_read(&self, request: &AccessRequest) -> Result<Traversal<'_>, ObservationError> {
         Msv2Observation::bind_read(self, request)
+    }
+
+    fn grid(
+        &self,
+        id: PartitionId,
+        data_group: &str,
+    ) -> Result<TimeBaselineGrid, ObservationError> {
+        Msv2Observation::grid(self, id, data_group)
     }
 }

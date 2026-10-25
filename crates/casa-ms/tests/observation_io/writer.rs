@@ -29,10 +29,7 @@ pub(crate) fn declaration(
             field.name = format!("{}_{index}", field.name);
         }
     }
-    let mut traversal = observation
-        .bind_read(&request(0..8, usize::MAX))
-        .expect("bind");
-    let grid = TimeBaselineGrid::from_cursor(traversal.cursors[0].as_mut()).expect("grid");
+    let grid = observation.grid(PartitionId(0), "base").expect("grid");
     (catalogue, grid)
 }
 
@@ -85,6 +82,13 @@ fn rust_written_msv4_reads_back_equal_to_the_msv2() {
         let mut writer = create(&out, observation, label == "v2");
         write_all(&mut writer, observation, times);
         let counters = writer.counters();
+        assert_eq!(writer.chunk_times(), 5);
+        assert_eq!(
+            counters.partial_chunks,
+            if times == 4 { 6 * (1 + 2 + 1) } else { 0 },
+            "{label}: four-time batches leave chunks 0..5 and 5..10 partly covered; \
+             twelve times cover every chunk whole"
+        );
         let written = writer.finish().expect("finish");
         let reopened = Msv4Observation::open(&written).expect("reopen");
         let read = samples(
@@ -118,6 +122,53 @@ fn rust_written_msv4_reads_back_equal_to_the_msv2() {
             );
         }
     }
+}
+
+/// A partition with padding (an MSv2 row removed: a baseline dropped at one
+/// time) is declared from the index and written: the padded cell has no
+/// acquisition, so no interval to compare with the dataset's. It reads back
+/// flagged, with NaN values and time auxiliaries, and every acquisition
+/// reads back equal to the MSv2's.
+#[test]
+fn a_padded_partition_is_declared_and_written() {
+    let root = tempfile::tempdir().expect("root");
+    let path = super::fixture(root.path(), "ms_trial.ms");
+    let mut ms = casa_ms::MeasurementSet::open(&path).expect("ms");
+    ms.main_table_mut().remove_rows(&[7]).expect("remove row 7");
+    ms.save().expect("save");
+    drop(ms);
+    let sparse = casa_ms::observation_io::Msv2Observation::open(&path).expect("padded");
+    let reference = samples(
+        &mut sparse.bind_read(&request(0..8, usize::MAX)).expect("bind"),
+        sparse.catalogue(),
+    )
+    .expect("v2");
+    let out = root.path().join("padded.ps.zarr");
+    let mut writer = create(&out, &sparse, true);
+    write_all(&mut writer, &sparse, 4);
+    let reopened = Msv4Observation::open(writer.finish().expect("finish")).expect("reopen");
+    let read = samples(
+        &mut reopened
+            .bind_read(&request(0..8, usize::MAX))
+            .expect("bind"),
+        reopened.catalogue(),
+    )
+    .expect("read back");
+    assert_eq!(read.len(), reference.len(), "every cell of the grid");
+    let mut padded = 0;
+    for (key, expected) in &reference {
+        let back = &read[key];
+        if expected.uvw.iter().all(|metres| metres.is_nan()) {
+            padded += 1;
+            assert!(back.flags.iter().all(|flag| *flag), "padding is flagged");
+            assert!(back.values.iter().all(|value| value.re.is_nan()));
+            assert!(back.uvw.iter().all(|metres| metres.is_nan()));
+            assert!(back.centroid.is_nan() && back.exposure.is_nan());
+        } else {
+            assert_eq!(back, expected, "{key:?}");
+        }
+    }
+    assert_eq!(padded, 1);
 }
 
 /// Staging directories beside `out`.
@@ -203,10 +254,11 @@ fn edited(
     let mut arrays = packed.arrays().clone();
     edit(&mut header, &mut arrays);
     let mut buffers = BatchBuffers::default();
-    let mut fill = buffers.begin(header);
+    let mut fill = buffers
+        .begin(header, batch.catalogue)
+        .expect("an edited header still fits the catalogue");
     *fill.arrays() = arrays;
-    fill.finish(batch.catalogue)
-        .expect("an edited batch is still well formed");
+    fill.finish().expect("an edited batch is still well formed");
     buffers
 }
 

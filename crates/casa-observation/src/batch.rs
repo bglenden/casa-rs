@@ -13,6 +13,7 @@ use num_complex::Complex32;
 use crate::ObservationError;
 use crate::catalogue::{Catalogue, DataGroupEntry, FieldId, OrderedBaseline, PartitionId, ScanId};
 use crate::grouping::GroupFragment;
+use crate::request::CorrelationAxis;
 
 /// One sample's coordinates, assembled on the stack.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -100,8 +101,9 @@ impl SampleTiming<'_> {
 /// `[sample, channel, correlation]` over the delivered correlations. The
 /// weights of a store that holds one weight per correlation (MSv2 `WEIGHT`)
 /// are the same view with a zero stride along the channel axis: no copy,
-/// and `as_slice()` is `None` on it. `flags` is the stored flag state, with
-/// MSv2 `FLAG_ROW` folded in; [`VisibilityBatch::validity`] is the one rule
+/// and `as_slice()` is `None` on it. `flags` is the stored flag state with
+/// absent acquisitions folded in (MSv2 `FLAG_ROW` and padding; in MSv4 a
+/// non-finite stored weight); [`VisibilityBatch::validity`] is the one rule
 /// that decides whether a value is used.
 #[derive(Clone, Copy, Debug)]
 pub struct DataGroupView<'a> {
@@ -109,7 +111,7 @@ pub struct DataGroupView<'a> {
     pub entry: &'a DataGroupEntry,
     /// Visibilities.
     pub values: Option<ArrayView3<'a, Complex32>>,
-    /// Stored flags; true excludes the value.
+    /// Flags, absent acquisitions folded in; true excludes the value.
     pub flags: Option<ArrayView3<'a, bool>>,
     /// Weights.
     pub weights: Option<ArrayView3<'a, f32>>,
@@ -139,13 +141,17 @@ impl DataGroupView<'_> {
 /// Whether each value of a batch is used: the contract's single validity
 /// rule, the same for every store.
 ///
-/// A value `(sample, channel, correlation)` is excluded when its stored
+/// A value `(sample, channel, correlation)` is excluded when its delivered
 /// flag is set or, among the roles read, its visibility or weight is not
-/// finite. That covers MSv2 `FLAG_ROW` (folded into the flags by the
-/// adapter), padding (a grid cell no acquisition filled: flagged, NaN, weight
-/// 0), XRADIO's own padding (NaN with the flag left false) and corrupt
-/// values alike, so a consumer applies no format-specific rule. The stored
-/// flags stay available unchanged in [`DataGroupView`].
+/// finite. A delivered flag already marks every absent acquisition, in
+/// every store: MSv2 `FLAG_ROW` and the cells the MSv2 adapter pads (no row
+/// filled them: flagged, NaN, weight 0) are flagged, and the MSv4 adapter
+/// folds a non-finite stored weight into the flag, because XRADIO pads a
+/// cell no row filled with NaN and leaves its `FLAG` false. So the rule
+/// gives one answer for one observation whichever store holds it and
+/// whichever roles are read, a flags-only read included, and a consumer
+/// applies no format-specific rule; the values and weights catch corrupt
+/// values besides.
 #[derive(Clone, Copy, Debug)]
 pub struct Validity<'a> {
     flags: Option<ArrayView3<'a, bool>>,
@@ -233,6 +239,9 @@ pub struct VisibilityBatch<'a> {
     /// The correlation products along the last axis: the delivered ones, in
     /// the partition's order.
     pub correlations: &'a [Correlation],
+    /// The traversal's correlation axis these are: what a packed piece
+    /// shares rather than copies.
+    pub(crate) axis: &'a CorrelationAxis,
     /// The requested data group.
     pub group: DataGroupView<'a>,
     /// The scientific-group fragments in this batch, in sample order. Only
