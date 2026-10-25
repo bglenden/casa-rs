@@ -304,33 +304,35 @@ fn source_name(ms: &MeasurementSet, id: i32) -> Result<Option<String>, Observati
 
 /// The scans: MAIN's distinct `SCAN_NUMBER`s in ascending order, named by
 /// their decimal number as XRADIO names them, with the `STATE::OBS_MODE`
-/// intents of their rows; and the scan of each `SCAN_NUMBER`.
+/// intents of their rows' states (`states_by_number`, each scan's
+/// `STATE_ID`s; `modes`, each `STATE` row's `OBS_MODE`); and the scan of
+/// each `SCAN_NUMBER`.
 pub(super) fn scans(
-    numbers: &[i32],
-    states: &[i32],
+    states_by_number: BTreeMap<i32, BTreeSet<i32>>,
     modes: &[String],
 ) -> (Vec<ScanEntry>, BTreeMap<i32, ScanId>) {
-    let mut by_number = BTreeMap::<i32, BTreeSet<String>>::new();
-    for (&number, &state) in numbers.iter().zip(states) {
-        let entry = by_number.entry(number).or_default();
-        if let Some(mode) = usize::try_from(state)
-            .ok()
-            .and_then(|state| modes.get(state))
-        {
-            entry.extend(intents(mode));
-        }
-    }
-    let index: BTreeMap<i32, ScanId> = by_number
+    let index: BTreeMap<i32, ScanId> = states_by_number
         .keys()
         .enumerate()
         .map(|(index, number)| (*number, ScanId(index as u32)))
         .collect();
-    let scans = by_number
+    let scans = states_by_number
         .into_iter()
-        .map(|(number, intents)| ScanEntry {
-            name: number.to_string(),
-            number: Some(number),
-            intents: intents.into_iter().collect(),
+        .map(|(number, states)| {
+            let intents: BTreeSet<String> = states
+                .into_iter()
+                .filter_map(|state| {
+                    usize::try_from(state)
+                        .ok()
+                        .and_then(|state| modes.get(state))
+                })
+                .flat_map(|mode| intents(mode))
+                .collect();
+            ScanEntry {
+                name: number.to_string(),
+                number: Some(number),
+                intents: intents.into_iter().collect(),
+            }
         })
         .collect();
     (scans, index)

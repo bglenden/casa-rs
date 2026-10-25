@@ -22,7 +22,7 @@ use casa_types::measures::{EpochRef, MjdHighPrec};
 
 use super::OpenOptions;
 use crate::{MeasurementSet, MsError};
-use index::{Grid, MainColumns};
+use index::{Grid, Index, ROWS_PER_CHUNK};
 
 fn storage(error: impl Into<MsError>) -> ObservationError {
     ObservationError::Storage(Box::new(error.into()))
@@ -46,7 +46,7 @@ struct Partition {
 
 /// An opened MeasurementSet v2 and its catalogue.
 ///
-/// Opening reads MAIN's key columns once and partitions the rows the way
+/// Opening reads MAIN's key columns in row chunks and partitions the rows the way
 /// XRADIO's converter does (`DATA_DESC_ID` × `OBS_MODE` × `OBSERVATION_ID`
 /// × `EPHEMERIS_ID`, the feed pair, and the opening's
 /// [`PartitionScheme`](super::PartitionScheme)); each partition's rows are
@@ -121,8 +121,13 @@ impl Msv2Observation {
         let spectral_weights = main
             .schema()
             .is_some_and(|schema| schema.contains_column("WEIGHT_SPECTRUM"));
-        let columns = MainColumns::read(main)?;
-        let (scans, scan_ids) = catalogue::scans(&columns.scan_number, &columns.state, &modes);
+        let index = Index::build(
+            main,
+            options.partition_scheme,
+            &modes,
+            &ephemerides,
+            ROWS_PER_CHUNK,
+        )?;
         let group = DataGroupEntry {
             name: "base".to_string(),
             visibilities: "DATA".to_string(),
@@ -139,9 +144,7 @@ impl Msv2Observation {
         };
         let mut partitions = Vec::new();
         let mut entries = Vec::new();
-        for (key, rows) in
-            index::partition_rows(&columns, options.partition_scheme, &modes, &ephemerides)?
-        {
+        for (key, grid) in index.partitions {
             let setup = usize::try_from(key.data_description)
                 .ok()
                 .and_then(|row| setups.get(row))
@@ -165,7 +168,6 @@ impl Msv2Observation {
                 u32::try_from(feed).map_err(|_| invalid(format!("negative feed {feed}")))
             };
             let feeds = [feed(key.feeds[0])?, feed(key.feeds[1])?];
-            let grid = Grid::build(&rows, &columns, &scan_ids, fields.len())?;
             entries.push(PartitionEntry {
                 spectral_window: setup.spectral_window.clone(),
                 frequencies_hz: setup.frequencies_hz.clone(),
@@ -186,7 +188,7 @@ impl Msv2Observation {
             catalogue: Catalogue {
                 antennas,
                 fields,
-                scans,
+                scans: index.scans,
                 observations,
                 partitions: entries,
             },
