@@ -192,6 +192,7 @@ external data.
 | Shared types | `cargo test -p casa-observation -p casa-types` | Rust only |
 | Interoperability, both directions | `tools/ms-trial/check_interop.sh` | cargo, uv (pinned XRADIO environment) |
 | Fixtures | `tools/ms-trial/make_fixtures.sh` | cargo, uv, network for the first `uv sync` |
+| Scale check on a real store | `/usr/bin/time -l cargo run --release -p casa-ms --example ms_trial_probe -- STORE [--open-only]` | Rust only; a MeasurementSet or MSv4 store |
 
 ## Adapter laws
 
@@ -340,6 +341,38 @@ matched like for like. They show the batch path adds no visible cost at this
 size. On 120 samples the v4 read is per-call overhead: zarrs opens each
 subset read and decodes Blosc and Zstandard chunks. No noise band has been
 measured; nothing here is a performance claim.
+
+### Scale check on real MeasurementSets
+
+A check for gross costs before the design is finalized, not a benchmark.
+`crates/casa-ms/examples/ms_trial_probe.rs` opens a store through the
+trial adapter, prints each partition's estimate and reads every partition
+once (first data group, every role and product, all channels, 256 MiB
+budget). Run on the Mac mini (`bg-mac-mini`: macOS 27.0.1, 8 cores, 24 GB),
+release build, one thread, page cache warm, one run each, on 2026-10-25:
+
+| MeasurementSet | MAIN rows | Partitions | Open | Peak RSS, open only | Traversal | Peak RSS, traversal |
+| --- | --- | --- | --- | --- | --- | --- |
+| `pilot.ms` (4.1 GB; 351 baselines, 64 SPWs × 64 channels × 4 products) | 2,021,760 | 64 | 0.37 s | 164 MB | 4,566 MiB in 1.96 s (2,325 MiB/s) | 278 MB |
+| `wave3-vla-aw-widefield-medium.ms` (33 GB; 351 baselines, 512 channels × 2 products) | 4,212,000 | 1 | 0.81 s | 313 MB | not run | — |
+
+- **No gross cost in the read.** One thread delivers 2.3 GB/s of batches
+  (about 250 million visibilities a second with their flags, weights, UVW
+  and time auxiliaries) against 0.35 s for `cat` of the same cached files:
+  the adapter decodes the tiled columns, unpacks `FLAG` bits and places time
+  auxiliaries, at about a sixth of a memory copy's speed. The uncached rate,
+  which the disk sets, was not measured. No grid was padded.
+- **Batch memory is what the estimate says.** Each `pilot.ms` partition is
+  one 71.3 MiB batch; the traversal's peak is the opening's plus about
+  114 MB.
+- **The opening index is the one cost that grows with the MeasurementSet:**
+  75–80 bytes per MAIN row at its peak, process included, and about
+  0.2 µs per row. A 10⁸-row MeasurementSet would need about 7.5 GB and 20 s
+  to open, outside any admission. Building the index in row chunks is
+  required before M2.
+
+The read was not compared with the production reader on the same data;
+the narrow timings above are the only like-for-like evidence.
 
 ### Copies and allocation in example A
 
