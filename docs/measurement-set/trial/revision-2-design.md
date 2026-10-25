@@ -377,6 +377,9 @@ The trial at `2b07a37`:
   before claiming parity on an MS with `FLAG_ROW`-only rows.
 - **Opening cost**: the MSv2 index (about nine key columns per row) moves to
   opening; measure on a 10^8-row MS; consider lazy construction if it hurts.
+  (Measured at 4.2 M rows, README "Scale check": 75–80 bytes a row at the
+  peak, so the index is now built in row chunks and holds four bytes a
+  cell; opening reads about 0.2 µs a row.)
 - **Fold versus inline validity**: D16 is a judgement on one-pass consumers;
   measure if a multi-pass consumer appears.
 - **Throughput**: raise zarrs concurrency and overlap variable decodes in the

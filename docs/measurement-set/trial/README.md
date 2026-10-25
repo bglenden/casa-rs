@@ -349,27 +349,33 @@ A check for gross costs before the design is finalized, not a benchmark.
 trial adapter, prints each partition's estimate and reads every partition
 once (first data group, every role and product, all channels, 256 MiB
 budget). Run on the Mac mini (`bg-mac-mini`: macOS 27.0.1, 8 cores, 24 GB),
-release build, one thread, page cache warm, one run each, on 2026-10-25:
+release build, one thread, page cache warm, on 2026-10-25, before (`e3f42dc`)
+and after (`4046d6c`) the opening index was built in row chunks:
 
-| MeasurementSet | MAIN rows | Partitions | Open | Peak RSS, open only | Traversal | Peak RSS, traversal |
+| MeasurementSet | MAIN rows | Partitions | Open, before → after | Peak RSS open only, before → after | Traversal | Peak RSS traversal, before → after |
 | --- | --- | --- | --- | --- | --- | --- |
-| `pilot.ms` (4.1 GB; 351 baselines, 64 SPWs × 64 channels × 4 products) | 2,021,760 | 64 | 0.37 s | 164 MB | 4,566 MiB in 1.96 s (2,325 MiB/s) | 278 MB |
-| `wave3-vla-aw-widefield-medium.ms` (33 GB; 351 baselines, 512 channels × 2 products) | 4,212,000 | 1 | 0.81 s | 313 MB | not run | — |
+| `pilot.ms` (4.1 GB; 351 baselines, 64 SPWs × 64 channels × 4 products) | 2,021,760 | 64 | 0.37 → 0.24 s | 164 → 30 MB | 4,566 MiB in 1.96 s (2,325 MiB/s) both | 278 → 146 MB |
+| `wave3-vla-aw-widefield-medium.ms` (33 GB; 351 baselines, 512 channels × 2 products) | 4,212,000 | 1 | 0.81 → 0.78 s | 313 → 42 MB | not run | — |
 
 - **No gross cost in the read.** One thread delivers 2.3 GB/s of batches
   (about 250 million visibilities a second with their flags, weights, UVW
   and time auxiliaries) against 0.35 s for `cat` of the same cached files:
   the adapter decodes the tiled columns, unpacks `FLAG` bits and places time
-  auxiliaries, at about a sixth of a memory copy's speed. The uncached rate,
-  which the disk sets, was not measured. No grid was padded.
+  auxiliaries, at about a sixth of a memory copy's speed. With the cache
+  cold the same traversal took 16.2 s (282 MiB/s) for the same 1.9 s of
+  user time: the external disk sets the pace, not the adapter. No grid was
+  padded.
 - **Batch memory is what the estimate says.** Each `pilot.ms` partition is
   one 71.3 MiB batch; the traversal's peak is the opening's plus about
   114 MB.
-- **The opening index is the one cost that grows with the MeasurementSet:**
-  75–80 bytes per MAIN row at its peak, process included, and about
-  0.2 µs per row. A 10⁸-row MeasurementSet would need about 7.5 GB and 20 s
-  to open, outside any admission. Building the index in row chunks is
-  required before M2.
+- **The opening index was the one cost that grew with the MeasurementSet:**
+  75–80 bytes per MAIN row at its peak, so a 10⁸-row MeasurementSet would
+  have needed about 7.5 GB to open, outside any admission. The index now
+  reads the key columns 2¹⁸ rows at a time in two passes (`msv2/index.rs`)
+  and holds only the grids (four bytes a cell) and one chunk: about 0.45 GB
+  for 10⁸ rows. Opening still reads every row's keys, about 0.2 µs a row
+  (about 20 s for 10⁸ rows); it became faster here because building a key
+  no longer allocates.
 
 The read was not compared with the production reader on the same data;
 the narrow timings above are the only like-for-like evidence.
@@ -638,10 +644,10 @@ MSv2 creator from batches.
 - The runtime's `NativeBlock` copy: the trial kept it so the production pass
   ran unchanged. M2 should let the pass place directly from batch views
   (`NativeRow` already borrows slices).
-- The MSv2 opening index (eleven key columns of every row while the grids
-  are built, then four bytes per grid cell) is acceptable for the trial;
-  its cost on a 10^8-row MeasurementSet is the measurement the design
-  record asks for before M2 keeps or replaces it.
+- The MSv2 opening index reads every row's key columns, in chunks of 2¹⁸
+  rows, and keeps four bytes per grid cell (scale check above). Its time,
+  about 0.2 µs a row, is what M2 should watch on the largest
+  MeasurementSets; lazy construction per partition remains the option.
 - Retained-byte figures (`capacity_bytes`, the work-unit ledger) count the
   batch buffers only, not allocations inside zarrs or casacore: they are
   probes, not admission bounds.
