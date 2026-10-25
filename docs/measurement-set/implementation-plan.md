@@ -517,9 +517,9 @@ approves completion only with no unresolved scope or acceptance reduction.
 
 ## 9. Evidence and executable gates
 
-The baseline is [`TESTING.md`](../../TESTING.md), the
-[representative matrix](../../resources/imaging-architecture/representative-science-matrix.json),
-and the [performance skill](../../.agents/skills/casa-rs-imaging-performance/SKILL.md).
+The baseline is `TESTING.md`, the
+representative matrix (`resources/imaging-architecture/representative-science-matrix.json`),
+and the performance skill (`.agents/skills/casa-rs-imaging-performance/SKILL.md`).
 Use four independent evidence classes:
 
 | Evidence | What must be proved |

@@ -195,8 +195,8 @@ are in [shared Measures types and bulk conversion](contracts.md#shared-measures-
 
 New dependency edges from `casa-imaging-model`, `casa-ms`, calibration, imaging operator/runtime, and
 affected applications to `casa-observation` require a reviewed update of
-[`dependency-policy.json`](../../resources/imaging-architecture/dependency-policy.json)
-and [`ARCHITECTURE.md`](../../ARCHITECTURE.md). Preserve ADR-0016's single
+`resources/imaging-architecture/dependency-policy.json`
+and `ARCHITECTURE.md`. Preserve ADR-0016's single
 compile/plan/run path, shared operators, and resource authority. There is no new
 execution DAG, runtime migration matrix, receipt system, plan hash, or replay
 store. One source binding may be revisited each major cycle without caching the
