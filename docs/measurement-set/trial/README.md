@@ -4,6 +4,7 @@ Status: revision 3 (the walkthrough's decisions plus the cleanups revision 2 exp
 Truth class: trial evidence
 Date: 2026-10-25
 Handoff: [trial-handoff.md](../trial-handoff.md)
+Review brief: [review-brief.md](review-brief.md)
 
 This is the evidence index for the trial's first assignment: two worked
 examples (A, dirty-image channel planes; B, a gain solve) and the early
