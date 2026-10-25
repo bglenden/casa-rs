@@ -50,17 +50,17 @@ struct Partition {
 /// XRADIO's converter does (`DATA_DESC_ID` × `OBS_MODE` × `OBSERVATION_ID`
 /// × `EPHEMERIS_ID`, the feed pair, and the opening's
 /// [`PartitionScheme`](super::PartitionScheme)); each partition's rows are
-/// placed on its time × baseline grid ([`index`]). Each partition has one
-/// data group, `base`, associating `DATA`, `FLAG`, `WEIGHT_SPECTRUM` (when
-/// MAIN has it, else `WEIGHT`) and `UVW`. Antenna, field and observation
-/// identities are the subtable rows; scans are the distinct `SCAN_NUMBER`s
-/// in ascending order.
+/// placed on its time × baseline grid (the `index` module). Each partition
+/// has one data group, `base`, associating `DATA`, `FLAG`,
+/// `WEIGHT_SPECTRUM` (when MAIN has it, else `WEIGHT`) and `UVW`. Antenna,
+/// field and observation identities are the subtable rows; scans are the
+/// distinct `SCAN_NUMBER`s in ascending order.
 ///
 /// Opening checks every unit and measure reference the batches rely on:
 /// `TIME` and `TIME_CENTROID` share one fixed reference (a variable
 /// reference is refused); the UVW convention is resolved to the phase
-/// centres' frame ([`UvwFrame`]); positions, diameters, angles and
-/// frequencies are in the units their types claim.
+/// centres' frame ([`UvwFrame`](casa_observation::UvwFrame)); positions,
+/// diameters, angles and frequencies are in the units their types claim.
 pub struct Msv2Observation {
     ms: MeasurementSet,
     catalogue: Catalogue,
@@ -80,8 +80,9 @@ impl Msv2Observation {
     ///
     /// When the MeasurementSet cannot be opened, a subtable the catalogue
     /// needs is missing or malformed, a unit or measure reference is
-    /// outside the trial profile, or the rows do not fit their grids
-    /// ([`index::Grid::build`]).
+    /// outside the trial profile, or the rows do not fit their grids (two
+    /// rows in one cell, two fields or scans at one time, several
+    /// `PROCESSOR_ID`s in one partition).
     #[cfg(unix)]
     pub fn open(path: impl AsRef<Path>) -> Result<Self, ObservationError> {
         Self::open_with(path, &OpenOptions::default())
