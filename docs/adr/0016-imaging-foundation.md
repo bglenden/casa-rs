@@ -7,6 +7,9 @@ Supersedes: 0010; the "Migration" section and the attestation wording of 0009;
 the joint continuum-plus-line decision of 0011
 Superseded by:
 
+Amended: 2026-10-25, on owner direction: every imaging crate may depend on the
+definitional crates (decision 10).
+
 ## Context
 
 Programme #486 delivered cube, MFS, Clark, multi-worker and Metal imaging as
@@ -77,6 +80,21 @@ normative design; this ADR records the decisions that supersede earlier ADRs.
     `casa-imaging-application`. `casa-imaging-reconstruction` is deleted when
     empty. Dependency direction is enforced by
     `scripts/check-imaging-dependencies.py` over `cargo metadata`.
+    Every crate the policy covers, the model included, may depend on the
+    **definitional crates**: crates that define values, units, quanta,
+    measures and coordinate systems and the pure functions on them, do no
+    file, network, process or environment I/O, start no threads, use no
+    device, and depend on no workspace crate but one another. They are
+    `casa-values`, `casa-types` and `casa-coordinates`; beyond them the model
+    has no workspace dependencies. The policy names the definitional crates
+    and lists each crate's other workspace dependencies exactly. Adding a
+    crate to the definitional set widens what every layer may use, so it is
+    the owner's decision, recorded on its pull request; the checks above
+    then apply to it. (Amended 2026-10-25 on owner direction: with no
+    workspace dependencies at all, the model could not share the
+    workspace's correlation, measure and coordinate vocabulary and kept
+    private copies of it, such as `CorrelationType`, `DirectionFrame`,
+    `FrequencyFrame` and `Epoch`.)
 11. **Joint continuum-plus-line reconstruction** is removed from the code.
     ADR-0011's sequential continuum subtraction remains; its joint-basis
     decision is superseded and may be re-proposed as a separate ADR with its
@@ -118,13 +136,21 @@ Neutral / tradeoffs:
    write-only.
 3. Keep the architecture checker and update its ratchets per commit.
    Rejected: it enforced programme process, not architecture.
+4. (Amendment of 2026-10-25.) Keep the model free of workspace dependencies
+   and convert between vocabularies at the application, or admit each
+   definitional dependency into each crate's exact set. Rejected: the first
+   keeps two types for one meaning; the second makes every use of a unit or
+   measure a policy edit while guarding nothing, since a definitional crate
+   brings in no persistence, I/O or device. `casa-numerics` and `casa-fft`
+   are algorithms rather than definitions and stay listed where used.
 
 ## Enforcement
 
 This decision is enforced by:
 - tests: T0 operator laws and T1 end-to-end capability tests (plan section 7)
 - lint/import/dependency rules: `scripts/check-imaging-dependencies.py`
-  (crate edges, device APIs only in `casa-imaging-metal`, no `std::env` or
-  `eprintln!` in library crates, no content hashing in imaging crates)
+  (crate edges, definitional crates closed and free of I/O, device APIs only
+  in `casa-imaging-metal`, no `std::env` or `eprintln!` in library crates, no
+  content hashing in imaging crates)
 - CI checks: `just arch-check`
 - review trigger: plan section 10 rules at every IF ticket review; gates R1–R4
