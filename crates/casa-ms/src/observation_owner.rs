@@ -420,11 +420,12 @@ mod tests {
         test_helpers::default_value_for_def,
     };
     use casa_imaging_model::{
-        CorrelationProduct, CorrelationSelection, CorrelationType, DataDescriptionSelection,
-        IdSelection, IntentSelection, MsColumnKind, PointingTimeSampling, RowSelection,
-        SelectedMainRow, SelectedRows, SpectralWindowSelection, UvSelection, compile_observation,
+        CorrelationProduct, CorrelationSelection, DataDescriptionSelection, IdSelection,
+        IntentSelection, MsColumnKind, PointingTimeSampling, RowSelection, SelectedMainRow,
+        SelectedRows, SpectralWindowSelection, UvSelection, compile_observation,
     };
     use casa_tables::{Table, TableOptions};
+    use casa_types::Correlation;
     use casa_types::{ArrayValue, Complex32, RecordField, RecordValue, ScalarValue, Value};
     use ndarray::ArrayD;
     use std::path::Path;
@@ -452,7 +453,7 @@ mod tests {
             vec![SpectralWindowSelection::new(0, channel_indices)],
             vec![CorrelationSelection::new(
                 0,
-                vec![CorrelationProduct::new(0, CorrelationType::CircularRr)],
+                vec![CorrelationProduct::new(0, Correlation::RR)],
             )],
         )
     }
@@ -1002,7 +1003,7 @@ mod tests {
             vec![SpectralWindowSelection::new(0, vec![0])],
             vec![CorrelationSelection::new(
                 0,
-                vec![CorrelationProduct::new(0, CorrelationType::CircularRr)],
+                vec![CorrelationProduct::new(0, Correlation::RR)],
             )],
         );
         let request = SelectedObservationResolutionRequest::new(

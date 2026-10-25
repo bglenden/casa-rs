@@ -1,5 +1,5 @@
 {
- "schema_version": 2,
+ "schema_version": 3,
  "decision": "ADR-0016",
  "layers": [
   "frontend",
@@ -49,6 +49,7 @@
  },
  "package_layers": {
   "casa-provider-contracts": "science",
+  "casa-observation": "science",
   "casa-ms": "observation",
   "casa-imaging-application": "application",
   "casa-imaging-model": "science",
@@ -64,15 +65,19 @@
   "casars-imager": "frontend",
   "casars-python": "frontend"
  },
+ "definitional_packages": [
+  "casa-values",
+  "casa-types",
+  "casa-coordinates"
+ ],
  "native_package_workspace_dependencies": {
+  "casa-observation": [],
   "casa-imaging-model": [],
   "casa-imaging-operator": [
-   "casa-coordinates",
    "casa-fft",
    "casa-images",
    "casa-imaging-model",
-   "casa-numerics",
-   "casa-types"
+   "casa-numerics"
   ],
   "casa-imaging-deconvolution": [
    "casa-fft",
@@ -80,13 +85,11 @@
    "casa-numerics"
   ],
   "casa-imaging-products": [
-   "casa-coordinates",
    "casa-fft",
    "casa-images",
    "casa-imaging-deconvolution",
    "casa-imaging-model",
-   "casa-numerics",
-   "casa-types"
+   "casa-numerics"
   ],
   "casa-imaging-metal": [
    "casa-imaging-operator",
@@ -103,30 +106,26 @@
    "casa-tables"
   ],
   "casa-imaging-application": [
-   "casa-coordinates",
    "casa-images",
    "casa-imaging-deconvolution",
    "casa-imaging-model",
    "casa-imaging-operator",
    "casa-imaging-products",
    "casa-imaging-runtime",
-   "casa-ms",
-   "casa-types"
+   "casa-ms"
   ],
   "casa-simulation-synthesis": [
    "casa-fft",
    "casa-numerics"
   ],
   "casa-simulation": [
-   "casa-coordinates",
    "casa-images",
    "casa-imaging-model",
    "casa-imaging-operator",
    "casa-imaging-runtime",
    "casa-ms",
    "casa-numerics",
-   "casa-tables",
-   "casa-types"
+   "casa-tables"
   ]
  },
  "device_dependency_prefixes": [
@@ -298,6 +297,16 @@
     ".rs"
    ],
    "regex": "\\bopen_measures_runtime\\b|\\bcasa_measures_data\\s*::\\s*(?:MeasuresRuntime|\\{[^}]*\\bMeasuresRuntime\\b)|\\bMeasuresRuntime::(?:open|open_discovered|discover_candidates)\\b|\\bopen_discovered\\b",
+   "grandfathered": []
+  },
+  {
+   "id": "definitional-crates-do-no-io",
+   "message": "definitional crates define values, units, quanta, measures and coordinate systems and the pure functions on them: no file, network or process I/O and no threads (ADR-0016 decision 10); environment reads and eprintln! are refused by the rules above",
+   "roots": "definitional",
+   "extensions": [
+    ".rs"
+   ],
+   "regex": "\\bstd::(?:fs|net|process)\\b|\\buse\\s+std::\\{[^}]*\\b(?:fs|net|process)\\b|\\bthread::(?:spawn|scope|Builder)\\b|\\bFile::(?:open|create)\\s*\\(",
    "grandfathered": []
   }
  ]

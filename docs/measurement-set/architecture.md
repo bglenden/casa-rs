@@ -1,8 +1,8 @@
 # Native observation I/O for MSv2 and MSv4
 
-Status: revision 5; working design authorized for M0/M1 trial, not frozen
+Status: revision 7; working design; the read contract ([contracts](contracts.md) sections 1–6 and creation) frozen narrowly for M2 on 2026-10-25, the rest not frozen
 Truth class: design proposal
-Date: 2026-10-24
+Date: 2026-10-25
 Companion documents: [contracts](contracts.md), [implementation plan](implementation-plan.md)
 
 Revision 5 retains Pro and Fable's review changes and owner discussion of
@@ -15,6 +15,17 @@ types; concrete ownership APIs remain subject to M1 evidence and review.
 On 2026-10-24 the owner agreed to proceed with the [M0/M1 trial](trial-handoff.md).
 The detailed APIs remain open to trial evidence and owner iteration; interface
 stabilization and broad production migration follow the M1 acceptance gate.
+
+Revisions 6 and 7 (2026-10-25) record what the trial settled with the owner
+and its reviewers. MSv4 is the future: the shared interface takes MSv4's
+native shape, and the MSv2 adapter assembles MSv2 data into it at opening. The
+decisions are D1 to D25 of the [trial's design record](trial/revision-2-design.md),
+refined by the trial's revisions 3 and 4 ([README](trial/README.md)); the
+[contracts](contracts.md) now state the current read contract directly and
+keep what is not realized in a separate provisional section. On the same day
+ADR-0016 was amended so that every imaging crate may depend on the
+definitional crates (`casa-values`, `casa-types`, `casa-coordinates`), and the
+imaging model now shares the observation boundary's `Correlation`.
 
 ## 1. Outcome and boundaries
 
@@ -123,7 +134,9 @@ have different field IDs, the reduction chooses the largest, losing their
 distinction. Proposed casa-rs conversion must validate agreement within each
 destination time slice, partition compatibly or reject. It must also preserve
 distinct acquisitions that would otherwise collide in a time/baseline cell.
-The common intermediate remains able to express sample-dependent fields.
+The common intermediate carries the field per time, as MSv4 does; a store
+whose baselines disagree on the field at a time is refused rather than
+reduced, and needs partitioning by field.
 
 ## 3. Proposed ownership
 
@@ -142,9 +155,11 @@ imaging operator/runtime   calibration   flagging/transforms   simulation
 The diagram shows the participating owners, not a dependency of the contract
 crate on its implementations. The algorithm planner sends an `AccessRequest`
 downward through the common interface; the adapter returns its bound realization
-and streams `VisibilityBatch` views upward. Selection, traversal/order, grouping,
-windows/overlap, layout, units and revisits travel in the request. Only the
-planner negotiates I/O; numerical inner loops consume the resulting views.
+and streams `VisibilityBatch` views upward. The partitions, data group, roles,
+channel window, correlations, scientific grouping and a byte budget travel in
+the request; the payload order is fixed, units are canonical, compute windows
+are views and a revisit is a new traversal. Only the planner negotiates I/O;
+numerical inner loops consume the resulting views.
 The proposed dependency direction is:
 
 | Owner | Responsibilities | Dependencies and exclusions |
@@ -193,35 +208,43 @@ scientific policies. Preserve CASA-compatible ordered interpolation where
 required; preparation order and worker completion order are separate. Details
 are in [shared Measures types and bulk conversion](contracts.md#shared-measures-types-and-bulk-conversion).
 
-New dependency edges from `casa-imaging-model`, `casa-ms`, calibration, imaging operator/runtime, and
-affected applications to `casa-observation` require a reviewed update of
-[`dependency-policy.json`](../../resources/imaging-architecture/dependency-policy.json)
-and [`ARCHITECTURE.md`](../../ARCHITECTURE.md). Preserve ADR-0016's single
-compile/plan/run path, shared operators, and resource authority. There is no new
-execution DAG, runtime migration matrix, receipt system, plan hash, or replay
-store. One source binding may be revisited each major cycle without caching the
-whole visibility dataset.
+The dependency policy already has what the contract needs.
+`casa-observation` is registered in the `science` layer of
+`resources/imaging-architecture/dependency-policy.json` with an empty exact
+workspace-dependency set, and the amendment of ADR-0016's decision 10 is
+applied: every crate in the imaging policy may depend on the definitional
+crates (`casa-values`, `casa-types`, `casa-coordinates`), which therefore
+appear in no exact set (the checker refuses them there). Direct Measures
+dependencies need no further change. `casa-ms` depends on `casa-observation`,
+which the layers already permit (`observation` on `science`).
 
-The policy delta must register `casa-observation` in `science` with its explicit
-`casa-types` dependency, change the model's exact dependency list to include
-`casa-observation` and `casa-types`, and enumerate each actual consumer edge.
-Audit the resulting transitive graph and Measures provider boundary; neither
-the contract nor the pure model may gain table/file I/O through this change.
-The checker already permits same-layer
-edges; do not broadly relax its layer rules. This and the corresponding
-ADR-0016 raw-type ownership amendment are proposed for owner review, not applied
-to the accepted policy in this documentation PR.
+The remaining M2 delta is only the production consumer edges, each added to
+its crate's exact set as that consumer moves: `casa-imaging-runtime` and
+`casa-imaging-application` on `casa-observation` when the pass reads batches
+directly (today the application uses it only in its trial tests), and
+`casa-imaging-model` if the compiled geometry takes catalogue types.
+Calibration is outside the imaging policy. `casa-observation` stays a science
+contract crate: not a definitional crate and not an execution owner, and it
+gains no table or file I/O. Audit the transitive graph and the Measures
+provider boundary with each edge; do not broadly relax the layer rules.
+Preserve ADR-0016's single compile/plan/run path, shared operators, and
+resource authority. There is no new execution DAG, runtime migration matrix,
+receipt system, plan hash, or replay store. One source binding may be
+revisited each major cycle without caching the whole visibility dataset.
 
 ## 4. Access is negotiated once, then executed in bulk
 
 1. `open` detects a supported schema/profile and supplies bounded metadata
    access, named data groups, and precise read/write capabilities. Selection
    resolves semantic catalogue IDs within this opened observation.
-2. The processing algorithm's planner compiles an `AccessRequest`: required columns/roles, selections,
-   scientific group boundaries, legal topology/layouts, precision, units, and ordering
-   constraints, compute windows/neighborhoods and repeated-pass/revisit semantics.
-   It specifies what can be split, not a physical tile size. The request travels
-   through the common source interface to the selected adapter before iteration.
+2. The processing algorithm's planner compiles an `AccessRequest`: the
+   partitions, one data group, the roles it reads, a channel window, the
+   correlation products and their flag policy, the scientific grouping and a
+   byte budget. Topology (the time × baseline grid), payload order, precision
+   and units are fixed by the contract; compute windows are views, and each
+   pass is its own traversal. It states a budget, not a physical tile size.
+   The request travels through the common source interface to the selected
+   adapter before iteration.
 3. The backend binds a realization under the existing resource budget. Its
    summary states actual layout, aggregation, scratch/decode/queue requirements,
    reorder costs, physical read/decode amplification per window and traversal,
@@ -260,7 +283,7 @@ resource authorities.
 
 | Consumer | Typical request, not a universal mandate |
 | --- | --- |
-| Continuum imaging | Selected groups/SPWs; UVW, frequency, correlation, validity and weights; bounded sample/channel-major views with irregular or factored coordinates. Revisit selection each major cycle. |
+| Continuum imaging | Selected groups/SPWs; UVW, frequency, correlation, validity and weights; bounded `[sample, channel, correlation]` views of whole times of the time × baseline grid, channel windows as views. Revisit selection each major cycle. |
 | Cube imaging | Frequency-local work with many samples per channel and explicit spectral mapping. Full-frequency storage chunks may be decoded repeatedly across plane waves; bind reports that cost and admits feasible traversal alternatives. |
 | Gain/bandpass solve | Scientific grouping by solution interval and configured field/SPW rules; correlations/channels arranged for the solver; sequential or bounded concurrent fragments feed admitted accumulators. |
 | Apply calibration | Streaming visibility/flag/weight updates, with gains interpolated by the calibration owner. No need to materialize a whole solve group. |
@@ -402,17 +425,21 @@ and [ADR-0016](../adr/0016-imaging-foundation.md): ownership establishes
 within-run association, with no private source markers, payload hashes, whole
 column backups, or verification-only data rereads.
 
-The dependency-policy update and revised raw observation ownership are explicit
-architecture decisions. M1 proposes the exact ADR additions/amendments and
-updates to current descriptive documentation. Accepted ADRs are not modified
-by this proposal. Existing persistent contracts are expanded only through
-profile-specific reviewed tests; an unavailable capability is never reported
-as complete.
+The dependency amendment has landed: ADR-0016's decision 10, accepted on
+`main` (`1eed6e9`), lets every imaging crate depend on the definitional crates,
+and the trial uses it. This proposal modifies no other accepted ADR. The Zarr
+write profile above (atomic object replacement, staging and publication) and
+any change to ADR-0008's locking and partial-failure guarantees are future
+decisions for a reviewed new ADR. Existing persistent contracts are expanded
+only through profile-specific reviewed tests; an unavailable capability is
+never reported as complete.
 
-Rejected designs include forcing v4 through per-row table calls, densifying all
-legacy rows, letting storage dictate the only kernel layout, a Python bridge on
-the hot path, a universal per-sample trait object, and retaining a second
-production imaging route for comparison. Frozen binaries/test harnesses provide
+Rejected designs include forcing v4 through per-row table calls, materializing
+a densified copy of legacy rows (the MSv2 adapter indexes rows onto the grid at
+opening and pads only inside the batches it fills), a layout choice per
+request (one payload order, which both stores hold, with permuted views for
+other kernel layouts), a Python bridge on the hot path, a universal per-sample
+trait object, and retaining a second production imaging route for comparison. Frozen binaries/test harnesses provide
 the old performance baseline without maintaining duplicate production engines.
 
 ## 7. Reference baseline

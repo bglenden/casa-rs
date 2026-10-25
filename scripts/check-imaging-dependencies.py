@@ -6,9 +6,15 @@ Checks, from `resources/imaging-architecture/dependency-policy.json`:
 
 1. every workspace package with a declared layer depends (normal and build
    dependencies, any target) only on packages in layers its layer may use;
-2. every native imaging package depends on exactly the declared workspace set;
-3. packages in device-free layers pull no device crate;
+2. every native imaging package depends on exactly the declared workspace
+   set, besides the definitional packages, which any package may use and no
+   set lists;
+3. definitional packages have no layer and depend on no workspace package
+   but one another and on no device crate, and packages in device-free layers
+   pull no device crate;
 4. source rules: regexes that must not match outside grandfathered files.
+   A rule whose `roots` is `"definitional"` covers the definitional packages'
+   sources.
    The grandfather list only shrinks: a listed file that no longer exists or
    no longer matches fails the check so the entry is removed. Test code is
    skipped unless a rule says otherwise: items gated by `#[cfg(test)]`, and
@@ -59,6 +65,7 @@ def check_layering(policy: dict, metadata: dict) -> list[str]:
     layers = policy["package_layers"]
     edges = policy["allowed_logical_edges"]
     exact = policy["native_package_workspace_dependencies"]
+    definitional = set(policy["definitional_packages"])
     device_prefixes = tuple(policy["device_dependency_prefixes"])
     device_free = set(policy["device_free_layers"])
     workspace = {package["name"] for package in metadata["packages"]}
@@ -67,6 +74,15 @@ def check_layering(policy: dict, metadata: dict) -> list[str]:
         name = package["name"]
         layer = layers.get(name)
         dependencies = package_dependencies(package, include_dev=False)
+        if name in definitional:
+            for dependency in dependencies:
+                if dependency in workspace and dependency not in definitional:
+                    failures.append(
+                        f"{name} is definitional but depends on {dependency}; "
+                        "definitional packages depend only on one another"
+                    )
+                if dependency.startswith(device_prefixes):
+                    failures.append(f"{name} is definitional but depends on {dependency}")
         if layer is not None:
             for dependency in dependencies:
                 target_layer = layers.get(dependency)
@@ -82,15 +98,27 @@ def check_layering(policy: dict, metadata: dict) -> list[str]:
                     if dependency.startswith(device_prefixes):
                         failures.append(f"{name} ({layer}) is device-free but depends on {dependency}")
         if name in exact:
-            actual = sorted({d for d in dependencies if d in workspace})
-            expected = sorted(exact[name])
+            actual = sorted({d for d in dependencies if d in workspace and d not in definitional})
+            expected = sorted(set(exact[name]) - definitional)
             if actual != expected:
                 failures.append(
-                    f"{name} workspace dependencies are {actual}; policy declares {expected}"
+                    f"{name} workspace dependencies besides the definitional packages are "
+                    f"{actual}; policy declares {expected}"
                 )
     for name in exact:
         if name not in workspace:
             failures.append(f"policy declares dependencies for missing package {name}")
+        listed = sorted(definitional.intersection(exact[name]))
+        if listed:
+            failures.append(
+                f"policy lists definitional {listed} for {name}; any package may use "
+                "the definitional packages, so no set lists them"
+            )
+    for name in sorted(definitional):
+        if name not in workspace:
+            failures.append(f"policy declares missing definitional package {name}")
+        if name in layers:
+            failures.append(f"definitional package {name} has a layer; it sits beneath every layer")
     return failures
 
 
@@ -226,6 +254,14 @@ def self_test() -> int:
                     f"imaging-dependencies self-test failed: {name}: {sorted(found)}",
                     file=sys.stderr,
                 )
+    for name, changes, packages, expected in LAYERING_CASES:
+        found = check_layering(
+            {**LAYERING_POLICY, **changes},
+            {"packages": [layering_package(*package) for package in packages]},
+        )
+        if len(found) != expected:
+            failures += 1
+            print(f"imaging-dependencies self-test failed: {name}: {found}", file=sys.stderr)
     if failures == 0:
         print("imaging-dependencies: self-test ok")
     return 1 if failures else 0
@@ -299,6 +335,62 @@ MODULE_CASES = [
         set(),
     ),
 ]
+
+# A two-layer policy over two definitional packages, for the layering cases:
+# each case changes the policy, names packages with their dependencies, and
+# expects that many failures.
+LAYERING_POLICY = {
+    "package_layers": {"model": "science", "store": "observation"},
+    "allowed_logical_edges": {"science": [], "observation": ["science"]},
+    "native_package_workspace_dependencies": {"model": [], "store": ["model", "tables"]},
+    "definitional_packages": ["values", "types"],
+    "device_dependency_prefixes": ["metal"],
+    "device_free_layers": ["science", "observation"],
+}
+LAYERING_WORKSPACE = [("values",), ("types", "values"), ("tables", "types"), ("store", "model", "tables", "types")]
+LAYERING_CASES = [
+    (
+        "any package may use the definitional packages without listing them",
+        {},
+        [("model", "types", "values"), *LAYERING_WORKSPACE],
+        0,
+    ),
+    (
+        "a dependency outside the definitional set still breaks an exact set",
+        {},
+        [("model", "types", "tables"), *LAYERING_WORKSPACE],
+        1,
+    ),
+    (
+        "an exact set that lists a definitional package is refused",
+        {"native_package_workspace_dependencies": {"model": ["types"], "store": ["model", "tables"]}},
+        [("model", "types"), *LAYERING_WORKSPACE],
+        1,
+    ),
+    (
+        "a definitional package that depends on another workspace package is refused",
+        {},
+        [("model",), ("values", "tables"), *LAYERING_WORKSPACE[1:]],
+        1,
+    ),
+    (
+        "a definitional package that pulls a device crate is refused",
+        {},
+        [("model",), ("values", "metal"), *LAYERING_WORKSPACE[1:]],
+        1,
+    ),
+    (
+        "a definitional package with a layer is refused",
+        {"package_layers": {"model": "science", "store": "observation", "types": "science"}},
+        [("model",), *LAYERING_WORKSPACE],
+        1,
+    ),
+]
+
+
+def layering_package(name: str, *dependencies: str) -> dict:
+    return {"name": name, "dependencies": [{"name": d, "kind": None} for d in dependencies]}
+
 
 TEST_GATE_ATTRIBUTE = re.compile(r"#\[\s*cfg\s*\(\s*test\s*\)\s*\]")
 PATH_ATTRIBUTE = re.compile(r'#\[\s*path\s*=\s*"([^"]*)"\s*\]')
@@ -503,9 +595,19 @@ def rule_violations(rule: dict) -> set[str]:
     return violating
 
 
+def source_rules(policy: dict) -> list[dict]:
+    """The policy's source rules, a `"definitional"` root naming the
+    definitional packages' sources."""
+    definitional = [f"crates/{name}/src" for name in policy["definitional_packages"]]
+    return [
+        {**rule, "roots": definitional} if rule["roots"] == "definitional" else rule
+        for rule in policy["source_rules"]
+    ]
+
+
 def check_source_rules(policy: dict) -> list[str]:
     failures: list[str] = []
-    for rule in policy["source_rules"]:
+    for rule in source_rules(policy):
         grandfathered = set(rule.get("grandfathered", []))
         violating = rule_violations(rule)
         for path in sorted(violating - grandfathered):
@@ -519,14 +621,14 @@ def check_source_rules(policy: dict) -> list[str]:
 
 
 def print_grandfather(policy: dict) -> None:
-    for rule in policy["source_rules"]:
+    for rule in source_rules(policy):
         print(json.dumps({"id": rule["id"], "grandfathered": sorted(rule_violations(rule))}, indent=1))
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--grandfather", action="store_true", help="print current violations in policy form")
-    parser.add_argument("--self-test", action="store_true", help="check the test-stripping logic")
+    parser.add_argument("--self-test", action="store_true", help="check the test-stripping and layering logic")
     args = parser.parse_args()
     if args.self_test:
         return self_test()

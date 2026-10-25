@@ -1,6 +1,6 @@
 # MeasurementSet implementation plan
 
-Status: revision 5; M0/M1 trial authorized, production migration awaits acceptance
+Status: revision 5; M0/M1 trial run; the read contract frozen narrowly for M2 by the owner (section 10)
 Truth class: design proposal
 Date: 2026-10-24
 Design inputs: [architecture](architecture.md), [draft contracts](contracts.md)
@@ -517,9 +517,9 @@ approves completion only with no unresolved scope or acceptance reduction.
 
 ## 9. Evidence and executable gates
 
-The baseline is [`TESTING.md`](../../TESTING.md), the
-[representative matrix](../../resources/imaging-architecture/representative-science-matrix.json),
-and the [performance skill](../../.agents/skills/casa-rs-imaging-performance/SKILL.md).
+The baseline is `TESTING.md`, the
+representative matrix (`resources/imaging-architecture/representative-science-matrix.json`),
+and the performance skill (`.agents/skills/casa-rs-imaging-performance/SKILL.md`).
 Use four independent evidence classes:
 
 | Evidence | What must be proved |
@@ -573,6 +573,16 @@ direction. Updating text or passing documentation checks does not stabilize
 the interfaces or authorize M2–M5 production migration. Keep the design and
 trial PRs draft and the external discussion visible. M1 acceptance, subsequent
 milestone authorization and permission to merge remain explicit later steps.
+
+**Owner decision, 2026-10-25 (#898).** The read contract
+([contracts](contracts.md) sections 1–6 and creation from batches) is frozen
+narrowly for M2, ahead of full M1 acceptance, and M2 builds on it. The M1
+rows the trial did not complete stay open ([trial README](trial/README.md),
+"M1 coverage") and are worked as the applications are ported; a finding that
+the design is not sufficient reopens the contract concerned through the
+change control below. The owner waived an independent re-review of the
+trial's revision 4, which answered the design and code reviews of revision
+3, and asked for the trial PR to be marked ready.
 
 Every implementation packet/PR includes:
 

@@ -5,16 +5,17 @@
 
 mod common;
 
-use casa_imaging_model::{CorrelationType, PolarizationCoordinate};
+use casa_imaging_model::PolarizationCoordinate;
 use casa_imaging_operator::{
     Basis, CpuBackend, GridBackend, GridPrecision, Mode, ModeSet, ModelImages, ModelPlane,
     ModelPrescale, NormalImages, PlaneRange, Tile, Work,
 };
+use casa_types::Correlation;
 use common::{IMAGE, INCREMENT_RAD, Rng, buffer, max_abs, operator, placements, samples};
 use ndarray::Array2;
 use num_complex::{Complex32, Complex64};
 
-const XX_YY: [CorrelationType; 2] = [CorrelationType::LinearXx, CorrelationType::LinearYy];
+const XX_YY: [Correlation; 2] = [Correlation::XX, Correlation::YY];
 const STOKES_I: [PolarizationCoordinate; 1] = [PolarizationCoordinate::StokesI];
 
 fn tolerance(precision: GridPrecision) -> f64 {

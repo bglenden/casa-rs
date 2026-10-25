@@ -1,6 +1,6 @@
 # MeasurementSet architecture review
 
-Status: revision 5; authorized for M0/M1 trial, interfaces not frozen
+Status: revision 5; authorized for M0/M1 trial; the read contract frozen narrowly for M2 on 2026-10-25, the rest not frozen
 Truth class: design proposal
 Date: 2026-10-24
 Repository baseline: `221ec71545fe36a758ab0869e7512349b5db7c0e`
@@ -67,6 +67,10 @@ The documents and PR remain provisional: neither addressing a comment nor an
 agent recommendation finalizes the design. The MSv2 + MSv4 scope, MSv3 deferral,
 Measures requirement and use of `ndarray` are owner directions; they do not
 freeze the concrete APIs or authorize broad implementation before M1 review.
+After the trial, the owner froze the read contract narrowly for M2 on
+2026-10-25 ([contracts](contracts.md), sections 1–6 and creation from
+batches); the rest stays provisional
+([implementation plan](implementation-plan.md), section 10).
 
 ## Decisions for the owner and independent reviewers
 
@@ -160,8 +164,8 @@ PRs must update the baseline and link the changed production entrypoints.
 | What does calibration currently assume? | [session.rs](https://github.com/bglenden/casa-rs/blob/221ec71545fe36a758ab0869e7512349b5db7c0e/crates/casa-calibration/src/session.rs), [solve/grouping.rs](https://github.com/bglenden/casa-rs/blob/221ec71545fe36a758ab0869e7512349b5db7c0e/crates/casa-calibration/src/solve/grouping.rs), and [execute.rs](https://github.com/bglenden/casa-rs/blob/221ec71545fe36a758ab0869e7512349b5db7c0e/crates/casa-calibration/src/execute.rs). |
 | What write performance/semantics must survive? | [visibility_write.rs](https://github.com/bglenden/casa-rs/blob/221ec71545fe36a758ab0869e7512349b5db7c0e/crates/casa-ms/src/observation_owner/visibility_write.rs), [write_session.rs](https://github.com/bglenden/casa-rs/blob/221ec71545fe36a758ab0869e7512349b5db7c0e/crates/casa-ms/src/write_session.rs), [flagging.rs](https://github.com/bglenden/casa-rs/blob/221ec71545fe36a758ab0869e7512349b5db7c0e/crates/casa-ms/src/flagging.rs). |
 | Which producer paths also need migration? | [simulation write pipeline](https://github.com/bglenden/casa-rs/tree/221ec71545fe36a758ab0869e7512349b5db7c0e/crates/casa-simulation/src/write) and [casa-vla](https://github.com/bglenden/casa-rs/tree/221ec71545fe36a758ab0869e7512349b5db7c0e/crates/casa-vla). |
-| What existing architectural constraints bind the proposal? | [ADR-0008](../adr/0008-casacore-storage-and-bounded-measurementset-writes.md), [ADR-0009](../adr/0009-mathematical-imaging-architecture.md), [ADR-0015](../adr/0015-run-local-imaging-ownership-without-content-attestation.md), [ADR-0016](../adr/0016-imaging-foundation.md), [dependency policy](../../resources/imaging-architecture/dependency-policy.json). These relative links resolve in the PR branch. |
-| What counts as validation? | [TESTING.md](../../TESTING.md), [performance skill](../../.agents/skills/casa-rs-imaging-performance/SKILL.md), [representative science matrix](../../resources/imaging-architecture/representative-science-matrix.json). |
+| What existing architectural constraints bind the proposal? | [ADR-0008](../adr/0008-casacore-storage-and-bounded-measurementset-writes.md), [ADR-0009](../adr/0009-mathematical-imaging-architecture.md), [ADR-0015](../adr/0015-run-local-imaging-ownership-without-content-attestation.md), [ADR-0016](../adr/0016-imaging-foundation.md), dependency policy (`resources/imaging-architecture/dependency-policy.json`). These relative links resolve in the PR branch. |
+| What counts as validation? | `TESTING.md`, performance skill (`.agents/skills/casa-rs-imaging-performance/SKILL.md`), representative science matrix (`resources/imaging-architecture/representative-science-matrix.json`). |
 | What defines MSv4 and its stack? | [Architecture reference baseline](architecture.md#7-reference-baseline): pinned XRADIO schema, group definitions, padding, conversion and Zarr configuration; Zarr specification, Xarray conventions, and Rust library links. |
 
 For a focused independent review, read the proposed contracts alongside the

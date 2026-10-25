@@ -11,7 +11,6 @@ use casa_coordinates::{
     SpectralCoordinate, StokesCoordinate, StokesType,
 };
 use casa_images::PagedImage;
-use casa_imaging_model::CorrelationType;
 use casa_imaging_runtime::{HostResources, ResourcePolicy};
 use casa_ms::MeasurementSet;
 use casa_ms::columns::data_columns::DataColumn;
@@ -28,6 +27,7 @@ use casa_simulation::{
     Simulator, SimulatorOptions, SpectralWindowSpec, StateSpec,
 };
 use casa_types::ArrayValue;
+use casa_types::Correlation;
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::frequency::FrequencyRef;
 use casa_types::measures::{EpochRef, MEpoch};
@@ -311,7 +311,7 @@ pub fn field_direction(field: usize) -> [f64; 2] {
 pub fn reference(
     rows: &[Row],
     model: &Path,
-    correlations: &[CorrelationType],
+    correlations: &[Correlation],
     beam: Option<PrimaryBeam>,
 ) -> Vec<Vec<Complex32>> {
     reference_through(
@@ -327,7 +327,7 @@ pub fn reference(
 pub fn reference_through(
     rows: &[Row],
     model: &Path,
-    correlations: &[CorrelationType],
+    correlations: &[Correlation],
     beam: Option<PrimaryBeam>,
     ft_machine: FtMachine,
 ) -> Vec<Vec<Complex32>> {

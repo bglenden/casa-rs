@@ -23,13 +23,13 @@ mod predict_support;
 
 use std::path::Path;
 
-use casa_imaging_model::CorrelationType;
 use casa_imaging_runtime::{HostResources, ResourcePolicy};
 use casa_simulation::predict::{FtMachine, ModelPredictor, PredictOptions, PrimaryBeam, SkyModel};
 use casa_simulation::{
     BackendRequest, CasaOutcome, PredictionOptions, SessionResources, Simulator, SimulatorResult,
     VoltagePatternSpec,
 };
+use casa_types::Correlation;
 use num_complex::Complex32;
 use predict_support::{
     CENTRE_RAD, bits, data, extended_model, predict_spec, read_main, reference_through, resources,
@@ -76,16 +76,8 @@ fn the_session_projects_w_as_the_row_predictor_does() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let model = extended_model(directory.path(), "model.image");
     for (stokes, correlations, beam) in [
-        (
-            "XX YY",
-            vec![CorrelationType::LinearXx, CorrelationType::LinearYy],
-            false,
-        ),
-        (
-            "RR LL",
-            vec![CorrelationType::CircularRr, CorrelationType::CircularLl],
-            true,
-        ),
+        ("XX YY", vec![Correlation::XX, Correlation::YY], false),
+        ("RR LL", vec![Correlation::RR, Correlation::LL], true),
     ] {
         let path = directory.path().join(format!("{stokes}-{beam}.ms"));
         let sm = session(&path, "ALMA", stokes, resources(3, 2 << 30));
@@ -139,7 +131,7 @@ fn setoptions_ft_after_wproject_predicts_through_gridft() {
     )
     .expect("predicted");
     let (rows, _) = read_main(&path);
-    let correlations = [CorrelationType::LinearXx, CorrelationType::LinearYy];
+    let correlations = [Correlation::XX, Correlation::YY];
     let gridft = reference_through(
         &rows,
         &model,
@@ -184,7 +176,7 @@ fn w_projection_predicts_on_the_cpu_and_refuses_an_explicit_metal_backend() {
     let expected = reference_through(
         &rows,
         &model,
-        &[CorrelationType::LinearXx, CorrelationType::LinearYy],
+        &[Correlation::XX, Correlation::YY],
         None,
         FtMachine::WProject(8),
     );
@@ -229,7 +221,7 @@ fn more_planes_than_the_kernel_key_indexes_are_refused() {
         ft_machine: FtMachine::WProject(planes),
         ..PredictOptions::default()
     };
-    let correlations = [CorrelationType::LinearXx, CorrelationType::LinearYy];
+    let correlations = [Correlation::XX, Correlation::YY];
     let refused = ModelPredictor::new(&sky, &correlations, CENTRE_RAD, &options(65_537))
         .err()
         .expect("refused");

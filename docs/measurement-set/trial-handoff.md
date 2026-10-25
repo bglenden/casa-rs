@@ -41,7 +41,7 @@ incorporates newer production changes, update source references and baselines.
 
 Read, in order:
 
-1. Repository [AGENTS.md](../../AGENTS.md), [TESTING.md](../../TESTING.md) and
+1. Repository `AGENTS.md`, `TESTING.md` and
    [environment/data guidance](../agent-reference.md). Read applicable domain
    skills before performance or implementation work.
 2. [Architecture](architecture.md), then [contracts](contracts.md), especially

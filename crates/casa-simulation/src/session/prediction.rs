@@ -26,13 +26,13 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use casa_imaging_model::CorrelationType;
 use casa_imaging_operator::{
     ConvolutionFunctionSet, GridPrecision, MAX_W_PLANES, OperatorError, PaddingFactor,
     PreparedModelGrids, Spheroidal, WPlaneCount, WPlanes,
 };
 use casa_imaging_runtime::pass::WorkerTeam;
 use casa_imaging_runtime::{Demand, Reservation, admit, charge_process_caches, free_memory};
+use casa_types::Correlation;
 
 use super::error::{SimulatorError, SimulatorResult};
 use super::{BackendRequest, Simulator};
@@ -426,7 +426,7 @@ impl Simulator {
 
     /// The correlations of the scans observed so far, which one operator
     /// predicts.
-    fn predicted_correlations(&self) -> SimulatorResult<Vec<CorrelationType>> {
+    fn predicted_correlations(&self) -> SimulatorResult<Vec<Correlation>> {
         self.check_visibility_correlations("predicted")?;
         let window = |scan: &super::observe::Scan| &self.spectral_windows[scan.spectral_window_id];
         let first = &window(&self.scans[0]).correlations;
@@ -443,7 +443,7 @@ impl Simulator {
         first
             .iter()
             .map(|&code| {
-                CorrelationType::from_casa_code(code).ok_or_else(|| {
+                Correlation::from_casacore_code(code).ok_or_else(|| {
                     SimulatorError::not_yet_implemented(format!(
                         "predicting correlation code {code} is not yet implemented in casa-rs \
                          (#841)"
@@ -658,7 +658,7 @@ fn model_error(error: PredictError) -> SimulatorError {
 
 /// An operator refusal for `correlations`: a correlation set the Stokes I
 /// model cannot feed is not yet implemented; the rest is raised.
-fn correlation_error(error: PredictError, correlations: &[CorrelationType]) -> SimulatorError {
+fn correlation_error(error: PredictError, correlations: &[Correlation]) -> SimulatorError {
     match error {
         PredictError::Operator(OperatorError::Polarization { reason }) => {
             SimulatorError::not_yet_implemented(format!(

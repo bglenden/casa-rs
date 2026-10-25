@@ -1,7 +1,7 @@
 # Architecture
 
 Truth class: current descriptive
-Last reality check: 2026-10-21
+Last reality check: 2026-10-25
 Verification: just docs-check
 
 ## System purpose
@@ -18,9 +18,9 @@ coordinates, measures, and related workflows.
 | foundation crates (`casa-types`, `casa-measures-data`, `casa-measures-tools`) | Public scalar/quanta/measures algorithms and contracts plus explicit runtime-data validation, loading, installation, and maintenance | core codecs; `casa-measures-data` also uses canonical `casa-tables` accessors |
 | shared numerics (`casa-numerics`) | Domain-neutral numerical algorithms reused by observation, calibration, and imaging owners | Rust numerical ecosystem crates only |
 | persistent storage (`casa-tables`) | CASA table persistence, codecs, data managers/storage backends, schema/mutation APIs, and TaQL engine | core codecs, foundation crates |
-| native imaging (`casa-imaging-model`, `casa-imaging-operator`, `casa-imaging-deconvolution`, `casa-imaging-products`, `casa-imaging-runtime`, `casa-imaging-metal`) | The dependency-free request science and compiled problem; the measurement operator (kernel sets, gridding and degridding, FFT and correction, imaging weights, spectral resampling, continuum fitting); image-domain reconstruction (the model lifecycle, the normal state a pass forms, masks and the minor-cycle solvers); normalization, restoration, Taylor, PB and pbcor products, written in bounded windows by the products' CASA image writer with atomic individual-image replacement; host resources, admission, the major-cycle pass, its worker teams and the paged cube state; the Metal backend | ADR-0016 layering, enforced by `scripts/check-imaging-dependencies.py` and `resources/imaging-architecture/dependency-policy.json`: `casa-imaging-model` has no workspace dependencies; the operator depends on the model, `casa-fft`, `casa-numerics` and, for AW convolution-function images, `casa-images`, `casa-coordinates` and `casa-types`; deconvolution depends on the model, `casa-fft` and `casa-numerics`; products depend on the model, deconvolution, `casa-fft` and `casa-numerics` and, for their writer, on `casa-images`, `casa-coordinates` and `casa-types`; runtime composes the operator, deconvolution, products and the Metal crate over `casa-ms`, `casa-tables` and `casa-lattices`; the Metal crate depends only on the operator |
+| native imaging (`casa-imaging-model`, `casa-imaging-operator`, `casa-imaging-deconvolution`, `casa-imaging-products`, `casa-imaging-runtime`, `casa-imaging-metal`) | The request science and compiled problem, over the definitional crates alone; the measurement operator (kernel sets, gridding and degridding, FFT and correction, imaging weights, spectral resampling, continuum fitting); image-domain reconstruction (the model lifecycle, the normal state a pass forms, masks and the minor-cycle solvers); normalization, restoration, Taylor, PB and pbcor products, written in bounded windows by the products' CASA image writer with atomic individual-image replacement; host resources, admission, the major-cycle pass, its worker teams and the paged cube state; the Metal backend | ADR-0016 layering, enforced by `scripts/check-imaging-dependencies.py` and `resources/imaging-architecture/dependency-policy.json`: every imaging crate may use the definitional crates (`casa-values`, `casa-types`, `casa-coordinates`); beyond them, `casa-imaging-model` has no workspace dependencies; the operator depends on the model, `casa-fft`, `casa-numerics` and, for AW convolution-function images, `casa-images`; deconvolution depends on the model, `casa-fft` and `casa-numerics`; products depend on the model, deconvolution, `casa-fft` and `casa-numerics` and, for their writer, on `casa-images`; runtime composes the operator, deconvolution, products and the Metal crate over `casa-ms`, `casa-tables` and `casa-lattices`; the Metal crate depends on the operator and `casa-numerics` |
 | imaging application composition (`casa-imaging-application`) | Sole production composition seam across MeasurementSet authority, reconstruction, products, resources, execution, typed installed-implementation availability, and CASA product publication | Native imaging owners only; unavailable requests invoke no execution implementation |
-| simulation (`casa-simulation`) | CASA's `sm` tool: the session the setters and `observe` describe, the deferred plan of `predict` and `corrupt` steps, model preparation through the measurement operator, thermal noise, and one streamed MeasurementSet write at `close`, admitted against the imaging runtime's resource policy and predicting through its block predictor on the CPU or Metal | An application in the ADR-0016 layering (the dependency policy lists its exact set): the imaging model, operator and runtime (Metal only through the runtime), `casa-ms`, `casa-tables`, `casa-images`, `casa-coordinates`, `casa-numerics` and `casa-types` |
+| simulation (`casa-simulation`) | CASA's `sm` tool: the session the setters and `observe` describe, the deferred plan of `predict` and `corrupt` steps, model preparation through the measurement operator, thermal noise, and one streamed MeasurementSet write at `close`, admitted against the imaging runtime's resource policy and predicting through its block predictor on the CPU or Metal | An application in the ADR-0016 layering (the dependency policy lists its exact set): the imaging model, operator and runtime (Metal only through the runtime), `casa-ms`, `casa-tables`, `casa-images` and `casa-numerics`, plus the definitional crates |
 | domain libraries (`casa-ms`, `casa-simulation-synthesis`, `casa-lattices`, `casa-coordinates`, `casa-images`, `casa-calibration`, `casa-vla`, `casa-components`) | Higher-level astronomy data models and algorithms built on table/image persistence; simulation synthesis owns only the serial model predictor and Airy voltage pattern used by MeasurementSet simulation; `casa-components` owns CASA component lists (sky components with their flux, shape and spectral model) and reads and writes their `ComponentList` tables as CASA does | foundation crates, `casa-tables`, selected peer domain crates where documented; `casa-components` depends only on `casa-tables` and `casa-types` |
 | boundary contracts (`casa-provider-contracts`) | The generic task-provider envelope, canonical parameter and application catalogs, task surface definitions, and protocol surfaces between providers, the task host, and Python | domain libraries and foundation crates; must not become a second source of truth |
 | parameter and task runtime (`casa-task-runtime`) | Format-neutral parameter resolution, sparse TOML profiles, migrations, task Last/Last Successful coordination, managed Last storage, and the common one-shot task CLI host | boundary contracts and `casa-types`; must not implement provider science behavior |
@@ -37,8 +37,17 @@ Native imaging follows its stricter accepted direction:
 
 `science -> observation / reconstruction -> products -> execution -> backends -> application -> frontends`
 
-`casa-imaging-model` owns the dependency-free science, reconstruction, and
-product schemas and commitments introduced by ADR-0009.
+Beneath every layer sit the definitional crates, `casa-values`, `casa-types`
+and `casa-coordinates`: they define values, units, quanta, measures and
+coordinate systems and the pure functions on them, do no file, network,
+process or environment I/O, start no threads, use no device and depend only on
+one another, so any crate in the layering may use them (ADR-0016 decision 10,
+amended 2026-10-25). The dependency policy names them and lists each crate's
+other workspace dependencies exactly; adding a crate to the set is the
+owner's decision.
+
+`casa-imaging-model` owns the science, reconstruction, and product schemas and
+commitments introduced by ADR-0009, over the definitional crates alone.
 `casa-imaging-operator` owns the measurement operator A and its adjoint
 (plan section 5.3): the kernel sets (`Spheroidal`, `WPlanes`, `AwCatalog`,
 `MosaicPb`), the `GridBackend` contract and its CPU implementation, the
@@ -267,7 +276,7 @@ borrowed visibility, flag and weight columns of a row (`SelectedNumericRow`).
 `casa-ms` fills them from MAIN and the compiled geometry; the application's
 `MeasurementSetSource` converts each block into the runtime's native rows.
 
-`casa-imaging-model` carries the dependency-free model-state schemas and the
+`casa-imaging-model` carries the model-state schemas and the
 compiler-owned lifecycle commitment: the target shape, the bounds and the
 arithmetic precision. `casa_imaging_deconvolution::ModelLifecycle` owns a
 run's model: every run starts from the empty generation, and each major cycle's
@@ -570,7 +579,8 @@ never makes a route available.
   `casa-imaging-application` before planning; production never enters a
   displaced implementation. `scripts/check-imaging-dependencies.py` (in `just
   arch-check`) rejects crate edges outside the ADR-0016 layering, non-exact
-  native dependency sets, device APIs outside `casa-imaging-metal`, and
+  native dependency sets, definitional crates that reach beyond one another or
+  do I/O, device APIs outside `casa-imaging-metal`, and
   environment reads, `eprintln!` and content hashing in imaging crates. Its
   only grandfathered files are three environment readers outside the imaging
   crates (`casa-measures-data`, `casa-ms`'s simulation task and

@@ -3,7 +3,7 @@
 //! compiled problem: plan section 5.3 projected from `CompiledProblem`.
 
 use casa_imaging_model::{
-    AntennaResponseClass, CompiledImageDomain, CompiledProblem, CorrelationType, InstrumentModel,
+    AntennaResponseClass, CompiledImageDomain, CompiledProblem, InstrumentModel,
     ReconstructionBasis, SpectralKernel, SpectralWcs, WeightDensityScope,
 };
 use casa_imaging_operator::{
@@ -16,6 +16,7 @@ use casa_imaging_runtime::pass::{BackendChoice, RowSamples};
 use casa_imaging_runtime::{
     Demand, FRAME_MARGIN, HostResources, Reservation, ResourcePolicy, admit, row_layout,
 };
+use casa_types::Correlation;
 
 use super::ImagingError;
 use crate::AwCatalogDeployment;
@@ -107,7 +108,7 @@ impl DomainOperator {
 /// source's selection, which every source must share.
 pub(crate) fn selected_correlations(
     problem: &CompiledProblem,
-) -> Result<Vec<CorrelationType>, ImagingError> {
+) -> Result<Vec<Correlation>, ImagingError> {
     let mut layouts = problem
         .observation_transaction()
         .read_set()
@@ -261,7 +262,7 @@ fn kernel_set_kind(problem: &CompiledProblem) -> KernelSetKind {
 pub(crate) fn domain_operator(
     problem: &CompiledProblem,
     extent: ImageExtent,
-    correlations: &[CorrelationType],
+    correlations: &[Correlation],
     backend: BackendChoice,
     requested_precision: Option<GridPrecision>,
     aw_catalog: Option<&AwCatalogDeployment>,

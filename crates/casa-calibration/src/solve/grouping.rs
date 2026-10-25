@@ -8,7 +8,7 @@ use casa_ms::MsError;
 use casa_ms::ms::MeasurementSet;
 use casa_ms::selection::MsSelection;
 use casa_types::{ArrayValue, Complex32};
-use ndarray::ArrayD;
+use ndarray::{ArrayD, ArrayView1, ArrayView2, Ix1, Ix2};
 
 use super::{
     GainSolveCombine, GainSolveError, GainSolveInterval, GainSolveMode, GainSolveModelSource,
@@ -274,6 +274,63 @@ pub(crate) fn correlation_types_for_ddid(
         })
 }
 
+/// The per-row facts the accumulation records, from a MAIN row or any
+/// other source of samples.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct SolveSampleRow {
+    pub(crate) data_desc_id: i32,
+    pub(crate) antenna1: i32,
+    pub(crate) antenna2: i32,
+    pub(crate) time_seconds: f64,
+    pub(crate) time_centroid_seconds: f64,
+    pub(crate) interval_seconds: f64,
+    pub(crate) scan_number: i32,
+}
+
+impl SolveSampleRow {
+    fn of(row: &SelectedSolveRow) -> Self {
+        Self {
+            data_desc_id: row.data_desc_id,
+            antenna1: row.antenna1,
+            antenna2: row.antenna2,
+            time_seconds: row.time_seconds,
+            time_centroid_seconds: row.time_centroid_seconds,
+            interval_seconds: row.interval_seconds,
+            scan_number: row.scan_number,
+        }
+    }
+}
+
+/// A sample's input weights: the row `WEIGHT` shared by every channel, or
+/// `WEIGHT_SPECTRUM` `[correlation, channel]`.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum SolveWeights<'a> {
+    Row(ArrayView1<'a, f32>),
+    Spectrum(ArrayView2<'a, f32>),
+}
+
+impl SolveWeights<'_> {
+    fn at(&self, corr_index: usize, chan_index: usize) -> f32 {
+        match self {
+            Self::Row(weights) => weights[corr_index],
+            Self::Spectrum(spectrum) => spectrum[[corr_index, chan_index]],
+        }
+    }
+}
+
+/// One sample's arrays for [`SolveAccumulator::observe_samples`], each
+/// `[correlation, channel]`.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct SolveSamples<'a> {
+    pub(crate) row: SolveSampleRow,
+    pub(crate) data: ArrayView2<'a, Complex32>,
+    pub(crate) flags: ArrayView2<'a, bool>,
+    pub(crate) weights: SolveWeights<'a>,
+    pub(crate) model: Option<ArrayView2<'a, Complex32>>,
+    pub(crate) correlation_types: &'a [i32],
+    pub(crate) selected_channels: &'a [usize],
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct SolveGroupOptions {
     pub(crate) gain_type: GainType,
@@ -382,10 +439,6 @@ impl SolveAccumulator {
         }
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "predates the function-length limit; #705"
-    )]
     pub(crate) fn observe(
         &mut self,
         ms: &MeasurementSet,
@@ -539,7 +592,57 @@ impl SolveAccumulator {
             });
         }
         let selected_channels = selected_channels(row, data.shape()[1])?;
+        self.observe_samples(
+            &SolveSamples {
+                row: SolveSampleRow::of(row),
+                data: complex_2d(data),
+                flags: flags
+                    .view()
+                    .into_dimensionality::<Ix2>()
+                    .expect("checked two-dimensional"),
+                weights: match weight_spectrum {
+                    Some(spectrum) => SolveWeights::Spectrum(
+                        spectrum
+                            .view()
+                            .into_dimensionality::<Ix2>()
+                            .expect("checked two-dimensional"),
+                    ),
+                    None => SolveWeights::Row(
+                        weights
+                            .view()
+                            .into_dimensionality::<Ix1>()
+                            .expect("checked one-dimensional"),
+                    ),
+                },
+                model: model_data.map(complex_2d),
+                correlation_types: &correlation_types,
+                selected_channels: &selected_channels,
+            },
+            gain_type,
+            stokes_i,
+        )
+    }
 
+    /// Accumulate one sample's selected channels: the arithmetic of
+    /// [`Self::observe`] on arrays from any source, `[correlation, channel]`
+    /// as casacore stores a MAIN cell. The MSv2/MSv4 trial
+    /// (`docs/measurement-set/trial/README.md`) feeds it from
+    /// `casa_observation::VisibilityBatch` views without copying them.
+    pub(crate) fn observe_samples(
+        &mut self,
+        samples: &SolveSamples<'_>,
+        gain_type: GainType,
+        stokes_i: f32,
+    ) -> Result<(), GainSolveError> {
+        let SolveSamples {
+            row,
+            data,
+            flags,
+            weights,
+            model: model_data,
+            correlation_types,
+            selected_channels,
+        } = samples;
         let graph_count = match gain_type {
             GainType::G => 2,
             GainType::T => 1,
@@ -566,8 +669,8 @@ impl SolveAccumulator {
 
         let mut time_centroid_weight = 0.0_f64;
         for corr_index in 0..data.shape()[0] {
-            for &chan_index in &selected_channels {
-                let weight = channel_weight(weights, weight_spectrum, corr_index, chan_index);
+            for &chan_index in *selected_channels {
+                let weight = weights.at(corr_index, chan_index);
                 if weight > 0.0 && !solve_sample_flagged(flags, gain_type, corr_index, chan_index) {
                     time_centroid_weight += f64::from(weight);
                 }
@@ -595,18 +698,19 @@ impl SolveAccumulator {
                 GainType::G => receptors.0,
                 GainType::T => 0,
             };
-            for &chan_index in &selected_channels {
+            for &chan_index in *selected_channels {
                 if solve_sample_flagged(flags, gain_type, corr_index, chan_index) {
                     continue;
                 }
-                let weight = channel_weight(weights, weight_spectrum, corr_index, chan_index);
+                let weight = weights.at(corr_index, chan_index);
                 if weight <= 0.0 {
                     continue;
                 }
-                let model = match model_data.as_ref() {
-                    Some(model_data) => model_data[[corr_index, chan_index]],
-                    None => Complex32::new(stokes_i, 0.0),
-                };
+                let model = model_data
+                    .as_ref()
+                    .map_or(Complex32::new(stokes_i, 0.0), |model| {
+                        model[[corr_index, chan_index]]
+                    });
                 let model_norm_sqr = model.norm_sqr();
                 if model_norm_sqr <= f32::EPSILON {
                     continue;
@@ -630,6 +734,64 @@ impl SolveAccumulator {
         }
 
         Ok(())
+    }
+
+    /// Add `other`, an accumulation of other samples of the same group, as
+    /// if its samples had been observed here: the fragment work units of the
+    /// MSv2/MSv4 trial accumulate apart and merge before the group closes.
+    /// Sums change order, so results agree to rounding, not bitwise.
+    #[cfg(test)]
+    pub(crate) fn merge(&mut self, other: Self) {
+        self.min_time = self.min_time.min(other.min_time);
+        self.max_time = self.max_time.max(other.max_time);
+        for bits in other.unique_time_bits {
+            if self.unique_time_bits.insert(bits) {
+                self.unique_time_sum += f64::from_bits(bits);
+                self.unique_time_count += 1;
+            }
+        }
+        self.time_centroid_weighted_sum += other.time_centroid_weighted_sum;
+        self.time_centroid_weight += other.time_centroid_weight;
+        self.total_interval += other.total_interval;
+        self.sample_rows += other.sample_rows;
+        self.scan_numbers.extend(other.scan_numbers);
+        self.antenna_ids.extend(other.antenna_ids);
+        if self.receptor_accumulations.len() < other.receptor_accumulations.len() {
+            let graphs = other.receptor_accumulations.len();
+            self.receptor_graphs.resize_with(graphs, HashMap::new);
+            self.receptor_weights.resize_with(graphs, HashMap::new);
+            self.receptor_stats.resize_with(graphs, HashMap::new);
+            self.receptor_accumulations
+                .resize_with(graphs, HashMap::new);
+        }
+        for (mine, theirs) in self
+            .receptor_accumulations
+            .iter_mut()
+            .zip(other.receptor_accumulations)
+        {
+            for (key, accumulation) in theirs {
+                let entry = mine.entry(key).or_default();
+                entry.weighted_sum += accumulation.weighted_sum;
+                entry.weight += accumulation.weight;
+                entry.weighted_sample_power += accumulation.weighted_sample_power;
+                entry.sample_count += accumulation.sample_count;
+            }
+        }
+    }
+
+    /// Entries the accumulation's sets and maps hold: its state grows with
+    /// the group's distinct times, antennas and baseline correlations, not
+    /// with its samples.
+    #[cfg(test)]
+    pub(crate) fn state_entries(&self) -> usize {
+        self.unique_time_bits.len()
+            + self.scan_numbers.len()
+            + self.antenna_ids.len()
+            + self
+                .receptor_accumulations
+                .iter()
+                .map(HashMap::len)
+                .sum::<usize>()
     }
 
     pub(crate) fn finalize_for_solve(&mut self, solve_mode: GainSolveMode) {
@@ -691,6 +853,14 @@ impl SolveAccumulator {
     }
 }
 
+/// A cell already checked to be two-dimensional, as a fixed-rank view.
+fn complex_2d(array: &ArrayD<Complex32>) -> ArrayView2<'_, Complex32> {
+    array
+        .view()
+        .into_dimensionality::<Ix2>()
+        .expect("checked two-dimensional")
+}
+
 fn selected_channels(
     row: &SelectedSolveRow,
     channel_count: usize,
@@ -708,12 +878,12 @@ fn selected_channels(
     }
 }
 
-fn channel_has_any_correlation_flagged(flags: &ArrayD<bool>, chan_index: usize) -> bool {
+fn channel_has_any_correlation_flagged(flags: &ArrayView2<'_, bool>, chan_index: usize) -> bool {
     (0..flags.shape()[0]).any(|corr_index| flags[[corr_index, chan_index]])
 }
 
 fn solve_sample_flagged(
-    flags: &ArrayD<bool>,
+    flags: &ArrayView2<'_, bool>,
     gain_type: GainType,
     _corr_index: usize,
     chan_index: usize,
@@ -722,17 +892,6 @@ fn solve_sample_flagged(
         GainType::G => channel_has_any_correlation_flagged(flags, chan_index),
         GainType::T => channel_has_any_correlation_flagged(flags, chan_index),
     }
-}
-
-fn channel_weight(
-    weights: &ArrayD<f32>,
-    weight_spectrum: Option<&ArrayD<f32>>,
-    corr_index: usize,
-    chan_index: usize,
-) -> f32 {
-    weight_spectrum
-        .map(|spectrum| spectrum[[corr_index, chan_index]])
-        .unwrap_or_else(|| weights[[corr_index]])
 }
 
 fn accumulate_collapsed_input(

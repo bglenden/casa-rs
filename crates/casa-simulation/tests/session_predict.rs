@@ -17,16 +17,16 @@
 
 mod predict_support;
 
-use casa_imaging_model::CorrelationType;
 use casa_simulation::VoltagePatternSpec;
 use casa_simulation::predict::PrimaryBeam;
+use casa_types::Correlation;
 use num_complex::Complex32;
 use predict_support::{
     N, Row, bits, cube_model, data, extended_model, predict_spec, read_main, reference, resources,
     scan, session, write_model,
 };
 
-const XX_YY: [CorrelationType; 2] = [CorrelationType::LinearXx, CorrelationType::LinearYy];
+const XX_YY: [Correlation; 2] = [Correlation::XX, Correlation::YY];
 
 /// Whether every value of `cell` is exactly zero.
 fn zero(cell: &[Complex32]) -> bool {
@@ -39,12 +39,7 @@ fn the_session_predicts_each_row_as_the_row_predictor_does() {
     let model = extended_model(directory.path(), "model.image");
     for (stokes, correlations, beam, workers) in [
         ("XX YY", XX_YY.to_vec(), false, 1),
-        (
-            "RR LL",
-            vec![CorrelationType::CircularRr, CorrelationType::CircularLl],
-            true,
-            5,
-        ),
+        ("RR LL", vec![Correlation::RR, Correlation::LL], true, 5),
     ] {
         let path = directory.path().join(format!("{stokes}-{beam}.ms"));
         let mut sm = session(&path, "ALMA", stokes, resources(workers, 2 << 30));

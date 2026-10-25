@@ -13,6 +13,9 @@ default = []
 slow-tests = []
 cpp-interop-tests = ["casa-test-support/cpp-interop-tests"]
 performance-tests = ["casa-test-support/performance-tests"]
+# The trial MSv4 (XRADIO VisibilityXds 4.0.1, local Zarr v3) adapter
+# (docs/measurement-set/trial/README.md).
+msv4 = ["dep:zarrs", "dep:bytemuck", "dep:unsafe_cell_slice"]
 
 [dependencies]
 casa-coordinates = { path = "../casa-coordinates" }
@@ -20,6 +23,7 @@ casa-imaging-model = { path = "../casa-imaging-model" }
 casa-logging = { path = "../casa-logging" }
 casa-measures-data = { path = "../casa-measures-data" }
 casa-numerics = { path = "../casa-numerics" }
+casa-observation = { path = "../casa-observation" }
 casa-provider-contracts = { path = "../casa-provider-contracts" }
 casa-task-runtime = { path = "../casa-task-runtime" }
 casa-simulation-synthesis = { path = "../casa-simulation-synthesis" }
@@ -28,15 +32,19 @@ casa-types = { path = "../casa-types" }
 libc = "0.2"
 libm = "0.2"
 ndarray.workspace = true
-num-complex.workspace = true
+num-complex = { workspace = true, features = ["bytemuck"] }
 schemars = { version = "0.8", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sofars.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
+bytemuck = { version = "1.25", optional = true }
+unsafe_cell_slice = { version = "=0.2.2", optional = true }
+zarrs = { version = "=0.23.14", default-features = false, features = ["filesystem", "blosc", "zstd"], optional = true }
 
 [dev-dependencies]
+casa-observation = { path = "../casa-observation" }
 casa-test-support = { path = "../casa-test-support" }
 flate2 = "1"
 tar = "0.4"
@@ -68,6 +76,15 @@ path = "src/bin/ms-read-probe.rs"
 
 [lints]
 workspace = true
+
+[[example]]
+name = "ms_trial_interop"
+required-features = ["msv4"]
+
+[[test]]
+name = "observation_io"
+path = "tests/observation_io.rs"
+required-features = ["msv4"]
 
 [[test]]
 name = "ms_create_roundtrip"

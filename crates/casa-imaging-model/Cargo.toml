@@ -12,5 +12,6 @@ publish = false
 workspace = true
 
 [dependencies]
+casa-types = { path = "../casa-types" }
 num-complex.workspace = true
 thiserror.workspace = true

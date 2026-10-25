@@ -21,7 +21,6 @@
 use std::process::ExitCode;
 use std::time::Instant;
 
-use casa_imaging_model::CorrelationType;
 use casa_imaging_operator::{GridPrecision, PaddingFactor};
 use casa_ms::MeasurementSet;
 use casa_ms::columns::data_columns::DataColumn;
@@ -34,6 +33,7 @@ use casa_simulation::predict::{
     SkyModel,
 };
 use casa_types::ArrayValue;
+use casa_types::Correlation;
 use ndarray::IxDyn;
 use num_complex::Complex32;
 
@@ -92,7 +92,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         .polarization()?
         .corr_type(0)?
         .into_iter()
-        .map(|code| CorrelationType::from_casa_code(code).ok_or(format!("correlation code {code}")))
+        .map(|code| Correlation::from_casacore_code(code).ok_or(format!("correlation code {code}")))
         .collect::<Result<Vec<_>, _>>()?;
     let phase_centre_rad = match ms.field()?.phase_dir(0)? {
         ArrayValue::Float64(direction) => [direction[IxDyn(&[0, 0])], direction[IxDyn(&[1, 0])]],

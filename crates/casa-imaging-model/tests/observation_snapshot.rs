@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use casa_imaging_model::{
-    CompileObservationError, CorrelationProduct, CorrelationSelection, CorrelationType,
-    DataDescriptionSelection, FlagPolicy, IdSelection, IntentSelection, ObservationSelection,
-    ObservationSnapshot, ObservationSnapshotInput, ObservationSourceInput,
-    ObservationSourceProvenance, ResolvedIntent, RowSelection, SelectedColumns, SelectedMainRow,
-    SelectedRowSequenceError, SelectedRows, SelectionBound, SpectralWindowCoordinateCatalog,
-    SpectralWindowSelection, UvDistanceRange, UvDistanceUnit, UvSelection, VisibilityColumn,
-    WeightColumn, compile_observation,
+    CompileObservationError, CorrelationProduct, CorrelationSelection, DataDescriptionSelection,
+    FlagPolicy, IdSelection, IntentSelection, ObservationSelection, ObservationSnapshot,
+    ObservationSnapshotInput, ObservationSourceInput, ObservationSourceProvenance, ResolvedIntent,
+    RowSelection, SelectedColumns, SelectedMainRow, SelectedRowSequenceError, SelectedRows,
+    SelectionBound, SpectralWindowCoordinateCatalog, SpectralWindowSelection, UvDistanceRange,
+    UvDistanceUnit, UvSelection, VisibilityColumn, WeightColumn, compile_observation,
 };
+use casa_types::Correlation;
 
 fn selected_rows(row_variant: u8) -> SelectedRows {
     let mut rows = (0_u64..10).collect::<Vec<_>>();
@@ -103,15 +103,15 @@ fn selection(row_digest: u8, reverse: bool) -> ObservationSelection {
         CorrelationSelection::new(
             5,
             vec![
-                CorrelationProduct::new(1, CorrelationType::LinearYy),
-                CorrelationProduct::new(0, CorrelationType::LinearXx),
+                CorrelationProduct::new(1, Correlation::YY),
+                CorrelationProduct::new(0, Correlation::XX),
             ],
         ),
         CorrelationSelection::new(
             1,
             vec![
-                CorrelationProduct::new(1, CorrelationType::CircularLl),
-                CorrelationProduct::new(0, CorrelationType::CircularRr),
+                CorrelationProduct::new(1, Correlation::LL),
+                CorrelationProduct::new(0, Correlation::RR),
             ],
         ),
     ];
@@ -163,38 +163,38 @@ fn snapshot(reverse: bool, left_locator: &str, right_locator: &str) -> Observati
 #[test]
 fn all_defined_measurement_set_correlation_coordinates_are_lossless() {
     let correlation_types = [
-        CorrelationType::StokesI,
-        CorrelationType::StokesQ,
-        CorrelationType::StokesU,
-        CorrelationType::StokesV,
-        CorrelationType::CircularRr,
-        CorrelationType::CircularRl,
-        CorrelationType::CircularLr,
-        CorrelationType::CircularLl,
-        CorrelationType::LinearXx,
-        CorrelationType::LinearXy,
-        CorrelationType::LinearYx,
-        CorrelationType::LinearYy,
-        CorrelationType::MixedRx,
-        CorrelationType::MixedRy,
-        CorrelationType::MixedLx,
-        CorrelationType::MixedLy,
-        CorrelationType::MixedXr,
-        CorrelationType::MixedXl,
-        CorrelationType::MixedYr,
-        CorrelationType::MixedYl,
-        CorrelationType::QuasiOrthogonalPp,
-        CorrelationType::QuasiOrthogonalPq,
-        CorrelationType::QuasiOrthogonalQp,
-        CorrelationType::QuasiOrthogonalQq,
-        CorrelationType::RightCircular,
-        CorrelationType::LeftCircular,
-        CorrelationType::Linear,
-        CorrelationType::PolarizedIntensity,
-        CorrelationType::LinearPolarizedIntensity,
-        CorrelationType::FractionalPolarizedIntensity,
-        CorrelationType::FractionalLinearPolarizedIntensity,
-        CorrelationType::PolarizationAngle,
+        Correlation::I,
+        Correlation::Q,
+        Correlation::U,
+        Correlation::V,
+        Correlation::RR,
+        Correlation::RL,
+        Correlation::LR,
+        Correlation::LL,
+        Correlation::XX,
+        Correlation::XY,
+        Correlation::YX,
+        Correlation::YY,
+        Correlation::RX,
+        Correlation::RY,
+        Correlation::LX,
+        Correlation::LY,
+        Correlation::XR,
+        Correlation::XL,
+        Correlation::YR,
+        Correlation::YL,
+        Correlation::PP,
+        Correlation::PQ,
+        Correlation::QP,
+        Correlation::QQ,
+        Correlation::RCircular,
+        Correlation::LCircular,
+        Correlation::Linear,
+        Correlation::Ptotal,
+        Correlation::Plinear,
+        Correlation::PFtotal,
+        Correlation::PFlinear,
+        Correlation::Pangle,
     ];
     let base = selection(31, false);
     let exact_selection = ObservationSelection::new(
@@ -254,15 +254,15 @@ fn data_description_catalog_binds_spw_and_polarization_pairing() {
                 CorrelationSelection::new(
                     1,
                     vec![
-                        CorrelationProduct::new(0, CorrelationType::CircularRr),
-                        CorrelationProduct::new(1, CorrelationType::CircularLl),
+                        CorrelationProduct::new(0, Correlation::RR),
+                        CorrelationProduct::new(1, Correlation::LL),
                     ],
                 ),
                 CorrelationSelection::new(
                     5,
                     vec![
-                        CorrelationProduct::new(0, CorrelationType::LinearXx),
-                        CorrelationProduct::new(1, CorrelationType::LinearYy),
+                        CorrelationProduct::new(0, Correlation::XX),
+                        CorrelationProduct::new(1, Correlation::YY),
                     ],
                 ),
             ],
@@ -626,7 +626,7 @@ fn snapshot_exposes_exact_selection_semantics_without_bulk_samples() {
     assert_eq!(selection.correlations()[0].polarization_id(), 1);
     assert_eq!(
         selection.correlations()[0].products()[0],
-        CorrelationProduct::new(0, CorrelationType::CircularRr)
+        CorrelationProduct::new(0, Correlation::RR)
     );
 
     let columns = source.columns();

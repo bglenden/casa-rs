@@ -45,7 +45,7 @@ pub use model::SkyModel;
 
 use casa_coordinates::CoordinateError;
 use casa_images::ImageError;
-use casa_imaging_model::{CorrelationType, PolarizationCoordinate};
+use casa_imaging_model::PolarizationCoordinate;
 use casa_imaging_operator::{
     ConvolutionFunctionSet, CpuBackend, GridGeometry, GridPadding, GridPrecision, ImageExtent,
     MeasurementOperator, ModeSet, ModelPlane, ModelPlaneGrids, NativeRow, OperatorError,
@@ -53,6 +53,7 @@ use casa_imaging_operator::{
     RowContext, SpectralAxis, SpectralKernel, SpectralResampler, Spheroidal, WPlaneCount, WPlanes,
 };
 use casa_imaging_runtime::pass::WorkerTeam;
+use casa_types::Correlation;
 use num_complex::Complex32;
 use thiserror::Error;
 
@@ -124,7 +125,7 @@ impl ModelLayout {
     /// cannot feed.
     pub(crate) fn new(
         model: &SkyModel,
-        correlations: &[CorrelationType],
+        correlations: &[Correlation],
         machine: FtMachine,
     ) -> Result<Self, PredictError> {
         let [nx, ny] = model.shape();
@@ -374,7 +375,7 @@ impl ModelPredictor {
     /// plane that cannot be read.
     pub fn new(
         model: &SkyModel,
-        correlations: &[CorrelationType],
+        correlations: &[Correlation],
         pointing_rad: [f64; 2],
         options: &PredictOptions,
     ) -> Result<Self, PredictError> {
