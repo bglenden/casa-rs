@@ -164,8 +164,10 @@ _Avoid_: Row, visibility (which is one value of a sample)
 
 **Padding**:
 A grid cell no acquisition fills (an antenna that dropped out, a baseline not
-written): delivered as flag true, weight zero, NaN values and auxiliaries. The
-validity rule excludes it; nothing is read from disk for it.
+written): delivered flagged in every store, with NaN values and auxiliaries
+(weight zero from MSv2; an XRADIO store's own padding has NaN weights, which
+the MSv4 adapter folds into the flag). The validity rule excludes it; nothing
+is read from disk for it.
 _Avoid_: Missing row, absent slot, occupancy
 
 **Batch Shape**:
@@ -178,8 +180,9 @@ _Avoid_: Cursor shape, chunk size, block size
 **Buffer Pool**:
 The bounded set of batch buffers a traversal's owned batches are filled
 into: a buffer is taken only for a batch, the producer waits while none is
-free, and an owned batch returns its buffer when it is dropped. Its size
-times the estimate's held bytes per batch is what owned batches can hold.
+free (or, with a wait limit, is refused), and an owned batch returns its
+buffer when it is dropped. Each buffer has a byte envelope it never exceeds,
+so the pool holds at most its size times that envelope.
 _Avoid_: Buffer cache, free list, lending
 
 **Traversal Order**:

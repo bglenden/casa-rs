@@ -1,1 +1,1 @@
-{"published":"rust.ps.zarr","region_writes":18,"elements":12120,"packed_elements":4080}
+{"published":"rust.ps.zarr","region_writes":18,"elements":12120,"packed_elements":4080,"partial_chunks":24}

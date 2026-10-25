@@ -1,6 +1,6 @@
 # MSv2/MSv4 trial evidence
 
-Status: revision 3 (the walkthrough's decisions plus the cleanups revision 2 exposed), stopped for review; interfaces not frozen; not M0/M1 acceptance
+Status: revision 4 (the walkthrough's decisions, the cleanups revision 2 exposed, and the answers to the reviews of revision 3), stopped for review; interfaces not frozen; not M0/M1 acceptance
 Truth class: trial evidence
 Date: 2026-10-25
 Handoff: [trial-handoff.md](../trial-handoff.md)
@@ -13,6 +13,43 @@ showed, including what is missing. Nothing here claims M0 or M1 complete:
 the full caller and Measures inventory, every Measures family's bulk route,
 general updates and creation, failure injection and the benchmark matrix
 remain later requirements.
+
+## Revision 4: the reviews of revision 3
+
+Astra's design review and Fable's independent code review of revision 3
+(`a6852cc`) on [bglenden/casa-rs#898](https://github.com/bglenden/casa-rs/pull/898)
+found three blocking and four should-fix design points (Astra: B1–B3,
+S1–S4) and two blocking, seven should-fix and seven minor code points
+(Fable). Revision 4 answers every one; the design documents now state the
+current contract directly ([contracts](../contracts.md), revision 7).
+
+| Finding | Change | Evidence |
+| --- | --- | --- |
+| Astra B1: partitions bound by spectral content alone | Sessions keep MSv4's archive UIDs (MSv2's from `OBSERVATION::SCHEDULE`) and bind first; partitions bind by content with channel widths, the bound session, the bound field and scan sets, and the feed pair where both stores have one; every binding is one to one, so a key one store lacks never collapses two entities the other keeps apart. | `partitions_bind_by_session_fields_scans_feeds_and_widths` (same spectrum in two sessions, field and scan splits, asymmetric subsets, feeds, widths), `catalogues_describe_the_same_observation` |
+| Astra B2: a buffer count is not a byte bound | Every pool buffer has a byte **envelope**: `begin` checks the header against the catalogue and reserves exactly the batch's arrays, refuses a batch over the envelope before allocating, and frees what earlier fills kept when keeping it would exceed the envelope; a returned buffer over it is emptied. The estimate gains per-time bytes and `buffer_bytes` (exactly what a fill reserves); `peak_buffer_bytes` is a traversal's envelope. | `a_pool_buffer_never_holds_more_than_its_envelope` (values-heavy then weights-heavy fills, Astra's reproduction), `the_budget_fits_whole_times_or_refuses_binding` (a batch's buffer is exactly `buffer_bytes`; an envelope a byte short refuses before allocating) |
+| Astra B3: centroid extra precision dropped | A dataset with `TIME_CENTROID_EXTRA_PRECISION` refuses a request for centroids (`Unsupported`); one without them reads. | `a_split_msv4_centroid_is_refused_not_truncated` |
+| Astra S1: correlations copied per batch | `CorrelationAxis` (`All`, or a `Subset` of shared products and indices) is resolved once at binding; every batch and packed piece shares it, and all-products batches borrow the catalogue's list. The MSv2 cursor no longer builds an index list per fill. | `the_correlation_axis_is_shared_not_copied` |
+| Astra S4: per-baseline polarization basis ignored | An MSv4 dataset with `polarization_mixed` is refused at opening. | `a_baseline_dependent_polarization_basis_is_refused` (two different baseline mappings) |
+| Astra S2, S3: superseded contract text | `contracts.md` revision 7: one current read contract (sections 1–6 and creation) and a provisional table with each capability's acceptance obligation; `architecture.md` states the landed ADR-0016 amendment and only the remaining M2 consumer edges. | docs gates |
+| Fable: validity differs by store on a flags-only read | The MSv4 adapter folds a non-finite stored weight into every delivered flag (XRADIO pads with NaN and `FLAG` false), so a delivered flag marks every absent acquisition in both stores. | `absent_acquisitions_are_excluded_whichever_roles_are_read` (XRADIO-style padding written into the fixture; an MSv2 with a row removed) |
+| Fable: a padded partition can be neither declared nor written | `Observation::grid` gives the declaration from the store's index (no payload read; `from_cursor` is gone); padding has no interval, so neither the grid nor the writer compares one. | `a_padded_partition_is_declared_and_written` |
+| Fable: grouped read without `scan_name` panics | A grouping keyed by scan on a store that names none is refused at binding; `field_name` and `scan_name` lengths are checked at opening. | `a_grouping_needs_the_scans_it_keys_by` |
+| Fable: abandoned work hangs the join | A `WorkToken` dropped unfinished abandons its group; `finish`, `close` and `is_idle` report `WorkAbandoned`. The completion keeps each series' latest closed bin instead of every finalized group. | `abandoned_work_is_an_error_not_a_wait`, `a_group_is_ready_once_after_its_input_and_its_work` |
+| Fable: the pool's wait is unbounded | `BufferPool::waiting_at_most(limit)` fails with `PoolExhausted`; a refused `next_owned` consumes nothing. | `a_limited_take_reports_an_exhausted_pool`, the budget law (retry delivers the next time) |
+| Fable: chunk-straddling writes are unaligned | `Msv4Writer::chunk_times` and the `partial_chunks` counter. | writer law (24 partial chunks at four times per batch, none at twelve); interop write counters |
+| Fable: padded and subset paths, parallel cursors unmeasured | The probe gains `--products` and `--parallel`, and `ms_trial_pad` pads a copy; the MSv2 cursor now spreads padded rows in place instead of decoding into scratch and copying. | scale check below; `spreading_in_place_is_placing` |
+| Fable: clippy fails on macOS | One `rename_noreplace` per platform, each ending in a tail expression. | clippy on the Mac mini |
+| Fable: request resolved twice; per-element validity in the examples; ignored `model_source`; `time_s` dropping the origin's fraction; `FlagsFrom` attribution; duplicated sentence | Resolved once per bind; `mask_into` once per batch or fragment; the parameter removed; the epoch view's own conversion; attributed to casa-rs's operator; contracts rewritten. | every law and example |
+
+Gates for revision 4: clippy `-D warnings` on `casa-observation`, `casa-ms`
+(`msv4`), `casa-imaging-application`, `casa-calibration` and `casa-types`,
+every target, on Linux and on the Mac mini (macOS 27.0.1); `casa-observation`
+12 unit tests and its doctest; `casa-ms` library, 431 pass, and adapter laws,
+28 pass; example A, 5 pass; example B, 5 pass;
+`tools/ms-trial/check_interop.sh` 26/26 and 74/74 with both oracle reports
+unchanged (the write counters gain `partial_chunks`); imaging T0 and T1;
+`just arch-check`, `just docs-check`, strict MkDocs, rustdoc with broken and
+private links denied.
 
 ## Revision 3: the weak spots revision 2 exposed
 
@@ -225,10 +262,11 @@ external data.
 ## Adapter laws
 
 `crates/casa-ms/tests/observation_io.rs` and its modules `refusals`,
-`writer` and `work`: 22 tests, all passing (the writer laws are described
-under interoperability, the refusals in revision 1's table). The shared
-types have 6 unit tests of their own (`cargo test -p casa-observation`) and
-the adapters' group index 3.
+`writer` and `work`: 28 tests, all passing (the writer laws are described
+under interoperability, the refusals in revision 1's table and revision 4's).
+The shared types have 12 unit tests of their own
+(`cargo test -p casa-observation`), and the adapters' group index, padding
+spread, `SCHEDULE` parser and partial-chunk count 7.
 
 - Both catalogues describe the same observation in each store's own names
   (antennas with equal positions, field, phase centre, scan 1 with its
@@ -406,6 +444,36 @@ and after (`4046d6c`) the opening index was built in row chunks:
   (about 20 s for 10⁸ rows); it became faster here because building a key
   no longer allocates.
 
+Revision 4 measured what that run did not exercise: the padded and
+correlation-subset paths, and parallel cursors. Same machine, release build,
+page cache warm; each figure is one of two or three alternating runs, which
+agreed within 2%. `padded` is a copy of `pilot.ms` from which
+`ms_trial_pad` removed antenna 5's rows for the second half of its times
+(37,440 rows; 32 of the 64 partitions padded, up to 3.7% of their cells):
+
+| Read of `pilot.ms` (4,566 MiB delivered) | Revision 3 (`a6852cc`) | Revision 4 | Peak RSS, 3 → 4 |
+| --- | --- | --- | --- |
+| Every product, unpadded | 1.93–1.96 s | 1.92–1.96 s | 146 → 146 MB |
+| Every product, `padded` copy | 2.85–2.90 s | 2.56–2.60 s | 241 → 170 MB |
+| `RR,LL` (2,329 MiB delivered) | — | 2.31–2.34 s | 183 MB |
+| Every product, 8 workers (`--parallel`) | — | 0.52 s (8.8 GB/s) | 760 MB |
+| `padded`, 8 workers | — | 0.82 s (5.5 GB/s) | 815 MB |
+
+- **No change where nothing was padded,** and the parallel reads deliver
+  every partition's samples with the same checksum as the sequential read.
+  Eight workers read 3.8 times as fast as one.
+- **Padding now costs nothing measurable in the adapter.** Revision 3
+  decoded a padded batch into scratch, pre-filled the batch with padding and
+  copied each row; revision 4 decodes the present rows straight into the
+  batch and spreads them to their samples in place, one move of runs, with no
+  payload scratch (70 MB less at the peak). The copy's padded partitions now
+  read in 1.28 s and its unpadded ones in 1.31 s, against 0.98 s for the same
+  partitions of `pilot.ms`. The remaining 30% is the table `remove_rows` and
+  `save` leave behind, which slows every partition alike; it is a property
+  of that edit, not of the padding path.
+- **A two-of-four subset** decodes every product and gathers two: 19% longer
+  than the whole read for half the bytes.
+
 The read was not compared with the production reader on the same data;
 the narrow timings above are the only like-for-like evidence.
 
@@ -498,8 +566,12 @@ and 1 batches; at most two groups live), differing only in buffer bytes
   read `FLAG_ROW`; the MSv2 adapter folds `FLAG_ROW` into the flags (D5),
   so a row flagged only by it is excluded here and not in production. The
   fixture's `FLAG_ROW` is false everywhere, so this comparison does not
-  exercise the case; whether CASA excludes such rows is to be checked
-  separately.
+  exercise the case. From the CASA sources (Fable's review of revision 3),
+  CASA's solver tests `flagRow()` before every cell it accumulates
+  (`SolveDataBuffer.cc`) and `GridFT::put` sets the row flags from
+  `flagRow()`, so `gaincal` and `tclean` both exclude such rows: D5 matches
+  CASA, and production casa-rs `gaincal` is the deviation, to be confirmed
+  by instrumenting both and fixed in the solver.
 
 ## MSv4 interoperability
 
@@ -655,9 +727,11 @@ MSv2 creator from batches.
    flagged. The request should name the correlations a consumer reads and
    the flag policy over unread ones.
 3. **Validity cost.** `Validity::excluded` is evaluated per element, with
-   up to four optional checks. That is fine at this size; a consumer's hot
-   loop may want a per-batch mask or the rule folded into the fill.
-4. **`FLAG_ROW` in production `gaincal`** (example B finding).
+   up to four optional checks; revision 4's examples evaluate it once per
+   batch or fragment with `mask_into`. Folding the rule into the fill
+   remains an option.
+4. **`FLAG_ROW` in production `gaincal`** (example B finding): CASA
+   excludes such rows, so the production solver is the deviation.
 5. **Cross-store rebinding as a contract.** The calibration comparison
    rebinds by context in test code; the design's `CalibrationBinding` is
    still to be built and tested with a caltable.
@@ -677,9 +751,9 @@ MSv2 creator from batches.
   rows, and keeps four bytes per grid cell (scale check above). Its time,
   about 0.2 µs a row, is what M2 should watch on the largest
   MeasurementSets; lazy construction per partition remains the option.
-- Retained-byte figures (`capacity_bytes`, the work-unit ledger) count the
-  batch buffers only, not allocations inside zarrs or casacore: they are
-  probes, not admission bounds.
+- Pool buffers are bounded by their envelope (revision 4), but allocations
+  inside zarrs or casacore are not counted: the envelope plus each cursor's
+  counted scratch is not yet an admission bound for the whole read.
 
 ## M1 coverage of this pass
 
@@ -690,10 +764,10 @@ This pass touches parts of the M1 checklist and completes none of it.
 | `layout-precision` | One sample-major layout from both stores, the grid's axes, Hz/m/s views, `complex64`, correlation subsets with a flag policy | Unit requests and conversions, Jy/weight scaling, `complex128` when a store needs it |
 | `measures-bulk` | Native epoch, frequency and UVW array views only | Every family's prepared bulk conversion, ordered interpolation, scalar/CASA agreement, performance |
 | `group-lifecycle` | Time-bin, per-scan and per-integration groups keyed by field and scan, closure, concurrent fragments, split channel windows, `GroupCompletion`, one cursor per partition, `Catalogue::bind_to` | Groups merged across partitions by a consumer, late samples, solve → caltable → reopen → apply |
-| `work-unit-lifetimes` | Unequal channel units, shared pinning against packing, bounded pools, buffers returned at the end | Cooperating workers on the admitted team, cancellation in flight, cube minor-cycle separation |
+| `work-unit-lifetimes` | Unequal channel units, shared pinning against packing, pools bounded in buffers and bytes, buffers returned at the end, abandoned work reported, a pool wait that can be bounded | Cooperating workers on the admitted team, cancellation in flight, cube minor-cycle separation |
 | `native-role-updates` | — | All |
 | `conversion-fidelity` | One loss-free MSv2 → MSv4 profile, both converters | Every audited loss row, rejection policies |
-| `source-free-create` | Common catalogue + grid declaration for both stores, padding fill values, storage options, the narrow writer with per-batch validation, exclusive staging and no-replace publication | v2 creation from batches, producer seam, backpressure, publication failure injection |
+| `source-free-create` | Common catalogue + grid declaration for both stores (the grid from the store's index), padding fill values and padded partitions, storage options, the narrow writer with per-batch validation, chunk-alignment counts, exclusive staging and no-replace publication | v2 creation from batches, producer seam, backpressure, publication failure injection, measured cost of unaligned writes |
 | `store-retention-executor` | zarrs pinned; concurrency target 1 | Key/handle retention plateau, W1/W4 thread and buffer counts |
 | `object-failure` | — | All |
 | `production-access-cost` | Narrow diagnostics on a tiny fixture; the estimate (bytes, batches, amplification, natural blocks, padding) as the planner's inquiry | The named MFS/cube/bandpass rows on both chunk geometries, noise bands |
@@ -711,8 +785,12 @@ and `TIME_CENTROID` in different scales; MSv2 UVW labelled with a celestial
 frame other than the phase centres'; MSv4 groups whose UVW frame is not
 their phase centres'; frames other than fk5/icrs for directions and UVW;
 units other than the schema's (none are converted); MSv4 variables of other
-data types or dimension orders (bitmask flags included); one antenna name
-with two positions; a batch budget smaller than one time; per-cell
+data types or dimension orders (bitmask flags included); MSv4 datasets
+with `polarization_mixed`; centroids from a dataset with
+`TIME_CENTROID_EXTRA_PRECISION`; `field_name` or `scan_name` not one per
+time; a grouping keyed by scan on a store without scans; one antenna name
+with two positions; a batch budget smaller than one time; a batch over its
+pool buffer's envelope; per-cell
 `WEIGHT_SPECTRUM` fallback; `SIGMA`, `FLAG_CATEGORY`; writing channel
 windows, correlation subsets, or batches that disagree with the
 declaration; MSv4 sharding (not exercised); remote stores.

@@ -1,6 +1,6 @@
 # MSv2/MSv4 trial: revision 2 design record
 
-Status: design decisions for revision 2, agreed with the owner on 2026-10-24, implemented on the trial branch on 2026-10-25 (deviations listed under "What the implementation did with each decision"; D18 completed after the ADR-0016 amendment of the same day); refined in revision 3 ("Revision 3 refinements"); PR #898 stays a draft and the interfaces are not frozen
+Status: design decisions for revision 2, agreed with the owner on 2026-10-24, implemented on the trial branch on 2026-10-25 (deviations listed under "What the implementation did with each decision"; D18 completed after the ADR-0016 amendment of the same day); refined in revisions 3 and 4 ("Revision 3 refinements", "Revision 4 refinements"); PR #898 stays a draft and the interfaces are not frozen
 Truth class: proposed design
 Date: 2026-10-25
 Evidence index: [README.md](README.md)
@@ -469,6 +469,41 @@ of four of them where revision 2's implementation proved awkward:
   dropped. Nothing is lent at the end, as D12 required.
 - **D14.** `GroupCompletion` hands out move-only `WorkToken`s, so the join of
   a group's input and its work cannot be miscounted.
+
+## Revision 4 refinements
+
+Revision 4 (README, "Revision 4") answered Astra's and Fable's reviews of
+revision 3. It keeps every decision; these changed form or gained a rule:
+
+- **D1.** The correlation axis is resolved once per traversal and shared
+  (`CorrelationAxis`): batches of every product borrow the catalogue's list,
+  and a subset's products are one `Arc` for every batch and packed piece.
+  Nothing per partition is copied per batch any more.
+- **D2, D25.** A partition's content now includes its channel widths, its
+  session, and the fields and scans its samples visit; sessions keep MSv4's
+  archive UIDs. Binding is one to one: a key one store lacks does not
+  distinguish, but two entities one catalogue keeps apart never bind to one.
+  A calibration binding that survives solve, persist, reopen and apply is
+  still provisional.
+- **D3, D24.** Padding has no interval: neither the grid declaration nor the
+  writer compares one, so a padded partition is declared and written. The
+  MSv4 adapter folds a non-finite stored weight into the delivered flag, so
+  padding is flagged in every store and validity gives one answer whichever
+  roles are read. The MSv2 cursor spreads padded rows in place.
+- **D7, D10, D12.** Pool buffers have a byte envelope that holds whatever
+  they are filled with, the estimate states exactly what a full batch's
+  buffer holds (`buffer_bytes`, with per-time arrays counted), and a pool
+  wait can be bounded (`waiting_at_most`, `PoolExhausted`).
+- **D14.** A work token dropped unfinished reports its group abandoned
+  instead of leaving the join waiting; the completion keeps one closed bin
+  per series, not every finalized group.
+- **D23.** The declaration comes from the boundary (`Observation::grid`),
+  from the store's index; `TimeBaselineGrid::from_cursor` is gone. The writer
+  states its chunk extent and counts the chunks a batch covers only partly.
+- **Profile refusals.** `polarization_mixed` (a per-baseline basis) and,
+  when centroids are requested, `TIME_CENTROID_EXTRA_PRECISION` are refused
+  rather than read as something they are not; a grouping keyed by scan
+  needs a store with scans.
 
 ## Provenance
 

@@ -1,6 +1,6 @@
-# MSv2/MSv4 trial: review brief for revision 3
+# MSv2/MSv4 trial: review brief
 
-Status: open request for review of draft PR #898 at revision 3
+Status: revision 3 reviewed (Astra, Fable; 2026-10-25, at `a6852cc`); revision 4 answers both reviews and is open for re-review
 Truth class: review instructions
 Date: 2026-10-25
 
@@ -10,8 +10,11 @@ public repository `bglenden/casa-rs`. The trial is draft pull request
 branch `claude/ms-v4-contract-trial` into the design branch
 `codex/ms-v4-architecture-plan` (trial base
 `ae2060162a0eb58e527f057543447f370c25567c`). Review the branch head at the
-time you start and cite the SHA you reviewed; revision 3 is `53a4492`
-(code) and `9f044ea` (docs), after the chunked opening index (`4046d6c`).
+time you start and cite the SHA you reviewed. Revision 3 (`a6852cc`) had a
+design review by Astra and an independent code review by Fable, both on the
+PR; revision 4 answers every finding (README, "Revision 4"), and a re-review
+should check those answers first: each finding's thread on the PR names the
+change and the law that tests it.
 
 ```text
 git clone https://github.com/bglenden/casa-rs && cd casa-rs
@@ -33,14 +36,15 @@ lost.
 1. The design record, `docs/measurement-set/trial/revision-2-design.md`:
    the principle, decisions D1 to D25 (D1–D15 the owner's, D16–D25
    delegated judgements), "What the implementation did with each decision"
-   and "Revision 3 refinements".
+   and the "Revision 3" and "Revision 4 refinements".
 2. The evidence index, `docs/measurement-set/trial/README.md`: the
-   "Revision 3", "Revision 2" and "Revision 1" tables, "What revision 2
-   taught", the scale check on real MeasurementSets, both examples, the
-   interoperability results, and "Keep, change or discard".
-3. The design, revised to the decisions: `docs/measurement-set/contracts.md`
-   (the "Revision 6" passages) and `docs/measurement-set/architecture.md`
-   (its revision 6 note).
+   "Revision 4", "Revision 3", "Revision 2" and "Revision 1" tables, "What
+   revision 2 taught", the scale check on real MeasurementSets, both
+   examples, the interoperability results, and "Keep, change or discard".
+3. The design: `docs/measurement-set/contracts.md` (revision 7: the current
+   read contract in sections 1–7 and the provisional capabilities in
+   section 8) and `docs/measurement-set/architecture.md` (its revision 7
+   note and section 3).
 4. The ADR-0016 amendment on `main` (`1eed6e9`, ported to the branch as
    `2fd4f06`): `docs/adr/0016-imaging-foundation.md` decision 10, which lets
    every imaging crate depend on the definitional crates `casa-values`,
@@ -80,10 +84,10 @@ lost.
 Rust 1.99 or newer, `CARGO_INCREMENTAL=0`; nothing below needs data outside
 the repository except where noted.
 
-| What | Command | Expected at revision 3 |
+| What | Command | Expected at revision 4 |
 | --- | --- | --- |
-| Boundary unit tests and doctest | `cargo test -p casa-observation` | 8 + 1 pass |
-| Adapter laws, refusals, writer, work units | `cargo test -p casa-ms --features msv4 --test observation_io` | all pass (the `casa-ms` library and these: 458) |
+| Boundary unit tests and doctest | `cargo test -p casa-observation` | 12 + 1 pass |
+| Adapter laws, refusals, writer, work units | `cargo test -p casa-ms --features msv4 --test observation_io` | 28 pass (and the `casa-ms` library: 431) |
 | Example A | `cargo test -p casa-imaging-application --test ms_trial_imaging -- --nocapture --test-threads 1` | 5 pass; planes bit-identical to the production imager |
 | Example B | `cargo test -p casa-calibration --lib batch_trial -- --nocapture --test-threads 1` | 5 pass; gains identical to production `gaincal` |
 | Interoperability, both directions | `tools/ms-trial/check_interop.sh` (needs `uv`) | 26/26 and 74/74; committed reports unchanged |
@@ -101,10 +105,10 @@ trial realizes the design the owner wants to freeze:
 1. Does the boundary take MSv4's native shape everywhere, with MSv2 only
    assembled into it? Name any place where MSv2 concepts leak into the
    interface or an MSv4 capability is lost.
-2. Are the "Revision 6" passages of `contracts.md` and `architecture.md` a
-   faithful account of decisions D1–D25 and revision 3? What else in those
-   documents is now stale, wrong, or should be removed rather than
-   annotated?
+2. Is `contracts.md` a faithful single account of decisions D1–D25 and
+   revisions 3 and 4, and is its provisional table complete, each with the
+   right acceptance obligation? What else is stale, wrong, or should be
+   removed?
 3. Which contracts are ready to freeze for M2, which need changes first, and
    which should stay explicitly provisional (updates, creation from batches
    for MSv2, bitmask flags, revisits)?
@@ -153,10 +157,13 @@ argue any of them should block the freeze:
 - A correlation subset is decoded whole and gathered (counted in the
   budget since revision 3); a strided in-place decode is not built.
 - An MSv2 creator from batches does not exist; the writer is MSv4 only.
-- CASA's `FLAG_ROW` behaviour in `gaincal` and `tclean` has not been
-  instrumented.
-- The buffer pool is not yet connected to the runtime's admission, and
-  `zarrs`' internal codec scratch is not counted.
+- CASA excludes `FLAG_ROW` rows in `gaincal` and `tclean` by its sources
+  (as the adapter does); neither CASA nor production casa-rs `gaincal`,
+  which does not, has been instrumented on such a row.
+- The buffer pool is bounded in bytes but not yet connected to the
+  runtime's admission, and `zarrs`' internal codec scratch is not counted.
+- Unaligned MSv4 writes are counted (`partial_chunks`), not measured, and no
+  caller aligns its batches yet.
 - The batch read was not compared with the production reader on the same
   large data; the trial's only like-for-like timings are on a 120-sample
   fixture.
