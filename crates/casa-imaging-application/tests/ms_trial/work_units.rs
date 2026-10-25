@@ -6,12 +6,14 @@
 //! strategies.
 //!
 //! - [`Strategy::SharedBatch`]: every unit borrows its window of one
-//!   shared batch ([`FilledBatch`] behind an `Arc`). Nothing is copied, but
-//!   a batch's whole allocation stays live until the slowest unit is done
-//!   with it, and the cursor can refill a buffer only then.
+//!   shared batch ([`FilledBatch`] behind an `Arc`), drawn from a pool of
+//!   two buffers. Nothing is copied, but a batch's whole allocation stays
+//!   live until the slowest unit is done with it, and the producer waits
+//!   on the pool until then.
 //! - [`Strategy::PackedPieces`]: the producer copies each unit's window into
-//!   storage of its own ([`FilledBatch::pack`]) and refills the batch buffer
-//!   at once. The copy is the price; the slow unit pins only its pieces.
+//!   a piece from that unit's own pool ([`BufferPool::pack`]) and drops the
+//!   batch at once, so its one buffer is refilled at once. The copy is the
+//!   price; the slow unit pins only its pieces.
 
 use std::fmt;
 use std::sync::mpsc;
@@ -23,7 +25,7 @@ use casa_imaging_operator::{
     SampleBuffer, SpectralAxis, SpectralKernel, SpectralResampler, WeightingGeneration, Work,
 };
 use casa_observation::{
-    BatchBuffers, FilledBatch, Observation, OwnedEvent, PartitionId, VisibilityBatch,
+    BufferPool, FilledBatch, Observation, OwnedEvent, PartitionId, VisibilityBatch,
 };
 use ndarray::Array2;
 
@@ -31,7 +33,7 @@ use crate::source::{per_times, request};
 
 /// How long the held-back unit waits before each batch.
 const DELAY: Duration = Duration::from_millis(60);
-/// Batch buffers the shared strategy circulates.
+/// Batch buffers in the shared strategy's pool.
 const SHARED_POOL: usize = 2;
 /// Pieces each unit may hold under the packed strategy.
 const PIECES_PER_UNIT: usize = 2;
@@ -53,9 +55,10 @@ pub struct Report {
     pub planes: Vec<(Array2<f32>, f64)>,
     /// When each unit finished, from the start.
     pub unit_done: Vec<Duration>,
-    /// Time the producer waited for storage to come back.
+    /// Time the producer spent asking a pool with no free buffer: waiting
+    /// for storage to come back.
     pub producer_stall: Duration,
-    /// Batch buffers ever allocated, and the capacity of the largest.
+    /// Batch buffers in the pool, and the capacity of the largest.
     pub batch_buffers: usize,
     pub batch_buffer_bytes: usize,
     /// Most batch-buffer bytes not back in the pool at once.
@@ -242,7 +245,6 @@ pub fn run(
     channels: std::ops::Range<usize>,
 ) -> Report {
     let units = channels.len();
-    let catalogue = observation.catalogue();
     let ledger = Arc::new(Mutex::new(Ledger::default()));
     let mut traversal = observation
         .bind_read(&per_times(
@@ -251,29 +253,40 @@ pub fn run(
             BATCH_TIMES,
         ))
         .expect("bind");
-    let (free_tx, free_rx) = mpsc::channel::<BatchBuffers>();
+    let batches = BufferPool::new(match strategy {
+        Strategy::SharedBatch => SHARED_POOL,
+        Strategy::PackedPieces => 1,
+    });
+    let pieces: Vec<BufferPool> = (0..units)
+        .map(|_| BufferPool::new(PIECES_PER_UNIT))
+        .collect();
     let started = Instant::now();
     let mut report = Report {
         planes: Vec::new(),
         unit_done: vec![Duration::ZERO; units],
         producer_stall: Duration::ZERO,
-        batch_buffers: 0,
+        batch_buffers: batches.capacity(),
         batch_buffer_bytes: 0,
         peak_batch_bytes: 0,
         peak_piece_bytes: 0,
         copied_elements: 0,
         fills_while_held: 0,
     };
+    // Time spent in `take` while `pool` had no free buffer.
+    let timed = |pool: &BufferPool, stall: &mut Duration, take: &mut dyn FnMut()| {
+        let empty = pool.free() == 0;
+        let waited = Instant::now();
+        take();
+        if empty {
+            *stall += waited.elapsed();
+        }
+    };
     std::thread::scope(|scope| {
         let mut senders = Vec::new();
         let mut handles = Vec::new();
-        let mut piece_returns = Vec::new();
         for unit in 0..units {
             let (tx, rx) = mpsc::channel::<Item>();
-            let (piece_tx, piece_rx) = mpsc::channel::<BatchBuffers>();
             senders.push(tx);
-            piece_returns.push(piece_rx);
-            let free_tx = free_tx.clone();
             let ledger = ledger.clone();
             let operator = clone_operator(template);
             let axis = SpectralAxis::new(axis.centre_hz(unit as u32), axis.increment_hz(), 1)
@@ -287,21 +300,18 @@ pub fn run(
                     }
                     match item {
                         Item::Shared(filled) => {
-                            let batch = filled.batch(catalogue);
+                            let batch = filled.batch();
                             let window = batch.channel_window(unit..unit + 1).expect("window");
                             state.grid(&window);
+                            // The last user returns the buffer to the pool.
                             if let Some(filled) = Arc::into_inner(filled) {
                                 ledger.lock().expect("ledger").batch_bytes -=
                                     filled.capacity_bytes();
-                                let _ = free_tx.send(filled.into_buffers());
                             }
                         }
                         Item::Piece(piece) => {
-                            let piece = *piece;
-                            state.grid(&piece.batch(catalogue));
-                            let bytes = piece.capacity_bytes();
-                            ledger.lock().expect("ledger").piece_bytes -= bytes;
-                            let _ = piece_tx.send(piece.into_buffers());
+                            state.grid(&piece.batch());
+                            ledger.lock().expect("ledger").piece_bytes -= piece.capacity_bytes();
                         }
                     }
                     if unit == 0 {
@@ -312,46 +322,18 @@ pub fn run(
                 (state.finish(), done)
             }));
         }
-        drop(free_tx);
-        let mut pool: Vec<BatchBuffers> = Vec::new();
-        let mut pieces: Vec<Vec<BatchBuffers>> = (0..units).map(|_| Vec::new()).collect();
-        let mut pieces_out = vec![0_usize; units];
-        // The producer asks what comes next before lending a buffer, so no
-        // batch count is needed in advance and nothing is lent at the end.
         loop {
-            match traversal.next_owned(None).expect("step") {
-                OwnedEvent::NeedBuffers => {}
+            let held = ledger.lock().expect("ledger").held > 0;
+            let mut event = None;
+            timed(&batches, &mut report.producer_stall, &mut || {
+                event = Some(traversal.next_owned(&batches).expect("read"));
+            });
+            let filled = match event.expect("an event") {
+                OwnedEvent::Batch(filled) => filled,
                 OwnedEvent::GroupEnd(..) => continue,
-                OwnedEvent::End(_) => break,
-                OwnedEvent::Batch(_) => unreachable!("no buffers were lent"),
-            }
-            // A batch buffer: from the pool, a new one while the pool may
-            // grow, else wait for one to come back.
-            let limit = match strategy {
-                Strategy::SharedBatch => SHARED_POOL,
-                Strategy::PackedPieces => 1,
+                OwnedEvent::End => break,
             };
-            while let Ok(buffers) = free_rx.try_recv() {
-                pool.push(buffers);
-            }
-            let buffers = if let Some(buffers) = pool.pop() {
-                buffers
-            } else if report.batch_buffers < limit {
-                report.batch_buffers += 1;
-                BatchBuffers::default()
-            } else {
-                let waited = Instant::now();
-                let buffers = free_rx.recv().expect("a buffer comes back");
-                report.producer_stall += waited.elapsed();
-                buffers
-            };
-            if ledger.lock().expect("ledger").held > 0 {
-                report.fills_while_held += 1;
-            }
-            let OwnedEvent::Batch(filled) = traversal.next_owned(Some(buffers)).expect("read")
-            else {
-                unreachable!("a batch was announced");
-            };
+            report.fills_while_held += usize::from(held);
             report.batch_buffer_bytes = report.batch_buffer_bytes.max(filled.capacity_bytes());
             match strategy {
                 Strategy::SharedBatch => {
@@ -368,29 +350,16 @@ pub fn run(
                     }
                 }
                 Strategy::PackedPieces => {
-                    let batch = filled.batch(catalogue);
+                    let batch = filled.batch();
                     // Fast units first, so a full slow queue holds back no one else.
                     for unit in (1..units).chain([0]) {
-                        while let Ok(buffers) = piece_returns[unit].try_recv() {
-                            pieces[unit].push(buffers);
-                            pieces_out[unit] -= 1;
-                        }
-                        let storage = if let Some(storage) = pieces[unit].pop() {
-                            storage
-                        } else if pieces_out[unit] < PIECES_PER_UNIT {
-                            BatchBuffers::default()
-                        } else {
-                            let waited = Instant::now();
-                            let storage = piece_returns[unit].recv().expect("a piece comes back");
-                            report.producer_stall += waited.elapsed();
-                            pieces_out[unit] -= 1;
-                            storage
-                        };
                         let window = batch.channel_window(unit..unit + 1).expect("window");
-                        let (piece, copied) =
-                            FilledBatch::pack(&window, storage, catalogue).expect("pack");
+                        let mut packed = None;
+                        timed(&pieces[unit], &mut report.producer_stall, &mut || {
+                            packed = Some(pieces[unit].pack(&window).expect("pack"));
+                        });
+                        let (piece, copied) = packed.expect("a piece");
                         report.copied_elements += copied;
-                        pieces_out[unit] += 1;
                         let mut ledger = ledger.lock().expect("ledger");
                         if unit == 0 {
                             ledger.held += 1;
@@ -402,11 +371,9 @@ pub fn run(
                             .send(Item::Piece(Box::new(piece)))
                             .expect("unit alive");
                     }
-                    let bytes = filled.capacity_bytes();
                     let mut ledger = ledger.lock().expect("ledger");
-                    ledger.peak_batch_bytes = ledger.peak_batch_bytes.max(bytes);
-                    drop(ledger);
-                    pool.push(filled.into_buffers());
+                    ledger.peak_batch_bytes = ledger.peak_batch_bytes.max(filled.capacity_bytes());
+                    // Dropping the batch returns its one buffer for the next fill.
                 }
             }
         }
@@ -417,6 +384,15 @@ pub fn run(
             report.unit_done[unit] = done;
         }
     });
+    assert_eq!(
+        batches.free(),
+        batches.capacity(),
+        "every batch buffer came back"
+    );
+    assert!(
+        pieces.iter().all(|pool| pool.free() == pool.capacity()),
+        "every piece came back"
+    );
     let ledger = ledger.lock().expect("ledger");
     report.peak_batch_bytes = ledger.peak_batch_bytes;
     report.peak_piece_bytes = ledger.peak_piece_bytes;

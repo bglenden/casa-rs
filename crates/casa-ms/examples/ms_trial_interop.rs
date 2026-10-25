@@ -46,7 +46,7 @@ fn per_times(observation: &dyn Observation, times: usize) -> Result<AccessReques
     let estimate = observation.estimate(&request(usize::MAX))?;
     let partition = &estimate.partitions[0];
     Ok(request(
-        partition.bytes_per_sample * partition.baselines * times,
+        partition.held_bytes_per_sample() * partition.baselines * times,
     ))
 }
 
@@ -59,7 +59,7 @@ fn per_times(observation: &dyn Observation, times: usize) -> Result<AccessReques
 /// resolved at opening: no relabelling happens here.
 fn write(ms: &Path, out: &Path) -> Result<(), Error> {
     let observation = casa_ms::observation_io::open(ms, &OpenOptions::default())?;
-    let mut catalogue = observation.catalogue().clone();
+    let mut catalogue = observation.catalogue().as_ref().clone();
     for antenna in &mut catalogue.antennas {
         antenna.name = format!("{}_{}", antenna.name, antenna.station);
     }

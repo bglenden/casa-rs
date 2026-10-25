@@ -74,7 +74,7 @@ pub(super) struct Dataset {
 /// data type and dimensions, and every unit and frame, against the profile
 /// and refuses others rather than reinterpreting or rescaling them.
 pub struct Msv4Observation {
-    pub(super) catalogue: Catalogue,
+    pub(super) catalogue: Arc<Catalogue>,
     pub(super) datasets: Vec<Dataset>,
     pub(super) options: CodecOptions,
     pub(super) open: OpenOptions,
@@ -116,7 +116,7 @@ impl Msv4Observation {
             .collect::<Vec<_>>();
         names.sort();
         let mut observation = Self {
-            catalogue: Catalogue::default(),
+            catalogue: Arc::new(Catalogue::default()),
             datasets: Vec::new(),
             options: CodecOptions::default().with_concurrent_target(1),
             open: options.clone(),
@@ -132,8 +132,14 @@ impl Msv4Observation {
 
     /// The catalogue.
     #[must_use]
-    pub fn catalogue(&self) -> &Catalogue {
+    pub fn catalogue(&self) -> &Arc<Catalogue> {
         &self.catalogue
+    }
+
+    /// The catalogue while the store is being opened, before any batch or
+    /// cursor shares it.
+    fn catalogue_mut(&mut self) -> &mut Catalogue {
+        Arc::get_mut(&mut self.catalogue).expect("the catalogue is shared only after opening")
     }
 
     fn add_dataset(
@@ -237,7 +243,7 @@ impl Msv4Observation {
         if groups.is_empty() {
             return Err(invalid("no data group"));
         }
-        self.catalogue.partitions.push(PartitionEntry {
+        self.catalogue_mut().partitions.push(PartitionEntry {
             intents,
             observation,
             feeds: None,
@@ -290,7 +296,7 @@ impl Msv4Observation {
                 })
                 .unwrap_or_default(),
         };
-        let observations = &mut self.catalogue.observations;
+        let observations = &mut self.catalogue_mut().observations;
         let index = observations
             .iter()
             .position(|known| *known == entry)
@@ -430,7 +436,7 @@ impl Msv4Observation {
             .unwrap_or_default();
         intents.sort();
         intents.dedup();
-        let scans = &mut self.catalogue.scans;
+        let scans = &mut self.catalogue_mut().scans;
         let ids = names
             .iter()
             .map(|name| {
@@ -459,7 +465,7 @@ impl Msv4Observation {
     /// The catalogue antenna `antenna` describes, added if new. One name
     /// and station with two positions is refused, not merged.
     fn antenna(&mut self, antenna: AntennaEntry) -> Result<AntennaId, ObservationError> {
-        let antennas = &mut self.catalogue.antennas;
+        let antennas = &mut self.catalogue_mut().antennas;
         let index = match antennas
             .iter()
             .position(|known| known.name == antenna.name && known.station == antenna.station)
@@ -506,7 +512,7 @@ impl Msv4Observation {
                 ),
                 source_name: sources.get(row).cloned(),
             };
-            let fields = &mut self.catalogue.fields;
+            let fields = &mut self.catalogue_mut().fields;
             let index = fields
                 .iter()
                 .position(|known| same_field(known, &entry))
@@ -645,7 +651,7 @@ fn read_antennas(
 }
 
 impl Observation for Msv4Observation {
-    fn catalogue(&self) -> &Catalogue {
+    fn catalogue(&self) -> &Arc<Catalogue> {
         &self.catalogue
     }
 

@@ -2,6 +2,8 @@
 //! Caller-owned reusable storage that a cursor fills and a batch borrows,
 //! and the one checked path from filled arrays to a batch.
 
+use std::sync::Arc;
+
 use casa_types::Correlation;
 use casa_types::measures::{EpochView, FrequencyView, UvwView};
 use ndarray::{ArrayView1, ArrayView2, ArrayView3, Axis, ShapeBuilder};
@@ -15,24 +17,27 @@ use crate::request::Roles;
 
 /// The storage behind one [`VisibilityBatch`].
 ///
-/// Owned by the caller (or a work unit), filled in place by a cursor and
-/// lent to the batch. Its arrays are private: a cursor fills them through
-/// [`Self::begin`], and [`BatchFill::finish`] checks them against the
-/// batch's [`BatchHeader`] and the observation's [`Catalogue`] once, which
-/// the buffers then keep. The batch is built from that header, the arrays
-/// and the catalogue's partition entry and nothing else, so no second
-/// description of the same data can drift from the arrays: the per-partition
-/// constants (frequencies, correlations, baselines, time system, data group)
-/// are never copied into a batch.
+/// Owned by the caller (or a [`BufferPool`](crate::BufferPool)), filled in
+/// place by a cursor and lent to the batch. Its arrays are private: a
+/// cursor fills them through [`Self::begin`], and [`BatchFill::finish`]
+/// checks them against the batch's [`BatchHeader`] and the observation's
+/// [`Catalogue`] once; the buffers then keep the header and a shared
+/// reference to that catalogue. The batch is built from the header, the
+/// arrays and the catalogue's partition entry and nothing else, so no
+/// second description of the same data can drift from the arrays: the
+/// per-partition constants (frequencies, correlations, baselines, time
+/// system, data group) are never copied into a batch, and no other
+/// catalogue can be paired with the arrays.
 ///
 /// Clearing keeps capacity, so after the first fill of the largest batch a
-/// traversal allocates nothing. The buffers are `Send`: a pool of them can
-/// be handed between work units whole, which is how a batch's lifetime is
-/// separated from a traversal's.
+/// traversal allocates nothing. The buffers are `Send`: they can be handed
+/// between work units whole, which is how a batch's lifetime is separated
+/// from a traversal's.
 #[derive(Debug, Default)]
 pub struct BatchBuffers {
     arrays: BatchArrays,
     header: Option<BatchHeader>,
+    catalogue: Option<Arc<Catalogue>>,
 }
 
 /// The arrays of one batch, as a cursor fills them.
@@ -116,6 +121,7 @@ impl BatchBuffers {
     /// Empty every array, keeping its capacity, and forget the batch.
     pub fn clear(&mut self) {
         self.header = None;
+        self.catalogue = None;
         let arrays = &mut self.arrays;
         arrays.values.clear();
         arrays.flags.clear();
@@ -171,20 +177,12 @@ impl BatchBuffers {
     }
 
     /// The batch the buffers hold, if a fill finished: views of the arrays
-    /// and of `catalogue`'s entry for the batch's partition, which must be
-    /// the catalogue the fill was checked against.
-    ///
-    /// # Panics
-    ///
-    /// If `catalogue` lacks the batch's partition: another observation's
-    /// catalogue was passed.
+    /// and of the entry for the batch's partition in the catalogue the fill
+    /// was checked against.
     #[must_use]
-    pub fn batch<'c>(&'c self, catalogue: &'c Catalogue) -> Option<VisibilityBatch<'c>> {
-        let header = self.header.as_ref()?;
-        let entry = catalogue
-            .partitions
-            .get(header.partition.0 as usize)
-            .expect("the batch's partition is in the catalogue it was checked against");
+    pub fn batch<'a>(&'a self) -> Option<VisibilityBatch<'a>> {
+        let (header, catalogue) = (self.header.as_ref()?, self.catalogue.as_ref()?);
+        let entry = catalogue.partition(header.partition);
         let arrays = &self.arrays;
         let baselines = entry.baselines.len();
         let samples = header.times * baselines;
@@ -192,7 +190,7 @@ impl BatchBuffers {
         let correlations = header.correlations.len();
         let cube = [samples, channels, correlations];
         let roles = header.roles;
-        let epochs = |offsets: &'c [f64]| {
+        let epochs = |offsets: &'a [f64]| {
             EpochView::new(
                 entry.time_scale,
                 entry.time_origin,
@@ -201,6 +199,7 @@ impl BatchBuffers {
         };
         let group = &entry.data_groups[header.data_group];
         Some(VisibilityBatch {
+            catalogue,
             partition: header.partition,
             time: epochs(&arrays.time_offsets_s),
             baselines: &entry.baselines,
@@ -282,21 +281,22 @@ impl BatchFill<'_> {
     }
 
     /// Check every array against the header and `catalogue`, once, and
-    /// keep the header: the partition, data group, channel window and
-    /// correlations exist in the catalogue; lengths (with overflow-checked
-    /// sizes); field and scan identities against the catalogue's counts;
-    /// and the fragments, which must tile the samples in order by whole
-    /// times.
+    /// keep the header and the catalogue: the partition, data group, channel
+    /// window and correlations exist in the catalogue; lengths (with
+    /// overflow-checked sizes); field and scan identities against the
+    /// catalogue's counts; and the fragments, which must tile the samples in
+    /// order by whole times.
     ///
     /// # Errors
     ///
     /// [`ObservationError::Shape`] or [`ObservationError::InvalidBatch`]: a
     /// cursor bug or a store the adapter should have refused, never a
     /// property a consumer must handle. The buffers then hold no batch.
-    pub fn finish(self, catalogue: &Catalogue) -> Result<(), ObservationError> {
+    pub fn finish(self, catalogue: &Arc<Catalogue>) -> Result<(), ObservationError> {
         let Self { buffers, header } = self;
         check(&buffers.arrays, &header, catalogue)?;
         buffers.header = Some(header);
+        buffers.catalogue = Some(Arc::clone(catalogue));
         Ok(())
     }
 }
@@ -494,16 +494,13 @@ impl BatchBuffers {
     /// explicit, accounted packing that gives a window storage of its own.
     /// Strided views are gathered into standard order; a weight shared by
     /// every channel stays one per correlation; shared quantities keep
-    /// their sharing. `catalogue` is the batch's observation's.
+    /// their sharing; the piece refers to the batch's catalogue.
     ///
     /// # Errors
     ///
     /// When the batch's data group is not in the catalogue's partition.
-    pub fn pack(
-        &mut self,
-        batch: &VisibilityBatch<'_>,
-        catalogue: &Catalogue,
-    ) -> Result<usize, ObservationError> {
+    pub fn pack(&mut self, batch: &VisibilityBatch<'_>) -> Result<usize, ObservationError> {
+        let catalogue = batch.catalogue;
         let group = &batch.group;
         let data_group = catalogue
             .partition(batch.partition)
@@ -589,7 +586,7 @@ impl BatchBuffers {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use casa_types::measures::EpochRef;
     use casa_types::measures::MjdHighPrec;
     use casa_types::measures::direction::DirectionRef;
@@ -603,7 +600,7 @@ mod tests {
     use crate::grouping::{FragmentPosition, GroupKey};
 
     /// Three antennas, two baselines, two channels, one correlation.
-    pub(crate) fn catalogue() -> Catalogue {
+    pub(crate) fn catalogue() -> Arc<Catalogue> {
         let baseline = |a, b| OrderedBaseline {
             antenna1: AntennaId(a),
             antenna2: AntennaId(b),
@@ -617,7 +614,7 @@ mod tests {
             receptors: vec!["X".to_string()],
             receptor_angles: Vec::new(),
         };
-        Catalogue {
+        Arc::new(Catalogue {
             antennas: vec![antenna("A"), antenna("B"), antenna("C")],
             fields: vec![FieldEntry {
                 name: "f".to_string(),
@@ -659,7 +656,7 @@ mod tests {
                     },
                 }],
             }],
-        }
+        })
     }
 
     fn header(times: usize) -> BatchHeader {
@@ -692,7 +689,7 @@ mod tests {
 
     /// Two times of two baselines, two channels, one correlation, closing
     /// its group in one fragment.
-    fn fill(
+    pub(crate) fn fill(
         buffers: &mut BatchBuffers,
         tweak: impl FnOnce(&mut BatchHeader, &mut BatchArrays),
     ) -> Result<(), ObservationError> {
@@ -718,10 +715,9 @@ mod tests {
 
     #[test]
     fn a_checked_fill_builds_the_batch_its_header_describes() {
-        let catalogue = catalogue();
         let mut buffers = BatchBuffers::default();
         fill(&mut buffers, |_, _| {}).expect("fill");
-        let batch = buffers.batch(&catalogue).expect("batch");
+        let batch = buffers.batch().expect("batch");
         assert_eq!(batch.samples(), 4);
         assert_eq!(batch.shape(), [4, 2, 1]);
         assert_eq!(batch.interval_s(3), Some(10.0));
@@ -753,7 +749,6 @@ mod tests {
 
     #[test]
     fn a_fill_that_disagrees_with_its_header_or_catalogue_is_refused() {
-        let catalogue = catalogue();
         let mut buffers = BatchBuffers::default();
         type Tweak = fn(&mut BatchHeader, &mut BatchArrays);
         let cases: [(&str, Tweak); 8] = [
@@ -781,7 +776,7 @@ mod tests {
         for (label, tweak) in cases {
             assert!(fill(&mut buffers, tweak).is_err(), "{label}");
             assert!(
-                buffers.batch(&catalogue).is_none(),
+                buffers.batch().is_none(),
                 "{label}: no batch after a refused fill"
             );
         }
@@ -789,16 +784,15 @@ mod tests {
 
     #[test]
     fn packing_goes_through_the_same_checks_and_keeps_sharing() {
-        let catalogue = catalogue();
         let mut buffers = BatchBuffers::default();
         fill(&mut buffers, |_, _| {}).expect("fill");
-        let batch = buffers.batch(&catalogue).expect("batch");
+        let batch = buffers.batch().expect("batch");
         let mut packed = BatchBuffers::default();
         let copied = packed
-            .pack(&batch.channel_window(0..1).expect("window"), &catalogue)
+            .pack(&batch.channel_window(0..1).expect("window"))
             .expect("pack");
         assert_eq!(copied, 4 + 4, "four flags and four per-correlation weights");
-        let piece = packed.batch(&catalogue).expect("piece");
+        let piece = packed.batch().expect("piece");
         assert_eq!(piece.channel_count(), 1);
         assert_eq!(piece.group.weights.expect("weights")[[3, 0, 0]], 4.0);
         assert!(matches!(

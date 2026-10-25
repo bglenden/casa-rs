@@ -3,6 +3,7 @@
 //! grid, with their coordinates and the borrowed payload of one data group.
 
 use std::ops::Range;
+use std::sync::Arc;
 
 use casa_types::Correlation;
 use casa_types::measures::{EpochView, FrequencyView, UvwView};
@@ -10,7 +11,7 @@ use ndarray::{ArrayView1, ArrayView3, s};
 use num_complex::Complex32;
 
 use crate::ObservationError;
-use crate::catalogue::{DataGroupEntry, FieldId, OrderedBaseline, PartitionId, ScanId};
+use crate::catalogue::{Catalogue, DataGroupEntry, FieldId, OrderedBaseline, PartitionId, ScanId};
 use crate::grouping::GroupFragment;
 
 /// One sample's coordinates, assembled on the stack.
@@ -209,6 +210,10 @@ impl Validity<'_> {
 /// [`Catalogue`]: crate::Catalogue
 #[derive(Clone, Copy, Debug)]
 pub struct VisibilityBatch<'a> {
+    /// The observation's catalogue, which the batch was checked against:
+    /// every identity in the batch (partition, field, scan, antenna) names
+    /// an entry of it.
+    pub catalogue: &'a Arc<Catalogue>,
     /// The partition the samples belong to.
     pub partition: PartitionId,
     /// The batch's times, in the partition's scale and origin.

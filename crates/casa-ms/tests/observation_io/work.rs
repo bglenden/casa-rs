@@ -9,8 +9,8 @@ use std::time::Duration;
 
 use casa_ms::observation_io::{OpenOptions, open};
 use casa_observation::{
-    AccessRequest, BatchBuffers, GroupCompletion, GroupKey, Grouping, OwnedEvent, ReadEvent,
-    VisibilityBatch,
+    AccessRequest, BatchBuffers, BufferPool, GroupCompletion, GroupKey, Grouping, OwnedEvent,
+    ReadEvent, VisibilityBatch, WorkToken,
 };
 
 use super::{fixture, per_times, request};
@@ -36,16 +36,17 @@ fn admitted_weight(batch: &VisibilityBatch<'_>) -> f64 {
 
 /// Each grouped batch is split into two channel windows, each window of
 /// each fragment a unit of work on its own thread, the low-channel units
-/// held back. The windows carry no fragments, so only the delivered batch
-/// can complete a group's input, once; [`GroupCompletion`] then finalizes a
-/// group only after both windows' work on every one of its fragments has
-/// finished. The finalized per-group sums equal a sequential traversal's.
+/// held back, the batches drawn from a pool of two buffers. The windows
+/// carry no fragments, so only the delivered batch can complete a group's
+/// input, once; [`GroupCompletion`] then finalizes a group only after both
+/// windows' work on every one of its fragments has handed its token back.
+/// The finalized per-group sums equal a sequential traversal's, and every
+/// buffer returns to the pool.
 #[test]
 fn split_channel_windows_complete_each_group_once() {
     let root = tempfile::tempdir().expect("root");
     for name in ["ms_trial.ms", "ms_trial.ps.zarr"] {
         let observation = open(fixture(root.path(), name), &OpenOptions::default()).expect("open");
-        let catalogue = observation.catalogue();
         let grouped = AccessRequest {
             grouping: Grouping::TimeBins {
                 width_s: 60.0,
@@ -67,53 +68,50 @@ fn split_channel_windows_complete_each_group_once() {
                     admitted_weight(&batch.sample_window(fragment.samples.clone()).expect("w"));
             }
         }
-        // Concurrently, in two channel windows.
+        // Concurrently, in two channel windows, from a pool of two buffers:
+        // the producer waits while both batches are still in use.
         let mut traversal = observation.bind_read(&grouped).expect("bind");
+        let pool = BufferPool::new(2);
         let mut completion = GroupCompletion::default();
         let mut partial = BTreeMap::<GroupKey, f64>::new();
         let mut finalized = BTreeMap::<GroupKey, f64>::new();
         let mut closed_with_pending = 0;
-        let (done_tx, done_rx) = mpsc::channel::<(GroupKey, f64)>();
+        let (done_tx, done_rx) = mpsc::channel::<(WorkToken, f64)>();
         std::thread::scope(|scope| {
-            let mut join = |key: GroupKey,
+            let mut join = |token: WorkToken,
                             sum: f64,
                             completion: &mut GroupCompletion,
                             partial: &mut BTreeMap<GroupKey, f64>| {
+                let key = token.key();
                 *partial.entry(key).or_default() += sum;
-                if completion.finish(key).expect("pending") {
+                if completion.finish(token) {
                     let total = partial.remove(&key).expect("partial");
                     assert!(finalized.insert(key, total).is_none(), "finalized once");
                 }
             };
-            let mut buffers = Some(BatchBuffers::default());
             loop {
-                let filled = match traversal.next_owned(buffers.take()).expect("read") {
+                let filled = match traversal.next_owned(&pool).expect("read") {
                     OwnedEvent::Batch(filled) => Arc::new(filled),
-                    OwnedEvent::NeedBuffers => {
-                        buffers = Some(BatchBuffers::default());
-                        continue;
-                    }
-                    OwnedEvent::GroupEnd(key, returned) => {
-                        buffers = returned;
+                    OwnedEvent::GroupEnd(key) => {
                         let _ = completion.close(key).expect("one closure");
                         continue;
                     }
-                    OwnedEvent::End(_) => break,
+                    OwnedEvent::End => break,
                 };
-                for fragment in filled.batch(catalogue).fragments.to_vec() {
+                for fragment in filled.batch().fragments.to_vec() {
                     for (unit, channels) in [(0, 0..4), (1, 4..8)] {
-                        completion.begin(fragment.key).expect("open group");
+                        let token = completion.begin(fragment.key).expect("open group");
                         let (filled, done_tx) = (filled.clone(), done_tx.clone());
                         let samples = fragment.samples.clone();
                         scope.spawn(move || {
                             if unit == 0 {
                                 std::thread::sleep(Duration::from_millis(20));
                             }
-                            let batch = filled.batch(catalogue);
+                            let batch = filled.batch();
                             let window = batch.channel_window(channels).expect("window");
                             assert!(window.fragments.is_empty(), "a window closes nothing");
                             let piece = window.sample_window(samples).expect("piece");
-                            let _ = done_tx.send((fragment.key, admitted_weight(&piece)));
+                            let _ = done_tx.send((token, admitted_weight(&piece)));
                         });
                     }
                     if fragment.position.closes() {
@@ -123,16 +121,17 @@ fn split_channel_windows_complete_each_group_once() {
                         assert!(!completion.close(fragment.key).expect("one closure"));
                     }
                 }
-                while let Ok((key, sum)) = done_rx.try_recv() {
-                    join(key, sum, &mut completion, &mut partial);
+                drop(filled);
+                while let Ok((token, sum)) = done_rx.try_recv() {
+                    join(token, sum, &mut completion, &mut partial);
                 }
-                buffers = Some(BatchBuffers::default());
             }
             drop(done_tx);
-            for (key, sum) in done_rx {
-                join(key, sum, &mut completion, &mut partial);
+            for (token, sum) in done_rx {
+                join(token, sum, &mut completion, &mut partial);
             }
         });
+        assert_eq!(pool.free(), 2, "{name}: every buffer came back");
         assert!(completion.is_idle(), "{name}: every group finalized");
         assert!(
             closed_with_pending >= 1,

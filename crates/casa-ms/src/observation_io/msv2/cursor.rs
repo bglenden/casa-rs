@@ -3,6 +3,7 @@
 //! the rows read by cell, the cells no row fills padded.
 
 use std::ops::Range;
+use std::sync::Arc;
 
 use casa_observation::{
     AccessRequest, BatchArrays, BatchBuffers, BatchHeader, Catalogue, DataGroupEntry, IoCounters,
@@ -484,7 +485,7 @@ fn gather_any(
 }
 
 impl VisibilityCursor for Msv2Cursor<'_> {
-    fn catalogue(&self) -> &Catalogue {
+    fn catalogue(&self) -> &Arc<Catalogue> {
         &self.observation.catalogue
     }
 

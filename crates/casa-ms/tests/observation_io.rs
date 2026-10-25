@@ -16,9 +16,9 @@ use std::path::{Path, PathBuf};
 
 use casa_ms::observation_io::{GroupClosure, Msv2Observation, Msv4Observation, OpenOptions};
 use casa_observation::{
-    AccessRequest, BatchBuffers, BindingTolerance, Catalogue, Correlation, CorrelationRequest,
-    Deliver, FlagsFrom, FragmentPosition, GroupKey, Grouping, Observation, ObservationError,
-    OwnedEvent, PartitionId, ReadEvent, Roles, Shared, Traversal,
+    AccessRequest, BatchBuffers, BindingTolerance, BufferPool, Catalogue, Correlation,
+    CorrelationRequest, Deliver, FlagsFrom, FragmentPosition, GroupKey, Grouping, Observation,
+    ObservationError, OwnedEvent, PartitionId, ReadEvent, Roles, Shared, Traversal,
 };
 use casa_types::measures::MjdHighPrec;
 use casa_types::measures::direction::DirectionRef;
@@ -52,8 +52,8 @@ pub(crate) fn request(channels: std::ops::Range<usize>, batch_bytes: usize) -> A
 }
 
 /// `request` budgeted for exactly `times` whole times per batch on
-/// `observation`: the estimate's bytes per sample, which costs no I/O, by
-/// the grid's baselines.
+/// `observation`: the estimate's held bytes per sample (the batch's and the
+/// cursor's scratch), which costs no I/O, by the grid's baselines.
 pub(crate) fn per_times(
     observation: &dyn Observation,
     request: AccessRequest,
@@ -66,7 +66,7 @@ pub(crate) fn per_times(
     let estimate = observation.estimate(&probe).expect("estimate");
     let partition = &estimate.partitions[0];
     AccessRequest {
-        batch_bytes: partition.bytes_per_sample * partition.baselines * times,
+        batch_bytes: partition.held_bytes_per_sample() * partition.baselines * times,
         ..request
     }
 }
@@ -161,13 +161,6 @@ fn first_batch<'o>(
     buffers: &mut BatchBuffers,
 ) -> Traversal<'o> {
     let mut traversal = observation.bind_read(request).expect("bind");
-    assert!(
-        matches!(
-            traversal.next_owned(None).expect("step"),
-            OwnedEvent::NeedBuffers
-        ),
-        "a batch comes next"
-    );
     let Some(ReadEvent::Batch(_)) = traversal.next(buffers).expect("read") else {
         panic!("a batch");
     };
@@ -401,7 +394,7 @@ fn both_stores_deliver_one_batch_shape() {
         let mut buffers = BatchBuffers::default();
         let traversal = first_batch(observation, &request, &mut buffers);
         assert_eq!(traversal.estimate.partitions[0].samples_per_batch(), 40);
-        let batch = buffers.batch(observation.catalogue()).expect("batch");
+        let batch = buffers.batch().expect("batch");
         assert_eq!(
             (batch.times(), batch.samples_per_time()),
             (4, 10),
@@ -472,7 +465,7 @@ fn time_origins_re_express_each_other_exactly() {
         let mut buffers = BatchBuffers::default();
         let request = per_times(observation, request(0..8, 0), 1);
         first_batch(observation, &request, &mut buffers);
-        let batch = buffers.batch(observation.catalogue()).expect("batch");
+        let batch = buffers.batch().expect("batch");
         batch.time.seconds_since(0, mjd_zero)
     };
     assert_eq!(first_time(&v2), first_time(&v4));
@@ -612,6 +605,10 @@ fn the_estimate_is_the_bound_realization_and_models_the_store() {
         whole.partitions[0].bytes_per_sample,
         32 * 8 + 32 + 32 * 4 + 24
     );
+    assert_eq!(
+        whole.partitions[0].scratch_bytes_per_sample, 32,
+        "the flag bytes before their conversion"
+    );
     let narrow = AccessRequest {
         roles: Roles {
             uvw: false,
@@ -644,6 +641,12 @@ fn the_estimate_is_the_bound_realization_and_models_the_store() {
         partition.bytes_per_sample,
         32 * 8 + 32 + 4 * 4 + 24 + 3 * 8,
         "one WEIGHT per correlation, three per-sample scalars"
+    );
+    assert_eq!(
+        partition.scratch_bytes_per_sample,
+        2 * 8 + 1 + 3 * 8,
+        "each row's number, sample, FLAG_ROW and three scalars; no padding and \
+         every product, so no payload scratch"
     );
     assert_eq!(
         partition.natural_blocks.channels, 8,
@@ -690,6 +693,16 @@ fn a_correlation_subset_carries_the_flags_it_is_asked_for() {
             assert!(
                 estimate.partitions[0].selected_elements < estimate.partitions[0].decoded_elements,
                 "{store}: a subset selects less than it decodes"
+            );
+            let every = AccessRequest {
+                correlations: CorrelationRequest::ALL,
+                ..subset.clone()
+            };
+            let every = observation.estimate(&every).expect("estimate");
+            assert!(
+                estimate.partitions[0].scratch_bytes_per_sample
+                    > every.partitions[0].scratch_bytes_per_sample,
+                "{store}: a subset decodes the whole axis into scratch, which the budget counts"
             );
             let mut traversal = observation.bind_read(&subset).expect("bind");
             let mut buffers = BatchBuffers::default();
@@ -760,9 +773,8 @@ fn a_correlation_subset_carries_the_flags_it_is_asked_for() {
 }
 
 /// The budget admits whole times: one time that does not fit fails
-/// binding, never a later read; a cursor asked what comes next without
-/// buffers says so without lending anything, and hands back nothing at the
-/// end.
+/// binding, never a later read. Owned batches drawn from a pool of one
+/// buffer each give it back when dropped, and the end takes none.
 #[test]
 fn the_budget_fits_whole_times_or_refuses_binding() {
     let root = tempfile::tempdir().expect("root");
@@ -782,28 +794,28 @@ fn the_budget_fits_whole_times_or_refuses_binding() {
         );
         let mut traversal = observation.bind_read(&one_time).expect("bind");
         assert_eq!(traversal.estimate.batches(), 12, "{store}");
-        let mut pool = Some(BatchBuffers::default());
+        // One buffer serves the traversal: each batch gives it back when
+        // dropped, and the end takes none.
+        let pool = BufferPool::new(1);
         let mut batches = 0;
         loop {
-            // Ask what comes next before lending anything.
-            match traversal.next_owned(None).expect("step") {
-                OwnedEvent::NeedBuffers => {}
-                OwnedEvent::End(returned) => {
-                    assert!(returned.is_none(), "{store}: nothing was lent at the end");
-                    break;
-                }
+            match traversal.next_owned(&pool).expect("read") {
+                OwnedEvent::End => break,
                 OwnedEvent::GroupEnd(..) => panic!("no groups requested"),
-                OwnedEvent::Batch(_) => unreachable!("no buffers were lent"),
+                OwnedEvent::Batch(filled) => {
+                    batches += 1;
+                    assert_eq!(filled.batch().times(), 1);
+                    assert!(
+                        filled.capacity_bytes() <= one_time.batch_bytes,
+                        "{store}: a batch holds no more than the budget"
+                    );
+                }
             }
-            let OwnedEvent::Batch(filled) = traversal
-                .next_owned(Some(pool.take().expect("the pool holds the buffers")))
-                .expect("read")
-            else {
-                unreachable!("a batch was announced");
-            };
-            batches += 1;
-            assert_eq!(filled.batch(observation.catalogue()).times(), 1);
-            pool = Some(filled.into_buffers());
+            assert_eq!(
+                pool.free(),
+                1,
+                "{store}: a dropped batch returns its buffer"
+            );
         }
         assert_eq!(batches, 12, "{store}");
     }

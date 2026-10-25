@@ -20,7 +20,7 @@ pub(crate) fn declaration(
     observation: &dyn Observation,
     rename: bool,
 ) -> (Catalogue, TimeBaselineGrid) {
-    let mut catalogue = observation.catalogue().clone();
+    let mut catalogue = observation.catalogue().as_ref().clone();
     if rename {
         for antenna in &mut catalogue.antennas {
             antenna.name = format!("{}_{}", antenna.name, antenna.station);
@@ -195,18 +195,17 @@ fn the_writer_publishes_only_complete_datasets() {
 /// any other.
 fn edited(
     batch: &VisibilityBatch<'_>,
-    catalogue: &Catalogue,
     edit: impl FnOnce(&mut BatchHeader, &mut BatchArrays),
 ) -> BatchBuffers {
     let mut packed = BatchBuffers::default();
-    packed.pack(batch, catalogue).expect("pack");
+    packed.pack(batch).expect("pack");
     let mut header = packed.header().expect("packed").clone();
     let mut arrays = packed.arrays().clone();
     edit(&mut header, &mut arrays);
     let mut buffers = BatchBuffers::default();
     let mut fill = buffers.begin(header);
     *fill.arrays() = arrays;
-    fill.finish(catalogue)
+    fill.finish(batch.catalogue)
         .expect("an edited batch is still well formed");
     buffers
 }
@@ -236,7 +235,6 @@ fn the_writer_refuses_batches_that_disagree_with_the_declaration() {
         ),
     ];
     for (store, observation) in [("v2", &v2 as &dyn Observation), ("v4", &v4)] {
-        let catalogue = observation.catalogue();
         for (label, edit) in cases {
             let out = root
                 .path()
@@ -249,8 +247,8 @@ fn the_writer_refuses_batches_that_disagree_with_the_declaration() {
             let Some(ReadEvent::Batch(batch)) = traversal.next(&mut buffers).expect("read") else {
                 panic!("a batch");
             };
-            let changed = edited(&batch, catalogue, edit);
-            let result = writer.write_batch(&changed.batch(catalogue).expect("batch"));
+            let changed = edited(&batch, edit);
+            let result = writer.write_batch(&changed.batch().expect("batch"));
             assert!(result.is_err(), "{store} {label}: refused");
             assert_eq!(
                 writer.counters().region_writes,

@@ -8,8 +8,9 @@
 //!
 //! **Trial status.** This crate is the executable sketch of
 //! `docs/measurement-set/contracts.md` for the MSv2/MSv4 trial
-//! (`docs/measurement-set/trial/README.md`), at its second revision
-//! (`docs/measurement-set/trial/revision-2-design.md`). Its interfaces are
+//! (`docs/measurement-set/trial/README.md`), at its third revision
+//! (`docs/measurement-set/trial/revision-2-design.md`, then the README's
+//! "Revision 3"). Its interfaces are
 //! not frozen.
 //!
 //! # The principle
@@ -44,6 +45,9 @@
 //! - A [`VisibilityCursor`] fills caller-owned [`BatchBuffers`] through one
 //!   checked path ([`BatchBuffers::begin`], [`BatchFill::finish`]) and lends
 //!   them as a [`VisibilityBatch`], or announces a [`ReadEvent::GroupEnd`].
+//!   Owned batches ([`FilledBatch`]) are filled into a bounded
+//!   [`BufferPool`] and return their buffers when dropped; concurrent work
+//!   on a group is joined by [`GroupCompletion`]'s [`WorkToken`]s.
 //!   Within a cursor the **traversal order** is fixed: whole times of one
 //!   channel window of one partition, in time order; across cursors it is
 //!   the consumer's.
@@ -97,6 +101,7 @@ mod catalogue;
 mod creation;
 mod cursor;
 mod grouping;
+mod pool;
 mod request;
 
 pub use batch::{DataGroupView, SampleCoordinate, SampleTiming, Shared, Validity, VisibilityBatch};
@@ -109,10 +114,11 @@ pub use catalogue::{
     ScanEntry, ScanId, UvwFrame, VisibilityUnits,
 };
 pub use creation::TimeBaselineGrid;
-pub use cursor::{
-    BoundCursor, FilledBatch, Observation, OwnedEvent, Reclaimed, Step, Traversal, VisibilityCursor,
+pub use cursor::{BoundCursor, Observation, OwnedEvent, Step, Traversal, VisibilityCursor};
+pub use grouping::{
+    FragmentPosition, GroupCompletion, GroupFragment, GroupKey, ReadEvent, WorkToken,
 };
-pub use grouping::{FragmentPosition, GroupCompletion, GroupFragment, GroupKey, ReadEvent};
+pub use pool::{BufferPool, FilledBatch};
 pub use request::{
     AccessRequest, CorrelationRequest, Deliver, Estimate, FlagsFrom, Grouping, IoCounters,
     NaturalBlocks, PartitionEstimate, ResolvedRequest, Roles, times_per_batch,

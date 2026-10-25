@@ -176,9 +176,9 @@ pub struct AccessRequest {
     ///
     /// [`ReadEvent::GroupEnd`]: crate::ReadEvent::GroupEnd
     pub grouping: Grouping,
-    /// The most payload bytes one batch may hold ([`Roles::sample_bytes`]
-    /// per sample). A batch holds whole times; binding fails when one time
-    /// does not fit.
+    /// The most bytes one batch may hold, with the adapter's decode scratch
+    /// for it ([`PartitionEstimate::held_bytes_per_sample`]). A batch holds
+    /// whole times; binding fails when one time does not fit.
     pub batch_bytes: usize,
 }
 
@@ -273,8 +273,13 @@ pub struct PartitionEstimate {
     pub times: usize,
     /// Baselines on its grid.
     pub baselines: usize,
-    /// Bytes one sample of the requested roles holds in a batch.
+    /// Bytes one sample of the requested roles holds in a batch
+    /// ([`Roles::sample_bytes`]).
     pub bytes_per_sample: usize,
+    /// Bytes per sample the cursor's own scratch holds while it fills a
+    /// batch: what it decodes before gathering a correlation subset,
+    /// converting flags or placing rows around padding.
+    pub scratch_bytes_per_sample: usize,
     /// Whole times per full batch under the budget.
     pub times_per_batch: usize,
     /// Batches in the traversal.
@@ -311,6 +316,20 @@ impl PartitionEstimate {
         self.samples_per_batch() * self.bytes_per_sample
     }
 
+    /// Bytes per sample the budget counts: the batch's and the cursor's
+    /// scratch.
+    #[must_use]
+    pub fn held_bytes_per_sample(&self) -> usize {
+        self.bytes_per_sample + self.scratch_bytes_per_sample
+    }
+
+    /// Bytes a full batch and the cursor's scratch for it hold: at most the
+    /// request's budget.
+    #[must_use]
+    pub fn held_bytes(&self) -> usize {
+        self.samples_per_batch() * self.held_bytes_per_sample()
+    }
+
     /// Decoded elements per selected element.
     #[must_use]
     pub fn amplification(&self) -> f64 {
@@ -327,7 +346,8 @@ fn amplification(decoded: usize, selected: usize) -> f64 {
 }
 
 /// Whole times per batch under `batch_bytes`: as many as fit, at most
-/// `times`.
+/// `times`. `bytes_per_sample` is what the budget counts per sample
+/// ([`PartitionEstimate::held_bytes_per_sample`]).
 ///
 /// # Errors
 ///
@@ -379,6 +399,19 @@ impl Estimate {
         self.partitions
             .iter()
             .map(PartitionEstimate::batch_bytes)
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// The most one batch and its decode scratch hold over the set: what
+    /// each buffer of a [`BufferPool`](crate::BufferPool) and the cursor
+    /// filling it can hold, so a pool of `n` buffers is admitted as `n`
+    /// times this (plus one batch of scratch per cursor).
+    #[must_use]
+    pub fn peak_held_bytes(&self) -> usize {
+        self.partitions
+            .iter()
+            .map(PartitionEstimate::held_bytes)
             .max()
             .unwrap_or(0)
     }

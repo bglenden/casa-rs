@@ -61,7 +61,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let partition = &estimate.partitions[0];
         println!(
             "partition {index} ({}): {} times x {} baselines x {} channels x {} products, \
-             padded {:.4}; {} B/sample, {} times/batch, {} batches of at most {:.1} MiB; \
+             padded {:.4}; {} B/sample (+{} scratch), {} times/batch, {} batches of at most {:.1} MiB held; \
              {} decode units, decoded/selected {:.3}",
             entry.spectral_window,
             partition.times,
@@ -70,9 +70,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             entry.correlations.len(),
             partition.padded_fraction,
             partition.bytes_per_sample,
+            partition.scratch_bytes_per_sample,
             partition.times_per_batch,
             partition.batches,
-            estimate.peak_batch_bytes() as f64 / MIB,
+            estimate.peak_held_bytes() as f64 / MIB,
             partition.decode_units,
             partition.decoded_elements as f64 / partition.selected_elements.max(1) as f64,
         );

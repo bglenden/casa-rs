@@ -75,9 +75,11 @@ pub struct GroupFragment {
 /// when both have happened.
 ///
 /// A consumer calls [`Self::begin`] for each unit of work it starts on a
-/// group, [`Self::finish`] when that unit is done, and [`Self::close`] when
-/// the source completes the group's input; whichever call makes the group
-/// ready returns `true`, once.
+/// group, which hands out a [`WorkToken`]; gives the token to
+/// [`Self::finish`] when that unit is done; and calls [`Self::close`] when
+/// the source completes the group's input. Whichever call makes the group
+/// ready returns `true`, once. Tokens cannot be copied, so a unit finishes
+/// once and only begun work can finish.
 #[derive(Debug, Default)]
 pub struct GroupCompletion {
     pending: BTreeMap<GroupKey, usize>,
@@ -87,45 +89,62 @@ pub struct GroupCompletion {
     finalized: BTreeSet<GroupKey>,
 }
 
+/// One unit of work begun on a group ([`GroupCompletion::begin`]). It ends
+/// when it is handed to [`GroupCompletion::finish`]; it is `Send`, so it can
+/// travel with the work and come back with its result.
+#[derive(Debug)]
+#[must_use = "a unit of work ends only when its token is finished"]
+pub struct WorkToken {
+    key: GroupKey,
+}
+
+impl WorkToken {
+    /// The group the work is on.
+    #[must_use]
+    pub fn key(&self) -> GroupKey {
+        self.key
+    }
+}
+
 impl GroupCompletion {
-    /// A unit of work on `key` has started.
+    /// A unit of work on `key` has started; finish it with the token.
     ///
     /// # Errors
     ///
     /// If the group's input has already completed: no work can begin on a
     /// group after its closure.
-    pub fn begin(&mut self, key: GroupKey) -> Result<(), ObservationError> {
+    pub fn begin(&mut self, key: GroupKey) -> Result<WorkToken, ObservationError> {
         if self.closed.contains(&key) || self.finalized.contains(&key) {
             return Err(ObservationError::InvalidBatch {
                 reason: format!("work begun on {key:?} after its input completed"),
             });
         }
         *self.pending.entry(key).or_default() += 1;
-        Ok(())
+        Ok(WorkToken { key })
     }
 
-    /// A unit of work on `key` has finished; `true` if that makes the group
-    /// ready.
+    /// The unit of work `token` names has finished; `true` if that makes
+    /// its group ready.
     ///
-    /// # Errors
+    /// # Panics
     ///
-    /// If no work on `key` was pending.
-    pub fn finish(&mut self, key: GroupKey) -> Result<bool, ObservationError> {
-        let Some(pending) = self.pending.get_mut(&key) else {
-            return Err(ObservationError::InvalidBatch {
-                reason: format!("work finished on {key:?} with none pending"),
-            });
-        };
+    /// If `token` was issued by another `GroupCompletion`.
+    pub fn finish(&mut self, token: WorkToken) -> bool {
+        let key = token.key;
+        let pending = self
+            .pending
+            .get_mut(&key)
+            .expect("a token's work is pending in the completion that issued it");
         *pending -= 1;
         if *pending > 0 {
-            return Ok(false);
+            return false;
         }
         self.pending.remove(&key);
         if self.closed.remove(&key) {
             self.finalized.insert(key);
-            Ok(true)
+            true
         } else {
-            Ok(false)
+            false
         }
     }
 
@@ -194,18 +213,18 @@ mod tests {
     #[test]
     fn a_group_is_ready_once_after_its_input_and_its_work() {
         let mut completion = GroupCompletion::default();
-        completion.begin(key(0)).expect("begin");
-        completion.begin(key(0)).expect("begin");
+        let first = completion.begin(key(0)).expect("begin");
+        let second = completion.begin(key(0)).expect("begin");
+        assert_eq!(second.key(), key(0));
         assert!(!completion.close(key(0)).expect("close"), "work pending");
         assert!(completion.begin(key(0)).is_err(), "no work after closure");
-        assert!(!completion.finish(key(0)).expect("finish"));
-        assert!(completion.finish(key(0)).expect("finish"), "ready once");
+        assert!(!completion.finish(first));
+        assert!(completion.finish(second), "ready once");
         assert!(completion.close(key(0)).is_err(), "closed twice");
         assert!(
             completion.close(key(1)).expect("close"),
             "no work: ready now"
         );
         assert!(completion.is_idle());
-        assert!(completion.finish(key(2)).is_err());
     }
 }

@@ -57,7 +57,7 @@ pub fn per_times(
     let estimate = observation.estimate(&probe).expect("estimate");
     let partition = &estimate.partitions[0];
     AccessRequest {
-        batch_bytes: partition.bytes_per_sample * partition.baselines * times,
+        batch_bytes: partition.held_bytes_per_sample() * partition.baselines * times,
         ..request
     }
 }

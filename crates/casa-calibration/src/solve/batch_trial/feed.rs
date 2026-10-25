@@ -14,8 +14,8 @@ use std::sync::{Arc, mpsc};
 use std::time::Duration;
 
 use casa_observation::{
-    AccessRequest, BatchBuffers, Catalogue, GroupCompletion, GroupKey, Observation, OwnedEvent,
-    ReadEvent, VisibilityBatch,
+    AccessRequest, BatchBuffers, BufferPool, Catalogue, GroupCompletion, GroupKey, Observation,
+    OwnedEvent, ReadEvent, VisibilityBatch, WorkToken,
 };
 use casa_types::measures::MjdHighPrec;
 use ndarray::{Array2, s};
@@ -187,16 +187,17 @@ pub(super) fn solve_sequential(
     (rows, trace)
 }
 
-/// Batch buffers the concurrent realization circulates.
+/// Batch buffers in the concurrent realization's pool.
 const CONCURRENT_POOL: usize = 4;
 
 /// Concurrent realization: each fragment is a work unit on its own thread,
 /// accumulating a partial group from a shared batch (`Arc<FilledBatch>`).
 /// The first is held back, so its group's input completes while its work
 /// is pending; [`GroupCompletion`] releases the group for solving only
-/// when every fragment's work has joined. A batch's buffers return to the
-/// pool when its last fragment's work lets go of them; the producer asks
-/// what comes next before lending a buffer, so none is lent at the end.
+/// when every fragment's work has handed back its token. A batch's buffer
+/// returns to the pool when its last fragment's work lets go of it; the
+/// producer waits on the pool while all of its buffers are in use, and
+/// takes none at the end.
 pub(super) fn solve_concurrent(
     observation: &dyn Observation,
     request: &GainSolveRequest,
@@ -210,8 +211,7 @@ pub(super) fn solve_concurrent(
     let mut rows = Vec::new();
     let mut partial = BTreeMap::<GroupKey, SolveAccumulator>::new();
     let mut completion = GroupCompletion::default();
-    let (done_tx, done_rx) = mpsc::channel::<(GroupKey, SolveAccumulator)>();
-    let (free_tx, free_rx) = mpsc::channel::<BatchBuffers>();
+    let (done_tx, done_rx) = mpsc::channel::<(WorkToken, SolveAccumulator)>();
     let mut ready = |key: GroupKey, partial: &mut BTreeMap<GroupKey, SolveAccumulator>| {
         let group = partial.remove(&key).expect("group");
         finish(group, &available, request, refant, &mut rows);
@@ -226,28 +226,27 @@ pub(super) fn solve_concurrent(
         } else {
             done_rx.try_recv().ok()
         };
-        while let Some((key, group)) = next {
+        while let Some((token, group)) = next {
+            let key = token.key();
             match partial.get_mut(&key) {
                 Some(total) => total.merge(group),
                 None => {
                     partial.insert(key, group);
                 }
             }
-            if completion.finish(key).expect("pending work") {
+            if completion.finish(token) {
                 ready(key, partial);
             }
             next = done_rx.try_recv().ok();
         }
     };
+    let pool = BufferPool::new(CONCURRENT_POOL);
     std::thread::scope(|scope| {
-        let mut allocated = 0;
-        let mut spare: Option<BatchBuffers> = None;
         let mut first = true;
         loop {
-            // Ask what comes next before lending a buffer.
-            let filled = match traversal.next_owned(None).expect("step") {
-                OwnedEvent::End(_) => break,
-                OwnedEvent::GroupEnd(key, _) => {
+            let filled = match traversal.next_owned(&pool).expect("read") {
+                OwnedEvent::End => break,
+                OwnedEvent::GroupEnd(key) => {
                     trace.closed_by_end += 1;
                     if completion.pending(key) > 0 {
                         trace.closed_with_pending += 1;
@@ -258,28 +257,14 @@ pub(super) fn solve_concurrent(
                     join(&mut completion, &mut partial, &mut ready, false);
                     continue;
                 }
-                OwnedEvent::Batch(_) => unreachable!("no buffers were lent"),
-                OwnedEvent::NeedBuffers => {
-                    let buffers = match spare.take().or_else(|| free_rx.try_recv().ok()) {
-                        Some(buffers) => buffers,
-                        None if allocated < CONCURRENT_POOL => {
-                            allocated += 1;
-                            BatchBuffers::default()
-                        }
-                        None => free_rx.recv().expect("a buffer comes back"),
-                    };
-                    match traversal.next_owned(Some(buffers)).expect("read") {
-                        OwnedEvent::Batch(filled) => Arc::new(filled),
-                        _ => unreachable!("a batch was announced"),
-                    }
-                }
+                OwnedEvent::Batch(filled) => Arc::new(filled),
             };
             trace.batches += 1;
             trace.buffer_bytes = trace.buffer_bytes.max(filled.capacity_bytes());
-            for fragment in filled.batch(catalogue).fragments.to_vec() {
+            for fragment in filled.batch().fragments.to_vec() {
                 trace.fragments += 1;
-                completion.begin(fragment.key).expect("an open group");
-                let (filled, done_tx, free_tx) = (filled.clone(), done_tx.clone(), free_tx.clone());
+                let token = completion.begin(fragment.key).expect("an open group");
+                let (filled, done_tx) = (filled.clone(), done_tx.clone());
                 let delay = std::mem::take(&mut first);
                 scope.spawn(move || {
                     if delay {
@@ -288,15 +273,12 @@ pub(super) fn solve_concurrent(
                     let mut group = accumulator(fragment.key);
                     observe(
                         &mut group,
-                        &filled.batch(catalogue),
+                        &filled.batch(),
                         fragment.samples.clone(),
                         catalogue,
                         request,
                     );
-                    let _ = done_tx.send((fragment.key, group));
-                    if let Some(filled) = Arc::into_inner(filled) {
-                        let _ = free_tx.send(filled.into_buffers());
-                    }
+                    let _ = done_tx.send((token, group));
                 });
                 if fragment.position.closes() {
                     trace.closed_by_fragment += 1;
@@ -309,15 +291,14 @@ pub(super) fn solve_concurrent(
                 }
             }
             trace.max_live_groups = trace.max_live_groups.max(partial.len().max(1));
-            if let Some(filled) = Arc::into_inner(filled) {
-                spare = Some(filled.into_buffers());
-            }
+            drop(filled);
             join(&mut completion, &mut partial, &mut ready, false);
         }
         while !completion.is_idle() {
             join(&mut completion, &mut partial, &mut ready, true);
         }
     });
+    assert_eq!(pool.free(), CONCURRENT_POOL, "every buffer came back");
     drop(ready);
     rows.sort_by(|a, b| {
         (a.time_seconds, a.antenna_id)

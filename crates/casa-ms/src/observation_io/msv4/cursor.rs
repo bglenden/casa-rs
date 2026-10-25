@@ -3,6 +3,7 @@
 //! caller's buffers.
 
 use std::ops::Range;
+use std::sync::Arc;
 
 use casa_observation::{
     AccessRequest, BatchArrays, BatchBuffers, BatchHeader, Catalogue, IoCounters, NaturalBlocks,
@@ -168,7 +169,22 @@ pub(super) fn estimate(
         .filter(|wanted| *wanted)
         .count();
     let bytes_per_sample = roles.sample_bytes(channels, resolved.correlations.len(), true, scalars);
-    let times_per_batch = times_per_batch(request.batch_bytes, bytes_per_sample, baselines, times)?;
+    // The cursor's scratch: the flag bytes before their conversion, and,
+    // when a subset is delivered, the values and weights of every stored
+    // product before they are gathered.
+    let stored = channels * entry.correlations.len();
+    let scratch_bytes_per_sample = usize::from(roles.flags) * stored
+        + if resolved.correlation_indices.is_some() {
+            stored * (usize::from(roles.values) * 8 + usize::from(roles.weights) * 4)
+        } else {
+            0
+        };
+    let times_per_batch = times_per_batch(
+        request.batch_bytes,
+        bytes_per_sample + scratch_bytes_per_sample,
+        baselines,
+        times,
+    )?;
     let batches = if times_per_batch == 0 {
         0
     } else {
@@ -197,6 +213,7 @@ pub(super) fn estimate(
         times,
         baselines,
         bytes_per_sample,
+        scratch_bytes_per_sample,
         times_per_batch,
         batches,
         decode_units,
@@ -486,7 +503,7 @@ impl Msv4Cursor<'_> {
 }
 
 impl VisibilityCursor for Msv4Cursor<'_> {
-    fn catalogue(&self) -> &Catalogue {
+    fn catalogue(&self) -> &Arc<Catalogue> {
         &self.observation.catalogue
     }
 

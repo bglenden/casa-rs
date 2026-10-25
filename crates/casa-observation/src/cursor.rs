@@ -2,11 +2,13 @@
 //! The observation boundary: an opened observation estimates and binds
 //! traversals, and a traversal's cursors fill batches.
 
+use std::sync::Arc;
+
 use crate::ObservationError;
-use crate::batch::VisibilityBatch;
 use crate::buffers::BatchBuffers;
 use crate::catalogue::Catalogue;
 use crate::grouping::{GroupKey, ReadEvent};
+use crate::pool::{BufferPool, FilledBatch};
 use crate::request::{AccessRequest, Estimate, IoCounters, PartitionEstimate};
 
 /// An opened observation, whatever stores it.
@@ -19,9 +21,11 @@ use crate::request::{AccessRequest, Estimate, IoCounters, PartitionEstimate};
 /// [`AccessRequest`]s, the bound [`Traversal`] and [`VisibilityBatch`]
 /// views. Dispatch to the store happens once per bind and once per batch,
 /// never per element.
+///
+/// [`VisibilityBatch`]: crate::VisibilityBatch
 pub trait Observation: Sync {
-    /// The observation's catalogue.
-    fn catalogue(&self) -> &Catalogue;
+    /// The observation's catalogue, shared with every batch it delivers.
+    fn catalogue(&self) -> &Arc<Catalogue>;
 
     /// What `request` would cost, from the catalogue and the store's
     /// geometry alone: no payload is read. Binding the same request
@@ -62,6 +66,16 @@ pub struct Traversal<'o> {
     current: usize,
 }
 
+/// Whose turn it is in a traversal.
+enum Turn {
+    /// Cursor `index` has a batch to fill.
+    Batch(usize),
+    /// A group's input is complete.
+    GroupEnd(GroupKey),
+    /// Every cursor is exhausted.
+    End,
+}
+
 impl<'o> Traversal<'o> {
     /// A traversal of `cursors` with `estimate`.
     #[must_use]
@@ -73,18 +87,16 @@ impl<'o> Traversal<'o> {
         }
     }
 
-    /// The cursor whose turn it is, after moving past exhausted ones.
-    fn advance(&mut self) -> Result<Option<usize>, Step> {
-        loop {
-            let Some(cursor) = self.cursors.get_mut(self.current) else {
-                return Ok(None);
-            };
+    /// The next turn, after moving past exhausted cursors.
+    fn turn(&mut self) -> Turn {
+        while let Some(cursor) = self.cursors.get_mut(self.current) {
             match cursor.step() {
                 Step::End => self.current += 1,
-                Step::GroupEnd(key) => return Err(Step::GroupEnd(key)),
-                Step::Batch => return Ok(Some(self.current)),
+                Step::GroupEnd(key) => return Turn::GroupEnd(key),
+                Step::Batch => return Turn::Batch(self.current),
             }
         }
+        Turn::End
     }
 
     /// The next event of the partitions in order, borrowing `buffers`.
@@ -96,36 +108,35 @@ impl<'o> Traversal<'o> {
         &'b mut self,
         buffers: &'b mut BatchBuffers,
     ) -> Result<Option<ReadEvent<'b>>, ObservationError> {
-        let index = match self.advance() {
-            Ok(None) => return Ok(None),
-            Ok(Some(index)) => index,
-            Err(Step::GroupEnd(key)) => return Ok(Some(ReadEvent::GroupEnd(key))),
-            Err(_) => unreachable!("advance returns only group ends as errors"),
-        };
-        let cursor = &mut self.cursors[index];
-        cursor.fill(buffers)?;
-        let buffers: &'b BatchBuffers = buffers;
-        buffers
-            .batch(cursor.catalogue())
-            .map(|batch| Some(ReadEvent::Batch(batch)))
-            .ok_or_else(unfinished)
+        match self.turn() {
+            Turn::End => Ok(None),
+            Turn::GroupEnd(key) => Ok(Some(ReadEvent::GroupEnd(key))),
+            Turn::Batch(index) => {
+                self.cursors[index].fill(buffers)?;
+                let buffers: &'b BatchBuffers = buffers;
+                buffers
+                    .batch()
+                    .map(|batch| Some(ReadEvent::Batch(batch)))
+                    .ok_or_else(unfinished)
+            }
+        }
     }
 
-    /// The next event of the partitions in order, taking `buffers` if given
-    /// and handing them back with it ([`VisibilityCursor::next_owned`]).
+    /// The next event of the partitions in order, a batch filled into a
+    /// buffer of `pool` ([`VisibilityCursor::next_owned`]).
     ///
     /// # Errors
     ///
-    /// As [`VisibilityCursor::fill`], with the buffers.
-    pub fn next_owned(
-        &mut self,
-        buffers: Option<BatchBuffers>,
-    ) -> Result<OwnedEvent, Box<Reclaimed>> {
-        match self.advance() {
-            Ok(None) => Ok(OwnedEvent::End(buffers)),
-            Err(Step::GroupEnd(key)) => Ok(OwnedEvent::GroupEnd(key, buffers)),
-            Err(_) => unreachable!("advance returns only group ends as errors"),
-            Ok(Some(index)) => self.cursors[index].next_owned(buffers),
+    /// As [`VisibilityCursor::fill`]; the buffer goes back to the pool.
+    pub fn next_owned(&mut self, pool: &BufferPool) -> Result<OwnedEvent, ObservationError> {
+        match self.turn() {
+            Turn::End => Ok(OwnedEvent::End),
+            Turn::GroupEnd(key) => Ok(OwnedEvent::GroupEnd(key)),
+            Turn::Batch(index) => {
+                let cursor = &mut self.cursors[index];
+                pool.fill(|buffers| cursor.fill(buffers))
+                    .map(OwnedEvent::Batch)
+            }
         }
     }
 
@@ -152,101 +163,32 @@ pub enum Step {
     End,
 }
 
-/// A batch together with the buffers it was filled into: an owned value a
-/// work unit can take, share read-only through an `Arc`, or hand back
-/// whole for refilling.
-///
-/// [`VisibilityBatch`] borrows its buffers, so it cannot outlive or leave
-/// the caller that filled them. A `FilledBatch` moves with its storage
-/// instead, which is how a batch's lifetime is separated from the
-/// traversal's: the cursor can fill the next buffers while earlier batches
-/// are still in use elsewhere, and a slow user keeps exactly its own
-/// batch's allocation alive. The batch's views are built on demand from
-/// the observation's catalogue ([`Self::batch`]).
+/// What [`VisibilityCursor::next_owned`] delivers.
 #[derive(Debug)]
-pub struct FilledBatch {
-    buffers: BatchBuffers,
-}
-
-impl FilledBatch {
-    /// The batch: views of the owned buffers and of `catalogue`, the
-    /// observation's.
-    #[must_use]
-    pub fn batch<'c>(&'c self, catalogue: &'c Catalogue) -> VisibilityBatch<'c> {
-        self.buffers
-            .batch(catalogue)
-            .expect("a filled batch holds a batch")
-    }
-
-    /// The buffers, for refilling.
-    #[must_use]
-    pub fn into_buffers(self) -> BatchBuffers {
-        self.buffers
-    }
-
-    /// Bytes the buffers hold, from their capacities.
-    #[must_use]
-    pub fn capacity_bytes(&self) -> usize {
-        self.buffers.capacity_bytes()
-    }
-
-    /// Copy `batch` into `buffers` ([`BatchBuffers::pack`]): a window with
-    /// storage of its own, and the payload elements copied.
-    ///
-    /// # Errors
-    ///
-    /// As [`BatchBuffers::pack`]; the buffers come back with the error.
-    pub fn pack(
-        batch: &VisibilityBatch<'_>,
-        mut buffers: BatchBuffers,
-        catalogue: &Catalogue,
-    ) -> Result<(Self, usize), Box<Reclaimed>> {
-        match buffers.pack(batch, catalogue) {
-            Ok(copied) => Ok((Self { buffers }, copied)),
-            Err(error) => Err(Box::new(Reclaimed { error, buffers })),
-        }
-    }
-}
-
-/// What [`VisibilityCursor::next_owned`] delivers. Every variant that is
-/// not a batch hands back the buffers it was given, so a pool never
-/// depends on knowing in advance how many batches a traversal has, and
-/// never lends a buffer only to learn the traversal was over.
-#[derive(Debug)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "a filled batch is moved once per batch; boxing it would allocate per batch"
+)]
 pub enum OwnedEvent {
-    /// The next batch, with its buffers.
+    /// The next batch, in a buffer of the pool.
     Batch(FilledBatch),
-    /// No further samples of this group will arrive; the buffers, if any
-    /// were given, come back unused.
-    GroupEnd(GroupKey, Option<BatchBuffers>),
-    /// The traversal is over; the buffers, if any were given, come back
-    /// unused.
-    End(Option<BatchBuffers>),
-    /// The next event is a batch and no buffers were given: call again with
-    /// some.
-    NeedBuffers,
-}
-
-/// A failed owned read, with the buffers it was given (boxed: the buffers
-/// are several hundred bytes of vector headers, and errors are rare).
-#[derive(Debug, thiserror::Error)]
-#[error("{error}")]
-pub struct Reclaimed {
-    /// What failed.
-    #[source]
-    pub error: ObservationError,
-    /// The buffers, emptied.
-    pub buffers: BatchBuffers,
+    /// No further samples of this group will arrive.
+    GroupEnd(GroupKey),
+    /// The traversal is over.
+    End,
 }
 
 /// A bound traversal of one partition of an [`AccessRequest`].
 ///
 /// An adapter implements [`Self::step`] and [`Self::fill`]; consumers call
 /// [`Self::next`], which lends the filled buffers as a [`VisibilityBatch`],
-/// or [`Self::next_owned`], which hands them over as a [`FilledBatch`].
+/// or [`Self::next_owned`], which fills a pooled buffer and hands it over
+/// as a [`FilledBatch`].
+///
+/// [`VisibilityBatch`]: crate::VisibilityBatch
 pub trait VisibilityCursor {
     /// The observation's catalogue: what the batches' views refer to.
-    fn catalogue(&self) -> &Catalogue;
+    fn catalogue(&self) -> &Arc<Catalogue>;
 
     /// What this partition's traversal costs.
     fn estimate(&self) -> &PartitionEstimate;
@@ -285,42 +227,27 @@ pub trait VisibilityCursor {
                 self.fill(buffers)?;
                 let buffers: &'b BatchBuffers = buffers;
                 buffers
-                    .batch(self.catalogue())
+                    .batch()
                     .map(|batch| Some(ReadEvent::Batch(batch)))
                     .ok_or_else(unfinished)
             }
         }
     }
 
-    /// The next event, taking `buffers` if given and handing them back with
-    /// it, whatever happens. Without buffers the cursor answers what comes
-    /// next ([`OwnedEvent::NeedBuffers`] for a batch) and fills nothing.
+    /// The next event, a batch filled into a buffer of `pool`. A buffer is
+    /// taken only for a batch, and the call waits while the pool has none
+    /// free: the pool's bound is the traversal's.
     ///
     /// # Errors
     ///
-    /// As [`Self::fill`], with the buffers.
-    fn next_owned(&mut self, buffers: Option<BatchBuffers>) -> Result<OwnedEvent, Box<Reclaimed>> {
+    /// As [`Self::fill`]; the buffer goes back to the pool.
+    fn next_owned(&mut self, pool: &BufferPool) -> Result<OwnedEvent, ObservationError> {
         match self.step() {
-            Step::End => Ok(OwnedEvent::End(buffers)),
-            Step::GroupEnd(key) => Ok(OwnedEvent::GroupEnd(key, buffers)),
-            Step::Batch => {
-                let Some(mut buffers) = buffers else {
-                    return Ok(OwnedEvent::NeedBuffers);
-                };
-                match self.fill(&mut buffers) {
-                    Ok(()) if buffers.header().is_some() => {
-                        Ok(OwnedEvent::Batch(FilledBatch { buffers }))
-                    }
-                    Ok(()) => Err(Box::new(Reclaimed {
-                        error: unfinished(),
-                        buffers,
-                    })),
-                    Err(error) => {
-                        buffers.clear();
-                        Err(Box::new(Reclaimed { error, buffers }))
-                    }
-                }
-            }
+            Step::End => Ok(OwnedEvent::End),
+            Step::GroupEnd(key) => Ok(OwnedEvent::GroupEnd(key)),
+            Step::Batch => pool
+                .fill(|buffers| self.fill(buffers))
+                .map(OwnedEvent::Batch),
         }
     }
 }
@@ -332,7 +259,7 @@ fn unfinished() -> ObservationError {
 }
 
 impl<C: VisibilityCursor + ?Sized> VisibilityCursor for Box<C> {
-    fn catalogue(&self) -> &Catalogue {
+    fn catalogue(&self) -> &Arc<Catalogue> {
         (**self).catalogue()
     }
 

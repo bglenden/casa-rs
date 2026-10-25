@@ -12,6 +12,7 @@ pub(crate) use catalogue::{metres, radians};
 pub use cursor::Msv2Cursor;
 
 use std::path::Path;
+use std::sync::Arc;
 
 use casa_observation::{
     AccessRequest, BoundCursor, Catalogue, DataGroupEntry, Estimate, NaturalBlocks, Observation,
@@ -63,7 +64,7 @@ struct Partition {
 /// diameters, angles and frequencies are in the units their types claim.
 pub struct Msv2Observation {
     ms: MeasurementSet,
-    catalogue: Catalogue,
+    catalogue: Arc<Catalogue>,
     partitions: Vec<Partition>,
     spectral_weights: bool,
     options: OpenOptions,
@@ -185,13 +186,13 @@ impl Msv2Observation {
             partitions.push(Partition { grid });
         }
         Ok(Self {
-            catalogue: Catalogue {
+            catalogue: Arc::new(Catalogue {
                 antennas,
                 fields,
                 scans: index.scans,
                 observations,
                 partitions: entries,
-            },
+            }),
             partitions,
             spectral_weights,
             options: options.clone(),
@@ -201,7 +202,7 @@ impl Msv2Observation {
 
     /// The catalogue.
     #[must_use]
-    pub fn catalogue(&self) -> &Catalogue {
+    pub fn catalogue(&self) -> &Arc<Catalogue> {
         &self.catalogue
     }
 
@@ -246,7 +247,6 @@ impl Msv2Observation {
     ) -> Result<PartitionEstimate, ObservationError> {
         let (partition, entry) = self.partition(id)?;
         let resolved = request.resolve(entry)?;
-        let grid = &partition.grid;
         let roles = request.roles;
         let channels = request.channels.len();
         let (delivered, stored) = (resolved.correlations.len(), entry.correlations.len());
@@ -256,6 +256,20 @@ impl Msv2Observation {
             .count();
         let bytes_per_sample =
             roles.sample_bytes(channels, delivered, self.spectral_weights, scalars);
+        let grid = &partition.grid;
+        // The cursor's scratch: each present row's number, sample, FLAG_ROW
+        // and time auxiliaries; and, when a time has padding or a subset is
+        // delivered, every stored product of the payload, read before it is
+        // placed.
+        let placed = resolved.correlation_indices.is_some() || grid.padded_fraction() > 0.0;
+        let scratch_bytes_per_sample = 2 * size_of::<usize>()
+            + usize::from(roles.flags)
+            + 8 * scalars
+            + if placed {
+                roles.sample_bytes(channels, stored, self.spectral_weights, 0)
+            } else {
+                0
+            };
         let per_sample = |correlations: usize| {
             usize::from(roles.values) * channels * correlations
                 + usize::from(roles.flags) * channels * correlations
@@ -269,8 +283,12 @@ impl Msv2Observation {
                 + scalars
         };
         let (times, baselines) = (grid.times(), grid.baselines.len());
-        let times_per_batch =
-            times_per_batch(request.batch_bytes, bytes_per_sample, baselines, times)?;
+        let times_per_batch = times_per_batch(
+            request.batch_bytes,
+            bytes_per_sample + scratch_bytes_per_sample,
+            baselines,
+            times,
+        )?;
         let group = &entry.data_groups[resolved.data_group];
         let tile = self
             .ms
@@ -282,6 +300,7 @@ impl Msv2Observation {
             times,
             baselines,
             bytes_per_sample,
+            scratch_bytes_per_sample,
             times_per_batch,
             batches: if times_per_batch == 0 {
                 0
@@ -343,7 +362,7 @@ impl Msv2Observation {
 }
 
 impl Observation for Msv2Observation {
-    fn catalogue(&self) -> &Catalogue {
+    fn catalogue(&self) -> &Arc<Catalogue> {
         &self.catalogue
     }
 

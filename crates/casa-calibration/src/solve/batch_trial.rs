@@ -84,7 +84,7 @@ fn access(observation: &dyn Observation, times: usize) -> AccessRequest {
     let estimate = observation.estimate(&request).expect("estimate");
     let partition = &estimate.partitions[0];
     AccessRequest {
-        batch_bytes: partition.bytes_per_sample * partition.baselines * times,
+        batch_bytes: partition.held_bytes_per_sample() * partition.baselines * times,
         ..request
     }
 }

@@ -8,8 +8,10 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use casa_observation::{ObservationError, VisibilityBatch};
-use casa_types::measures::MjdHighPrec;
+use casa_observation::{ObservationError, ScanId, Shared, VisibilityBatch};
+use casa_types::measures::{EpochView, MjdHighPrec, UvwView};
+use ndarray::{ArrayView1, ArrayView3};
+use num_complex::Complex32;
 use zarrs::array::ArraySubset;
 
 use super::{Msv4Writer, request_error};
@@ -30,6 +32,19 @@ pub(super) struct Scratch {
 struct Placement {
     first_time: usize,
     times: usize,
+}
+
+/// A batch the declaration admits: the views a write encodes, each proven
+/// present, and where its times go.
+struct Checked<'b> {
+    values: ArrayView3<'b, Complex32>,
+    flags: ArrayView3<'b, bool>,
+    weights: ArrayView3<'b, f32>,
+    uvw: UvwView<'b>,
+    centroid: EpochView<'b>,
+    exposure: Shared<'b, f64>,
+    samples_per_time: usize,
+    placement: Placement,
 }
 
 /// `view`'s elements as the one slice they occupy in standard layout.
@@ -65,15 +80,17 @@ impl Msv4Writer {
     /// When a check fails, a time is written twice, or the batch is a
     /// channel window. Nothing of the batch is then written.
     pub fn write_batch(&mut self, batch: &VisibilityBatch<'_>) -> Result<(), ObservationError> {
-        self.check_context(batch)?;
-        let placement = self.place(batch)?;
-        let group = &batch.group;
-        let (Some(values), Some(flags), Some(weights), Some(uvw)) =
-            (group.values, group.flags, group.weights, group.uvw)
-        else {
-            return Err(request_error("a written batch carries every role"));
-        };
-        self.gather_times(batch);
+        let Checked {
+            values,
+            flags,
+            weights,
+            uvw,
+            centroid,
+            exposure,
+            samples_per_time,
+            placement,
+        } = self.check(batch)?;
+        self.gather_times(centroid, exposure, samples_per_time);
         let [_, baselines, channels, correlations] = self.shape;
         let rows = placement.first_time as u64..(placement.first_time + placement.times) as u64;
         let cube = ArraySubset::new_with_ranges(&[
@@ -134,6 +151,39 @@ impl Msv4Writer {
         Ok(())
     }
 
+    /// Everything the write needs of `batch`, checked against the
+    /// declaration before any byte is written.
+    fn check<'b>(&self, batch: &VisibilityBatch<'b>) -> Result<Checked<'b>, ObservationError> {
+        self.check_context(batch)?;
+        let timing = &batch.timing;
+        let (Some(centroid), Some(exposure), Some(_), Some(scan)) = (
+            timing.centroid,
+            timing.exposure_s,
+            timing.interval_s,
+            batch.scan,
+        ) else {
+            return Err(request_error(
+                "a written batch carries its time centroid, interval, exposure and scan",
+            ));
+        };
+        let group = &batch.group;
+        let (Some(values), Some(flags), Some(weights), Some(uvw)) =
+            (group.values, group.flags, group.weights, group.uvw)
+        else {
+            return Err(request_error("a written batch carries every role"));
+        };
+        Ok(Checked {
+            values,
+            flags,
+            weights,
+            uvw,
+            centroid,
+            exposure,
+            samples_per_time: batch.samples_per_time(),
+            placement: self.place(batch, scan)?,
+        })
+    }
+
     /// The batch's context against the declaration's, before any sample.
     fn check_context(&self, batch: &VisibilityBatch<'_>) -> Result<(), ObservationError> {
         let target = &self.target;
@@ -175,22 +225,16 @@ impl Msv4Writer {
         if batch.time.reference() != target.grid.time_scale {
             return Err(mismatch("time scale"));
         }
-        let timing = &batch.timing;
-        if timing.centroid.is_none()
-            || timing.exposure_s.is_none()
-            || timing.interval_s.is_none()
-            || batch.scan.is_none()
-        {
-            return Err(request_error(
-                "a written batch carries its time centroid, interval, exposure and scan",
-            ));
-        }
         Ok(())
     }
 
     /// The batch's times in the dataset, with each time's field, scan and
     /// interval checked against the grid: contiguous and not yet written.
-    fn place(&self, batch: &VisibilityBatch<'_>) -> Result<Placement, ObservationError> {
+    fn place(
+        &self,
+        batch: &VisibilityBatch<'_>,
+        scan: ArrayView1<'_, ScanId>,
+    ) -> Result<Placement, ObservationError> {
         let target = &self.target;
         let grid = &target.grid;
         let unix = MjdHighPrec::new(UNIX_EPOCH_MJD, 0.0);
@@ -199,14 +243,17 @@ impl Msv4Writer {
             return Err(request_error("an empty batch"));
         }
         let per_time = batch.samples_per_time();
-        let scan = batch.scan.expect("checked");
-        let mut first_time = None;
-        for t in 0..times {
+        let index_of = |t: usize| {
             let seconds = batch.time.seconds_since(t, unix);
-            let index = *target
+            target
                 .times
                 .get(&seconds.to_bits())
-                .ok_or_else(|| invalid(format!("time {seconds} is not in the dataset")))?;
+                .copied()
+                .ok_or_else(|| invalid(format!("time {seconds} is not in the dataset")))
+        };
+        let first_time = index_of(0)?;
+        for t in 0..times {
+            let index = index_of(t)?;
             if batch.field[t] != grid.field_per_time[index] {
                 return Err(mismatch("field at a time"));
             }
@@ -218,12 +265,10 @@ impl Msv4Writer {
             {
                 return Err(mismatch("integration interval"));
             }
-            let first = *first_time.get_or_insert(index);
-            if index != first + t {
+            if index != first_time + t {
                 return Err(invalid("a batch's times are not contiguous in the dataset"));
             }
         }
-        let first_time = first_time.expect("times");
         if first_time + times > self.written.len()
             || self.written[first_time..first_time + times]
                 .iter()
@@ -236,23 +281,23 @@ impl Msv4Writer {
 
     /// The time centroids (in Unix seconds) and exposures per sample,
     /// counted as packed unless the batch already holds them that way.
-    fn gather_times(&mut self, batch: &VisibilityBatch<'_>) {
+    fn gather_times(
+        &mut self,
+        centroid: EpochView<'_>,
+        exposure: Shared<'_, f64>,
+        samples_per_time: usize,
+    ) {
         let unix = MjdHighPrec::new(UNIX_EPOCH_MJD, 0.0);
-        let centroid = batch.timing.centroid.expect("checked");
-        let in_place = centroid.origin() == unix
-            && matches!(
-                batch.timing.exposure_s,
-                Some(casa_observation::Shared::PerSample(_))
-            );
+        let in_place = centroid.origin() == unix && matches!(exposure, Shared::PerSample(_));
         let scratch = &mut self.scratch;
-        let samples = batch.samples();
+        let samples = centroid.len();
         scratch.centroid.clear();
         scratch.exposure.clear();
         for sample in 0..samples {
             scratch.centroid.push(centroid.seconds_since(sample, unix));
             scratch
                 .exposure
-                .push(batch.exposure_s(sample).expect("checked"));
+                .push(exposure.get(sample, samples_per_time));
         }
         if !in_place {
             self.counters.packed_elements += 2 * samples;
