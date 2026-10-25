@@ -31,8 +31,11 @@ use casa_types::Complex32;
 use super::geometry::RowGeometry;
 use super::pipeline::Integration;
 use super::prediction::PredictionStage;
+use crate::corrupt::jones::JonesTerm;
+use crate::corrupt::{BatchScales, NoiseScratch, TsysAtm};
 use crate::session::SessionResources;
 use crate::session::error::{SimulatorError, SimulatorResult};
+use crate::session::plan::DataPlan;
 
 /// The writer's phase, as an admission refusal names it.
 pub(super) const WRITER_PHASE: &str = "the simulator's MeasurementSet writer";
@@ -47,8 +50,10 @@ const WRITER_LIVE_BATCHES: usize = 2;
 /// from a plan that cannot be made.
 const UNBOUNDED_WRITER_BYTES: usize = 1 << 50;
 
-/// Scratch of one worker's integration, per antenna: the antennas' uvw, and
-/// their shadow and elevation flags, with room for the measures frames.
+/// Scratch of one worker's integration, per antenna: the antennas' uvw,
+/// their shadow flags and elevations, and for `tsys-manual` noise their
+/// airmasses (and elevations at a moved pointing's phase centre), with room
+/// for the measures frames.
 const ANTENNA_SCRATCH_BYTES: u64 = 64;
 
 /// The MAIN table `close` writes.
@@ -65,6 +70,76 @@ pub(super) struct MainShape<'a> {
     /// Heap of the subtable columns the save generates (POINTING's), which
     /// grows with the scans.
     pub(super) generated_bytes: u64,
+    /// What a batch's `tsys-atm` noise holds beside the cells.
+    pub(super) noise_scales: NoiseScales,
+}
+
+/// What a batch's `tsys-atm` noise and `settrop` terms hold beside the
+/// cells: their antenna scales and phasors ([`BatchScales`]), and each
+/// worker's σ of a row ([`NoiseScratch`]).
+#[derive(Debug, Clone, Copy, Default)]
+pub(super) struct NoiseScales {
+    /// The plan's `tsys-atm` terms.
+    terms: usize,
+    /// The plan's `settrop` terms.
+    tropospheric_terms: usize,
+    /// Channels of the cells.
+    channels: usize,
+    /// Rows of the smallest integration, and antennas of the largest, when
+    /// the rows come in whole integrations ([`BatchScales::most_entries`]).
+    integrations: Option<(usize, usize)>,
+}
+
+impl NoiseScales {
+    /// What `plan`'s corruptions hold, for cells of `channels` channels and
+    /// the rows' `integrations`. Every `corrupt` covers scan 0, so its
+    /// corruptions are all the plan's.
+    pub(super) fn of(
+        plan: &DataPlan,
+        channels: usize,
+        integrations: Option<(usize, usize)>,
+    ) -> Self {
+        let mut models: Vec<*const TsysAtm> = plan
+            .noise_for_scan(0)
+            .iter()
+            .filter_map(|application| application.tsys_atm().map(std::ptr::from_ref))
+            .collect();
+        models.sort_unstable();
+        models.dedup();
+        let mut tropospheric: Vec<*const JonesTerm> = plan
+            .corruptions_for_scan(0)
+            .flat_map(|(_, jones)| jones)
+            .filter(|term| term.tropospheric_phase().is_some())
+            .map(|term| std::ptr::from_ref::<JonesTerm>(term))
+            .collect();
+        tropospheric.sort_unstable();
+        tropospheric.dedup();
+        Self {
+            terms: models.len(),
+            tropospheric_terms: tropospheric.len(),
+            channels,
+            integrations,
+        }
+    }
+
+    /// The most antenna-scale and phasor entries a batch of `rows` rows
+    /// needs: the room its table reserves.
+    pub(super) fn entries(&self, rows: usize) -> (usize, usize) {
+        (
+            BatchScales::most_entries(self.terms, rows, self.integrations),
+            BatchScales::most_entries(self.tropospheric_terms, rows, self.integrations),
+        )
+    }
+
+    /// The most a batch of `rows` rows holds with `workers` workers.
+    pub(super) fn bytes(&self, rows: usize, workers: usize) -> u64 {
+        let scratch = if self.terms == 0 {
+            0
+        } else {
+            workers as u64 * NoiseScratch::bytes(self.channels)
+        };
+        BatchScales::bytes(self.entries(rows), self.channels) + scratch
+    }
 }
 
 /// What `close` was admitted: the write plan, the workers that fit, and the
@@ -206,7 +281,8 @@ fn refusal_or(
 /// Bytes the pipeline holds beside the writer, with `cores`' streaming
 /// workers: the batch being filled, the geometry of the integrations it
 /// spans (with the unwritten rows of the one before), the list of those
-/// integrations, one integration's scalar runs, and each worker's scratch.
+/// integrations, one integration's scalar runs, each worker's scratch, and
+/// the batch's `tsys-atm` antenna scales.
 pub(super) fn pipeline_bytes(
     shape: &MainShape<'_>,
     batch_rows: usize,
@@ -223,7 +299,10 @@ pub(super) fn pipeline_bytes(
     let integrations = (rows + 2) * size(size_of::<Integration>());
     let scalars = largest * (4 + 4 + 1);
     let workers = cores.streaming_workers as u64 * shape.antennas as u64 * ANTENNA_SCRATCH_BYTES;
-    batch + geometry + integrations + scalars + workers
+    let noise = shape
+        .noise_scales
+        .bytes(batch_rows, cores.streaming_workers);
+    batch + geometry + integrations + scalars + workers + noise
 }
 
 fn to_usize(bytes: u64) -> usize {
@@ -246,6 +325,7 @@ mod tests {
             largest_integration: 1_000,
             antennas: 44,
             generated_bytes: 0,
+            noise_scales: NoiseScales::default(),
         }
     }
 

@@ -60,27 +60,31 @@ pub(crate) fn trace_group(
     if trace_path().is_none() {
         return;
     }
-    let receptors =
-        group
-            .receptor_graphs
-            .iter()
-            .zip(group.receptor_weights.iter())
-            .zip(group.receptor_stats.iter())
-            .enumerate()
-            .map(|(receptor, ((graph, weights), stats))| {
-                let mut edges = graph
+    let receptors = group
+        .channel_graphs
+        .first()
+        .into_iter()
+        .flatten()
+        .enumerate()
+        .map(|(receptor, graph)| {
+            let mut edges = graph
+                .edges
                 .iter()
                 .filter_map(|(&(antenna1, antenna2), value)| {
                     if antenna1 > antenna2 {
                         return None;
                     }
-                    let stat = stats.get(&(antenna1, antenna2)).copied().unwrap_or_default();
+                    let stat = graph
+                        .stats
+                        .get(&(antenna1, antenna2))
+                        .copied()
+                        .unwrap_or_default();
                     Some(json!({
                         "antenna1": antenna1,
                         "antenna2": antenna2,
                         "sum_re": value.re,
                         "sum_im": value.im,
-                        "weight": weights.get(&(antenna1, antenna2)).copied().unwrap_or_default(),
+                        "weight": graph.weights.get(&(antenna1, antenna2)).copied().unwrap_or_default(),
                         "sample_count": stat.sample_count,
                         "collapsed_count": stat.collapsed_count,
                         "weighted_sample_power": stat.weighted_sample_power,
@@ -113,7 +117,7 @@ pub(crate) fn trace_group(
         "observation_id": group.observation_id,
         "min_time": group.min_time,
         "max_time": group.max_time,
-        "averaged_time": group.aggregate_time_centroid(),
+        "averaged_time": group.solution_time,
         "fallback_time": group.aggregate_time(),
         "total_interval": group.total_interval,
         "sample_rows": group.sample_rows,
@@ -156,7 +160,6 @@ pub(crate) fn trace_solution_rows(
                 .collect::<Vec<_>>();
             json!({
                 "time": row.time_seconds,
-                "interval": row.interval_seconds,
                 "field_id": row.field_id,
                 "spw_id": row.spw_id,
                 "scan_number": row.scan_number,
@@ -296,7 +299,7 @@ mod tests {
 
     use super::*;
     use crate::solve::grouping::SolveEdgeStats;
-    use crate::solve::kernel::PhaseStepTrace;
+    use crate::solve::kernel::{PhaseStepTrace, SolveGraph};
     use crate::solve::{GainSolveCombine, GainSolveInterval, GainSolveModelSource, RefAntSelector};
 
     fn test_request(output_table: impl Into<std::path::PathBuf>) -> GainSolveRequest {
@@ -339,26 +342,27 @@ mod tests {
         group.max_time = 20.0;
         group.unique_time_sum = 30.0;
         group.unique_time_count = 2;
-        group.time_centroid_weighted_sum = 61.0;
-        group.time_centroid_weight = 4.0;
+        group.solution_time = 15.25;
         group.total_interval = 8.0;
         group.sample_rows = 2;
         group.scan_numbers.insert(6);
         group.antenna_ids.extend([0, 1]);
-        group.receptor_graphs = vec![HashMap::from([
-            ((0, 1), Complex32::new(2.0, -1.0)),
-            ((1, 0), Complex32::new(2.0, 1.0)),
-        ])];
-        group.receptor_weights = vec![HashMap::from([((0, 1), 3.5), ((1, 0), 3.5)])];
-        group.receptor_stats = vec![HashMap::from([(
-            (0, 1),
-            SolveEdgeStats {
-                weighted_sample_power: 7.0,
-                raw_weighted_sample_power: 8.0,
-                sample_count: 9,
-                collapsed_count: 10,
-            },
-        )])];
+        group.channel_graphs = vec![vec![SolveGraph {
+            edges: HashMap::from([
+                ((0, 1), Complex32::new(2.0, -1.0)),
+                ((1, 0), Complex32::new(2.0, 1.0)),
+            ]),
+            weights: HashMap::from([((0, 1), 3.5), ((1, 0), 3.5)]),
+            stats: HashMap::from([(
+                (0, 1),
+                SolveEdgeStats {
+                    weighted_sample_power: 7.0,
+                    raw_weighted_sample_power: 8.0,
+                    sample_count: 9,
+                    collapsed_count: 10,
+                },
+            )]),
+        }]];
         let request = test_request(dir.path().join("phase.cal"));
 
         trace_group(&base_key, &bucket_key, &group, &request);
@@ -368,7 +372,6 @@ mod tests {
             &[
                 SolutionRow {
                     time_seconds: 20.0,
-                    interval_seconds: 4.0,
                     field_id: 3,
                     spw_id: 4,
                     antenna_id: 2,
@@ -383,7 +386,6 @@ mod tests {
                 },
                 SolutionRow {
                     time_seconds: 20.0,
-                    interval_seconds: 4.0,
                     field_id: 3,
                     spw_id: 4,
                     antenna_id: 1,

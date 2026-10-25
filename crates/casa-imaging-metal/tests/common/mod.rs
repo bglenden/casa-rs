@@ -9,8 +9,9 @@ use casa_imaging_operator::{
     AiryDish, Basis, CellHold, CfKey, ConvolutionFunctionSet, DenseCell, DeviceFailure,
     GridAccumulator, GridGeometry, GridPadding, GridPrecision, GridScalar, ImageCorrection,
     ImageExtent, KernelNormalisation, MeasurementOperator, ModelImages, ModelPlane, MosaicPb,
-    MosaicWindow, MuellerRouting, OperatorError, PaddingFactor, Placement, PolarizationRouting,
-    RowContext, SampleBuffer, Spheroidal, TapFootprint, TapLayout, Tile, pair_plane,
+    MosaicRules, MosaicWindow, MuellerRouting, OperatorError, PaddingFactor, Placement,
+    PolarizationRouting, RowContext, SampleBuffer, Spheroidal, TapFootprint, TapLayout, Tile,
+    pair_plane,
 };
 use casa_types::Correlation;
 use ndarray::Array2;
@@ -182,6 +183,7 @@ fn mosaic_set() -> MosaicPb {
         .map(|(index, &hz)| window(index as u32, hz))
         .collect::<Vec<_>>();
     MosaicPb::new(
+        MosaicRules::Tclean,
         &geometry,
         &routing(),
         MOSAIC_FREQUENCIES_HZ[0],

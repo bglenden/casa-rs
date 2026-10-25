@@ -9,8 +9,8 @@ use casa_imaging_model::{
 use casa_imaging_operator::{
     AiryDish, AwCatalog, Basis, CacheBound, CacheCharge, ConvolutionFunctionSet, DensityCellRule,
     DensityGridShape, GridGeometry, GridPadding, GridPrecision, ImageExtent, MeasurementOperator,
-    MosaicPb, MosaicWindow, PaddingFactor, PolarizationRouting, SpectralAxis, SpectralResampler,
-    Spheroidal, WPlaneCount, WPlanes,
+    MosaicPb, MosaicRules, MosaicWindow, PaddingFactor, PolarizationRouting, SpectralAxis,
+    SpectralResampler, Spheroidal, WPlaneCount, WPlanes,
 };
 use casa_imaging_runtime::pass::{BackendChoice, RowSamples};
 use casa_imaging_runtime::{
@@ -400,12 +400,19 @@ fn kernel_set(
                 .collect::<Vec<_>>();
             let frequency_hz = reference_frequency_hz(problem)?;
             let windows = mosaic_windows(problem)?;
+            let rules = MosaicRules::Tclean;
             let screening = admission.admit(
                 "mosaic screens",
-                MosaicPb::screens_bytes(geometry, frequency_hz, &dishes, &windows)?,
+                MosaicPb::screens_bytes(rules, geometry, frequency_hz, &dishes, &windows)?,
             )?;
-            let screens =
-                MosaicPb::screens(geometry, polarization, frequency_hz, &dishes, &windows)?;
+            let screens = MosaicPb::screens(
+                rules,
+                geometry,
+                polarization,
+                frequency_hz,
+                &dishes,
+                &windows,
+            )?;
             let mut kernels = admission.admit(PHASE, screens.kernel_bytes())?;
             let set = screens.finish()?;
             drop(screening);

@@ -50,6 +50,7 @@ use crate::constants::{
     COL_N_POLY_PHASE, COL_PHASE_UNITS, COL_POLY_COEFF_AMP, COL_POLY_COEFF_PHASE, COL_SCALE_FACTOR,
     COL_SPECTRAL_WINDOW_ID, COL_TIME, COL_VALID_DOMAIN, LEGACY_CAL_DESC_KEYWORD,
 };
+use crate::lookup::interpolate_time_linear;
 use crate::model::CalibrationParameterFamily;
 use crate::plan::{
     ApplyCalibrationTablePlan, ApplyInterpolationMode, ApplyMode, ApplyPlan, ApplyPlanError,
@@ -378,6 +379,9 @@ pub struct ApplyExecutionTimings {
 pub(crate) struct EvaluatedApplyRow {
     pub(crate) corrected_data: ArrayValue,
     pub(crate) flags: ArrayValue,
+    /// `[correlation, channel]` factors the `calwt` tables scale weights by,
+    /// when any table applies with `calwt`.
+    pub(crate) weight_factors: Option<ArrayD<f32>>,
 }
 
 /// Errors returned while executing an apply plan.
@@ -517,6 +521,7 @@ pub(crate) fn evaluate_apply_rows(
         None
     };
 
+    let any_calwt = plan.calibration_tables.iter().any(|table| table.calwt);
     let mut evaluated_rows = HashMap::new();
     let mut main_rows = ms
         .main_table()
@@ -558,6 +563,10 @@ pub(crate) fn evaluate_apply_rows(
                 source: MsError::from(source),
             }
         })?;
+        // Unit weights through the calwt update leave its factors.
+        let unit_weight = any_calwt.then(|| {
+            ArrayValue::Float32(ArrayD::from_elem(IxDyn(&[correlation_types.len()]), 1.0))
+        });
 
         let result = apply_row(
             row,
@@ -565,8 +574,8 @@ pub(crate) fn evaluate_apply_rows(
                 correlation_types,
                 data,
                 original_flags: Some(original_flags),
-                original_weight: None,
-                has_weight_spectrum: false,
+                original_weight: unit_weight.as_ref(),
+                has_weight_spectrum: any_calwt,
             },
             plan,
             &loaded_tables,
@@ -581,6 +590,10 @@ pub(crate) fn evaluate_apply_rows(
                 flags: result
                     .updated_flags
                     .unwrap_or_else(|| original_flags.clone()),
+                weight_factors: match result.updated_weight_spectrum {
+                    Some(ArrayValue::Float32(factors)) => Some(factors),
+                    _ => None,
+                },
             },
         );
     }
@@ -3104,12 +3117,12 @@ fn pol_id_of_ddid(ddid_row: usize) -> i32 {
     ddid_row as i32
 }
 
-struct LoadedCalibrationTable {
+pub(crate) struct LoadedCalibrationTable {
     path: PathBuf,
     interp: ApplyInterpolationMode,
     supports_calwt: bool,
     engine: Option<Arc<MsCalEngine>>,
-    solutions: HashMap<(i32, i32, i32), Vec<CalibrationSolution>>,
+    pub(crate) solutions: HashMap<(i32, i32, i32), Vec<CalibrationSolution>>,
 }
 
 #[derive(Clone, Copy)]
@@ -3118,13 +3131,13 @@ struct LegacyCalDescEntry {
     receptor_count: usize,
 }
 
-struct CalibrationSolution {
-    time_seconds: f64,
-    grid: Arc<CalibrationGrid>,
+pub(crate) struct CalibrationSolution {
+    pub(crate) time_seconds: f64,
+    pub(crate) grid: Arc<CalibrationGrid>,
 }
 
 #[derive(Clone)]
-enum CalibrationGrid {
+pub(crate) enum CalibrationGrid {
     Complex(GainGrid),
     Delay(DelayGrid),
     Antpos(AntposGrid),
@@ -3133,11 +3146,11 @@ enum CalibrationGrid {
 }
 
 #[derive(Clone)]
-struct GainGrid {
-    receptor_count: usize,
-    channel_count: usize,
-    values: ArrayD<Complex32>,
-    flags: ArrayD<bool>,
+pub(crate) struct GainGrid {
+    pub(crate) receptor_count: usize,
+    pub(crate) channel_count: usize,
+    pub(crate) values: ArrayD<Complex32>,
+    pub(crate) flags: ArrayD<bool>,
 }
 
 #[derive(Clone, Copy)]
@@ -3156,28 +3169,28 @@ struct CalibrationSamplingContext<'a> {
 }
 
 #[derive(Clone)]
-struct DelayGrid {
-    receptor_count: usize,
-    channel_count: usize,
-    values_ns: ArrayD<f32>,
-    flags: ArrayD<bool>,
+pub(crate) struct DelayGrid {
+    pub(crate) receptor_count: usize,
+    pub(crate) channel_count: usize,
+    pub(crate) values_ns: ArrayD<f32>,
+    pub(crate) flags: ArrayD<bool>,
 }
 
 #[derive(Clone)]
-struct AntposGrid {
+pub(crate) struct AntposGrid {
     offsets_m: [f32; 3],
     flagged: bool,
 }
 
 #[derive(Clone)]
-struct GainCurveGrid {
+pub(crate) struct GainCurveGrid {
     receptor_count: usize,
     coefficients: ArrayD<f32>,
     flags: ArrayD<bool>,
 }
 
 #[derive(Clone)]
-struct OpacityGrid {
+pub(crate) struct OpacityGrid {
     tau: f32,
     flagged: bool,
 }
@@ -3690,7 +3703,7 @@ impl OpacityGrid {
 }
 
 impl LoadedCalibrationTable {
-    fn lookup(
+    pub(crate) fn lookup(
         &self,
         field_id: i32,
         spw_id: i32,
@@ -3763,135 +3776,6 @@ impl LoadedCalibrationTable {
     }
 }
 
-fn interpolate_time_linear(
-    path: &Path,
-    candidates: &[CalibrationSolution],
-    time_seconds: f64,
-) -> Result<Arc<CalibrationGrid>, ApplyExecutionError> {
-    let mut sorted = candidates.iter().collect::<Vec<_>>();
-    sorted.sort_by(|a, b| a.time_seconds.total_cmp(&b.time_seconds));
-
-    let lower = sorted
-        .iter()
-        .rev()
-        .find(|solution| solution.time_seconds <= time_seconds)
-        .copied();
-    let upper = sorted
-        .iter()
-        .find(|solution| solution.time_seconds >= time_seconds)
-        .copied();
-
-    match (lower, upper) {
-        (Some(lower), Some(upper))
-            if (upper.time_seconds - lower.time_seconds).abs() > f64::EPSILON =>
-        {
-            let fraction = ((time_seconds - lower.time_seconds)
-                / (upper.time_seconds - lower.time_seconds)) as f32;
-            match (lower.grid.as_ref(), upper.grid.as_ref()) {
-                (CalibrationGrid::Complex(lower), CalibrationGrid::Complex(upper)) => {
-                    if lower.values.shape() != upper.values.shape() {
-                        return Err(ApplyExecutionError::UnsupportedInterpolation {
-                            path: path.display().to_string(),
-                            interp: ApplyInterpolationMode::Linear,
-                            reason: "time interpolation requires matching parameter shapes"
-                                .to_string(),
-                        });
-                    }
-                    let mut values = lower.values.clone();
-                    for (value, upper_value) in values.iter_mut().zip(upper.values.iter()) {
-                        *value = interpolate_gain_amplitude_phase(*value, *upper_value, fraction);
-                    }
-                    let mut flags = lower.flags.clone();
-                    for (flag, upper_flag) in flags.iter_mut().zip(upper.flags.iter()) {
-                        *flag = *flag || *upper_flag;
-                    }
-                    Ok(Arc::new(CalibrationGrid::Complex(GainGrid {
-                        receptor_count: lower.receptor_count,
-                        channel_count: lower.channel_count,
-                        values,
-                        flags,
-                    })))
-                }
-                (CalibrationGrid::Delay(lower), CalibrationGrid::Delay(upper)) => {
-                    if lower.values_ns.shape() != upper.values_ns.shape() {
-                        return Err(ApplyExecutionError::UnsupportedInterpolation {
-                            path: path.display().to_string(),
-                            interp: ApplyInterpolationMode::Linear,
-                            reason: "time interpolation requires matching parameter shapes"
-                                .to_string(),
-                        });
-                    }
-                    let mut values_ns = lower.values_ns.clone();
-                    for (value, upper_value) in values_ns.iter_mut().zip(upper.values_ns.iter()) {
-                        *value = *value + (*upper_value - *value) * fraction;
-                    }
-                    let mut flags = lower.flags.clone();
-                    for (flag, upper_flag) in flags.iter_mut().zip(upper.flags.iter()) {
-                        *flag = *flag || *upper_flag;
-                    }
-                    Ok(Arc::new(CalibrationGrid::Delay(DelayGrid {
-                        receptor_count: lower.receptor_count,
-                        channel_count: lower.channel_count,
-                        values_ns,
-                        flags,
-                    })))
-                }
-                (
-                    CalibrationGrid::Antpos(_)
-                    | CalibrationGrid::GainCurve(_)
-                    | CalibrationGrid::Opacity(_),
-                    _,
-                )
-                | (
-                    _,
-                    CalibrationGrid::Antpos(_)
-                    | CalibrationGrid::GainCurve(_)
-                    | CalibrationGrid::Opacity(_),
-                ) => Err(ApplyExecutionError::UnsupportedInterpolation {
-                    path: path.display().to_string(),
-                    interp: ApplyInterpolationMode::Linear,
-                    reason:
-                        "VLA prior tables are row-geometry dependent and use nearest table rows"
-                            .to_string(),
-                }),
-                _ => Err(ApplyExecutionError::UnsupportedInterpolation {
-                    path: path.display().to_string(),
-                    interp: ApplyInterpolationMode::Linear,
-                    reason: "time interpolation requires matching calibration parameter families"
-                        .to_string(),
-                }),
-            }
-        }
-        (Some(lower), _) => Ok(lower.grid.clone()),
-        (_, Some(upper)) => Ok(upper.grid.clone()),
-        _ => Err(ApplyExecutionError::UnsupportedInterpolation {
-            path: path.display().to_string(),
-            interp: ApplyInterpolationMode::Linear,
-            reason: "no calibration rows available for linear interpolation".to_string(),
-        }),
-    }
-}
-
-fn interpolate_gain_amplitude_phase(
-    lower: Complex32,
-    upper: Complex32,
-    fraction: f32,
-) -> Complex32 {
-    let lower_amp = lower.norm();
-    let upper_amp = upper.norm();
-    let amp = lower_amp + (upper_amp - lower_amp) * fraction;
-    let lower_phase = lower.arg();
-    let mut upper_phase = upper.arg();
-    while upper_phase > lower_phase + std::f32::consts::PI {
-        upper_phase -= 2.0 * std::f32::consts::PI;
-    }
-    while upper_phase < lower_phase - std::f32::consts::PI {
-        upper_phase += 2.0 * std::f32::consts::PI;
-    }
-    let phase = lower_phase + (upper_phase - lower_phase) * fraction;
-    Complex32::new(amp * phase.cos(), amp * phase.sin())
-}
-
 fn geometry_engine_for_plan(
     ms: &MeasurementSet,
     plan: &ApplyPlan,
@@ -3915,7 +3799,7 @@ fn geometry_engine_for_plan(
         })
 }
 
-fn load_calibration_table(
+pub(crate) fn load_calibration_table(
     table_plan: &ApplyCalibrationTablePlan,
     geometry_engine: Option<&Arc<MsCalEngine>>,
 ) -> Result<LoadedCalibrationTable, ApplyExecutionError> {
@@ -4642,6 +4526,7 @@ fn get_f64_array(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::lookup::interpolate_gain_amplitude_phase;
     use std::fs;
     use std::sync::{Mutex, OnceLock};
 

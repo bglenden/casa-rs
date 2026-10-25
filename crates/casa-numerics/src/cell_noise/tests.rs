@@ -403,7 +403,7 @@ fn every_lane_draws_as_a_draw_made_alone() {
                 let [re, im] = scaled_draws(
                     &window.map(|pair| pair.0),
                     &window.map(|pair| pair.1),
-                    sigma,
+                    &[sigma; LANES],
                 );
                 for (lane, &(a, b)) in window.iter().enumerate() {
                     let (alone_re, alone_im) = scaled_draw(a, b, sigma);
@@ -422,6 +422,57 @@ fn every_lane_draws_as_a_draw_made_alone() {
                         );
                     }
                 }
+            }
+        }
+    }
+}
+
+/// A scale of 1 in every channel adds bit for bit what `add_to_row` adds,
+/// and each channel scaled by `s` gets bit for bit the draws a row of σ·`s`
+/// would, in every shape, a partial last batch included.
+#[test]
+fn scaled_rows_draw_each_channel_at_its_own_sigma() {
+    for (correlations, autocorrelation) in
+        [(1, false), (2, false), (4, false), (2, true), (3, false)]
+    {
+        for channels in [1, 15, 16, 17, 40] {
+            let samples = channels * correlations;
+            let noise = CellNoise::new(key(11_111, 3), 0.25);
+            let start = varied_cell(samples, channels as u64);
+            let mut plain = start.clone();
+            noise.add_to_row(5, autocorrelation, correlations, &mut plain);
+            let mut ones = start.clone();
+            noise.add_to_row_scaled(
+                5,
+                autocorrelation,
+                correlations,
+                &vec![1.0; channels],
+                &mut ones,
+            );
+            let bits = |cell: &[Complex32]| -> Vec<(u32, u32)> {
+                cell.iter()
+                    .map(|c| (c.re.to_bits(), c.im.to_bits()))
+                    .collect()
+            };
+            assert_eq!(bits(&ones), bits(&plain), "{correlations}x{channels}");
+
+            let scales: Vec<f32> = (0..channels).map(|c| 0.5 + 0.37 * c as f32).collect();
+            let mut scaled = start.clone();
+            noise.add_to_row_scaled(5, autocorrelation, correlations, &scales, &mut scaled);
+            for (channel, &scale) in scales.iter().enumerate() {
+                let mut alone = start.clone();
+                CellNoise::new(noise.key(), 0.25 * scale).add_to_row(
+                    5,
+                    autocorrelation,
+                    correlations,
+                    &mut alone,
+                );
+                let span = channel * correlations..(channel + 1) * correlations;
+                assert_eq!(
+                    bits(&scaled[span.clone()]),
+                    bits(&alone[span]),
+                    "{correlations}x{channels}, channel {channel}"
+                );
             }
         }
     }

@@ -28,11 +28,13 @@ mod corrected_export;
 mod execute;
 mod fluxscale;
 mod gencal;
+mod lookup;
 mod managed_output;
 mod model;
 mod plan;
 mod plots;
 mod session;
+mod simulated;
 mod solve;
 mod stats;
 mod summary;
@@ -58,6 +60,10 @@ pub use fluxscale::{
     fluxscale,
 };
 pub use gencal::{GencalError, GencalReport, GencalRequest, GencalType, gencal};
+pub use lookup::{
+    CalibrationTableLookup, ComplexSolution, FieldSelection, LOOKUP_KEPT_ROW_BYTES,
+    LOOKUP_LOADING_ROW_BYTES,
+};
 pub use managed_output::{CalibrationTaskResult, ManagedCalibrationOutput};
 pub use model::{
     CalibrationColumnSummary, CalibrationIssueSeverity, CalibrationKeywordSummary,
@@ -77,6 +83,11 @@ pub use plots::{
 pub use session::{
     CalibrationDataset, CalibrationError, CalibrationSolveRequest, CalibrationSolveResult,
     solve_calibration,
+};
+pub use simulated::{
+    SIMULATED_TABLE_ROW_BYTES, SIMULATED_TABLE_VALUE_BYTES, SimulatedJones, SimulatedSolution,
+    SolutionValues, check_simulated_table_destination, simulated_table_bytes,
+    write_simulated_jones_table,
 };
 pub use solve::{
     GainSolveCombine, GainSolveError, GainSolveInterval, GainSolveMode, GainSolveModelSource,

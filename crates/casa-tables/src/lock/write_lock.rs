@@ -64,6 +64,10 @@ pub struct TableWriteLock {
     /// Whether a write was recorded; releasing then publishes it.
     #[cfg_attr(not(unix), allow(dead_code))]
     written: bool,
+    /// `table.dat` as it was when the lock was taken, `None` when it could
+    /// not be read; the publication compares the file with it.
+    #[cfg(unix)]
+    table_dat_at_acquire: Option<Vec<u8>>,
 }
 
 impl TableWriteLock {
@@ -129,10 +133,13 @@ impl TableWriteLock {
             if !outcome.is_acquired() {
                 return Err(lock_failed(outcome.refusal(LockType::Write, nattempts)));
             }
+            let table_dat_at_acquire =
+                std::fs::read(path.join(crate::storage::TABLE_CONTROL_FILE)).ok();
             Ok(Self {
                 path,
                 lock_file: Some(lock_file),
                 written: false,
+                table_dat_at_acquire,
             })
         }
         #[cfg(not(unix))]
@@ -194,11 +201,13 @@ impl TableWriteLock {
 
     /// Release the lock, publishing any recorded write in the sync data.
     ///
-    /// The published row, column and data-manager counts are read from the
-    /// table's `table.dat` as persisted, not taken from an in-memory handle:
-    /// casacore takes a reopened table's row count from the sync data and
-    /// asserts that its per-data-manager counters match the table's data
-    /// managers.
+    /// The published row, column and data-manager counts describe the table
+    /// as persisted, not an in-memory handle: casacore takes a reopened
+    /// table's row count from the sync data and asserts that its
+    /// per-data-manager counters match the table's data managers. They are
+    /// read from the table's `table.dat` when this writer changed its bytes;
+    /// when the file is as it was when the lock was taken, the row count
+    /// published before is kept, since the file can trail it (#880).
     ///
     /// # Errors
     ///
@@ -219,7 +228,12 @@ impl TableWriteLock {
                 message: error.to_string(),
             };
             let published = if self.written {
-                publish_persisted_write(&lock_file, &self.path).map(|_| ())
+                publish_persisted_write(
+                    &lock_file,
+                    &self.path,
+                    self.table_dat_at_acquire.as_deref(),
+                )
+                .map(|_| ())
             } else {
                 Ok(())
             };
@@ -260,25 +274,47 @@ impl PersistedShape {
     }
 }
 
+/// Whether `table_dir`'s `table.dat` still holds `before`, byte for byte.
+#[cfg(unix)]
+fn table_dat_unchanged(table_dir: &Path, before: &[u8]) -> bool {
+    std::fs::read(table_dir.join(crate::storage::TABLE_CONTROL_FILE)).is_ok_and(|now| now == before)
+}
+
 /// Publish a write to the table at `table_dir` in its lock file's sync data,
 /// describing the table as persisted: its row and column counts and one
 /// change counter per data manager, as casacore's `PlainTable::putFile`
 /// publishes them. The counters continue from the sync data the lock file
 /// holds, and every data manager counts as changed. The caller holds the
 /// table's write lock. Returns the published sync data.
+///
+/// `table_dat_before` is `table.dat` as it was before the write. A write
+/// that changed the file's bytes publishes the counts it gives, which may be
+/// fewer rows than before, as casacore's full `putFile` flushes `table.dat`
+/// before it publishes. A write that left the file's bytes as they were (one
+/// that wrote only data, stopped before it reached the file, wrote nothing,
+/// or wrote the file back unchanged) keeps the row count published before,
+/// as casacore's data-only `putFile` publishes the count it holds without
+/// rewriting the file. The file can trail that count (#880), and publishing
+/// the file's would then announce fewer rows than the storage managers hold,
+/// which casacore refuses.
 #[cfg(unix)]
 pub(crate) fn publish_persisted_write(
     lock_file: &LockFile,
     table_dir: &Path,
+    table_dat_before: Option<&[u8]>,
 ) -> std::io::Result<SyncData> {
     let shape = PersistedShape::read(table_dir)?;
-    let mut sync = lock_file.read_sync_data()?.unwrap_or_else(SyncData::new);
-    sync.record_write(
-        shape.rows,
-        shape.columns,
-        true,
-        &vec![true; shape.data_managers],
-    );
+    let published = lock_file.read_sync_data()?;
+    let rows = match &published {
+        Some(published)
+            if table_dat_before.is_some_and(|before| table_dat_unchanged(table_dir, before)) =>
+        {
+            published.nrrow
+        }
+        _ => shape.rows,
+    };
+    let mut sync = published.unwrap_or_else(SyncData::new);
+    sync.record_write(rows, shape.columns, true, &vec![true; shape.data_managers]);
     lock_file.write_sync_data(&sync)?;
     Ok(sync)
 }

@@ -20,7 +20,7 @@ const fn method(name: &'static str, parameters: &'static [Parameter], status: St
 
 use CasaDefault::{Bool, Empty, Float, Floats, Int, Ints, Text, Texts};
 use Kind as K;
-use Status::{DeprecatedInCasa, DisabledInCasa, Implemented, NotYetImplemented};
+use Status::{DeprecatedInCasa, DisabledInCasa, Implemented};
 
 /// The keyword-only constructor controls CASA lacks (ADR-0019 item 3), with
 /// casa-rs's defaults: CASA's constructor takes none.
@@ -134,7 +134,10 @@ const METHODS: &[Method] = &[
         mutating: true,
         ..method("open", &MS, Implemented)
     },
-    method("openfromms", &MS, NotYetImplemented),
+    Method {
+        mutating: true,
+        ..method("openfromms", &MS, Implemented)
+    },
     Method {
         mutating: true,
         ..method("close", &[], Implemented)
@@ -293,7 +296,7 @@ const METHODS: &[Method] = &[
             param("spwmap", K::Ints, Ints(&[-1])),
             param("opacity", K::Float, Float(0.0)),
         ],
-        NotYetImplemented,
+        Implemented,
     ),
     method(
         "setgain",
@@ -303,7 +306,7 @@ const METHODS: &[Method] = &[
             param("interval", K::Quantity, Empty),
             param("amplitude", K::Floats, Floats(&[0.01])),
         ],
-        NotYetImplemented,
+        Implemented,
     ),
     method(
         "settrop",
@@ -316,7 +319,7 @@ const METHODS: &[Method] = &[
             param("windspeed", K::Float, Float(7.0)),
             param("simint", K::Float, Float(-1.0)),
         ],
-        NotYetImplemented,
+        Implemented,
     ),
     method(
         "setpointingerror",
@@ -335,7 +338,7 @@ const METHODS: &[Method] = &[
             param("amplitude", K::Floats, Floats(&[0.01])),
             param("offset", K::Floats, Floats(&[0.0])),
         ],
-        NotYetImplemented,
+        Implemented,
     ),
     method("oldsetnoise", &OLDSETNOISE, DeprecatedInCasa),
     method("setnoise", &SETNOISE, Implemented),

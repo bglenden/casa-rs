@@ -16,7 +16,8 @@
 //!
 //! Beside the tolerance, Metal leaves flagged rows and the cross-hands of
 //! 4 correlations exactly zero, as the CPU does, and the pass reports that
-//! it predicted on Metal.
+//! it predicted on Metal. Through the mosaic machine, a session of 12 m and
+//! 7 m dishes on two fields predicts within the same tolerance.
 //!
 //! A session that only corrupts writes the same MeasurementSet whatever
 //! backend it asks for: rows Metal does not predict get the host's noise.
@@ -28,6 +29,11 @@
 //! host then draws as the device would flush them, and a σ of zero leaves
 //! the model as it is.
 //!
+//! A patch after `openfromms` adds the DATA on disk after the prediction,
+//! and its noise last, on Metal as on the CPU (#886 review): the device
+//! leaves the noise to the host, so a large value on disk cancelled after
+//! it cannot round it away.
+//!
 //! On a host without a Metal device the Metal comparisons print `skipped:
 //! no Metal device` and pass: run them outside command sandboxes on Apple
 //! silicon (`TESTING.md`).
@@ -38,11 +44,18 @@ mod predict_support;
 use std::path::Path;
 
 use casa_imaging_runtime::{HostResources, ResourcePolicy};
-use casa_simulation::{BackendRequest, NoiseSpec, SessionResources, Simulator, VoltagePatternSpec};
+use casa_simulation::{
+    BackendRequest, NoiseSpec, PredictionOptions, SessionResources, Simulator, SimulatorOptions,
+    VoltagePatternSpec,
+};
 use casa_test_support::ms_digest::measurement_set_manifest;
+use casa_types::measures::{EpochRef, MEpoch};
 use num_complex::Complex32;
 use pass_summary::{PassSummary, capture};
-use predict_support::{N, Row, predict_spec, read_main, scan, session_with_channels, write_model};
+use predict_support::{
+    N, REFERENCE_MJD, Row, bits, data, predict_spec, read_main, scan, session_with_channels,
+    session_with_dishes, write_model,
+};
 
 /// The T0 Metal law's tolerance, relative to the CPU's largest sample.
 const TOLERANCE: f32 = 1.0e-4;
@@ -222,17 +235,63 @@ fn metal_predicts_the_cpus_data_within_the_t0_tolerance() {
     }
 }
 
+/// The mosaic session of 12 m and 7 m dishes in turn, its scans on the
+/// model's centre and on the `offset` field (a pointing ramp), predicted
+/// through the mosaic machine with `backend`: MAIN and the pass's summary.
+fn predicted_mosaic(path: &Path, model: &Path, backend: BackendRequest) -> (Vec<Row>, PassSummary) {
+    let dishes = [12.0, 7.0, 12.0, 7.0, 12.0, 7.0, 12.0, 7.0];
+    let mut sm = session_with_dishes(path, "ALMA", "XX YY", CHANNELS, &dishes, resources(backend));
+    sm.observe(&scan("target", 0.0, 600.0)).expect("observe");
+    sm.observe(&scan("offset", 600.0, 1200.0)).expect("observe");
+    sm.set_options(&PredictionOptions {
+        ftmachine: "mosaic".to_string(),
+        ..PredictionOptions::default()
+    })
+    .expect("setoptions");
+    sm.predict(&predict_spec(model, false)).expect("predict");
+    let ((), summary) = capture(|| sm.close().expect("close"));
+    (read_main(path).0, summary.expect("the pass's summary"))
+}
+
+/// Metal predicts through the mosaic machine's dish-pair cells and their
+/// pointing ramps as the CPU does, to the T0 tolerance (#841 Phase 2).
+#[test]
+fn metal_predicts_the_cpus_mosaic_within_the_t0_tolerance() {
+    if !metal_device() {
+        return;
+    }
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let model = cube(directory.path());
+    let (cpu, cpu_pass) = predicted_mosaic(
+        &directory.path().join("cpu.ms"),
+        &model,
+        BackendRequest::Cpu,
+    );
+    let (metal, metal_pass) = predicted_mosaic(
+        &directory.path().join("metal.ms"),
+        &model,
+        BackendRequest::Metal,
+    );
+    assert_eq!(cpu_pass.backend, "Cpu");
+    assert_eq!(metal_pass.backend, "Metal", "the pass predicted on Metal");
+    let ratio = relative_difference(&metal, &cpu);
+    println!(
+        "mosaic: max |metal - cpu| / max |cpu| = {ratio:.3e} over {} rows",
+        metal.len()
+    );
+    assert!(
+        ratio <= TOLERANCE,
+        "max |metal - cpu| is {ratio:e} of max |cpu|"
+    );
+    assert!(ratio > 0.0, "Metal predicted the CPU's bits");
+}
+
 /// A session of 4 linear correlations, corrupted and never predicted.
 fn noise_only(path: &Path, backend: BackendRequest) -> String {
     let mut sm: Simulator =
         session_with_channels(path, "ALMA", "XX XY YX YY", 4, resources(backend));
     sm.observe(&scan("target", 0.0, 200.0)).expect("observe");
-    sm.set_noise(&NoiseSpec {
-        mode: "simplenoise".to_string(),
-        simple_noise_jy: 0.1,
-        on_the_fly: true,
-    })
-    .expect("setnoise");
+    sm.set_noise(&NoiseSpec::simple(0.1)).expect("setnoise");
     sm.corrupt().expect("corrupt");
     sm.observe(&scan("offset", 200.0, 300.0)).expect("observe");
     sm.close().expect("close");
@@ -277,12 +336,8 @@ fn predicted_and_corrupted(
         sm.predict(&predict_spec(model, false)).expect("predict");
     }
     if let Some(simple_noise_jy) = noise_jy {
-        sm.set_noise(&NoiseSpec {
-            mode: "simplenoise".to_string(),
-            simple_noise_jy,
-            on_the_fly: true,
-        })
-        .expect("setnoise");
+        sm.set_noise(&NoiseSpec::simple(simple_noise_jy))
+            .expect("setnoise");
         sm.corrupt().expect("corrupt");
     }
     sm.observe(&scan("offset", long_s, long_s + 500.0))
@@ -356,4 +411,100 @@ fn metal_adds_the_hosts_noise_to_the_model_on_the_device() {
             assert!(subnormal > 0, "σ {sigma}: some noise is subnormal");
         }
     }
+}
+
+/// A flux whose samples' unit in the last place, 8 Jy, rounds away noise
+/// of [`CANCELLED_NOISE_JY`] added to it.
+const CANCELLED_JY: f32 = 1.0e8;
+
+/// σ of the noise-order law's noise, Jy.
+const CANCELLED_NOISE_JY: f64 = 0.25;
+
+/// `sm.setnoise(simplenoise=σ)` of [`CANCELLED_NOISE_JY`], then
+/// `sm.corrupt()`.
+fn corrupt_cancelled(sm: &mut Simulator) {
+    sm.set_noise(&NoiseSpec::simple(CANCELLED_NOISE_JY))
+        .expect("setnoise");
+    sm.corrupt().expect("corrupt");
+}
+
+/// The mean power of the real parts of `a − b`'s samples, Jy².
+fn real_power(a: &[Row], b: &[Row]) -> f64 {
+    let (mut power, mut samples) = (0.0, 0_usize);
+    for (a, b) in a.iter().zip(b) {
+        for (x, y) in a.data.iter().zip(&b.data) {
+            power += f64::from(x.re - y.re).powi(2);
+            samples += 1;
+        }
+    }
+    power / samples as f64
+}
+
+/// That `power`, the real noise power of a run, is σ² of the noise-order
+/// law's noise, to a tenth.
+fn assert_noise_power(power: f64, what: &str) {
+    let expected = CANCELLED_NOISE_JY * CANCELLED_NOISE_JY;
+    assert!(
+        (power - expected).abs() < 0.1 * expected,
+        "{what}: real noise power {power}, against σ² {expected}"
+    );
+}
+
+/// On Metal, as on the CPU, the noise of a patch after `openfromms`
+/// follows the DATA it reads from disk (#886 review): a prediction of
+/// +1e8 Jy added to one of −1e8 Jy closed before, and corrupted, writes
+/// what closing the prediction and then corrupting in a third session
+/// writes, bit for bit, keeping the noise. Added on the device before the
+/// DATA on disk, it rounded away.
+#[test]
+fn metal_adds_the_noise_after_the_data_on_disk() {
+    if !metal_device() {
+        return;
+    }
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let model =
+        |name: &str, flux: f32| write_model(directory.path(), name, &[vec![(N / 2, N / 2, flux)]]);
+    let (minus, plus) = (
+        model("minus.image", -CANCELLED_JY),
+        model("plus.image", CANCELLED_JY),
+    );
+    let observed = |name: &str| {
+        let path = directory.path().join(name);
+        let backend = resources(BackendRequest::Metal);
+        let mut sm = session_with_channels(&path, "ALMA", "XX YY", CHANNELS, backend);
+        sm.observe(&scan("target", 0.0, 600.0)).expect("observe");
+        sm.predict(&predict_spec(&minus, false)).expect("predict");
+        sm.close().expect("close");
+        path
+    };
+    let reopened = |path: &Path| {
+        let options = SimulatorOptions {
+            measures: casa_test_support::deterministic_measures_provider(),
+            resources: resources(BackendRequest::Metal),
+            now: MEpoch::from_mjd(REFERENCE_MJD, EpochRef::UTC),
+        };
+        Simulator::open_from_ms(path, options).expect("openfromms")
+    };
+    let add = |sm: &mut Simulator| sm.predict(&predict_spec(&plus, true)).expect("predict");
+    let one = observed("one.ms");
+    let mut sm = reopened(&one);
+    add(&mut sm);
+    corrupt_cancelled(&mut sm);
+    let ((), pass) = capture(|| sm.close().expect("close"));
+    assert_eq!(
+        pass.expect("the patch's summary").backend,
+        "Some(Metal)",
+        "the patch predicted on Metal"
+    );
+    let two = observed("two.ms");
+    let mut sm = reopened(&two);
+    add(&mut sm);
+    sm.close().expect("close");
+    let sum = read_main(&two).0;
+    let mut sm = reopened(&two);
+    corrupt_cancelled(&mut sm);
+    sm.close().expect("close");
+    let (one, two) = (read_main(&one).0, read_main(&two).0);
+    assert_eq!(bits(&data(&one)), bits(&data(&two)));
+    assert_noise_power(real_power(&one, &sum), "the reopened prediction");
 }

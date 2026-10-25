@@ -1,0 +1,246 @@
+{
+  "schema_version": 1,
+  "purpose": "simulation Phase 3 (#841): sm.setgain(mode='fbm') and sm.setleakage then sm.corrupt, run by CASA and by casa-rs",
+  "notes": [
+    "Each corrupted scenario predicts a 1 Jy unpolarised point at the phase centre, so its noise-free twin's parallel hands are 1 and its cross hands 0; compare_sm_ms.py compares DATA against the twin by statistics (corruption_stats.py), as the draws differ.",
+    "A one-element amplitude [a] is CASA's complex amplitude (a, a): the gain screens' scale is |(a, a)| = a·sqrt(2) ('gain_scale'), and a leakage's real and imaginary parts are drawn with standard deviations amplitude[0] and amplitude[1] ('leakage_amplitude').",
+    "With autocorrelations written (CASA's default), CASA's fill loop leaves the last antenna with unit gain, which casa-rs does not follow (docs/CASA (C++) bugs.md); a screen normalised by a huge value read past its FFT's output comes out unit too (antennas 0-6 and 10 in one run of corrupt-gain-table), so CASA's unit-gain antennas are reported, not checked.",
+    "corrupt-gain-table and corrupt-leakage-openfromms (simobserve's leakage flow: openfromms, setdata(fieldid=[]), setleakage(table=...), corrupt) write calibration tables, compared with CASA's in all but the draws ('tables'). CASA writes a table at setgain or setleakage; casa-rs at close, from the MeasurementSet it wrote.",
+    "CASA 6.7.6's fBM screens copy their last two or three slots from past the end of their FFT's output and normalise with them, so their amplitude and phase scales vary from run to run (0.15 to 1 of the documented scale measured): 'casa_gain_checks' checks only CASA's closure, casa-rs is held to the documented scales, and the two implementations' screens are compared by their autocorrelations (docs/CASA (C++) bugs.md).",
+    "corrupt-gain-noautos fits the gains from cross-correlations alone, and its last antenna appears only as ANTENNA2.",
+    "CASA draws one leakage per spectral window for the whole run (its infinite solution interval spans scans and fields) and simulates only the first two windows, leaving later ones uncorrupted, which casa-rs does not follow (docs/CASA (C++) bugs.md). corrupt-leakage therefore observes two windows, four scans each; it has no autocorrelations, which would give CASA's last antenna a leakage of 1."
+  ],
+  "complists": {
+    "point.cl": [
+      {"flux": [1.0, 0.0, 0.0, 0.0], "fluxunit": "Jy", "polarization": "Stokes", "dir": ["J2000", "10h00m00.0", "-30d00m00.0"], "shape": "point", "freq": "230GHz"}
+    ]
+  },
+  "scenarios": [
+    {
+      "name": "corrupt-gain",
+      "data": "gains",
+      "twin": "corrupt-gain-twin",
+      "gain_scale": 0.042426406871192854,
+      "casa_gain_checks": ["closure"],
+      "config": {"cfg": "alma.cycle10.3.cfg", "mount": "alt-az"},
+      "calls": [
+        {"op": "setspwindow", "spwname": "band6", "freq": "230GHz", "deltafreq": "15.625MHz", "freqresolution": "15.625MHz", "refcode": "TOPO", "nchannels": 2, "stokes": "XX YY"},
+        {"op": "setfeed", "mode": "perfect X Y"},
+        {"op": "settimes", "integrationtime": "10s", "usehourangle": true, "referencetime": ["UTC", "2026/03/21/00:00:00"]},
+        {"op": "setfield", "sourcename": "target", "sourcedirection": ["J2000", "10h00m00.0", "-30d00m00.0"]},
+        {"op": "observe", "sourcename": "target", "spwname": "band6", "starttime": "-300s", "stoptime": "300s"},
+        {"op": "predict", "complist": "point.cl"},
+        {"op": "setseed", "seed": 2718},
+        {"op": "setgain", "mode": "fbm", "amplitude": [0.03]},
+        {"op": "corrupt"}
+      ]
+    },
+    {
+      "name": "corrupt-gain-twin",
+      "data": "model",
+      "config": {"cfg": "alma.cycle10.3.cfg", "mount": "alt-az"},
+      "calls": [
+        {"op": "setspwindow", "spwname": "band6", "freq": "230GHz", "deltafreq": "15.625MHz", "freqresolution": "15.625MHz", "refcode": "TOPO", "nchannels": 2, "stokes": "XX YY"},
+        {"op": "setfeed", "mode": "perfect X Y"},
+        {"op": "settimes", "integrationtime": "10s", "usehourangle": true, "referencetime": ["UTC", "2026/03/21/00:00:00"]},
+        {"op": "setfield", "sourcename": "target", "sourcedirection": ["J2000", "10h00m00.0", "-30d00m00.0"]},
+        {"op": "observe", "sourcename": "target", "spwname": "band6", "starttime": "-300s", "stoptime": "300s"},
+        {"op": "predict", "complist": "point.cl"}
+      ]
+    },
+    {
+      "name": "corrupt-gain-noautos",
+      "data": "gains",
+      "twin": "corrupt-gain-noautos-twin",
+      "gain_scale": 0.042426406871192854,
+      "casa_gain_checks": ["closure"],
+      "config": {"cfg": "alma.cycle10.3.cfg", "mount": "alt-az"},
+      "calls": [
+        {"op": "setspwindow", "spwname": "band6", "freq": "230GHz", "deltafreq": "15.625MHz", "freqresolution": "15.625MHz", "refcode": "TOPO", "nchannels": 2, "stokes": "XX YY"},
+        {"op": "setfeed", "mode": "perfect X Y"},
+        {"op": "setauto", "autocorrwt": 0.0},
+        {"op": "settimes", "integrationtime": "10s", "usehourangle": true, "referencetime": ["UTC", "2026/03/21/00:00:00"]},
+        {"op": "setfield", "sourcename": "target", "sourcedirection": ["J2000", "10h00m00.0", "-30d00m00.0"]},
+        {"op": "observe", "sourcename": "target", "spwname": "band6", "starttime": "-300s", "stoptime": "300s"},
+        {"op": "predict", "complist": "point.cl"},
+        {"op": "setseed", "seed": 2718},
+        {"op": "setgain", "mode": "fbm", "amplitude": [0.03]},
+        {"op": "corrupt"}
+      ]
+    },
+    {
+      "name": "corrupt-gain-noautos-twin",
+      "data": "model",
+      "config": {"cfg": "alma.cycle10.3.cfg", "mount": "alt-az"},
+      "calls": [
+        {"op": "setspwindow", "spwname": "band6", "freq": "230GHz", "deltafreq": "15.625MHz", "freqresolution": "15.625MHz", "refcode": "TOPO", "nchannels": 2, "stokes": "XX YY"},
+        {"op": "setfeed", "mode": "perfect X Y"},
+        {"op": "setauto", "autocorrwt": 0.0},
+        {"op": "settimes", "integrationtime": "10s", "usehourangle": true, "referencetime": ["UTC", "2026/03/21/00:00:00"]},
+        {"op": "setfield", "sourcename": "target", "sourcedirection": ["J2000", "10h00m00.0", "-30d00m00.0"]},
+        {"op": "observe", "sourcename": "target", "spwname": "band6", "starttime": "-300s", "stoptime": "300s"},
+        {"op": "predict", "complist": "point.cl"}
+      ]
+    },
+    {
+      "name": "corrupt-leakage",
+      "data": "leakage",
+      "twin": "corrupt-leakage-twin",
+      "leakage_amplitude": [0.03, 0.015],
+      "config": {"cfg": "alma.cycle10.3.cfg", "mount": "alt-az"},
+      "calls": [
+        {"op": "setspwindow", "spwname": "band6-0", "freq": "224GHz", "deltafreq": "15.625MHz", "freqresolution": "15.625MHz", "refcode": "TOPO", "nchannels": 1, "stokes": "XX XY YX YY"},
+        {"op": "setspwindow", "spwname": "band6-1", "freq": "238GHz", "deltafreq": "15.625MHz", "freqresolution": "15.625MHz", "refcode": "TOPO", "nchannels": 1, "stokes": "XX XY YX YY"},
+        {"op": "setfeed", "mode": "perfect X Y"},
+        {"op": "setauto", "autocorrwt": 0.0},
+        {"op": "settimes", "integrationtime": "10s", "usehourangle": true, "referencetime": ["UTC", "2026/03/21/00:00:00"]},
+        {"op": "setfield", "sourcename": "target", "sourcedirection": ["J2000", "10h00m00.0", "-30d00m00.0"]},
+        {"op": "observe", "sourcename": "target", "spwname": "band6-0", "starttime": "-300s", "stoptime": "-280s"},
+        {"op": "observe", "sourcename": "target", "spwname": "band6-1", "starttime": "-270s", "stoptime": "-250s"},
+        {"op": "observe", "sourcename": "target", "spwname": "band6-0", "starttime": "-240s", "stoptime": "-220s"},
+        {"op": "observe", "sourcename": "target", "spwname": "band6-1", "starttime": "-210s", "stoptime": "-190s"},
+        {"op": "observe", "sourcename": "target", "spwname": "band6-0", "starttime": "-180s", "stoptime": "-160s"},
+        {"op": "observe", "sourcename": "target", "spwname": "band6-1", "starttime": "-150s", "stoptime": "-130s"},
+        {"op": "observe", "sourcename": "target", "spwname": "band6-0", "starttime": "-120s", "stoptime": "-100s"},
+        {"op": "observe", "sourcename": "target", "spwname": "band6-1", "starttime": "-90s", "stoptime": "-70s"},
+        {"op": "predict", "complist": "point.cl"},
+        {"op": "setseed", "seed": 2718},
+        {"op": "setleakage", "amplitude": [0.03, 0.015], "offset": [0.04, 0.02]},
+        {"op": "corrupt"}
+      ]
+    },
+    {
+      "name": "corrupt-leakage-twin",
+      "data": "model",
+      "config": {"cfg": "alma.cycle10.3.cfg", "mount": "alt-az"},
+      "calls": [
+        {"op": "setspwindow", "spwname": "band6-0", "freq": "224GHz", "deltafreq": "15.625MHz", "freqresolution": "15.625MHz", "refcode": "TOPO", "nchannels": 1, "stokes": "XX XY YX YY"},
+        {"op": "setspwindow", "spwname": "band6-1", "freq": "238GHz", "deltafreq": "15.625MHz", "freqresolution": "15.625MHz", "refcode": "TOPO", "nchannels": 1, "stokes": "XX XY YX YY"},
+        {"op": "setfeed", "mode": "perfect X Y"},
+        {"op": "setauto", "autocorrwt": 0.0},
+        {"op": "settimes", "integrationtime": "10s", "usehourangle": true, "referencetime": ["UTC", "2026/03/21/00:00:00"]},
+        {"op": "setfield", "sourcename": "target", "sourcedirection": ["J2000", "10h00m00.0", "-30d00m00.0"]},
+        {"op": "observe", "sourcename": "target", "spwname": "band6-0", "starttime": "-300s", "stoptime": "-280s"},
+        {"op": "observe", "sourcename": "target", "spwname": "band6-1", "starttime": "-270s", "stoptime": "-250s"},
+        {"op": "observe", "sourcename": "target", "spwname": "band6-0", "starttime": "-240s", "stoptime": "-220s"},
+        {"op": "observe", "sourcename": "target", "spwname": "band6-1", "starttime": "-210s", "stoptime": "-190s"},
+        {"op": "observe", "sourcename": "target", "spwname": "band6-0", "starttime": "-180s", "stoptime": "-160s"},
+        {"op": "observe", "sourcename": "target", "spwname": "band6-1", "starttime": "-150s", "stoptime": "-130s"},
+        {"op": "observe", "sourcename": "target", "spwname": "band6-0", "starttime": "-120s", "stoptime": "-100s"},
+        {"op": "observe", "sourcename": "target", "spwname": "band6-1", "starttime": "-90s", "stoptime": "-70s"},
+        {"op": "predict", "complist": "point.cl"}
+      ]
+    },
+    {
+      "name": "corrupt-gain-table",
+      "data": "gains",
+      "twin": "corrupt-gain-noautos-twin",
+      "gain_scale": 0.042426406871192854,
+      "casa_gain_checks": ["closure"],
+      "tables": ["corrupt-gain-table.gcal"],
+      "config": {"cfg": "alma.cycle10.3.cfg", "mount": "alt-az"},
+      "calls": [
+        {"op": "setspwindow", "spwname": "band6", "freq": "230GHz", "deltafreq": "15.625MHz", "freqresolution": "15.625MHz", "refcode": "TOPO", "nchannels": 2, "stokes": "XX YY"},
+        {"op": "setfeed", "mode": "perfect X Y"},
+        {"op": "setauto", "autocorrwt": 0.0},
+        {"op": "settimes", "integrationtime": "10s", "usehourangle": true, "referencetime": ["UTC", "2026/03/21/00:00:00"]},
+        {"op": "setfield", "sourcename": "target", "sourcedirection": ["J2000", "10h00m00.0", "-30d00m00.0"]},
+        {"op": "observe", "sourcename": "target", "spwname": "band6", "starttime": "-300s", "stoptime": "300s"},
+        {"op": "predict", "complist": "point.cl"},
+        {"op": "setseed", "seed": 2718},
+        {"op": "setgain", "mode": "fbm", "amplitude": [0.03], "table": "corrupt-gain-table.gcal"},
+        {"op": "corrupt"}
+      ]
+    },
+    {
+      "name": "corrupt-leakage-openfromms",
+      "data": "leakage",
+      "twin": "corrupt-leakage-openfromms-twin",
+      "leakage_amplitude": [0.03, 0.015],
+      "openfromms_ms": "casa",
+      "ignore": ["MAIN.CORRECTED_DATA"],
+      "tables": ["corrupt-leakage-openfromms.dcal"],
+      "config": {"cfg": "alma.cycle10.3.cfg", "mount": "alt-az"},
+      "calls": [
+        {"op": "setspwindow", "spwname": "band6", "freq": "230GHz", "deltafreq": "15.625MHz", "freqresolution": "15.625MHz", "refcode": "TOPO", "nchannels": 1, "stokes": "XX XY YX YY"},
+        {"op": "setfeed", "mode": "perfect X Y"},
+        {"op": "setauto", "autocorrwt": 0.0},
+        {"op": "settimes", "integrationtime": "10s", "usehourangle": true, "referencetime": ["UTC", "2026/03/21/00:00:00"]},
+        {"op": "setfield", "sourcename": "target", "sourcedirection": ["J2000", "10h00m00.0", "-30d00m00.0"]},
+        {"op": "observe", "sourcename": "target", "spwname": "band6", "starttime": "-300s", "stoptime": "-240s"},
+        {"op": "observe", "sourcename": "target", "spwname": "band6", "starttime": "-120s", "stoptime": "-60s"},
+        {"op": "predict", "complist": "point.cl"},
+        {"op": "close"},
+        {"op": "openfromms"},
+        {"op": "setdata", "fieldid": []},
+        {"op": "setseed", "seed": 2718},
+        {"op": "setleakage", "amplitude": [0.03, 0.015], "offset": [0.04, 0.02], "table": "corrupt-leakage-openfromms.dcal"},
+        {"op": "corrupt"}
+      ]
+    },
+    {
+      "name": "corrupt-leakage-openfromms-twin",
+      "data": "model",
+      "config": {"cfg": "alma.cycle10.3.cfg", "mount": "alt-az"},
+      "calls": [
+        {"op": "setspwindow", "spwname": "band6", "freq": "230GHz", "deltafreq": "15.625MHz", "freqresolution": "15.625MHz", "refcode": "TOPO", "nchannels": 1, "stokes": "XX XY YX YY"},
+        {"op": "setfeed", "mode": "perfect X Y"},
+        {"op": "setauto", "autocorrwt": 0.0},
+        {"op": "settimes", "integrationtime": "10s", "usehourangle": true, "referencetime": ["UTC", "2026/03/21/00:00:00"]},
+        {"op": "setfield", "sourcename": "target", "sourcedirection": ["J2000", "10h00m00.0", "-30d00m00.0"]},
+        {"op": "observe", "sourcename": "target", "spwname": "band6", "starttime": "-300s", "stoptime": "-240s"},
+        {"op": "observe", "sourcename": "target", "spwname": "band6", "starttime": "-120s", "stoptime": "-60s"},
+        {"op": "predict", "complist": "point.cl"}
+      ]
+    },
+    {
+      "name": "corrupt-setapply-gain-linear",
+      "data": "model",
+      "config": {"cfg": "alma.cycle10.3.cfg", "mount": "alt-az"},
+      "calls": [
+        {"op": "setspwindow", "spwname": "band6", "freq": "230GHz", "deltafreq": "15.625MHz", "freqresolution": "15.625MHz", "refcode": "TOPO", "nchannels": 2, "stokes": "XX YY"},
+        {"op": "setfeed", "mode": "perfect X Y"},
+        {"op": "setauto", "autocorrwt": 0.0},
+        {"op": "settimes", "integrationtime": "5s", "usehourangle": true, "referencetime": ["UTC", "2026/03/21/00:00:00"]},
+        {"op": "setfield", "sourcename": "target", "sourcedirection": ["J2000", "10h00m00.0", "-30d00m00.0"]},
+        {"op": "observe", "sourcename": "target", "spwname": "band6", "starttime": "-300s", "stoptime": "300s"},
+        {"op": "predict", "complist": "point.cl"},
+        {"op": "setapply", "table": "corrupt-gain-table.gcal", "type": "G", "interp": "linear"},
+        {"op": "corrupt"}
+      ]
+    },
+    {
+      "name": "corrupt-setapply-gain-nearest",
+      "data": "model",
+      "config": {"cfg": "alma.cycle10.3.cfg", "mount": "alt-az"},
+      "calls": [
+        {"op": "setspwindow", "spwname": "band6", "freq": "230GHz", "deltafreq": "15.625MHz", "freqresolution": "15.625MHz", "refcode": "TOPO", "nchannels": 2, "stokes": "XX YY"},
+        {"op": "setfeed", "mode": "perfect X Y"},
+        {"op": "setauto", "autocorrwt": 0.0},
+        {"op": "settimes", "integrationtime": "5s", "usehourangle": true, "referencetime": ["UTC", "2026/03/21/00:00:00"]},
+        {"op": "setfield", "sourcename": "target", "sourcedirection": ["J2000", "10h00m00.0", "-30d00m00.0"]},
+        {"op": "observe", "sourcename": "target", "spwname": "band6", "starttime": "-300s", "stoptime": "300s"},
+        {"op": "predict", "complist": "point.cl"},
+        {"op": "setapply", "table": "corrupt-gain-table.gcal", "type": "G", "interp": "nearest"},
+        {"op": "corrupt"}
+      ]
+    },
+    {
+      "name": "corrupt-setapply-leakage",
+      "data": "model",
+      "config": {"cfg": "alma.cycle10.3.cfg", "mount": "alt-az"},
+      "calls": [
+        {"op": "setspwindow", "spwname": "band6", "freq": "230GHz", "deltafreq": "15.625MHz", "freqresolution": "15.625MHz", "refcode": "TOPO", "nchannels": 1, "stokes": "XX XY YX YY"},
+        {"op": "setfeed", "mode": "perfect X Y"},
+        {"op": "setauto", "autocorrwt": 0.0},
+        {"op": "settimes", "integrationtime": "10s", "usehourangle": true, "referencetime": ["UTC", "2026/03/21/00:00:00"]},
+        {"op": "setfield", "sourcename": "target", "sourcedirection": ["J2000", "10h00m00.0", "-30d00m00.0"]},
+        {"op": "observe", "sourcename": "target", "spwname": "band6", "starttime": "-300s", "stoptime": "-240s"},
+        {"op": "observe", "sourcename": "target", "spwname": "band6", "starttime": "-120s", "stoptime": "-60s"},
+        {"op": "predict", "complist": "point.cl"},
+        {"op": "setapply", "table": "corrupt-leakage-openfromms.dcal", "type": "D"},
+        {"op": "corrupt"}
+      ]
+    }
+  ]
+}

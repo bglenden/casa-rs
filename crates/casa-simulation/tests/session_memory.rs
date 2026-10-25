@@ -48,17 +48,67 @@
 //! screens, and what it keeps after (the kernels and the grids) is what its
 //! reservations keep.
 //!
+//! A sixth law predicts total power (`setoptions(ftmachine='sd')`, #841
+//! Phase 2): `predict` holds no more than it is admitted while it tabulates
+//! the kernel and reads the model, and keeps what its reservation keeps, the
+//! pointings' samples.
+//!
+//! A fifth law predicts component lists (#841 Phase 2): what `predict`
+//! keeps (each component's fluxes and beam powers per channel, its shape's
+//! transform and each field's rotation) is what it was admitted before it
+//! formed them, and `close` holds no more beyond its admission for twice
+//! the components.
+//!
+//! Two more laws, in `session_memory/mosaic.rs`, predict through the
+//! simulator's mosaic machine (#841 Phase 2) for 12 m and 7 m dishes:
+//! `predict` holds no more than it is admitted while it builds every dish
+//! pair's beams on their screens, and keeps what its reservations keep (the
+//! cells, one set of grids, and a pointing for each phase centre), however
+//! many pointings it keeps.
+//!
+//! Two laws, in `session_memory/patch.rs`, patch a MeasurementSet
+//! `openfromms` opened (#841 Phase 2): `close` holds no more than it is
+//! admitted, and nothing beyond that grows with the rows, or with the
+//! scans when each row is a scan of its own.
+//!
+//! Two more, in `session_memory/tsys.rs` and `session_memory/patch.rs`,
+//! repeat the first law's base and ten-times-the-rows cases, and the
+//! patch's rows law, with `tsys-manual` noise (#841 Phase 3), whose σ takes
+//! each row's airmasses and exposure; `session_memory/tsys_atm.rs` holds
+//! `tsys-atm`'s (Phase 4c): `setnoise` builds its atmosphere within what it
+//! is admitted, and `close` holds its admission.
+//!
 //! This binary's global allocator counts the live heap; the counters are
 //! the process's, so each law runs alone in a process of its own
 //! ([`alone`]).
 
+#[path = "session_memory/apply.rs"]
+mod apply;
+#[path = "session_memory/gain_setters.rs"]
+mod gain_setters;
+#[path = "session_memory/jones.rs"]
+mod jones;
+#[path = "session_memory/mosaic.rs"]
+mod mosaic;
 mod pass_summary;
+#[path = "session_memory/patch.rs"]
+mod patch;
+#[path = "session_memory/troposphere.rs"]
+mod troposphere;
+#[path = "session_memory/tsys.rs"]
+mod tsys;
+#[path = "session_memory/tsys_atm.rs"]
+mod tsys_atm;
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 
+use casa_components::{
+    ComponentList, ComponentShape, Ellipse, EllipseErrors, Flux, ShapeKind, SkyComponent,
+    SpectralIndex, SpectralKind, SpectralModel,
+};
 use casa_coordinates::{
     CoordinateSystem as ImageCoordinates, DirectionCoordinate, Projection, ProjectionType,
     SpectralCoordinate, StokesCoordinate, StokesType,
@@ -69,12 +119,12 @@ use casa_imaging_runtime::{
     reserved_memory,
 };
 use casa_simulation::{
-    ArrayConfig, BackendRequest, CoordinateSystem, NoiseSpec, ObserveSpec, PredictSpec,
-    PredictionOptions, SessionResources, Simulator, SimulatorOptions, SpectralWindowSpec,
-    StateSpec, VoltagePatternSpec,
+    ArrayConfig, AtmosphereSpec, BackendRequest, CoordinateSystem, NoiseSpec, ObserveSpec,
+    PredictSpec, PredictionOptions, SessionResources, Simulator, SimulatorOptions,
+    SpectralWindowSpec, StateSpec, TsysParameters, VoltagePatternSpec,
 };
 use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::frequency::FrequencyRef;
+use casa_types::measures::frequency::{FrequencyRef, MFrequency};
 use casa_types::measures::{EpochRef, MEpoch, MeasuresProvider};
 use ndarray::{ArrayD, IxDyn};
 use num_complex::Complex32;
@@ -88,10 +138,20 @@ struct CountingHeap;
 
 static LIVE: AtomicU64 = AtomicU64::new(0);
 static PEAK: AtomicU64 = AtomicU64::new(0);
+/// The most the live bytes exceeded what the process's reservations held,
+/// at any allocation: a heap within its admission at every moment, not only
+/// at the two peaks.
+static EXCESS: AtomicI64 = AtomicI64::new(i64::MIN);
 
 fn grow(bytes: u64) {
     let live = LIVE.fetch_add(bytes, Ordering::Relaxed) + bytes;
     PEAK.fetch_max(live, Ordering::Relaxed);
+    EXCESS.fetch_max(live as i64 - reserved_memory() as i64, Ordering::Relaxed);
+}
+
+/// What the live bytes exceed the reservations by now.
+fn excess_now() -> i64 {
+    LIVE.load(Ordering::Relaxed) as i64 - reserved_memory() as i64
 }
 
 // SAFETY: forwards to `System` with the caller's arguments and adds atomic
@@ -380,26 +440,49 @@ fn simulate(case: Case, ms: &Path, model: &Path, measures: &Arc<dyn MeasuresProv
     })
     .expect("predict");
     sm.set_noise(&noise()).expect("setnoise");
+    jones::set_gains(&mut sm);
     sm.corrupt().expect("corrupt");
     sm.close().expect("close");
 }
 
-/// 0.1 Jy of simple noise.
+/// Whether [`noise`] is `tsys-manual` rather than `simplenoise`: the Tsys
+/// laws set it, each alone in its process ([`alone`]).
+static TSYS_NOISE: AtomicBool = AtomicBool::new(false);
+
+/// Whether [`noise`] is `tsys-atm`, as [`TSYS_NOISE`].
+static ATM_NOISE: AtomicBool = AtomicBool::new(false);
+
+/// 0.1 Jy of simple noise, or Tsys noise with CASA's defaults once a Tsys
+/// law sets [`TSYS_NOISE`] or [`ATM_NOISE`].
 fn noise() -> NoiseSpec {
-    NoiseSpec {
-        mode: "simplenoise".to_string(),
-        simple_noise_jy: 0.1,
-        on_the_fly: true,
+    if ATM_NOISE.load(Ordering::Relaxed) {
+        NoiseSpec::tsys_atm(TsysParameters::default(), 0.0, AtmosphereSpec::default())
+    } else if TSYS_NOISE.load(Ordering::Relaxed) {
+        NoiseSpec::tsys_manual(TsysParameters::default())
+    } else {
+        NoiseSpec::simple(0.1)
     }
 }
 
-/// A session writing `ms` within `budget`, with its antennas, a window of
-/// `channels` channels, the field and the times set.
+/// A session writing `ms` within `budget`, with its 12 m antennas, a window
+/// of `channels` channels, the field and the times set.
 fn configured(
     ms: &Path,
     measures: &Arc<dyn MeasuresProvider>,
     budget: u64,
     channels: usize,
+) -> Simulator {
+    configured_with_dishes(ms, measures, budget, channels, &[12.0])
+}
+
+/// [`configured`] with antennas of the diameters `dishes`: one for every
+/// antenna, or one each.
+fn configured_with_dishes(
+    ms: &Path,
+    measures: &Arc<dyn MeasuresProvider>,
+    budget: u64,
+    channels: usize,
+    dishes: &[f64],
 ) -> Simulator {
     let mut sm = Simulator::open(
         ms,
@@ -421,7 +504,7 @@ fn configured(
         x: along(0, 50.0),
         y: along(1, -15.0),
         z: along(2, 30.0),
-        dish_diameter: vec![12.0],
+        dish_diameter: dishes.to_vec(),
         offset: vec![0.0],
         mount: vec!["alt-az".to_string()],
         antenna_names: vec!["DA".to_string()],
@@ -832,32 +915,49 @@ const W_PLANES: i64 = 128;
 /// for the planes beside `close`'s writer.
 const BUDGET_W: u64 = BUDGET_32 + (32 << 20);
 
-/// What a `predict` held while it ran and kept after, beyond what was live
-/// before it, and what was admitted.
-#[derive(Debug, Clone, Copy)]
-struct Predicted {
-    /// The heap's peak during `predict`, and the most its reservations held.
-    during: Closed,
-    /// The heap left live after `predict`, and what its reservations keep.
-    kept: Closed,
-}
-
 /// A one-integration scan predicted from `model` through `WProjectFT` with
 /// [`W_PLANES`] planes: what `predict` held and kept. The session is closed
 /// and `ms` deleted after.
 fn predict_w(ms: &Path, model: &Path, measures: &Arc<dyn MeasuresProvider>) -> Predicted {
-    let mut sm = configured(ms, measures, BUDGET_W, 32);
-    sm.observe(&scan(1)).expect("observe");
-    sm.set_options(&PredictionOptions {
+    let options = PredictionOptions {
         ftmachine: "wproject".to_string(),
         w_planes: W_PLANES,
         ..PredictionOptions::default()
+    };
+    predict_through(&options, (ms, model, measures), BUDGET_W, &[12.0])
+}
+
+/// A one-integration scan of antennas of `dishes` predicted from `model`
+/// within `budget` through the FTMachine `options` choose: what `predict`
+/// held and kept. The session is closed and `ms` deleted after.
+fn predict_through(
+    options: &PredictionOptions,
+    (ms, model, measures): (&Path, &Path, &Arc<dyn MeasuresProvider>),
+    budget: u64,
+    dishes: &[f64],
+) -> Predicted {
+    predict_after(options, (ms, model, measures), budget, dishes, |sm| {
+        sm.observe(&scan(1)).expect("observe");
     })
-    .expect("setoptions");
+}
+
+/// [`predict_through`] after `observe` sets the session's fields and scans.
+fn predict_after(
+    options: &PredictionOptions,
+    (ms, model, measures): (&Path, &Path, &Arc<dyn MeasuresProvider>),
+    budget: u64,
+    dishes: &[f64],
+    observe: impl FnOnce(&mut Simulator),
+) -> Predicted {
+    let mut sm = configured_with_dishes(ms, measures, budget, 32, dishes);
+    observe(&mut sm);
+    sm.set_options(options).expect("setoptions");
     let reserved = reserved_memory();
     let baseline = LIVE.load(Ordering::Relaxed);
     PEAK.store(baseline, Ordering::Relaxed);
     let window = ReservationWindow::open();
+    let before = excess_now();
+    EXCESS.store(before, Ordering::Relaxed);
     sm.predict(&PredictSpec {
         images: vec![model.to_path_buf()],
         component_list: None,
@@ -869,6 +969,7 @@ fn predict_w(ms: &Path, model: &Path, measures: &Arc<dyn MeasuresProvider>) -> P
             heap: PEAK.load(Ordering::Relaxed) - baseline,
             admitted: window.close() - reserved,
         },
+        beyond: EXCESS.load(Ordering::Relaxed) - before,
         kept: Closed {
             heap: LIVE.load(Ordering::Relaxed).saturating_sub(baseline),
             admitted: reserved_memory() - reserved,
@@ -881,7 +982,7 @@ fn predict_w(ms: &Path, model: &Path, measures: &Arc<dyn MeasuresProvider>) -> P
 }
 
 /// `predict` through `WProjectFT` builds its planes on screens and keeps the
-/// kernels cropped from them (this PR, #841 Phase 2): while it runs, the
+/// kernels cropped from them (#865, #841 Phase 2): while it runs, the
 /// heap stays within the most its reservations held (the screens, then the
 /// kernels, then the model's grids and their preparation) and the
 /// allowance; after it, what the session keeps (the kernels and the grids)
@@ -905,9 +1006,14 @@ fn a_w_projection_predict_holds_its_admission_and_keeps_what_it_charges() {
     // Once unmeasured: state a process keeps once it has predicted.
     predict_w(&ms, &model, &measures);
     for _ in 0..MEASURED_RUNS {
-        let Predicted { during, kept } = predict_w(&ms, &model, &measures);
+        let Predicted {
+            during,
+            beyond,
+            kept,
+        } = predict_w(&ms, &model, &measures);
         println!(
-            "W predict: held {} bytes against {} admitted; kept {} against {} charged",
+            "W predict: held {} bytes against {} admitted, {beyond} at most beyond its \
+             reservations; kept {} against {} charged",
             during.heap, during.admitted, kept.heap, kept.admitted
         );
         assert!(
@@ -923,6 +1029,431 @@ fn a_w_projection_predict_holds_its_admission_and_keeps_what_it_charges() {
         assert!(
             kept.unadmitted().unsigned_abs() <= ALLOWANCE_BYTES,
             "predict keeps {} bytes against the {} its reservations keep",
+            kept.heap,
+            kept.admitted
+        );
+    }
+}
+
+/// The component law's cases: lists of this many components, observed in
+/// this many channels. In the second, many components in one channel, a
+/// temporary of 16 bytes a component would show beyond the allowance.
+const COMPONENT_CASES: [([usize; 2], usize); 2] = [([128, 256], 320), ([1_024, 8_192], 1)];
+
+/// A component's charge in each channel: its fluxes in XX and YY, and its
+/// beam's power.
+const COMPONENT_CHANNEL_BYTES: usize = 2 * 16 + 4;
+
+/// Write a list of `count` components around [`CENTRE_RAD`] to `path`:
+/// points and Gaussians 2″ apart, with spectral indices.
+fn write_components(path: &Path, count: usize) {
+    let mut list = ComponentList::new();
+    for index in 0..count {
+        let (column, row) = ((index % 16) as f64 - 7.5, (index / 16) as f64 - 7.5);
+        let direction = MDirection::from_angles(
+            CENTRE_RAD[0] + column * 1.0e-5 / CENTRE_RAD[1].cos(),
+            CENTRE_RAD[1] + row * 1.0e-5,
+            DirectionRef::J2000,
+        );
+        let shape = if index % 2 == 0 {
+            ComponentShape::point(direction)
+        } else {
+            let axes = Ellipse::new(6.0e-6, 3.0e-6, 0.5).expect("axes");
+            ComponentShape::new(
+                direction,
+                ShapeKind::Gaussian {
+                    axes,
+                    errors: EllipseErrors::default(),
+                },
+            )
+            .expect("a Gaussian")
+        };
+        let spectrum = SpectralModel::new(
+            MFrequency::new(FREQUENCY_HZ, FrequencyRef::LSRK),
+            SpectralKind::SpectralIndex(SpectralIndex::new(-0.7)),
+        );
+        list.push(SkyComponent::new(
+            Flux::stokes_jy(0.01, 0.0, 0.0, 0.0),
+            shape,
+            spectrum,
+        ));
+    }
+    list.write_table(path).expect("write the list");
+}
+
+/// What a `predict` held while it ran and kept after, beyond what was live
+/// before it, and what was admitted.
+#[derive(Debug, Clone, Copy)]
+struct Predicted {
+    /// The heap's peak during `predict`, and the most its reservations held.
+    during: Closed,
+    /// The most the heap grew beyond its reservations' growth at any moment
+    /// of `predict`, bytes.
+    beyond: i64,
+    /// The heap left live after `predict`, and what its reservations keep.
+    kept: Closed,
+}
+
+/// A 20-integration scan of `channels` channels predicted from the list at
+/// `list` under the default voltage pattern within `budget`, written to
+/// `ms` and closed: what `predict` held and kept, and what `close` held.
+fn predict_components(
+    ms: &Path,
+    (list, channels): (&Path, usize),
+    measures: &Arc<dyn MeasuresProvider>,
+    budget: u64,
+) -> (Predicted, Closed) {
+    let mut sm = configured(ms, measures, budget, channels);
+    sm.observe(&scan(20)).expect("observe");
+    sm.set_vp(&VoltagePatternSpec::default()).expect("setvp");
+    let reserved = reserved_memory();
+    let baseline = LIVE.load(Ordering::Relaxed);
+    PEAK.store(baseline, Ordering::Relaxed);
+    let window = ReservationWindow::open();
+    let before = excess_now();
+    EXCESS.store(before, Ordering::Relaxed);
+    sm.predict(&PredictSpec {
+        images: Vec::new(),
+        component_list: Some(list.to_path_buf()),
+        incremental: false,
+    })
+    .expect("predict");
+    let predicted = Predicted {
+        during: Closed {
+            heap: PEAK.load(Ordering::Relaxed) - baseline,
+            admitted: window.close() - reserved,
+        },
+        beyond: EXCESS.load(Ordering::Relaxed) - before,
+        kept: Closed {
+            heap: LIVE.load(Ordering::Relaxed).saturating_sub(baseline),
+            admitted: reserved_memory() - reserved,
+        },
+    };
+    drop(window);
+    (predicted, measured_close(sm, ms, false).0)
+}
+
+/// `predict(complist=…)` admits, once the list is read, the list and what
+/// it prepares before it forms that (this PR, #841 Phase 2): while it runs,
+/// the heap stays within that admission and the allowance, and holds no
+/// more beyond it for twice the components (the list as read, some 0.6 KB a
+/// component, was held uncharged); after it, what the session keeps is what
+/// its reservation keeps. `close` adds the components into each batch in
+/// place, so it too holds no more beyond its admission for twice the
+/// components. Each list's budget is the base's and its charge, so that
+/// `close` finds the same memory free and its writer batches alike. The
+/// case of many components in one channel holds the preparation's
+/// temporary directions to their charge (#872 review).
+#[test]
+fn predicting_components_keeps_what_it_charges_and_close_holds_its_admission() {
+    if !alone("predicting_components_keeps_what_it_charges_and_close_holds_its_admission") {
+        return;
+    }
+    let resources = resources(BUDGET_320);
+    charge_process_caches(resources.host(), resources.policy()).expect("the process caches");
+    let measures = casa_test_support::deterministic_measures_provider();
+    let root = tempfile::tempdir().expect("temporary directory");
+    for (counts, channels) in COMPONENT_CASES {
+        components_hold_their_admission(root.path(), &measures, counts, channels);
+    }
+}
+
+/// The component law for lists of `counts` components observed in
+/// `channels` channels.
+fn components_hold_their_admission(
+    root: &Path,
+    measures: &Arc<dyn MeasuresProvider>,
+    counts: [usize; 2],
+    channels: usize,
+) {
+    let ms = root.join(format!("components-{channels}.ms"));
+    let lists = counts.map(|count| {
+        let path = root.join(format!("{count}.cl"));
+        write_components(&path, count);
+        path
+    });
+    // Once unmeasured: state a process keeps once it has predicted, and
+    // each list's charge.
+    let charges = lists.each_ref().map(|list| {
+        predict_components(&ms, (list, channels), measures, BUDGET_320)
+            .0
+            .kept
+            .admitted
+    });
+    let least = || Closed {
+        heap: u64::MAX,
+        admitted: 0,
+    };
+    let [(few, few_beyond), (many, many_beyond)] = [0, 1].map(|case| {
+        let count = counts[case];
+        // `close`'s peak depends on whether the band writer's I/O thread
+        // still holds a band when the next fills, which varies from run to
+        // run on a loaded host (59.2 or 61.4 MB here on CI), so its worst run
+        // is compared: a per-component cost raises every run alike.
+        let most = Closed {
+            heap: 0,
+            admitted: 0,
+        };
+        let (mut predicts, mut closes, mut least_beyond) = (least(), most, i64::MAX);
+        for _ in 0..MEASURED_RUNS {
+            let (
+                Predicted {
+                    during,
+                    beyond,
+                    kept,
+                },
+                closed,
+            ) = predict_components(
+                &ms,
+                (&lists[case], channels),
+                measures,
+                BUDGET_320 + charges[case],
+            );
+            println!(
+                "{count} components in {channels} channels: predict held {} bytes against {} \
+                 admitted, {beyond} at most beyond its reservations, and kept {} against {} \
+                 charged; close held {} against {}",
+                during.heap,
+                during.admitted,
+                kept.heap,
+                kept.admitted,
+                closed.heap,
+                closed.admitted
+            );
+            assert!(
+                beyond <= ALLOWANCE_BYTES as i64,
+                "{count} components: predict held {beyond} bytes beyond its reservations at one \
+                 moment"
+            );
+            least_beyond = least_beyond.min(beyond);
+            assert!(
+                kept.admitted >= (count * channels * COMPONENT_CHANNEL_BYTES) as u64,
+                "{count} components: the fluxes and powers are charged: {kept:?}"
+            );
+            assert!(
+                during.heap <= during.admitted + ALLOWANCE_BYTES,
+                "{count} components: predict held {} bytes, beyond the {} admitted and the \
+                 allowance",
+                during.heap,
+                during.admitted
+            );
+            assert!(
+                kept.unadmitted().unsigned_abs() <= ALLOWANCE_BYTES,
+                "{count} components: predict keeps {} bytes against the {} its reservation keeps",
+                kept.heap,
+                kept.admitted
+            );
+            assert!(
+                closed.heap <= closed.admitted + ALLOWANCE_BYTES,
+                "{count} components: close held {} bytes, beyond the {} admitted and the \
+                 allowance",
+                closed.heap,
+                closed.admitted
+            );
+            predicts.heap = predicts.heap.min(during.heap);
+            predicts.admitted = predicts.admitted.max(during.admitted);
+            closes.heap = closes.heap.max(closed.heap);
+            closes.admitted = closes.admitted.max(closed.admitted);
+        }
+        ([predicts, closes], least_beyond)
+    });
+    println!(
+        "{} - {} components in {channels} channels: predict held {} bytes more beyond its \
+         reservations at one moment",
+        counts[1],
+        counts[0],
+        many_beyond - few_beyond
+    );
+    assert!(
+        many_beyond <= few_beyond + SCANS_ALLOWANCE_BYTES as i64,
+        "{} components in {channels} channels: predict held {many_beyond} bytes beyond its \
+         reservations at one moment, against {few_beyond} for {}",
+        counts[1],
+        counts[0]
+    );
+    for (step, call) in ["predict", "close"].into_iter().enumerate() {
+        let (few, many) = (few[step], many[step]);
+        println!(
+            "{} - {} components in {channels} channels: {call} held {} bytes more beyond its \
+             admission",
+            counts[1],
+            counts[0],
+            many.unadmitted() - few.unadmitted()
+        );
+        assert!(
+            many.unadmitted() <= few.unadmitted() + SCANS_ALLOWANCE_BYTES as i64,
+            "{} components in {channels} channels: {call} held {} bytes beyond its admission, \
+             against {} for {}",
+            counts[1],
+            many.unadmitted(),
+            few.unadmitted(),
+            counts[0]
+        );
+    }
+}
+
+/// Fields of the total-power law, each observed for one integration.
+const SINGLE_DISH_FIELDS: usize = 1_000;
+
+/// Channels of the total-power law: each field keeps 5,120 bytes of
+/// samples in XX and YY.
+const SINGLE_DISH_CHANNELS: usize = 320;
+
+/// [`SINGLE_DISH_FIELDS`] one-integration scans of their own fields,
+/// predicted from `model` through `SDGrid` with the `PB` kernel: what
+/// `predict` held and kept. The session is dropped unwritten.
+fn predict_single_dish(model: &Path, measures: &Arc<dyn MeasuresProvider>) -> Predicted {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let mut sm = configured(
+        &directory.path().join("sd.ms"),
+        measures,
+        BUDGET_320,
+        SINGLE_DISH_CHANNELS,
+    );
+    for field in 0..SINGLE_DISH_FIELDS {
+        let name = format!("f{field}");
+        let direction = MDirection::from_angles(
+            CENTRE_RAD[0] + 1.0e-7 * field as f64,
+            CENTRE_RAD[1],
+            DirectionRef::J2000,
+        );
+        sm.set_field(&name, &direction, "", 0.0).expect("setfield");
+        sm.observe(&ObserveSpec {
+            source: name,
+            ..scan_from(field, 1)
+        })
+        .expect("observe");
+    }
+    sm.set_options(&PredictionOptions {
+        ftmachine: "sd".to_string(),
+        grid_function: "PB".to_string(),
+        ..PredictionOptions::default()
+    })
+    .expect("setoptions");
+    let reserved = reserved_memory();
+    let baseline = LIVE.load(Ordering::Relaxed);
+    PEAK.store(baseline, Ordering::Relaxed);
+    let window = ReservationWindow::open();
+    let before = excess_now();
+    EXCESS.store(before, Ordering::Relaxed);
+    sm.predict(&PredictSpec {
+        images: vec![model.to_path_buf()],
+        component_list: None,
+        incremental: false,
+    })
+    .expect("predict");
+    let predicted = Predicted {
+        during: Closed {
+            heap: PEAK.load(Ordering::Relaxed) - baseline,
+            admitted: window.close() - reserved,
+        },
+        beyond: EXCESS.load(Ordering::Relaxed) - before,
+        kept: Closed {
+            heap: LIVE.load(Ordering::Relaxed).saturating_sub(baseline),
+            admitted: reserved_memory() - reserved,
+        },
+    };
+    drop(window);
+    predicted
+}
+
+/// A model of `planes` planes, one per channel of the law's window, with
+/// [`write_model`]'s points in every plane.
+fn write_cube(path: &Path, planes: usize) {
+    let mut coordinates = ImageCoordinates::new();
+    coordinates.add_coordinate(DirectionCoordinate::new(
+        DirectionRef::J2000,
+        Projection::new(ProjectionType::SIN),
+        CENTRE_RAD,
+        [-CELL_RAD, CELL_RAD],
+        [(PIXELS / 2) as f64, (PIXELS / 2) as f64],
+    ));
+    coordinates.add_coordinate(StokesCoordinate::new(vec![StokesType::I]));
+    coordinates.add_coordinate(SpectralCoordinate::new(
+        FrequencyRef::LSRK,
+        FREQUENCY_HZ,
+        CHANNEL_HZ,
+        0.0,
+        FREQUENCY_HZ,
+    ));
+    let shape = vec![PIXELS, PIXELS, 1, planes];
+    let mut image =
+        PagedImage::<f32>::create(shape.clone(), coordinates, path).expect("create model");
+    let mut pixels = ArrayD::zeros(IxDyn(&shape));
+    for plane in 0..planes {
+        for (x, y, flux) in [(32, 32, 1.0_f32), (41, 28, 0.5), (12, 50, 0.25)] {
+            pixels[IxDyn(&[x, y, 0, plane])] = flux;
+        }
+    }
+    image.put_slice(&pixels, &[0, 0, 0, 0]).expect("pixels");
+    image.set_units("Jy/pixel").expect("units");
+    image.save().expect("save model");
+}
+
+/// `predict` through `SDGrid` admits its samples and its preparation (the
+/// kernel, as tabulated and as kept, the plane read and each pointing's
+/// scratch) before it forms them (#874, #841 Phase 2): while it runs, the
+/// heap stays within that admission and the allowance; after it, what the
+/// session keeps (the 1,000 pointings' 5.1 MB of samples) is what its
+/// reservation keeps. Both a one-plane model and a cube of a plane per
+/// channel are predicted (#874 review): a cube's samples were first held
+/// as a plane × pointing matrix, uncharged, and its read caches tiles
+/// across every plane (here 8 MiB for a 5 MiB cube), now charged.
+#[test]
+fn a_total_power_predict_keeps_what_it_charges() {
+    if !alone("a_total_power_predict_keeps_what_it_charges") {
+        return;
+    }
+    let resources = resources(BUDGET_320);
+    charge_process_caches(resources.host(), resources.policy()).expect("the process caches");
+    let measures = casa_test_support::deterministic_measures_provider();
+    let root = tempfile::tempdir().expect("temporary directory");
+    let plane = root.path().join("model.image");
+    write_model(&plane, SINGLE_DISH_CHANNELS);
+    let cube = root.path().join("cube.image");
+    write_cube(&cube, SINGLE_DISH_CHANNELS);
+    for model in [plane, cube] {
+        total_power_holds_its_admission(&model, &measures);
+    }
+}
+
+/// The total-power law for `model`.
+fn total_power_holds_its_admission(model: &Path, measures: &Arc<dyn MeasuresProvider>) {
+    // Once unmeasured: state a process keeps once it has predicted.
+    predict_single_dish(model, measures);
+    for _ in 0..MEASURED_RUNS {
+        let Predicted {
+            during,
+            beyond,
+            kept,
+        } = predict_single_dish(model, measures);
+        println!(
+            "SD predict of {}: held {} bytes against {} admitted, {beyond} at most beyond its \
+             reservations; kept {} against {} charged",
+            model.display(),
+            during.heap,
+            during.admitted,
+            kept.heap,
+            kept.admitted
+        );
+        assert!(
+            kept.admitted >= (SINGLE_DISH_FIELDS * SINGLE_DISH_CHANNELS * 2 * 8) as u64,
+            "the samples are charged: {kept:?}"
+        );
+        // The cube's tile cache outlived the preparation's admission once.
+        assert!(
+            beyond <= ALLOWANCE_BYTES as i64,
+            "predict held {beyond} bytes beyond its reservations at one moment"
+        );
+        assert!(
+            during.heap <= during.admitted + ALLOWANCE_BYTES,
+            "predict held {} bytes, beyond the {} admitted and the allowance",
+            during.heap,
+            during.admitted
+        );
+        assert!(
+            kept.unadmitted().unsigned_abs() <= ALLOWANCE_BYTES,
+            "predict keeps {} bytes against the {} its reservation keeps",
             kept.heap,
             kept.admitted
         );

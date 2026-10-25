@@ -295,6 +295,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "casa-atmosphere"
+version = "0.27.0"
+dependencies = [
+ "num-complex",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "casa-calibration"
 version = "0.27.0"
 dependencies = [
@@ -326,6 +336,7 @@ dependencies = [
  "casa-tables",
  "casa-test-support",
  "casa-types",
+ "libm",
  "ndarray",
  "num-complex",
  "serde_json",
@@ -630,7 +641,11 @@ dependencies = [
 name = "casa-simulation"
 version = "0.27.0"
 dependencies = [
+ "casa-atmosphere",
+ "casa-calibration",
+ "casa-components",
  "casa-coordinates",
+ "casa-fft",
  "casa-images",
  "casa-imaging-model",
  "casa-imaging-operator",

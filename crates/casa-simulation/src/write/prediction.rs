@@ -5,9 +5,11 @@
 //!
 //! A scan's rows are predicted from every `predict` step covering it, their
 //! predictions summed (one [`PredictionDomain`] per step, as CASA's mappers
-//! sum their degrids), each row rotated to each step's tangent point by
-//! [`GridFtProjection`] as CASA's `GridFT` rotates it. Scans with the same
-//! steps and field share a segment, and one predictor serves a segment; it
+//! sum their degrids), each row reprojected to each step's tangent point by
+//! [`GridFtProjection`] as CASA's FTMachine does (`MosaicFTNew`'s
+//! `girarUVW`, the others' `rotateUVW`), and through the mosaic machine
+//! pointed by its kernels' phase ramp. Scans with the same steps, field and
+//! phase centre share a segment, and one predictor serves a segment; it
 //! is rebuilt when the batches reach a scan of another segment. A run of a
 //! segment's rows is predicted in blocks, straight into the batch's DATA,
 //! which a scan no step covers leaves zero: a block is the whole write
@@ -17,7 +19,9 @@
 //! On Metal the stage also corrupts the rows it predicts: the device adds
 //! their scans' noise to the model in its memory, with the draws of
 //! `casa_numerics::cell_noise`, before the model is copied into DATA, so
-//! the host makes no pass of its own over those cells (#855).
+//! the host makes no pass of its own over those cells (#855). A patch after
+//! `openfromms` adds the DATA on disk after the prediction, and the host
+//! adds that noise after it ([`device_noise`]).
 //!
 //! The rows are as `observe` writes them: the row flag is FLAG_ROW, every
 //! sample is unflagged with unit weight, and an autocorrelation predicts the
@@ -38,9 +42,34 @@ use casa_types::Complex32;
 
 use super::geometry::RowGeometry;
 use crate::corrupt::NoiseApplication;
+use crate::predict::FtMachine;
 use crate::session::Simulator;
 use crate::session::error::{SimulatorError, SimulatorResult};
 use crate::session::observe::Scan;
+use crate::session::plan::DataPlan;
+
+/// The noise of scan `scan` in `plan` that a stage predicting the scan may
+/// add on the device ([`PredictionStage::predict`]): all of it, but none
+/// when `from_disk`, the DATA on disk being added after the prediction (a
+/// patch after `openfromms`), whose noise the host adds after it (#886
+/// review), or when gains or leakage corrupt the scan, whose noise follows
+/// them (`session::plan`).
+///
+/// Noise added before a value that is then cancelled keeps only the
+/// precision of the sum: beside visibilities of 2²³ σ and more it is
+/// rounded to steps of σ, or lost. The DATA on disk may hold such a value.
+/// The component lists' and total power's visibilities, which the host
+/// adds after the device's noise, are a sky model's, far below that:
+/// adding them after the noise rounds each sample once, independently, and
+/// the device's noise saves the host's pass (#886 follow-up: 0.34 s of a
+/// 2.1 s Metal `close`).
+pub(super) fn device_noise(plan: &DataPlan, scan: usize, from_disk: bool) -> &[NoiseApplication] {
+    if from_disk || plan.has_jones_for_scan(scan) {
+        &[]
+    } else {
+        plan.noise_for_scan(scan)
+    }
+}
 
 /// Bytes of the native rows of one prediction block, about, when the budget
 /// cannot hold a whole write batch's ([`super::resources`]). A block ends
@@ -55,11 +84,13 @@ const SMALL_BLOCK_BYTES: u64 = 16 << 20;
 /// device's time when it drops.
 const METAL_STAGE_TIMING: &str = "casa_imaging::metal_stage_timing";
 
-/// The scans with the same predict steps and field: the domains a
-/// predictor sums and each row's rotation to each domain's tangent point.
+/// The scans with the same predict steps, field and phase centre: the
+/// domains a predictor sums, each row's rotation to each domain's tangent
+/// point, and the pointing offset each domain's kernels ramp by.
 struct Segment<'s> {
     domains: Vec<PredictionDomain<'s>>,
     projections: Vec<GridFtProjection>,
+    pointing_offsets: Vec<[f64; 2]>,
 }
 
 /// The prediction stage's state across batches.
@@ -72,6 +103,9 @@ pub(super) struct PredictionStage<'s> {
     scan_segments: Vec<Option<usize>>,
     /// Each spectral window's channel frequencies.
     frequencies: Vec<Vec<f64>>,
+    /// Each antenna's dish class, which keys the mosaic machine's kernels
+    /// (the other machines ignore it); empty without a mosaic step.
+    antenna_types: Vec<u8>,
     /// Bytes of every model grid the steps hold, which a device copies.
     grid_bytes: u64,
     /// Rows of a block, once started.
@@ -137,18 +171,20 @@ impl<'s> PredictionStage<'s> {
                 scan_segments.push(None);
                 continue;
             }
-            // Pointings of one field that `observemany` moved have their own
-            // phase centres, and so their own projections.
+            // Rows are phased on their field (#884); the mosaic machine's
+            // kernels ramp to where the antennas point.
             let key = (
                 steps,
                 scan.field_id,
-                scan.phase_center_rad.map(f64::to_bits),
+                [scan.phase_center_rad, scan.pointing_rad]
+                    .map(|direction| direction.map(f64::to_bits)),
             );
             let segment = match keys.get(&key) {
                 Some(segment) => *segment,
                 None => {
                     let mut domains = Vec::with_capacity(key.0.len());
                     let mut projections = Vec::with_capacity(key.0.len());
+                    let mut pointing_offsets = Vec::with_capacity(key.0.len());
                     for step in key.0.clone() {
                         let prediction = predictions[step];
                         let model = prediction.grids_for(scan.field_id).ok_or_else(|| {
@@ -162,14 +198,21 @@ impl<'s> PredictionStage<'s> {
                             resampler: &prediction.model.resampler,
                             model,
                         });
-                        projections.push(GridFtProjection::between_j2000_directions(
-                            scan.phase_center_rad,
-                            prediction.tangent_rad,
-                        ));
+                        // `MosaicFT` reprojects through `girarUVW`, the
+                        // others through `rotateUVW`.
+                        let project = match prediction.model.machine() {
+                            FtMachine::Mosaic => GridFtProjection::mosaic_between_j2000_directions,
+                            FtMachine::Grid(_) | FtMachine::WProject(_) => {
+                                GridFtProjection::between_j2000_directions
+                            }
+                        };
+                        projections.push(project(scan.phase_center_rad, prediction.tangent_rad));
+                        pointing_offsets.push(prediction.pointing_offset_rad(scan.pointing_rad));
                     }
                     segments.push(Segment {
                         domains,
                         projections,
+                        pointing_offsets,
                     });
                     keys.insert(key, segments.len() - 1);
                     segments.len() - 1
@@ -186,6 +229,14 @@ impl<'s> PredictionStage<'s> {
             .iter()
             .map(|prediction| prediction.grid_bytes())
             .sum();
+        // A mosaic step classes the antennas of its time in first-seen
+        // order, so a later step's classes extend an earlier one's.
+        let antenna_types = predictions
+            .iter()
+            .map(|prediction| prediction.antenna_types())
+            .max_by_key(|types| types.len())
+            .unwrap_or_default()
+            .to_vec();
         let most_terms = (0..session.scans().len())
             .map(|scan| plan.noise_for_scan(scan).len())
             .max()
@@ -197,6 +248,7 @@ impl<'s> PredictionStage<'s> {
             segments,
             scan_segments,
             frequencies,
+            antenna_types,
             grid_bytes,
             block_rows: 0,
             workers: 0,
@@ -267,7 +319,8 @@ impl<'s> PredictionStage<'s> {
     /// and on Metal the device copy of every model grid
     /// ([`casa_imaging_operator::PreparedModelGrids::device_copy`]) and a
     /// block's noise rows and the most noise terms of a scan, here and in
-    /// the predictor ([`BlockPredictor::noise_bytes`]).
+    /// the predictor ([`BlockPredictor::noise_bytes`]); and what it keeps
+    /// across blocks ([`Self::state_bytes`]).
     pub(super) fn bytes(&self, rows: usize, workers: usize) -> u64 {
         let predictor = self
             .segments
@@ -296,7 +349,31 @@ impl<'s> PredictionStage<'s> {
                     + BlockPredictor::noise_bytes(self.backend, shape, terms)
             }
         };
-        predictor + shape.shared_bytes() + projections + device
+        predictor + shape.shared_bytes() + projections + device + self.state_bytes()
+    }
+
+    /// Bytes the stage keeps across blocks: each scan's segment, of which an
+    /// opened MeasurementSet may have one a row (#886 review), each
+    /// segment's domains, the windows' channel frequencies and the antennas'
+    /// dish classes.
+    fn state_bytes(&self) -> u64 {
+        let domain = size_of::<PredictionDomain<'_>>()
+            + size_of::<GridFtProjection>()
+            + size_of::<[f64; 2]>();
+        let segments: usize = self
+            .segments
+            .iter()
+            .map(|segment| size_of::<Segment<'_>>() + segment.domains.len() * domain)
+            .sum();
+        let frequencies: usize = self
+            .frequencies
+            .iter()
+            .map(|window| size_of::<Vec<f64>>() + window.len() * size_of::<f64>())
+            .sum();
+        (self.scan_segments.len() * size_of::<Option<usize>>()
+            + segments
+            + frequencies
+            + self.antenna_types.len()) as u64
     }
 
     /// Allocate the block of `rows` rows, predicted with `workers` workers,
@@ -316,14 +393,25 @@ impl<'s> PredictionStage<'s> {
     /// Whether the stage adds `noise`, a predicted run's, itself, on the
     /// device, as it predicts the run ([`Self::predict`]). That happens on
     /// Metal, where the model is formed in device memory, when every term
-    /// draws there exactly as on the host
-    /// ([`casa_numerics::cell_noise::metal_draws_exactly`]); otherwise the
-    /// host adds it after.
+    /// has one σ for every row (`simplenoise`) and draws there exactly as on
+    /// the host ([`casa_numerics::cell_noise::metal_draws_exactly`]);
+    /// otherwise the host adds it after. A Tsys term, whose σ varies by row
+    /// (and for `tsys-atm` by channel), is the host's: the device's terms
+    /// hold one σ each.
     pub(super) fn noises_on_device(&self, noise: &[NoiseApplication]) -> bool {
         self.backend == BackendChoice::Metal
-            && noise
-                .iter()
-                .all(|application| metal_draws_exactly(application.noise().sigma()))
+            && noise.iter().all(|application| {
+                application
+                    .uniform()
+                    .is_some_and(|noise| metal_draws_exactly(noise.sigma()))
+            })
+    }
+
+    /// Whether the stage added `noise`, the [`device_noise`] it was given
+    /// for a run of scan `scan`, as it predicted the run: the host then
+    /// adds none.
+    pub(super) fn noised(&self, scan: usize, noise: &[NoiseApplication]) -> bool {
+        !noise.is_empty() && self.predicts(scan) && self.noises_on_device(noise)
     }
 
     /// Predict each run of `runs`, (scan, first row, rows) of `rows`, into
@@ -331,7 +419,8 @@ impl<'s> PredictionStage<'s> {
     /// from the first); the batch's first row is MAIN row `first_row`. Runs
     /// of scans no step covers are left as they are. When the stage
     /// [`Self::noises_on_device`], a predicted run also gets its scan's
-    /// noise, `noise(scan)`, on the device before it is copied out.
+    /// [`device_noise`], `noise(scan)`, on the device before it is copied
+    /// out.
     pub(super) fn predict<'n>(
         &mut self,
         team: &WorkerTeam,
@@ -353,7 +442,7 @@ impl<'s> PredictionStage<'s> {
                 self.noise_terms.extend(
                     noise(scan)
                         .iter()
-                        .map(NoiseApplication::noise)
+                        .filter_map(NoiseApplication::uniform)
                         .filter(|noise| noise.sigma() != 0.0)
                         .map(|noise| MetalNoiseTerm {
                             key: noise.key(),
@@ -440,24 +529,37 @@ impl<'s> PredictionStage<'s> {
             &self.correlation_indices,
             &self.frequencies[scan.spectral_window_id],
         );
+        let antenna_type = |antenna: usize| {
+            // A mosaic step classed every antenna of the scans it covers.
+            debug_assert!(
+                self.antenna_types.is_empty() || antenna < self.antenna_types.len(),
+                "antenna {antenna} has no dish class"
+            );
+            self.antenna_types.get(antenna).copied().unwrap_or(0)
+        };
         for (offset, row) in rows.iter().enumerate() {
             self.projections.clear();
-            self.projections
-                .extend(segment.projections.iter().map(|projection| {
-                    let (uvw_m, phase_shift_m) = projection.apply(row.uvw_m);
-                    DomainProjection {
-                        uvw_m,
-                        phase_shift_m,
-                        pointing_offset_rad: [0.0; 2],
-                    }
-                }));
+            self.projections.extend(
+                segment
+                    .projections
+                    .iter()
+                    .zip(&segment.pointing_offsets)
+                    .map(|(projection, pointing_offset_rad)| {
+                        let (uvw_m, phase_shift_m) = projection.apply(row.uvw_m);
+                        DomainProjection {
+                            uvw_m,
+                            phase_shift_m,
+                            pointing_offset_rad: *pointing_offset_rad,
+                        }
+                    }),
+            );
             let header = NativeRowHeader {
                 row_flag: row.flagged,
                 context: RowContext {
                     original_uvw_m: Some(row.uvw_m),
                     time_s: 0.0,
                     antennas: [row.antenna1 as u32, row.antenna2 as u32],
-                    antenna_types: [0, 0],
+                    antenna_types: [antenna_type(row.antenna1), antenna_type(row.antenna2)],
                     parallactic_angle_rad: [0.0, 0.0],
                     field: scan.field_id as u32,
                     spectral_window: scan.spectral_window_id as u32,

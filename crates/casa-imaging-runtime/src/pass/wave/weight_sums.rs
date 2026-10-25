@@ -385,7 +385,7 @@ mod tests {
         use casa_imaging_model::PolarizationCoordinate;
         use casa_imaging_operator::{
             AiryDish, Basis, GridGeometry, GridPadding, ImageExtent, MeasurementOperator, MosaicPb,
-            MosaicWindow, PolarizationRouting,
+            MosaicRules, MosaicWindow, PolarizationRouting,
         };
         use casa_types::Correlation;
         let geometry = GridGeometry::new(
@@ -409,8 +409,15 @@ mod tests {
             selected_frequencies_hz: vec![1.0e11],
         };
         let dishes = [AiryDish::casa_alma(12.0, &geometry)];
-        let cf =
-            MosaicPb::new(&geometry, &routing, 1.0e11, &dishes, &[window]).expect("mosaic set");
+        let cf = MosaicPb::new(
+            MosaicRules::Tclean,
+            &geometry,
+            &routing,
+            1.0e11,
+            &dishes,
+            &[window],
+        )
+        .expect("mosaic set");
         MeasurementOperator::new(
             geometry,
             Basis::Taylor {

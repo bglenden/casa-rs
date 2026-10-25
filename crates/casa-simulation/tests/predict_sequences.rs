@@ -19,23 +19,26 @@ mod predict_support;
 
 use std::path::{Path, PathBuf};
 
+use casa_components::{
+    ComponentList, ComponentShape, Flux, SkyComponent, SpectralKind, SpectralModel,
+};
 use casa_simulation::{
     CasaOutcome, NoiseSpec, ObserveManySpec, Pointing, PredictSpec, PredictionOptions, Simulator,
     SimulatorResult, VoltagePatternSpec,
 };
+use casa_types::Correlation;
 use casa_types::measures::direction::{DirectionRef, MDirection};
+use casa_types::measures::frequency::{FrequencyRef, MFrequency};
 use num_complex::Complex32;
 use predict_support::{
-    CENTRE_RAD, bits, cube_model, data, extended_model, predict_spec, read_main, resources, scan,
-    session,
+    CENTRE_RAD, FREQUENCY_HZ, Row, bits, cube_model, data, extended_model, predict_spec, read_main,
+    reference, resources, scan, session, write_point_list,
 };
 
+const XX_YY: [Correlation; 2] = [Correlation::XX, Correlation::YY];
+
 fn simple_noise(sigma_jy: f64) -> NoiseSpec {
-    NoiseSpec {
-        mode: "simplenoise".to_string(),
-        simple_noise_jy: sigma_jy,
-        on_the_fly: true,
-    }
+    NoiseSpec::simple(sigma_jy)
 }
 
 /// Write a session of two scans: `first` runs after the first scan is
@@ -210,12 +213,13 @@ fn predict_refuses_as_casa_does() {
     let (outcome, message) = refusal(sm.predict(&spec(&[&model, &model])));
     assert_eq!(outcome, CasaOutcome::NotYetImplemented);
     assert!(message.contains("Phase 2"), "{message}");
+    // A component list that is not a readable table is CASA's False.
     let (outcome, message) = refusal(sm.predict(&PredictSpec {
         component_list: Some(directory.path().join("model.cl")),
         ..spec(&[&model])
     }));
-    assert_eq!(outcome, CasaOutcome::NotYetImplemented);
-    assert!(message.contains("complist"), "{message}");
+    assert_eq!(outcome, CasaOutcome::ReturnsFalse);
+    assert!(message.contains("not readable"), "{message}");
     sm.close().expect("close");
     let rows = read_main(&directory.path().join("x.ms")).0;
     assert!(
@@ -224,19 +228,81 @@ fn predict_refuses_as_casa_does() {
     );
 }
 
-/// CASA centres the voltage pattern on each pointing's direction, which
-/// casa-rs does not yet do for a pointing `observemany` moved off its
-/// field: `predict` with `setvp` refuses it, and predicts it without one.
+/// CASA's primary beam on a pointing `observemany` moved off its field is
+/// centred where the first row of the field it visits points, and kept
+/// there for the field's other rows (`BeamSkyJones`, #884): measured on
+/// CASA 6.7.6, a field-first sequence keeps the beam on the field and a
+/// moved-first one on the moved direction. casa-rs does not follow that
+/// yet, so a beam over a model image, a component list or total power, and
+/// the mosaic machine, refuse a moved pointing; each predicts it without.
 #[test]
-fn predict_with_a_beam_refuses_pointings_moved_off_their_field() {
+fn a_beam_on_a_moved_pointing_is_refused() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let model = extended_model(directory.path(), "model.image");
-    let mut sm = session(
-        &directory.path().join("moved.ms"),
-        "ALMA",
-        "XX YY",
-        resources(2, 2 << 30),
+    let points = directory.path().join("points.cl");
+    write_points(&points);
+    let list = PredictSpec {
+        images: Vec::new(),
+        component_list: Some(points),
+        incremental: false,
+    };
+    let mosaic = PredictionOptions {
+        ftmachine: "mosaic".to_string(),
+        ..PredictionOptions::default()
+    };
+    let single_dish = PredictionOptions {
+        ftmachine: "sd".to_string(),
+        grid_function: "PB".to_string(),
+        ..PredictionOptions::default()
+    };
+    let no_beam = VoltagePatternSpec {
+        dovp: false,
+        ..VoltagePatternSpec::default()
+    };
+    let cases = [
+        ("an image under the beam", None, spec(&[&model])),
+        ("a list under the beam", None, list),
+        (
+            "total power under the beam",
+            Some(&single_dish),
+            spec(&[&model]),
+        ),
+    ];
+    for (index, (what, options, predict)) in cases.into_iter().enumerate() {
+        let mut sm = moved_pointing(&directory.path().join(format!("beam-{index}.ms")));
+        if let Some(options) = options {
+            sm.set_options(options).expect("setoptions");
+        }
+        sm.set_vp(&VoltagePatternSpec::default()).expect("setvp");
+        let (outcome, message) = refusal(sm.predict(&predict));
+        assert_eq!(outcome, CasaOutcome::NotYetImplemented, "{what}");
+        assert!(
+            message.contains("pointed away") && message.contains("#884"),
+            "{what}: {message}"
+        );
+        sm.set_vp(&no_beam).expect("setvp");
+        sm.predict(&predict)
+            .unwrap_or_else(|error| panic!("{what} without the beam: {error}"));
+    }
+    let mut sm = moved_pointing(&directory.path().join("mosaic.ms"));
+    sm.set_options(&mosaic).expect("setoptions");
+    let (outcome, message) = refusal(sm.predict(&spec(&[&model])));
+    assert_eq!(
+        outcome,
+        CasaOutcome::NotYetImplemented,
+        "the mosaic machine"
     );
+    assert!(message.contains("pointed away"), "{message}");
+    sm.set_options(&PredictionOptions::default())
+        .expect("setoptions");
+    sm.predict(&spec(&[&model]))
+        .expect("GridFT predicts the moved pointing");
+}
+
+/// An ALMA session observing `target` and then a pointing of it moved
+/// 1.7″ east, to `path`.
+fn moved_pointing(path: &Path) -> Simulator {
+    let mut sm = session(path, "ALMA", "XX YY", resources(2, 2 << 30));
     let base = scan("target", 0.0, 20.0);
     let pointing = |start_s: f64, direction: Option<MDirection>| Pointing {
         source: "target".to_string(),
@@ -247,41 +313,81 @@ fn predict_with_a_beam_refuses_pointings_moved_off_their_field() {
     let moved = MDirection::from_angles(CENTRE_RAD[0] + 1.0e-5, CENTRE_RAD[1], DirectionRef::J2000);
     sm.observe_many(&ObserveManySpec {
         pointings: vec![pointing(0.0, None), pointing(20.0, Some(moved))],
-        spectral_window: base.spectral_window.clone(),
+        spectral_window: base.spectral_window,
         add_observation: false,
-        state: base.state.clone(),
-        observer: base.observer.clone(),
-        project: base.project.clone(),
+        state: base.state,
+        observer: base.observer,
+        project: base.project,
     })
     .expect("observemany");
-    sm.set_vp(&VoltagePatternSpec::default())
-        .expect("setvp records");
-    let (outcome, message) = refusal(sm.predict(&spec(&[&model])));
-    assert_eq!(outcome, CasaOutcome::NotYetImplemented);
-    assert!(
-        message.contains("pointed away") && message.contains("Phase 2"),
-        "{message}"
-    );
-    sm.set_vp(&VoltagePatternSpec {
-        dovp: false,
-        ..VoltagePatternSpec::default()
-    })
-    .expect("setvp");
-    sm.predict(&spec(&[&model])).expect("no beam: predicted");
-    sm.close().expect("close");
+    sm
 }
 
-/// A pointing `observemany` moved off its field is predicted at its own
-/// phase centre: its DATA is that of a field at the moved direction, and the
-/// first pointing's is unchanged (#861 review: the prediction stage reused
-/// the first pointing's projection, at a normalized RMS of 1.1).
+/// A pointing `observemany` moved off its field is phased on its field, as
+/// CASA's `VisBuffer` phases it from FIELD's PHASE_DIR (#884): its DATA is
+/// the per-row reference's at the field, with its UVW, which are a field's
+/// at the moved direction, as `NewMSSimulator` computes them. A field there
+/// is phased there, and predicts other DATA.
 #[test]
-fn a_moved_pointing_is_predicted_at_its_own_phase_centre() {
+fn a_moved_pointing_is_phased_on_its_field() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let model = extended_model(directory.path(), "model.image");
+    let (pointed, field) = moved_and_field_there(directory.path(), &model, None);
+    let expected = reference(&pointed, &model, &XX_YY, None);
+    assert_eq!(
+        bits(&data(&pointed)),
+        bits(&expected),
+        "the moved pointing is phased on its field"
+    );
+    assert_ne!(
+        bits(&data(&pointed)),
+        bits(&data(&field)),
+        "a field at the moved direction is phased there"
+    );
+}
+
+/// Total power samples a moved pointing at its own direction, not its
+/// field's (#874, after #861's moved pointings): its DATA is that of a
+/// field at the moved direction.
+#[test]
+fn total_power_samples_a_moved_pointing_at_its_own_direction() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let model = extended_model(directory.path(), "model.image");
+    let (pointed, field) = moved_and_field_there(
+        directory.path(),
+        &model,
+        Some(&PredictionOptions {
+            ftmachine: "sd".to_string(),
+            grid_function: "PB".to_string(),
+            ..PredictionOptions::default()
+        }),
+    );
+    assert!(
+        pointed
+            .iter()
+            .flat_map(|row| &row.data)
+            .any(|v| v.norm() > 0.0),
+        "the model is predicted"
+    );
+    assert_eq!(
+        bits(pointed.iter().map(|row| &row.data)),
+        bits(field.iter().map(|row| &row.data)),
+        "the moved pointing's DATA"
+    );
+}
+
+/// Sessions of two pointings predicting `model` after `options`: the second
+/// pointing moved off its field, and the second at a field at the moved
+/// direction. Their UVW agree, as `NewMSSimulator` computes a moved
+/// pointing's at the moved direction.
+fn moved_and_field_there(
+    directory: &Path,
+    model: &Path,
+    options: Option<&PredictionOptions>,
+) -> (Vec<Row>, Vec<Row>) {
     let moved = MDirection::from_angles(CENTRE_RAD[0] + 1.0e-5, CENTRE_RAD[1], DirectionRef::J2000);
     let observed = |name: &str, second: Pointing| {
-        let path = directory.path().join(name);
+        let path = directory.join(name);
         let mut sm = session(&path, "ALMA", "XX YY", resources(2, 2 << 30));
         sm.set_field("moved", &moved, "", 0.0).expect("setfield");
         let base = scan("target", 0.0, 20.0);
@@ -302,7 +408,10 @@ fn a_moved_pointing_is_predicted_at_its_own_phase_centre() {
             project: base.project,
         })
         .expect("observemany");
-        sm.predict(&spec(&[&model])).expect("predict");
+        if let Some(options) = options {
+            sm.set_options(options).expect("setoptions");
+        }
+        sm.predict(&spec(&[model])).expect("predict");
         sm.close().expect("close");
         read_main(&path).0
     };
@@ -326,23 +435,96 @@ fn a_moved_pointing_is_predicted_at_its_own_phase_centre() {
     );
     assert_eq!(pointed.len(), field.len(), "rows");
     for (row, (pointed, field)) in pointed.iter().zip(&field).enumerate() {
-        assert_eq!(
-            pointed.uvw_m, field.uvw_m,
-            "row {row}: the same phase centre"
-        );
+        assert_eq!(pointed.uvw_m, field.uvw_m, "row {row}: the same UVW");
     }
-    assert!(
-        pointed
-            .iter()
-            .flat_map(|row| &row.data)
-            .any(|v| v.norm() > 0.0),
-        "the model is predicted"
-    );
-    assert_eq!(
-        bits(pointed.iter().map(|row| &row.data)),
-        bits(field.iter().map(|row| &row.data)),
-        "the moved pointing's DATA"
-    );
+    (pointed, field)
+}
+
+/// A list of a point at the centre and one 3″ north of it, written to
+/// `path`.
+fn write_points(path: &Path) {
+    let mut list = ComponentList::new();
+    for (north_rad, flux) in [(0.0, 1.0), (1.5e-5, 0.5)] {
+        list.push(SkyComponent::new(
+            Flux::stokes_jy(flux, 0.0, 0.0, 0.0),
+            ComponentShape::point(MDirection::from_angles(
+                CENTRE_RAD[0],
+                CENTRE_RAD[1] + north_rad,
+                DirectionRef::J2000,
+            )),
+            SpectralModel::new(
+                MFrequency::new(FREQUENCY_HZ, FrequencyRef::LSRK),
+                SpectralKind::Constant,
+            ),
+        ));
+    }
+    list.write_table(path).expect("write the list");
+}
+
+/// A component list on a pointing `observemany` moved off its field is
+/// phased on the field, as CASA predicts it (#884, the
+/// `components-moved-pointing` scenario): a point at the field's direction
+/// predicts its flux at zero phase in both pointings, though the moved
+/// pointing's UVW are the moved direction's.
+#[test]
+fn components_are_predicted_at_a_moved_pointing() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let points = directory.path().join("points.cl");
+    write_point_list(&points, CENTRE_RAD, 1.0);
+    let path = directory.path().join("moved.ms");
+    let mut sm = moved_pointing(&path);
+    sm.predict(&PredictSpec {
+        images: Vec::new(),
+        component_list: Some(points),
+        incremental: false,
+    })
+    .expect("predict");
+    sm.close().expect("close");
+    let rows = read_main(&path).0;
+    assert!(!rows.is_empty());
+    for (row, cells) in rows.iter().enumerate() {
+        for value in &cells.data {
+            assert!(
+                (value.re - 1.0).abs() < 1e-6 && value.im.abs() < 1e-6,
+                "row {row}: the point at the field: {value}"
+            );
+        }
+    }
+}
+
+/// CASA squints the VLA's and the EVLA's beams for a component list, moving
+/// the RR and LL beams apart; casa-rs's patterns are unsquinted, so it
+/// refuses the list under them with squint, and predicts it without.
+#[test]
+fn components_under_a_squinting_beam_are_refused_unless_squint_is_off() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let points = directory.path().join("points.cl");
+    write_points(&points);
+    for telescope in ["VLA", "EVLA"] {
+        let mut sm = session(
+            &directory.path().join(format!("{telescope}.ms")),
+            telescope,
+            "RR LL",
+            resources(2, 2 << 30),
+        );
+        sm.observe(&scan("target", 0.0, 20.0)).expect("observe");
+        let list = PredictSpec {
+            images: Vec::new(),
+            component_list: Some(points.clone()),
+            incremental: false,
+        };
+        sm.set_vp(&VoltagePatternSpec::default()).expect("setvp");
+        let (outcome, message) = refusal(sm.predict(&list));
+        assert_eq!(outcome, CasaOutcome::NotYetImplemented, "{telescope}");
+        assert!(message.contains("squint"), "{telescope}: {message}");
+        sm.set_vp(&VoltagePatternSpec {
+            do_squint: false,
+            ..VoltagePatternSpec::default()
+        })
+        .expect("setvp");
+        sm.predict(&list).expect("unsquinted: predicted");
+        sm.close().expect("close");
+    }
 }
 
 #[test]
@@ -378,13 +560,21 @@ fn setvp_setoptions_and_the_session_refuse_what_casa_rs_lacks() {
         ..VoltagePatternSpec::default()
     }));
     assert_eq!(outcome, CasaOutcome::NotYetImplemented);
-    for ftmachine in ["mosaic", "SD"] {
+    let (outcome, message) = refusal(vla.set_options(&PredictionOptions {
+        ftmachine: "both".to_string(),
+        ..PredictionOptions::default()
+    }));
+    assert_eq!(outcome, CasaOutcome::NotYetImplemented);
+    assert!(message.contains("#841"), "{message}");
+    // SDGrid's Gaussian kernels.
+    for grid_function in ["GAUSS", "GJINC"] {
         let (outcome, message) = refusal(vla.set_options(&PredictionOptions {
-            ftmachine: ftmachine.to_string(),
+            ftmachine: "SD".to_string(),
+            grid_function: grid_function.to_string(),
             ..PredictionOptions::default()
         }));
-        assert_eq!(outcome, CasaOutcome::NotYetImplemented, "{ftmachine}");
-        assert!(message.contains("Phase 2"), "{message}");
+        assert_eq!(outcome, CasaOutcome::NotYetImplemented, "{grid_function}");
+        assert!(message.contains("'PB', 'BOX' and 'SF' are"), "{message}");
     }
     let (outcome, _) = refusal(vla.set_options(&PredictionOptions {
         grid_function: "BOX".to_string(),

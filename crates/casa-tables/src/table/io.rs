@@ -266,6 +266,7 @@ impl Table {
                 error
             })?;
         crate::storage::tiled_stman::invalidate_shared_tile_cache_for_table(&options.path);
+        self.note_full_save(&options.path);
         tracing::info!(
             path = %options.path.display(),
             rows = self.inner.row_count(),
@@ -285,7 +286,10 @@ impl Table {
     /// tables on disk.
     pub fn save_metadata_only(&self, options: TableOptions) -> Result<(), TableError> {
         let snapshot = StorageSnapshot {
-            row_count: 0,
+            // The rows the sync data at the target publishes, which its
+            // `table.dat` can trail (#880). This save writes no rows, so this
+            // handle's own count, which includes unsaved ones, is not used.
+            row_count: persisted_rows::published_row_count(&options.path) as usize,
             rows: Vec::new(),
             undefined_cells: Vec::new(),
             keywords: self.inner.keywords().clone(),
@@ -417,6 +421,7 @@ impl Table {
             profiler.mark("storage_save");
         }
         crate::storage::tiled_stman::invalidate_shared_tile_cache_for_table(&options.path);
+        self.note_full_save(&options.path);
         tracing::info!(
             path = %options.path.display(),
             rows = self.inner.row_count(),
@@ -503,6 +508,7 @@ impl Table {
             profiler.mark("storage_save");
         }
         crate::storage::tiled_stman::invalidate_shared_tile_cache_for_table(&options.path);
+        self.note_full_save(&options.path);
         tracing::info!(
             path = %options.path.display(),
             rows = row_count,
@@ -604,6 +610,8 @@ impl Table {
                     ));
                 }
             };
+        let persisted_rows = self.require_persisted_rows(source_path, &table_dat)?;
+        table_dat.raise_row_count(persisted_rows);
 
         let mut profiler = StorageProfiler::start(format!(
             "Table::save_selected_columns_in_place path={}",
@@ -1027,6 +1035,8 @@ impl Table {
                         ));
                     }
                 };
+            let persisted_rows = self.require_persisted_rows(&source_path, &table_dat)?;
+            table_dat.raise_row_count(persisted_rows);
 
             if table_dat
                 .table_desc
@@ -1212,6 +1222,8 @@ impl Table {
                         ));
                     }
                 };
+            let persisted_rows = self.require_persisted_rows(&source_path, &table_dat)?;
+            table_dat.raise_row_count(persisted_rows);
 
             if table_dat
                 .table_desc

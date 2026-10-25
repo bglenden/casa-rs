@@ -20,28 +20,35 @@
 //!
 //! Divergences: CASA rewrites the model image's spectral units and frame in
 //! place; casa-rs never writes it (`docs/CASA (C++) bugs.md`). MODEL_DATA
-//! and CORRECTED_DATA are not written (plan decision 6), even for an
-//! incremental predict, whose sum CASA forms through MODEL_DATA.
+//! and CORRECTED_DATA are not created (plan decision 6), even for an
+//! incremental predict, whose sum CASA forms through MODEL_DATA; a
+//! MeasurementSet `openfromms` opened keeps those it has in step with DATA.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use casa_components::ComponentList;
 use casa_imaging_operator::{
-    ConvolutionFunctionSet, GridPrecision, MAX_W_PLANES, OperatorError, PaddingFactor,
-    PreparedModelGrids, Spheroidal, WPlaneCount, WPlanes,
+    ConvolutionFunctionSet, GridPrecision, MAX_W_PLANES, MosaicPb, MosaicRules, OperatorError,
+    PaddingFactor, PreparedModelGrids, Spheroidal, WPlaneCount, WPlanes,
 };
 use casa_imaging_runtime::pass::WorkerTeam;
 use casa_imaging_runtime::{Demand, Reservation, admit, charge_process_caches, free_memory};
 use casa_types::Correlation;
 
 use super::error::{SimulatorError, SimulatorResult};
+use super::resources::SessionResources;
 use super::{BackendRequest, Simulator};
 use crate::predict::{
-    BeamPattern, FtMachine, ModelLayout, ModelOperator, PredictError, PrimaryBeam, SkyModel,
+    BeamPattern, ComponentPrediction, ComponentRefusal, ComponentTargets, ComponentWindow,
+    FtMachine, ModelLayout, ModelOperator, PredictError, PrimaryBeam, SingleDishKernel, SkyModel,
 };
 
 /// The phase a model's grids are admitted as.
 pub(crate) const MODEL_PHASE: &str = "the simulator's model grids";
+
+/// The phase a component list's prepared fluxes and beams are admitted as.
+const COMPONENTS_PHASE: &str = "the simulator's component list";
 
 /// The phase the workers preparing a model are admitted as.
 const PREPARATION_PHASE: &str = "the simulator's model preparation";
@@ -53,9 +60,17 @@ const W_SCREENS_PHASE: &str = "the simulator's W-projection screens";
 /// The phase a model's kernels are admitted as.
 const KERNEL_PHASE: &str = "the simulator's convolution functions";
 
-/// The FTMachines CASA's simulator builds other than `GridFT` and
-/// `WProjectFT`.
-const OTHER_FTMACHINES: [&str; 4] = ["sd", "both", "mosaic", "pbwproject"];
+/// The phase the mosaic screens are admitted as while the beams are
+/// transformed on them.
+const MOSAIC_SCREENS_PHASE: &str = "the simulator's mosaic screens";
+
+/// The phase the mosaic machine's pointings, dish classes and beams'
+/// inputs are admitted as.
+const MOSAIC_STATE_PHASE: &str = "the simulator's mosaic pointings and dish classes";
+
+/// The FTMachines CASA's simulator builds other than `GridFT`,
+/// `WProjectFT`, `MosaicFTNew` and `SDGrid`.
+const OTHER_FTMACHINES: [&str; 2] = ["both", "pbwproject"];
 
 /// The arguments of `sm.predict`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -114,10 +129,11 @@ impl PredictSpec {
 /// `WProjectFT` predict; the session's memory budget stands for `cache`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PredictionOptions {
-    /// `ftmachine`: `WProjectFT` for `wproject`, and `GridFT` unless `sd`,
-    /// `both`, `mosaic` or `pbwproject` (case-insensitive).
+    /// `ftmachine`: `WProjectFT` for `wproject`, `SDGrid` for `sd`, and
+    /// `GridFT` unless `both`, `mosaic` or `pbwproject` (case-insensitive).
     pub ftmachine: String,
-    /// `gridfunction`; `SF`, the spheroid, is implemented.
+    /// `gridfunction`: `SF`, the spheroid, for `GridFT` and `WProjectFT`;
+    /// `PB`, `BOX` or `SF` for `SDGrid`.
     pub grid_function: String,
     /// `padding`, `GridFT`'s; factors below 1 are ignored, as CASA ignores
     /// them. `WProjectFT` pads by 1 whatever it is.
@@ -181,10 +197,18 @@ pub(crate) struct Prediction {
     /// The grids: one set for every field without a beam, else one set per
     /// field, the beam centred on it.
     grids: Vec<(Option<usize>, PreparedModelGrids)>,
+    /// The mosaic machine's pointing offsets, from the model's pixel
+    /// `(nx/2, ny/2)`, by phase centre (its bits), sorted by the bits; empty
+    /// for the others.
+    pointings: Vec<([u64; 2], [f64; 2])>,
+    /// The mosaic machine's dish class of each antenna; empty for the
+    /// others.
+    antenna_types: Vec<u8>,
     /// The grids' memory, admitted at `predict` and released with them.
     _reservation: Reservation,
-    /// What the operator's kernels keep, admitted as they were built and
-    /// released with them.
+    /// What the operator's kernels keep, and the mosaic machine's pointings
+    /// and dish classes, admitted as they were built and released with
+    /// them.
     _kernels: Reservation,
 }
 
@@ -218,6 +242,29 @@ impl Prediction {
     pub(crate) fn grid_bytes(&self) -> u64 {
         self.grids.iter().map(|(_, grids)| grids.bytes()).sum()
     }
+
+    /// The offset of rows pointed at `centre_rad`, which the mosaic
+    /// machine's kernels ramp by; zero for the other machines.
+    pub(crate) fn pointing_offset_rad(&self, centre_rad: [f64; 2]) -> [f64; 2] {
+        let key = centre_rad.map(f64::to_bits);
+        let found = self
+            .pointings
+            .binary_search_by_key(&key, |(known, _)| *known)
+            .ok()
+            .map(|index| &self.pointings[index]);
+        // A mosaic step measured every scan it covers.
+        debug_assert!(
+            found.is_some() || self.pointings.is_empty(),
+            "a mosaic step predicts rows pointed at {centre_rad:?}, which it did not measure"
+        );
+        found.map_or([0.0; 2], |(_, offset)| *offset)
+    }
+
+    /// Each antenna's dish class, which keys the mosaic machine's kernels;
+    /// empty for the other machines.
+    pub(crate) fn antenna_types(&self) -> &[u8] {
+        &self.antenna_types
+    }
 }
 
 impl Simulator {
@@ -227,29 +274,37 @@ impl Simulator {
     ///
     /// # Errors
     ///
-    /// Not yet implemented: an FTMachine other than `GridFT` and
-    /// `WProjectFT` (`sd`, `both`, `mosaic`, `pbwproject`), or a grid
-    /// function other than `SF`. Nothing is recorded then.
+    /// Not yet implemented: an FTMachine other than `GridFT`, `WProjectFT`,
+    /// `MosaicFTNew` and `SDGrid` (`both`, `pbwproject`), a grid function
+    /// other than `SF` for the interferometric machines, or other than `PB`,
+    /// `BOX` and `SF` for `SDGrid`. Nothing is recorded then.
     pub fn set_options(&mut self, options: &PredictionOptions) -> SimulatorResult<()> {
         let ftmachine = options.ftmachine.to_lowercase();
         if OTHER_FTMACHINES.contains(&ftmachine.as_str()) {
-            let phase = if ftmachine == "both" || ftmachine == "pbwproject" {
-                "#841"
-            } else {
-                "simulation Phase 2"
-            };
             return Err(SimulatorError::not_yet_implemented(format!(
-                "setoptions(ftmachine='{ftmachine}') is not yet implemented in casa-rs ({phase})"
+                "setoptions(ftmachine='{ftmachine}') is not yet implemented in casa-rs (#841)"
             )));
         }
-        let grid_function = options.grid_function.to_lowercase();
-        if grid_function != "sf" {
-            return Err(SimulatorError::not_yet_implemented(format!(
-                "setoptions(gridfunction='{}') is not yet implemented in casa-rs (#841); \
-                 'SF' is",
-                options.grid_function
-            )));
-        }
+        let single_dish = if ftmachine == "sd" {
+            Some(
+                SingleDishKernel::from_grid_function(&options.grid_function).ok_or_else(|| {
+                    SimulatorError::not_yet_implemented(format!(
+                        "setoptions(ftmachine='sd', gridfunction='{}') is not yet implemented \
+                         in casa-rs (#841); 'PB', 'BOX' and 'SF' are",
+                        options.grid_function
+                    ))
+                })?,
+            )
+        } else {
+            if options.grid_function.to_lowercase() != "sf" {
+                return Err(SimulatorError::not_yet_implemented(format!(
+                    "setoptions(gridfunction='{}') is not yet implemented in casa-rs (#841); \
+                     'SF' is",
+                    options.grid_function
+                )));
+            }
+            None
+        };
         tracing::info!("Setting processing options");
         // CASA keeps a padding of at least 1 and ignores the rest.
         let padding = options.padding as f32;
@@ -258,6 +313,8 @@ impl Simulator {
                 .map_err(|error| SimulatorError::raised(format!("padding {padding}: {error}")))?;
         }
         self.w_projection_planes = (ftmachine == "wproject").then_some(options.w_planes);
+        self.mosaic = ftmachine == "mosaic";
+        self.single_dish = single_dish;
         Ok(())
     }
 
@@ -272,6 +329,9 @@ impl Simulator {
     ///   casa-rs's [`MAX_W_PLANES`] (65,536).
     /// - Not yet implemented: `WProjectFT` on the Metal backend.
     fn ft_machine(&self) -> SimulatorResult<FtMachine> {
+        if self.mosaic {
+            return Ok(FtMachine::Mosaic);
+        }
         let Some(planes) = self.w_projection_planes else {
             return Ok(FtMachine::Grid(self.padding));
         };
@@ -331,6 +391,7 @@ impl Simulator {
             );
         }
         self.voltage_pattern = spec.dovp;
+        self.squint = spec.do_squint;
         Ok(())
     }
 
@@ -343,9 +404,11 @@ impl Simulator {
     /// - Raised, as casatools' binding raises before predicting: a named
     ///   image that does not exist or does not open
     ///   ([`PredictSpec::check_images`]).
-    /// - Not yet implemented: a component list, more than one image, a
-    ///   model layout CASA reads and casa-rs does not (other than Stokes I,
-    ///   J2000, direction–Stokes–spectral axes), a near-field distance on the
+    /// - Not yet implemented: more than one image, a model layout CASA reads
+    ///   and casa-rs does not (other than Stokes I, J2000,
+    ///   direction–Stokes–spectral axes), a component casa-rs does not
+    ///   predict (a direction not in J2000, or a flux, spectrum or shape
+    ///   casa-components does not evaluate), a near-field distance on the
     ///   last field, scans whose windows differ in correlations, or
     ///   `setvp(dovp=True)` for a telescope whose default pattern casa-rs
     ///   does not have (ALMA's, ACA's, the VLA's and the EVLA's it has) or
@@ -353,7 +416,8 @@ impl Simulator {
     /// - CASA's `False`: no model image ("No model images found"), or no
     ///   rows observed yet.
     /// - Raised: a scan of 3 correlations ("No such VisVector type"), or
-    ///   model grids or kernels that do not fit the session's memory budget
+    ///   model grids or kernels, or a component list's read or preparation,
+    ///   that do not fit the session's memory budget
     ///   ([`SimulatorError::admission_refused`]).
     /// - As the FTMachine `setoptions` chose refuses: `WProjectFT` with
     ///   fewer than two planes, or on the Metal backend.
@@ -371,12 +435,6 @@ impl Simulator {
         } else {
             tracing::info!("The data column will be replaced");
         }
-        if let Some(list) = &spec.component_list {
-            return Err(SimulatorError::not_yet_implemented(format!(
-                "predict(complist='{}') is not yet implemented in casa-rs (simulation Phase 2)",
-                list.display()
-            )));
-        }
         if images.len() > 1 {
             return Err(SimulatorError::not_yet_implemented(format!(
                 "predict from {} model images is not yet implemented in casa-rs (simulation \
@@ -384,11 +442,23 @@ impl Simulator {
                 images.len()
             )));
         }
-        let Some(path) = images.first() else {
+        // The plan corrupts by gains and leakage after every prediction
+        // (`session::plan`).
+        if spec.incremental && self.data_plan.corrupts_by_jones() {
+            return Err(SimulatorError::not_yet_implemented(
+                "an incremental predict after a corrupt with setgain or setleakage terms is not \
+                 yet implemented in casa-rs (simulation Phase 3)",
+            ));
+        }
+        let list = spec
+            .component_list
+            .as_deref()
+            .filter(|path| !path.as_os_str().is_empty());
+        if images.is_empty() && list.is_none() {
             return Err(SimulatorError::refused(
                 "Failed to create SkyEquation: No model images found",
             ));
-        };
+        }
         if let Some(field) = self.fields.last()
             && field.distance_m != 0.0
         {
@@ -398,7 +468,14 @@ impl Simulator {
                 field.distance_m, field.name
             )));
         }
-        let model = SkyModel::open(path).map_err(model_error)?;
+        // `createSkyEquation` reads the component list before the images.
+        let list = list
+            .map(|path| read_component_list(path, &self.options.resources))
+            .transpose()?;
+        let model = images
+            .first()
+            .map(|path| SkyModel::open(path).map_err(model_error))
+            .transpose()?;
         if self.planned_rows() == 0 {
             return Err(SimulatorError::refused(
                 "Failed to create SkyEquation: Caught exception: MSIter::construct - Input \
@@ -407,21 +484,227 @@ impl Simulator {
         }
         let correlations = self.predicted_correlations()?;
         let beam = self.voltage_pattern_beam()?;
-        if beam.is_some() {
-            self.check_pointings_on_fields()?;
+        // Each of these points a scan at its phase centre, which on an
+        // opened MeasurementSet POINTING must agree with.
+        if self.mosaic && model.is_some() {
+            self.require_pointings_at_phase_centres("setoptions(ftmachine='mosaic')")?;
         }
-        let layout = ModelLayout::new(&model, &correlations, self.ft_machine()?)
-            .map_err(|error| correlation_error(error, &correlations))?;
-        let (kernels, kernel_reservation) = self.admitted_kernels(&layout)?;
-        let operator = ModelOperator::new(layout, kernels, GridPrecision::F32);
-        let prediction = self.prepare(&model, operator, beam, kernel_reservation)?;
+        if beam.is_some() {
+            self.require_pointings_at_phase_centres("setvp(dovp=True)")?;
+        }
+        if self.single_dish.is_some() {
+            self.require_pointings_at_phase_centres("setoptions(ftmachine='sd')")?;
+        }
+        // A primary beam, over a model image, a component list or total
+        // power, and the mosaic machine's kernels are centred on each
+        // scan's field here, which a pointing `observemany` moved does not
+        // point at (#884).
+        if model.is_some() && self.mosaic {
+            self.check_pointings_on_fields("setoptions(ftmachine='mosaic')")?;
+        }
+        if beam.is_some() {
+            self.check_pointings_on_fields("setvp(dovp=True)")?;
+        }
+        if let Some(kernel) = self.single_dish {
+            // Total power samples a model image; `SDGrid` with a component
+            // list is not yet here.
+            let Some(model) = model.filter(|_| list.is_none()) else {
+                return Err(SimulatorError::not_yet_implemented(
+                    "predict(complist=…) after setoptions(ftmachine='sd') is not yet \
+                     implemented in casa-rs (#841); a model image is",
+                ));
+            };
+            return self.predict_single_dish(model, kernel, beam, spec.incremental);
+        }
+        let components = list
+            .map(|(path, list, held)| self.prepare_components(&path, (list, held), beam))
+            .transpose()?;
+        let prediction = model
+            .map(|model| self.prepare_image(&model, &correlations, beam))
+            .transpose()?;
         if !spec.incremental {
             // Every step so far covers a prefix of the scans this one covers.
             self.data_plan.clear();
         }
-        self.data_plan
-            .predict(Arc::new(prediction), self.scans.len());
+        let scans = self.scans.len();
+        if let Some(components) = components {
+            self.data_plan
+                .predict_components(Arc::new(components), scans);
+        }
+        if let Some(prediction) = prediction {
+            self.data_plan.predict(Arc::new(prediction), scans);
+        }
         Ok(())
+    }
+
+    /// `model` admitted and prepared for rows with `correlations` through
+    /// the FTMachine `setoptions` chose: its kernels, then its grids, with
+    /// `beam` in the image plane except through the mosaic machine, whose
+    /// kernels carry the beams and which keeps each scan's pointing and
+    /// each antenna's dish class.
+    fn prepare_image(
+        &self,
+        model: &SkyModel,
+        correlations: &[Correlation],
+        beam: Option<PrimaryBeam>,
+    ) -> SimulatorResult<Prediction> {
+        let machine = self.ft_machine()?;
+        let mut mosaic_state = None;
+        let (beams, antenna_types, pointings) = match machine {
+            FtMachine::Mosaic => {
+                // What the machine keeps per pointing and antenna, and its
+                // beams' inputs until the kernels are built, admitted before
+                // they are formed.
+                let (kept, building) = self.mosaic_state_bytes();
+                let resources = &self.options.resources;
+                let reservation = admit(
+                    resources.host(),
+                    resources.policy(),
+                    &Demand {
+                        phase: MOSAIC_STATE_PHASE,
+                        memory: kept + building,
+                    },
+                )
+                .map_err(SimulatorError::admission)?;
+                mosaic_state = Some((reservation, kept));
+                let (beams, antenna_types) = self.mosaic_beams()?;
+                (Some(beams), antenna_types, self.mosaic_pointings(model)?)
+            }
+            FtMachine::Grid(_) | FtMachine::WProject(_) => {
+                if self
+                    .antennas
+                    .windows(2)
+                    .any(|pair| pair[0].diameter_m != pair[1].diameter_m)
+                {
+                    tracing::warn!(
+                        "Heterogeneous array is only supported for ALMA,ACA,OVRO telescopes, \
+                         and only with option ftmachine=mosaic."
+                    );
+                }
+                (None, Vec::new(), Vec::new())
+            }
+        };
+        let layout = ModelLayout::new(model, correlations, machine, beams)
+            .map_err(|error| correlation_error(error, correlations))?;
+        let (kernels, mut kernel_reservation) = self.admitted_kernels(&layout)?;
+        // The operator drops the layout's beams.
+        let operator = ModelOperator::new(layout, kernels, GridPrecision::F32);
+        if let Some((mut reservation, kept)) = mosaic_state {
+            debug_assert_eq!(
+                (pointings.capacity() * size_of::<([u64; 2], [f64; 2])>()
+                    + antenna_types.capacity()) as u64,
+                kept,
+                "the mosaic state keeps what was admitted for it"
+            );
+            reservation.retain(kept);
+            kernel_reservation.join(reservation);
+        }
+        let image_beam = beam.filter(|_| machine != FtMachine::Mosaic);
+        let mut prediction = self.prepare(model, operator, image_beam, kernel_reservation)?;
+        prediction.pointings = pointings;
+        prediction.antenna_types = antenna_types;
+        Ok(prediction)
+    }
+
+    /// `list` prepared for the session's windows, with `beam` per observed
+    /// field, and admitted. The admission is made when the list has been
+    /// read: what the prediction will hold, known from the list's length,
+    /// and its preparation's scratch. The list's own share of the read's
+    /// admission, `held_list`, is released when the list is dropped here.
+    fn prepare_components(
+        &self,
+        path: &Path,
+        (list, held_list): (ComponentList, Reservation),
+        beam: Option<PrimaryBeam>,
+    ) -> SimulatorResult<ComponentPrediction> {
+        // CASA squints the VLA's and EVLA's beams for a component list (RR
+        // and LL beams apart); casa-rs's patterns are unsquinted.
+        if self.squint
+            && let Some(beam) = beam.filter(|beam| beam.squints())
+        {
+            return Err(SimulatorError::not_yet_implemented(format!(
+                "predict(complist='{}') under the {beam:?} primary beam with beam squint is \
+                 not yet implemented in casa-rs (#841): CASA squints the RR and LL beams for \
+                 components; setvp(dosquint=False) predicts them unsquinted",
+                path.display()
+            )));
+        }
+        if self
+            .antennas
+            .windows(2)
+            .any(|pair| pair[0].diameter_m != pair[1].diameter_m)
+        {
+            tracing::warn!(
+                "Heterogeneous array is not supported for simulation from components.  \
+                 Primary beam will be applied by telescope name."
+            );
+        }
+        let windows: Vec<ComponentWindow> = self
+            .spectral_windows
+            .iter()
+            .map(|window| ComponentWindow {
+                first_hz: window.start_frequency_hz,
+                step_hz: window.channel_width_hz,
+                channels: window.channel_count,
+                correlations: window.correlations.clone(),
+            })
+            .collect();
+        let pattern = beam.map(PrimaryBeam::pattern);
+        // A scan is phased on its field's phase centre, as CASA's
+        // `VisBuffer` phases it, and the beam centred there: a beam on a
+        // pointing `observemany` moved was refused above (#884). Scans at
+        // one centre share a pointing.
+        let mut pointings: Vec<(usize, [f64; 2])> = Vec::new();
+        let pointing_of_scan: Vec<usize> = self
+            .scans
+            .iter()
+            .map(|scan| {
+                let centre = scan.phase_center_rad.map(f64::to_bits);
+                pointings
+                    .iter()
+                    .position(|(_, known)| known.map(f64::to_bits) == centre)
+                    .unwrap_or_else(|| {
+                        pointings.push((pointings.len(), scan.phase_center_rad));
+                        pointings.len() - 1
+                    })
+            })
+            .collect();
+        let targets = ComponentTargets {
+            windows: &windows,
+            pointings: &pointings,
+            pointing_of_scan: &pointing_of_scan,
+            beam: pattern.as_ref(),
+        };
+        let resources = &self.options.resources;
+        let preparation = ComponentTargets::preparation_bytes(list.len());
+        let mut reservation = admit(
+            resources.host(),
+            resources.policy(),
+            &Demand {
+                phase: COMPONENTS_PHASE,
+                memory: targets.bytes(list.len()) + preparation,
+            },
+        )
+        .map_err(SimulatorError::admission)?;
+        let held_preparation = reservation.split(preparation);
+        let prediction = ComponentPrediction::new(&list, targets, reservation).map_err(
+            |ComponentRefusal::NotYetImplemented(reason)| {
+                SimulatorError::not_yet_implemented(format!(
+                    "predict(complist='{}'): {reason} (#841)",
+                    path.display()
+                ))
+            },
+        )?;
+        drop(held_preparation);
+        tracing::info!(
+            components = list.len(),
+            bytes = prediction.bytes(),
+            "prepared the component list {}",
+            path.display()
+        );
+        drop(list);
+        drop(held_list);
+        Ok(prediction)
     }
 
     /// The correlations of the scans observed so far, which one operator
@@ -454,24 +737,15 @@ impl Simulator {
     }
 
     /// The primary beam `setvp` asks for: the default pattern of OBSERVATION
-    /// row 0's telescope at spectral window 0's REF_FREQUENCY, its start
-    /// frequency (`VPSkyJones`).
+    /// row 0's telescope at spectral window 0's REF_FREQUENCY
+    /// (`VPSkyJones`).
     fn voltage_pattern_beam(&self) -> SimulatorResult<Option<PrimaryBeam>> {
         if !self.voltage_pattern {
             return Ok(None);
         }
-        let telescope = self
-            .observations
-            .first()
-            .map_or(self.telescope.as_str(), |observation| {
-                observation.telescope.as_str()
-            });
-        let reference_frequency_hz = self
-            .spectral_windows
-            .first()
-            .map_or(0.0, |window| window.start_frequency_hz);
-        let beam =
-            PrimaryBeam::for_telescope(telescope, reference_frequency_hz).ok_or_else(|| {
+        let telescope = self.observing_telescope();
+        let beam = PrimaryBeam::for_telescope(telescope, self.reference_frequency_hz())
+            .ok_or_else(|| {
                 SimulatorError::not_yet_implemented(format!(
                     "setvp(dovp=True) for telescope {telescope} is not yet implemented in \
                      casa-rs (#841); the default patterns of ALMA, ACA, VLA and EVLA are"
@@ -480,19 +754,39 @@ impl Simulator {
         Ok(Some(beam))
     }
 
-    /// That every scan points at its field, as a primary beam centred on
-    /// each field needs. CASA centres the beam on each pointing's direction
-    /// (from POINTING), which casa-rs does not yet do for the pointings
-    /// `observemany` moves off their field.
-    fn check_pointings_on_fields(&self) -> SimulatorResult<()> {
+    /// OBSERVATION row 0's telescope, whose patterns CASA's `VPSkyJones`
+    /// takes (`msc.observation().telescopeName()(0)`).
+    pub(super) fn observing_telescope(&self) -> &str {
+        self.observations
+            .first()
+            .map_or(self.telescope.as_str(), |observation| {
+                observation.telescope.as_str()
+            })
+    }
+
+    /// Spectral window 0's REF_FREQUENCY, which picks the VLA's pattern by
+    /// band (`VPSkyJones`), Hz.
+    pub(super) fn reference_frequency_hz(&self) -> f64 {
+        self.spectral_windows
+            .first()
+            .map_or(0.0, |window| window.reference_frequency_hz)
+    }
+
+    /// That every scan points at its field, as `what` needs here: a primary
+    /// beam, or the mosaic machine's kernels, centred on each scan's field.
+    /// CASA's beam on a pointing `observemany` moved off its field is
+    /// centred where the first row of the field it visits points, which
+    /// `BeamSkyJones` keeps for the field's other rows (#884, `docs/CASA
+    /// (C++) bugs.md`); casa-rs does not follow it yet.
+    fn check_pointings_on_fields(&self, what: &str) -> SimulatorResult<()> {
         let moved = self
             .scans
             .iter()
-            .find(|scan| scan.phase_center_rad != self.fields[scan.field_id].direction_rad);
+            .find(|scan| scan.pointing_rad != scan.phase_center_rad);
         match moved {
             Some(scan) => Err(SimulatorError::not_yet_implemented(format!(
-                "predict with setvp(dovp=True) for scan {} pointed away from its field {} is \
-                 not yet implemented in casa-rs (simulation Phase 2); pointings at their \
+                "predict with {what} for scan {} pointed away from its field {} is not yet \
+                 implemented in casa-rs (simulation Phase 2, #884); pointings at their \
                  fields' centres are",
                 scan.scan_number, self.fields[scan.field_id].name
             ))),
@@ -502,7 +796,7 @@ impl Simulator {
 
     /// The fields of the scans observed so far, each once, in the order
     /// first observed.
-    fn observed_fields(&self) -> Vec<usize> {
+    pub(super) fn observed_fields(&self) -> Vec<usize> {
         let mut fields = Vec::new();
         for scan in &self.scans {
             if !fields.contains(&scan.field_id) {
@@ -552,6 +846,32 @@ impl Simulator {
                     screen = set.screen_size(),
                     bytes = set.resident_bytes(),
                     "W projection using {planes} planes"
+                );
+                (Box::new(set), kernels)
+            }
+            FtMachine::Mosaic => {
+                let beams = layout.beams().expect("a mosaic layout has its beams");
+                let (dishes, windows) = (&beams.dishes, &beams.windows);
+                let (rules, frequency_hz) = (MosaicRules::Simulator, layout.image_frequency_hz());
+                tracing::info!("Performing Mosaic gridding for model images (uv convolution)");
+                let screening = admitted(
+                    MOSAIC_SCREENS_PHASE,
+                    MosaicPb::screens_bytes(rules, geometry, frequency_hz, dishes, windows)
+                        .map_err(raised)?,
+                )?;
+                let screens =
+                    MosaicPb::screens(rules, geometry, polarization, frequency_hz, dishes, windows)
+                        .map_err(raised)?;
+                let mut kernels = admitted(KERNEL_PHASE, screens.kernel_bytes())?;
+                let set = screens.finish().map_err(raised)?;
+                drop(screening);
+                kernels.retain(set.resident_bytes());
+                tracing::info!(
+                    dishes = set.dishes(),
+                    screen = set.screen_size(),
+                    bytes = set.resident_bytes(),
+                    "convolution function support: {}",
+                    set.max_half_support()[0]
                 );
                 (Box::new(set), kernels)
             }
@@ -635,10 +955,45 @@ impl Simulator {
             model: operator,
             tangent_rad: model.centre_rad(),
             grids,
+            pointings: Vec::new(),
+            antenna_types: Vec::new(),
             _reservation: reservation,
             _kernels: kernels,
         })
     }
+}
+
+/// The component list at `path`, as `createSkyEquation` reads it: CASA's
+/// `False` when the path is not a readable table ("ComponentList … not
+/// readable"), and when the table is not a component list CASA reads
+/// (`ComponentList`'s constructor throws, and `predict` catches it). The
+/// read is admitted within `resources` before it starts; once the list is
+/// formed, the list's share of that admission is returned with it and the
+/// rest released.
+fn read_component_list(
+    path: &Path,
+    resources: &SessionResources,
+) -> SimulatorResult<(PathBuf, ComponentList, Reservation)> {
+    if !path.join("table.dat").is_file() {
+        return Err(SimulatorError::refused(format!(
+            "Failed to create SkyEquation: ComponentList {} not readable",
+            path.display()
+        )));
+    }
+    let refused = |error| SimulatorError::refused(format!("Caught exception: {error}"));
+    let reading_bytes = ComponentList::read_table_bytes(path).map_err(refused)?;
+    let mut reading = admit(
+        resources.host(),
+        resources.policy(),
+        &Demand {
+            phase: COMPONENTS_PHASE,
+            memory: reading_bytes,
+        },
+    )
+    .map_err(SimulatorError::admission)?;
+    let list = ComponentList::read_table(path).map_err(refused)?;
+    let held = reading.split(list.bytes().min(reading_bytes));
+    Ok((path.to_path_buf(), list, held))
 }
 
 /// A model that cannot be read or prepared, as CASA reports it: a layout

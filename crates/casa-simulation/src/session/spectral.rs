@@ -7,6 +7,7 @@
 use casa_types::measures::frequency::FrequencyRef;
 
 use super::error::{SimulatorError, SimulatorResult};
+use crate::corrupt::WindowNoise;
 
 /// The arguments of `sm.setspwindow`.
 #[derive(Debug, Clone, PartialEq)]
@@ -34,6 +35,15 @@ pub(crate) struct SpectralWindow {
     pub(crate) channel_count: usize,
     pub(crate) start_frequency_hz: f64,
     pub(crate) channel_width_hz: f64,
+    /// REF_FREQUENCY, Hz, which picks window 0's beams (`VPSkyJones`):
+    /// `setspwindow` writes the start frequency, and `openfromms` reads it
+    /// back, whatever the channels are.
+    pub(crate) reference_frequency_hz: f64,
+    /// TOTAL_BANDWIDTH, Hz: the channels' widths summed, as `setspwindow`
+    /// writes it (negative for a decreasing axis), or as `openfromms` reads
+    /// it. `tsys-manual` noise takes |TOTAL_BANDWIDTH| / NUM_CHAN as every
+    /// channel's bandwidth.
+    pub(crate) total_bandwidth_hz: f64,
     pub(crate) frame: FrequencyRef,
     /// casacore `Stokes::StokesTypes` codes, one per correlation.
     pub(crate) correlations: Vec<i32>,
@@ -50,6 +60,8 @@ impl SpectralWindow {
             channel_count: spec.channel_count,
             start_frequency_hz: spec.start_frequency_hz,
             channel_width_hz: spec.channel_width_hz,
+            reference_frequency_hz: spec.start_frequency_hz,
+            total_bandwidth_hz: spec.channel_count as f64 * spec.channel_width_hz,
             frame: spec.frame,
             correlations: parse_stokes(&spec.stokes),
         })
@@ -60,6 +72,17 @@ impl SpectralWindow {
         (0..self.channel_count)
             .map(|channel| self.start_frequency_hz + channel as f64 * self.channel_width_hz)
             .collect()
+    }
+
+    /// What the window gives its rows' noise: REF_FREQUENCY, and
+    /// |TOTAL_BANDWIDTH| / NUM_CHAN as each channel's bandwidth
+    /// (`AtmosCorruptor::simPar`'s `deltaNu`).
+    pub(crate) fn noise(&self, spectral_window_id: usize) -> WindowNoise {
+        WindowNoise {
+            spectral_window_id,
+            reference_frequency_hz: self.reference_frequency_hz,
+            channel_bandwidth_hz: self.total_bandwidth_hz.abs() / self.channel_count.max(1) as f64,
+        }
     }
 
     /// CORR_PRODUCT: for each correlation, the receptor pair

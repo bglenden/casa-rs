@@ -20,9 +20,9 @@ use casa_observation::{
 use casa_types::measures::MjdHighPrec;
 use ndarray::{ArrayView2, s};
 
-use crate::solve::grouping::{SolveAccumulator, SolveSampleRow, SolveSamples, SolveWeights};
+use crate::solve::grouping::{SolveAccumulator, SolveGroupOptions, SolveSampleRow, SolveSamples};
 use crate::solve::kernel::SolutionRow;
-use crate::solve::{GainSolveRequest, apply_flex_refant, solve_closed_group};
+use crate::solve::{GainSolveRequest, apply_flex_refant, nearest_first, solve_closed_group};
 
 /// A fresh accumulator for group `key`.
 fn accumulator(key: GroupKey) -> SolveAccumulator {
@@ -67,6 +67,14 @@ fn observe(
     let centroid = batch.timing.centroid.expect("time centroid");
     let per_time = batch.samples_per_time();
     let first = samples.start;
+    let options = SolveGroupOptions {
+        gain_type: request.gain_type,
+        model_source: request.model_source,
+        stokes_i: request.smodel[0],
+        solve_interval: request.solve_interval,
+        combine: request.combine,
+        channelized: false,
+    };
     for sample in samples {
         let coordinate = batch.sample(sample);
         if coordinate.baseline.is_auto() {
@@ -81,29 +89,27 @@ fn observe(
         let scan = batch.scan(sample).expect("scan");
         group
             .observe_samples(
+                &SolveSampleRow {
+                    field_id: batch.field[sample / per_time].0 as i32,
+                    data_desc_id: 0,
+                    antenna1: coordinate.baseline.antenna1.0 as i32,
+                    antenna2: coordinate.baseline.antenna2.0 as i32,
+                    time_seconds: batch.time.seconds_since(sample / per_time, mjd_zero),
+                    time_centroid_seconds: centroid.seconds_since(sample, mjd_zero),
+                    interval_seconds: batch.interval_s(sample).expect("interval"),
+                    scan_number: catalogue.scans[scan.0 as usize]
+                        .number
+                        .expect("casacore scan numbers"),
+                },
                 &SolveSamples {
-                    row: SolveSampleRow {
-                        data_desc_id: 0,
-                        antenna1: coordinate.baseline.antenna1.0 as i32,
-                        antenna2: coordinate.baseline.antenna2.0 as i32,
-                        time_seconds: batch.time.seconds_since(sample / per_time, mjd_zero),
-                        time_centroid_seconds: centroid.seconds_since(sample, mjd_zero),
-                        interval_seconds: batch.interval_s(sample).expect("interval"),
-                        scan_number: catalogue.scans[scan.0 as usize]
-                            .number
-                            .expect("casacore scan numbers"),
-                    },
                     data: values.slice(s![sample, .., ..]).reversed_axes(),
                     flags,
-                    weights: SolveWeights::Spectrum(
-                        weights.slice(s![sample, .., ..]).reversed_axes(),
-                    ),
+                    weights: weights.slice(s![sample, .., ..]).reversed_axes(),
                     model: None,
-                    correlation_types: &codes,
-                    selected_channels: &channels,
                 },
-                request.gain_type,
-                request.smodel[0],
+                &codes,
+                &channels,
+                &options,
             )
             .expect("observe");
     }
@@ -125,6 +131,18 @@ pub(super) struct SolveTrace {
     pub(super) buffer_bytes: usize,
 }
 
+/// The antennas other than `refant`, nearest it first: production's
+/// alternates when the reference antenna is flagged, from the catalogue's
+/// positions.
+fn alternates(catalogue: &Catalogue, refant: i32) -> Vec<i32> {
+    let positions: Vec<[f64; 3]> = catalogue
+        .antennas
+        .iter()
+        .map(|antenna| antenna.position.as_itrf())
+        .collect();
+    nearest_first(&positions, refant)
+}
+
 /// The catalogue's antennas, as the solver numbers them.
 fn antennas(catalogue: &Catalogue) -> BTreeSet<i32> {
     (0..catalogue.antennas.len() as i32).collect()
@@ -139,7 +157,11 @@ fn finish(
     rows: &mut Vec<SolutionRow>,
 ) {
     group.finalize_for_solve(request.solve_mode);
-    rows.extend(solve_closed_group(group, available, request, refant).expect("solve"));
+    rows.extend(
+        solve_closed_group(group, available, request, refant)
+            .into_iter()
+            .flatten(),
+    );
 }
 
 /// Sequential realization: one batch at a time, fragments accumulated in
@@ -192,7 +214,7 @@ pub(super) fn solve_sequential(
     }
     trace.buffer_bytes = buffers.capacity_bytes();
     assert!(live.is_empty(), "every group closed");
-    apply_flex_refant(&mut rows, refant);
+    apply_flex_refant(&mut rows, refant, &alternates(catalogue, refant));
     (rows, trace)
 }
 
@@ -322,6 +344,6 @@ pub(super) fn solve_concurrent(
             .partial_cmp(&(b.time_seconds, b.antenna_id))
             .expect("finite")
     });
-    apply_flex_refant(&mut rows, refant);
+    apply_flex_refant(&mut rows, refant, &alternates(catalogue, refant));
     (rows, trace)
 }

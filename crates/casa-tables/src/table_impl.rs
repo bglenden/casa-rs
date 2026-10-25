@@ -4,6 +4,7 @@ use std::collections::HashSet;
 use std::mem::size_of;
 use std::path::PathBuf;
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 
@@ -273,12 +274,29 @@ pub(crate) struct TableImpl {
     /// with the value at the last flush to tell whether there is anything
     /// to write (casacore's `tableChanged`/`dataManChanged` flags).
     generation: u64,
+    /// Whether rows were added, inserted or removed since the rows were
+    /// loaded or last saved in full, so that they no longer line up with
+    /// the rows on disk. A partial in-place save refuses the table then
+    /// (#880). It is atomic because a full save, which takes a shared
+    /// borrow, clears it.
+    rows_reshaped: AtomicBool,
 }
 
 impl TableImpl {
     /// The change count; see the `generation` field.
     pub(crate) fn generation(&self) -> u64 {
         self.generation
+    }
+
+    /// Whether the rows changed shape since they matched the disk; see the
+    /// `rows_reshaped` field.
+    pub(crate) fn rows_reshaped(&self) -> bool {
+        self.rows_reshaped.load(Ordering::Relaxed)
+    }
+
+    /// Record that the rows on disk now match these rows, after a full save.
+    pub(crate) fn note_rows_persisted(&self) {
+        self.rows_reshaped.store(false, Ordering::Relaxed);
     }
 
     /// Count one change made outside this value's own mutators.
@@ -387,6 +405,7 @@ impl TableImpl {
             column_keywords: HashMap::new(),
             schema: None,
             generation: 0,
+            rows_reshaped: AtomicBool::new(false),
         }
     }
 
@@ -409,6 +428,7 @@ impl TableImpl {
             column_keywords: HashMap::new(),
             schema: None,
             generation: 0,
+            rows_reshaped: AtomicBool::new(false),
         }
     }
 
@@ -437,6 +457,7 @@ impl TableImpl {
             column_keywords,
             schema,
             generation: 0,
+            rows_reshaped: AtomicBool::new(false),
         }
     }
 
@@ -471,6 +492,7 @@ impl TableImpl {
             column_keywords,
             schema,
             generation: 0,
+            rows_reshaped: AtomicBool::new(false),
         }
     }
 
@@ -493,6 +515,7 @@ impl TableImpl {
             column_keywords,
             schema,
             generation: 0,
+            rows_reshaped: AtomicBool::new(false),
         }
     }
 
@@ -865,6 +888,7 @@ impl TableImpl {
         loaded.undefined_cells.push(HashSet::new());
         self.persisted_row_count = loaded.rows.len();
         self.lazy_rows = None;
+        *self.rows_reshaped.get_mut() = true;
         Ok(())
     }
 
@@ -1856,6 +1880,7 @@ impl TableImpl {
         let removed = loaded.rows.remove(index);
         self.persisted_row_count = loaded.rows.len();
         self.lazy_rows = None;
+        *self.rows_reshaped.get_mut() = true;
         Ok(removed)
     }
 
@@ -1866,6 +1891,7 @@ impl TableImpl {
         loaded.undefined_cells.insert(index, HashSet::new());
         self.persisted_row_count = loaded.rows.len();
         self.lazy_rows = None;
+        *self.rows_reshaped.get_mut() = true;
         Ok(())
     }
 
@@ -1962,6 +1988,7 @@ impl TableImpl {
         self.pending_array_cells = PendingArrayCells::default();
         self.persisted_row_count = self.loaded_rows.get().map_or(0, |loaded| loaded.rows.len());
         self.lazy_rows = None;
+        *self.rows_reshaped.get_mut() = false;
         self.keywords = keywords;
         self.column_keywords = column_keywords;
         self.schema = schema;

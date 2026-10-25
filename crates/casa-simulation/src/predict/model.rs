@@ -16,6 +16,9 @@ use super::PredictError;
 /// The brightness unit `sm.predict` reads the pixels in.
 const JY_PER_PIXEL: &str = "Jy/pixel";
 
+/// The tile cache a model is opened with, bytes: casa-tables' default.
+const MODEL_CACHE_BYTES: usize = 64 << 20;
+
 /// A CASA model image as `sm.predict` reads it: Stokes I planes in
 /// Jy/pixel, with the direction of pixel `(nx/2, ny/2)` and the frequency of
 /// every plane.
@@ -46,6 +49,9 @@ pub struct SkyModel {
     coordinates: CoordinateSystem,
     /// Plane 0's spectral world value in the coordinate system's own unit.
     first_spectral_world: f64,
+    /// The most the image's tile cache holds once a plane is read
+    /// ([`Self::cache_bytes`]).
+    cache_bytes: u64,
 }
 
 impl std::fmt::Debug for SkyModel {
@@ -80,10 +86,13 @@ impl SkyModel {
     /// frequency units.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, PredictError> {
         let path = path.as_ref();
-        let image = PagedImage::<f32>::open(path).map_err(|source| PredictError::Image {
-            path: path.display().to_string(),
-            source,
-        })?;
+        let image =
+            PagedImage::<f32>::open_with_cache(path, MODEL_CACHE_BYTES).map_err(|source| {
+                PredictError::Image {
+                    path: path.display().to_string(),
+                    source,
+                }
+            })?;
         let shape = image.shape().to_vec();
         let coordinates = image.coordinates().clone();
         let unsupported = |reason: String| Err(PredictError::UnsupportedModel(reason));
@@ -123,6 +132,7 @@ impl SkyModel {
             );
         }
         let [nx, ny, planes] = [shape[0], shape[1], shape[3]];
+        let cache_bytes = cache_bound(&shape, image.tile_shape());
         let increment = coordinates.coordinate(0).increment();
         let centre = coordinates.to_world(&[(nx / 2) as f64, (ny / 2) as f64, 0.0, 0.0])?;
         Ok(Self {
@@ -136,7 +146,16 @@ impl SkyModel {
             frequency_increment_hz: coordinates.coordinate(2).increment()[0] * hz_per_unit,
             coordinates,
             first_spectral_world: centre[3],
+            cache_bytes,
         })
+    }
+
+    /// The most the image's tile cache holds once a plane has been read,
+    /// bytes, until the model is dropped. casa-tables keeps every tile when
+    /// they all fit the cache, and otherwise as many as fit, at least one;
+    /// a cube tiled across many planes caches far more than a plane.
+    pub(super) fn cache_bytes(&self) -> u64 {
+        self.cache_bytes
     }
 
     /// The image's path.
@@ -179,6 +198,26 @@ impl SkyModel {
         Ok([pixel[0], pixel[1]])
     }
 
+    /// The offset of a J2000 pointing from pixel `(nx/2, ny/2)` along the
+    /// image axes, radians (its pixel offset times the increments), as the
+    /// mosaic machine measures it (`HetArrayConvFunc::findConvFunction`'s
+    /// `pixFieldDir`); `None` when its pixel, truncated as
+    /// `checkPBOfField` truncates it, lies outside the image.
+    pub(crate) fn pointing_offset_rad(
+        &self,
+        direction_rad: [f64; 2],
+    ) -> Result<Option<[f64; 2]>, PredictError> {
+        let pixel = self.pixel_of(direction_rad)?;
+        let inside = |pixel: f64, n: usize| (0.0..n as f64).contains(&pixel.trunc());
+        if !inside(pixel[0], self.shape[0]) || !inside(pixel[1], self.shape[1]) {
+            return Ok(None);
+        }
+        Ok(Some([
+            (pixel[0] - (self.shape[0] / 2) as f64) * self.increment_rad[0],
+            (pixel[1] - (self.shape[1] / 2) as f64) * self.increment_rad[1],
+        ]))
+    }
+
     /// Model plane `plane`, `[y][x]`, read from the image.
     ///
     /// # Errors
@@ -205,6 +244,25 @@ impl SkyModel {
         let [nx, ny] = self.shape;
         2 * (nx * ny * size_of::<f32>()) as u64
     }
+}
+
+/// The bytes the tile cache of an `f32` image of `shape`, tiled by `tile`,
+/// holds at most with [`MODEL_CACHE_BYTES`]: all its tiles when they fit,
+/// else the tiles that fit, at least one (casa-tables' `TiledArrayStorage`).
+fn cache_bound(shape: &[usize], tile: &[usize]) -> u64 {
+    let tile_bytes = tile.iter().product::<usize>() * size_of::<f32>();
+    let tiles: usize = shape
+        .iter()
+        .zip(tile)
+        .map(|(&length, &tile)| length.div_ceil(tile.max(1)))
+        .product();
+    let all = tiles * tile_bytes;
+    let held = if all <= MODEL_CACHE_BYTES {
+        all
+    } else {
+        (MODEL_CACHE_BYTES / tile_bytes.max(1)).max(1) * tile_bytes
+    };
+    held as u64
 }
 
 /// Hz in one `unit`, or `None` when `unit` is not a frequency.

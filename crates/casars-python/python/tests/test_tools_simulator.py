@@ -41,14 +41,12 @@ DIRECTION = "J2000 23h30m00 34d00m00"
 REFERENCE = "UTC 2020/01/01/00:00:00"
 
 IMPLEMENTED = {
-    "open", "close", "done", "name", "type", "summary", "setconfig", "setfeed",
-    "setspwindow", "setfield", "setmosaicfield", "settimes", "setlimits", "setauto",
-    "observe", "observemany", "setdata", "setseed", "setnoise", "corrupt", "reset",
-    "predict", "setoptions", "setvp",
+    "open", "openfromms", "close", "done", "name", "type", "summary", "setconfig",
+    "setfeed", "setspwindow", "setfield", "setmosaicfield", "settimes", "setlimits",
+    "setauto", "observe", "observemany", "setdata", "setseed", "setnoise", "corrupt",
+    "reset", "predict", "setoptions", "setvp", "setgain", "setleakage", "setapply", "settrop",
 }
-NOT_YET_IMPLEMENTED = {
-    "openfromms", "setapply", "setgain", "settrop", "setleakage",
-}
+NOT_YET_IMPLEMENTED: set[str] = set()
 DISABLED_IN_CASA = {"setbandpass", "setpa", "setpointingerror"}
 
 
@@ -613,6 +611,29 @@ def test_setnoise_and_corrupt_add_casas_thermal_noise_at_close(tmp_path: Path) -
 
 
 @needs_measures
+def test_openfromms_corrupts_the_measurement_set_closed_before(tmp_path: Path) -> None:
+    # One session corrupting before close, and another closing first and
+    # corrupting after openfromms, write the same DATA.
+    expected = noisy(tmp_path / "one.ms", 5)
+    path = tmp_path / "two.ms"
+    sm = simulator()
+    sm.open(str(path))
+    configure(sm)
+    assert sm.observe("F", "L", starttime="0s", stoptime="300s")
+    assert sm.openfromms(str(path)) is True  # writes the open session first
+    assert sm.name() == str(path)
+    assert sm.setseed(5) is True
+    assert sm.setnoise(mode="simplenoise", simplenoise="0.1Jy") is True
+    assert sm.corrupt() is True
+    with pytest.raises(NotImplementedError, match="observe after openfromms"):
+        sm.observe("F", "L", starttime="300s", stoptime="310s")
+    sm.close()
+    assert np.array_equal(np.asarray(Table.open(path).get_column("DATA")), expected)
+    with pytest.raises(RuntimeError):
+        sm.openfromms(str(tmp_path / "missing.ms"))
+
+
+@needs_measures
 def test_the_seed_decides_the_draws(tmp_path: Path) -> None:
     first = noisy(tmp_path / "first.ms", 5)
     assert np.array_equal(noisy(tmp_path / "again.ms", 5), first)
@@ -658,19 +679,194 @@ def test_setnoise_outcomes_follow_casa(tmp_path: Path, caplog: pytest.LogCapture
         assert sm.setnoise(mode="bogus") is False
     assert caplog.messages[0].startswith("Caught exception: Error in Simulator::create_corrupt")
     assert caplog.messages[1:] == ["Caught exception: unsupported mode bogus in setnoise()"]
-    with pytest.raises(NotImplementedError, match="tsys-manual.*Phase 3"):
-        sm.setnoise(mode="tsys-manual")
-    with pytest.raises(NotImplementedError, match="tsys-atm.*Phase 4"):
-        sm.setnoise(mode="tsys-atm")
     with pytest.raises(NotImplementedError, match="OTF=False"):
         sm.setnoise(simplenoise="0.1Jy", OTF=False)
+    # CASA writes a Tsys mode's T term to <table>.T.cal; casa-rs not yet.
+    for mode in ["tsys-manual", "tsys-atm"]:
+        with pytest.raises(NotImplementedError, match=r"noisy\.T\.cal"):
+            sm.setnoise(mode=mode, table="noisy.cal")
+    caplog.clear()
+    with caplog.at_level(logging.ERROR, logger=LOGGER):
+        assert sm.setnoise(mode="tsys-manual", pwv="200mm") is False
+        # A pwv without units is metres, as in CASA.
+        assert sm.setnoise(mode="tsys-manual", pwv=5) is False
+        assert sm.setnoise(mode="tsys-manual", tau=50.0) is False
+        assert sm.setnoise(mode="tsys-atm", pwv="200mm") is False
+    assert caplog.messages[0].startswith("Caught exception:  you input PWV=200mm")
+    assert caplog.messages[1].startswith("Caught exception:  you input PWV=5000mm")
+    assert "Tsys" in caplog.messages[2] and "poorly defined" in caplog.messages[2]
+    assert caplog.messages[3].startswith("Caught exception:  you input PWV=200mm")
+    with pytest.raises(RuntimeError, match="Cannot convert Jy to mm"):
+        sm.setnoise(mode="tsys-manual", pwv="1Jy")
+    with pytest.raises(RuntimeError, match="Cannot convert"):
+        sm.setnoise(mode="tsys-atm", altitude="5Jy")
     # None of those added a term; `[]` is 0 Jy.
     assert sm.setnoise() is True
+    assert sm.setnoise(mode="tsys-manual") is True
+    assert sm.setnoise(mode="tsys-atm") is True
     assert sm.reset() is True
     assert sm.corrupt() is True
     sm.close()
     data = np.asarray(Table.open(tmp_path / "x.ms").get_column("DATA"))
     assert np.all(data == 0)
+
+
+def tsys_atm_data(path: Path, **site: Any) -> np.ndarray:
+    """DATA of 300 s in four 1 GHz channels from 180 GHz, up the 183 GHz
+    water line, after one `tsys-atm` term of seed 5 with `site`."""
+    sm = simulator()
+    sm.open(str(path))
+    configure(sm)
+    assert sm.setspwindow(
+        spwname="W", freq="180GHz", deltafreq="1GHz", freqresolution="1GHz", nchannels=4,
+        stokes="RR LL",
+    )
+    assert sm.observe("F", "W", starttime="0s", stoptime="300s")
+    assert sm.setseed(5) is True
+    assert sm.setnoise(mode="tsys-atm", **site) is True
+    assert sm.corrupt() is True
+    sm.close()
+    return np.asarray(Table.open(path).get_column("DATA"))
+
+
+@needs_measures
+def test_tsys_atm_noise_rises_up_the_water_line(tmp_path: Path) -> None:
+    site = {
+        "pwv": "2mm", "pground": "550mbar", "relhum": 30.0, "altitude": "5050m",
+        "waterheight": "1500m",
+    }
+    data = tsys_atm_data(tmp_path / "site.ms", **site)
+    main = Table.open(tmp_path / "site.ms")
+    auto = np.asarray(main.get_column("ANTENNA1")) == np.asarray(main.get_column("ANTENNA2"))
+    variance = np.var(data[~auto].real, axis=(0, 1))
+    # Each channel nearer the line sees a hotter, more opaque sky.
+    assert np.all(np.diff(variance) > 0), variance
+    assert variance[-1] > 3 * variance[0], variance
+    # The site's values decide the noise; a ground pressure without units is
+    # in pascals, at most 100 mbar, which CASA takes as unset.
+    default = tsys_atm_data(tmp_path / "default.ms")
+    assert not np.array_equal(default, data)
+    assert np.array_equal(tsys_atm_data(tmp_path / "pascals.ms", pground=550), default)
+
+
+@needs_measures
+def test_setgain_and_setleakage_follow_casa(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    sm = opened(tmp_path)
+    configure(sm)
+    assert sm.observe("F", "L", starttime="0s", stoptime="60s")
+    with caplog.at_level(logging.ERROR, logger=LOGGER):
+        assert sm.setgain(mode="table") is False
+    assert caplog.messages == ["Cannot yet read from table"]
+    with caplog.at_level(logging.ERROR, logger=LOGGER):
+        assert sm.setgain(mode="drift") is False
+    assert caplog.messages[-1] == "Caught exception: unsupported mode drift in setgain()"
+    # A second corrupt gains the first one's noise: DATA differs from the
+    # same noise without gains.
+    assert sm.setseed(5) is True
+    assert sm.setnoise(mode="simplenoise", simplenoise="0.1Jy") is True
+    assert sm.corrupt() is True
+    assert sm.setgain(amplitude=[0.05], table=str(tmp_path / "g.cal")) is True
+    assert sm.setgain(mode="random", amplitude=[0.02, 0.01]) is True
+    assert sm.corrupt() is True
+    sm.close()
+    gained = np.asarray(Table.open(tmp_path / "x.ms").get_column("DATA"))
+    # The fbm gains' table, written at close: a G Jones row for each of the
+    # 6 integrations and 4 antennas.
+    table = Table.open(tmp_path / "g.cal")
+    assert table.keywords["VisCal"] == "G Jones"
+    assert table.row_count == 6 * 4
+    # setapply of that table corrupts as its gains did.
+    sm = simulator()
+    sm.open(str(tmp_path / "applied.ms"))
+    configure(sm)
+    assert sm.observe("F", "L", starttime="0s", stoptime="60s")
+    assert sm.setapply(table=str(tmp_path / "g.cal"), type="G", interp="nearest") is True
+    with pytest.raises(RuntimeError, match="aipslin"):
+        sm.setapply(table=str(tmp_path / "g.cal"), interp="aipslin")
+    with pytest.raises(NotImplementedError, match="calwt"):
+        sm.setapply(table=str(tmp_path / "g.cal"), calwt=True)
+    assert sm.corrupt() is True
+    sm.close()
+    sm = simulator()
+    sm.open(str(tmp_path / "plain.ms"))
+    configure(sm)
+    assert sm.observe("F", "L", starttime="0s", stoptime="60s")
+    assert sm.setseed(5) is True
+    assert sm.setnoise(mode="simplenoise", simplenoise="0.1Jy") is True
+    assert sm.corrupt() is True
+    assert sm.corrupt() is True
+    sm.close()
+    plain = np.asarray(Table.open(tmp_path / "plain.ms").get_column("DATA"))
+    assert gained.shape == plain.shape
+    assert not np.array_equal(gained, plain)
+    # Leakage needs the cross hands, which RR LL lacks.
+    sm = opened(tmp_path / "leak")
+    configure(sm)
+    assert sm.observe("F", "L", starttime="0s", stoptime="20s")
+    assert sm.setleakage(amplitude=[0.05], offset=[0.01]) is True
+    with pytest.raises(RuntimeError, match="JonesGenLin"):
+        sm.corrupt()
+
+
+@needs_measures
+def test_settrop_follows_casa(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    sm = opened(tmp_path)
+    configure(sm)
+    assert sm.observe("F", "L", starttime="0s", stoptime="60s")
+    with caplog.at_level(logging.ERROR, logger=LOGGER):
+        assert sm.settrop(mode="1d") is False
+    assert caplog.messages[-1] == "Caught exception: unsupported mode 1d in settrop()"
+    with caplog.at_level(logging.ERROR, logger=LOGGER):
+        assert sm.settrop(mode="individual", pwv=0.0) is False
+    assert "undefined PWV" in caplog.messages[-1]
+    with caplog.at_level(logging.ERROR, logger=LOGGER):
+        assert sm.settrop(mode="individual", simint=120.0) is False
+    assert "setEvenSlots" in caplog.messages[-1]
+    with pytest.raises(NotImplementedError, match="debugging ramp"):
+        sm.settrop(mode="test")
+    assert sm.settrop(mode="individual", table=str(tmp_path / "t.cal"), pwv=1.0) is True
+    assert sm.settrop(pwv=1.0, deltapwv=0.01) is True
+    assert sm.corrupt() is True
+    sm.close()
+    # The individual term's table, written at close: a Tf Jones row for each
+    # of the 6 integrations and 4 antennas, phase only, a value a channel.
+    table = Table.open(tmp_path / "t.cal")
+    assert table.keywords["VisCal"] == "Tf Jones"
+    assert table.row_count == 6 * 4
+    cparam = np.asarray(table.get_column("CPARAM"))
+    assert cparam.size == 6 * 4 * 4
+    assert np.allclose(np.abs(cparam), 1.0, atol=1e-6)
+    assert np.any(np.angle(cparam) != 0)
+
+
+@needs_measures
+def test_setnoise_tsys_manual_scales_the_unit_draws_by_each_rows_sigma(tmp_path: Path) -> None:
+    # A tsys-manual term draws a 1 Jy simplenoise term's values of the same
+    # seed, scaled by each row's σ (CASA's unit ANoise scaled by its T).
+    def run(name: str, **noise: Any) -> np.ndarray:
+        sm = simulator()
+        sm.open(str(tmp_path / name))
+        configure(sm)
+        assert sm.observe("F", "L", starttime="0s", stoptime="300s")
+        assert sm.setseed(5) is True
+        assert sm.setnoise(**noise) is True
+        assert sm.corrupt() is True
+        sm.close()
+        return np.asarray(Table.open(tmp_path / name).get_column("DATA"))
+
+    unit = run("unit.ms", mode="simplenoise", simplenoise="1Jy")
+    tsys = run("tsys.ms", mode="tsys-manual", tau=0.1)
+    sigma = (tsys.real * unit.real).sum(axis=(1, 2)) / (unit.real**2).sum(axis=(1, 2))
+    assert np.allclose(tsys, sigma[:, None, None] * unit, rtol=1e-5, atol=0)
+    # 25 m dishes near the zenith, Tsys about 124 K, in 1 MHz and 10 s:
+    # about 0.22 Jy.
+    assert np.all((sigma > 0.15) & (sigma < 0.3))
+    # The parameters reach the model: a double-sideband receiver doubles
+    # Tsys and so σ.
+    double = run("double.ms", mode="tsys-manual", tau=0.1, rxtype=1)
+    assert np.allclose(double, 2 * tsys, rtol=1e-5, atol=0)
 
 
 @needs_measures
@@ -703,16 +899,44 @@ def test_predict_outcomes_follow_casa(tmp_path: Path, caplog: pytest.LogCaptureF
     sm = opened(tmp_path)
     configure(sm)
     assert sm.observe("F", "L", starttime="0s", stoptime="30s")
+    missing = tmp_path / "model.cl"
     with caplog.at_level(logging.ERROR, logger=LOGGER):
         assert sm.predict() is False
         assert sm.predict(imagename=[""]) is False
-    assert caplog.messages == ["Failed to create SkyEquation: No model images found"] * 2
-    with pytest.raises(NotImplementedError, match="complist.*Phase 2"):
-        sm.predict(complist=str(tmp_path / "model.cl"))
+        assert sm.predict(complist=str(missing)) is False
+    assert caplog.messages == ["Failed to create SkyEquation: No model images found"] * 2 + [
+        f"Failed to create SkyEquation: ComponentList {missing} not readable"
+    ]
     with pytest.raises(RuntimeError, match="does not exist"):
         sm.predict(imagename=str(tmp_path / "missing.image"))
     sm.close()
     assert np.all(np.asarray(Table.open(tmp_path / "x.ms").get_column("DATA")) == 0)
+
+
+@needs_measures
+def test_a_list_the_cl_tool_writes_is_predicted(tmp_path: Path) -> None:
+    # The cl tool's list read by sm.predict(complist=...), as simobserve
+    # uses the two: a 1 Jy point at the phase centre, with no beam, is 1 Jy
+    # on RR and LL of every cross-correlation, in every channel.
+    from casars.tools import componentlist
+
+    path = tmp_path / "point.cl"
+    cl = componentlist()
+    assert cl.addcomponent(flux=1.0, fluxunit="Jy", dir=DIRECTION, shape="point",
+                           freq="1.4GHz")
+    assert cl.rename(str(path)) is True
+    assert cl.close(log=False) is True
+
+    sm = opened(tmp_path)
+    configure(sm)
+    assert sm.observe("F", "L", starttime="0s", stoptime="30s")
+    assert sm.predict(complist=str(path)) is True
+    sm.close()
+    table = Table.open(tmp_path / "x.ms")
+    data = np.asarray(table.get_column("DATA"))
+    cross = np.asarray(table.get_column("ANTENNA1")) != np.asarray(table.get_column("ANTENNA2"))
+    assert cross.any()
+    np.testing.assert_allclose(data[cross], 1.0, atol=1e-6)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -803,6 +1027,39 @@ def test_wproject_predicts_and_refuses_as_casa_does(
 
 
 @needs_measures
+def test_total_power_samples_the_model_at_the_pointing(tmp_path: Path) -> None:
+    # setoptions(ftmachine='sd') samples the model in the image plane, as
+    # CASA's SDGrid does: the autocorrelations carry it and the
+    # cross-correlations nothing. BOX takes the pixel nearest the pointing,
+    # the fixture's 1 Jy point; PB needs the telescope's pattern, and casa-rs's
+    # PB kernel has ALMA's and ACA's, not yet the VLA's.
+    model = sky_model(tmp_path)
+    sm = simulator()
+    sm.open(str(tmp_path / "sd.ms"))
+    configure(sm)
+    assert sm.observe("F", "L", starttime="0s", stoptime="60s")
+    assert sm.setoptions(ftmachine="sd", gridfunction="BOX") is True
+    assert sm.predict(imagename=str(model)) is True
+    sm.close()
+    table = Table.open(tmp_path / "sd.ms")
+    data = np.asarray(table.get_column("DATA"))
+    autos = np.asarray(table.get_column("ANTENNA1")) == np.asarray(table.get_column("ANTENNA2"))
+    assert autos.any() and (~autos).any()
+    assert np.all(data[autos] == 1.0)
+    assert np.all(data[~autos] == 0)
+
+    sm = opened(tmp_path)
+    configure(sm)
+    assert sm.observe("F", "L", starttime="0s", stoptime="30s")
+    with pytest.raises(NotImplementedError, match="gridfunction='GAUSS'"):
+        sm.setoptions(ftmachine="sd", gridfunction="GAUSS")
+    assert sm.setoptions(ftmachine="sd", gridfunction="PB") is True
+    with pytest.raises(NotImplementedError, match="telescope VLA"):
+        sm.predict(imagename=str(model))
+    sm.close()
+
+
+@needs_measures
 def test_setvp_applies_the_vla_and_evla_default_patterns(tmp_path: Path) -> None:
     # The VLA's Airy pattern of window 0's band and the EVLA's polynomial
     # fits differ; neither squints a Stokes I model, so RR and LL agree.
@@ -845,8 +1102,9 @@ def test_setoptions_and_setvp_follow_casa(tmp_path: Path, caplog: pytest.LogCapt
     with caplog.at_level(logging.ERROR, logger=LOGGER):
         assert sm.setoptions(location=1.0) is True
     assert caplog.messages == ["Could not convert location 1 to a Position Measures"]
-    with pytest.raises(NotImplementedError, match="mosaic.*Phase 2"):
-        sm.setoptions(ftmachine="mosaic")
+    assert sm.setoptions(ftmachine="mosaic") is True
+    with pytest.raises(NotImplementedError, match="both.*#841"):
+        sm.setoptions(ftmachine="both")
     with pytest.raises(NotImplementedError, match="gridfunction"):
         sm.setoptions(gridfunction="BOX")
     assert sm.setvp() is True

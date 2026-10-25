@@ -30,6 +30,7 @@ members = [
     "crates/casa-imaging-metal",
     "crates/casa-simulation-synthesis",
     "crates/casa-simulation",
+    "crates/casa-atmosphere",
     "crates/casa-measures-data",
     "crates/casa-test-support",
     "crates/casa-ms",
@@ -78,6 +79,9 @@ opt-level = 2
 opt-level = 2
 [profile.test.package.casa-simulation]
 opt-level = 2
+# The ATM oracle tests evaluate every species over hundreds of frequencies.
+[profile.test.package.casa-atmosphere]
+opt-level = 3
 [profile.test.package.casa-test-support]
 opt-level = 2
 

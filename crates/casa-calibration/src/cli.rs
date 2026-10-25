@@ -1866,9 +1866,14 @@ fn build_input_calibration_table_specs_for_solver(
             load_apply_specs_from_callib(&callib).map_err(|error| error.to_string())
         }
         (None, true) => Ok(Vec::new()),
-        (None, false) => {
-            build_calibration_table_specs(calibration_table_paths, gainfield, interp, spwmap, None)
-        }
+        // CASA's gaincal and bandpass pre-apply gaintable entries with calwt=True.
+        (None, false) => build_calibration_table_specs(
+            calibration_table_paths,
+            gainfield,
+            interp,
+            spwmap,
+            Some("true"),
+        ),
     }
 }
 

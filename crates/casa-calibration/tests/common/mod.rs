@@ -131,11 +131,15 @@ pub fn create_minimal_complex_caltable(root: &Path) -> PathBuf {
 }
 
 pub fn assert_corrected_rows_are_unit_model(ms_path: &Path) {
+    assert_corrected_rows_are_unit_model_except(ms_path, &[]);
+}
+
+pub fn assert_corrected_rows_are_unit_model_except(ms_path: &Path, skipped_rows: &[usize]) {
     let ms = MeasurementSet::open(ms_path).expect("reopen measurement set");
     let corrected = ms
         .data_column(VisibilityDataColumn::CorrectedData)
         .expect("corrected data column");
-    for row in 0..ms.row_count() {
+    for row in (0..ms.row_count()).filter(|row| !skipped_rows.contains(row)) {
         let ArrayValue::Complex32(values) = corrected.get(row).expect("corrected row") else {
             panic!("expected complex corrected data");
         };
@@ -148,6 +152,39 @@ pub fn assert_corrected_rows_are_unit_model(ms_path: &Path) {
             );
         }
     }
+}
+
+/// Make MAIN row `row` an outlier flagged only by `FLAG_ROW`: its DATA is
+/// scaled by `factor`, `FLAG_ROW` is set and every `FLAG` element is clear.
+pub fn make_row_flag_only_outlier(ms_path: &Path, row: usize, factor: Complex32) {
+    let mut ms = MeasurementSet::open(ms_path).expect("open measurement set");
+    let ArrayValue::Complex32(data) = ms
+        .main_table()
+        .cell_accessor(row, "DATA")
+        .and_then(|cell| cell.array())
+        .expect("DATA cell")
+    else {
+        panic!("expected complex DATA");
+    };
+    let outlier = data.mapv(|value| value * factor);
+    let flags = ArrayD::from_elem(outlier.raw_dim(), false);
+    let table = ms.main_table_mut();
+    table
+        .column_accessor_mut("DATA")
+        .and_then(|mut column| column.set(row, Value::Array(ArrayValue::Complex32(outlier))))
+        .expect("write outlier DATA");
+    table
+        .column_accessor_mut("FLAG")
+        .and_then(|mut column| column.set(row, Value::Array(ArrayValue::Bool(flags))))
+        .expect("clear FLAG");
+    table
+        .column_accessor_mut("FLAG_ROW")
+        .and_then(|mut column| column.set(row, Value::Scalar(ScalarValue::Bool(true))))
+        .expect("set FLAG_ROW");
+    table
+        .prepare_write()
+        .save_selected_rows(&["DATA", "FLAG", "FLAG_ROW"], &[row])
+        .expect("save outlier row");
 }
 
 pub fn assert_corrected_rows_match_model_column(ms_path: &Path) {
@@ -862,7 +899,8 @@ pub fn create_gain_solve_weight_spectrum_fixture_ms(root: &Path) -> PathBuf {
     let ms_path = root.join("gain_solve_weight_spectrum_fixture.ms");
     let builder = MeasurementSetBuilder::new()
         .with_main_column(OptionalMainColumn::Data)
-        .with_main_column(OptionalMainColumn::WeightSpectrum);
+        .with_main_column(OptionalMainColumn::WeightSpectrum)
+        .with_main_column(OptionalMainColumn::SigmaSpectrum);
     let mut ms =
         MeasurementSet::create(&ms_path, builder).expect("create weight-spectrum gain solve MS");
 
@@ -1056,6 +1094,15 @@ fn add_custom_gain_solve_row_with_weight_spectrum(
                 ),
                 "WEIGHT_SPECTRUM" => RecordField::new(
                     "WEIGHT_SPECTRUM",
+                    Value::Array(ArrayValue::Float32(
+                        ArrayD::from_shape_vec(IxDyn(&[2, 2]).f(), vec![1.0, 1.0, 0.0, 0.0])
+                            .unwrap(),
+                    )),
+                ),
+                // CASA's solver weights come from SIGMA_SPECTRUM when both
+                // spectrum columns exist; a zero sigma gives a zero weight.
+                "SIGMA_SPECTRUM" => RecordField::new(
+                    "SIGMA_SPECTRUM",
                     Value::Array(ArrayValue::Float32(
                         ArrayD::from_shape_vec(IxDyn(&[2, 2]).f(), vec![1.0, 1.0, 0.0, 0.0])
                             .unwrap(),

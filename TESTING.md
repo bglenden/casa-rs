@@ -12,6 +12,16 @@ Verification: just verify
 - Packaging/runtime tests: editable Python package checks, wheel-install smoke checks, installer validation, demos, and suite layout checks
 - Performance tests: smoke benchmarks and parity timing when performance is part of the requirement
 
+A crate that ports a self-contained CASA C++ library is tested against that
+library compiled locally, not only through CASA. `casa-atmosphere` (ATM)
+commits compact fixtures that `tools/atmosphere/build-atm-oracle.sh` writes by
+building CASA's ATM sources with a harness (`tools/atmosphere/atm_oracle.cc`);
+CI compares against the committed fixtures. Regenerate them only when the
+harness's inputs or CASA's ATM change, and record why on the PR.
+`tools/atmosphere/at_tool_check.py` (run under CASA's Python) compares the
+port with CASA's own `at` tool, which also confirms that the compiled sources
+are the ATM that CASA ships; rerun it when either changes.
+
 Imaging evidence uses four non-substitutable tiers:
 
 - diagnostic/law evidence localizes algorithms, invariants, and edge cases and

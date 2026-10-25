@@ -13,9 +13,19 @@
 //! observe's start and stop. The reference time is left unchanged, so the
 //! hour-angle offset and SOURCE.TIME stay the same.
 //!
-//! Scenarios may also call `setseed`, `setnoise` (`simplenoise` in Jy),
+//! Scenarios may also call `setseed`, `setnoise` (`simplenoise` in Jy, or
+//! `tsys-manual` or `tsys-atm` with their parameters; `pwv` in mm, `pground`
+//! in mbar, `altitude` and `waterheight` in m),
 //! `corrupt`, `reset`, `setoptions`, `setvp` and `predict` (Phase 1d;
-//! `tools/simulation/sm_predict_scenarios.json`). Each of those must end as
+//! `tools/simulation/sm_predict_scenarios.json`), and, in two stages,
+//! `close` and then `openfromms` (Phase 2;
+//! `tools/simulation/sm_openfromms_scenarios.json`): the first stage is
+//! closed, and its MS, or a copy of CASA's when the scenario's
+//! `openfromms_ms` is `casa`, reopened; and `setdata`, `setgain` and
+//! `setleakage` (Phase 3; `tools/simulation/sm_corrupt_scenarios.json`)
+//! and `settrop` (Phase 4d; `tools/simulation/sm_trop_scenarios.json`),
+//! whose `table` is written under the output directory, as the oracle
+//! writes CASA's under its own. Each of those must end as
 //! CASA's did: `True`, `False`, or raised, as the manifest records; a call
 //! that does not stops the run. `--simplenoise-jy` adds a `setnoise` and a
 //! `corrupt` after every scenario's own calls, with the seed of `--seed`
@@ -39,10 +49,10 @@ use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use casa_simulation::{
-    ArrayConfig, BackendRequest, CasaOutcome, CoordinateSystem, ExecutionControls, NoiseSpec,
-    ObserveManySpec, ObserveSpec, Pointing, PredictSpec, PredictionOptions, SessionResources,
-    Simulator, SimulatorOptions, SimulatorResult, SpectralWindowSpec, StateSpec,
-    VoltagePatternSpec,
+    ApplySpec, ArrayConfig, AtmosphereSpec, BackendRequest, CasaOutcome, CoordinateSystem,
+    ExecutionControls, GainSpec, LeakageSpec, NoiseSpec, ObserveManySpec, ObserveSpec, Pointing,
+    PredictSpec, PredictionOptions, SessionResources, Simulator, SimulatorOptions, SimulatorResult,
+    SpectralWindowSpec, StateSpec, TroposphereSpec, TsysParameters, VoltagePatternSpec,
 };
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::frequency::FrequencyRef;
@@ -206,22 +216,117 @@ struct ExtraNoise {
 }
 
 fn simple_noise(sigma_jy: f64) -> NoiseSpec {
-    NoiseSpec {
-        mode: "simplenoise".to_string(),
-        simple_noise_jy: sigma_jy,
-        on_the_fly: true,
+    NoiseSpec::simple(sigma_jy)
+}
+
+/// `setnoise` with the call's arguments, CASA's defaults for the others:
+/// `simplenoise` in Jy, `pwv` in mm, `pground` in mbar, `altitude` and
+/// `waterheight` in m, the other parameters as numbers.
+fn set_noise(session: &mut Simulator, call: &Value) -> SimulatorResult<()> {
+    let or = |key: &str, default: f64| call.get(key).and_then(Value::as_f64).unwrap_or(default);
+    let defaults = TsysParameters::default();
+    session.set_noise(&NoiseSpec {
+        mode: text(call, "mode", "simplenoise").to_string(),
+        simple_noise_jy: or("simplenoise", 0.0),
+        table: text(call, "table", "").to_string(),
+        water_vapour_mm: or("pwv", 0.0),
+        atmosphere: AtmosphereSpec {
+            ground_pressure_hpa: or("pground", 0.0),
+            relative_humidity_percent: or("relhum", 20.0),
+            altitude_m: or("altitude", 0.0),
+            water_scale_height_m: or("waterheight", 0.0),
+        },
+        tsys: TsysParameters {
+            tau: or("tau", defaults.tau),
+            atmosphere_k: or("tatmos", defaults.atmosphere_k),
+            antenna_efficiency: or("antefficiency", defaults.antenna_efficiency),
+            spillover_efficiency: or("spillefficiency", defaults.spillover_efficiency),
+            correlator_efficiency: or("correfficiency", defaults.correlator_efficiency),
+            receiver_k: or("trx", defaults.receiver_k),
+            ground_k: or("tground", defaults.ground_k),
+            cmb_k: or("tcmb", defaults.cmb_k),
+            sensitivity: or("senscoeff", defaults.sensitivity),
+            receiver_type: call
+                .get("rxtype")
+                .and_then(Value::as_i64)
+                .unwrap_or(defaults.receiver_type),
+        },
+        on_the_fly: call.get("OTF").and_then(Value::as_bool).unwrap_or(true),
+    })
+}
+
+/// The numbers of `key`, or `default` when the call has none.
+fn numbers_or(call: &Value, key: &str, default: &[f64]) -> Vec<f64> {
+    if call.get(key).is_some() {
+        numbers(call, key)
+    } else {
+        default.to_vec()
     }
 }
 
-fn set_noise(session: &mut Simulator, call: &Value) -> SimulatorResult<()> {
-    session.set_noise(&NoiseSpec {
-        mode: text(call, "mode", "simplenoise").to_string(),
-        on_the_fly: call.get("OTF").and_then(Value::as_bool).unwrap_or(true),
-        ..simple_noise(
-            call.get("simplenoise")
-                .and_then(Value::as_f64)
-                .unwrap_or(0.0),
-        )
+/// `setdata`, with CASA's defaults (`spwid=[0]`, `fieldid=[0]`).
+fn set_data(session: &mut Simulator, call: &Value) -> SimulatorResult<()> {
+    let ids = |key: &str| -> Vec<i64> {
+        numbers_or(call, key, &[0.0])
+            .into_iter()
+            .map(|id| id as i64)
+            .collect()
+    };
+    session.set_data(&ids("spwid"), &ids("fieldid"), text(call, "msselect", ""))
+}
+
+/// `setapply` of the table the manifest names (CASA's, which both sides
+/// apply), with CASA's defaults.
+fn set_apply(session: &mut Simulator, call: &Value) -> SimulatorResult<()> {
+    session.set_apply(&ApplySpec {
+        table: text(call, "table", "").to_string(),
+        kind: text(call, "type", "").to_string(),
+        interval_s: call.get("t").and_then(Value::as_f64).unwrap_or(0.0),
+        interp: text(call, "interp", "linear").to_string(),
+        calwt: flag(call, "calwt", false),
+        spwmap: numbers_or(call, "spwmap", &[-1.0])
+            .into_iter()
+            .map(|window| window as i64)
+            .collect(),
+        opacity: call.get("opacity").and_then(Value::as_f64).unwrap_or(0.0),
+    })
+}
+
+/// A `setgain` or `setleakage` table, named in the manifest, under `out`.
+fn table_under(call: &Value, out: &Path) -> String {
+    match text(call, "table", "") {
+        "" => String::new(),
+        name => out.join(name).to_string_lossy().into_owned(),
+    }
+}
+
+fn set_gain(session: &mut Simulator, call: &Value, out: &Path) -> SimulatorResult<()> {
+    session.set_gain(&GainSpec {
+        mode: text(call, "mode", "fbm").to_string(),
+        table: table_under(call, out),
+        amplitude: numbers_or(call, "amplitude", &[0.01]),
+    })
+}
+
+fn set_trop(session: &mut Simulator, call: &Value, out: &Path) -> SimulatorResult<()> {
+    let defaults = TroposphereSpec::default();
+    let value = |key: &str, default: f64| call.get(key).and_then(Value::as_f64).unwrap_or(default);
+    session.set_trop(&TroposphereSpec {
+        mode: text(call, "mode", &defaults.mode).to_string(),
+        table: table_under(call, out),
+        water_vapour_mm: value("pwv", defaults.water_vapour_mm),
+        delta_pwv: value("deltapwv", defaults.delta_pwv),
+        beta: value("beta", defaults.beta),
+        windspeed_m_s: value("windspeed", defaults.windspeed_m_s),
+        simint_s: value("simint", defaults.simint_s),
+    })
+}
+
+fn set_leakage(session: &mut Simulator, call: &Value, out: &Path) -> SimulatorResult<()> {
+    session.set_leakage(&LeakageSpec {
+        table: table_under(call, out),
+        amplitude: numbers_or(call, "amplitude", &[0.01]),
+        offset: numbers_or(call, "offset", &[0.0]),
     })
 }
 
@@ -293,6 +398,23 @@ fn expect_casas_outcome(entry: &Value, result: SimulatorResult<()>) {
     assert!(agree, "{op}: CASA {casa}, casa-rs {ours}");
 }
 
+/// Replace the directory `to` with a copy of `from`.
+fn replace_with_copy(from: &Path, to: &Path) {
+    if to.exists() {
+        std::fs::remove_dir_all(to).expect("remove the first stage");
+    }
+    std::fs::create_dir_all(to).expect("the copy's directory");
+    for entry in std::fs::read_dir(from).expect("read CASA's first stage") {
+        let entry = entry.expect("an entry");
+        let target = to.join(entry.file_name());
+        if entry.file_type().expect("its type").is_dir() {
+            replace_with_copy(&entry.path(), &target);
+        } else {
+            std::fs::copy(entry.path(), &target).expect("copy a file");
+        }
+    }
+}
+
 fn run_scenario(
     scenario: &Value,
     out: &Path,
@@ -306,12 +428,42 @@ fn run_scenario(
         resources,
         now: now_utc(),
     };
-    let mut session = Simulator::open(out.join(format!("{name}.ms")), options);
-    for entry in scenario["calls"].as_array().expect("calls") {
+    let path = out.join(format!("{name}.ms"));
+    let mut session = Some(Simulator::open(&path, options.clone()));
+    let calls = scenario["calls"].as_array().expect("calls");
+    for (index, entry) in calls.iter().enumerate() {
         let call = &entry["resolved"];
-        match entry["op"].as_str().expect("op") {
-            "open" | "close" => {}
-            "setconfig" => set_config(&mut session, call),
+        let op = entry["op"].as_str().expect("op");
+        match op {
+            // The last call is the final close, made below.
+            "open" => continue,
+            "close" if index + 1 == calls.len() => continue,
+            "close" => {
+                let first = session.take().expect("an open session");
+                first.close().expect("close the first stage");
+                continue;
+            }
+            "openfromms" => {
+                if scenario["openfromms_ms"] == "casa" {
+                    let stage_one = calls[index - 1]["resolved"]["stage1"]
+                        .as_str()
+                        .expect("CASA's first stage");
+                    replace_with_copy(Path::new(stage_one), &path);
+                }
+                match Simulator::open_from_ms(&path, options.clone()) {
+                    Ok(opened) => {
+                        expect_casas_outcome(entry, Ok(()));
+                        session = Some(opened);
+                    }
+                    Err(error) => expect_casas_outcome(entry, Err(error)),
+                }
+                continue;
+            }
+            _ => {}
+        }
+        let session = session.as_mut().expect("an open session");
+        match op {
+            "setconfig" => set_config(session, call),
             "setspwindow" => session
                 .set_spectral_window(&SpectralWindowSpec {
                     name: text(call, "spwname", "XBAND").to_string(),
@@ -348,18 +500,24 @@ fn run_scenario(
                     )
                     .expect("setfield");
             }
-            "observe" => observe(&mut session, call, shift_s),
-            "observemany" => expect_casas_outcome(entry, observe_many(&mut session, call, shift_s)),
+            "observe" => observe(session, call, shift_s),
+            "observemany" => expect_casas_outcome(entry, observe_many(session, call, shift_s)),
             "setseed" => session.set_seed(number(call, "seed") as i32),
-            "setnoise" => expect_casas_outcome(entry, set_noise(&mut session, call)),
+            "setnoise" => expect_casas_outcome(entry, set_noise(session, call)),
+            "setdata" => expect_casas_outcome(entry, set_data(session, call)),
+            "setapply" => expect_casas_outcome(entry, set_apply(session, call)),
+            "setgain" => expect_casas_outcome(entry, set_gain(session, call, out)),
+            "setleakage" => expect_casas_outcome(entry, set_leakage(session, call, out)),
+            "settrop" => expect_casas_outcome(entry, set_trop(session, call, out)),
             "corrupt" => expect_casas_outcome(entry, session.corrupt()),
             "reset" => session.reset(),
-            "setoptions" => expect_casas_outcome(entry, set_options(&mut session, call)),
-            "setvp" => expect_casas_outcome(entry, set_vp(&mut session, call)),
-            "predict" => expect_casas_outcome(entry, predict(&mut session, call)),
+            "setoptions" => expect_casas_outcome(entry, set_options(session, call)),
+            "setvp" => expect_casas_outcome(entry, set_vp(session, call)),
+            "predict" => expect_casas_outcome(entry, predict(session, call)),
             other => panic!("unsupported call {other}"),
         }
     }
+    let mut session = session.expect("an open session");
     if let Some(extra) = extra_noise {
         if let Some(seed) = extra.seed {
             session.set_seed(seed);

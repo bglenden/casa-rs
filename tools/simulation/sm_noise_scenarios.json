@@ -1,0 +1,142 @@
+{
+  "schema_version": 1,
+  "purpose": "simulation Phase 3 (#841): sm.setnoise(mode='tsys-manual') scenarios, run by CASA and by casa-rs",
+  "notes": [
+    "Each noisy scenario's noise is its DATA minus its noise-free twin's. A tsys-manual term has a σ per row, so compare_sm_ms.py divides each implementation's noise by CASA's formula (tsys_manual_sigma, with each antenna's elevation of the field at the row's TIME) and checks unit variance per correlation and class, a KS test between the two, and casa-rs's variance over CASA's in groups of rows (spectral window, dish pair, auto or cross, eight time bins), each within five standard errors.",
+    "tsys-predict observes from 2 h before transit to 50 min after, at 52 to 67 degrees elevation: earlier, alma.cycle10.3's antennas shadow one another and the two simulators flag different ones (docs/CASA (C++) bugs.md); from 1 h after transit on 2026-03-21 the two simulators' UVW differ by 3.7 to 4.6 mm, against at most 0.001 mm before; the cause is not established and is not noise (the other scenarios' spans keep within 1 mm).",
+    "The scenarios observe at 40 degrees elevation and above, where CASA's airmass, which it caches for 100 s of solution times, differs from the airmass at each integration by under 0.1 % of Tsys; casa-rs computes it at every integration (docs/CASA (C++) bugs.md). Each scenario has one integration time, so CASA's EXPOSURE of the first row is every row's.",
+    "Model images are named relative to the oracle's --model-root, as in sm_predict_scenarios.json: alma-big/model4 is 512 pixels of 0.15 arcsec centred on (0.0007615435494667714, -0.0001523087098933758) rad with one plane per channel of the 4-channel 230 GHz band. tsys-predict checks that CASA's noise-scaling T scales the noise only, not the predicted model.",
+    "tsys-mixed has dishes of 12 m and 7 m, autocorrelations, two spectral windows of 32 channels at different frequencies and channel widths (one decreasing) and tsys-manual's other parameters away from their defaults (rxtype 1 doubles Tsys).",
+    "tsys-openfromms is simobserve's thermal-noise flow: observe, close, openfromms, setseed, setnoise(mode='tsys-manual'), corrupt. casa-rs reopens CASA's first stage (openfromms_ms casa), so the rows are CASA's."
+  ],
+  "scenarios": [
+    {
+      "name": "tsys-predict",
+      "data": "noisy",
+      "twin": "tsys-predict-twin",
+      "config": {"cfg": "alma.cycle10.3.cfg", "mount": "alt-az"},
+      "calls": [
+        {"op": "setspwindow", "spwname": "band6", "freq": "230GHz", "deltafreq": "15.625MHz", "freqresolution": "15.625MHz", "refcode": "TOPO", "nchannels": 4, "stokes": "XX YY"},
+        {"op": "setfeed", "mode": "perfect X Y"},
+        {"op": "setauto", "autocorrwt": 0.0},
+        {"op": "settimes", "integrationtime": "60s", "usehourangle": true, "referencetime": ["UTC", "2026/03/21/00:00:00"]},
+        {"op": "setfield", "sourcename": "target", "sourcedirection": ["J2000", "0.0007615435494667714rad", "-0.0001523087098933758rad"]},
+        {"op": "observe", "sourcename": "target", "spwname": "band6", "starttime": "-7200s", "stoptime": "3000s"},
+        {"op": "predict", "imagename": "alma-big/model4.input.image"},
+        {"op": "setseed", "seed": 4321},
+        {"op": "setnoise", "mode": "tsys-manual", "tau": 0.15},
+        {"op": "corrupt"}
+      ]
+    },
+    {
+      "name": "tsys-predict-twin",
+      "data": "model",
+      "config": {"cfg": "alma.cycle10.3.cfg", "mount": "alt-az"},
+      "calls": [
+        {"op": "setspwindow", "spwname": "band6", "freq": "230GHz", "deltafreq": "15.625MHz", "freqresolution": "15.625MHz", "refcode": "TOPO", "nchannels": 4, "stokes": "XX YY"},
+        {"op": "setfeed", "mode": "perfect X Y"},
+        {"op": "setauto", "autocorrwt": 0.0},
+        {"op": "settimes", "integrationtime": "60s", "usehourangle": true, "referencetime": ["UTC", "2026/03/21/00:00:00"]},
+        {"op": "setfield", "sourcename": "target", "sourcedirection": ["J2000", "0.0007615435494667714rad", "-0.0001523087098933758rad"]},
+        {"op": "observe", "sourcename": "target", "spwname": "band6", "starttime": "-7200s", "stoptime": "3000s"},
+        {"op": "predict", "imagename": "alma-big/model4.input.image"}
+      ]
+    },
+    {
+      "name": "tsys-mixed",
+      "data": "noisy",
+      "twin": "tsys-mixed-twin",
+      "config": {
+        "local": {
+          "telescopename": "ALMA",
+          "x": [0.0, 120.0, -80.0, 300.0, 50.0, -200.0, 210.0],
+          "y": [0.0, 40.0, 150.0, -60.0, -250.0, -90.0, 310.0],
+          "z": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+          "dishdiameter": [12.0, 12.0, 12.0, 12.0, 7.0, 7.0, 7.0],
+          "antname": ["A00", "A01", "A02", "A03", "A04", "A05", "A06"],
+          "padname": ["A00", "A01", "A02", "A03", "A04", "A05", "A06"],
+          "referencelocation": "ALMA"
+        },
+        "mount": "alt-az"
+      },
+      "calls": [
+        {"op": "setspwindow", "spwname": "b6", "freq": "230GHz", "deltafreq": "15.625MHz", "freqresolution": "15.625MHz", "refcode": "TOPO", "nchannels": 32, "stokes": "XX YY"},
+        {"op": "setspwindow", "spwname": "b3", "freq": "100GHz", "deltafreq": "-2MHz", "freqresolution": "2MHz", "refcode": "TOPO", "nchannels": 32, "stokes": "XX YY"},
+        {"op": "setfeed", "mode": "perfect X Y"},
+        {"op": "setauto", "autocorrwt": 1.0},
+        {"op": "settimes", "integrationtime": "10s", "usehourangle": true, "referencetime": ["UTC", "2026/03/21/00:00:00"]},
+        {"op": "setfield", "sourcename": "u", "sourcedirection": ["J2000", "10h00m00.0", "-60d00m00.0"]},
+        {"op": "observe", "sourcename": "u", "spwname": "b6", "starttime": "-10800s", "stoptime": "0s"},
+        {"op": "observe", "sourcename": "u", "spwname": "b3", "starttime": "0s", "stoptime": "10800s"},
+        {"op": "setseed", "seed": 99},
+        {"op": "setnoise", "mode": "tsys-manual", "tau": 0.3, "tatmos": 260.0, "antefficiency": 0.7, "spillefficiency": 0.9, "correfficiency": 0.95, "trx": 80.0, "tground": 280.0, "tcmb": 2.725, "senscoeff": 0.5, "rxtype": 1},
+        {"op": "corrupt"}
+      ]
+    },
+    {
+      "name": "tsys-mixed-twin",
+      "data": "zero",
+      "config": {
+        "local": {
+          "telescopename": "ALMA",
+          "x": [0.0, 120.0, -80.0, 300.0, 50.0, -200.0, 210.0],
+          "y": [0.0, 40.0, 150.0, -60.0, -250.0, -90.0, 310.0],
+          "z": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+          "dishdiameter": [12.0, 12.0, 12.0, 12.0, 7.0, 7.0, 7.0],
+          "antname": ["A00", "A01", "A02", "A03", "A04", "A05", "A06"],
+          "padname": ["A00", "A01", "A02", "A03", "A04", "A05", "A06"],
+          "referencelocation": "ALMA"
+        },
+        "mount": "alt-az"
+      },
+      "calls": [
+        {"op": "setspwindow", "spwname": "b6", "freq": "230GHz", "deltafreq": "15.625MHz", "freqresolution": "15.625MHz", "refcode": "TOPO", "nchannels": 32, "stokes": "XX YY"},
+        {"op": "setspwindow", "spwname": "b3", "freq": "100GHz", "deltafreq": "-2MHz", "freqresolution": "2MHz", "refcode": "TOPO", "nchannels": 32, "stokes": "XX YY"},
+        {"op": "setfeed", "mode": "perfect X Y"},
+        {"op": "setauto", "autocorrwt": 1.0},
+        {"op": "settimes", "integrationtime": "10s", "usehourangle": true, "referencetime": ["UTC", "2026/03/21/00:00:00"]},
+        {"op": "setfield", "sourcename": "u", "sourcedirection": ["J2000", "10h00m00.0", "-60d00m00.0"]},
+        {"op": "observe", "sourcename": "u", "spwname": "b6", "starttime": "-10800s", "stoptime": "0s"},
+        {"op": "observe", "sourcename": "u", "spwname": "b3", "starttime": "0s", "stoptime": "10800s"}
+      ]
+    },
+    {
+      "name": "tsys-openfromms",
+      "data": "noisy",
+      "twin": "tsys-openfromms-twin",
+      "openfromms_ms": "casa",
+      "ignore": ["MAIN.CORRECTED_DATA"],
+      "config": {"cfg": "aca.cycle10.cfg", "mount": "alt-az"},
+      "calls": [
+        {"op": "setspwindow", "spwname": "band7", "freq": "345GHz", "deltafreq": "31.25MHz", "freqresolution": "31.25MHz", "refcode": "TOPO", "nchannels": 8, "stokes": "XX YY"},
+        {"op": "setfeed", "mode": "perfect X Y"},
+        {"op": "setauto", "autocorrwt": 0.0},
+        {"op": "settimes", "integrationtime": "20s", "usehourangle": true, "referencetime": ["UTC", "2026/03/21/00:00:00"]},
+        {"op": "setfield", "sourcename": "target", "sourcedirection": ["J2000", "10h00m00.0", "-45d00m00.0"]},
+        {"op": "observe", "sourcename": "target", "spwname": "band7", "starttime": "-5400s", "stoptime": "5400s"},
+        {"op": "close"},
+        {"op": "openfromms"},
+        {"op": "setseed", "seed": 7},
+        {"op": "setnoise", "mode": "tsys-manual", "tau": 0.25, "pwv": "1mm", "spillefficiency": 0.95, "correfficiency": 0.91, "antefficiency": 0.71, "trx": 70.0, "tground": 269.0, "tatmos": 260.0, "tcmb": 2.725},
+        {"op": "corrupt"}
+      ]
+    },
+    {
+      "name": "tsys-openfromms-twin",
+      "data": "zero",
+      "openfromms_ms": "casa",
+      "ignore": ["MAIN.CORRECTED_DATA"],
+      "config": {"cfg": "aca.cycle10.cfg", "mount": "alt-az"},
+      "calls": [
+        {"op": "setspwindow", "spwname": "band7", "freq": "345GHz", "deltafreq": "31.25MHz", "freqresolution": "31.25MHz", "refcode": "TOPO", "nchannels": 8, "stokes": "XX YY"},
+        {"op": "setfeed", "mode": "perfect X Y"},
+        {"op": "setauto", "autocorrwt": 0.0},
+        {"op": "settimes", "integrationtime": "20s", "usehourangle": true, "referencetime": ["UTC", "2026/03/21/00:00:00"]},
+        {"op": "setfield", "sourcename": "target", "sourcedirection": ["J2000", "10h00m00.0", "-45d00m00.0"]},
+        {"op": "observe", "sourcename": "target", "spwname": "band7", "starttime": "-5400s", "stoptime": "5400s"},
+        {"op": "close"},
+        {"op": "openfromms"}
+      ]
+    }
+  ]
+}

@@ -16,7 +16,7 @@
 //! reports by logging and returning `False` is logged at ERROR on the Python
 //! logger `casars.tools.simulator`; a failure CASA raises is a
 //! `RuntimeError`. What CASA does and casa-rs does not yet (a whole method,
-//! or a mode such as `setnoise(mode='tsys-atm')`) raises
+//! or a mode such as `setnoise(OTF=False)`) raises
 //! `NotImplementedError` naming the phase that implements it.
 //!
 //! Divergence: the MeasurementSet is written at `close` or `done` (and by an
@@ -27,6 +27,7 @@
 //! MS on disk; the drop emits a `ResourceWarning`.
 
 mod corruption;
+mod gains;
 mod lifecycle;
 mod prediction;
 mod setup;
@@ -36,7 +37,10 @@ pub(crate) mod surface;
 use std::ffi::CString;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use casa_simulation::{CasaOutcome, SessionResources, Simulator, SimulatorError, SimulatorResult};
+use casa_simulation::{
+    ApplySpec, CasaOutcome, SessionResources, Simulator, SimulatorError, SimulatorResult,
+    TroposphereSpec,
+};
 use casa_types::measures::MeasuresProvider;
 use pyo3::exceptions::{PyNotImplementedError, PyResourceWarning, PyRuntimeError};
 use pyo3::prelude::*;
@@ -411,11 +415,11 @@ impl PySimulator {
         setup::setspwindow(self, py, &request)
     }
 
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(signature = (ms = None), text_signature = "($self, ms='')")]
-    fn openfromms(&self, ms: Option<&Bound<'_, PyAny>>) -> PyResult<bool> {
-        stubs::not_yet_implemented("openfromms")
+    /// Open the existing MeasurementSet `ms`, closing (writing) any open
+    /// one; `predict` and `corrupt` then rewrite its rows at `close`.
+    #[pyo3(signature = (ms = ""), text_signature = "($self, ms='')")]
+    fn openfromms(&self, py: Python<'_>, ms: &str) -> PyResult<bool> {
+        lifecycle::openfromms(self, py, ms)
     }
 
     /// Plan several pointings: a scan for each run of pointings of one
@@ -527,10 +531,12 @@ impl PySimulator {
         Ok(result.unwrap_or(false))
     }
 
-    /// Predict the model image into the rows observed so far, replacing
-    /// their DATA or, with `incremental`, adding to it; written at `close`.
-    /// One CASA image (Stokes I, J2000) is implemented; a component list or
-    /// several images raise `NotImplementedError`.
+    /// Predict the model image and the component list into the rows observed
+    /// so far, replacing their DATA or, with `incremental`, adding to it;
+    /// written at `close`. One CASA image (Stokes I, J2000) and a CASA
+    /// component list of J2000 points, Gaussians and disks are implemented;
+    /// several images, a limb-darkened disk or another frame raise
+    /// `NotImplementedError`.
     #[pyo3(
         signature = (imagename = StringList::of(&[]), complist = "", incremental = false),
         text_signature = "($self, imagename=[], complist='', incremental=False)"
@@ -546,11 +552,12 @@ impl PySimulator {
     }
 
     /// Set how `predict` grids: `GridFT` (`ftmachine='ft'`) with the
-    /// spheroidal `gridfunction='SF'` and its `padding`, and `WProjectFT`
+    /// spheroidal `gridfunction='SF'` and its `padding`, `WProjectFT`
     /// (`ftmachine='wproject'`) with `wprojplanes` planes, which CASA pads
-    /// by 1 whatever `padding` says, are implemented. `WProjectFT` predicts
-    /// on the CPU. Other FTMachines and grid functions raise
-    /// `NotImplementedError`.
+    /// by 1 whatever `padding` says, and total power through `SDGrid`
+    /// (`ftmachine='sd'`) with `gridfunction` `'PB'`, `'BOX'` or `'SF'`, are
+    /// implemented. `WProjectFT` and `SDGrid` predict on the CPU. Other
+    /// FTMachines and grid functions raise `NotImplementedError`.
     #[allow(unused_variables, clippy::too_many_arguments)]
     #[pyo3(
         signature = (
@@ -623,9 +630,61 @@ impl PySimulator {
         corruption::corrupt(self, py)
     }
 
-    /// Remove every noise term; noise `corrupt` already applied stays.
+    /// Remove every noise, gain and leakage term; what `corrupt` already
+    /// applied stays.
     fn reset(&self, py: Python<'_>) -> PyResult<bool> {
         corruption::reset(self, py)
+    }
+
+    /// Simulate antenna gains over the rows observed so far, as fractional
+    /// Brownian motion of `amplitude` (`mode='fbm'`) or drawn afresh each
+    /// integration about one (`mode='random'`), for `corrupt` to apply.
+    /// A `table` is written as CASA's `G Jones` calibration table at
+    /// `close`.
+    #[pyo3(
+        signature = (
+            mode = "fbm", table = "", interval = Variant::Empty,
+            amplitude = DoubleList::of(&[0.01])
+        ),
+        text_signature = "($self, mode='fbm', table='', interval=[], amplitude=[0.01])"
+    )]
+    fn setgain(
+        &self,
+        py: Python<'_>,
+        mode: &str,
+        table: &str,
+        interval: Variant,
+        amplitude: DoubleList,
+    ) -> PyResult<bool> {
+        let request = gains::GainRequest {
+            mode,
+            table,
+            interval,
+            amplitude: amplitude.0,
+        };
+        gains::setgain(self, py, request)
+    }
+
+    /// Simulate polarization leakages over the rows observed so far, of
+    /// `amplitude` about `offset`, for `corrupt` to apply. A `table` is
+    /// written as CASA's `D Jones` calibration table at `close`.
+    #[allow(unused_variables)]
+    #[pyo3(
+        signature = (
+            mode = "constant", table = "", amplitude = DoubleList::of(&[0.01]),
+            offset = DoubleList::of(&[0.0])
+        ),
+        text_signature = "($self, mode='constant', table='', amplitude=[0.01], offset=[0.0])"
+    )]
+    fn setleakage(
+        &self,
+        py: Python<'_>,
+        mode: &str,
+        table: &str,
+        amplitude: DoubleList,
+        offset: DoubleList,
+    ) -> PyResult<bool> {
+        gains::setleakage(self, py, (table, amplitude.0, offset.0))
     }
 
     /// Disabled in CASA: logs CASA's error and returns `False`.
@@ -645,65 +704,82 @@ impl PySimulator {
         stubs::disabled_in_casa(self, py)
     }
 
-    /// Not yet implemented in casa-rs.
+    /// Corrupt by the calibration table `table` (a `G` or `D` table) at
+    /// each later `corrupt`, its solutions taken at each integration
+    /// observed by then and interpolated in time by `interp` (`linear`,
+    /// amplitude and phase apart, or `nearest`); `spwmap` maps each data
+    /// window to the table's. `field` is not read, as in CASA.
     #[allow(unused_variables, clippy::too_many_arguments)]
     #[pyo3(
         signature = (
-            table = None, r#type = None, t = None, field = None, interp = None, calwt = None,
-            spwmap = None, opacity = None
+            table = "", r#type = "", t = 0.0, field = Variant::Empty, interp = "linear",
+            calwt = false, spwmap = IntList::of(&[-1]), opacity = 0.0
         ),
         text_signature = "($self, table='', type='', t=0.0, field=[], interp='linear', calwt=False, spwmap=[-1], opacity=0.0)"
     )]
     fn setapply(
         &self,
-        table: Option<&Bound<'_, PyAny>>,
-        r#type: Option<&Bound<'_, PyAny>>,
-        t: Option<&Bound<'_, PyAny>>,
-        field: Option<&Bound<'_, PyAny>>,
-        interp: Option<&Bound<'_, PyAny>>,
-        calwt: Option<&Bound<'_, PyAny>>,
-        spwmap: Option<&Bound<'_, PyAny>>,
-        opacity: Option<&Bound<'_, PyAny>>,
+        py: Python<'_>,
+        table: &str,
+        r#type: &str,
+        t: f64,
+        field: Variant,
+        interp: &str,
+        calwt: bool,
+        spwmap: IntList,
+        opacity: f64,
     ) -> PyResult<bool> {
-        stubs::not_yet_implemented("setapply")
+        let spec = ApplySpec {
+            table: table.to_string(),
+            kind: r#type.to_string(),
+            interval_s: t,
+            interp: interp.to_string(),
+            calwt,
+            spwmap: spwmap.0,
+            opacity,
+        };
+        gains::setapply(self, py, spec)
     }
 
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(
-        signature = (mode = None, table = None, interval = None, amplitude = None),
-        text_signature = "($self, mode='fbm', table='', interval=[], amplitude=[0.01])"
-    )]
-    fn setgain(
-        &self,
-        mode: Option<&Bound<'_, PyAny>>,
-        table: Option<&Bound<'_, PyAny>>,
-        interval: Option<&Bound<'_, PyAny>>,
-        amplitude: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<bool> {
-        stubs::not_yet_implemented("setgain")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables, clippy::too_many_arguments)]
+    /// Simulate the troposphere's phase over the rows observed so far, a
+    /// screen of water vapour above the array (`mode='screen'`) or a series
+    /// above each antenna (`'individual'`), of mean `pwv` mm fluctuating by
+    /// `deltapwv` of it, for `corrupt` to apply channel by channel. A
+    /// `table` is written as CASA's `Tf Jones` calibration table at
+    /// `close`. casa-rs takes the whole wet phase delay, where CASA takes
+    /// its dispersive part alone (`docs/CASA (C++) bugs.md`).
+    #[allow(clippy::too_many_arguments)]
     #[pyo3(
         signature = (
-            mode = None, table = None, pwv = None, deltapwv = None, beta = None,
-            windspeed = None, simint = None
+            mode = "screen", table = "", pwv = 3.0, deltapwv = 0.15, beta = 1.1,
+            windspeed = 7.0, simint = -1.0
         ),
         text_signature = "($self, mode='screen', table='', pwv=3.0, deltapwv=0.15, beta=1.1, windspeed=7.0, simint=-1.0)"
     )]
     fn settrop(
         &self,
-        mode: Option<&Bound<'_, PyAny>>,
-        table: Option<&Bound<'_, PyAny>>,
-        pwv: Option<&Bound<'_, PyAny>>,
-        deltapwv: Option<&Bound<'_, PyAny>>,
-        beta: Option<&Bound<'_, PyAny>>,
-        windspeed: Option<&Bound<'_, PyAny>>,
-        simint: Option<&Bound<'_, PyAny>>,
+        py: Python<'_>,
+        mode: &str,
+        table: &str,
+        pwv: f64,
+        deltapwv: f64,
+        beta: f64,
+        windspeed: f64,
+        simint: f64,
     ) -> PyResult<bool> {
-        stubs::not_yet_implemented("settrop")
+        gains::settrop(
+            self,
+            py,
+            TroposphereSpec {
+                mode: mode.to_string(),
+                table: table.to_string(),
+                water_vapour_mm: pwv,
+                delta_pwv: deltapwv,
+                beta,
+                windspeed_m_s: windspeed,
+                simint_s: simint,
+            },
+        )
     }
 
     /// Disabled in CASA: logs CASA's error and returns `False`.
@@ -720,22 +796,6 @@ impl PySimulator {
         dopbcorrection: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<bool> {
         stubs::disabled_in_casa(self, py)
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(
-        signature = (mode = None, table = None, amplitude = None, offset = None),
-        text_signature = "($self, mode='constant', table='', amplitude=[0.01], offset=[0.0])"
-    )]
-    fn setleakage(
-        &self,
-        mode: Option<&Bound<'_, PyAny>>,
-        table: Option<&Bound<'_, PyAny>>,
-        amplitude: Option<&Bound<'_, PyAny>>,
-        offset: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<bool> {
-        stubs::not_yet_implemented("setleakage")
     }
 
     /// Deprecated in CASA; casa-rs provides `setnoise` instead.
@@ -765,8 +825,14 @@ impl PySimulator {
     }
 
     /// Add a noise term with the current seed. `mode='simplenoise'` adds
-    /// σ = `simplenoise` (Jy) to each real and imaginary part; the Tsys
-    /// modes, and `OTF=False`, raise `NotImplementedError`.
+    /// σ = `simplenoise` (Jy) to each real and imaginary part;
+    /// `mode='tsys-manual'` adds the σ of each row's system temperature
+    /// (`tau`, `tatmos`, the efficiencies, `trx`, `tground`, `tcmb`,
+    /// `senscoeff`, `rxtype`, the row's dishes, elevations, channel width
+    /// and integration time); `mode='tsys-atm'` the σ of each row's and
+    /// channel's, its atmosphere ATM's for `pwv`, `pground`, `relhum`,
+    /// `altitude`, `waterheight` and `tground`. `OTF=False`, and a Tsys
+    /// mode with a `table`, raise `NotImplementedError`.
     #[allow(unused_variables, non_snake_case, clippy::too_many_arguments)]
     #[pyo3(
         signature = (
@@ -803,11 +869,25 @@ impl PySimulator {
     ) -> PyResult<bool> {
         let request = corruption::NoiseRequest {
             mode,
+            table,
             simple_noise: simplenoise,
             ground_pressure: pground,
+            relative_humidity: relhum,
             altitude,
             water_height: waterheight,
             water_vapour: pwv,
+            tsys: casa_simulation::TsysParameters {
+                tau,
+                atmosphere_k: tatmos,
+                antenna_efficiency: antefficiency,
+                spillover_efficiency: spillefficiency,
+                correlator_efficiency: correfficiency,
+                receiver_k: trx,
+                ground_k: tground,
+                cmb_k: tcmb,
+                sensitivity: senscoeff,
+                receiver_type: rxtype,
+            },
             on_the_fly: OTF,
         };
         corruption::setnoise(self, py, &request)

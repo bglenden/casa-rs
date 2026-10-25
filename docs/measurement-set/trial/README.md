@@ -539,13 +539,16 @@ catalogue, 60 s bins per field and scan, and a byte budget of whole times.
 
 | Realization | Whole times per batch | Closure | Gains vs production | SNR vs production | Weights vs production |
 | --- | --- | --- | --- | --- | --- |
-| Sequential, v2 | 1, 3, 4, 7, 12 | at delivery and deferred | identical | ≤ 1.2e-7 relative | ≤ 1.6e-7 relative |
-| Sequential, v4 | 1, 3, 4, 7, 12 | at delivery and deferred | identical | ≤ 1.2e-7 | ≤ 1.6e-7 |
-| Concurrent fragments, first held back 50 ms, v2 / v4 | 3 | both | ≤ 1.9e-7 absolute | ≤ 6.2e-6 | ≤ 1.6e-7 |
-| Production against itself | — | — | identical | ≤ 1.2e-7 | ≤ 1.2e-7 |
+| Sequential, v2 | 1, 3, 4, 7, 12 | at delivery and deferred | ≤ 1.3e-7 absolute | ≤ 2.5e-6 relative | ≤ 1.6e-7 relative |
+| Sequential, v4 | 1, 3, 4, 7, 12 | at delivery and deferred | ≤ 1.3e-7 | ≤ 2.5e-6 | ≤ 1.6e-7 |
+| Concurrent fragments, first held back 50 ms, v2 / v4 | 3 | both | ≤ 1.3e-7 | ≤ 2.1e-6 | ≤ 2.0e-7 |
+| Production against itself | — | — | identical | ≤ 1.2e-7 | ≤ 1.6e-7 |
 
-Scans, intervals, identities and times are equal in every row of every
-run. The two stores now give the same traces batch for batch (12, 4, 3, 2
+Scans, identities and times are equal in every row of every run, times to
+a few ulps of MJD seconds (about 1 µs each): production's solution time is
+a weighted mean over baselines summed in hash-map order, so it differs by
+an ulp from itself too. These figures are after merging `main` into the
+design branch (below); before it, the gains were identical. The two stores now give the same traces batch for batch (12, 4, 3, 2
 and 1 batches; at most two groups live), differing only in buffer bytes
 (3.8–42.7 KB for v2 with its per-correlation weight, 5.0–55.4 KB for v4).
 
@@ -580,16 +583,26 @@ and 1 batches; at most two groups live), differing only in buffer bytes
   own namespace is still untested.
 - *Closure bookkeeping* (first pass: hand-written in the consumer): now
   `casa_observation::GroupCompletion`, shared with the work-unit law.
-- **Finding:** production `gaincal` accumulates from `FLAG` and does not
-  read `FLAG_ROW`; the MSv2 adapter folds `FLAG_ROW` into the flags (D5),
-  so a row flagged only by it is excluded here and not in production. The
-  fixture's `FLAG_ROW` is false everywhere, so this comparison does not
-  exercise the case. From the CASA sources (Fable's review of revision 3),
-  CASA's solver tests `flagRow()` before every cell it accumulates
-  (`SolveDataBuffer.cc`) and `GridFT::put` sets the row flags from
-  `flagRow()`, so `gaincal` and `tclean` both exclude such rows: D5 matches
-  CASA, and production casa-rs `gaincal` is the deviation, to be confirmed
-  by instrumenting both and fixed in the solver.
+- **Finding, resolved on `main`:** production `gaincal` accumulated from
+  `FLAG` and did not read `FLAG_ROW`, while the MSv2 adapter folds
+  `FLAG_ROW` into the flags (D5). `main`'s `0ddb970` made both solves treat
+  such a row as fully flagged, confirmed against a CASA 6.7.5.18 oracle, so
+  D5 and production now agree. The fixture's `FLAG_ROW` is still false
+  everywhere; a case that sets it is what remains of #907.
+- **Finding from merging `main`: the solve weights are not the batch's
+  weights.** `main`'s `4eeaab2` makes production `gaincal` weight each
+  sample by 1/σ² from `SIGMA` (`SIGMA_SPECTRUM` where the MeasurementSet
+  has `WEIGHT_SPECTRUM`), as CASA's `CalSolvingVi2::calibrateCurrentVB`
+  does through `resetWeightsUsingSigma`; it no longer reads `WEIGHT`. The
+  batch carries `WEIGHT` and no `SIGMA` (contracts, section 8), and XRADIO's
+  conversion maps no `SIGMA` into MSv4 (architecture, conversion
+  fidelity). The fixture's `WEIGHT` is 1/σ² to 1.3e-7, so example B, which
+  solves with the batch's weights, still agrees with production to
+  rounding, but on data whose `WEIGHT` is not 1/σ² (after `statwt`, say)
+  a batch-fed solve would differ from CASA. Before calibration moves onto
+  batches, the contract needs the weight role a solve uses: `SIGMA` as a
+  requestable role for MSv2, and a stated rule for MSv4, which has only
+  `WEIGHT`.
 
 ## MSv4 interoperability
 
@@ -750,8 +763,10 @@ MSv2 creator from batches.
    up to four optional checks; revision 4's examples evaluate it once per
    batch or fragment with `mask_into`. Folding the rule into the fill
    remains an option.
-4. **`FLAG_ROW` in production `gaincal`** (example B finding): CASA
-   excludes such rows, so the production solver is the deviation.
+4. **Solve weights** (example B finding after merging `main`): production
+   `gaincal` weights by 1/σ² as CASA does, and the batch has no `SIGMA`;
+   see example B. (`FLAG_ROW` in production `gaincal`, the earlier
+   finding here, is fixed on `main`.)
 5. **Cross-store rebinding as a contract.** The calibration comparison
    rebinds by context in test code; the design's `CalibrationBinding` is
    still to be built and tested with a caltable.

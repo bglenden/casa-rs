@@ -34,6 +34,7 @@ use ndarray::{ArrayD, IxDyn};
 use super::prediction::PredictionStage;
 use super::resources::{MainShape, admit_main_write, writer_plan};
 use super::{cell_shape, main_shape};
+use crate::session::observe::PlannedScan;
 use crate::session::{BackendRequest, SessionResources};
 use crate::{
     ArrayConfig, CoordinateSystem, NoiseSpec, ObserveSpec, PredictSpec, Simulator,
@@ -121,11 +122,7 @@ fn scan(start_s: f64, stop_s: f64) -> ObserveSpec {
 }
 
 fn simple_noise(sigma_jy: f64) -> NoiseSpec {
-    NoiseSpec {
-        mode: "simplenoise".to_string(),
-        simple_noise_jy: sigma_jy,
-        on_the_fly: true,
-    }
+    NoiseSpec::simple(sigma_jy)
 }
 
 /// The session, before `close`: four scans of 16 VLA antennas with four
@@ -236,7 +233,12 @@ fn session_predicting(
 /// MAIN of the session.
 fn shape(session: &Simulator) -> MainShape<'_> {
     let cell = cell_shape(session).expect("one shape").expect("scans");
-    main_shape(session, cell)
+    main_shape(session, &planned(session), cell)
+}
+
+/// The session's scans with their planned rows.
+fn planned(session: &Simulator) -> Vec<PlannedScan<'_>> {
+    PlannedScan::of_all(session.scans()).expect("every scan planned")
 }
 
 /// Write the session with `resources` to `directory/name` and digest it.
@@ -341,7 +343,7 @@ fn the_predicted_measurement_set_is_the_same_for_any_worker_count_and_budget() {
             Some(&model),
         );
         let cell = cell_shape(&probe).expect("one shape").expect("scans");
-        let shape = main_shape(&probe, cell);
+        let shape = main_shape(&probe, &planned(&probe), cell);
         let stage = PredictionStage::new(&probe, cell, BackendChoice::Cpu)
             .expect("stage")
             .expect("the session predicts");

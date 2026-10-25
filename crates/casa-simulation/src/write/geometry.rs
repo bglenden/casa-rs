@@ -10,7 +10,10 @@
 //! - an antenna is flagged when the field is below the elevation limit at
 //!   its position, or when another dish shadows it. Shadowing is charged to
 //!   the antenna behind, where CASA's simulator charges the one in front
-//!   (recorded in `docs/CASA (C++) bugs.md`).
+//!   (recorded in `docs/CASA (C++) bugs.md`);
+//! - for `tsys-manual` noise, each antenna's airmass at the phase centre
+//!   (`crate::corrupt::airmass`), as CASA's `VisIter::azel` gives the
+//!   corruptor.
 
 use std::sync::Arc;
 
@@ -18,9 +21,10 @@ use casa_ms::shadowing::{ProjectedBaseline, ShadowedAntenna, shadowed_antennas};
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::{EpochRef, MEpoch, MPosition, MeasFrame, MeasuresProvider, UvwFrame};
 
+use crate::corrupt::{RowNoise, airmass};
 use crate::session::array::Antenna;
 use crate::session::error::{SimulatorError, SimulatorResult};
-use crate::session::observe::Scan;
+use crate::session::observe::PlannedScan;
 
 /// The array's fixed geometry for a session.
 pub(crate) struct ArrayGeometry<'a> {
@@ -28,6 +32,8 @@ pub(crate) struct ArrayGeometry<'a> {
     positions: Vec<MPosition>,
     observatory: MPosition,
     measures: Arc<dyn MeasuresProvider>,
+    /// Whether rows need their antennas' airmasses (`tsys-manual` noise).
+    airmass: bool,
 }
 
 /// One MAIN row's geometry and weights.
@@ -39,6 +45,29 @@ pub(crate) struct RowGeometry {
     pub(crate) flagged: bool,
     pub(crate) sigma: f32,
     pub(crate) weight: f32,
+    /// TIME, seconds: where gains and leakage take their solution.
+    pub(crate) time_s: f64,
+    /// The airmasses of ANTENNA1 and ANTENNA2 at the phase centre, when the
+    /// geometry computes them ([`ArrayGeometry::with_airmass`]); NaN
+    /// otherwise.
+    pub(crate) airmass: [f32; 2],
+    /// EXPOSURE, seconds.
+    pub(crate) exposure_s: f64,
+}
+
+impl RowGeometry {
+    /// What the row gives a noise term's σ, its antennas' dishes from
+    /// `antennas`.
+    pub(crate) fn noise(&self, antennas: &[Antenna]) -> RowNoise {
+        RowNoise {
+            diameters_m: [
+                antennas[self.antenna1].diameter_m,
+                antennas[self.antenna2].diameter_m,
+            ],
+            airmass: self.airmass,
+            exposure_s: self.exposure_s,
+        }
+    }
 }
 
 impl<'a> ArrayGeometry<'a> {
@@ -66,28 +95,38 @@ impl<'a> ArrayGeometry<'a> {
             positions,
             observatory,
             measures,
+            airmass: false,
         })
+    }
+
+    /// The geometry, computing each row's airmasses when `airmass`.
+    pub(crate) fn with_airmass(self, airmass: bool) -> Self {
+        Self { airmass, ..self }
     }
 
     /// The rows of one integration of `scan` at stored TIME `time_s`, in
     /// CASA's order: antenna 1 ascending, then antenna 2 from antenna 1
     /// (autocorrelations written) or the next. `rows` holds the scan's
-    /// [`Scan::baseline_count`] rows.
+    /// [`PlannedRows::baseline_count`](crate::session::observe::PlannedRows::baseline_count)
+    /// rows.
     ///
     /// The result depends only on the arguments, so integrations can be
     /// computed on any thread in any order.
     pub(crate) fn integration_rows(
         &self,
-        scan: &Scan,
+        scan: PlannedScan<'_>,
         time_s: f64,
         rows: &mut [RowGeometry],
     ) -> SimulatorResult<()> {
-        debug_assert_eq!(rows.len(), scan.baseline_count());
-        let count = scan.antenna_count;
+        let planned = scan.rows;
+        debug_assert_eq!(rows.len(), planned.baseline_count());
+        let count = planned.antenna_count;
         let antennas = &self.antennas[..count];
         let epoch = MEpoch::from_mjd(time_s / 86_400.0, EpochRef::UT1);
+        // At the pointing direction, as `NewMSSimulator` computes a moved
+        // pointing's UVW, though its DATA is phased on the field (#884).
         let frame = UvwFrame::new(
-            scan.phase_center_rad,
+            scan.scan.pointing_rad,
             epoch.clone(),
             &self.observatory,
             self.measures.clone(),
@@ -109,7 +148,7 @@ impl<'a> ArrayGeometry<'a> {
             .iter()
             .map(|antenna| antenna.diameter_m)
             .fold(0.0_f64, f64::max);
-        let with_autocorrelations = scan.autocorrelation_weight > 0.0;
+        let with_autocorrelations = planned.autocorrelation_weight > 0.0;
         let baselines = (0..count).flat_map(|antenna1| {
             let first = if with_autocorrelations {
                 antenna1
@@ -128,7 +167,7 @@ impl<'a> ArrayGeometry<'a> {
             let sigma = (largest_diameter * largest_diameter / diameters) as f32;
             let mut weight = 1.0 / (sigma * sigma);
             if antenna1 == antenna2 {
-                weight *= scan.autocorrelation_weight;
+                weight *= planned.autocorrelation_weight;
             }
             *row = RowGeometry {
                 antenna1,
@@ -137,6 +176,9 @@ impl<'a> ArrayGeometry<'a> {
                 flagged: false,
                 sigma,
                 weight,
+                time_s,
+                airmass: [f32::NAN; 2],
+                exposure_s: planned.integration_s,
             };
         }
         let shadowed = shadowed_antennas(
@@ -150,28 +192,65 @@ impl<'a> ArrayGeometry<'a> {
                     diameter1_m: antennas[row.antenna1].diameter_m,
                     diameter2_m: antennas[row.antenna2].diameter_m,
                 }),
-            scan.shadow_fraction_limit,
+            planned.shadow_fraction_limit,
             ShadowedAntenna::Behind,
         );
-        let low = self.below_elevation_limit(scan, &epoch)?;
+        // The elevation limit is applied where the antennas point
+        // (`NewMSSimulator`'s per-antenna `azel`).
+        let pointing = self.elevations(scan.scan.pointing_rad, &epoch, count)?;
+        let limit = scan.rows.elevation_limit_rad;
         for row in rows.iter_mut() {
             row.flagged = shadowed[row.antenna1]
                 || shadowed[row.antenna2]
-                || low[row.antenna1]
-                || low[row.antenna2];
+                || pointing[row.antenna1] < limit
+                || pointing[row.antenna2] < limit;
+        }
+        if self.airmass {
+            // The corruptor's airmass is at the phase centre, which a moved
+            // pointing leaves (#884).
+            let airmasses: Vec<f32> = if scan.scan.phase_center_rad == scan.scan.pointing_rad {
+                pointing
+                    .iter()
+                    .map(|&elevation| airmass(elevation))
+                    .collect()
+            } else {
+                self.airmasses(scan.scan.phase_center_rad, time_s, count)?
+            };
+            for row in rows.iter_mut() {
+                row.airmass = [airmasses[row.antenna1], airmasses[row.antenna2]];
+            }
         }
         Ok(())
     }
 
-    /// For each antenna, whether the field is below `scan`'s elevation limit
-    /// at its position (`NewMSSimulator`'s per-antenna `azel`).
-    fn below_elevation_limit(&self, scan: &Scan, epoch: &MEpoch) -> SimulatorResult<Vec<bool>> {
-        let direction = MDirection::from_angles(
-            scan.phase_center_rad[0],
-            scan.phase_center_rad[1],
-            DirectionRef::J2000,
-        );
-        self.positions[..scan.antenna_count]
+    /// The airmass ([`airmass`]) of J2000 `direction_rad` at each of the
+    /// first `count` antennas at stored TIME `time_s`, as `VisIter::azel`
+    /// gives `AtmosCorruptor::simPar` its elevations.
+    pub(crate) fn airmasses(
+        &self,
+        direction_rad: [f64; 2],
+        time_s: f64,
+        count: usize,
+    ) -> SimulatorResult<Vec<f32>> {
+        let epoch = MEpoch::from_mjd(time_s / 86_400.0, EpochRef::UT1);
+        Ok(self
+            .elevations(direction_rad, &epoch, count)?
+            .into_iter()
+            .map(airmass)
+            .collect())
+    }
+
+    /// The elevation (AZEL) of J2000 `direction_rad` at each of the first
+    /// `count` antennas' positions at `epoch`, radians.
+    fn elevations(
+        &self,
+        direction_rad: [f64; 2],
+        epoch: &MEpoch,
+        count: usize,
+    ) -> SimulatorResult<Vec<f64>> {
+        let [ra, dec] = direction_rad;
+        let direction = MDirection::from_angles(ra, dec, DirectionRef::J2000);
+        self.positions[..count]
             .iter()
             .map(|position| {
                 let frame = MeasFrame::new()
@@ -181,7 +260,7 @@ impl<'a> ArrayGeometry<'a> {
                 let azel = direction
                     .convert_to(DirectionRef::AZEL, &frame)
                     .map_err(|error| SimulatorError::raised(format!("elevation: {error}")))?;
-                Ok(azel.as_angles().1 < scan.elevation_limit_rad)
+                Ok(azel.as_angles().1)
             })
             .collect()
     }

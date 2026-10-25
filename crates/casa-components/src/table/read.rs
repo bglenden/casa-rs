@@ -38,6 +38,12 @@ const REQUIRED_COLUMNS: [&str; 10] = [
     LABEL,
 ];
 
+/// Bytes a row of a component list holds while it is read, beside its
+/// columns' bytes on disk: casa-tables' loaded row and the component formed
+/// from it. Reading the lists casa-components writes holds 9.5 to 9.8 KB a
+/// row, for 128 to 8,192 rows (the simulator's counting law, #841).
+const READ_ROW_BYTES: u64 = 10 * 1024;
+
 /// Read the component list at `path`.
 pub(crate) fn read_component_list(path: &Path) -> Result<ComponentList, ComponentListError> {
     let table = open(path)?;
@@ -45,6 +51,25 @@ pub(crate) fn read_component_list(path: &Path) -> Result<ComponentList, Componen
     (0..table.row_count())
         .map(|row| reader.component(row))
         .collect()
+}
+
+/// The most reading the list at `path` holds: [`READ_ROW_BYTES`] a row and
+/// the table's files.
+pub(crate) fn read_bytes(path: &Path) -> Result<u64, ComponentListError> {
+    let rows = Table::open(TableOptions::new(path))
+        .map_err(|source| ComponentListError::Table {
+            path: path.to_path_buf(),
+            source,
+        })?
+        .row_count() as u64;
+    let on_disk: u64 = std::fs::read_dir(path)
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| entry.ok()?.metadata().ok())
+        .filter(std::fs::Metadata::is_file)
+        .map(|metadata| metadata.len())
+        .sum();
+    Ok(rows * READ_ROW_BYTES + on_disk)
 }
 
 /// Open the table read-only, holding casacore's read lock while it is read
