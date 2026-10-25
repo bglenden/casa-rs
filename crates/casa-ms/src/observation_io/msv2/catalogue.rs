@@ -369,7 +369,7 @@ pub(super) fn spectral_setups(ms: &MeasurementSet) -> Result<Vec<SpectralSetup>,
                 .into_iter()
                 .map(|code| {
                     Correlation::from_casacore_code(code)
-                        .ok_or_else(|| invalid(format!("unsupported CORR_TYPE {code}")))
+                        .ok_or_else(|| invalid(format!("unknown CORR_TYPE {code}")))
                 })
                 .collect::<Result<_, _>>()?;
             Ok(SpectralSetup {

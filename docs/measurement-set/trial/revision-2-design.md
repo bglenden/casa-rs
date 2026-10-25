@@ -1,6 +1,6 @@
 # MSv2/MSv4 trial: revision 2 design record
 
-Status: design decisions for revision 2, agreed with the owner on 2026-10-24, implemented on the trial branch on 2026-10-25 (deviations listed under "What the implementation did with each decision"); PR #898 stays a draft and the interfaces are not frozen
+Status: design decisions for revision 2, agreed with the owner on 2026-10-24, implemented on the trial branch on 2026-10-25 (deviations listed under "What the implementation did with each decision"; D18 completed after the ADR-0016 amendment of the same day); PR #898 stays a draft and the interfaces are not frozen
 Truth class: proposed design
 Date: 2026-10-25
 Evidence index: [README.md](README.md)
@@ -428,12 +428,20 @@ The evidence is in [README.md](README.md), "Revision 2".
   gather the delivered products (MSv4 decodes the full cube into scratch);
   a strided in-place decode per product is a later optimization, to be
   measured.
-- **D18 vocabulary.** `Correlation` and `MUvw` live in `casa-types`;
-  `casa-observation` uses them. `casa-imaging-model` keeps its
-  `CorrelationType`: the ADR-0016 dependency policy
-  (`resources/imaging-architecture/dependency-policy.json`) requires it to
-  depend on no workspace crate, and changing that is an Ask First item. The
-  imaging example maps between the two at its boundary, as before.
+- **D18 vocabulary.** `Correlation` and `MUvw` live in `casa-types`. The
+  ADR-0016 dependency policy first allowed `casa-imaging-model` no workspace
+  dependency, so the model kept its own `CorrelationType`; on owner direction
+  (2026-10-25) ADR-0016 now lets every imaging crate depend on the
+  definitional crates (`casa-values`, `casa-types`, `casa-coordinates`), and
+  the model's private type is gone. Both adapters, `casa-observation`, the
+  imaging crates and the simulator use the one `Correlation`, and the imaging
+  example's batch and operator share one list of products. Unifying showed
+  that revision 2's `Correlation`, the eight feed products, was narrower
+  than MSv4: the schema allows all 32 casacore `Stokes` types in its
+  `polarization` coordinate, as an MSv2 `CORR_TYPE` may store them, so
+  `Correlation` now holds all 32 under MSv4's labels and a consumer refuses
+  the types it cannot use (the operator refuses mixed and quasi-orthogonal
+  feeds, as before).
 - **D23 one declaration.** The common declaration (`Catalogue` plus
   `TimeBaselineGrid` per partition) and the rule for padded cells are in
   place and the MSv4 creator uses them; an MSv2 creator from batches was

@@ -15,7 +15,6 @@
     "crates/casa-images/src/image_expr_compiled.rs",
     "crates/casa-imaging-model/src/compiled_problem.rs",
     "crates/casa-imaging-model/src/geometry.rs",
-    "crates/casa-imaging-model/src/observation.rs",
     "crates/casa-imaging-model/tests/compiled_problem.rs",
     "crates/casa-imaging-runtime/src/managed_cube_blocks.rs",
     "crates/casa-lattices/src/statistics.rs",

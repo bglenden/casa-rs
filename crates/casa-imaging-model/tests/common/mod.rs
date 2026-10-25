@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use casa_imaging_model::{
-    CorrelationProduct, CorrelationSelection, CorrelationType, DataDescriptionSelection,
-    FlagPolicy, IdSelection, IntentSelection, ObservationSelection, ObservationSnapshot,
-    ObservationSnapshotInput, ObservationSourceInput, ObservationSourceProvenance, RowSelection,
-    SelectedColumns, SelectedMainRow, SelectedRows, SpectralWindowSelection, UvSelection,
-    VisibilityColumn, WeightColumn, compile_observation,
+    CorrelationProduct, CorrelationSelection, DataDescriptionSelection, FlagPolicy, IdSelection,
+    IntentSelection, ObservationSelection, ObservationSnapshot, ObservationSnapshotInput,
+    ObservationSourceInput, ObservationSourceProvenance, RowSelection, SelectedColumns,
+    SelectedMainRow, SelectedRows, SpectralWindowSelection, UvSelection, VisibilityColumn,
+    WeightColumn, compile_observation,
 };
+use casa_types::Correlation;
 
 pub fn observation_snapshot(observation: u8) -> ObservationSnapshot {
     compile_observation(ObservationSnapshotInput::new(vec![observation_source(
@@ -38,7 +39,7 @@ pub fn observation_source_with_corrected_data(
         vec![SpectralWindowSelection::new(0, vec![0])],
         vec![CorrelationSelection::new(
             0,
-            vec![CorrelationProduct::new(0, CorrelationType::StokesI)],
+            vec![CorrelationProduct::new(0, Correlation::I)],
         )],
     );
     ObservationSourceInput::new(

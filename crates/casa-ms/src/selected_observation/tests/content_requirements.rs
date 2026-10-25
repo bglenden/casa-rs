@@ -129,8 +129,8 @@ fn refilled_blocks_hold_no_more_than_the_plan_charges_for_their_buffer() {
             vec![CorrelationSelection::new(
                 0,
                 vec![
-                    CorrelationProduct::new(0, CorrelationType::CircularRr),
-                    CorrelationProduct::new(1, CorrelationType::CircularLl),
+                    CorrelationProduct::new(0, Correlation::RR),
+                    CorrelationProduct::new(1, Correlation::LL),
                 ],
             )],
         );

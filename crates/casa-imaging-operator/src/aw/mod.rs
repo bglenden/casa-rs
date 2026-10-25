@@ -16,7 +16,8 @@ mod native_cache;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 
-use casa_imaging_model::{CorrelationType, NativeAwRequestInput};
+use casa_imaging_model::NativeAwRequestInput;
+use casa_types::Correlation;
 use num_complex::Complex32;
 use thiserror::Error;
 
@@ -1086,12 +1087,12 @@ fn routing(elements: &[u32], polarization: &PolarizationRouting) -> Option<Muell
 }
 
 /// The diagonal Mueller element of a parallel or cross hand.
-fn mueller_element(correlation: CorrelationType) -> Option<u32> {
+fn mueller_element(correlation: Correlation) -> Option<u32> {
     Some(match correlation {
-        CorrelationType::CircularRr | CorrelationType::LinearXx => 0,
-        CorrelationType::CircularRl | CorrelationType::LinearXy => 5,
-        CorrelationType::CircularLr | CorrelationType::LinearYx => 10,
-        CorrelationType::CircularLl | CorrelationType::LinearYy => 15,
+        Correlation::RR | Correlation::XX => 0,
+        Correlation::RL | Correlation::XY => 5,
+        Correlation::LR | Correlation::YX => 10,
+        Correlation::LL | Correlation::YY => 15,
         _ => return None,
     })
 }
@@ -1125,10 +1126,10 @@ mod tests {
 
     #[test]
     fn casa_routes_the_selected_cell_to_its_visibility_or_grid_hand() {
-        use CorrelationType as C;
+        use Correlation as C;
         use casa_imaging_model::PolarizationCoordinate as P;
 
-        let parallel = [C::CircularRr, C::CircularLl];
+        let parallel = [C::RR, C::LL];
         let pol = PolarizationRouting::compile(&parallel, &[P::CircularRr, P::CircularLl])
             .expect("parallel hands");
         let routes = routing(&[0, 15], &pol).expect("routes");
@@ -1166,7 +1167,7 @@ mod tests {
             }
         }
 
-        let correlations = [C::CircularRr, C::CircularRl, C::CircularLr, C::CircularLl];
+        let correlations = [C::RR, C::RL, C::LR, C::LL];
         let pol = PolarizationRouting::compile(
             &correlations,
             &[P::CircularRr, P::CircularRl, P::CircularLr, P::CircularLl],
@@ -1193,11 +1194,8 @@ mod tests {
                 );
             }
         }
-        let pol = PolarizationRouting::compile(
-            &[C::CircularRr, C::CircularRl, C::CircularLl],
-            &[P::StokesI],
-        )
-        .expect("three correlations");
+        let pol = PolarizationRouting::compile(&[C::RR, C::RL, C::LL], &[P::StokesI])
+            .expect("three correlations");
         assert!(
             routing(&[0, 15], &pol).is_none(),
             "do not overwrite colliding routes"
@@ -1264,8 +1262,8 @@ mod tests {
         // conjFreq.
         assert!((conjugate_frequency(1.0e9, 1.5e9) - (3.5e18_f64).sqrt()).abs() < 1.0);
         assert_eq!(circular_degrees(350.0 - 10.0), -20.0);
-        assert_eq!(mueller_element(CorrelationType::CircularLl), Some(15));
-        assert_eq!(mueller_element(CorrelationType::LinearXy), Some(5));
+        assert_eq!(mueller_element(Correlation::LL), Some(15));
+        assert_eq!(mueller_element(Correlation::XY), Some(5));
     }
 
     #[test]

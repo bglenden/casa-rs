@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use casa_imaging_model::{
-    CorrelationProduct, CorrelationSelection, CorrelationType, DataDescriptionSelection,
-    FlagPolicy, IdSelection, IntentSelection, ModelBounds, ModelLifecycleRequirements,
-    NumericPrecision, ObservationSelection, ObservationSnapshot, ObservationSnapshotInput,
-    ObservationSourceInput, ObservationSourceProvenance, RowSelection, SelectedColumns,
-    SelectedMainRow, SelectedRows, SpectralWindowSelection, UvSelection, VisibilityColumn,
-    WeightColumn, compile_observation,
+    CorrelationProduct, CorrelationSelection, DataDescriptionSelection, FlagPolicy, IdSelection,
+    IntentSelection, ModelBounds, ModelLifecycleRequirements, NumericPrecision,
+    ObservationSelection, ObservationSnapshot, ObservationSnapshotInput, ObservationSourceInput,
+    ObservationSourceProvenance, RowSelection, SelectedColumns, SelectedMainRow, SelectedRows,
+    SpectralWindowSelection, UvSelection, VisibilityColumn, WeightColumn, compile_observation,
 };
+use casa_types::Correlation;
 
 pub fn model_lifecycle() -> ModelLifecycleRequirements {
     ModelLifecycleRequirements::new(
@@ -26,7 +26,7 @@ pub fn observation() -> ObservationSnapshot {
         vec![SpectralWindowSelection::new(0, vec![0])],
         vec![CorrelationSelection::new(
             0,
-            vec![CorrelationProduct::new(0, CorrelationType::StokesI)],
+            vec![CorrelationProduct::new(0, Correlation::I)],
         )],
     );
     compile_observation(ObservationSnapshotInput::new(vec![

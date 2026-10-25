@@ -21,7 +21,7 @@ use std::time::{Duration, Instant};
 
 use casa_images::PagedImage;
 use casa_imaging_application::{GridPrecision, ResourcePolicy};
-use casa_imaging_model::{CorrelationType, PolarizationCoordinate};
+use casa_imaging_model::PolarizationCoordinate;
 use casa_imaging_operator::{
     Basis, GridGeometry, GridPadding, ImageExtent, MeasurementOperator, ModeSet, NormalImages,
     PaddingFactor, PolarizationRouting, SpectralAxis, SpectralKernel, SpectralResampler,
@@ -32,7 +32,8 @@ use casa_imaging_runtime::pass::{
     WorkerTeam, run_major_cycle,
 };
 use casa_ms::observation_io::{OpenOptions, open as open_store};
-use casa_observation::{Correlation, Observation, PartitionId};
+use casa_observation::{Observation, PartitionId};
+use casa_types::Correlation;
 use flate2::read::GzDecoder;
 use ndarray::{Array2, ArrayD, Axis};
 use source::{BatchSource, SourceTrace, per_times, request};
@@ -43,6 +44,14 @@ const IMSIZE: usize = 64;
 const CELL_ARCSEC: f64 = 0.012;
 /// The planes: native channels 2 … 5 of the eight.
 const CHANNELS: std::ops::Range<usize> = 2..6;
+/// The fixture's products: the batch delivers them and the operator routes
+/// them, in this order.
+const CORRELATIONS: [Correlation; 4] = [
+    Correlation::XX,
+    Correlation::XY,
+    Correlation::YX,
+    Correlation::YY,
+];
 
 fn fixture(root: &Path, name: &str) -> PathBuf {
     let archive = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -141,16 +150,9 @@ fn operator(planes: u32) -> MeasurementOperator {
         GridPadding::CasaComposite(PaddingFactor::TCLEAN),
     )
     .expect("geometry");
-    let polarization = PolarizationRouting::compile(
-        &[
-            CorrelationType::LinearXx,
-            CorrelationType::LinearXy,
-            CorrelationType::LinearYx,
-            CorrelationType::LinearYy,
-        ],
-        &[PolarizationCoordinate::StokesI],
-    )
-    .expect("routing");
+    let polarization =
+        PolarizationRouting::compile(&CORRELATIONS, &[PolarizationCoordinate::StokesI])
+            .expect("routing");
     let kernels = Box::new(Spheroidal::new(&geometry, &polarization));
     MeasurementOperator::new(
         geometry,
@@ -219,12 +221,7 @@ fn trial(
         observation,
         CHANNELS,
         axis(observation),
-        &[
-            Correlation::XX,
-            Correlation::XY,
-            Correlation::YX,
-            Correlation::YY,
-        ],
+        &CORRELATIONS,
         batch_bytes,
     );
     let mut waves: Vec<NormalImages> = Vec::new();

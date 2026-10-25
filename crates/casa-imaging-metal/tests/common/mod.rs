@@ -4,7 +4,7 @@
 #![allow(dead_code, reason = "each law file uses a subset of the fixtures")]
 
 use casa_imaging_metal::MetalBackend;
-use casa_imaging_model::{CorrelationType, PolarizationCoordinate};
+use casa_imaging_model::PolarizationCoordinate;
 use casa_imaging_operator::{
     AiryDish, Basis, CellHold, CfKey, ConvolutionFunctionSet, DenseCell, DeviceFailure,
     GridAccumulator, GridGeometry, GridPadding, GridPrecision, GridScalar, ImageCorrection,
@@ -12,12 +12,13 @@ use casa_imaging_operator::{
     MosaicWindow, MuellerRouting, OperatorError, PaddingFactor, Placement, PolarizationRouting,
     RowContext, SampleBuffer, Spheroidal, TapFootprint, TapLayout, Tile, pair_plane,
 };
+use casa_types::Correlation;
 use ndarray::Array2;
 use num_complex::{Complex32, Complex64};
 
 pub const IMAGE: usize = 64;
 const INCREMENT_RAD: [f64; 2] = [-2.0e-5, 2.0e-5];
-const XX_YY: [CorrelationType; 2] = [CorrelationType::LinearXx, CorrelationType::LinearYy];
+const XX_YY: [Correlation; 2] = [Correlation::XX, Correlation::YY];
 const XX_YY_REQUESTED: [PolarizationCoordinate; 2] = [
     PolarizationCoordinate::LinearXx,
     PolarizationCoordinate::LinearYy,

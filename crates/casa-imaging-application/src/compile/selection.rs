@@ -7,9 +7,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use casa_imaging_model::{
-    CorrelationProduct, CorrelationSelection, CorrelationType, ObservationSelection,
-    SelectedMainRow, SelectedRows, SelectedRowsBuilder, SpectralWindowSelection,
-    VisibilityColumn as OwnerVisibilityColumn,
+    CorrelationProduct, CorrelationSelection, ObservationSelection, SelectedMainRow, SelectedRows,
+    SelectedRowsBuilder, SpectralWindowSelection, VisibilityColumn as OwnerVisibilityColumn,
 };
 use casa_ms::{
     MeasurementSet, SelectedObservationContentBudget, SelectedObservationRow,
@@ -17,6 +16,7 @@ use casa_ms::{
     SelectedObservationSpectralEnvelopeReducer, SelectedObservationSpectralWindow,
     VisibilityDataColumn, parse_spw_selector, resolve_channel_selector_selection,
 };
+use casa_types::Correlation;
 use casa_types::measures::frequency::FrequencyRef;
 
 use super::PrepareError;
@@ -514,8 +514,8 @@ pub(super) fn visibility_column(
     })
 }
 
-fn correlation_type(code: i32) -> Result<CorrelationType, PrepareError> {
-    CorrelationType::from_casa_code(code).ok_or(PrepareError::UnsupportedCorrelation { code })
+fn correlation_type(code: i32) -> Result<Correlation, PrepareError> {
+    Correlation::from_casacore_code(code).ok_or(PrepareError::UnsupportedCorrelation { code })
 }
 
 #[cfg(test)]

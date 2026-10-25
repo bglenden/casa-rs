@@ -193,8 +193,8 @@ fn a_multi_spw_walk_drops_what_the_selection_drops() {
             vec![CorrelationSelection::new(
                 0,
                 vec![
-                    CorrelationProduct::new(0, CorrelationType::CircularRr),
-                    CorrelationProduct::new(1, CorrelationType::CircularLl),
+                    CorrelationProduct::new(0, Correlation::RR),
+                    CorrelationProduct::new(1, Correlation::LL),
                 ],
             )],
         );

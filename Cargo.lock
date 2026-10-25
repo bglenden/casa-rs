@@ -412,6 +412,7 @@ dependencies = [
  "casa-fft",
  "casa-imaging-model",
  "casa-numerics",
+ "casa-types",
  "ndarray",
  "num-complex",
  "rayon",
@@ -426,6 +427,7 @@ dependencies = [
  "casa-imaging-model",
  "casa-imaging-operator",
  "casa-numerics",
+ "casa-types",
  "ndarray",
  "num-complex",
  "objc2",
@@ -438,6 +440,7 @@ dependencies = [
 name = "casa-imaging-model"
 version = "0.27.0"
 dependencies = [
+ "casa-types",
  "num-complex",
  "thiserror",
 ]
@@ -492,6 +495,7 @@ dependencies = [
  "casa-lattices",
  "casa-ms",
  "casa-tables",
+ "casa-types",
  "fs2",
  "libc",
  "ndarray",

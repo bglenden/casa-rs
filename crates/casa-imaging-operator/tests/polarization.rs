@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! CASA correlation representation, polarization map and Stokes basis.
 
-use casa_imaging_model::{CorrelationType as C, PolarizationCoordinate as P};
+use casa_imaging_model::PolarizationCoordinate as P;
 use casa_imaging_operator::{GridPolarization, OperatorError, PolarizationRouting};
+use casa_types::Correlation as C;
 use num_complex::Complex64;
 
 fn c(re: f64, im: f64) -> Complex64 {
@@ -11,25 +12,21 @@ fn c(re: f64, im: f64) -> Complex64 {
 
 #[test]
 fn stokes_i_from_parallel_hands_sums_both_into_one_plane() {
-    let routing =
-        PolarizationRouting::compile(&[C::LinearXx, C::LinearYy], &[P::StokesI]).expect("routing");
+    let routing = PolarizationRouting::compile(&[C::XX, C::YY], &[P::StokesI]).expect("routing");
     assert_eq!(routing.grid(), &[GridPolarization::StokesI]);
     assert_eq!(routing.pol_map(), &[Some(0), Some(0)]);
     assert_eq!(routing.to_requested(0, 0), c(1.0, 0.0));
     assert_eq!(routing.from_requested(0, 0), c(1.0, 0.0));
     assert_eq!(routing.sumwt_source(0), 0);
-    let full = PolarizationRouting::compile(
-        &[C::CircularRr, C::CircularRl, C::CircularLr, C::CircularLl],
-        &[P::StokesI],
-    )
-    .expect("routing");
+    let full = PolarizationRouting::compile(&[C::RR, C::RL, C::LR, C::LL], &[P::StokesI])
+        .expect("routing");
     assert_eq!(full.pol_map(), &[Some(0), None, None, Some(0)]);
 }
 
 #[test]
 fn full_stokes_from_linear_feeds_uses_the_casacore_matrices() {
     let routing = PolarizationRouting::compile(
-        &[C::LinearXx, C::LinearXy, C::LinearYx, C::LinearYy],
+        &[C::XX, C::XY, C::YX, C::YY],
         &[P::StokesI, P::StokesQ, P::StokesU, P::StokesV],
     )
     .expect("routing");
@@ -92,29 +89,25 @@ fn full_stokes_from_linear_feeds_uses_the_casacore_matrices() {
 #[test]
 fn circular_pairs_follow_the_changelabels_table() {
     let iv =
-        PolarizationRouting::compile(&[C::CircularRr, C::CircularLl], &[P::StokesI, P::StokesV])
-            .expect("routing");
+        PolarizationRouting::compile(&[C::RR, C::LL], &[P::StokesI, P::StokesV]).expect("routing");
     assert_eq!(
         iv.grid(),
         &[
-            GridPolarization::Correlation(C::CircularRr),
-            GridPolarization::Correlation(C::CircularLl)
+            GridPolarization::Correlation(C::RR),
+            GridPolarization::Correlation(C::LL)
         ]
     );
     assert_eq!(iv.to_requested(1, 0), c(0.5, 0.0));
     assert_eq!(iv.to_requested(1, 1), c(-0.5, 0.0));
     assert_eq!(iv.from_requested(0, 1), c(1.0, 0.0));
     assert_eq!(iv.from_requested(1, 1), c(-1.0, 0.0));
-    let qu = PolarizationRouting::compile(
-        &[C::CircularRr, C::CircularRl, C::CircularLr, C::CircularLl],
-        &[P::StokesQ, P::StokesU],
-    )
-    .expect("routing");
+    let qu = PolarizationRouting::compile(&[C::RR, C::RL, C::LR, C::LL], &[P::StokesQ, P::StokesU])
+        .expect("routing");
     assert_eq!(
         qu.grid(),
         &[
-            GridPolarization::Correlation(C::CircularRl),
-            GridPolarization::Correlation(C::CircularLr)
+            GridPolarization::Correlation(C::RL),
+            GridPolarization::Correlation(C::LR)
         ]
     );
     assert_eq!(qu.pol_map(), &[None, Some(0), Some(1), None]);
@@ -123,21 +116,16 @@ fn circular_pairs_follow_the_changelabels_table() {
     assert_eq!(qu.from_requested(0, 1), c(0.0, 1.0));
     assert_eq!(qu.from_requested(1, 1), c(0.0, -1.0));
     // I and Q on circular feeds need all four correlations.
-    let iq = PolarizationRouting::compile(
-        &[C::CircularRr, C::CircularRl, C::CircularLr, C::CircularLl],
-        &[P::StokesI, P::StokesQ],
-    )
-    .expect("routing");
+    let iq = PolarizationRouting::compile(&[C::RR, C::RL, C::LR, C::LL], &[P::StokesI, P::StokesQ])
+        .expect("routing");
     assert_eq!(iq.grid_pols(), 4);
 }
 
 #[test]
 fn requested_correlations_route_themselves_and_drop_the_rest() {
-    let routing = PolarizationRouting::compile(
-        &[C::LinearXx, C::LinearXy, C::LinearYx, C::LinearYy],
-        &[P::LinearXx, P::LinearYy],
-    )
-    .expect("routing");
+    let routing =
+        PolarizationRouting::compile(&[C::XX, C::XY, C::YX, C::YY], &[P::LinearXx, P::LinearYy])
+            .expect("routing");
     assert_eq!(routing.pol_map(), &[Some(0), None, None, Some(1)]);
     assert_eq!(routing.to_requested(0, 0), c(1.0, 0.0));
     assert_eq!(routing.to_requested(0, 1), c(0.0, 0.0));
@@ -146,21 +134,19 @@ fn requested_correlations_route_themselves_and_drop_the_rest() {
 
 #[test]
 fn unroutable_requests_are_typed_errors() {
-    let q_from_parallel =
-        PolarizationRouting::compile(&[C::CircularRr, C::CircularLl], &[P::StokesQ]);
+    let q_from_parallel = PolarizationRouting::compile(&[C::RR, C::LL], &[P::StokesQ]);
     assert!(matches!(
         q_from_parallel,
         Err(OperatorError::Polarization { .. })
     ));
-    let mixed =
-        PolarizationRouting::compile(&[C::LinearXx, C::LinearYy], &[P::StokesI, P::LinearXx]);
+    let mixed = PolarizationRouting::compile(&[C::XX, C::YY], &[P::StokesI, P::LinearXx]);
     assert!(matches!(mixed, Err(OperatorError::Polarization { .. })));
-    let unselected = PolarizationRouting::compile(&[C::LinearXx], &[P::LinearYy]);
+    let unselected = PolarizationRouting::compile(&[C::XX], &[P::LinearYy]);
     assert!(matches!(
         unselected,
         Err(OperatorError::Polarization { .. })
     ));
-    let mixed_feeds = PolarizationRouting::compile(&[C::LinearXx, C::CircularLl], &[P::StokesI]);
+    let mixed_feeds = PolarizationRouting::compile(&[C::XX, C::LL], &[P::StokesI]);
     assert!(matches!(
         mixed_feeds,
         Err(OperatorError::Polarization { .. })

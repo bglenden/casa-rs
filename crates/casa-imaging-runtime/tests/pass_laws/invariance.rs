@@ -2,7 +2,7 @@
 //! Partition and worker-count invariance, the streamed density grid,
 //! cancellation and the point-source law.
 
-use casa_imaging_model::{CorrelationType, PolarizationCoordinate};
+use casa_imaging_model::PolarizationCoordinate;
 use casa_imaging_operator::{
     Basis, CellHold, DensityCellRule, DensityGridShape, GridGeometry, GridPadding, GridPrecision,
     ImageExtent, MeasurementOperator, ModeSet, NormalImages, PaddingFactor, PlaneRange,
@@ -15,6 +15,7 @@ use casa_imaging_runtime::pass::{
     SampleContent, SourceError, VisibilitySink, WEIGHT_SUM_WORK, WeightCache, WorkerTeam,
     needs_row_work, run_density_pass, run_major_cycle, run_row_work_pass,
 };
+use casa_types::Correlation;
 use num_complex::Complex32;
 
 use crate::fixture::{
@@ -705,7 +706,7 @@ fn the_row_work_pass_measures_what_a_first_pass_reports() {
     let spheroidal = operator(GridPrecision::F64, Basis::Constant);
     let resampler = SpectralResampler::direct(Basis::Constant).expect("direct");
     let polarization = PolarizationRouting::compile(
-        &[CorrelationType::LinearXx, CorrelationType::LinearYy],
+        &[Correlation::XX, Correlation::YY],
         &[PolarizationCoordinate::StokesI],
     )
     .expect("routing");

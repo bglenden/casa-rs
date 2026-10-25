@@ -9,8 +9,8 @@
 mod common;
 
 use casa_imaging_model::{
-    CorrelationType, EvlaDishSurface, NativeAwFrequencyGroup, NativeAwGrid, NativeAwRequestInput,
-    NativeAwTerms, PolarizationCoordinate,
+    EvlaDishSurface, NativeAwFrequencyGroup, NativeAwGrid, NativeAwRequestInput, NativeAwTerms,
+    PolarizationCoordinate,
 };
 use casa_imaging_operator::{
     AwCatalog, AwIndexing, Basis, CellHold, CfKey, ConvolutionFunctionSet, CpuBackend, GridBackend,
@@ -19,11 +19,12 @@ use casa_imaging_operator::{
     NativeCacheState, NativeManifest, NativeRow, Placement, PlaneRange, PolarizationRouting,
     RowContext, SampleBuffer, SpectralResampler, TapLayout, WeightingGeneration, Work,
 };
+use casa_types::Correlation;
 use common::{IMAGE, Rng, buffer, placements, samples};
 use ndarray::Array2;
 use num_complex::{Complex32, Complex64};
 
-const RR_LL: [CorrelationType; 2] = [CorrelationType::CircularRr, CorrelationType::CircularLl];
+const RR_LL: [Correlation; 2] = [Correlation::RR, Correlation::LL];
 const STOKES_I: [PolarizationCoordinate; 1] = [PolarizationCoordinate::StokesI];
 /// 20″ cells: the working field is 64 × 4 cells wide at the generation
 /// oversampling.

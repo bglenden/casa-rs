@@ -52,8 +52,9 @@ source and the implementation order are recorded in
 [revision-2-design.md](revision-2-design.md), whose last section says what
 the implementation did with each decision. Revision 2 implemented them all,
 with the qualifications listed there (an MSv2 creator from batches was not
-built; `casa-imaging-model` keeps its own correlation type under the
-ADR-0016 dependency policy). Every open question listed at the end of this
+built). D18 was completed once ADR-0016 was amended to let imaging depend on
+the definitional crates: both adapters, imaging and the simulator share one
+`Correlation` of all 32 casacore `Stokes` types. Every open question listed at the end of this
 document is resolved. Both examples run unchanged in their science: the
 planes and the gains are bit-identical to production from both stores.
 
@@ -73,7 +74,7 @@ What changed at the boundary:
 | D13–D15 | `GroupKey` carries the scan; `Grouping::{TimeBins {combine_fields, combine_scans}, PerScan, PerIntegration}` with the clock of each (field, scan) key starting at its first time, as production `gaincal`. | `group_fragments_do_not_depend_on_batch_size`, grouping unit tests |
 | D16 | `Validity` stays inline; `mask_into` for multi-pass consumers. | consumers |
 | D17 | `CorrelationRequest { deliver, flags_from }`: a subset is delivered in the partition's order with its own flags or the OR over every product. | `a_correlation_subset_carries_the_flags_it_is_asked_for` |
-| D18, D21 | `Correlation` and `MUvw` in `casa-types`; `UvwView::get` is an `MUvw`. | casa-types unit tests |
+| D18, D21 | `Correlation` (the 32 casacore `Stokes` types under MSv4's labels) and `MUvw` in `casa-types`; the imaging model's `CorrelationType` is gone; `UvwView::get` is an `MUvw`. | casa-types unit tests, imaging T0 and T1 |
 | D19, D20 | Measure views are built from the buffers and the catalogue entry; times stay offsets in the store's scale from the partition's origin. | `time_origins_re_express_each_other_exactly` |
 | D23, D24 | One declaration (`Catalogue` + `TimeBaselineGrid::from_cursor`); the writer's fill values are the padding convention and its row-flag refusal is gone; a batch's grid is the dataset's, so the writer's scatter path is gone. | writer laws |
 | D25 | `Catalogue::bind_to(&other, &BindingTolerance) -> Binding`; example B binds with it. | `catalogues_describe_the_same_observation`, example B |
@@ -106,10 +107,16 @@ What changed at the boundary:
   correlation axis into scratch; MSv2 reads full cells), counted in
   `copied_elements`. A strided in-place decode per product is the next
   measurement, not a design question.
-- **The dependency policy bounds vocabulary unification.** `casa-types` now
-  owns `Correlation` and `MUvw`, but `casa-imaging-model` may depend on no
-  workspace crate (ADR-0016), so it keeps `CorrelationType`; changing that
-  is an Ask First item.
+- **The dependency policy bounded vocabulary unification, until it was
+  amended.** `casa-types` owns `Correlation` and `MUvw`, but ADR-0016 let
+  `casa-imaging-model` depend on no workspace crate, so the model kept
+  `CorrelationType` and private copies of other measure vocabulary. The
+  amendment of 2026-10-25 lets every imaging crate use the definitional
+  crates; the model now uses `casa_types::Correlation`. Moving the model to
+  the shared vocabulary exposed that revision 2's eight-product
+  `Correlation` was narrower than MSv4, which allows all 32 `Stokes` types.
+  The model's `DirectionFrame`, `FrequencyFrame` and `Epoch` remain its own
+  and are the next candidates.
 
 ## Provenance
 
@@ -567,8 +574,8 @@ Each of these was decided in [revision-2-design.md](revision-2-design.md)
 2, with the qualifications recorded there; they are kept here as the record
 of what revision 1 left open. What revision 2 leaves open is in that
 record's last section: the time tolerance of the MSv2 grid, ephemeris as a
-content key, MSv2 tile-level amplification, strided subset decodes, the
-imaging model's correlation type, and an MSv2 creator from batches.
+content key, MSv2 tile-level amplification, strided subset decodes, and an
+MSv2 creator from batches.
 
 1. **End of stream without a buffer.** `next_owned` returns the buffer at
    the end, as the review asked, but still needs one to ask; with an
