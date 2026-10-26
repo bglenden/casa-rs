@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["OPTIONAL_COLUMNS","OPTIONAL_KEYWORDS","REQUIRED_COLUMNS","REQUIRED_KEYWORDS"],"enum":["OptionalMainColumn","VisibilityDataColumn"]};
+window.SIDEBAR_ITEMS = {"constant":["OPTIONAL_COLUMNS","OPTIONAL_KEYWORDS","REQUIRED_COLUMNS","REQUIRED_KEYWORDS"],"enum":["OptionalMainColumn","VisibilityDataColumn"],"fn":["initial_model_visibility"]};
