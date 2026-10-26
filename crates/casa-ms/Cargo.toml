@@ -93,6 +93,10 @@ required-features = ["msv4"]
 name = "ms_trial_read_passes"
 required-features = ["msv4"]
 
+[[example]]
+name = "ms_trial_update_pass"
+required-features = ["msv4"]
+
 [[test]]
 name = "observation_io"
 path = "tests/observation_io.rs"
