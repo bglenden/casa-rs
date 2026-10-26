@@ -12,7 +12,9 @@
 //! exactly: every acquisition, its flags (row flags folded in), weights,
 //! UVW and time auxiliaries, and every selected data group. Padding, a grid
 //! cell no acquisition filled, stays padding: an MSv4 holds it as a NaN
-//! weight, and an MSv2 holds no row for it.
+//! weight, and an MSv2 as a flagged row of NaN data and weights, or, by the
+//! declared policy that reproduces an original sparse MSv2, as no row
+//! ([`PaddingRows`]).
 //!
 //! The selected data groups of a partition are read in lockstep, one
 //! traversal each sized to the same whole times per batch (the first with
@@ -124,10 +126,29 @@ pub struct ConversionOptions {
     pub chunks: [u64; 4],
     /// MSv4 destinations: the payload variables' codec.
     pub codec: Msv4Codec,
+    /// MSv2 destinations: what a padded grid cell becomes.
+    pub padding: PaddingRows,
     /// Software recorded as the creator.
     pub creator: String,
     /// Creation time recorded, ISO 8601.
     pub creation_date: String,
+}
+
+/// What a padded grid cell (one no acquisition filled) becomes in an MSv2
+/// destination.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PaddingRows {
+    /// A row flagged throughout, its data, weights and UVW NaN, as the MSv2
+    /// creator writes padding (revision 2 design, D23); its interval is the
+    /// grid's, its exposure 0 and its time centroid its time, so that the
+    /// row's keys stay valid. Every grid cell is a row, so the row count is
+    /// known from the grids.
+    #[default]
+    Flagged,
+    /// No row: the declared policy that reproduces an original sparse MSv2
+    /// (D23), since a NaN weight is padding's one mark. The row count then
+    /// needs the acquisitions counted first, from the weights.
+    Omitted,
 }
 
 /// What a conversion did.
@@ -141,8 +162,8 @@ pub struct ConversionReport {
     pub batches: usize,
     /// Samples read (the grids' cells, padding included).
     pub samples: usize,
-    /// MSv2 destinations: rows written, one per sample that is not
-    /// padding.
+    /// MSv2 destinations: rows written, one per sample, or per acquisition
+    /// with padding omitted ([`PaddingRows`]).
     pub rows: usize,
     /// MSv4 destinations: payload elements encoded, over every variable.
     pub elements: usize,

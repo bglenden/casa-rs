@@ -5,7 +5,7 @@
 //! ```text
 //! ms_trial_convert to-msv4|to-msv2 SOURCE DESTINATION [--workers N]
 //!     [--batch-mib M] [--chunk-times T] [--codec blosc|zstd|none]
-//!     [--accept KIND,...]
+//!     [--padding flagged|omitted] [--accept KIND,...]
 //! ```
 //!
 //! `KIND` is `sigma`, `row-flags`, `flag-categories`, `data-groups`,
@@ -16,7 +16,9 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use casa_ms::observation_io::Msv4Codec;
-use casa_ms::observation_io::convert::{ConversionOptions, LossKind, to_msv2, to_msv4};
+use casa_ms::observation_io::convert::{
+    ConversionOptions, LossKind, PaddingRows, to_msv2, to_msv4,
+};
 use serde_json::json;
 
 type Error = Box<dyn std::error::Error>;
@@ -45,6 +47,7 @@ fn main() -> Result<(), Error> {
         workers: 1,
         chunks: [0, 0, 0, 0],
         codec: Msv4Codec::BloscLz4,
+        padding: PaddingRows::Flagged,
         creator: "casa-rs ms_trial_convert".to_string(),
         creation_date: "2026-10-26T00:00:00+00:00".to_string(),
     };
@@ -60,6 +63,13 @@ fn main() -> Result<(), Error> {
                     "zstd" => Msv4Codec::Zstd,
                     "none" => Msv4Codec::None,
                     other => return Err(format!("unknown codec {other}").into()),
+                }
+            }
+            "--padding" => {
+                options.padding = match value.as_str() {
+                    "flagged" => PaddingRows::Flagged,
+                    "omitted" => PaddingRows::Omitted,
+                    other => return Err(format!("unknown padding {other}").into()),
                 }
             }
             "--accept" => {

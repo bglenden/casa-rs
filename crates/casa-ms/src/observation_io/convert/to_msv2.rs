@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Either store converted to a new MeasurementSet v2: subtables from the
-//! catalogue, and one MAIN row per acquisition, partition after partition,
-//! each partition's rows in time and baseline order.
+//! catalogue, and one MAIN row per grid cell (or per acquisition, padding
+//! omitted), partition after partition, each partition's rows in time and
+//! baseline order.
 
 use std::fs;
 use std::path::Path;
@@ -11,8 +12,10 @@ use casa_tables::table_quantum::TableQuantumDesc;
 use casa_types::measures::EpochRef;
 use ndarray::Axis;
 
-use super::msv2_rows::{MainRows, acquired};
-use super::{ConversionOptions, ConversionReport, Loss, lockstep, losses, msv2_tables};
+use super::msv2_rows::{MainRows, Occupancy, acquired};
+use super::{
+    ConversionOptions, ConversionReport, Loss, PaddingRows, lockstep, losses, msv2_tables,
+};
 use crate::observation_io::update::{request_error, storage};
 use crate::observation_io::{OpenOptions, open};
 use crate::write_session::MeasurementSetCreateTarget;
@@ -41,24 +44,27 @@ const SECONDS_PER_DAY: f64 = 86_400.0;
 /// `DATA` (`base`), `CORRECTED_DATA` (`corrected`) and `MODEL_DATA`
 /// (`model`), sharing the first group's flags, weights and UVW. Partitions
 /// sharing a spectral window, polarization or intents share their
-/// subtable rows. Every acquisition becomes one row; padding becomes none,
-/// so an MSv4's grid cells no acquisition filled do not reappear as MSv2
-/// rows. `SIGMA` is derived from the weights ([`Loss::SigmaDerived`]), so
-/// the caller must accept [`LossKind::Sigma`](super::LossKind::Sigma).
+/// subtable rows. Every grid cell becomes one row, padding a flagged row of
+/// NaN data and weights; or, with [`PaddingRows::Omitted`], padding becomes
+/// no row, which reproduces an original sparse MSv2. `SIGMA` is derived
+/// from the weights ([`Loss::SigmaDerived`]), so the caller must accept
+/// [`LossKind::Sigma`](super::LossKind::Sigma).
 ///
-/// Occupancy is not recorded apart from the weights, and an MSv2's row
-/// count is fixed before its rows are written: a first pass reads the
-/// weights to count the acquisitions, and a second writes the rows. The
+/// An MSv2's row count is fixed before its rows are written. With padding
+/// omitted it is the acquisitions, which only the weights record, so a
+/// first pass reads them to count; otherwise it is the grids' cells. The
 /// MSv2 is written by one thread and created in a staging directory renamed
 /// into place when complete.
 ///
 /// # Errors
 ///
 /// Before anything is written: a loss not accepted; a data group without an
-/// MSv2 column; times in another scale than UTC; feeds other than 0;
-/// weights that vary over channels (an MSv2 `WEIGHT` holds one per
-/// correlation); a source with no acquisition. Then any error reading the
-/// source or writing the destination, which then is not created.
+/// MSv2 column; times in another scale than UTC; feeds other than 0; a
+/// source with nothing to write. Weights that vary over channels (an MSv2
+/// `WEIGHT` holds one per correlation), refused by the counting pass when
+/// there is one and otherwise when reached. Then any error reading the
+/// source or writing the destination; the destination is then not
+/// created.
 pub fn to_msv2(
     source: &Path,
     destination: &Path,
@@ -76,7 +82,7 @@ pub fn to_msv2(
     found.sort();
     losses::refuse_unaccepted(&found, &options.accept)?;
     refuse_unwritable(catalogue)?;
-    let occupancy = occupancy(observation.as_ref(), &groups[0], options.batch_bytes)?;
+    let occupancy = occupancy(observation.as_ref(), &groups[0], options)?;
     let target = MeasurementSetCreateTarget::prepare(destination, false).map_err(storage)?;
     let staging = target.staging_path().to_path_buf();
     let created = create(
@@ -134,24 +140,18 @@ fn refuse_unwritable(catalogue: &Catalogue) -> Result<(), ObservationError> {
     Ok(())
 }
 
-/// What the occupancy pass found.
-struct Occupancy {
-    /// Acquisitions (samples that are not padding) of each partition.
-    rows: Vec<usize>,
-    /// The first and last time of any grid, MJD seconds.
-    time_range: [f64; 2],
-}
-
-/// Count each partition's acquisitions from its weights, the first
-/// selected group's, and the times the grids span.
+/// Each partition's rows and interval from its grid, the first selected
+/// group's, and the times the grids span; with padding omitted, the
+/// acquisitions counted from the weights.
 fn occupancy(
     observation: &dyn Observation,
     group: &str,
-    budget: usize,
+    options: &ConversionOptions,
 ) -> Result<Occupancy, ObservationError> {
     let catalogue = observation.catalogue();
     let groups = [group.to_string()];
     let mut rows = Vec::with_capacity(catalogue.partitions.len());
+    let mut intervals = Vec::with_capacity(catalogue.partitions.len());
     let mut range = [f64::INFINITY, f64::NEG_INFINITY];
     for id in catalogue.partition_ids() {
         let grid = observation.grid(id, group)?;
@@ -159,13 +159,18 @@ fn occupancy(
         if let (Some(first), Some(last)) = (grid.times_s.first(), grid.times_s.last()) {
             range = [range[0].min(origin + first), range[1].max(origin + last)];
         }
+        intervals.push(grid.interval_s);
+        if options.padding == PaddingRows::Flagged {
+            rows.push(grid.times_s.len() * grid.baselines.len());
+            continue;
+        }
         let mut count = 0;
         lockstep::read(
             observation,
             id,
             &groups,
             WEIGHTS,
-            (budget, None),
+            (options.batch_bytes, None),
             |batches| {
                 let weights = batches[0]
                     .group
@@ -184,6 +189,7 @@ fn occupancy(
     }
     Ok(Occupancy {
         rows,
+        intervals,
         time_range: range,
     })
 }
@@ -208,7 +214,14 @@ fn create(
     }
     let layout = msv2_tables::populate(&mut ms, catalogue, occupancy.time_range)?;
     let names = columns.iter().map(|column| column.name()).collect();
-    let mut main = MainRows::start(staging, catalogue, names, &occupancy.rows, layout)?;
+    let mut main = MainRows::start(
+        staging,
+        catalogue,
+        names,
+        occupancy,
+        layout,
+        options.padding,
+    )?;
     let mut report = ConversionReport::default();
     for id in catalogue.partition_ids() {
         let read = lockstep::read(

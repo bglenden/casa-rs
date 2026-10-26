@@ -6,7 +6,9 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use casa_ms::observation_io::convert::{ConversionOptions, Loss, LossKind, to_msv2, to_msv4};
+use casa_ms::observation_io::convert::{
+    ConversionOptions, Loss, LossKind, PaddingRows, to_msv2, to_msv4,
+};
 use casa_ms::observation_io::{Msv4Codec, OpenOptions, open, open_update};
 use casa_ms::{
     SyntheticAntenna, SyntheticObservationRequest, SyntheticSpectralSetup,
@@ -28,6 +30,7 @@ fn options(accept: &[LossKind]) -> ConversionOptions {
         workers: 2,
         chunks: [5, 0, 0, 0],
         codec: Msv4Codec::BloscLz4,
+        padding: PaddingRows::Flagged,
         creator: "casa-rs".to_string(),
         creation_date: "2026-10-26T00:00:00+00:00".to_string(),
     }
@@ -400,30 +403,68 @@ fn an_msv2_survives_the_round_trip_through_msv4() {
     }
 }
 
-/// A grid cell no acquisition filled is padding in the MSv4 and no row in
-/// the MSv2 made from it: an MSv2 missing a row comes back missing it.
+/// A grid cell no acquisition filled is padding in the MSv4. In the MSv2
+/// made from it, it is by default a flagged row of NaN data and weights
+/// (revision 2 design, D23), with valid keys, which reads back as padding
+/// and converts back to padding; declaring that the conversion reproduces
+/// the original sparse row set makes it no row.
 #[test]
-fn padding_becomes_no_msv2_row() {
+fn padding_becomes_a_flagged_row_or_none_as_declared() {
     let root = tempfile::tempdir().expect("root");
     let sparse = fixture(root.path(), "ms_trial.ms");
     let mut ms = casa_ms::MeasurementSet::open(&sparse).expect("ms");
     ms.main_table_mut().remove_rows(&[7]).expect("remove row 7");
     ms.save().expect("save");
     drop(ms);
-    let v4 = root.path().join("sparse.ps.zarr");
-    let back = root.path().join("back.ms");
     let accept = [LossKind::Sigma, LossKind::Tables];
+    let v4 = root.path().join("sparse.ps.zarr");
     to_msv4(&sparse, &v4, &options(&accept)).expect("to MSv4");
-    let padded =
-        read(&v4, PartitionId(0), "base").len() - acquisitions(&v4, PartitionId(0), "base").len();
-    assert_eq!(padded, 1, "the missing row is padding in the MSv4");
-    let report = to_msv2(&v4, &back, &options(&accept)).expect("to MSv2");
-    assert_eq!((report.samples, report.rows), (120, 119));
-    assert_eq!(rows_and_sigmas(&back).0, 119);
+    let padded = |path: &Path| {
+        read(path, PartitionId(0), "base")
+            .into_iter()
+            .filter(|(_, sample)| sample.weights.iter().all(|weight| weight.is_nan()))
+            .collect::<Vec<_>>()
+    };
     assert_eq!(
-        acquisitions(&back, PartitionId(0), "base"),
-        acquisitions(&sparse, PartitionId(0), "base")
+        padded(&v4).len(),
+        1,
+        "the missing row is padding in the MSv4"
     );
+    let expected = acquisitions(&sparse, PartitionId(0), "base");
+
+    let flagged = root.path().join("flagged.ms");
+    let report = to_msv2(&v4, &flagged, &options(&accept)).expect("flagged");
+    assert_eq!((report.samples, report.rows), (120, 120));
+    assert_eq!(rows_and_sigmas(&flagged).0, 120);
+    let cells = padded(&flagged);
+    assert_eq!(cells.len(), 1, "the padded row reads back as padding");
+    let (key, cell) = &cells[0];
+    assert!(cell.flags.iter().all(|flag| *flag), "flagged throughout");
+    assert!(
+        cell.values
+            .iter()
+            .all(|value| value.re.is_nan() && value.im.is_nan())
+    );
+    assert_eq!(
+        (cell.centroid, cell.interval, cell.exposure),
+        (f64::from_bits(key.0), 10.0, 0.0),
+        "valid keys: centred on its time, the grid's interval, nothing integrated"
+    );
+    assert_eq!(acquisitions(&flagged, PartitionId(0), "base"), expected);
+    let again = root.path().join("again.ps.zarr");
+    to_msv4(&flagged, &again, &options(&accept)).expect("back to MSv4");
+    assert_eq!(padded(&again).len(), 1, "still padding");
+    assert_eq!(acquisitions(&again, PartitionId(0), "base"), expected);
+
+    let omitted = root.path().join("omitted.ms");
+    let declared = ConversionOptions {
+        padding: PaddingRows::Omitted,
+        ..options(&accept)
+    };
+    let report = to_msv2(&v4, &omitted, &declared).expect("omitted");
+    assert_eq!((report.samples, report.rows), (120, 119));
+    assert_eq!(rows_and_sigmas(&omitted).0, 119, "the original's rows");
+    assert_eq!(acquisitions(&omitted, PartitionId(0), "base"), expected);
 }
 
 /// Weights that vary over channels have no MSv2 `WEIGHT`: the conversion

@@ -912,25 +912,31 @@ unnamed), which the MSv2 adapter now reports
   visibility shape, partition after partition, in time and baseline order.
   `base`, `corrected` and `model` become `DATA`, `CORRECTED_DATA` and
   `MODEL_DATA`; another group name is refused.
-- **Padding becomes no row.** A sample whose every weight is non-finite is
-  padding (section 3's one mark), and an acquisition is everything else,
-  so a grid cell no acquisition filled never reappears as an MSv2 row:
-  the declared policy the architecture's loss table asks for. An MSv2's
-  row count is fixed before its rows are written and the batch carries no
-  presence mask, so a first pass reads the first group's weights to count
-  each partition's acquisitions (finding 5).
+- **Padding, as decided in D23** (`revision-2-design.md`). A sample whose
+  every weight is non-finite is padding (section 3's one mark), and an
+  acquisition is everything else. By default every grid cell becomes a
+  row, and a padded cell a row flagged throughout with NaN data, weights
+  and UVW; its keys stay valid (the grid's interval, exposure 0, time
+  centroid at its time), so the MSv2 reopens, and it reads back, and
+  converts back, as padding. A conversion that must reproduce an original
+  sparse row set declares it (`PaddingRows::Omitted`): padding then
+  becomes no row. An MSv2's row count is fixed before its rows are written
+  and the batch carries no presence mask, so that policy first reads the
+  first group's weights to count each partition's acquisitions (finding
+  5); the default takes the count from the grids.
 - **`SIGMA` is derived** as CASA's `mstransform` derives it when corrected
   data become data (`weightToSigma`): `1/√w`, and −1 where `w` is not
   positive. This is reported as `Loss::SigmaDerived` and must be accepted,
   since no batch carries sigma; right for weights never recalibrated,
   wrong for the others (finding 6).
-- Refused before anything is written: weights that vary over channels (an
-  MSv2 `WEIGHT` holds one per correlation and no `WEIGHT_SPECTRUM` is
-  written), times in a scale other than UTC, feeds other than 0, units
-  that differ between partitions of one column, fields in a frame other
-  than J2000, a source with no acquisition. The MSv2 is written by one
-  thread into a staging directory renamed into place, and removed on
-  failure.
+- Refused before anything is written: times in a scale other than UTC,
+  feeds other than 0, units that differ between partitions of one column,
+  fields in a frame other than J2000, a source with nothing to write.
+  Weights that vary over channels (an MSv2 `WEIGHT` holds one per
+  correlation and no `WEIGHT_SPECTRUM` is written) are refused by the
+  counting pass when there is one, and otherwise when reached. The MSv2 is
+  written by one thread into a staging directory renamed into place, and
+  removed on failure, so a refusal publishes nothing.
 
 | Law | What it shows |
 | --- | --- |
@@ -938,7 +944,7 @@ unnamed), which the MSv2 adapter now reports
 | `partitions_and_data_groups_convert_together` | Two windows of four and three channels and two groups become two datasets with `VISIBILITY_MODEL`; every group reads back equal; whole five-time chunks hold nothing; leaving `model` out is refused as a loss. |
 | `an_msv4_converts_to_an_msv2_of_every_acquisition` | XRADIO's store to an MSv2: refused until `SIGMA` is accepted, 120 rows, every sample equal to XRADIO's and to the original MSv2's, `SIGMA` = `1/√WEIGHT` (−1 where not positive), and antennas, fields (source names included), scans, observations, windows, products and intents equal to XRADIO's catalogue. |
 | `an_msv2_survives_the_round_trip_through_msv4` | The two-window MSv2 to MSv4 and back: the original's row count, `DATA` and `MODEL_DATA` of both partitions equal. |
-| `padding_becomes_no_msv2_row` | An MSv2 missing a row: padding in the MSv4, no row in the MSv2 made from it (119 of 120), every acquisition equal. |
+| `padding_becomes_a_flagged_row_or_none_as_declared` | An MSv2 missing a row is padding in the MSv4. By default the MSv2 made from it has 120 rows: the padded one flagged throughout with NaN data and weights, centred on its time, the grid's interval and exposure 0; it reads back as padding and is padding again in an MSv4 made from it. Declared `Omitted`, it has the original's 119. Every acquisition equal throughout. |
 | `weights_varying_over_channels_are_refused` | An MSv4 whose weights vary over channels is refused naming `WEIGHT_SPECTRUM`; nothing is created. |
 
 **Measurements on `pilot.ms`** (Mac mini `bg-mac-mini`: Apple M2, 8
@@ -958,7 +964,8 @@ Commands: `ms_trial_convert`, `ms_trial_read_passes`,
 | 1 worker, Zstandard (`31c7456`) | 18.8 s | 10.5 + 2.4 s | 214 MB | 1.1 GB |
 | 1 worker, uncompressed (`31c7456`) | 32.8 s | 2.9 + 3.3 s | 206 MB | 6.4 GB |
 | XRADIO's `convert_msv2_to_processing_set` (`partition_scheme=[]`, no pointing) | 27.3 s (39.0 s with interpreter start) | 20.2 + 6.0 s | 1.33 GB | 1.6 GB |
-| MSv4 → MSv2 (one writer thread) | 15.1–17.1 s | 7.8 + 0.9 s | 146 MB | 4.0 GB |
+| MSv4 → MSv2 (one writer thread), padding flagged (the default; D23 commit) | 15.8–19.6 s | 7.0 + 0.9–1.2 s | 148 MB | 4.0 GB |
+| the same, padding omitted (counting pass first; D23 commit) | 17.0–17.2 s | 7.8 + 0.9 s | 146 MB | 4.0 GB |
 | Update pass, MSv4: rewrite `base` visibilities | 17.6 s (23.5 s first) | 7.0 + 0.9 s | 149 MB | 576 chunks replaced, none read |
 | Update pass, MSv2: the same | 24.6 s (37.6 s first) | 8.2 + 2.4 s | 386 MB | 2,021,760 cells |
 
@@ -1022,11 +1029,13 @@ Commands: `ms_trial_convert`, `ms_trial_read_passes`,
    the 17.6 s pass. Its 64 finishes, which write each partition's last
    chunk-row and synchronize the directories, took 3.2 s. That is the price of each chunk being old or new after a power
    loss; workers updating disjoint partitions would overlap it.
-5. **MSv2 creation needs occupancy up front.** The creation plan fixes
-   the row count, and padding is known only from the weights, so
-   `to_msv2` reads every weight twice. A presence role in the batch
-   (`contracts.md` section 8, "Occupancy") would replace that pass with a
-   read of the mask alone.
+5. **Omitting padding needs occupancy up front.** The creation plan fixes
+   the row count, and padding is known only from the weights, so with
+   padding omitted `to_msv2` reads every weight twice: about 0.9 s of CPU
+   on `pilot.ms` (7.8 s against 7.0 s), lost in the disk's pace here. D23's
+   default, every cell a row, needs no such pass. A presence role in the
+   batch (`contracts.md` section 8, "Occupancy") would reduce the pass to
+   a read of the mask alone.
 6. **`SIGMA` into an MSv2 is a policy, not a mapping.** The architecture's
    loss table asks that `SIGMA` not be rebuilt as `1/√WEIGHT` without a
    justified relation. But `SIGMA` is a required MAIN column (casacore's
@@ -1115,9 +1124,8 @@ MSv2 creator from batches.
    `UvwView` still carries a `DirectionRef`.
 7. **Creation catalogue for MSv2.** The writer's declaration is the common
    `Catalogue` plus a `TimeBaselineGrid`; an MSv2 creator needs a rows
-   description in its place. Answered by the converter: the catalogue and
-   batches suffice, with the acquisitions counted from the weights first
-   (converter section, finding 5).
+   description in its place. Answered by D23 and the converter: the
+   catalogue and batches suffice, every cell a row (converter section).
 
 ### Discard or defer
 
@@ -1143,8 +1151,8 @@ This pass touches parts of the M1 checklist and completes none of it.
 | `group-lifecycle` | Time-bin, per-scan and per-integration groups keyed by field and scan, closure, concurrent fragments, split channel windows, `GroupCompletion`, one cursor per partition, `Catalogue::bind_to` | Groups merged across partitions by a consumer, late samples, solve → caltable → reopen → apply |
 | `work-unit-lifetimes` | Unequal channel units, shared pinning against packing, pools bounded in buffers and bytes, buffers returned at the end, abandoned work reported, a pool wait that can be bounded | Cooperating workers on the admitted team, cancellation in flight, cube minor-cycle separation |
 | `native-role-updates` | Update sessions on both stores: visibilities, flag set/clear changes and weights of declared targets; broadcast-weight and data-group alias rules; `FLAG_ROW` and padding preserved; whole-unit writes without read-back (write-back section) | `WEIGHT_SPECTRUM` and `FLAG_CATEGORY`, bit flags, per-batch MSv2 planning, MSv4 structural writes, conflicting queued patches |
-| `conversion-fidelity` | MSv2 ↔ MSv4 through the boundary: a loss inventory refused unless accepted, every group, padding as no MSv2 row, `pilot.ms` equal to XRADIO's conversion and back through casacore (converter section) | Subtable-column inventory, `WEIGHT_SPECTRUM` and `FLAG_CATEGORY` into an MSv2, the `SIGMA` policy, every audited loss row |
-| `source-free-create` | Common catalogue + grid declaration for both stores (the grid from the store's index), padding fill values and padded partitions, storage options, the narrow writer with per-batch validation, whole-chunk writes (partial chunks held), exclusive staging and no-replace publication; a processing set of many datasets; MSv2 creation from the catalogue and batches (converter) | Producer seam, backpressure, publication failure injection, the held chunk admitted with the producer's batches, MSv2 creation without an occupancy pass |
+| `conversion-fidelity` | MSv2 ↔ MSv4 through the boundary: a loss inventory refused unless accepted, every group, padding as D23's flagged rows or omitted as declared, `pilot.ms` equal to XRADIO's conversion and back through casacore (converter section) | Subtable-column inventory, `WEIGHT_SPECTRUM` and `FLAG_CATEGORY` into an MSv2, the `SIGMA` policy, every audited loss row |
+| `source-free-create` | Common catalogue + grid declaration for both stores (the grid from the store's index), padding fill values and padded partitions, storage options, the narrow writer with per-batch validation, whole-chunk writes (partial chunks held), exclusive staging and no-replace publication; a processing set of many datasets; MSv2 creation from the catalogue and batches (converter) | Producer seam, backpressure, publication failure injection, the held chunk admitted with the producer's batches, omitting padding without a counting pass |
 | `store-retention-executor` | `zarrs` and `zarrs_filesystem` pinned; codecs one chunk at a time on the caller's thread; retention plateau over 30 passes and W1/W4/W8 thread counts on `pilot.ms` (converter findings 2, 3) | Codec buffer counts, rayon's idle global pool, an admitted pool for in-partition parallelism or a time range (#910) |
 | `object-failure` | MSv4 chunk replacement through a temporary file and rename, with injected failures before writing and before the rename (including an absent chunk's first write); the changed directories synchronized at finish; its cost at scale (converter finding 4) | A process killed mid-replacement, ENOSPC |
 | `production-access-cost` | Narrow diagnostics on a tiny fixture; the estimate (bytes, batches, amplification, natural blocks, padding) as the planner's inquiry | The named MFS/cube/bandpass rows on both chunk geometries, noise bands |

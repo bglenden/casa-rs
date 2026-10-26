@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! MAIN's rows of an MSv2 a conversion creates: one per acquisition, in
-//! batch order. A sample's array cells go to the variable-shape creation
-//! writers as they are read; its keys are gathered per batch and pushed to
-//! the scalar columns a column at a time.
+//! MAIN's rows of an MSv2 a conversion creates: one per sample, padding a
+//! flagged row, or one per acquisition with padding omitted, in batch
+//! order. A sample's array cells go to the variable-shape creation writers
+//! as they are read; its keys are gathered per batch and pushed to the
+//! scalar columns a column at a time.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -14,6 +15,7 @@ use casa_types::measures::MjdHighPrec;
 use ndarray::{ArrayView2, ArrayView3, Axis};
 use num_complex::Complex32;
 
+use super::PaddingRows;
 use super::msv2_tables::Layout;
 use crate::MeasurementSet;
 use crate::observation_io::update::{request_error, storage};
@@ -25,6 +27,17 @@ use crate::write_session::{
 
 /// The array columns every converted MSv2 holds besides its data columns.
 const ARRAY_COLUMNS: [&str; 5] = ["FLAG", "FLAG_CATEGORY", "UVW", "WEIGHT", "SIGMA"];
+
+/// The rows each partition will hold, from its grid.
+pub(super) struct Occupancy {
+    /// Rows of each partition: its grid's cells, or with padding omitted
+    /// its acquisitions (samples that are not padding).
+    pub(super) rows: Vec<usize>,
+    /// Each partition's grid interval, a padded row's `INTERVAL`.
+    pub(super) intervals: Vec<f64>,
+    /// The first and last time of any grid, MJD seconds.
+    pub(super) time_range: [f64; 2],
+}
 
 /// Whether a sample's weights (`[channel, correlation]`) are an
 /// acquisition's rather than padding's, whose every weight is non-finite.
@@ -121,6 +134,9 @@ struct Scratch {
 pub(super) struct MainRows {
     session: MeasurementSetWriteSession,
     layout: Layout,
+    /// Each partition's grid interval.
+    intervals: Vec<f64>,
+    padding: PaddingRows,
     data_columns: Vec<&'static str>,
     scalars: Scalars,
     planned: usize,
@@ -130,18 +146,20 @@ pub(super) struct MainRows {
 }
 
 impl MainRows {
-    /// Plan and start MAIN's writers at `staging` for `rows` acquisitions
-    /// of each of `catalogue`'s partitions, with `data_columns` (`DATA`,
-    /// `CORRECTED_DATA`, `MODEL_DATA`) and the subtables' `layout`.
+    /// Plan and start MAIN's writers at `staging` for the `occupancy` of
+    /// `catalogue`'s partitions, with `data_columns` (`DATA`,
+    /// `CORRECTED_DATA`, `MODEL_DATA`), the subtables' `layout` and the
+    /// `padding` policy the occupancy was counted under.
     pub(super) fn start(
         staging: &Path,
         catalogue: &Catalogue,
         data_columns: Vec<&'static str>,
-        rows: &[usize],
+        occupancy: &Occupancy,
         layout: Layout,
+        padding: PaddingRows,
     ) -> Result<Self, ObservationError> {
-        let planned = rows.iter().sum();
-        let plan = plan(catalogue, &data_columns, rows, planned)?;
+        let planned = occupancy.rows.iter().sum();
+        let plan = plan(catalogue, &data_columns, &occupancy.rows, planned)?;
         let session = MeasurementSetWriteSession::start(staging, plan).map_err(storage)?;
         let id = |name: &str| session.scalar_column(name).map_err(storage);
         let scalars = Scalars {
@@ -167,6 +185,8 @@ impl MainRows {
         Ok(Self {
             session,
             layout,
+            intervals: occupancy.intervals.clone(),
+            padding,
             data_columns,
             scalars,
             planned,
@@ -176,8 +196,9 @@ impl MainRows {
         })
     }
 
-    /// Write a row for every acquisition of `batches`, one batch per data
-    /// column of the same times, the first with every role.
+    /// Write a row for every sample of `batches` (every acquisition, with
+    /// padding omitted), one batch per data column of the same times, the
+    /// first with every role.
     pub(super) fn push(&mut self, batches: &[VisibilityBatch<'_>]) -> Result<(), ObservationError> {
         let batch = &batches[0];
         let missing = |role: &str| request_error(format!("a converted batch carries its {role}"));
@@ -194,44 +215,54 @@ impl MainRows {
             .collect::<Result<Vec<_>, _>>()?;
         let shape = [batch.correlations.len(), batch.channel_count()];
         let origin = MjdHighPrec::new(0.0, 0.0);
+        let interval = self.intervals[batch.partition.0 as usize];
         self.keys.clear();
         for sample in 0..batch.samples() {
             let sample_weights = weights.index_axis(Axis(0), sample);
-            if !acquired(sample_weights)? {
+            let acquisition = acquired(sample_weights)?;
+            if !acquisition && self.padding == PaddingRows::Omitted {
                 continue;
             }
-            self.push_cells(sample, shape, &values, flags, sample_weights)?;
+            self.push_cells(sample, shape, &values, flags, sample_weights, acquisition)?;
             self.session
                 .push_f64_row("UVW", &[3], &uvw.metres_at(sample))
                 .map_err(storage)?;
             let coordinate = batch.sample(sample);
             let scan = batch.scan(sample).ok_or_else(|| missing("scans"))?;
+            let time = batch
+                .time
+                .seconds_since(sample / batch.samples_per_time(), origin);
             let keys = &mut self.keys;
             keys.antenna1.push(coordinate.baseline.antenna1.0 as i32);
             keys.antenna2.push(coordinate.baseline.antenna2.0 as i32);
             keys.field.push(coordinate.field.0 as i32);
             keys.scan.push(self.layout.scan_number[scan.0 as usize]);
-            keys.time.push(
-                batch
-                    .time
-                    .seconds_since(sample / batch.samples_per_time(), origin),
-            );
-            keys.centroid.push(centroid.seconds_since(sample, origin));
-            keys.interval.push(
-                batch
-                    .interval_s(sample)
-                    .ok_or_else(|| missing("intervals"))?,
-            );
-            keys.exposure.push(
-                batch
-                    .exposure_s(sample)
-                    .ok_or_else(|| missing("exposures"))?,
-            );
+            keys.time.push(time);
+            if acquisition {
+                keys.centroid.push(centroid.seconds_since(sample, origin));
+                keys.interval.push(
+                    batch
+                        .interval_s(sample)
+                        .ok_or_else(|| missing("intervals"))?,
+                );
+                keys.exposure.push(
+                    batch
+                        .exposure_s(sample)
+                        .ok_or_else(|| missing("exposures"))?,
+                );
+            } else {
+                // A padded row's keys stay valid: nothing was integrated,
+                // over the grid's interval, centred on its time.
+                keys.centroid.push(time);
+                keys.interval.push(interval);
+                keys.exposure.push(0.0);
+            }
         }
         self.push_keys(batch.partition.0 as usize, batch)
     }
 
-    /// One acquisition's visibility, flag, weight and sigma cells.
+    /// One sample's visibility, flag, weight and sigma cells; padding's
+    /// flagged throughout with NaN weights, padding's one mark.
     fn push_cells(
         &mut self,
         sample: usize,
@@ -239,6 +270,7 @@ impl MainRows {
         values: &[ArrayView3<'_, Complex32>],
         flags: ArrayView3<'_, bool>,
         weights: ArrayView2<'_, f32>,
+        acquisition: bool,
     ) -> Result<(), ObservationError> {
         // A sample's `[channel, correlation]` cells, correlation fastest,
         // are an MSv2 cell of shape `[correlation, channel]` as casacore
@@ -250,7 +282,13 @@ impl MainRows {
                 .push_complex32_row(column, &shape, cell)
                 .map_err(storage)?;
         }
-        let cell = contiguous(flags.index_axis(Axis(0), sample), &mut scratch.flags);
+        let cell = if acquisition {
+            contiguous(flags.index_axis(Axis(0), sample), &mut scratch.flags)
+        } else {
+            scratch.flags.clear();
+            scratch.flags.resize(shape[0] * shape[1], true);
+            &scratch.flags
+        };
         self.session
             .push_bool_row("FLAG", &shape, cell)
             .map_err(storage)?;
@@ -258,7 +296,11 @@ impl MainRows {
             .push_undefined_row("FLAG_CATEGORY")
             .map_err(storage)?;
         scratch.weights.clear();
-        scratch.weights.extend(weights.row(0).iter().copied());
+        if acquisition {
+            scratch.weights.extend(weights.row(0).iter().copied());
+        } else {
+            scratch.weights.resize(shape[0], f32::NAN);
+        }
         scratch.sigmas.clear();
         scratch
             .sigmas
@@ -378,7 +420,7 @@ fn plan(
 ) -> Result<MeasurementSetWritePlan, ObservationError> {
     if total == 0 {
         return Err(request_error(
-            "the source holds no acquisition to write as an MSv2 row",
+            "the source holds nothing to write as an MSv2 row",
         ));
     }
     let telescope = catalogue
