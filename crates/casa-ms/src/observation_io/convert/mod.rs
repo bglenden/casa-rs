@@ -58,6 +58,10 @@ pub enum Loss {
     Table(String),
     /// A column or variable whose content the destination does not hold.
     Column(String),
+    /// Antennas no partition's baselines name, this many: an MSv4
+    /// dataset's `antenna_xds` holds only its baselines' antennas, as
+    /// XRADIO's converter writes it, so these are written nowhere.
+    UnusedAntennas(usize),
 }
 
 impl Loss {
@@ -70,7 +74,7 @@ impl Loss {
             Self::RowFlags => LossKind::RowFlags,
             Self::FlagCategories => LossKind::FlagCategories,
             Self::DataGroup(_) => LossKind::DataGroups,
-            Self::Table(_) => LossKind::Tables,
+            Self::Table(_) | Self::UnusedAntennas(_) => LossKind::Tables,
             Self::Column(_) => LossKind::Columns,
         }
     }
@@ -86,6 +90,9 @@ impl fmt::Display for Loss {
             Self::DataGroup(group) => write!(f, "data group {group} is not converted"),
             Self::Table(table) => write!(f, "{table} is not carried"),
             Self::Column(column) => write!(f, "{column} is not carried"),
+            Self::UnusedAntennas(count) => {
+                write!(f, "{count} antennas no baseline names are not carried")
+            }
         }
     }
 }
@@ -101,7 +108,7 @@ pub enum LossKind {
     FlagCategories,
     /// Any [`Loss::DataGroup`].
     DataGroups,
-    /// Any [`Loss::Table`].
+    /// Any [`Loss::Table`], and [`Loss::UnusedAntennas`].
     Tables,
     /// Any [`Loss::Column`].
     Columns,

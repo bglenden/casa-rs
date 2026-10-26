@@ -62,11 +62,14 @@ const SECONDS_PER_DAY: f64 = 86_400.0;
 /// # Errors
 ///
 /// Before anything is written: a loss not accepted
-/// ([`ObservationError::InvalidRequest`]); fields that follow an ephemeris;
+/// ([`ObservationError::InvalidRequest`]); fields that follow an ephemeris
+/// or whose direction is a polynomial in time;
 /// a data group without an MSv2 column, or selected twice; times in another
 /// scale than UTC; feeds other than 0; a window without channels; fields in
-/// another frame than J2000; one column's groups in different units; an
-/// existing destination; a source with nothing to write. Weights that vary
+/// another frame than J2000; a scan without a casacore number; feeds whose
+/// receptors differ; a correlation product the feeds cannot name (a Stokes
+/// product, or a receptor they lack); one column's groups in different
+/// units; an existing destination; a source with nothing to write. Weights that vary
 /// over channels (an MSv2 `WEIGHT` holds one per correlation), refused by
 /// the counting pass when there is one and otherwise when reached. Then any
 /// error reading the source or writing the destination; the destination is
@@ -140,7 +143,8 @@ fn column(group: &str) -> Result<OptionalMainColumn, ObservationError> {
 /// Refuse what the MSv2 written cannot say: another time scale than UTC
 /// (`TIME` is written with the MeasurementSet's default reference), a feed
 /// other than the one `FEED` row per antenna the conversion writes, a
-/// window without channels, or a field in another frame than J2000.
+/// window without channels, a field in another frame than J2000, and what
+/// its subtables cannot say ([`msv2_tables::refuse_unwritable`]).
 fn refuse_unwritable(catalogue: &Catalogue) -> Result<(), ObservationError> {
     if catalogue
         .fields
@@ -168,7 +172,7 @@ fn refuse_unwritable(catalogue: &Catalogue) -> Result<(), ObservationError> {
             });
         }
     }
-    Ok(())
+    msv2_tables::refuse_unwritable(catalogue)
 }
 
 /// Each partition's rows and interval from its grid, the first selected
@@ -190,13 +194,24 @@ fn occupancy(
         let grid = observation.grid(id, group)?;
         let origin = (grid.time_origin.day() + grid.time_origin.frac()) * SECONDS_PER_DAY;
         if let (Some(first), Some(last)) = (grid.times_s.first(), grid.times_s.last()) {
-            let span =
-                |known: [f64; 2]| [known[0].min(origin + first), known[1].max(origin + last)];
-            range = span(range);
+            let span = |known: [f64; 2], half: f64| {
+                [
+                    known[0].min(origin + first - half),
+                    known[1].max(origin + last + half),
+                ]
+            };
+            range = span(range, 0.0);
+            // A session's TIME_RANGE spans its integrations, edge to edge,
+            // as fillers write it.
+            let half = if grid.interval_s.is_finite() {
+                grid.interval_s / 2.0
+            } else {
+                0.0
+            };
             if let Some(session) =
                 observation_ranges.get_mut(catalogue.partition(id).observation.0 as usize)
             {
-                *session = span(*session);
+                *session = span(*session, half);
             }
         }
         intervals.push(grid.interval_s);

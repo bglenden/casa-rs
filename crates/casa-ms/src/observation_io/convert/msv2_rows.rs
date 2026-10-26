@@ -37,7 +37,8 @@ pub(super) struct Occupancy {
     pub(super) intervals: Vec<f64>,
     /// The first and last time of any grid, MJD seconds.
     pub(super) time_range: [f64; 2],
-    /// The first and last time of each session's grids, by session.
+    /// Each session's grids' span, by session: from the start of the
+    /// first integration to the end of the last.
     pub(super) observation_ranges: Vec<[f64; 2]>,
 }
 

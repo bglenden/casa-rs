@@ -401,6 +401,41 @@ fn an_msv2_survives_the_round_trip_through_msv4() {
             );
         }
     }
+    // The MSv4 holds XRADIO's names, and the MSv2 made from it says them:
+    // the round trip renames as XRADIO's conversion does.
+    let names = |path: &Path, id, column: &str| -> Vec<String> {
+        let ms = casa_ms::MeasurementSet::open(path).expect("ms");
+        let table = ms.subtable(id).expect("subtable");
+        (0..table.row_count())
+            .map(|row| {
+                match table
+                    .cell_accessor(row, column)
+                    .and_then(|cell| cell.scalar())
+                {
+                    Ok(casa_types::ScalarValue::String(name)) => name.clone(),
+                    other => panic!("{column} of row {row}: {other:?}"),
+                }
+            })
+            .collect()
+    };
+    let suffixed = |names: Vec<String>, suffixes: Vec<String>| -> Vec<String> {
+        names
+            .iter()
+            .zip(suffixes)
+            .map(|(name, suffix)| format!("{name}_{suffix}"))
+            .collect()
+    };
+    let rows = |count: usize| (0..count).map(|row| row.to_string()).collect();
+    use casa_ms::SubtableId::{Antenna, Field};
+    let fields = names(&v2, Field, "NAME");
+    assert_eq!(
+        names(&back, Field, "NAME"),
+        suffixed(fields.clone(), rows(fields.len()))
+    );
+    assert_eq!(
+        names(&back, Antenna, "NAME"),
+        suffixed(names(&v2, Antenna, "NAME"), names(&v2, Antenna, "STATION"))
+    );
 }
 
 /// A grid cell no acquisition filled is padding in the MSv4. In the MSv2
@@ -524,10 +559,11 @@ fn weights_varying_over_channels_are_refused() {
     assert!(!out.exists());
 }
 
-/// The fixture MSv2 with its second half of times in a second observation
-/// (session): two partitions of one spectral window, data description and
-/// state.
-fn two_sessions(root: &Path) -> PathBuf {
+/// The fixture MSv2 with half its times in a second observation (session):
+/// the later half, or with `early` the earlier, so that its partition's
+/// first row comes before the first session's. Two partitions of one
+/// spectral window, data description and state.
+fn two_sessions(root: &Path, early: bool) -> PathBuf {
     let path = fixture(root, "ms_trial.ms");
     let mut ms = casa_ms::MeasurementSet::open(&path).expect("ms");
     let rows = ms.main_table().row_count();
@@ -547,7 +583,7 @@ fn two_sessions(root: &Path) -> PathBuf {
         * (times.iter().copied().fold(f64::INFINITY, f64::min)
             + times.iter().copied().fold(f64::NEG_INFINITY, f64::max));
     for (row, time) in times.iter().enumerate() {
-        if *time > middle {
+        if (*time > middle) != early {
             ms.main_table_mut()
                 .cell_accessor_mut(row, "OBSERVATION_ID")
                 .and_then(|mut cell| {
@@ -612,7 +648,7 @@ fn two_sessions(root: &Path) -> PathBuf {
 #[test]
 fn partitions_of_one_window_share_its_name_and_rows() {
     let root = tempfile::tempdir().expect("root");
-    let v2 = two_sessions(root.path());
+    let v2 = two_sessions(root.path(), false);
     let v4 = root.path().join("sessions.ps.zarr");
     let back = root.path().join("back.ms");
     let accept = [LossKind::Sigma, LossKind::Tables];
@@ -643,8 +679,9 @@ fn partitions_of_one_window_share_its_name_and_rows() {
             },
         )
         .collect();
+    // Edge to edge: contiguous integrations make the sessions meet.
     assert!(
-        ranges[0][1] < ranges[1][0],
+        ranges[0][0] < ranges[0][1] && ranges[0][1] <= ranges[1][0] && ranges[1][0] < ranges[1][1],
         "each session its own times: {ranges:?}"
     );
     for id in [PartitionId(0), PartitionId(1)] {
@@ -721,14 +758,15 @@ fn keys_and_subtable_rows_the_destination_drops_are_losses() {
     );
 }
 
-/// A field that follows an ephemeris is refused: casacore reads its
-/// directions as offsets, which the catalogue would hold as a phase
-/// centre.
+/// A field whose direction moves is refused: one that follows an
+/// ephemeris, whose directions casacore reads as offsets, and one whose
+/// direction is a polynomial in time (as XRADIO refuses it). The catalogue
+/// would hold the offset or the constant term as the phase centre.
 #[test]
-fn ephemeris_fields_are_refused() {
-    let root = tempfile::tempdir().expect("root");
-    let v2 = fixture(root.path(), "ms_trial.ms");
-    let mut ms = casa_ms::MeasurementSet::open(&v2).expect("ms");
+fn moving_fields_are_refused() {
+    let ephemeris_root = tempfile::tempdir().expect("root");
+    let ephemeris = fixture(ephemeris_root.path(), "ms_trial.ms");
+    let mut ms = casa_ms::MeasurementSet::open(&ephemeris).expect("ms");
     ms.subtable_mut(casa_ms::SubtableId::Field)
         .expect("FIELD")
         .add_column(
@@ -738,13 +776,26 @@ fn ephemeris_fields_are_refused() {
         .expect("an ephemeris");
     ms.save().expect("save");
     drop(ms);
-    let out = root.path().join("ephemeris.ps.zarr");
-    let refused = to_msv4(&v2, &out, &options(&[LossKind::Sigma, LossKind::Tables]));
-    assert!(
-        matches!(refused, Err(ObservationError::Unsupported { what }) if what.contains("ephemeris")),
-        "{refused:?}"
-    );
-    assert!(!out.exists());
+    let polynomial_root = tempfile::tempdir().expect("root");
+    let polynomial = fixture(polynomial_root.path(), "ms_trial.ms");
+    let mut ms = casa_ms::MeasurementSet::open(&polynomial).expect("ms");
+    ms.field_mut()
+        .and_then(|mut fields| fields.set_i32(0, "NUM_POLY", 1))
+        .expect("a polynomial");
+    ms.save().expect("save");
+    drop(ms);
+    for (root, source, moving) in [
+        (&ephemeris_root, &ephemeris, "ephemeris"),
+        (&polynomial_root, &polynomial, "polynomial"),
+    ] {
+        let out = root.path().join("moving.ps.zarr");
+        let refused = to_msv4(source, &out, &options(&[LossKind::Sigma, LossKind::Tables]));
+        assert!(
+            matches!(refused, Err(ObservationError::Unsupported { what }) if what.contains(moving)),
+            "{refused:?}"
+        );
+        assert!(!out.exists());
+    }
 }
 
 /// XRADIO names antennas `NAME_STATION` only for ALMA, VLA, NOEMA and
@@ -820,4 +871,165 @@ fn a_flag_category_held_in_any_row_is_a_loss() {
         "{refused:?}"
     );
     assert!(!out.exists());
+}
+
+/// An MSv4 dataset lists the antennas its baselines name, as XRADIO's
+/// converter writes it, so an antenna no baseline names is written nowhere
+/// and is reported.
+#[test]
+fn antennas_no_baseline_names_are_a_loss() {
+    let root = tempfile::tempdir().expect("root");
+    let v2 = fixture(root.path(), "ms_trial.ms");
+    let mut ms = casa_ms::MeasurementSet::open(&v2).expect("ms");
+    let first_row = |ms: &casa_ms::MeasurementSet, id| {
+        ms.subtable(id)
+            .and_then(|table| table.rows().ok()?.first().cloned())
+            .expect("a first row")
+    };
+    let antennas = ms
+        .subtable(casa_ms::SubtableId::Antenna)
+        .expect("ANTENNA")
+        .row_count();
+    let mut spare = first_row(&ms, casa_ms::SubtableId::Antenna);
+    for column in ["NAME", "STATION"] {
+        spare.upsert(
+            column,
+            casa_types::Value::Scalar(casa_types::ScalarValue::String("SPARE".to_string())),
+        );
+    }
+    let mut feed = first_row(&ms, casa_ms::SubtableId::Feed);
+    feed.upsert(
+        "ANTENNA_ID",
+        casa_types::Value::Scalar(casa_types::ScalarValue::Int32(
+            i32::try_from(antennas).expect("few antennas"),
+        )),
+    );
+    ms.subtable_mut(casa_ms::SubtableId::Antenna)
+        .expect("ANTENNA")
+        .add_row(spare)
+        .expect("a spare antenna");
+    ms.subtable_mut(casa_ms::SubtableId::Feed)
+        .expect("FEED")
+        .add_row(feed)
+        .expect("its feed");
+    ms.save().expect("save");
+    drop(ms);
+    let out = root.path().join("spare.ps.zarr");
+    let report =
+        to_msv4(&v2, &out, &options(&[LossKind::Sigma, LossKind::Tables])).expect("convert");
+    assert!(
+        report.losses.contains(&Loss::UnusedAntennas(1)),
+        "{:?}",
+        report.losses
+    );
+    let converted = open(&out, &OpenOptions::default()).expect("open");
+    let names: Vec<&str> = converted
+        .catalogue()
+        .antennas
+        .iter()
+        .map(|antenna| antenna.name.as_str())
+        .collect();
+    assert_eq!(names.len(), antennas, "{names:?}");
+    assert!(!names.iter().any(|name| name.starts_with("SPARE")));
+}
+
+/// XRADIO numbers an MSv2's datasets in the order their partitions' first
+/// MAIN rows appear, not by partition key: a second session holding the
+/// earlier times is dataset `_0`.
+#[test]
+fn datasets_are_numbered_as_their_first_rows_appear() {
+    let root = tempfile::tempdir().expect("root");
+    let v2 = two_sessions(root.path(), true);
+    let v4 = root.path().join("order.ps.zarr");
+    to_msv4(&v2, &v4, &options(&[LossKind::Sigma, LossKind::Tables])).expect("to MSv4");
+    let converted = casa_ms::observation_io::Msv4Observation::open(&v4).expect("open");
+    let mut starts: Vec<(String, f64)> = converted
+        .catalogue()
+        .partition_ids()
+        .into_iter()
+        .map(|id| {
+            let grid = converted.grid(id, "base").expect("grid");
+            let origin = (grid.time_origin.day() + grid.time_origin.frac()) * 86_400.0;
+            (
+                converted.dataset_name(id).to_string(),
+                origin + grid.times_s[0],
+            )
+        })
+        .collect();
+    starts.sort_by(|a, b| a.0.cmp(&b.0));
+    assert_eq!(starts[0].0, "ms_trial_0");
+    assert_eq!(starts[1].0, "ms_trial_1");
+    assert!(starts[0].1 < starts[1].1, "{starts:?}");
+}
+
+/// A negative `PROCESSOR_ID` names no processor (casacore's UVFITS filler
+/// writes -1 in every row) and is no loss; a lone `PROCESSOR` that is not
+/// a correlator is one, since an MSv2 destination writes a correlator.
+#[test]
+fn processors_are_lost_only_when_named_or_not_a_correlator() {
+    let root = tempfile::tempdir().expect("root");
+    let v2 = fixture(root.path(), "ms_trial.ms");
+    let mut ms = casa_ms::MeasurementSet::open(&v2).expect("ms");
+    for row in 0..ms.main_table().row_count() {
+        ms.main_table_mut()
+            .cell_accessor_mut(row, "PROCESSOR_ID")
+            .and_then(|mut cell| {
+                cell.set(casa_types::Value::Scalar(casa_types::ScalarValue::Int32(
+                    -1,
+                )))
+            })
+            .expect("no processor");
+    }
+    ms.save().expect("save");
+    drop(ms);
+    let accept = [LossKind::Sigma, LossKind::Tables];
+    let report =
+        to_msv4(&v2, &root.path().join("uvfits.ps.zarr"), &options(&accept)).expect("no loss");
+    assert!(
+        !report.losses.iter().any(|loss| matches!(
+            loss,
+            Loss::Column(column) if column == "PROCESSOR_ID"
+        ) || *loss == Loss::Table("PROCESSOR".to_string())),
+        "{:?}",
+        report.losses
+    );
+    let scalar = |value| casa_types::Value::Scalar(value);
+    let radiometer = casa_types::RecordValue::new(vec![
+        casa_types::RecordField::new("FLAG_ROW", scalar(casa_types::ScalarValue::Bool(false))),
+        casa_types::RecordField::new("MODE_ID", scalar(casa_types::ScalarValue::Int32(-1))),
+        casa_types::RecordField::new(
+            "SUB_TYPE",
+            scalar(casa_types::ScalarValue::String(String::new())),
+        ),
+        casa_types::RecordField::new(
+            "TYPE",
+            scalar(casa_types::ScalarValue::String("RADIOMETER".to_string())),
+        ),
+        casa_types::RecordField::new("TYPE_ID", scalar(casa_types::ScalarValue::Int32(-1))),
+    ]);
+    let mut ms = casa_ms::MeasurementSet::open(&v2).expect("ms");
+    assert_eq!(
+        ms.processor().expect("PROCESSOR").row_count(),
+        0,
+        "the fixture's PROCESSOR is empty"
+    );
+    ms.subtable_mut(casa_ms::SubtableId::Processor)
+        .expect("PROCESSOR")
+        .add_row(radiometer)
+        .expect("a lone radiometer");
+    ms.save().expect("save");
+    drop(ms);
+    let report = to_msv4(
+        &v2,
+        &root.path().join("radiometer.ps.zarr"),
+        &options(&accept),
+    )
+    .expect("accepted");
+    assert!(
+        report
+            .losses
+            .contains(&Loss::Table("PROCESSOR".to_string())),
+        "{:?}",
+        report.losses
+    );
 }

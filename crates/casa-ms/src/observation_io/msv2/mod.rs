@@ -53,8 +53,9 @@ struct Partition {
 ///
 /// Opening reads MAIN's key columns in row chunks and partitions the rows the way
 /// XRADIO's converter does (`DATA_DESC_ID` × `OBS_MODE` × `OBSERVATION_ID`
-/// × `EPHEMERIS_ID`, the feed pair, and the opening's
-/// [`PartitionScheme`](super::PartitionScheme)); each partition's rows are
+/// × `EPHEMERIS_ID` and the opening's
+/// [`PartitionScheme`](super::PartitionScheme)), and further by the feed
+/// pair, which XRADIO does not split by; each partition's rows are
 /// placed on its time × baseline grid (the `index` module). Each partition
 /// has one data group, `base`, associating `DATA`, `FLAG`,
 /// `WEIGHT_SPECTRUM` (when MAIN has it, else `WEIGHT`) and `UVW`. Antenna,
@@ -211,6 +212,24 @@ impl Msv2Observation {
     #[must_use]
     pub fn spectral_window_id(&self, id: PartitionId) -> u32 {
         self.partitions[id.0 as usize].spectral_window_id
+    }
+
+    /// The first MAIN row of partition `id`, `None` when it holds none:
+    /// XRADIO's converter numbers an MSv2's partitions in the order their
+    /// first rows appear.
+    ///
+    /// # Panics
+    ///
+    /// If `id` is not a partition of the observation.
+    #[must_use]
+    pub fn first_row(&self, id: PartitionId) -> Option<u32> {
+        self.partitions[id.0 as usize]
+            .grid
+            .cells
+            .iter()
+            .copied()
+            .filter(|row| *row != index::NO_ROW)
+            .min()
     }
 
     /// The MeasurementSet.

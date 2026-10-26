@@ -12,8 +12,8 @@ use casa_observation::{Catalogue, Observation, ObservationError, PartitionId, Ro
 use super::{ConversionOptions, ConversionReport, lockstep, losses};
 use crate::observation_io::update::storage;
 use crate::observation_io::{
-    Msv2Observation, Msv4ProcessingSetWriter, Msv4StorageOptions, Msv4WriteCounters, OpenOptions,
-    open,
+    Msv2Observation, Msv4Observation, Msv4ProcessingSetWriter, Msv4StorageOptions,
+    Msv4WriteCounters, OpenOptions,
 };
 
 /// What converting one partition did.
@@ -27,14 +27,19 @@ struct Converted {
 /// processing set at `destination`.
 ///
 /// Every partition becomes one dataset with the selected data groups
-/// ([`ConversionOptions::data_groups`]), named as XRADIO's converter names
-/// its datasets: the source's file name without `.ms`, then the partition's
-/// number padded with zeros. An MSv2's antennas (for the telescopes XRADIO
-/// renames), fields, sources and spectral windows are renamed as that
-/// converter renames them (`NAME_STATION`, `NAME_FIELD_ID`,
-/// `NAME_SOURCE_ID`, `NAME_SPECTRAL_WINDOW_ID`), so the two converters'
-/// stores agree; a source XRADIO finds no row for in one spectral window,
-/// which it names `Unknown` there, is still named here. Partitions are
+/// ([`ConversionOptions::data_groups`]) and the antennas its baselines name
+/// (others are [`Loss::UnusedAntennas`](super::Loss::UnusedAntennas)).
+/// An MSv4's datasets keep their names. An MSv2's are named as XRADIO's
+/// converter names them: the file name without `.ms`, then the partition's
+/// number in the order the partitions' first MAIN rows appear, padded with
+/// zeros to the width of the largest. Its antennas (for the telescopes
+/// XRADIO renames, by the first observation's telescope), fields, sources
+/// and spectral windows are renamed as that converter renames them
+/// (`NAME_STATION`, `NAME_FIELD_ID`, `NAME_SOURCE_ID`,
+/// `NAME_SPECTRAL_WINDOW_ID`), so the two converters' stores agree; a
+/// source XRADIO finds no row for in one spectral window, which it names
+/// `Unknown` there, is still named here. Two partitions XRADIO would merge,
+/// rows of different feeds, are two datasets here. Partitions are
 /// converted [`ConversionOptions::workers`] at a time; nothing appears at
 /// `destination` until every dataset is complete.
 ///
@@ -42,7 +47,8 @@ struct Converted {
 ///
 /// [`ObservationError::InvalidRequest`] naming the first loss not accepted,
 /// and [`ObservationError::Unsupported`] for fields that follow an
-/// ephemeris, both before anything is written; any error opening or
+/// ephemeris or whose direction is a polynomial in time, both before
+/// anything is written; any error opening or
 /// reading the source or writing the destination, which then is not
 /// created.
 pub fn to_msv4(
@@ -50,10 +56,16 @@ pub fn to_msv4(
     destination: &Path,
     options: &ConversionOptions,
 ) -> Result<ConversionReport, ObservationError> {
-    let (observation, named) = open_named(source)?;
+    let Named {
+        observation,
+        catalogue: named,
+        datasets,
+    } = open_named(source)?;
     let catalogue = observation.catalogue();
     let groups = losses::selected_groups(catalogue, options.data_groups.as_deref())?;
-    let found = losses::inventory(source, catalogue, &groups)?;
+    let mut found = losses::inventory(source, catalogue, &groups)?;
+    found.extend(losses::unused_antennas(observation.as_ref(), &groups[0])?);
+    found.sort();
     losses::refuse_unaccepted(&found, &options.accept)?;
     let set = Msv4ProcessingSetWriter::create(destination)?;
     let ids = catalogue.partition_ids();
@@ -73,7 +85,7 @@ pub fn to_msv4(
                         &named,
                         *id,
                         &groups,
-                        &dataset_name(source, id.0 as usize, ids.len()),
+                        &datasets[id.0 as usize],
                         options,
                     );
                     let failed = result.is_err();
@@ -109,40 +121,73 @@ pub fn to_msv4(
     Ok(report)
 }
 
-/// Open `source`, and the catalogue its datasets are declared with: an
-/// MSv4's own, or an MSv2's with XRADIO's names.
-fn open_named(source: &Path) -> Result<(Box<dyn Observation>, Catalogue), ObservationError> {
+/// A source opened for conversion, with what its datasets are named.
+struct Named {
+    observation: Box<dyn Observation>,
+    /// The catalogue the datasets are declared with.
+    catalogue: Catalogue,
+    /// Each partition's dataset name.
+    datasets: Vec<String>,
+}
+
+/// Open `source`, with the catalogue its datasets are declared with and
+/// each partition's dataset name: an MSv4's own, or an MSv2's with
+/// XRADIO's names.
+fn open_named(source: &Path) -> Result<Named, ObservationError> {
     let options = OpenOptions::default();
     if source.join("zarr.json").is_file() {
-        let observation = open(source, &options)?;
+        let observation = Msv4Observation::open_with(source, &options)?;
         let catalogue = observation.catalogue().as_ref().clone();
-        return Ok((observation, catalogue));
+        let datasets = catalogue
+            .partition_ids()
+            .into_iter()
+            .map(|id| observation.dataset_name(id).to_string())
+            .collect();
+        return Ok(Named {
+            observation: Box::new(observation),
+            catalogue,
+            datasets,
+        });
     }
     let observation = Msv2Observation::open_with(source, &options)?;
-    let windows: Vec<u32> = observation
-        .catalogue()
-        .partition_ids()
-        .into_iter()
-        .map(|id| observation.spectral_window_id(id))
+    let ids = observation.catalogue().partition_ids();
+    let windows: Vec<u32> = ids
+        .iter()
+        .map(|id| observation.spectral_window_id(*id))
         .collect();
+    let first_rows: Vec<Option<u32>> = ids.iter().map(|id| observation.first_row(*id)).collect();
     let fields = observation.measurement_set().field().map_err(storage)?;
     let sources = (0..observation.catalogue().fields.len())
         .map(|row| fields.source_id(row).map_err(storage))
         .collect::<Result<Vec<_>, _>>()?;
     let named = xradio_names(observation.catalogue(), &windows, &sources);
-    Ok((Box::new(observation), named))
+    let datasets = dataset_names(source, &first_rows);
+    Ok(Named {
+        observation: Box::new(observation),
+        catalogue: named,
+        datasets,
+    })
 }
 
-/// Dataset `index` of `count` converted from `source`, named as XRADIO's
-/// converter names it: the file name without `.ms`, and the index padded
-/// with zeros to the width of the largest.
-fn dataset_name(source: &Path, index: usize, count: usize) -> String {
-    let name = source.file_name().map_or_else(
+/// Each partition's dataset name, as XRADIO's converter names an MSv2's:
+/// the file name without `.ms` (of the path made absolute, so `.` and a
+/// trailing `/` still name the MeasurementSet), then the partition's
+/// number in the order of `first_rows`, the partitions' first MAIN rows,
+/// padded with zeros to the width of the largest.
+fn dataset_names(source: &Path, first_rows: &[Option<u32>]) -> Vec<String> {
+    let path = std::path::absolute(source).unwrap_or_else(|_| source.to_path_buf());
+    let stem = path.file_name().map_or_else(
         || "dataset".to_string(),
         |name| name.to_string_lossy().replace(".ms", ""),
     );
-    let width = count.saturating_sub(1).to_string().len();
-    format!("{name}_{index:0width$}")
+    let mut order: Vec<usize> = (0..first_rows.len()).collect();
+    order.sort_by_key(|index| (first_rows[*index].unwrap_or(u32::MAX), *index));
+    let width = first_rows.len().saturating_sub(1).to_string().len();
+    let mut names = vec![String::new(); first_rows.len()];
+    for (number, index) in order.into_iter().enumerate() {
+        names[index] = format!("{stem}_{number:0width$}");
+    }
+    names
 }
 
 /// Telescopes whose antennas XRADIO's converter names `NAME_STATION`;
@@ -225,4 +270,27 @@ fn partition(
         samples: read.samples,
         counters: writer.finish()?,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn datasets_are_numbered_by_first_row_and_padded_to_the_largest() {
+        let rows = [Some(10), Some(0), None];
+        assert_eq!(
+            dataset_names(Path::new("data/pilot.ms"), &rows),
+            ["pilot_1", "pilot_0", "pilot_2"]
+        );
+        let eleven: Vec<Option<u32>> = (0..11).rev().map(Some).collect();
+        let names = dataset_names(Path::new("pilot.ms/"), &eleven);
+        assert_eq!(names[10], "pilot_00");
+        assert_eq!(names[0], "pilot_10");
+        let here = dataset_names(Path::new("."), &[Some(0)]);
+        assert!(
+            !here[0].starts_with("dataset") && !here[0].starts_with('_'),
+            "{here:?}"
+        );
+    }
 }

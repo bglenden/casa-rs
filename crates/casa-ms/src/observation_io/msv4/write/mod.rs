@@ -14,9 +14,10 @@
 //! `VISIBILITY`, `FLAG`, `WEIGHT` and `UVW`, and each further one
 //! (`corrected`, `model`) its own `VISIBILITY_<GROUP>` beside the first's
 //! flags, weights and UVW, as XRADIO lays out a converted MSv2. Then
-//! `TIME_CENTROID` and `EFFECTIVE_INTEGRATION_TIME`, an `antenna_xds` and a
-//! `field_and_source_<group>_xds` of the first group, which every group
-//! names. It writes no
+//! `TIME_CENTROID` and `EFFECTIVE_INTEGRATION_TIME`, an `antenna_xds` of the
+//! antennas the dataset's baselines name (as XRADIO's converter writes it),
+//! and a `field_and_source_<group>_xds` of the first group, which every
+//! group names. It writes no
 //! pointing, system-calibration, weather or phase-calibration datasets and
 //! no `EFFECTIVE_CHANNEL_WIDTH`. Every time must be written exactly once,
 //! from batches whose coordinates and context match the declaration
@@ -472,7 +473,7 @@ impl Msv4Writer {
         write_antennas(
             store,
             &format!("{root}/antenna_xds"),
-            catalogue,
+            &dataset_antennas(catalogue, grid),
             &observation.telescope,
         )?;
         writer.write_fields(store, &format!("{root}/{fields_xds}"), catalogue)?;
@@ -873,11 +874,32 @@ impl Msv4Writer {
     }
 }
 
-/// The catalogue's antennas as an `antenna_xds`.
+/// The antennas `grid`'s baselines name, in catalogue order: a dataset's
+/// `antenna_xds` holds these alone, as XRADIO's converter writes the
+/// antennas of a partition's baselines. The grid was checked against the
+/// catalogue.
+fn dataset_antennas<'a>(
+    catalogue: &'a Catalogue,
+    grid: &TimeBaselineGrid,
+) -> Vec<&'a AntennaEntry> {
+    let mut named = vec![false; catalogue.antennas.len()];
+    for baseline in &grid.baselines {
+        named[baseline.antenna1.0 as usize] = true;
+        named[baseline.antenna2.0 as usize] = true;
+    }
+    catalogue
+        .antennas
+        .iter()
+        .zip(named)
+        .filter_map(|(antenna, named)| named.then_some(antenna))
+        .collect()
+}
+
+/// `antennas` as an `antenna_xds`.
 fn write_antennas(
     store: &Arc<FilesystemStore>,
     path: &str,
-    catalogue: &Catalogue,
+    antennas: &[&AntennaEntry],
     telescope: &str,
 ) -> Result<(), ObservationError> {
     create_group(
@@ -885,7 +907,6 @@ fn write_antennas(
         path,
         json!({"type": "antenna", "overall_telescope_name": telescope, "relocatable_antennas": true}),
     )?;
-    let antennas = &catalogue.antennas;
     let count = antennas.len() as u64;
     let receptors = antennas
         .first()
@@ -905,7 +926,12 @@ fn write_antennas(
             what: "writing antenna positions in other than ITRF",
         });
     }
-    let column = |f: fn(&AntennaEntry) -> String| antennas.iter().map(f).collect::<Vec<_>>();
+    let column = |f: fn(&AntennaEntry) -> String| {
+        antennas
+            .iter()
+            .map(|antenna| f(antenna))
+            .collect::<Vec<_>>()
+    };
     for (name, values) in [
         ("antenna_name", column(|a| a.name.clone())),
         ("station_name", column(|a| a.station.clone())),

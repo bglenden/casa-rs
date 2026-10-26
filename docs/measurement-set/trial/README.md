@@ -873,20 +873,27 @@ grids, batches) and create the destination from those alone.
   `Columns`) is what a caller accepts:
   - from an MSv2: `SIGMA`/`SIGMA_SPECTRUM`, any `FLAG_ROW` set, held
     `FLAG_CATEGORY` cells, MAIN columns outside the boundary's roles, an
-    `ARRAY_ID` or `PROCESSOR_ID` other than 0, the `WEIGHT` summary beside
-    `WEIGHT_SPECTRUM`, subtables the catalogue does not carry (pointing,
-    system calibration, weather, flag commands, history, Doppler,
-    frequency offsets, sources, and any further table a keyword names), a
-    `PROCESSOR` of more than one row, and `STATE` rows that say more than
-    an intent (a sub-scan, calibration or load, a reference or non-signal
-    row);
+    `ARRAY_ID` or `PROCESSOR_ID` above 0 (a negative id names nothing:
+    casacore's UVFITS filler writes `PROCESSOR_ID` −1), the `WEIGHT`
+    summary beside `WEIGHT_SPECTRUM`, subtables the catalogue does not
+    carry (pointing, system calibration, weather, flag commands, history,
+    Doppler, frequency offsets, sources, and any further table a keyword
+    names), a `PROCESSOR` of more than one row or of one that is not a
+    correlator, and `STATE` rows that say more than an intent (a sub-scan,
+    calibration or load, a reference or non-signal row);
   - from an MSv4: sub-datasets other than antennas and fields and
     variables the writer does not write;
   - in either, unselected data groups;
+  - into an MSv4, antennas no partition's baselines name
+    (`Loss::UnusedAntennas`, below);
   - into an MSv2, `SIGMA` itself (`Loss::SigmaDerived`, below).
 
   Columns of the subtables the catalogue does carry (an antenna's offset,
-  a field's delay direction) are not inventoried.
+  a field's delay direction) are not inventoried. Fields whose direction
+  moves are refused in either direction: those that follow an ephemeris
+  (`EPHEMERIS_ID` ≥ 0) and those whose direction is a polynomial in time
+  (`NUM_POLY` > 0, which XRADIO refuses too), since the catalogue would
+  hold an offset or a constant term as the phase centre.
 - **Lockstep groups.** A partition's selected groups are read by one
   traversal each, sized to the same whole times per batch (the first with
   every role, the others their visibilities only), so a destination writes
@@ -898,24 +905,35 @@ grids, batches) and create the destination from those alone.
 (`Msv4ProcessingSetWriter`: one staging directory, datasets written
 concurrently, published by one rename that refuses to replace). Further
 groups are `VISIBILITY_<GROUP>` variables beside one `FLAG`, `WEIGHT` and
-`UVW`. Datasets are named as XRADIO names them: the source's file name
-without `.ms`, then the partition's index padded with zeros to the width
-of the largest. An MSv2's names are XRADIO's too: antennas `NAME_STATION`
-for the telescopes it renames (ALMA, VLA, NOEMA and EVLA; others keep
-their names), fields `NAME_FIELDID`, sources `NAME_SOURCEID` by the
-field's `SOURCE_ID`, and spectral windows `NAME_SPWID` by the partition's
-`SPECTRAL_WINDOW` row (`spw_ID` when unnamed), which the MSv2 adapter now
-reports (`Msv2Observation::spectral_window_id`). XRADIO names a source it
-finds no `SOURCE` row for in a window `Unknown` there; this converter
-names it from the field, and the MSv4 reader reads `Unknown` as no
-source. Partitions are converted `workers` at a time.
+`UVW`. Each dataset's `antenna_xds` lists the antennas its baselines
+name, as XRADIO writes it (so the MSv4 reader's catalogue is their
+union), and an antenna no partition names is reported
+(`Loss::UnusedAntennas`). An MSv4's datasets keep their names. An MSv2's
+datasets are named as XRADIO names them: the file name without `.ms`,
+then the partition's number in the order the partitions' first MAIN rows
+appear (XRADIO groups with `sort=False`), padded with zeros to the width
+of the largest (`Msv2Observation::first_row`). Its names are XRADIO's
+too: antennas `NAME_STATION` for the telescopes it renames (ALMA, VLA,
+NOEMA and EVLA, judged by the first observation's telescope where XRADIO
+judges each partition's; others keep their names), fields `NAME_FIELDID`,
+sources `NAME_SOURCEID` by the field's `SOURCE_ID`, and spectral windows
+`NAME_SPWID` by the partition's `SPECTRAL_WINDOW` row (`spw_ID` when
+unnamed), which the MSv2 adapter now reports
+(`Msv2Observation::spectral_window_id`). XRADIO names a source it finds
+no `SOURCE` row for `Unknown` (or `Unknown_SOURCEID` in a partition of
+several fields); this converter names it from the field, and the MSv4
+reader reads both placeholders as no source. The MSv2 adapter splits
+partitions by feed pair as well, which XRADIO does not, so a multi-feed
+MSv2 makes more datasets here. Partitions are converted `workers` at a
+time.
 
 **To MSv2.** A new MeasurementSet through production's creation path:
 
 - subtables from the catalogue: an antenna and a feed per antenna, a field
   per field, a source per source in each spectral window, an observation
-  per session with the times its partitions span, polarizations whose
-  products name receptors by their place in the first antenna's feed, and
+  per session whose `TIME_RANGE` spans its integrations edge to edge,
+  polarizations whose products name receptors by their place in the
+  feeds (which must agree), and
   spectral windows, polarizations, data descriptions and states shared by
   partitions of equal content (`convert/msv2_tables.rs`). A data
   description is shared only by partitions whose state or observation
@@ -926,6 +944,13 @@ source. Partitions are converted `workers` at a time.
   visibility shape, partition after partition, in time and baseline order.
   `base`, `corrected` and `model` become `DATA`, `CORRECTED_DATA` and
   `MODEL_DATA`; another group name is refused.
+- **Names are the MSv4's.** An MSv4 made from an MSv2 holds XRADIO's names
+  (above), so the MSv2 converted back from it says them: a round trip
+  renames field `trial` to `trial_0` and antenna `W08` of a VLA to
+  `W08_W08`, and a second round trip suffixes again, as XRADIO's
+  conversion of the round-tripped MSv2 would. The converter writes what
+  the MSv4 says rather than guessing which suffixes XRADIO added; a CASA
+  script that selects by the original names needs the MSv4's (finding 8).
 - **Padding, as decided in D23** (`revision-2-design.md`). A sample whose
   every weight is non-finite is padding (section 3's one mark), and an
   acquisition is everything else. By default every grid cell becomes a
@@ -946,8 +971,10 @@ source. Partitions are converted `workers` at a time.
   wrong for the others (finding 6).
 - Refused before anything is written: times in a scale other than UTC,
   feeds other than 0, units that differ between partitions of one column,
-  fields in a frame other than J2000, a data group selected twice, a
-  source with nothing to write.
+  fields in a frame other than J2000, a scan without a casacore number,
+  feeds whose receptors differ, a correlation product the feeds cannot
+  name (a Stokes product, or a receptor they lack), a data group selected
+  twice, a source with nothing to write.
   Weights that vary over channels (an MSv2 `WEIGHT` holds one per
   correlation and no `WEIGHT_SPECTRUM` is written) are refused by the
   counting pass when there is one, and otherwise when reached. The MSv2 is
@@ -959,12 +986,15 @@ source. Partitions are converted `workers` at a time.
 | `an_msv2_converts_to_the_msv4_xradio_makes_of_it` | Refused until `SIGMA` is accepted, with nothing written; then losses exactly `SIGMA`, `HISTORY` and `POINTING`; every sample equal to the MSv2's and to XRADIO's own conversion; XRADIO's names. |
 | `partitions_and_data_groups_convert_together` | Two windows of four and three channels and two groups become two datasets with `VISIBILITY_MODEL`; every group reads back equal; whole five-time chunks hold nothing; leaving `model` out is refused as a loss. |
 | `an_msv4_converts_to_an_msv2_of_every_acquisition` | XRADIO's store to an MSv2: refused until `SIGMA` is accepted, 120 rows, every sample equal to XRADIO's and to the original MSv2's, `SIGMA` = `1/√WEIGHT` (−1 where not positive), and antennas, fields (source names included), scans, observations, windows, products and intents equal to XRADIO's catalogue. |
-| `an_msv2_survives_the_round_trip_through_msv4` | The two-window MSv2 to MSv4 and back: the original's row count, `DATA` and `MODEL_DATA` of both partitions equal. |
+| `an_msv2_survives_the_round_trip_through_msv4` | The two-window MSv2 to MSv4 and back: the original's row count, `DATA` and `MODEL_DATA` of both partitions equal; fields and antennas named as the MSv4 names them (`NAME_FIELDID`, `NAME_STATION`). |
 | `padding_becomes_a_flagged_row_or_none_as_declared` | An MSv2 missing a row is padding in the MSv4. By default the MSv2 made from it has 120 rows: the padded one flagged throughout with NaN data and weights, centred on its time, the grid's interval and exposure 0; it reads back as padding and is padding again in an MSv4 made from it. Declared `Omitted`, it has the original's 119. Every acquisition equal throughout. |
 | `weights_varying_over_channels_are_refused` | An MSv4 whose weights vary over channels is refused naming `WEIGHT_SPECTRUM`; nothing is created. |
 | `partitions_of_one_window_share_its_name_and_rows` | An MSv2 whose times fall in two sessions has two partitions of one window; both keep the window's one name (`_0`, its row) in the MSv4, and come back as one `SPECTRAL_WINDOW` row and one data description, the two `OBSERVATION` rows each spanning its own times; every sample equal. |
 | `keys_and_subtable_rows_the_destination_drops_are_losses` | An `ARRAY_ID` of 1 is refused as a loss until columns are accepted; then the report names `ARRAY_ID` and a `PROCESSOR` of two rows. |
-| `ephemeris_fields_are_refused` | A field with an `EPHEMERIS_ID` is refused as unsupported; nothing is created. |
+| `moving_fields_are_refused` | A field with an `EPHEMERIS_ID`, and one with `NUM_POLY` 1, are refused as unsupported; nothing is created. |
+| `datasets_are_numbered_as_their_first_rows_appear` | A second session holding the earlier times is dataset `ms_trial_0`, as XRADIO numbers it, though its partition key sorts second. |
+| `processors_are_lost_only_when_named_or_not_a_correlator` | `PROCESSOR_ID` −1 in every row is no loss; a lone `PROCESSOR` row of type `RADIOMETER` is one. |
+| `antennas_no_baseline_names_are_a_loss` | An antenna (with its feed) that no row names is reported as `UnusedAntennas(1)` and is in no dataset's `antenna_xds`. |
 | `a_flag_category_held_in_any_row_is_a_loss` | A `FLAG_CATEGORY` cell held in a middle row only is found (every row is read, in chunks, the first and last first) and refused until flag categories are accepted; nothing is created. |
 | `only_the_telescopes_xradio_renames_get_station_names` | The fixture's antennas, renamed `NAME_STATION` as a VLA's, keep their names when the telescope is MeerKAT. |
 
@@ -1073,11 +1103,19 @@ Commands: `ms_trial_convert`, `ms_trial_read_passes`,
    the variable-shape writers, which the simulator calls several times
    slower. Here the disk, not those writers, sets the pace (8 s of CPU in
    16 s).
+8. **A round trip renames.** XRADIO's names are suffixes on the MSv2's
+   (field `NAME_FIELDID`, antenna `NAME_STATION`, window `NAME_SPWID`,
+   source `NAME_SOURCEID`), and `to_msv2` writes the MSv4's names, so
+   MSv2 → MSv4 → MSv2 renames every field, window and source (and a VLA's
+   antennas), and repeating it suffixes again. Undoing a suffix would
+   guess at what XRADIO added (a native MSv4 field may be named `x_0`), so
+   the names stay the MSv4's; whether an MSv2 written for CASA users
+   should strip XRADIO's suffixes is a question for the owner.
 
 **Not done:** an MSv2 `WEIGHT_SPECTRUM` or `FLAG_CATEGORY` written; feeds
-other than 0; fields that follow an ephemeris, refused in either direction
-since the MSv2 adapter's catalogue would hold an ephemeris offset as a
-phase centre; MSv2 subtable rows beyond the catalogue (an MSv2 → MSv2
+other than 0; fields that follow an ephemeris or whose direction is a
+polynomial in time, refused in either direction since the MSv2 adapter's
+catalogue would hold an offset or a constant term as the phase centre; MSv2 subtable rows beyond the catalogue (an MSv2 → MSv2
 conversion drops `POINTING`, `SOURCE` detail and `HISTORY`, as reported);
 a loss inventory at subtable-column level; a v4 → v2 reference converter
 to compare with (XRADIO has none; casacore read-back stands in); MSv2

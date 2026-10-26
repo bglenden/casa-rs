@@ -10,15 +10,17 @@
 //! system calibration, weather, flag commands, history, Doppler, frequency
 //! offsets, sources, and any further subtable a keyword names); an MSv4's
 //! sub-datasets and main-dataset variables the writer does not write; and
-//! in either the data groups not selected. Columns of the subtables the
+//! in either the data groups not selected; and, into an MSv4, antennas no
+//! partition's baselines name. Columns of the subtables the
 //! catalogue does carry (an antenna's offset, a field's delay direction, a
 //! spectral window's resolution) are not inventoried. Fields that follow
-//! an ephemeris are refused: the catalogue would hold their offsets as
-//! phase centres.
+//! an ephemeris, or whose direction is a polynomial in time, are refused:
+//! the catalogue would hold an offset or a constant term as the phase
+//! centre.
 
 use std::path::Path;
 
-use casa_observation::{Catalogue, ObservationError};
+use casa_observation::{Catalogue, Observation, ObservationError};
 use casa_tables::{RequiredScalarColumnDestination, RequiredScalarColumnValuesMut};
 use casa_types::Value;
 
@@ -99,6 +101,28 @@ pub(super) fn inventory(
     Ok(losses)
 }
 
+/// The antennas of `observation`'s catalogue that no partition's baselines
+/// (the grids of `group`) name, as a loss when there are any: an MSv4
+/// dataset holds only its baselines' antennas.
+pub(super) fn unused_antennas(
+    observation: &dyn Observation,
+    group: &str,
+) -> Result<Option<Loss>, ObservationError> {
+    let catalogue = observation.catalogue();
+    let mut named = vec![false; catalogue.antennas.len()];
+    for id in catalogue.partition_ids() {
+        for baseline in &observation.grid(id, group)?.baselines {
+            for antenna in [baseline.antenna1, baseline.antenna2] {
+                if let Some(named) = named.get_mut(antenna.0 as usize) {
+                    *named = true;
+                }
+            }
+        }
+    }
+    let unused = named.iter().filter(|named| !**named).count();
+    Ok((unused > 0).then_some(Loss::UnusedAntennas(unused)))
+}
+
 /// Refuse the first of `losses` whose kind is not in `accept`.
 pub(super) fn refuse_unaccepted(
     losses: &[Loss],
@@ -160,7 +184,7 @@ const ROW_CHUNK: usize = 1 << 18;
 
 fn msv2(source: &Path, losses: &mut Vec<Loss>) -> Result<(), ObservationError> {
     let ms = crate::MeasurementSet::open_retained_read(source).map_err(storage)?;
-    refuse_ephemerides(&ms)?;
+    refuse_moving_fields(&ms)?;
     let main = ms.main_table();
     let columns: Vec<String> = main
         .schema()
@@ -193,9 +217,11 @@ fn msv2(source: &Path, losses: &mut Vec<Loss>) -> Result<(), ObservationError> {
     subtables(&ms, losses)
 }
 
-/// Refuse fields that follow an ephemeris: casacore reads their directions
-/// as offsets from it, which the catalogue does not apply.
-fn refuse_ephemerides(ms: &crate::MeasurementSet) -> Result<(), ObservationError> {
+/// Refuse fields whose direction moves: those that follow an ephemeris,
+/// whose directions casacore reads as offsets from it, and those whose
+/// directions are polynomials in time (`NUM_POLY` above 0), as XRADIO's
+/// converter refuses them. The catalogue holds one constant direction.
+fn refuse_moving_fields(ms: &crate::MeasurementSet) -> Result<(), ObservationError> {
     let fields = ms.field().map_err(storage)?;
     for row in 0..fields.row_count() {
         if fields
@@ -207,13 +233,19 @@ fn refuse_ephemerides(ms: &crate::MeasurementSet) -> Result<(), ObservationError
                 what: "converting fields that follow an ephemeris (FIELD EPHEMERIS_ID)",
             });
         }
+        if fields.num_poly(row).map_err(storage)? > 0 {
+            return Err(ObservationError::Unsupported {
+                what: "converting fields whose direction is a polynomial in time (FIELD NUM_POLY)",
+            });
+        }
     }
     Ok(())
 }
 
 /// MAIN's keys the destination does not hold: a set `FLAG_ROW`, and an
-/// `ARRAY_ID` or `PROCESSOR_ID` other than the 0 an MSv2 destination
-/// writes (an MSv4 has neither), read in row chunks.
+/// `ARRAY_ID` or `PROCESSOR_ID` above the 0 an MSv2 destination writes (an
+/// MSv4 has neither), read in row chunks. A negative id names nothing:
+/// casacore's UVFITS filler writes `PROCESSOR_ID` -1 in every row.
 fn main_keys(main: &casa_tables::Table, losses: &mut Vec<Loss>) -> Result<(), ObservationError> {
     let rows = main.row_count();
     let (mut flags, mut arrays, mut processors) = (Vec::new(), Vec::new(), Vec::new());
@@ -240,8 +272,8 @@ fn main_keys(main: &casa_tables::Table, losses: &mut Vec<Loss>) -> Result<(), Ob
         main.required_scalar_columns_for_rows_into(&chunk, &mut destinations)
             .map_err(storage)?;
         flagged |= flags.iter().any(|flag| *flag);
-        array |= arrays.iter().any(|id| *id != 0);
-        processor |= processors.iter().any(|id| *id != 0);
+        array |= arrays.iter().any(|id| *id > 0);
+        processor |= processors.iter().any(|id| *id > 0);
         if flagged && array && processor {
             break;
         }
@@ -260,34 +292,38 @@ fn main_keys(main: &casa_tables::Table, losses: &mut Vec<Loss>) -> Result<(), Ob
 
 /// Subtables, and subtable content, the destination does not hold: the
 /// uncarried subtables with rows, any further table a keyword names, a
-/// `PROCESSOR` of more than one row (an MSv2 destination writes one
-/// correlator), and `STATE` rows that say more than their `OBS_MODE` (an
-/// MSv2 destination writes `SIG`, and no sub-scan, calibration or load).
+/// `PROCESSOR` of more than one row or of another type than a correlator
+/// (an MSv2 destination writes one correlator), and `STATE` rows that say
+/// more than their `OBS_MODE` (an MSv2 destination writes `SIG`, and no
+/// sub-scan, calibration or load).
 fn subtables(ms: &crate::MeasurementSet, losses: &mut Vec<Loss>) -> Result<(), ObservationError> {
     for id in UNCARRIED_SUBTABLES {
         if ms.subtable(*id).is_some_and(|table| table.row_count() > 0) {
             losses.push(Loss::Table(id.name().to_string()));
         }
     }
-    if ms
-        .subtable(SubtableId::Processor)
-        .is_some_and(|table| table.row_count() > 1)
-    {
+    let processors = ms.processor().map_err(storage)?;
+    let correlator = |row| {
+        processors
+            .string(row, "TYPE")
+            .map(|kind| kind == "CORRELATOR")
+            .map_err(storage)
+    };
+    if processors.row_count() > 1 || (processors.row_count() == 1 && !correlator(0)?) {
         losses.push(Loss::Table("PROCESSOR".to_string()));
     }
-    if let Ok(state) = ms.state() {
-        for row in 0..state.row_count() {
-            let plain = state.i32(row, "SUB_SCAN").map_err(storage)? == 0
-                && state.f64(row, "CAL").map_err(storage)? == 0.0
-                && state.f64(row, "LOAD").map_err(storage)? == 0.0
-                && state.bool(row, "SIG").map_err(storage)?
-                && !state.bool(row, "REF").map_err(storage)?;
-            if !plain {
-                losses.push(Loss::Column(
-                    "STATE SUB_SCAN, CAL, LOAD, SIG and REF".to_string(),
-                ));
-                break;
-            }
+    let state = ms.state().map_err(storage)?;
+    for row in 0..state.row_count() {
+        let plain = state.i32(row, "SUB_SCAN").map_err(storage)? == 0
+            && state.f64(row, "CAL").map_err(storage)? == 0.0
+            && state.f64(row, "LOAD").map_err(storage)? == 0.0
+            && state.bool(row, "SIG").map_err(storage)?
+            && !state.bool(row, "REF").map_err(storage)?;
+        if !plain {
+            losses.push(Loss::Column(
+                "STATE SUB_SCAN, CAL, LOAD, SIG and REF".to_string(),
+            ));
+            break;
         }
     }
     let main = ms.main_table();
@@ -306,8 +342,9 @@ fn subtables(ms: &crate::MeasurementSet, losses: &mut Vec<Loss>) -> Result<(), O
 
 /// Rows of `FLAG_CATEGORY` read at once: an undefined or empty cell costs
 /// nothing to read, and a held one ends the search, so this bounds the
-/// cells read past the first held one.
-const CATEGORY_CHUNK: usize = 4096;
+/// cells read with the first held one (256 cells of three categories of
+/// 32,768 channels and 4 correlations are about 100 MB).
+const CATEGORY_CHUNK: usize = 256;
 
 /// Whether MAIN's `FLAG_CATEGORY` holds categories: a defined cell with
 /// elements in any row. The first and last rows are read first, since

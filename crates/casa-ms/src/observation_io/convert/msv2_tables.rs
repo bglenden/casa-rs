@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! The subtables of an MSv2 a conversion creates, from the source's
 //! catalogue: one antenna and feed per catalogue antenna, one field per
-//! field and one source per source name, one observation per session, and
+//! field, one source per source in each spectral window, one observation
+//! per session, and
 //! spectral windows, polarizations, data descriptions and states shared by
 //! the partitions whose content is the same, so long as no two partitions
 //! share a data description, state and observation (an MSv2 would read
@@ -53,18 +54,24 @@ pub(super) struct Layout {
     pub(super) scan_number: Vec<i32>,
 }
 
-/// Fill `ms`'s subtables from `catalogue`, whose data span the
-/// `occupancy`'s times (MJD seconds).
-pub(super) fn populate(
-    ms: &mut MeasurementSet,
-    catalogue: &Catalogue,
-    occupancy: &Occupancy,
-) -> Result<Layout, ObservationError> {
-    let time_range = occupancy.time_range;
-    antennas(ms, catalogue, time_range)?;
-    let named_sources = fields(ms, catalogue, time_range[0])?;
-    observations(ms, catalogue, &occupancy.observation_ranges)?;
-    let scan_number = catalogue
+/// Refuse what an MSv2's subtables cannot say of `catalogue`, before
+/// anything is written: a scan without a casacore number, feeds whose
+/// receptors differ, or a correlation product the feeds cannot name (a
+/// Stokes product, or a receptor they lack).
+pub(super) fn refuse_unwritable(catalogue: &Catalogue) -> Result<(), ObservationError> {
+    scan_numbers(catalogue)?;
+    let receptors = feed_receptors(catalogue)?;
+    for entry in &catalogue.partitions {
+        for correlation in &entry.correlations {
+            receptor_pair(*correlation, receptors)?;
+        }
+    }
+    Ok(())
+}
+
+/// Each catalogue scan's `SCAN_NUMBER`.
+fn scan_numbers(catalogue: &Catalogue) -> Result<Vec<i32>, ObservationError> {
+    catalogue
         .scans
         .iter()
         .map(|scan| {
@@ -75,7 +82,39 @@ pub(super) fn populate(
                 ))
             })
         })
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect()
+}
+
+/// The receptors `CORR_PRODUCT` indexes: those of every antenna that has a
+/// feed, which must agree.
+fn feed_receptors(catalogue: &Catalogue) -> Result<&[String], ObservationError> {
+    let mut fed = catalogue
+        .antennas
+        .iter()
+        .map(|antenna| antenna.receptors.as_slice())
+        .filter(|receptors| !receptors.is_empty());
+    let first = fed.next().unwrap_or(&[]);
+    if fed.any(|receptors| receptors != first) {
+        return Err(ObservationError::Unsupported {
+            what: "writing MSv2 polarizations for feeds whose receptors differ",
+        });
+    }
+    Ok(first)
+}
+
+/// Fill `ms`'s subtables from `catalogue`, whose data span the
+/// `occupancy`'s times (MJD seconds); [`refuse_unwritable`] has accepted
+/// it.
+pub(super) fn populate(
+    ms: &mut MeasurementSet,
+    catalogue: &Catalogue,
+    occupancy: &Occupancy,
+) -> Result<Layout, ObservationError> {
+    let time_range = occupancy.time_range;
+    antennas(ms, catalogue, time_range)?;
+    let named_sources = fields(ms, catalogue, time_range[0])?;
+    observations(ms, catalogue, &occupancy.observation_ranges)?;
+    let scan_number = scan_numbers(catalogue)?;
     let mut windows: Vec<&PartitionEntry> = Vec::new();
     let mut polarizations: Vec<&[Correlation]> = Vec::new();
     let mut descriptions: Vec<(usize, usize)> = Vec::new();
@@ -112,10 +151,7 @@ pub(super) fn populate(
     }
     spectral_windows(ms, &windows)?;
     sources(ms, &named_sources, windows.len(), time_range)?;
-    let receptors = catalogue
-        .antennas
-        .first()
-        .map_or(&[][..], |antenna| antenna.receptors.as_slice());
+    let receptors = feed_receptors(catalogue)?;
     for correlations in &polarizations {
         polarization(ms, correlations, receptors)?;
     }

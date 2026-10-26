@@ -143,6 +143,16 @@ impl Msv4Observation {
         &self.catalogue
     }
 
+    /// The name of partition `id`'s dataset in the processing set.
+    ///
+    /// # Panics
+    ///
+    /// If `id` is not a partition of the observation.
+    #[must_use]
+    pub fn dataset_name(&self, id: PartitionId) -> &str {
+        self.datasets[id.0 as usize].path.trim_start_matches('/')
+    }
+
     /// The catalogue while the store is being opened, before any batch or
     /// cursor shares it.
     fn catalogue_mut(&mut self) -> &mut Catalogue {
@@ -559,7 +569,7 @@ impl Msv4Observation {
                 // XRADIO's placeholder for an absent source is none.
                 source_name: sources
                     .get(row)
-                    .filter(|name| name.as_str() != super::UNKNOWN_SOURCE)
+                    .filter(|name| !super::is_unknown_source(name))
                     .cloned(),
             };
             let fields = &mut self.catalogue_mut().fields;

@@ -11,7 +11,11 @@ oracle.
         Open the converter's processing set with XRADIO, run XRADIO's schema
         check, and compare every dataset with XRADIO's conversion of the
         same MSv2: datasets matched by spectral window, polarization, fields
-        and first time; every payload variable and coordinate exactly.
+        and first time; every payload variable and coordinate exactly; and
+        XRADIO's names: each dataset's own, its antennas', and its base
+        group's fields' and sources'. Where XRADIO found no SOURCE row for a
+        field in a window it names the source "Unknown" and the converter
+        names it from the field; those are counted, not mismatches.
 
 Each prints a JSON report and exits non-zero on any mismatch.
 """
@@ -64,6 +68,34 @@ def key(node):
     )
 
 
+def names(node):
+    """The names a dataset carries: its antennas, and its base group's fields
+    and sources."""
+    field_and_source = node.xr_ms.get_field_and_source_xds()
+    return {
+        "antenna_name": node["antenna_xds"].ds.antenna_name.values,
+        "field_name": field_and_source.field_name.values,
+        "source_name": field_and_source.source_name.values,
+    }
+
+
+def compare_names(name, node, expected_name, expected, mismatches):
+    """Record where `node`'s names differ from XRADIO's; return the sources
+    XRADIO calls "Unknown" that the converter names."""
+    if name != expected_name:
+        mismatches.append({"dataset": name, "problem": f"XRADIO names it {expected_name}"})
+    ours, theirs = names(node), names(expected)
+    unknown = 0
+    for label in ours:
+        a, b = ours[label], theirs[label]
+        if label == "source_name" and a.shape == b.shape:
+            unknown += int(np.sum((b == "Unknown") & (a != b)))
+            b = np.where(b == "Unknown", a, b)
+        if a.shape != b.shape or not np.array_equal(a, b):
+            mismatches.append({"dataset": name, "names": label, "ours": list(a)[:8], "theirs": list(b)[:8]})
+    return unknown
+
+
 def compare(ours, theirs):
     results = []
 
@@ -81,12 +113,14 @@ def compare(ours, theirs):
     record("the same number of datasets", len(mine.children) == len(reference.children),
            {"ours": len(mine.children), "theirs": len(reference.children)})
     mismatches = []
+    unknown = 0
     for name in sorted(mine.children):
         node = mine[name]
         match = by_key.get(key(node))
         if not match:
             mismatches.append({"dataset": name, "problem": "no XRADIO dataset with its key"})
             continue
+        unknown += compare_names(name, node, match[0], reference[match[0]], mismatches)
         ds = node.ds.load()
         expected = reference[match[0]].ds.load()
         for coord in COORDINATES:
@@ -97,8 +131,8 @@ def compare(ours, theirs):
             same = a.shape == b.shape and np.array_equal(a, b, equal_nan=np.issubdtype(a.dtype, np.inexact))
             if not same or ds[var].dims != expected[var].dims or ds[var].dtype != expected[var].dtype:
                 mismatches.append({"dataset": name, "variable": var})
-    record("every dataset equals XRADIO's, variable for variable", not mismatches, {"mismatches": mismatches[:20]} if mismatches else None)
-    print(json.dumps({"datasets": len(mine.children), "results": results}, indent=1))
+    record("every dataset equals XRADIO's, names and variables", not mismatches, {"mismatches": mismatches[:20]} if mismatches else None)
+    print(json.dumps({"datasets": len(mine.children), "sources_xradio_calls_unknown": unknown, "results": results}, indent=1))
     return all(r["ok"] for r in results)
 
 
