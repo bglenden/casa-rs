@@ -1061,6 +1061,12 @@ Commands: `ms_trial_convert`, `ms_trial_read_passes`,
   and after it (`30fab54`), run alternately on the Mac mini while system
   indexing loaded it (load average 7–9, so slower than the 22 s above);
   at `d5d0bce` it took 7.6 s of user CPU, and MSv4 → MSv2 15.1 s.
+  At `64668a3` (the reader's antenna merge) the same checks pass, and
+  XRADIO's own processing set, converted to an MSv2 by `to_msv2`, reads
+  back through casacore equal to `pilot.ms` too, row for row and in the
+  same 1,888 subtable rows: its datasets hold 27 of the 54 antennas each,
+  and the merge numbers them as `pilot.ms` does (the read-back pairs rows
+  by antenna id). MSv4 → MSv2 from XRADIO's store took 20.7 s.
 - **The converters are write-bound.** Writing to the external disk
   (about 200–250 MB/s) sets the pace: one worker spends about 8 s of CPU
   in a 22 s conversion, and the uncompressed run, with the least CPU, is
