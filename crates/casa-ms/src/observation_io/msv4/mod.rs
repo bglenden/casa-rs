@@ -19,7 +19,11 @@ mod write;
 pub use cursor::Msv4Cursor;
 pub use read::Msv4Observation;
 
-/// The codec options of every MSv4 read, write and update: one chunk at a
+/// XRADIO's name for an absent source, which the writer writes for a field
+/// without one and the reader reads as none.
+pub(super) const UNKNOWN_SOURCE: &str = "Unknown";
+
+/// The codec options of every MSv4 payload read, write and update: one chunk at a
 /// time, on the calling thread, so that parallelism is the caller's (its
 /// workers) and no work falls through to a pool the process did not admit.
 ///

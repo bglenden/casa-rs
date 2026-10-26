@@ -276,7 +276,7 @@ external data.
 | Interoperability, both directions | `tools/ms-trial/check_interop.sh` | cargo, uv (pinned XRADIO environment) |
 | Fixtures | `tools/ms-trial/make_fixtures.sh` | cargo, uv, network for the first `uv sync` |
 | Scale check on a real store | `/usr/bin/time -l cargo run --release -p casa-ms --example ms_trial_probe -- STORE [--open-only]` | Rust only; a MeasurementSet or MSv4 store |
-| Convert either store | `cargo run --release -p casa-ms --features msv4 --example ms_trial_convert -- to-msv4\|to-msv2 SOURCE DEST [--workers N] [--chunk-times T] [--codec blosc\|zstd\|none] [--accept sigma,tables,…]` | Rust only |
+| Convert either store | `cargo run --release -p casa-ms --features msv4 --example ms_trial_convert -- to-msv4\|to-msv2 SOURCE DEST [--workers N] [--chunk-times T] [--codec blosc\|zstd\|none] [--padding flagged\|omitted] [--accept sigma,tables,…]` (chunks of 10 times unless `T` is given) | Rust only |
 | Read passes (retention, threads) | `cargo run --release -p casa-ms --features msv4 --example ms_trial_read_passes -- STORE [--passes N] [--workers W]` | Rust only |
 | Update pass (replacement and synchronization cost) | `cargo run --release -p casa-ms --features msv4 --example ms_trial_update_pass -- COPY_OF_STORE` | Rust only; changes the store |
 | Converter against XRADIO | `tools/ms-trial/check_convert.py xradio-convert --ms MS --out PS`; `… compare --ours PS --theirs PS` | the pinned XRADIO environment |
@@ -868,11 +868,14 @@ grids, batches) and create the destination from those alone.
   (`Sigma`, `RowFlags`, `FlagCategories`, `DataGroups`, `Tables`,
   `Columns`) is what a caller accepts:
   - from an MSv2: `SIGMA`/`SIGMA_SPECTRUM`, any `FLAG_ROW` set, held
-    `FLAG_CATEGORY` cells, MAIN columns outside the boundary's roles, the
-    `WEIGHT` summary beside `WEIGHT_SPECTRUM`, subtables the catalogue
-    does not carry (pointing, system calibration, weather, flag commands,
-    history, Doppler, frequency offsets, sources, and any further table a
-    keyword names);
+    `FLAG_CATEGORY` cells, MAIN columns outside the boundary's roles, an
+    `ARRAY_ID` or `PROCESSOR_ID` other than 0, the `WEIGHT` summary beside
+    `WEIGHT_SPECTRUM`, subtables the catalogue does not carry (pointing,
+    system calibration, weather, flag commands, history, Doppler,
+    frequency offsets, sources, and any further table a keyword names), a
+    `PROCESSOR` of more than one row, and `STATE` rows that say more than
+    an intent (a sub-scan, calibration or load, a reference or non-signal
+    row);
   - from an MSv4: sub-datasets other than antennas and fields and
     variables the writer does not write;
   - in either, unselected data groups;
@@ -891,17 +894,24 @@ grids, batches) and create the destination from those alone.
 (`Msv4ProcessingSetWriter`: one staging directory, datasets written
 concurrently, published by one rename that refuses to replace). Further
 groups are `VISIBILITY_<GROUP>` variables beside one `FLAG`, `WEIGHT` and
-`UVW`. An MSv2's antennas, fields and spectral windows are renamed as
-XRADIO's converter renames them: `NAME_STATION`, `NAME_FIELDID`, and
-`NAME_SPWID` by the partition's `SPECTRAL_WINDOW` row (`spw_ID` when
-unnamed), which the MSv2 adapter now reports
-(`Msv2Observation::spectral_window_id`). Partitions are converted
-`workers` at a time.
+`UVW`. Datasets are named as XRADIO names them: the source's file name
+without `.ms`, then the partition's index padded with zeros to the width
+of the largest. An MSv2's names are XRADIO's too: antennas `NAME_STATION`
+for the telescopes it renames (ALMA, VLA, NOEMA and EVLA; others keep
+their names), fields `NAME_FIELDID`, sources `NAME_SOURCEID` by the
+field's `SOURCE_ID`, and spectral windows `NAME_SPWID` by the partition's
+`SPECTRAL_WINDOW` row (`spw_ID` when unnamed), which the MSv2 adapter now
+reports (`Msv2Observation::spectral_window_id`). XRADIO names a source it
+finds no `SOURCE` row for in a window `Unknown` there; this converter
+names it from the field, and the MSv4 reader reads `Unknown` as no
+source. Partitions are converted `workers` at a time.
 
 **To MSv2.** A new MeasurementSet through production's creation path:
 
 - subtables from the catalogue: an antenna and a feed per antenna, a field
-  per field, a source per source name, an observation per session, and
+  per field, a source per source in each spectral window, an observation
+  per session with the times its partitions span, polarizations whose
+  products name receptors by their place in the first antenna's feed, and
   spectral windows, polarizations, data descriptions and states shared by
   partitions of equal content (`convert/msv2_tables.rs`). A data
   description is shared only by partitions whose state or observation
@@ -916,7 +926,8 @@ unnamed), which the MSv2 adapter now reports
   every weight is non-finite is padding (section 3's one mark), and an
   acquisition is everything else. By default every grid cell becomes a
   row, and a padded cell a row flagged throughout with NaN data, weights
-  and UVW; its keys stay valid (the grid's interval, exposure 0, time
+  and UVW (`FLAG_ROW` stays false: its flags already exclude it, and a
+  reader folding `FLAG_ROW` in reads the same); its keys stay valid (the grid's interval, exposure 0, time
   centroid at its time), so the MSv2 reopens, and it reads back, and
   converts back, as padding. A conversion that must reproduce an original
   sparse row set declares it (`PaddingRows::Omitted`): padding then
@@ -931,7 +942,8 @@ unnamed), which the MSv2 adapter now reports
   wrong for the others (finding 6).
 - Refused before anything is written: times in a scale other than UTC,
   feeds other than 0, units that differ between partitions of one column,
-  fields in a frame other than J2000, a source with nothing to write.
+  fields in a frame other than J2000, a data group selected twice, a
+  source with nothing to write.
   Weights that vary over channels (an MSv2 `WEIGHT` holds one per
   correlation and no `WEIGHT_SPECTRUM` is written) are refused by the
   counting pass when there is one, and otherwise when reached. The MSv2 is
@@ -946,6 +958,10 @@ unnamed), which the MSv2 adapter now reports
 | `an_msv2_survives_the_round_trip_through_msv4` | The two-window MSv2 to MSv4 and back: the original's row count, `DATA` and `MODEL_DATA` of both partitions equal. |
 | `padding_becomes_a_flagged_row_or_none_as_declared` | An MSv2 missing a row is padding in the MSv4. By default the MSv2 made from it has 120 rows: the padded one flagged throughout with NaN data and weights, centred on its time, the grid's interval and exposure 0; it reads back as padding and is padding again in an MSv4 made from it. Declared `Omitted`, it has the original's 119. Every acquisition equal throughout. |
 | `weights_varying_over_channels_are_refused` | An MSv4 whose weights vary over channels is refused naming `WEIGHT_SPECTRUM`; nothing is created. |
+| `partitions_of_one_window_share_its_name_and_rows` | An MSv2 whose times fall in two sessions has two partitions of one window; both keep the window's one name (`_0`, its row) in the MSv4, and come back as one `SPECTRAL_WINDOW` row and one data description, the two `OBSERVATION` rows each spanning its own times; every sample equal. |
+| `keys_and_subtable_rows_the_destination_drops_are_losses` | An `ARRAY_ID` of 1 is refused as a loss until columns are accepted; then the report names `ARRAY_ID` and a `PROCESSOR` of two rows. |
+| `ephemeris_fields_are_refused` | A field with an `EPHEMERIS_ID` is refused as unsupported; nothing is created. |
+| `only_the_telescopes_xradio_renames_get_station_names` | The fixture's antennas, renamed `NAME_STATION` as a VLA's, keep their names when the telescope is MeerKAT. |
 
 **Measurements on `pilot.ms`** (Mac mini `bg-mac-mini`: Apple M2, 8
 cores, 24 GiB, macOS 27.0.1, rustc 1.99.0; data on an external USB SSD,
@@ -1054,7 +1070,9 @@ Commands: `ms_trial_convert`, `ms_trial_read_passes`,
    16 s).
 
 **Not done:** an MSv2 `WEIGHT_SPECTRUM` or `FLAG_CATEGORY` written; feeds
-other than 0; MSv2 subtable rows beyond the catalogue (an MSv2 → MSv2
+other than 0; fields that follow an ephemeris, refused in either direction
+since the MSv2 adapter's catalogue would hold an ephemeris offset as a
+phase centre; MSv2 subtable rows beyond the catalogue (an MSv2 → MSv2
 conversion drops `POINTING`, `SOURCE` detail and `HISTORY`, as reported);
 a loss inventory at subtable-column level; a v4 → v2 reference converter
 to compare with (XRADIO has none; casacore read-back stands in); MSv2

@@ -37,6 +37,8 @@ pub(super) struct Occupancy {
     pub(super) intervals: Vec<f64>,
     /// The first and last time of any grid, MJD seconds.
     pub(super) time_range: [f64; 2],
+    /// The first and last time of each session's grids, by session.
+    pub(super) observation_ranges: Vec<[f64; 2]>,
 }
 
 /// Whether a sample's weights (`[channel, correlation]`) are an
@@ -209,6 +211,15 @@ impl MainRows {
             .timing
             .centroid
             .ok_or_else(|| missing("time centroids"))?;
+        if batches.iter().any(|each| {
+            each.partition != batch.partition
+                || each.samples() != batch.samples()
+                || each.time.offsets_s() != batch.time.offsets_s()
+        }) {
+            return Err(request_error(
+                "a further group's batch is not the first's partition and times",
+            ));
+        }
         let values = batches
             .iter()
             .map(|each| each.group.values.ok_or_else(|| missing("visibilities")))

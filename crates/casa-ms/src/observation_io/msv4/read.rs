@@ -556,7 +556,11 @@ impl Msv4Observation {
                     centres[2 * row + 1],
                     frame,
                 ),
-                source_name: sources.get(row).cloned(),
+                // XRADIO's placeholder for an absent source is none.
+                source_name: sources
+                    .get(row)
+                    .filter(|name| name.as_str() != super::UNKNOWN_SOURCE)
+                    .cloned(),
             };
             let fields = &mut self.catalogue_mut().fields;
             let index = fields

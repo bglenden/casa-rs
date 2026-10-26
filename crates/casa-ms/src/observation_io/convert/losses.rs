@@ -3,14 +3,18 @@
 //! anything is written.
 //!
 //! The inventory is of whole tables and columns: an MSv2's `SIGMA`,
-//! `FLAG_ROW` flags, `FLAG_CATEGORY` cells, MAIN columns outside the
+//! `FLAG_ROW` flags, `FLAG_CATEGORY` cells, `ARRAY_ID`s and `PROCESSOR_ID`s
+//! other than 0, a `PROCESSOR` of more than one row, `STATE` rows that say
+//! more than their intents, MAIN columns outside the
 //! boundary's roles and subtables the catalogue does not carry (pointing,
 //! system calibration, weather, flag commands, history, Doppler, frequency
 //! offsets, sources, and any further subtable a keyword names); an MSv4's
 //! sub-datasets and main-dataset variables the writer does not write; and
 //! in either the data groups not selected. Columns of the subtables the
 //! catalogue does carry (an antenna's offset, a field's delay direction, a
-//! spectral window's resolution) are not inventoried.
+//! spectral window's resolution) are not inventoried. Fields that follow
+//! an ephemeris are refused: the catalogue would hold their offsets as
+//! phase centres.
 
 use std::path::Path;
 
@@ -46,6 +50,15 @@ pub(super) fn selected_groups(
         return Err(request_error(
             "a conversion selects at least one data group",
         ));
+    }
+    if let Some(group) = groups
+        .iter()
+        .enumerate()
+        .find_map(|(index, group)| groups[..index].contains(group).then_some(group))
+    {
+        return Err(request_error(format!(
+            "data group {group} is selected twice"
+        )));
     }
     for entry in &catalogue.partitions {
         if let Some(missing) = groups
@@ -102,6 +115,8 @@ pub(super) fn refuse_unaccepted(
 
 /// MAIN columns the conversion carries: the keys the partitions and grid
 /// are made of, the time auxiliaries and the data groups' roles.
+/// `ARRAY_ID` and `PROCESSOR_ID` are carried only as 0, and reported
+/// otherwise ([`main_keys`]).
 const CARRIED_COLUMNS: &[&str] = &[
     "ANTENNA1",
     "ANTENNA2",
@@ -145,6 +160,7 @@ const ROW_CHUNK: usize = 1 << 18;
 
 fn msv2(source: &Path, losses: &mut Vec<Loss>) -> Result<(), ObservationError> {
     let ms = crate::MeasurementSet::open_retained_read(source).map_err(storage)?;
+    refuse_ephemerides(&ms)?;
     let main = ms.main_table();
     let columns: Vec<String> = main
         .schema()
@@ -173,27 +189,108 @@ fn msv2(source: &Path, losses: &mut Vec<Loss>) -> Result<(), ObservationError> {
             "WEIGHT (the row summary beside WEIGHT_SPECTRUM)".to_string(),
         ));
     }
+    main_keys(main, losses)?;
+    subtables(&ms, losses)
+}
+
+/// Refuse fields that follow an ephemeris: casacore reads their directions
+/// as offsets from it, which the catalogue does not apply.
+fn refuse_ephemerides(ms: &crate::MeasurementSet) -> Result<(), ObservationError> {
+    let fields = ms.field().map_err(storage)?;
+    for row in 0..fields.row_count() {
+        if fields
+            .ephemeris_id(row)
+            .map_err(storage)?
+            .is_some_and(|id| id >= 0)
+        {
+            return Err(ObservationError::Unsupported {
+                what: "converting fields that follow an ephemeris (FIELD EPHEMERIS_ID)",
+            });
+        }
+    }
+    Ok(())
+}
+
+/// MAIN's keys the destination does not hold: a set `FLAG_ROW`, and an
+/// `ARRAY_ID` or `PROCESSOR_ID` other than the 0 an MSv2 destination
+/// writes (an MSv4 has neither), read in row chunks.
+fn main_keys(main: &casa_tables::Table, losses: &mut Vec<Loss>) -> Result<(), ObservationError> {
     let rows = main.row_count();
-    let mut flags = Vec::new();
+    let (mut flags, mut arrays, mut processors) = (Vec::new(), Vec::new(), Vec::new());
+    let (mut flagged, mut array, mut processor) = (false, false, false);
     for start in (0..rows).step_by(ROW_CHUNK) {
         let chunk: Vec<usize> = (start..rows.min(start + ROW_CHUNK)).collect();
         flags.clear();
-        let mut destinations = [RequiredScalarColumnDestination::new(
-            "FLAG_ROW",
-            RequiredScalarColumnValuesMut::Bool(&mut flags),
-        )];
+        arrays.clear();
+        processors.clear();
+        let mut destinations = [
+            RequiredScalarColumnDestination::new(
+                "FLAG_ROW",
+                RequiredScalarColumnValuesMut::Bool(&mut flags),
+            ),
+            RequiredScalarColumnDestination::new(
+                "ARRAY_ID",
+                RequiredScalarColumnValuesMut::Int32(&mut arrays),
+            ),
+            RequiredScalarColumnDestination::new(
+                "PROCESSOR_ID",
+                RequiredScalarColumnValuesMut::Int32(&mut processors),
+            ),
+        ];
         main.required_scalar_columns_for_rows_into(&chunk, &mut destinations)
             .map_err(storage)?;
-        if flags.iter().any(|flag| *flag) {
-            losses.push(Loss::RowFlags);
+        flagged |= flags.iter().any(|flag| *flag);
+        array |= arrays.iter().any(|id| *id != 0);
+        processor |= processors.iter().any(|id| *id != 0);
+        if flagged && array && processor {
             break;
         }
     }
+    if flagged {
+        losses.push(Loss::RowFlags);
+    }
+    if array {
+        losses.push(Loss::Column("ARRAY_ID".to_string()));
+    }
+    if processor {
+        losses.push(Loss::Column("PROCESSOR_ID".to_string()));
+    }
+    Ok(())
+}
+
+/// Subtables, and subtable content, the destination does not hold: the
+/// uncarried subtables with rows, any further table a keyword names, a
+/// `PROCESSOR` of more than one row (an MSv2 destination writes one
+/// correlator), and `STATE` rows that say more than their `OBS_MODE` (an
+/// MSv2 destination writes `SIG`, and no sub-scan, calibration or load).
+fn subtables(ms: &crate::MeasurementSet, losses: &mut Vec<Loss>) -> Result<(), ObservationError> {
     for id in UNCARRIED_SUBTABLES {
         if ms.subtable(*id).is_some_and(|table| table.row_count() > 0) {
             losses.push(Loss::Table(id.name().to_string()));
         }
     }
+    if ms
+        .subtable(SubtableId::Processor)
+        .is_some_and(|table| table.row_count() > 1)
+    {
+        losses.push(Loss::Table("PROCESSOR".to_string()));
+    }
+    if let Ok(state) = ms.state() {
+        for row in 0..state.row_count() {
+            let plain = state.i32(row, "SUB_SCAN").map_err(storage)? == 0
+                && state.f64(row, "CAL").map_err(storage)? == 0.0
+                && state.f64(row, "LOAD").map_err(storage)? == 0.0
+                && state.bool(row, "SIG").map_err(storage)?
+                && !state.bool(row, "REF").map_err(storage)?;
+            if !plain {
+                losses.push(Loss::Column(
+                    "STATE SUB_SCAN, CAL, LOAD, SIG and REF".to_string(),
+                ));
+                break;
+            }
+        }
+    }
+    let main = ms.main_table();
     let standard: Vec<&str> = SubtableId::ALL_REQUIRED
         .iter()
         .chain(UNCARRIED_SUBTABLES)

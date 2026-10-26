@@ -523,3 +523,265 @@ fn weights_varying_over_channels_are_refused() {
     );
     assert!(!out.exists());
 }
+
+/// The fixture MSv2 with its second half of times in a second observation
+/// (session): two partitions of one spectral window, data description and
+/// state.
+fn two_sessions(root: &Path) -> PathBuf {
+    let path = fixture(root, "ms_trial.ms");
+    let mut ms = casa_ms::MeasurementSet::open(&path).expect("ms");
+    let rows = ms.main_table().row_count();
+    let times: Vec<f64> = (0..rows)
+        .map(|row| {
+            match ms
+                .main_table()
+                .cell_accessor(row, "TIME")
+                .and_then(|cell| cell.scalar())
+            {
+                Ok(casa_types::ScalarValue::Float64(time)) => *time,
+                other => panic!("TIME of row {row}: {other:?}"),
+            }
+        })
+        .collect();
+    let middle = 0.5
+        * (times.iter().copied().fold(f64::INFINITY, f64::min)
+            + times.iter().copied().fold(f64::NEG_INFINITY, f64::max));
+    for (row, time) in times.iter().enumerate() {
+        if *time > middle {
+            ms.main_table_mut()
+                .cell_accessor_mut(row, "OBSERVATION_ID")
+                .and_then(|mut cell| {
+                    cell.set(casa_types::Value::Scalar(casa_types::ScalarValue::Int32(1)))
+                })
+                .expect("second session");
+        }
+    }
+    let string_array = |values: &[&str]| {
+        casa_types::Value::Array(casa_types::ArrayValue::String(
+            ndarray::ArrayD::from_shape_vec(
+                vec![values.len()],
+                values.iter().map(ToString::to_string).collect(),
+            )
+            .expect("shape"),
+        ))
+    };
+    let scalar = |value: casa_types::ScalarValue| casa_types::Value::Scalar(value);
+    let session = casa_types::RecordValue::new(vec![
+        casa_types::RecordField::new("FLAG_ROW", scalar(casa_types::ScalarValue::Bool(false))),
+        casa_types::RecordField::new("LOG", string_array(&[])),
+        casa_types::RecordField::new(
+            "OBSERVER",
+            scalar(casa_types::ScalarValue::String("second".to_string())),
+        ),
+        casa_types::RecordField::new(
+            "PROJECT",
+            scalar(casa_types::ScalarValue::String("trial".to_string())),
+        ),
+        casa_types::RecordField::new(
+            "RELEASE_DATE",
+            scalar(casa_types::ScalarValue::Float64(0.0)),
+        ),
+        casa_types::RecordField::new("SCHEDULE", string_array(&[])),
+        casa_types::RecordField::new(
+            "SCHEDULE_TYPE",
+            scalar(casa_types::ScalarValue::String(String::new())),
+        ),
+        casa_types::RecordField::new(
+            "TELESCOPE_NAME",
+            scalar(casa_types::ScalarValue::String("VLA".to_string())),
+        ),
+        casa_types::RecordField::new(
+            "TIME_RANGE",
+            casa_types::Value::Array(casa_types::ArrayValue::Float64(
+                ndarray::ArrayD::from_shape_vec(vec![2], vec![middle, middle]).expect("shape"),
+            )),
+        ),
+    ]);
+    ms.subtable_mut(casa_ms::SubtableId::Observation)
+        .expect("OBSERVATION")
+        .add_row(session)
+        .expect("a second session");
+    ms.save().expect("save");
+    path
+}
+
+/// Two partitions of one spectral window keep one window name in the MSv4
+/// (XRADIO's `NAME_SPWID`, by the window's row, not the partition's), and
+/// come back as one `SPECTRAL_WINDOW` row and one data description, which
+/// their sessions tell apart, each session's `TIME_RANGE` its own.
+#[test]
+fn partitions_of_one_window_share_its_name_and_rows() {
+    let root = tempfile::tempdir().expect("root");
+    let v2 = two_sessions(root.path());
+    let v4 = root.path().join("sessions.ps.zarr");
+    let back = root.path().join("back.ms");
+    let accept = [LossKind::Sigma, LossKind::Tables];
+    let report = to_msv4(&v2, &v4, &options(&accept)).expect("to MSv4");
+    assert_eq!(report.partitions, 2, "one partition per session");
+    let converted = open(&v4, &OpenOptions::default()).expect("open");
+    let windows: Vec<&str> = converted
+        .catalogue()
+        .partitions
+        .iter()
+        .map(|entry| entry.spectral_window.as_str())
+        .collect();
+    assert_eq!(windows.len(), 2);
+    assert_eq!(windows[0], windows[1], "one window name: {windows:?}");
+    assert!(windows[0].ends_with("_0"), "the window's row: {windows:?}");
+    to_msv2(&v4, &back, &options(&accept)).expect("to MSv2");
+    let ms = casa_ms::MeasurementSet::open(&back).expect("back");
+    let count = |id| ms.subtable(id).expect("subtable").row_count();
+    assert_eq!(count(casa_ms::SubtableId::SpectralWindow), 1);
+    assert_eq!(count(casa_ms::SubtableId::DataDescription), 1);
+    assert_eq!(count(casa_ms::SubtableId::Observation), 2);
+    let sessions = ms.observation().expect("OBSERVATION");
+    let ranges: Vec<Vec<f64>> = (0..2)
+        .map(
+            |row| match sessions.array(row, "TIME_RANGE").expect("TIME_RANGE") {
+                casa_types::ArrayValue::Float64(range) => range.iter().copied().collect(),
+                other => panic!("TIME_RANGE of row {row}: {other:?}"),
+            },
+        )
+        .collect();
+    assert!(
+        ranges[0][1] < ranges[1][0],
+        "each session its own times: {ranges:?}"
+    );
+    for id in [PartitionId(0), PartitionId(1)] {
+        assert_eq!(read(&back, id, "base"), read(&v2, id, "base"), "{id:?}");
+    }
+}
+
+/// What an MSv2 says that the boundary does not carry is reported: an
+/// `ARRAY_ID` other than 0 and a `PROCESSOR` of more than one row.
+#[test]
+fn keys_and_subtable_rows_the_destination_drops_are_losses() {
+    let root = tempfile::tempdir().expect("root");
+    let v2 = fixture(root.path(), "ms_trial.ms");
+    let mut ms = casa_ms::MeasurementSet::open(&v2).expect("ms");
+    ms.main_table_mut()
+        .cell_accessor_mut(0, "ARRAY_ID")
+        .and_then(|mut cell| cell.set(casa_types::Value::Scalar(casa_types::ScalarValue::Int32(1))))
+        .expect("a second array");
+    let processors = ms
+        .subtable(casa_ms::SubtableId::Processor)
+        .expect("PROCESSOR")
+        .row_count();
+    let radiometer = casa_types::RecordValue::new(vec![
+        casa_types::RecordField::new(
+            "FLAG_ROW",
+            casa_types::Value::Scalar(casa_types::ScalarValue::Bool(false)),
+        ),
+        casa_types::RecordField::new(
+            "MODE_ID",
+            casa_types::Value::Scalar(casa_types::ScalarValue::Int32(-1)),
+        ),
+        casa_types::RecordField::new(
+            "SUB_TYPE",
+            casa_types::Value::Scalar(casa_types::ScalarValue::String(String::new())),
+        ),
+        casa_types::RecordField::new(
+            "TYPE",
+            casa_types::Value::Scalar(casa_types::ScalarValue::String("RADIOMETER".to_string())),
+        ),
+        casa_types::RecordField::new(
+            "TYPE_ID",
+            casa_types::Value::Scalar(casa_types::ScalarValue::Int32(-1)),
+        ),
+    ]);
+    for _ in processors..2 {
+        ms.subtable_mut(casa_ms::SubtableId::Processor)
+            .expect("PROCESSOR")
+            .add_row(radiometer.clone())
+            .expect("a second processor");
+    }
+    ms.save().expect("save");
+    drop(ms);
+    let out = root.path().join("dropped.ps.zarr");
+    let refused = to_msv4(&v2, &out, &options(&[LossKind::Sigma, LossKind::Tables]));
+    assert!(
+        matches!(refused, Err(ObservationError::InvalidRequest { ref reason }) if reason.contains("ARRAY_ID")),
+        "{refused:?}"
+    );
+    let report = to_msv4(
+        &v2,
+        &out,
+        &options(&[LossKind::Sigma, LossKind::Tables, LossKind::Columns]),
+    )
+    .expect("accepted");
+    assert!(
+        report
+            .losses
+            .contains(&Loss::Column("ARRAY_ID".to_string()))
+    );
+    assert!(
+        report
+            .losses
+            .contains(&Loss::Table("PROCESSOR".to_string()))
+    );
+}
+
+/// A field that follows an ephemeris is refused: casacore reads its
+/// directions as offsets, which the catalogue would hold as a phase
+/// centre.
+#[test]
+fn ephemeris_fields_are_refused() {
+    let root = tempfile::tempdir().expect("root");
+    let v2 = fixture(root.path(), "ms_trial.ms");
+    let mut ms = casa_ms::MeasurementSet::open(&v2).expect("ms");
+    ms.subtable_mut(casa_ms::SubtableId::Field)
+        .expect("FIELD")
+        .add_column(
+            casa_tables::ColumnSchema::scalar("EPHEMERIS_ID", casa_types::PrimitiveType::Int32),
+            Some(casa_types::Value::Scalar(casa_types::ScalarValue::Int32(0))),
+        )
+        .expect("an ephemeris");
+    ms.save().expect("save");
+    drop(ms);
+    let out = root.path().join("ephemeris.ps.zarr");
+    let refused = to_msv4(&v2, &out, &options(&[LossKind::Sigma, LossKind::Tables]));
+    assert!(
+        matches!(refused, Err(ObservationError::Unsupported { what }) if what.contains("ephemeris")),
+        "{refused:?}"
+    );
+    assert!(!out.exists());
+}
+
+/// XRADIO names antennas `NAME_STATION` only for ALMA, VLA, NOEMA and
+/// EVLA; another telescope's keep their names.
+#[test]
+fn only_the_telescopes_xradio_renames_get_station_names() {
+    let root = tempfile::tempdir().expect("root");
+    let v2 = fixture(root.path(), "ms_trial.ms");
+    let mut ms = casa_ms::MeasurementSet::open(&v2).expect("ms");
+    let names: Vec<String> = {
+        let antennas = ms.antenna().expect("ANTENNA");
+        (0..antennas.row_count())
+            .map(|row| antennas.name(row).expect("NAME"))
+            .collect()
+    };
+    let telescope = ms
+        .observation()
+        .and_then(|sessions| sessions.string(0, "TELESCOPE_NAME"))
+        .expect("TELESCOPE_NAME");
+    assert!(
+        ["ALMA", "VLA", "NOEMA", "EVLA"].contains(&telescope.as_str()),
+        "the fixture's antennas are renamed as it is: {telescope}"
+    );
+    ms.observation_mut()
+        .expect("OBSERVATION")
+        .set_string(0, "TELESCOPE_NAME", "MeerKAT")
+        .expect("another telescope");
+    ms.save().expect("save");
+    drop(ms);
+    let out = root.path().join("meerkat.ps.zarr");
+    to_msv4(&v2, &out, &options(&[LossKind::Sigma, LossKind::Tables])).expect("convert");
+    let converted = open(&out, &OpenOptions::default()).expect("open");
+    let converted: Vec<String> = converted
+        .catalogue()
+        .antennas
+        .iter()
+        .map(|antenna| antenna.name.clone())
+        .collect();
+    assert_eq!(converted, names);
+}

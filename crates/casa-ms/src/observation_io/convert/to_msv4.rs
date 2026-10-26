@@ -10,6 +10,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use casa_observation::{Catalogue, Observation, ObservationError, PartitionId, Roles};
 
 use super::{ConversionOptions, ConversionReport, lockstep, losses};
+use crate::observation_io::update::storage;
 use crate::observation_io::{
     Msv2Observation, Msv4ProcessingSetWriter, Msv4StorageOptions, Msv4WriteCounters, OpenOptions,
     open,
@@ -25,19 +26,25 @@ struct Converted {
 /// Convert the store at `source` (MSv2 or MSv4) into a new MSv4
 /// processing set at `destination`.
 ///
-/// Every partition becomes one dataset, `<source stem>_<partition>`, with
-/// the selected data groups ([`ConversionOptions::data_groups`]); an MSv2's
-/// antennas, fields and spectral windows are renamed as XRADIO's converter
-/// renames them (`NAME_STATION`, `NAME_FIELD_ID`, `NAME_SPECTRAL_WINDOW_ID`),
-/// so the two converters' stores agree. Partitions are converted
-/// [`ConversionOptions::workers`] at a time; nothing appears at
+/// Every partition becomes one dataset with the selected data groups
+/// ([`ConversionOptions::data_groups`]), named as XRADIO's converter names
+/// its datasets: the source's file name without `.ms`, then the partition's
+/// number padded with zeros. An MSv2's antennas (for the telescopes XRADIO
+/// renames), fields, sources and spectral windows are renamed as that
+/// converter renames them (`NAME_STATION`, `NAME_FIELD_ID`,
+/// `NAME_SOURCE_ID`, `NAME_SPECTRAL_WINDOW_ID`), so the two converters'
+/// stores agree; a source XRADIO finds no row for in one spectral window,
+/// which it names `Unknown` there, is still named here. Partitions are
+/// converted [`ConversionOptions::workers`] at a time; nothing appears at
 /// `destination` until every dataset is complete.
 ///
 /// # Errors
 ///
-/// [`ObservationError::Unsupported`] naming the first loss not accepted,
-/// before anything is written; any error opening or reading the source or
-/// writing the destination, which then is not created.
+/// [`ObservationError::InvalidRequest`] naming the first loss not accepted,
+/// and [`ObservationError::Unsupported`] for fields that follow an
+/// ephemeris, both before anything is written; any error opening or
+/// reading the source or writing the destination, which then is not
+/// created.
 pub fn to_msv4(
     source: &Path,
     destination: &Path,
@@ -48,10 +55,6 @@ pub fn to_msv4(
     let groups = losses::selected_groups(catalogue, options.data_groups.as_deref())?;
     let found = losses::inventory(source, catalogue, &groups)?;
     losses::refuse_unaccepted(&found, &options.accept)?;
-    let stem = source.file_stem().map_or_else(
-        || "dataset".to_string(),
-        |stem| stem.to_string_lossy().into_owned(),
-    );
     let set = Msv4ProcessingSetWriter::create(destination)?;
     let ids = catalogue.partition_ids();
     let next = AtomicUsize::new(0);
@@ -70,7 +73,7 @@ pub fn to_msv4(
                         &named,
                         *id,
                         &groups,
-                        &format!("{stem}_{}", id.0),
+                        &dataset_name(source, id.0 as usize, ids.len()),
                         options,
                     );
                     let failed = result.is_err();
@@ -122,21 +125,52 @@ fn open_named(source: &Path) -> Result<(Box<dyn Observation>, Catalogue), Observ
         .into_iter()
         .map(|id| observation.spectral_window_id(id))
         .collect();
-    let named = xradio_names(observation.catalogue(), &windows);
+    let fields = observation.measurement_set().field().map_err(storage)?;
+    let sources = (0..observation.catalogue().fields.len())
+        .map(|row| fields.source_id(row).map_err(storage))
+        .collect::<Result<Vec<_>, _>>()?;
+    let named = xradio_names(observation.catalogue(), &windows, &sources);
     Ok((Box::new(observation), named))
 }
 
-/// `catalogue` with XRADIO's names: antennas `NAME_STATION`, fields
-/// `NAME_ID`, and spectral windows `NAME_ID` (`spw_ID` unnamed) by the
-/// `SPECTRAL_WINDOW` row of each partition, `windows`, as its converter
-/// names an MSv2's.
-fn xradio_names(catalogue: &Catalogue, windows: &[u32]) -> Catalogue {
+/// Dataset `index` of `count` converted from `source`, named as XRADIO's
+/// converter names it: the file name without `.ms`, and the index padded
+/// with zeros to the width of the largest.
+fn dataset_name(source: &Path, index: usize, count: usize) -> String {
+    let name = source.file_name().map_or_else(
+        || "dataset".to_string(),
+        |name| name.to_string_lossy().replace(".ms", ""),
+    );
+    let width = count.saturating_sub(1).to_string().len();
+    format!("{name}_{index:0width$}")
+}
+
+/// Telescopes whose antennas XRADIO's converter names `NAME_STATION`;
+/// others keep their names.
+const STATION_NAMED: [&str; 4] = ["ALMA", "VLA", "NOEMA", "EVLA"];
+
+/// `catalogue` with XRADIO's names, as its converter names an MSv2's:
+/// antennas `NAME_STATION` for the telescopes it names so
+/// ([`STATION_NAMED`]), fields `NAME_ID`, sources `NAME_SOURCEID` by each
+/// field's `SOURCE_ID` (`sources`), and spectral windows `NAME_ID`
+/// (`spw_ID` unnamed) by the `SPECTRAL_WINDOW` row of each partition
+/// (`windows`).
+fn xradio_names(catalogue: &Catalogue, windows: &[u32], sources: &[i32]) -> Catalogue {
     let mut named = catalogue.clone();
-    for antenna in &mut named.antennas {
-        antenna.name = format!("{}_{}", antenna.name, antenna.station);
+    let telescope = catalogue
+        .observations
+        .first()
+        .map_or("", |observation| observation.telescope.as_str());
+    if STATION_NAMED.contains(&telescope) {
+        for antenna in &mut named.antennas {
+            antenna.name = format!("{}_{}", antenna.name, antenna.station);
+        }
     }
-    for (index, field) in named.fields.iter_mut().enumerate() {
+    for ((index, field), source) in named.fields.iter_mut().enumerate().zip(sources) {
         field.name = format!("{}_{index}", field.name);
+        if let Some(name) = &mut field.source_name {
+            *name = format!("{name}_{source}");
+        }
     }
     for (partition, window) in named.partitions.iter_mut().zip(windows) {
         partition.spectral_window = match partition.spectral_window.as_str() {

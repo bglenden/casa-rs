@@ -10,6 +10,7 @@ use std::path::Path;
 use casa_observation::{Catalogue, Observation, ObservationError, Roles, VisibilityUnits};
 use casa_tables::table_quantum::TableQuantumDesc;
 use casa_types::measures::EpochRef;
+use casa_types::measures::direction::DirectionRef;
 use ndarray::Axis;
 
 use super::msv2_rows::{MainRows, Occupancy, acquired};
@@ -44,9 +45,11 @@ const SECONDS_PER_DAY: f64 = 86_400.0;
 /// `DATA` (`base`), `CORRECTED_DATA` (`corrected`) and `MODEL_DATA`
 /// (`model`), sharing the first group's flags, weights and UVW. Partitions
 /// sharing a spectral window, polarization or intents share their
-/// subtable rows. Every grid cell becomes one row, padding a flagged row of
-/// NaN data and weights; or, with [`PaddingRows::Omitted`], padding becomes
-/// no row, which reproduces an original sparse MSv2. `SIGMA` is derived
+/// subtable rows. Every grid cell becomes one row; padding becomes a row
+/// whose every `FLAG` is set, with NaN data, weights and `UVW`, the grid's
+/// interval, no exposure and `FLAG_ROW` false (its flags already exclude
+/// it), as D23 decided. With [`PaddingRows::Omitted`], padding becomes no
+/// row, which reproduces an original sparse MSv2. `SIGMA` is derived
 /// from the weights ([`Loss::SigmaDerived`]), so the caller must accept
 /// [`LossKind::Sigma`](super::LossKind::Sigma).
 ///
@@ -58,13 +61,16 @@ const SECONDS_PER_DAY: f64 = 86_400.0;
 ///
 /// # Errors
 ///
-/// Before anything is written: a loss not accepted; a data group without an
-/// MSv2 column; times in another scale than UTC; feeds other than 0; a
-/// source with nothing to write. Weights that vary over channels (an MSv2
-/// `WEIGHT` holds one per correlation), refused by the counting pass when
-/// there is one and otherwise when reached. Then any error reading the
-/// source or writing the destination; the destination is then not
-/// created.
+/// Before anything is written: a loss not accepted
+/// ([`ObservationError::InvalidRequest`]); fields that follow an ephemeris;
+/// a data group without an MSv2 column, or selected twice; times in another
+/// scale than UTC; feeds other than 0; a window without channels; fields in
+/// another frame than J2000; one column's groups in different units; an
+/// existing destination; a source with nothing to write. Weights that vary
+/// over channels (an MSv2 `WEIGHT` holds one per correlation), refused by
+/// the counting pass when there is one and otherwise when reached. Then any
+/// error reading the source or writing the destination; the destination is
+/// then not created.
 pub fn to_msv2(
     source: &Path,
     destination: &Path,
@@ -82,8 +88,18 @@ pub fn to_msv2(
     found.sort();
     losses::refuse_unaccepted(&found, &options.accept)?;
     refuse_unwritable(catalogue)?;
-    let occupancy = occupancy(observation.as_ref(), &groups[0], options)?;
+    let columns = columns
+        .into_iter()
+        .zip(&groups)
+        .map(|(column, group)| Ok((column, group_unit(catalogue, group)?)))
+        .collect::<Result<Vec<_>, ObservationError>>()?;
     let target = MeasurementSetCreateTarget::prepare(destination, false).map_err(storage)?;
+    let occupancy = occupancy(observation.as_ref(), &groups[0], options)?;
+    if occupancy.rows.iter().sum::<usize>() == 0 {
+        return Err(request_error(
+            "the source holds nothing to write as an MSv2 row",
+        ));
+    }
     let staging = target.staging_path().to_path_buf();
     let created = create(
         &staging,
@@ -122,10 +138,25 @@ fn column(group: &str) -> Result<OptionalMainColumn, ObservationError> {
 }
 
 /// Refuse what the MSv2 written cannot say: another time scale than UTC
-/// (`TIME` is written with the MeasurementSet's default reference), or a
-/// feed other than the one `FEED` row per antenna the conversion writes.
+/// (`TIME` is written with the MeasurementSet's default reference), a feed
+/// other than the one `FEED` row per antenna the conversion writes, a
+/// window without channels, or a field in another frame than J2000.
 fn refuse_unwritable(catalogue: &Catalogue) -> Result<(), ObservationError> {
+    if catalogue
+        .fields
+        .iter()
+        .any(|field| field.phase_centre.refer() != DirectionRef::J2000)
+    {
+        return Err(ObservationError::Unsupported {
+            what: "writing MSv2 fields in another frame than J2000",
+        });
+    }
     for entry in &catalogue.partitions {
+        if entry.frequencies_hz.is_empty() {
+            return Err(ObservationError::Unsupported {
+                what: "writing an MSv2 spectral window without channels",
+            });
+        }
         if entry.time_scale != EpochRef::UTC {
             return Err(ObservationError::Unsupported {
                 what: "writing MSv2 times in another scale than UTC",
@@ -152,12 +183,21 @@ fn occupancy(
     let groups = [group.to_string()];
     let mut rows = Vec::with_capacity(catalogue.partitions.len());
     let mut intervals = Vec::with_capacity(catalogue.partitions.len());
-    let mut range = [f64::INFINITY, f64::NEG_INFINITY];
+    let empty = [f64::INFINITY, f64::NEG_INFINITY];
+    let mut range = empty;
+    let mut observation_ranges = vec![empty; catalogue.observations.len()];
     for id in catalogue.partition_ids() {
         let grid = observation.grid(id, group)?;
         let origin = (grid.time_origin.day() + grid.time_origin.frac()) * SECONDS_PER_DAY;
         if let (Some(first), Some(last)) = (grid.times_s.first(), grid.times_s.last()) {
-            range = [range[0].min(origin + first), range[1].max(origin + last)];
+            let span =
+                |known: [f64; 2]| [known[0].min(origin + first), known[1].max(origin + last)];
+            range = span(range);
+            if let Some(session) =
+                observation_ranges.get_mut(catalogue.partition(id).observation.0 as usize)
+            {
+                *session = span(*session);
+            }
         }
         intervals.push(grid.interval_s);
         if options.padding == PaddingRows::Flagged {
@@ -184,13 +224,18 @@ fn occupancy(
         )?;
         rows.push(count);
     }
-    if range[0] > range[1] {
-        range = [0.0, 0.0];
-    }
+    let spanned = |range: [f64; 2]| {
+        if range[0] > range[1] {
+            [0.0, 0.0]
+        } else {
+            range
+        }
+    };
     Ok(Occupancy {
         rows,
         intervals,
-        time_range: range,
+        time_range: spanned(range),
+        observation_ranges: observation_ranges.into_iter().map(spanned).collect(),
     })
 }
 
@@ -200,20 +245,25 @@ fn create(
     staging: &Path,
     observation: &dyn Observation,
     groups: &[String],
-    columns: &[OptionalMainColumn],
+    columns: &[(OptionalMainColumn, Option<String>)],
     occupancy: &Occupancy,
     options: &ConversionOptions,
 ) -> Result<ConversionReport, ObservationError> {
     let catalogue = observation.catalogue();
-    let builder = msv2_tables::builder(catalogue, columns);
+    let optional: Vec<OptionalMainColumn> = columns.iter().map(|(column, _)| *column).collect();
+    let builder = msv2_tables::builder(catalogue, &optional);
     let mut ms = MeasurementSet::create(staging, builder).map_err(storage)?;
     // The MAIN writers write into the directory before the save.
     fs::create_dir_all(staging).map_err(storage)?;
-    for (column, group) in columns.iter().zip(groups) {
-        declare_units(&mut ms, catalogue, column.name(), group)?;
+    for (column, unit) in columns {
+        if let Some(unit) = unit {
+            TableQuantumDesc::with_unit(column.name(), unit)
+                .write(ms.main_table_mut())
+                .map_err(storage)?;
+        }
     }
-    let layout = msv2_tables::populate(&mut ms, catalogue, occupancy.time_range)?;
-    let names = columns.iter().map(|column| column.name()).collect();
+    let layout = msv2_tables::populate(&mut ms, catalogue, occupancy)?;
+    let names = optional.iter().map(|column| column.name()).collect();
     let mut main = MainRows::start(
         staging,
         catalogue,
@@ -240,33 +290,25 @@ fn create(
     Ok(report)
 }
 
-/// Declare `column`'s `QuantumUnits` as `group`'s units, which every
-/// partition must share; undeclared units declare none, as CASA's `DATA`
+/// The `QuantumUnits` `group`'s column declares: its units, which every
+/// partition must share; none for undeclared units, as CASA's `DATA`
 /// declares none.
-fn declare_units(
-    ms: &mut MeasurementSet,
-    catalogue: &Catalogue,
-    column: &str,
-    group: &str,
-) -> Result<(), ObservationError> {
+fn group_unit(catalogue: &Catalogue, group: &str) -> Result<Option<String>, ObservationError> {
     let mut units = catalogue
         .partitions
         .iter()
         .filter_map(|entry| entry.data_group(group).map(|(_, entry)| &entry.units));
     let Some(first) = units.next() else {
-        return Ok(());
+        return Ok(None);
     };
     if units.any(|units| units != first) {
         return Err(ObservationError::Unsupported {
             what: "writing one MSv2 column of data groups with different units",
         });
     }
-    let unit = match first {
-        VisibilityUnits::Undeclared => return Ok(()),
-        VisibilityUnits::Jansky => "Jy".to_string(),
-        VisibilityUnits::Declared(unit) => unit.clone(),
-    };
-    TableQuantumDesc::with_unit(column, &unit)
-        .write(ms.main_table_mut())
-        .map_err(storage)
+    Ok(match first {
+        VisibilityUnits::Undeclared => None,
+        VisibilityUnits::Jansky => Some("Jy".to_string()),
+        VisibilityUnits::Declared(unit) => Some(unit.clone()),
+    })
 }

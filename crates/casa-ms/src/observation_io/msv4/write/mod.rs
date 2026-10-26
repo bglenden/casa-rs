@@ -819,7 +819,7 @@ impl Msv4Writer {
             &column(&|f| {
                 f.source_name
                     .clone()
-                    .unwrap_or_else(|| "Unknown".to_string())
+                    .unwrap_or_else(|| super::UNKNOWN_SOURCE.to_string())
             }),
         )?;
         strings(

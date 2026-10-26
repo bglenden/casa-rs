@@ -9,11 +9,11 @@
 
 use casa_observation::{Catalogue, Correlation, ObservationError, PartitionEntry};
 use casa_tables::table_measures::{MeasureType, TableMeasDesc};
-use casa_types::measures::direction::DirectionRef;
 use casa_types::measures::frequency::FrequencyRef;
 use casa_types::quanta::Unit;
 use num_complex::Complex32;
 
+use super::msv2_rows::Occupancy;
 use crate::observation_io::update::{request_error, storage};
 use crate::schema::{self, SubtableId};
 use crate::subtable_rows::{
@@ -53,16 +53,17 @@ pub(super) struct Layout {
     pub(super) scan_number: Vec<i32>,
 }
 
-/// Fill `ms`'s subtables from `catalogue`, whose data span `time_range`
-/// (MJD seconds).
+/// Fill `ms`'s subtables from `catalogue`, whose data span the
+/// `occupancy`'s times (MJD seconds).
 pub(super) fn populate(
     ms: &mut MeasurementSet,
     catalogue: &Catalogue,
-    time_range: [f64; 2],
+    occupancy: &Occupancy,
 ) -> Result<Layout, ObservationError> {
+    let time_range = occupancy.time_range;
     antennas(ms, catalogue, time_range)?;
-    fields(ms, catalogue, time_range)?;
-    observations(ms, catalogue, time_range)?;
+    let named_sources = fields(ms, catalogue, time_range[0])?;
+    observations(ms, catalogue, &occupancy.observation_ranges)?;
     let scan_number = catalogue
         .scans
         .iter()
@@ -110,8 +111,13 @@ pub(super) fn populate(
         layout.state.push(state as i32);
     }
     spectral_windows(ms, &windows)?;
+    sources(ms, &named_sources, windows.len(), time_range)?;
+    let receptors = catalogue
+        .antennas
+        .first()
+        .map_or(&[][..], |antenna| antenna.receptors.as_slice());
     for correlations in &polarizations {
-        polarization(ms, correlations)?;
+        polarization(ms, correlations, receptors)?;
     }
     for (window, polarization) in &descriptions {
         subtable_mut(ms, SubtableId::DataDescription)
@@ -261,24 +267,25 @@ fn antennas(
     Ok(())
 }
 
+/// The fields, and the sources they name: each name once, at its first
+/// field's direction.
 fn fields(
     ms: &mut MeasurementSet,
     catalogue: &Catalogue,
-    time_range: [f64; 2],
-) -> Result<(), ObservationError> {
-    let time = time_range[0];
-    let mut sources: Vec<(&str, [f64; 2])> = Vec::new();
+    time: f64,
+) -> Result<Vec<(String, [f64; 2])>, ObservationError> {
+    let mut sources: Vec<(String, [f64; 2])> = Vec::new();
+    // Fields are J2000 (refused otherwise before the conversion begins).
     for field in &catalogue.fields {
-        if field.phase_centre.refer() != DirectionRef::J2000 {
-            return Err(ObservationError::Unsupported {
-                what: "writing MSv2 fields in another frame than J2000",
-            });
-        }
         let (longitude, latitude) = field.phase_centre.as_angles();
         let source = field.source_name.as_deref().map_or(-1, |name| {
-            position_or_push(&mut sources, (name, [longitude, latitude]), |known| {
-                known.0 == name
-            }) as i32
+            sources
+                .iter()
+                .position(|known| known.0 == name)
+                .unwrap_or_else(|| {
+                    sources.push((name.to_string(), [longitude, latitude]));
+                    sources.len() - 1
+                }) as i32
         });
         let direction = f64_array(&[longitude, latitude], vec![2, 1]);
         let row = row_from_defs(
@@ -299,37 +306,52 @@ fn fields(
             .and_then(|table| table.add_row(row).map_err(Into::into))
             .map_err(storage)?;
     }
-    // One SOURCE row per source name, for every spectral window, at the
-    // direction of its first field: what the catalogue says of a source.
+    Ok(sources)
+}
+
+/// One `SOURCE` row per source and spectral window, as CASA's fillers
+/// write them and XRADIO's converter looks them up (by `SOURCE_ID` and
+/// `SPECTRAL_WINDOW_ID`): what the catalogue says of a source, its name
+/// and its first field's direction.
+fn sources(
+    ms: &mut MeasurementSet,
+    sources: &[(String, [f64; 2])],
+    windows: usize,
+    time_range: [f64; 2],
+) -> Result<(), ObservationError> {
     for (id, (name, direction)) in sources.iter().enumerate() {
-        let row = row_from_defs(
-            schema::source::REQUIRED_COLUMNS,
-            &[
-                ("CALIBRATION_GROUP", i(-1)),
-                ("CODE", s("")),
-                ("DIRECTION", f64_array(direction, vec![2])),
-                ("INTERVAL", f(time_range[1] - time_range[0])),
-                ("NAME", s(name)),
-                ("NUM_LINES", i(0)),
-                ("PROPER_MOTION", f64_array(&[0.0, 0.0], vec![2])),
-                ("SOURCE_ID", i(id as i32)),
-                ("SPECTRAL_WINDOW_ID", i(-1)),
-                ("TIME", f(0.5 * (time_range[0] + time_range[1]))),
-            ],
-        );
-        subtable_mut(ms, SubtableId::Source)
-            .and_then(|table| table.add_row(row).map_err(Into::into))
-            .map_err(storage)?;
+        for window in 0..windows {
+            let row = row_from_defs(
+                schema::source::REQUIRED_COLUMNS,
+                &[
+                    ("CALIBRATION_GROUP", i(-1)),
+                    ("CODE", s("")),
+                    ("DIRECTION", f64_array(direction, vec![2])),
+                    ("INTERVAL", f(time_range[1] - time_range[0])),
+                    ("NAME", s(name)),
+                    ("NUM_LINES", i(0)),
+                    ("PROPER_MOTION", f64_array(&[0.0, 0.0], vec![2])),
+                    ("SOURCE_ID", i(id as i32)),
+                    ("SPECTRAL_WINDOW_ID", i(window as i32)),
+                    ("TIME", f(0.5 * (time_range[0] + time_range[1]))),
+                ],
+            );
+            subtable_mut(ms, SubtableId::Source)
+                .and_then(|table| table.add_row(row).map_err(Into::into))
+                .map_err(storage)?;
+        }
     }
     Ok(())
 }
 
+/// One `OBSERVATION` row per session, each with the times its partitions
+/// span (`ranges`, by session).
 fn observations(
     ms: &mut MeasurementSet,
     catalogue: &Catalogue,
-    time_range: [f64; 2],
+    ranges: &[[f64; 2]],
 ) -> Result<(), ObservationError> {
-    for observation in &catalogue.observations {
+    for (observation, time_range) in catalogue.observations.iter().zip(ranges) {
         // The archive identifiers as importasdm writes them, which is how
         // the MSv2 adapter and XRADIO's converter read them back.
         let schedule = match (&observation.scheduling_block, &observation.execution_block) {
@@ -351,7 +373,7 @@ fn observations(
                 ("SCHEDULE", string_array(&schedule, vec![schedule.len()])),
                 ("SCHEDULE_TYPE", s("")),
                 ("TELESCOPE_NAME", s(&observation.telescope)),
-                ("TIME_RANGE", f64_array(&time_range, vec![2])),
+                ("TIME_RANGE", f64_array(time_range, vec![2])),
             ],
         );
         subtable_mut(ms, SubtableId::Observation)
@@ -415,25 +437,45 @@ fn spectral_windows(
     Ok(())
 }
 
-/// The receptor pair of a correlation product of a two-receptor feed.
-fn receptors(correlation: Correlation) -> Result<[i32; 2], ObservationError> {
+/// The receptors a correlation product correlates, by their positions in
+/// the feed's `receptors` (`R`, `L`, `X`, `Y`), as `CORR_PRODUCT` holds
+/// them.
+fn receptor_pair(
+    correlation: Correlation,
+    receptors: &[String],
+) -> Result<[i32; 2], ObservationError> {
     use Correlation::{LL, LR, RL, RR, XX, XY, YX, YY};
-    Ok(match correlation {
-        RR | XX => [0, 0],
-        RL | XY => [0, 1],
-        LR | YX => [1, 0],
-        LL | YY => [1, 1],
+    let [first, second] = match correlation {
+        RR => ["R", "R"],
+        RL => ["R", "L"],
+        LR => ["L", "R"],
+        LL => ["L", "L"],
+        XX => ["X", "X"],
+        XY => ["X", "Y"],
+        YX => ["Y", "X"],
+        YY => ["Y", "Y"],
         _ => {
             return Err(ObservationError::Unsupported {
                 what: "writing MSv2 correlation products other than a feed pair's",
             });
         }
-    })
+    };
+    let position = |label: &str| {
+        receptors
+            .iter()
+            .position(|receptor| receptor.eq_ignore_ascii_case(label))
+            .map(|index| index as i32)
+            .ok_or(ObservationError::Unsupported {
+                what: "writing an MSv2 correlation product of a receptor the feeds lack",
+            })
+    };
+    Ok([position(first)?, position(second)?])
 }
 
 fn polarization(
     ms: &mut MeasurementSet,
     correlations: &[Correlation],
+    receptors: &[String],
 ) -> Result<(), ObservationError> {
     let count = correlations.len();
     let types: Vec<i32> = correlations
@@ -442,7 +484,7 @@ fn polarization(
         .collect();
     let mut products = vec![0; 2 * count];
     for (index, correlation) in correlations.iter().enumerate() {
-        let [first, second] = receptors(*correlation)?;
+        let [first, second] = receptor_pair(*correlation, receptors)?;
         products[index] = first;
         products[count + index] = second;
     }
@@ -462,7 +504,27 @@ fn polarization(
 
 #[cfg(test)]
 mod tests {
-    use super::position_or_push;
+    use casa_observation::Correlation;
+
+    use super::{position_or_push, receptor_pair};
+
+    #[test]
+    fn products_name_receptors_by_their_place_in_the_feed() {
+        let feed = |labels: &[&str]| labels.iter().map(ToString::to_string).collect::<Vec<_>>();
+        assert_eq!(
+            receptor_pair(Correlation::RL, &feed(&["R", "L"])).unwrap(),
+            [0, 1]
+        );
+        assert_eq!(
+            receptor_pair(Correlation::XY, &feed(&["Y", "X"])).unwrap(),
+            [1, 0]
+        );
+        assert_eq!(
+            receptor_pair(Correlation::LL, &feed(&["L"])).unwrap(),
+            [0, 0]
+        );
+        assert!(receptor_pair(Correlation::RR, &feed(&["X", "Y"])).is_err());
+    }
 
     #[test]
     fn equal_content_shares_one_row() {

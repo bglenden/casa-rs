@@ -9,8 +9,9 @@
 //! ```
 //!
 //! `KIND` is `sigma`, `row-flags`, `flag-categories`, `data-groups`,
-//! `tables` or `columns`. Prints one JSON object: elapsed seconds and the
-//! conversion report.
+//! `tables` or `columns`. MSv4 chunks hold `T` times (default 10, the
+//! measurements' chunk) and every baseline, channel and correlation.
+//! Prints one JSON object: elapsed seconds and the conversion report.
 
 use std::path::PathBuf;
 use std::time::Instant;
@@ -45,7 +46,7 @@ fn main() -> Result<(), Error> {
         accept: Vec::new(),
         batch_bytes: 256 << 20,
         workers: 1,
-        chunks: [0, 0, 0, 0],
+        chunks: [10, 0, 0, 0],
         codec: Msv4Codec::BloscLz4,
         padding: PaddingRows::Flagged,
         creator: "casa-rs ms_trial_convert".to_string(),
