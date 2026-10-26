@@ -7,7 +7,8 @@
 //! Earth's atmosphere from 1 GHz to a few THz. CASA uses it in the `at`
 //! tool, in `sm.setnoise(mode='tsys-atm')` and in `sm.settrop`. This crate
 //! ports the C++ library CASA ships (`casatools/src/code/atmosphere/ATM`,
-//! version 1.0.0) so that casa-rs computes the same numbers natively.
+//! version 1.0.0) so that casa-rs computes the same numbers natively, less
+//! four data errors it corrects (below).
 //!
 //! # The model
 //!
@@ -38,11 +39,18 @@
 //!
 //! # Agreement with the C++
 //!
-//! The port follows ATM's arithmetic, including its line-window tables and
-//! its known data defects (listed in `docs/CASA (C++) bugs.md`), so that
-//! results agree with CASA's `at` tool. The tests compare every layer
-//! field and every species' refractivity with fixtures produced by
-//! compiling CASA's ATM sources (`tools/atmosphere/build-atm-oracle.sh`).
+//! The port follows ATM's arithmetic, including its line-window tables, so
+//! that results agree with CASA's `at` tool, except where it corrects four
+//! of ATM's data errors (`docs/CASA (C++) bugs.md`): HCN's J=12–11 line is
+//! at 1062.98 GHz, not 106.298 GHz; five reference atmospheres have the
+//! leading digit of their sea-level air density back; and H2(17)O and HDO
+//! take their own abundances. ATM's other defects, which do not change its
+//! numbers or have no correct values to restore, are followed. The tests
+//! compare every layer field, species refractivity, opacity and sky
+//! temperature with fixtures produced by compiling CASA's ATM sources with
+//! the same corrections (`tools/atmosphere/atm-corrections.patch`, applied
+//! by `tools/atmosphere/build-atm-oracle.sh`), and
+//! `tools/atmosphere/at_tool_check.py` links that C++ to the `at` tool.
 //!
 //! # Cost and parallelism
 //!

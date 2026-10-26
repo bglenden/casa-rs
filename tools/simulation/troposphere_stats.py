@@ -13,9 +13,11 @@ twin (a 1 Jy point at the phase centre):
   simulator defaults). CASA's `φ` is ATM's dispersive part on its grid
   half a band below each channel (`atm_frequencies(..., 'casa')`);
   casa-rs's is the dispersive and non-dispersive parts together at each
-  channel's CHAN_FREQ. Both come from casatools' `at` tool, whose delays
-  are for its profile's own water column and are scaled to `pwv` (as
-  ATM's `SkyStatus` scales them). δ recovered channel by channel must be
+  channel's CHAN_FREQ. CASA's comes from casatools' `at` tool
+  (`at_tool_wet_delays`), whose delays are for its profile's own water
+  column and are scaled to `pwv` (as ATM's `SkyStatus` scales them);
+  casa-rs's from casa-atmosphere at `pwv` (`atm_model.casars_wet_delays`),
+  which corrects ATM's data errors. δ recovered channel by channel must be
   one value per row within `MODEL_TOLERANCE` (single precision), on the
   channels whose delay is at least a twentieth of the window's largest.
 - **data** (`data_failures`). DATA over the twin is `g_p(c) · conj(g_q(c))`
@@ -25,7 +27,9 @@ twin (a 1 Jy point at the phase centre):
   few lags. casa-rs's `individual` series are held to `deltapwv`; CASA's
   normalise with values read past the end of their transforms
   (docs/CASA (C++) bugs.md) and are reported, as is a screen's sampled
-  excess, whose root-mean-square is the whole screen's.
+  excess, whose root-mean-square is the whole screen's. On either side
+  the excess must vary on some antenna when `deltapwv` is positive
+  (`flat_failures`).
 
 `test_compare_sm_ms.py` tests the pure-NumPy parts.
 """
@@ -49,7 +53,7 @@ DELAY_FLOOR = 0.05
 
 # casa-rs's `individual` series' root-mean-square, relative to `deltapwv`:
 # the series are normalised to it exactly, so this checks the excess read
-# back through the `at` tool's delays, and so the delays' absolute size
+# back through casa-rs's own delays, and so the delays' absolute size
 # (2.6e-8 measured in sm_trop_scenarios.json).
 RMS_TOLERANCE = 1e-5
 
@@ -154,6 +158,16 @@ def excess_statistics(excess: np.ndarray, antennas: np.ndarray, slots: np.ndarra
             ],
         }
     return found
+
+
+def flat_failures(statistics: dict, delta_pwv: float) -> list[str]:
+    """A failure when `deltapwv` is positive yet no antenna's excess varies:
+    no troposphere was simulated, or a degenerate delay model (an infinite
+    one makes every excess zero) hid it. Screens have no rms law to catch
+    this (#902 review)."""
+    if delta_pwv > 0 and statistics and all(found["rms"] == 0.0 for found in statistics.values()):
+        return [f"the excess does not vary on any antenna, though deltapwv is {delta_pwv}"]
+    return []
 
 
 def rms_failures(statistics: dict, delta_pwv: float) -> list[str]:

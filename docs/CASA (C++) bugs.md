@@ -73,11 +73,12 @@ Component-list behaviours casa-rs does not follow:
 Component-list behaviours casa-rs follows:
 [`addcomponent`'s polarization](#claddcomponent-stores-four-flux-values-as-stokes),
 [a shape `addcomponent` cannot make](#claddcomponent-keeps-a-point-for-a-shape-it-cannot-make).
-ATM behaviours casa-rs follows for parity with the `at` tool:
+ATM data errors casa-rs corrects (`tools/atmosphere/atm-corrections.patch`):
 [HCN's misplaced line](#atms-hcn-catalogue-misplaces-a-line-at-106-ghz),
 [sea-level air densities](#atms-reference-air-densities-drop-a-digit-at-sea-level),
 [the H2(17)O weight](#atm-weights-h217o-by-the-18o-abundance),
-[the HDO weight](#atms-hdo-weight-divides-by-three),
+[the HDO weight](#atms-hdo-weight-divides-by-three).
+ATM behaviours casa-rs follows:
 [HCN above 100 km](#atms-hcn-profile-stops-at-100-km),
 [copied bottom pressures](#copying-an-atmprofile-copies-its-top-pressures-as-bottom-pressures),
 [unpadded ozone isotopologue layers](#atm-leaves-the-ozone-isotopologue-layers-unpadded),
@@ -1606,13 +1607,14 @@ its integration's time and takes the slot nearest it, as CASA does when
 ## ATM's HCN catalogue misplaces a line at 106 GHz
 
 - Date noted: 2026-10-24
-- Status: likely ATM data error; casa-rs follows it (#841 Phase 4,
-  `casa-atmosphere`), kept for parity with the `at` tool; the owner may
-  choose to fix it later
+- Status: ATM data error; casa-rs corrects it (#841 Phase 4,
+  `casa-atmosphere`; owner decision, 2026-10-24)
 - Affected code: `atmosphere/ATM/ATMRefractiveIndex.cc:796`
   (`mkSpecificRefractivity_hcn`, `fre[18]`)
 
-HCN's rotational lines are spaced by about 88.6 GHz: the table runs 88.63,
+HCN's rotational lines are spaced by about 88.6 GHz (J=1–0 at 88.631 GHz,
+2–1 at 177.260, 3–2 at 265.886; *Synthesis Imaging in Radio Astronomy II*,
+printed p. 568, PDF p. 592): the table runs 88.63,
 177.26, …, 974.49 GHz, then gives the J=12–11 line as `106.298069519`
 before continuing at 1151.45 GHz. The line belongs at 1062.98 GHz (as the
 JPL catalogue has it, `c027001.cat`); the decimal point moved. ATM
@@ -1622,14 +1624,25 @@ misplaced line is not negligible: with the default Chajnantor profile, the
 compiled C++ gives a zenith opacity of 0.029368 at 106.298 GHz, of which
 HCN is 4.5·10⁻⁴; with the line moved to 1062.98 GHz it gives 0.028919, HCN
 1.3·10⁻⁷, so the total is 1.5 % high there (measured in the #894 review).
-Away from 106.3 GHz the line's wings fall off, and at 1063 GHz the
-missing line is lost among water's.
+Away from 106.3 GHz the line's wings fall off (in `at_tool_check.py`'s
+bands the correction moves the dry opacity by at most 3.5·10⁻⁵ and Tebb by
+1.3·10⁻⁵, at 90 GHz), and at 1063 GHz the missing line is lost among
+water's.
+
+casa-rs moves the decimal point back: the line is at 1062.98069519 GHz.
+The correction is one of four in `tools/atmosphere/atm-corrections.patch`,
+which `extract_atm_tables.py` applies before it generates the port's tables
+and `build-atm-oracle.sh` before it compiles the C++ the tests compare
+with. `at_tool_check.py` shows the C++ built without the patch equals
+CASA's `at` tool (to 7.5·10⁻¹⁵) and the port equals the C++ built with it
+(to 8.1·10⁻¹⁵), so the port differs from the `at` tool by the four
+corrections alone.
 
 ## ATM's reference air densities drop a digit at sea level
 
 - Date noted: 2026-10-24
-- Status: likely ATM data error; casa-rs follows it (#841 Phase 4), kept for
-  parity with the `at` tool; the owner may choose to fix it later
+- Status: ATM data error; casa-rs corrects it (#841 Phase 4; owner
+  decision, 2026-10-24)
 - Affected code: `atmosphere/ATM/ATMProfile.cc:1360`, `:1367`, `:1374`,
   `:1381`, `:1388` (`st76`, `den[6][50]`)
 
@@ -1646,35 +1659,60 @@ NO2, SO2, HCl and HCN are up to about four times too scarce in layers whose
 middle is below 1 km. Only sea-level-to-1-km sites with those atmospheres
 see it, and those gases' columns lie mostly higher.
 
+casa-rs restores the digit: 2.496e19, 2.711e19, 2.549e19, 2.855e19 and
+2.548e19 cm⁻³. Air density falls with height, by about e⁻¹ in a dry-air
+scale height of 8 km (*Interferometry and Synthesis in Radio Astronomy*,
+3rd ed., printed pp. 661 and 668, PDF pp. 700 and 707), and the restored
+values fall by 0.88 to 0.91 to
+their 1 km entries, as the tropical profile's untouched 2.450e19 does; the
+typo's values rise 3 to 5 times instead. The US Standard Atmosphere's
+sea-level 1013.25 hPa and 288.15 K give 2.547e19 by the ideal gas law. In
+`at_tool_check.py`'s humid sea-level atmosphere (mid-latitude summer) the
+correction raises the O3, CO and N2O line opacities by up to 1.8 %, 7.7 %
+and 8.5 % and the dry opacity by up to 0.22 % (at 690 GHz); Tebb moves by
+at most 1.2·10⁻⁵. Sites at 1 km and above do not change.
+
 ## ATM weights H2(17)O by the (18)O abundance
 
 - Date noted: 2026-10-24
-- Status: likely ATM bug; casa-rs follows it (#841 Phase 4), kept for parity
-  with the `at` tool; the owner may choose to fix it later
+- Status: ATM bug; casa-rs corrects it (#841 Phase 4; owner decision,
+  2026-10-24)
 - Affected code: `atmosphere/ATM/ATMRefractiveIndex.cc:449`
   (`mkEarthSpecificRefractivity`, `ratiohh17o`)
 
 `ratiohh17o = abun_18o/(1+abun_18o+abun_17o+2.0*abun_d)` uses the (18)O/(16)O
 ratio (0.0020439) where the (17)O ratio (0.000375) belongs, so H2(17)O lines
-are 5.45 times too strong.
+are 5.45 times too strong. ATM's own (17)O fractions for oxygen and ozone
+use `abun_17o`. casa-rs does too. Over `at_tool_check.py`'s atmospheres and
+bands the correction lowers the wet opacity by up to 0.61 % (at 990 GHz)
+and Tebb by up to 0.087 % (at 460 GHz), and changes the dispersive wet
+phase by up to 4 % where it is small (at 380 GHz); at Chajnantor the zenith
+opacity at 230 GHz moves by 2·10⁻⁴.
 
 ## ATM's HDO weight divides by three
 
 - Date noted: 2026-10-24
-- Status: likely ATM typo; casa-rs follows it (#841 Phase 4), kept for parity
-  with the `at` tool; the owner may choose to fix it later
+- Status: ATM typo; casa-rs corrects it (#841 Phase 4; owner decision,
+  2026-10-24)
 - Affected code: `atmosphere/ATM/ATMRefractiveIndex.cc:450`
   (`mkEarthSpecificRefractivity`, `ratiohdo`)
 
 `ratiohdo = 2.0*abun_d/(1+abun_18o+abun_17o+2-0*abun_d)` reads `2-0*abun_d`
 (that is, 2) where every sibling ratio has `2.0*abun_d`. The denominator is
 3.0024 instead of 1.0030, so HDO lines are about three times too weak.
+casa-rs uses `2.0*abun_d`. Of the four corrections this one matters most:
+at Chajnantor the zenith opacity rises 0.32 % at 230 GHz (near HDO's
+225.9 GHz line) and 0.15 % at 90 GHz (near its 80.6 GHz line), with Tebb
+0.24 % and 0.10 % higher; over `at_tool_check.py`'s atmospheres and bands
+the wet opacity rises by up to 1.8 % and Tebb by up to 0.47 % (both at
+850 GHz).
 
 ## ATM's HCN profile stops at 100 km
 
 - Date noted: 2026-10-24
-- Status: ATM data gap; casa-rs follows it (#841 Phase 4), kept for parity
-  with the `at` tool
+- Status: ATM data gap; casa-rs follows it (#841 Phase 4): there are no
+  values to restore, and the air above 90 km (below 0.002 hPa) is about
+  2·10⁻⁶ of the column
 - Affected code: `atmosphere/ATM/ATMProfile.cc:1429` (`st76`, `hcn[50]`)
 
 `hcn[50]` is initialised with 45 values, so C++ zero-fills its last five

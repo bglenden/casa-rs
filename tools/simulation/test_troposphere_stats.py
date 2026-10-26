@@ -11,6 +11,7 @@ from troposphere_stats import (
     data_failures,
     excess_from_table,
     excess_statistics,
+    flat_failures,
     rms_failures,
     slot_of,
 )
@@ -72,6 +73,16 @@ class StatisticsTests(unittest.TestCase):
         self.assertEqual(found[1]["structure"][0], 0.02**2)
         self.assertEqual(rms_failures({0: {"rms": 0.01}}, 0.01), [])
         self.assertEqual(len(rms_failures({0: {"rms": 0.0101}}, 0.01)), 1)
+
+    def test_an_excess_that_never_varies_fails_when_the_troposphere_should(self) -> None:
+        # A screen has no rms law: an infinite delay model made every excess
+        # zero and the screen passed (#902 review).
+        zero = excess_statistics(np.zeros(6), np.array([0, 0, 0, 1, 1, 1]), np.array([0, 1, 2, 0, 1, 2]))
+        self.assertEqual(
+            flat_failures(zero, 0.01), ["the excess does not vary on any antenna, though deltapwv is 0.01"]
+        )
+        self.assertEqual(flat_failures(zero, 0.0), [])
+        self.assertEqual(flat_failures({0: {"rms": 0.0}, 1: {"rms": 1e-3}}, 0.01), [])
 
 
 if __name__ == "__main__":

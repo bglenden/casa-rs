@@ -49,12 +49,15 @@ oracle's manifest, the comparison opens `<casa>/<name>.ms` and
 
     A `setnoise(mode='tsys-atm')` term (Phase 4c) is checked the same way
     with a σ per row and channel (`tsys_atm_sigma`): the same formula with
-    ATM's opacity and sky brightness, which casatools' `at` tool computes.
-    CASA gives ATM a grid from REF_FREQUENCY, half a band below each
-    channel, and casa-rs each channel's CHAN_FREQ (`docs/CASA (C++)
-    bugs.md`), so each implementation's noise is divided by the σ of its
-    own frequencies, and the direct comparison covers only the scenario's
-    `direct_spws`, narrow windows where the two agree.
+    ATM's opacity and sky brightness, CASA's from casatools' `at` tool and
+    casa-rs's from casa-atmosphere (`--atmosphere-model`, `atm_model.py`),
+    which corrects ATM's data errors. CASA gives ATM a grid from
+    REF_FREQUENCY, half a band below each channel, and casa-rs each
+    channel's CHAN_FREQ (`docs/CASA (C++) bugs.md`), so each
+    implementation's noise is divided by the σ of its own ATM at its own
+    frequencies, and the direct comparison covers only the scenario's
+    `direct_spws`, narrow windows where the frequencies agree, each side's
+    noise over its own σ.
   - `gains` and `leakage` (`sm.setgain` or `sm.setleakage`, then
     `corrupt`; Phase 3): the draws differ, so each implementation's DATA
     is checked against what CASA's corruptors simulate, from its quotient
@@ -63,9 +66,10 @@ oracle's manifest, the comparison opens `<casa>/<name>.ms` and
   - `troposphere` (`sm.settrop`, then `corrupt`; Phase 4d): the draws and
     the delay models differ (CASA's dispersive wet delay half a band below
     each channel, casa-rs's whole wet delay at CHAN_FREQ), so each
-    implementation's `Tf Jones` table is checked against its own model
-    through casatools' `at` tool, and its DATA over the twin against its
-    table (`troposphere_stats.py` says how).
+    implementation's `Tf Jones` table is checked against its own model,
+    CASA's through casatools' `at` tool and casa-rs's through
+    casa-atmosphere (`--atmosphere-model`), and its DATA over the twin
+    against its table (`troposphere_stats.py` says how).
 
   A NaN or infinite DATA or noise sample fails a `model`, `noisy`, `gains`
   or `leakage` scenario, as does a statistic that is not a number (#853
@@ -95,6 +99,7 @@ import sys
 
 import numpy as np
 
+from atm_model import ModelError, casars_sky, casars_wet_delays
 from corruption_stats import gain_statistics, leakage_statistics, structure_failures
 from troposphere_stats import (
     MODEL_TOLERANCE,
@@ -102,6 +107,7 @@ from troposphere_stats import (
     data_failures,
     excess_from_table,
     excess_statistics,
+    flat_failures,
     rms_failures,
     slot_of,
 )
@@ -160,6 +166,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--only", nargs="*", help="compare only these scenarios")
     parser.add_argument("--uvw-tolerance-m", type=float, default=TOLERANCES["UVW"])
     parser.add_argument("--data-nrms", type=float, default=DATA_NRMS, help="largest DATA NRMS of a model scenario")
+    parser.add_argument(
+        "--atmosphere-model",
+        help="casa-atmosphere's at_tool_quantities example: casa-rs's ATM, for tsys-atm and troposphere scenarios",
+    )
     parser.add_argument("--json", help="write the report here as JSON")
     parser.add_argument("--verbose", action="store_true", help="also list the known differences")
     return parser.parse_args()
@@ -786,15 +796,16 @@ def time_bins(time: np.ndarray, bins: int = NOISE_TIME_BINS) -> np.ndarray:
     return np.minimum(((time - time.min()) / span * bins).astype(int), bins - 1)
 
 
-def tsys_sigmas(term: dict, geometry: dict) -> dict:
+def tsys_sigmas(term: dict, geometry: dict, model: str | None = None) -> dict:
     """Each implementation's σ, [row, 1, channel] (one channel for
     `tsys-manual`, whose σ is the row's): `tsys_manual_sigma` for both, or
-    `tsys_atm_sigma` at CASA's frequencies for CASA and at each channel's
-    for casa-rs."""
+    `tsys_atm_sigma` with CASA's ATM (the `at` tool) at CASA's frequencies
+    for CASA and with casa-rs's (`model`, `atm_model.casars_sky`) at each
+    channel's for casa-rs."""
     if term.get("mode") == "tsys-atm":
         return {
             "casa": tsys_atm_sigma(term, geometry, "casa")[:, None, :],
-            "casa-rs": tsys_atm_sigma(term, geometry, "channel")[:, None, :],
+            "casa-rs": tsys_atm_sigma(term, geometry, "channel", casars_sky(model))[:, None, :],
         }
     sigma = tsys_manual_sigma(
         term,
@@ -807,17 +818,19 @@ def tsys_sigmas(term: dict, geometry: dict) -> dict:
     return {"casa": sigma, "casa-rs": sigma}
 
 
-def compare_tsys_noise(paths: dict, term: dict, direct_spws=None) -> tuple[dict, list[str]]:
+def compare_tsys_noise(paths: dict, term: dict, direct_spws=None, model: str | None = None) -> tuple[dict, list[str]]:
     """A Tsys term's noise in both implementations: normalized by each
     row's σ (`tsys_sigmas`), and CASA's against casa-rs's in groups of rows
     (`grouped_variance_ratios`): every row's for `tsys-manual`, and for
     `tsys-atm` those of the windows `direct_spws`, where CASA's and
-    casa-rs's frequencies give the same σ."""
+    casa-rs's frequencies are the same. casa-rs's ATM is not CASA's (it
+    corrects ATM's data errors), so there each side's noise is first divided
+    by its own σ."""
     from casatools import measures, quanta, table
 
     tb, me, qa = table(), measures(), quanta()
     geometry = row_geometry(tb, me, qa, paths["casa"])
-    sigma = tsys_sigmas(term, geometry)
+    sigma = tsys_sigmas(term, geometry, model)
     noise, stats, failures = {}, {}, []
     for side in ("casa", "casa-rs"):
         noisy, clean = main_columns(tb, paths[side]), main_columns(tb, paths[side + "-twin"])
@@ -855,9 +868,11 @@ def compare_tsys_noise(paths: dict, term: dict, direct_spws=None) -> tuple[dict,
         ]
     )
     direct = unflagged.copy()
+    casa, ours = noise["casa"][0], noise["casa-rs"][0]
     if term.get("mode") == "tsys-atm":
         direct &= np.isin(geometry["spw"], list(direct_spws or []))
-    casa, ours = noise["casa"][0][direct], noise["casa-rs"][0][direct]
+        casa, ours = casa / sigma["casa"], ours / sigma["casa-rs"]
+    casa, ours = casa[direct], ours[direct]
     cross_rows, auto_rows = ~auto[direct], auto[direct]
     groups, group_failures = grouped_variance_ratios(casa[cross_rows], ours[cross_rows], labels[direct][cross_rows])
     if auto_rows.any():
@@ -949,9 +964,12 @@ def tf_table(tb, path: str) -> dict:
     return found
 
 
-def compare_troposphere(paths: dict, scenario: dict) -> tuple[dict, list[str]]:
+def compare_troposphere(paths: dict, scenario: dict, model: str | None = None) -> tuple[dict, list[str]]:
     """`settrop` of both implementations, each against its own model: its
-    table's phases and its DATA over its twin (`troposphere_stats.py`)."""
+    table's phases and its DATA over its twin (`troposphere_stats.py`).
+    CASA's model is the dispersive wet delay of its ATM (the `at` tool),
+    casa-rs's the whole wet delay of casa-rs's (`model`,
+    `atm_model.casars_wet_delays`)."""
     from casatools import table
 
     tb = table()
@@ -975,9 +993,12 @@ def compare_troposphere(paths: dict, scenario: dict) -> tuple[dict, list[str]]:
             models = {}
             for model_mapping in ("casa", "channel"):
                 frequencies = atm_frequencies(windows, int(spw), model_mapping)
-                if frequencies is not None:
-                    dispersive, continuum = at_tool_wet_delays(pwv, frequencies)
-                    models[model_mapping] = dispersive if model_mapping == "casa" else dispersive + continuum
+                if frequencies is None:
+                    continue
+                if model_mapping == "casa":
+                    models[model_mapping] = at_tool_wet_delays(pwv, frequencies)[0]
+                else:
+                    models[model_mapping] = sum(casars_wet_delays(model, pwv, frequencies))
             if mapping not in models:
                 continue
             excess[rows], spread[rows] = excess_from_table(phases, models[mapping])
@@ -1013,6 +1034,7 @@ def compare_troposphere(paths: dict, scenario: dict) -> tuple[dict, list[str]]:
         worst, data_failed = data_failures(ratio, np.repeat(expected[:, None, :], 2, axis=1))
         side_failures += data_failed
         statistics = excess_statistics(excess, solutions["antenna"], slot_of(solutions["time"]))
+        side_failures += flat_failures(statistics, delta_pwv)
         if side == "casa-rs" and call.get("mode", "screen") == "individual":
             side_failures += rms_failures(statistics, delta_pwv)
         stats[side] = {
@@ -1025,9 +1047,33 @@ def compare_troposphere(paths: dict, scenario: dict) -> tuple[dict, list[str]]:
     return stats, failures
 
 
-def compare_data(tb, scenario: dict, paths: dict, limit: float) -> tuple[dict, list[str]]:
+def needs_atmosphere_model(scenario: dict) -> bool:
+    """Whether comparing the scenario's DATA needs casa-rs's ATM: a
+    `tsys-atm` noise or a troposphere."""
+    term = tsys_term(scenario)
+    return scenario.get("data") == "troposphere" or (
+        scenario.get("data") == "noisy" and term is not None and term.get("mode") == "tsys-atm"
+    )
+
+
+def compare_data(tb, scenario: dict, paths: dict, limit: float, model: str | None = None) -> tuple[dict, list[str]]:
     """DATA by the scenario's kind: zero, model, noisy, gains, leakage or
-    troposphere."""
+    troposphere. `model` is casa-atmosphere's `at_tool_quantities` example,
+    casa-rs's ATM (`atm_model.py`), which `tsys-atm` and troposphere
+    scenarios need."""
+    kind = scenario.get("data") or "zero"
+    if needs_atmosphere_model(scenario):
+        if model is None:
+            return {"kind": kind}, ["needs --atmosphere-model, casa-atmosphere's at_tool_quantities example"]
+        try:
+            return compare_data_kind(tb, scenario, paths, limit, model)
+        except ModelError as error:
+            return {"kind": kind}, [f"casa-rs's atmosphere model: {error}"]
+    return compare_data_kind(tb, scenario, paths, limit, model)
+
+
+def compare_data_kind(tb, scenario: dict, paths: dict, limit: float, model: str | None) -> tuple[dict, list[str]]:
+    """`compare_data` by the scenario's kind."""
     kind = scenario.get("data") or "zero"
     if kind == "zero":
         failures = []
@@ -1044,7 +1090,7 @@ def compare_data(tb, scenario: dict, paths: dict, limit: float) -> tuple[dict, l
     if kind == "noisy":
         term = tsys_term(scenario)
         if term is not None and scenario.get("noise_variance") is None:
-            stats, failures = compare_tsys_noise(paths, term, scenario.get("direct_spws"))
+            stats, failures = compare_tsys_noise(paths, term, scenario.get("direct_spws"), model)
             return dict(stats, kind=kind, noise=term["mode"]), failures
         stats, failures = compare_noisy_data(paths, scenario.get("noise_variance"))
         return dict(stats, kind=kind), failures
@@ -1052,7 +1098,7 @@ def compare_data(tb, scenario: dict, paths: dict, limit: float) -> tuple[dict, l
         stats, failures = compare_corrupted_data(paths, scenario)
         return dict(stats, kind=kind), failures
     if kind == "troposphere":
-        stats, failures = compare_troposphere(paths, scenario)
+        stats, failures = compare_troposphere(paths, scenario, model)
         return dict(stats, kind=kind), failures
     return {"kind": kind}, [f"unknown data kind {kind!r}"]
 
@@ -1127,7 +1173,9 @@ def compare_scenario(
                 for key, message in data_cell_differences(values_a, values_b):
                     differ(key, message)
                 paths = {"casa": casa_ms, "casa-rs": casars_ms, **(twins or {})}
-                report["data"], failures = compare_data(tb, scenario, paths, args.data_nrms)
+                report["data"], failures = compare_data(
+                    tb, scenario, paths, args.data_nrms, getattr(args, "atmosphere_model", None)
+                )
                 for failure in failures:
                     differ("MAIN.DATA:values", failure)
                 continue
