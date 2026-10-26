@@ -6,6 +6,7 @@
 mod catalogue;
 mod cursor;
 mod index;
+pub(super) mod update;
 
 #[cfg(feature = "msv4")]
 pub(crate) use catalogue::{metres, radians};
@@ -117,7 +118,6 @@ impl Msv2Observation {
         let observations = catalogue::read_observations(&ms)?;
         let main = ms.main_table();
         let time_scale = catalogue::time_scale(main)?;
-        let units = catalogue::data_units(main);
         let setups = catalogue::spectral_setups(&ms)?;
         let modes = catalogue::read_state_modes(&ms)?;
         let spectral_weights = main
@@ -130,20 +130,7 @@ impl Msv2Observation {
             &ephemerides,
             ROWS_PER_CHUNK,
         )?;
-        let group = DataGroupEntry {
-            name: "base".to_string(),
-            visibilities: "DATA".to_string(),
-            flags: "FLAG".to_string(),
-            weights: if spectral_weights {
-                "WEIGHT_SPECTRUM"
-            } else {
-                "WEIGHT"
-            }
-            .to_string(),
-            uvw: "UVW".to_string(),
-            units,
-            uvw_frame,
-        };
+        let groups = data_groups(main, spectral_weights, uvw_frame);
         let mut partitions = Vec::new();
         let mut entries = Vec::new();
         for (key, grid) in index.partitions {
@@ -184,7 +171,7 @@ impl Msv2Observation {
                 baselines: grid.baselines.clone(),
                 time_scale,
                 time_origin: MjdHighPrec::new(0.0, 0.0),
-                data_groups: vec![group.clone()],
+                data_groups: groups.clone(),
             });
             partitions.push(Partition { grid });
         }
@@ -457,4 +444,41 @@ impl Observation for Msv2Observation {
     ) -> Result<TimeBaselineGrid, ObservationError> {
         Msv2Observation::grid(self, id, data_group)
     }
+}
+
+/// The data groups MAIN's visibility columns form, named as XRADIO's
+/// converter names them: `base` (`DATA`), and `corrected`
+/// (`CORRECTED_DATA`) and `model` (`MODEL_DATA`) where the columns exist.
+/// Every group reads the same flags, weights and UVW.
+pub(super) fn data_groups(
+    main: &casa_tables::Table,
+    spectral_weights: bool,
+    uvw_frame: casa_observation::UvwFrame,
+) -> Vec<DataGroupEntry> {
+    let weights = if spectral_weights {
+        "WEIGHT_SPECTRUM"
+    } else {
+        "WEIGHT"
+    };
+    let has = |column: &str| {
+        main.schema()
+            .is_some_and(|schema| schema.contains_column(column))
+    };
+    [
+        ("base", "DATA"),
+        ("corrected", "CORRECTED_DATA"),
+        ("model", "MODEL_DATA"),
+    ]
+    .into_iter()
+    .filter(|(name, column)| *name == "base" || has(column))
+    .map(|(name, column)| DataGroupEntry {
+        name: name.to_string(),
+        visibilities: column.to_string(),
+        flags: "FLAG".to_string(),
+        weights: weights.to_string(),
+        uvw: "UVW".to_string(),
+        units: catalogue::data_units(main, column),
+        uvw_frame,
+    })
+    .collect()
 }

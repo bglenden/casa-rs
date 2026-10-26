@@ -78,9 +78,10 @@ fn quantum_units(table: &Table, column: &str) -> Option<Vec<String>> {
     }
 }
 
-/// What `DATA`'s `QuantumUnits` declares: janskys only when it says `Jy`.
-pub(super) fn data_units(table: &Table) -> VisibilityUnits {
-    match quantum_units(table, "DATA").as_deref() {
+/// What visibility column `column`'s `QuantumUnits` declares: janskys
+/// only when it says `Jy`.
+pub(super) fn data_units(table: &Table, column: &str) -> VisibilityUnits {
+    match quantum_units(table, column).as_deref() {
         None | Some([]) => VisibilityUnits::Undeclared,
         Some([unit, ..]) if unit == "Jy" => VisibilityUnits::Jansky,
         Some([unit, ..]) => VisibilityUnits::Declared(unit.clone()),

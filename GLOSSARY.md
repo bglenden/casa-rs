@@ -197,6 +197,20 @@ correlation fastest, as both stores deliver it without a transpose. A
 channel-major view of the same memory is free; contiguity per plane is not.
 _Avoid_: Layout, memory order
 
+**Update Session**:
+One owner of a store that reads it and writes declared targets back: it
+holds the process's write intent on the store, lends the observation for
+reading and one updater at a time for writing, and resolves each target's
+variable and the data groups sharing it before any payload is written.
+_Avoid_: Writer (which creates a new store), read-write handle
+
+**Patch**:
+The new values one target receives for the samples of a delivered batch:
+visibilities, a flag change (flags set and cleared, others kept) or weights.
+A store writes it to its own units (MSv2 cells, MSv4 chunks) and reads a unit
+back only when the patch supplies it partly.
+_Avoid_: Mutation batch, write-back buffer
+
 ## Imaging execution
 
 **Resource Policy**:

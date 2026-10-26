@@ -5,6 +5,8 @@
 
 #[path = "observation_io/refusals.rs"]
 mod refusals;
+#[path = "observation_io/update.rs"]
+mod update;
 #[path = "observation_io/work.rs"]
 mod work;
 #[path = "observation_io/writer.rs"]

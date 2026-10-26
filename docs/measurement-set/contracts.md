@@ -687,8 +687,13 @@ on eight workers and checks every partition's samples and checksum against a
 sequential read.
 
 The trial's adapters open stores read-only and hold no locks beyond the
-storage libraries' own. Mixed read/update sessions and locking are provisional
-(section 8).
+storage libraries' own. An **update session** (`open_update`, section 7) is
+the one mixed owner: it takes the process's write intent on the store, so a
+second update session is refused, lends the same observation for reading and
+one updater at a time for writing, and lets independent read-only
+observations open beside it. MSv2 updaters hold casacore's table lock for
+their life; MSv4 has no cross-process lock protocol, and the session says
+so (`UpdateGuarantees`).
 
 ## 7. Updates and creation
 
@@ -730,8 +735,16 @@ coverage are provisional (section 8).
 
 ### Updates (provisional)
 
-Nothing in this subsection is realized by the trial. Its acceptance
-obligations stand for M1/M2.
+The write-back trial (trial README, "Write-back") realizes a narrow part of
+this subsection: update sessions with declared targets (data group, role,
+alias scope, creation), one updater per traversal writing visibilities,
+flag set/clear changes and weights for the batches the session delivered,
+the broadcast-weight rule below (Pro R1), data-group aliases accepted
+explicitly, row flags and padding preserved, whole-unit writes that read
+nothing, and MSv4 chunks replaced atomically through a temporary object.
+A batch's own times and baselines address its samples in both stores, so
+no update map is added to the read side. The rest of this subsection, and
+its acceptance obligations, stand for M1/M2.
 
 An `UpdateMapRef` refers to a session-owned inverse map from selected logical
 elements to a named writable role's native address domain (cells, scalars or
@@ -832,13 +845,13 @@ when its acceptance obligation is met.
 | Requested precision | `Complex<f32>`, `bool`, `f32`, `f64` only; complex128 refused | Native precision, lossless widening or explicitly approved narrowing per role, charged and fused with decode; the writer checks representability; the existing science tolerances hold |
 | Real-valued data (`FLOAT_DATA`, `SPECTRUM`) | Refused | Its own typed variant under its profile, not reinterpreted as frequency visibilities |
 | More than one data group per traversal; role aliases | One group per traversal; each group keeps its own field and UVW context | Each group keeps its UVW and field/source context and explicit alias relationships to the others |
-| Occupancy and conversion to rows | Absence only as flagged padding | Unknown occupancy representable; conversion to a row format resolves it by declared policy or reports the ambiguity, never recovering an imaginary MSv2 row; writing new measurements into holes needs an explicit fill policy |
-| Native flags: bitmasks, reason bits, categories, row flags as their own view | `bool` only; `uint8` refused; row flags folded | Native dtype and reason bits preserved for lossless writes; `UNSPECIFIED_BIT` for generic flagging, bound to its actual bit; clearing an effective flag never clears unknown reasons |
+| Occupancy and conversion to rows | Absence only as flagged padding; the batch carries no presence mask, so an update infers padding (a missing MSv2 row, a non-finite MSv4 weight) and refuses to clear its flags | Unknown occupancy representable; conversion to a row format resolves it by declared policy or reports the ambiguity, never recovering an imaginary MSv2 row; writing new measurements into holes needs an explicit fill policy |
+| Native flags: bitmasks, reason bits, categories, row flags as their own view | `bool` only; `uint8` refused; row flags folded on read; a flag change sets and clears element flags and never writes `FLAG_ROW` or `FLAG_CATEGORY` | Native dtype and reason bits preserved for lossless writes; `UNSPECIFIED_BIT` for generic flagging, bound to its actual bit; clearing an effective flag never clears unknown reasons |
 | Weight roles and fallback; `SIGMA` | One broadcast weight view; `SIGMA` not read. Production `gaincal` solves with 1/σ² from `SIGMA`, as CASA does, so the calibration port needs this first (trial README, example B) | The request names the weight role and fallback for undefined cells, recording which rule and cell supplied each value; `SIGMA` never silently equated with weights |
 | Revisit and compute-window requirements as request fields | A new traversal per pass; windows are views | Binding states what depends on an estimated pass count; a revisit does not imply cached values |
-| Updates | Not built | Section 7 |
+| Updates | The write-back trial's update sessions (section 7) | Section 7's remaining obligations: bit flags and flag categories, conflicting queued patches, structural writes (a new MSv4 data group), per-batch MSv2 planning, a killed process and the synchronization boundary at scale |
 | MSv2 creation from batches; general creation and loss policy | The MSv4 writer only | Cells in time order become rows, padded cells flagged NaN rows; cross-format creation preflights metadata, flag and occupancy mappings and rejects unapproved loss |
-| Mixed read/update sessions and locking | Read-only opens | Plan read and write access before locking, no implicit upgrade; original-input semantics need disjoint read and write regions after resolving aliases, or a proven read-before-write order; casacore cross-process locks stay authoritative for v2; the v4 profile reports that it has no cross-process lock protocol |
+| Mixed read/update sessions and locking | One update session per store in a process, one updater per session, read-only opens beside them; casacore's lock per MSv2 updater | Plan read and write access before locking, no implicit upgrade; original-input semantics need disjoint read and write regions after resolving aliases, or a proven read-before-write order; casacore cross-process locks stay authoritative for v2; the v4 profile reports that it has no cross-process lock protocol |
 | Calibration binding across stores | Observation-to-observation `bind_to` | Solve, persist, close, permute partition and catalogue enumeration, reopen and apply, with overlapping antenna subsets and ambiguous-name rejection; CASA's v2 associations and SPW mapping preserved |
 | Ephemeris, pointing and time-dependent metadata | Ephemeris is not a partition key; pointing not read | Queried in bounded windows; ephemeris keys partitions as XRADIO's converter does |
 | Baseline-dependent polarization (`polarization_mixed`) | Refused at opening | A checked per-baseline basis mapping in the common metadata |

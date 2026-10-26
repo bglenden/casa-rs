@@ -104,6 +104,7 @@ mod cursor;
 mod grouping;
 mod pool;
 mod request;
+mod update;
 
 pub use batch::{DataGroupView, SampleCoordinate, SampleTiming, Shared, Validity, VisibilityBatch};
 pub use buffers::{BatchArrays, BatchBuffers, BatchFill, BatchHeader, Sharing};
@@ -123,6 +124,10 @@ pub use pool::{BufferPool, FilledBatch};
 pub use request::{
     AccessRequest, CorrelationAxis, CorrelationRequest, Deliver, Estimate, FlagsFrom, Grouping,
     IoCounters, NaturalBlocks, PartitionEstimate, ResolvedRequest, Roles, times_per_batch,
+};
+pub use update::{
+    AliasScope, PatchValues, ResolvedTarget, UpdateGuarantees, UpdateReport, UpdateTarget, Updater,
+    WeightChannels, WritableRole, check_values, uniform_over_channels,
 };
 
 /// Why a request could not be bound or a traversal failed.
@@ -178,6 +183,14 @@ pub enum ObservationError {
     #[error("invalid batch: {reason}")]
     InvalidBatch {
         /// Why.
+        reason: String,
+    },
+    /// Another session in this process already holds what this one needs:
+    /// write intent on the store, or the session's one live updater.
+    /// Nothing was opened or written.
+    #[error("conflict: {reason}")]
+    Conflict {
+        /// What is held.
         reason: String,
     },
     /// The storage layer failed.
