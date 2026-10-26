@@ -53,8 +53,8 @@ impl Fixture {
     /// evidence record (`skymodel_oracle.py --evidence`) with its inputs as
     /// a directory.
     fn load() -> Self {
-        let directory = std::env::var_os("CASA_RS_SKYMODEL_FIXTURE")
-            .map_or_else(data_dir, PathBuf::from);
+        let directory =
+            std::env::var_os("CASA_RS_SKYMODEL_FIXTURE").map_or_else(data_dir, PathBuf::from);
         let file = std::fs::File::open(directory.join("skymodel_casa.json.gz"))
             .expect("the CASA fixture is checked in");
         let record = serde_json::from_reader(flate2::read::GzDecoder::new(file))
@@ -364,15 +364,17 @@ fn modifymodel_writes_and_returns_what_casa_does() {
             &mut found,
         );
         let mut casa_image = case["image"].clone();
-        if name == "dir_freq_linear" {
-            // Departure: CASA labels the three planes IQU, as many as
-            // `ia.fromshape` gives three planes; casa-rs labels them IQV,
-            // as `modifymodel` reports.
-            assert_eq!(
-                casa_image["csys"]["stokes1"]["stokes"],
-                json!(["I", "Q", "U"])
-            );
-            casa_image["csys"]["stokes1"]["stokes"] = json!(["I", "Q", "V"]);
+        // Departure: CASA labels the planes by their count, as
+        // `ia.fromshape` does; casa-rs labels three unlabelled planes IQV, as
+        // `modifymodel` reports, and keeps a model's own labels.
+        let relabelled = match name {
+            "dir_freq_linear" => Some((json!(["I", "Q", "U"]), json!(["I", "Q", "V"]))),
+            "iv" => Some((json!(["I", "Q"]), json!(["I", "V"]))),
+            _ => None,
+        };
+        if let Some((casas, ours)) = relabelled {
+            assert_eq!(casa_image["csys"]["stokes1"]["stokes"], casas, "{name}");
+            casa_image["csys"]["stokes1"]["stokes"] = ours;
         }
         found.extend(image_differences(&output, &casa_image, 1e-6));
         assert_no_differences(name, &found);

@@ -1907,7 +1907,11 @@ coordinate system labels the planes by their count: I, IQ, IQU or IQUV
 
 casa-rs keeps the model's labels and labels unlabelled planes as
 `modifymodel` reports them (IQV for three). Models of Stokes I alone, the
-usual case, are unaffected.
+usual case, are unaffected. A model labelled in a circular or linear basis
+(RR and LL, or XX and YY) also keeps its labels, so `flatimage` (which
+wants a Stokes I plane) and adding components (which wants I, Q, U or V)
+refuse it, where CASA relabels it I and Q and goes on; `simobserve`'s sky
+model is a brightness in Stokes parameters.
 
 ## `modifymodel` indexes the map it makes of two cells
 
@@ -1963,4 +1967,6 @@ visibility prediction takes component frequencies
 (`casa_components::SpectralModel::sample_stokes`); a meaningful
 conversion would need the observation's epoch and position, which the sky
 model does not have. Components in the image's own frame, the usual case,
-are unaffected.
+are unaffected: the oracle's matched-frame cases (LSRK spectra on an LSRK
+cube, TOPO spectra on a TOPO cube) agree with CASA to 1e-6, where the same
+cube with spectra in the other frame differs by 1.1e-4.

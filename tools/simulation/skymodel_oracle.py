@@ -31,8 +31,8 @@ than those recorded, apart from casacore's bookkeeping and the documented
 departures.
 
 `--evidence CASATESTDATA` records, into `--out`, the evidence cases instead:
-casatestdata's ppdisk model (with the VLA tutorial's overrides) and
-simobserve's test models and component lists, copied to `--out/inputs`.
+casatestdata's ppdisk model (with tutorial-like overrides) and simobserve's
+test models and component lists, copied to `--out/inputs`.
 casa-rs's tests compare them with `CASA_RS_SKYMODEL_FIXTURE=<out>`:
 
     python3 -I tools/simulation/skymodel_oracle.py --out EV --evidence /Volumes/home/casatestdata
@@ -282,6 +282,7 @@ MODIFY_CASES = [
     ("plain2d_spectral", "plain2d.im", {"incenter": "100GHz", "inwidth": "50MHz"}),
     ("dir_freq", "dir_freq.im", {}),
     ("dir_freq_linear", "dir_freq_linear.im", {}),
+    ("iv", "iv.im", {}),
     ("freq_first", "freq_first.im", {}),
     ("galactic", "galactic.im", {}),
     ("galactic_indirection", "galactic.im", {"indirection": "J2000 12h00m00 -10d00m00"}),
@@ -352,6 +353,10 @@ COMPONENT_LISTS = {
 PROJECT_CASES = [
     ("dsf_shapes", "dsf.im", "shapes.cl"),
     ("dfs_cube_spectral", "dfs_cube.im", "spectral.cl"),
+    # The same spectra in the image's own frame: LSRK on an LSRK cube, TOPO
+    # on the TOPO cube.
+    ("iquv_cube_spectral", "iquv_cube.im", "spectral.cl"),
+    ("dfs_cube_topo", "dfs_cube.im", "topo.cl"),
     ("iquv_cube_polarised", "iquv_cube.im", "polarised.cl"),
     ("iv_polarised", "iv.im", "polarised.cl"),
     ("dsf_galactic", "dsf.im", "galactic.cl"),
@@ -577,8 +582,10 @@ KINDS = ("modify", "flat", "project", "component_model")
 
 # The evidence cases (`--evidence`): casatestdata's models, read from a
 # casatestdata clone and recorded with their inputs as a directory rather
-# than checked in. The ppdisk model with the VLA tutorial's overrides, and
-# CASA's own simobserve test models and component lists with its overrides.
+# than checked in. The ppdisk model with tutorial-like overrides (the VLA
+# tutorial's 44 GHz, 128 MHz and 3e-5 Jy/pixel, with a direction and cell
+# chosen here), and CASA's own simobserve test models and component lists
+# with its overrides.
 EVIDENCE_INPUTS = {
     "input50pc_672GHz.fits": "regression/sim_components_and_skymodel/input50pc_672GHz.fits",
     "core5ps.skymodel": "unittest/simobserve/core5ps.skymodel",
@@ -670,6 +677,7 @@ BOOKKEEPING = ("worldreplace", "pixelreplace", "telescopeposition")
 # difference is expected, and what tolerance the pixels take.
 DEPARTURES = {
     ("modify", "dir_freq_linear"): {"csys": ["stokes1.stokes"]},
+    ("modify", "iv"): {"csys": ["stokes1.stokes"]},
     ("component_model", "width_unset"): {"csys": ["spectral2.wcs.cdelt"]},
     ("project", "dsf_topo"): {"pixels": 2e-4},
     ("project", "dfs_cube_spectral"): {"pixels": 2e-4},
