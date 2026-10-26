@@ -11,6 +11,7 @@ use casa_tables::{ColumnSchema, LockType, Table};
 use casa_types::{ArrayValue, Complex32, PrimitiveType, ScalarValue, Value};
 
 use super::ObservationOwnerError;
+use crate::schema::main_table::initial_model_visibility;
 use crate::{MeasurementSet, MsError};
 
 const VISIBILITY_WRITE_BATCH_ROWS: u64 = 10_000;
@@ -78,7 +79,9 @@ struct PendingVisibilityCells {
 #[cfg(unix)]
 impl SelectedVisibilityWrite {
     /// Take the MAIN write lock and start an in-place write. `MODEL_DATA` is
-    /// created, zero-filled, when MAIN lacks it, as CASA does.
+    /// created when MAIN lacks it and filled with CASA's initial model, as
+    /// tclean creates it ([`initial_model_visibility`]: 1, and 0 in the
+    /// cross hands), so rows the run does not predict hold that model.
     ///
     /// The MeasurementSet is opened with retained read locks, and MAIN's is
     /// then upgraded to the write lock. Both wait, as casacore's do, for a
@@ -120,19 +123,22 @@ impl SelectedVisibilityWrite {
                 .add_tiled_column_clone("DATA", "MODEL_DATA", "TiledModelData")?;
             let row_count = measurement_set.main_table().row_count();
             let batch = VISIBILITY_WRITE_BATCH_ROWS as usize;
+            let mut models = std::collections::HashMap::new();
             for start in (0..row_count).step_by(batch) {
                 let rows: Vec<usize> = (start..row_count.min(start + batch)).collect();
                 let descriptions = main_data_description_ids(&measurement_set, &rows)?;
                 for (&row, description) in rows.iter().zip(descriptions) {
-                    let shape = model_cell_shape(&measurement_set, description)?;
+                    let model = match models.entry(description) {
+                        std::collections::hash_map::Entry::Occupied(model) => model.into_mut(),
+                        std::collections::hash_map::Entry::Vacant(slot) => {
+                            slot.insert(initial_model_cell(&measurement_set, description)?)
+                        }
+                    };
                     queue_visibility_cell(
                         measurement_set.main_table_mut(),
                         "MODEL_DATA",
                         row,
-                        ArrayValue::Complex32(ndarray::ArrayD::from_elem(
-                            ndarray::IxDyn(&shape),
-                            Complex32::new(0.0, 0.0),
-                        )),
+                        model.clone(),
                     )?;
                 }
                 persist_visibility_rows(measurement_set.main_table_mut(), &["MODEL_DATA"], &rows)?;
@@ -464,6 +470,30 @@ fn main_data_description_ids(
             _ => Err(ObservationOwnerError::PredictionAddress),
         })
         .collect()
+}
+
+/// CASA's initial `MODEL_DATA` cell for data description
+/// `data_description_id`: `[correlation, channel]`, each product holding
+/// [`initial_model_visibility`] of its correlation type.
+fn initial_model_cell(
+    measurement_set: &MeasurementSet,
+    data_description_id: usize,
+) -> Result<ArrayValue, ObservationOwnerError> {
+    let [correlations, channels] = model_cell_shape(measurement_set, data_description_id)?;
+    let polarization_id = usize::try_from(
+        measurement_set
+            .data_description()?
+            .polarization_id(data_description_id)?,
+    )
+    .map_err(|_| ObservationOwnerError::PredictionAddress)?;
+    let types = measurement_set.polarization()?.corr_type(polarization_id)?;
+    if types.len() != correlations {
+        return Err(ObservationOwnerError::PredictionAddress);
+    }
+    Ok(ArrayValue::Complex32(ndarray::ArrayD::from_shape_fn(
+        ndarray::IxDyn(&[correlations, channels]),
+        |at| initial_model_visibility(types[at[0]]),
+    )))
 }
 
 fn model_cell_shape(

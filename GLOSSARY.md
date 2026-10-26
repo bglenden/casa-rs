@@ -41,7 +41,7 @@ The compiler-derived MeasurementSet read and write sets of one imaging run. The
 read set names, for each snapshot source, its exact selection and the data,
 flag and weight columns read. The write set names the selected cells of an
 optional in-place `MODEL_DATA` write (the column is created when MAIN lacks
-it) and, under a Sequential Continuum Transform, the output-role cells of an
+it, holding CASA's initial model: 1, and 0 in the cross hands) and, under a Sequential Continuum Transform, the output-role cells of an
 optional `CORRECTED_DATA` write; compile refuses the latter when MAIN has no
 such column. Writes run under casacore's table lock, as in CASA; an interrupted
 write may leave partial derived values that the next run recomputes. Image

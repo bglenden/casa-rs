@@ -533,6 +533,29 @@ impl VisibilityDataColumn {
     }
 }
 
+/// The model visibility a new `MODEL_DATA` holds before any model is
+/// written, for a product of correlation type `code` (casacore's Stokes
+/// enum).
+///
+/// CASA initializes a `MODEL_DATA` column it adds to a unit point source at
+/// the phase centre: 1 in every product except the cross hands `RL`, `LR`,
+/// `XY` and `YX`, which hold 0 (`VisSetUtil::initScrCols` in casacore's
+/// `msvis`, which tclean's `VisSetUtil::addScrCols` and
+/// `VisSet::initCalSet` call). Every other code, Stokes and mixed products
+/// and codes casa-rs does not name included, holds 1 as in CASA. Every
+/// casa-rs writer that adds `MODEL_DATA` fills it with this; a model
+/// prediction written later replaces it.
+#[must_use]
+pub fn initial_model_visibility(code: i32) -> casa_types::Complex32 {
+    use casa_types::Correlation;
+    match Correlation::from_casacore_code(code) {
+        Some(Correlation::RL | Correlation::LR | Correlation::XY | Correlation::YX) => {
+            casa_types::Complex32::new(0.0, 0.0)
+        }
+        _ => casa_types::Complex32::new(1.0, 0.0),
+    }
+}
+
 impl From<VisibilityDataColumn> for OptionalMainColumn {
     fn from(value: VisibilityDataColumn) -> Self {
         value.optional_column()
@@ -691,6 +714,27 @@ mod tests {
     #[test]
     fn required_column_count() {
         assert_eq!(REQUIRED_COLUMNS.len(), 21);
+    }
+
+    /// CASA's initial model (`VisSetUtil::initScrCols`): 0 in exactly the
+    /// cross hands RL, LR, XY and YX, 1 in every other code, unknown ones
+    /// included.
+    #[test]
+    fn initial_model_is_casas_unit_point_source() {
+        use casa_types::{Complex32, Correlation};
+        for correlation in Correlation::ALL {
+            let zero = matches!(
+                correlation,
+                Correlation::RL | Correlation::LR | Correlation::XY | Correlation::YX
+            );
+            assert_eq!(
+                initial_model_visibility(correlation.casacore_code()),
+                Complex32::new(if zero { 0.0 } else { 1.0 }, 0.0),
+                "{correlation:?}"
+            );
+        }
+        assert_eq!(initial_model_visibility(0), Complex32::new(1.0, 0.0));
+        assert_eq!(initial_model_visibility(99), Complex32::new(1.0, 0.0));
     }
 
     #[test]
