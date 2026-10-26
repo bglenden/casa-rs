@@ -40,7 +40,10 @@ struct Converted {
 /// `NAME_SPECTRAL_WINDOW_ID`), so the two converters' stores agree; a
 /// source XRADIO finds no row for in one spectral window, which it names
 /// `Unknown` there, is still named here. Two partitions XRADIO would merge,
-/// rows of different feeds, are two datasets here. Partitions are
+/// rows of different feeds, are two datasets here, and rows with
+/// `STATE_ID` -1 have no intents here where XRADIO gives them the last
+/// `STATE` row's; the datasets numbered after such a difference can hold
+/// other data than XRADIO's of the same name. Partitions are
 /// converted [`ConversionOptions::workers`] at a time; nothing appears at
 /// `destination` until every dataset is complete.
 ///
@@ -64,7 +67,7 @@ pub fn to_msv4(
     } = open_named(source)?;
     let catalogue = observation.catalogue();
     let groups = losses::selected_groups(catalogue, options.data_groups.as_deref())?;
-    let mut found = losses::inventory(source, catalogue, &groups)?;
+    let mut found = losses::inventory(source, catalogue, &groups, losses::Destination::Msv4)?;
     found.extend(losses::unused_antennas(catalogue));
     found.sort();
     losses::refuse_unaccepted(&found, &options.accept)?;
@@ -175,8 +178,9 @@ fn open_named(source: &Path) -> Result<Named, ObservationError> {
 /// of `first_rows`, the partitions' first MAIN rows, padded with zeros to
 /// the width of the largest. The path is made absolute, and resolved when
 /// that leaves no file name, so `.`, `..` and a trailing `/` name the
-/// MeasurementSet they stand for (XRADIO's converter names `.`'s datasets
-/// `_0` and so on).
+/// MeasurementSet they stand for, where XRADIO's converter names `.`'s
+/// datasets `_0`, `..`'s `.._0` and `/`'s `_0` (here `dataset_0`, `/`
+/// having no name).
 fn dataset_names(source: &Path, first_rows: &[Option<u32>]) -> Vec<String> {
     let mut path = std::path::absolute(source).unwrap_or_else(|_| source.to_path_buf());
     if path.file_name().is_none() {

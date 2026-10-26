@@ -1097,3 +1097,46 @@ fn a_round_trip_keeps_the_antenna_order() {
         "no baseline reversed"
     );
 }
+
+/// A moving field no row names is refused into an MSv2, which writes every
+/// `FIELD` row and would write its offset as a fixed direction, and not
+/// into an MSv4, which writes only the fields its datasets name.
+#[test]
+fn an_unused_moving_field_is_refused_only_where_it_is_written() {
+    let root = tempfile::tempdir().expect("root");
+    let v2 = fixture(root.path(), "ms_trial.ms");
+    let mut ms = casa_ms::MeasurementSet::open(&v2).expect("ms");
+    let mut comet = ms
+        .subtable(casa_ms::SubtableId::Field)
+        .and_then(|table| table.rows().ok()?.first().cloned())
+        .expect("a field");
+    comet.upsert(
+        "NAME",
+        casa_types::Value::Scalar(casa_types::ScalarValue::String("comet".to_string())),
+    );
+    comet.upsert(
+        "EPHEMERIS_ID",
+        casa_types::Value::Scalar(casa_types::ScalarValue::Int32(0)),
+    );
+    let fields = ms.subtable_mut(casa_ms::SubtableId::Field).expect("FIELD");
+    fields
+        .add_column(
+            casa_tables::ColumnSchema::scalar("EPHEMERIS_ID", casa_types::PrimitiveType::Int32),
+            Some(casa_types::Value::Scalar(casa_types::ScalarValue::Int32(
+                -1,
+            ))),
+        )
+        .expect("no ephemerides");
+    fields.add_row(comet).expect("an unused comet");
+    ms.save().expect("save");
+    drop(ms);
+    let accept = [LossKind::Sigma, LossKind::Tables];
+    to_msv4(&v2, &root.path().join("comet.ps.zarr"), &options(&accept)).expect("to MSv4");
+    let out = root.path().join("comet.ms");
+    let refused = to_msv2(&v2, &out, &options(&accept));
+    assert!(
+        matches!(refused, Err(ObservationError::Unsupported { what }) if what.contains("ephemeris")),
+        "{refused:?}"
+    );
+    assert!(!out.exists());
+}

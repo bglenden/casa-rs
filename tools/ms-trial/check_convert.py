@@ -91,7 +91,7 @@ def compare_names(name, node, expected_name, expected, mismatches):
     for label in ours:
         a, b = ours[label], theirs[label]
         if label == "source_name" and a.shape == b.shape:
-            placeholder = np.array([re.fullmatch(r"Unknown(_-?\d+)?", str(name)) is not None for name in b], dtype=bool)
+            placeholder = np.array([re.fullmatch(r"Unknown(_-?\d+)?", str(source)) is not None for source in b], dtype=bool)
             unknown += int(np.sum(placeholder & (a != b)))
             b = np.where(placeholder, a, b)
         if a.shape != b.shape or not np.array_equal(a, b):

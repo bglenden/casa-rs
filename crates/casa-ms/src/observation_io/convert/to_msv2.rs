@@ -88,7 +88,7 @@ pub fn to_msv2(
         .iter()
         .map(|group| column(group))
         .collect::<Result<Vec<_>, _>>()?;
-    let mut found = losses::inventory(source, catalogue, &groups)?;
+    let mut found = losses::inventory(source, catalogue, &groups, losses::Destination::Msv2)?;
     found.push(Loss::SigmaDerived);
     found.sort();
     losses::refuse_unaccepted(&found, &options.accept)?;

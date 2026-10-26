@@ -896,8 +896,10 @@ grids, batches) and create the destination from those alone.
   moves are refused in either direction: those that follow an ephemeris
   (`EPHEMERIS_ID` ≥ 0) and those whose direction is a polynomial in time
   (`NUM_POLY` > 0, which XRADIO refuses too), since the catalogue would
-  hold an offset or a constant term as the phase centre. Only the fields
-  MAIN's rows name are checked, as XRADIO checks the fields it converts.
+  hold an offset or a constant term as the phase centre. Into an MSv4
+  only the fields MAIN's rows name are checked, as XRADIO checks the
+  fields it converts; into an MSv2, which writes every `FIELD` row, every
+  row is.
 - **Lockstep groups.** A partition's selected groups are read by one
   traversal each, sized to the same whole times per batch (the first with
   every role, the others their visibilities only), so a destination writes
@@ -911,14 +913,20 @@ concurrently, published by one rename that refuses to replace). Further
 groups are `VISIBILITY_<GROUP>` variables beside one `FLAG`, `WEIGHT` and
 `UVW`. Each dataset's `antenna_xds` lists the antennas its baselines
 name, as XRADIO writes it, and an antenna no partition names is reported
-(`Loss::UnusedAntennas`); `relocatable_antennas` is set, as XRADIO sets
-it, only for the telescopes whose antennas it renames. Both converters
+(`Loss::UnusedAntennas`); `relocatable_antennas` is set only for the
+telescopes whose antennas XRADIO renames, by the dataset's telescope as
+XRADIO sets it (names follow the first session's telescope, below, so in
+an MSv2 whose sessions name different telescopes the two can disagree). Both converters
 list a dataset's antennas in the MSv2's `ANTENNA` order, so the MSv4
 reader merges the datasets' lists keeping every one's order (a
 topological merge, the antenna first seen first among those free to
 come next): an MSv2 written back numbers its antennas as the original
 did whenever the datasets determine the order, XRADIO's stores
-included, and no baseline comes back reversed. An MSv4's datasets keep their names. An MSv2's
+included, and no baseline of either converter's store comes back
+reversed (both of a baseline's antennas are in one list). Each
+`antenna_xds` is read once, and checked there; opening 3,001 datasets
+took as long as before the merge (24.0–24.9 s against 24.2–24.8 s, a
+debug build). An MSv4's datasets keep their names. An MSv2's
 datasets are named as XRADIO names them: the file name without `.ms`,
 then the partition's number in the order the partitions' first MAIN rows
 appear (XRADIO groups with `sort=False`), padded with zeros to the width
@@ -936,9 +944,10 @@ when another window's `SOURCE` row names it, and writes `Unknown` when
 none does. The MSv4 reader reads both placeholders as no source. Two
 partitionings differ from XRADIO's: the MSv2 adapter splits partitions
 by feed pair as well, and gives a row with `STATE_ID` −1 no intents
-where XRADIO gives it the last `STATE` row's (NumPy's index −1). Either
-makes more datasets here, and the datasets numbered after a split
-partition then hold other data than XRADIO's of the same name.
+where XRADIO gives it the last `STATE` row's (NumPy's index −1). The
+first makes more datasets here; the second can, or can give the same
+datasets other intents. Either way the datasets numbered after the
+first difference can hold other data than XRADIO's of the same name.
 Partitions are converted `workers` at a time.
 
 **To MSv2.** A new MeasurementSet through production's creation path:
@@ -1008,6 +1017,7 @@ Partitions are converted `workers` at a time.
 | `moving_fields_are_refused` | A field with an `EPHEMERIS_ID`, and one with `NUM_POLY` 1, are refused as unsupported; nothing is created. |
 | `datasets_are_numbered_as_their_first_rows_appear` | A second session holding the earlier times is dataset `ms_trial_0`, as XRADIO numbers it, though its partition key sorts second. |
 | `a_round_trip_keeps_the_antenna_order` | The first dataset lacks a middle antenna the second names; the MSv2 converted back has the original's `ANTENNA` order and no row with `ANTENNA1` > `ANTENNA2` (first-appearance order, before the merge, put that antenna last). |
+| `an_unused_moving_field_is_refused_only_where_it_is_written` | A `FIELD` row with an `EPHEMERIS_ID` that no row names converts to an MSv4 and is refused into an MSv2, which would write it as a fixed direction. |
 | `processors_are_lost_only_when_named_or_not_a_correlator` | `PROCESSOR_ID` −1 in every row is no loss; a lone `PROCESSOR` row of type `RADIOMETER` is one. |
 | `antennas_no_baseline_names_are_a_loss` | An antenna (with its feed) that no row names is reported as `UnusedAntennas(1)` and is in no dataset's `antenna_xds`. |
 | `a_flag_category_held_in_any_row_is_a_loss` | A `FLAG_CATEGORY` cell held in a middle row only is found (every row is read, in chunks, the first and last first) and refused until flag categories are accepted; nothing is created. |

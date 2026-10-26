@@ -76,11 +76,22 @@ pub(super) fn selected_groups(
     Ok(groups)
 }
 
-/// Everything `source` holds that converting `groups` would not carry.
+/// The store a conversion creates, which decides what it must refuse.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Destination {
+    /// An MSv2, which writes every catalogue field.
+    Msv2,
+    /// An MSv4, which writes the fields its datasets name.
+    Msv4,
+}
+
+/// Everything `source` holds that converting `groups` into `destination`
+/// would not carry.
 pub(super) fn inventory(
     source: &Path,
     catalogue: &Catalogue,
     groups: &[String],
+    destination: Destination,
 ) -> Result<Vec<Loss>, ObservationError> {
     let mut losses = Vec::new();
     for entry in &catalogue.partitions {
@@ -94,7 +105,7 @@ pub(super) fn inventory(
     if source.join("zarr.json").is_file() {
         msv4(source, &mut losses)?;
     } else {
-        msv2(source, catalogue, &mut losses)?;
+        msv2(source, catalogue, destination, &mut losses)?;
     }
     losses.sort();
     losses.dedup();
@@ -183,10 +194,11 @@ const ROW_CHUNK: usize = 1 << 18;
 fn msv2(
     source: &Path,
     catalogue: &Catalogue,
+    destination: Destination,
     losses: &mut Vec<Loss>,
 ) -> Result<(), ObservationError> {
     let ms = crate::MeasurementSet::open_retained_read(source).map_err(storage)?;
-    refuse_moving_fields(&ms, catalogue)?;
+    refuse_moving_fields(&ms, catalogue, destination)?;
     let main = ms.main_table();
     let columns: Vec<String> = main
         .schema()
@@ -219,18 +231,20 @@ fn msv2(
     subtables(&ms, losses)
 }
 
-/// Refuse fields whose direction moves, among those `catalogue`'s
-/// partitions name (an MSv2 catalogue's fields are its `FIELD` rows): those
-/// that follow an ephemeris, whose directions casacore reads as offsets
-/// from it, and those whose directions are polynomials in time (`NUM_POLY`
-/// above 0), as XRADIO's converter refuses the fields it converts. The
-/// catalogue holds one constant direction.
+/// Refuse fields whose direction moves, among those `destination` writes:
+/// every `FIELD` row into an MSv2, and into an MSv4 those `catalogue`'s
+/// partitions name (an MSv2 catalogue's fields are its `FIELD` rows), as
+/// XRADIO's converter refuses the fields it converts. A field moves when it
+/// follows an ephemeris, whose directions casacore reads as offsets from
+/// it, or when its directions are polynomials in time (`NUM_POLY` above
+/// 0); the catalogue holds one constant direction.
 fn refuse_moving_fields(
     ms: &crate::MeasurementSet,
     catalogue: &Catalogue,
+    destination: Destination,
 ) -> Result<(), ObservationError> {
     let fields = ms.field().map_err(storage)?;
-    let mut named = vec![false; fields.row_count()];
+    let mut named = vec![destination == Destination::Msv2; fields.row_count()];
     for field in catalogue.partitions.iter().flat_map(|entry| &entry.fields) {
         if let Some(named) = named.get_mut(field.0 as usize) {
             *named = true;

@@ -580,3 +580,37 @@ fn a_grouping_needs_the_scans_it_keys_by() {
     }
     assert!(fragments > 0);
 }
+
+/// A group of the processing set that is not a visibility dataset, and a
+/// dataset of another schema version, are refused as unsupported, though
+/// opening reads every dataset's antennas before the datasets themselves.
+#[test]
+fn other_datasets_and_schema_versions_are_refused() {
+    let root = tempfile::tempdir().expect("root");
+    let store = fixture(root.path(), "ms_trial.ps.zarr");
+    let notes = store.join("notes");
+    std::fs::create_dir(&notes).expect("a group");
+    std::fs::write(
+        notes.join("zarr.json"),
+        r#"{"zarr_format": 3, "node_type": "group", "attributes": {"type": "notes"}}"#,
+    )
+    .expect("its metadata");
+    assert!(
+        matches!(
+            Msv4Observation::open(&store),
+            Err(ObservationError::Unsupported { what }) if what.contains("visibility")
+        ),
+        "a group that is not a visibility dataset"
+    );
+    std::fs::remove_dir_all(&notes).expect("no group");
+    edit_json(&dataset(&store).join("zarr.json"), |value| {
+        value["attributes"]["schema_version"] = "3.0.0".into();
+    });
+    assert!(
+        matches!(
+            Msv4Observation::open(&store),
+            Err(ObservationError::Unsupported { what }) if what.contains("schema version")
+        ),
+        "another schema version"
+    );
+}
