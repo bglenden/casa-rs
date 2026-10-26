@@ -109,8 +109,10 @@ impl ObservationReadSet {
 
 /// Exact selected visibility-column cells written in place for one MeasurementSet.
 ///
-/// The writer creates `MODEL_DATA` when MAIN lacks it, as CASA does;
-/// `CORRECTED_DATA` must already exist.
+/// The writer creates `MODEL_DATA` when MAIN lacks it, filled with CASA's
+/// initial model as tclean creates it (1, and 0 in the cross hands), so
+/// cells the run does not predict hold that model; `CORRECTED_DATA` must
+/// already exist.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SelectedVisibilityWriteAccess {
     measurement_set: usize,

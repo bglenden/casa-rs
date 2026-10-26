@@ -183,6 +183,29 @@ fn model_data_write_read_interoperability_matrix() {
             .expect("Rust write, C++ read"),
         rust_written
     );
+    // Every cell the run did not predict holds CASA's initial model, as
+    // tclean creates the column: 1 in RR and LL, 0 in RL and LR.
+    for (correlation, initial) in [(0, 1.0), (1, 0.0), (2, 0.0), (3, 1.0)] {
+        let initial = casa_types::Complex32::new(initial, 0.0);
+        for (row, channel) in [(0, 15), (5, 0)] {
+            assert_eq!(
+                rust_model_data_sample(&ms_path, row, correlation, channel),
+                initial,
+                "Rust read of row {row} product {correlation} channel {channel}"
+            );
+            assert_eq!(
+                MeasurementSetOracle::read_model_data_sample(
+                    &ms_path,
+                    row as u64,
+                    correlation as u32,
+                    channel as u32
+                )
+                .expect("C++ read of the initial model"),
+                initial,
+                "C++ read of row {row} product {correlation} channel {channel}"
+            );
+        }
+    }
 
     let cpp_path = dir.path().join("cpp_model_data_write.ms");
     let builder = MeasurementSetBuilder::new()

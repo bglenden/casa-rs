@@ -138,7 +138,7 @@ pub use probes::{
     MeasurementSetUvRange,
 };
 pub use schema::SubtableId;
-pub use schema::main_table::{OptionalMainColumn, VisibilityDataColumn};
+pub use schema::main_table::{OptionalMainColumn, VisibilityDataColumn, initial_model_visibility};
 pub use selected_observation::{
     BoundObservationSourceError, BoundSelectedObservation, BoundSelectedObservationError,
     DeferredSelectedObservationAccess, FilledObservationBlock, ObservationSourceBinding,

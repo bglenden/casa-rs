@@ -11,6 +11,7 @@ use casa_tables::{ColumnSchema, LockType, Table};
 use casa_types::{ArrayValue, Complex32, PrimitiveType, ScalarValue, Value};
 
 use super::ObservationOwnerError;
+use crate::schema::main_table::initial_model_visibility;
 use crate::{MeasurementSet, MsError};
 
 const VISIBILITY_WRITE_BATCH_ROWS: u64 = 10_000;
@@ -78,7 +79,9 @@ struct PendingVisibilityCells {
 #[cfg(unix)]
 impl SelectedVisibilityWrite {
     /// Take the MAIN write lock and start an in-place write. `MODEL_DATA` is
-    /// created, zero-filled, when MAIN lacks it, as CASA does.
+    /// created when MAIN lacks it and filled with CASA's initial model, as
+    /// tclean creates it ([`initial_model_visibility`]: 1, and 0 in the
+    /// cross hands), so rows the run does not predict hold that model.
     ///
     /// The MeasurementSet is opened with retained read locks, and MAIN's is
     /// then upgraded to the write lock. Both wait, as casacore's do, for a
@@ -110,6 +113,27 @@ impl SelectedVisibilityWrite {
             schema.contains_column("MODEL_DATA")
         };
         if targets.model_data && !has_model {
+            // Everything that could refuse the seeding is checked before the
+            // column exists: a refusal after it would leave MODEL_DATA
+            // holding DATA's clone, which a later write would not reseed.
+            let models = initial_models(&measurement_set)?;
+            let row_count = measurement_set.main_table().row_count();
+            let batch = VISIBILITY_WRITE_BATCH_ROWS as usize;
+            for start in (0..row_count).step_by(batch) {
+                let rows: Vec<usize> = (start..row_count.min(start + batch)).collect();
+                let descriptions = main_data_description_ids(&measurement_set, &rows)?;
+                if let Some((row, id)) = rows
+                    .iter()
+                    .zip(descriptions)
+                    .find(|(_, id)| *id >= models.len())
+                {
+                    return Err(MsError::InvalidInput(format!(
+                        "MAIN row {row} names DATA_DESC_ID {id}, which DATA_DESCRIPTION \
+                         does not hold"
+                    ))
+                    .into());
+                }
+            }
             measurement_set.main_table_mut().add_column(
                 ColumnSchema::array_variable("MODEL_DATA", PrimitiveType::Complex32, Some(2)),
                 None,
@@ -118,21 +142,15 @@ impl SelectedVisibilityWrite {
                 .main_table_mut()
                 .prepare_write()
                 .add_tiled_column_clone("DATA", "MODEL_DATA", "TiledModelData")?;
-            let row_count = measurement_set.main_table().row_count();
-            let batch = VISIBILITY_WRITE_BATCH_ROWS as usize;
             for start in (0..row_count).step_by(batch) {
                 let rows: Vec<usize> = (start..row_count.min(start + batch)).collect();
                 let descriptions = main_data_description_ids(&measurement_set, &rows)?;
                 for (&row, description) in rows.iter().zip(descriptions) {
-                    let shape = model_cell_shape(&measurement_set, description)?;
                     queue_visibility_cell(
                         measurement_set.main_table_mut(),
                         "MODEL_DATA",
                         row,
-                        ArrayValue::Complex32(ndarray::ArrayD::from_elem(
-                            ndarray::IxDyn(&shape),
-                            Complex32::new(0.0, 0.0),
-                        )),
+                        models[description].cell(),
                     )?;
                 }
                 persist_visibility_rows(measurement_set.main_table_mut(), &["MODEL_DATA"], &rows)?;
@@ -157,7 +175,8 @@ impl SelectedVisibilityWrite {
     /// read and its tile written; the list holds its old and new buffers at
     /// once while it grows. Beside them are the batch's row numbers and, while a missing
     /// `MODEL_DATA` is created, their data-description ids as read and as
-    /// indices. Tiles cached for reuse go to the process-wide table cache,
+    /// indices, and each data description's initial model (a value per
+    /// product). Tiles cached for reuse go to the process-wide table cache,
     /// charged on its own.
     ///
     /// # Errors
@@ -179,10 +198,12 @@ impl SelectedVisibilityWrite {
         /// about 240 KB.
         const STAGING_BYTES: u64 = 1 << 20;
         let measurement_set = MeasurementSet::open(path.as_ref())?;
-        let mut cell_values = 0;
-        for description in 0..measurement_set.data_description()?.row_count() {
+        let descriptions = measurement_set.data_description()?.row_count();
+        let (mut cell_values, mut products) = (0, 0);
+        for description in 0..descriptions {
             let [correlations, channels] = model_cell_shape(&measurement_set, description)?;
             cell_values = cell_values.max(correlations * channels);
+            products = products.max(correlations);
         }
         let main = measurement_set.main_table();
         require_bounded_destinations(main, targets)?;
@@ -219,7 +240,9 @@ impl SelectedVisibilityWrite {
         let columns = u64::from(targets.model_data) + u64::from(targets.corrected_data);
         let rows = batch * (size_of::<usize>() as u64 + STAGING_BYTES_PER_ROW);
         let creation = if targets.model_data {
-            batch * (size_of::<Option<ScalarValue>>() + size_of::<usize>()) as u64
+            let models =
+                descriptions * (size_of::<InitialModel>() + products * size_of::<Complex32>());
+            batch * (size_of::<Option<ScalarValue>>() + size_of::<usize>()) as u64 + models as u64
         } else {
             0
         };
@@ -466,6 +489,58 @@ fn main_data_description_ids(
         .collect()
 }
 
+/// CASA's initial `MODEL_DATA` for one data description: each product's
+/// [`initial_model_visibility`], in `CORR_TYPE` order, over its channels.
+struct InitialModel {
+    products: Vec<Complex32>,
+    channels: usize,
+}
+
+impl InitialModel {
+    /// The `[correlation, channel]` cell.
+    fn cell(&self) -> ArrayValue {
+        ArrayValue::Complex32(ndarray::ArrayD::from_shape_fn(
+            ndarray::IxDyn(&[self.products.len(), self.channels]),
+            |at| self.products[at[0]],
+        ))
+    }
+}
+
+/// Every `DATA_DESCRIPTION` row's [`InitialModel`], by row.
+///
+/// # Errors
+///
+/// A description whose window or polarization cannot be read, or whose
+/// polarization's `CORR_TYPE` does not list `NUM_CORR` products.
+fn initial_models(
+    measurement_set: &MeasurementSet,
+) -> Result<Vec<InitialModel>, ObservationOwnerError> {
+    let descriptions = measurement_set.data_description()?;
+    let polarizations = measurement_set.polarization()?;
+    (0..descriptions.row_count())
+        .map(|description| {
+            let [correlations, channels] = model_cell_shape(measurement_set, description)?;
+            let polarization = descriptions.polarization_id(description)?;
+            let types = polarizations.corr_type(
+                usize::try_from(polarization)
+                    .map_err(|_| ObservationOwnerError::PredictionAddress)?,
+            )?;
+            if types.len() != correlations {
+                return Err(MsError::InvalidInput(format!(
+                    "POLARIZATION row {polarization} has NUM_CORR {correlations} but {} \
+                     CORR_TYPE entries",
+                    types.len()
+                ))
+                .into());
+            }
+            Ok(InitialModel {
+                products: types.into_iter().map(initial_model_visibility).collect(),
+                channels,
+            })
+        })
+        .collect()
+}
+
 fn model_cell_shape(
     measurement_set: &MeasurementSet,
     data_description_id: usize,
@@ -511,4 +586,164 @@ fn persist_visibility_rows(
     table.prepare_write().save_selected_rows(columns, rows)?;
     table.discard_persisted_cell_updates(columns, rows);
     Ok(())
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use casa_types::{ArrayValue, Complex32, RecordField, RecordValue, ScalarValue, Value};
+    use ndarray::{ArrayD, IxDyn};
+
+    use crate::{
+        MeasurementSet, SelectedVisibilityWrite, SelectedVisibilityWriteTargets,
+        SyntheticObservationRequest, SyntheticSpectralSetup, generate_synthetic_observation_ms,
+        tutorial_vla_a_antennas,
+    };
+
+    fn i32_array(values: &[i32], shape: &[usize]) -> Value {
+        Value::Array(ArrayValue::Int32(
+            ArrayD::from_shape_vec(IxDyn(shape), values.to_vec()).expect("shape"),
+        ))
+    }
+
+    /// A new `MODEL_DATA` is seeded per data description from that
+    /// description's own polarization row, in its `CORR_TYPE` order: two
+    /// windows whose descriptions name `RR RL LR LL` and `XX YY XY YX` hold
+    /// 1 0 0 1 and 1 1 0 0 in every channel of every row, though the write
+    /// touches none.
+    #[test]
+    fn a_new_model_data_is_seeded_from_each_descriptions_polarization() {
+        let root = tempfile::tempdir().expect("root");
+        let path = root.path().join("two-polarizations.ms");
+        let mut request = SyntheticObservationRequest::vla_ppdisk(
+            root.path().join("unused.fits"),
+            &path,
+            tutorial_vla_a_antennas(),
+        );
+        request.predict_model = false;
+        request.polarization_setup.correlation_count = 4;
+        request.duration_seconds = 6.0;
+        request.integration_seconds = 2.0;
+        request.spectral_windows = vec![
+            SyntheticSpectralSetup {
+                name: "circular".to_string(),
+                start_frequency_hz: 43.0e9,
+                channel_width_hz: 2.0e6,
+                channel_count: 3,
+            },
+            SyntheticSpectralSetup {
+                name: "linear".to_string(),
+                start_frequency_hz: 44.0e9,
+                channel_width_hz: 2.0e6,
+                channel_count: 3,
+            },
+        ];
+        generate_synthetic_observation_ms(&request).expect("simulate");
+        let mut ms = MeasurementSet::open(&path).expect("open");
+        assert_eq!(
+            ms.polarization()
+                .expect("POLARIZATION")
+                .corr_type(0)
+                .expect("row 0"),
+            [5, 6, 7, 8],
+            "the simulator's circular products"
+        );
+        let linear = RecordValue::new(vec![
+            RecordField::new(
+                "CORR_PRODUCT",
+                i32_array(&[0, 1, 0, 1, 0, 1, 1, 0], &[2, 4]),
+            ),
+            RecordField::new("CORR_TYPE", i32_array(&[9, 12, 10, 11], &[4])),
+            RecordField::new("FLAG_ROW", Value::Scalar(ScalarValue::Bool(false))),
+            RecordField::new("NUM_CORR", Value::Scalar(ScalarValue::Int32(4))),
+        ]);
+        ms.subtable_mut(crate::SubtableId::Polarization)
+            .expect("POLARIZATION")
+            .add_row(linear)
+            .expect("add the linear row");
+        ms.data_description_mut()
+            .expect("DATA_DESCRIPTION")
+            .set_i32(1, "POLARIZATION_ID", 1)
+            .expect("point the second window at it");
+        ms.save().expect("save");
+        drop(ms);
+
+        let write =
+            SelectedVisibilityWrite::begin(&path, SelectedVisibilityWriteTargets::new(true, false))
+                .expect("begin");
+        write.complete().expect("complete");
+
+        let ms = MeasurementSet::open(&path).expect("reopen");
+        let main = ms.main_table();
+        let rows: Vec<usize> = (0..main.row_count()).collect();
+        let descriptions = super::main_data_description_ids(&ms, &rows).expect("DATA_DESC_ID");
+        let cells = main
+            .column_accessor("MODEL_DATA")
+            .and_then(|column| column.array_cells_owned_uncached(&rows))
+            .expect("MODEL_DATA");
+        let expected = |description: usize| match description {
+            0 => [1.0, 0.0, 0.0, 1.0],
+            _ => [1.0, 1.0, 0.0, 0.0],
+        };
+        let mut seen = [0, 0];
+        for ((row, description), cell) in rows.iter().zip(descriptions).zip(cells) {
+            let Some(ArrayValue::Complex32(cell)) = cell else {
+                panic!("row {row} has a MODEL_DATA cell");
+            };
+            assert_eq!(cell.shape(), [4, 3], "row {row}");
+            for ((correlation, _), value) in cell.indexed_iter().map(|(at, v)| ((at[0], at[1]), v))
+            {
+                assert_eq!(
+                    *value,
+                    Complex32::new(expected(description)[correlation], 0.0),
+                    "row {row}, description {description}, product {correlation}"
+                );
+            }
+            seen[description] += 1;
+        }
+        assert!(
+            seen[0] > 0 && seen[1] > 0,
+            "rows of both descriptions: {seen:?}"
+        );
+    }
+
+    /// A description the initial model cannot be built for (here a
+    /// polarization whose `NUM_CORR` is not its `CORR_TYPE`'s length) refuses
+    /// the write before `MODEL_DATA` exists, so no half-seeded column holding
+    /// `DATA` is left for a later write to take as seeded.
+    #[test]
+    fn an_unseedable_model_is_refused_before_model_data_exists() {
+        let root = tempfile::tempdir().expect("root");
+        let path = root.path().join("inconsistent.ms");
+        let mut request = SyntheticObservationRequest::vla_ppdisk(
+            root.path().join("unused.fits"),
+            &path,
+            tutorial_vla_a_antennas(),
+        );
+        request.predict_model = false;
+        request.duration_seconds = 4.0;
+        request.integration_seconds = 2.0;
+        generate_synthetic_observation_ms(&request).expect("simulate");
+        let mut ms = MeasurementSet::open(&path).expect("open");
+        ms.polarization_mut()
+            .expect("POLARIZATION")
+            .set_i32(0, "NUM_CORR", 3)
+            .expect("an inconsistent NUM_CORR");
+        ms.save().expect("save");
+        drop(ms);
+        let refused =
+            SelectedVisibilityWrite::begin(&path, SelectedVisibilityWriteTargets::new(true, false));
+        assert!(
+            matches!(&refused, Err(error) if error.to_string().contains("CORR_TYPE")),
+            "{:?}",
+            refused.err()
+        );
+        let ms = MeasurementSet::open(&path).expect("reopen");
+        assert!(
+            !ms.main_table()
+                .schema()
+                .expect("schema")
+                .contains_column("MODEL_DATA"),
+            "no MODEL_DATA was added"
+        );
+    }
 }

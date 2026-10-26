@@ -1431,16 +1431,21 @@ fn stokes_code(stokes: StokesProduct) -> i32 {
     }
 }
 
+/// The imported rows' `MODEL_DATA`: CASA's initial model
+/// ([`casa_ms::initial_model_visibility`]), channel by channel. CASA's
+/// `importvla` fills it by position instead (`VLAFiller.cc`: with four
+/// products the second and third are 0, otherwise every product is 1).
+/// The two agree wherever cross hands come with all four products, which
+/// this importer orders `RR RL LR LL`; a cross hand in a list of two would
+/// hold 1 there and 0 here.
 fn build_model_data(corr_types: &[i32], n_chan: usize) -> Vec<Complex32> {
     let mut values = Vec::with_capacity(corr_types.len() * n_chan);
     for _ in 0..n_chan {
-        for &corr_type in corr_types {
-            let value = match corr_type {
-                5 | 8 => Complex32::new(1.0, 0.0),
-                _ => Complex32::new(0.0, 0.0),
-            };
-            values.push(value);
-        }
+        values.extend(
+            corr_types
+                .iter()
+                .map(|code| casa_ms::initial_model_visibility(*code)),
+        );
     }
     values
 }
