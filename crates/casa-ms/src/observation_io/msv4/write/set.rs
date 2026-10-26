@@ -95,22 +95,25 @@ impl Msv4ProcessingSetWriter {
         Ok(writer)
     }
 
-    /// Declare the dataset that `catalogue`'s partition `partition`, data
-    /// group `data_group` and `grid` describe, stored as `options` say,
-    /// and return its writer ([`Msv4Writer`]). Every coordinate and
-    /// sub-dataset is written now; the payload follows from the writer's
-    /// batches.
+    /// Declare the dataset that `catalogue`'s partition `partition`, its
+    /// data groups `data_groups` and `grid` describe, stored as `options`
+    /// say, and return its writer ([`Msv4Writer`]). The first group carries
+    /// every role; each further one only its visibilities, sharing the
+    /// first's flags, weights and UVW (MSv2's `corrected` and `model`).
+    /// Every coordinate and sub-dataset is written now; the payload follows
+    /// from the writer's batches.
     ///
     /// # Errors
     ///
     /// When the processing set already has a dataset of that name, the
-    /// declaration is inconsistent, or a frame, scale or unit is outside
-    /// the profile.
+    /// declaration is inconsistent (a group missing, declared twice, or
+    /// not sharing the first's flags, weights and UVW), or a frame, scale
+    /// or unit is outside the profile.
     pub fn dataset(
         &self,
         catalogue: &Catalogue,
         partition: PartitionId,
-        data_group: &str,
+        data_groups: &[&str],
         grid: &TimeBaselineGrid,
         options: &Msv4StorageOptions,
     ) -> Result<Msv4Writer, ObservationError> {
@@ -120,7 +123,7 @@ impl Msv4ProcessingSetWriter {
             &self.registry,
             catalogue,
             partition,
-            data_group,
+            data_groups,
             grid,
             options,
         )

@@ -55,7 +55,7 @@ pub(crate) fn create(
     let (catalogue, grid) = declaration(observation, rename);
     let set = Msv4ProcessingSetWriter::create(out).expect("create");
     let writer = set
-        .dataset(&catalogue, PartitionId(0), "base", &grid, &storage())
+        .dataset(&catalogue, PartitionId(0), &["base"], &grid, &storage())
         .expect("declare");
     (set, writer)
 }
@@ -421,7 +421,7 @@ fn the_writer_refuses_batches_that_disagree_with_the_declaration() {
         )
         .expect("create");
         let mut writer = set
-            .dataset(&catalogue, PartitionId(0), "base", &grid, &storage())
+            .dataset(&catalogue, PartitionId(0), &["base"], &grid, &storage())
             .expect("declare");
         let mut traversal = v4
             .bind_read(&per_times(&v4, request(0..8, 0), 4))
@@ -443,7 +443,7 @@ fn the_writer_refuses_batches_that_disagree_with_the_declaration() {
     assert!(
         Msv4ProcessingSetWriter::create(&root.path().join("unknown-field.ps.zarr"))
             .expect("create")
-            .dataset(&catalogue, PartitionId(0), "base", &grid, &storage())
+            .dataset(&catalogue, PartitionId(0), &["base"], &grid, &storage())
             .is_err(),
         "a grid naming a field the catalogue lacks"
     );

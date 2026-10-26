@@ -36,7 +36,8 @@ struct Placement {
 /// A batch the declaration admits: the views a write encodes, each proven
 /// present, and where its times go.
 struct Checked<'b> {
-    values: ArrayView3<'b, Complex32>,
+    /// Each declared group's visibilities, in declaration order.
+    values: Vec<ArrayView3<'b, Complex32>>,
     flags: ArrayView3<'b, bool>,
     weights: ArrayView3<'b, f32>,
     uvw: UvwView<'b>,
@@ -62,33 +63,49 @@ fn mismatch(what: &str) -> ObservationError {
 }
 
 impl Msv4Writer {
-    /// Write `batch`: whole times of the declared grid, every channel,
-    /// every product, every role.
+    /// Write `batch` to a dataset of one data group: [`Self::write_groups`]
+    /// with that batch alone.
     ///
-    /// Before any byte is written the batch is checked against the
-    /// declaration: its partition, baseline table, channel frequencies and
-    /// frame, correlation products, visibility units and UVW frame must be
-    /// the declared ones (not merely the same counts); each time's instant,
-    /// field, scan and interval must be the grid's. The batch's grid is the
-    /// dataset's, so its visibilities and flags are encoded straight from
+    /// # Errors
+    ///
+    /// As [`Self::write_groups`].
+    pub fn write_batch(&mut self, batch: &VisibilityBatch<'_>) -> Result<(), ObservationError> {
+        self.write_groups(&[*batch])
+    }
+
+    /// Write one batch per declared data group, in declaration order, all
+    /// of the same times: whole times of the declared grid, every channel
+    /// and every product. The first group's batch carries every role; a
+    /// further group's needs only its visibilities.
+    ///
+    /// Before any byte is written each batch is checked against the
+    /// declaration: its group, partition, baseline table, channel
+    /// frequencies and frame, correlation products, visibility units and
+    /// UVW frame must be the declared ones (not merely the same counts);
+    /// each time's instant, field, scan and interval must be the grid's,
+    /// and every batch's times the first's. The batches' grid is the
+    /// dataset's, so their visibilities and flags are encoded straight from
     /// their views; a weight shared by every channel is written for each
     /// channel (counted as packed).
     ///
-    /// The chunks the batch covers whole are stored at once. Its times in a
-    /// chunk it covers only partly are held (copied) until the chunk's
-    /// other times arrive, and the chunk is then stored whole, so batches in
-    /// time order encode every chunk once whatever their size; at most one
-    /// chunk of times is held ([`Self::buffer_bytes`]). Held times that the
-    /// next batch does not continue are stored as they are, and that chunk
-    /// is decoded and re-encoded when its other times come
+    /// The chunks the batches cover whole are stored at once. Their times
+    /// in a chunk they cover only partly are held (copied) until the
+    /// chunk's other times arrive, and the chunk is then stored whole, so
+    /// batches in time order encode every chunk once whatever their size;
+    /// at most one chunk of times is held ([`Self::buffer_bytes`]). Held
+    /// times that the next batches do not continue are stored as they are,
+    /// and that chunk is decoded and re-encoded when its other times come
     /// ([`Msv4WriteCounters::partial_chunks`]).
     ///
     /// # Errors
     ///
-    /// When a check fails, a time is written twice, or the batch is a
-    /// channel window: nothing of the batch is then written or held. A
-    /// storage error leaves the dataset incomplete; drop the writer.
-    pub fn write_batch(&mut self, batch: &VisibilityBatch<'_>) -> Result<(), ObservationError> {
+    /// When a check fails, a time is written twice, or a batch is a channel
+    /// window: nothing of the batches is then written or held. A storage
+    /// error leaves the dataset incomplete; drop the writer.
+    pub fn write_groups(
+        &mut self,
+        batches: &[VisibilityBatch<'_>],
+    ) -> Result<(), ObservationError> {
         let Checked {
             values,
             flags,
@@ -98,8 +115,11 @@ impl Msv4Writer {
             exposure,
             samples_per_time,
             placement,
-        } = self.check(batch)?;
-        let values = contiguous(values, "visibilities")?;
+        } = self.check(batches)?;
+        let values = values
+            .into_iter()
+            .map(|values| contiguous(values, "visibilities"))
+            .collect::<Result<Vec<_>, _>>()?;
         let flags = contiguous(flags, "flags")?;
         self.gather_times(centroid, exposure, samples_per_time);
         if !weights.is_standard_layout() {
@@ -129,16 +149,17 @@ impl Msv4Writer {
                 Step::Hold(held) => {
                     self.counters.held_elements += held.len() * per.elements();
                     let part = columns.times(&in_batch(&held), per);
-                    self.held.hold(held, part, per, self.chunk_times.min(total));
+                    self.held
+                        .hold(held, &part, per, self.chunk_times.min(total));
                 }
                 Step::Store(run) => {
                     store(
                         payload,
                         &run,
-                        columns.times(&in_batch(&run), per),
+                        &columns.times(&in_batch(&run), per),
                         &self.options,
                     )?;
-                    self.counters.region_writes += 6;
+                    self.counters.region_writes += 5 + per.groups;
                 }
                 Step::Release => release(
                     &mut self.held,
@@ -161,6 +182,7 @@ impl Msv4Writer {
         PerTime {
             baselines,
             cube: baselines * channels * correlations,
+            groups: self.target.groups.len(),
         }
     }
 
@@ -176,8 +198,36 @@ impl Msv4Writer {
 
     /// Everything the write needs of `batch`, checked against the
     /// declaration before any byte is written.
-    fn check<'b>(&self, batch: &VisibilityBatch<'b>) -> Result<Checked<'b>, ObservationError> {
-        self.check_context(batch)?;
+    fn check<'b>(&self, batches: &[VisibilityBatch<'b>]) -> Result<Checked<'b>, ObservationError> {
+        if batches.len() != self.target.groups.len() {
+            return Err(request_error(format!(
+                "the dataset declares {} data groups and {} batches were given",
+                self.target.groups.len(),
+                batches.len()
+            )));
+        }
+        let batch = &batches[0];
+        for (index, each) in batches.iter().enumerate() {
+            self.check_context(each, index)?;
+        }
+        let unix = MjdHighPrec::new(UNIX_EPOCH_MJD, 0.0);
+        let mut values = Vec::with_capacity(batches.len());
+        for other in batches {
+            if other.times() != batch.times()
+                || (0..batch.times()).any(|t| {
+                    other.time.seconds_since(t, unix).to_bits()
+                        != batch.time.seconds_since(t, unix).to_bits()
+                })
+            {
+                return Err(mismatch("times of a further group's batch"));
+            }
+            values.push(
+                other
+                    .group
+                    .values
+                    .ok_or_else(|| request_error("a written batch carries its visibilities"))?,
+            );
+        }
         let timing = &batch.timing;
         let (Some(centroid), Some(exposure), Some(_), Some(scan)) = (
             timing.centroid,
@@ -190,10 +240,9 @@ impl Msv4Writer {
             ));
         };
         let group = &batch.group;
-        let (Some(values), Some(flags), Some(weights), Some(uvw)) =
-            (group.values, group.flags, group.weights, group.uvw)
+        let (Some(flags), Some(weights), Some(uvw)) = (group.flags, group.weights, group.uvw)
         else {
-            return Err(request_error("a written batch carries every role"));
+            return Err(request_error("the first group's batch carries every role"));
         };
         Ok(Checked {
             values,
@@ -207,10 +256,19 @@ impl Msv4Writer {
         })
     }
 
-    /// The batch's context against the declaration's, before any sample.
-    fn check_context(&self, batch: &VisibilityBatch<'_>) -> Result<(), ObservationError> {
+    /// The context of `batch`, of declared group `group`, against the
+    /// declaration's, before any sample.
+    fn check_context(
+        &self,
+        batch: &VisibilityBatch<'_>,
+        group: usize,
+    ) -> Result<(), ObservationError> {
         let target = &self.target;
         let entry = &target.entry;
+        let declared = &target.groups[group];
+        if batch.group.entry.name != declared.name {
+            return Err(mismatch("data group"));
+        }
         if batch.partition != target.partition {
             return Err(mismatch("partition"));
         }
@@ -236,12 +294,12 @@ impl Msv4Writer {
             return Err(mismatch("correlation products"));
         }
         let group = &batch.group;
-        if group.entry.units != target.group.units {
+        if group.entry.units != declared.units {
             return Err(mismatch("visibility units"));
         }
         if group
             .uvw
-            .is_some_and(|uvw| uvw.reference() != target.group.uvw_frame.effective)
+            .is_some_and(|uvw| uvw.reference() != declared.uvw_frame.effective)
         {
             return Err(mismatch("UVW frame"));
         }
@@ -364,11 +422,13 @@ impl Msv4Writer {
 fn store(
     payload: &Payload,
     times: &Range<usize>,
-    columns: Columns<'_>,
+    columns: &Columns<'_>,
     options: &CodecOptions,
 ) -> Result<(), ObservationError> {
     let times = times.start as u64..times.end as u64;
-    store_times(&payload.values, &times, columns.values, options)?;
+    for (array, values) in payload.values.iter().zip(&columns.values) {
+        store_times(array, &times, values, options)?;
+    }
     store_times(&payload.flags, &times, columns.flags, options)?;
     store_times(&payload.weights, &times, columns.weights, options)?;
     store_times(&payload.uvw, &times, columns.uvw, options)?;
@@ -402,10 +462,11 @@ fn release(
     total: usize,
 ) -> Result<(), ObservationError> {
     let times = held.times();
-    store(payload, &times, held.columns(), options)?;
-    counters.region_writes += 6;
+    store(payload, &times, &held.columns(), options)?;
+    let variables = 5 + payload.values.len();
+    counters.region_writes += variables;
     if times != chunks::chunk_of(times.start, chunk, total) {
-        counters.partial_chunks += 6;
+        counters.partial_chunks += variables;
     }
     held.clear();
     Ok(())

@@ -15,6 +15,8 @@
 //! converter does, so both adapters deliver the same batches. The
 //! production readers and writers are unchanged.
 
+#[cfg(all(feature = "msv4", unix))]
+pub mod convert;
 mod grouping;
 mod msv2;
 #[cfg(feature = "msv4")]

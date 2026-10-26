@@ -195,7 +195,7 @@ fn the_msv2_time_reference_is_read_not_assumed() {
         matches!(
             Msv4ProcessingSetWriter::create(&root.path().join("tai.ps.zarr"))
                 .expect("create")
-                .dataset(v2.catalogue(), PartitionId(0), "base", &grid, &storage()),
+                .dataset(v2.catalogue(), PartitionId(0), &["base"], &grid, &storage()),
             Err(ObservationError::Unsupported { .. })
         ),
         "the writer does not label TAI seconds as unix/utc"

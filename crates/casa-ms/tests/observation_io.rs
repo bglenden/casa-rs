@@ -3,6 +3,9 @@
 //! (`docs/measurement-set/trial/README.md`): the MSv4 store XRADIO wrote
 //! from the MSv2, read through both adapters into the same batches.
 
+#[cfg(unix)]
+#[path = "observation_io/convert.rs"]
+mod convert;
 #[path = "observation_io/refusals.rs"]
 mod refusals;
 #[path = "observation_io/update.rs"]
@@ -1097,7 +1100,7 @@ fn flag_row_is_folded_into_the_flags() {
         .dataset(
             &catalogue,
             PartitionId(0),
-            "base",
+            &["base"],
             &grid,
             &writer::storage(),
         )

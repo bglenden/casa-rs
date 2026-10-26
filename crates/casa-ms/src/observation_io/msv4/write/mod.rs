@@ -10,9 +10,13 @@
 //! [`Msv4StorageOptions`]: dataset name, provenance, chunks and codec.
 //!
 //! The trial profile writes what the reader admits (module docs): the main
-//! dataset's coordinates and one data group (`VISIBILITY`, `FLAG`,
-//! `WEIGHT`, `UVW`), `TIME_CENTROID` and `EFFECTIVE_INTEGRATION_TIME`, an
-//! `antenna_xds` and a `field_and_source_<group>_xds`. It writes no
+//! dataset's coordinates and its data groups: the first declared holds
+//! `VISIBILITY`, `FLAG`, `WEIGHT` and `UVW`, and each further one
+//! (`corrected`, `model`) its own `VISIBILITY_<GROUP>` beside the first's
+//! flags, weights and UVW, as XRADIO lays out a converted MSv2. Then
+//! `TIME_CENTROID` and `EFFECTIVE_INTEGRATION_TIME`, an `antenna_xds` and a
+//! `field_and_source_<group>_xds` of the first group, which every group
+//! names. It writes no
 //! pointing, system-calibration, weather or phase-calibration datasets and
 //! no `EFFECTIVE_CHANNEL_WIDTH`. Every time must be written exactly once,
 //! from batches whose coordinates and context match the declaration
@@ -104,7 +108,8 @@ pub struct Msv4WriteCounters {
 /// once at creation.
 struct Destination {
     partition: PartitionId,
-    group: DataGroupEntry,
+    /// The declared data groups; the first carries every role.
+    groups: Vec<DataGroupEntry>,
     entry: PartitionEntry,
     grid: TimeBaselineGrid,
     /// The grid's times in Unix seconds, by bit pattern.
@@ -113,7 +118,8 @@ struct Destination {
 
 /// The dataset's payload variables.
 struct Payload {
-    values: Array<FilesystemStore>,
+    /// Each declared group's visibilities, in declaration order.
+    values: Vec<Array<FilesystemStore>>,
     flags: Array<FilesystemStore>,
     weights: Array<FilesystemStore>,
     uvw: Array<FilesystemStore>,
@@ -308,19 +314,54 @@ fn request_error(reason: impl Into<String>) -> ObservationError {
     }
 }
 
-/// Resolve and check the declaration: the partition, its data group, the
-/// grid's identities against the catalogue, and the grid's times in Unix
-/// seconds.
+/// The visibility variable of declared group `index` named `name`: the
+/// first group's is `VISIBILITY`, any other's `VISIBILITY_<NAME>`
+/// (XRADIO's `VISIBILITY_CORRECTED`, `VISIBILITY_MODEL`).
+fn visibility_variable(index: usize, name: &str) -> String {
+    if index == 0 {
+        "VISIBILITY".to_string()
+    } else {
+        format!("VISIBILITY_{}", name.to_uppercase())
+    }
+}
+
+/// Resolve and check the declaration: the partition, its data groups
+/// (which must share the first's flags, weights and UVW), the grid's
+/// identities against the catalogue, and the grid's times in Unix seconds.
 fn destination(
     catalogue: &Catalogue,
     partition: PartitionId,
-    data_group: &str,
+    data_groups: &[&str],
     grid: &TimeBaselineGrid,
 ) -> Result<(Destination, Vec<f64>), ObservationError> {
-    let group = catalogue
-        .data_group(partition, data_group)
-        .ok_or_else(|| request_error(format!("no data group {data_group} in {partition:?}")))?
-        .clone();
+    let groups = data_groups
+        .iter()
+        .map(|name| {
+            catalogue
+                .data_group(partition, name)
+                .cloned()
+                .ok_or_else(|| request_error(format!("no data group {name} in {partition:?}")))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let Some(first) = groups.first() else {
+        return Err(request_error("a dataset declares at least one data group"));
+    };
+    if groups.iter().any(|group| {
+        group.flags != first.flags
+            || group.weights != first.weights
+            || group.uvw != first.uvw
+            || group.uvw_frame != first.uvw_frame
+    }) {
+        return Err(ObservationError::Unsupported {
+            what: "data groups that do not share the first group's flags, weights and UVW",
+        });
+    }
+    let mut names: Vec<&str> = data_groups.to_vec();
+    names.sort_unstable();
+    names.dedup();
+    if names.len() != data_groups.len() {
+        return Err(request_error("a data group is declared twice"));
+    }
     let entry = catalogue.partition(partition).clone();
     let times = grid.times_s.len();
     if grid.field_per_time.len() != times || grid.scan_per_time.len() != times {
@@ -377,7 +418,7 @@ fn destination(
     Ok((
         Destination {
             partition,
-            group,
+            groups,
             entry,
             times: unix_times
                 .iter()
@@ -398,11 +439,11 @@ impl Msv4Writer {
         registry: &Arc<set::Registry>,
         catalogue: &Catalogue,
         partition: PartitionId,
-        data_group: &str,
+        data_groups: &[&str],
         grid: &TimeBaselineGrid,
         options: &Msv4StorageOptions,
     ) -> Result<Self, ObservationError> {
-        let (target, unix_times) = destination(catalogue, partition, data_group, grid)?;
+        let (target, unix_times) = destination(catalogue, partition, data_groups, grid)?;
         let chunk_times = usize::try_from(options.chunks[0].max(1))
             .map_err(|_| request_error("a chunk of more times than a usize holds"))?;
         let mut writer = Self {
@@ -424,7 +465,7 @@ impl Msv4Writer {
             counters: Msv4WriteCounters::default(),
         };
         let root = format!("/{}", options.dataset_name);
-        let fields_xds = format!("field_and_source_{data_group}_xds");
+        let fields_xds = format!("field_and_source_{}_xds", data_groups[0]);
         let observation = catalogue.observation(writer.target.entry.observation);
         writer.write_main_group(store, &root, observation, options, &fields_xds)?;
         writer.write_coordinates(store, &root, catalogue, &unix_times)?;
@@ -447,20 +488,21 @@ impl Msv4Writer {
         options: &Msv4StorageOptions,
         fields_xds: &str,
     ) -> Result<(), ObservationError> {
-        let group = &self.target.group;
         let mut groups = serde_json::Map::new();
-        groups.insert(
-            group.name.clone(),
-            json!({
-                "correlated_data": "VISIBILITY",
-                "flag": "FLAG",
+        for (index, group) in self.target.groups.iter().enumerate() {
+            groups.insert(
+                group.name.clone(),
+                json!({
+                    "correlated_data": visibility_variable(index, &group.name),
+                    "flag": "FLAG",
                 "weight": "WEIGHT",
                 "uvw": "UVW",
                 "field_and_source": fields_xds,
                 "description": "Data group written by the casa-rs MSv4 trial writer",
                 "date": options.creation_date,
-            }),
-        );
+                }),
+            );
+        }
         let mut info = json!({
             "observer": observation.observers,
             "release_date": options.creation_date,
@@ -633,7 +675,7 @@ impl Msv4Writer {
         let chunks = options.chunks;
         // An undeclared unit is written as XRADIO's converter spells it, so
         // that no reader takes the data for calibrated janskys.
-        let units = match &self.target.group.units {
+        let units = |group: &DataGroupEntry| match &group.units {
             VisibilityUnits::Jansky => "Jy".to_string(),
             VisibilityUnits::Declared(units) => units.clone(),
             VisibilityUnits::Undeclared => "unkown".to_string(),
@@ -651,16 +693,24 @@ impl Msv4Writer {
         // Fill values are the padding convention: a cell never delivered
         // reads back flagged, its values and weight NaN as XRADIO pads
         // them, so the non-finite weight marks it as padding.
-        let values = create_array(
-            store,
-            &format!("{root}/VISIBILITY"),
-            cube(
-                "complex64",
-                8,
-                json!(["NaN", "NaN"]),
-                json!({"type": "quanta", "units": units, "coordinates": coordinates}),
-            ),
-        )?;
+        let values = self
+            .target
+            .groups
+            .iter()
+            .enumerate()
+            .map(|(index, group)| {
+                create_array(
+                    store,
+                    &format!("{root}/{}", visibility_variable(index, &group.name)),
+                    cube(
+                        "complex64",
+                        8,
+                        json!(["NaN", "NaN"]),
+                        json!({"type": "quanta", "units": units(group), "coordinates": coordinates}),
+                    ),
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         let flags = create_array(
             store,
             &format!("{root}/FLAG"),
@@ -689,7 +739,7 @@ impl Msv4Writer {
                 dimensions: &["time", "baseline_id", "uvw_label"],
                 attributes: json!({
                     "type": "uvw", "units": "m",
-                    "frame": super::metadata::direction_name(self.target.group.uvw_frame.effective)?,
+                    "frame": super::metadata::direction_name(self.target.groups[0].uvw_frame.effective)?,
                     "coordinates": coordinates,
                 }),
             },
@@ -740,7 +790,7 @@ impl Msv4Writer {
             .iter()
             .map(|field| &catalogue.fields[field.0 as usize])
             .collect();
-        let frame = self.target.group.uvw_frame.effective;
+        let frame = self.target.groups[0].uvw_frame.effective;
         if fields
             .iter()
             .any(|field| field.phase_centre.refer() != frame)

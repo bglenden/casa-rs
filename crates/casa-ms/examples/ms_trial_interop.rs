@@ -76,7 +76,7 @@ fn write(ms: &Path, out: &Path) -> Result<(), Error> {
         codec: Msv4Codec::BloscLz4,
     };
     let set = Msv4ProcessingSetWriter::create(out)?;
-    let mut writer = set.dataset(&catalogue, PartitionId(0), "base", &grid, &options)?;
+    let mut writer = set.dataset(&catalogue, PartitionId(0), &["base"], &grid, &options)?;
     // Four times per batch, so batches straddle the five-time chunks and
     // the writer holds their partial chunks.
     let mut traversal = observation.bind_read(&per_times(&*observation, 4)?)?;
