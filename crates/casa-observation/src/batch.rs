@@ -145,7 +145,7 @@ impl DataGroupView<'_> {
 /// flag is set or, among the roles read, its visibility or weight is not
 /// finite. A delivered flag already marks every absent acquisition, in
 /// every store: MSv2 `FLAG_ROW` and the cells the MSv2 adapter pads (no row
-/// filled them: flagged, NaN, weight 0) are flagged, and the MSv4 adapter
+/// filled them: flagged, values and weights NaN) are flagged, and the MSv4 adapter
 /// folds a non-finite stored weight into the flag, because XRADIO pads a
 /// cell no row filled with NaN and leaves its `FLAG` false. So the rule
 /// gives one answer for one observation whichever store holds it and
@@ -206,7 +206,7 @@ impl Validity<'_> {
 /// partition's table ([`Self::baselines`]); the coordinates cost `T + B`
 /// entries, not `T × B`. Both stores deliver this shape: MSv4 holds it, the
 /// MSv2 adapter places rows on it at opening and pads the cells no row
-/// filled (flag true, weight 0, values NaN). Field and scan are per time.
+/// filled (flag true, values and weights NaN). Field and scan are per time.
 ///
 /// Every view is filled and checked before the batch is delivered: reading
 /// an element performs no I/O or decoding. The borrow keeps the buffers

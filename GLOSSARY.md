@@ -164,10 +164,10 @@ _Avoid_: Row, visibility (which is one value of a sample)
 
 **Padding**:
 A grid cell no acquisition fills (an antenna that dropped out, a baseline not
-written): delivered flagged in every store, with NaN values and auxiliaries
-(weight zero from MSv2; an XRADIO store's own padding has NaN weights, which
-the MSv4 adapter folds into the flag). The validity rule excludes it; nothing
-is read from disk for it.
+written): delivered flagged in every store, with NaN values, weights and
+auxiliaries (an MSv4 store holds its own padding with NaN weights, as XRADIO
+pads, and the MSv4 adapter folds the non-finite weight into the flag). The
+validity rule excludes it; nothing is read from disk for it.
 _Avoid_: Missing row, absent slot, occupancy
 
 **Batch Shape**:
@@ -196,6 +196,20 @@ The element order inside one batch, `[sample, channel, correlation]`,
 correlation fastest, as both stores deliver it without a transpose. A
 channel-major view of the same memory is free; contiguity per plane is not.
 _Avoid_: Layout, memory order
+
+**Update Session**:
+One owner of a store that reads it and writes declared targets back: it
+holds the process's write intent on the store, lends the observation for
+reading and one updater at a time for writing, and resolves each target's
+variable and the data groups sharing it before any payload is written.
+_Avoid_: Writer (which creates a new store), read-write handle
+
+**Patch**:
+The new values one target receives for the samples of a delivered batch:
+visibilities, a flag change (flags set and cleared, others kept) or weights.
+A store writes it to its own units (MSv2 cells, MSv4 chunks) and reads a unit
+back only when the patch supplies it partly.
+_Avoid_: Mutation batch, write-back buffer
 
 ## Imaging execution
 

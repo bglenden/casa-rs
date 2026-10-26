@@ -19,6 +19,7 @@ mod grouping;
 mod msv2;
 #[cfg(feature = "msv4")]
 mod msv4;
+mod update;
 
 use std::path::Path;
 
@@ -29,6 +30,9 @@ pub use msv2::{Msv2Cursor, Msv2Observation};
 pub use msv4::{
     Msv4Codec, Msv4Cursor, Msv4Observation, Msv4StorageOptions, Msv4WriteCounters, Msv4Writer,
 };
+pub use update::UpdateSession;
+#[cfg(unix)]
+pub use update::open_update;
 
 /// When a cursor announces that a scientific group's input is complete.
 ///

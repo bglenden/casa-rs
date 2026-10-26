@@ -584,6 +584,18 @@ change control below. The owner waived an independent re-review of the
 trial's revision 4, which answered the design and code reviews of revision
 3, and asked for the trial PR to be marked ready.
 
+**Order agreed with the owner, 2026-10-26.** What shapes the interfaces
+comes before any consumer is converted: (1) the design and trial on
+`main` (#878); (2) a write-back trial on both stores (update mutation
+scope, interrupted-update failure scope and MSv4 atomic replacement, the
+mixed-session lock rule, whole-unit writes without read-back, flag bits);
+(3) an MSv2 ↔ MSv4 converter in both directions, with MSv2 creation, the
+conversion-loss policy and the retention, codec-thread and pin
+measurements on real data; (4) the calibration prerequisites (the `SIGMA`
+solve weight, the caltable round trip); (5) the imaging port, then the
+calibration port. The M3 gates, the flagging memory gate and explicit
+narrowing stay with their own milestones.
+
 Every implementation packet/PR includes:
 
 1. Work issue, accepted contract revision and prerequisite milestone links.

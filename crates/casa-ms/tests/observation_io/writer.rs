@@ -43,13 +43,13 @@ pub(crate) fn storage() -> Msv4StorageOptions {
     }
 }
 
-fn create(out: &Path, observation: &dyn Observation, rename: bool) -> Msv4Writer {
+pub(crate) fn create(out: &Path, observation: &dyn Observation, rename: bool) -> Msv4Writer {
     let (catalogue, grid) = declaration(observation, rename);
     Msv4Writer::create(out, &catalogue, PartitionId(0), "base", &grid, &storage()).expect("create")
 }
 
 /// Write every batch of `observation` at `times` whole times per batch.
-fn write_all(writer: &mut Msv4Writer, observation: &dyn Observation, times: usize) {
+pub(crate) fn write_all(writer: &mut Msv4Writer, observation: &dyn Observation, times: usize) {
     let mut traversal = observation
         .bind_read(&per_times(observation, request(0..8, 0), times))
         .expect("bind");
@@ -177,6 +177,7 @@ fn a_padded_partition_is_declared_and_written() {
             padded += 1;
             assert!(back.flags.iter().all(|flag| *flag), "padding is flagged");
             assert!(back.values.iter().all(|value| value.re.is_nan()));
+            assert!(back.weights.iter().all(|weight| weight.is_nan()));
             assert!(back.uvw.iter().all(|metres| metres.is_nan()));
             assert!(back.centroid.is_nan() && back.exposure.is_nan());
         } else {

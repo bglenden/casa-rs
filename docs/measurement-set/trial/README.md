@@ -147,7 +147,7 @@ What changed at the boundary:
 | --- | --- | --- |
 | D1 | Per-partition constants (frequencies and frame, correlations, baseline table, time system, data groups with units and UVW frame) live once in `PartitionEntry`; a batch's views borrow them (`buffers.batch(&catalogue)`) and copy nothing; `BatchFill::finish` checks the batch against the catalogue. | `both_stores_deliver_one_batch_shape` (frequency and baseline pointers are the catalogue's) |
 | D2, D4 | A partition is a store unit described by content (spectral setup, intents, observing session, feed pair). The MSv2 adapter partitions MAIN rows as XRADIO does (`DATA_DESC_ID` × `OBS_MODE` × `OBSERVATION_ID` × `EPHEMERIS_ID` × feed pair, plus `OpenOptions::partition_scheme`); duplicate (time, baseline) rows and several `PROCESSOR_ID`s are refused at opening. | `catalogues_describe_the_same_observation`, `duplicate_rows_are_refused_at_opening` |
-| D3 | One topology: the MSv2 adapter places rows on the time × baseline grid at opening (`msv2/index.rs`); a cell no row fills is padding (flag true, weight 0, NaN values and auxiliaries). `Irregular`, `Occupancy` and the row-order refusal are gone. | `msv2_cells_no_row_fills_are_padding` |
+| D3 | One topology: the MSv2 adapter places rows on the time × baseline grid at opening (`msv2/index.rs`); a cell no row fills is padding (flag true, NaN values and auxiliaries, weight 0; NaN since the write-back trial). `Irregular`, `Occupancy` and the row-order refusal are gone. | `msv2_cells_no_row_fills_are_padding` |
 | D5 | `FLAG_ROW` is folded into the flags at fill; `row_flags` is gone. One weight view `[sample, channel, correlation]`: MSv2 `WEIGHT` is seen through a zero channel stride. | `flag_row_is_folded_into_the_flags`, `both_stores_deliver_one_batch_shape` |
 | D6, D11 | The request names a partition set; `bind_read` returns a `Traversal` of one `Send` cursor per partition with the estimate. | `the_estimate_is_the_bound_realization_and_models_the_store` |
 | D7, D10 | A byte budget (`batch_bytes`) replaces `max_samples`; `Observation::estimate` costs a batch shape from the catalogue and the store's geometry (times, baselines, bytes per sample, whole times per batch, batches, decode units, amplification, natural blocks, padded fraction) without reading payload, and binding returns the same `Estimate`. | same, `the_budget_fits_whole_times_or_refuses_binding` |
@@ -323,7 +323,8 @@ spread, `SCHEDULE` parser and partial-chunk count 7.
   back whenever the batch is dropped, and takes none at the end (revision 3;
   revision 2 asked without buffers, `NeedBuffers`).
 - An MSv2 row removed from the fixture leaves a padded cell: flagged, NaN
-  values, UVW and auxiliaries, weight 0, excluded by the validity rule; the
+  values, weights, UVW and auxiliaries (weight 0 until the write-back
+  trial), excluded by the validity rule; the
   other 119 samples are unchanged, the batch count is the grid's and the
   estimate reports the padded fraction (1/120). A duplicated row is refused
   at opening, naming both rows. A row with `FLAG_ROW` set has every value
@@ -665,7 +666,8 @@ a data group and a `TimeBaselineGrid` (the scientific declaration) and
 the main dataset's coordinates, the data group (`complex64`, `bool`,
 `float32`, `float64`), `TIME_CENTROID` and `EFFECTIVE_INTEGRATION_TIME`, an
 `antenna_xds` and a `field_and_source_<group>_xds`. The payload variables'
-fill values are the padding convention (NaN, flag true, weight 0). Chunks
+fill values are the padding convention (flag true, values and weights NaN,
+as XRADIO pads). Chunks
 are regular (here `[5, 10, 4, 4]`). Payload variables use Blosc-LZ4, none or
 Zstandard; coordinates use Zstandard. Each writer creates its own staging
 directory beside the destination (exclusively, under a name no other
@@ -710,6 +712,134 @@ catalogue.
   22:13:57 TAI, while "Unix epoch in TAI plus the offset" gives 22:13:20.
   The first pass made exactly that error for `tai`; revision 1 reads and
   writes `unix`/`utc` only, and the oracle now compares instants.
+
+## Write-back: update sessions on both stores
+
+Agreed with the owner on 2026-10-26 as the step before any consumer is
+converted: the update side of the design is the part most likely to push
+back on the frozen read contract, and nearly every consumer writes
+something (`MODEL_DATA`, `CORRECTED_DATA`, `FLAG`). It realizes, narrowly,
+the update obligations of `contracts.md` section 7 that the design reviews
+raised: mutation scope over broadcast and data-group aliases (Pro R1),
+the failure scope of an interrupted update and MSv4 atomic replacement
+(Pro R3, Fable), the in-process lock rule of a mixed read/update session
+(Fable), no read-back of a unit a patch supplies whole (Fable), and what a
+flag change writes (Fable).
+
+**The interface** (`casa_observation::update`, `casa_ms::observation_io::update`):
+
+- `open_update(path, options, targets)` takes this process's write intent
+  on the store, opens it once, and resolves the declared `UpdateTarget`s
+  (data group, role, alias scope, create) before any payload. The session
+  lends the observation for reading and one `Updater` at a time for
+  writing, bound to a traversal and some targets.
+- `Updater::write(batch, values)` takes one `PatchValues` per bound target
+  for a batch the session delivered: visibilities, a flag change (set and
+  clear masks; elements neither names keep their stored flag), or weights
+  for the delivered channels or all of them. Values are checked against the
+  batch before anything is written.
+- The batch's sample addresses are found from its own times and the
+  partition's baselines (the MSv2 grid's rows, the MSv4 dataset's time
+  index): **the frozen read contract needed no change to be written
+  back.**
+
+| Law | What it shows |
+| --- | --- |
+| `a_model_pass_reads_one_group_and_writes_another` | One owner reads `base` and writes `model`: MSv2 creates `MODEL_DATA` holding CASA's initial model (120 cells seeded), writes 120 cells over it and reads none, and opens afterwards with a `model` group carrying `DATA`'s keywords; `DATA` is unchanged. MSv4 refuses to add a group at opening and rewrites `base`: six chunks written whole from the held windows, none read, 14,416 bytes held (five times of every element and its mark, and two chunk counts). |
+| `a_partial_model_pass_creates_model_data_over_casas_initial_model` | A two-channel model pass creates `MODEL_DATA`: its two channels hold the model and every other cell CASA's initial model, 1 in `XX` and `YY` and 0 in `XY` and `YX`, never `DATA`. |
+| `partial_units_are_read_once_and_whole_ones_never` | A two-channel window: MSv2 reads each of the 120 cells it changes partly; MSv4 reads the three chunks it covers partly once each, across three batches. Every other channel reads back unchanged. |
+| `a_weight_shared_by_channels_changes_only_as_a_whole` | Pro R1: an MSv2 `WEIGHT` serves every channel, so changing the delivered two channels is refused and nothing is written; `WeightChannels::All` is the explicit whole-scalar change. MSv4 changes just the delivered channels. |
+| `a_shared_variable_is_written_only_with_its_aliases_accepted` | `base` and `model` share `FLAG`: a flag target of either is refused unless it accepts the other group as an alias, which the resolved target names; so is a `base` flag target in a session that creates `model`. |
+| `flag_changes_keep_row_flags_and_padding` | Clearing `FLAG` leaves a `FLAG_ROW` row excluded; a padded cell (no MSv2 row) receives nothing (`unaddressed`) and clearing its flag is refused. |
+| `msv4_padding_stays_flagged` | Clearing a flag or writing a finite weight where the MSv4 store holds padding (a non-finite weight) is refused, and so is clearing flags from a traversal that does not read weights. |
+| `padding_the_writer_stores_stays_padding` | An MSv2 with a row removed, written by casa-rs's writer, holds its padding with a NaN weight, as XRADIO does: the updater refuses to clear its flag or weight it, and it reads back flagged. |
+| `an_empty_flag_change_keeps_every_flag` | A flag change with neither mask keeps every flag: MSv2 rewrites the cells as stored, MSv4 writes nothing. |
+| `clearing_every_msv4_flag_erases_chunks_and_finishes` | Clearing every flag makes each `FLAG` chunk equal to the fill value, which zarrs erases rather than stores, an absent chunk included; the update finishes (its directories synchronized) and reads back unflagged. |
+| `an_msv4_batch_of_other_channels_is_refused_whole` | A batch whose channels are not the updater's traversal's is refused before any target takes it, so nothing of it is written. |
+| `a_session_reads_what_its_updaters_wrote` | A second traversal of the session's observation delivers what its first updater wrote, in both stores. |
+| `one_update_session_per_store_and_one_updater_per_session` | A second update session on a store, or a second live updater of a session, is a `Conflict`; one variable bound twice to an updater is refused (whichever wrote last would win); read-only observations open beside them. MSv2 states casacore's cross-process lock; MSv4 states atomic units and no cross-process lock. |
+| `an_msv2_updater_takes_its_batches_in_order` | The MSv2 updater plans its rows up front: a batch after a skipped one is refused, and finishing with rows unwritten fails. |
+| `a_failed_replacement_leaves_each_chunk_old_or_new` | Pro R3: a replacement failing after its temporary file is written (as a killed process leaves it) publishes nothing of that chunk: times 0..5 read new, 5..12 old, the temporary file stays unread beside the old chunk. |
+| `a_failed_first_write_leaves_an_absent_chunk_absent` | `FLAG`'s chunk `c/2/0/0/0` is absent (equal to the fill value); its failed first write leaves it absent, reading as the fill value, and the four chunks before it replaced. |
+| `a_failure_before_writing_changes_nothing` | A failure before any byte is written changes nothing. |
+
+**How each store writes.**
+
+- **MSv2** reuses production's bounded selected-row mutation
+  (`MeasurementSetWriteSession`): it plans the traversal's present rows,
+  takes casacore's write lock for the updater's life, and writes each
+  batch's cells in place, reading a cell back only when a patch covers it
+  partly. A failure leaves the rows already written, as casacore's writes
+  do.
+- **MSv4** holds one chunk-row of times per target variable (the window),
+  over the channel chunks the traversal reaches (every channel for
+  weights), and replaces each chunk whole through a store whose writes go
+  to a synchronized temporary file renamed over the chunk. The window
+  counts the elements assigned in each chunk: a chunk assigned whole is
+  encoded without reading it, one assigned partly is read once per window,
+  and an untouched one costs nothing. Every replacement is atomic; there is
+  no transaction across chunks. Finishing synchronizes the directories the
+  replacements changed (those whose objects it renamed or removed), so a
+  finished update is on disk wherever the filesystem honours `fsync`.
+
+**What it shows about the design.**
+
+1. **Addressing is enough.** A batch's times and the partition's baselines
+   locate every sample in both stores; no update map had to be added to the
+   read side.
+2. **Occupancy is implicit.** Padding is a missing MSv2 row or a NaN MSv4
+   weight; the batch carries no presence mask, so the MSv4 updater needs
+   weights read to keep padding flagged. An explicit presence role in the
+   batch (`contracts.md` section 8, "Occupancy") would make this uniform.
+3. **Production's MSv2 mutation plans every row up front** and takes
+   values as one `ArrayValue` per cell. Sparse updates (a flag pass that
+   skips unchanged batches) and the M2 hot path need it to plan per batch
+   and take typed columns.
+4. **MSv4 cannot gain a data group.** Writing a model to an MSv4 store needs
+   a structural write (a new variable and group); MSv2 adds the column.
+5. **Data groups are now the stores' own.** The MSv2 adapter lists
+   `corrected` and `model` where `CORRECTED_DATA` and `MODEL_DATA` exist,
+   as XRADIO's converter names them, all sharing `FLAG`, the weights and
+   `UVW`.
+6. **Padding needed one mark.** The MSv2 adapter padded with weight 0 and
+   casa-rs's writer stored that, so an MSv4 written from a padded MSv2
+   could not tell padding from a flagged acquisition, and a flag pass could
+   clear it. Padding is now a NaN weight in both stores (as XRADIO pads),
+   a contract revision to section 3; the validity rule already excluded a
+   non-finite weight. Finding 2's presence mask would remove the
+   inference.
+7. **A new model starts as CASA's.** The first version left a created
+   `MODEL_DATA` holding `DATA` wherever the pass did not reach, which gives
+   a later solve identity gains there. CASA initializes a new `MODEL_DATA`
+   to a unit point source, 1 and 0 in the cross hands `RL`, `LR`, `XY` and
+   `YX` (`VisSetUtil::initScrCols`, called by tclean's `addScrCols` and by
+   `VisSet`), and `CORRECTED_DATA` from `DATA`. The owner chose CASA's
+   model (2026-10-26): the updater installs `MODEL_DATA` from `DATA`'s
+   storage, the layout applycal's `CORRECTED_DATA` uses, and overwrites
+   every row with that model before the pass writes. casa-rs's other
+   writers differ and are a follow-up: imaging fills a new `MODEL_DATA`
+   with 0, and the simulator writes 1 in every product, cross hands
+   included.
+
+**Not done:** per-batch MSv2 row planning; `WEIGHT_SPECTRUM` and
+`FLAG_CATEGORY` (the fixture has neither); MSv4 structural writes; a
+process actually killed during a replacement (the injected failure leaves
+what a kill leaves); sweeping stray temporary files; the MSv2 read-back of
+partly covered cells one cell at a time; a failure while `MODEL_DATA` is
+being seeded, which leaves the rows not yet seeded holding `DATA`; the cost of synchronizing each
+replaced chunk at scale (step 3's converter measures it).
+
+**Independent review.** A separate agent reviewed the first version and
+found three blocking defects, all fixed with laws: a flag change with
+neither mask cleared every MSv2 flag of a whole cell; MSv4 padding written
+by casa-rs's writer (weight 0) could be cleared or weighted into an
+acquisition; and `MODEL_DATA` was seeded from `DATA` (finding 7). It also asked for
+one binding per variable, aliases for groups the session creates, a
+directory synchronization at finish and a window limited to the channels
+reached, all done. Its check of the fixes found one more defect (finishing
+failed after an absent chunk was erased, since its directory did not exist)
+and a batch of other channels taken by one target before another refused
+it; both are fixed with laws.
 
 ## Keep, change or discard: the trial's summary for design review
 
@@ -800,11 +930,11 @@ This pass touches parts of the M1 checklist and completes none of it.
 | `measures-bulk` | Native epoch, frequency and UVW array views only | Every family's prepared bulk conversion, ordered interpolation, scalar/CASA agreement, performance |
 | `group-lifecycle` | Time-bin, per-scan and per-integration groups keyed by field and scan, closure, concurrent fragments, split channel windows, `GroupCompletion`, one cursor per partition, `Catalogue::bind_to` | Groups merged across partitions by a consumer, late samples, solve → caltable → reopen → apply |
 | `work-unit-lifetimes` | Unequal channel units, shared pinning against packing, pools bounded in buffers and bytes, buffers returned at the end, abandoned work reported, a pool wait that can be bounded | Cooperating workers on the admitted team, cancellation in flight, cube minor-cycle separation |
-| `native-role-updates` | — | All |
+| `native-role-updates` | Update sessions on both stores: visibilities, flag set/clear changes and weights of declared targets; broadcast-weight and data-group alias rules; `FLAG_ROW` and padding preserved; whole-unit writes without read-back (write-back section) | `WEIGHT_SPECTRUM` and `FLAG_CATEGORY`, bit flags, per-batch MSv2 planning, MSv4 structural writes, conflicting queued patches |
 | `conversion-fidelity` | One loss-free MSv2 → MSv4 profile, both converters | Every audited loss row, rejection policies |
 | `source-free-create` | Common catalogue + grid declaration for both stores (the grid from the store's index), padding fill values and padded partitions, storage options, the narrow writer with per-batch validation, whole-chunk writes (partial chunks held), exclusive staging and no-replace publication | v2 creation from batches, producer seam, backpressure, publication failure injection, the held chunk admitted with the producer's batches |
 | `store-retention-executor` | zarrs pinned; concurrency target 1 | Key/handle retention plateau, W1/W4 thread and buffer counts |
-| `object-failure` | — | All |
+| `object-failure` | MSv4 chunk replacement through a temporary file and rename, with injected failures before writing and before the rename (including an absent chunk's first write); the changed directories synchronized at finish | A process killed mid-replacement, ENOSPC, the finish and synchronization boundary at scale |
 | `production-access-cost` | Narrow diagnostics on a tiny fixture; the estimate (bytes, batches, amplification, natural blocks, padding) as the planner's inquiry | The named MFS/cube/bandpass rows on both chunk geometries, noise bands |
 
 ## Unsupported in the trial (typed refusals)

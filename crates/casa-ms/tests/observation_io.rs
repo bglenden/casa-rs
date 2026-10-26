@@ -5,6 +5,8 @@
 
 #[path = "observation_io/refusals.rs"]
 mod refusals;
+#[path = "observation_io/update.rs"]
+mod update;
 #[path = "observation_io/work.rs"]
 mod work;
 #[path = "observation_io/writer.rs"]
@@ -931,8 +933,8 @@ fn owned_batch(event: Result<OwnedEvent, ObservationError>) -> casa_observation:
 }
 
 /// An MSv2 row absent from the grid (an antenna dropping out, a baseline
-/// not written) is padding: its cell is flagged, its values and UVW NaN,
-/// its weight zero and its time auxiliaries NaN, and the validity rule
+/// not written) is padding: its cell is flagged, its values, weights, UVW
+/// and time auxiliaries NaN (as XRADIO pads an MSv4), and the validity rule
 /// excludes it. Every other sample is unchanged, the batch count is the
 /// grid's, and the estimate reports the padded fraction.
 #[test]
@@ -993,7 +995,7 @@ fn msv2_cells_no_row_fills_are_padding() {
                         .iter()
                         .all(|v| v.re.is_nan() && v.im.is_nan())
                 );
-                assert!(weights.slice(cell).iter().all(|w| *w == 0.0));
+                assert!(weights.slice(cell).iter().all(|w| w.is_nan()));
                 assert!(batch.timing.centroid.expect("centroid").offsets_s()[sample].is_nan());
                 assert!(batch.interval_s(sample).expect("interval").is_nan());
                 assert!((0..8).all(|c| (0..4).all(|p| validity.excluded(sample, c, p))));

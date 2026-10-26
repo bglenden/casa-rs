@@ -11,6 +11,9 @@
 mod cursor;
 mod metadata;
 mod read;
+pub(super) mod store;
+pub(super) mod update;
+mod window;
 mod write;
 
 pub use cursor::Msv4Cursor;

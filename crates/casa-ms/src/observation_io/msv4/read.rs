@@ -48,6 +48,8 @@ pub(super) struct GroupArrays {
 /// One `VisibilityXds` dataset of the processing set: what its partition
 /// entry does not already state.
 pub(super) struct Dataset {
+    /// The dataset's group in the processing set (`/name`).
+    pub(super) path: String,
     /// `time` coordinate: seconds from the partition's origin.
     pub(super) times: Vec<f64>,
     /// `time.integration_time`, when stated.
@@ -286,6 +288,7 @@ impl Msv4Observation {
             ..partition
         });
         self.datasets.push(Dataset {
+            path: path.to_string(),
             times,
             interval_s,
             centroid,
