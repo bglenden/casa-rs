@@ -99,8 +99,14 @@ fn normalising_moves_only_angles_outside_the_range() {
     let inside = 1.0_f64;
     assert_eq!(mvangle_normalized(inside, -0.5), inside);
     let outside = 1.0 + 4.0 * std::f64::consts::PI;
-    assert_eq!(mvangle_normalized(outside, -0.5), outside - 2.0 * (2.0 * std::f64::consts::PI));
-    assert_eq!(mvangle_normalized(-1.0, 0.0), -1.0 + 2.0 * std::f64::consts::PI);
+    assert_eq!(
+        mvangle_normalized(outside, -0.5),
+        outside - 2.0 * (2.0 * std::f64::consts::PI)
+    );
+    assert_eq!(
+        mvangle_normalized(-1.0, 0.0),
+        -1.0 + 2.0 * std::f64::consts::PI
+    );
 }
 
 #[test]

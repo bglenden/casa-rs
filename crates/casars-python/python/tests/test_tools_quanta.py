@@ -8,6 +8,7 @@ with the object-surface bundle. Every expected value and message is CASA
 
 from __future__ import annotations
 
+import logging
 import math
 from typing import Any
 
@@ -28,8 +29,8 @@ CASA = casa_signatures("quanta")
 
 IMPLEMENTED = {
     "abs", "add", "angle", "canon", "canonical", "check", "compare", "convert", "div", "done",
-    "getunit", "getvalue", "isquantity", "mul", "neg", "quantity", "splitdate", "sub", "time",
-    "toangle", "totime", "type", "unit",
+    "formxxx", "getunit", "getvalue", "isquantity", "mul", "neg", "quantity", "splitdate", "sub", "time",
+    "toangle", "tos", "totime", "type", "unit",
 }
 NOT_YET_IMPLEMENTED = set(CASA["methods"]) - IMPLEMENTED
 
@@ -234,3 +235,35 @@ def test_unimplemented_methods_raise_not_implemented(method: str) -> None:
     required = [entry for entry in CASA["methods"][method] if entry["default"] is None]
     with pytest.raises(NotImplementedError, match=f"quanta.{method} is not yet implemented in casa-rs"):
         getattr(quanta(), method)(*["x" for _ in required])
+
+
+@pytest.mark.parametrize(
+    ("value", "form", "prec", "written"),
+    [
+        # CASA 6.7.6 (tools/simulation/simutil_oracle.py).
+        ("18h00m00.031s", "hms", 5, "18:00:00.03100"),
+        ("-22d59m59.6s", "dms", 5, "-022.59.59.600000"),
+        ("359.9999999deg", "dms", 5, "-000.00.00.000360"),
+        ("86399.9999999s", "hms", 5, "24:00:00.00000"),
+        ("720.25deg", "deg", 2, "0.25"),
+        ("-0.5deg", "+deg", 2, "359.5"),
+        ("3.14159265358979rad", "rad", 2, "3.14159"),
+    ],
+)
+def test_formxxx_writes_casas_strings(value: str, form: str, prec: int, written: str) -> None:
+    assert quanta().formxxx(value, format=form, prec=prec) == written
+
+
+def test_formxxx_answers_an_unknown_format_with_an_empty_string(caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.WARNING, logger="casars.tools.quanta"):
+        assert quanta().formxxx("1deg", format="xyz") == ""
+    assert caplog.messages == ["Don't understand xyz"]
+    with pytest.raises(RuntimeError, match="non-conforming unit"):
+        quanta().formxxx("1Jy", format="hms")
+
+
+def test_tos_writes_fixed_decimals_and_the_unit() -> None:
+    qa = quanta()
+    assert qa.tos(qa.quantity("100GHz")) == "100.000000000GHz"
+    assert qa.tos("229.98GHz", prec=0) == "230GHz"
+    assert qa.tos("1e-12Jy", prec=15) == "0.000000000001000Jy"

@@ -28,11 +28,238 @@
     }
   ],
   "methods": {
+    "approxBeam": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "configfile"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "freq"
+      }
+    ],
+    "average_direction": [
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "directions"
+      }
+    ],
+    "bandname": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "freq"
+      }
+    ],
+    "baselineLengths": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "configfile"
+      }
+    ],
+    "calc_pointings2": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spacing"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "size"
+      },
+      {
+        "default": "'hex'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "maptype"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "direction"
+      },
+      {
+        "default": "0.5",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "relmargin"
+      },
+      {
+        "default": "0.0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "beam"
+      }
+    ],
+    "dir_m2s": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "dir"
+      }
+    ],
+    "direction_splitter": [
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "direction"
+      }
+    ],
+    "isdirection": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "s"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "halt"
+      }
+    ],
+    "isquantity": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "s"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "halt"
+      }
+    ],
+    "itrf2loc": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "x"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "y"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "z"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "cx"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "cy"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "cz"
+      }
+    ],
+    "median_direction": [
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "directions"
+      }
+    ],
+    "noisetemp": [
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "telescope"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "freq"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "diam"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "epsilon"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "correlator"
+      }
+    ],
+    "polsettings": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "telescope"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "poltype"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "listall"
+      }
+    ],
+    "read_pointings": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "filename"
+      }
+    ],
     "readantenna": [
       {
         "default": "None",
         "kind": "POSITIONAL_OR_KEYWORD",
         "name": "antab"
+      }
+    ],
+    "wrapang": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "ang"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "target"
+      },
+      {
+        "default": "360.0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "period"
+      }
+    ],
+    "write_pointings": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "filename"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pointings"
+      },
+      {
+        "default": "1.0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "time"
       }
     ]
   },

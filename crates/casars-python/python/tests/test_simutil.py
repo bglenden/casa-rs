@@ -1,15 +1,20 @@
-"""`casars.simutil`: CASA's `simutil.readantenna` (#841).
+"""`casars.simutil`: CASA's `simutil` helper class (#841).
 
 `simutil` is CASA's Python helper class (`casatasks.private.simutil`), not a
-tool: casa-rs declares only `readantenna`, and the class is not in the
-object-surface bundle. The signatures are compared with CASA 6.7.6's
-(`data/casa_simutil_signatures.json`); the expected values are CASA 6.7.6's
-for the same files (probed 2026-10-21).
+tool, and is not in the object-surface bundle. casa-rs declares
+`readantenna` and (Phase 5a) the direction, pointing, receiver and baseline
+helpers `simobserve` uses. The signatures are compared with CASA 6.7.6's
+(`data/casa_simutil_signatures.json`). The expected values are CASA 6.7.6's:
+`readantenna`'s for the same files (probed 2026-10-21), and the rest from
+casa-simulation's CASA fixture (`tools/simulation/simutil_oracle.py`), which
+the Rust tests compare in full; here a sample checks the binding's
+arguments, results and state.
 """
 
 from __future__ import annotations
 
 import inspect
+import json
 import logging
 from pathlib import Path
 from typing import Any
@@ -57,8 +62,11 @@ def position(longitude: float, latitude: float, height: float) -> dict[str, Any]
 def test_the_class_has_casas_signatures() -> None:
     assert simutil.simutil.__module__ == "casars.simutil"
     assert describe(simutil.simutil) == CASA["constructor"]
-    assert describe(simutil.simutil.readantenna) == CASA["methods"]["readantenna"]
-    assert set(CASA["methods"]) == {"readantenna"}
+    declared = {name for name in dir(simutil.simutil) if not name.startswith("_")
+                and callable(getattr(simutil.simutil, name))}
+    assert declared == set(CASA["methods"])
+    for name, parameters in CASA["methods"].items():
+        assert describe(getattr(simutil.simutil, name)) == parameters, name
 
 
 def test_simutil_is_not_a_bundled_tool() -> None:
@@ -69,7 +77,8 @@ def test_simutil_is_not_a_bundled_tool() -> None:
 def test_signatures_match_a_live_casa_when_one_is_importable() -> None:
     live = pytest.importorskip("casatasks.private.simutil").simutil
     assert describe(simutil.simutil) == describe(live.__init__)
-    assert describe(simutil.simutil.readantenna) == describe(live.readantenna)
+    for name in CASA["methods"]:
+        assert describe(getattr(simutil.simutil, name)) == describe(getattr(live, name)), name
 
 
 @needs_measures_data
@@ -145,3 +154,145 @@ def test_missing_files_raise_os_errors(tmp_path: Path) -> None:
 def test_the_constructor_takes_casas_arguments() -> None:
     simutil.simutil("J2000 10h00m00 -30d00m00", "100GHz", "2GHz", "1h", True)
     assert inspect.signature(simutil.simutil).parameters["verbose"].default is False
+
+
+# The CASA fixture casa-simulation's Rust tests compare in full.
+FIXTURE = json.loads(
+    (Path(__file__).resolve().parents[3] / "casa-simulation" / "tests" / "data" / "simutil_casa.json")
+    .read_text(encoding="utf-8")
+)
+CONFIGS = Path(__file__).resolve().parents[3] / "casa-simulation" / "tests" / "data" / "readantenna"
+
+
+def test_the_constructor_keeps_casas_state() -> None:
+    u = simutil.simutil()
+    assert u.direction == ""
+    assert u.centerfreq == {"unit": "GHz", "value": 245.0}
+    assert (u.bandwidth, u.totaltime, u.verbose) == ({"unit": "GHz", "value": 1.0}, {"unit": "h", "value": 0.0},
+                                                    False)
+    assert u.pointings is None and u.telescopename is None
+    u.direction = "J2000 10h00m00 -30d00m00"
+    assert u.direction == "J2000 10h00m00 -30d00m00"
+
+
+def test_pointings_are_casas_and_kept() -> None:
+    cases = [case for case in FIXTURE["calc_pointings2"] if "pointings" in case and isinstance(case["direction"], str)]
+    assert len(cases) > 600
+    for case in cases[::25] + [case for case in cases if any(isinstance(s, dict) for s in case["size"])]:
+        u = simutil.simutil()
+        found = u.calc_pointings2(case["spacing"], case["size"], maptype=case["maptype"],
+                                  direction=case["direction"], relmargin=case["relmargin"], beam=case["beam"])
+        assert found == case["pointings"], case
+        assert u.pointings == found and u.direction == case["direction"]
+
+
+def test_pointings_default_to_the_objects_direction() -> None:
+    u = simutil.simutil("J2000 19h00m00 -23d00m00")
+    case = next(c for c in FIXTURE["calc_pointings2"]
+                if c["direction"] == "J2000 19h00m00 -23d00m00" and c["maptype"] == "hexagonal")
+    assert u.calc_pointings2(case["spacing"], case["size"], "hexagonal", beam=case["beam"]) == case["pointings"]
+    # One size string is used for both axes.
+    assert u.calc_pointings2("10arcsec", "40arcsec") == u.calc_pointings2("10arcsec", ["40arcsec", "40arcsec"])
+
+
+def test_a_list_of_directions_is_returned_as_given() -> None:
+    directions = ["J2000 10h00m00 -30d00m00", "J2000 10h00m01 -30d00m00"]
+    assert simutil.simutil().calc_pointings2("10arcsec", "30arcsec", direction=directions) == directions
+
+
+def test_pointing_files_read_and_write_as_casas(tmp_path: Path) -> None:
+    for case in FIXTURE["read_pointings"]:
+        path = write(tmp_path, case["name"] + ".ptg.txt", case["text"])
+        u = simutil.simutil()
+        assert u.read_pointings(path) == (case["n"], case["pointings"], case["times"])
+        assert u.pointings == case["pointings"]
+    with pytest.raises(RuntimeError, match="No valid lines found in pointing file"):
+        simutil.simutil().read_pointings(write(tmp_path, "empty.ptg.txt", "# none\n"))
+    with pytest.raises(FileNotFoundError):
+        simutil.simutil().read_pointings(str(tmp_path / "missing.ptg.txt"))
+    for case in FIXTURE["write_pointings"]:
+        path = tmp_path / "out.ptg.txt"
+        simutil.simutil().write_pointings(str(path), case["pointings"], time=case["time"])
+        assert path.read_text(encoding="utf-8") == case["text"], case["time"]
+
+
+def test_directions_split_and_centre_as_casas() -> None:
+    u = simutil.simutil()
+    for case in FIXTURE["direction_splitter"]:
+        if "error" in case:
+            with pytest.raises(RuntimeError):
+                u.direction_splitter(case["direction"])
+            continue
+        epoch, x, y = u.direction_splitter(case["direction"])
+        assert epoch == case["epoch"]
+        assert x == {"unit": "deg", "value": pytest.approx(case["x"], rel=1e-12)}
+        assert y == {"unit": "deg", "value": pytest.approx(case["y"], rel=1e-12, abs=1e-12)}
+    for method in ("average_direction", "median_direction"):
+        for case in FIXTURE[method]:
+            centre, offsets = getattr(u, method)(case["directions"])
+            assert centre == case["direction"]
+            assert isinstance(offsets, np.ndarray) and offsets.shape == (2, len(case["directions"]))
+            np.testing.assert_allclose(offsets, case["offsets"], rtol=0, atol=1e-12)
+    for case in FIXTURE["wrapang"]:
+        assert u.wrapang(case["ang"], case["target"], case["period"]) == pytest.approx(case["out"], abs=1e-12)
+
+
+def test_dir_m2s_writes_a_measure_as_simutil_does() -> None:
+    measure = {"type": "direction", "refer": "J2000", "m0": {"unit": "deg", "value": 270.000129167},
+               "m1": {"unit": "deg", "value": -22.999888889}}
+    assert simutil.simutil().dir_m2s(measure) == "J2000 18:00:00.03100 -022.59.59.600000"
+    with pytest.raises(RuntimeError, match="converting direction measure"):
+        simutil.simutil().dir_m2s({"type": "epoch"})
+
+
+def test_receivers_bands_and_feeds_are_casas() -> None:
+    u = simutil.simutil()
+    for case in FIXTURE["noisetemp"][::7]:
+        if "error" in case or case["freq"] in ("35GHz", "1GHz"):
+            continue
+        found = u.noisetemp(telescope=case["telescope"], freq=case["freq"], diam=case.get("diam"),
+                            epsilon=case.get("epsilon"), correlator=case["correlator"])
+        assert found == pytest.approx(tuple(case["result"]), rel=1e-12), case
+    with pytest.raises(AttributeError):
+        u.noisetemp()
+    u.telescopename = "ALMA"
+    assert u.noisetemp() == u.noisetemp(telescope="ALMA", freq="245GHz")
+    for case in FIXTURE["bandname"]:
+        assert u.bandname(case["freq"]) == case["band"]
+    for case in FIXTURE["polsettings"]:
+        assert list(u.polsettings(case["telescope"], poltype=case["poltype"])) == case["out"]
+    assert u.polsettings("VLA", listall=True) == {"circular": ("RR LL", "perfect R L"),
+                                                 "linear": ("XX YY", "perfect X Y"), "RR": ("RR", "perfect R L")}
+
+
+def test_quantities_and_directions_are_tested_as_casa_tests_them() -> None:
+    u = simutil.simutil()
+    assert u.isquantity("10arcsec") and u.isquantity(["1GHz", {"unit": "s", "value": 2.0}])
+    assert not u.isquantity("", halt=False) and not u.isquantity("abc", halt=False)
+    with pytest.raises(RuntimeError, match="can't interpret 'abc' as a CASA quantity"):
+        u.isquantity("abc")
+    assert u.isdirection("J2000 10h00m00 -30d00m00")
+    assert not u.isdirection("10h00m00 -30d00m00", halt=False)
+    with pytest.raises(RuntimeError, match="as a direction"):
+        u.isdirection("nowhere")
+
+
+def test_local_positions_are_east_north_up() -> None:
+    lat, lon, el = simutil.simutil().itrf2loc([2225117.5], [-5440262.6], [-2481145.2],
+                                              2225061.0, -5440057.0, -2481681.0)
+    assert all(isinstance(axis, np.ndarray) and axis.shape == (1,) for axis in (lat, lon, el))
+    assert np.hypot(np.hypot(lat[0], lon[0]), el[0]) == pytest.approx(
+        np.hypot(np.hypot(56.5, -205.6), 535.8), rel=1e-9)
+
+
+@needs_measures_data
+def test_beams_are_casas() -> None:
+    u = simutil.simutil()
+    for case in FIXTURE["beams"]:
+        path = str(CONFIGS / case["config"])
+        if "beam_arcsec" in case:
+            assert u.approxBeam(path, case["freq_ghz"]) == pytest.approx(case["beam_arcsec"], rel=1e-9)
+        else:
+            lengths = u.baselineLengths(path)
+            assert isinstance(lengths, np.ndarray) and len(lengths) == case["baselines"]
+            assert lengths.sum() == pytest.approx(case["sum_m"], rel=1e-9)

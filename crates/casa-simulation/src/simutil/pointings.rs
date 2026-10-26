@@ -76,7 +76,10 @@ pub fn calc_pointings(
         )?,
         MapType::Alma | MapType::Alma2012 => {
             let spacing = qa::value_in(spacing, "arcsec")?;
-            let (width, height) = (qa::value_in(size[0], "arcsec")?, qa::value_in(size[1], "arcsec")?);
+            let (width, height) = (
+                qa::value_in(size[0], "arcsec")?,
+                qa::value_in(size[1], "arcsec")?,
+            );
             let offsets = if layout == MapType::Alma2012 {
                 triangle_points(width, height, 0.0, spacing)
             } else {
@@ -87,7 +90,10 @@ pub fn calc_pointings(
                 };
                 triangular_tiling(width, height, 0.0, spacing, beam)
             };
-            tiled(&offsets, (&centre.epoch, &centre.longitude, &centre.latitude))?
+            tiled(
+                &offsets,
+                (&centre.epoch, &centre.longitude, &centre.latitude),
+            )?
         }
         MapType::Unknown => Vec::new(),
     };
@@ -117,7 +123,9 @@ fn lattice(
         spacing.clone()
     };
     let row_margin = if hexagonal { 2.309401077 } else { 2.0 };
-    let rows = 1 + (qa::value_in(&qa::div(size[1], &y_spacing)?, "")? - row_margin * relmargin).floor() as i64;
+    let rows = 1
+        + (qa::value_in(&qa::div(size[1], &y_spacing)?, "")? - row_margin * relmargin).floor()
+            as i64;
     let available = 1.0 + qa::value_in(&qa::div(size[0], spacing)?, "")? - 2.0 * relmargin;
     let columns = available.floor() as i64;
     // Hexagonal maps: the even rows are shifted half a spacing ahead, and
@@ -130,16 +138,18 @@ fn lattice(
         (columns - 1, 0.5 * (columns - 1) as f64)
     };
     let mut pointings = Vec::new();
-    let mut y = qa::add(centre_y, &qa::mul(&qa::number(0.5 * (rows - 1) as f64), &y_spacing)?)?;
+    let mut y = qa::add(
+        centre_y,
+        &qa::mul(&qa::number(0.5 * (rows - 1) as f64), &y_spacing)?,
+    )?;
     for row in 0..rows.max(0) {
         let x_spacing = qa::mul(&qa::number(1.0 / qa::value_in(&y, "rad")?.cos()), spacing)?;
         let latitude = qa::dms(&y)?;
-        let (shift, count) = if !hexagonal {
-            (to_first, columns)
-        } else if row % 2 == 1 {
-            (to_first, columns)
-        } else {
+        // A hexagonal map's even rows start half a spacing ahead.
+        let (shift, count) = if hexagonal && row % 2 == 0 {
             (to_first - 0.5, even_columns)
+        } else {
+            (to_first, columns)
         };
         let x_min = qa::sub(centre_x, &qa::mul(&qa::number(shift), &x_spacing)?)?;
         for column in 0..count.max(0) {
@@ -154,14 +164,21 @@ fn lattice(
 /// The ALMA tilings' offsets placed about the centre, from the last offset
 /// to the first. As CASA does, each offset in arcsec is written as Python
 /// writes a float, with `arcsec` after it, and read back.
-fn tiled(offsets: &[(f64, f64)], (epoch, centre_x, centre_y): Centre<'_>) -> Result<Vec<String>, SimutilError> {
+fn tiled(
+    offsets: &[(f64, f64)],
+    (epoch, centre_x, centre_y): Centre<'_>,
+) -> Result<Vec<String>, SimutilError> {
     let arcsec = |value: f64| qa::read(&format!("{}arcsec", qa::python_float(value)));
     let mut pointings = Vec::with_capacity(offsets.len());
     for &(x, y) in offsets.iter().rev() {
         let latitude = qa::add(centre_y, &arcsec(y)?)?;
         let cos_latitude = qa::value_in(&latitude, "rad")?.cos();
         let longitude = qa::add(centre_x, &arcsec(x / cos_latitude)?)?;
-        pointings.push(format!("{epoch}{} {}", qa::hms(&longitude)?, qa::dms(&latitude)?));
+        pointings.push(format!(
+            "{epoch}{} {}",
+            qa::hms(&longitude)?,
+            qa::dms(&latitude)?
+        ));
     }
     Ok(pointings)
 }
@@ -274,7 +291,9 @@ fn base_tiling(width: f64, height: f64, angle: f64, spacing: f64, beam: f64) -> 
         let columns: Vec<f64> = if even(ih) {
             (-w_even..=w_even).map(|iw| iw as f64 * w_spacing).collect()
         } else {
-            (-w_odd..w_odd).map(|iw| (iw as f64 + 0.5) * w_spacing).collect()
+            (-w_odd..w_odd)
+                .map(|iw| (iw as f64 + 0.5) * w_spacing)
+                .collect()
         };
         for x in columns {
             let (x, y) = rotate(x, ih as f64 * h_spacing, cos_angle, sin_angle);
@@ -297,7 +316,9 @@ fn shifted_tiling(width: f64, height: f64, angle: f64, spacing: f64, beam: f64) 
     let mut points = Vec::new();
     for ih in -h..h {
         let columns: Vec<f64> = if even(ih) {
-            (-w_even..w_even).map(|iw| (iw as f64 + 0.5) * w_spacing).collect()
+            (-w_even..w_even)
+                .map(|iw| (iw as f64 + 0.5) * w_spacing)
+                .collect()
         } else {
             (-w_odd..=w_odd).map(|iw| iw as f64 * w_spacing).collect()
         };
@@ -383,7 +404,8 @@ fn read_pointing_line(line: &str, file: &mut PointingFile) -> Result<(), Simutil
         file.times.push(time(fields.get(3).copied())?);
         let longitude = qa::hms(&qa::read(fields[1])?)?;
         let latitude = qa::dms(&qa::read(fields[2])?)?;
-        file.pointings.push(format!("{} {longitude} {latitude}", fields[0]));
+        file.pointings
+            .push(format!("{} {longitude} {latitude}", fields[0]));
     }
     Ok(())
 }
@@ -400,7 +422,11 @@ pub fn format_pointings(pointings: &[String], times: &[String]) -> Result<String
     }
     let mut text = String::from("#Epoch     RA          DEC      TIME[sec]\n");
     for (index, pointing) in pointings.iter().enumerate() {
-        let time = if times.len() == 1 { &times[0] } else { &times[index] };
+        let time = if times.len() == 1 {
+            &times[0]
+        } else {
+            &times[index]
+        };
         text.push_str(&format!("{pointing}  {time}\n"));
     }
     Ok(text)
@@ -408,7 +434,11 @@ pub fn format_pointings(pointings: &[String], times: &[String]) -> Result<String
 
 /// [`format_pointings`] written to `path`, each time a float as Python
 /// writes it.
-pub fn write_pointings(path: &Path, pointings: &[String], times: &[f64]) -> Result<(), SimutilError> {
+pub fn write_pointings(
+    path: &Path,
+    pointings: &[String],
+    times: &[f64],
+) -> Result<(), SimutilError> {
     let times: Vec<String> = times.iter().map(|&time| qa::python_float(time)).collect();
     let text = format_pointings(pointings, &times)?;
     std::fs::write(path, text)

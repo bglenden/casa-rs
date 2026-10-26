@@ -178,7 +178,7 @@ pub fn mvangle_radians(value: &Quantity) -> Result<f64, QuantumError> {
         Ok(base * (CIRCLE / DAY_S))
     } else {
         Err(QuantumError(format!(
-            "Quantum::assure: non-conforming unit '{}'",
+            "Quantum::assure non-conforming unit type '{}'",
             value.unit().name()
         )))
     }
@@ -242,7 +242,11 @@ pub fn stream_double(value: f64) -> String {
 /// (normalised into [−180°, 180°), or into [0°, 360°) for `+deg`).
 /// `Ok(None)` for any other format, which CASA answers with an empty string
 /// and a warning. The format's case is ignored.
-pub fn formxxx(value: &Quantity, format: &str, precision: i64) -> Result<Option<String>, QuantumError> {
+pub fn formxxx(
+    value: &Quantity,
+    format: &str,
+    precision: i64,
+) -> Result<Option<String>, QuantumError> {
     let radians = mvangle_radians(value)?;
     // casacore's `Int ndig = 6 + precision`, passed on as an unsigned count.
     let digits = |extra: i64| u32::try_from(6 + precision + extra).unwrap_or(u32::MAX);

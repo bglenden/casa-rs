@@ -31,6 +31,13 @@ impl ReceiverEfficiencies {
     }
 }
 
+/// π as `noisetemp`'s Ruze formula writes it, to ten decimals.
+#[allow(
+    clippy::approx_constant,
+    reason = "CASA's truncated π, kept so the efficiencies are CASA's"
+)]
+const CASA_PI: f64 = 3.1415926535;
+
 /// The telescopes `noisetemp` knows, with their dish diameter (m),
 /// subreflector diameter (m), surface accuracy (µm RMS) and correlator
 /// efficiency. Any other telescope takes ALMA's.
@@ -56,8 +63,12 @@ fn receiver_table(telescope: &str) -> ReceiverTable {
     match telescope {
         // CASR-669.
         "ALMA" | "ACA" | "ALMASD" => ReceiverTable {
-            edges_ghz: &[35.0, 50.0, 84.0, 116.0, 162.0, 211.0, 275.0, 373.0, 500.0, 720.0, 950.0],
-            temperatures_k: &[28.0, 30.0, 40.0, 42.0, 50.0, 50.0, 72.0, 135.0, 105.0, 230.0],
+            edges_ghz: &[
+                35.0, 50.0, 84.0, 116.0, 162.0, 211.0, 275.0, 373.0, 500.0, 720.0, 950.0,
+            ],
+            temperatures_k: &[
+                28.0, 30.0, 40.0, 42.0, 50.0, 50.0, 72.0, 135.0, 105.0, 230.0,
+            ],
             range_ghz: [35.0, 950.0],
         },
         "EVLA" => ReceiverTable {
@@ -138,7 +149,7 @@ pub fn noise_temperature(
     let blockage = 1.0 - (subreflector / diameter).powi(2);
     let frequency_ghz = qa::value_in(frequency, "GHz")?;
     let epsilon = epsilon.unwrap_or(surface);
-    let ruze = 4.0 * 3.1415926535 * epsilon * frequency_ghz / 2.99792458e5;
+    let ruze = 4.0 * CASA_PI * epsilon * frequency_ghz / 2.99792458e5;
     let phase = (-(ruze * ruze)).exp();
     // CAS-14652: the ALMA and ACA correlators.
     correlator_efficiency = match (telescope.as_str(), correlator.unwrap_or("")) {
@@ -194,7 +205,10 @@ pub fn band_name(frequency_ghz: f64) -> String {
 /// `sm.setspwindow` and the feed `mode` for `sm.setfeed`. `circular`,
 /// `linear` or `RR`; for any other (or no) type, circular feeds for a
 /// telescope whose name contains `VLA` or `DRAO`, linear otherwise.
-pub fn polarization_settings(telescope: &str, poltype: Option<&str>) -> (&'static str, &'static str) {
+pub fn polarization_settings(
+    telescope: &str,
+    poltype: Option<&str>,
+) -> (&'static str, &'static str) {
     let circular = ("RR LL", "perfect R L");
     let linear = ("XX YY", "perfect X Y");
     match poltype {

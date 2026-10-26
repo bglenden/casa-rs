@@ -24,8 +24,12 @@ use std::path::{Path, PathBuf};
 
 use casa_simulation::readantenna::read_antenna_config;
 use casa_simulation::simutil::baselines::{approximate_beam, baseline_lengths};
-use casa_simulation::simutil::direction::{average_direction, median_direction, split_direction, wrap_angle};
-use casa_simulation::simutil::pointings::{PBCOEFF, calc_pointings, format_pointings, parse_pointings};
+use casa_simulation::simutil::direction::{
+    average_direction, median_direction, split_direction, wrap_angle,
+};
+use casa_simulation::simutil::pointings::{
+    PBCOEFF, calc_pointings, format_pointings, parse_pointings,
+};
 use casa_simulation::simutil::python_float;
 use casa_simulation::simutil::receivers::{band_name, noise_temperature, polarization_settings};
 use casa_types::quanta::casacore::casacore_unit;
@@ -56,7 +60,9 @@ fn cases<'a>(fixture: &'a Value, key: &str) -> &'a [Value] {
 }
 
 fn text(value: &Value) -> &str {
-    value.as_str().unwrap_or_else(|| panic!("a string, not {value}"))
+    value
+        .as_str()
+        .unwrap_or_else(|| panic!("a string, not {value}"))
 }
 
 fn strings(value: &Value) -> Vec<String> {
@@ -100,18 +106,33 @@ fn pointing_lists_are_casas() {
         let mut beam = case["beam"].as_f64().expect("beam");
         let expected = if case.get("error").is_some() {
             // CASA's NameError: compare with the beam casa-rs defaults to.
-            let spacing_arcsec = casacore::convert(&spacing, Some(&casacore_unit("arcsec").unwrap()))
-                .unwrap()
-                .value();
-            let defaulted = calc_pointings(&spacing, [&sizes[0], &sizes[1]], maptype, direction, relmargin, beam)
-                .expect("casa-rs defaults the ALMA beam");
+            let spacing_arcsec =
+                casacore::convert(&spacing, Some(&casacore_unit("arcsec").unwrap()))
+                    .unwrap()
+                    .value();
+            let defaulted = calc_pointings(
+                &spacing,
+                [&sizes[0], &sizes[1]],
+                maptype,
+                direction,
+                relmargin,
+                beam,
+            )
+            .expect("casa-rs defaults the ALMA beam");
             beam = spacing_arcsec * PBCOEFF * 3.0_f64.sqrt();
             defaulted
         } else {
             strings(&case["pointings"])
         };
-        let ours = calc_pointings(&spacing, [&sizes[0], &sizes[1]], maptype, direction, relmargin, beam)
-            .unwrap_or_else(|error| panic!("{case}: {error}"));
+        let ours = calc_pointings(
+            &spacing,
+            [&sizes[0], &sizes[1]],
+            maptype,
+            direction,
+            relmargin,
+            beam,
+        )
+        .unwrap_or_else(|error| panic!("{case}: {error}"));
         compared += ours.len();
         if ours != expected {
             let first = ours
@@ -131,16 +152,32 @@ fn pointing_lists_are_casas() {
         }
     }
     assert!(compared > 10_000, "{compared} pointings compared");
-    assert!(failures.is_empty(), "{} cases differ:\n{}", failures.len(), failures.join("\n"));
+    assert!(
+        failures.is_empty(),
+        "{} cases differ:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
 }
 
 #[test]
 fn pointing_files_read_and_write_as_casas() {
     let fixture = fixture();
     for case in cases(&fixture, "read_pointings") {
-        let file = parse_pointings(text(&case["text"])).unwrap_or_else(|error| panic!("{case}: {error}"));
-        assert_eq!(file.pointings, strings(&case["pointings"]), "{}", case["name"]);
-        let times: Vec<f64> = case["times"].as_array().unwrap().iter().map(|t| t.as_f64().unwrap()).collect();
+        let file =
+            parse_pointings(text(&case["text"])).unwrap_or_else(|error| panic!("{case}: {error}"));
+        assert_eq!(
+            file.pointings,
+            strings(&case["pointings"]),
+            "{}",
+            case["name"]
+        );
+        let times: Vec<f64> = case["times"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t.as_f64().unwrap())
+            .collect();
         assert_eq!(file.times, times, "{}", case["name"]);
     }
     assert!(parse_pointings("# nothing\n").is_err());
@@ -161,7 +198,12 @@ fn pointing_files_read_and_write_as_casas() {
             Value::Array(times) => times.iter().map(shown).collect(),
             one => vec![shown(one)],
         };
-        assert_eq!(format_pointings(&pointings, &times).unwrap(), text(&case["text"]), "{}", case["time"]);
+        assert_eq!(
+            format_pointings(&pointings, &times).unwrap(),
+            text(&case["text"]),
+            "{}",
+            case["time"]
+        );
     }
 }
 
@@ -177,9 +219,19 @@ fn directions_split_average_and_wrap_as_casas() {
         }
         let ours = ours.unwrap_or_else(|error| panic!("{direction}: {error}"));
         assert_eq!(ours.epoch, text(&case["epoch"]), "{direction}");
-        assert!(close(ours.longitude.value(), case["x"].as_f64().unwrap()), "{direction}");
-        assert!(close(ours.latitude.value(), case["y"].as_f64().unwrap()), "{direction}");
-        assert_eq!(ours.longitude.unit().name(), text(&case["x_unit"]), "{direction}");
+        assert!(
+            close(ours.longitude.value(), case["x"].as_f64().unwrap()),
+            "{direction}"
+        );
+        assert!(
+            close(ours.latitude.value(), case["y"].as_f64().unwrap()),
+            "{direction}"
+        );
+        assert_eq!(
+            ours.longitude.unit().name(),
+            text(&case["x_unit"]),
+            "{direction}"
+        );
     }
     for (key, centre) in [
         ("average_direction", average_direction as fn(&[String]) -> _),
@@ -187,7 +239,12 @@ fn directions_split_average_and_wrap_as_casas() {
     ] {
         for case in cases(&fixture, key) {
             let ours = centre(&strings(&case["directions"])).unwrap();
-            assert_eq!(ours.centre, text(&case["direction"]), "{key} {}", case["directions"]);
+            assert_eq!(
+                ours.centre,
+                text(&case["direction"]),
+                "{key} {}",
+                case["directions"]
+            );
             let offsets = case["offsets"].as_array().unwrap();
             for (i, offset) in ours.offsets.iter().enumerate() {
                 for axis in 0..2 {
@@ -203,7 +260,13 @@ fn directions_split_average_and_wrap_as_casas() {
     }
     for case in cases(&fixture, "wrapang") {
         let get = |key: &str| case[key].as_f64().unwrap();
-        assert!(close(wrap_angle(get("ang"), get("target"), get("period")), get("out")), "{case}");
+        assert!(
+            close(
+                wrap_angle(get("ang"), get("target"), get("period")),
+                get("out")
+            ),
+            "{case}"
+        );
     }
 }
 
@@ -211,7 +274,8 @@ fn directions_split_average_and_wrap_as_casas() {
 /// temperature and CASA the last (`t0[z-1]` with `z = 0`).
 fn at_first_edge(telescope: &str, freq: &str) -> bool {
     let telescope = telescope.to_uppercase();
-    (matches!(telescope.as_str(), "ALMA" | "ACA" | "ALMASD") && freq == "35GHz") || (telescope == "EVLA" && freq == "1GHz")
+    (matches!(telescope.as_str(), "ALMA" | "ACA" | "ALMASD") && freq == "35GHz")
+        || (telescope == "EVLA" && freq == "1GHz")
 }
 
 #[test]
@@ -243,8 +307,16 @@ fn receivers_bands_and_feeds_are_casas() {
             departures += 1;
             continue;
         }
-        let casa: Vec<f64> = case["result"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect();
-        assert!(ours[..5].iter().zip(&casa[..5]).all(|(a, b)| close(*a, *b)), "{case}: {ours:?}");
+        let casa: Vec<f64> = case["result"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_f64().unwrap())
+            .collect();
+        assert!(
+            ours[..5].iter().zip(&casa[..5]).all(|(a, b)| close(*a, *b)),
+            "{case}: {ours:?}"
+        );
         if at_first_edge(telescope, freq) {
             assert!(!close(ours[5], casa[5]), "{case}: CASA's last temperature");
             departures += 1;
@@ -254,11 +326,20 @@ fn receivers_bands_and_feeds_are_casas() {
     }
     assert!(departures > 0, "the departures are exercised");
     for case in cases(&fixture, "bandname") {
-        assert_eq!(band_name(case["freq"].as_f64().unwrap()), text(&case["band"]), "{case}");
+        assert_eq!(
+            band_name(case["freq"].as_f64().unwrap()),
+            text(&case["band"]),
+            "{case}"
+        );
     }
     for case in cases(&fixture, "polsettings") {
-        let (stokes, feed) = polarization_settings(text(&case["telescope"]), case["poltype"].as_str());
-        assert_eq!(vec![stokes.to_string(), feed.to_string()], strings(&case["out"]), "{case}");
+        let (stokes, feed) =
+            polarization_settings(text(&case["telescope"]), case["poltype"].as_str());
+        assert_eq!(
+            vec![stokes.to_string(), feed.to_string()],
+            strings(&case["out"]),
+            "{case}"
+        );
     }
 }
 
@@ -273,16 +354,29 @@ fn approximate_beams_are_casas() {
             .unwrap_or_else(|error| panic!("{name}: {error}"));
         if let Some(beam) = case["beam_arcsec"].as_f64() {
             let ours = approximate_beam(&config, case["freq_ghz"].as_f64().unwrap()).unwrap();
-            assert!(((ours - beam) / beam).abs() < 1e-9, "{name}: {ours} vs CASA {beam}");
+            assert!(
+                ((ours - beam) / beam).abs() < 1e-9,
+                "{name}: {ours} vs CASA {beam}"
+            );
             compared += 1;
         } else {
             let lengths = baseline_lengths(&config).unwrap();
-            assert_eq!(lengths.len() as u64, case["baselines"].as_u64().unwrap(), "{name}");
+            assert_eq!(
+                lengths.len() as u64,
+                case["baselines"].as_u64().unwrap(),
+                "{name}"
+            );
             let sum: f64 = lengths.iter().sum();
             let casa_sum = case["sum_m"].as_f64().unwrap();
-            assert!(((sum - casa_sum) / casa_sum).abs() < 1e-9, "{name}: {sum} vs CASA {casa_sum}");
+            assert!(
+                ((sum - casa_sum) / casa_sum).abs() < 1e-9,
+                "{name}: {sum} vs CASA {casa_sum}"
+            );
             let max = lengths.iter().copied().fold(0.0, f64::max);
-            assert!((max - case["max_m"].as_f64().unwrap()).abs() < 1e-5, "{name}");
+            assert!(
+                (max - case["max_m"].as_f64().unwrap()).abs() < 1e-5,
+                "{name}"
+            );
         }
     }
     assert!(compared >= 20, "{compared} beams compared");

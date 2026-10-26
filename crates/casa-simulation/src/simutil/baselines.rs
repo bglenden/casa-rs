@@ -13,7 +13,10 @@ use super::SimutilError;
 /// three as `lat, lon, el`.) The centre's latitude and longitude come from
 /// casa-rs's `xyz2long`, which corrects CASA's (see
 /// [`crate::readantenna::geodesy`]); the rotation is CASA's.
-pub fn itrf_to_local(positions: &[[f64; 3]], centre: [f64; 3]) -> Result<Vec<[f64; 3]>, SimutilError> {
+pub fn itrf_to_local(
+    positions: &[[f64; 3]],
+    centre: [f64; 3],
+) -> Result<Vec<[f64; 3]>, SimutilError> {
     let wgs84 = geodesy::datum("WGS84").expect("WGS84 is one of casa-rs's datums");
     let (longitude, latitude, _) = geodesy::xyz_to_geodetic(centre[0], centre[1], centre[2], wgs84)
         .ok_or_else(|| SimutilError::Arithmetic(format!("no WGS84 position for {centre:?}")))?;
@@ -65,7 +68,10 @@ pub fn baseline_lengths(config: &AntennaConfigFile) -> Result<Vec<f64>, SimutilE
 /// baseline, arcsec, at `frequency_ghz`. The percentile is scipy's
 /// `scoreatpercentile`: the sorted lengths interpolated linearly at
 /// `0.9 × (n − 1)`.
-pub fn approximate_beam(config: &AntennaConfigFile, frequency_ghz: f64) -> Result<f64, SimutilError> {
+pub fn approximate_beam(
+    config: &AntennaConfigFile,
+    frequency_ghz: f64,
+) -> Result<f64, SimutilError> {
     if !(frequency_ghz > 0.0 && frequency_ghz.is_finite()) {
         return Err(SimutilError::Frequency(frequency_ghz));
     }

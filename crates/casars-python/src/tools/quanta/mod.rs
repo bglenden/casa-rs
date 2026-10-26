@@ -353,10 +353,20 @@ impl PyQuanta {
         signature = (v = Variant::Empty, format = "dms".to_string(), prec = 2),
         text_signature = "($self, v=[], format='dms', prec=2)"
     )]
-    fn formxxx(&self, py: Python<'_>, v: Variant, format: String, prec: i64) -> PyResult<Py<PyAny>> {
+    fn formxxx(
+        &self,
+        py: Python<'_>,
+        v: Variant,
+        format: String,
+        prec: i64,
+    ) -> PyResult<Py<PyAny>> {
         let written = py.detach(|| ops::formxxx(&v, &format, prec))?;
         if written.is_none() {
-            emit(py, LOGGER, &[LogLine::warning(format!("Don't understand {format}"))])?;
+            emit(
+                py,
+                LOGGER,
+                &[LogLine::warning(format!("Don't understand {format}"))],
+            )?;
         }
         CasaValue::Text(written.unwrap_or_default()).into_python(py)
     }

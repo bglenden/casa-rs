@@ -87,6 +87,10 @@ ATM behaviours casa-rs does not follow:
 [the averaged non-dispersive wet phase](#refractiveindexprofiles-averaged-non-dispersive-wet-phase-reads-a-channel-as-a-water-column).
 Calibration behaviours casa-rs does not follow:
 [a solve that fits exactly](#viscalsolver2-fails-a-solve-whose-chi-square-is-exactly-zero).
+`simutil` behaviours casa-rs does not follow:
+[the ALMA tiling's default beam](#calc_pointings2s-alma-tiling-reads-an-undefined-pbcoeff),
+[`noisetemp`'s receiver lookup](#noisetemp-reads-the-wrong-receiver-temperature-at-the-edges-of-its-tables),
+[directions without an epoch](#direction_splitter-cannot-split-a-direction-without-an-epoch).
 
 ## AW-projection pairs the partner hand's visibility with the conjugate-baseline cell
 
@@ -1797,3 +1801,64 @@ on the casa-rs gain fixtures had to add noise to get a table at all. casa-rs's `
 chi-square that is small but not zero follows CASA's convergence rule
 unchanged, so noise-free data that converge only linearly can still reach
 CASA's 50-iteration limit and fail as CASA's would.
+
+## `calc_pointings2`'s ALMA tiling reads an undefined `pbcoeff`
+
+- Date noted: 2026-10-26
+- Status: CASA bug; casa-rs does not follow it (#841 Phase 5a)
+- Affected code: `casatasks/src/private/simutil.py:611` (`calc_pointings2`)
+
+For `maptype='ALMA'` (and its aliases `alma`, `ALMA-OT`), when the caller
+gives no primary beam (`beam <= 0`), `calc_pointings2` defaults it to
+`spacing_asec*pbcoeff*pl.sqrt(3)`. `pbcoeff` is a local of
+`task_simobserve.py`, not defined in `simutil.py`, so the call raises
+`NameError` (CASA 6.7.6). `simobserve` reaches it with an ALMA map and no
+antenna list, and any script that calls `calc_pointings2` directly without
+`beam` does too. casa-rs uses `simobserve`'s value, 1.13, as the default
+clearly intends (`casa_simulation::simutil::pointings::PBCOEFF`); the
+pointings are then those of the beam `spacing × 1.13 × √3`.
+
+## `noisetemp` reads the wrong receiver temperature at the edges of its tables
+
+- Date noted: 2026-10-26
+- Status: CASA bugs; casa-rs does not follow them (#841 Phase 5a)
+- Affected code: `casatasks/src/private/simutil.py:1124–1134` (`noisetemp`)
+
+`noisetemp` looks the receiver temperature up with
+`while(f0[z]<obsfreq and z<len(t0)): z+=1` and then `t_rx=t0[z-1]`:
+
+- **At the first band edge.** A frequency at or above the table's lower
+  limit but not above its first edge leaves `z = 0`, and `t0[-1]` is
+  Python's last entry. ALMA, ACA and total power at exactly 35 GHz get
+  230 K (band 10's) instead of 28 K, the (E)VLA from 0.8 to 1 GHz 28 K (Q
+  band's) instead of 10 K, and the SMA at 180 GHz 500 K instead of 67 K.
+  casa-rs takes the first temperature there.
+- **Above the last edge of an unknown telescope's table.** For a telescope
+  `noisetemp` does not know, the frequency edges and temperatures are lists
+  of the same length (`[10, 900]`, `[200, 200]`), so above 900 GHz the
+  test reads `f0[2]` before checking `z` and raises `IndexError` (CASA
+  6.7.6, `WSRT` at 950 GHz). casa-rs keeps the last temperature, 200 K.
+  For the telescopes it knows, the edges have one more entry than the
+  temperatures and the test does not overrun.
+
+The efficiencies are unchanged. `tools/simulation/simutil_oracle.py` records
+both cases, and `tests/simutil_casa.rs` checks that casa-rs departs exactly
+there.
+
+## `direction_splitter` cannot split a direction without an epoch
+
+- Date noted: 2026-10-26
+- Status: CASA bug; casa-rs refuses the input (#841 Phase 5a)
+- Affected code: `casatasks/src/private/simutil.py:876–894`
+  (`direction_splitter`)
+
+`direction_splitter` keeps the epoch only when a direction has three
+fields, but reads the longitude from field 1 and the latitude from field 2
+whatever the count. A direction without an epoch (`'18h00m00 -23d00m00'`)
+therefore raises `IndexError`, and a latitude its regular expression
+`([+-]?\d+).(\d+).(\d+\.?\d*)` does not match raises `AttributeError`
+(CASA 6.7.6). casa-rs refuses both with "can't interpret ... as a
+direction", the message `isdirection` gives, so a `simobserve` that is given
+such a direction stops with a clear error rather than a traceback. A
+direction with more than three fields is split as CASA splits it (no epoch,
+fields 1 and 2).

@@ -31,7 +31,10 @@ pub(crate) fn value_in(value: &Quantity, unit: &str) -> Result<f64, SimutilError
 
 /// `qa.convert(value, unit)`.
 pub(crate) fn convert(value: &Quantity, unit: &str) -> Result<Quantity, SimutilError> {
-    Ok(casacore::convert(value, Some(&casacore::casacore_unit(unit)?))?)
+    Ok(casacore::convert(
+        value,
+        Some(&casacore::casacore_unit(unit)?),
+    )?)
 }
 
 /// `qa.add`.
@@ -60,7 +63,10 @@ pub(crate) fn to_angle(value: &Quantity) -> Result<Quantity, SimutilError> {
         return Ok(value.clone());
     }
     let radians = mvangle_radians(value)?;
-    Ok(Quantity::with_unit(radians, casacore::casacore_unit("rad")?))
+    Ok(Quantity::with_unit(
+        radians,
+        casacore::casacore_unit("rad")?,
+    ))
 }
 
 /// `qa.formxxx(value, format='hms', prec=5)`.
@@ -88,7 +94,12 @@ pub fn python_float(value: f64) -> String {
         return if value > 0.0 { "inf" } else { "-inf" }.to_string();
     }
     if value == 0.0 {
-        return if value.is_sign_negative() { "-0.0" } else { "0.0" }.to_string();
+        return if value.is_sign_negative() {
+            "-0.0"
+        } else {
+            "0.0"
+        }
+        .to_string();
     }
     // Rust's `{:e}` writes the shortest round-trip digits.
     let scientific = format!("{value:e}");

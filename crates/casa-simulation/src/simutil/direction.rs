@@ -246,7 +246,10 @@ mod tests {
 
     #[test]
     fn latitudes_split_as_casas_expression_matches() {
-        assert_eq!(fields("-023.00.38.805516"), owned("-023", "00", "38.805516"));
+        assert_eq!(
+            fields("-023.00.38.805516"),
+            owned("-023", "00", "38.805516")
+        );
         assert_eq!(fields("-22d59m59.6s"), owned("-22", "59", "59.6"));
         assert_eq!(fields("+20d00m00"), owned("+20", "00", "00"));
         assert_eq!(fields("-30°15′20.5″"), owned("-30", "15", "20.5"));
