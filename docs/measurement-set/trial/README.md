@@ -821,10 +821,14 @@ flag change writes (Fable).
    `VisSet`), and `CORRECTED_DATA` from `DATA`. The owner chose CASA's
    model (2026-10-26): the updater installs `MODEL_DATA` from `DATA`'s
    storage, the layout applycal's `CORRECTED_DATA` uses, and overwrites
-   every row with that model before the pass writes. casa-rs's other
-   writers differ and are a follow-up: imaging fills a new `MODEL_DATA`
-   with 0, and the simulator writes 1 in every product, cross hands
-   included.
+   every row with that model before the pass writes. One helper,
+   `casa_ms::initial_model_visibility`, holds the rule, and every casa-rs
+   writer that adds `MODEL_DATA` uses it: this updater, imaging's in-place
+   writer (which filled a new column with 0 until this change) and the
+   VLA importer. The simulator's `predict` writes 1 in every product, cross
+   hands included, because that is what CASA's `Simulator::predict` does
+   after the prediction (`vb.setModelVisCube(Complex(1.0,0.0))`); it
+   overwrites the model rather than initializing a new column.
 
 **Not done:** per-batch MSv2 row planning; `WEIGHT_SPECTRUM` and
 `FLAG_CATEGORY` (the fixture has neither); MSv4 structural writes; a

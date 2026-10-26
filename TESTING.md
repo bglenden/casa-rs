@@ -15,12 +15,16 @@ Verification: just verify
 A crate that ports a self-contained CASA C++ library is tested against that
 library compiled locally, not only through CASA. `casa-atmosphere` (ATM)
 commits compact fixtures that `tools/atmosphere/build-atm-oracle.sh` writes by
-building CASA's ATM sources with a harness (`tools/atmosphere/atm_oracle.cc`);
-CI compares against the committed fixtures. Regenerate them only when the
-harness's inputs or CASA's ATM change, and record why on the PR.
-`tools/atmosphere/at_tool_check.py` (run under CASA's Python) compares the
-port with CASA's own `at` tool, which also confirms that the compiled sources
-are the ATM that CASA ships; rerun it when either changes.
+building CASA's ATM sources with a harness (`tools/atmosphere/atm_oracle.cc`)
+and with the port's corrections of ATM's data errors
+(`tools/atmosphere/atm-corrections.patch`); CI compares against the committed
+fixtures. Regenerate them only when the harness's inputs, the corrections or
+CASA's ATM change, and record why on the PR.
+`tools/atmosphere/at_tool_check.py` (run under CASA's Python) compares the C++
+built without the corrections with CASA's own `at` tool, which confirms that
+the compiled sources are the ATM that CASA ships, and the port with the C++
+built with them, over the `at` tool's quantities; rerun it when any of them
+changes.
 
 Imaging evidence uses four non-substitutable tiers:
 

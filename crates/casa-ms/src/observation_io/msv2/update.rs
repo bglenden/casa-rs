@@ -19,9 +19,8 @@
 use std::sync::{Arc, Mutex, PoisonError};
 
 use casa_observation::{
-    AccessRequest, Correlation, ObservationError, PartitionEntry, PatchValues, ResolvedTarget,
-    UpdateReport, Updater, VisibilityBatch, WeightChannels, WritableRole, check_values,
-    uniform_over_channels,
+    AccessRequest, ObservationError, PartitionEntry, PatchValues, ResolvedTarget, UpdateReport,
+    Updater, VisibilityBatch, WeightChannels, WritableRole, check_values, uniform_over_channels,
 };
 use casa_types::ArrayValue;
 use casa_types::measures::MjdHighPrec;
@@ -32,7 +31,7 @@ use super::index::NO_ROW;
 use super::{Msv2Observation, OpenOptions};
 use crate::column_def::build_table_schema;
 use crate::observation_io::update::{Busy, request_error, storage};
-use crate::schema::main_table::VisibilityDataColumn;
+use crate::schema::main_table::{VisibilityDataColumn, initial_model_visibility};
 use crate::{
     MeasurementSet, MeasurementSetColumnStorage, MeasurementSetColumnWriteMode,
     MeasurementSetMutationBatch, MeasurementSetMutationColumnBatch,
@@ -182,24 +181,11 @@ fn persisted(main: &casa_tables::Table, column: &str) -> bool {
         .any(|manager| manager.columns.iter().any(|name| name == column))
 }
 
-/// CASA's initial model for one correlation product: 0 in the cross hands
-/// `RL`, `LR`, `XY` and `YX`, 1 in every other product, a unit point source
-/// at the phase centre (`VisSetUtil::initScrCols`, which tclean's
-/// `addScrCols` and `VisSet` call).
-fn casa_model_seed(correlation: Correlation) -> Complex32 {
-    match correlation {
-        Correlation::RL | Correlation::LR | Correlation::XY | Correlation::YX => {
-            Complex32::new(0.0, 0.0)
-        }
-        _ => Complex32::new(1.0, 0.0),
-    }
-}
-
 /// The bytes one seeding batch may hold.
 const SEED_BATCH_BYTES: usize = 64 << 20;
 
 /// Install a `MODEL_DATA` just added to the schema and write CASA's
-/// initial model ([`casa_model_seed`]) into every row, as CASA initializes
+/// initial model ([`initial_model_visibility`]) into every row, as CASA initializes
 /// the column when it adds it; returns the cells written. The storage is
 /// cloned from `DATA`'s (the layout casacore is known to read, as applycal
 /// installs `CORRECTED_DATA`) and every cell is then overwritten, so once
@@ -219,7 +205,7 @@ fn seed_model(
         cell_bytes = cell_bytes.max(shape[0] * shape[1] * size_of::<Complex32>());
         seeds.push(ArrayValue::Complex32(ArrayD::from_shape_fn(
             IxDyn(&shape),
-            |at| casa_model_seed(entry.correlations[at[0]]),
+            |at| initial_model_visibility(entry.correlations[at[0]].casacore_code()),
         )));
         for row in observation.partitions[index].grid.cells.iter() {
             if *row != NO_ROW {

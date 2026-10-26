@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! The quantities `tools/atmosphere/at_tool_check.py` reads from CASA's `at`
 //! tool, computed by casa-atmosphere: it reads the check's configuration
-//! (profiles and bands, in the `at` tool's terms) as JSON on stdin and
-//! writes the results as JSON on stdout.
+//! (profiles, bands and water/airmass sets, in the `at` tool's terms) as
+//! JSON on stdin and writes the results as JSON on stdout. The simulator's
+//! CASA comparator (`tools/simulation/compare_sm_ms.py`) reads casa-rs's
+//! own sky and wet delays from it the same way.
 //!
 //! ```text
 //! cargo build --release -p casa-atmosphere --example at_tool_quantities
@@ -56,21 +58,31 @@ fn grid(bands: &[Value]) -> SpectralGrid {
     grid
 }
 
-fn per_channel(profile: &AbsorptionProfile, set: &Value) -> Value {
+/// Each (water column, airmass) set as the `at` tool's `setUserWH2O` and
+/// `setAirMass` leave its sky.
+fn skies(sets: &[Value]) -> Vec<Sky> {
+    sets.iter()
+        .map(|set| Sky {
+            airmass: number(&set["airmass"]),
+            ..Sky::zenith(number(&set["water_m"]))
+        })
+        .collect()
+}
+
+fn per_channel(profile: &AbsorptionProfile, sets: &[Sky]) -> Value {
     let ground = profile.ground_water_column_m();
     let ground_t = profile.atmosphere().parameters().ground_temperature_k;
-    let set_water = number(&set["water_m"]);
-    let set_airmass = number(&set["airmass"]);
     let mut windows = Vec::new();
     for (w, window) in profile.grid().windows().iter().enumerate() {
         let first = profile.grid().flat_index(w, 0).expect("a window");
         let channels: Vec<usize> = (first..first + window.num_channels()).collect();
         let values = |f: &dyn Fn(usize) -> f64| channels.iter().map(|&c| f(c)).collect::<Vec<_>>();
-        let zenith = Sky::zenith(ground);
-        let set_sky = Sky {
-            airmass: set_airmass,
-            ..Sky::zenith(set_water)
+        let per_set = |f: &dyn Fn(usize, &Sky) -> f64| {
+            sets.iter()
+                .map(|sky| values(&|c| f(c, sky)))
+                .collect::<Vec<_>>()
         };
+        let zenith = Sky::zenith(ground);
         let average = Sky {
             spill_temperature_k: ground_t,
             ..zenith
@@ -89,7 +101,6 @@ fn per_channel(profile: &AbsorptionProfile, set: &Value) -> Value {
             "tebb": values(&|c| profile.tebb_sky(c, &zenith).expect("valid conditions")),
             "tebb_1mm": values(&|c| profile.tebb_sky(c, &Sky::zenith(1e-3)).expect("valid conditions")),
             "trj": values(&|c| profile.trj_sky(c, &zenith).expect("valid conditions")),
-            "tebb_set": values(&|c| profile.tebb_sky(c, &set_sky).expect("valid conditions")),
             "disp_phase": values(&|c| profile.dispersive_h2o_phase_delay_deg(c, ground)),
             "nondisp_phase": values(&|c| profile.non_dispersive_h2o_phase_delay_deg(c, ground)),
             "nondisp_dry_phase": values(&|c| profile.non_dispersive_dry_phase_delay_deg(c)),
@@ -102,6 +113,12 @@ fn per_channel(profile: &AbsorptionProfile, set: &Value) -> Value {
             "n2o_path": values(&|c| profile.absorber_path_length_m(c, Absorber::N2oLines)),
             "average_tebb": profile.average_tebb_sky(w, &average).expect("valid conditions"),
             "average_trj": profile.average_trj_sky(w, &average).expect("valid conditions"),
+            "set_tebb": per_set(&|c, sky| profile.tebb_sky(c, sky).expect("valid conditions")),
+            "set_wet": per_set(&|c, sky| profile.wet_opacity(c, sky.water_column_m)),
+            "set_disp_phase": per_set(&|c, sky| profile.dispersive_h2o_phase_delay_deg(c, sky.water_column_m)),
+            "set_nondisp_phase": per_set(&|c, sky| {
+                profile.non_dispersive_h2o_phase_delay_deg(c, sky.water_column_m)
+            }),
         }));
     }
     json!({ "ground_water_m": ground, "layers": profile.atmosphere().layers().len(), "windows": windows })
@@ -114,6 +131,7 @@ fn main() {
         .expect("a configuration on stdin");
     let config: Value = serde_json::from_str(&input).expect("JSON");
     let bands = config["bands"].as_array().expect("bands");
+    let sets = skies(config["sets"].as_array().expect("sets"));
     let results: Vec<Value> = config["profiles"]
         .as_array()
         .expect("profiles")
@@ -121,7 +139,7 @@ fn main() {
         .map(|profile| {
             per_channel(
                 &AbsorptionProfile::new(atmosphere(profile), grid(bands)),
-                &config["set"],
+                &sets,
             )
         })
         .collect();

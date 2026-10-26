@@ -18,7 +18,9 @@
 // With `--time <channels>` it instead times the species refractivities for
 // a Chajnantor profile, to compare with casa-atmosphere's
 // `refractivity_timing` example; `--time-profile <channels>` times
-// building a RefractiveIndexProfile (the `profile_timing` example).
+// building a RefractiveIndexProfile (the `profile_timing` example); and
+// `--at-tool` computes what at_tool_check.py reads from CASA's `at` tool
+// (atm_oracle_at_tool.cc).
 
 #include <chrono>
 #include <cmath>
@@ -275,12 +277,16 @@ int time_refractivity(unsigned int channels) {
 // In atm_oracle_sky.cc.
 void write_sky_fixtures(const std::string& dir);
 int time_profile(unsigned int channels);
+// In atm_oracle_at_tool.cc.
+int at_tool_quantities();
 
 int main(int argc, char** argv) {
   if (argc == 3 && std::string(argv[1]) == "--time") return time_refractivity(std::stoul(argv[2]));
   if (argc == 3 && std::string(argv[1]) == "--time-profile") return time_profile(std::stoul(argv[2]));
-  if (argc != 2) {
-    std::fprintf(stderr, "usage: %s <fixture directory> | --time <channels> | --time-profile <channels>\n",
+  if (argc == 2 && std::string(argv[1]) == "--at-tool") return at_tool_quantities();
+  if (argc != 2 || std::string(argv[1]).rfind("--", 0) == 0) {
+    std::fprintf(stderr,
+                 "usage: %s <fixture directory> | --time <channels> | --time-profile <channels> | --at-tool\n",
                  argv[0]);
     return 2;
   }
