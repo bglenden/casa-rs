@@ -731,7 +731,8 @@ fn an_msv4_batch_of_other_channels_is_refused_whole() {
 /// initial model (1, and 0 in the cross hands `XY`, `YX`, `RL`, `LR`) fills
 /// every cell when the column is added, as CASA's `initScrCols` does, and
 /// the pass writes its two channels over it, merging each cell with the
-/// seed it reads back. The rest of the column is the seed, never `DATA`.
+/// seed it reads back. The rest of the column is the seed, never `DATA`,
+/// and a second pass of the session finds the column and seeds nothing.
 #[test]
 fn a_partial_model_pass_creates_model_data_over_casas_initial_model() {
     let root = tempfile::tempdir().expect("root");
@@ -752,12 +753,23 @@ fn a_partial_model_pass_creates_model_data_over_casas_initial_model() {
         )]
     })
     .expect("a two-channel model pass");
-    drop(session);
     assert_eq!(
         (report.units_written, report.units_read),
         (240, 120),
         "120 cells seeded, then 120 merged with the seed each read back"
     );
+    let again = pass(&session, &two, &[0], |batch| {
+        vec![Owned::Visibilities(
+            batch.group.values.expect("values").mapv(model),
+        )]
+    })
+    .expect("a second pass of the same session");
+    assert_eq!(
+        (again.units_written, again.units_read),
+        (120, 120),
+        "the column exists now: nothing is seeded again"
+    );
+    drop(session);
     let written = read(&path, "model", 0..8);
     let products = correlations.len();
     for (key, sample) in &reference {

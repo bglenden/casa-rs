@@ -228,6 +228,14 @@ fn seed_model(
             }
         }
     }
+    let main_rows = ms.main_table().row_count();
+    if rows.len() != main_rows {
+        return Err(request_error(format!(
+            "MAIN has {main_rows} rows and the session's grids place {}: it changed since the \
+             session opened, so MODEL_DATA cannot be seeded in every row",
+            rows.len()
+        )));
+    }
     let plan = MeasurementSetWritePlan::selected_row_mutation(
         rows.clone(),
         vec![MeasurementSetWriteColumnPlan {
