@@ -81,6 +81,10 @@ workspace = true
 name = "ms_trial_interop"
 required-features = ["msv4"]
 
+[[example]]
+name = "ms_trial_convert"
+required-features = ["msv4"]
+
 [[test]]
 name = "observation_io"
 path = "tests/observation_io.rs"
