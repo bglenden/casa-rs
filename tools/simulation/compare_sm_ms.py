@@ -99,7 +99,7 @@ import sys
 
 import numpy as np
 
-from atm_model import casars_sky, casars_wet_delays
+from atm_model import ModelError, casars_sky, casars_wet_delays
 from corruption_stats import gain_statistics, leakage_statistics, structure_failures
 from troposphere_stats import (
     MODEL_TOLERANCE,
@@ -107,6 +107,7 @@ from troposphere_stats import (
     data_failures,
     excess_from_table,
     excess_statistics,
+    flat_failures,
     rms_failures,
     slot_of,
 )
@@ -1033,6 +1034,7 @@ def compare_troposphere(paths: dict, scenario: dict, model: str | None = None) -
         worst, data_failed = data_failures(ratio, np.repeat(expected[:, None, :], 2, axis=1))
         side_failures += data_failed
         statistics = excess_statistics(excess, solutions["antenna"], slot_of(solutions["time"]))
+        side_failures += flat_failures(statistics, delta_pwv)
         if side == "casa-rs" and call.get("mode", "screen") == "individual":
             side_failures += rms_failures(statistics, delta_pwv)
         stats[side] = {
@@ -1060,8 +1062,19 @@ def compare_data(tb, scenario: dict, paths: dict, limit: float, model: str | Non
     casa-rs's ATM (`atm_model.py`), which `tsys-atm` and troposphere
     scenarios need."""
     kind = scenario.get("data") or "zero"
-    if model is None and needs_atmosphere_model(scenario):
-        return {"kind": kind}, ["needs --atmosphere-model, casa-atmosphere's at_tool_quantities example"]
+    if needs_atmosphere_model(scenario):
+        if model is None:
+            return {"kind": kind}, ["needs --atmosphere-model, casa-atmosphere's at_tool_quantities example"]
+        try:
+            return compare_data_kind(tb, scenario, paths, limit, model)
+        except ModelError as error:
+            return {"kind": kind}, [f"casa-rs's atmosphere model: {error}"]
+    return compare_data_kind(tb, scenario, paths, limit, model)
+
+
+def compare_data_kind(tb, scenario: dict, paths: dict, limit: float, model: str | None) -> tuple[dict, list[str]]:
+    """`compare_data` by the scenario's kind."""
+    kind = scenario.get("data") or "zero"
     if kind == "zero":
         failures = []
         for side in ("casa", "casa-rs"):

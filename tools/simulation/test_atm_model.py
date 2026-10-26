@@ -16,12 +16,13 @@ import sys
 import tempfile
 import textwrap
 import unittest
+from unittest import mock
 
 import numpy as np
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
-from atm_model import SETTROP_SITE, casars_sky, casars_wet_delays  # noqa: E402
+from atm_model import SETTROP_SITE, ModelError, casars_sky, casars_wet_delays  # noqa: E402
 from compare_sm_ms import compare_data, needs_atmosphere_model  # noqa: E402
 
 # A stand-in for the example: the grid the `at` tool's convention gives,
@@ -47,6 +48,7 @@ FAKE = textwrap.dedent(
         "set_disp_phase": [[s["water_m"] * 1e3 * (c + 1) for c in range(n)] for s in sets],
         "set_nondisp_phase": [[s["water_m"] * 1e5 * (c + 1) for c in range(n)] for s in sets],
     }}
+    {mutate}
     json.dump({{"profiles": [{{"windows": [window]}}]}}, sys.stdout)
     """
 )
@@ -60,10 +62,12 @@ class AtmModelTests(unittest.TestCase):
     def tearDown(self):
         self.directory.cleanup()
 
-    def model(self, shift: float = 0.0) -> str:
-        path = os.path.join(self.directory.name, f"model{shift}")
+    def model(self, shift: float = 0.0, mutate: str = "pass") -> str:
+        """A stand-in example; `mutate` is one Python statement that may
+        change its `window` before it is written."""
+        path = os.path.join(self.directory.name, f"model{len(os.listdir(self.directory.name))}")
         with open(path, "w") as handle:
-            handle.write(FAKE.format(python=sys.executable, record=self.record, shift=shift))
+            handle.write(FAKE.format(python=sys.executable, record=self.record, shift=shift, mutate=mutate))
         os.chmod(path, os.stat(path).st_mode | stat.S_IEXEC)
         return path
 
@@ -96,13 +100,55 @@ class AtmModelTests(unittest.TestCase):
         self.assertAlmostEqual(band["res_ghz"], 1e-3, places=12)
 
     def test_a_grid_the_model_does_not_reproduce_is_refused(self):
-        with self.assertRaisesRegex(RuntimeError, "not the frequencies asked for"):
+        with self.assertRaisesRegex(ModelError, "not the frequencies asked for"):
             casars_sky(self.model(shift=5.0))(
                 {"altitude_m": 5000.0, "tground": 270.0, "pressure_mbar": 560.0, "humidity": 20.0,
                  "h0_km": 2.0, "pwv_mm": 1.0},
                 100.0e9 + 2.0e6 * np.arange(3),
                 np.array([1.0]),
             )
+
+    SITE = {"altitude_m": 5000.0, "tground": 270.0, "pressure_mbar": 560.0, "humidity": 20.0, "h0_km": 2.0,
+            "pwv_mm": 1.0}
+
+    def test_infinite_delays_are_refused(self):
+        # The #902 review's injection: the real frequencies, both set phases
+        # infinite. Every excess would read back as zero.
+        infinite = self.model(
+            mutate='window["set_disp_phase"] = window["set_nondisp_phase"] = [[float("inf")] * n for s in sets]'
+        )
+        with self.assertRaisesRegex(ModelError, "set_disp_phase is not finite"):
+            casars_wet_delays(infinite, 1.0, 183.0e9 + 1.0e8 * np.arange(5))
+
+    def test_a_nan_opacity_is_refused(self):
+        nan = self.model(mutate='window["dry"][1] = float("nan")')
+        with self.assertRaisesRegex(ModelError, "dry is not finite"):
+            casars_sky(nan)(self.SITE, 100.0e9 + 2.0e6 * np.arange(3), np.array([1.0]))
+
+    def test_a_missing_quantity_is_refused(self):
+        missing = self.model(mutate='del window["set_tebb"]')
+        with self.assertRaisesRegex(ModelError, "no set_tebb"):
+            casars_sky(missing)(self.SITE, 100.0e9 + 2.0e6 * np.arange(3), np.array([1.0]))
+
+    def test_a_wrong_number_of_sets_is_refused(self):
+        short = self.model(mutate='window["set_wet"] = window["set_wet"][:1]')
+        with self.assertRaisesRegex(ModelError, r"set_wet .* shape \(1, 3\), not \(2, 3\)"):
+            casars_sky(short)(self.SITE, 100.0e9 + 2.0e6 * np.arange(3), np.array([1.0, 2.0]))
+
+    def test_a_short_window_is_refused(self):
+        short = self.model(mutate='window["set_nondisp_phase"] = [s[:-1] for s in window["set_nondisp_phase"]]')
+        with self.assertRaisesRegex(ModelError, r"set_nondisp_phase .* shape \(1, 4\), not \(1, 5\)"):
+            casars_wet_delays(short, 1.0, 183.0e9 + 1.0e8 * np.arange(5))
+
+    def test_text_in_place_of_a_number_is_refused(self):
+        text = self.model(mutate='window["dry"] = [str(x) for x in window["dry"]]')
+        with self.assertRaisesRegex(ModelError, "dry is <U"):
+            casars_sky(text)(self.SITE, 100.0e9 + 2.0e6 * np.arange(3), np.array([1.0]))
+
+    def test_no_window_is_refused(self):
+        empty = self.model(mutate='json.dump({"profiles": []}, sys.stdout); sys.exit(0)')
+        with self.assertRaisesRegex(ModelError, "gave no window"):
+            casars_wet_delays(empty, 1.0, 183.0e9 + 1.0e8 * np.arange(5))
 
     def test_wet_delays_are_settrops_site_at_the_single_precision_water_column(self):
         frequencies = 183.0e9 + 1.0e8 * np.arange(5)
@@ -133,6 +179,19 @@ class NeedsModelTests(unittest.TestCase):
         stats, failures = compare_data(None, self.TSYS_ATM, {}, 1e-3)
         self.assertEqual(stats, {"kind": "noisy"})
         self.assertEqual(failures, ["needs --atmosphere-model, casa-atmosphere's at_tool_quantities example"])
+
+    def test_a_refused_model_fails_the_scenario(self):
+        # A malformed or infinite model fails the scenario, not the whole run
+        # (#902 review: trop-screen passed with infinite delays).
+        refused = ModelError("casa-atmosphere's set_disp_phase is not finite")
+        for scenario, comparison in (
+            ({"data": "troposphere", "calls": []}, "compare_troposphere"),
+            (self.TSYS_ATM, "compare_tsys_noise"),
+        ):
+            with mock.patch(f"compare_sm_ms.{comparison}", side_effect=refused):
+                stats, failures = compare_data(None, scenario, {}, 1e-3, "model")
+            self.assertEqual(stats, {"kind": scenario["data"]})
+            self.assertEqual(failures, ["casa-rs's atmosphere model: casa-atmosphere's set_disp_phase is not finite"])
 
 
 if __name__ == "__main__":

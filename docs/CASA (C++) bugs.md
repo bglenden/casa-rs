@@ -1612,7 +1612,7 @@ its integration's time and takes the slot nearest it, as CASA does when
 
 HCN's rotational lines are spaced by about 88.6 GHz (J=1–0 at 88.631 GHz,
 2–1 at 177.260, 3–2 at 265.886; *Synthesis Imaging in Radio Astronomy II*,
-p. 592): the table runs 88.63,
+printed p. 568, PDF p. 592): the table runs 88.63,
 177.26, …, 974.49 GHz, then gives the J=12–11 line as `106.298069519`
 before continuing at 1151.45 GHz. The line belongs at 1062.98 GHz (as the
 JPL catalogue has it, `c027001.cat`); the decimal point moved. ATM
@@ -1660,7 +1660,8 @@ see it, and those gases' columns lie mostly higher.
 casa-rs restores the digit: 2.496e19, 2.711e19, 2.549e19, 2.855e19 and
 2.548e19 cm⁻³. Air density falls with height, by about e⁻¹ in a dry-air
 scale height of 8 km (*Interferometry and Synthesis in Radio Astronomy*,
-3rd ed., pp. 700 and 707), and the restored values fall by 0.88 to 0.91 to
+3rd ed., printed pp. 661 and 668, PDF pp. 700 and 707), and the restored
+values fall by 0.88 to 0.91 to
 their 1 km entries, as the tropical profile's untouched 2.450e19 does; the
 typo's values rise 3 to 5 times instead. The US Standard Atmosphere's
 sea-level 1013.25 hPa and 288.15 K give 2.547e19 by the ideal gas law. In

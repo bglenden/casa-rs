@@ -27,7 +27,9 @@ twin (a 1 Jy point at the phase centre):
   few lags. casa-rs's `individual` series are held to `deltapwv`; CASA's
   normalise with values read past the end of their transforms
   (docs/CASA (C++) bugs.md) and are reported, as is a screen's sampled
-  excess, whose root-mean-square is the whole screen's.
+  excess, whose root-mean-square is the whole screen's. On either side
+  the excess must vary on some antenna when `deltapwv` is positive
+  (`flat_failures`).
 
 `test_compare_sm_ms.py` tests the pure-NumPy parts.
 """
@@ -156,6 +158,16 @@ def excess_statistics(excess: np.ndarray, antennas: np.ndarray, slots: np.ndarra
             ],
         }
     return found
+
+
+def flat_failures(statistics: dict, delta_pwv: float) -> list[str]:
+    """A failure when `deltapwv` is positive yet no antenna's excess varies:
+    no troposphere was simulated, or a degenerate delay model (an infinite
+    one makes every excess zero) hid it. Screens have no rms law to catch
+    this (#902 review)."""
+    if delta_pwv > 0 and statistics and all(found["rms"] == 0.0 for found in statistics.values()):
+        return [f"the excess does not vary on any antenna, though deltapwv is {delta_pwv}"]
+    return []
 
 
 def rms_failures(statistics: dict, delta_pwv: float) -> list[str]:

@@ -50,11 +50,45 @@ def profile(site: dict) -> dict:
     }
 
 
+class ModelError(RuntimeError):
+    """casa-atmosphere's example gave something other than the quantities
+    asked for."""
+
+
+# What the helpers read: one value per channel, and one per channel at each
+# (water column, airmass) set.
+CHANNEL_KEYS = ("freq_hz", "dry")
+SET_KEYS = ("set_tebb", "set_wet", "set_disp_phase", "set_nondisp_phase")
+
+
+def checked(found, channels: int, sets: int) -> dict[str, np.ndarray]:
+    """The quantities of one window of the example's output, as arrays
+    ([channel] and [set, channel]): every one present, numeric, of its shape
+    and finite. An infinite delay would make every excess zero, which a
+    screen comparison accepted (#902 review)."""
+    if not isinstance(found, dict):
+        raise ModelError("casa-atmosphere gave no window")
+    arrays = {}
+    for keys, shape in ((CHANNEL_KEYS, (channels,)), (SET_KEYS, (sets, channels))):
+        for key in keys:
+            try:
+                values = np.asarray(found[key])
+            except (KeyError, ValueError):
+                raise ModelError(f"casa-atmosphere gave no {key} of shape {shape}") from None
+            if values.dtype.kind not in "fi" or values.shape != shape:
+                raise ModelError(f"casa-atmosphere's {key} is {values.dtype} of shape {values.shape}, not {shape}")
+            if not np.all(np.isfinite(values)):
+                raise ModelError(f"casa-atmosphere's {key} is not finite")
+            arrays[key] = values.astype(float)
+    return arrays
+
+
 def window(model: str, site: dict, frequencies_hz: np.ndarray, sets: list[dict]) -> tuple[dict, np.ndarray]:
     """casa-atmosphere's quantities on the grid of `frequencies_hz` (regular,
     either order) for `site` and each (water column, airmass) of `sets`, as
-    one window of `at_tool_quantities`, and the permutation that puts its
-    ascending channels back in the order given. Refuses a grid the example
+    one window of `at_tool_quantities` (`checked`), and the permutation that
+    puts its ascending channels back in the order given. Raises `ModelError`
+    for output that is malformed or not finite, and for a grid the example
     does not reproduce within 1 Hz."""
     order = np.argsort(frequencies_hz)
     ascending = np.asarray(frequencies_hz, dtype=float)[order]
@@ -71,10 +105,13 @@ def window(model: str, site: dict, frequencies_hz: np.ndarray, sets: list[dict])
     result = json.loads(
         subprocess.run([model], input=json.dumps(config), capture_output=True, text=True, check=True).stdout
     )
-    found = result["profiles"][0]["windows"][0]
-    got = np.asarray(found["freq_hz"], dtype=float)
-    if got.size != n or not np.allclose(got, ascending, rtol=0.0, atol=1.0):
-        raise RuntimeError("casa-atmosphere's channels are not the frequencies asked for")
+    try:
+        found = result["profiles"][0]["windows"][0]
+    except (KeyError, IndexError, TypeError):
+        raise ModelError("casa-atmosphere gave no window") from None
+    found = checked(found, n, len(sets))
+    if not np.allclose(found["freq_hz"], ascending, rtol=0.0, atol=1.0):
+        raise ModelError("casa-atmosphere's channels are not the frequencies asked for")
     return found, np.argsort(order)
 
 
@@ -88,8 +125,8 @@ def casars_sky(model: str):
         water = float(site["pwv_mm"]) * 1e-3
         sets = [{"water_m": water, "airmass": float(airmass)} for airmass in airmasses]
         found, inverse = window(model, dict(site, temperature_k=site["tground"]), frequencies_hz, sets)
-        tau = (np.asarray(found["dry"]) + np.asarray(found["set_wet"][0]))[inverse]
-        tebb = np.asarray(found["set_tebb"], dtype=float).T[inverse]
+        tau = (found["dry"] + found["set_wet"][0])[inverse]
+        tebb = found["set_tebb"].T[inverse]
         return tau, tebb
 
     return sky
@@ -101,6 +138,6 @@ def casars_wet_delays(model: str, pwv_mm: float, frequencies_hz: np.ndarray) -> 
     `settrop`'s site, at the regular grid `frequencies_hz`."""
     water = float(np.float32(pwv_mm)) * 1e-3
     found, inverse = window(model, SETTROP_SITE, frequencies_hz, [{"water_m": water, "airmass": 1.0}])
-    dispersive = np.radians(np.asarray(found["set_disp_phase"][0], dtype=float))[inverse]
-    continuum = np.radians(np.asarray(found["set_nondisp_phase"][0], dtype=float))[inverse]
+    dispersive = np.radians(found["set_disp_phase"][0])[inverse]
+    continuum = np.radians(found["set_nondisp_phase"][0])[inverse]
     return dispersive, continuum
