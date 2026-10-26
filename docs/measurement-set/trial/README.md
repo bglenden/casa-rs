@@ -753,6 +753,8 @@ flag change writes (Fable).
 | `msv4_padding_stays_flagged` | Clearing a flag or writing a finite weight where the MSv4 store holds padding (a non-finite weight) is refused, and so is clearing flags from a traversal that does not read weights. |
 | `padding_the_writer_stores_stays_padding` | An MSv2 with a row removed, written by casa-rs's writer, holds its padding with a NaN weight, as XRADIO does: the updater refuses to clear its flag or weight it, and it reads back flagged. |
 | `an_empty_flag_change_keeps_every_flag` | A flag change with neither mask keeps every flag: MSv2 rewrites the cells as stored, MSv4 writes nothing. |
+| `clearing_every_msv4_flag_erases_chunks_and_finishes` | Clearing every flag makes each `FLAG` chunk equal to the fill value, which zarrs erases rather than stores, an absent chunk included; the update finishes (its directories synchronized) and reads back unflagged. |
+| `an_msv4_batch_of_other_channels_is_refused_whole` | A batch whose channels are not the updater's traversal's is refused before any target takes it, so nothing of it is written. |
 | `a_session_reads_what_its_updaters_wrote` | A second traversal of the session's observation delivers what its first updater wrote, in both stores. |
 | `one_update_session_per_store_and_one_updater_per_session` | A second update session on a store, or a second live updater of a session, is a `Conflict`; one variable bound twice to an updater is refused (whichever wrote last would win); read-only observations open beside them. MSv2 states casacore's cross-process lock; MSv4 states atomic units and no cross-process lock. |
 | `an_msv2_updater_takes_its_batches_in_order` | The MSv2 updater plans its rows up front: a batch after a skipped one is refused, and finishing with rows unwritten fails. |
@@ -776,7 +778,8 @@ flag change writes (Fable).
   encoded without reading it, one assigned partly is read once per window,
   and an untouched one costs nothing. Every replacement is atomic; there is
   no transaction across chunks. Finishing synchronizes the directories the
-  replacements changed, so a finished update survives a power loss.
+  replacements changed (those whose objects it renamed or removed), so a
+  finished update is on disk wherever the filesystem honours `fsync`.
 
 **What it shows about the design.**
 
@@ -810,7 +813,11 @@ flag change writes (Fable).
    simulator with 1. Seeding from `DATA`, as the first version did, gives a
    later solve identity gains wherever the model pass did not reach, so
    `MODEL_DATA` is created only by a traversal that writes it whole until
-   the owner picks one seed for casa-rs.
+   the owner picks one seed for casa-rs. Two consequences remain: a
+   request has one channel range, so an MS whose partitions differ in
+   channel count cannot create `MODEL_DATA` this way; and a covering pass
+   that fails or is dropped after the column is installed leaves `DATA` in
+   the rows it did not reach, with the `model` group present on reopen.
 
 **Not done:** per-batch MSv2 row planning; `WEIGHT_SPECTRUM` and
 `FLAG_CATEGORY` (the fixture has neither); MSv4 structural writes; a
@@ -826,7 +833,10 @@ by casa-rs's writer (weight 0) could be cleared or weighted into an
 acquisition; and `MODEL_DATA` was seeded from `DATA`. It also asked for
 one binding per variable, aliases for groups the session creates, a
 directory synchronization at finish and a window limited to the channels
-reached, all done.
+reached, all done. Its check of the fixes found one more defect (finishing
+failed after an absent chunk was erased, since its directory did not exist)
+and a batch of other channels taken by one target before another refused
+it; both are fixed with laws.
 
 ## Keep, change or discard: the trial's summary for design review
 

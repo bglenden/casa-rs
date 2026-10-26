@@ -58,6 +58,8 @@ struct Msv4Updater<'s> {
     partitions: Vec<Partition>,
     /// The partition whose windows hold values.
     open: Option<usize>,
+    /// The traversal's channels, which every batch delivers.
+    channels: Range<usize>,
     options: CodecOptions,
     report: UpdateReport,
     /// The store's counts when the updater started.
@@ -146,6 +148,7 @@ impl Msv4Update {
             roles: targets.iter().map(|target| target.target.role).collect(),
             partitions,
             open: None,
+            channels: request.channels.clone(),
             options: CodecOptions::default().with_concurrent_target(1),
             report: UpdateReport::default(),
             start: self.counts(),
@@ -208,6 +211,13 @@ impl Updater for Msv4Updater<'_> {
         if !Arc::ptr_eq(batch.catalogue, self.update.observation.catalogue()) {
             return Err(request_error(
                 "the batch was not delivered by this session's observation",
+            ));
+        }
+        // Every window holds the traversal's channels; a batch of others
+        // would be refused by one target after another had taken it.
+        if batch.channels() != self.channels {
+            return Err(request_error(
+                "the batch's channels are not the traversal's the updater was bound to",
             ));
         }
         let index = self

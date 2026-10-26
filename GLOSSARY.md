@@ -164,10 +164,10 @@ _Avoid_: Row, visibility (which is one value of a sample)
 
 **Padding**:
 A grid cell no acquisition fills (an antenna that dropped out, a baseline not
-written): delivered flagged in every store, with NaN values and auxiliaries
-(weight zero from MSv2; an XRADIO store's own padding has NaN weights, which
-the MSv4 adapter folds into the flag). The validity rule excludes it; nothing
-is read from disk for it.
+written): delivered flagged in every store, with NaN values, weights and
+auxiliaries (an MSv4 store holds its own padding with NaN weights, as XRADIO
+pads, and the MSv4 adapter folds the non-finite weight into the flag). The
+validity rule excludes it; nothing is read from disk for it.
 _Avoid_: Missing row, absent slot, occupancy
 
 **Batch Shape**:

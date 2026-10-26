@@ -660,3 +660,75 @@ fn a_session_reads_what_its_updaters_wrote() {
         }
     }
 }
+
+/// Clearing every flag of the MSv4 fixture makes each `FLAG` chunk equal to
+/// the fill value (false), which zarrs erases rather than stores; one of
+/// them (`c/2/0/0/0`) was never stored. The update still finishes, its
+/// changed directories synchronized, and reads back unflagged.
+#[test]
+fn clearing_every_msv4_flag_erases_chunks_and_finishes() {
+    let root = tempfile::tempdir().expect("root");
+    let path = fixture(root.path(), "ms_trial.ps.zarr");
+    let session = open_update(
+        &path,
+        &OpenOptions::default(),
+        &[UpdateTarget::new("base", WritableRole::Flags)],
+    )
+    .expect("session");
+    let four = per_times(session.observation(), request(0..8, 0), 4);
+    let report = pass(&session, &four, &[0], clear_all).expect("finishes");
+    drop(session);
+    assert_eq!(report.units_written, 6, "every chunk erased");
+    let after = read(&path, "base", 0..8);
+    assert!(
+        after
+            .values()
+            .all(|sample| sample.flags.iter().all(|f| !*f))
+    );
+}
+
+/// An MSv4 updater takes only batches of its traversal's channels: one of
+/// other channels is refused before any target takes it.
+#[test]
+fn an_msv4_batch_of_other_channels_is_refused_whole() {
+    let root = tempfile::tempdir().expect("root");
+    let path = fixture(root.path(), "ms_trial.ps.zarr");
+    let before = read(&path, "base", 0..8);
+    let targets = [
+        UpdateTarget::new("base", WritableRole::Weights),
+        UpdateTarget::new("base", WritableRole::Flags),
+    ];
+    let session = open_update(&path, &OpenOptions::default(), &targets).expect("session");
+    let narrow = per_times(session.observation(), request(2..4, 0), 4);
+    let wide = per_times(session.observation(), request(0..8, 0), 4);
+    let mut traversal = session.observation().bind_read(&wide).expect("bind");
+    let mut updater = session.updater(&narrow, &[0, 1]).expect("updater");
+    let mut buffers = BatchBuffers::default();
+    let Some(ReadEvent::Batch(batch)) = traversal.next(&mut buffers).expect("read") else {
+        panic!("a batch");
+    };
+    let weights = Array3::from_elem(batch.shape(), 8.0_f32);
+    let set = Array3::from_elem(batch.shape(), true);
+    let refused = updater.write(
+        &batch,
+        &[
+            PatchValues::Weights {
+                values: weights.view(),
+                channels: WeightChannels::Delivered,
+            },
+            PatchValues::Flags {
+                set: Some(set.view()),
+                clear: None,
+            },
+        ],
+    );
+    assert!(
+        matches!(refused, Err(ObservationError::InvalidRequest { ref reason }) if reason.contains("channels")),
+        "{refused:?}"
+    );
+    let report = updater.finish().expect("finish");
+    assert_eq!(report.units_written, 0, "nothing of the batch");
+    drop(traversal);
+    drop(session);
+    assert_eq!(read(&path, "base", 0..8), before);
+}

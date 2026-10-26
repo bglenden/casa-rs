@@ -88,7 +88,8 @@ impl ReplacingStore {
     }
 
     /// Synchronize every directory a replacement or erasure changed since
-    /// the last call, so the changes survive a power loss.
+    /// the last call, so the changes survive a power loss. Every directory
+    /// is attempted; the first failure is returned.
     pub(super) fn sync(&self) -> Result<(), StorageError> {
         let touched: Vec<PathBuf> = self
             .touched
@@ -96,12 +97,14 @@ impl ReplacingStore {
             .unwrap_or_else(PoisonError::into_inner)
             .drain()
             .collect();
+        let mut first = Ok(());
         for directory in touched {
-            File::open(&directory)
-                .and_then(|handle| handle.sync_all())
-                .map_err(io)?;
+            let synced = File::open(&directory).and_then(|handle| handle.sync_all());
+            if let (Err(error), Ok(())) = (synced, &first) {
+                first = Err(io(error));
+            }
         }
-        Ok(())
+        first
     }
 
     /// Record that `directory`'s entries changed; `created` adds the
@@ -220,11 +223,17 @@ impl WritableStorageTraits for ReplacingStore {
         ))
     }
 
+    /// Erase `key`'s object (a chunk equal to the fill value is not
+    /// stored). Erasing an absent object changes nothing, so only an
+    /// erasure that removed a file marks its directory for [`Self::sync`].
     fn erase(&self, key: &StoreKey) -> Result<(), StorageError> {
         self.counters.erased.fetch_add(1, Ordering::Relaxed);
-        self.inner.erase(key)?;
         let path = self.inner.key_to_fspath(key);
-        self.touch(path.parent().unwrap_or(&self.root), false);
+        let existed = path.is_file();
+        self.inner.erase(key)?;
+        if existed {
+            self.touch(path.parent().unwrap_or(&self.root), false);
+        }
         Ok(())
     }
 
