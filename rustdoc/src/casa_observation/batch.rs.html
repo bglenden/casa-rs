@@ -145,7 +145,7 @@
 <a href=#145 id=145 data-nosnippet>145</a>/// flag is set or, among the roles read, its visibility or weight is not
 <a href=#146 id=146 data-nosnippet>146</a>/// finite. A delivered flag already marks every absent acquisition, in
 <a href=#147 id=147 data-nosnippet>147</a>/// every store: MSv2 `FLAG_ROW` and the cells the MSv2 adapter pads (no row
-<a href=#148 id=148 data-nosnippet>148</a>/// filled them: flagged, NaN, weight 0) are flagged, and the MSv4 adapter
+<a href=#148 id=148 data-nosnippet>148</a>/// filled them: flagged, values and weights NaN) are flagged, and the MSv4 adapter
 <a href=#149 id=149 data-nosnippet>149</a>/// folds a non-finite stored weight into the flag, because XRADIO pads a
 <a href=#150 id=150 data-nosnippet>150</a>/// cell no row filled with NaN and leaves its `FLAG` false. So the rule
 <a href=#151 id=151 data-nosnippet>151</a>/// gives one answer for one observation whichever store holds it and
@@ -206,7 +206,7 @@
 <a href=#206 id=206 data-nosnippet>206</a>/// partition's table ([`Self::baselines`]); the coordinates cost `T + B`
 <a href=#207 id=207 data-nosnippet>207</a>/// entries, not `T × B`. Both stores deliver this shape: MSv4 holds it, the
 <a href=#208 id=208 data-nosnippet>208</a>/// MSv2 adapter places rows on it at opening and pads the cells no row
-<a href=#209 id=209 data-nosnippet>209</a>/// filled (flag true, weight 0, values NaN). Field and scan are per time.
+<a href=#209 id=209 data-nosnippet>209</a>/// filled (flag true, values and weights NaN). Field and scan are per time.
 <a href=#210 id=210 data-nosnippet>210</a>///
 <a href=#211 id=211 data-nosnippet>211</a>/// Every view is filled and checked before the batch is delivered: reading
 <a href=#212 id=212 data-nosnippet>212</a>/// an element performs no I/O or decoding. The borrow keeps the buffers

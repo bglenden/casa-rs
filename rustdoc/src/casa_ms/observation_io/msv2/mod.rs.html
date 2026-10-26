@@ -6,118 +6,118 @@
 <a href=#6 id=6 data-nosnippet>6</a></span><span class="kw">mod </span>catalogue;
 <a href=#7 id=7 data-nosnippet>7</a><span class="kw">mod </span>cursor;
 <a href=#8 id=8 data-nosnippet>8</a><span class="kw">mod </span>index;
-<a href=#9 id=9 data-nosnippet>9</a>
-<a href=#10 id=10 data-nosnippet>10</a><span class="attr">#[cfg(feature = <span class="string">"msv4"</span>)]
-<a href=#11 id=11 data-nosnippet>11</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">use </span>catalogue::{metres, radians};
-<a href=#12 id=12 data-nosnippet>12</a><span class="kw">pub use </span>cursor::Msv2Cursor;
-<a href=#13 id=13 data-nosnippet>13</a>
-<a href=#14 id=14 data-nosnippet>14</a><span class="kw">use </span>std::path::Path;
-<a href=#15 id=15 data-nosnippet>15</a><span class="kw">use </span>std::sync::Arc;
-<a href=#16 id=16 data-nosnippet>16</a>
-<a href=#17 id=17 data-nosnippet>17</a><span class="kw">use </span>casa_observation::{
-<a href=#18 id=18 data-nosnippet>18</a>    AccessRequest, BoundCursor, Catalogue, DataGroupEntry, Estimate, NaturalBlocks, Observation,
-<a href=#19 id=19 data-nosnippet>19</a>    ObservationError, ObservationId, PartitionEntry, PartitionEstimate, PartitionId,
-<a href=#20 id=20 data-nosnippet>20</a>    ResolvedRequest, Roles, TimeBaselineGrid, Traversal, times_per_batch,
-<a href=#21 id=21 data-nosnippet>21</a>};
-<a href=#22 id=22 data-nosnippet>22</a><span class="kw">use </span>casa_tables::{RequiredScalarColumnDestination, RequiredScalarColumnValuesMut};
-<a href=#23 id=23 data-nosnippet>23</a><span class="kw">use </span>casa_types::measures::{EpochRef, MjdHighPrec};
-<a href=#24 id=24 data-nosnippet>24</a>
-<a href=#25 id=25 data-nosnippet>25</a><span class="kw">use </span><span class="kw">super</span>::OpenOptions;
-<a href=#26 id=26 data-nosnippet>26</a><span class="kw">use crate</span>::{MeasurementSet, MsError};
-<a href=#27 id=27 data-nosnippet>27</a><span class="kw">use </span>index::{Grid, Index, ROWS_PER_CHUNK};
-<a href=#28 id=28 data-nosnippet>28</a>
-<a href=#29 id=29 data-nosnippet>29</a><span class="kw">fn </span>storage(error: <span class="kw">impl </span>Into&lt;MsError&gt;) -&gt; ObservationError {
-<a href=#30 id=30 data-nosnippet>30</a>    ObservationError::Storage(Box::new(error.into()))
-<a href=#31 id=31 data-nosnippet>31</a>}
-<a href=#32 id=32 data-nosnippet>32</a>
-<a href=#33 id=33 data-nosnippet>33</a><span class="kw">fn </span>table_error(error: casa_tables::TableError) -&gt; ObservationError {
-<a href=#34 id=34 data-nosnippet>34</a>    storage(MsError::from(error))
-<a href=#35 id=35 data-nosnippet>35</a>}
-<a href=#36 id=36 data-nosnippet>36</a>
-<a href=#37 id=37 data-nosnippet>37</a><span class="kw">fn </span>invalid(reason: <span class="kw">impl </span>Into&lt;String&gt;) -&gt; ObservationError {
-<a href=#38 id=38 data-nosnippet>38</a>    ObservationError::InvalidStore {
-<a href=#39 id=39 data-nosnippet>39</a>        reason: reason.into(),
-<a href=#40 id=40 data-nosnippet>40</a>    }
-<a href=#41 id=41 data-nosnippet>41</a>}
-<a href=#42 id=42 data-nosnippet>42</a>
-<a href=#43 id=43 data-nosnippet>43</a><span class="doccomment">/// One partition of the MeasurementSet: its rows on their grid.
-<a href=#44 id=44 data-nosnippet>44</a></span><span class="attr">#[derive(Debug)]
-<a href=#45 id=45 data-nosnippet>45</a></span><span class="kw">struct </span>Partition {
-<a href=#46 id=46 data-nosnippet>46</a>    grid: Grid,
-<a href=#47 id=47 data-nosnippet>47</a>}
-<a href=#48 id=48 data-nosnippet>48</a>
-<a href=#49 id=49 data-nosnippet>49</a><span class="doccomment">/// An opened MeasurementSet v2 and its catalogue.
-<a href=#50 id=50 data-nosnippet>50</a>///
-<a href=#51 id=51 data-nosnippet>51</a>/// Opening reads MAIN's key columns in row chunks and partitions the rows the way
-<a href=#52 id=52 data-nosnippet>52</a>/// XRADIO's converter does (`DATA_DESC_ID` × `OBS_MODE` × `OBSERVATION_ID`
-<a href=#53 id=53 data-nosnippet>53</a>/// × `EPHEMERIS_ID`, the feed pair, and the opening's
-<a href=#54 id=54 data-nosnippet>54</a>/// [`PartitionScheme`](super::PartitionScheme)); each partition's rows are
-<a href=#55 id=55 data-nosnippet>55</a>/// placed on its time × baseline grid (the `index` module). Each partition
-<a href=#56 id=56 data-nosnippet>56</a>/// has one data group, `base`, associating `DATA`, `FLAG`,
-<a href=#57 id=57 data-nosnippet>57</a>/// `WEIGHT_SPECTRUM` (when MAIN has it, else `WEIGHT`) and `UVW`. Antenna,
-<a href=#58 id=58 data-nosnippet>58</a>/// field and observation identities are the subtable rows; scans are the
-<a href=#59 id=59 data-nosnippet>59</a>/// distinct `SCAN_NUMBER`s in ascending order.
-<a href=#60 id=60 data-nosnippet>60</a>///
-<a href=#61 id=61 data-nosnippet>61</a>/// Opening checks every unit and measure reference the batches rely on:
-<a href=#62 id=62 data-nosnippet>62</a>/// `TIME` and `TIME_CENTROID` share one fixed reference (a variable
-<a href=#63 id=63 data-nosnippet>63</a>/// reference is refused); the UVW convention is resolved to the phase
-<a href=#64 id=64 data-nosnippet>64</a>/// centres' frame ([`UvwFrame`](casa_observation::UvwFrame)); positions,
-<a href=#65 id=65 data-nosnippet>65</a>/// diameters, angles and frequencies are in the units their types claim.
-<a href=#66 id=66 data-nosnippet>66</a></span><span class="kw">pub struct </span>Msv2Observation {
-<a href=#67 id=67 data-nosnippet>67</a>    ms: MeasurementSet,
-<a href=#68 id=68 data-nosnippet>68</a>    catalogue: Arc&lt;Catalogue&gt;,
-<a href=#69 id=69 data-nosnippet>69</a>    partitions: Vec&lt;Partition&gt;,
-<a href=#70 id=70 data-nosnippet>70</a>    spectral_weights: bool,
-<a href=#71 id=71 data-nosnippet>71</a>    options: OpenOptions,
-<a href=#72 id=72 data-nosnippet>72</a>}
-<a href=#73 id=73 data-nosnippet>73</a>
-<a href=#74 id=74 data-nosnippet>74</a><span class="kw">impl </span>Msv2Observation {
-<a href=#75 id=75 data-nosnippet>75</a>    <span class="doccomment">/// Open the MeasurementSet at `path` and read its catalogue.
-<a href=#76 id=76 data-nosnippet>76</a>    ///
-<a href=#77 id=77 data-nosnippet>77</a>    /// The tables stay open with casacore read locks, and their payload
-<a href=#78 id=78 data-nosnippet>78</a>    /// rows stay on disk: the typed column fills read only the selected
-<a href=#79 id=79 data-nosnippet>79</a>    /// cells, as the production selected-observation source does.
-<a href=#80 id=80 data-nosnippet>80</a>    ///
-<a href=#81 id=81 data-nosnippet>81</a>    /// # Errors
-<a href=#82 id=82 data-nosnippet>82</a>    ///
-<a href=#83 id=83 data-nosnippet>83</a>    /// When the MeasurementSet cannot be opened, a subtable the catalogue
-<a href=#84 id=84 data-nosnippet>84</a>    /// needs is missing or malformed, a unit or measure reference is
-<a href=#85 id=85 data-nosnippet>85</a>    /// outside the trial profile, or the rows do not fit their grids (two
-<a href=#86 id=86 data-nosnippet>86</a>    /// rows in one cell, two fields or scans at one time, several
-<a href=#87 id=87 data-nosnippet>87</a>    /// `PROCESSOR_ID`s in one partition).
-<a href=#88 id=88 data-nosnippet>88</a>    </span><span class="attr">#[cfg(unix)]
-<a href=#89 id=89 data-nosnippet>89</a>    </span><span class="kw">pub fn </span>open(path: <span class="kw">impl </span>AsRef&lt;Path&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, ObservationError&gt; {
-<a href=#90 id=90 data-nosnippet>90</a>        <span class="self">Self</span>::open_with(path, <span class="kw-2">&amp;</span>OpenOptions::default())
-<a href=#91 id=91 data-nosnippet>91</a>    }
-<a href=#92 id=92 data-nosnippet>92</a>
-<a href=#93 id=93 data-nosnippet>93</a>    <span class="doccomment">/// [`Self::open`] with `options`.
-<a href=#94 id=94 data-nosnippet>94</a>    ///
-<a href=#95 id=95 data-nosnippet>95</a>    /// # Errors
-<a href=#96 id=96 data-nosnippet>96</a>    ///
-<a href=#97 id=97 data-nosnippet>97</a>    /// As [`Self::open`].
-<a href=#98 id=98 data-nosnippet>98</a>    </span><span class="attr">#[cfg(unix)]
-<a href=#99 id=99 data-nosnippet>99</a>    </span><span class="kw">pub fn </span>open_with(
-<a href=#100 id=100 data-nosnippet>100</a>        path: <span class="kw">impl </span>AsRef&lt;Path&gt;,
-<a href=#101 id=101 data-nosnippet>101</a>        options: <span class="kw-2">&amp;</span>OpenOptions,
-<a href=#102 id=102 data-nosnippet>102</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, ObservationError&gt; {
-<a href=#103 id=103 data-nosnippet>103</a>        <span class="kw">let </span>ms = MeasurementSet::open_retained_read(path).map_err(storage)<span class="question-mark">?</span>;
-<a href=#104 id=104 data-nosnippet>104</a>        <span class="self">Self</span>::from_measurement_set(ms, options)
-<a href=#105 id=105 data-nosnippet>105</a>    }
-<a href=#106 id=106 data-nosnippet>106</a>
-<a href=#107 id=107 data-nosnippet>107</a>    <span class="kw">fn </span>from_measurement_set(
-<a href=#108 id=108 data-nosnippet>108</a>        ms: MeasurementSet,
-<a href=#109 id=109 data-nosnippet>109</a>        options: <span class="kw-2">&amp;</span>OpenOptions,
-<a href=#110 id=110 data-nosnippet>110</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, ObservationError&gt; {
-<a href=#111 id=111 data-nosnippet>111</a>        <span class="kw">let </span>antennas = catalogue::read_antennas(<span class="kw-2">&amp;</span>ms)<span class="question-mark">?</span>;
-<a href=#112 id=112 data-nosnippet>112</a>        <span class="kw">let </span>catalogue::Fields {
-<a href=#113 id=113 data-nosnippet>113</a>            entries: fields,
-<a href=#114 id=114 data-nosnippet>114</a>            ephemerides,
-<a href=#115 id=115 data-nosnippet>115</a>            uvw_frame,
-<a href=#116 id=116 data-nosnippet>116</a>        } = catalogue::fields_and_uvw(<span class="kw-2">&amp;</span>ms)<span class="question-mark">?</span>;
-<a href=#117 id=117 data-nosnippet>117</a>        <span class="kw">let </span>observations = catalogue::read_observations(<span class="kw-2">&amp;</span>ms)<span class="question-mark">?</span>;
-<a href=#118 id=118 data-nosnippet>118</a>        <span class="kw">let </span>main = ms.main_table();
-<a href=#119 id=119 data-nosnippet>119</a>        <span class="kw">let </span>time_scale = catalogue::time_scale(main)<span class="question-mark">?</span>;
-<a href=#120 id=120 data-nosnippet>120</a>        <span class="kw">let </span>units = catalogue::data_units(main);
+<a href=#9 id=9 data-nosnippet>9</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">mod </span>update;
+<a href=#10 id=10 data-nosnippet>10</a>
+<a href=#11 id=11 data-nosnippet>11</a><span class="attr">#[cfg(feature = <span class="string">"msv4"</span>)]
+<a href=#12 id=12 data-nosnippet>12</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">use </span>catalogue::{metres, radians};
+<a href=#13 id=13 data-nosnippet>13</a><span class="kw">pub use </span>cursor::Msv2Cursor;
+<a href=#14 id=14 data-nosnippet>14</a>
+<a href=#15 id=15 data-nosnippet>15</a><span class="kw">use </span>std::path::Path;
+<a href=#16 id=16 data-nosnippet>16</a><span class="kw">use </span>std::sync::Arc;
+<a href=#17 id=17 data-nosnippet>17</a>
+<a href=#18 id=18 data-nosnippet>18</a><span class="kw">use </span>casa_observation::{
+<a href=#19 id=19 data-nosnippet>19</a>    AccessRequest, BoundCursor, Catalogue, DataGroupEntry, Estimate, NaturalBlocks, Observation,
+<a href=#20 id=20 data-nosnippet>20</a>    ObservationError, ObservationId, PartitionEntry, PartitionEstimate, PartitionId,
+<a href=#21 id=21 data-nosnippet>21</a>    ResolvedRequest, Roles, TimeBaselineGrid, Traversal, times_per_batch,
+<a href=#22 id=22 data-nosnippet>22</a>};
+<a href=#23 id=23 data-nosnippet>23</a><span class="kw">use </span>casa_tables::{RequiredScalarColumnDestination, RequiredScalarColumnValuesMut};
+<a href=#24 id=24 data-nosnippet>24</a><span class="kw">use </span>casa_types::measures::{EpochRef, MjdHighPrec};
+<a href=#25 id=25 data-nosnippet>25</a>
+<a href=#26 id=26 data-nosnippet>26</a><span class="kw">use </span><span class="kw">super</span>::OpenOptions;
+<a href=#27 id=27 data-nosnippet>27</a><span class="kw">use crate</span>::{MeasurementSet, MsError};
+<a href=#28 id=28 data-nosnippet>28</a><span class="kw">use </span>index::{Grid, Index, ROWS_PER_CHUNK};
+<a href=#29 id=29 data-nosnippet>29</a>
+<a href=#30 id=30 data-nosnippet>30</a><span class="kw">fn </span>storage(error: <span class="kw">impl </span>Into&lt;MsError&gt;) -&gt; ObservationError {
+<a href=#31 id=31 data-nosnippet>31</a>    ObservationError::Storage(Box::new(error.into()))
+<a href=#32 id=32 data-nosnippet>32</a>}
+<a href=#33 id=33 data-nosnippet>33</a>
+<a href=#34 id=34 data-nosnippet>34</a><span class="kw">fn </span>table_error(error: casa_tables::TableError) -&gt; ObservationError {
+<a href=#35 id=35 data-nosnippet>35</a>    storage(MsError::from(error))
+<a href=#36 id=36 data-nosnippet>36</a>}
+<a href=#37 id=37 data-nosnippet>37</a>
+<a href=#38 id=38 data-nosnippet>38</a><span class="kw">fn </span>invalid(reason: <span class="kw">impl </span>Into&lt;String&gt;) -&gt; ObservationError {
+<a href=#39 id=39 data-nosnippet>39</a>    ObservationError::InvalidStore {
+<a href=#40 id=40 data-nosnippet>40</a>        reason: reason.into(),
+<a href=#41 id=41 data-nosnippet>41</a>    }
+<a href=#42 id=42 data-nosnippet>42</a>}
+<a href=#43 id=43 data-nosnippet>43</a>
+<a href=#44 id=44 data-nosnippet>44</a><span class="doccomment">/// One partition of the MeasurementSet: its rows on their grid.
+<a href=#45 id=45 data-nosnippet>45</a></span><span class="attr">#[derive(Debug)]
+<a href=#46 id=46 data-nosnippet>46</a></span><span class="kw">struct </span>Partition {
+<a href=#47 id=47 data-nosnippet>47</a>    grid: Grid,
+<a href=#48 id=48 data-nosnippet>48</a>}
+<a href=#49 id=49 data-nosnippet>49</a>
+<a href=#50 id=50 data-nosnippet>50</a><span class="doccomment">/// An opened MeasurementSet v2 and its catalogue.
+<a href=#51 id=51 data-nosnippet>51</a>///
+<a href=#52 id=52 data-nosnippet>52</a>/// Opening reads MAIN's key columns in row chunks and partitions the rows the way
+<a href=#53 id=53 data-nosnippet>53</a>/// XRADIO's converter does (`DATA_DESC_ID` × `OBS_MODE` × `OBSERVATION_ID`
+<a href=#54 id=54 data-nosnippet>54</a>/// × `EPHEMERIS_ID`, the feed pair, and the opening's
+<a href=#55 id=55 data-nosnippet>55</a>/// [`PartitionScheme`](super::PartitionScheme)); each partition's rows are
+<a href=#56 id=56 data-nosnippet>56</a>/// placed on its time × baseline grid (the `index` module). Each partition
+<a href=#57 id=57 data-nosnippet>57</a>/// has one data group, `base`, associating `DATA`, `FLAG`,
+<a href=#58 id=58 data-nosnippet>58</a>/// `WEIGHT_SPECTRUM` (when MAIN has it, else `WEIGHT`) and `UVW`. Antenna,
+<a href=#59 id=59 data-nosnippet>59</a>/// field and observation identities are the subtable rows; scans are the
+<a href=#60 id=60 data-nosnippet>60</a>/// distinct `SCAN_NUMBER`s in ascending order.
+<a href=#61 id=61 data-nosnippet>61</a>///
+<a href=#62 id=62 data-nosnippet>62</a>/// Opening checks every unit and measure reference the batches rely on:
+<a href=#63 id=63 data-nosnippet>63</a>/// `TIME` and `TIME_CENTROID` share one fixed reference (a variable
+<a href=#64 id=64 data-nosnippet>64</a>/// reference is refused); the UVW convention is resolved to the phase
+<a href=#65 id=65 data-nosnippet>65</a>/// centres' frame ([`UvwFrame`](casa_observation::UvwFrame)); positions,
+<a href=#66 id=66 data-nosnippet>66</a>/// diameters, angles and frequencies are in the units their types claim.
+<a href=#67 id=67 data-nosnippet>67</a></span><span class="kw">pub struct </span>Msv2Observation {
+<a href=#68 id=68 data-nosnippet>68</a>    ms: MeasurementSet,
+<a href=#69 id=69 data-nosnippet>69</a>    catalogue: Arc&lt;Catalogue&gt;,
+<a href=#70 id=70 data-nosnippet>70</a>    partitions: Vec&lt;Partition&gt;,
+<a href=#71 id=71 data-nosnippet>71</a>    spectral_weights: bool,
+<a href=#72 id=72 data-nosnippet>72</a>    options: OpenOptions,
+<a href=#73 id=73 data-nosnippet>73</a>}
+<a href=#74 id=74 data-nosnippet>74</a>
+<a href=#75 id=75 data-nosnippet>75</a><span class="kw">impl </span>Msv2Observation {
+<a href=#76 id=76 data-nosnippet>76</a>    <span class="doccomment">/// Open the MeasurementSet at `path` and read its catalogue.
+<a href=#77 id=77 data-nosnippet>77</a>    ///
+<a href=#78 id=78 data-nosnippet>78</a>    /// The tables stay open with casacore read locks, and their payload
+<a href=#79 id=79 data-nosnippet>79</a>    /// rows stay on disk: the typed column fills read only the selected
+<a href=#80 id=80 data-nosnippet>80</a>    /// cells, as the production selected-observation source does.
+<a href=#81 id=81 data-nosnippet>81</a>    ///
+<a href=#82 id=82 data-nosnippet>82</a>    /// # Errors
+<a href=#83 id=83 data-nosnippet>83</a>    ///
+<a href=#84 id=84 data-nosnippet>84</a>    /// When the MeasurementSet cannot be opened, a subtable the catalogue
+<a href=#85 id=85 data-nosnippet>85</a>    /// needs is missing or malformed, a unit or measure reference is
+<a href=#86 id=86 data-nosnippet>86</a>    /// outside the trial profile, or the rows do not fit their grids (two
+<a href=#87 id=87 data-nosnippet>87</a>    /// rows in one cell, two fields or scans at one time, several
+<a href=#88 id=88 data-nosnippet>88</a>    /// `PROCESSOR_ID`s in one partition).
+<a href=#89 id=89 data-nosnippet>89</a>    </span><span class="attr">#[cfg(unix)]
+<a href=#90 id=90 data-nosnippet>90</a>    </span><span class="kw">pub fn </span>open(path: <span class="kw">impl </span>AsRef&lt;Path&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, ObservationError&gt; {
+<a href=#91 id=91 data-nosnippet>91</a>        <span class="self">Self</span>::open_with(path, <span class="kw-2">&amp;</span>OpenOptions::default())
+<a href=#92 id=92 data-nosnippet>92</a>    }
+<a href=#93 id=93 data-nosnippet>93</a>
+<a href=#94 id=94 data-nosnippet>94</a>    <span class="doccomment">/// [`Self::open`] with `options`.
+<a href=#95 id=95 data-nosnippet>95</a>    ///
+<a href=#96 id=96 data-nosnippet>96</a>    /// # Errors
+<a href=#97 id=97 data-nosnippet>97</a>    ///
+<a href=#98 id=98 data-nosnippet>98</a>    /// As [`Self::open`].
+<a href=#99 id=99 data-nosnippet>99</a>    </span><span class="attr">#[cfg(unix)]
+<a href=#100 id=100 data-nosnippet>100</a>    </span><span class="kw">pub fn </span>open_with(
+<a href=#101 id=101 data-nosnippet>101</a>        path: <span class="kw">impl </span>AsRef&lt;Path&gt;,
+<a href=#102 id=102 data-nosnippet>102</a>        options: <span class="kw-2">&amp;</span>OpenOptions,
+<a href=#103 id=103 data-nosnippet>103</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, ObservationError&gt; {
+<a href=#104 id=104 data-nosnippet>104</a>        <span class="kw">let </span>ms = MeasurementSet::open_retained_read(path).map_err(storage)<span class="question-mark">?</span>;
+<a href=#105 id=105 data-nosnippet>105</a>        <span class="self">Self</span>::from_measurement_set(ms, options)
+<a href=#106 id=106 data-nosnippet>106</a>    }
+<a href=#107 id=107 data-nosnippet>107</a>
+<a href=#108 id=108 data-nosnippet>108</a>    <span class="kw">fn </span>from_measurement_set(
+<a href=#109 id=109 data-nosnippet>109</a>        ms: MeasurementSet,
+<a href=#110 id=110 data-nosnippet>110</a>        options: <span class="kw-2">&amp;</span>OpenOptions,
+<a href=#111 id=111 data-nosnippet>111</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, ObservationError&gt; {
+<a href=#112 id=112 data-nosnippet>112</a>        <span class="kw">let </span>antennas = catalogue::read_antennas(<span class="kw-2">&amp;</span>ms)<span class="question-mark">?</span>;
+<a href=#113 id=113 data-nosnippet>113</a>        <span class="kw">let </span>catalogue::Fields {
+<a href=#114 id=114 data-nosnippet>114</a>            entries: fields,
+<a href=#115 id=115 data-nosnippet>115</a>            ephemerides,
+<a href=#116 id=116 data-nosnippet>116</a>            uvw_frame,
+<a href=#117 id=117 data-nosnippet>117</a>        } = catalogue::fields_and_uvw(<span class="kw-2">&amp;</span>ms)<span class="question-mark">?</span>;
+<a href=#118 id=118 data-nosnippet>118</a>        <span class="kw">let </span>observations = catalogue::read_observations(<span class="kw-2">&amp;</span>ms)<span class="question-mark">?</span>;
+<a href=#119 id=119 data-nosnippet>119</a>        <span class="kw">let </span>main = ms.main_table();
+<a href=#120 id=120 data-nosnippet>120</a>        <span class="kw">let </span>time_scale = catalogue::time_scale(main)<span class="question-mark">?</span>;
 <a href=#121 id=121 data-nosnippet>121</a>        <span class="kw">let </span>setups = catalogue::spectral_setups(<span class="kw-2">&amp;</span>ms)<span class="question-mark">?</span>;
 <a href=#122 id=122 data-nosnippet>122</a>        <span class="kw">let </span>modes = catalogue::read_state_modes(<span class="kw-2">&amp;</span>ms)<span class="question-mark">?</span>;
 <a href=#123 id=123 data-nosnippet>123</a>        <span class="kw">let </span>spectral_weights = main
@@ -130,332 +130,356 @@
 <a href=#130 id=130 data-nosnippet>130</a>            <span class="kw-2">&amp;</span>ephemerides,
 <a href=#131 id=131 data-nosnippet>131</a>            ROWS_PER_CHUNK,
 <a href=#132 id=132 data-nosnippet>132</a>        )<span class="question-mark">?</span>;
-<a href=#133 id=133 data-nosnippet>133</a>        <span class="kw">let </span>group = DataGroupEntry {
-<a href=#134 id=134 data-nosnippet>134</a>            name: <span class="string">"base"</span>.to_string(),
-<a href=#135 id=135 data-nosnippet>135</a>            visibilities: <span class="string">"DATA"</span>.to_string(),
-<a href=#136 id=136 data-nosnippet>136</a>            flags: <span class="string">"FLAG"</span>.to_string(),
-<a href=#137 id=137 data-nosnippet>137</a>            weights: <span class="kw">if </span>spectral_weights {
-<a href=#138 id=138 data-nosnippet>138</a>                <span class="string">"WEIGHT_SPECTRUM"
-<a href=#139 id=139 data-nosnippet>139</a>            </span>} <span class="kw">else </span>{
-<a href=#140 id=140 data-nosnippet>140</a>                <span class="string">"WEIGHT"
-<a href=#141 id=141 data-nosnippet>141</a>            </span>}
-<a href=#142 id=142 data-nosnippet>142</a>            .to_string(),
-<a href=#143 id=143 data-nosnippet>143</a>            uvw: <span class="string">"UVW"</span>.to_string(),
-<a href=#144 id=144 data-nosnippet>144</a>            units,
-<a href=#145 id=145 data-nosnippet>145</a>            uvw_frame,
-<a href=#146 id=146 data-nosnippet>146</a>        };
-<a href=#147 id=147 data-nosnippet>147</a>        <span class="kw">let </span><span class="kw-2">mut </span>partitions = Vec::new();
-<a href=#148 id=148 data-nosnippet>148</a>        <span class="kw">let </span><span class="kw-2">mut </span>entries = Vec::new();
-<a href=#149 id=149 data-nosnippet>149</a>        <span class="kw">for </span>(key, grid) <span class="kw">in </span>index.partitions {
-<a href=#150 id=150 data-nosnippet>150</a>            <span class="kw">let </span>setup = usize::try_from(key.data_description)
-<a href=#151 id=151 data-nosnippet>151</a>                .ok()
-<a href=#152 id=152 data-nosnippet>152</a>                .and_then(|row| setups.get(row))
-<a href=#153 id=153 data-nosnippet>153</a>                .ok_or_else(|| {
-<a href=#154 id=154 data-nosnippet>154</a>                    invalid(<span class="macro">format!</span>(
-<a href=#155 id=155 data-nosnippet>155</a>                        <span class="string">"DATA_DESC_ID {} is not in DATA_DESCRIPTION"</span>,
-<a href=#156 id=156 data-nosnippet>156</a>                        key.data_description
-<a href=#157 id=157 data-nosnippet>157</a>                    ))
-<a href=#158 id=158 data-nosnippet>158</a>                })<span class="question-mark">?</span>;
-<a href=#159 id=159 data-nosnippet>159</a>            <span class="kw">let </span>observation = u32::try_from(key.observation)
-<a href=#160 id=160 data-nosnippet>160</a>                .ok()
-<a href=#161 id=161 data-nosnippet>161</a>                .filter(|id| (<span class="kw-2">*</span>id <span class="kw">as </span>usize) &lt; observations.len())
-<a href=#162 id=162 data-nosnippet>162</a>                .map(ObservationId)
-<a href=#163 id=163 data-nosnippet>163</a>                .ok_or_else(|| {
-<a href=#164 id=164 data-nosnippet>164</a>                    invalid(<span class="macro">format!</span>(
-<a href=#165 id=165 data-nosnippet>165</a>                        <span class="string">"OBSERVATION_ID {} is not in OBSERVATION"</span>,
-<a href=#166 id=166 data-nosnippet>166</a>                        key.observation
-<a href=#167 id=167 data-nosnippet>167</a>                    ))
-<a href=#168 id=168 data-nosnippet>168</a>                })<span class="question-mark">?</span>;
-<a href=#169 id=169 data-nosnippet>169</a>            <span class="kw">let </span>feed = |feed: i32| {
-<a href=#170 id=170 data-nosnippet>170</a>                u32::try_from(feed).map_err(|<span class="kw">_</span>| invalid(<span class="macro">format!</span>(<span class="string">"negative feed {feed}"</span>)))
-<a href=#171 id=171 data-nosnippet>171</a>            };
-<a href=#172 id=172 data-nosnippet>172</a>            <span class="kw">let </span>feeds = [feed(key.feeds[<span class="number">0</span>])<span class="question-mark">?</span>, feed(key.feeds[<span class="number">1</span>])<span class="question-mark">?</span>];
-<a href=#173 id=173 data-nosnippet>173</a>            entries.push(PartitionEntry {
-<a href=#174 id=174 data-nosnippet>174</a>                spectral_window: setup.spectral_window.clone(),
-<a href=#175 id=175 data-nosnippet>175</a>                frequencies_hz: setup.frequencies_hz.clone(),
-<a href=#176 id=176 data-nosnippet>176</a>                frequency_frame: setup.frequency_frame,
-<a href=#177 id=177 data-nosnippet>177</a>                channel_widths_hz: setup.channel_widths_hz.clone(),
-<a href=#178 id=178 data-nosnippet>178</a>                correlations: setup.correlations.clone(),
-<a href=#179 id=179 data-nosnippet>179</a>                intents: catalogue::intents(<span class="kw-2">&amp;</span>key.obs_mode),
-<a href=#180 id=180 data-nosnippet>180</a>                observation,
-<a href=#181 id=181 data-nosnippet>181</a>                feeds: <span class="prelude-val">Some</span>(feeds),
-<a href=#182 id=182 data-nosnippet>182</a>                fields: <span class="kw">super</span>::distinct(<span class="kw-2">&amp;</span>grid.field_per_time),
-<a href=#183 id=183 data-nosnippet>183</a>                scans: <span class="kw">super</span>::distinct(<span class="kw-2">&amp;</span>grid.scan_per_time),
-<a href=#184 id=184 data-nosnippet>184</a>                baselines: grid.baselines.clone(),
-<a href=#185 id=185 data-nosnippet>185</a>                time_scale,
-<a href=#186 id=186 data-nosnippet>186</a>                time_origin: MjdHighPrec::new(<span class="number">0.0</span>, <span class="number">0.0</span>),
-<a href=#187 id=187 data-nosnippet>187</a>                data_groups: <span class="macro">vec!</span>[group.clone()],
-<a href=#188 id=188 data-nosnippet>188</a>            });
-<a href=#189 id=189 data-nosnippet>189</a>            partitions.push(Partition { grid });
-<a href=#190 id=190 data-nosnippet>190</a>        }
-<a href=#191 id=191 data-nosnippet>191</a>        <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
-<a href=#192 id=192 data-nosnippet>192</a>            catalogue: Arc::new(Catalogue {
-<a href=#193 id=193 data-nosnippet>193</a>                antennas,
-<a href=#194 id=194 data-nosnippet>194</a>                fields,
-<a href=#195 id=195 data-nosnippet>195</a>                scans: index.scans,
-<a href=#196 id=196 data-nosnippet>196</a>                observations,
-<a href=#197 id=197 data-nosnippet>197</a>                partitions: entries,
-<a href=#198 id=198 data-nosnippet>198</a>            }),
-<a href=#199 id=199 data-nosnippet>199</a>            partitions,
-<a href=#200 id=200 data-nosnippet>200</a>            spectral_weights,
-<a href=#201 id=201 data-nosnippet>201</a>            options: options.clone(),
-<a href=#202 id=202 data-nosnippet>202</a>            ms,
-<a href=#203 id=203 data-nosnippet>203</a>        })
-<a href=#204 id=204 data-nosnippet>204</a>    }
-<a href=#205 id=205 data-nosnippet>205</a>
-<a href=#206 id=206 data-nosnippet>206</a>    <span class="doccomment">/// The catalogue.
-<a href=#207 id=207 data-nosnippet>207</a>    </span><span class="attr">#[must_use]
-<a href=#208 id=208 data-nosnippet>208</a>    </span><span class="kw">pub fn </span>catalogue(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>Arc&lt;Catalogue&gt; {
-<a href=#209 id=209 data-nosnippet>209</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.catalogue
-<a href=#210 id=210 data-nosnippet>210</a>    }
-<a href=#211 id=211 data-nosnippet>211</a>
-<a href=#212 id=212 data-nosnippet>212</a>    <span class="doccomment">/// The MeasurementSet.
-<a href=#213 id=213 data-nosnippet>213</a>    </span><span class="attr">#[must_use]
-<a href=#214 id=214 data-nosnippet>214</a>    </span><span class="kw">pub fn </span>measurement_set(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>MeasurementSet {
-<a href=#215 id=215 data-nosnippet>215</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.ms
-<a href=#216 id=216 data-nosnippet>216</a>    }
-<a href=#217 id=217 data-nosnippet>217</a>
-<a href=#218 id=218 data-nosnippet>218</a>    <span class="doccomment">/// The time scale of MAIN `TIME` (every partition's).
-<a href=#219 id=219 data-nosnippet>219</a>    </span><span class="attr">#[must_use]
-<a href=#220 id=220 data-nosnippet>220</a>    </span><span class="kw">pub fn </span>time_scale(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; EpochRef {
-<a href=#221 id=221 data-nosnippet>221</a>        <span class="self">self</span>.catalogue
-<a href=#222 id=222 data-nosnippet>222</a>            .partitions
-<a href=#223 id=223 data-nosnippet>223</a>            .first()
-<a href=#224 id=224 data-nosnippet>224</a>            .map_or(EpochRef::UTC, |partition| partition.time_scale)
-<a href=#225 id=225 data-nosnippet>225</a>    }
-<a href=#226 id=226 data-nosnippet>226</a>
-<a href=#227 id=227 data-nosnippet>227</a>    <span class="kw">fn </span>partition(
-<a href=#228 id=228 data-nosnippet>228</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#229 id=229 data-nosnippet>229</a>        id: PartitionId,
-<a href=#230 id=230 data-nosnippet>230</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(<span class="kw-2">&amp;</span>Partition, <span class="kw-2">&amp;</span>PartitionEntry), ObservationError&gt; {
-<a href=#231 id=231 data-nosnippet>231</a>        <span class="kw">match </span>(
-<a href=#232 id=232 data-nosnippet>232</a>            <span class="self">self</span>.partitions.get(id.<span class="number">0 </span><span class="kw">as </span>usize),
-<a href=#233 id=233 data-nosnippet>233</a>            <span class="self">self</span>.catalogue.partitions.get(id.<span class="number">0 </span><span class="kw">as </span>usize),
-<a href=#234 id=234 data-nosnippet>234</a>        ) {
-<a href=#235 id=235 data-nosnippet>235</a>            (<span class="prelude-val">Some</span>(partition), <span class="prelude-val">Some</span>(entry)) =&gt; <span class="prelude-val">Ok</span>((partition, entry)),
-<a href=#236 id=236 data-nosnippet>236</a>            <span class="kw">_ </span>=&gt; <span class="prelude-val">Err</span>(ObservationError::InvalidRequest {
-<a href=#237 id=237 data-nosnippet>237</a>                reason: <span class="macro">format!</span>(<span class="string">"no partition {id:?}"</span>),
-<a href=#238 id=238 data-nosnippet>238</a>            }),
-<a href=#239 id=239 data-nosnippet>239</a>        }
-<a href=#240 id=240 data-nosnippet>240</a>    }
-<a href=#241 id=241 data-nosnippet>241</a>
-<a href=#242 id=242 data-nosnippet>242</a>    <span class="doccomment">/// What `request` costs on partition `id`, from the grid and the tile
-<a href=#243 id=243 data-nosnippet>243</a>    /// shape: every MSv2 role is a required column, so binding refuses
-<a href=#244 id=244 data-nosnippet>244</a>    /// nothing the request can ask for beyond the request's own
-<a href=#245 id=245 data-nosnippet>245</a>    /// consistency.
-<a href=#246 id=246 data-nosnippet>246</a>    </span><span class="kw">fn </span>estimate_partition(
-<a href=#247 id=247 data-nosnippet>247</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#248 id=248 data-nosnippet>248</a>        request: <span class="kw-2">&amp;</span>AccessRequest,
-<a href=#249 id=249 data-nosnippet>249</a>        id: PartitionId,
-<a href=#250 id=250 data-nosnippet>250</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(PartitionEstimate, ResolvedRequest), ObservationError&gt; {
-<a href=#251 id=251 data-nosnippet>251</a>        <span class="kw">let </span>(partition, entry) = <span class="self">self</span>.partition(id)<span class="question-mark">?</span>;
-<a href=#252 id=252 data-nosnippet>252</a>        <span class="kw">let </span>resolved = request.resolve(entry)<span class="question-mark">?</span>;
-<a href=#253 id=253 data-nosnippet>253</a>        <span class="kw">let </span>roles = request.roles;
-<a href=#254 id=254 data-nosnippet>254</a>        <span class="kw">let </span>channels = request.channels.len();
-<a href=#255 id=255 data-nosnippet>255</a>        <span class="kw">let </span>(delivered, stored) = (
-<a href=#256 id=256 data-nosnippet>256</a>            resolved.correlations.products(entry).len(),
-<a href=#257 id=257 data-nosnippet>257</a>            entry.correlations.len(),
-<a href=#258 id=258 data-nosnippet>258</a>        );
-<a href=#259 id=259 data-nosnippet>259</a>        <span class="kw">let </span>scalars = [roles.time_centroid, roles.interval, roles.exposure]
-<a href=#260 id=260 data-nosnippet>260</a>            .into_iter()
-<a href=#261 id=261 data-nosnippet>261</a>            .filter(|wanted| <span class="kw-2">*</span>wanted)
-<a href=#262 id=262 data-nosnippet>262</a>            .count();
-<a href=#263 id=263 data-nosnippet>263</a>        <span class="kw">let </span>bytes_per_sample =
-<a href=#264 id=264 data-nosnippet>264</a>            roles.sample_bytes(channels, delivered, <span class="self">self</span>.spectral_weights, scalars);
-<a href=#265 id=265 data-nosnippet>265</a>        <span class="kw">let </span>grid = <span class="kw-2">&amp;</span>partition.grid;
-<a href=#266 id=266 data-nosnippet>266</a>        <span class="comment">// The cursor's scratch: each present row's number, sample, FLAG_ROW
-<a href=#267 id=267 data-nosnippet>267</a>        // and time auxiliaries; and, when a subset is delivered, every stored
-<a href=#268 id=268 data-nosnippet>268</a>        // product of the cube roles, read before the delivered ones are
-<a href=#269 id=269 data-nosnippet>269</a>        // gathered. Padding needs none: rows are spread in place.
-<a href=#270 id=270 data-nosnippet>270</a>        </span><span class="kw">let </span>gathered = Roles {
-<a href=#271 id=271 data-nosnippet>271</a>            uvw: <span class="bool-val">false</span>,
-<a href=#272 id=272 data-nosnippet>272</a>            ..roles
-<a href=#273 id=273 data-nosnippet>273</a>        };
-<a href=#274 id=274 data-nosnippet>274</a>        <span class="kw">let </span>scratch_bytes_per_sample = <span class="number">2 </span>* size_of::&lt;usize&gt;()
-<a href=#275 id=275 data-nosnippet>275</a>            + usize::from(roles.flags)
-<a href=#276 id=276 data-nosnippet>276</a>            + <span class="number">8 </span>* scalars
-<a href=#277 id=277 data-nosnippet>277</a>            + <span class="kw">if </span>resolved.correlations.indices().is_some() {
-<a href=#278 id=278 data-nosnippet>278</a>                gathered.sample_bytes(channels, stored, <span class="self">self</span>.spectral_weights, <span class="number">0</span>)
-<a href=#279 id=279 data-nosnippet>279</a>            } <span class="kw">else </span>{
-<a href=#280 id=280 data-nosnippet>280</a>                <span class="number">0
-<a href=#281 id=281 data-nosnippet>281</a>            </span>};
-<a href=#282 id=282 data-nosnippet>282</a>        <span class="kw">let </span>per_sample = |correlations: usize| {
-<a href=#283 id=283 data-nosnippet>283</a>            usize::from(roles.values) * channels * correlations
-<a href=#284 id=284 data-nosnippet>284</a>                + usize::from(roles.flags) * channels * correlations
-<a href=#285 id=285 data-nosnippet>285</a>                + usize::from(roles.weights)
-<a href=#286 id=286 data-nosnippet>286</a>                    * <span class="kw">if </span><span class="self">self</span>.spectral_weights {
-<a href=#287 id=287 data-nosnippet>287</a>                        channels * correlations
-<a href=#288 id=288 data-nosnippet>288</a>                    } <span class="kw">else </span>{
-<a href=#289 id=289 data-nosnippet>289</a>                        correlations
-<a href=#290 id=290 data-nosnippet>290</a>                    }
-<a href=#291 id=291 data-nosnippet>291</a>                + usize::from(roles.uvw) * <span class="number">3
-<a href=#292 id=292 data-nosnippet>292</a>                </span>+ scalars
-<a href=#293 id=293 data-nosnippet>293</a>        };
-<a href=#294 id=294 data-nosnippet>294</a>        <span class="kw">let </span>(times, baselines) = (grid.times(), grid.baselines.len());
-<a href=#295 id=295 data-nosnippet>295</a>        <span class="kw">let </span>bytes_per_time = roles.time_bytes(<span class="number">0</span>);
-<a href=#296 id=296 data-nosnippet>296</a>        <span class="kw">let </span>times_per_batch = times_per_batch(
-<a href=#297 id=297 data-nosnippet>297</a>            request.batch_bytes,
-<a href=#298 id=298 data-nosnippet>298</a>            baselines * (bytes_per_sample + scratch_bytes_per_sample) + bytes_per_time,
-<a href=#299 id=299 data-nosnippet>299</a>            times,
-<a href=#300 id=300 data-nosnippet>300</a>        )<span class="question-mark">?</span>;
-<a href=#301 id=301 data-nosnippet>301</a>        <span class="kw">let </span>group = <span class="kw-2">&amp;</span>entry.data_groups[resolved.data_group];
-<a href=#302 id=302 data-nosnippet>302</a>        <span class="kw">let </span>tile = <span class="self">self
-<a href=#303 id=303 data-nosnippet>303</a>            </span>.ms
-<a href=#304 id=304 data-nosnippet>304</a>            .main_table()
-<a href=#305 id=305 data-nosnippet>305</a>            .array_column_tile_shape(<span class="kw-2">&amp;</span>group.visibilities)
-<a href=#306 id=306 data-nosnippet>306</a>            .map_err(table_error)<span class="question-mark">?</span>;
-<a href=#307 id=307 data-nosnippet>307</a>        <span class="kw">let </span>estimate = PartitionEstimate {
-<a href=#308 id=308 data-nosnippet>308</a>            partition: id,
-<a href=#309 id=309 data-nosnippet>309</a>            times,
-<a href=#310 id=310 data-nosnippet>310</a>            baselines,
-<a href=#311 id=311 data-nosnippet>311</a>            bytes_per_sample,
-<a href=#312 id=312 data-nosnippet>312</a>            bytes_per_time,
-<a href=#313 id=313 data-nosnippet>313</a>            scratch_bytes_per_sample,
-<a href=#314 id=314 data-nosnippet>314</a>            times_per_batch,
-<a href=#315 id=315 data-nosnippet>315</a>            batches: <span class="kw">if </span>times_per_batch == <span class="number">0 </span>{
-<a href=#316 id=316 data-nosnippet>316</a>                <span class="number">0
-<a href=#317 id=317 data-nosnippet>317</a>            </span>} <span class="kw">else </span>{
-<a href=#318 id=318 data-nosnippet>318</a>                times.div_ceil(times_per_batch)
-<a href=#319 id=319 data-nosnippet>319</a>            },
-<a href=#320 id=320 data-nosnippet>320</a>            decode_units: grid.rows,
-<a href=#321 id=321 data-nosnippet>321</a>            decoded_elements: grid.rows * per_sample(stored),
-<a href=#322 id=322 data-nosnippet>322</a>            selected_elements: grid.rows * per_sample(delivered),
-<a href=#323 id=323 data-nosnippet>323</a>            natural_blocks: <span class="kw">match </span>tile.as_deref() {
-<a href=#324 id=324 data-nosnippet>324</a>                <span class="comment">// A cell tile is [correlation, channel, rows].
-<a href=#325 id=325 data-nosnippet>325</a>                </span><span class="prelude-val">Some</span>([<span class="kw">_</span>, channels, rows, ..]) =&gt; NaturalBlocks {
-<a href=#326 id=326 data-nosnippet>326</a>                    times: (<span class="kw-2">*</span>rows / baselines.max(<span class="number">1</span>)).max(<span class="number">1</span>),
-<a href=#327 id=327 data-nosnippet>327</a>                    channels: <span class="kw-2">*</span>channels,
-<a href=#328 id=328 data-nosnippet>328</a>                },
-<a href=#329 id=329 data-nosnippet>329</a>                <span class="kw">_ </span>=&gt; NaturalBlocks {
-<a href=#330 id=330 data-nosnippet>330</a>                    times: <span class="number">1</span>,
-<a href=#331 id=331 data-nosnippet>331</a>                    channels: entry.frequencies_hz.len(),
-<a href=#332 id=332 data-nosnippet>332</a>                },
-<a href=#333 id=333 data-nosnippet>333</a>            },
-<a href=#334 id=334 data-nosnippet>334</a>            padded_fraction: grid.padded_fraction(),
-<a href=#335 id=335 data-nosnippet>335</a>        };
-<a href=#336 id=336 data-nosnippet>336</a>        <span class="prelude-val">Ok</span>((estimate, resolved))
-<a href=#337 id=337 data-nosnippet>337</a>    }
-<a href=#338 id=338 data-nosnippet>338</a>
-<a href=#339 id=339 data-nosnippet>339</a>    <span class="doccomment">/// What `request` costs ([`Observation::estimate`]).
-<a href=#340 id=340 data-nosnippet>340</a>    ///
-<a href=#341 id=341 data-nosnippet>341</a>    /// # Errors
-<a href=#342 id=342 data-nosnippet>342</a>    ///
-<a href=#343 id=343 data-nosnippet>343</a>    /// When the request names an unknown partition, data group, channel or
-<a href=#344 id=344 data-nosnippet>344</a>    /// correlation product, or budgets less than one time.
-<a href=#345 id=345 data-nosnippet>345</a>    </span><span class="kw">pub fn </span>estimate(<span class="kw-2">&amp;</span><span class="self">self</span>, request: <span class="kw-2">&amp;</span>AccessRequest) -&gt; <span class="prelude-ty">Result</span>&lt;Estimate, ObservationError&gt; {
-<a href=#346 id=346 data-nosnippet>346</a>        <span class="prelude-val">Ok</span>(Estimate {
-<a href=#347 id=347 data-nosnippet>347</a>            partitions: request
-<a href=#348 id=348 data-nosnippet>348</a>                .partitions
-<a href=#349 id=349 data-nosnippet>349</a>                .iter()
-<a href=#350 id=350 data-nosnippet>350</a>                .map(|<span class="kw-2">&amp;</span>id| <span class="prelude-val">Ok</span>(<span class="self">self</span>.estimate_partition(request, id)<span class="question-mark">?</span>.<span class="number">0</span>))
-<a href=#351 id=351 data-nosnippet>351</a>                .collect::&lt;<span class="prelude-ty">Result</span>&lt;<span class="kw">_</span>, ObservationError&gt;&gt;()<span class="question-mark">?</span>,
-<a href=#352 id=352 data-nosnippet>352</a>        })
-<a href=#353 id=353 data-nosnippet>353</a>    }
-<a href=#354 id=354 data-nosnippet>354</a>
-<a href=#355 id=355 data-nosnippet>355</a>    <span class="doccomment">/// Bind a traversal of `request`: one cursor per partition, whole times
-<a href=#356 id=356 data-nosnippet>356</a>    /// per batch ([`Observation::bind_read`]).
-<a href=#357 id=357 data-nosnippet>357</a>    ///
-<a href=#358 id=358 data-nosnippet>358</a>    /// # Errors
-<a href=#359 id=359 data-nosnippet>359</a>    ///
-<a href=#360 id=360 data-nosnippet>360</a>    /// As [`Self::estimate`].
-<a href=#361 id=361 data-nosnippet>361</a>    </span><span class="kw">pub fn </span>bind_read(<span class="kw-2">&amp;</span><span class="self">self</span>, request: <span class="kw-2">&amp;</span>AccessRequest) -&gt; <span class="prelude-ty">Result</span>&lt;Traversal&lt;<span class="lifetime">'_</span>&gt;, ObservationError&gt; {
-<a href=#362 id=362 data-nosnippet>362</a>        <span class="kw">let </span>bound = request
-<a href=#363 id=363 data-nosnippet>363</a>            .partitions
-<a href=#364 id=364 data-nosnippet>364</a>            .iter()
-<a href=#365 id=365 data-nosnippet>365</a>            .map(|<span class="kw-2">&amp;</span>id| <span class="self">self</span>.estimate_partition(request, id))
-<a href=#366 id=366 data-nosnippet>366</a>            .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()<span class="question-mark">?</span>;
-<a href=#367 id=367 data-nosnippet>367</a>        <span class="kw">let </span>estimate = Estimate {
-<a href=#368 id=368 data-nosnippet>368</a>            partitions: bound.iter().map(|(estimate, <span class="kw">_</span>)| estimate.clone()).collect(),
-<a href=#369 id=369 data-nosnippet>369</a>        };
-<a href=#370 id=370 data-nosnippet>370</a>        <span class="kw">let </span>cursors = bound
-<a href=#371 id=371 data-nosnippet>371</a>            .into_iter()
-<a href=#372 id=372 data-nosnippet>372</a>            .map(|(estimate, resolved)| {
-<a href=#373 id=373 data-nosnippet>373</a>                Msv2Cursor::bind(<span class="self">self</span>, request, estimate, resolved)
-<a href=#374 id=374 data-nosnippet>374</a>                    .map(|cursor| Box::new(cursor) <span class="kw">as </span>BoundCursor&lt;<span class="lifetime">'_</span>&gt;)
-<a href=#375 id=375 data-nosnippet>375</a>            })
-<a href=#376 id=376 data-nosnippet>376</a>            .collect::&lt;<span class="prelude-ty">Result</span>&lt;<span class="kw">_</span>, <span class="kw">_</span>&gt;&gt;()<span class="question-mark">?</span>;
-<a href=#377 id=377 data-nosnippet>377</a>        <span class="prelude-val">Ok</span>(Traversal::new(cursors, estimate))
-<a href=#378 id=378 data-nosnippet>378</a>    }
-<a href=#379 id=379 data-nosnippet>379</a>
-<a href=#380 id=380 data-nosnippet>380</a>    <span class="doccomment">/// Partition `id`'s grid ([`Observation::grid`]): its times, fields and
-<a href=#381 id=381 data-nosnippet>381</a>    /// scans from the opening index, and the one `INTERVAL` of its rows,
-<a href=#382 id=382 data-nosnippet>382</a>    /// read in bounded row chunks. Padding has no row, so no interval.
-<a href=#383 id=383 data-nosnippet>383</a>    ///
-<a href=#384 id=384 data-nosnippet>384</a>    /// # Errors
-<a href=#385 id=385 data-nosnippet>385</a>    ///
-<a href=#386 id=386 data-nosnippet>386</a>    /// As [`Observation::grid`].
-<a href=#387 id=387 data-nosnippet>387</a>    </span><span class="kw">pub fn </span>grid(
-<a href=#388 id=388 data-nosnippet>388</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#389 id=389 data-nosnippet>389</a>        id: PartitionId,
-<a href=#390 id=390 data-nosnippet>390</a>        data_group: <span class="kw-2">&amp;</span>str,
-<a href=#391 id=391 data-nosnippet>391</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;TimeBaselineGrid, ObservationError&gt; {
-<a href=#392 id=392 data-nosnippet>392</a>        <span class="kw">let </span>(partition, entry) = <span class="self">self</span>.partition(id)<span class="question-mark">?</span>;
-<a href=#393 id=393 data-nosnippet>393</a>        <span class="kw">if </span>entry.data_group(data_group).is_none() {
-<a href=#394 id=394 data-nosnippet>394</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(ObservationError::InvalidRequest {
-<a href=#395 id=395 data-nosnippet>395</a>                reason: <span class="macro">format!</span>(<span class="string">"no data group {data_group} in {id:?}"</span>),
-<a href=#396 id=396 data-nosnippet>396</a>            });
-<a href=#397 id=397 data-nosnippet>397</a>        }
-<a href=#398 id=398 data-nosnippet>398</a>        <span class="kw">let </span>grid = <span class="kw-2">&amp;</span>partition.grid;
-<a href=#399 id=399 data-nosnippet>399</a>        <span class="kw">let </span>rows: Vec&lt;usize&gt; = grid
-<a href=#400 id=400 data-nosnippet>400</a>            .cells
-<a href=#401 id=401 data-nosnippet>401</a>            .iter()
-<a href=#402 id=402 data-nosnippet>402</a>            .filter(|&amp;&amp;row| row != index::NO_ROW)
-<a href=#403 id=403 data-nosnippet>403</a>            .map(|<span class="kw-2">&amp;</span>row| row <span class="kw">as </span>usize)
-<a href=#404 id=404 data-nosnippet>404</a>            .collect();
-<a href=#405 id=405 data-nosnippet>405</a>        <span class="kw">let </span>main = <span class="self">self</span>.ms.main_table();
-<a href=#406 id=406 data-nosnippet>406</a>        <span class="kw">let </span><span class="kw-2">mut </span>interval = <span class="prelude-val">None</span>;
-<a href=#407 id=407 data-nosnippet>407</a>        <span class="kw">let </span><span class="kw-2">mut </span>values = Vec::new();
-<a href=#408 id=408 data-nosnippet>408</a>        <span class="kw">for </span>chunk <span class="kw">in </span>rows.chunks(ROWS_PER_CHUNK) {
-<a href=#409 id=409 data-nosnippet>409</a>            values.clear();
-<a href=#410 id=410 data-nosnippet>410</a>            main.required_scalar_columns_for_rows_into(
-<a href=#411 id=411 data-nosnippet>411</a>                chunk,
-<a href=#412 id=412 data-nosnippet>412</a>                <span class="kw-2">&amp;mut </span>[RequiredScalarColumnDestination::new(
-<a href=#413 id=413 data-nosnippet>413</a>                    <span class="string">"INTERVAL"</span>,
-<a href=#414 id=414 data-nosnippet>414</a>                    RequiredScalarColumnValuesMut::Float64(<span class="kw-2">&amp;mut </span>values),
-<a href=#415 id=415 data-nosnippet>415</a>                )],
-<a href=#416 id=416 data-nosnippet>416</a>            )
-<a href=#417 id=417 data-nosnippet>417</a>            .map_err(table_error)<span class="question-mark">?</span>;
-<a href=#418 id=418 data-nosnippet>418</a>            <span class="kw">for </span>value <span class="kw">in </span><span class="kw-2">&amp;</span>values {
-<a href=#419 id=419 data-nosnippet>419</a>                <span class="kw">if </span><span class="kw-2">*</span>interval.get_or_insert(<span class="kw-2">*</span>value) != <span class="kw-2">*</span>value {
-<a href=#420 id=420 data-nosnippet>420</a>                    <span class="kw">return </span><span class="prelude-val">Err</span>(ObservationError::Unsupported {
-<a href=#421 id=421 data-nosnippet>421</a>                        what: <span class="string">"a grid with more than one integration interval"</span>,
-<a href=#422 id=422 data-nosnippet>422</a>                    });
-<a href=#423 id=423 data-nosnippet>423</a>                }
-<a href=#424 id=424 data-nosnippet>424</a>            }
-<a href=#425 id=425 data-nosnippet>425</a>        }
-<a href=#426 id=426 data-nosnippet>426</a>        <span class="prelude-val">Ok</span>(TimeBaselineGrid {
-<a href=#427 id=427 data-nosnippet>427</a>            baselines: grid.baselines.clone(),
-<a href=#428 id=428 data-nosnippet>428</a>            time_scale: entry.time_scale,
-<a href=#429 id=429 data-nosnippet>429</a>            time_origin: entry.time_origin,
-<a href=#430 id=430 data-nosnippet>430</a>            times_s: grid.times_s.clone(),
-<a href=#431 id=431 data-nosnippet>431</a>            field_per_time: grid.field_per_time.clone(),
-<a href=#432 id=432 data-nosnippet>432</a>            scan_per_time: grid.scan_per_time.clone(),
-<a href=#433 id=433 data-nosnippet>433</a>            interval_s: interval.ok_or_else(|| ObservationError::InvalidRequest {
-<a href=#434 id=434 data-nosnippet>434</a>                reason: <span class="macro">format!</span>(<span class="string">"{id:?} has no rows"</span>),
-<a href=#435 id=435 data-nosnippet>435</a>            })<span class="question-mark">?</span>,
-<a href=#436 id=436 data-nosnippet>436</a>        })
-<a href=#437 id=437 data-nosnippet>437</a>    }
-<a href=#438 id=438 data-nosnippet>438</a>}
+<a href=#133 id=133 data-nosnippet>133</a>        <span class="kw">let </span>groups = data_groups(main, spectral_weights, uvw_frame);
+<a href=#134 id=134 data-nosnippet>134</a>        <span class="kw">let </span><span class="kw-2">mut </span>partitions = Vec::new();
+<a href=#135 id=135 data-nosnippet>135</a>        <span class="kw">let </span><span class="kw-2">mut </span>entries = Vec::new();
+<a href=#136 id=136 data-nosnippet>136</a>        <span class="kw">for </span>(key, grid) <span class="kw">in </span>index.partitions {
+<a href=#137 id=137 data-nosnippet>137</a>            <span class="kw">let </span>setup = usize::try_from(key.data_description)
+<a href=#138 id=138 data-nosnippet>138</a>                .ok()
+<a href=#139 id=139 data-nosnippet>139</a>                .and_then(|row| setups.get(row))
+<a href=#140 id=140 data-nosnippet>140</a>                .ok_or_else(|| {
+<a href=#141 id=141 data-nosnippet>141</a>                    invalid(<span class="macro">format!</span>(
+<a href=#142 id=142 data-nosnippet>142</a>                        <span class="string">"DATA_DESC_ID {} is not in DATA_DESCRIPTION"</span>,
+<a href=#143 id=143 data-nosnippet>143</a>                        key.data_description
+<a href=#144 id=144 data-nosnippet>144</a>                    ))
+<a href=#145 id=145 data-nosnippet>145</a>                })<span class="question-mark">?</span>;
+<a href=#146 id=146 data-nosnippet>146</a>            <span class="kw">let </span>observation = u32::try_from(key.observation)
+<a href=#147 id=147 data-nosnippet>147</a>                .ok()
+<a href=#148 id=148 data-nosnippet>148</a>                .filter(|id| (<span class="kw-2">*</span>id <span class="kw">as </span>usize) &lt; observations.len())
+<a href=#149 id=149 data-nosnippet>149</a>                .map(ObservationId)
+<a href=#150 id=150 data-nosnippet>150</a>                .ok_or_else(|| {
+<a href=#151 id=151 data-nosnippet>151</a>                    invalid(<span class="macro">format!</span>(
+<a href=#152 id=152 data-nosnippet>152</a>                        <span class="string">"OBSERVATION_ID {} is not in OBSERVATION"</span>,
+<a href=#153 id=153 data-nosnippet>153</a>                        key.observation
+<a href=#154 id=154 data-nosnippet>154</a>                    ))
+<a href=#155 id=155 data-nosnippet>155</a>                })<span class="question-mark">?</span>;
+<a href=#156 id=156 data-nosnippet>156</a>            <span class="kw">let </span>feed = |feed: i32| {
+<a href=#157 id=157 data-nosnippet>157</a>                u32::try_from(feed).map_err(|<span class="kw">_</span>| invalid(<span class="macro">format!</span>(<span class="string">"negative feed {feed}"</span>)))
+<a href=#158 id=158 data-nosnippet>158</a>            };
+<a href=#159 id=159 data-nosnippet>159</a>            <span class="kw">let </span>feeds = [feed(key.feeds[<span class="number">0</span>])<span class="question-mark">?</span>, feed(key.feeds[<span class="number">1</span>])<span class="question-mark">?</span>];
+<a href=#160 id=160 data-nosnippet>160</a>            entries.push(PartitionEntry {
+<a href=#161 id=161 data-nosnippet>161</a>                spectral_window: setup.spectral_window.clone(),
+<a href=#162 id=162 data-nosnippet>162</a>                frequencies_hz: setup.frequencies_hz.clone(),
+<a href=#163 id=163 data-nosnippet>163</a>                frequency_frame: setup.frequency_frame,
+<a href=#164 id=164 data-nosnippet>164</a>                channel_widths_hz: setup.channel_widths_hz.clone(),
+<a href=#165 id=165 data-nosnippet>165</a>                correlations: setup.correlations.clone(),
+<a href=#166 id=166 data-nosnippet>166</a>                intents: catalogue::intents(<span class="kw-2">&amp;</span>key.obs_mode),
+<a href=#167 id=167 data-nosnippet>167</a>                observation,
+<a href=#168 id=168 data-nosnippet>168</a>                feeds: <span class="prelude-val">Some</span>(feeds),
+<a href=#169 id=169 data-nosnippet>169</a>                fields: <span class="kw">super</span>::distinct(<span class="kw-2">&amp;</span>grid.field_per_time),
+<a href=#170 id=170 data-nosnippet>170</a>                scans: <span class="kw">super</span>::distinct(<span class="kw-2">&amp;</span>grid.scan_per_time),
+<a href=#171 id=171 data-nosnippet>171</a>                baselines: grid.baselines.clone(),
+<a href=#172 id=172 data-nosnippet>172</a>                time_scale,
+<a href=#173 id=173 data-nosnippet>173</a>                time_origin: MjdHighPrec::new(<span class="number">0.0</span>, <span class="number">0.0</span>),
+<a href=#174 id=174 data-nosnippet>174</a>                data_groups: groups.clone(),
+<a href=#175 id=175 data-nosnippet>175</a>            });
+<a href=#176 id=176 data-nosnippet>176</a>            partitions.push(Partition { grid });
+<a href=#177 id=177 data-nosnippet>177</a>        }
+<a href=#178 id=178 data-nosnippet>178</a>        <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
+<a href=#179 id=179 data-nosnippet>179</a>            catalogue: Arc::new(Catalogue {
+<a href=#180 id=180 data-nosnippet>180</a>                antennas,
+<a href=#181 id=181 data-nosnippet>181</a>                fields,
+<a href=#182 id=182 data-nosnippet>182</a>                scans: index.scans,
+<a href=#183 id=183 data-nosnippet>183</a>                observations,
+<a href=#184 id=184 data-nosnippet>184</a>                partitions: entries,
+<a href=#185 id=185 data-nosnippet>185</a>            }),
+<a href=#186 id=186 data-nosnippet>186</a>            partitions,
+<a href=#187 id=187 data-nosnippet>187</a>            spectral_weights,
+<a href=#188 id=188 data-nosnippet>188</a>            options: options.clone(),
+<a href=#189 id=189 data-nosnippet>189</a>            ms,
+<a href=#190 id=190 data-nosnippet>190</a>        })
+<a href=#191 id=191 data-nosnippet>191</a>    }
+<a href=#192 id=192 data-nosnippet>192</a>
+<a href=#193 id=193 data-nosnippet>193</a>    <span class="doccomment">/// The catalogue.
+<a href=#194 id=194 data-nosnippet>194</a>    </span><span class="attr">#[must_use]
+<a href=#195 id=195 data-nosnippet>195</a>    </span><span class="kw">pub fn </span>catalogue(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>Arc&lt;Catalogue&gt; {
+<a href=#196 id=196 data-nosnippet>196</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.catalogue
+<a href=#197 id=197 data-nosnippet>197</a>    }
+<a href=#198 id=198 data-nosnippet>198</a>
+<a href=#199 id=199 data-nosnippet>199</a>    <span class="doccomment">/// The MeasurementSet.
+<a href=#200 id=200 data-nosnippet>200</a>    </span><span class="attr">#[must_use]
+<a href=#201 id=201 data-nosnippet>201</a>    </span><span class="kw">pub fn </span>measurement_set(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>MeasurementSet {
+<a href=#202 id=202 data-nosnippet>202</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.ms
+<a href=#203 id=203 data-nosnippet>203</a>    }
+<a href=#204 id=204 data-nosnippet>204</a>
+<a href=#205 id=205 data-nosnippet>205</a>    <span class="doccomment">/// The time scale of MAIN `TIME` (every partition's).
+<a href=#206 id=206 data-nosnippet>206</a>    </span><span class="attr">#[must_use]
+<a href=#207 id=207 data-nosnippet>207</a>    </span><span class="kw">pub fn </span>time_scale(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; EpochRef {
+<a href=#208 id=208 data-nosnippet>208</a>        <span class="self">self</span>.catalogue
+<a href=#209 id=209 data-nosnippet>209</a>            .partitions
+<a href=#210 id=210 data-nosnippet>210</a>            .first()
+<a href=#211 id=211 data-nosnippet>211</a>            .map_or(EpochRef::UTC, |partition| partition.time_scale)
+<a href=#212 id=212 data-nosnippet>212</a>    }
+<a href=#213 id=213 data-nosnippet>213</a>
+<a href=#214 id=214 data-nosnippet>214</a>    <span class="kw">fn </span>partition(
+<a href=#215 id=215 data-nosnippet>215</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#216 id=216 data-nosnippet>216</a>        id: PartitionId,
+<a href=#217 id=217 data-nosnippet>217</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(<span class="kw-2">&amp;</span>Partition, <span class="kw-2">&amp;</span>PartitionEntry), ObservationError&gt; {
+<a href=#218 id=218 data-nosnippet>218</a>        <span class="kw">match </span>(
+<a href=#219 id=219 data-nosnippet>219</a>            <span class="self">self</span>.partitions.get(id.<span class="number">0 </span><span class="kw">as </span>usize),
+<a href=#220 id=220 data-nosnippet>220</a>            <span class="self">self</span>.catalogue.partitions.get(id.<span class="number">0 </span><span class="kw">as </span>usize),
+<a href=#221 id=221 data-nosnippet>221</a>        ) {
+<a href=#222 id=222 data-nosnippet>222</a>            (<span class="prelude-val">Some</span>(partition), <span class="prelude-val">Some</span>(entry)) =&gt; <span class="prelude-val">Ok</span>((partition, entry)),
+<a href=#223 id=223 data-nosnippet>223</a>            <span class="kw">_ </span>=&gt; <span class="prelude-val">Err</span>(ObservationError::InvalidRequest {
+<a href=#224 id=224 data-nosnippet>224</a>                reason: <span class="macro">format!</span>(<span class="string">"no partition {id:?}"</span>),
+<a href=#225 id=225 data-nosnippet>225</a>            }),
+<a href=#226 id=226 data-nosnippet>226</a>        }
+<a href=#227 id=227 data-nosnippet>227</a>    }
+<a href=#228 id=228 data-nosnippet>228</a>
+<a href=#229 id=229 data-nosnippet>229</a>    <span class="doccomment">/// What `request` costs on partition `id`, from the grid and the tile
+<a href=#230 id=230 data-nosnippet>230</a>    /// shape: every MSv2 role is a required column, so binding refuses
+<a href=#231 id=231 data-nosnippet>231</a>    /// nothing the request can ask for beyond the request's own
+<a href=#232 id=232 data-nosnippet>232</a>    /// consistency.
+<a href=#233 id=233 data-nosnippet>233</a>    </span><span class="kw">fn </span>estimate_partition(
+<a href=#234 id=234 data-nosnippet>234</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#235 id=235 data-nosnippet>235</a>        request: <span class="kw-2">&amp;</span>AccessRequest,
+<a href=#236 id=236 data-nosnippet>236</a>        id: PartitionId,
+<a href=#237 id=237 data-nosnippet>237</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(PartitionEstimate, ResolvedRequest), ObservationError&gt; {
+<a href=#238 id=238 data-nosnippet>238</a>        <span class="kw">let </span>(partition, entry) = <span class="self">self</span>.partition(id)<span class="question-mark">?</span>;
+<a href=#239 id=239 data-nosnippet>239</a>        <span class="kw">let </span>resolved = request.resolve(entry)<span class="question-mark">?</span>;
+<a href=#240 id=240 data-nosnippet>240</a>        <span class="kw">let </span>roles = request.roles;
+<a href=#241 id=241 data-nosnippet>241</a>        <span class="kw">let </span>channels = request.channels.len();
+<a href=#242 id=242 data-nosnippet>242</a>        <span class="kw">let </span>(delivered, stored) = (
+<a href=#243 id=243 data-nosnippet>243</a>            resolved.correlations.products(entry).len(),
+<a href=#244 id=244 data-nosnippet>244</a>            entry.correlations.len(),
+<a href=#245 id=245 data-nosnippet>245</a>        );
+<a href=#246 id=246 data-nosnippet>246</a>        <span class="kw">let </span>scalars = [roles.time_centroid, roles.interval, roles.exposure]
+<a href=#247 id=247 data-nosnippet>247</a>            .into_iter()
+<a href=#248 id=248 data-nosnippet>248</a>            .filter(|wanted| <span class="kw-2">*</span>wanted)
+<a href=#249 id=249 data-nosnippet>249</a>            .count();
+<a href=#250 id=250 data-nosnippet>250</a>        <span class="kw">let </span>bytes_per_sample =
+<a href=#251 id=251 data-nosnippet>251</a>            roles.sample_bytes(channels, delivered, <span class="self">self</span>.spectral_weights, scalars);
+<a href=#252 id=252 data-nosnippet>252</a>        <span class="kw">let </span>grid = <span class="kw-2">&amp;</span>partition.grid;
+<a href=#253 id=253 data-nosnippet>253</a>        <span class="comment">// The cursor's scratch: each present row's number, sample, FLAG_ROW
+<a href=#254 id=254 data-nosnippet>254</a>        // and time auxiliaries; and, when a subset is delivered, every stored
+<a href=#255 id=255 data-nosnippet>255</a>        // product of the cube roles, read before the delivered ones are
+<a href=#256 id=256 data-nosnippet>256</a>        // gathered. Padding needs none: rows are spread in place.
+<a href=#257 id=257 data-nosnippet>257</a>        </span><span class="kw">let </span>gathered = Roles {
+<a href=#258 id=258 data-nosnippet>258</a>            uvw: <span class="bool-val">false</span>,
+<a href=#259 id=259 data-nosnippet>259</a>            ..roles
+<a href=#260 id=260 data-nosnippet>260</a>        };
+<a href=#261 id=261 data-nosnippet>261</a>        <span class="kw">let </span>scratch_bytes_per_sample = <span class="number">2 </span>* size_of::&lt;usize&gt;()
+<a href=#262 id=262 data-nosnippet>262</a>            + usize::from(roles.flags)
+<a href=#263 id=263 data-nosnippet>263</a>            + <span class="number">8 </span>* scalars
+<a href=#264 id=264 data-nosnippet>264</a>            + <span class="kw">if </span>resolved.correlations.indices().is_some() {
+<a href=#265 id=265 data-nosnippet>265</a>                gathered.sample_bytes(channels, stored, <span class="self">self</span>.spectral_weights, <span class="number">0</span>)
+<a href=#266 id=266 data-nosnippet>266</a>            } <span class="kw">else </span>{
+<a href=#267 id=267 data-nosnippet>267</a>                <span class="number">0
+<a href=#268 id=268 data-nosnippet>268</a>            </span>};
+<a href=#269 id=269 data-nosnippet>269</a>        <span class="kw">let </span>per_sample = |correlations: usize| {
+<a href=#270 id=270 data-nosnippet>270</a>            usize::from(roles.values) * channels * correlations
+<a href=#271 id=271 data-nosnippet>271</a>                + usize::from(roles.flags) * channels * correlations
+<a href=#272 id=272 data-nosnippet>272</a>                + usize::from(roles.weights)
+<a href=#273 id=273 data-nosnippet>273</a>                    * <span class="kw">if </span><span class="self">self</span>.spectral_weights {
+<a href=#274 id=274 data-nosnippet>274</a>                        channels * correlations
+<a href=#275 id=275 data-nosnippet>275</a>                    } <span class="kw">else </span>{
+<a href=#276 id=276 data-nosnippet>276</a>                        correlations
+<a href=#277 id=277 data-nosnippet>277</a>                    }
+<a href=#278 id=278 data-nosnippet>278</a>                + usize::from(roles.uvw) * <span class="number">3
+<a href=#279 id=279 data-nosnippet>279</a>                </span>+ scalars
+<a href=#280 id=280 data-nosnippet>280</a>        };
+<a href=#281 id=281 data-nosnippet>281</a>        <span class="kw">let </span>(times, baselines) = (grid.times(), grid.baselines.len());
+<a href=#282 id=282 data-nosnippet>282</a>        <span class="kw">let </span>bytes_per_time = roles.time_bytes(<span class="number">0</span>);
+<a href=#283 id=283 data-nosnippet>283</a>        <span class="kw">let </span>times_per_batch = times_per_batch(
+<a href=#284 id=284 data-nosnippet>284</a>            request.batch_bytes,
+<a href=#285 id=285 data-nosnippet>285</a>            baselines * (bytes_per_sample + scratch_bytes_per_sample) + bytes_per_time,
+<a href=#286 id=286 data-nosnippet>286</a>            times,
+<a href=#287 id=287 data-nosnippet>287</a>        )<span class="question-mark">?</span>;
+<a href=#288 id=288 data-nosnippet>288</a>        <span class="kw">let </span>group = <span class="kw-2">&amp;</span>entry.data_groups[resolved.data_group];
+<a href=#289 id=289 data-nosnippet>289</a>        <span class="kw">let </span>tile = <span class="self">self
+<a href=#290 id=290 data-nosnippet>290</a>            </span>.ms
+<a href=#291 id=291 data-nosnippet>291</a>            .main_table()
+<a href=#292 id=292 data-nosnippet>292</a>            .array_column_tile_shape(<span class="kw-2">&amp;</span>group.visibilities)
+<a href=#293 id=293 data-nosnippet>293</a>            .map_err(table_error)<span class="question-mark">?</span>;
+<a href=#294 id=294 data-nosnippet>294</a>        <span class="kw">let </span>estimate = PartitionEstimate {
+<a href=#295 id=295 data-nosnippet>295</a>            partition: id,
+<a href=#296 id=296 data-nosnippet>296</a>            times,
+<a href=#297 id=297 data-nosnippet>297</a>            baselines,
+<a href=#298 id=298 data-nosnippet>298</a>            bytes_per_sample,
+<a href=#299 id=299 data-nosnippet>299</a>            bytes_per_time,
+<a href=#300 id=300 data-nosnippet>300</a>            scratch_bytes_per_sample,
+<a href=#301 id=301 data-nosnippet>301</a>            times_per_batch,
+<a href=#302 id=302 data-nosnippet>302</a>            batches: <span class="kw">if </span>times_per_batch == <span class="number">0 </span>{
+<a href=#303 id=303 data-nosnippet>303</a>                <span class="number">0
+<a href=#304 id=304 data-nosnippet>304</a>            </span>} <span class="kw">else </span>{
+<a href=#305 id=305 data-nosnippet>305</a>                times.div_ceil(times_per_batch)
+<a href=#306 id=306 data-nosnippet>306</a>            },
+<a href=#307 id=307 data-nosnippet>307</a>            decode_units: grid.rows,
+<a href=#308 id=308 data-nosnippet>308</a>            decoded_elements: grid.rows * per_sample(stored),
+<a href=#309 id=309 data-nosnippet>309</a>            selected_elements: grid.rows * per_sample(delivered),
+<a href=#310 id=310 data-nosnippet>310</a>            natural_blocks: <span class="kw">match </span>tile.as_deref() {
+<a href=#311 id=311 data-nosnippet>311</a>                <span class="comment">// A cell tile is [correlation, channel, rows].
+<a href=#312 id=312 data-nosnippet>312</a>                </span><span class="prelude-val">Some</span>([<span class="kw">_</span>, channels, rows, ..]) =&gt; NaturalBlocks {
+<a href=#313 id=313 data-nosnippet>313</a>                    times: (<span class="kw-2">*</span>rows / baselines.max(<span class="number">1</span>)).max(<span class="number">1</span>),
+<a href=#314 id=314 data-nosnippet>314</a>                    channels: <span class="kw-2">*</span>channels,
+<a href=#315 id=315 data-nosnippet>315</a>                },
+<a href=#316 id=316 data-nosnippet>316</a>                <span class="kw">_ </span>=&gt; NaturalBlocks {
+<a href=#317 id=317 data-nosnippet>317</a>                    times: <span class="number">1</span>,
+<a href=#318 id=318 data-nosnippet>318</a>                    channels: entry.frequencies_hz.len(),
+<a href=#319 id=319 data-nosnippet>319</a>                },
+<a href=#320 id=320 data-nosnippet>320</a>            },
+<a href=#321 id=321 data-nosnippet>321</a>            padded_fraction: grid.padded_fraction(),
+<a href=#322 id=322 data-nosnippet>322</a>        };
+<a href=#323 id=323 data-nosnippet>323</a>        <span class="prelude-val">Ok</span>((estimate, resolved))
+<a href=#324 id=324 data-nosnippet>324</a>    }
+<a href=#325 id=325 data-nosnippet>325</a>
+<a href=#326 id=326 data-nosnippet>326</a>    <span class="doccomment">/// What `request` costs ([`Observation::estimate`]).
+<a href=#327 id=327 data-nosnippet>327</a>    ///
+<a href=#328 id=328 data-nosnippet>328</a>    /// # Errors
+<a href=#329 id=329 data-nosnippet>329</a>    ///
+<a href=#330 id=330 data-nosnippet>330</a>    /// When the request names an unknown partition, data group, channel or
+<a href=#331 id=331 data-nosnippet>331</a>    /// correlation product, or budgets less than one time.
+<a href=#332 id=332 data-nosnippet>332</a>    </span><span class="kw">pub fn </span>estimate(<span class="kw-2">&amp;</span><span class="self">self</span>, request: <span class="kw-2">&amp;</span>AccessRequest) -&gt; <span class="prelude-ty">Result</span>&lt;Estimate, ObservationError&gt; {
+<a href=#333 id=333 data-nosnippet>333</a>        <span class="prelude-val">Ok</span>(Estimate {
+<a href=#334 id=334 data-nosnippet>334</a>            partitions: request
+<a href=#335 id=335 data-nosnippet>335</a>                .partitions
+<a href=#336 id=336 data-nosnippet>336</a>                .iter()
+<a href=#337 id=337 data-nosnippet>337</a>                .map(|<span class="kw-2">&amp;</span>id| <span class="prelude-val">Ok</span>(<span class="self">self</span>.estimate_partition(request, id)<span class="question-mark">?</span>.<span class="number">0</span>))
+<a href=#338 id=338 data-nosnippet>338</a>                .collect::&lt;<span class="prelude-ty">Result</span>&lt;<span class="kw">_</span>, ObservationError&gt;&gt;()<span class="question-mark">?</span>,
+<a href=#339 id=339 data-nosnippet>339</a>        })
+<a href=#340 id=340 data-nosnippet>340</a>    }
+<a href=#341 id=341 data-nosnippet>341</a>
+<a href=#342 id=342 data-nosnippet>342</a>    <span class="doccomment">/// Bind a traversal of `request`: one cursor per partition, whole times
+<a href=#343 id=343 data-nosnippet>343</a>    /// per batch ([`Observation::bind_read`]).
+<a href=#344 id=344 data-nosnippet>344</a>    ///
+<a href=#345 id=345 data-nosnippet>345</a>    /// # Errors
+<a href=#346 id=346 data-nosnippet>346</a>    ///
+<a href=#347 id=347 data-nosnippet>347</a>    /// As [`Self::estimate`].
+<a href=#348 id=348 data-nosnippet>348</a>    </span><span class="kw">pub fn </span>bind_read(<span class="kw-2">&amp;</span><span class="self">self</span>, request: <span class="kw-2">&amp;</span>AccessRequest) -&gt; <span class="prelude-ty">Result</span>&lt;Traversal&lt;<span class="lifetime">'_</span>&gt;, ObservationError&gt; {
+<a href=#349 id=349 data-nosnippet>349</a>        <span class="kw">let </span>bound = request
+<a href=#350 id=350 data-nosnippet>350</a>            .partitions
+<a href=#351 id=351 data-nosnippet>351</a>            .iter()
+<a href=#352 id=352 data-nosnippet>352</a>            .map(|<span class="kw-2">&amp;</span>id| <span class="self">self</span>.estimate_partition(request, id))
+<a href=#353 id=353 data-nosnippet>353</a>            .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()<span class="question-mark">?</span>;
+<a href=#354 id=354 data-nosnippet>354</a>        <span class="kw">let </span>estimate = Estimate {
+<a href=#355 id=355 data-nosnippet>355</a>            partitions: bound.iter().map(|(estimate, <span class="kw">_</span>)| estimate.clone()).collect(),
+<a href=#356 id=356 data-nosnippet>356</a>        };
+<a href=#357 id=357 data-nosnippet>357</a>        <span class="kw">let </span>cursors = bound
+<a href=#358 id=358 data-nosnippet>358</a>            .into_iter()
+<a href=#359 id=359 data-nosnippet>359</a>            .map(|(estimate, resolved)| {
+<a href=#360 id=360 data-nosnippet>360</a>                Msv2Cursor::bind(<span class="self">self</span>, request, estimate, resolved)
+<a href=#361 id=361 data-nosnippet>361</a>                    .map(|cursor| Box::new(cursor) <span class="kw">as </span>BoundCursor&lt;<span class="lifetime">'_</span>&gt;)
+<a href=#362 id=362 data-nosnippet>362</a>            })
+<a href=#363 id=363 data-nosnippet>363</a>            .collect::&lt;<span class="prelude-ty">Result</span>&lt;<span class="kw">_</span>, <span class="kw">_</span>&gt;&gt;()<span class="question-mark">?</span>;
+<a href=#364 id=364 data-nosnippet>364</a>        <span class="prelude-val">Ok</span>(Traversal::new(cursors, estimate))
+<a href=#365 id=365 data-nosnippet>365</a>    }
+<a href=#366 id=366 data-nosnippet>366</a>
+<a href=#367 id=367 data-nosnippet>367</a>    <span class="doccomment">/// Partition `id`'s grid ([`Observation::grid`]): its times, fields and
+<a href=#368 id=368 data-nosnippet>368</a>    /// scans from the opening index, and the one `INTERVAL` of its rows,
+<a href=#369 id=369 data-nosnippet>369</a>    /// read in bounded row chunks. Padding has no row, so no interval.
+<a href=#370 id=370 data-nosnippet>370</a>    ///
+<a href=#371 id=371 data-nosnippet>371</a>    /// # Errors
+<a href=#372 id=372 data-nosnippet>372</a>    ///
+<a href=#373 id=373 data-nosnippet>373</a>    /// As [`Observation::grid`].
+<a href=#374 id=374 data-nosnippet>374</a>    </span><span class="kw">pub fn </span>grid(
+<a href=#375 id=375 data-nosnippet>375</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#376 id=376 data-nosnippet>376</a>        id: PartitionId,
+<a href=#377 id=377 data-nosnippet>377</a>        data_group: <span class="kw-2">&amp;</span>str,
+<a href=#378 id=378 data-nosnippet>378</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;TimeBaselineGrid, ObservationError&gt; {
+<a href=#379 id=379 data-nosnippet>379</a>        <span class="kw">let </span>(partition, entry) = <span class="self">self</span>.partition(id)<span class="question-mark">?</span>;
+<a href=#380 id=380 data-nosnippet>380</a>        <span class="kw">if </span>entry.data_group(data_group).is_none() {
+<a href=#381 id=381 data-nosnippet>381</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(ObservationError::InvalidRequest {
+<a href=#382 id=382 data-nosnippet>382</a>                reason: <span class="macro">format!</span>(<span class="string">"no data group {data_group} in {id:?}"</span>),
+<a href=#383 id=383 data-nosnippet>383</a>            });
+<a href=#384 id=384 data-nosnippet>384</a>        }
+<a href=#385 id=385 data-nosnippet>385</a>        <span class="kw">let </span>grid = <span class="kw-2">&amp;</span>partition.grid;
+<a href=#386 id=386 data-nosnippet>386</a>        <span class="kw">let </span>rows: Vec&lt;usize&gt; = grid
+<a href=#387 id=387 data-nosnippet>387</a>            .cells
+<a href=#388 id=388 data-nosnippet>388</a>            .iter()
+<a href=#389 id=389 data-nosnippet>389</a>            .filter(|&amp;&amp;row| row != index::NO_ROW)
+<a href=#390 id=390 data-nosnippet>390</a>            .map(|<span class="kw-2">&amp;</span>row| row <span class="kw">as </span>usize)
+<a href=#391 id=391 data-nosnippet>391</a>            .collect();
+<a href=#392 id=392 data-nosnippet>392</a>        <span class="kw">let </span>main = <span class="self">self</span>.ms.main_table();
+<a href=#393 id=393 data-nosnippet>393</a>        <span class="kw">let </span><span class="kw-2">mut </span>interval = <span class="prelude-val">None</span>;
+<a href=#394 id=394 data-nosnippet>394</a>        <span class="kw">let </span><span class="kw-2">mut </span>values = Vec::new();
+<a href=#395 id=395 data-nosnippet>395</a>        <span class="kw">for </span>chunk <span class="kw">in </span>rows.chunks(ROWS_PER_CHUNK) {
+<a href=#396 id=396 data-nosnippet>396</a>            values.clear();
+<a href=#397 id=397 data-nosnippet>397</a>            main.required_scalar_columns_for_rows_into(
+<a href=#398 id=398 data-nosnippet>398</a>                chunk,
+<a href=#399 id=399 data-nosnippet>399</a>                <span class="kw-2">&amp;mut </span>[RequiredScalarColumnDestination::new(
+<a href=#400 id=400 data-nosnippet>400</a>                    <span class="string">"INTERVAL"</span>,
+<a href=#401 id=401 data-nosnippet>401</a>                    RequiredScalarColumnValuesMut::Float64(<span class="kw-2">&amp;mut </span>values),
+<a href=#402 id=402 data-nosnippet>402</a>                )],
+<a href=#403 id=403 data-nosnippet>403</a>            )
+<a href=#404 id=404 data-nosnippet>404</a>            .map_err(table_error)<span class="question-mark">?</span>;
+<a href=#405 id=405 data-nosnippet>405</a>            <span class="kw">for </span>value <span class="kw">in </span><span class="kw-2">&amp;</span>values {
+<a href=#406 id=406 data-nosnippet>406</a>                <span class="kw">if </span><span class="kw-2">*</span>interval.get_or_insert(<span class="kw-2">*</span>value) != <span class="kw-2">*</span>value {
+<a href=#407 id=407 data-nosnippet>407</a>                    <span class="kw">return </span><span class="prelude-val">Err</span>(ObservationError::Unsupported {
+<a href=#408 id=408 data-nosnippet>408</a>                        what: <span class="string">"a grid with more than one integration interval"</span>,
+<a href=#409 id=409 data-nosnippet>409</a>                    });
+<a href=#410 id=410 data-nosnippet>410</a>                }
+<a href=#411 id=411 data-nosnippet>411</a>            }
+<a href=#412 id=412 data-nosnippet>412</a>        }
+<a href=#413 id=413 data-nosnippet>413</a>        <span class="prelude-val">Ok</span>(TimeBaselineGrid {
+<a href=#414 id=414 data-nosnippet>414</a>            baselines: grid.baselines.clone(),
+<a href=#415 id=415 data-nosnippet>415</a>            time_scale: entry.time_scale,
+<a href=#416 id=416 data-nosnippet>416</a>            time_origin: entry.time_origin,
+<a href=#417 id=417 data-nosnippet>417</a>            times_s: grid.times_s.clone(),
+<a href=#418 id=418 data-nosnippet>418</a>            field_per_time: grid.field_per_time.clone(),
+<a href=#419 id=419 data-nosnippet>419</a>            scan_per_time: grid.scan_per_time.clone(),
+<a href=#420 id=420 data-nosnippet>420</a>            interval_s: interval.ok_or_else(|| ObservationError::InvalidRequest {
+<a href=#421 id=421 data-nosnippet>421</a>                reason: <span class="macro">format!</span>(<span class="string">"{id:?} has no rows"</span>),
+<a href=#422 id=422 data-nosnippet>422</a>            })<span class="question-mark">?</span>,
+<a href=#423 id=423 data-nosnippet>423</a>        })
+<a href=#424 id=424 data-nosnippet>424</a>    }
+<a href=#425 id=425 data-nosnippet>425</a>}
+<a href=#426 id=426 data-nosnippet>426</a>
+<a href=#427 id=427 data-nosnippet>427</a><span class="kw">impl </span>Observation <span class="kw">for </span>Msv2Observation {
+<a href=#428 id=428 data-nosnippet>428</a>    <span class="kw">fn </span>catalogue(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>Arc&lt;Catalogue&gt; {
+<a href=#429 id=429 data-nosnippet>429</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.catalogue
+<a href=#430 id=430 data-nosnippet>430</a>    }
+<a href=#431 id=431 data-nosnippet>431</a>
+<a href=#432 id=432 data-nosnippet>432</a>    <span class="kw">fn </span>estimate(<span class="kw-2">&amp;</span><span class="self">self</span>, request: <span class="kw-2">&amp;</span>AccessRequest) -&gt; <span class="prelude-ty">Result</span>&lt;Estimate, ObservationError&gt; {
+<a href=#433 id=433 data-nosnippet>433</a>        Msv2Observation::estimate(<span class="self">self</span>, request)
+<a href=#434 id=434 data-nosnippet>434</a>    }
+<a href=#435 id=435 data-nosnippet>435</a>
+<a href=#436 id=436 data-nosnippet>436</a>    <span class="kw">fn </span>bind_read(<span class="kw-2">&amp;</span><span class="self">self</span>, request: <span class="kw-2">&amp;</span>AccessRequest) -&gt; <span class="prelude-ty">Result</span>&lt;Traversal&lt;<span class="lifetime">'_</span>&gt;, ObservationError&gt; {
+<a href=#437 id=437 data-nosnippet>437</a>        Msv2Observation::bind_read(<span class="self">self</span>, request)
+<a href=#438 id=438 data-nosnippet>438</a>    }
 <a href=#439 id=439 data-nosnippet>439</a>
-<a href=#440 id=440 data-nosnippet>440</a><span class="kw">impl </span>Observation <span class="kw">for </span>Msv2Observation {
-<a href=#441 id=441 data-nosnippet>441</a>    <span class="kw">fn </span>catalogue(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>Arc&lt;Catalogue&gt; {
-<a href=#442 id=442 data-nosnippet>442</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.catalogue
-<a href=#443 id=443 data-nosnippet>443</a>    }
-<a href=#444 id=444 data-nosnippet>444</a>
-<a href=#445 id=445 data-nosnippet>445</a>    <span class="kw">fn </span>estimate(<span class="kw-2">&amp;</span><span class="self">self</span>, request: <span class="kw-2">&amp;</span>AccessRequest) -&gt; <span class="prelude-ty">Result</span>&lt;Estimate, ObservationError&gt; {
-<a href=#446 id=446 data-nosnippet>446</a>        Msv2Observation::estimate(<span class="self">self</span>, request)
-<a href=#447 id=447 data-nosnippet>447</a>    }
+<a href=#440 id=440 data-nosnippet>440</a>    <span class="kw">fn </span>grid(
+<a href=#441 id=441 data-nosnippet>441</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#442 id=442 data-nosnippet>442</a>        id: PartitionId,
+<a href=#443 id=443 data-nosnippet>443</a>        data_group: <span class="kw-2">&amp;</span>str,
+<a href=#444 id=444 data-nosnippet>444</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;TimeBaselineGrid, ObservationError&gt; {
+<a href=#445 id=445 data-nosnippet>445</a>        Msv2Observation::grid(<span class="self">self</span>, id, data_group)
+<a href=#446 id=446 data-nosnippet>446</a>    }
+<a href=#447 id=447 data-nosnippet>447</a>}
 <a href=#448 id=448 data-nosnippet>448</a>
-<a href=#449 id=449 data-nosnippet>449</a>    <span class="kw">fn </span>bind_read(<span class="kw-2">&amp;</span><span class="self">self</span>, request: <span class="kw-2">&amp;</span>AccessRequest) -&gt; <span class="prelude-ty">Result</span>&lt;Traversal&lt;<span class="lifetime">'_</span>&gt;, ObservationError&gt; {
-<a href=#450 id=450 data-nosnippet>450</a>        Msv2Observation::bind_read(<span class="self">self</span>, request)
-<a href=#451 id=451 data-nosnippet>451</a>    }
-<a href=#452 id=452 data-nosnippet>452</a>
-<a href=#453 id=453 data-nosnippet>453</a>    <span class="kw">fn </span>grid(
-<a href=#454 id=454 data-nosnippet>454</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#455 id=455 data-nosnippet>455</a>        id: PartitionId,
-<a href=#456 id=456 data-nosnippet>456</a>        data_group: <span class="kw-2">&amp;</span>str,
-<a href=#457 id=457 data-nosnippet>457</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;TimeBaselineGrid, ObservationError&gt; {
-<a href=#458 id=458 data-nosnippet>458</a>        Msv2Observation::grid(<span class="self">self</span>, id, data_group)
-<a href=#459 id=459 data-nosnippet>459</a>    }
-<a href=#460 id=460 data-nosnippet>460</a>}
+<a href=#449 id=449 data-nosnippet>449</a><span class="doccomment">/// The data groups MAIN's visibility columns form, named as XRADIO's
+<a href=#450 id=450 data-nosnippet>450</a>/// converter names them: `base` (`DATA`), and `corrected`
+<a href=#451 id=451 data-nosnippet>451</a>/// (`CORRECTED_DATA`) and `model` (`MODEL_DATA`) where the columns exist.
+<a href=#452 id=452 data-nosnippet>452</a>/// Every group reads the same flags, weights and UVW.
+<a href=#453 id=453 data-nosnippet>453</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>data_groups(
+<a href=#454 id=454 data-nosnippet>454</a>    main: <span class="kw-2">&amp;</span>casa_tables::Table,
+<a href=#455 id=455 data-nosnippet>455</a>    spectral_weights: bool,
+<a href=#456 id=456 data-nosnippet>456</a>    uvw_frame: casa_observation::UvwFrame,
+<a href=#457 id=457 data-nosnippet>457</a>) -&gt; Vec&lt;DataGroupEntry&gt; {
+<a href=#458 id=458 data-nosnippet>458</a>    <span class="kw">let </span>weights = <span class="kw">if </span>spectral_weights {
+<a href=#459 id=459 data-nosnippet>459</a>        <span class="string">"WEIGHT_SPECTRUM"
+<a href=#460 id=460 data-nosnippet>460</a>    </span>} <span class="kw">else </span>{
+<a href=#461 id=461 data-nosnippet>461</a>        <span class="string">"WEIGHT"
+<a href=#462 id=462 data-nosnippet>462</a>    </span>};
+<a href=#463 id=463 data-nosnippet>463</a>    <span class="kw">let </span>has = |column: <span class="kw-2">&amp;</span>str| {
+<a href=#464 id=464 data-nosnippet>464</a>        main.schema()
+<a href=#465 id=465 data-nosnippet>465</a>            .is_some_and(|schema| schema.contains_column(column))
+<a href=#466 id=466 data-nosnippet>466</a>    };
+<a href=#467 id=467 data-nosnippet>467</a>    [
+<a href=#468 id=468 data-nosnippet>468</a>        (<span class="string">"base"</span>, <span class="string">"DATA"</span>),
+<a href=#469 id=469 data-nosnippet>469</a>        (<span class="string">"corrected"</span>, <span class="string">"CORRECTED_DATA"</span>),
+<a href=#470 id=470 data-nosnippet>470</a>        (<span class="string">"model"</span>, <span class="string">"MODEL_DATA"</span>),
+<a href=#471 id=471 data-nosnippet>471</a>    ]
+<a href=#472 id=472 data-nosnippet>472</a>    .into_iter()
+<a href=#473 id=473 data-nosnippet>473</a>    .filter(|(name, column)| <span class="kw-2">*</span>name == <span class="string">"base" </span>|| has(column))
+<a href=#474 id=474 data-nosnippet>474</a>    .map(|(name, column)| DataGroupEntry {
+<a href=#475 id=475 data-nosnippet>475</a>        name: name.to_string(),
+<a href=#476 id=476 data-nosnippet>476</a>        visibilities: column.to_string(),
+<a href=#477 id=477 data-nosnippet>477</a>        flags: <span class="string">"FLAG"</span>.to_string(),
+<a href=#478 id=478 data-nosnippet>478</a>        weights: weights.to_string(),
+<a href=#479 id=479 data-nosnippet>479</a>        uvw: <span class="string">"UVW"</span>.to_string(),
+<a href=#480 id=480 data-nosnippet>480</a>        units: catalogue::data_units(main, column),
+<a href=#481 id=481 data-nosnippet>481</a>        uvw_frame,
+<a href=#482 id=482 data-nosnippet>482</a>    })
+<a href=#483 id=483 data-nosnippet>483</a>    .collect()
+<a href=#484 id=484 data-nosnippet>484</a>}
 </code></pre></div></section></main></body></html>

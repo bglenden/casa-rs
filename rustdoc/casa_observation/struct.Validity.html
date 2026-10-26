@@ -4,7 +4,7 @@ rule, the same for every store.</p>
 flag is set or, among the roles read, its visibility or weight is not
 finite. A delivered flag already marks every absent acquisition, in
 every store: MSv2 <code>FLAG_ROW</code> and the cells the MSv2 adapter pads (no row
-filled them: flagged, NaN, weight 0) are flagged, and the MSv4 adapter
+filled them: flagged, values and weights NaN) are flagged, and the MSv4 adapter
 folds a non-finite stored weight into the flag, because XRADIO pads a
 cell no row filled with NaN and leaves its <code>FLAG</code> false. So the rule
 gives one answer for one observation whichever store holds it and

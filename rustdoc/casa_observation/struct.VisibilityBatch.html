@@ -19,7 +19,7 @@ and one data group’s payload, borrowed from the caller’s
 partition’s table (<a href="struct.VisibilityBatch.html#structfield.baselines" title="field casa_observation::VisibilityBatch::baselines"><code>Self::baselines</code></a>); the coordinates cost <code>T + B</code>
 entries, not <code>T × B</code>. Both stores deliver this shape: MSv4 holds it, the
 MSv2 adapter places rows on it at opening and pads the cells no row
-filled (flag true, weight 0, values NaN). Field and scan are per time.</p>
+filled (flag true, values and weights NaN). Field and scan are per time.</p>
 <p>Every view is filled and checked before the batch is delivered: reading
 an element performs no I/O or decoding. The borrow keeps the buffers
 from being refilled while any view of them is alive.</p>

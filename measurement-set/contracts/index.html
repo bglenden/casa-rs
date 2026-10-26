@@ -1090,11 +1090,15 @@ grid when the MeasurementSet is opened, reading MAIN's key columns in bounded
 row chunks. Two rows claiming one cell are distinct acquisitions the partition
 keys failed to separate: opening refuses them, naming both rows, rather than
 discarding or averaging either.</p>
-<p>A cell no acquisition fills is <strong>padding</strong>. Every store delivers it flagged:
-the MSv2 adapter pads with flag true, weight 0, and values, UVW and time
-auxiliaries NaN; an MSv4 store holds its own padding (XRADIO's converter pads
-with NaN values and weights and leaves <code>FLAG</code> false), and the MSv4 adapter
-folds the non-finite stored weight into the delivered flag. The estimate
+<p>A cell no acquisition fills is <strong>padding</strong>. Every store delivers it flagged,
+with a NaN weight: the MSv2 adapter pads with flag true and values, weights,
+UVW and time auxiliaries NaN; an MSv4 store holds its own padding (XRADIO's
+converter pads with NaN values and weights and leaves <code>FLAG</code> false; casa-rs's
+writer pads the same way with <code>FLAG</code> true), and the MSv4 adapter folds the
+non-finite stored weight into the delivered flag. A NaN weight is padding's
+one mark in both stores; the MSv2 adapter padded with weight 0 until the
+write-back trial found that an MSv4 written from it could not tell padding
+from a flagged acquisition. The estimate
 reports the fraction of cells an adapter pads before anything is read; it is 0
 for MSv4, whose store holds its grid whole, and that says nothing of the cells
 the store itself holds as padding.</p>
@@ -1721,8 +1725,13 @@ cursors. The trial's probe reads all 64 partitions of a real MeasurementSet
 on eight workers and checks every partition's samples and checksum against a
 sequential read.</p>
 <p>The trial's adapters open stores read-only and hold no locks beyond the
-storage libraries' own. Mixed read/update sessions and locking are provisional
-(section 8).</p>
+storage libraries' own. An <strong>update session</strong> (<code>open_update</code>, section 7) is
+the one mixed owner: it takes the process's write intent on the store, so a
+second update session is refused, lends the same observation for reading and
+one updater at a time for writing, and lets independent read-only
+observations open beside it. MSv2 updaters hold casacore's table lock for
+their life; MSv4 has no cross-process lock protocol, and the session says
+so (<code>UpdateGuarantees</code>).</p>
 <h2 id="7-updates-and-creation">7. Updates and creation<a class="headerlink" href="#7-updates-and-creation" title="Permanent link">&para;</a></h2>
 <h3 id="creation-from-batches">Creation from batches<a class="headerlink" href="#creation-from-batches" title="Permanent link">&para;</a></h3>
 <p>A producer declares a dataset with the common catalogue (antennas, fields,
@@ -1738,7 +1747,7 @@ time, baseline, field and scan against the grid, and its interval where it has
 an acquisition (padding has none). It refuses what it cannot represent: a TAI
 grid (it writes <code>unix</code>/<code>utc</code> only), a true row flag (fold row flags into the
 element flags first), a channel window. A padded cell is written as padding:
-flagged, NaN values, UVW and time auxiliaries, weight 0. Every coordinate and
+flagged, NaN values, weights, UVW and time auxiliaries. Every coordinate and
 sub-dataset is written into a staging directory of the writer's own; the
 dataset is published by a rename that refuses to replace an existing one, and
 a dropped or failed writer removes its staging.</p>
@@ -1756,8 +1765,21 @@ one (cells in time order become rows, padded cells flagged NaN rows), and that
 creator, publication semantics beyond the MSv4 writer's and loss-policy
 coverage are provisional (section 8).</p>
 <h3 id="updates-provisional">Updates (provisional)<a class="headerlink" href="#updates-provisional" title="Permanent link">&para;</a></h3>
-<p>Nothing in this subsection is realized by the trial. Its acceptance
-obligations stand for M1/M2.</p>
+<p>The write-back trial (trial README, "Write-back") realizes a narrow part of
+this subsection: update sessions with declared targets (data group, role,
+alias scope, creation), one updater per traversal writing visibilities,
+flag set/clear changes and weights for the batches the session delivered,
+the broadcast-weight rule below (Pro R1), data-group aliases accepted
+explicitly (a group the session creates included), one binding per
+variable, row flags and padding preserved (a padded MSv2 cell has no row;
+an MSv4 updater refuses to clear a flag or write a finite weight where the
+store holds a NaN weight), whole-unit writes that read nothing, MSv4 chunks
+replaced atomically through a temporary object with the changed directories
+synchronized at finish, and new <code>CORRECTED_DATA</code> and <code>MODEL_DATA</code>
+initialized as CASA initializes them (from <code>DATA</code>; 1, and 0 in the cross
+hands). A batch's own times and baselines address its samples in
+both stores, so no update map is added to the read side. The rest of this
+subsection, and its acceptance obligations, stand for M1/M2.</p>
 <p>An <code>UpdateMapRef</code> refers to a session-owned inverse map from selected logical
 elements to a named writable role's native address domain (cells, scalars or
 chunk coordinates). That domain need not equal the visibility array's domain.
@@ -1871,12 +1893,12 @@ when its acceptance obligation is met.</p>
 </tr>
 <tr>
 <td>Occupancy and conversion to rows</td>
-<td>Absence only as flagged padding</td>
+<td>Absence only as flagged padding with a NaN weight in both stores; the batch carries no presence mask, so an update infers padding (a missing MSv2 row, a non-finite MSv4 weight, which a traversal must read weights to see) and refuses to clear its flags or give it a finite weight</td>
 <td>Unknown occupancy representable; conversion to a row format resolves it by declared policy or reports the ambiguity, never recovering an imaginary MSv2 row; writing new measurements into holes needs an explicit fill policy</td>
 </tr>
 <tr>
 <td>Native flags: bitmasks, reason bits, categories, row flags as their own view</td>
-<td><code>bool</code> only; <code>uint8</code> refused; row flags folded</td>
+<td><code>bool</code> only; <code>uint8</code> refused; row flags folded on read; a flag change sets and clears element flags and never writes <code>FLAG_ROW</code> or <code>FLAG_CATEGORY</code></td>
 <td>Native dtype and reason bits preserved for lossless writes; <code>UNSPECIFIED_BIT</code> for generic flagging, bound to its actual bit; clearing an effective flag never clears unknown reasons</td>
 </tr>
 <tr>
@@ -1891,8 +1913,8 @@ when its acceptance obligation is met.</p>
 </tr>
 <tr>
 <td>Updates</td>
-<td>Not built</td>
-<td>Section 7</td>
+<td>The write-back trial's update sessions (section 7)</td>
+<td>Section 7's remaining obligations: bit flags and flag categories, conflicting queued patches, structural writes (a new MSv4 data group), per-batch MSv2 planning, a killed process, stray temporary files and the synchronization cost at scale</td>
 </tr>
 <tr>
 <td>MSv2 creation from batches; general creation and loss policy</td>
@@ -1901,7 +1923,7 @@ when its acceptance obligation is met.</p>
 </tr>
 <tr>
 <td>Mixed read/update sessions and locking</td>
-<td>Read-only opens</td>
+<td>One update session per store in a process, one updater per session, read-only opens beside them; casacore's lock per MSv2 updater</td>
 <td>Plan read and write access before locking, no implicit upgrade; original-input semantics need disjoint read and write regions after resolving aliases, or a proven read-before-write order; casacore cross-process locks stay authoritative for v2; the v4 profile reports that it has no cross-process lock protocol</td>
 </tr>
 <tr>

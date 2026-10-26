@@ -78,362 +78,363 @@
 <a href=#78 id=78 data-nosnippet>78</a>    }
 <a href=#79 id=79 data-nosnippet>79</a>}
 <a href=#80 id=80 data-nosnippet>80</a>
-<a href=#81 id=81 data-nosnippet>81</a><span class="doccomment">/// What `DATA`'s `QuantumUnits` declares: janskys only when it says `Jy`.
-<a href=#82 id=82 data-nosnippet>82</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>data_units(table: <span class="kw-2">&amp;</span>Table) -&gt; VisibilityUnits {
-<a href=#83 id=83 data-nosnippet>83</a>    <span class="kw">match </span>quantum_units(table, <span class="string">"DATA"</span>).as_deref() {
-<a href=#84 id=84 data-nosnippet>84</a>        <span class="prelude-val">None </span>| <span class="prelude-val">Some</span>([]) =&gt; VisibilityUnits::Undeclared,
-<a href=#85 id=85 data-nosnippet>85</a>        <span class="prelude-val">Some</span>([unit, ..]) <span class="kw">if </span>unit == <span class="string">"Jy" </span>=&gt; VisibilityUnits::Jansky,
-<a href=#86 id=86 data-nosnippet>86</a>        <span class="prelude-val">Some</span>([unit, ..]) =&gt; VisibilityUnits::Declared(unit.clone()),
-<a href=#87 id=87 data-nosnippet>87</a>    }
-<a href=#88 id=88 data-nosnippet>88</a>}
-<a href=#89 id=89 data-nosnippet>89</a>
-<a href=#90 id=90 data-nosnippet>90</a><span class="doccomment">/// The time scale of MAIN `TIME` and `TIME_CENTROID`, in seconds. The
-<a href=#91 id=91 data-nosnippet>91</a>/// MeasurementSet definition's default reference is UTC; another fixed
-<a href=#92 id=92 data-nosnippet>92</a>/// reference is kept, a variable one refused, and the two columns must
-<a href=#93 id=93 data-nosnippet>93</a>/// agree.
-<a href=#94 id=94 data-nosnippet>94</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>time_scale(main: <span class="kw-2">&amp;</span>Table) -&gt; <span class="prelude-ty">Result</span>&lt;EpochRef, ObservationError&gt; {
-<a href=#95 id=95 data-nosnippet>95</a>    <span class="kw">let </span><span class="kw-2">mut </span>scales = Vec::new();
-<a href=#96 id=96 data-nosnippet>96</a>    <span class="kw">for </span>column <span class="kw">in </span>[<span class="string">"TIME"</span>, <span class="string">"TIME_CENTROID"</span>] {
-<a href=#97 id=97 data-nosnippet>97</a>        require_units(main, column, <span class="string">"s"</span>)<span class="question-mark">?</span>;
-<a href=#98 id=98 data-nosnippet>98</a>        <span class="kw">let </span>scale = <span class="kw">match </span>measure_reference(main, column)<span class="question-mark">? </span>{
-<a href=#99 id=99 data-nosnippet>99</a>            <span class="prelude-val">Some</span>(name) =&gt; name
-<a href=#100 id=100 data-nosnippet>100</a>                .parse::&lt;EpochRef&gt;()
-<a href=#101 id=101 data-nosnippet>101</a>                .map_err(|<span class="kw">_</span>| invalid(<span class="macro">format!</span>(<span class="string">"unknown {column} reference {name}"</span>)))<span class="question-mark">?</span>,
-<a href=#102 id=102 data-nosnippet>102</a>            <span class="prelude-val">None </span>=&gt; EpochRef::UTC,
-<a href=#103 id=103 data-nosnippet>103</a>        };
-<a href=#104 id=104 data-nosnippet>104</a>        scales.push(scale);
-<a href=#105 id=105 data-nosnippet>105</a>    }
-<a href=#106 id=106 data-nosnippet>106</a>    <span class="kw">for </span>column <span class="kw">in </span>[<span class="string">"INTERVAL"</span>, <span class="string">"EXPOSURE"</span>] {
-<a href=#107 id=107 data-nosnippet>107</a>        require_units(main, column, <span class="string">"s"</span>)<span class="question-mark">?</span>;
-<a href=#108 id=108 data-nosnippet>108</a>    }
-<a href=#109 id=109 data-nosnippet>109</a>    <span class="kw">if </span>scales[<span class="number">0</span>] == scales[<span class="number">1</span>] {
-<a href=#110 id=110 data-nosnippet>110</a>        <span class="prelude-val">Ok</span>(scales[<span class="number">0</span>])
-<a href=#111 id=111 data-nosnippet>111</a>    } <span class="kw">else </span>{
-<a href=#112 id=112 data-nosnippet>112</a>        <span class="prelude-val">Err</span>(ObservationError::Unsupported {
-<a href=#113 id=113 data-nosnippet>113</a>            what: <span class="string">"MSv2 TIME and TIME_CENTROID in different time scales"</span>,
-<a href=#114 id=114 data-nosnippet>114</a>        })
-<a href=#115 id=115 data-nosnippet>115</a>    }
-<a href=#116 id=116 data-nosnippet>116</a>}
-<a href=#117 id=117 data-nosnippet>117</a>
-<a href=#118 id=118 data-nosnippet>118</a><span class="doccomment">/// The `FIELD` subtable as the catalogue needs it.
-<a href=#119 id=119 data-nosnippet>119</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>Fields {
-<a href=#120 id=120 data-nosnippet>120</a>    <span class="kw">pub</span>(<span class="kw">super</span>) entries: Vec&lt;FieldEntry&gt;,
-<a href=#121 id=121 data-nosnippet>121</a>    <span class="doccomment">/// Each field's `EPHEMERIS_ID`, when the optional column is present.
-<a href=#122 id=122 data-nosnippet>122</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) ephemerides: Vec&lt;<span class="prelude-ty">Option</span>&lt;i32&gt;&gt;,
-<a href=#123 id=123 data-nosnippet>123</a>    <span class="doccomment">/// The UVW convention the phase centres' frame resolves.
-<a href=#124 id=124 data-nosnippet>124</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) uvw_frame: UvwFrame,
-<a href=#125 id=125 data-nosnippet>125</a>}
-<a href=#126 id=126 data-nosnippet>126</a>
-<a href=#127 id=127 data-nosnippet>127</a><span class="doccomment">/// The fields, their ephemerides, and the UVW convention.
-<a href=#128 id=128 data-nosnippet>128</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>fields_and_uvw(ms: <span class="kw-2">&amp;</span>MeasurementSet) -&gt; <span class="prelude-ty">Result</span>&lt;Fields, ObservationError&gt; {
-<a href=#129 id=129 data-nosnippet>129</a>    <span class="kw">let </span>field = ms.field().map_err(storage)<span class="question-mark">?</span>;
-<a href=#130 id=130 data-nosnippet>130</a>    <span class="kw">let </span>field_table = ms
-<a href=#131 id=131 data-nosnippet>131</a>        .subtable(SubtableId::Field)
-<a href=#132 id=132 data-nosnippet>132</a>        .ok_or_else(|| invalid(<span class="string">"no FIELD subtable"</span>))<span class="question-mark">?</span>;
-<a href=#133 id=133 data-nosnippet>133</a>    require_units(field_table, <span class="string">"PHASE_DIR"</span>, <span class="string">"rad"</span>)<span class="question-mark">?</span>;
-<a href=#134 id=134 data-nosnippet>134</a>    <span class="kw">let </span>phase_frame = measure_reference(field_table, <span class="string">"PHASE_DIR"</span>)<span class="question-mark">?
-<a href=#135 id=135 data-nosnippet>135</a>        </span>.map(|name| {
-<a href=#136 id=136 data-nosnippet>136</a>            name.parse::&lt;DirectionRef&gt;()
-<a href=#137 id=137 data-nosnippet>137</a>                .map_err(|<span class="kw">_</span>| invalid(<span class="macro">format!</span>(<span class="string">"unknown PHASE_DIR reference {name}"</span>)))
-<a href=#138 id=138 data-nosnippet>138</a>        })
-<a href=#139 id=139 data-nosnippet>139</a>        .transpose()<span class="question-mark">?
-<a href=#140 id=140 data-nosnippet>140</a>        </span>.unwrap_or(DirectionRef::J2000);
-<a href=#141 id=141 data-nosnippet>141</a>    <span class="kw">let </span>phase_dir = DirectionColumn::phase_dir(field_table);
-<a href=#142 id=142 data-nosnippet>142</a>    <span class="kw">let </span>fields = (<span class="number">0</span>..field.row_count())
-<a href=#143 id=143 data-nosnippet>143</a>        .map(|row| {
-<a href=#144 id=144 data-nosnippet>144</a>            <span class="kw">let </span>(longitude, latitude) = phase_dir.get_direction(row).map_err(storage)<span class="question-mark">?</span>.as_angles();
-<a href=#145 id=145 data-nosnippet>145</a>            <span class="kw">let </span>source = field.source_id(row).map_err(storage)<span class="question-mark">?</span>;
-<a href=#146 id=146 data-nosnippet>146</a>            <span class="prelude-val">Ok</span>(FieldEntry {
-<a href=#147 id=147 data-nosnippet>147</a>                name: field.name(row).map_err(storage)<span class="question-mark">?</span>,
-<a href=#148 id=148 data-nosnippet>148</a>                phase_centre: MDirection::from_angles(longitude, latitude, phase_frame),
-<a href=#149 id=149 data-nosnippet>149</a>                source_name: source_name(ms, source)<span class="question-mark">?</span>,
-<a href=#150 id=150 data-nosnippet>150</a>            })
-<a href=#151 id=151 data-nosnippet>151</a>        })
-<a href=#152 id=152 data-nosnippet>152</a>        .collect::&lt;<span class="prelude-ty">Result</span>&lt;<span class="kw">_</span>, ObservationError&gt;&gt;()<span class="question-mark">?</span>;
-<a href=#153 id=153 data-nosnippet>153</a>    <span class="kw">let </span>ephemerides = (<span class="number">0</span>..field.row_count())
-<a href=#154 id=154 data-nosnippet>154</a>        .map(|row| field.ephemeris_id(row).map_err(storage))
-<a href=#155 id=155 data-nosnippet>155</a>        .collect::&lt;<span class="prelude-ty">Result</span>&lt;<span class="kw">_</span>, ObservationError&gt;&gt;()<span class="question-mark">?</span>;
-<a href=#156 id=156 data-nosnippet>156</a>    <span class="kw">let </span>main = ms.main_table();
-<a href=#157 id=157 data-nosnippet>157</a>    require_units(main, <span class="string">"UVW"</span>, <span class="string">"m"</span>)<span class="question-mark">?</span>;
-<a href=#158 id=158 data-nosnippet>158</a>    <span class="kw">let </span>stored_label = measure_reference(main, <span class="string">"UVW"</span>)<span class="question-mark">?
-<a href=#159 id=159 data-nosnippet>159</a>        </span>.map(|name| {
-<a href=#160 id=160 data-nosnippet>160</a>            name.parse::&lt;DirectionRef&gt;()
-<a href=#161 id=161 data-nosnippet>161</a>                .map_err(|<span class="kw">_</span>| invalid(<span class="macro">format!</span>(<span class="string">"unknown UVW reference {name}"</span>)))
-<a href=#162 id=162 data-nosnippet>162</a>        })
-<a href=#163 id=163 data-nosnippet>163</a>        .transpose()<span class="question-mark">?</span>;
-<a href=#164 id=164 data-nosnippet>164</a>    <span class="comment">// CASA's convention: UVW are in the phase centre's frame. An ITRF label
-<a href=#165 id=165 data-nosnippet>165</a>    // (casacore's default, which simulators and fillers write) is the known
-<a href=#166 id=166 data-nosnippet>166</a>    // mislabelling; any other label must name the phase centres' frame.
-<a href=#167 id=167 data-nosnippet>167</a>    </span><span class="kw">match </span>stored_label {
-<a href=#168 id=168 data-nosnippet>168</a>        <span class="prelude-val">None </span>| <span class="prelude-val">Some</span>(DirectionRef::ITRF) =&gt; {}
-<a href=#169 id=169 data-nosnippet>169</a>        <span class="prelude-val">Some</span>(label) <span class="kw">if </span>label == phase_frame =&gt; {}
-<a href=#170 id=170 data-nosnippet>170</a>        <span class="prelude-val">Some</span>(<span class="kw">_</span>) =&gt; {
-<a href=#171 id=171 data-nosnippet>171</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(ObservationError::Unsupported {
-<a href=#172 id=172 data-nosnippet>172</a>                what: <span class="string">"MSv2 UVW labelled with a celestial frame other than the phase centres'"</span>,
-<a href=#173 id=173 data-nosnippet>173</a>            });
-<a href=#174 id=174 data-nosnippet>174</a>        }
-<a href=#175 id=175 data-nosnippet>175</a>    }
-<a href=#176 id=176 data-nosnippet>176</a>    <span class="prelude-val">Ok</span>(Fields {
-<a href=#177 id=177 data-nosnippet>177</a>        entries: fields,
-<a href=#178 id=178 data-nosnippet>178</a>        ephemerides,
-<a href=#179 id=179 data-nosnippet>179</a>        uvw_frame: UvwFrame {
-<a href=#180 id=180 data-nosnippet>180</a>            effective: phase_frame,
-<a href=#181 id=181 data-nosnippet>181</a>            stored_label,
-<a href=#182 id=182 data-nosnippet>182</a>        },
-<a href=#183 id=183 data-nosnippet>183</a>    })
-<a href=#184 id=184 data-nosnippet>184</a>}
-<a href=#185 id=185 data-nosnippet>185</a>
-<a href=#186 id=186 data-nosnippet>186</a><span class="doccomment">/// Every `OBSERVATION` row. A MeasurementSet without one gets a single
-<a href=#187 id=187 data-nosnippet>187</a>/// empty entry, which every row's `OBSERVATION_ID` 0 then names.
-<a href=#188 id=188 data-nosnippet>188</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>read_observations(
-<a href=#189 id=189 data-nosnippet>189</a>    ms: <span class="kw-2">&amp;</span>MeasurementSet,
-<a href=#190 id=190 data-nosnippet>190</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;ObservationEntry&gt;, ObservationError&gt; {
-<a href=#191 id=191 data-nosnippet>191</a>    <span class="kw">let </span>observation = ms.observation().map_err(storage)<span class="question-mark">?</span>;
-<a href=#192 id=192 data-nosnippet>192</a>    <span class="kw">if </span>observation.row_count() == <span class="number">0 </span>{
-<a href=#193 id=193 data-nosnippet>193</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="macro">vec!</span>[ObservationEntry::default()]);
-<a href=#194 id=194 data-nosnippet>194</a>    }
-<a href=#195 id=195 data-nosnippet>195</a>    (<span class="number">0</span>..observation.row_count())
-<a href=#196 id=196 data-nosnippet>196</a>        .map(|row| {
-<a href=#197 id=197 data-nosnippet>197</a>            <span class="kw">let </span>schedule: Vec&lt;String&gt; = <span class="kw">match </span>observation
-<a href=#198 id=198 data-nosnippet>198</a>                .optional_array(row, <span class="string">"SCHEDULE"</span>)
-<a href=#199 id=199 data-nosnippet>199</a>                .map_err(storage)<span class="question-mark">?
-<a href=#200 id=200 data-nosnippet>200</a>            </span>{
-<a href=#201 id=201 data-nosnippet>201</a>                <span class="prelude-val">Some</span>(ArrayValue::String(lines)) =&gt; lines.iter().cloned().collect(),
-<a href=#202 id=202 data-nosnippet>202</a>                <span class="kw">_ </span>=&gt; Vec::new(),
-<a href=#203 id=203 data-nosnippet>203</a>            };
-<a href=#204 id=204 data-nosnippet>204</a>            <span class="kw">let </span>uid = |line: usize, label: <span class="kw-2">&amp;</span>str| {
-<a href=#205 id=205 data-nosnippet>205</a>                schedule
-<a href=#206 id=206 data-nosnippet>206</a>                    .get(line)
-<a href=#207 id=207 data-nosnippet>207</a>                    .filter(|<span class="kw">_</span>| schedule.len() == <span class="number">2</span>)
-<a href=#208 id=208 data-nosnippet>208</a>                    .and_then(|line| scheduled_uid(line, label))
-<a href=#209 id=209 data-nosnippet>209</a>            };
-<a href=#210 id=210 data-nosnippet>210</a>            <span class="prelude-val">Ok</span>(ObservationEntry {
-<a href=#211 id=211 data-nosnippet>211</a>                telescope: observation.string(row, <span class="string">"TELESCOPE_NAME"</span>).map_err(storage)<span class="question-mark">?</span>,
-<a href=#212 id=212 data-nosnippet>212</a>                observers: <span class="macro">vec!</span>[observation.string(row, <span class="string">"OBSERVER"</span>).map_err(storage)<span class="question-mark">?</span>],
-<a href=#213 id=213 data-nosnippet>213</a>                project: observation.string(row, <span class="string">"PROJECT"</span>).map_err(storage)<span class="question-mark">?</span>,
-<a href=#214 id=214 data-nosnippet>214</a>                execution_block: uid(<span class="number">1</span>, <span class="string">"ExecBlock"</span>),
-<a href=#215 id=215 data-nosnippet>215</a>                session_reference: <span class="prelude-val">None</span>,
-<a href=#216 id=216 data-nosnippet>216</a>                scheduling_block: uid(<span class="number">0</span>, <span class="string">"SchedulingBlock"</span>),
-<a href=#217 id=217 data-nosnippet>217</a>            })
-<a href=#218 id=218 data-nosnippet>218</a>        })
-<a href=#219 id=219 data-nosnippet>219</a>        .collect()
-<a href=#220 id=220 data-nosnippet>220</a>}
-<a href=#221 id=221 data-nosnippet>221</a>
-<a href=#222 id=222 data-nosnippet>222</a><span class="doccomment">/// The UID after `label` in a `SCHEDULE` line, as XRADIO's converter reads
-<a href=#223 id=223 data-nosnippet>223</a>/// one `importasdm` writes (`[SchedulingBlock uid://A001/X3571/X122,
-<a href=#224 id=224 data-nosnippet>224</a>/// ExecBlock uid://A002/X1003af4/X75a3]`, one entry per line): the word
-<a href=#225 id=225 data-nosnippet>225</a>/// characters, `/` and `:` that follow `label` and a space.
-<a href=#226 id=226 data-nosnippet>226</a></span><span class="kw">fn </span>scheduled_uid(line: <span class="kw-2">&amp;</span>str, label: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Option</span>&lt;String&gt; {
-<a href=#227 id=227 data-nosnippet>227</a>    <span class="kw">let </span>start = line.find(<span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"{label} "</span>))<span class="question-mark">? </span>+ label.len() + <span class="number">1</span>;
-<a href=#228 id=228 data-nosnippet>228</a>    <span class="kw">let </span>uid: String = line[start..]
-<a href=#229 id=229 data-nosnippet>229</a>        .chars()
-<a href=#230 id=230 data-nosnippet>230</a>        .take_while(|c| c.is_alphanumeric() || <span class="macro">matches!</span>(c, <span class="string">'_' </span>| <span class="string">'/' </span>| <span class="string">':'</span>))
-<a href=#231 id=231 data-nosnippet>231</a>        .collect();
-<a href=#232 id=232 data-nosnippet>232</a>    (!uid.is_empty()).then_some(uid)
-<a href=#233 id=233 data-nosnippet>233</a>}
-<a href=#234 id=234 data-nosnippet>234</a>
-<a href=#235 id=235 data-nosnippet>235</a><span class="doccomment">/// `STATE::OBS_MODE` of every state row: the intents a `STATE_ID` names.
-<a href=#236 id=236 data-nosnippet>236</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>read_state_modes(ms: <span class="kw-2">&amp;</span>MeasurementSet) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;String&gt;, ObservationError&gt; {
-<a href=#237 id=237 data-nosnippet>237</a>    <span class="kw">match </span>ms.state() {
-<a href=#238 id=238 data-nosnippet>238</a>        <span class="prelude-val">Ok</span>(state) =&gt; (<span class="number">0</span>..state.row_count())
-<a href=#239 id=239 data-nosnippet>239</a>            .map(|row| state.string(row, <span class="string">"OBS_MODE"</span>).map_err(storage))
-<a href=#240 id=240 data-nosnippet>240</a>            .collect(),
-<a href=#241 id=241 data-nosnippet>241</a>        <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; <span class="prelude-val">Ok</span>(Vec::new()),
-<a href=#242 id=242 data-nosnippet>242</a>    }
-<a href=#243 id=243 data-nosnippet>243</a>}
-<a href=#244 id=244 data-nosnippet>244</a>
-<a href=#245 id=245 data-nosnippet>245</a><span class="doccomment">/// The intents an `OBS_MODE` string lists, sorted and deduplicated.
-<a href=#246 id=246 data-nosnippet>246</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>intents(mode: <span class="kw-2">&amp;</span>str) -&gt; Vec&lt;String&gt; {
-<a href=#247 id=247 data-nosnippet>247</a>    <span class="kw">let </span>set: BTreeSet&lt;String&gt; = mode
-<a href=#248 id=248 data-nosnippet>248</a>        .split(<span class="string">','</span>)
-<a href=#249 id=249 data-nosnippet>249</a>        .map(str::trim)
-<a href=#250 id=250 data-nosnippet>250</a>        .filter(|intent| !intent.is_empty())
-<a href=#251 id=251 data-nosnippet>251</a>        .map(str::to_string)
-<a href=#252 id=252 data-nosnippet>252</a>        .collect();
-<a href=#253 id=253 data-nosnippet>253</a>    set.into_iter().collect()
-<a href=#254 id=254 data-nosnippet>254</a>}
-<a href=#255 id=255 data-nosnippet>255</a>
-<a href=#256 id=256 data-nosnippet>256</a><span class="doccomment">/// Every `ANTENNA` row, with its first `FEED` row's receptors.
-<a href=#257 id=257 data-nosnippet>257</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>read_antennas(ms: <span class="kw-2">&amp;</span>MeasurementSet) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;AntennaEntry&gt;, ObservationError&gt; {
-<a href=#258 id=258 data-nosnippet>258</a>    <span class="kw">let </span>antenna = ms.antenna().map_err(storage)<span class="question-mark">?</span>;
-<a href=#259 id=259 data-nosnippet>259</a>    <span class="kw">let </span>antenna_table = ms
-<a href=#260 id=260 data-nosnippet>260</a>        .subtable(SubtableId::Antenna)
-<a href=#261 id=261 data-nosnippet>261</a>        .ok_or_else(|| invalid(<span class="string">"no ANTENNA subtable"</span>))<span class="question-mark">?</span>;
-<a href=#262 id=262 data-nosnippet>262</a>    require_units(antenna_table, <span class="string">"POSITION"</span>, <span class="string">"m"</span>)<span class="question-mark">?</span>;
-<a href=#263 id=263 data-nosnippet>263</a>    require_units(antenna_table, <span class="string">"DISH_DIAMETER"</span>, <span class="string">"m"</span>)<span class="question-mark">?</span>;
-<a href=#264 id=264 data-nosnippet>264</a>    <span class="kw">match </span>measure_reference(antenna_table, <span class="string">"POSITION"</span>)<span class="question-mark">?</span>.as_deref() {
-<a href=#265 id=265 data-nosnippet>265</a>        <span class="prelude-val">None </span>| <span class="prelude-val">Some</span>(<span class="string">"ITRF"</span>) =&gt; {}
-<a href=#266 id=266 data-nosnippet>266</a>        <span class="prelude-val">Some</span>(<span class="kw">_</span>) =&gt; {
-<a href=#267 id=267 data-nosnippet>267</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(ObservationError::Unsupported {
-<a href=#268 id=268 data-nosnippet>268</a>                what: <span class="string">"MSv2 antenna positions in other than ITRF"</span>,
-<a href=#269 id=269 data-nosnippet>269</a>            });
-<a href=#270 id=270 data-nosnippet>270</a>        }
-<a href=#271 id=271 data-nosnippet>271</a>    }
-<a href=#272 id=272 data-nosnippet>272</a>    <span class="kw">let </span>feed = ms.feed().map_err(storage)<span class="question-mark">?</span>;
-<a href=#273 id=273 data-nosnippet>273</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(feed_table) = ms.subtable(SubtableId::Feed) {
-<a href=#274 id=274 data-nosnippet>274</a>        require_units(feed_table, <span class="string">"RECEPTOR_ANGLE"</span>, <span class="string">"rad"</span>)<span class="question-mark">?</span>;
-<a href=#275 id=275 data-nosnippet>275</a>    }
-<a href=#276 id=276 data-nosnippet>276</a>    <span class="kw">let </span><span class="kw-2">mut </span>receptors = <span class="macro">vec!</span>[(Vec::new(), Vec::new()); antenna.row_count()];
-<a href=#277 id=277 data-nosnippet>277</a>    <span class="kw">for </span>row <span class="kw">in </span>(<span class="number">0</span>..feed.row_count()).rev() {
-<a href=#278 id=278 data-nosnippet>278</a>        <span class="kw">let </span>id = usize::try_from(feed.i32(row, <span class="string">"ANTENNA_ID"</span>).map_err(storage)<span class="question-mark">?</span>)
-<a href=#279 id=279 data-nosnippet>279</a>            .map_err(|<span class="kw">_</span>| invalid(<span class="string">"negative FEED ANTENNA_ID"</span>))<span class="question-mark">?</span>;
-<a href=#280 id=280 data-nosnippet>280</a>        <span class="kw">let </span><span class="prelude-val">Some</span>(slot) = receptors.get_mut(id) <span class="kw">else </span>{
-<a href=#281 id=281 data-nosnippet>281</a>            <span class="kw">continue</span>;
-<a href=#282 id=282 data-nosnippet>282</a>        };
-<a href=#283 id=283 data-nosnippet>283</a>        <span class="kw">let </span>types = <span class="kw">match </span>feed.array(row, <span class="string">"POLARIZATION_TYPE"</span>).map_err(storage)<span class="question-mark">? </span>{
-<a href=#284 id=284 data-nosnippet>284</a>            ArrayValue::String(types) =&gt; types.iter().cloned().collect(),
-<a href=#285 id=285 data-nosnippet>285</a>            <span class="kw">_ </span>=&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(invalid(<span class="string">"FEED POLARIZATION_TYPE is not a string array"</span>)),
-<a href=#286 id=286 data-nosnippet>286</a>        };
-<a href=#287 id=287 data-nosnippet>287</a>        <span class="kw">let </span>angles = <span class="kw">match </span>feed.array(row, <span class="string">"RECEPTOR_ANGLE"</span>).map_err(storage)<span class="question-mark">? </span>{
-<a href=#288 id=288 data-nosnippet>288</a>            ArrayValue::Float64(angles) =&gt; angles.iter().map(|angle| radians(<span class="kw-2">*</span>angle)).collect(),
-<a href=#289 id=289 data-nosnippet>289</a>            <span class="kw">_ </span>=&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(invalid(<span class="string">"FEED RECEPTOR_ANGLE is not a Float64 array"</span>)),
-<a href=#290 id=290 data-nosnippet>290</a>        };
-<a href=#291 id=291 data-nosnippet>291</a>        <span class="kw-2">*</span>slot = (types, angles);
-<a href=#292 id=292 data-nosnippet>292</a>    }
-<a href=#293 id=293 data-nosnippet>293</a>    (<span class="number">0</span>..antenna.row_count())
-<a href=#294 id=294 data-nosnippet>294</a>        .zip(receptors)
-<a href=#295 id=295 data-nosnippet>295</a>        .map(|(row, (receptors, receptor_angles))| {
-<a href=#296 id=296 data-nosnippet>296</a>            <span class="kw">let </span>[x, y, z] = antenna.position(row).map_err(storage)<span class="question-mark">?</span>;
-<a href=#297 id=297 data-nosnippet>297</a>            <span class="prelude-val">Ok</span>(AntennaEntry {
-<a href=#298 id=298 data-nosnippet>298</a>                name: antenna.name(row).map_err(storage)<span class="question-mark">?</span>,
-<a href=#299 id=299 data-nosnippet>299</a>                station: antenna.station(row).map_err(storage)<span class="question-mark">?</span>,
-<a href=#300 id=300 data-nosnippet>300</a>                position: MPosition::new_itrf(x, y, z),
-<a href=#301 id=301 data-nosnippet>301</a>                mount: antenna.mount(row).map_err(storage)<span class="question-mark">?</span>,
-<a href=#302 id=302 data-nosnippet>302</a>                dish_diameter: metres(antenna.dish_diameter(row).map_err(storage)<span class="question-mark">?</span>),
-<a href=#303 id=303 data-nosnippet>303</a>                receptors,
-<a href=#304 id=304 data-nosnippet>304</a>                receptor_angles,
-<a href=#305 id=305 data-nosnippet>305</a>            })
-<a href=#306 id=306 data-nosnippet>306</a>        })
-<a href=#307 id=307 data-nosnippet>307</a>        .collect()
-<a href=#308 id=308 data-nosnippet>308</a>}
-<a href=#309 id=309 data-nosnippet>309</a>
-<a href=#310 id=310 data-nosnippet>310</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>metres(value: f64) -&gt; Quantity {
-<a href=#311 id=311 data-nosnippet>311</a>    Quantity::new(value, <span class="string">"m"</span>).expect(<span class="string">"metres parse"</span>)
-<a href=#312 id=312 data-nosnippet>312</a>}
-<a href=#313 id=313 data-nosnippet>313</a>
-<a href=#314 id=314 data-nosnippet>314</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>radians(value: f64) -&gt; Quantity {
-<a href=#315 id=315 data-nosnippet>315</a>    Quantity::new(value, <span class="string">"rad"</span>).expect(<span class="string">"radians parse"</span>)
-<a href=#316 id=316 data-nosnippet>316</a>}
-<a href=#317 id=317 data-nosnippet>317</a>
-<a href=#318 id=318 data-nosnippet>318</a><span class="doccomment">/// The `SOURCE` name of source `id`, if the MeasurementSet has one.
-<a href=#319 id=319 data-nosnippet>319</a></span><span class="kw">fn </span>source_name(ms: <span class="kw-2">&amp;</span>MeasurementSet, id: i32) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;String&gt;, ObservationError&gt; {
-<a href=#320 id=320 data-nosnippet>320</a>    <span class="kw">if </span>id &lt; <span class="number">0 </span>{
-<a href=#321 id=321 data-nosnippet>321</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
-<a href=#322 id=322 data-nosnippet>322</a>    }
-<a href=#323 id=323 data-nosnippet>323</a>    <span class="kw">let </span><span class="prelude-val">Ok</span>(source) = ms.source() <span class="kw">else </span>{
-<a href=#324 id=324 data-nosnippet>324</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
-<a href=#325 id=325 data-nosnippet>325</a>    };
-<a href=#326 id=326 data-nosnippet>326</a>    <span class="kw">for </span>row <span class="kw">in </span><span class="number">0</span>..source.row_count() {
-<a href=#327 id=327 data-nosnippet>327</a>        <span class="kw">if </span>source.i32(row, <span class="string">"SOURCE_ID"</span>).map_err(storage)<span class="question-mark">? </span>== id {
-<a href=#328 id=328 data-nosnippet>328</a>            <span class="kw">return </span>source.string(row, <span class="string">"NAME"</span>).map(<span class="prelude-val">Some</span>).map_err(storage);
-<a href=#329 id=329 data-nosnippet>329</a>        }
-<a href=#330 id=330 data-nosnippet>330</a>    }
-<a href=#331 id=331 data-nosnippet>331</a>    <span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>)
-<a href=#332 id=332 data-nosnippet>332</a>}
-<a href=#333 id=333 data-nosnippet>333</a>
-<a href=#334 id=334 data-nosnippet>334</a><span class="doccomment">/// The scans: MAIN's distinct `SCAN_NUMBER`s in ascending order, named by
-<a href=#335 id=335 data-nosnippet>335</a>/// their decimal number as XRADIO names them, with the `STATE::OBS_MODE`
-<a href=#336 id=336 data-nosnippet>336</a>/// intents of their rows' states (`states_by_number`, each scan's
-<a href=#337 id=337 data-nosnippet>337</a>/// `STATE_ID`s; `modes`, each `STATE` row's `OBS_MODE`); and the scan of
-<a href=#338 id=338 data-nosnippet>338</a>/// each `SCAN_NUMBER`.
-<a href=#339 id=339 data-nosnippet>339</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>scans(
-<a href=#340 id=340 data-nosnippet>340</a>    states_by_number: BTreeMap&lt;i32, BTreeSet&lt;i32&gt;&gt;,
-<a href=#341 id=341 data-nosnippet>341</a>    modes: <span class="kw-2">&amp;</span>[String],
-<a href=#342 id=342 data-nosnippet>342</a>) -&gt; (Vec&lt;ScanEntry&gt;, BTreeMap&lt;i32, ScanId&gt;) {
-<a href=#343 id=343 data-nosnippet>343</a>    <span class="kw">let </span>index: BTreeMap&lt;i32, ScanId&gt; = states_by_number
-<a href=#344 id=344 data-nosnippet>344</a>        .keys()
-<a href=#345 id=345 data-nosnippet>345</a>        .enumerate()
-<a href=#346 id=346 data-nosnippet>346</a>        .map(|(index, number)| (<span class="kw-2">*</span>number, ScanId(index <span class="kw">as </span>u32)))
-<a href=#347 id=347 data-nosnippet>347</a>        .collect();
-<a href=#348 id=348 data-nosnippet>348</a>    <span class="kw">let </span>scans = states_by_number
-<a href=#349 id=349 data-nosnippet>349</a>        .into_iter()
-<a href=#350 id=350 data-nosnippet>350</a>        .map(|(number, states)| {
-<a href=#351 id=351 data-nosnippet>351</a>            <span class="kw">let </span>intents: BTreeSet&lt;String&gt; = states
-<a href=#352 id=352 data-nosnippet>352</a>                .into_iter()
-<a href=#353 id=353 data-nosnippet>353</a>                .filter_map(|state| {
-<a href=#354 id=354 data-nosnippet>354</a>                    usize::try_from(state)
-<a href=#355 id=355 data-nosnippet>355</a>                        .ok()
-<a href=#356 id=356 data-nosnippet>356</a>                        .and_then(|state| modes.get(state))
-<a href=#357 id=357 data-nosnippet>357</a>                })
-<a href=#358 id=358 data-nosnippet>358</a>                .flat_map(|mode| intents(mode))
-<a href=#359 id=359 data-nosnippet>359</a>                .collect();
-<a href=#360 id=360 data-nosnippet>360</a>            ScanEntry {
-<a href=#361 id=361 data-nosnippet>361</a>                name: number.to_string(),
-<a href=#362 id=362 data-nosnippet>362</a>                number: <span class="prelude-val">Some</span>(number),
-<a href=#363 id=363 data-nosnippet>363</a>                intents: intents.into_iter().collect(),
-<a href=#364 id=364 data-nosnippet>364</a>            }
-<a href=#365 id=365 data-nosnippet>365</a>        })
-<a href=#366 id=366 data-nosnippet>366</a>        .collect();
-<a href=#367 id=367 data-nosnippet>367</a>    (scans, index)
-<a href=#368 id=368 data-nosnippet>368</a>}
-<a href=#369 id=369 data-nosnippet>369</a>
-<a href=#370 id=370 data-nosnippet>370</a><span class="doccomment">/// The spectral window and correlation products of one data description.
-<a href=#371 id=371 data-nosnippet>371</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>SpectralSetup {
-<a href=#372 id=372 data-nosnippet>372</a>    <span class="kw">pub</span>(<span class="kw">super</span>) spectral_window: String,
-<a href=#373 id=373 data-nosnippet>373</a>    <span class="kw">pub</span>(<span class="kw">super</span>) frequencies_hz: Vec&lt;f64&gt;,
-<a href=#374 id=374 data-nosnippet>374</a>    <span class="kw">pub</span>(<span class="kw">super</span>) frequency_frame: FrequencyRef,
-<a href=#375 id=375 data-nosnippet>375</a>    <span class="kw">pub</span>(<span class="kw">super</span>) channel_widths_hz: Vec&lt;f64&gt;,
-<a href=#376 id=376 data-nosnippet>376</a>    <span class="kw">pub</span>(<span class="kw">super</span>) correlations: Vec&lt;Correlation&gt;,
-<a href=#377 id=377 data-nosnippet>377</a>}
-<a href=#378 id=378 data-nosnippet>378</a>
-<a href=#379 id=379 data-nosnippet>379</a><span class="doccomment">/// Every `DATA_DESCRIPTION` row's spectral setup.
-<a href=#380 id=380 data-nosnippet>380</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>spectral_setups(ms: <span class="kw-2">&amp;</span>MeasurementSet) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;SpectralSetup&gt;, ObservationError&gt; {
-<a href=#381 id=381 data-nosnippet>381</a>    <span class="kw">let </span>descriptions = ms.data_description().map_err(storage)<span class="question-mark">?</span>;
-<a href=#382 id=382 data-nosnippet>382</a>    <span class="kw">let </span>windows = ms.spectral_window().map_err(storage)<span class="question-mark">?</span>;
-<a href=#383 id=383 data-nosnippet>383</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(window_table) = ms.subtable(SubtableId::SpectralWindow) {
-<a href=#384 id=384 data-nosnippet>384</a>        require_units(window_table, <span class="string">"CHAN_FREQ"</span>, <span class="string">"Hz"</span>)<span class="question-mark">?</span>;
-<a href=#385 id=385 data-nosnippet>385</a>        require_units(window_table, <span class="string">"CHAN_WIDTH"</span>, <span class="string">"Hz"</span>)<span class="question-mark">?</span>;
-<a href=#386 id=386 data-nosnippet>386</a>    }
-<a href=#387 id=387 data-nosnippet>387</a>    <span class="kw">let </span>polarizations = ms.polarization().map_err(storage)<span class="question-mark">?</span>;
-<a href=#388 id=388 data-nosnippet>388</a>    (<span class="number">0</span>..descriptions.row_count())
-<a href=#389 id=389 data-nosnippet>389</a>        .map(|row| {
-<a href=#390 id=390 data-nosnippet>390</a>            <span class="kw">let </span>window = usize::try_from(descriptions.spectral_window_id(row).map_err(storage)<span class="question-mark">?</span>)
-<a href=#391 id=391 data-nosnippet>391</a>                .map_err(|<span class="kw">_</span>| invalid(<span class="string">"negative SPECTRAL_WINDOW_ID"</span>))<span class="question-mark">?</span>;
-<a href=#392 id=392 data-nosnippet>392</a>            <span class="kw">let </span>polarization = usize::try_from(descriptions.polarization_id(row).map_err(storage)<span class="question-mark">?</span>)
-<a href=#393 id=393 data-nosnippet>393</a>                .map_err(|<span class="kw">_</span>| invalid(<span class="string">"negative POLARIZATION_ID"</span>))<span class="question-mark">?</span>;
-<a href=#394 id=394 data-nosnippet>394</a>            <span class="kw">let </span>frame_code = windows.meas_freq_ref(window).map_err(storage)<span class="question-mark">?</span>;
-<a href=#395 id=395 data-nosnippet>395</a>            <span class="kw">let </span>frequency_frame = FrequencyRef::from_casacore_code(frame_code)
-<a href=#396 id=396 data-nosnippet>396</a>                .ok_or_else(|| invalid(<span class="macro">format!</span>(<span class="string">"unknown MEAS_FREQ_REF {frame_code}"</span>)))<span class="question-mark">?</span>;
-<a href=#397 id=397 data-nosnippet>397</a>            <span class="kw">let </span>correlations = polarizations
-<a href=#398 id=398 data-nosnippet>398</a>                .corr_type(polarization)
-<a href=#399 id=399 data-nosnippet>399</a>                .map_err(storage)<span class="question-mark">?
-<a href=#400 id=400 data-nosnippet>400</a>                </span>.into_iter()
-<a href=#401 id=401 data-nosnippet>401</a>                .map(|code| {
-<a href=#402 id=402 data-nosnippet>402</a>                    Correlation::from_casacore_code(code)
-<a href=#403 id=403 data-nosnippet>403</a>                        .ok_or_else(|| invalid(<span class="macro">format!</span>(<span class="string">"unknown CORR_TYPE {code}"</span>)))
-<a href=#404 id=404 data-nosnippet>404</a>                })
-<a href=#405 id=405 data-nosnippet>405</a>                .collect::&lt;<span class="prelude-ty">Result</span>&lt;<span class="kw">_</span>, <span class="kw">_</span>&gt;&gt;()<span class="question-mark">?</span>;
-<a href=#406 id=406 data-nosnippet>406</a>            <span class="prelude-val">Ok</span>(SpectralSetup {
-<a href=#407 id=407 data-nosnippet>407</a>                spectral_window: windows.name(window).map_err(storage)<span class="question-mark">?</span>,
-<a href=#408 id=408 data-nosnippet>408</a>                frequencies_hz: windows.chan_freq(window).map_err(storage)<span class="question-mark">?</span>,
-<a href=#409 id=409 data-nosnippet>409</a>                frequency_frame,
-<a href=#410 id=410 data-nosnippet>410</a>                channel_widths_hz: windows.chan_width(window).map_err(storage)<span class="question-mark">?</span>,
-<a href=#411 id=411 data-nosnippet>411</a>                correlations,
-<a href=#412 id=412 data-nosnippet>412</a>            })
-<a href=#413 id=413 data-nosnippet>413</a>        })
-<a href=#414 id=414 data-nosnippet>414</a>        .collect()
-<a href=#415 id=415 data-nosnippet>415</a>}
-<a href=#416 id=416 data-nosnippet>416</a>
-<a href=#417 id=417 data-nosnippet>417</a><span class="attr">#[cfg(test)]
-<a href=#418 id=418 data-nosnippet>418</a></span><span class="kw">mod </span>tests {
-<a href=#419 id=419 data-nosnippet>419</a>    <span class="kw">use </span><span class="kw">super</span>::scheduled_uid;
-<a href=#420 id=420 data-nosnippet>420</a>
-<a href=#421 id=421 data-nosnippet>421</a>    <span class="attr">#[test]
-<a href=#422 id=422 data-nosnippet>422</a>    </span><span class="kw">fn </span>schedule_lines_name_their_uids_as_xradio_reads_them() {
-<a href=#423 id=423 data-nosnippet>423</a>        <span class="kw">let </span>lines = [
-<a href=#424 id=424 data-nosnippet>424</a>            <span class="string">"[SchedulingBlock uid://A001/X3571/X122,"</span>,
-<a href=#425 id=425 data-nosnippet>425</a>            <span class="string">"ExecBlock uid://A002/X1003af4/X75a3]"</span>,
-<a href=#426 id=426 data-nosnippet>426</a>        ];
-<a href=#427 id=427 data-nosnippet>427</a>        <span class="macro">assert_eq!</span>(
-<a href=#428 id=428 data-nosnippet>428</a>            scheduled_uid(lines[<span class="number">0</span>], <span class="string">"SchedulingBlock"</span>).as_deref(),
-<a href=#429 id=429 data-nosnippet>429</a>            <span class="prelude-val">Some</span>(<span class="string">"uid://A001/X3571/X122"</span>)
-<a href=#430 id=430 data-nosnippet>430</a>        );
-<a href=#431 id=431 data-nosnippet>431</a>        <span class="macro">assert_eq!</span>(
-<a href=#432 id=432 data-nosnippet>432</a>            scheduled_uid(lines[<span class="number">1</span>], <span class="string">"ExecBlock"</span>).as_deref(),
-<a href=#433 id=433 data-nosnippet>433</a>            <span class="prelude-val">Some</span>(<span class="string">"uid://A002/X1003af4/X75a3"</span>)
-<a href=#434 id=434 data-nosnippet>434</a>        );
-<a href=#435 id=435 data-nosnippet>435</a>        <span class="macro">assert_eq!</span>(scheduled_uid(<span class="string">"default"</span>, <span class="string">"ExecBlock"</span>), <span class="prelude-val">None</span>);
-<a href=#436 id=436 data-nosnippet>436</a>        <span class="macro">assert_eq!</span>(scheduled_uid(<span class="string">"ExecBlock "</span>, <span class="string">"ExecBlock"</span>), <span class="prelude-val">None</span>);
-<a href=#437 id=437 data-nosnippet>437</a>    }
-<a href=#438 id=438 data-nosnippet>438</a>}
+<a href=#81 id=81 data-nosnippet>81</a><span class="doccomment">/// What visibility column `column`'s `QuantumUnits` declares: janskys
+<a href=#82 id=82 data-nosnippet>82</a>/// only when it says `Jy`.
+<a href=#83 id=83 data-nosnippet>83</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>data_units(table: <span class="kw-2">&amp;</span>Table, column: <span class="kw-2">&amp;</span>str) -&gt; VisibilityUnits {
+<a href=#84 id=84 data-nosnippet>84</a>    <span class="kw">match </span>quantum_units(table, column).as_deref() {
+<a href=#85 id=85 data-nosnippet>85</a>        <span class="prelude-val">None </span>| <span class="prelude-val">Some</span>([]) =&gt; VisibilityUnits::Undeclared,
+<a href=#86 id=86 data-nosnippet>86</a>        <span class="prelude-val">Some</span>([unit, ..]) <span class="kw">if </span>unit == <span class="string">"Jy" </span>=&gt; VisibilityUnits::Jansky,
+<a href=#87 id=87 data-nosnippet>87</a>        <span class="prelude-val">Some</span>([unit, ..]) =&gt; VisibilityUnits::Declared(unit.clone()),
+<a href=#88 id=88 data-nosnippet>88</a>    }
+<a href=#89 id=89 data-nosnippet>89</a>}
+<a href=#90 id=90 data-nosnippet>90</a>
+<a href=#91 id=91 data-nosnippet>91</a><span class="doccomment">/// The time scale of MAIN `TIME` and `TIME_CENTROID`, in seconds. The
+<a href=#92 id=92 data-nosnippet>92</a>/// MeasurementSet definition's default reference is UTC; another fixed
+<a href=#93 id=93 data-nosnippet>93</a>/// reference is kept, a variable one refused, and the two columns must
+<a href=#94 id=94 data-nosnippet>94</a>/// agree.
+<a href=#95 id=95 data-nosnippet>95</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>time_scale(main: <span class="kw-2">&amp;</span>Table) -&gt; <span class="prelude-ty">Result</span>&lt;EpochRef, ObservationError&gt; {
+<a href=#96 id=96 data-nosnippet>96</a>    <span class="kw">let </span><span class="kw-2">mut </span>scales = Vec::new();
+<a href=#97 id=97 data-nosnippet>97</a>    <span class="kw">for </span>column <span class="kw">in </span>[<span class="string">"TIME"</span>, <span class="string">"TIME_CENTROID"</span>] {
+<a href=#98 id=98 data-nosnippet>98</a>        require_units(main, column, <span class="string">"s"</span>)<span class="question-mark">?</span>;
+<a href=#99 id=99 data-nosnippet>99</a>        <span class="kw">let </span>scale = <span class="kw">match </span>measure_reference(main, column)<span class="question-mark">? </span>{
+<a href=#100 id=100 data-nosnippet>100</a>            <span class="prelude-val">Some</span>(name) =&gt; name
+<a href=#101 id=101 data-nosnippet>101</a>                .parse::&lt;EpochRef&gt;()
+<a href=#102 id=102 data-nosnippet>102</a>                .map_err(|<span class="kw">_</span>| invalid(<span class="macro">format!</span>(<span class="string">"unknown {column} reference {name}"</span>)))<span class="question-mark">?</span>,
+<a href=#103 id=103 data-nosnippet>103</a>            <span class="prelude-val">None </span>=&gt; EpochRef::UTC,
+<a href=#104 id=104 data-nosnippet>104</a>        };
+<a href=#105 id=105 data-nosnippet>105</a>        scales.push(scale);
+<a href=#106 id=106 data-nosnippet>106</a>    }
+<a href=#107 id=107 data-nosnippet>107</a>    <span class="kw">for </span>column <span class="kw">in </span>[<span class="string">"INTERVAL"</span>, <span class="string">"EXPOSURE"</span>] {
+<a href=#108 id=108 data-nosnippet>108</a>        require_units(main, column, <span class="string">"s"</span>)<span class="question-mark">?</span>;
+<a href=#109 id=109 data-nosnippet>109</a>    }
+<a href=#110 id=110 data-nosnippet>110</a>    <span class="kw">if </span>scales[<span class="number">0</span>] == scales[<span class="number">1</span>] {
+<a href=#111 id=111 data-nosnippet>111</a>        <span class="prelude-val">Ok</span>(scales[<span class="number">0</span>])
+<a href=#112 id=112 data-nosnippet>112</a>    } <span class="kw">else </span>{
+<a href=#113 id=113 data-nosnippet>113</a>        <span class="prelude-val">Err</span>(ObservationError::Unsupported {
+<a href=#114 id=114 data-nosnippet>114</a>            what: <span class="string">"MSv2 TIME and TIME_CENTROID in different time scales"</span>,
+<a href=#115 id=115 data-nosnippet>115</a>        })
+<a href=#116 id=116 data-nosnippet>116</a>    }
+<a href=#117 id=117 data-nosnippet>117</a>}
+<a href=#118 id=118 data-nosnippet>118</a>
+<a href=#119 id=119 data-nosnippet>119</a><span class="doccomment">/// The `FIELD` subtable as the catalogue needs it.
+<a href=#120 id=120 data-nosnippet>120</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>Fields {
+<a href=#121 id=121 data-nosnippet>121</a>    <span class="kw">pub</span>(<span class="kw">super</span>) entries: Vec&lt;FieldEntry&gt;,
+<a href=#122 id=122 data-nosnippet>122</a>    <span class="doccomment">/// Each field's `EPHEMERIS_ID`, when the optional column is present.
+<a href=#123 id=123 data-nosnippet>123</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) ephemerides: Vec&lt;<span class="prelude-ty">Option</span>&lt;i32&gt;&gt;,
+<a href=#124 id=124 data-nosnippet>124</a>    <span class="doccomment">/// The UVW convention the phase centres' frame resolves.
+<a href=#125 id=125 data-nosnippet>125</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) uvw_frame: UvwFrame,
+<a href=#126 id=126 data-nosnippet>126</a>}
+<a href=#127 id=127 data-nosnippet>127</a>
+<a href=#128 id=128 data-nosnippet>128</a><span class="doccomment">/// The fields, their ephemerides, and the UVW convention.
+<a href=#129 id=129 data-nosnippet>129</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>fields_and_uvw(ms: <span class="kw-2">&amp;</span>MeasurementSet) -&gt; <span class="prelude-ty">Result</span>&lt;Fields, ObservationError&gt; {
+<a href=#130 id=130 data-nosnippet>130</a>    <span class="kw">let </span>field = ms.field().map_err(storage)<span class="question-mark">?</span>;
+<a href=#131 id=131 data-nosnippet>131</a>    <span class="kw">let </span>field_table = ms
+<a href=#132 id=132 data-nosnippet>132</a>        .subtable(SubtableId::Field)
+<a href=#133 id=133 data-nosnippet>133</a>        .ok_or_else(|| invalid(<span class="string">"no FIELD subtable"</span>))<span class="question-mark">?</span>;
+<a href=#134 id=134 data-nosnippet>134</a>    require_units(field_table, <span class="string">"PHASE_DIR"</span>, <span class="string">"rad"</span>)<span class="question-mark">?</span>;
+<a href=#135 id=135 data-nosnippet>135</a>    <span class="kw">let </span>phase_frame = measure_reference(field_table, <span class="string">"PHASE_DIR"</span>)<span class="question-mark">?
+<a href=#136 id=136 data-nosnippet>136</a>        </span>.map(|name| {
+<a href=#137 id=137 data-nosnippet>137</a>            name.parse::&lt;DirectionRef&gt;()
+<a href=#138 id=138 data-nosnippet>138</a>                .map_err(|<span class="kw">_</span>| invalid(<span class="macro">format!</span>(<span class="string">"unknown PHASE_DIR reference {name}"</span>)))
+<a href=#139 id=139 data-nosnippet>139</a>        })
+<a href=#140 id=140 data-nosnippet>140</a>        .transpose()<span class="question-mark">?
+<a href=#141 id=141 data-nosnippet>141</a>        </span>.unwrap_or(DirectionRef::J2000);
+<a href=#142 id=142 data-nosnippet>142</a>    <span class="kw">let </span>phase_dir = DirectionColumn::phase_dir(field_table);
+<a href=#143 id=143 data-nosnippet>143</a>    <span class="kw">let </span>fields = (<span class="number">0</span>..field.row_count())
+<a href=#144 id=144 data-nosnippet>144</a>        .map(|row| {
+<a href=#145 id=145 data-nosnippet>145</a>            <span class="kw">let </span>(longitude, latitude) = phase_dir.get_direction(row).map_err(storage)<span class="question-mark">?</span>.as_angles();
+<a href=#146 id=146 data-nosnippet>146</a>            <span class="kw">let </span>source = field.source_id(row).map_err(storage)<span class="question-mark">?</span>;
+<a href=#147 id=147 data-nosnippet>147</a>            <span class="prelude-val">Ok</span>(FieldEntry {
+<a href=#148 id=148 data-nosnippet>148</a>                name: field.name(row).map_err(storage)<span class="question-mark">?</span>,
+<a href=#149 id=149 data-nosnippet>149</a>                phase_centre: MDirection::from_angles(longitude, latitude, phase_frame),
+<a href=#150 id=150 data-nosnippet>150</a>                source_name: source_name(ms, source)<span class="question-mark">?</span>,
+<a href=#151 id=151 data-nosnippet>151</a>            })
+<a href=#152 id=152 data-nosnippet>152</a>        })
+<a href=#153 id=153 data-nosnippet>153</a>        .collect::&lt;<span class="prelude-ty">Result</span>&lt;<span class="kw">_</span>, ObservationError&gt;&gt;()<span class="question-mark">?</span>;
+<a href=#154 id=154 data-nosnippet>154</a>    <span class="kw">let </span>ephemerides = (<span class="number">0</span>..field.row_count())
+<a href=#155 id=155 data-nosnippet>155</a>        .map(|row| field.ephemeris_id(row).map_err(storage))
+<a href=#156 id=156 data-nosnippet>156</a>        .collect::&lt;<span class="prelude-ty">Result</span>&lt;<span class="kw">_</span>, ObservationError&gt;&gt;()<span class="question-mark">?</span>;
+<a href=#157 id=157 data-nosnippet>157</a>    <span class="kw">let </span>main = ms.main_table();
+<a href=#158 id=158 data-nosnippet>158</a>    require_units(main, <span class="string">"UVW"</span>, <span class="string">"m"</span>)<span class="question-mark">?</span>;
+<a href=#159 id=159 data-nosnippet>159</a>    <span class="kw">let </span>stored_label = measure_reference(main, <span class="string">"UVW"</span>)<span class="question-mark">?
+<a href=#160 id=160 data-nosnippet>160</a>        </span>.map(|name| {
+<a href=#161 id=161 data-nosnippet>161</a>            name.parse::&lt;DirectionRef&gt;()
+<a href=#162 id=162 data-nosnippet>162</a>                .map_err(|<span class="kw">_</span>| invalid(<span class="macro">format!</span>(<span class="string">"unknown UVW reference {name}"</span>)))
+<a href=#163 id=163 data-nosnippet>163</a>        })
+<a href=#164 id=164 data-nosnippet>164</a>        .transpose()<span class="question-mark">?</span>;
+<a href=#165 id=165 data-nosnippet>165</a>    <span class="comment">// CASA's convention: UVW are in the phase centre's frame. An ITRF label
+<a href=#166 id=166 data-nosnippet>166</a>    // (casacore's default, which simulators and fillers write) is the known
+<a href=#167 id=167 data-nosnippet>167</a>    // mislabelling; any other label must name the phase centres' frame.
+<a href=#168 id=168 data-nosnippet>168</a>    </span><span class="kw">match </span>stored_label {
+<a href=#169 id=169 data-nosnippet>169</a>        <span class="prelude-val">None </span>| <span class="prelude-val">Some</span>(DirectionRef::ITRF) =&gt; {}
+<a href=#170 id=170 data-nosnippet>170</a>        <span class="prelude-val">Some</span>(label) <span class="kw">if </span>label == phase_frame =&gt; {}
+<a href=#171 id=171 data-nosnippet>171</a>        <span class="prelude-val">Some</span>(<span class="kw">_</span>) =&gt; {
+<a href=#172 id=172 data-nosnippet>172</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(ObservationError::Unsupported {
+<a href=#173 id=173 data-nosnippet>173</a>                what: <span class="string">"MSv2 UVW labelled with a celestial frame other than the phase centres'"</span>,
+<a href=#174 id=174 data-nosnippet>174</a>            });
+<a href=#175 id=175 data-nosnippet>175</a>        }
+<a href=#176 id=176 data-nosnippet>176</a>    }
+<a href=#177 id=177 data-nosnippet>177</a>    <span class="prelude-val">Ok</span>(Fields {
+<a href=#178 id=178 data-nosnippet>178</a>        entries: fields,
+<a href=#179 id=179 data-nosnippet>179</a>        ephemerides,
+<a href=#180 id=180 data-nosnippet>180</a>        uvw_frame: UvwFrame {
+<a href=#181 id=181 data-nosnippet>181</a>            effective: phase_frame,
+<a href=#182 id=182 data-nosnippet>182</a>            stored_label,
+<a href=#183 id=183 data-nosnippet>183</a>        },
+<a href=#184 id=184 data-nosnippet>184</a>    })
+<a href=#185 id=185 data-nosnippet>185</a>}
+<a href=#186 id=186 data-nosnippet>186</a>
+<a href=#187 id=187 data-nosnippet>187</a><span class="doccomment">/// Every `OBSERVATION` row. A MeasurementSet without one gets a single
+<a href=#188 id=188 data-nosnippet>188</a>/// empty entry, which every row's `OBSERVATION_ID` 0 then names.
+<a href=#189 id=189 data-nosnippet>189</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>read_observations(
+<a href=#190 id=190 data-nosnippet>190</a>    ms: <span class="kw-2">&amp;</span>MeasurementSet,
+<a href=#191 id=191 data-nosnippet>191</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;ObservationEntry&gt;, ObservationError&gt; {
+<a href=#192 id=192 data-nosnippet>192</a>    <span class="kw">let </span>observation = ms.observation().map_err(storage)<span class="question-mark">?</span>;
+<a href=#193 id=193 data-nosnippet>193</a>    <span class="kw">if </span>observation.row_count() == <span class="number">0 </span>{
+<a href=#194 id=194 data-nosnippet>194</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="macro">vec!</span>[ObservationEntry::default()]);
+<a href=#195 id=195 data-nosnippet>195</a>    }
+<a href=#196 id=196 data-nosnippet>196</a>    (<span class="number">0</span>..observation.row_count())
+<a href=#197 id=197 data-nosnippet>197</a>        .map(|row| {
+<a href=#198 id=198 data-nosnippet>198</a>            <span class="kw">let </span>schedule: Vec&lt;String&gt; = <span class="kw">match </span>observation
+<a href=#199 id=199 data-nosnippet>199</a>                .optional_array(row, <span class="string">"SCHEDULE"</span>)
+<a href=#200 id=200 data-nosnippet>200</a>                .map_err(storage)<span class="question-mark">?
+<a href=#201 id=201 data-nosnippet>201</a>            </span>{
+<a href=#202 id=202 data-nosnippet>202</a>                <span class="prelude-val">Some</span>(ArrayValue::String(lines)) =&gt; lines.iter().cloned().collect(),
+<a href=#203 id=203 data-nosnippet>203</a>                <span class="kw">_ </span>=&gt; Vec::new(),
+<a href=#204 id=204 data-nosnippet>204</a>            };
+<a href=#205 id=205 data-nosnippet>205</a>            <span class="kw">let </span>uid = |line: usize, label: <span class="kw-2">&amp;</span>str| {
+<a href=#206 id=206 data-nosnippet>206</a>                schedule
+<a href=#207 id=207 data-nosnippet>207</a>                    .get(line)
+<a href=#208 id=208 data-nosnippet>208</a>                    .filter(|<span class="kw">_</span>| schedule.len() == <span class="number">2</span>)
+<a href=#209 id=209 data-nosnippet>209</a>                    .and_then(|line| scheduled_uid(line, label))
+<a href=#210 id=210 data-nosnippet>210</a>            };
+<a href=#211 id=211 data-nosnippet>211</a>            <span class="prelude-val">Ok</span>(ObservationEntry {
+<a href=#212 id=212 data-nosnippet>212</a>                telescope: observation.string(row, <span class="string">"TELESCOPE_NAME"</span>).map_err(storage)<span class="question-mark">?</span>,
+<a href=#213 id=213 data-nosnippet>213</a>                observers: <span class="macro">vec!</span>[observation.string(row, <span class="string">"OBSERVER"</span>).map_err(storage)<span class="question-mark">?</span>],
+<a href=#214 id=214 data-nosnippet>214</a>                project: observation.string(row, <span class="string">"PROJECT"</span>).map_err(storage)<span class="question-mark">?</span>,
+<a href=#215 id=215 data-nosnippet>215</a>                execution_block: uid(<span class="number">1</span>, <span class="string">"ExecBlock"</span>),
+<a href=#216 id=216 data-nosnippet>216</a>                session_reference: <span class="prelude-val">None</span>,
+<a href=#217 id=217 data-nosnippet>217</a>                scheduling_block: uid(<span class="number">0</span>, <span class="string">"SchedulingBlock"</span>),
+<a href=#218 id=218 data-nosnippet>218</a>            })
+<a href=#219 id=219 data-nosnippet>219</a>        })
+<a href=#220 id=220 data-nosnippet>220</a>        .collect()
+<a href=#221 id=221 data-nosnippet>221</a>}
+<a href=#222 id=222 data-nosnippet>222</a>
+<a href=#223 id=223 data-nosnippet>223</a><span class="doccomment">/// The UID after `label` in a `SCHEDULE` line, as XRADIO's converter reads
+<a href=#224 id=224 data-nosnippet>224</a>/// one `importasdm` writes (`[SchedulingBlock uid://A001/X3571/X122,
+<a href=#225 id=225 data-nosnippet>225</a>/// ExecBlock uid://A002/X1003af4/X75a3]`, one entry per line): the word
+<a href=#226 id=226 data-nosnippet>226</a>/// characters, `/` and `:` that follow `label` and a space.
+<a href=#227 id=227 data-nosnippet>227</a></span><span class="kw">fn </span>scheduled_uid(line: <span class="kw-2">&amp;</span>str, label: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Option</span>&lt;String&gt; {
+<a href=#228 id=228 data-nosnippet>228</a>    <span class="kw">let </span>start = line.find(<span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"{label} "</span>))<span class="question-mark">? </span>+ label.len() + <span class="number">1</span>;
+<a href=#229 id=229 data-nosnippet>229</a>    <span class="kw">let </span>uid: String = line[start..]
+<a href=#230 id=230 data-nosnippet>230</a>        .chars()
+<a href=#231 id=231 data-nosnippet>231</a>        .take_while(|c| c.is_alphanumeric() || <span class="macro">matches!</span>(c, <span class="string">'_' </span>| <span class="string">'/' </span>| <span class="string">':'</span>))
+<a href=#232 id=232 data-nosnippet>232</a>        .collect();
+<a href=#233 id=233 data-nosnippet>233</a>    (!uid.is_empty()).then_some(uid)
+<a href=#234 id=234 data-nosnippet>234</a>}
+<a href=#235 id=235 data-nosnippet>235</a>
+<a href=#236 id=236 data-nosnippet>236</a><span class="doccomment">/// `STATE::OBS_MODE` of every state row: the intents a `STATE_ID` names.
+<a href=#237 id=237 data-nosnippet>237</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>read_state_modes(ms: <span class="kw-2">&amp;</span>MeasurementSet) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;String&gt;, ObservationError&gt; {
+<a href=#238 id=238 data-nosnippet>238</a>    <span class="kw">match </span>ms.state() {
+<a href=#239 id=239 data-nosnippet>239</a>        <span class="prelude-val">Ok</span>(state) =&gt; (<span class="number">0</span>..state.row_count())
+<a href=#240 id=240 data-nosnippet>240</a>            .map(|row| state.string(row, <span class="string">"OBS_MODE"</span>).map_err(storage))
+<a href=#241 id=241 data-nosnippet>241</a>            .collect(),
+<a href=#242 id=242 data-nosnippet>242</a>        <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; <span class="prelude-val">Ok</span>(Vec::new()),
+<a href=#243 id=243 data-nosnippet>243</a>    }
+<a href=#244 id=244 data-nosnippet>244</a>}
+<a href=#245 id=245 data-nosnippet>245</a>
+<a href=#246 id=246 data-nosnippet>246</a><span class="doccomment">/// The intents an `OBS_MODE` string lists, sorted and deduplicated.
+<a href=#247 id=247 data-nosnippet>247</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>intents(mode: <span class="kw-2">&amp;</span>str) -&gt; Vec&lt;String&gt; {
+<a href=#248 id=248 data-nosnippet>248</a>    <span class="kw">let </span>set: BTreeSet&lt;String&gt; = mode
+<a href=#249 id=249 data-nosnippet>249</a>        .split(<span class="string">','</span>)
+<a href=#250 id=250 data-nosnippet>250</a>        .map(str::trim)
+<a href=#251 id=251 data-nosnippet>251</a>        .filter(|intent| !intent.is_empty())
+<a href=#252 id=252 data-nosnippet>252</a>        .map(str::to_string)
+<a href=#253 id=253 data-nosnippet>253</a>        .collect();
+<a href=#254 id=254 data-nosnippet>254</a>    set.into_iter().collect()
+<a href=#255 id=255 data-nosnippet>255</a>}
+<a href=#256 id=256 data-nosnippet>256</a>
+<a href=#257 id=257 data-nosnippet>257</a><span class="doccomment">/// Every `ANTENNA` row, with its first `FEED` row's receptors.
+<a href=#258 id=258 data-nosnippet>258</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>read_antennas(ms: <span class="kw-2">&amp;</span>MeasurementSet) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;AntennaEntry&gt;, ObservationError&gt; {
+<a href=#259 id=259 data-nosnippet>259</a>    <span class="kw">let </span>antenna = ms.antenna().map_err(storage)<span class="question-mark">?</span>;
+<a href=#260 id=260 data-nosnippet>260</a>    <span class="kw">let </span>antenna_table = ms
+<a href=#261 id=261 data-nosnippet>261</a>        .subtable(SubtableId::Antenna)
+<a href=#262 id=262 data-nosnippet>262</a>        .ok_or_else(|| invalid(<span class="string">"no ANTENNA subtable"</span>))<span class="question-mark">?</span>;
+<a href=#263 id=263 data-nosnippet>263</a>    require_units(antenna_table, <span class="string">"POSITION"</span>, <span class="string">"m"</span>)<span class="question-mark">?</span>;
+<a href=#264 id=264 data-nosnippet>264</a>    require_units(antenna_table, <span class="string">"DISH_DIAMETER"</span>, <span class="string">"m"</span>)<span class="question-mark">?</span>;
+<a href=#265 id=265 data-nosnippet>265</a>    <span class="kw">match </span>measure_reference(antenna_table, <span class="string">"POSITION"</span>)<span class="question-mark">?</span>.as_deref() {
+<a href=#266 id=266 data-nosnippet>266</a>        <span class="prelude-val">None </span>| <span class="prelude-val">Some</span>(<span class="string">"ITRF"</span>) =&gt; {}
+<a href=#267 id=267 data-nosnippet>267</a>        <span class="prelude-val">Some</span>(<span class="kw">_</span>) =&gt; {
+<a href=#268 id=268 data-nosnippet>268</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(ObservationError::Unsupported {
+<a href=#269 id=269 data-nosnippet>269</a>                what: <span class="string">"MSv2 antenna positions in other than ITRF"</span>,
+<a href=#270 id=270 data-nosnippet>270</a>            });
+<a href=#271 id=271 data-nosnippet>271</a>        }
+<a href=#272 id=272 data-nosnippet>272</a>    }
+<a href=#273 id=273 data-nosnippet>273</a>    <span class="kw">let </span>feed = ms.feed().map_err(storage)<span class="question-mark">?</span>;
+<a href=#274 id=274 data-nosnippet>274</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(feed_table) = ms.subtable(SubtableId::Feed) {
+<a href=#275 id=275 data-nosnippet>275</a>        require_units(feed_table, <span class="string">"RECEPTOR_ANGLE"</span>, <span class="string">"rad"</span>)<span class="question-mark">?</span>;
+<a href=#276 id=276 data-nosnippet>276</a>    }
+<a href=#277 id=277 data-nosnippet>277</a>    <span class="kw">let </span><span class="kw-2">mut </span>receptors = <span class="macro">vec!</span>[(Vec::new(), Vec::new()); antenna.row_count()];
+<a href=#278 id=278 data-nosnippet>278</a>    <span class="kw">for </span>row <span class="kw">in </span>(<span class="number">0</span>..feed.row_count()).rev() {
+<a href=#279 id=279 data-nosnippet>279</a>        <span class="kw">let </span>id = usize::try_from(feed.i32(row, <span class="string">"ANTENNA_ID"</span>).map_err(storage)<span class="question-mark">?</span>)
+<a href=#280 id=280 data-nosnippet>280</a>            .map_err(|<span class="kw">_</span>| invalid(<span class="string">"negative FEED ANTENNA_ID"</span>))<span class="question-mark">?</span>;
+<a href=#281 id=281 data-nosnippet>281</a>        <span class="kw">let </span><span class="prelude-val">Some</span>(slot) = receptors.get_mut(id) <span class="kw">else </span>{
+<a href=#282 id=282 data-nosnippet>282</a>            <span class="kw">continue</span>;
+<a href=#283 id=283 data-nosnippet>283</a>        };
+<a href=#284 id=284 data-nosnippet>284</a>        <span class="kw">let </span>types = <span class="kw">match </span>feed.array(row, <span class="string">"POLARIZATION_TYPE"</span>).map_err(storage)<span class="question-mark">? </span>{
+<a href=#285 id=285 data-nosnippet>285</a>            ArrayValue::String(types) =&gt; types.iter().cloned().collect(),
+<a href=#286 id=286 data-nosnippet>286</a>            <span class="kw">_ </span>=&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(invalid(<span class="string">"FEED POLARIZATION_TYPE is not a string array"</span>)),
+<a href=#287 id=287 data-nosnippet>287</a>        };
+<a href=#288 id=288 data-nosnippet>288</a>        <span class="kw">let </span>angles = <span class="kw">match </span>feed.array(row, <span class="string">"RECEPTOR_ANGLE"</span>).map_err(storage)<span class="question-mark">? </span>{
+<a href=#289 id=289 data-nosnippet>289</a>            ArrayValue::Float64(angles) =&gt; angles.iter().map(|angle| radians(<span class="kw-2">*</span>angle)).collect(),
+<a href=#290 id=290 data-nosnippet>290</a>            <span class="kw">_ </span>=&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(invalid(<span class="string">"FEED RECEPTOR_ANGLE is not a Float64 array"</span>)),
+<a href=#291 id=291 data-nosnippet>291</a>        };
+<a href=#292 id=292 data-nosnippet>292</a>        <span class="kw-2">*</span>slot = (types, angles);
+<a href=#293 id=293 data-nosnippet>293</a>    }
+<a href=#294 id=294 data-nosnippet>294</a>    (<span class="number">0</span>..antenna.row_count())
+<a href=#295 id=295 data-nosnippet>295</a>        .zip(receptors)
+<a href=#296 id=296 data-nosnippet>296</a>        .map(|(row, (receptors, receptor_angles))| {
+<a href=#297 id=297 data-nosnippet>297</a>            <span class="kw">let </span>[x, y, z] = antenna.position(row).map_err(storage)<span class="question-mark">?</span>;
+<a href=#298 id=298 data-nosnippet>298</a>            <span class="prelude-val">Ok</span>(AntennaEntry {
+<a href=#299 id=299 data-nosnippet>299</a>                name: antenna.name(row).map_err(storage)<span class="question-mark">?</span>,
+<a href=#300 id=300 data-nosnippet>300</a>                station: antenna.station(row).map_err(storage)<span class="question-mark">?</span>,
+<a href=#301 id=301 data-nosnippet>301</a>                position: MPosition::new_itrf(x, y, z),
+<a href=#302 id=302 data-nosnippet>302</a>                mount: antenna.mount(row).map_err(storage)<span class="question-mark">?</span>,
+<a href=#303 id=303 data-nosnippet>303</a>                dish_diameter: metres(antenna.dish_diameter(row).map_err(storage)<span class="question-mark">?</span>),
+<a href=#304 id=304 data-nosnippet>304</a>                receptors,
+<a href=#305 id=305 data-nosnippet>305</a>                receptor_angles,
+<a href=#306 id=306 data-nosnippet>306</a>            })
+<a href=#307 id=307 data-nosnippet>307</a>        })
+<a href=#308 id=308 data-nosnippet>308</a>        .collect()
+<a href=#309 id=309 data-nosnippet>309</a>}
+<a href=#310 id=310 data-nosnippet>310</a>
+<a href=#311 id=311 data-nosnippet>311</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>metres(value: f64) -&gt; Quantity {
+<a href=#312 id=312 data-nosnippet>312</a>    Quantity::new(value, <span class="string">"m"</span>).expect(<span class="string">"metres parse"</span>)
+<a href=#313 id=313 data-nosnippet>313</a>}
+<a href=#314 id=314 data-nosnippet>314</a>
+<a href=#315 id=315 data-nosnippet>315</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>radians(value: f64) -&gt; Quantity {
+<a href=#316 id=316 data-nosnippet>316</a>    Quantity::new(value, <span class="string">"rad"</span>).expect(<span class="string">"radians parse"</span>)
+<a href=#317 id=317 data-nosnippet>317</a>}
+<a href=#318 id=318 data-nosnippet>318</a>
+<a href=#319 id=319 data-nosnippet>319</a><span class="doccomment">/// The `SOURCE` name of source `id`, if the MeasurementSet has one.
+<a href=#320 id=320 data-nosnippet>320</a></span><span class="kw">fn </span>source_name(ms: <span class="kw-2">&amp;</span>MeasurementSet, id: i32) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;String&gt;, ObservationError&gt; {
+<a href=#321 id=321 data-nosnippet>321</a>    <span class="kw">if </span>id &lt; <span class="number">0 </span>{
+<a href=#322 id=322 data-nosnippet>322</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
+<a href=#323 id=323 data-nosnippet>323</a>    }
+<a href=#324 id=324 data-nosnippet>324</a>    <span class="kw">let </span><span class="prelude-val">Ok</span>(source) = ms.source() <span class="kw">else </span>{
+<a href=#325 id=325 data-nosnippet>325</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
+<a href=#326 id=326 data-nosnippet>326</a>    };
+<a href=#327 id=327 data-nosnippet>327</a>    <span class="kw">for </span>row <span class="kw">in </span><span class="number">0</span>..source.row_count() {
+<a href=#328 id=328 data-nosnippet>328</a>        <span class="kw">if </span>source.i32(row, <span class="string">"SOURCE_ID"</span>).map_err(storage)<span class="question-mark">? </span>== id {
+<a href=#329 id=329 data-nosnippet>329</a>            <span class="kw">return </span>source.string(row, <span class="string">"NAME"</span>).map(<span class="prelude-val">Some</span>).map_err(storage);
+<a href=#330 id=330 data-nosnippet>330</a>        }
+<a href=#331 id=331 data-nosnippet>331</a>    }
+<a href=#332 id=332 data-nosnippet>332</a>    <span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>)
+<a href=#333 id=333 data-nosnippet>333</a>}
+<a href=#334 id=334 data-nosnippet>334</a>
+<a href=#335 id=335 data-nosnippet>335</a><span class="doccomment">/// The scans: MAIN's distinct `SCAN_NUMBER`s in ascending order, named by
+<a href=#336 id=336 data-nosnippet>336</a>/// their decimal number as XRADIO names them, with the `STATE::OBS_MODE`
+<a href=#337 id=337 data-nosnippet>337</a>/// intents of their rows' states (`states_by_number`, each scan's
+<a href=#338 id=338 data-nosnippet>338</a>/// `STATE_ID`s; `modes`, each `STATE` row's `OBS_MODE`); and the scan of
+<a href=#339 id=339 data-nosnippet>339</a>/// each `SCAN_NUMBER`.
+<a href=#340 id=340 data-nosnippet>340</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>scans(
+<a href=#341 id=341 data-nosnippet>341</a>    states_by_number: BTreeMap&lt;i32, BTreeSet&lt;i32&gt;&gt;,
+<a href=#342 id=342 data-nosnippet>342</a>    modes: <span class="kw-2">&amp;</span>[String],
+<a href=#343 id=343 data-nosnippet>343</a>) -&gt; (Vec&lt;ScanEntry&gt;, BTreeMap&lt;i32, ScanId&gt;) {
+<a href=#344 id=344 data-nosnippet>344</a>    <span class="kw">let </span>index: BTreeMap&lt;i32, ScanId&gt; = states_by_number
+<a href=#345 id=345 data-nosnippet>345</a>        .keys()
+<a href=#346 id=346 data-nosnippet>346</a>        .enumerate()
+<a href=#347 id=347 data-nosnippet>347</a>        .map(|(index, number)| (<span class="kw-2">*</span>number, ScanId(index <span class="kw">as </span>u32)))
+<a href=#348 id=348 data-nosnippet>348</a>        .collect();
+<a href=#349 id=349 data-nosnippet>349</a>    <span class="kw">let </span>scans = states_by_number
+<a href=#350 id=350 data-nosnippet>350</a>        .into_iter()
+<a href=#351 id=351 data-nosnippet>351</a>        .map(|(number, states)| {
+<a href=#352 id=352 data-nosnippet>352</a>            <span class="kw">let </span>intents: BTreeSet&lt;String&gt; = states
+<a href=#353 id=353 data-nosnippet>353</a>                .into_iter()
+<a href=#354 id=354 data-nosnippet>354</a>                .filter_map(|state| {
+<a href=#355 id=355 data-nosnippet>355</a>                    usize::try_from(state)
+<a href=#356 id=356 data-nosnippet>356</a>                        .ok()
+<a href=#357 id=357 data-nosnippet>357</a>                        .and_then(|state| modes.get(state))
+<a href=#358 id=358 data-nosnippet>358</a>                })
+<a href=#359 id=359 data-nosnippet>359</a>                .flat_map(|mode| intents(mode))
+<a href=#360 id=360 data-nosnippet>360</a>                .collect();
+<a href=#361 id=361 data-nosnippet>361</a>            ScanEntry {
+<a href=#362 id=362 data-nosnippet>362</a>                name: number.to_string(),
+<a href=#363 id=363 data-nosnippet>363</a>                number: <span class="prelude-val">Some</span>(number),
+<a href=#364 id=364 data-nosnippet>364</a>                intents: intents.into_iter().collect(),
+<a href=#365 id=365 data-nosnippet>365</a>            }
+<a href=#366 id=366 data-nosnippet>366</a>        })
+<a href=#367 id=367 data-nosnippet>367</a>        .collect();
+<a href=#368 id=368 data-nosnippet>368</a>    (scans, index)
+<a href=#369 id=369 data-nosnippet>369</a>}
+<a href=#370 id=370 data-nosnippet>370</a>
+<a href=#371 id=371 data-nosnippet>371</a><span class="doccomment">/// The spectral window and correlation products of one data description.
+<a href=#372 id=372 data-nosnippet>372</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>SpectralSetup {
+<a href=#373 id=373 data-nosnippet>373</a>    <span class="kw">pub</span>(<span class="kw">super</span>) spectral_window: String,
+<a href=#374 id=374 data-nosnippet>374</a>    <span class="kw">pub</span>(<span class="kw">super</span>) frequencies_hz: Vec&lt;f64&gt;,
+<a href=#375 id=375 data-nosnippet>375</a>    <span class="kw">pub</span>(<span class="kw">super</span>) frequency_frame: FrequencyRef,
+<a href=#376 id=376 data-nosnippet>376</a>    <span class="kw">pub</span>(<span class="kw">super</span>) channel_widths_hz: Vec&lt;f64&gt;,
+<a href=#377 id=377 data-nosnippet>377</a>    <span class="kw">pub</span>(<span class="kw">super</span>) correlations: Vec&lt;Correlation&gt;,
+<a href=#378 id=378 data-nosnippet>378</a>}
+<a href=#379 id=379 data-nosnippet>379</a>
+<a href=#380 id=380 data-nosnippet>380</a><span class="doccomment">/// Every `DATA_DESCRIPTION` row's spectral setup.
+<a href=#381 id=381 data-nosnippet>381</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>spectral_setups(ms: <span class="kw-2">&amp;</span>MeasurementSet) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;SpectralSetup&gt;, ObservationError&gt; {
+<a href=#382 id=382 data-nosnippet>382</a>    <span class="kw">let </span>descriptions = ms.data_description().map_err(storage)<span class="question-mark">?</span>;
+<a href=#383 id=383 data-nosnippet>383</a>    <span class="kw">let </span>windows = ms.spectral_window().map_err(storage)<span class="question-mark">?</span>;
+<a href=#384 id=384 data-nosnippet>384</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(window_table) = ms.subtable(SubtableId::SpectralWindow) {
+<a href=#385 id=385 data-nosnippet>385</a>        require_units(window_table, <span class="string">"CHAN_FREQ"</span>, <span class="string">"Hz"</span>)<span class="question-mark">?</span>;
+<a href=#386 id=386 data-nosnippet>386</a>        require_units(window_table, <span class="string">"CHAN_WIDTH"</span>, <span class="string">"Hz"</span>)<span class="question-mark">?</span>;
+<a href=#387 id=387 data-nosnippet>387</a>    }
+<a href=#388 id=388 data-nosnippet>388</a>    <span class="kw">let </span>polarizations = ms.polarization().map_err(storage)<span class="question-mark">?</span>;
+<a href=#389 id=389 data-nosnippet>389</a>    (<span class="number">0</span>..descriptions.row_count())
+<a href=#390 id=390 data-nosnippet>390</a>        .map(|row| {
+<a href=#391 id=391 data-nosnippet>391</a>            <span class="kw">let </span>window = usize::try_from(descriptions.spectral_window_id(row).map_err(storage)<span class="question-mark">?</span>)
+<a href=#392 id=392 data-nosnippet>392</a>                .map_err(|<span class="kw">_</span>| invalid(<span class="string">"negative SPECTRAL_WINDOW_ID"</span>))<span class="question-mark">?</span>;
+<a href=#393 id=393 data-nosnippet>393</a>            <span class="kw">let </span>polarization = usize::try_from(descriptions.polarization_id(row).map_err(storage)<span class="question-mark">?</span>)
+<a href=#394 id=394 data-nosnippet>394</a>                .map_err(|<span class="kw">_</span>| invalid(<span class="string">"negative POLARIZATION_ID"</span>))<span class="question-mark">?</span>;
+<a href=#395 id=395 data-nosnippet>395</a>            <span class="kw">let </span>frame_code = windows.meas_freq_ref(window).map_err(storage)<span class="question-mark">?</span>;
+<a href=#396 id=396 data-nosnippet>396</a>            <span class="kw">let </span>frequency_frame = FrequencyRef::from_casacore_code(frame_code)
+<a href=#397 id=397 data-nosnippet>397</a>                .ok_or_else(|| invalid(<span class="macro">format!</span>(<span class="string">"unknown MEAS_FREQ_REF {frame_code}"</span>)))<span class="question-mark">?</span>;
+<a href=#398 id=398 data-nosnippet>398</a>            <span class="kw">let </span>correlations = polarizations
+<a href=#399 id=399 data-nosnippet>399</a>                .corr_type(polarization)
+<a href=#400 id=400 data-nosnippet>400</a>                .map_err(storage)<span class="question-mark">?
+<a href=#401 id=401 data-nosnippet>401</a>                </span>.into_iter()
+<a href=#402 id=402 data-nosnippet>402</a>                .map(|code| {
+<a href=#403 id=403 data-nosnippet>403</a>                    Correlation::from_casacore_code(code)
+<a href=#404 id=404 data-nosnippet>404</a>                        .ok_or_else(|| invalid(<span class="macro">format!</span>(<span class="string">"unknown CORR_TYPE {code}"</span>)))
+<a href=#405 id=405 data-nosnippet>405</a>                })
+<a href=#406 id=406 data-nosnippet>406</a>                .collect::&lt;<span class="prelude-ty">Result</span>&lt;<span class="kw">_</span>, <span class="kw">_</span>&gt;&gt;()<span class="question-mark">?</span>;
+<a href=#407 id=407 data-nosnippet>407</a>            <span class="prelude-val">Ok</span>(SpectralSetup {
+<a href=#408 id=408 data-nosnippet>408</a>                spectral_window: windows.name(window).map_err(storage)<span class="question-mark">?</span>,
+<a href=#409 id=409 data-nosnippet>409</a>                frequencies_hz: windows.chan_freq(window).map_err(storage)<span class="question-mark">?</span>,
+<a href=#410 id=410 data-nosnippet>410</a>                frequency_frame,
+<a href=#411 id=411 data-nosnippet>411</a>                channel_widths_hz: windows.chan_width(window).map_err(storage)<span class="question-mark">?</span>,
+<a href=#412 id=412 data-nosnippet>412</a>                correlations,
+<a href=#413 id=413 data-nosnippet>413</a>            })
+<a href=#414 id=414 data-nosnippet>414</a>        })
+<a href=#415 id=415 data-nosnippet>415</a>        .collect()
+<a href=#416 id=416 data-nosnippet>416</a>}
+<a href=#417 id=417 data-nosnippet>417</a>
+<a href=#418 id=418 data-nosnippet>418</a><span class="attr">#[cfg(test)]
+<a href=#419 id=419 data-nosnippet>419</a></span><span class="kw">mod </span>tests {
+<a href=#420 id=420 data-nosnippet>420</a>    <span class="kw">use </span><span class="kw">super</span>::scheduled_uid;
+<a href=#421 id=421 data-nosnippet>421</a>
+<a href=#422 id=422 data-nosnippet>422</a>    <span class="attr">#[test]
+<a href=#423 id=423 data-nosnippet>423</a>    </span><span class="kw">fn </span>schedule_lines_name_their_uids_as_xradio_reads_them() {
+<a href=#424 id=424 data-nosnippet>424</a>        <span class="kw">let </span>lines = [
+<a href=#425 id=425 data-nosnippet>425</a>            <span class="string">"[SchedulingBlock uid://A001/X3571/X122,"</span>,
+<a href=#426 id=426 data-nosnippet>426</a>            <span class="string">"ExecBlock uid://A002/X1003af4/X75a3]"</span>,
+<a href=#427 id=427 data-nosnippet>427</a>        ];
+<a href=#428 id=428 data-nosnippet>428</a>        <span class="macro">assert_eq!</span>(
+<a href=#429 id=429 data-nosnippet>429</a>            scheduled_uid(lines[<span class="number">0</span>], <span class="string">"SchedulingBlock"</span>).as_deref(),
+<a href=#430 id=430 data-nosnippet>430</a>            <span class="prelude-val">Some</span>(<span class="string">"uid://A001/X3571/X122"</span>)
+<a href=#431 id=431 data-nosnippet>431</a>        );
+<a href=#432 id=432 data-nosnippet>432</a>        <span class="macro">assert_eq!</span>(
+<a href=#433 id=433 data-nosnippet>433</a>            scheduled_uid(lines[<span class="number">1</span>], <span class="string">"ExecBlock"</span>).as_deref(),
+<a href=#434 id=434 data-nosnippet>434</a>            <span class="prelude-val">Some</span>(<span class="string">"uid://A002/X1003af4/X75a3"</span>)
+<a href=#435 id=435 data-nosnippet>435</a>        );
+<a href=#436 id=436 data-nosnippet>436</a>        <span class="macro">assert_eq!</span>(scheduled_uid(<span class="string">"default"</span>, <span class="string">"ExecBlock"</span>), <span class="prelude-val">None</span>);
+<a href=#437 id=437 data-nosnippet>437</a>        <span class="macro">assert_eq!</span>(scheduled_uid(<span class="string">"ExecBlock "</span>, <span class="string">"ExecBlock"</span>), <span class="prelude-val">None</span>);
+<a href=#438 id=438 data-nosnippet>438</a>    }
+<a href=#439 id=439 data-nosnippet>439</a>}
 </code></pre></div></section></main></body></html>
