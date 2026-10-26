@@ -386,7 +386,7 @@ impl Payload<'_> {
                     present,
                     [samples, weight_channels, stored],
                     keep,
-                    0.0,
+                    f32::NAN,
                     &mut arrays.weights,
                 );
                 counters.copied_elements += arrays.weights.len();
@@ -398,7 +398,7 @@ impl Payload<'_> {
                         present,
                         samples,
                         weight_channels * stored,
-                        0.0,
+                        f32::NAN,
                     );
                     counters.copied_elements += arrays.weights.len();
                 }

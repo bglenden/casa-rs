@@ -125,9 +125,23 @@ pub fn open_update(
         Store::V4(update) => update.observation().catalogue(),
     };
     let creatable = matches!(store, Store::V2(_));
+    // A group the session creates shares the MSv2 flags and weights, so it
+    // is an alias of their targets before it exists.
+    let creating: Vec<String> = targets
+        .iter()
+        .filter(|target| {
+            creatable
+                && target.create
+                && !catalogue
+                    .partitions
+                    .iter()
+                    .any(|entry| entry.data_group(&target.data_group).is_some())
+        })
+        .map(|target| target.data_group.clone())
+        .collect();
     let targets = targets
         .iter()
-        .map(|target| resolve(catalogue, target, creatable))
+        .map(|target| resolve(catalogue, target, creatable, &creating))
         .collect::<Result<Vec<_>, _>>()?;
     Ok(UpdateSession {
         store,
@@ -176,8 +190,9 @@ impl UpdateSession {
     /// # Errors
     ///
     /// [`ObservationError::Conflict`] while another updater of this session
-    /// is live; [`ObservationError::InvalidRequest`] for an unknown target
-    /// or a request the observation cannot bind; a storage error when the
+    /// is live; [`ObservationError::InvalidRequest`] for an unknown target,
+    /// two targets writing one variable (whichever wrote last would win), or
+    /// a request the observation cannot bind; a storage error when the
     /// store cannot be prepared for writing (MSv2: casacore's write lock,
     /// a column to create).
     pub fn updater(
@@ -193,6 +208,17 @@ impl UpdateSession {
                     .ok_or_else(|| request_error(format!("the session has no target {index}")))
             })
             .collect::<Result<Vec<_>, _>>()?;
+        for (index, target) in bound.iter().enumerate() {
+            if bound[..index]
+                .iter()
+                .any(|earlier| earlier.variable == target.variable)
+            {
+                return Err(request_error(format!(
+                    "two bound targets write {}; bind it once",
+                    target.variable
+                )));
+            }
+        }
         if self.updating.swap(true, Ordering::AcqRel) {
             return Err(ObservationError::Conflict {
                 reason: "another updater of this session is live".to_string(),
@@ -208,11 +234,13 @@ impl UpdateSession {
 }
 
 /// `target` resolved against `catalogue`: the variable it writes in every
-/// partition that has its group, and the other groups reading it.
+/// partition that has its group, and the other groups reading it, those
+/// the session is `creating` included.
 fn resolve(
     catalogue: &Catalogue,
     target: &UpdateTarget,
     creatable: bool,
+    creating: &[String],
 ) -> Result<ResolvedTarget, ObservationError> {
     let mut variable: Option<String> = None;
     let mut aliases: Vec<String> = Vec::new();
@@ -245,6 +273,13 @@ fn resolve(
         Some(variable) => (variable, false),
         None => (created_variable(target, creatable)?, true),
     };
+    if target.role != WritableRole::Visibilities {
+        for group in creating {
+            if *group != target.data_group && !aliases.contains(group) {
+                aliases.push(group.clone());
+            }
+        }
+    }
     if !aliases.is_empty() && target.aliases == casa_observation::AliasScope::Refuse {
         return Err(request_error(format!(
             "{:?} of group {} is {variable}, which group(s) {} also read; accept the aliases \
@@ -262,8 +297,9 @@ fn resolve(
     })
 }
 
-/// The column a target creates: the visibilities of `corrected` or `model`,
-/// seeded from `DATA` as CASA seeds them, where the store can add a column.
+/// The column a target creates, where the store can add one: the
+/// visibilities of `corrected` or `model` (the MSv2 updater says how each
+/// is seeded).
 fn created_variable(target: &UpdateTarget, creatable: bool) -> Result<String, ObservationError> {
     let column = match (target.role, target.data_group.as_str()) {
         (WritableRole::Visibilities, "corrected") => "CORRECTED_DATA",

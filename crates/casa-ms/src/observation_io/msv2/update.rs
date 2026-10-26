@@ -111,6 +111,17 @@ impl Msv2Update {
             .iter()
             .map(|id| catalogue.partition(*id))
             .collect();
+        if targets
+            .iter()
+            .any(|target| target.created && target.variable == "MODEL_DATA")
+            && !covers_main(catalogue, request)
+        {
+            return Err(request_error(
+                "MODEL_DATA is created from DATA's storage, and a model pass that does not \
+                 write every partition, channel and product would leave DATA in the cells it \
+                 skips; create it with a traversal of the whole MeasurementSet",
+            ));
+        }
         let mut writer = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
         for target in targets.iter().filter(|target| target.created) {
             add_column(&mut writer, &target.variable)?;
@@ -162,10 +173,23 @@ impl Msv2Update {
     }
 }
 
+/// Whether a traversal of `request` writes every MAIN row's every element:
+/// every partition (the adapter places every row in one), every channel
+/// and every product.
+fn covers_main(catalogue: &casa_observation::Catalogue, request: &AccessRequest) -> bool {
+    catalogue.partition_ids().iter().all(|id| {
+        request.partitions.contains(id)
+            && request.channels == (0..catalogue.partition(*id).frequencies_hz.len())
+    }) && request.correlations.deliver == casa_observation::Deliver::All
+}
+
 /// Add visibility column `name` (`MODEL_DATA` or `CORRECTED_DATA`) to
 /// MAIN's schema with `DATA`'s keywords, as applycal adds `CORRECTED_DATA`,
 /// unless it is there; the mutation then installs its storage cloned from
-/// `DATA`, values included.
+/// `DATA`, values included. CASA seeds `CORRECTED_DATA` from `DATA` too, so
+/// rows a pass skips read as uncorrected; it seeds `MODEL_DATA` with 1
+/// (`VisSet`) and casa-rs's imaging with 0, so `MODEL_DATA` is created only
+/// by a pass that writes it whole ([`covers_main`]).
 fn add_column(ms: &mut MeasurementSet, name: &str) -> Result<(), ObservationError> {
     if ms
         .main_table()
@@ -481,7 +505,10 @@ fn column_cells(
                 ArrayValue::Complex32(cell)
             }
             PatchValues::Flags { set, clear } => {
+                // A change with neither mask assigns nothing: every flag
+                // keeps its stored value.
                 let assigns_all = window.whole
+                    && (set.is_some() || clear.is_some())
                     && (0..values_len(set, clear, sample)).all(|element| {
                         flag_at(set, sample, element) || flag_at(clear, sample, element)
                     });

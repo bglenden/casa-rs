@@ -60,6 +60,14 @@ fn pass(
     updater.finish()
 }
 
+/// A flag change clearing every delivered flag.
+fn clear_all(batch: &VisibilityBatch<'_>) -> Vec<Owned> {
+    vec![Owned::Flags {
+        set: None,
+        clear: Some(Array3::from_elem(batch.shape(), true)),
+    }]
+}
+
 fn model(value: Complex32) -> Complex32 {
     value * 2.0 + Complex32::new(0.0, 1.0)
 }
@@ -84,9 +92,11 @@ fn read(
 }
 
 /// A model pass is one owner reading one group and writing another: on
-/// the MSv2, `MODEL_DATA` is created seeded from `DATA` (as CASA seeds it)
-/// and written for every row from the `DATA` the same session reads, cells
-/// supplied whole and never read; it then opens as a `model` group. An MSv4
+/// the MSv2, `MODEL_DATA` is created by a traversal of the whole
+/// MeasurementSet and written for every row from the `DATA` the same
+/// session reads, cells supplied whole and never read; it then opens as a
+/// `model` group with `DATA`'s keywords. A pass over part of the
+/// MeasurementSet may not create it. An MSv4
 /// store cannot gain a group, so the same pass there is refused at opening
 /// and rewrites `base` instead, its chunks supplied whole and never read.
 #[test]
@@ -102,6 +112,12 @@ fn a_model_pass_reads_one_group_and_writes_another() {
         open_update(&v2, &OpenOptions::default(), std::slice::from_ref(&created)).expect("v2");
     assert!(session.targets()[0].created);
     assert_eq!(session.targets()[0].variable, "MODEL_DATA");
+    let Err(ObservationError::InvalidRequest { reason }) =
+        session.updater(&per_times(session.observation(), request(2..4, 0), 4), &[0])
+    else {
+        panic!("a model pass over two channels may not create MODEL_DATA");
+    };
+    assert!(reason.contains("whole MeasurementSet"), "{reason}");
     let four = per_times(session.observation(), request(0..8, 0), 4);
     let report = pass(&session, &four, &[0], |batch| {
         vec![Owned::Visibilities(
@@ -121,6 +137,13 @@ fn a_model_pass_reads_one_group_and_writes_another() {
     );
     let written = read(&v2, "model", 0..8);
     assert_eq!(read(&v2, "base", 0..8), reference, "DATA unchanged");
+    let ms = casa_ms::MeasurementSet::open(&v2).expect("reopen");
+    assert_eq!(
+        ms.main_table().column_keywords("MODEL_DATA"),
+        ms.main_table().column_keywords("DATA"),
+        "DATA's keywords"
+    );
+    drop(ms);
     for (key, sample) in &reference {
         let expected: Vec<Complex32> = sample.values.iter().map(|v| model(*v)).collect();
         assert_eq!(written[key].values, expected, "{key:?}");
@@ -147,7 +170,11 @@ fn a_model_pass_reads_one_group_and_writes_another() {
         (6, 0),
         "six chunks of [5, 10, 4, 4] written whole from the held windows"
     );
-    assert_eq!(report.held_bytes, 5 * 10 * 8 * 4 * (8 + 1));
+    assert_eq!(
+        report.held_bytes,
+        5 * 10 * 8 * 4 * (8 + 1) + 2 * size_of::<usize>(),
+        "five times of every element, its mark, and the row's two chunk counts"
+    );
     let rewritten = read(&v4, "base", 0..8);
     for (key, sample) in &reference {
         let expected: Vec<Complex32> = sample.values.iter().map(|v| model(*v)).collect();
@@ -256,8 +283,8 @@ fn a_weight_shared_by_channels_changes_only_as_a_whole() {
 }
 
 /// Data groups share their flags and weights: a target writing a variable
-/// another group reads must accept that alias, and the resolved target
-/// names it.
+/// another group reads, or will read once the session creates it, must
+/// accept that alias, and the resolved target names it.
 #[test]
 fn a_shared_variable_is_written_only_with_its_aliases_accepted() {
     let root = tempfile::tempdir().expect("root");
@@ -266,6 +293,26 @@ fn a_shared_variable_is_written_only_with_its_aliases_accepted() {
         create: true,
         ..UpdateTarget::new("model", WritableRole::Visibilities)
     };
+    let base_flags = |aliases| UpdateTarget {
+        aliases,
+        ..UpdateTarget::new("base", WritableRole::Flags)
+    };
+    let Err(ObservationError::InvalidRequest { reason }) = open_update(
+        &path,
+        &OpenOptions::default(),
+        &[created.clone(), base_flags(AliasScope::Refuse)],
+    ) else {
+        panic!("FLAG is model's too once the session creates it");
+    };
+    assert!(reason.contains("model"), "{reason}");
+    let session = open_update(
+        &path,
+        &OpenOptions::default(),
+        &[created.clone(), base_flags(AliasScope::Accept)],
+    )
+    .expect("accepted");
+    assert_eq!(session.targets()[1].aliases, ["model".to_string()]);
+    drop(session);
     let session = open_update(&path, &OpenOptions::default(), &[created]).expect("create");
     let all = per_times(session.observation(), request(0..8, 0), 12);
     pass(&session, &all, &[0], |batch| {
@@ -357,8 +404,9 @@ fn flag_changes_keep_row_flags_and_padding() {
     assert!(flagged.iter().all(|sample| sample.flags.iter().all(|f| *f)));
 }
 
-/// An MSv4 store pads with NaN weights: clearing a flag there is refused,
-/// and so is clearing flags from a traversal that does not read weights.
+/// An MSv4 store pads with NaN weights: clearing a flag or writing a
+/// finite weight there is refused, and so is clearing flags from a
+/// traversal that does not read weights.
 #[test]
 fn msv4_padding_stays_flagged() {
     let root = tempfile::tempdir().expect("root");
@@ -375,16 +423,20 @@ fn msv4_padding_stays_flagged() {
         vec![Owned::Weights(weights, WeightChannels::Delivered)]
     })
     .expect("pad the first sample of each batch");
-    let clear_all = |batch: &VisibilityBatch<'_>| {
-        vec![Owned::Flags {
-            set: None,
-            clear: Some(Array3::from_elem(batch.shape(), true)),
-        }]
-    };
     let refused = pass(&session, &four, &[1], clear_all);
     assert!(
         matches!(refused, Err(ObservationError::InvalidRequest { ref reason }) if reason.contains("padding")),
         "{refused:?}"
+    );
+    let weighted = pass(&session, &four, &[0], |batch| {
+        vec![Owned::Weights(
+            Array3::from_elem(batch.shape(), 8.0),
+            WeightChannels::All,
+        )]
+    });
+    assert!(
+        matches!(weighted, Err(ObservationError::InvalidRequest { ref reason }) if reason.contains("padding")),
+        "a finite weight would make padding an acquisition: {weighted:?}"
     );
     let flags_only = AccessRequest {
         roles: casa_observation::Roles {
@@ -402,7 +454,8 @@ fn msv4_padding_stays_flagged() {
 }
 
 /// One update session per store in a process, and one live updater per
-/// session; read-only observations open beside them.
+/// session, binding each variable once; read-only observations open beside
+/// them.
 #[test]
 fn one_update_session_per_store_and_one_updater_per_session() {
     let root = tempfile::tempdir().expect("root");
@@ -418,6 +471,13 @@ fn one_update_session_per_store_and_one_updater_per_session() {
             .expect("a reader beside the session");
         drop(reader);
         let one = per_times(session.observation(), request(0..8, 0), 12);
+        assert!(
+            matches!(
+                session.updater(&one, &[0, 0]),
+                Err(ObservationError::InvalidRequest { .. })
+            ),
+            "one variable bound twice"
+        );
         let first = session.updater(&one, &[0]).expect("one updater");
         assert!(matches!(
             session.updater(&one, &[0]),
@@ -482,4 +542,121 @@ fn an_msv2_updater_takes_its_batches_in_order() {
         ),
         "the planned rows were not written"
     );
+}
+
+/// A flag change that names no element (neither mask) keeps every flag:
+/// MSv2 rewrites each cell as stored, MSv4 writes nothing.
+#[test]
+fn an_empty_flag_change_keeps_every_flag() {
+    let root = tempfile::tempdir().expect("root");
+    for name in ["ms_trial.ms", "ms_trial.ps.zarr"] {
+        let path = fixture(root.path(), name);
+        let before = read(&path, "base", 0..8);
+        assert!(
+            before
+                .values()
+                .any(|sample| sample.flags.iter().any(|f| *f))
+        );
+        let session = open_update(
+            &path,
+            &OpenOptions::default(),
+            &[UpdateTarget::new("base", WritableRole::Flags)],
+        )
+        .expect("session");
+        let four = per_times(session.observation(), request(0..8, 0), 4);
+        let report = pass(&session, &four, &[0], |_| {
+            vec![Owned::Flags {
+                set: None,
+                clear: None,
+            }]
+        })
+        .expect("no change");
+        drop(session);
+        if name.ends_with(".zarr") {
+            assert_eq!(report.units_written, 0, "{name}");
+        }
+        let after = read(&path, "base", 0..8);
+        for (key, sample) in &before {
+            assert_eq!(after[key].flags, sample.flags, "{name} {key:?}");
+        }
+    }
+}
+
+/// Padding that casa-rs's writer stores (from an MSv2 with a row removed)
+/// is padding to the MSv4 updater too: its weight is NaN, as XRADIO pads,
+/// so clearing its flags or giving it a finite weight is refused.
+#[test]
+fn padding_the_writer_stores_stays_padding() {
+    let root = tempfile::tempdir().expect("root");
+    let path = fixture(root.path(), "ms_trial.ms");
+    let mut ms = casa_ms::MeasurementSet::open(&path).expect("ms");
+    ms.main_table_mut().remove_rows(&[7]).expect("remove row 7");
+    ms.save().expect("save");
+    drop(ms);
+    let sparse = casa_ms::observation_io::Msv2Observation::open(&path).expect("padded");
+    let out = root.path().join("padded.ps.zarr");
+    let mut writer = super::writer::create(&out, &sparse, true);
+    super::writer::write_all(&mut writer, &sparse, 4);
+    writer.finish().expect("finish");
+    let targets = [
+        UpdateTarget::new("base", WritableRole::Flags),
+        UpdateTarget::new("base", WritableRole::Weights),
+    ];
+    let session = open_update(&out, &OpenOptions::default(), &targets).expect("session");
+    let four = per_times(session.observation(), request(0..8, 0), 4);
+    let cleared = pass(&session, &four, &[0], clear_all);
+    assert!(
+        matches!(cleared, Err(ObservationError::InvalidRequest { ref reason }) if reason.contains("padding")),
+        "{cleared:?}"
+    );
+    let weighted = pass(&session, &four, &[1], |batch| {
+        vec![Owned::Weights(
+            Array3::from_elem(batch.shape(), 8.0),
+            WeightChannels::Delivered,
+        )]
+    });
+    assert!(
+        matches!(weighted, Err(ObservationError::InvalidRequest { ref reason }) if reason.contains("padding")),
+        "{weighted:?}"
+    );
+    drop(session);
+    let padded: Vec<_> = read(&out, "base", 0..8)
+        .into_values()
+        .filter(|sample| sample.weights.iter().all(|w| w.is_nan()))
+        .collect();
+    assert_eq!(padded.len(), 1);
+    assert!(padded[0].flags.iter().all(|f| *f), "still flagged");
+}
+
+/// A session reads what its own updaters wrote: a second traversal of its
+/// observation delivers the first pass's values.
+#[test]
+fn a_session_reads_what_its_updaters_wrote() {
+    let root = tempfile::tempdir().expect("root");
+    for name in ["ms_trial.ms", "ms_trial.ps.zarr"] {
+        let path = fixture(root.path(), name);
+        let before = read(&path, "base", 0..8);
+        let session = open_update(
+            &path,
+            &OpenOptions::default(),
+            &[UpdateTarget::new("base", WritableRole::Visibilities)],
+        )
+        .expect("session");
+        let four = per_times(session.observation(), request(0..8, 0), 4);
+        pass(&session, &four, &[0], |batch| {
+            vec![Owned::Visibilities(
+                batch.group.values.expect("values").mapv(model),
+            )]
+        })
+        .expect("pass");
+        let again = samples(
+            &mut session.observation().bind_read(&four).expect("bind"),
+            session.observation().catalogue(),
+        )
+        .expect("read again");
+        for (key, sample) in &before {
+            let expected: Vec<Complex32> = sample.values.iter().map(|v| model(*v)).collect();
+            assert_eq!(again[key].values, expected, "{name} {key:?}");
+        }
+    }
 }

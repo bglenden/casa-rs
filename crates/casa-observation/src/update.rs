@@ -54,9 +54,12 @@ pub struct UpdateTarget {
     pub role: WritableRole,
     /// Whether the variable may be shared with other groups.
     pub aliases: AliasScope,
-    /// Create the group's visibility variable when the store lacks it,
-    /// seeded from the `base` group's, as CASA seeds `CORRECTED_DATA` and
-    /// `MODEL_DATA` from `DATA`. Stores that cannot add a variable refuse.
+    /// Create the group's visibility variable when the store lacks it.
+    /// `corrected` is seeded from the `base` group's visibilities, as CASA
+    /// seeds `CORRECTED_DATA` from `DATA`, so what a pass skips reads as
+    /// uncorrected; `model` is created only by a traversal that writes
+    /// every cell, since no seed of the model is safe (CASA's is 1,
+    /// casa-rs imaging's 0). Stores that cannot add a variable refuse.
     pub create: bool,
 }
 
@@ -169,7 +172,8 @@ pub struct UpdateReport {
     /// only partly. A unit a patch supplies whole is never read.
     pub units_read: usize,
     /// The most bytes the updater holds between batches: MSv4, one
-    /// chunk-row of times of each target variable; MSv2, none.
+    /// chunk-row of times of each target variable over the channel chunks
+    /// the traversal reaches (every channel for weights); MSv2, none.
     pub held_bytes: usize,
 }
 
@@ -179,6 +183,10 @@ pub struct UpdateReport {
 /// targets (`casa_ms::observation_io::UpdateSession::updater`); each call
 /// gives the values of those targets, in that order, for one delivered
 /// batch.
+///
+/// Only [`Self::finish`] completes an update: an updater dropped without
+/// it leaves what it wrote and discards what it held (an MSv4 updater's
+/// window of up to one chunk-row of times), and reports neither.
 pub trait Updater: Send {
     /// Write `values`, one per bound target, for `batch`'s samples.
     ///
@@ -186,8 +194,9 @@ pub trait Updater: Send {
     ///
     /// When a value disagrees with its target or the batch, the batch is
     /// not the traversal's next, or a change is refused (a weight shared by
-    /// channels the patch does not address, a flag cleared where no sample
-    /// exists). Nothing of `batch` is then written. A storage failure
+    /// channels the patch does not address, a flag cleared or a finite
+    /// weight written where the store holds padding). Nothing of `batch` is
+    /// then written. A storage failure
     /// leaves what the store's guarantees state.
     fn write(
         &mut self,

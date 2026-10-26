@@ -110,17 +110,23 @@ impl Msv4Update {
                     })?;
                 let record = &group.record;
                 let path = |variable: &str| format!("{}/{variable}", dataset.path);
+                let channels = request.channels.clone();
                 windows.push(match target.target.role {
                     WritableRole::Visibilities => Target::Visibilities(Window::open(
                         &self.store,
                         &path(&record.correlated_data),
+                        channels,
                     )?),
                     WritableRole::Flags => {
-                        Target::Flags(Window::open(&self.store, &path(&record.flag))?)
+                        Target::Flags(Window::open(&self.store, &path(&record.flag), channels)?)
                     }
-                    WritableRole::Weights => {
-                        Target::Weights(Window::open(&self.store, &path(&record.weight))?)
-                    }
+                    // A weight patch may change every channel
+                    // (`WeightChannels::All`).
+                    WritableRole::Weights => Target::Weights(Window::open(
+                        &self.store,
+                        &path(&record.weight),
+                        0..catalogue_channels(self, *id),
+                    )?),
                 });
             }
             partitions.push(Partition {
@@ -213,7 +219,7 @@ impl Updater for Msv4Updater<'_> {
         let times = dataset_times(batch, entry, &self.partitions[index].times)?;
         let products = product_indices(batch, entry)?;
         for value in values {
-            refuse_cleared_padding(batch, value)?;
+            refuse_padding_changes(batch, value)?;
         }
         if self.open != Some(index) {
             self.flush()?;
@@ -238,6 +244,7 @@ impl Updater for Msv4Updater<'_> {
 
     fn finish(mut self: Box<Self>) -> Result<UpdateReport, ObservationError> {
         self.flush()?;
+        self.update.store.sync().map_err(storage)?;
         let [reads, replaced, erased] = self.update.counts();
         let mut report = self.report;
         report.units_read = reads - self.start[0];
@@ -245,6 +252,16 @@ impl Updater for Msv4Updater<'_> {
         report.held_bytes = self.held_bytes();
         Ok(report)
     }
+}
+
+/// Partition `id`'s channel count.
+fn catalogue_channels(update: &Msv4Update, id: PartitionId) -> usize {
+    update
+        .observation
+        .catalogue()
+        .partition(id)
+        .frequencies_hz
+        .len()
 }
 
 /// Assign one target's values into its window.
@@ -336,34 +353,38 @@ fn product_indices(
         .collect()
 }
 
-/// Refuse clearing a flag where the store holds padding: a sample whose
-/// delivered weight is not finite (XRADIO pads with NaN weights). Clearing
-/// flags needs the traversal to read weights, so that padding is known.
-fn refuse_cleared_padding(
+/// Refuse a change that would make padding read as an acquisition: a
+/// cleared flag, or a finite weight, where the store holds padding (a
+/// non-finite weight: XRADIO and casa-rs's writer pad with NaN weights).
+/// Either change needs the traversal to read weights, which mark padding;
+/// a non-finite weight of an acquisition is kept the same way.
+fn refuse_padding_changes(
     batch: &VisibilityBatch<'_>,
     value: &PatchValues<'_>,
 ) -> Result<(), ObservationError> {
-    let PatchValues::Flags {
-        clear: Some(clear), ..
-    } = value
-    else {
-        return Ok(());
+    let changes_padding: Box<dyn Fn(usize, usize, usize) -> bool + '_> = match value {
+        PatchValues::Flags {
+            clear: Some(clear), ..
+        } if clear.iter().any(|cleared| *cleared) => Box::new(|s, c, p| clear[[s, c, p]]),
+        PatchValues::Weights { values, channels } => {
+            let all = *channels == WeightChannels::All;
+            Box::new(move |s, c, p| values[[s, if all { 0 } else { c }, p]].is_finite())
+        }
+        _ => return Ok(()),
     };
-    if !clear.iter().any(|cleared| *cleared) {
-        return Ok(());
-    }
     let Some(weights) = batch.group.weights else {
         return Err(request_error(
-            "clearing MSv4 flags needs the traversal to read weights, which mark padding",
+            "clearing MSv4 flags or writing MSv4 weights needs the traversal to read weights, \
+             which mark padding",
         ));
     };
-    if clear
-        .iter()
-        .zip(weights.iter())
-        .any(|(cleared, weight)| *cleared && !weight.is_finite())
+    if weights
+        .indexed_iter()
+        .any(|((s, c, p), weight)| !weight.is_finite() && changes_padding(s, c, p))
     {
         return Err(request_error(
-            "a flag cleared where the store holds padding (a non-finite weight)",
+            "a flag cleared or a finite weight written where the store holds padding (a \
+             non-finite weight)",
         ));
     }
     Ok(())

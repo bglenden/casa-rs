@@ -16,9 +16,10 @@
 //! no `EFFECTIVE_CHANNEL_WIDTH`. Every time must be written exactly once,
 //! from batches whose coordinates and context match the declaration
 //! ([`Msv4Writer::write_batch`]); the payload variables' fill values are
-//! the padding convention (NaN, flag true, weight 0), so a cell never
-//! delivered reads back as padding; the store is built in a staging
-//! directory of its own and published only by [`Msv4Writer::finish`].
+//! the padding convention (flag true, values and weights NaN, as XRADIO
+//! pads them), so a cell never delivered reads back as padding; the store
+//! is built in a staging directory of its own and published only by
+//! [`Msv4Writer::finish`].
 
 mod chunks;
 mod payload;
@@ -662,7 +663,8 @@ impl Msv4Writer {
         };
         let coordinates = json!(PAYLOAD_COORDINATES);
         // Fill values are the padding convention: a cell never delivered
-        // reads back as a flagged NaN of weight zero.
+        // reads back flagged, its values and weight NaN as XRADIO pads
+        // them, so the non-finite weight marks it as padding.
         let values = create_array(
             store,
             &format!("{root}/VISIBILITY"),
@@ -684,7 +686,7 @@ impl Msv4Writer {
             cube(
                 "float32",
                 4,
-                json!(0.0),
+                json!("NaN"),
                 json!({"coordinates": coordinates}),
             ),
         )?;

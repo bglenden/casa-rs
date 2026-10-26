@@ -105,11 +105,15 @@ row chunks. Two rows claiming one cell are distinct acquisitions the partition
 keys failed to separate: opening refuses them, naming both rows, rather than
 discarding or averaging either.
 
-A cell no acquisition fills is **padding**. Every store delivers it flagged:
-the MSv2 adapter pads with flag true, weight 0, and values, UVW and time
-auxiliaries NaN; an MSv4 store holds its own padding (XRADIO's converter pads
-with NaN values and weights and leaves `FLAG` false), and the MSv4 adapter
-folds the non-finite stored weight into the delivered flag. The estimate
+A cell no acquisition fills is **padding**. Every store delivers it flagged,
+with a NaN weight: the MSv2 adapter pads with flag true and values, weights,
+UVW and time auxiliaries NaN; an MSv4 store holds its own padding (XRADIO's
+converter pads with NaN values and weights and leaves `FLAG` false; casa-rs's
+writer pads the same way with `FLAG` true), and the MSv4 adapter folds the
+non-finite stored weight into the delivered flag. A NaN weight is padding's
+one mark in both stores; the MSv2 adapter padded with weight 0 until the
+write-back trial found that an MSv4 written from it could not tell padding
+from a flagged acquisition. The estimate
 reports the fraction of cells an adapter pads before anything is read; it is 0
 for MSv4, whose store holds its grid whole, and that says nothing of the cells
 the store itself holds as padding.
@@ -713,7 +717,7 @@ time, baseline, field and scan against the grid, and its interval where it has
 an acquisition (padding has none). It refuses what it cannot represent: a TAI
 grid (it writes `unix`/`utc` only), a true row flag (fold row flags into the
 element flags first), a channel window. A padded cell is written as padding:
-flagged, NaN values, UVW and time auxiliaries, weight 0. Every coordinate and
+flagged, NaN values, weights, UVW and time auxiliaries. Every coordinate and
 sub-dataset is written into a staging directory of the writer's own; the
 dataset is published by a rename that refuses to replace an existing one, and
 a dropped or failed writer removes its staging.
@@ -740,11 +744,15 @@ this subsection: update sessions with declared targets (data group, role,
 alias scope, creation), one updater per traversal writing visibilities,
 flag set/clear changes and weights for the batches the session delivered,
 the broadcast-weight rule below (Pro R1), data-group aliases accepted
-explicitly, row flags and padding preserved, whole-unit writes that read
-nothing, and MSv4 chunks replaced atomically through a temporary object.
-A batch's own times and baselines address its samples in both stores, so
-no update map is added to the read side. The rest of this subsection, and
-its acceptance obligations, stand for M1/M2.
+explicitly (a group the session creates included), one binding per
+variable, row flags and padding preserved (a padded MSv2 cell has no row;
+an MSv4 updater refuses to clear a flag or write a finite weight where the
+store holds a NaN weight), whole-unit writes that read nothing, MSv4 chunks
+replaced atomically through a temporary object with the changed directories
+synchronized at finish, and `MODEL_DATA` created only by a traversal that
+writes it whole. A batch's own times and baselines address its samples in
+both stores, so no update map is added to the read side. The rest of this
+subsection, and its acceptance obligations, stand for M1/M2.
 
 An `UpdateMapRef` refers to a session-owned inverse map from selected logical
 elements to a named writable role's native address domain (cells, scalars or
@@ -845,11 +853,11 @@ when its acceptance obligation is met.
 | Requested precision | `Complex<f32>`, `bool`, `f32`, `f64` only; complex128 refused | Native precision, lossless widening or explicitly approved narrowing per role, charged and fused with decode; the writer checks representability; the existing science tolerances hold |
 | Real-valued data (`FLOAT_DATA`, `SPECTRUM`) | Refused | Its own typed variant under its profile, not reinterpreted as frequency visibilities |
 | More than one data group per traversal; role aliases | One group per traversal; each group keeps its own field and UVW context | Each group keeps its UVW and field/source context and explicit alias relationships to the others |
-| Occupancy and conversion to rows | Absence only as flagged padding; the batch carries no presence mask, so an update infers padding (a missing MSv2 row, a non-finite MSv4 weight) and refuses to clear its flags | Unknown occupancy representable; conversion to a row format resolves it by declared policy or reports the ambiguity, never recovering an imaginary MSv2 row; writing new measurements into holes needs an explicit fill policy |
+| Occupancy and conversion to rows | Absence only as flagged padding with a NaN weight in both stores; the batch carries no presence mask, so an update infers padding (a missing MSv2 row, a non-finite MSv4 weight, which a traversal must read weights to see) and refuses to clear its flags or give it a finite weight | Unknown occupancy representable; conversion to a row format resolves it by declared policy or reports the ambiguity, never recovering an imaginary MSv2 row; writing new measurements into holes needs an explicit fill policy |
 | Native flags: bitmasks, reason bits, categories, row flags as their own view | `bool` only; `uint8` refused; row flags folded on read; a flag change sets and clears element flags and never writes `FLAG_ROW` or `FLAG_CATEGORY` | Native dtype and reason bits preserved for lossless writes; `UNSPECIFIED_BIT` for generic flagging, bound to its actual bit; clearing an effective flag never clears unknown reasons |
 | Weight roles and fallback; `SIGMA` | One broadcast weight view; `SIGMA` not read. Production `gaincal` solves with 1/σ² from `SIGMA`, as CASA does, so the calibration port needs this first (trial README, example B) | The request names the weight role and fallback for undefined cells, recording which rule and cell supplied each value; `SIGMA` never silently equated with weights |
 | Revisit and compute-window requirements as request fields | A new traversal per pass; windows are views | Binding states what depends on an estimated pass count; a revisit does not imply cached values |
-| Updates | The write-back trial's update sessions (section 7) | Section 7's remaining obligations: bit flags and flag categories, conflicting queued patches, structural writes (a new MSv4 data group), per-batch MSv2 planning, a killed process and the synchronization boundary at scale |
+| Updates | The write-back trial's update sessions (section 7) | Section 7's remaining obligations: bit flags and flag categories, conflicting queued patches, structural writes (a new MSv4 data group), per-batch MSv2 planning, a seed for a `MODEL_DATA` written in part, a killed process, stray temporary files and the synchronization cost at scale |
 | MSv2 creation from batches; general creation and loss policy | The MSv4 writer only | Cells in time order become rows, padded cells flagged NaN rows; cross-format creation preflights metadata, flag and occupancy mappings and rejects unapproved loss |
 | Mixed read/update sessions and locking | One update session per store in a process, one updater per session, read-only opens beside them; casacore's lock per MSv2 updater | Plan read and write access before locking, no implicit upgrade; original-input semantics need disjoint read and write regions after resolving aliases, or a proven read-before-write order; casacore cross-process locks stay authoritative for v2; the v4 profile reports that it has no cross-process lock protocol |
 | Calibration binding across stores | Observation-to-observation `bind_to` | Solve, persist, close, permute partition and catalogue enumeration, reopen and apply, with overlapping antenna subsets and ambiguous-name rejection; CASA's v2 associations and SPW mapping preserved |
