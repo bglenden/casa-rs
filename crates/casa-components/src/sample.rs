@@ -16,8 +16,9 @@
 //! component to the direction (`MVDirection::separation` and
 //! `MVDirection::positionAngle`), the angle counted from north through east.
 //! A pixel gains the component's Stokes flux in Jy, sampled by its spectral
-//! model at each frequency ([`SpectralModel::sample_stokes`]), times the
-//! scale.
+//! model at each frequency
+//! ([`SpectralModel::sample_stokes`](crate::SpectralModel::sample_stokes)),
+//! times the scale.
 //!
 //! The component's reference direction is first converted into the frame of
 //! the pixel directions with no measures frame, as CASA converts it; a
