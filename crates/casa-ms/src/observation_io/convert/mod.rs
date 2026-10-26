@@ -2,25 +2,33 @@
 //! Converting between MeasurementSet v2 and MSv4 through the observation
 //! boundary: the source is read as batches like any consumer reads it, and
 //! the destination is created from those batches and the source's
-//! catalogue ([`to_msv4`]).
+//! catalogue ([`to_msv4`], [`to_msv2`]).
 //!
 //! A conversion first inventories what the destination cannot hold (a
 //! [`Loss`]) and refuses, before any byte is written, every loss the
 //! caller did not accept ([`ConversionOptions::accept`]): converting never
-//! drops information silently. What it keeps it keeps exactly: every
-//! acquisition, its flags (row flags folded in), weights, UVW and time
-//! auxiliaries, and every selected data group.
+//! drops information silently, nor states what the source did not hold
+//! without saying so ([`Loss::SigmaDerived`]). What it keeps it keeps
+//! exactly: every acquisition, its flags (row flags folded in), weights,
+//! UVW and time auxiliaries, and every selected data group. Padding, a grid
+//! cell no acquisition filled, stays padding: an MSv4 holds it as a NaN
+//! weight, and an MSv2 holds no row for it.
 //!
 //! The selected data groups of a partition are read in lockstep, one
 //! traversal each sized to the same whole times per batch (the first with
 //! every role, the others their visibilities only), so the destination
 //! writes every variable of a time range together and each chunk once.
 
+mod lockstep;
 mod losses;
+mod msv2_rows;
+mod msv2_tables;
+mod to_msv2;
 mod to_msv4;
 
 use std::fmt;
 
+pub use to_msv2::to_msv2;
 pub use to_msv4::to_msv4;
 
 use super::Msv4Codec;
@@ -30,6 +38,11 @@ use super::Msv4Codec;
 pub enum Loss {
     /// MSv2 `SIGMA` (and `SIGMA_SPECTRUM`): MSv4 holds no sigma.
     Sigma,
+    /// An MSv2 destination's `SIGMA`, which no batch carries, derived from
+    /// `WEIGHT` as CASA's `mstransform` derives it when corrected data
+    /// become data: `1/√WEIGHT`, and -1 where the weight is not positive.
+    /// Right for weights never recalibrated, wrong for the others.
+    SigmaDerived,
     /// MSv2 `FLAG_ROW` set on some row: folded into the element flags, so
     /// a reverse conversion cannot tell a row flag from flags of every
     /// element.
@@ -51,7 +64,7 @@ impl Loss {
     #[must_use]
     pub fn kind(&self) -> LossKind {
         match self {
-            Self::Sigma => LossKind::Sigma,
+            Self::Sigma | Self::SigmaDerived => LossKind::Sigma,
             Self::RowFlags => LossKind::RowFlags,
             Self::FlagCategories => LossKind::FlagCategories,
             Self::DataGroup(_) => LossKind::DataGroups,
@@ -65,6 +78,7 @@ impl fmt::Display for Loss {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Sigma => write!(f, "SIGMA is not carried"),
+            Self::SigmaDerived => write!(f, "SIGMA is derived from WEIGHT as 1/sqrt(WEIGHT)"),
             Self::RowFlags => write!(f, "FLAG_ROW is folded into FLAG"),
             Self::FlagCategories => write!(f, "FLAG_CATEGORY is not carried"),
             Self::DataGroup(group) => write!(f, "data group {group} is not converted"),
@@ -77,7 +91,7 @@ impl fmt::Display for Loss {
 /// What a caller accepts losing ([`Loss::kind`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum LossKind {
-    /// [`Loss::Sigma`].
+    /// [`Loss::Sigma`] and [`Loss::SigmaDerived`].
     Sigma,
     /// [`Loss::RowFlags`].
     RowFlags,
@@ -102,7 +116,8 @@ pub struct ConversionOptions {
     /// The most bytes one time range of every selected group's batches
     /// may hold together.
     pub batch_bytes: usize,
-    /// Partitions converted at once, each by its own thread.
+    /// MSv4 destinations: partitions converted at once, each by its own
+    /// thread. An MSv2 is written by one.
     pub workers: usize,
     /// MSv4 destinations: the chunk shape `[time, baseline, frequency,
     /// polarization]`, 0 for a whole axis.
@@ -124,8 +139,11 @@ pub struct ConversionReport {
     pub partitions: usize,
     /// Batches of the first group read.
     pub batches: usize,
-    /// Samples written (the grid's cells, padding included).
+    /// Samples read (the grids' cells, padding included).
     pub samples: usize,
+    /// MSv2 destinations: rows written, one per sample that is not
+    /// padding.
+    pub rows: usize,
     /// MSv4 destinations: payload elements encoded, over every variable.
     pub elements: usize,
     /// MSv4 destinations: elements held toward a chunk a batch covered only

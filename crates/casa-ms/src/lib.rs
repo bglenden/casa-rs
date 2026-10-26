@@ -70,6 +70,7 @@ pub mod simulation;
 pub mod simulation_task;
 pub mod spectral_selection;
 mod subtable_overrides;
+mod subtable_rows;
 pub mod subtables;
 pub mod task_contract;
 pub mod transform;

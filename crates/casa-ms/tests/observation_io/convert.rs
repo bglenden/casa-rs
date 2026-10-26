@@ -1,20 +1,20 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! The converter: either store into a new MSv4 through the boundary, every
-//! acquisition and selected data group carried, every loss refused unless
-//! accepted.
+//! The converter: either store into a new MSv4 or MSv2 through the
+//! boundary, every acquisition and selected data group carried, padding
+//! kept as padding, every loss refused unless accepted.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use casa_ms::observation_io::convert::{ConversionOptions, Loss, LossKind, to_msv4};
+use casa_ms::observation_io::convert::{ConversionOptions, Loss, LossKind, to_msv2, to_msv4};
 use casa_ms::observation_io::{Msv4Codec, OpenOptions, open, open_update};
 use casa_ms::{
     SyntheticAntenna, SyntheticObservationRequest, SyntheticSpectralSetup,
     generate_synthetic_observation_ms,
 };
 use casa_observation::{
-    AccessRequest, CorrelationRequest, Grouping, ObservationError, PartitionId, Roles,
-    UpdateTarget, WritableRole,
+    AccessRequest, BatchBuffers, CorrelationRequest, Grouping, ObservationError, PartitionId,
+    PatchValues, ReadEvent, Roles, UpdateTarget, WeightChannels, WritableRole,
 };
 use num_complex::Complex32;
 
@@ -247,4 +247,238 @@ fn partitions_and_data_groups_convert_together() {
         matches!(refused, Err(ObservationError::InvalidRequest { ref reason }) if reason.contains("model")),
         "leaving a group behind is a loss: {refused:?}"
     );
+}
+
+/// Every acquisition of `group` in partition `id`: the samples that are not
+/// padding (a NaN weight).
+fn acquisitions(path: &Path, id: PartitionId, group: &str) -> BTreeMap<Key, Sample> {
+    read(path, id, group)
+        .into_iter()
+        .filter(|(_, sample)| !sample.weights.iter().all(|weight| weight.is_nan()))
+        .collect()
+}
+
+/// MAIN's row count and `SIGMA`, `WEIGHT` of the MSv2 at `path`.
+fn rows_and_sigmas(path: &Path) -> (usize, Vec<(f32, f32)>) {
+    let ms = casa_ms::MeasurementSet::open(path).expect("ms");
+    let main = ms.main_table();
+    let column = |name: &str| {
+        main.column_accessor(name)
+            .and_then(|column| column.array_cells_owned(&(0..main.row_count()).collect::<Vec<_>>()))
+            .expect(name)
+    };
+    let pairs = column("WEIGHT")
+        .into_iter()
+        .zip(column("SIGMA"))
+        .flat_map(|(weight, sigma)| {
+            let (
+                Some(casa_types::ArrayValue::Float32(weight)),
+                Some(casa_types::ArrayValue::Float32(sigma)),
+            ) = (weight, sigma)
+            else {
+                panic!("float WEIGHT and SIGMA cells");
+            };
+            weight.into_iter().zip(sigma).collect::<Vec<_>>()
+        })
+        .collect();
+    (main.row_count(), pairs)
+}
+
+/// XRADIO's MSv4 of the fixture converts to an MSv2 holding every
+/// acquisition as it is, with SIGMA derived as CASA derives it from the
+/// weight; that derivation is refused until accepted.
+#[test]
+fn an_msv4_converts_to_an_msv2_of_every_acquisition() {
+    let root = tempfile::tempdir().expect("root");
+    let xradio = fixture(root.path(), "ms_trial.ps.zarr");
+    let v2 = fixture(root.path(), "ms_trial.ms");
+    let out = root.path().join("converted.ms");
+    let refused = to_msv2(&xradio, &out, &options(&[LossKind::Tables]));
+    assert!(
+        matches!(refused, Err(ObservationError::InvalidRequest { ref reason }) if reason.contains("SIGMA")),
+        "{refused:?}"
+    );
+    assert!(!out.exists(), "nothing is written before the refusal");
+    let report = to_msv2(
+        &xradio,
+        &out,
+        &options(&[LossKind::Sigma, LossKind::Tables, LossKind::Columns]),
+    )
+    .expect("convert");
+    assert!(
+        report.losses.contains(&Loss::SigmaDerived),
+        "{:?}",
+        report.losses
+    );
+    assert_eq!(
+        (report.partitions, report.samples, report.rows),
+        (1, 120, 120)
+    );
+    let converted = read(&out, PartitionId(0), "base");
+    assert_eq!(
+        converted,
+        read(&xradio, PartitionId(0), "base"),
+        "XRADIO's samples"
+    );
+    assert_eq!(
+        converted,
+        read(&v2, PartitionId(0), "base"),
+        "the MSv2's samples"
+    );
+    let (rows, pairs) = rows_and_sigmas(&out);
+    assert_eq!(rows, 120);
+    for (weight, sigma) in pairs {
+        assert_eq!(
+            sigma,
+            if weight > 0.0 {
+                1.0 / weight.sqrt()
+            } else {
+                -1.0
+            }
+        );
+    }
+    let ours = open(&out, &OpenOptions::default()).expect("open");
+    let theirs = open(&xradio, &OpenOptions::default()).expect("open");
+    let (ours, theirs) = (ours.catalogue(), theirs.catalogue());
+    // Measures compare through their exact debug form.
+    assert_eq!(
+        format!("{:?}", ours.antennas),
+        format!("{:?}", theirs.antennas),
+        "antennas"
+    );
+    assert_eq!(
+        format!("{:?}", ours.fields),
+        format!("{:?}", theirs.fields),
+        "fields"
+    );
+    assert_eq!(ours.scans, theirs.scans, "scans");
+    assert_eq!(ours.observations, theirs.observations, "observations");
+    let (a, b) = (&ours.partitions[0], &theirs.partitions[0]);
+    assert_eq!(
+        (
+            &a.spectral_window,
+            &a.frequencies_hz,
+            &a.channel_widths_hz,
+            a.frequency_frame
+        ),
+        (
+            &b.spectral_window,
+            &b.frequencies_hz,
+            &b.channel_widths_hz,
+            b.frequency_frame
+        ),
+        "spectral window"
+    );
+    assert_eq!((&a.correlations, &a.intents), (&b.correlations, &b.intents));
+}
+
+/// Two partitions of different shapes and two data groups go to an MSv4
+/// and back: the MSv2 holds the original's rows, `DATA` and `MODEL_DATA`
+/// of every partition reading back equal.
+#[test]
+fn an_msv2_survives_the_round_trip_through_msv4() {
+    let root = tempfile::tempdir().expect("root");
+    let v2 = two_windows(root.path());
+    let v4 = root.path().join("two_windows.ps.zarr");
+    let back = root.path().join("back.ms");
+    let accept = [LossKind::Sigma, LossKind::Tables];
+    to_msv4(&v2, &v4, &options(&accept)).expect("to MSv4");
+    let report = to_msv2(&v4, &back, &options(&accept)).expect("to MSv2");
+    let original = casa_ms::MeasurementSet::open(&v2)
+        .expect("ms")
+        .main_table()
+        .row_count();
+    assert_eq!((report.partitions, report.rows), (2, original));
+    for id in [PartitionId(0), PartitionId(1)] {
+        for group in ["base", "model"] {
+            assert_eq!(
+                read(&back, id, group),
+                read(&v2, id, group),
+                "{id:?} {group}"
+            );
+        }
+    }
+}
+
+/// A grid cell no acquisition filled is padding in the MSv4 and no row in
+/// the MSv2 made from it: an MSv2 missing a row comes back missing it.
+#[test]
+fn padding_becomes_no_msv2_row() {
+    let root = tempfile::tempdir().expect("root");
+    let sparse = fixture(root.path(), "ms_trial.ms");
+    let mut ms = casa_ms::MeasurementSet::open(&sparse).expect("ms");
+    ms.main_table_mut().remove_rows(&[7]).expect("remove row 7");
+    ms.save().expect("save");
+    drop(ms);
+    let v4 = root.path().join("sparse.ps.zarr");
+    let back = root.path().join("back.ms");
+    let accept = [LossKind::Sigma, LossKind::Tables];
+    to_msv4(&sparse, &v4, &options(&accept)).expect("to MSv4");
+    let padded =
+        read(&v4, PartitionId(0), "base").len() - acquisitions(&v4, PartitionId(0), "base").len();
+    assert_eq!(padded, 1, "the missing row is padding in the MSv4");
+    let report = to_msv2(&v4, &back, &options(&accept)).expect("to MSv2");
+    assert_eq!((report.samples, report.rows), (120, 119));
+    assert_eq!(rows_and_sigmas(&back).0, 119);
+    assert_eq!(
+        acquisitions(&back, PartitionId(0), "base"),
+        acquisitions(&sparse, PartitionId(0), "base")
+    );
+}
+
+/// Weights that vary over channels have no MSv2 `WEIGHT`: the conversion
+/// refuses them before creating anything.
+#[test]
+fn weights_varying_over_channels_are_refused() {
+    let root = tempfile::tempdir().expect("root");
+    let v4 = fixture(root.path(), "ms_trial.ps.zarr");
+    let session = open_update(
+        &v4,
+        &OpenOptions::default(),
+        &[UpdateTarget::new("base", WritableRole::Weights)],
+    )
+    .expect("session");
+    let request = AccessRequest {
+        partitions: vec![PartitionId(0)],
+        data_group: "base".to_string(),
+        roles: Roles::ALL,
+        channels: 0..session
+            .observation()
+            .catalogue()
+            .partition(PartitionId(0))
+            .frequencies_hz
+            .len(),
+        correlations: CorrelationRequest::ALL,
+        grouping: Grouping::None,
+        batch_bytes: usize::MAX,
+    };
+    let mut traversal = session.observation().bind_read(&request).expect("bind");
+    let mut updater = session.updater(&request, &[0]).expect("updater");
+    let mut buffers = BatchBuffers::default();
+    while let Some(ReadEvent::Batch(batch)) = traversal.next(&mut buffers).expect("read") {
+        let weights = ndarray::Array3::from_shape_fn(batch.shape(), |(_, c, _)| 1.0 + c as f32);
+        updater
+            .write(
+                &batch,
+                &[PatchValues::Weights {
+                    values: weights.view(),
+                    channels: WeightChannels::Delivered,
+                }],
+            )
+            .expect("write");
+    }
+    updater.finish().expect("finish");
+    drop(traversal);
+    drop(session);
+    let out = root.path().join("spectral.ms");
+    let refused = to_msv2(
+        &v4,
+        &out,
+        &options(&[LossKind::Sigma, LossKind::Tables, LossKind::Columns]),
+    );
+    assert!(
+        matches!(refused, Err(ObservationError::Unsupported { what }) if what.contains("WEIGHT_SPECTRUM")),
+        "{refused:?}"
+    );
+    assert!(!out.exists());
 }

@@ -3,8 +3,9 @@
 //! the measurements in `docs/measurement-set/trial/README.md`.
 //!
 //! ```text
-//! ms_trial_convert to-msv4 SOURCE DESTINATION [--workers N] [--batch-mib M]
-//!     [--chunk-times T] [--codec blosc|zstd|none] [--accept KIND,...]
+//! ms_trial_convert to-msv4|to-msv2 SOURCE DESTINATION [--workers N]
+//!     [--batch-mib M] [--chunk-times T] [--codec blosc|zstd|none]
+//!     [--accept KIND,...]
 //! ```
 //!
 //! `KIND` is `sigma`, `row-flags`, `flag-categories`, `data-groups`,
@@ -15,7 +16,7 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use casa_ms::observation_io::Msv4Codec;
-use casa_ms::observation_io::convert::{ConversionOptions, LossKind, to_msv4};
+use casa_ms::observation_io::convert::{ConversionOptions, LossKind, to_msv2, to_msv4};
 use serde_json::json;
 
 type Error = Box<dyn std::error::Error>;
@@ -34,7 +35,7 @@ fn kind(name: &str) -> Result<LossKind, Error> {
 
 fn main() -> Result<(), Error> {
     let mut args = std::env::args().skip(1);
-    let direction = args.next().ok_or("a direction: to-msv4")?;
+    let direction = args.next().ok_or("a direction: to-msv4 or to-msv2")?;
     let source = PathBuf::from(args.next().ok_or("a source")?);
     let destination = PathBuf::from(args.next().ok_or("a destination")?);
     let mut options = ConversionOptions {
@@ -70,6 +71,7 @@ fn main() -> Result<(), Error> {
     let started = Instant::now();
     let report = match direction.as_str() {
         "to-msv4" => to_msv4(&source, &destination, &options)?,
+        "to-msv2" => to_msv2(&source, &destination, &options)?,
         other => return Err(format!("unknown direction {other}").into()),
     };
     let seconds = started.elapsed().as_secs_f64();
@@ -84,6 +86,7 @@ fn main() -> Result<(), Error> {
             "partitions": report.partitions,
             "batches": report.batches,
             "samples": report.samples,
+            "rows": report.rows,
             "elements": report.elements,
             "held_elements": report.held_elements,
             "losses": report.losses.iter().map(ToString::to_string).collect::<Vec<_>>(),
