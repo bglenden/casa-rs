@@ -167,6 +167,12 @@ impl SpectralCoordinate {
             .map(|conversion| conversion.frequency_ref)
     }
 
+    /// Returns the measures frame of the CASA conversion layer (its epoch,
+    /// position and direction), if configured.
+    pub fn conversion_frame(&self) -> Option<&MeasFrame> {
+        self.conversion.as_ref().map(|conversion| &conversion.frame)
+    }
+
     /// Returns the world-coordinate frame presented by pixel/world conversion.
     pub fn world_frequency_ref(&self) -> FrequencyRef {
         self.conversion_frequency_ref()

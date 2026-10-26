@@ -544,6 +544,8 @@ fn model_coordinates(
     let hz = |value: &ModelValue| -> Result<f64, SkyModelError> {
         Ok(qa::value_in(&value.quantity()?, "Hz")?)
     };
+    let width = hz(&spectrum.width)?;
+    check_increments(&[cdelt[0], cdelt[1], width])?;
     let mut coordinates = CoordinateSystem::new().with_obs_info(shape_obs_info());
     coordinates.add_coordinate(DirectionCoordinate::new(
         refer,
@@ -556,11 +558,26 @@ fn model_coordinates(
     coordinates.add_coordinate(SpectralCoordinate::new(
         FrequencyRef::LSRK,
         hz(&spectrum.refval)?,
-        hz(&spectrum.width)?,
+        width,
         spectrum.refpix,
         hz(&spectrum.rest_frequency)?,
     ));
     Ok(coordinates)
+}
+
+/// Refuse a zero (or non-finite) increment, as CASA's coordinate setters
+/// do: wcslib cannot invert the axis, and CASA could not open the image.
+pub(super) fn check_increments(increments: &[f64]) -> Result<(), SkyModelError> {
+    if increments
+        .iter()
+        .all(|increment| increment.is_finite() && *increment != 0.0)
+    {
+        Ok(())
+    } else {
+        Err(SkyModelError::Model(
+            "wcs wcsset_error: Linear transformation matrix is singular".to_string(),
+        ))
+    }
 }
 
 /// casacore's unit `name`.

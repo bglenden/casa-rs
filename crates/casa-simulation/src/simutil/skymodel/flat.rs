@@ -12,9 +12,13 @@
 //!
 //! casa-rs forms that plane directly: the mean of the I plane over the
 //! channels, in double precision as CASA's moments sums, or the plane
-//! itself for one channel. The image keeps the model's direction
-//! coordinate, observation information and brightness unit. Components,
-//! when given, are then added to it ([`add_components`]).
+//! itself for one channel. A masked sample does not count: the mean is over
+//! the unmasked channels, and a pixel with none is masked (and zero), as
+//! CASA's moments leaves it; with one channel, the plane's mask is kept. The
+//! image keeps the model's direction coordinate, observation information,
+//! brightness unit and restoring beam (the common beam of a beam per plane,
+//! as casa-rs's `immoments` takes it). Components, when given, are then
+//! added to it ([`add_components`]).
 
 use std::path::{Path, PathBuf};
 
@@ -22,10 +26,10 @@ use casa_components::ComponentList;
 use casa_coordinates::{
     CoordinateModel, CoordinateSystem, CoordinateType, StokesCoordinate, StokesType,
 };
-use casa_images::PagedImage;
-use ndarray::IxDyn;
+use casa_images::{ImageBeamSet, ImageInfo, PagedImage};
+use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 
-use super::{SkyModelError, add_components, pixel_axes, write_image, zeros};
+use super::{SkyModelError, add_components, pixel_axes, remove_existing, zeros};
 
 /// `simutil.flatimage(image, complist)`: write `<image>.flat`, replacing
 /// what is there, with `complist`'s components added when it is given, and
@@ -69,25 +73,36 @@ pub fn flat_image(image_path: &Path, complist: Option<&Path>) -> Result<PathBuf,
         0
     };
     let pixels = image.get()?;
+    let mask = image.get_mask()?;
+    let valid = |position: &[usize]| mask.as_ref().is_none_or(|mask| mask[IxDyn(position)]);
     let [nx, ny] = [shape[direction_axes[0]], shape[direction_axes[1]]];
     let nchan = shape[spectral_axes[0]];
     let mut flat = zeros(&[nx, ny, 1]);
+    let mut flat_mask = ArrayD::from_elem(IxDyn(&[nx, ny, 1]).f(), true);
     let mut position = vec![0; shape.len()];
     position[stokes_axes[0]] = i_plane;
     for y in 0..ny {
         for x in 0..nx {
             position[direction_axes[0]] = x;
             position[direction_axes[1]] = y;
-            flat[[x, y, 0]] = if nchan == 1 {
-                pixels[IxDyn(&position)]
-            } else {
-                let mut sum = 0.0;
-                for channel in 0..nchan {
-                    position[spectral_axes[0]] = channel;
+            if nchan == 1 {
+                flat[[x, y, 0]] = pixels[IxDyn(&position)];
+                flat_mask[[x, y, 0]] = valid(&position);
+                continue;
+            }
+            let (mut sum, mut count) = (0.0, 0_usize);
+            for channel in 0..nchan {
+                position[spectral_axes[0]] = channel;
+                if valid(&position) {
                     sum += f64::from(pixels[IxDyn(&position)]);
+                    count += 1;
                 }
-                (sum / nchan as f64) as f32
-            };
+            }
+            if count == 0 {
+                flat_mask[[x, y, 0]] = false;
+            } else {
+                flat[[x, y, 0]] = (sum / count as f64) as f32;
+            }
         }
     }
     let mut flat_coordinates =
@@ -98,9 +113,21 @@ pub fn flat_image(image_path: &Path, complist: Option<&Path>) -> Result<PathBuf,
     flat_coordinates.add_coordinate(direction.clone());
     flat_coordinates.add_coordinate(StokesCoordinate::new(vec![StokesType::I]));
     let units = image.units().to_string();
+    let mut info = image.image_info()?;
+    if info.beam_set.is_multi() {
+        info.beam_set = ImageBeamSet::new(info.beam_set.common_beam()?);
+    }
     drop(image);
     let flat_path = PathBuf::from(format!("{}.flat", image_path.display()));
-    write_image(&flat_path, &flat, flat_coordinates, &units)?;
+    let masked = flat_mask.iter().any(|valid| !valid);
+    write_flat(
+        &flat_path,
+        &flat,
+        flat_coordinates,
+        &units,
+        &info,
+        masked.then_some(&flat_mask),
+    )?;
     if let Some(complist) = complist {
         if !complist.exists() {
             return Err(SkyModelError::Model(format!(
@@ -111,4 +138,29 @@ pub fn flat_image(image_path: &Path, complist: Option<&Path>) -> Result<PathBuf,
         add_components(&flat_path, &ComponentList::read_table(complist)?)?;
     }
     Ok(flat_path)
+}
+
+/// Write the flat image, replacing what is at `path`, with the model's
+/// image information and, when some pixels are masked, the mask as the
+/// default `mask0`.
+fn write_flat(
+    path: &Path,
+    pixels: &ArrayD<f32>,
+    coordinates: CoordinateSystem,
+    units: &str,
+    info: &ImageInfo,
+    mask: Option<&ArrayD<bool>>,
+) -> Result<(), SkyModelError> {
+    remove_existing(path)?;
+    let shape = pixels.shape().to_vec();
+    let mut image = PagedImage::<f32>::create(shape.clone(), coordinates, path)?;
+    image.put_slice(pixels, &vec![0; shape.len()])?;
+    image.set_units(units)?;
+    image.set_image_info(info)?;
+    if let Some(mask) = mask {
+        image.put_mask("mask0", mask)?;
+        image.set_default_mask("mask0")?;
+    }
+    image.save()?;
+    Ok(())
 }

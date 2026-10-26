@@ -14,6 +14,7 @@ use casa_types::measures::frequency::FrequencyRef;
 use casa_types::quanta::Quantity;
 use casa_types::quanta::casacore::{casacore_unit, tos};
 
+use super::modify::check_increments;
 use super::{SkyModelError, add_components, flat_image, shape_obs_info, write_image, zeros};
 use crate::simutil::{SimutilError, direction, qa};
 
@@ -161,6 +162,8 @@ impl ComponentModel {
         ];
         let centre = size as f64 / 2.0;
         let hz = |value: &Quantity| qa::value_in(value, "Hz");
+        let bandwidth = hz(&qa::read(&self.bandwidth)?)?;
+        check_increments(&[cdelt[0], cdelt[1], bandwidth])?;
         let mut coordinates = CoordinateSystem::new().with_obs_info(shape_obs_info());
         coordinates.add_coordinate(DirectionCoordinate::new(
             refer,
@@ -173,7 +176,7 @@ impl ComponentModel {
         coordinates.add_coordinate(SpectralCoordinate::new(
             FrequencyRef::LSRK,
             hz(&self.specrefval)?,
-            hz(&qa::read(&self.bandwidth)?)?,
+            bandwidth,
             self.specrefpix,
             hz(&self.specrefval)?,
         ));

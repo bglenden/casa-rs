@@ -59,6 +59,10 @@ import numpy as np
 import casatools
 from casatasks.private.simutil import simutil
 
+# Run with `python3 -I`, which leaves the script's directory off the path.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from skymodel_compare import pixel_problems, record_differences  # noqa: E402
+
 qa = casatools.quanta()
 ia = casatools.image()
 cl = casatools.componentlist()
@@ -135,6 +139,13 @@ def coordinates(spec):
         cs.setreferencevalue(spec.get("freq_hz", FREQ_HZ), type="spectral")
         cs.setincrement(spec.get("chan_hz", CHAN_HZ), type="spectral")
         cs.setreferencepixel(spec.get("chan_refpix", 0.0), type="spectral")
+        if "conversion" in spec:
+            # A conversion layer with a real frame: the telescope's position,
+            # an epoch and the direction's reference value.
+            telescope, epoch, frame = spec["conversion"]
+            cs.settelescope(telescope)
+            cs.setepoch(casatools.measures().epoch("UTC", epoch))
+            assert cs.setconversiontype(spectral=frame)
     return cs
 
 
@@ -191,9 +202,29 @@ def pixels(shape, nan_at=()):
     return values.astype(np.float32)
 
 
+def masked_pixels(shape, masked):
+    """The values and mask of `masked`: in its `channel`, every pixel whose
+    `x + y` is a multiple of `every` masked and set to `value`; at each of
+    `both_at`, every channel masked."""
+    values = pixels(shape)
+    mask = np.ones(shape, dtype=bool)
+    for x in range(shape[0]):
+        for y in range(shape[1]):
+            if (x + y) % masked["every"] == 0:
+                mask[x, y, :, masked["channel"]] = False
+                values[x, y, :, masked["channel"]] = masked["value"]
+    for x, y in masked["both_at"]:
+        mask[x, y, :, :] = False
+    return values, mask
+
+
 def make_image(path, spec):
     shape = spec["shape"]
-    ia.fromarray(outfile=path, pixels=pixels(shape, spec.get("nan_at", ())), csys=coordinate_record(spec), overwrite=True)
+    values = pixels(shape, spec.get("nan_at", ()))
+    mask = None
+    if "masked" in spec:
+        values, mask = masked_pixels(shape, spec["masked"])
+    ia.fromarray(outfile=path, pixels=values, csys=coordinate_record(spec), overwrite=True)
     types = ia.coordsys().axiscoordinatetypes()
     expected = [{"lon": "Direction", "lat": "Direction"}.get(axis, axis.capitalize()) for axis in spec["axes"]]
     assert types == expected, f"{path}: axes {types}, wanted {expected}"
@@ -201,11 +232,15 @@ def make_image(path, spec):
     if "beam_arcsec" in spec:
         major, minor, pa = spec["beam_arcsec"]
         ia.setrestoringbeam(major=f"{major}arcsec", minor=f"{minor}arcsec", pa=f"{pa}deg")
+    if mask is not None:
+        ia.calcmask("T", name="mask0", asdefault=True)
+        ia.putregion(pixelmask=mask)
     ia.done()
 
 
 def describe(path):
-    """The image at `path`: shape, unit, beam, coordinate record, pixels."""
+    """The image at `path`: shape, unit, beam, coordinate record, pixels and,
+    when some pixels are masked, the default mask (both in Fortran order)."""
     if not os.path.exists(path):
         return None
     ia.open(path)
@@ -221,6 +256,8 @@ def describe(path):
         "pixels": float32_values(data),
         "masked": int(np.size(mask) - np.count_nonzero(mask)),
     }
+    if info["masked"]:
+        info["mask"] = [bool(value) for value in np.asarray(mask).flatten(order="F")]
     cs.done()
     ia.close()
     return info
@@ -255,6 +292,11 @@ INPUTS = {
     "jybeam_nobeam.im": {"axes": ["lon", "lat", "stokes", "spectral"], "stokes": ["I"], "shape": [NX, NY, 1, 1], "unit": "Jy/beam"},
     "kelvin.im": {"axes": ["lon", "lat", "stokes", "spectral"], "stokes": ["I"], "shape": [NX, NY, 1, 1], "unit": "K"},
     "dirstokes.im": {"axes": ["lon", "lat", "stokes"], "stokes": ["I"], "shape": [NX, NY, 1]},
+    # LSRD, with an LSRK conversion layer of a real frame (the VLA, an
+    # epoch, the image's direction).
+    "lsrd.im": {"axes": ["lon", "lat", "stokes", "spectral"], "stokes": ["I"], "shape": [NX, NY, 1, 1], "frame": "LSRD", "conversion": ["VLA", "2025/06/01/12:00", "LSRK"]},
+    # Two channels with masked samples (set to 9) and pixels masked in both.
+    "masked_cube.im": {"axes": ["lon", "lat", "stokes", "spectral"], "stokes": ["I"], "shape": [NX, NY, 1, 2], "masked": {"channel": 1, "every": 3, "value": 9.0, "both_at": [[2, 2], [5, 7]]}},
 }
 FITS_INPUTS = {"dfs_cube.fits": "dfs_cube.im", "plain2d.fits": "plain2d.im"}
 
@@ -294,16 +336,25 @@ MODIFY_CASES = [
     ("dirstokes", "dirstokes.im", {}),
     ("fits_cube", "dfs_cube.fits", {}),
     ("fits_plain2d", "plain2d.fits", {"incenter": "100GHz", "inwidth": "50MHz"}),
+    # Zero increments, which CASA's coordinate setters refuse.
+    ("dsf_incell_zero", "dsf.im", {"incell": "0arcsec"}),
+    ("dsf_inwidth_zero", "dsf.im", {"inwidth": "0Hz"}),
 ]
 
+# name, component list, and the input flattened: the modifymodel output of
+# the case of that name, or (third) an input image itself.
 FLAT_CASES = [
-    ("dsf", None),
-    ("dfs_cube", None),
-    ("iquv_cube", None),
-    ("iquv_1ch", None),
-    ("dir_freq_linear", None),
-    ("dsf", "shapes.cl"),
-    ("dfs_cube", "spectral.cl"),
+    ("dsf", None, None),
+    ("dfs_cube", None, None),
+    ("iquv_cube", None, None),
+    ("iquv_1ch", None, None),
+    ("dir_freq_linear", None, None),
+    ("dsf", "shapes.cl", None),
+    ("dfs_cube", "spectral.cl", None),
+    # Masked samples, and a Jy/beam image whose beam the flat image keeps.
+    ("masked_cube", None, "masked_cube.im"),
+    ("jybeam", None, "jybeam.im"),
+    ("jybeam", "shapes.cl", "jybeam.im"),
 ]
 
 COMPONENT_LISTS = {
@@ -334,6 +385,12 @@ COMPONENT_LISTS = {
     ],
     "rest.cl": [
         dict(flux=1.0, dx=0.1, dy=-0.1, shape="point", spectrumtype="spectral index", index=1.0, freq="REST 230GHz"),
+    ],
+    # LSRD spectra on lsrd.im, whose conversion layer presents LSRK: a 1 Jy
+    # point at the reference frequency and an extended Gaussian.
+    "lsrd.cl": [
+        dict(flux=1.0, dx=0.0, dy=0.0, shape="point", spectrumtype="spectral index", index=2.0, freq="LSRD 230GHz"),
+        dict(flux=0.5, dx=0.6, dy=-0.4, shape="Gaussian", majoraxis="1.0arcsec", minoraxis="0.6arcsec", positionangle="40deg", spectrumtype="spectral index", index=-1.5, freq="LSRD 229GHz"),
     ],
     # simobserve's component-only model: a core and five points over 4".
     "core5ps.cl": [
@@ -366,6 +423,7 @@ PROJECT_CASES = [
     ("plain2d_shapes", "plain2d.im", "shapes.cl"),
     ("dsf_topo", "dsf.im", "topo.cl"),
     ("dsf_rest", "dsf.im", "rest.cl"),
+    ("lsrd_converted", "lsrd.im", "lsrd.cl"),
     ("jybeam_shapes", "jybeam.im", "shapes.cl"),
     ("jybeam_nobeam_shapes", "jybeam_nobeam.im", "shapes.cl"),
     ("kelvin_shapes", "kelvin.im", "shapes.cl"),
@@ -377,6 +435,8 @@ COMPONENT_MODEL_CASES = [
     ("eight_channels", "core5ps_index.cl", "10MHz", 8, 3.7321),
     ("width_unset", "core5ps.cl", "", 2, 2.5),
     ("shapes", "shapes.cl", "1GHz", 1, 3.0),
+    # A zero width, which CASA's coordinate setters refuse.
+    ("zero_width", "core5ps.cl", "0Hz", 1, 3.7321),
 ]
 
 
@@ -456,13 +516,21 @@ def run_modify(work, name, inimage, overrides):
     return case
 
 
-def run_flat(work, name, complist):
+def run_flat(work, name, complist, image=None):
+    """flatimage of the modifymodel output `name`, or of a copy of the input
+    `image` when one is given."""
     util = simutil()
     model = os.path.join(work, name + ".skymodel")
+    case = {"name": name, "complist": complist}
+    if image:
+        model = os.path.join(work, f"{name}+{complist}.input" if complist else f"{name}.input")
+        if os.path.exists(model):
+            shutil.rmtree(model)
+        shutil.copytree(os.path.join(INPUT_DIR, image), model)
+        case["input"] = image
     flat = model + ".flat"
     if os.path.exists(flat):
         shutil.rmtree(flat)
-    case = {"name": name, "complist": complist}
     try:
         util.flatimage(model, complist=os.path.join(INPUT_DIR, complist) if complist else "", verbose=False)
     except Exception as error:  # noqa: BLE001
@@ -547,6 +615,12 @@ def run_component_model(work, name, complist, compwidth, comp_nchan, psfsize):
         util.flatimage(newmodel, verbose=False)
     except Exception as error:  # noqa: BLE001
         case["error"] = failure(error)
+    finally:
+        # A refusal leaves the list and the image open; CASA aborts at exit
+        # on a table removed while open.
+        cl.done()
+        if "csmodel" in locals():
+            csmodel.done()
     case["image"] = describe(os.path.join(work, name + ".compskymodel"))
     case["flat"] = describe(os.path.join(work, name + ".compskymodel.flat"))
     return case
@@ -602,7 +676,7 @@ EVIDENCE_MODIFY = [
     ("core5ps_test", "core5ps.skymodel4mod", {"inbright": "5.95565834e-05Jy/pixel", "indirection": "J2000 19h00m00 -23d00m00", "incell": "0.043080964943481216arcsec", "incenter": "345GHz", "inwidth": "10MHz"}),
     ("flatone", "flatone.model", {}),
 ]
-EVIDENCE_FLAT = [("ppdisk_vla", None), ("core5ps", "core5ps.clist"), ("core5ps_test", "ps5.clist"), ("flatone", None)]
+EVIDENCE_FLAT = [("ppdisk_vla", None, None), ("core5ps", "core5ps.clist", None), ("core5ps_test", "ps5.clist", None), ("flatone", None, None)]
 EVIDENCE_PROJECT = [("core5ps_point", "core5ps.skymodel", "point.cl"), ("core5ps_ps5", "core5ps.skymodel", "ps5.clist")]
 # Component lists, widths and channels as simobserve's tests give them; the
 # PSF is approxBeam's for alma.out01 at the list's frequency, as simobserve
@@ -628,8 +702,8 @@ def run_cases(work, modify, flat, project, component_model):
     record = {"casa": casatools.version_string(), **{kind: [] for kind in KINDS}}
     for name, image, overrides in modify:
         record["modify"].append(run_modify(work, name, image, overrides))
-    for name, complist in flat:
-        record["flat"].append(run_flat(work, name, complist))
+    for name, complist, image in flat:
+        record["flat"].append(run_flat(work, name, complist, image))
     for name, image, complist in project:
         record["project"].append(run_project(work, name, image, complist))
     for name, complist, compwidth, comp_nchan, psfsize in component_model:
@@ -684,29 +758,6 @@ DEPARTURES = {
 }
 
 
-def record_differences(actual, expected, where, report):
-    """Report where two coordinate-system records differ: strings and shapes
-    exactly, numbers to 1e-9 of their size."""
-    if isinstance(expected, dict) and isinstance(actual, dict):
-        for key in sorted(set(expected) | set(actual)):
-            if where.endswith("csys") and key.startswith(BOOKKEEPING):
-                continue
-            if key not in actual or key not in expected:
-                report(f"{where}.{key}: only in {'CASA' if key in expected else 'casa-rs'}")
-            else:
-                record_differences(actual[key], expected[key], f"{where}.{key}", report)
-    elif isinstance(expected, list) and isinstance(actual, list):
-        if len(actual) != len(expected):
-            report(f"{where}: {len(actual)} values, CASA {len(expected)}")
-        for index, (a, e) in enumerate(zip(actual, expected)):
-            record_differences(a, e, f"{where}[{index}]", report)
-    elif isinstance(expected, (int, float)) and isinstance(actual, (int, float)) and not isinstance(expected, bool):
-        if abs(actual - expected) > 1e-9 * max(abs(expected), 1e-300) and actual != expected:
-            report(f"{where}: {actual!r}, CASA {expected!r}")
-    elif actual != expected:
-        report(f"{where}: {actual!r}, CASA {expected!r}")
-
-
 def output_name(kind, case):
     """The name casa-rs's test writes a case's image under: the case's, and
     for a flat image made with components, the list's too."""
@@ -718,7 +769,8 @@ def output_name(kind, case):
 def check(out, directory):
     """Read the images casa-rs wrote in `directory/<kind>/<case>` in CASA and
     report where they differ from what CASA made, apart from casacore's
-    bookkeeping and the documented departures."""
+    bookkeeping and the documented departures. Every image CASA made for a
+    case it did not refuse must be there."""
     with gzip.open(os.path.join(out, "skymodel_casa.json.gz"), "rt") as handle:
         record = json.load(handle)
     problems = []
@@ -731,13 +783,16 @@ def check(out, directory):
             expected_departures = DEPARTURES.get((kind, case["name"]), {})
             for key in ("image", "flat"):
                 expected = case.get(key)
+                if expected is None:
+                    continue
                 name = output_name(kind, case)
                 flat = key == "flat" or kind == "flat"
+                where = f"{kind}/{name}" + (".flat" if flat else "")
                 path = os.path.join(directory, kind, name + (".flat" if flat else ""))
-                if expected is None or not os.path.exists(path):
+                if not os.path.exists(path):
+                    problems.append(f"{where}: missing from {directory}")
                     continue
                 compared += 1
-                where = f"{kind}/{name}" + (".flat" if flat else "")
                 actual = describe(path)
                 for field in ("shape", "unit", "types", "beam"):
                     if actual[field] != expected[field]:
@@ -747,14 +802,16 @@ def check(out, directory):
                     expected_here = any(f" csys.{field}" in problem for field in expected_csys)
                     (departures if expected_here else problems).append(problem)
 
-                record_differences(actual["csys"], expected["csys"], f"{where} csys", report)
-                peak = max((abs(v) for v in expected["pixels"] if v is not None), default=0.0) or 1.0
-                worst = max((abs((a or 0.0) - (e or 0.0)) for a, e in zip(actual["pixels"], expected["pixels"])), default=0.0)
-                tolerance = expected_departures.get("pixels", 1e-6)
-                print(f"{where}: shape {actual['shape']}, largest pixel difference {worst / peak:.1e} of the peak")
-                if worst > 1e-6 * peak:
-                    message = f"{where}: pixels differ by {worst:.3g} (peak {peak:.3g})"
-                    (departures if worst <= tolerance * peak else problems).append(message)
+                record_differences(actual["csys"], expected["csys"], f"{where} csys", report, BOOKKEEPING)
+                found, worst = pixel_problems(
+                    where, actual["pixels"], expected["pixels"], actual.get("mask"), expected.get("mask"))
+                print(f"{where}: shape {actual['shape']}, largest pixel difference {worst:.1e} of the peak")
+                tolerance = expected_departures.get("pixels")
+                for problem in found:
+                    within = tolerance is not None and "differ by" in problem and worst <= tolerance
+                    (departures if within else problems).append(problem)
+    if compared == 0:
+        problems.append(f"no images compared in {directory}")
     for departure in departures:
         print(f"documented departure: {departure}")
     for problem in problems:

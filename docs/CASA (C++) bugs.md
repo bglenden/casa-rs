@@ -1962,11 +1962,18 @@ geocentre, an epoch of 0, and the J2000 pole, the same defaults as
 So a TOPO spectrum on an LSRK image, or LSRK spectra on a TOPO image, are
 shifted by a velocity no observation has, about 1e-4 of the frequency in
 CASA 6.7.6's oracle, which a spectral index turns into a flux difference of
-about 1e-4. casa-rs takes the reference frequency as it is, as its
-visibility prediction takes component frequencies
-(`casa_components::SpectralModel::sample_stokes`); a meaningful
-conversion would need the observation's epoch and position, which the sky
-model does not have. Components in the image's own frame, the usual case,
-are unaffected: the oracle's matched-frame cases (LSRK spectra on an LSRK
-cube, TOPO spectra on a TOPO cube) agree with CASA to 1e-6, where the same
-cube with spectra in the other frame differs by 1.1e-4.
+about 1e-4.
+
+casa-rs converts as CASA does when the image's conversion layer carries a
+real frame: an epoch and an observatory position (and the direction). The
+oracle's LSRD image, with an LSRK conversion layer at the VLA on
+2025-06-01, agrees with CASA to 1e-6 (a 1 Jy point at the reference
+frequency stays 1 Jy). With no conversion layer, or the placeholder (an
+epoch of 0 at the geocentre), casa-rs takes the frequencies as they are:
+a meaningful conversion would need the observation's epoch and position,
+which such a sky model does not carry.
+
+Components in the image's own frame, the usual case, are unaffected. The
+oracle's matched-frame cases (LSRK spectra on an LSRK cube, TOPO spectra
+on a TOPO cube) agree with CASA to 1e-6, where the same cube with spectra
+in the other frame and only the placeholder differs by 1.1e-4.

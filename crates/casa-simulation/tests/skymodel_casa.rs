@@ -278,26 +278,160 @@ fn image_differences(path: &Path, casa: &Value, tolerance: f64) -> Vec<String> {
     differences(&json!(image.units()), &casa["unit"], "unit", &mut found);
     let ours = record_json(&image.coordinates().to_record());
     differences(&ours, &compared_record(&casa["csys"]), "csys", &mut found);
-    let pixels = image.get().expect("pixels");
+    found.extend(beam_differences(&image, &casa["beam"]));
+    // Fortran order, as CASA's record holds them.
+    let pixels: Vec<f64> = image
+        .get()
+        .expect("pixels")
+        .t()
+        .iter()
+        .map(|v| f64::from(*v))
+        .collect();
+    let mask: Option<Vec<bool>> = image
+        .get_mask()
+        .expect("the mask")
+        .map(|mask| mask.t().iter().copied().collect());
     let theirs: Vec<f64> = casa["pixels"]
         .as_array()
         .expect("pixels")
         .iter()
         .map(|value| value.as_f64().unwrap_or(f64::NAN))
         .collect();
-    let peak = theirs
+    let their_mask: Option<Vec<bool>> = casa.get("mask").map(|mask| {
+        mask.as_array()
+            .expect("a mask")
+            .iter()
+            .map(|v| v.as_bool().expect("a flag"))
+            .collect()
+    });
+    found.extend(pixel_differences(
+        &pixels,
+        &theirs,
+        mask.as_deref(),
+        their_mask.as_deref(),
+        tolerance,
+    ));
+    found
+}
+
+/// Where `ours` differs from CASA's `theirs` (both in Fortran order, NaN
+/// for a non-finite value), with their masks (`None` for no mask). The masks
+/// must agree; of the pixels both leave unmasked, a finite value must meet a
+/// finite one within `tolerance` of CASA's peak, and a non-finite value a
+/// non-finite one.
+fn pixel_differences(
+    ours: &[f64],
+    theirs: &[f64],
+    our_mask: Option<&[bool]>,
+    their_mask: Option<&[bool]>,
+    tolerance: f64,
+) -> Vec<String> {
+    if ours.len() != theirs.len() {
+        return vec![format!("{} pixels, CASA {}", ours.len(), theirs.len())];
+    }
+    let unmasked = |mask: Option<&[bool]>, index: usize| mask.is_none_or(|mask| mask[index]);
+    let mut found = Vec::new();
+    let differing_masks = (0..ours.len())
+        .filter(|&index| unmasked(our_mask, index) != unmasked(their_mask, index))
+        .count();
+    if differing_masks > 0 {
+        found.push(format!("the mask differs at {differing_masks} pixels"));
+    }
+    let valid: Vec<usize> = (0..ours.len())
+        .filter(|&index| unmasked(our_mask, index) && unmasked(their_mask, index))
+        .collect();
+    let one_sided = valid
         .iter()
-        .fold(0.0_f64, |peak, value| peak.max(value.abs()));
-    let worst = pixels
-        .t()
+        .filter(|&&index| ours[index].is_finite() != theirs[index].is_finite())
+        .count();
+    if one_sided > 0 {
+        found.push(format!("{one_sided} pixels finite on one side only"));
+    }
+    let finite: Vec<usize> = valid
+        .into_iter()
+        .filter(|&index| ours[index].is_finite() && theirs[index].is_finite())
+        .collect();
+    let peak = finite
         .iter()
-        .zip(&theirs)
-        .map(|(ours, theirs)| (f64::from(*ours) - theirs).abs())
-        .fold(0.0_f64, f64::max);
-    if pixels.len() != theirs.len() || worst > tolerance * peak.max(f64::MIN_POSITIVE) {
+        .fold(0.0_f64, |peak, &index| peak.max(theirs[index].abs()));
+    let worst = finite.iter().fold(0.0_f64, |worst, &index| {
+        worst.max((ours[index] - theirs[index]).abs())
+    });
+    if worst > tolerance * if peak > 0.0 { peak } else { 1.0 } {
         found.push(format!("pixels differ by {worst:.3e} (peak {peak:.3e})"));
     }
     found
+}
+
+/// Where the image's restoring beam differs from CASA's record of it (`{}`
+/// for none): the axes in arcsec and the position angle in degrees, to
+/// 1e-9.
+fn beam_differences(image: &PagedImage<f32>, casa: &Value) -> Vec<String> {
+    let ours = image
+        .image_info()
+        .expect("the image information")
+        .beam_set
+        .single_beam()
+        .filter(|beam| !beam.is_null());
+    let theirs = casa.as_object().filter(|record| !record.is_empty());
+    match (ours, theirs) {
+        (None, None) => Vec::new(),
+        (Some(beam), Some(record)) => {
+            let value = |field: &str, unit: &str| {
+                let quantity = &record[field];
+                Quantity::read(&format!("{}{}", quantity["value"], text(&quantity["unit"])))
+                    .expect("a beam quantity")
+                    .get_value_in(&casa_types::quanta::Unit::new(unit).expect("a unit"))
+                    .expect("an angle")
+            };
+            let ours = [
+                beam.major_in("arcsec").expect("arcsec"),
+                beam.minor_in("arcsec").expect("arcsec"),
+                beam.position_angle_in("deg").expect("deg"),
+            ];
+            let theirs = [
+                value("major", "arcsec"),
+                value("minor", "arcsec"),
+                value("positionangle", "deg"),
+            ];
+            if ours
+                .iter()
+                .zip(theirs)
+                .all(|(ours, theirs)| (ours - theirs).abs() <= 1e-9 * theirs.abs().max(1.0))
+            {
+                Vec::new()
+            } else {
+                vec![format!("beam {ours:?}, CASA {theirs:?}")]
+            }
+        }
+        (ours, theirs) => vec![format!("beam {ours:?}, CASA {theirs:?}")],
+    }
+}
+
+#[test]
+fn the_comparator_fails_what_differs() {
+    // NaN everywhere against finite values, a finite value against a
+    // recorded NaN, and a masked pixel CASA leaves unmasked all fail.
+    let finite = [1.0, 2.0];
+    assert!(!pixel_differences(&[f64::NAN, f64::NAN], &finite, None, None, 1e-6).is_empty());
+    assert!(!pixel_differences(&[0.0, 2.0], &[f64::NAN, 2.0], None, None, 1e-6).is_empty());
+    assert!(pixel_differences(&[f64::NAN, 2.0], &[f64::NAN, 2.0], None, None, 1e-6).is_empty());
+    assert!(
+        !pixel_differences(&[1.0, 9.0], &[1.0, 0.0], None, Some(&[true, false]), 1e-6).is_empty()
+    );
+    assert!(
+        pixel_differences(
+            &[1.0, 9.0],
+            &[1.0, 0.0],
+            Some(&[true, false]),
+            Some(&[true, false]),
+            1e-6
+        )
+        .is_empty()
+    );
+    assert!(!pixel_differences(&[1.0, 2.1], &finite, None, None, 1e-6).is_empty());
+    assert!(!pixel_differences(&[1.0], &finite, None, None, 1e-6).is_empty());
+    assert!(pixel_differences(&[1.0, 2.0 + 1e-7], &finite, None, None, 1e-6).is_empty());
 }
 
 fn assert_no_differences(what: &str, found: &[String]) {
@@ -416,25 +550,30 @@ fn flatimage_collapses_as_casa_does() {
     let fixture = Fixture::load();
     for case in fixture.cases("flat") {
         let name = text(&case["name"]);
-        // The flat image is made from casa-rs's own modifymodel output,
-        // written under the name the oracle's check reads it by.
-        let model = fixture
-            .cases("modify")
-            .iter()
-            .find(|model| model["name"] == case["name"])
-            .unwrap_or_else(|| panic!("{name}: no modifymodel case"));
+        // The flat image is made from casa-rs's own modifymodel output, or
+        // from a copy of the input itself, written under the name the
+        // oracle's check reads it by.
         let complist = case["complist"].as_str();
         let output = match complist {
             Some(list) => format!("{name}+{list}"),
             None => name.to_string(),
         };
         let output = fixture.output("flat", &output);
-        modify_model(
-            &fixture.input(text(&model["input"])),
-            &output,
-            &overrides(&model["params"]),
-        )
-        .unwrap_or_else(|error| panic!("{name}: {error}"));
+        if let Some(input) = case["input"].as_str() {
+            copy_dir(&fixture.input(input), &output);
+        } else {
+            let model = fixture
+                .cases("modify")
+                .iter()
+                .find(|model| model["name"] == case["name"])
+                .unwrap_or_else(|| panic!("{name}: no modifymodel case"));
+            modify_model(
+                &fixture.input(text(&model["input"])),
+                &output,
+                &overrides(&model["params"]),
+            )
+            .unwrap_or_else(|error| panic!("{name}: {error}"));
+        }
         let complist = complist.map(|list| fixture.input(list));
         let flat = flat_image(&output, complist.as_deref())
             .unwrap_or_else(|error| panic!("{name}: {error}"));
@@ -519,9 +658,16 @@ fn the_component_only_model_is_casas() {
         let mut found = Vec::new();
         differences(&ours, &expected, "parameters", &mut found);
         let path = fixture.output("component_model", name);
-        let flat = model
-            .write(&list, &[cell.clone(), cell], &path)
-            .unwrap_or_else(|error| panic!("{name}: {error}"));
+        let written = model.write(&list, &[cell.clone(), cell], &path);
+        if let Some(error) = case.get("error") {
+            // CASA refuses at the coordinate setters; casa-rs before it
+            // writes.
+            let message = written.expect_err(name).to_string();
+            assert_eq!(message, text(&error["message"]), "{name}");
+            assert_no_differences(name, &found);
+            continue;
+        }
+        let flat = written.unwrap_or_else(|error| panic!("{name}: {error}"));
         let mut casa_image = case["image"].clone();
         if name == "width_unset" {
             // Departure: CASA's increment for an unset compwidth is the

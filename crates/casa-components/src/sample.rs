@@ -26,12 +26,9 @@
 //! limb-darkened disk is refused, as its visibility is.
 //!
 //! The frequencies are taken in the frame of the spectral model's reference
-//! frequency, as the visibility takes them. CASA converts the reference
-//! frequency into the image's frame through the spectral coordinate's
-//! measures frame, which an image made from a shape leaves at its defaults:
-//! the geocentre, at MJD 0, towards the J2000 pole. The conversion it makes
-//! is not one the data could have, and shifts the frequency by up to about
-//! 1e-4 (`docs/CASA (C++) bugs.md`).
+//! frequency, as the visibility takes them: a caller sampling an image in
+//! another frame converts them first (CASA converts the reference frequency
+//! into the image's frame, `refFreqInFrame`, which gives the same ratio).
 
 use std::f64::consts::{FRAC_PI_4, PI};
 

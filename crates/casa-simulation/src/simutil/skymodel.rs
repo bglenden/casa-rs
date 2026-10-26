@@ -39,9 +39,13 @@
 //!   `coordsys.setincrement` puts a meaningless value there (the model's
 //!   right ascension, in radians, as hertz). casa-rs uses the 2 GHz
 //!   `simobserve` observes with.
-//! - **Frequency frames.** A component whose spectrum is in another frame
-//!   than the image's is sampled at the image's frequencies taken in the
-//!   spectrum's frame ([`casa_components`]' sampling).
+//! - **Frequency frames without a usable frame.** A component whose
+//!   spectrum is in another frame than the image's is converted into the
+//!   image's frame with the image's conversion-layer frame, as CASA converts
+//!   it. When the image has none, or the placeholder `ia.fromshape` leaves
+//!   (an epoch of 0 at the geocentre), CASA converts through the
+//!   placeholder; casa-rs leaves the frequencies unconverted
+//!   ([`add_components`]).
 
 mod add;
 mod component_model;

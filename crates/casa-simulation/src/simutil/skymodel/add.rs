@@ -13,7 +13,18 @@
 //! pixel.
 //!
 //! Without a spectral axis every component is sampled at the first one's
-//! reference frequency. An image in Jy/beam gains the components times the
+//! reference frequency. With one, the frequencies are the image's world
+//! frequencies, in its conversion layer's frame when it has one, and a
+//! component whose spectrum is in another frame is sampled at them
+//! expressed in its own: CASA converts the reference frequency into the
+//! image's frame instead (`refFreqInFrame`), which gives the same ratio.
+//! The conversion uses the conversion layer's epoch, position and
+//! direction. An image without a usable frame, one with no conversion layer
+//! or with the placeholder `ia.fromshape` leaves (an epoch of 0 at the
+//! geocentre), is sampled with the frequencies unconverted, where CASA
+//! converts through the placeholder (`docs/CASA (C++) bugs.md`).
+//!
+//! An image in Jy/beam gains the components times the
 //! beam's area in pixels; any other unit without "pixel" in it is taken as
 //! Jy/pixel, with CASA's warning. As in CASA, a spectral or Stokes axis that
 //! is the image's first is not treated as one, and the image's mask is not
@@ -31,6 +42,7 @@ use casa_coordinates::{Coordinate, CoordinateModel, CoordinateType, DirectionCoo
 use casa_images::PagedImage;
 use casa_types::measures::direction::MDirection;
 use casa_types::measures::frame::MeasFrame;
+use casa_types::measures::frequency::FrequencyRef;
 use ndarray::{Array3, IxDyn};
 
 use super::{SkyModelError, pixel_axes};
@@ -42,9 +54,44 @@ struct Placement<'a> {
     grid: PixelGrid,
     shape: [usize; 2],
     frequencies_hz: Vec<f64>,
+    /// The frame of `frequencies_hz` and, when it is usable, the measures
+    /// frame to convert a component's reference frequency into it; `None`
+    /// without a spectral axis.
+    spectral_frame: Option<(FrequencyRef, Option<MeasFrame>)>,
 }
 
 impl Placement<'_> {
+    /// The frequencies at which `component` is sampled: the image's,
+    /// expressed in the frame of the component's spectrum (see the module
+    /// documentation).
+    fn frequencies_for(&self, component: &SkyComponent) -> Result<Vec<f64>, SkyModelError> {
+        let reference = component.spectrum().reference_frequency();
+        let unconverted = Ok(self.frequencies_hz.clone());
+        let Some((image_frame, measures)) = &self.spectral_frame else {
+            return unconverted;
+        };
+        let rest = |frame: FrequencyRef| frame == FrequencyRef::REST;
+        if reference.refer() == *image_frame || rest(reference.refer()) || rest(*image_frame) {
+            return unconverted;
+        }
+        let Some(measures) = measures else {
+            return unconverted;
+        };
+        let converted = reference.convert_to(*image_frame, measures).map_err(|_| {
+            SkyModelError::Model(format!(
+                "Cannot transform frequency from {} to {}",
+                image_frame.as_str(),
+                reference.refer().as_str()
+            ))
+        })?;
+        let ratio = reference.hz() / converted.hz();
+        Ok(self
+            .frequencies_hz
+            .iter()
+            .map(|frequency| frequency * ratio)
+            .collect())
+    }
+
     /// The direction cosines of pixel `(x, y)`.
     fn pixel_direction(&self, x: f64, y: f64) -> Result<[f64; 3], SkyModelError> {
         let world = self.direction.to_world(&[x, y]).map_err(|_| {
@@ -80,10 +127,11 @@ impl Placement<'_> {
                 }
             }
         }
+        let frequencies = self.frequencies_for(point)?;
         for [x, y] in candidates {
-            let mut values = Array3::zeros((4, 1, self.frequencies_hz.len()));
+            let mut values = Array3::zeros((4, 1, frequencies.len()));
             let at = self.pixel_direction(x, y)?;
-            point.sample_pixels(&mut values, &[at], &self.grid, &self.frequencies_hz)?;
+            point.sample_pixels(&mut values, &[at], &self.grid, &frequencies)?;
             if values.iter().any(|value| *value != 0.0) {
                 let inside = x >= 0.0 && y >= 0.0 && x < nx && y < ny;
                 return Ok(if inside {
@@ -140,6 +188,7 @@ pub fn add_components(image_path: &Path, list: &ComponentList) -> Result<(), Sky
         },
         shape: [shape[direction_axes[0]], shape[direction_axes[1]]],
         frequencies_hz: Vec::new(),
+        spectral_frame: None,
     };
     let spectral =
         pixel_axes(&coordinates, CoordinateType::Spectral).filter(|(_, axes)| axes[0] > 0);
@@ -148,6 +197,11 @@ pub fn add_components(image_path: &Path, list: &ComponentList) -> Result<(), Sky
             let CoordinateModel::Spectral(coordinate) = coordinates.coordinate(*index) else {
                 unreachable!("the coordinate found is a spectral coordinate");
             };
+            let usable = coordinate
+                .conversion_frame()
+                .filter(|frame| usable_frame(frame))
+                .cloned();
+            placement.spectral_frame = Some((coordinate.world_frequency_ref(), usable));
             let to_hz = qa_value_in_hz(&coordinate.axis_units()[0])?;
             (0..shape[axes[0]])
                 .map(|channel| Ok(coordinate.to_world(&[channel as f64])?[0] * to_hz))
@@ -192,12 +246,8 @@ pub fn add_components(image_path: &Path, list: &ComponentList) -> Result<(), Sky
     }
     let mut samples = Array3::<f64>::zeros((4, nx * ny, nfreq));
     for component in extended {
-        component.sample_pixels(
-            &mut samples,
-            &directions,
-            &placement.grid,
-            &placement.frequencies_hz,
-        )?;
+        let frequencies = placement.frequencies_for(component)?;
+        component.sample_pixels(&mut samples, &directions, &placement.grid, &frequencies)?;
     }
 
     let scale = unit_scale(&image, direction)?;
@@ -276,6 +326,19 @@ fn stokes_planes(
         axis: Some(axes[0]),
         planes,
     })
+}
+
+/// Whether a conversion layer's measures frame is one to convert with: an
+/// epoch and a position, neither the placeholder a spectral coordinate made
+/// from a shape holds (MJD 0, the geocentre), and a direction.
+fn usable_frame(frame: &MeasFrame) -> bool {
+    let epoch = frame
+        .epoch()
+        .is_some_and(|epoch| epoch.value().as_mjd() != 0.0);
+    let position = frame
+        .position()
+        .is_some_and(|position| position.as_itrf().iter().any(|value| *value != 0.0));
+    epoch && position && frame.direction().is_some()
 }
 
 /// Hz per unit of a spectral axis in `unit`.
