@@ -2,10 +2,10 @@
 //! The subtables of an MSv2 a conversion creates, from the source's
 //! catalogue: one antenna and feed per catalogue antenna, one field per
 //! field and one source per source name, one observation per session, and
-//! spectral windows,
-//! polarizations, data descriptions and states shared by the partitions
-//! whose content is the same. The layout says where each partition's rows
-//! point.
+//! spectral windows, polarizations, data descriptions and states shared by
+//! the partitions whose content is the same, so long as no two partitions
+//! share a data description, state and observation (an MSv2 would read
+//! them back as one). The layout says where each partition's rows point.
 
 use casa_observation::{Catalogue, Correlation, ObservationError, PartitionEntry};
 use casa_tables::table_measures::{MeasureType, TableMeasDesc};
@@ -79,6 +79,7 @@ pub(super) fn populate(
     let mut polarizations: Vec<&[Correlation]> = Vec::new();
     let mut descriptions: Vec<(usize, usize)> = Vec::new();
     let mut states: Vec<&[String]> = Vec::new();
+    let mut keys: Vec<(usize, usize, u32)> = Vec::new();
     let mut layout = Layout {
         data_description: Vec::new(),
         state: Vec::new(),
@@ -89,12 +90,22 @@ pub(super) fn populate(
         let polarization = position_or_push(&mut polarizations, &entry.correlations, |known| {
             *known == entry.correlations.as_slice()
         });
-        let description = position_or_push(&mut descriptions, (window, polarization), |known| {
-            *known == (window, polarization)
-        });
         let state = position_or_push(&mut states, &entry.intents, |known| {
             *known == entry.intents.as_slice()
         });
+        // Partitions an MSv2 keys alike (data description, state,
+        // observation) would read back as one: a later one gets a data
+        // description of its own.
+        let key = |description| (description, state, entry.observation.0);
+        let description = (0..descriptions.len())
+            .find(|index| {
+                descriptions[*index] == (window, polarization) && !keys.contains(&key(*index))
+            })
+            .unwrap_or_else(|| {
+                descriptions.push((window, polarization));
+                descriptions.len() - 1
+            });
+        keys.push(key(description));
         layout.data_description.push(description as i32);
         layout.state.push(state as i32);
     }

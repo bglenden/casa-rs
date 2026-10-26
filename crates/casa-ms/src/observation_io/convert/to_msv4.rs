@@ -11,7 +11,8 @@ use casa_observation::{Catalogue, Observation, ObservationError, PartitionId, Ro
 
 use super::{ConversionOptions, ConversionReport, lockstep, losses};
 use crate::observation_io::{
-    Msv4ProcessingSetWriter, Msv4StorageOptions, Msv4WriteCounters, OpenOptions, open,
+    Msv2Observation, Msv4ProcessingSetWriter, Msv4StorageOptions, Msv4WriteCounters, OpenOptions,
+    open,
 };
 
 /// What converting one partition did.
@@ -27,8 +28,8 @@ struct Converted {
 /// Every partition becomes one dataset, `<source stem>_<partition>`, with
 /// the selected data groups ([`ConversionOptions::data_groups`]); an MSv2's
 /// antennas, fields and spectral windows are renamed as XRADIO's converter
-/// renames them (`NAME_STATION`, `NAME_ID`, `NAME_ID`), so the two
-/// converters' stores agree. Partitions are converted
+/// renames them (`NAME_STATION`, `NAME_FIELD_ID`, `NAME_SPECTRAL_WINDOW_ID`),
+/// so the two converters' stores agree. Partitions are converted
 /// [`ConversionOptions::workers`] at a time; nothing appears at
 /// `destination` until every dataset is complete.
 ///
@@ -42,17 +43,11 @@ pub fn to_msv4(
     destination: &Path,
     options: &ConversionOptions,
 ) -> Result<ConversionReport, ObservationError> {
-    let observation = open(source, &OpenOptions::default())?;
+    let (observation, named) = open_named(source)?;
     let catalogue = observation.catalogue();
     let groups = losses::selected_groups(catalogue, options.data_groups.as_deref())?;
-    let source_is_msv2 = !source.join("zarr.json").is_file();
     let found = losses::inventory(source, catalogue, &groups)?;
     losses::refuse_unaccepted(&found, &options.accept)?;
-    let named = if source_is_msv2 {
-        xradio_names(catalogue)
-    } else {
-        catalogue.as_ref().clone()
-    };
     let stem = source.file_stem().map_or_else(
         || "dataset".to_string(),
         |stem| stem.to_string_lossy().into_owned(),
@@ -111,9 +106,31 @@ pub fn to_msv4(
     Ok(report)
 }
 
+/// Open `source`, and the catalogue its datasets are declared with: an
+/// MSv4's own, or an MSv2's with XRADIO's names.
+fn open_named(source: &Path) -> Result<(Box<dyn Observation>, Catalogue), ObservationError> {
+    let options = OpenOptions::default();
+    if source.join("zarr.json").is_file() {
+        let observation = open(source, &options)?;
+        let catalogue = observation.catalogue().as_ref().clone();
+        return Ok((observation, catalogue));
+    }
+    let observation = Msv2Observation::open_with(source, &options)?;
+    let windows: Vec<u32> = observation
+        .catalogue()
+        .partition_ids()
+        .into_iter()
+        .map(|id| observation.spectral_window_id(id))
+        .collect();
+    let named = xradio_names(observation.catalogue(), &windows);
+    Ok((Box::new(observation), named))
+}
+
 /// `catalogue` with XRADIO's names: antennas `NAME_STATION`, fields
-/// `NAME_ID`, spectral windows `NAME_ID`, as its converter writes an MSv2's.
-fn xradio_names(catalogue: &Catalogue) -> Catalogue {
+/// `NAME_ID`, and spectral windows `NAME_ID` (`spw_ID` unnamed) by the
+/// `SPECTRAL_WINDOW` row of each partition, `windows`, as its converter
+/// names an MSv2's.
+fn xradio_names(catalogue: &Catalogue, windows: &[u32]) -> Catalogue {
     let mut named = catalogue.clone();
     for antenna in &mut named.antennas {
         antenna.name = format!("{}_{}", antenna.name, antenna.station);
@@ -121,8 +138,11 @@ fn xradio_names(catalogue: &Catalogue) -> Catalogue {
     for (index, field) in named.fields.iter_mut().enumerate() {
         field.name = format!("{}_{index}", field.name);
     }
-    for (index, partition) in named.partitions.iter_mut().enumerate() {
-        partition.spectral_window = format!("{}_{index}", partition.spectral_window);
+    for (partition, window) in named.partitions.iter_mut().zip(windows) {
+        partition.spectral_window = match partition.spectral_window.as_str() {
+            "" | "none" => format!("spw_{window}"),
+            name => format!("{name}_{window}"),
+        };
     }
     named
 }

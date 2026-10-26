@@ -45,6 +45,8 @@ fn invalid(reason: impl Into<String>) -> ObservationError {
 #[derive(Debug)]
 struct Partition {
     grid: Grid,
+    /// The `SPECTRAL_WINDOW` row of its data description.
+    spectral_window_id: u32,
 }
 
 /// An opened MeasurementSet v2 and its catalogue.
@@ -173,7 +175,10 @@ impl Msv2Observation {
                 time_origin: MjdHighPrec::new(0.0, 0.0),
                 data_groups: groups.clone(),
             });
-            partitions.push(Partition { grid });
+            partitions.push(Partition {
+                grid,
+                spectral_window_id: setup.spectral_window_id,
+            });
         }
         Ok(Self {
             catalogue: Arc::new(Catalogue {
@@ -194,6 +199,18 @@ impl Msv2Observation {
     #[must_use]
     pub fn catalogue(&self) -> &Arc<Catalogue> {
         &self.catalogue
+    }
+
+    /// The `SPECTRAL_WINDOW` row of partition `id`'s data description:
+    /// the identifier XRADIO's converter names an MSv2's spectral window by
+    /// (`NAME_<id>`), which the format-neutral catalogue does not carry.
+    ///
+    /// # Panics
+    ///
+    /// If `id` is not a partition of the observation.
+    #[must_use]
+    pub fn spectral_window_id(&self, id: PartitionId) -> u32 {
+        self.partitions[id.0 as usize].spectral_window_id
     }
 
     /// The MeasurementSet.
