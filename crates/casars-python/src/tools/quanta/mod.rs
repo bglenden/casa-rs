@@ -17,7 +17,10 @@ use pyo3::prelude::*;
 
 use crate::convert::value::CasaValue;
 use crate::convert::{ConvertResult, StringList, Variant};
-use crate::tools::not_yet_implemented;
+use crate::tools::{LogLine, emit, not_yet_implemented};
+
+/// The Python logger the tool's warnings go to.
+const LOGGER: &str = "casars.tools.quanta";
 
 /// CASA's `quanta` tool.
 #[pyclass(name = "quanta", module = "casars.tools", frozen)]
@@ -344,19 +347,18 @@ impl PyQuanta {
         stub("floor")
     }
 
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
+    /// An angle or time as text: `hms`, `dms`, `deg`, `rad` or `+deg`. Any
+    /// other format gives an empty string and a warning, as in CASA.
     #[pyo3(
-        signature = (v = None, format = None, prec = None),
+        signature = (v = Variant::Empty, format = "dms".to_string(), prec = 2),
         text_signature = "($self, v=[], format='dms', prec=2)"
     )]
-    fn formxxx(
-        &self,
-        v: Option<&Bound<'_, PyAny>>,
-        format: Option<&Bound<'_, PyAny>>,
-        prec: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("formxxx")
+    fn formxxx(&self, py: Python<'_>, v: Variant, format: String, prec: i64) -> PyResult<Py<PyAny>> {
+        let written = py.detach(|| ops::formxxx(&v, &format, prec))?;
+        if written.is_none() {
+            emit(py, LOGGER, &[LogLine::warning(format!("Don't understand {format}"))])?;
+        }
+        CasaValue::Text(written.unwrap_or_default()).into_python(py)
     }
 
     /// Not yet implemented in casa-rs.
@@ -510,14 +512,9 @@ impl PyQuanta {
         stub("tan")
     }
 
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(signature = (v = None, prec = None), text_signature = "($self, v=[], prec=9)")]
-    fn tos(
-        &self,
-        v: Option<&Bound<'_, PyAny>>,
-        prec: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("tos")
+    /// A quantity as text: the value with `prec` decimals, then the unit.
+    #[pyo3(signature = (v = Variant::Empty, prec = 9), text_signature = "($self, v=[], prec=9)")]
+    fn tos(&self, py: Python<'_>, v: Variant, prec: i64) -> PyResult<Py<PyAny>> {
+        call(py, || ops::tos(&v, prec))
     }
 }

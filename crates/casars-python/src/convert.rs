@@ -32,7 +32,7 @@ pub(crate) mod value;
 use std::collections::BTreeMap;
 use std::fmt;
 
-use casa_types::quanta::{Dimension, Quantity, Unit, UnitDim, casacore_unit_name};
+use casa_types::quanta::{Dimension, Quantity, Unit, UnitDim};
 use num_complex::Complex64;
 use numpy::{PyReadonlyArrayDyn, PyUntypedArrayMethods};
 use pyo3::exceptions::{PyRuntimeError, PyTypeError};
@@ -564,8 +564,7 @@ pub(crate) fn quantity_record(record: &BTreeMap<String, Variant>) -> Result<Quan
 /// casacore's `Unit(name)`: the name normalised as `Unit::check` normalises
 /// it, failing with casacore's message for a name it cannot read.
 pub(crate) fn casacore_unit(name: &str) -> Result<Unit, String> {
-    Unit::new(&casacore_unit_name(name))
-        .map_err(|_| format!("Unit::check Illegal unit string '{name}'"))
+    casa_types::quanta::casacore::casacore_unit(name).map_err(|error| error.0)
 }
 
 #[cfg(test)]
