@@ -1030,6 +1030,22 @@ Commands: `ms_trial_convert`, `ms_trial_read_passes`,
   folded in), `WEIGHT`, `UVW`, `TIME_CENTROID`, `INTERVAL`, `EXPOSURE`;
   its derived `SIGMA` equals the original's exactly, since `pilot.ms`'s
   weights are `1/σ²` (`check_v2_readback.py`).
+- **Rechecked after the review fixes (`d5d0bce`).** Every dataset now
+  also matches XRADIO's in name (`pilot_00` … `pilot_63`, numbered by
+  first row), antennas (each dataset's 27 of the 54) and fields; the 64
+  source names differ only where XRADIO, finding no `SOURCE` row for the
+  window, says `Unknown`. casacore reads back every row as before and the
+  1,888 subtable rows the matched rows point at, equal to the original's:
+  each spectral window's channels and reference, each polarization's
+  `CORR_TYPE` and `CORR_PRODUCT`, each field's `PHASE_DIR`, each
+  antenna's position and diameter, each session's telescope and a
+  `TIME_RANGE` covering its rows; and each field has a `SOURCE` row in
+  every window it is observed in. The losses are unchanged. The fixes cost
+  nothing measurable: MSv2 → MSv4 with one worker took 31.5–32.6 s and
+  7.5–8.0 s of user CPU both before the first round of fixes (`4a402ac`)
+  and after it (`30fab54`), run alternately on the Mac mini while system
+  indexing loaded it (load average 7–9, so slower than the 22 s above);
+  at `d5d0bce` it took 7.6 s of user CPU, and MSv4 → MSv2 15.1 s.
 - **The converters are write-bound.** Writing to the external disk
   (about 200–250 MB/s) sets the pace: one worker spends about 8 s of CPU
   in a 22 s conversion, and the uncompressed run, with the least CPU, is
