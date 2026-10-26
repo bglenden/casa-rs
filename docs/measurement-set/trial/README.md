@@ -1029,10 +1029,14 @@ Commands: `ms_trial_convert`, `ms_trial_read_passes`,
    read of the mask alone.
 6. **`SIGMA` into an MSv2 is a policy, not a mapping.** The architecture's
    loss table asks that `SIGMA` not be rebuilt as `1/√WEIGHT` without a
-   justified relation. The converter applies CASA's own rule for
-   corrected-to-data and makes the caller accept it; the alternative is to
-   refuse unless the source carries sigma, which an MSv4 never does. An
-   owner decision, recorded with step 4's `SIGMA` weight role.
+   justified relation. But `SIGMA` is a required MAIN column (casacore's
+   `MeasurementSet::requiredTableDesc`), so every row needs a value, and an
+   MSv4 holds no sigma: refusing would make every MSv4 unconvertible, and a
+   sentinel such as −1 would make tools that weight by `1/σ²` (CASA's, and
+   production `gaincal`) treat every sample as unusable. The converter
+   applies CASA's own rule for corrected-to-data and makes the caller
+   accept it. The owner kept this as the interim rule (2026-10-26), to be
+   revisited with step 4's `SIGMA` weight role.
 7. **Fast creation and per-element flags.** Production's fast creation
    stream (one shape, background writer) takes a row flag per row and no
    per-element `FLAG`, `CORRECTED_DATA` or `MODEL_DATA`, so `to_msv2` uses
