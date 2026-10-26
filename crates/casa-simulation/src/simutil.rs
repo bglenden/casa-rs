@@ -11,6 +11,8 @@
 //! | `read_pointings`, `write_pointings` | [`pointings::read_pointings`], [`pointings::write_pointings`] |
 //! | `noisetemp`, `bandname`, `polsettings` | [`receivers::noise_temperature`], [`receivers::band_name`], [`receivers::polarization_settings`] |
 //! | `itrf2loc`, `baselineLengths`, `approxBeam` | [`baselines::itrf_to_local`], [`baselines::baseline_lengths`], [`baselines::approximate_beam`] |
+//! | `dir_s2m` | [`direction::direction_measure`] |
+//! | `modifymodel`, `flatimage`, `ia.modify`, the component-only model | [`skymodel`] |
 //!
 //! **CASA's numbers to the last bit.** Pointing lists are compared with
 //! CASA's as strings, so the arithmetic follows CASA's: every `qa` call goes
@@ -43,6 +45,7 @@ pub mod direction;
 pub mod pointings;
 mod qa;
 pub mod receivers;
+pub mod skymodel;
 
 pub use qa::python_float;
 

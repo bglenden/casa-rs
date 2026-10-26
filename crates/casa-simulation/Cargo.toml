@@ -35,6 +35,8 @@ tracing.workspace = true
 
 [dev-dependencies]
 casa-test-support = { path = "../casa-test-support" }
+flate2 = "1"
 serde_json = { version = "1", features = ["float_roundtrip"] }
+tar = "0.4"
 tempfile = "3"
 tracing-subscriber.workspace = true

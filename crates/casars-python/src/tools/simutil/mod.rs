@@ -14,12 +14,14 @@
 //! (`None` until set; CASA's class has no such attribute until a caller
 //! sets it).
 //!
-//! Declared so far (simulation Phase 5a): `readantenna`; the direction
-//! helpers `direction_splitter`, `average_direction`, `median_direction`,
-//! `dir_m2s`, `wrapang`, `isquantity` and `isdirection`; the pointings
-//! `calc_pointings2`, `read_pointings` and `write_pointings`; `noisetemp`,
-//! `bandname` and `polsettings`; and `itrf2loc`, `baselineLengths` and
-//! `approxBeam`. The sky-model helpers come with Phase 5b.
+//! Declared so far (simulation Phases 5a and 5b): `readantenna`; the
+//! direction helpers `direction_splitter`, `average_direction`,
+//! `median_direction`, `dir_m2s`, `wrapang`, `isquantity` and
+//! `isdirection`; the pointings `calc_pointings2`, `read_pointings` and
+//! `write_pointings`; `noisetemp`, `bandname` and `polsettings`;
+//! `itrf2loc`, `baselineLengths` and `approxBeam`; and the sky-model
+//! helpers `modifymodel` and `flatimage`
+//! ([`casa_simulation::simutil::skymodel`]).
 //!
 //! Not being a CASA tool, the class is not in the object-surface bundle
 //! (whose CASA tools are [`crate::tools::TOOLS`]); its Python tests compare
@@ -52,6 +54,7 @@ use casa_simulation::simutil::direction::{
 };
 use casa_simulation::simutil::pointings::{calc_pointings, format_pointings, parse_pointings};
 use casa_simulation::simutil::receivers::{band_name, noise_temperature, polarization_settings};
+use casa_simulation::simutil::skymodel::{ModelOverrides, SkyModelError, flat_image, modify_model};
 use pyo3::exceptions::{
     PyAttributeError, PyFileNotFoundError, PyOSError, PyRuntimeError, PyTypeError,
 };
@@ -499,6 +502,79 @@ impl PySimutil {
         py.detach(|| -> PyResult<f64> {
             approximate_beam(&configuration(&configfile)?, freq).map_err(ops::raised)
         })
+    }
+
+    /// The model image `inimage` (a CASA image or a FITS file) fitted into
+    /// `simobserve`'s four axes as the new image `outimage`, with its
+    /// brightness, direction, cell, centre frequency and channel width
+    /// overridden where given; with `flatimage`, its flat image too.
+    /// Returns CASA's tuple `(model_refdir, model_cell, model_size,
+    /// model_nchan, model_specrefval, model_specrefpix, model_width,
+    /// model_stokes)`, or `False` for more than one `indirection`.
+    /// `innchan` is unused, as in CASA.
+    #[pyo3(
+        signature = (inimage, outimage, inbright, indirection, incell, incenter, inwidth, innchan, flatimage = false),
+        text_signature = "($self, inimage, outimage, inbright, indirection, incell, incenter, inwidth, innchan, flatimage=False)"
+    )]
+    #[allow(clippy::too_many_arguments, unused_variables)]
+    fn modifymodel(
+        &self,
+        py: Python<'_>,
+        inimage: PathBuf,
+        outimage: PathBuf,
+        inbright: String,
+        indirection: StringList,
+        incell: StringList,
+        incenter: String,
+        inwidth: String,
+        innchan: &Bound<'_, PyAny>,
+        flatimage: bool,
+    ) -> PyResult<Py<PyAny>> {
+        let overrides = ModelOverrides {
+            inbright,
+            indirection: indirection.0,
+            incell: incell.0,
+            incenter,
+            inwidth,
+        };
+        let summary = py.detach(|| {
+            let summary = modify_model(&inimage, &outimage, &overrides)?;
+            if flatimage {
+                flat_image(&outimage, None)?;
+            }
+            Ok(summary)
+        });
+        match summary {
+            Ok(summary) => ops::model_summary(summary).into_python(py),
+            Err(SkyModelError::Indirections(message)) => {
+                emit(
+                    py,
+                    LOGGER,
+                    &[LogLine::info(
+                        SkyModelError::Indirections(message).to_string(),
+                    )],
+                )?;
+                Ok(false.into_pyobject(py)?.to_owned().into_any().unbind())
+            }
+            Err(error) => Err(ops::sky_model_raised(error)),
+        }
+    }
+
+    /// `image` collapsed to one Stokes I plane, as `<image>.flat`, with the
+    /// components of `complist` added when it is given.
+    #[pyo3(signature = (image, complist = "", verbose = false), text_signature = "($self, image, complist='', verbose=False)")]
+    #[allow(unused_variables)]
+    fn flatimage(
+        &self,
+        py: Python<'_>,
+        image: PathBuf,
+        complist: &str,
+        verbose: bool,
+    ) -> PyResult<()> {
+        let complist = (!complist.is_empty()).then(|| PathBuf::from(complist));
+        py.detach(|| flat_image(&image, complist.as_deref()))
+            .map(|_| ())
+            .map_err(ops::sky_model_raised)
     }
 
     /// Whether `s` (a value or a list) holds quantities casacore reads; with

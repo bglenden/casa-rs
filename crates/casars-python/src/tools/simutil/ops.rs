@@ -4,8 +4,9 @@
 
 use casa_simulation::simutil::SimutilError;
 use casa_simulation::simutil::direction::CentredDirections;
+use casa_simulation::simutil::skymodel::{ModelSummary, ModelValue, SkyModelError};
 use casa_types::quanta::Quantity;
-use pyo3::exceptions::{PyRuntimeError, PyTypeError};
+use pyo3::exceptions::{PyOSError, PyRuntimeError, PyTypeError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyString};
 
@@ -73,6 +74,35 @@ pub(super) fn centred(centred: CentredDirections) -> CasaValue {
             shape: vec![2, n],
             values: centred.offsets.into_iter().flatten().collect(),
         },
+    ])
+}
+
+/// A sky-model refusal: a missing or unwritable file as `OSError`, the rest
+/// (CASA's `simutil.msg(..., priority='error')`) as `RuntimeError`.
+pub(super) fn sky_model_raised(error: SkyModelError) -> PyErr {
+    match error {
+        SkyModelError::Io { .. } => PyOSError::new_err(error.to_string()),
+        other => PyRuntimeError::new_err(other.to_string()),
+    }
+}
+
+/// `modifymodel`'s tuple: the cells and sizes as quantity records, the
+/// centre frequency and width as the strings given or as records.
+pub(super) fn model_summary(summary: ModelSummary) -> CasaValue {
+    let quantity = |value: &Quantity| CasaValue::quantity(value.value(), value.unit().name());
+    let given_or_model = |value: &ModelValue| match value {
+        ModelValue::Given(text) => CasaValue::Text(text.clone()),
+        ModelValue::Model(value) => quantity(value),
+    };
+    CasaValue::Tuple(vec![
+        CasaValue::Text(summary.refdir),
+        CasaValue::List(summary.cell.iter().map(quantity).collect()),
+        CasaValue::List(summary.size.iter().map(quantity).collect()),
+        CasaValue::Int(summary.nchan as i64),
+        given_or_model(&summary.specrefval),
+        CasaValue::Float(summary.specrefpix),
+        given_or_model(&summary.width),
+        CasaValue::Text(summary.stokes),
     ])
 }
 

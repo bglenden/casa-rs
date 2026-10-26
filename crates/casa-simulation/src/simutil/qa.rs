@@ -14,6 +14,17 @@ pub(crate) fn read(text: &str) -> Result<Quantity, SimutilError> {
     Quantity::read(text).map_err(|_| SimutilError::Quantity(text.to_string()))
 }
 
+/// `simutil.isquantity(text, halt=False)`: a non-empty string casacore
+/// reads as a quantity.
+pub(crate) fn is_quantity(text: &str) -> bool {
+    !text.is_empty() && Quantity::read(text).is_ok()
+}
+
+/// `qa.compare(value, unit)`: whether `value` has the dimensions of `unit`.
+pub(crate) fn conforms(value: &Quantity, unit: &str) -> bool {
+    casacore::casacore_unit(unit).is_ok_and(|unit| unit.val().dim == value.unit().val().dim)
+}
+
 /// A number with no unit, as `qa` takes a Python number.
 pub(crate) fn number(value: f64) -> Quantity {
     Quantity::dimensionless(value)
