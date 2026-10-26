@@ -749,8 +749,9 @@ variable, row flags and padding preserved (a padded MSv2 cell has no row;
 an MSv4 updater refuses to clear a flag or write a finite weight where the
 store holds a NaN weight), whole-unit writes that read nothing, MSv4 chunks
 replaced atomically through a temporary object with the changed directories
-synchronized at finish, and `MODEL_DATA` created only by a traversal that
-writes it whole. A batch's own times and baselines address its samples in
+synchronized at finish, and new `CORRECTED_DATA` and `MODEL_DATA`
+initialized as CASA initializes them (from `DATA`; 1, and 0 in the cross
+hands). A batch's own times and baselines address its samples in
 both stores, so no update map is added to the read side. The rest of this
 subsection, and its acceptance obligations, stand for M1/M2.
 
@@ -857,7 +858,7 @@ when its acceptance obligation is met.
 | Native flags: bitmasks, reason bits, categories, row flags as their own view | `bool` only; `uint8` refused; row flags folded on read; a flag change sets and clears element flags and never writes `FLAG_ROW` or `FLAG_CATEGORY` | Native dtype and reason bits preserved for lossless writes; `UNSPECIFIED_BIT` for generic flagging, bound to its actual bit; clearing an effective flag never clears unknown reasons |
 | Weight roles and fallback; `SIGMA` | One broadcast weight view; `SIGMA` not read. Production `gaincal` solves with 1/σ² from `SIGMA`, as CASA does, so the calibration port needs this first (trial README, example B) | The request names the weight role and fallback for undefined cells, recording which rule and cell supplied each value; `SIGMA` never silently equated with weights |
 | Revisit and compute-window requirements as request fields | A new traversal per pass; windows are views | Binding states what depends on an estimated pass count; a revisit does not imply cached values |
-| Updates | The write-back trial's update sessions (section 7) | Section 7's remaining obligations: bit flags and flag categories, conflicting queued patches, structural writes (a new MSv4 data group), per-batch MSv2 planning, a seed for a `MODEL_DATA` written in part, a killed process, stray temporary files and the synchronization cost at scale |
+| Updates | The write-back trial's update sessions (section 7) | Section 7's remaining obligations: bit flags and flag categories, conflicting queued patches, structural writes (a new MSv4 data group), per-batch MSv2 planning, a killed process, stray temporary files and the synchronization cost at scale |
 | MSv2 creation from batches; general creation and loss policy | The MSv4 writer only | Cells in time order become rows, padded cells flagged NaN rows; cross-format creation preflights metadata, flag and occupancy mappings and rejects unapproved loss |
 | Mixed read/update sessions and locking | One update session per store in a process, one updater per session, read-only opens beside them; casacore's lock per MSv2 updater | Plan read and write access before locking, no implicit upgrade; original-input semantics need disjoint read and write regions after resolving aliases, or a proven read-before-write order; casacore cross-process locks stay authoritative for v2; the v4 profile reports that it has no cross-process lock protocol |
 | Calibration binding across stores | Observation-to-observation `bind_to` | Solve, persist, close, permute partition and catalogue enumeration, reopen and apply, with overlapping antenna subsets and ambiguous-name rejection; CASA's v2 associations and SPW mapping preserved |

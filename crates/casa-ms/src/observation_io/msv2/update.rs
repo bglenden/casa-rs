@@ -10,12 +10,18 @@
 //! set or cleared) is written without reading it; any other is read and
 //! merged. Writes are in place, as casacore's are: a failure leaves the
 //! rows already written.
+//!
+//! A `CORRECTED_DATA` the session creates starts as `DATA`'s copy and a
+//! `MODEL_DATA` as CASA's initial model (1, 0 in the cross hands), as CASA
+//! initializes them, so rows and channels a pass does not reach read as
+//! uncorrected data and a unit point source.
 
 use std::sync::{Arc, Mutex, PoisonError};
 
 use casa_observation::{
-    AccessRequest, ObservationError, PartitionEntry, PatchValues, ResolvedTarget, UpdateReport,
-    Updater, VisibilityBatch, WeightChannels, WritableRole, check_values, uniform_over_channels,
+    AccessRequest, Correlation, ObservationError, PartitionEntry, PatchValues, ResolvedTarget,
+    UpdateReport, Updater, VisibilityBatch, WeightChannels, WritableRole, check_values,
+    uniform_over_channels,
 };
 use casa_types::ArrayValue;
 use casa_types::measures::MjdHighPrec;
@@ -111,20 +117,13 @@ impl Msv2Update {
             .iter()
             .map(|id| catalogue.partition(*id))
             .collect();
-        if targets
-            .iter()
-            .any(|target| target.created && target.variable == "MODEL_DATA")
-            && !covers_main(catalogue, request)
-        {
-            return Err(request_error(
-                "MODEL_DATA is created from DATA's storage, and a model pass that does not \
-                 write every partition, channel and product would leave DATA in the cells it \
-                 skips; create it with a traversal of the whole MeasurementSet",
-            ));
-        }
         let mut writer = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut seeded = 0;
         for target in targets.iter().filter(|target| target.created) {
             add_column(&mut writer, &target.variable)?;
+            if target.variable == "MODEL_DATA" && !persisted(writer.main_table(), "MODEL_DATA") {
+                seeded += seed_model(&mut writer, &self.observation)?;
+            }
         }
         let plans: Vec<MeasurementSetWriteColumnPlan> = targets
             .iter()
@@ -168,28 +167,113 @@ impl Msv2Update {
                 time: 0,
             },
             batch_rows,
-            report: UpdateReport::default(),
+            report: UpdateReport {
+                units_written: seeded,
+                ..UpdateReport::default()
+            },
         }))
     }
 }
 
-/// Whether a traversal of `request` writes every MAIN row's every element:
-/// every partition (the adapter places every row in one), every channel
-/// and every product.
-fn covers_main(catalogue: &casa_observation::Catalogue, request: &AccessRequest) -> bool {
-    catalogue.partition_ids().iter().all(|id| {
-        request.partitions.contains(id)
-            && request.channels == (0..catalogue.partition(*id).frequencies_hz.len())
-    }) && request.correlations.deliver == casa_observation::Deliver::All
+/// Whether a data manager stores MAIN's `column`.
+fn persisted(main: &casa_tables::Table, column: &str) -> bool {
+    main.data_manager_info()
+        .iter()
+        .any(|manager| manager.columns.iter().any(|name| name == column))
+}
+
+/// CASA's initial model for one correlation product: 0 in the cross hands
+/// `RL`, `LR`, `XY` and `YX`, 1 in every other product, a unit point source
+/// at the phase centre (`VisSetUtil::initScrCols`, which tclean's
+/// `addScrCols` and `VisSet` call).
+fn casa_model_seed(correlation: Correlation) -> Complex32 {
+    match correlation {
+        Correlation::RL | Correlation::LR | Correlation::XY | Correlation::YX => {
+            Complex32::new(0.0, 0.0)
+        }
+        _ => Complex32::new(1.0, 0.0),
+    }
+}
+
+/// The bytes one seeding batch may hold.
+const SEED_BATCH_BYTES: usize = 64 << 20;
+
+/// Install a `MODEL_DATA` just added to the schema and write CASA's
+/// initial model ([`casa_model_seed`]) into every row, as CASA initializes
+/// the column when it adds it; returns the cells written. The storage is
+/// cloned from `DATA`'s (the layout casacore is known to read, as applycal
+/// installs `CORRECTED_DATA`) and every cell is then overwritten, so once
+/// this returns no row of the model holds `DATA`; a pass then writes its
+/// own values over the seed. Every MAIN row lies in one partition's grid.
+fn seed_model(
+    ms: &mut MeasurementSet,
+    observation: &Msv2Observation,
+) -> Result<usize, ObservationError> {
+    let catalogue = observation.catalogue();
+    let mut rows = Vec::new();
+    let mut row_seeds = Vec::new();
+    let mut seeds = Vec::with_capacity(catalogue.partitions.len());
+    let mut cell_bytes = 0;
+    for (index, entry) in catalogue.partitions.iter().enumerate() {
+        let shape = [entry.correlations.len(), entry.frequencies_hz.len()];
+        cell_bytes = cell_bytes.max(shape[0] * shape[1] * size_of::<Complex32>());
+        seeds.push(ArrayValue::Complex32(ArrayD::from_shape_fn(
+            IxDyn(&shape),
+            |at| casa_model_seed(entry.correlations[at[0]]),
+        )));
+        for row in observation.partitions[index].grid.cells.iter() {
+            if *row != NO_ROW {
+                rows.push(*row as usize);
+                row_seeds.push(index);
+            }
+        }
+    }
+    let plan = MeasurementSetWritePlan::selected_row_mutation(
+        rows.clone(),
+        vec![MeasurementSetWriteColumnPlan {
+            name: "MODEL_DATA".to_string(),
+            bytes_per_row: cell_bytes.max(1),
+            mode: MeasurementSetColumnWriteMode::Create,
+            storage_manager: MeasurementSetColumnStorage::TiledShape,
+            tile_shape: None,
+            create_source_column: Some("DATA".to_string()),
+        }],
+        MeasurementSetWriteResources {
+            available_bytes: SEED_BATCH_BYTES.max(cell_bytes),
+            maximum_live_batches: 1,
+            tiled_column_buffer_bytes: casa_tables::STREAMING_TILED_COLUMN_BUFFER_BYTES,
+        },
+    )
+    .map_err(storage)?;
+    let batch_rows = plan.batch_rows().max(1);
+    let mut session =
+        MeasurementSetWriteSession::start_selected_row_mutation(ms, plan).map_err(storage)?;
+    for (batch, indices) in rows.chunks(batch_rows).zip(row_seeds.chunks(batch_rows)) {
+        session
+            .write_mutation_batch(
+                ms,
+                MeasurementSetMutationBatch {
+                    row_indices: batch.to_vec(),
+                    columns: vec![MeasurementSetMutationColumnBatch {
+                        name: "MODEL_DATA".to_string(),
+                        values: MeasurementSetMutationColumnValues::Arrays(
+                            indices.iter().map(|index| seeds[*index].clone()).collect(),
+                        ),
+                    }],
+                },
+            )
+            .map_err(storage)?;
+    }
+    session.finish_mutation().map_err(storage)?;
+    Ok(rows.len())
 }
 
 /// Add visibility column `name` (`MODEL_DATA` or `CORRECTED_DATA`) to
 /// MAIN's schema with `DATA`'s keywords, as applycal adds `CORRECTED_DATA`,
-/// unless it is there; the mutation then installs its storage cloned from
-/// `DATA`, values included. CASA seeds `CORRECTED_DATA` from `DATA` too, so
-/// rows a pass skips read as uncorrected; it seeds `MODEL_DATA` with 1
-/// (`VisSet`) and casa-rs's imaging with 0, so `MODEL_DATA` is created only
-/// by a pass that writes it whole ([`covers_main`]).
+/// unless it is there. `CORRECTED_DATA`'s storage is then installed by the
+/// updater's mutation, cloned from `DATA` values included, as CASA seeds it,
+/// so rows a pass skips read as uncorrected; `MODEL_DATA` is installed and
+/// seeded with CASA's initial model by [`seed_model`].
 fn add_column(ms: &mut MeasurementSet, name: &str) -> Result<(), ObservationError> {
     if ms
         .main_table()
@@ -222,8 +306,7 @@ fn add_column(ms: &mut MeasurementSet, name: &str) -> Result<(), ObservationErro
 }
 
 /// Production's plan for `target`'s column: replace an existing one, or
-/// create a visibility column seeded from `DATA`, as applycal creates
-/// `CORRECTED_DATA`.
+/// create `CORRECTED_DATA` seeded from `DATA`, as applycal does.
 fn column_plan(
     target: &ResolvedTarget,
     entries: &[&PartitionEntry],
@@ -245,11 +328,7 @@ fn column_plan(
         (WritableRole::Weights, "WEIGHT") => correlations * 4,
         (WritableRole::Weights, _) => cell * 4,
     };
-    let create = target.created
-        && !main
-            .data_manager_info()
-            .iter()
-            .any(|manager| manager.columns.contains(&target.variable));
+    let create = target.created && !persisted(main, &target.variable);
     MeasurementSetWriteColumnPlan {
         name: target.variable.clone(),
         bytes_per_row,

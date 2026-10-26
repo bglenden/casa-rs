@@ -54,12 +54,13 @@ pub struct UpdateTarget {
     pub role: WritableRole,
     /// Whether the variable may be shared with other groups.
     pub aliases: AliasScope,
-    /// Create the group's visibility variable when the store lacks it.
-    /// `corrected` is seeded from the `base` group's visibilities, as CASA
-    /// seeds `CORRECTED_DATA` from `DATA`, so what a pass skips reads as
-    /// uncorrected; `model` is created only by a traversal that writes
-    /// every cell, since no seed of the model is safe (CASA's is 1,
-    /// casa-rs imaging's 0). Stores that cannot add a variable refuse.
+    /// Create the group's visibility variable when the store lacks it,
+    /// initialized as CASA initializes it: `corrected` from the `base`
+    /// group's visibilities (`CORRECTED_DATA` from `DATA`), so what a pass
+    /// skips reads as uncorrected; `model` with a unit point source at the
+    /// phase centre (1, and 0 in the cross hands), so what a pass skips
+    /// reads as CASA's default model. Stores that cannot add a variable
+    /// refuse.
     pub create: bool,
 }
 

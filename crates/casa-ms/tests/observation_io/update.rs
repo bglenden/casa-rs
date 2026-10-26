@@ -92,13 +92,12 @@ fn read(
 }
 
 /// A model pass is one owner reading one group and writing another: on
-/// the MSv2, `MODEL_DATA` is created by a traversal of the whole
-/// MeasurementSet and written for every row from the `DATA` the same
-/// session reads, cells supplied whole and never read; it then opens as a
-/// `model` group with `DATA`'s keywords. A pass over part of the
-/// MeasurementSet may not create it. An MSv4
-/// store cannot gain a group, so the same pass there is refused at opening
-/// and rewrites `base` instead, its chunks supplied whole and never read.
+/// the MSv2, `MODEL_DATA` is created holding CASA's initial model in every
+/// row and then written for every row from the `DATA` the same session
+/// reads, cells supplied whole and never read; it then opens as a `model`
+/// group with `DATA`'s keywords. An MSv4 store cannot gain a group, so the
+/// same pass there is refused at opening and rewrites `base` instead, its
+/// chunks supplied whole and never read.
 #[test]
 fn a_model_pass_reads_one_group_and_writes_another() {
     let root = tempfile::tempdir().expect("root");
@@ -112,12 +111,6 @@ fn a_model_pass_reads_one_group_and_writes_another() {
         open_update(&v2, &OpenOptions::default(), std::slice::from_ref(&created)).expect("v2");
     assert!(session.targets()[0].created);
     assert_eq!(session.targets()[0].variable, "MODEL_DATA");
-    let Err(ObservationError::InvalidRequest { reason }) =
-        session.updater(&per_times(session.observation(), request(2..4, 0), 4), &[0])
-    else {
-        panic!("a model pass over two channels may not create MODEL_DATA");
-    };
-    assert!(reason.contains("whole MeasurementSet"), "{reason}");
     let four = per_times(session.observation(), request(0..8, 0), 4);
     let report = pass(&session, &four, &[0], |batch| {
         vec![Owned::Visibilities(
@@ -133,7 +126,8 @@ fn a_model_pass_reads_one_group_and_writes_another() {
             report.units_written,
             report.units_read
         ),
-        (3, 120, 120, 0)
+        (3, 120, 240, 0),
+        "120 cells seeded when MODEL_DATA is created, 120 written whole"
     );
     let written = read(&v2, "model", 0..8);
     assert_eq!(read(&v2, "base", 0..8), reference, "DATA unchanged");
@@ -731,4 +725,55 @@ fn an_msv4_batch_of_other_channels_is_refused_whole() {
     drop(traversal);
     drop(session);
     assert_eq!(read(&path, "base", 0..8), before);
+}
+
+/// A model pass over part of an MSv2 may create `MODEL_DATA`: CASA's
+/// initial model (1, and 0 in the cross hands `XY`, `YX`, `RL`, `LR`) fills
+/// every cell when the column is added, as CASA's `initScrCols` does, and
+/// the pass writes its two channels over it, merging each cell with the
+/// seed it reads back. The rest of the column is the seed, never `DATA`.
+#[test]
+fn a_partial_model_pass_creates_model_data_over_casas_initial_model() {
+    let root = tempfile::tempdir().expect("root");
+    let path = fixture(root.path(), "ms_trial.ms");
+    let reference = read(&path, "base", 0..8);
+    let created = UpdateTarget {
+        create: true,
+        ..UpdateTarget::new("model", WritableRole::Visibilities)
+    };
+    let session = open_update(&path, &OpenOptions::default(), &[created]).expect("session");
+    let correlations = session.observation().catalogue().partitions[0]
+        .correlations
+        .clone();
+    let two = per_times(session.observation(), request(2..4, 0), 4);
+    let report = pass(&session, &two, &[0], |batch| {
+        vec![Owned::Visibilities(
+            batch.group.values.expect("values").mapv(model),
+        )]
+    })
+    .expect("a two-channel model pass");
+    drop(session);
+    assert_eq!(
+        (report.units_written, report.units_read),
+        (240, 120),
+        "120 cells seeded, then 120 merged with the seed each read back"
+    );
+    let written = read(&path, "model", 0..8);
+    let products = correlations.len();
+    for (key, sample) in &reference {
+        for (index, value) in written[key].values.iter().enumerate() {
+            let (channel, product) = (index / products, index % products);
+            let expected = if (2..4).contains(&channel) {
+                model(sample.values[index])
+            } else if matches!(correlations[product].label(), "XY" | "YX" | "RL" | "LR") {
+                Complex32::new(0.0, 0.0)
+            } else {
+                Complex32::new(1.0, 0.0)
+            };
+            assert_eq!(
+                *value, expected,
+                "{key:?} channel {channel} product {product}"
+            );
+        }
+    }
 }

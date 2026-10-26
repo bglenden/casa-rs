@@ -745,7 +745,8 @@ flag change writes (Fable).
 
 | Law | What it shows |
 | --- | --- |
-| `a_model_pass_reads_one_group_and_writes_another` | One owner reads `base` and writes `model`: MSv2 refuses to create `MODEL_DATA` from a two-channel traversal, then creates it from a traversal of the whole MeasurementSet, writes 120 cells and reads none, and opens afterwards with a `model` group carrying `DATA`'s keywords; `DATA` is unchanged. MSv4 refuses to add a group at opening and rewrites `base`: six chunks written whole from the held windows, none read, 14,416 bytes held (five times of every element and its mark, and two chunk counts). |
+| `a_model_pass_reads_one_group_and_writes_another` | One owner reads `base` and writes `model`: MSv2 creates `MODEL_DATA` holding CASA's initial model (120 cells seeded), writes 120 cells over it and reads none, and opens afterwards with a `model` group carrying `DATA`'s keywords; `DATA` is unchanged. MSv4 refuses to add a group at opening and rewrites `base`: six chunks written whole from the held windows, none read, 14,416 bytes held (five times of every element and its mark, and two chunk counts). |
+| `a_partial_model_pass_creates_model_data_over_casas_initial_model` | A two-channel model pass creates `MODEL_DATA`: its two channels hold the model and every other cell CASA's initial model, 1 in `XX` and `YY` and 0 in `XY` and `YX`, never `DATA`. |
 | `partial_units_are_read_once_and_whole_ones_never` | A two-channel window: MSv2 reads each of the 120 cells it changes partly; MSv4 reads the three chunks it covers partly once each, across three batches. Every other channel reads back unchanged. |
 | `a_weight_shared_by_channels_changes_only_as_a_whole` | Pro R1: an MSv2 `WEIGHT` serves every channel, so changing the delivered two channels is refused and nothing is written; `WeightChannels::All` is the explicit whole-scalar change. MSv4 changes just the delivered channels. |
 | `a_shared_variable_is_written_only_with_its_aliases_accepted` | `base` and `model` share `FLAG`: a flag target of either is refused unless it accepts the other group as an alias, which the resolved target names; so is a `base` flag target in a session that creates `model`. |
@@ -807,30 +808,32 @@ flag change writes (Fable).
    a contract revision to section 3; the validity rule already excluded a
    non-finite weight. Finding 2's presence mask would remove the
    inference.
-7. **No seed for a model written in part.** CASA seeds a new
-   `CORRECTED_DATA` from `DATA` (kept here) and a new `MODEL_DATA` with 1
-   (`VisSet`); casa-rs's imaging seeds `MODEL_DATA` with 0 and its
-   simulator with 1. Seeding from `DATA`, as the first version did, gives a
-   later solve identity gains wherever the model pass did not reach, so
-   `MODEL_DATA` is created only by a traversal that writes it whole until
-   the owner picks one seed for casa-rs. Two consequences remain: a
-   request has one channel range, so an MS whose partitions differ in
-   channel count cannot create `MODEL_DATA` this way; and a covering pass
-   that fails or is dropped after the column is installed leaves `DATA` in
-   the rows it did not reach, with the `model` group present on reopen.
+7. **A new model starts as CASA's.** The first version left a created
+   `MODEL_DATA` holding `DATA` wherever the pass did not reach, which gives
+   a later solve identity gains there. CASA initializes a new `MODEL_DATA`
+   to a unit point source, 1 and 0 in the cross hands `RL`, `LR`, `XY` and
+   `YX` (`VisSetUtil::initScrCols`, called by tclean's `addScrCols` and by
+   `VisSet`), and `CORRECTED_DATA` from `DATA`. The owner chose CASA's
+   model (2026-10-26): the updater installs `MODEL_DATA` from `DATA`'s
+   storage, the layout applycal's `CORRECTED_DATA` uses, and overwrites
+   every row with that model before the pass writes. casa-rs's other
+   writers differ and are a follow-up: imaging fills a new `MODEL_DATA`
+   with 0, and the simulator writes 1 in every product, cross hands
+   included.
 
 **Not done:** per-batch MSv2 row planning; `WEIGHT_SPECTRUM` and
 `FLAG_CATEGORY` (the fixture has neither); MSv4 structural writes; a
 process actually killed during a replacement (the injected failure leaves
 what a kill leaves); sweeping stray temporary files; the MSv2 read-back of
-partly covered cells one cell at a time; the cost of synchronizing each
+partly covered cells one cell at a time; a failure while `MODEL_DATA` is
+being seeded, which leaves the rows not yet seeded holding `DATA`; the cost of synchronizing each
 replaced chunk at scale (step 3's converter measures it).
 
 **Independent review.** A separate agent reviewed the first version and
 found three blocking defects, all fixed with laws: a flag change with
 neither mask cleared every MSv2 flag of a whole cell; MSv4 padding written
 by casa-rs's writer (weight 0) could be cleared or weighted into an
-acquisition; and `MODEL_DATA` was seeded from `DATA`. It also asked for
+acquisition; and `MODEL_DATA` was seeded from `DATA` (finding 7). It also asked for
 one binding per variable, aliases for groups the session creates, a
 directory synchronization at finish and a window limited to the channels
 reached, all done. Its check of the fixes found one more defect (finishing
