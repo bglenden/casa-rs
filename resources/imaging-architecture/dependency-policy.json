@@ -49,6 +49,7 @@
  },
  "package_layers": {
   "casa-provider-contracts": "science",
+  "casa-observation": "science",
   "casa-ms": "observation",
   "casa-imaging-application": "application",
   "casa-imaging-model": "science",
@@ -71,6 +72,7 @@
   "casa-coordinates"
  ],
  "native_package_workspace_dependencies": {
+  "casa-observation": [],
   "casa-imaging-model": [],
   "casa-imaging-operator": [
    "casa-fft",

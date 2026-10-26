@@ -12,6 +12,7 @@ workspace = true
 
 [dependencies]
 casa-values = { path = "../casa-values" }
+ndarray.workspace = true
 sofars.workspace = true
 time = "0.3"
 tracing.workspace = true

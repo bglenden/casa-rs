@@ -54,13 +54,13 @@ pub use model_state::{
 };
 
 pub use observation::{
-    CompileObservationError, CorrelationProduct, CorrelationSelection, CorrelationType,
-    DataDescriptionSelection, FlagPolicy, IdSelection, IntentSelection, MsColumnKind,
-    ObservationSelection, ObservationSnapshot, ObservationSnapshotInput, ObservationSource,
-    ObservationSourceInput, ObservationSourceProvenance, ResolvedIntent, RowSelection,
-    SelectedColumns, SelectedMainRow, SelectedRowSequenceError, SelectedRows, SelectedRowsBuilder,
-    SelectionBound, SpectralWindowCoordinateCatalog, SpectralWindowSelection, UvDistanceRange,
-    UvDistanceUnit, UvSelection, VisibilityColumn, WeightColumn, compile_observation,
+    CompileObservationError, CorrelationProduct, CorrelationSelection, DataDescriptionSelection,
+    FlagPolicy, IdSelection, IntentSelection, MsColumnKind, ObservationSelection,
+    ObservationSnapshot, ObservationSnapshotInput, ObservationSource, ObservationSourceInput,
+    ObservationSourceProvenance, ResolvedIntent, RowSelection, SelectedColumns, SelectedMainRow,
+    SelectedRowSequenceError, SelectedRows, SelectedRowsBuilder, SelectionBound,
+    SpectralWindowCoordinateCatalog, SpectralWindowSelection, UvDistanceRange, UvDistanceUnit,
+    UvSelection, VisibilityColumn, WeightColumn, compile_observation,
 };
 
 pub use native_aw::{

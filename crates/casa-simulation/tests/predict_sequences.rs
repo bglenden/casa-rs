@@ -22,11 +22,11 @@ use std::path::{Path, PathBuf};
 use casa_components::{
     ComponentList, ComponentShape, Flux, SkyComponent, SpectralKind, SpectralModel,
 };
-use casa_imaging_model::CorrelationType;
 use casa_simulation::{
     CasaOutcome, NoiseSpec, ObserveManySpec, Pointing, PredictSpec, PredictionOptions, Simulator,
     SimulatorResult, VoltagePatternSpec,
 };
+use casa_types::Correlation;
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::frequency::{FrequencyRef, MFrequency};
 use num_complex::Complex32;
@@ -35,7 +35,7 @@ use predict_support::{
     reference, resources, scan, session, write_point_list,
 };
 
-const XX_YY: [CorrelationType; 2] = [CorrelationType::LinearXx, CorrelationType::LinearYy];
+const XX_YY: [Correlation; 2] = [Correlation::XX, Correlation::YY];
 
 fn simple_noise(sigma_jy: f64) -> NoiseSpec {
     NoiseSpec::simple(sigma_jy)

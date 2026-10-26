@@ -91,8 +91,8 @@ fn t41_trackfield_phase_centre_matches_casa_at_three_row_times() -> Result<(), B
         vec![CorrelationSelection::new(
             POLARIZATION_ID,
             vec![
-                CorrelationProduct::new(0, CorrelationType::LinearXx),
-                CorrelationProduct::new(1, CorrelationType::LinearYy),
+                CorrelationProduct::new(0, Correlation::XX),
+                CorrelationProduct::new(1, Correlation::YY),
             ],
         )],
     );

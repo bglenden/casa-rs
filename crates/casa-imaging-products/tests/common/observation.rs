@@ -5,13 +5,14 @@
 //! two spectral windows, Stokes I only.
 
 use casa_imaging_model::{
-    CorrelationProduct, CorrelationSelection, CorrelationType, DataDescriptionSelection,
-    FlagPolicy, IdSelection, IntentSelection, ObservationSelection, ObservationSourceInput,
-    ObservationSourceProvenance, PrimaryBeamValidityPolicy, ProductBlankingPolicy,
-    ProductSupportComparison, ProductValidityPolicies, RowSelection, SelectedColumns,
-    SelectedMainRow, SelectedRows, SpectralWindowSelection, TaylorSupportReference,
-    TaylorValidityPolicy, UvSelection, VisibilityColumn, WeightColumn,
+    CorrelationProduct, CorrelationSelection, DataDescriptionSelection, FlagPolicy, IdSelection,
+    IntentSelection, ObservationSelection, ObservationSourceInput, ObservationSourceProvenance,
+    PrimaryBeamValidityPolicy, ProductBlankingPolicy, ProductSupportComparison,
+    ProductValidityPolicies, RowSelection, SelectedColumns, SelectedMainRow, SelectedRows,
+    SpectralWindowSelection, TaylorSupportReference, TaylorValidityPolicy, UvSelection,
+    VisibilityColumn, WeightColumn,
 };
+use casa_types::Correlation;
 
 /// One measurement set selecting rows 0 and 2 of `3 + seed`, each in its own
 /// spectral window, with provenance `fixture://<label>/<seed>`.
@@ -37,7 +38,7 @@ pub fn source(seed: u8, label: &str) -> ObservationSourceInput {
             ],
             vec![CorrelationSelection::new(
                 0,
-                vec![CorrelationProduct::new(0, CorrelationType::StokesI)],
+                vec![CorrelationProduct::new(0, Correlation::I)],
             )],
         ),
         SelectedColumns::new(

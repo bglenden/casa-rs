@@ -62,7 +62,7 @@ pub(crate) use single_dish::{SingleDishPointings, SingleDishPrediction, SingleDi
 
 use casa_coordinates::CoordinateError;
 use casa_images::ImageError;
-use casa_imaging_model::{CorrelationType, PolarizationCoordinate};
+use casa_imaging_model::PolarizationCoordinate;
 use casa_imaging_operator::{
     AiryDish, ConvolutionFunctionSet, CpuBackend, GridGeometry, GridPadding, GridPrecision,
     ImageExtent, MeasurementOperator, ModeSet, ModelPlane, ModelPlaneGrids, MosaicPb, MosaicRules,
@@ -71,6 +71,7 @@ use casa_imaging_operator::{
     SpectralResampler, Spheroidal, WPlaneCount, WPlanes,
 };
 use casa_imaging_runtime::pass::WorkerTeam;
+use casa_types::Correlation;
 use num_complex::Complex32;
 use thiserror::Error;
 
@@ -166,7 +167,7 @@ impl ModelLayout {
     /// cannot feed, or the mosaic machine without beams.
     pub(crate) fn new(
         model: &SkyModel,
-        correlations: &[CorrelationType],
+        correlations: &[Correlation],
         machine: FtMachine,
         beams: Option<MosaicBeams>,
     ) -> Result<Self, PredictError> {
@@ -452,7 +453,7 @@ impl ModelPredictor {
     /// plane that cannot be read.
     pub fn new(
         model: &SkyModel,
-        correlations: &[CorrelationType],
+        correlations: &[Correlation],
         pointing_rad: [f64; 2],
         options: &PredictOptions,
     ) -> Result<Self, PredictError> {

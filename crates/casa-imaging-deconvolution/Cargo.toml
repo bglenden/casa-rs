@@ -20,3 +20,6 @@ num-complex = { workspace = true, features = ["bytemuck"] }
 rayon = "1"
 thiserror.workspace = true
 tracing.workspace = true
+
+[dev-dependencies]
+casa-types = { path = "../casa-types" }

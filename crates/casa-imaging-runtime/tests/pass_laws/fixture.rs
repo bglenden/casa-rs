@@ -3,7 +3,7 @@
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use casa_imaging_model::{CorrelationType, PolarizationCoordinate};
+use casa_imaging_model::PolarizationCoordinate;
 use casa_imaging_operator::{
     Basis, CellHold, CfKey, ConvolutionFunctionSet, CpuBackend, GridGeometry, GridPadding,
     GridPrecision, ImageCorrection, ImageExtent, KernelNormalisation, MeasurementOperator, ModeSet,
@@ -18,6 +18,7 @@ use casa_imaging_runtime::pass::{
     PassError, PassSummary, Residency, RowAddress, SampleContent, SourceError, WeightCache,
     WorkerTeam, run_major_cycle,
 };
+use casa_types::Correlation;
 use ndarray::Array2;
 use num_complex::Complex32;
 
@@ -302,7 +303,7 @@ pub fn operator_with(
 ) -> MeasurementOperator {
     let geometry = geometry(image);
     let polarization = PolarizationRouting::compile(
-        &[CorrelationType::LinearXx, CorrelationType::LinearYy],
+        &[Correlation::XX, Correlation::YY],
         &[PolarizationCoordinate::StokesI],
     )
     .expect("routing");

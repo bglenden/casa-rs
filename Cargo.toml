@@ -34,6 +34,7 @@ members = [
     "crates/casa-measures-data",
     "crates/casa-test-support",
     "crates/casa-ms",
+    "crates/casa-observation",
 ]
 
 [workspace.package]

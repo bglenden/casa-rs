@@ -17,10 +17,9 @@ use std::process::Command;
 use std::time::Instant;
 
 use casa_imaging_model::{
-    CorrelationProduct, CorrelationSelection, CorrelationType, DataDescriptionSelection,
-    IdSelection, IntentSelection, MsColumnKind, ObservationSelection, RowSelection,
-    SelectedMainRow, SelectedRows, SpectralWindowSelection, UvSelection, VisibilityColumn,
-    WeightColumn,
+    CorrelationProduct, CorrelationSelection, DataDescriptionSelection, IdSelection,
+    IntentSelection, MsColumnKind, ObservationSelection, RowSelection, SelectedMainRow,
+    SelectedRows, SpectralWindowSelection, UvSelection, VisibilityColumn, WeightColumn,
 };
 use casa_ms::OptionalMainColumn;
 use casa_ms::SubTable;
@@ -33,6 +32,7 @@ use casa_ms::{
 use casa_test_support::casacore_oracle_available;
 use casa_test_support::ms_digest;
 use casa_test_support::ms_interop::MeasurementSetOracle;
+use casa_types::Correlation;
 use casa_types::{ArrayValue, Value};
 
 use common::{populate_main_rows, populate_subtables};
@@ -148,10 +148,10 @@ fn model_data_write_read_interoperability_matrix() {
         vec![CorrelationSelection::new(
             0,
             vec![
-                CorrelationProduct::new(0, CorrelationType::CircularRr),
-                CorrelationProduct::new(1, CorrelationType::CircularRl),
-                CorrelationProduct::new(2, CorrelationType::CircularLr),
-                CorrelationProduct::new(3, CorrelationType::CircularLl),
+                CorrelationProduct::new(0, Correlation::RR),
+                CorrelationProduct::new(1, Correlation::RL),
+                CorrelationProduct::new(2, Correlation::LR),
+                CorrelationProduct::new(3, Correlation::LL),
             ],
         )],
     );
@@ -235,10 +235,10 @@ fn model_data_clone_preserves_cpp_heterogeneous_tiled_shape_storage() {
         vec![CorrelationSelection::new(
             0,
             vec![
-                CorrelationProduct::new(0, CorrelationType::CircularRr),
-                CorrelationProduct::new(1, CorrelationType::CircularRl),
-                CorrelationProduct::new(2, CorrelationType::CircularLr),
-                CorrelationProduct::new(3, CorrelationType::CircularLl),
+                CorrelationProduct::new(0, Correlation::RR),
+                CorrelationProduct::new(1, Correlation::RL),
+                CorrelationProduct::new(2, Correlation::LR),
+                CorrelationProduct::new(3, Correlation::LL),
             ],
         )],
     );

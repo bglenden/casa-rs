@@ -53,6 +53,7 @@ pub(crate) mod listobs;
 mod metadata;
 pub mod ms;
 pub mod msexplore;
+pub mod observation_io;
 mod observation_owner;
 pub mod plot;
 mod plot_data;

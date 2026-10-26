@@ -15,30 +15,30 @@ use crate::{
 };
 use casa_imaging_model::{
     AntennaResponseClass, AxisOrder, CentreLaws, CorrelationProduct, CorrelationSelection,
-    CorrelationType, DataDescriptionSelection, DeclaredInnerProducts, DirectionCoordinateSpec,
-    DirectionFrame, Epoch, FacetLayout, FiniteValuePolicy, FlagPolicy, FrequencyFrame,
-    GeometryInput, IdSelection, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape,
-    InstrumentModel, InstrumentResponse, IntentSelection, ItrfPosition,
-    MeasurementEquationContract, MissingPointingPolicy, ModelBounds, ModelColumnWrite,
-    ModelInnerProduct, ModelLifecycleRequirements, NumericPrecision, NumericalStage,
-    NumericsContract, ObservationPointingLaw, ObservationSelection, ObservationSnapshotInput,
-    ObservationSource, ObservationSourceInput, ObservationSourceProvenance,
-    ObservationTransactionRequirements, PhaseCentreLaw, PointingCentreLaw, PointingDirectionColumn,
-    PointingDirectionSemantic, PointingExtrapolation, PointingInterpolation, PointingTimeSampling,
-    PolarizationContract, PolarizationCoordinate, PrimaryBeamValidityPolicy, ProblemInput,
-    ProblemSpecification, ProductBlankingPolicy, ProductKind, ProductNormalization,
-    ProductRequirements, ProductSupportComparison, ProductValidityPolicies, Projection,
-    PsfPhaseCentreLaw, ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract,
-    ReconstructionControls, ReductionPolicy, RestFrequency, RestoringBeamPolicy, RowSelection,
-    ScientificContract, SelectedColumns, SelectedMainRow, SelectedObservationRunChannel,
-    SelectedObservationRunRow, SelectedRows, SkyDirection, SpectralContract,
-    SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor, SpectralSamplingLaw,
-    SpectralWcs, SpectralWindowSelection, StageErrorBudget, TaylorSupportReference,
-    TaylorValidityPolicy, TimeScale, UvSelection, UvwCoordinateLaw, VisibilityColumn,
-    VisibilityInnerProduct, WeightColumn, WeightDensityScope, WeightingContract, WeightingScheme,
-    compile, compile_observation,
+    DataDescriptionSelection, DeclaredInnerProducts, DirectionCoordinateSpec, DirectionFrame,
+    Epoch, FacetLayout, FiniteValuePolicy, FlagPolicy, FrequencyFrame, GeometryInput, IdSelection,
+    ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape, InstrumentModel, InstrumentResponse,
+    IntentSelection, ItrfPosition, MeasurementEquationContract, MissingPointingPolicy, ModelBounds,
+    ModelColumnWrite, ModelInnerProduct, ModelLifecycleRequirements, NumericPrecision,
+    NumericalStage, NumericsContract, ObservationPointingLaw, ObservationSelection,
+    ObservationSnapshotInput, ObservationSource, ObservationSourceInput,
+    ObservationSourceProvenance, ObservationTransactionRequirements, PhaseCentreLaw,
+    PointingCentreLaw, PointingDirectionColumn, PointingDirectionSemantic, PointingExtrapolation,
+    PointingInterpolation, PointingTimeSampling, PolarizationContract, PolarizationCoordinate,
+    PrimaryBeamValidityPolicy, ProblemInput, ProblemSpecification, ProductBlankingPolicy,
+    ProductKind, ProductNormalization, ProductRequirements, ProductSupportComparison,
+    ProductValidityPolicies, Projection, PsfPhaseCentreLaw, ReconstructionAlgorithm,
+    ReconstructionBasis, ReconstructionContract, ReconstructionControls, ReductionPolicy,
+    RestFrequency, RestoringBeamPolicy, RowSelection, ScientificContract, SelectedColumns,
+    SelectedMainRow, SelectedObservationRunChannel, SelectedObservationRunRow, SelectedRows,
+    SkyDirection, SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
+    SpectralSamplingLaw, SpectralWcs, SpectralWindowSelection, StageErrorBudget,
+    TaylorSupportReference, TaylorValidityPolicy, TimeScale, UvSelection, UvwCoordinateLaw,
+    VisibilityColumn, VisibilityInnerProduct, WeightColumn, WeightDensityScope, WeightingContract,
+    WeightingScheme, compile, compile_observation,
 };
 use casa_tables::{ColumnSchema, Table, TableOptions};
+use casa_types::Correlation;
 use casa_types::measures::{
     EopValues, MeasuresProvider, MeasuresProviderState,
     direction::{DirectionRef, MDirection},
@@ -197,10 +197,7 @@ fn retained_selected_samples_are_bounded_and_block_partition_invariant() {
     let first = &one_row_samples[0];
     assert_eq!(first.channel.frequency_centre_hz, 1.4e9);
     assert_eq!(first.frequency_hz, 1.4e9);
-    assert_eq!(
-        first.correlation.correlation_type(),
-        CorrelationType::CircularRr
-    );
+    assert_eq!(first.correlation.correlation_type(), Correlation::RR);
     assert_eq!(first.visibility, Visibility::Complex32([0.0, 0.0]));
     let coordinates = &first.row.coordinates;
     assert_eq!(
@@ -527,7 +524,7 @@ fn block_traversal_reports_unequal_parallel_hand_weights() {
 
 #[test]
 fn imaging_weight_groups_reject_ambiguous_or_mixed_multi_correlation_layouts() {
-    let products = |types: &[CorrelationType]| {
+    let products = |types: &[Correlation]| {
         types
             .iter()
             .copied()
@@ -538,50 +535,42 @@ fn imaging_weight_groups_reject_ambiguous_or_mixed_multi_correlation_layouts() {
             .collect::<Vec<_>>()
     };
     for valid in [
-        products(&[CorrelationType::CircularRl]),
-        products(&[CorrelationType::CircularRr, CorrelationType::CircularLl]),
+        products(&[Correlation::RL]),
+        products(&[Correlation::RR, Correlation::LL]),
+        products(&[Correlation::RR, Correlation::RL, Correlation::LL]),
         products(&[
-            CorrelationType::CircularRr,
-            CorrelationType::CircularRl,
-            CorrelationType::CircularLl,
+            Correlation::RR,
+            Correlation::RL,
+            Correlation::LR,
+            Correlation::LL,
         ]),
         products(&[
-            CorrelationType::CircularRr,
-            CorrelationType::CircularRl,
-            CorrelationType::CircularLr,
-            CorrelationType::CircularLl,
-        ]),
-        products(&[
-            CorrelationType::LinearXx,
-            CorrelationType::LinearXy,
-            CorrelationType::LinearYx,
-            CorrelationType::LinearYy,
+            Correlation::XX,
+            Correlation::XY,
+            Correlation::YX,
+            Correlation::YY,
         ]),
     ] {
         validate_input_weight_group(&valid, 0).expect("canonical imaging-weight group");
     }
     for invalid in [
         products(&[]),
-        products(&[CorrelationType::CircularRr, CorrelationType::CircularRl]),
-        products(&[CorrelationType::CircularRl, CorrelationType::CircularLr]),
+        products(&[Correlation::RR, Correlation::RL]),
+        products(&[Correlation::RL, Correlation::LR]),
+        products(&[Correlation::RR, Correlation::XY, Correlation::LL]),
         products(&[
-            CorrelationType::CircularRr,
-            CorrelationType::LinearXy,
-            CorrelationType::CircularLl,
+            Correlation::RR,
+            Correlation::LR,
+            Correlation::RL,
+            Correlation::LL,
         ]),
         products(&[
-            CorrelationType::CircularRr,
-            CorrelationType::CircularLr,
-            CorrelationType::CircularRl,
-            CorrelationType::CircularLl,
+            Correlation::RR,
+            Correlation::RL,
+            Correlation::RL,
+            Correlation::LL,
         ]),
-        products(&[
-            CorrelationType::CircularRr,
-            CorrelationType::CircularRl,
-            CorrelationType::CircularRl,
-            CorrelationType::CircularLl,
-        ]),
-        products(&[CorrelationType::CircularRr, CorrelationType::LinearYy]),
+        products(&[Correlation::RR, Correlation::YY]),
     ] {
         assert!(matches!(
             validate_input_weight_group(&invalid, 7),
@@ -2935,8 +2924,8 @@ fn fixture_selection_with_channels(
         vec![CorrelationSelection::new(
             0,
             vec![
-                CorrelationProduct::new(0, CorrelationType::CircularRr),
-                CorrelationProduct::new(1, CorrelationType::CircularLl),
+                CorrelationProduct::new(0, Correlation::RR),
+                CorrelationProduct::new(1, Correlation::LL),
             ],
         )],
     )
@@ -2967,8 +2956,8 @@ fn multi_spw_source_input(path: &std::path::Path) -> ObservationSourceInput {
         vec![CorrelationSelection::new(
             0,
             vec![
-                CorrelationProduct::new(0, CorrelationType::CircularRr),
-                CorrelationProduct::new(1, CorrelationType::CircularLl),
+                CorrelationProduct::new(0, Correlation::RR),
+                CorrelationProduct::new(1, Correlation::LL),
             ],
         )],
     );

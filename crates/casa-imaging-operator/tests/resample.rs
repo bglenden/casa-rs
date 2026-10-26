@@ -5,7 +5,7 @@
 
 mod common;
 
-use casa_imaging_model::{CorrelationType, PolarizationCoordinate};
+use casa_imaging_model::PolarizationCoordinate;
 use casa_imaging_operator::{
     Basis, CellHold, CfKey, ConvolutionFunctionSet, DensityCellRule, DensityGridShape, DensityUv,
     GridGeometry, GridPadding, GridPrecision, ImageCorrection, ImageExtent, KernelNormalisation,
@@ -14,11 +14,12 @@ use casa_imaging_operator::{
     SpectralResampler, Spheroidal, TapLayout, WPlaneCount, WPlanes, WeightingGeneration,
     build_density_grid,
 };
+use casa_types::Correlation;
 use common::{Rng, geometry, operator};
 use num_complex::Complex32;
 
 const C: f64 = 299_792_458.0;
-const XX_YY: [CorrelationType; 2] = [CorrelationType::LinearXx, CorrelationType::LinearYy];
+const XX_YY: [Correlation; 2] = [Correlation::XX, Correlation::YY];
 const STOKES_I: [PolarizationCoordinate; 1] = [PolarizationCoordinate::StokesI];
 
 fn context() -> RowContext {

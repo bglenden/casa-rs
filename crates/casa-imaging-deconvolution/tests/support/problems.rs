@@ -13,25 +13,26 @@
 use casa_imaging_deconvolution::{ModelLifecycle, ModelStoragePlan, PreparedFinalModel};
 use casa_imaging_model::{
     AxisOrder, CentreLaws, CompiledProblem, CorrelationProduct, CorrelationSelection,
-    CorrelationType, DataDescriptionSelection, DeclaredInnerProducts, DirectionCoordinateSpec,
-    DirectionFrame, DopplerConvention, FacetLayout, FiniteValuePolicy, FlagPolicy, FrequencyFrame,
-    GeometryInput, IdSelection, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape,
-    InstrumentResponse, IntentSelection, MeasurementEquationContract, ModelBounds,
-    ModelColumnWrite, ModelInnerProduct, ModelLifecycleRequirements, NumericPrecision,
-    NumericalStage, NumericsContract, ObservationSelection, ObservationSnapshotInput,
-    ObservationSourceInput, ObservationSourceProvenance, ObservationTransactionRequirements,
-    PhaseCentreLaw, PointingCentreLaw, PolarizationContract, PolarizationCoordinate,
-    PrimaryBeamValidityPolicy, ProblemInput, ProblemSpecification, ProductBlankingPolicy,
-    ProductKind, ProductNormalization, ProductRequirements, ProductSupportComparison,
-    ProductValidityPolicies, Projection, ReconstructionAlgorithm, ReconstructionBasis,
-    ReconstructionContract, ReconstructionControls, ReductionPolicy, RestFrequency,
-    RestoringBeamPolicy, RowSelection, ScientificContract, SelectedColumns, SelectedMainRow,
-    SelectedRows, SkyDirection, SpectralContract, SpectralCoordinateSpec, SpectralCoupling,
-    SpectralFrameAnchor, SpectralSamplingLaw, SpectralWcs, SpectralWindowSelection,
-    StageErrorBudget, TaylorSupportReference, TaylorValidityPolicy, UvSelection, UvwCoordinateLaw,
-    VisibilityColumn, VisibilityInnerProduct, WeightColumn, WeightDensityScope, WeightingContract,
-    WeightingScheme, compile, compile_observation,
+    DataDescriptionSelection, DeclaredInnerProducts, DirectionCoordinateSpec, DirectionFrame,
+    DopplerConvention, FacetLayout, FiniteValuePolicy, FlagPolicy, FrequencyFrame, GeometryInput,
+    IdSelection, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape, InstrumentResponse,
+    IntentSelection, MeasurementEquationContract, ModelBounds, ModelColumnWrite, ModelInnerProduct,
+    ModelLifecycleRequirements, NumericPrecision, NumericalStage, NumericsContract,
+    ObservationSelection, ObservationSnapshotInput, ObservationSourceInput,
+    ObservationSourceProvenance, ObservationTransactionRequirements, PhaseCentreLaw,
+    PointingCentreLaw, PolarizationContract, PolarizationCoordinate, PrimaryBeamValidityPolicy,
+    ProblemInput, ProblemSpecification, ProductBlankingPolicy, ProductKind, ProductNormalization,
+    ProductRequirements, ProductSupportComparison, ProductValidityPolicies, Projection,
+    ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract, ReconstructionControls,
+    ReductionPolicy, RestFrequency, RestoringBeamPolicy, RowSelection, ScientificContract,
+    SelectedColumns, SelectedMainRow, SelectedRows, SkyDirection, SpectralContract,
+    SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor, SpectralSamplingLaw,
+    SpectralWcs, SpectralWindowSelection, StageErrorBudget, TaylorSupportReference,
+    TaylorValidityPolicy, UvSelection, UvwCoordinateLaw, VisibilityColumn, VisibilityInnerProduct,
+    WeightColumn, WeightDensityScope, WeightingContract, WeightingScheme, compile,
+    compile_observation,
 };
+use casa_types::Correlation;
 
 pub fn source(seed: u8) -> ObservationSourceInput {
     ObservationSourceInput::new(
@@ -55,7 +56,7 @@ pub fn source(seed: u8) -> ObservationSourceInput {
             ],
             vec![CorrelationSelection::new(
                 0,
-                vec![CorrelationProduct::new(0, CorrelationType::StokesI)],
+                vec![CorrelationProduct::new(0, Correlation::I)],
             )],
         ),
         SelectedColumns::new(

@@ -17,12 +17,13 @@ use crate::{
     VisibilityChannelReadRange,
 };
 use casa_imaging_model::{
-    CompiledProblem, CorrelationProduct, CorrelationType, DataDescriptionSelection, DirectionFrame,
-    Epoch, FrequencyFrame, InstrumentModel, MeasurementSetReadAccess, ObservationSelection,
+    CompiledProblem, CorrelationProduct, DataDescriptionSelection, DirectionFrame, Epoch,
+    FrequencyFrame, InstrumentModel, MeasurementSetReadAccess, ObservationSelection,
     ObservationSource, PointingCentreLaw, PointingDirectionColumn, SelectedAntennaResponses,
     SelectedObservationRunChannel, SelectedObservationRunRow, SelectedSampleCoordinates,
     SelectedSampleMetadata, TimeScale, VisibilityColumn, WeightColumn,
 };
+use casa_types::Correlation;
 use thiserror::Error;
 
 use super::spectral_evaluation::prepare_row_frequency_conversion;
@@ -1282,30 +1283,30 @@ pub(super) fn validate_input_weight_group(
     }
     let valid = match (products.first(), products.last()) {
         (Some(first), Some(last))
-            if first.correlation_type() == CorrelationType::CircularRr
-                && last.correlation_type() == CorrelationType::CircularLl =>
+            if first.correlation_type() == Correlation::RR
+                && last.correlation_type() == Correlation::LL =>
         {
             matches_canonical_correlation_order(
                 products,
                 &[
-                    CorrelationType::CircularRr,
-                    CorrelationType::CircularRl,
-                    CorrelationType::CircularLr,
-                    CorrelationType::CircularLl,
+                    Correlation::RR,
+                    Correlation::RL,
+                    Correlation::LR,
+                    Correlation::LL,
                 ],
             )
         }
         (Some(first), Some(last))
-            if first.correlation_type() == CorrelationType::LinearXx
-                && last.correlation_type() == CorrelationType::LinearYy =>
+            if first.correlation_type() == Correlation::XX
+                && last.correlation_type() == Correlation::YY =>
         {
             matches_canonical_correlation_order(
                 products,
                 &[
-                    CorrelationType::LinearXx,
-                    CorrelationType::LinearXy,
-                    CorrelationType::LinearYx,
-                    CorrelationType::LinearYy,
+                    Correlation::XX,
+                    Correlation::XY,
+                    Correlation::YX,
+                    Correlation::YY,
                 ],
             )
         }
@@ -1324,7 +1325,7 @@ pub(super) fn validate_input_weight_group(
 
 fn matches_canonical_correlation_order(
     products: &[CorrelationProduct],
-    canonical: &[CorrelationType; 4],
+    canonical: &[Correlation; 4],
 ) -> bool {
     let mut remaining = canonical.iter();
     products.iter().all(|product| {

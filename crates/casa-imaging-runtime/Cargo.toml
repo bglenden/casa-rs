@@ -30,4 +30,5 @@ tempfile = "3"
 thiserror.workspace = true
 
 [dev-dependencies]
+casa-types = { path = "../casa-types" }
 ndarray.workspace = true

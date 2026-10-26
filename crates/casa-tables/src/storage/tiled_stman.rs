@@ -840,6 +840,26 @@ pub(crate) fn tiled_2d_channel_tile_width(
     Ok((default_tile_shape.len() >= 3).then(|| default_tile_shape[1].max(1) as usize))
 }
 
+/// The tile shape of the tiled manager `dm_seq_nr`: its first hypercube's,
+/// else its default tile shape, in casacore's axis order (the cell's axes,
+/// then rows).
+pub(crate) fn tiled_tile_shape(
+    table_path: &Path,
+    dm_seq_nr: u32,
+) -> Result<Option<Vec<usize>>, StorageError> {
+    let header_path = table_path.join(format!("table.f{dm_seq_nr}"));
+    let (variant, header) = read_tiled_header(&header_path)?;
+    if let Some(cube) = header.cubes.iter().find(|cube| !cube.tile_shape.is_empty()) {
+        return Ok(Some(cube.tile_shape.clone()));
+    }
+    let default_tile_shape: Vec<usize> = variant
+        .default_tile_shape()
+        .iter()
+        .map(|&extent| usize::try_from(extent).unwrap_or(0))
+        .collect();
+    Ok((!default_tile_shape.is_empty()).then_some(default_tile_shape))
+}
+
 /// Bytes of the largest bucket (tile) of the tiled manager `dm_seq_nr`,
 /// over its hypercubes and its default tile shape: what reading or writing
 /// one of its cells holds whole.

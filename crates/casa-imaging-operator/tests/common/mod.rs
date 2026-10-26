@@ -4,11 +4,12 @@
 
 #![allow(dead_code)]
 
-use casa_imaging_model::{CorrelationType, PolarizationCoordinate};
+use casa_imaging_model::PolarizationCoordinate;
 use casa_imaging_operator::{
     Basis, CfKey, GridGeometry, GridPadding, GridPrecision, ImageExtent, MeasurementOperator,
     PaddingFactor, Placement, PolarizationRouting, SampleBuffer, Spheroidal,
 };
+use casa_types::Correlation;
 use num_complex::{Complex32, Complex64};
 
 pub const IMAGE: usize = 64;
@@ -29,7 +30,7 @@ pub fn geometry() -> GridGeometry {
 pub fn operator(
     precision: GridPrecision,
     basis: Basis,
-    correlations: &[CorrelationType],
+    correlations: &[Correlation],
     requested: &[PolarizationCoordinate],
 ) -> MeasurementOperator {
     let geometry = geometry();

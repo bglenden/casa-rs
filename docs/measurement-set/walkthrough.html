@@ -1,0 +1,837 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="description" content="A step-by-step review of the proposed casa-rs MSv2/MSv4 observation interface.">
+  <title>From storage to science · casa-rs design walkthrough</title>
+  <style>
+    :root {
+      --paper: #f6f5f0; --white: #fff; --ink: #192d33; --muted: #52676c;
+      --line: #d7dfdb; --teal: #076b63; --tint: #e7f3ed; --blue: #235c9c;
+      --blue-tint: #edf3fc; --amber: #77521e; --amber-tint: #fff5df;
+      --radius: 16px; --mono: ui-monospace, SFMono-Regular, Consolas, monospace;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--paper); color: var(--ink); font: 16px/1.65 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    a { color: var(--teal); text-underline-offset: 3px; }
+    button, select, textarea, input { font: inherit; }
+    button, select { cursor: pointer; }
+    button { color: var(--ink); background: var(--white); border: 1px solid var(--line); border-radius: 9px; padding: 9px 15px; line-height: 1.3; }
+    button:hover { border-color: var(--teal); background: #f1f8f4; }
+    button:disabled { cursor: default; opacity: .45; }
+    button.primary { background: var(--teal); border-color: var(--teal); color: white; }
+    button[aria-pressed="true"] { background: var(--ink); border-color: var(--ink); color: white; }
+    :focus-visible { outline: 3px solid #bd6a12; outline-offset: 4px; }
+    [hidden] { display: none !important; }
+    .skip { position: absolute; left: 12px; top: -90px; z-index: 20; padding: 10px; background: white; }
+    .skip:focus { top: 10px; }
+    .shell { max-width: 1440px; margin: auto; display: grid; grid-template-columns: 276px minmax(0, 1fr); min-height: 100vh; }
+    aside { padding: 34px 22px; border-right: 1px solid var(--line); position: sticky; top: 0; height: 100vh; overflow: auto; }
+    .brand { font-weight: 750; letter-spacing: -.04em; font-size: 25px; }
+    .eyebrow { font-size: 11px; text-transform: uppercase; letter-spacing: .13em; font-weight: 750; color: var(--teal); }
+    .sidebar-title { margin: 22px 0 8px; font-size: 22px; line-height: 1.25; letter-spacing: -.025em; }
+    .sidebar-copy { color: var(--muted); font-size: 13px; margin-bottom: 24px; }
+    .badge { display: inline-block; border: 1px solid #e1cda4; border-radius: 20px; padding: 3px 10px; color: var(--amber); background: var(--amber-tint); font-size: 11px; font-weight: 650; }
+    nav ol { padding: 0; list-style: none; }
+    nav li { margin: 4px 0; }
+    nav a { display: flex; align-items: center; gap: 11px; text-decoration: none; color: var(--muted); border-radius: 8px; padding: 9px 8px; font-size: 13px; line-height: 1.35; }
+    nav a:hover { background: #e9eeea; }
+    nav a[aria-current="step"] { background: var(--tint); color: var(--teal); font-weight: 700; }
+    .num { font: 11px var(--mono); opacity: .8; }
+    .sidebar-bottom { margin-top: 26px; font-size: 12px; color: var(--muted); }
+    main { min-width: 0; padding: 30px 52px 60px; }
+    .toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+    .toolbar .tools { display: flex; gap: 8px; }
+    .toolbar button { font-size: 12px; padding: 7px 10px; }
+    .progress-label { font: 12px var(--mono); color: var(--muted); }
+    progress { width: 100%; height: 4px; display: block; border: 0; border-radius: 4px; overflow: hidden; accent-color: var(--teal); background: var(--line); }
+    progress::-webkit-progress-bar { background: var(--line); }
+    progress::-webkit-progress-value { background: var(--teal); }
+    .mobile-nav { display: none; }
+    .step { max-width: 880px; margin: 45px auto 0; scroll-margin-top: 24px; }
+    .step h1 { font-size: clamp(28px, 3.3vw, 44px); line-height: 1.12; letter-spacing: -.04em; margin: 12px 0 20px; max-width: 770px; }
+    .lead { font-size: 19px; line-height: 1.65; color: #39545a; max-width: 760px; }
+    h2 { font-size: 19px; line-height: 1.35; margin: 27px 0 10px; letter-spacing: -.015em; }
+    h3 { margin: 0 0 8px; font-size: 15px; }
+    p { margin: 12px 0; }
+    ul, ol { padding-left: 23px; }
+    li { padding-left: 2px; margin: 6px 0; }
+    strong { font-weight: 700; }
+    code { font-family: var(--mono); font-size: .86em; background: #e9eeeb; padding: 2px 5px; border-radius: 4px; overflow-wrap: anywhere; }
+    pre { overflow-x: auto; padding: 20px; border: 1px solid var(--line); border-radius: 12px; background: #eff3f0; font: 13px/1.7 var(--mono); }
+    pre code { padding: 0; background: transparent; font-size: inherit; }
+    .diagram { border: 1px solid var(--line); background: var(--white); border-radius: var(--radius); padding: 26px; margin: 25px 0; }
+    .caption { font-size: 12px; color: var(--muted); margin: 14px 0 0; }
+    .flow { display: flex; align-items: stretch; justify-content: center; gap: 12px; }
+    .flow > .box { flex: 1; }
+    .box { padding: 16px; border: 1px solid var(--line); border-radius: 11px; background: #f8faf8; min-width: 0; }
+    .box b { display: block; font-size: 14px; }
+    .box small { display: block; color: var(--muted); font-size: 12px; margin-top: 5px; }
+    .box.accent { border-color: #72b5a1; background: var(--tint); }
+    .arrow { align-self: center; color: var(--teal); font-size: 23px; }
+    .stack { display: grid; gap: 9px; flex: 1; min-width: 0; }
+    .columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin: 22px 0; }
+    .columns.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .card { border: 1px solid var(--line); border-radius: 12px; padding: 19px; background: var(--white); }
+    .card p, .card li { font-size: 14px; }
+    .note { border-left: 3px solid var(--teal); background: var(--tint); padding: 14px 18px; margin: 23px 0; border-radius: 0 8px 8px 0; font-size: 14px; }
+    .note.amber { border-color: #bf8b30; background: var(--amber-tint); }
+    .pause { border: 1px solid #b8d3c6; border-radius: 12px; padding: 18px 22px; margin-top: 30px; }
+    .pause .eyebrow { margin-bottom: 6px; }
+    .pause p { margin: 0; font-size: 15px; }
+    .source { font-size: 12px; color: var(--muted); margin: 18px 0 0; }
+    details { border-top: 1px solid var(--line); padding: 13px 0; margin-top: 12px; }
+    summary { cursor: pointer; font-weight: 650; font-size: 14px; }
+    details p, details li { font-size: 14px; }
+    .table-scroll { overflow-x: auto; margin: 20px 0; }
+    table { border-collapse: collapse; width: 100%; font-size: 14px; }
+    th { font-size: 12px; text-align: left; color: var(--muted); }
+    th, td { padding: 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+    .controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 18px; }
+    .controls button { font-size: 13px; }
+    .component { border: 1px solid #b7cec3; border-radius: 10px; padding: 18px; background: var(--tint); min-height: 112px; }
+    .component p { font-size: 14px; margin-bottom: 0; }
+    .payload-table { min-width: 580px; }
+    .payload-table td[data-value] { font-family: var(--mono); white-space: nowrap; }
+    .payload-table td.selected-value { outline: 2px solid var(--teal); outline-offset: -2px; background: var(--tint); }
+    .flag-label { display: block; color: var(--amber); font-size: 11px; }
+    .payload-controls label { display: grid; gap: 5px; font-size: 12px; }
+    .payload-controls select { max-width: 100%; font: inherit; padding: 8px; }
+    .matrix { display: grid; gap: 5px; margin: 15px 0; }
+    .cell { text-align: center; padding: 9px 3px; border-radius: 5px; background: var(--blue-tint); color: var(--blue); font: 11px var(--mono); }
+    .matrix-head { text-align: center; color: var(--muted); font: 10px var(--mono); padding: 5px 2px; }
+    .matrix-label { align-self: center; color: var(--muted); font: 10px var(--mono); }
+    .event-list { counter-reset: event; display: flex; flex-wrap: wrap; gap: 6px; padding: 0; list-style: none; }
+    .event-list li { background: #edf0ed; padding: 6px 9px; border-radius: 5px; font-size: 12px; margin: 0; }
+    .event-list li.done { background: var(--tint); color: var(--teal); }
+    .event-list li.current { outline: 2px solid var(--teal); }
+    output { font-weight: 700; }
+    .state { font-size: 13px; min-height: 73px; }
+    .state.finished { color: var(--teal); font-weight: 700; }
+    .slider { display: grid; grid-template-columns: auto minmax(80px, 1fr) auto; align-items: center; gap: 15px; font-size: 13px; margin: 20px 0; }
+    input[type="range"] { accent-color: var(--teal); width: 100%; }
+    .worker { display: grid; grid-template-columns: 62px 1fr 84px; gap: 12px; align-items: center; font-size: 12px; margin: 12px 0; }
+    .track { height: 12px; background: #edf0ed; border-radius: 20px; overflow: hidden; }
+    .fill { height: 100%; background: var(--teal); border-radius: 20px; }
+    .memory { display: flex; gap: 5px; height: 37px; margin: 13px 0; }
+    .memory span { flex: 1; background: #759ac5; border-radius: 5px; }
+    .memory span.free { background: #e4e9e5; border: 1px dashed #a4b4ab; }
+    .memory.shared { gap: 0; border-radius: 5px; overflow: hidden; }
+    .memory.shared span { border-radius: 0; }
+    .tiny { font-size: 12px; color: var(--muted); }
+    .decision-tag { font: 11px var(--mono); color: var(--teal); margin-bottom: 7px; }
+    .milestones { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; margin: 24px 0; }
+    .milestone { border-top: 3px solid #b6c7bf; padding: 12px 6px; font-size: 12px; }
+    .milestone b { display: block; font: 15px var(--mono); margin-bottom: 5px; }
+    .milestone.key { border-color: var(--teal); background: var(--tint); }
+    .notes { max-width: 880px; margin: 27px auto 0; border-top: 1px solid var(--line); }
+    textarea { resize: vertical; width: 100%; min-height: 100px; border: 1px solid var(--line); border-radius: 8px; padding: 12px; background: white; color: var(--ink); font-size: 14px; }
+    .notes-actions { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 8px; }
+    .notes-actions button { font-size: 12px; }
+    footer { max-width: 880px; margin: 30px auto 0; border-top: 1px solid var(--line); padding-top: 22px; display: flex; gap: 12px; align-items: center; justify-content: space-between; }
+    #next-label { color: var(--muted); font-size: 12px; text-align: right; margin-left: auto; }
+    .all-mode .step { padding-bottom: 40px; border-bottom: 1px solid var(--line); }
+    .all-mode .notes, .all-mode footer { display: none; }
+    .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+    .js-only { display: none; }
+    .enhanced .js-only { display: block; }
+    .enhanced .toolbar.js-only, .enhanced footer.js-only { display: flex; }
+    @media (max-width: 1080px) {
+      .shell { grid-template-columns: 235px minmax(0, 1fr); }
+      main { padding: 26px 28px 50px; }
+      aside { padding: 27px 16px; }
+      .columns.three { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 740px) {
+      .shell { display: block; }
+      aside { position: static; height: auto; padding: 18px 22px; border-right: 0; border-bottom: 1px solid var(--line); }
+      aside .brand { display: inline; margin-right: 10px; font-size: 22px; }
+      .sidebar-title, .sidebar-copy, aside nav, .sidebar-bottom { display: none; }
+      main { padding: 22px 20px 40px; }
+      .enhanced .mobile-nav { display: block; margin: 18px 0; }
+      .mobile-nav select { width: 100%; max-width: 100%; padding: 9px; border: 1px solid var(--line); background: white; border-radius: 8px; color: var(--ink); }
+      .step { margin-top: 28px; }
+      .lead { font-size: 17px; }
+      .flow { flex-direction: column; gap: 8px; }
+      .arrow { transform: rotate(90deg); line-height: 1; }
+      .columns { grid-template-columns: 1fr; }
+      .diagram { padding: 17px; }
+      .milestones { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .matrix { gap: 3px; }
+      .cell { font-size: 9px; padding: 8px 0; }
+      #next-label { display: none; }
+      footer { justify-content: space-between; }
+      .notes-actions { align-items: start; }
+    }
+    @media print {
+      body { background: white; font-size: 11pt; }
+      .shell { display: block; }
+      aside, .toolbar, progress, .mobile-nav, .notes, footer, .controls, .slider, .skip { display: none !important; }
+      main { padding: 0; }
+      .step, .step[hidden] { display: block !important; max-width: none; margin: 0; padding: 0; break-before: page; }
+      .step:first-of-type { break-before: auto; }
+      .step h1 { font-size: 26pt; }
+      .diagram, .card, .pause { break-inside: avoid; }
+      .lead { font-size: 13pt; }
+      a { color: inherit; }
+      .source a { overflow-wrap: anywhere; }
+      .note, .box, .cell, .card { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+    }
+  </style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to the walkthrough</a>
+<div class="shell">
+  <aside aria-label="Walkthrough navigation">
+    <div class="brand">casa-rs<span style="color:var(--teal)">.</span></div>
+    <span class="badge">Trial design · revision 5</span>
+    <div class="sidebar-title">From storage<br>to science</div>
+    <p class="sidebar-copy">A guided review of the shared observation interface. One idea at a time.</p>
+    <nav aria-label="Steps">
+      <ol>
+        <li><a href="#boundary"><span class="num">01</span> One scientific boundary</a></li>
+        <li><a href="#units"><span class="num">02</span> Separate the concepts</a></li>
+        <li><a href="#catalogue"><span class="num">03</span> Describe the observation</a></li>
+        <li><a href="#block"><span class="num">04</span> Build the shared batch</a></li>
+        <li><a href="#layout"><span class="num">05</span> Choose a memory layout</a></li>
+        <li><a href="#request"><span class="num">06</span> Negotiate access</a></li>
+        <li><a href="#groups"><span class="num">07</span> Accumulate a solve</a></li>
+        <li><a href="#workers"><span class="num">08</span> Finish at different rates</a></li>
+        <li><a href="#updates"><span class="num">09</span> Write changes back</a></li>
+        <li><a href="#creation"><span class="num">10</span> Create and interoperate</a></li>
+        <li><a href="#rust"><span class="num">11</span> Place the Rust pieces</a></li>
+        <li><a href="#review"><span class="num">12</span> Decide, prove, then build</a></li>
+      </ol>
+    </nav>
+    <div class="sidebar-bottom">Based on draft <code>988a992e</code><br>24 October 2026<br><a href="https://github.com/bglenden/casa-rs/pull/878">PR #878 · design discussion</a></div>
+  </aside>
+  <main id="content">
+    <div class="toolbar js-only">
+      <div class="progress-label" id="step-count" aria-live="polite">01 / 12</div>
+      <div class="tools"><button id="all-toggle" aria-pressed="false">Read all</button><button id="print-button">Print / PDF</button></div>
+    </div>
+    <progress class="js-only" id="progress" value="1" max="12" aria-label="Current walkthrough step"></progress>
+    <div class="mobile-nav"><label class="sr-only" for="step-select">Choose a step</label><select id="step-select"></select></div>
+    <noscript><p class="note">All twelve sections are shown below. Enable JavaScript for guided navigation and the interactive examples.</p></noscript>
+
+    <section class="step" id="boundary" data-title="One scientific boundary" aria-labelledby="title-boundary">
+      <div class="eyebrow">01 · The goal</div>
+      <h1 id="title-boundary" tabindex="-1">One scientific boundary.<br>Two storage worlds.</h1>
+      <p class="lead">Imaging, calibration, and flagging should consume the same scientific structures whether the data came from a CASA table or an MSv4 array store.</p>
+      <div class="diagram">
+        <h3>Before iteration · the planner requests access</h3>
+        <div class="flow">
+          <div class="box"><b>MS adapter</b><small>Chooses physical reads, aggregation, prefetch and packing within the budget</small></div>
+          <span class="arrow" aria-hidden="true">←</span>
+          <div class="box accent"><b>AccessRequest</b><small>Selection · roles · traversal/order · grouping · windows/overlap · layout · units/precision · revisits</small></div>
+          <span class="arrow" aria-hidden="true">←</span>
+          <div class="box"><b>Algorithm planner</b><small>Operation requirements + task parameters for imaging, calibration or flagging</small></div>
+        </div>
+        <p class="caption">The adapter returns the bound layout/traversal, read/decode/copy costs and resource limits, or an explicit error. This negotiation happens before numerical iteration.</p>
+        <h3 style="margin-top:24px">During iteration · data flows to the processing algorithm</h3>
+        <div class="flow">
+          <div class="stack"><div class="box"><b>MSv2</b><small>casacore tables · cells · storage managers</small></div><div class="box"><b>MSv4</b><small>XRADIO schema · Zarr arrays · codecs</small></div></div>
+          <span class="arrow" aria-hidden="true">→</span>
+          <div class="box"><b>Storage adapters</b><small>Selection, I/O, decode, packing, addressed writes</small></div>
+          <span class="arrow" aria-hidden="true">→</span>
+          <div class="box accent"><b>Visibility batches</b><small>Typed arrays + coordinates + scientific meaning</small></div>
+          <span class="arrow" aria-hidden="true">→</span>
+          <div class="box"><b>Processing algorithms</b><small>Image · solve · apply · flag</small></div>
+        </div>
+        <p class="caption">Proposed common boundary. Production computation and I/O run natively, without a Python runtime.</p>
+      </div>
+      <p>The processing planner knows how its operation will consume data and sends that access pattern through the common source interface. The adapter knows the storage geometry and organizes I/O accordingly. The algorithm's numerical loops consume the resulting views; they do not negotiate I/O per value.</p>
+      <div class="columns">
+        <div class="card"><h3>Common after binding</h3><p>Select → bind access → receive batches → compute → submit changes → finish.</p></div>
+        <div class="card"><h3>Specific at creation</h3><p>MSv2 storage managers and tiles; MSv4 chunk geometry, codecs, and schema metadata.</p></div>
+      </div>
+      <div class="note">The owner has authorized the M0/M1 trial. The shared API is not implemented or frozen. MSv2 + MSv4 is the agreed scope; MSv3 and XRADIO image persistence are deferred. Trial evidence and review precede production migration.</div>
+      <div class="pause"><div class="eyebrow">Pause here · D2 / D4</div><p>Does this put the storage–science boundary in the right place, with enough access-pattern information flowing back to the adapter?</p></div>
+      <p class="source">Read: <a href="https://github.com/bglenden/casa-rs/blob/988a992e73247f4096c63e1f89e7dc1c1c692d44/docs/measurement-set/architecture.md#1-outcome-and-boundaries">Architecture §1</a>.</p>
+    </section>
+
+    <section class="step" id="units" data-title="Separate the concepts" aria-labelledby="title-units">
+      <div class="eyebrow">02 · Vocabulary</div>
+      <h1 id="title-units" tabindex="-1">Keep scientific grouping, I/O, and work separate.</h1>
+      <p class="lead">A physical chunk does not define a calibration solution, a kernel invocation, or the amount of work assigned to a thread.</p>
+      <div class="columns three">
+        <div class="card"><div class="eyebrow">Scientific meaning</div><h2>Partition &amp; scientific group</h2><p>A <strong>partition</strong> has a compatible spectral, polarization, and observation context.</p><p>A <strong>scientific group</strong> is what an algorithm treats together, such as one solution interval. It can cross partitions.</p></div>
+        <div class="card"><div class="eyebrow">Data movement</div><h2>Chunk &amp; visibility batch</h2><p>A <strong>chunk or tile</strong> is a physical decode/update unit.</p><p>An <strong>visibility batch</strong> is the bounded aggregation delivered by the adapter. It may span many chunks.</p></div>
+        <div class="card"><div class="eyebrow">Execution</div><h2>Window &amp; work unit</h2><p>A <strong>compute window</strong> is the part of a batch a kernel processes.</p><p>A <strong>work unit</strong> runs one or more windows on one worker or a cooperating worker group.</p></div>
+      </div>
+      <div class="diagram"><div class="flow">
+        <div class="box"><b>Several stored chunks</b><small>Read/decode efficiently</small></div><span class="arrow" aria-hidden="true">→</span>
+        <div class="box accent"><b>One larger visibility batch</b><small>Amortize adapter work</small></div><span class="arrow" aria-hidden="true">→</span>
+        <div class="stack"><div class="box"><b>Window A → worker 1</b></div><div class="box"><b>Window B → workers 2–3</b></div></div>
+      </div><p class="caption">Relationships are flexible. A scientific group may need fragments from several batches, and one batch may feed several groups.</p></div>
+      <p>This separation lets MSv4 use larger native aggregation without making every kernel use a large scratch buffer. A <strong>data group</strong>, introduced next, is another concept: it associates the arrays that describe one visibility product.</p>
+      <p><strong>Visibility batch</strong> is the provisional name for the common intermediate. “Observation block” has an observatory meaning; “chunk” is reserved here for physical storage. The batch can contain only requested metadata/flags when visibility values are unnecessary.</p>
+      <div class="pause"><div class="eyebrow">Pause here · D2</div><p>Is this vocabulary clear enough to use consistently? In particular, a scientific group and a cooperating worker group have different purposes.</p></div>
+      <p class="source">Read: <a href="https://github.com/bglenden/casa-rs/blob/988a992e73247f4096c63e1f89e7dc1c1c692d44/docs/measurement-set/architecture.md#2-the-important-distinctions">Architecture §2</a>.</p>
+    </section>
+
+    <section class="step" id="catalogue" data-title="Describe the observation" aria-labelledby="title-catalogue">
+      <div class="eyebrow">03 · Before reading payloads</div>
+      <h1 id="title-catalogue" tabindex="-1">Open a catalogue of scientific meaning.</h1>
+      <p class="lead">The first common structure describes antennas, spectral windows, correlations, fields, sources, and available data products. Selection uses these meanings.</p>
+      <div class="diagram"><div class="flow">
+        <div class="box accent"><b>Observation catalogue</b><small>Partitions · antennas/feeds · SPWs · correlations · fields/sources</small></div>
+        <span class="arrow" aria-hidden="true">→</span>
+        <div class="box"><b>Selected data group</b><small>Visibility + flags + weights + UVW + field/source context</small></div>
+      </div></div>
+      <p>A data group might represent raw, corrected, or model visibilities. These labels are conveniences; the actual array associations are explicit. Two groups may share a flag or weight variable, which matters when writing.</p>
+      <div class="table-scroll"><table><thead><tr><th>Case</th><th>Proposed representation</th></tr></thead><tbody>
+        <tr><td>Mosaic fields</td><td>Compatible sequential fields may share a time axis, using <code>field_name(time)</code>. Alternatively, partitioning by <code>FIELD_ID</code> yields separate datasets. A mosaic is not required to occupy one hypercube.</td></tr>
+        <tr><td>Continuum and line SPWs</td><td>Different spectral contexts generally occupy different partitions. Batches have compatible spectral coordinates and correlation setup; the algorithm may combine several batches scientifically.</td></tr>
+        <tr><td>Large metadata</td><td>Moving-source, pointing, and ephemeris metadata are queried in bounded windows instead of loading sample-sized histories on open.</td></tr>
+      </tbody></table></div>
+      <h2>Why a mosaic need not add a visibility axis</h2>
+      <p>In a sequential mosaic, the correlated field is a function of time. The visibility array has axes <code>[time, baseline, frequency, polarization]</code>, while an auxiliary coordinate labels each time:</p>
+      <div class="table-scroll"><table><thead><tr><th>Time</th><th>Field coordinate</th><th>Visibility slice</th></tr></thead><tbody>
+        <tr><td>t0</td><td>A</td><td>V[t0, :, :, :] belongs to field A</td></tr>
+        <tr><td>t1</td><td>A</td><td>V[t1, :, :, :] belongs to field A</td></tr>
+        <tr><td>t2</td><td>B</td><td>V[t2, :, :, :] belongs to field B</td></tr>
+        <tr><td>t3</td><td>A</td><td>V[t3, :, :, :] is a later visit to A</td></tr>
+      </tbody></table></div>
+      <p>There is no independent A-versus-B choice at t0 in this example, so a time × field visibility grid would introduce unused combinations. The fields are neither averaged nor overlaid. The reader preserves the field association, and imaging applies the appropriate geometry to each sample.</p>
+      <p>XRADIO can also split by field. Its default extra partition scheme is empty, explicitly recommended for rapidly changing phase centres in on-the-fly mosaics; required spectral/observation partitioning still applies. Antenna beam-pointing history is separately indexed by time and antenna in <code>pointing_xds</code>. Simultaneous beams or phase centres need an explicit supported mapping; this sequential example does not settle those cases.</p>
+      <p class="source">Verified against the pinned <a href="https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/src/xradio/measurement_set/schema.py#L1734">field_name(time) schema</a>, <a href="https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/src/xradio/measurement_set/convert_msv2_to_processing_set.py#L97">partitioning options</a>, and <a href="https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/src/xradio/measurement_set/schema.py#L1463">antenna pointing schema</a>.</p>
+      <details id="mosaic-converter"><summary>What the actual MSv2 → MSv4 converter does</summary>
+        <p>XRADIO's <code>convert_msv2_to_processing_set</code> reads the original field IDs, constructs one field label per time, and attaches <code>field_name(time)</code> to the visibility dataset. Repeated visits produce repeated labels. The field/source dataset supplies the associated phase centres; ephemeris fields also carry time-dependent information.</p>
+        <p>The upstream <a href="https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/tests/stakeholder/test_measure_set_stakeholder.py#L753">VLA SNR_G55 test</a> exercises both combined-field and field-partitioned conversion. The <a href="https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/tests/stakeholder/test_measure_set_stakeholder.py#L597">ALMA solar-mosaic test</a> uses combined fields and requires one dataset after selecting its target SPW/line/intent. The <a href="https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/tests/stakeholder/test_measure_set_stakeholder.py#L697">VLASS test</a> also uses combined fields, explicitly avoiding the many partitions generated by splitting on field.</p>
+        <p><strong>An assumption our adapter must check:</strong> the <a href="https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/src/xradio/measurement_set/_utils/_msv2/conversion.py#L2080">converter takes the maximum field ID across baselines at each time</a>. This gives the right label when all present baselines agree; it does not check agreement. Our proposed conversion must validate this, partition compatibly or reject conflicting fields. Distinct acquisitions must never overwrite one another to fit the array.</p>
+        <p class="source">Evidence is from inspection of the pinned converter and upstream tests. Those conversions have not been run for this proposal; their aggregate/schema checks do not by themselves prove every input field association survives.</p>
+      </details>
+      <details><summary>Identity needs care when calibration is saved and reopened</summary><p>Catalogue handles belong to an opened observation. They are not permanent MS row numbers. Calibration owns the binding to antenna/SPW/field identities in a persisted caltable. Reopening and changing catalogue enumeration must not change which solutions apply.</p></details>
+      <div class="pause"><div class="eyebrow">Pause here · D1</div><p>Does the catalogue expose enough scientific context without leaking table row IDs or Zarr paths into algorithms?</p></div>
+      <p class="source">Read: <a href="https://github.com/bglenden/casa-rs/blob/988a992e73247f4096c63e1f89e7dc1c1c692d44/docs/measurement-set/contracts.md#2-topology-and-identity">Contracts §2</a> and <a href="https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/src/xradio/measurement_set/schema.py">pinned XRADIO schema</a>.</p>
+    </section>
+
+    <section class="step" id="block" data-title="Build the shared batch" aria-labelledby="title-block">
+      <div class="eyebrow">04 · The central intermediate structure</div>
+      <h1 id="title-block" tabindex="-1">A batch is arrays plus their meaning.</h1>
+      <p class="lead">A <code>VisibilityBatch</code> carries the actual visibility, flag, weight and coordinate data, and exposes typed array views for computation. The source has read and decoded the requested payload before delivering the batch; accessing an element does not trigger storage I/O.</p>
+      <h2 id="array-views">A view accesses the actual values</h2>
+      <p>A <strong>view</strong> is a borrowed reference to an existing array buffer, together with its shape and strides. It can cover the whole array or a subset. Creating the view does not copy the numerical data; indexing it reads a value directly from that buffer.</p>
+      <p>The distinction is ownership: the caller, I/O session or admitted work unit owns the reusable allocation, and the batch borrows it. Rust's lifetime rules keep the allocation valid and prevent refill while it is borrowed. For workers that finish at different times, transfer the owner or share read-only storage and borrow views locally. The allocation can be reused after its last user finishes. Writable views require exclusive access or proven disjoint mutable regions.</p>
+      <pre><code>// Illustrative ndarray access; the public domain API is still a draft.
+// owned_values contains the 16 complex numbers in the example below.
+let values: ArrayView3&lt;'_, Complex&lt;f32&gt;&gt; = owned_values.view();
+let value = values[[1, 0, 0]]; // reads 3+4i directly from the buffer
+let channel_1 = values.slice(s![.., 1..2, ..]); // shape [2, 1, 4]
+// Making the view performs no payload copy or I/O.</code></pre>
+      <p><code>ndarray</code>'s borrowed multidimensional slice is an <code>ArrayView</code>. Its <code>Slice</code>/<code>SliceInfo</code> types and <code>s!</code> macro describe which ranges to select. The channel slice above keeps strides <code>[8, 4, 1]</code>: each sample's four selected correlations are contiguous, with a gap between samples. An ordinary Rust <code>&amp;[T]</code> requires contiguous storage; <code>as_slice()</code> additionally requires standard axis order, while <code>as_slice_memory_order()</code> exposes physical order. Neither accessor silently packs a strided view.</p>
+      <details id="ndarray-choice"><summary>Why use ndarray?</summary><p><code>ndarray</code> is the owner-agreed choice for numerical arrays and borrowed views. Concrete ownership/view APIs and the overall design remain open for iteration; the M1 performance and lifetime checks still apply. casa-rs already uses it: <code>casa-values::ArrayValue</code> holds typed <code>ArrayD</code> payloads. Fixed-rank views such as <code>ArrayView3</code> suit the small set of layouts we intend to admit. A view can borrow an existing array or a suitably shaped reusable flat buffer.</p><p>Thin domain types add axis meanings, native Measures metadata, flag/weight semantics and update provenance. Buffer ownership, admission and storage scheduling remain explicit. These responsibilities are not supplied by a general array library.</p><p>Slicing a view need not copy values. An arbitrary gather, a required memory-order change, an owned result or mutation of shared copy-on-write storage can require a copy. We must account for those costs, prevent broadcast aliases from becoming independent mutable cells, and measure real imaging/calibration loops before freezing concrete types. A small view also keeps its entire backing allocation live; releasing another slice does not free part of that allocation.</p></details>
+      <p class="source">Read: <a href="https://github.com/bglenden/casa-rs/blob/988a992e73247f4096c63e1f89e7dc1c1c692d44/docs/measurement-set/contracts.md#buffer-ownership-and-array-views">ownership and array views</a>, <a href="https://github.com/bglenden/casa-rs/blob/988a992e73247f4096c63e1f89e7dc1c1c692d44/docs/measurement-set/contracts.md#using-ndarray">agreed ndarray direction</a>, and <a href="https://docs.rs/ndarray/0.17.2/ndarray/type.ArrayView3.html">ndarray 0.17.2 view documentation</a>.</p>
+      <h2>A concrete batch: two samples, two channels, four correlations</h2>
+      <p>This illustrative batch has one time and two ordered baselines. Sample 0 is antenna 0 with itself; sample 1 is antenna 0 with antenna 1. Both use feed 0. The correlation order is <code>[XX, XY, YX, YY]</code>. These are invented numbers for explanation, not a converted observation.</p>
+      <pre><code>time: MJD 60000 TAI + 0 s (split epoch)
+frequency_hz: [1_000_000_000, 1_001_000_000]  // TOPO
+field: A; phase centre: (1.0, 0.5) rad, ICRS
+uvw_m: [[0, 0, 0], [100, -40, 20]]          // per sample
+// UVW refers to this phase centre and the declared baseline convention.</code></pre>
+      <p><strong><code>groups[0].values</code></strong> is a borrowed view of 16 complex numbers: <code>Complex&lt;f32&gt;</code>, in Jy, shape <code>[sample=2, channel=2, correlation=4]</code>. Each number has an f32 real part and an f32 imaginary part, so this payload occupies 128 bytes.</p>
+      <div class="table-scroll"><table class="payload-table" id="batch-values"><caption>Visibility values in Jy; correlation is the innermost axis</caption><thead><tr><th>Sample</th><th>Channel</th><th>XX</th><th>XY</th><th>YX</th><th>YY</th></tr></thead><tbody>
+        <tr><th>0 · auto 0–0</th><td>0</td><td id="v-0-0-0" data-value="10+0i">10+0i</td><td id="v-0-0-1" data-value="1+2i">1+2i</td><td id="v-0-0-2" data-value="1-2i">1-2i</td><td id="v-0-0-3" data-value="8+0i">8+0i</td></tr>
+        <tr><th>0 · auto 0–0</th><td>1</td><td id="v-0-1-0" data-value="12+0i">12+0i</td><td id="v-0-1-1" data-value="0.5+1i">0.5+1i</td><td id="v-0-1-2" data-value="0.5-1i">0.5-1i</td><td id="v-0-1-3" data-value="9+0i">9+0i</td></tr>
+        <tr><th>1 · cross 0–1</th><td>0</td><td id="v-1-0-0" data-value="3+4i">3+4i</td><td id="v-1-0-1" data-value="0.2-0.1i">0.2-0.1i</td><td id="v-1-0-2" data-value="-0.3+0.4i">-0.3+0.4i</td><td id="v-1-0-3" data-value="2-1i">2-1i</td></tr>
+        <tr><th>1 · cross 0–1</th><td>1</td><td id="v-1-1-0" data-value="4+3i" data-flag="true">4+3i<span class="flag-label">flagged</span></td><td id="v-1-1-1" data-value="0.1+0.2i">0.1+0.2i</td><td id="v-1-1-2" data-value="0.5-0.2i">0.5-0.2i</td><td id="v-1-1-3" data-value="1+2i">1+2i</td></tr>
+      </tbody></table></div>
+      <p><strong><code>groups[0].flags</code></strong> is a separate boolean array with the same shape. Only <code>flags[1, 1, XX]</code> is true; its stored visibility remains <code>4+3i</code>. All other flags and both row flags are false. Both acquisitions are known present and selected, and every value is finite.</p>
+      <p><strong><code>groups[0].weights</code></strong> contains eight f32 numbers with shape <code>[sample=2, correlation=4]</code>. In this example they are declared inverse-variance weights in Jy⁻². Each applies to both channels through a checked broadcast view, without duplicating its storage.</p>
+      <div class="table-scroll"><table id="batch-weights"><caption>Stored weights, shared across the two channels</caption><thead><tr><th>Sample</th><th>XX</th><th>XY</th><th>YX</th><th>YY</th></tr></thead><tbody>
+        <tr><th>0</th><td id="w-0-0">4</td><td id="w-0-1">2</td><td id="w-0-2">2</td><td id="w-0-3">4</td></tr>
+        <tr><th>1</th><td id="w-1-0">16</td><td id="w-1-1">8</td><td id="w-1-2">8</td><td id="w-1-3">16</td></tr>
+      </tbody></table></div>
+      <div class="diagram" id="batch-element-inspector">
+        <h3>Read one element as a computation would</h3>
+        <div class="js-only"><div class="controls payload-controls">
+          <label>Sample<select id="payload-sample"><option value="0" data-baseline="0–0" data-uvw="0, 0, 0">0 · auto 0–0</option><option value="1" data-baseline="0–1" data-uvw="100, -40, 20" selected>1 · cross 0–1</option></select></label>
+          <label>Channel<select id="payload-channel"><option value="0" data-hz="1,000,000,000">0 · 1 GHz</option><option value="1" data-hz="1,001,000,000">1 · 1.001 GHz</option></select></label>
+          <label>Correlation<select id="payload-correlation"><option value="0">XX</option><option value="1">XY</option><option value="2">YX</option><option value="3">YY</option></select></label>
+        </div></div>
+        <p id="payload-readout" aria-live="polite">values[1, 0, XX] = 3+4i Jy; flag = false; weight[1, XX] = 16 Jy⁻². This element is included by the example's flag/validity policy.</p>
+        <p id="payload-coordinate">Baseline 0–1; frequency 1,000,000,000 Hz (TOPO); UVW (100, -40, 20) m; field A at MJD 60000 TAI.</p>
+        <p id="payload-offset" class="caption">Contiguous element strides: [8, 4, 1]. Flat visibility/flag index = 1×8 + 0×4 + 0 = 8. Native weight index = 1×4 + 0 = 4.</p>
+      </div>
+      <p>The batch lends these buffers for its lifetime. A numerical loop reads typed array elements directly; no catalogue lookup or per-value type dispatch is needed. Other requested data groups expose their own associated arrays. A flags-only request can omit visibility values entirely.</p>
+      <h2>Where those buffers sit in the structure</h2>
+      <div class="diagram">
+        <div class="controls" role="group" aria-label="Inspect a batch component">
+          <button data-component="values" aria-pressed="true">Values</button><button data-component="coordinates" aria-pressed="false">Coordinates</button><button data-component="units" aria-pressed="false">Units &amp; frames</button><button data-component="flags" aria-pressed="false">Flags &amp; validity</button><button data-component="weights" aria-pressed="false">Weights</button><button data-component="addresses" aria-pressed="false">Update maps</button>
+        </div>
+        <div class="component" id="component-detail" aria-live="polite"><h3>Typed visibility values</h3><p>In the example, groups[0].values lends the 16 Complex&lt;f32&gt; numbers above with shape [2, 2, 4] and element strides [8, 4, 1]. Select the typed loop once per batch.</p></div>
+        <pre><code>// Semantic sketch, not a finished Rust API.
+VisibilityBatch {
+    context,       // compatible spectral/correlation context
+    topology,      // irregular samples or factored time × baseline
+    coordinates,   // epochs, frequencies, baseline/field context
+    groups: [DataGroupView {
+        values,    // view of the 16 complex numbers above
+        flags,     // view of 16 booleans, one true
+        weights,   // view of 8 f32 weights, broadcast over channel
+        uvw,       // view of two 3-vectors in metres
+        field_and_source, associations,
+    }],
+    grouping,      // scientific-group ranges or index views
+    update_maps,   // optional, role-specific write provenance
+}</code></pre>
+        <p class="caption">Requested roles only. A flags-only operation need not read visibility values. Missing required roles fail binding.</p>
+      </div>
+      <p>Metadata declares which axes it depends on. A constant frequency frame, per-time epoch, or per-correlation row weight should not become one allocated object per visibility.</p>
+      <h2 id="native-measures">The coordinates are native casa-rs Measures</h2>
+      <p>The batch exposes Measures' own frequency, direction, epoch, position and reference types. The frequency numbers above belong to a native Measures array view carrying <code>FrequencyRef::TOPO</code>; the epoch uses <code>EpochRef::TAI</code> and split precision. Measures conversion functions accept those views directly. There is no second set of “MS measures” to translate before computation.</p>
+      <p>We will extend or rework <code>casa-types::measures</code> and quanta to support this naturally. Array views share reference metadata and borrow numeric buffers; they do not require one full measure/frame object per value. MSv2/MSv4 metadata is decoded into those types at the I/O boundary, with the original encoding retained where needed for faithful writes.</p>
+      <div class="diagram" id="measures-bulk-flow">
+        <h3>Bulk conversion throughout Measures</h3>
+        <p>This applies to directions, epochs/time scales, positions, baselines/UVW, frequencies, radial velocities, Doppler conventions, magnetic vectors, unit conversions, and future measure families. LSRK↔TOPO is one example.</p>
+        <div class="flow">
+          <div class="box"><b>Bind the route</b><small>Source/destination references, units, scientific policy and provider</small></div><span class="arrow" aria-hidden="true">→</span>
+          <div class="box accent"><b>Prepare the context</b><small>Shared model/context work → family-specific factors, matrices or other prepared state</small></div><span class="arrow" aria-hidden="true">→</span>
+          <div class="box"><b>Convert the slice</b><small>Typed scalar/vector arithmetic, including necessary nonlinear work, into reusable output storage</small></div>
+        </div>
+        <p class="caption">Examples: 4096 frequencies can share prepared Doppler factors; many directions at one epoch/site can share frame preparation while retaining per-direction corrections. An epoch array crossing a leap second cannot assume one offset. These illustrate the work pattern, not measured speedups.</p>
+      </div>
+      <details id="measures-bulk-details"><summary>What can be reused, and how workers share it</summary><p>Hoist invariant route, frame and model work; avoid repeated invariant provider lookups and per-value allocation/locking. Preserve genuinely value-dependent mathematics and prepare varying auxiliary inputs in bounded groups. Direction, geodetic, time-scale and Doppler transformations can be nonlinear or piecewise; the common bulk contract does not assume a single matrix, offset or scale for every array.</p><p>Source and destination contexts can differ, such as when mapping an observation to a fixed image reference epoch. Changing an epoch, direction, observer or scientific model can require new prepared state. Prepared transforms are immutable and shareable. Mutable conversion state and output buffers belong to admitted work units. Existing CASA-compatible interpolation depends on preparation order: retain that sequence across batches, then let workers finish applying prepared transforms independently. Bound retained context state and queues.</p><p>Current code already has an ordered <code>MFrequencyConverter</code>, a reusable <code>UvwFrame</code>, and prepared frequency factors inside <code>casa-ms</code>. Consolidate these in Measures. M1 must exercise every currently supported family, compare its scientific results and performance against appropriate existing paths, and include real spectral and non-spectral consumers. Frequency plus one other example is insufficient. Converting coordinates does not itself regrid the visibility values.</p></details>
+      <p class="source">Read: <a href="https://github.com/bglenden/casa-rs/blob/988a992e73247f4096c63e1f89e7dc1c1c692d44/docs/measurement-set/contracts.md#shared-measures-types-and-bulk-conversion">native Measures and bulk-conversion contract</a>, <a href="https://github.com/bglenden/casa-rs/blob/988a992e73247f4096c63e1f89e7dc1c1c692d44/docs/measurement-set/implementation-plan.md#m1-measures-bulk-conversion-trial">M1 Measures trial</a>, and <a href="https://github.com/bglenden/casa-rs/blob/988a992e73247f4096c63e1f89e7dc1c1c692d44/docs/measurement-set/README.md#source-map-for-external-reviewers">pinned existing Measures source map</a>.</p>
+      <h2>Should autocorrelations be real?</h2>
+      <p><strong>The same-receptor power products are real in the ideal measurement:</strong> <code>XX = ⟨Eₓ Eₓ*⟩ = ⟨|Eₓ|²⟩</code>, and similarly YY (or RR/LL), for the same antenna and feed. But <code>XY = ⟨Eₓ Eᵧ*⟩</code> can be complex, with <code>YX = conjugate(XY)</code> ideally. The example's auto row therefore has real XX/YY and complex XY/YX.</p>
+      <p>MSv2 <code>DATA</code> and MSv4 <code>VISIBILITY</code> use complex arrays, so auto and cross baselines can share one array and one typed loop. MSv2 also has real <code>FLOAT_DATA</code>; MSv4 has a separate real <code>SPECTRUM</code> array for single-dish data. The batch preserves the supplied scalar type and values. Antenna equality alone cannot authorize discarding imaginary parts or changing dtype.</p>
+      <details><summary>Storage type, physical meaning, and the initial support scope</summary><p>The ideal auto correlation matrix is Hermitian; different feeds/signals or stored processing results require their own interpretation. Reading does not force supplied data to satisfy ideal reality or conjugate symmetry. Selecting only real self-products from a complex array could support an explicitly requested real projection, but its imaginary-value handling and write semantics would need a defined policy.</p><p>The shared real-valued variants cover supported legacy FLOAT_DATA. XRADIO SpectrumXds uses [time, antenna, frequency, polarization] and remains outside the initial MSv4 VisibilityXds profile. This explanation does not expand that implementation scope.</p><p class="source">Sources: <a href="https://github.com/casacore/casacore/blob/a1399b6b99907bd14021920a089403a93c10aba1/ms/MeasurementSets/MSMainEnums.h#L176">MSv2 DATA/FLOAT_DATA definitions</a>, <a href="https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/src/xradio/measurement_set/schema.py#L1020">MSv4 complex VISIBILITY</a>, and <a href="https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/src/xradio/measurement_set/schema.py#L1001">real SPECTRUM</a>.</p></details>
+      <h2>Known units at the numerical boundary</h2>
+      <p>The proposed default views guarantee <strong>Hz for frequency, m for distances, rad for angles, and s for durations</strong>. Epochs retain explicit origin/representation, time scale, and split precision. A caller can request another compatible unit at binding; the result guarantees that choice. A <code>frequency_hz()</code> accessor cannot return MHz.</p>
+      <details><summary>Canonical units, explicit conversions, and the MSv4 convention</summary><p>Unit syntax and scaling are resolved once at the appropriate metadata scope. Shared axes are converted once where possible; other scaling can be fused with fill/decode/packing. Already-canonical views need no unit-conversion pass. Frames remain separate: Hz in TOPO is not Hz in LSRK, and seconds do not imply UTC or TAI.</p><p>The pinned MSv4 schema constrains the main coordinate quantities to Hz, m, s and rad. Visibility units are a string defaulting to Jy. We propose Jy for established flux-density data, rather than converting everything to SI base units; instrumental data cannot acquire a flux calibration through unit conversion. Declared inverse-variance weights and matching sigma must scale consistently with amplitude units.</p><p>Computation does not rewrite persistent unit metadata. Updates convert back to the destination's units under scope and precision checks.</p><p>Sources: <a href="https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/src/xradio/schema/measures.py#L56">coordinate units</a>, <a href="https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/src/xradio/measurement_set/schema.py#L1035">visibility units</a>, and <a href="https://github.com/bglenden/casa-rs/blob/988a992e73247f4096c63e1f89e7dc1c1c692d44/docs/measurement-set/contracts.md#units-and-measure-references">proposed unit contract</a>.</p></details>
+      <div class="note amber"><strong>Three facts stay separate:</strong> selection, whether an acquisition is known to exist, and whether its requested values are usable. NaN padding or a false flag does not prove an acquisition occurred.</div>
+      <details><summary>Precision is an explicit request</summary><p>Native precision, lossless widening, and approved narrowing are different policies. The initial imaging binding requests complex64 input (<code>Complex&lt;f32&gt;</code>); narrowing complex128 requires scientific approval. Grid precision does not authorize input conversion.</p></details>
+      <div class="pause"><div class="eyebrow">Pause here · D1</div><p>Are these the right contents for the shared structure? Which facts should every consumer be able to rely on without rechecking them per value?</p></div>
+      <p class="source">Read: <a href="https://github.com/bglenden/casa-rs/blob/988a992e73247f4096c63e1f89e7dc1c1c692d44/docs/measurement-set/contracts.md#concrete-batch-example">concrete batch contract</a> and <a href="https://github.com/bglenden/casa-rs/blob/988a992e73247f4096c63e1f89e7dc1c1c692d44/docs/measurement-set/contracts.md#autocorrelations-and-real-valued-data">autocorrelation scalar semantics</a>.</p>
+    </section>
+
+    <section class="step" id="layout" data-title="Choose a memory layout" aria-labelledby="title-layout">
+      <div class="eyebrow">05 · Topology and element order</div>
+      <h1 id="title-layout" tabindex="-1">Keep the measurements.<br>Change how the kernel sees them.</h1>
+      <p class="lead">The initial contract offers sample-major and channel-major views. Either can retain factored time/baseline coordinates.</p>
+      <div class="diagram">
+        <div class="controls" role="group" aria-label="Array layout"><button data-layout="sample" aria-pressed="true">Sample-major</button><button data-layout="channel" aria-pressed="false">Channel-major</button></div>
+        <h3 id="layout-shape">[sample, channel, correlation]</h3>
+        <div class="matrix" id="layout-matrix" role="img" aria-label="Six samples by four channels, each cell a correlation vector"></div>
+        <p id="layout-explanation" class="caption">Read each displayed row left to right: the channels for one sample are adjacent; correlations are innermost.</p>
+        <p class="caption">Toy array: 2 times × 3 baselines = 6 samples, 4 channels, 2 correlations. Each cell represents both correlations. This shows element order, not a measured transpose cost.</p>
+      </div>
+      <div class="columns">
+        <div class="card"><h3>Irregular topology</h3><p>A list of acquisitions, each with a channel × correlation array. Missing baselines, repeated time/baseline coordinates, and variable row shapes need explicit handling.</p></div>
+        <div class="card"><h3>Time–baseline topology</h3><p>Separate time and baseline axes plus occupancy. Compatible contiguous MSv4 data can use <code>sample = time × B + baseline</code> without copying values.</p></div>
+      </div>
+      <p>Checked strides determine whether a view is possible. Transposes, sparse gathers, type conversion, and decompression can require accounted buffers. The interface does not promise universal zero-copy access.</p>
+      <details><summary>What factoring saves, and what it cannot save</summary><p>Time and baseline coordinate entries can scale as O(T+B). UVW and other truly sample-dependent data still scale with the samples. A rectangular view has one slot per time/baseline pair; duplicate acquisitions cannot be silently averaged or overwritten to make them fit.</p></details>
+      <div class="pause"><div class="eyebrow">Pause here · D1</div><p>Are two explicit layouts, checked strides, and separate topology sufficient for the first real imaging and calibration kernels?</p></div>
+      <p class="source">Read: <a href="https://github.com/bglenden/casa-rs/blob/988a992e73247f4096c63e1f89e7dc1c1c692d44/docs/measurement-set/contracts.md#3-numeric-arrays-metadata-and-data-groups">Contracts §3</a>. M1 must test the actual kernels before these choices stabilize.</p>
+    </section>
+
+    <section class="step" id="request" data-title="Negotiate access" aria-labelledby="title-request">
+      <div class="eyebrow">06 · Algorithm-led access</div>
+      <h1 id="title-request" tabindex="-1">The algorithm states its needs.<br>The adapter binds a realization.</h1>
+      <p class="lead">The processing planner sends the adapter a declared access pattern plus required units, precision, and layouts. The adapter returns a realization within the admitted memory and worker budget.</p>
+      <div class="table-scroll"><table><thead><tr><th>Request carries</th><th>What the adapter learns</th></tr></thead><tbody>
+        <tr><td>Selection and roles</td><td>Which fields/SPWs/channels/correlations and visibility/flag/weight/geometry arrays are needed.</td></tr>
+        <tr><td>Traversal and scientific grouping</td><td>Required ordering, legal reordering/interleaving, solution-bin boundaries, and fragment/completion rules.</td></tr>
+        <tr><td>Compute windows and overlap</td><td>What the operation consumes together; channel waves, contiguous axes, and required neighborhoods/halos.</td></tr>
+        <tr><td>Layouts, units and precision</td><td>Which array views and conversions the consumer can accept.</td></tr>
+        <tr><td>Revisits and delivery limits</td><td>Repeated passes or reuse needs and bounded aggregation. Adaptive pass counts are identified as estimates; revisiting does not imply retaining all input.</td></tr>
+      </tbody></table></div>
+      <div class="diagram">
+        <div class="controls" role="group" aria-label="Example consumer"><button data-consumer="image" aria-pressed="true">Cube imaging</button><button data-consumer="solve" aria-pressed="false">Calibration solve</button><button data-consumer="apply" aria-pressed="false">Apply calibration</button></div>
+        <div class="columns" style="margin-bottom:0">
+          <div class="box accent"><h3>Example request</h3><div id="consumer-request" aria-live="polite"><p>Selected channel wave; visibility, flags, weights, UVW and frequency context; a kernel-compatible channel-local layout.</p></div></div>
+          <div class="box"><h3>Binding must disclose</h3><div id="consumer-binding" aria-live="polite"><p>Actual chunks decoded, packing and image-state memory, and repeated whole-band reads if stored chunks span more channels than the wave.</p></div></div>
+        </div>
+        <p class="caption">Illustrative requests, not universal defaults. The processing planner supplies the operation's requirements before iteration; the numerical loop receives the agreed views.</p>
+      </div>
+      <div class="table-scroll"><table><thead><tr><th>Hard requirement</th><th>Preference</th><th>Binding result</th></tr></thead><tbody><tr><td>Scientific selection/grouping, accepted strides, permitted precision changes, required order</td><td>Aggregation target and locality among scientifically equivalent choices</td><td>An exact supported realization, or a typed error explaining the limiting capability/working set</td></tr></tbody></table></div>
+      <p>The budget includes payloads, decoded chunks, codec scratch, packed copies, indexes, caches, queued writes, and consumer state that are alive together. A backend cannot make a minimum decode buffer disappear by promising smaller compute windows.</p>
+      <div class="note amber">Chunk geometry still matters. Reading a narrow channel window from a full-band compressed chunk may decode the full band repeatedly. Larger aggregation alone does not fix this; creation policies and admitted traversal choices must be measured.</div>
+      <div class="pause"><div class="eyebrow">Pause here · D2</div><p>Does the request give the algorithm enough control while leaving the adapter room to use larger native MSv4 operations?</p></div>
+      <p class="source">Read: <a href="https://github.com/bglenden/casa-rs/blob/988a992e73247f4096c63e1f89e7dc1c1c692d44/docs/measurement-set/contracts.md#4-access-requests-and-scientific-groups">Contracts §4</a> and <a href="https://github.com/bglenden/casa-rs/blob/988a992e73247f4096c63e1f89e7dc1c1c692d44/docs/measurement-set/architecture.md#4-access-is-negotiated-once-then-executed-in-bulk">Architecture §4</a>.</p>
+    </section>
+
+    <section class="step" id="groups" data-title="Accumulate a solve" aria-labelledby="title-groups">
+      <div class="eyebrow">07 · Scientific completion</div>
+      <h1 id="title-groups" tabindex="-1">A solution interval can span many batches.</h1>
+      <p class="lead">A splittable solver consumes fragments and retains its admitted accumulator state. The storage batch does not set the solution boundary.</p>
+      <div class="diagram">
+        <h3>Two interleaved scientific groups, K0 and K1</h3>
+        <p class="tiny">Each can be a solution-bin/SPW key under an explicit grouping rule. A combined-SPW solve uses a different declared key. This sequence illustrates control events, not a solver implementation.</p>
+        <ol class="event-list" id="event-list"><li>1 · K0 First → job A</li><li>2 · K1 Whole → job B</li><li>3 · B finishes</li><li>4 · K0 Last → job C</li><li>5 · C finishes</li><li>6 · A finishes</li></ol>
+        <div class="controls"><button id="event-reset">Reset</button><button id="event-next" class="primary">Next event</button><span class="tiny" id="event-position">0 of 6 events</span></div>
+        <div class="columns"><div class="box"><h3>K0</h3><div class="state" id="group-k0" aria-live="polite">No fragments received.</div></div><div class="box"><h3>K1</h3><div class="state" id="group-k1" aria-live="polite">No fragments received.</div></div></div>
+        <p class="caption">“Whole” and “Last” prove no more input is coming for that group. Finalization also waits for all jobs consuming its fragments.</p>
+      </div>
+      <p>The algorithm may accept sequential groups or a bounded set of concurrent groups. Concurrent fragments can preserve storage locality, but admission includes every live accumulator, statistics buffer, and group index.</p>
+      <p>Closing a group needs a proven traversal frontier or end-of-stream. Seeing a later timestamp in an unordered stream is insufficient. A later <code>GroupEnd</code> can close input when the final payload could not carry that proof; completion is signaled exactly once.</p>
+      <details><summary>What if a solve needs every sample at once?</summary><p>It must declare that requirement. It either fits within admission, uses an explicitly supported equivalent bounded strategy, or fails. Storage does not secretly build a whole-observation replay cache. Iterative revisits are explicit bounded passes.</p></details>
+      <div class="pause"><div class="eyebrow">Pause here · D2</div><p>Do these grouping and completion rules fit gain and bandpass solving, including multi-SPW rules and late samples?</p></div>
+      <p class="source">Read: <a href="https://github.com/bglenden/casa-rs/blob/988a992e73247f4096c63e1f89e7dc1c1c692d44/docs/measurement-set/contracts.md#4-access-requests-and-scientific-groups">Contracts §4</a>.</p>
+    </section>
+
+    <section class="step" id="workers" data-title="Finish at different rates" aria-labelledby="title-workers">
+      <div class="eyebrow">08 · Execution lifetime</div>
+      <h1 id="title-workers" tabindex="-1">Fast work can retire while slow work continues.</h1>
+      <p class="lead">Ownership follows a work unit. It can have one worker or cooperating workers, private scratch, and borrowed read-only input.</p>
+      <div class="diagram">
+        <h3>Move time forward</h3>
+        <div class="slider"><label for="work-time">Illustrative time</label><input id="work-time" type="range" min="0" max="5" step="1" value="2"><output for="work-time" id="work-time-value">2 / 5</output></div>
+        <div id="workers-state" aria-live="polite">
+          <div class="worker"><span>Unit A</span><div class="track"><div class="fill" id="worker-a" style="width:100%"></div></div><span id="worker-a-label">Finished</span></div>
+          <div class="worker"><span>Unit B</span><div class="track"><div class="fill" id="worker-b" style="width:100%"></div></div><span id="worker-b-label">Finished</span></div>
+          <div class="worker"><span>Unit C</span><div class="track"><div class="fill" id="worker-c" style="width:40%"></div></div><span id="worker-c-label">Running</span></div>
+        </div>
+        <div class="columns">
+          <div class="card"><h3>One shared allocation</h3><div class="memory shared" id="shared-memory" aria-hidden="true"><span></span><span></span><span></span></div><output id="shared-bytes">384 MiB retained</output><p>The last reader keeps the whole backing allocation alive. Dropping two slices does not free two thirds of it.</p></div>
+          <div class="card"><h3>Three independent allocations</h3><div class="memory" id="owned-memory" aria-hidden="true"><span class="free"></span><span class="free"></span><span></span></div><output id="owned-bytes">128 MiB retained</output><p>Each owner's storage can return to the pool when its own work finishes. Creating these pieces may require a budgeted copy.</p></div>
+        </div>
+        <p class="caption">Illustrative input-buffer sizes and durations, not benchmark results. Scratch, image state, and codecs are additional costs. Grey capacity is reusable, not necessarily returned to the OS.</p>
+      </div>
+      <p>Independent jobs can finish out of order where the algorithm permits. Shared mutable arrays require exclusive ownership or proven disjoint regions. Buffers are reused only after actual last use, including any outstanding device operation. Queues and scratch stay under the existing resource authority.</p>
+      <h2>Your cube CLEAN example</h2>
+      <p>Visibility batches belong to gridding/prediction passes. Model, residual, mask, and solver state belong to imaging. A channel needing more minor-cycle iterations should not keep its input visibility batch alive. A completed channel can release scratch and free workers for other admitted work; required image state survives for later major cycles and products.</p>
+      <div class="note">Scientific coupling and major-cycle/stopping rules may still require joins. The shared representation itself adds no global “all channels must finish” barrier.</div>
+      <div class="pause"><div class="eyebrow">Pause here · D3</div><p>Does this separate the lifetimes you had in mind: input batches, work-group state, and reusable thread-local scratch?</p></div>
+      <p class="source">Read: <a href="https://github.com/bglenden/casa-rs/blob/988a992e73247f4096c63e1f89e7dc1c1c692d44/docs/measurement-set/contracts.md#independent-work-unit-lifetimes">Independent work-unit lifetimes</a>. M1 must prove safe handoff, independent progress, pinning, cancellation, and bounded queues.</p>
+    </section>
+
+    <section class="step" id="updates" data-title="Write changes back" aria-labelledby="title-updates">
+      <div class="eyebrow">09 · Addressed mutation</div>
+      <h1 id="title-updates" tabindex="-1">Reordering must preserve where updates belong.</h1>
+      <p class="lead">A read can carry a session-scoped, role-specific inverse map. The consumer submits a bulk patch; the adapter resolves it to actual cells, scalars, chunks, or shards.</p>
+      <div class="diagram"><div class="flow">
+        <div class="box"><b>Source elements</b><small><code>[A, B, C, D]</code></small></div><span class="arrow" aria-hidden="true">→</span>
+        <div class="box accent"><b>Selected / reordered</b><small><code>[C, A]</code> + inverse map</small></div><span class="arrow" aria-hidden="true">→</span>
+        <div class="box"><b>Patch values</b><small><code>[C′, A′]</code></small></div><span class="arrow" aria-hidden="true">→</span>
+        <div class="box"><b>Updated source</b><small><code>[A′, B, C′, D]</code></small></div>
+      </div><p class="caption">Letters denote logical elements. Physical addresses remain inside the adapter. Averaging C and A loses this simple inverse and needs an explicit output/scientific scatter rule.</p></div>
+      <h2>Write scope can be larger than a visible slice</h2>
+      <p>Suppose one native <code>WEIGHT = 2</code> supplies two channels. Setting only channel 0 to 8 cannot silently change that scalar, because channel 1 would change too. The request must authorize the wider scope, create and initialize a supported channel-resolved destination, or be rejected.</p>
+      <p>The same care applies to data groups sharing variables and integer flags carrying multiple reasons. Updates preserve unselected values and unknown flag bits. The sink coalesces physical writes within bounded flush windows.</p>
+      <details><summary>Locks and failures are part of the contract</summary><p>Plan read/write ownership before traversal, including destination-column creation. Original-input semantics need disjoint native regions or a proven read-before-write order. MSv2 retains ordinary casacore locks and partial-failure behavior.</p><p>The proposed local MSv4 profile replaces each encoded object atomically on supported filesystems. Failure may still leave some objects updated and others unchanged. This does not provide a dataset transaction, concurrent-reader snapshot, cross-process XRADIO lock protocol, or an automatic power-loss guarantee.</p></details>
+      <div class="pause"><div class="eyebrow">Pause here · D3</div><p>Are explicit per-role patches and mutation scopes the right write interface? Is the proposed per-object MSv4 failure guarantee sufficient?</p></div>
+      <p class="source">Read: <a href="https://github.com/bglenden/casa-rs/blob/988a992e73247f4096c63e1f89e7dc1c1c692d44/docs/measurement-set/contracts.md#7-updates-and-creation">Contracts §7</a>.</p>
+    </section>
+
+    <section class="step" id="creation" data-title="Create and interoperate" aria-labelledby="title-creation">
+      <div class="eyebrow">10 · New data and existing ecosystems</div>
+      <h1 id="title-creation" tabindex="-1">Creation uses the same scientific vocabulary.</h1>
+      <p class="lead">A simulator or importer must be able to create an observation without opening an input MS or borrowing its hidden metadata.</p>
+      <div class="diagram"><div class="flow">
+        <div class="box"><b>Catalogue builder</b><small>Define antennas, SPWs, fields, groups</small></div><span class="arrow" aria-hidden="true">→</span>
+        <div class="box accent"><b>Creation batches</b><small>Typed arrays + explicit target regions</small></div><span class="arrow" aria-hidden="true">→</span>
+        <div class="box"><b>Configured sink</b><small>MSv2 managers/tiles or MSv4 chunks/codecs</small></div>
+      </div><p class="caption">Creation addresses destination regions. Existing-source inverse maps are neither required nor appropriate.</p></div>
+      <p>For cube workloads, creation can select frequency-local chunks. Continuum workloads may favor wider frequency coverage. The exact policies need measurement; existing stores are not automatically rechunked on open.</p>
+      <div class="columns"><div class="card"><h3>CASA interoperability</h3><p>Maintain MSv2 read/write interchange with CASA/casacore and the existing science/performance requirements.</p></div><div class="card"><h3>XRADIO interoperability</h3><p>Test Rust-written MSv4 with pinned XRADIO, and XRADIO-written MSv4 with Rust. This does not claim current CASA directly opens MSv4.</p></div></div>
+      <h2>Conversion must describe what survives</h2>
+      <div class="table-scroll"><table><thead><tr><th>Example</th><th>Required decision</th></tr></thead><tbody>
+        <tr><td>Row flags versus element flags</td><td>Preserve effective badness; report loss of row-versus-element provenance when the destination cannot retain it.</td></tr>
+        <tr><td>INTERVAL versus EXPOSURE</td><td>Preserve distinct meanings. Effective integration time represents exposure, not a replacement for nominal interval.</td></tr>
+        <tr><td>Duplicate acquisitions</td><td>Preserve through a valid mapping or reject. Do not silently overwrite or average them to fill a rectangular array.</td></tr>
+        <tr><td>Unknown row occupancy after padding</td><td>A reverse conversion needs an explicit policy or rejection. Missing acquisition history cannot be reconstructed from flags.</td></tr>
+      </tbody></table></div>
+      <p>These are examples from a longer loss table. Arbitrary MSv2 → MSv4 → MSv2 exact-row roundtrips are not promised.</p>
+      <div class="pause"><div class="eyebrow">Pause here · D5</div><p>Are source-free creation and explicit conversion-loss policies strong enough to protect persistent interoperability?</p></div>
+      <p class="source">Read: <a href="https://github.com/bglenden/casa-rs/blob/988a992e73247f4096c63e1f89e7dc1c1c692d44/docs/measurement-set/architecture.md#conversion-fidelity">Conversion fidelity table</a> and <a href="https://github.com/bglenden/casa-rs/blob/988a992e73247f4096c63e1f89e7dc1c1c692d44/docs/measurement-set/contracts.md#7-updates-and-creation">creation contract</a>.</p>
+    </section>
+
+    <section class="step" id="rust" data-title="Place the Rust pieces" aria-labelledby="title-rust">
+      <div class="eyebrow">11 · Implementation boundaries</div>
+      <h1 id="title-rust" tabindex="-1">A small shared contract.<br>Specialized owners around it.</h1>
+      <p class="lead">Measures owns the coordinate types and conversion engine. The proposed <code>casa-observation</code> crate uses those types directly in the shared observation contracts.</p>
+      <div class="table-scroll"><table><thead><tr><th>Owner</th><th>Responsibility</th></tr></thead><tbody>
+        <tr><td><code>casa-types::measures</code> and quanta</td><td>Authoritative coordinate/reference/unit types, scalar and bulk views, prepared frame conversions, and UVW transforms. Rework their APIs for direct array use.</td></tr>
+        <tr><td><code>casa-observation</code><br><span class="tiny">Proposed new crate</span></td><td>Catalogue identities, antenna/feed pairs, topology, batch views, access and source/sink contracts. Depends on casa-types; uses its Measures types directly. No storage or execution runtime.</td></tr>
+        <tr><td><code>casa-ms</code></td><td>MSv2/MSv4 adapters, schema/catalogue mapping, retained storage bindings, decode/pack, and persistence.</td></tr>
+        <tr><td>Imaging and calibration owners</td><td>Use the shared Measures types; select transformations and context, compile imaging geometry, grid and solve. Retain their own admitted working state.</td></tr>
+        <tr><td>Existing execution/resource owners</td><td>Worker teams, memory admission, cancellation, and pass lifecycle. Backend decode uses that admitted executor.</td></tr>
+      </tbody></table></div>
+      <div class="diagram"><div class="flow"><div class="box"><b>XRADIO conventions</b><small>Schema + metadata + dimensions</small></div><span class="arrow" aria-hidden="true">→</span><div class="box accent"><b>Native MSv4 adapter</b><small>Rust schema mapping over Zarr storage/codecs</small></div><span class="arrow" aria-hidden="true">→</span><div class="box"><b>Shared observation API</b><small>No Python runtime dependency</small></div></div><p class="caption">Xarray and Dask are ecosystem tools, not required runtime layers for this reader/writer.</p></div>
+      <p><code>zarrs</code> is a candidate for Zarr access. M0/M1 must pin and audit the complete dependency graph: codecs, filesystem behavior, retained per-key state, concurrency, and replacement semantics. Generic Zarr support alone is not full XRADIO interoperability.</p>
+      <div class="note amber">The owner requires native Measures types and bulk conversion. This supersedes the earlier dependency-free observation-base proposal. The proposed model dependencies become <code>casa-observation</code> and <code>casa-types</code>; accepted ADR/policy files have not been changed by this design PR.</div>
+      <details><summary>Scope of the initial MSv4 profile</summary><p>Local interferometric <code>VisibilityXds</code>, XRADIO schema 4.0.1 and Zarr v3. Read, create, update, codecs, and structural capabilities are tracked separately. Other schema versions, Zarr v2, remote mutation, and antenna-axis spectra need their own evidence.</p><p>Production orchestration and science are Rust. Native codec dependencies are compatible with this goal; optional Python tooling can prepare data and serve as an interoperability oracle.</p></details>
+      <div class="pause"><div class="eyebrow">Pause here · D4</div><p>Does this place Measures, observation contracts and compiled imaging geometry with the right owners?</p></div>
+      <p class="source">Read: <a href="https://github.com/bglenden/casa-rs/blob/988a992e73247f4096c63e1f89e7dc1c1c692d44/docs/measurement-set/architecture.md#3-proposed-ownership">Proposed ownership</a>, <a href="https://github.com/bglenden/casa-rs/blob/988a992e73247f4096c63e1f89e7dc1c1c692d44/docs/measurement-set/architecture.md#7-reference-baseline">pinned technology references</a>, and <a href="https://zarr-specs.readthedocs.io/en/latest/v3/core/index.html">Zarr v3 specification</a>.</p>
+    </section>
+
+    <section class="step" id="review" data-title="Decide, prove, then build" aria-labelledby="title-review">
+      <div class="eyebrow">12 · The review path</div>
+      <h1 id="title-review" tabindex="-1">Stabilize the contract with evidence.</h1>
+      <p class="lead">The owner has agreed to proceed with a small exploratory trial: first image a few channel planes, then try a gain solve with groups crossing batch boundaries. Review what the two examples teach us and adjust the shared interfaces before expanding to the full M1 checklist.</p>
+      <p>Both examples use real MSv2/MSv4 inputs and existing numerical consumers. Establish the affected paths' fixtures and baselines, then show the Rust usage, scientific results, copies, retained memory and narrow timing comparisons. General updates/creation, full Measures coverage and failure testing remain later M1 requirements.</p>
+      <p><strong>Check MSv4 interoperability early in both directions:</strong> Rust reads an XRADIO-written fixture, and XRADIO opens, validates and loads a fresh Rust-written dataset. A narrow known-shape Rust writer is part of this first pass. Compare actual values, flags, weights, coordinates, units, reference frames and data-group associations; opening metadata alone is insufficient. Keep the tested profile explicit.</p>
+      <div class="milestones"><div class="milestone"><b>M0</b>Inventory, profiles, baseline</div><div class="milestone key"><b>M1</b>Executable contract trial</div><div class="milestone"><b>M2</b>Production MSv2 cutover</div><div class="milestone"><b>M3</b>Native MSv4 backend</div><div class="milestone"><b>M4</b>Remaining consumers</div><div class="milestone"><b>M5</b>Integrated acceptance</div></div>
+      <p>M2 and M3 can proceed as coordinated branches after M1. M1 is the key checkpoint: real v2/v4 reads, imaging and calibration, addressed updates, source-free creation, unequal worker completion, interoperability, and bounded resources.</p>
+      <div class="columns">
+        <div class="card"><div class="decision-tag">D1 · REPRESENTATION</div><h3>Are the batch's meanings right?</h3><p>Typed arrays, two topologies, separate presence/validity, coordinates, and group associations.</p></div>
+        <div class="card"><div class="decision-tag">D2 · ACCESS</div><h3>Do algorithms have enough control?</h3><p>Hard layout/grouping requirements, fragments, closure, and larger native aggregation.</p></div>
+        <div class="card"><div class="decision-tag">D3 · OWNERSHIP &amp; WRITES</div><h3>Are lifetimes and mutation precise?</h3><p>Independent retirement, shared-allocation pinning, inverse maps, aliases, and failure boundaries.</p></div>
+        <div class="card"><div class="decision-tag">D4 · BOUNDARIES</div><h3>Do types live with the right owner?</h3><p>One Measures type system and bulk engine, shared observation contracts, compiled imaging geometry, and one resource authority.</p></div>
+        <div class="card"><div class="decision-tag">D5 · SUPPORT</div><h3>Is the persistent contract clear?</h3><p>MSv2 + MSv4 scope agreed; detailed profiles, creation, and conversion policies remain proposed.</p></div>
+        <div class="card"><div class="decision-tag">D6 · SEQUENCE</div><h3>What must pass before freezing?</h3><p>M1 evidence before fan-out, independent milestone review, and deliberate later API changes.</p></div>
+      </div>
+      <h2>What counts as evidence</h2>
+      <p>Existing MSv2 performance and interoperability must survive. MSv4 must show a useful larger-aggregation benefit on matched workloads, including wall time as well as operation counts. Memory includes all retained allocations; a four-worker gain cannot conceal a single-worker regression.</p>
+      <p>Competent implementation agents receive bounded packets with reviewed contracts, fixture recipes, and exact checks. A stronger independent reviewer evaluates milestone evidence. Missing prerequisites keep a gate blocked.</p>
+      <div class="pause"><div class="eyebrow">Next checkpoint · first worked example</div><p>Use the trial handoff below to create a separate implementation branch and draft PR. Review the first running example, then the second, and discuss what to keep or change before expanding the trial. All M1 checks remain required for eventual acceptance; trial authorization does not freeze the interface or approve a merge.</p></div>
+      <h2>Review sources</h2>
+      <ul>
+        <li><a href="https://github.com/bglenden/casa-rs/pull/878">Draft PR #878</a> — discussion and Pro/Fable review responses.</li>
+        <li><a href="https://github.com/bglenden/casa-rs/blob/988a992e73247f4096c63e1f89e7dc1c1c692d44/docs/measurement-set/trial-handoff.md">Trial handoff</a> — branch setup, agreed scope, review checkpoints and evidence.</li>
+        <li><a href="https://github.com/bglenden/casa-rs/blob/988a992e73247f4096c63e1f89e7dc1c1c692d44/docs/measurement-set/README.md">Revision 5 review guide</a> — decisions and pinned casa-rs source map.</li>
+        <li><a href="https://github.com/bglenden/casa-rs/blob/988a992e73247f4096c63e1f89e7dc1c1c692d44/docs/measurement-set/contracts.md">Intermediate contracts</a> — full semantic proposal behind this explanation.</li>
+        <li><a href="https://github.com/bglenden/casa-rs/blob/988a992e73247f4096c63e1f89e7dc1c1c692d44/docs/measurement-set/implementation-plan.md">Implementation plan</a> — M0–M5, evidence packets, and change control.</li>
+        <li><a href="https://github.com/bglenden/casa-rs/blob/988a992e73247f4096c63e1f89e7dc1c1c692d44/docs/measurement-set/architecture.md#7-reference-baseline">Primary references</a> — pinned XRADIO, Zarr, casacore, and Rust dependency evidence.</li>
+      </ul>
+      <p class="source">This standalone explanation follows trial revision 5, <code>988a992e</code>, including native Measures types, prepared bulk conversions, mosaic evidence and the concrete numeric batch. The linked proposal governs if the explanation omits detail. Examples are illustrative; no implementation or benchmark result is claimed.</p>
+    </section>
+
+    <details class="notes js-only" id="notes-panel">
+      <summary>My notes for this step</summary>
+      <label class="tiny" id="notes-label" for="step-notes">Step 1 · One scientific boundary</label>
+      <textarea id="step-notes" placeholder="Questions, disagreements, or changes to discuss…"></textarea>
+      <div class="notes-actions"><span class="tiny" id="notes-status" role="status">Notes stay in this browser. Export to keep or share; nothing is posted to GitHub.</span><button id="export-notes">Export all notes</button></div>
+    </details>
+    <footer class="js-only"><button id="previous">← Back</button><span id="next-label">Next: Separate the concepts</span><button id="next" class="primary">Next →</button></footer>
+  </main>
+</div>
+<script>
+(() => {
+  'use strict';
+  const sections = [...document.querySelectorAll('.step')];
+  const links = [...document.querySelectorAll('nav a')];
+  const select = document.getElementById('step-select');
+  const notesInput = document.getElementById('step-notes');
+  const storageKey = 'casa-rs-ms-walkthrough-notes-r2';
+  let current = 0;
+  let all = false;
+  let notes = {};
+  let canStore = true;
+  try {
+    const parsed = JSON.parse(localStorage.getItem(storageKey) || '{}');
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) notes = parsed;
+    localStorage.setItem(storageKey, JSON.stringify(notes));
+  } catch (_) { canStore = false; }
+
+  sections.forEach((section, i) => {
+    const option = document.createElement('option');
+    option.value = String(i);
+    option.textContent = `${String(i + 1).padStart(2, '0')} · ${section.dataset.title}`;
+    select.append(option);
+  });
+
+  function show(index, focus = false) {
+    current = Math.max(0, Math.min(sections.length - 1, index));
+    sections.forEach((section, i) => { section.hidden = !all && i !== current; });
+    links.forEach((link, i) => {
+      if (i === current) link.setAttribute('aria-current', 'step');
+      else link.removeAttribute('aria-current');
+    });
+    select.value = String(current);
+    document.getElementById('step-count').textContent = `${String(current + 1).padStart(2, '0')} / ${sections.length}`;
+    document.getElementById('progress').value = current + 1;
+    document.getElementById('previous').disabled = current === 0;
+    document.getElementById('next').disabled = current === sections.length - 1;
+    document.getElementById('next-label').textContent = sections[current + 1] ? `Next: ${sections[current + 1].dataset.title}` : 'Ready for discussion';
+    document.getElementById('notes-label').textContent = `Step ${current + 1} · ${sections[current].dataset.title}`;
+    notesInput.value = typeof notes[sections[current].id] === 'string' ? notes[sections[current].id] : '';
+    document.getElementById('notes-status').textContent = canStore
+      ? 'Notes stay in this browser. Export to keep or share; nothing is posted to GitHub.'
+      : 'Browser storage is unavailable. Export notes before closing; nothing is posted to GitHub.';
+    document.title = `${current + 1}. ${sections[current].dataset.title} · casa-rs`;
+    if (focus) {
+      sections[current].querySelector('h1').focus({ preventScroll: true });
+      sections[current].scrollIntoView({ block: 'start' });
+    }
+  }
+
+  function go(index) {
+    const next = Math.max(0, Math.min(sections.length - 1, index));
+    if (location.hash === `#${sections[next].id}`) show(next, true);
+    else location.hash = sections[next].id;
+  }
+
+  function fromHash(focus) {
+    const index = sections.findIndex(section => `#${section.id}` === location.hash);
+    show(index < 0 ? 0 : index, focus);
+  }
+  window.addEventListener('hashchange', () => fromHash(true));
+  links.forEach((link, i) => link.addEventListener('click', event => { event.preventDefault(); go(i); }));
+  select.addEventListener('change', () => go(Number(select.value)));
+  document.getElementById('previous').addEventListener('click', () => go(current - 1));
+  document.getElementById('next').addEventListener('click', () => go(current + 1));
+  document.getElementById('all-toggle').addEventListener('click', event => {
+    all = !all;
+    document.body.classList.toggle('all-mode', all);
+    event.currentTarget.setAttribute('aria-pressed', String(all));
+    event.currentTarget.textContent = all ? 'One step at a time' : 'Read all';
+    show(current);
+    sections[current].scrollIntoView({ block: 'start' });
+  });
+  document.getElementById('print-button').addEventListener('click', () => window.print());
+  document.addEventListener('keydown', event => {
+    if (all || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+    if (event.target.closest('input, textarea, select, button, summary, [contenteditable]')) return;
+    if (event.key === 'ArrowRight') { event.preventDefault(); go(current + 1); }
+    if (event.key === 'ArrowLeft') { event.preventDefault(); go(current - 1); }
+  });
+  notesInput.addEventListener('input', () => {
+    notes[sections[current].id] = notesInput.value;
+    try { localStorage.setItem(storageKey, JSON.stringify(notes)); }
+    catch (_) {
+      canStore = false;
+      document.getElementById('notes-status').textContent = 'Could not save in this browser. Export notes before closing.';
+    }
+  });
+  document.getElementById('export-notes').addEventListener('click', () => {
+    const lines = ['# MSv2/MSv4 design review notes', '', 'Draft snapshot: 988a992e', 'PR: https://github.com/bglenden/casa-rs/pull/878', '', 'Personal discussion notes; not design approval.', ''];
+    sections.forEach((section, i) => {
+      const value = notes[section.id];
+      if (typeof value === 'string' && value.trim()) lines.push(`## ${i + 1}. ${section.dataset.title}`, '', value.trim(), '');
+    });
+    if (lines.length === 7) lines.push('No notes recorded.');
+    const url = URL.createObjectURL(new Blob([lines.join('\n')], { type: 'text/markdown;charset=utf-8' }));
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = 'casa-rs-design-review-notes.md';
+    document.body.append(anchor);
+    anchor.click();
+    anchor.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  });
+
+  const components = {
+    values: ['Typed visibility values', 'In the example, groups[0].values lends the 16 Complex<f32> numbers above with shape [2, 2, 4] and element strides [8, 4, 1]. Select the typed loop once per batch.'],
+    coordinates: ['Native Measures views with declared axes', 'The example shares one split-precision MJD 60000 TAI epoch and two TOPO frequencies in Measures-native views. Measures accepts them directly. Its two baseline pairs and UVW vectors associate samples with geometry; the field catalogue supplies phase centre A.'],
+    units: ['Measures units and reference types', 'Canonical views use Hz, m, rad and s with the Measures system’s reference enums and epoch representations. Compatible unit requests bind once. Bulk frame conversion prepares context once, then operates on numeric slices; unit scaling alone does not change frames.'],
+    flags: ['Native flags and separate validity', 'The example has 16 booleans; only [sample 1, channel 1, XX] is true. The 4+3i value stays in its buffer but is excluded by the illustrated consumer. Native bitmasks/reasons and row/category flags also remain representable without losing their meaning.'],
+    weights: ['Weights with native broadcast semantics', 'The example stores eight weights, four per sample. weight[1, XX] = 16 applies to both channels without two stored copies. Channel-dependent weights and fallback provenance remain explicit when requested.'],
+    addresses: ['Optional role-specific inverse maps', 'Reordering or selecting samples preserves checked provenance for the selected writable role. A row-weight scalar has a different address domain from a visibility array; reductions do not retain an invented inverse.']
+  };
+  document.querySelectorAll('[data-component]').forEach(button => button.addEventListener('click', () => {
+    document.querySelectorAll('[data-component]').forEach(item => item.setAttribute('aria-pressed', String(item === button)));
+    const [title, description] = components[button.dataset.component];
+    const panel = document.getElementById('component-detail');
+    panel.querySelector('h3').textContent = title;
+    panel.querySelector('p').textContent = description;
+  }));
+
+  function inspectPayload() {
+    const sample = document.getElementById('payload-sample');
+    const channel = document.getElementById('payload-channel');
+    const correlation = document.getElementById('payload-correlation');
+    const s = Number(sample.value), c = Number(channel.value), p = Number(correlation.value);
+    const label = correlation.selectedOptions[0].textContent;
+    const cell = document.getElementById(`v-${s}-${c}-${p}`);
+    const flag = cell.dataset.flag === 'true';
+    const weight = document.getElementById(`w-${s}-${p}`).textContent;
+    document.querySelectorAll('#batch-values .selected-value').forEach(item => item.classList.remove('selected-value'));
+    cell.classList.add('selected-value');
+    document.getElementById('payload-readout').textContent =
+      `values[${s}, ${c}, ${label}] = ${cell.dataset.value} Jy; flag = ${flag}; weight[${s}, ${label}] = ${weight} Jy⁻². ` +
+      (flag ? 'Excluded by the example’s flag policy; the stored visibility is unchanged.' : 'Included by the example’s flag/validity policy.');
+    const baseline = sample.selectedOptions[0];
+    document.getElementById('payload-coordinate').textContent =
+      `Baseline ${baseline.dataset.baseline}; frequency ${channel.selectedOptions[0].dataset.hz} Hz (TOPO); UVW (${baseline.dataset.uvw}) m; field A at MJD 60000 TAI.`;
+    document.getElementById('payload-offset').textContent =
+      `Contiguous element strides: [8, 4, 1]. Flat visibility/flag index = ${s}×8 + ${c}×4 + ${p} = ${s*8+c*4+p}. Native weight index = ${s}×4 + ${p} = ${s*4+p}.`;
+  }
+  ['payload-sample', 'payload-channel', 'payload-correlation'].forEach(id =>
+    document.getElementById(id).addEventListener('change', inspectPayload));
+  inspectPayload();
+
+  function drawLayout(layout) {
+    const sampleMajor = layout === 'sample';
+    const matrix = document.getElementById('layout-matrix');
+    const columns = sampleMajor ? 4 : 6;
+    const rows = sampleMajor ? 6 : 4;
+    matrix.style.gridTemplateColumns = `46px repeat(${columns}, minmax(0, 1fr))`;
+    matrix.replaceChildren();
+    const add = (label, className) => {
+      const cell = document.createElement('span'); cell.className = className; cell.textContent = label; matrix.append(cell);
+    };
+    add('', 'matrix-head');
+    for (let c = 0; c < columns; c++) add(`${sampleMajor ? 'ch' : 's'}${c}`, 'matrix-head');
+    for (let r = 0; r < rows; r++) {
+      add(`${sampleMajor ? 's' : 'ch'}${r}`, 'matrix-label');
+      for (let c = 0; c < columns; c++) add(`s${sampleMajor ? r : c}c${sampleMajor ? c : r}`, 'cell');
+    }
+    matrix.setAttribute('aria-label', sampleMajor ? 'Six samples by four channels; each cell a correlation vector' : 'Four channels by six samples; each cell a correlation vector');
+    document.getElementById('layout-shape').textContent = sampleMajor ? '[sample, channel, correlation]' : '[channel, sample, correlation]';
+    document.getElementById('layout-explanation').textContent = sampleMajor
+      ? 'Read each displayed row left to right: the channels for one sample are adjacent; correlations are innermost.'
+      : 'Read each displayed row left to right: the samples for one channel are adjacent; correlations are innermost. Obtaining this order can require a budgeted transpose.';
+    document.querySelectorAll('[data-layout]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.layout === layout)));
+  }
+  document.querySelectorAll('[data-layout]').forEach(button => button.addEventListener('click', () => drawLayout(button.dataset.layout)));
+
+  const consumers = {
+    image: ['Selected channel wave; visibility, flags, weights, UVW and frequency context; a kernel-compatible channel-local layout.', 'Actual chunks decoded, packing and image-state memory, and repeated whole-band reads if stored chunks span more channels than the wave.'],
+    solve: ['Explicit solution bins and field/SPW combination rules; solver-compatible channel/correlation access; sequential or bounded concurrent fragments.', 'Fragment order, proof of group closure, packing/index costs, and the complete bound on simultaneously live solver state.'],
+    apply: ['A streaming selection, declared input/output roles, requested precision, and layout accepted by the correction kernel.', 'Source and destination alias scope, gain-context access, reusable patch buffers, and bounded physical write coalescing.']
+  };
+  document.querySelectorAll('[data-consumer]').forEach(button => button.addEventListener('click', () => {
+    document.querySelectorAll('[data-consumer]').forEach(item => item.setAttribute('aria-pressed', String(item === button)));
+    const [request, binding] = consumers[button.dataset.consumer];
+    document.getElementById('consumer-request').querySelector('p').textContent = request;
+    document.getElementById('consumer-binding').querySelector('p').textContent = binding;
+  }));
+
+  let eventIndex = 0;
+  const groupStates = [
+    ['No fragments received.', 'No fragments received.'],
+    ['Input open. Job A pending.', 'No fragments received.'],
+    ['Input open. Job A pending.', 'Input closed by Whole. Job B pending; cannot finalize.'],
+    ['Input open. Job A pending.', 'Finalized once. Whole received and job B finished.'],
+    ['Input closed by Last. Jobs A and C pending; cannot finalize.', 'Finalized once.'],
+    ['Input closed. Job C finished; A is still pending. Cannot finalize.', 'Finalized once.'],
+    ['Finalized once. Last received and both jobs finished.', 'Finalized once.']
+  ];
+  function drawEvents() {
+    document.querySelectorAll('#event-list li').forEach((item, i) => {
+      item.classList.toggle('done', i < eventIndex); item.classList.toggle('current', i === eventIndex - 1);
+    });
+    ['group-k0', 'group-k1'].forEach((id, i) => {
+      const panel = document.getElementById(id); panel.textContent = groupStates[eventIndex][i];
+      panel.classList.toggle('finished', panel.textContent.startsWith('Finalized'));
+    });
+    document.getElementById('event-position').textContent = `${eventIndex} of 6 events`;
+    document.getElementById('event-next').disabled = eventIndex === 6;
+    document.getElementById('event-reset').disabled = eventIndex === 0;
+  }
+  document.getElementById('event-next').addEventListener('click', () => { eventIndex = Math.min(6, eventIndex + 1); drawEvents(); });
+  document.getElementById('event-reset').addEventListener('click', () => { eventIndex = 0; drawEvents(); });
+
+  function drawWorkers() {
+    const time = Number(document.getElementById('work-time').value);
+    const durations = [1, 2, 5];
+    document.getElementById('work-time-value').textContent = `${time} / 5`;
+    ['a', 'b', 'c'].forEach((id, i) => {
+      document.getElementById(`worker-${id}`).style.width = `${Math.min(1, time / durations[i]) * 100}%`;
+      document.getElementById(`worker-${id}-label`).textContent = time >= durations[i] ? 'Finished' : time === 0 ? 'Ready' : 'Running';
+    });
+    const owned = durations.filter(duration => time < duration).length * 128;
+    const shared = time < 5 ? 384 : 0;
+    document.getElementById('shared-bytes').textContent = `${shared} MiB retained`;
+    document.getElementById('owned-bytes').textContent = `${owned} MiB retained`;
+    document.querySelectorAll('#shared-memory span').forEach(span => span.classList.toggle('free', shared === 0));
+    document.querySelectorAll('#owned-memory span').forEach((span, i) => span.classList.toggle('free', time >= durations[i]));
+  }
+  document.getElementById('work-time').addEventListener('input', drawWorkers);
+
+  drawLayout('sample');
+  drawEvents();
+  drawWorkers();
+  document.body.classList.add('enhanced');
+  fromHash(false);
+})();
+</script>
+</body>
+</html>

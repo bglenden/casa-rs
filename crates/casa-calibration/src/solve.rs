@@ -13,12 +13,14 @@
 //! should be CASA-compatible on disk and should yield corrected visibilities
 //! close to CASA's own `gaincal` when applied.
 
+#[cfg(test)]
+mod batch_trial;
 pub(crate) mod grouping;
 pub(crate) mod kernel;
 mod trace;
 pub(crate) mod writer;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use casa_ms::MsError;
@@ -293,6 +295,16 @@ pub(crate) fn solve_gain(
     ms: &MeasurementSet,
     request: &GainSolveRequest,
 ) -> Result<GainSolveReport, GainSolveError> {
+    let (solution_rows, refant_id) = solve_gain_rows(ms, request)?;
+    write_gain_caltable(ms, request, refant_id, &solution_rows)
+}
+
+/// The solution rows of [`solve_gain`] and the resolved reference antenna,
+/// before the caltable is written.
+pub(crate) fn solve_gain_rows(
+    ms: &MeasurementSet,
+    request: &GainSolveRequest,
+) -> Result<(Vec<kernel::SolutionRow>, i32), GainSolveError> {
     if matches!(request.model_source, GainSolveModelSource::PointSource) {
         validate_smodel(request.smodel)?;
     } else if !ms
@@ -332,24 +344,14 @@ pub(crate) fn solve_gain(
     for ((base_key, bucket_key), mut group) in groups {
         group.finalize_for_solve(request.solve_mode);
         trace::trace_group(&base_key, &bucket_key, &group, request);
-        // An interval CASA cannot solve gets no rows (`Calibrater::genericGatherAndSolve`
-        // keeps a solution only after one succeeds).
-        let Some(mut group_rows) = solve_group(
+        let Some(group_rows) = solve_closed_group(
             group,
             &context.available_antennas,
-            request.gain_type,
-            request.solve_mode,
+            request,
             context.refant_id,
-            request.min_snr,
-            request.min_baselines_per_antenna,
         ) else {
             continue;
         };
-        if matches!(request.solve_mode, GainSolveMode::AmplitudePhase)
-            && request.normalize_average_amplitude
-        {
-            normalize_gain_solution_amplitudes(&mut group_rows);
-        }
         trace::trace_solution_rows(
             &base_key,
             &bucket_key,
@@ -367,7 +369,34 @@ pub(crate) fn solve_gain(
         context.refant_id,
         &refant_distance_order(ms, context.refant_id)?,
     );
-    write_gain_caltable(ms, request, context.refant_id, &solution_rows)
+    Ok((solution_rows, context.refant_id))
+}
+
+/// Solve one complete group whose accumulation is finalized
+/// ([`grouping::SolveAccumulator::finalize_for_solve`]). An interval CASA
+/// cannot solve gets no rows (`Calibrater::genericGatherAndSolve` keeps a
+/// solution only after one succeeds).
+pub(crate) fn solve_closed_group(
+    group: grouping::SolveAccumulator,
+    available_antennas: &BTreeSet<i32>,
+    request: &GainSolveRequest,
+    refant_id: i32,
+) -> Option<Vec<kernel::SolutionRow>> {
+    let mut group_rows = solve_group(
+        group,
+        available_antennas,
+        request.gain_type,
+        request.solve_mode,
+        refant_id,
+        request.min_snr,
+        request.min_baselines_per_antenna,
+    )?;
+    if matches!(request.solve_mode, GainSolveMode::AmplitudePhase)
+        && request.normalize_average_amplitude
+    {
+        normalize_gain_solution_amplitudes(&mut group_rows);
+    }
+    Some(group_rows)
 }
 
 /// The antennas other than `refant_id`, nearest it first: the alternates
@@ -389,6 +418,12 @@ fn refant_distance_order(ms: &MeasurementSet, refant_id: i32) -> Result<Vec<i32>
             path: "ANTENNA POSITION".to_string(),
             source,
         })?;
+    Ok(nearest_first(&positions, refant_id))
+}
+
+/// The antennas other than `refant_id`, nearest it first, of antennas at
+/// `positions` (ITRF metres, indexed by antenna ID).
+pub(crate) fn nearest_first(positions: &[[f64; 3]], refant_id: i32) -> Vec<i32> {
     let origin = usize::try_from(refant_id)
         .ok()
         .and_then(|row| positions.get(row))
@@ -406,10 +441,10 @@ fn refant_distance_order(ms: &MeasurementSet, refant_id: i32) -> Result<Vec<i32>
         })
         .collect::<Vec<_>>();
     order.sort_by(|left, right| left.0.total_cmp(&right.0).then(left.1.cmp(&right.1)));
-    Ok(order
+    order
         .into_iter()
         .map(|(_, row)| i32::try_from(row).expect("antenna row count fits in i32"))
-        .collect())
+        .collect()
 }
 
 /// Refer each solution interval's phases to a reference antenna, as
@@ -422,7 +457,7 @@ fn refant_distance_order(ms: &MeasurementSet, refant_id: i32) -> Result<Vec<i32>
 /// every antenna, so an alternate is held at constant phase. An interval
 /// with no such antenna is flagged entirely and leaves the last referred
 /// interval in place for the next.
-fn apply_flex_refant(
+pub(crate) fn apply_flex_refant(
     rows: &mut [kernel::SolutionRow],
     preferred_refant_id: i32,
     alternates: &[i32],

@@ -7,7 +7,7 @@
 
 mod common;
 
-use casa_imaging_model::{CorrelationType, PolarizationCoordinate};
+use casa_imaging_model::PolarizationCoordinate;
 use casa_imaging_operator::{
     AiryDish, Basis, CellHold, CfKey, ConvolutionFunctionSet, CpuBackend, GridBackend,
     GridGeometry, GridPadding, GridPrecision, ImageExtent, KernelNormalisation,
@@ -16,11 +16,12 @@ use casa_imaging_operator::{
     PolarizationRouting, RowContext, SampleBuffer, Work, pair_plane,
 };
 use casa_numerics::AnnularApertureVoltageTable;
+use casa_types::Correlation;
 use common::{IMAGE, Rng, buffer, placements, samples};
 use ndarray::Array2;
 use num_complex::{Complex32, Complex64};
 
-const XX_YY: [CorrelationType; 2] = [CorrelationType::LinearXx, CorrelationType::LinearYy];
+const XX_YY: [Correlation; 2] = [Correlation::XX, Correlation::YY];
 const STOKES_I: [PolarizationCoordinate; 1] = [PolarizationCoordinate::StokesI];
 /// 4.1″ cells: the 10.7 m beam spans about sixteen cells at 100 GHz.
 const CELL_RAD: f64 = 2.0e-5;

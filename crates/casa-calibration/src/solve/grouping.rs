@@ -9,7 +9,7 @@ use casa_ms::MsError;
 use casa_ms::ms::MeasurementSet;
 use casa_ms::selection::MsSelection;
 use casa_types::{ArrayValue, Complex32};
-use ndarray::ArrayD;
+use ndarray::{ArrayD, ArrayView2, Ix2};
 
 use super::{
     GainSolveCombine, GainSolveError, GainSolveInterval, GainSolveMode, GainSolveModelSource,
@@ -298,6 +298,47 @@ pub(crate) struct SelectedSolveRow {
     pub(crate) flag_row: bool,
 }
 
+/// What the accumulation reads of a sample's row: its identities, times and
+/// scan, from a MAIN row or from any other source of samples.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct SolveSampleRow {
+    pub(crate) field_id: i32,
+    pub(crate) data_desc_id: i32,
+    pub(crate) antenna1: i32,
+    pub(crate) antenna2: i32,
+    pub(crate) time_seconds: f64,
+    pub(crate) time_centroid_seconds: f64,
+    pub(crate) interval_seconds: f64,
+    pub(crate) scan_number: i32,
+}
+
+impl SolveSampleRow {
+    fn of(row: &SelectedSolveRow) -> Self {
+        Self {
+            field_id: row.field_id,
+            data_desc_id: row.data_desc_id,
+            antenna1: row.antenna1,
+            antenna2: row.antenna2,
+            time_seconds: row.time_seconds,
+            time_centroid_seconds: row.time_centroid_seconds,
+            interval_seconds: row.interval_seconds,
+            scan_number: row.scan_number,
+        }
+    }
+}
+
+/// One sample's arrays for [`SolveAccumulator::observe_samples`], each
+/// `[correlation, channel]` as casacore stores a MAIN cell: the data, the
+/// flags the solve uses (row flags already folded in), the solve weights and
+/// the model, if any.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct SolveSamples<'a> {
+    pub(crate) data: ArrayView2<'a, Complex32>,
+    pub(crate) flags: ArrayView2<'a, bool>,
+    pub(crate) weights: ArrayView2<'a, f32>,
+    pub(crate) model: Option<ArrayView2<'a, Complex32>>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct SolveBaseKey {
     pub(crate) field_id: i32,
@@ -380,12 +421,32 @@ struct WeightedTime {
     weight: f64,
 }
 
-/// One MAIN row's arrays for the solve, `[correlation, channel]`.
+/// One MAIN row's arrays for the solve, `[correlation, channel]`, checked
+/// two-dimensional and of one shape.
 struct SolveRowInputs<'a> {
     data: &'a ArrayD<Complex32>,
     flags: Cow<'a, ArrayD<bool>>,
     weights: ArrayD<f32>,
     model: Option<&'a ArrayD<Complex32>>,
+}
+
+impl SolveRowInputs<'_> {
+    /// The arrays as [`SolveSamples`] views.
+    fn samples(&self) -> SolveSamples<'_> {
+        SolveSamples {
+            data: two_dimensional(self.data),
+            flags: two_dimensional(&self.flags),
+            weights: two_dimensional(&self.weights),
+            model: self.model.map(two_dimensional),
+        }
+    }
+}
+
+/// A MAIN cell checked two-dimensional, as a view.
+fn two_dimensional<T>(cell: &ArrayD<T>) -> ArrayView2<'_, T> {
+    cell.view()
+        .into_dimensionality::<Ix2>()
+        .expect("checked two-dimensional")
 }
 
 impl SolveAccumulator {
@@ -426,17 +487,41 @@ impl SolveAccumulator {
         let correlation_types = correlation_types_for_ddid(ms, row.data_desc_id)?;
         let channel_count = inputs.data.shape()[1];
         let channels = if options.channelized {
-            if self.sample_rows > 0 && self.solution_channels != channel_count {
-                return Err(GainSolveError::UnsupportedParameterShape {
-                    path: "<measurement-set DATA>".to_string(),
-                    shape: inputs.data.shape().to_vec(),
-                });
-            }
-            self.solution_channels = channel_count;
             (0..channel_count).collect()
         } else {
             selected_channels(row, channel_count)?
         };
+        self.observe_samples(
+            &SolveSampleRow::of(row),
+            &inputs.samples(),
+            &correlation_types,
+            &channels,
+            options,
+        )
+    }
+
+    /// Accumulate one sample's `channels` (every channel for a channelized
+    /// solve): the arithmetic of [`Self::observe`] on arrays from any source.
+    /// The MSv2/MSv4 trial (`docs/measurement-set/trial/README.md`) feeds it
+    /// from `casa_observation::VisibilityBatch` views without copying them.
+    pub(crate) fn observe_samples(
+        &mut self,
+        row: &SolveSampleRow,
+        samples: &SolveSamples<'_>,
+        correlation_types: &[i32],
+        channels: &[usize],
+        options: &SolveGroupOptions,
+    ) -> Result<(), GainSolveError> {
+        if options.channelized {
+            let channel_count = samples.data.shape()[1];
+            if self.sample_rows > 0 && self.solution_channels != channel_count {
+                return Err(GainSolveError::UnsupportedParameterShape {
+                    path: "<measurement-set DATA>".to_string(),
+                    shape: samples.data.shape().to_vec(),
+                });
+            }
+            self.solution_channels = channel_count;
+        }
 
         let graph_count = match options.gain_type {
             GainType::G => 2,
@@ -467,11 +552,11 @@ impl SolveAccumulator {
                 GainType::T => 0,
             };
             let mut channel_weights = Vec::with_capacity(channels.len());
-            for &chan_index in &channels {
+            for &chan_index in channels {
                 let weight = self.accumulate_sample(
                     graph_index,
                     row,
-                    &inputs,
+                    samples,
                     options,
                     corr_index,
                     chan_index,
@@ -498,7 +583,7 @@ impl SolveAccumulator {
         Ok(())
     }
 
-    fn observe_metadata(&mut self, row: &SelectedSolveRow) {
+    fn observe_metadata(&mut self, row: &SolveSampleRow) {
         self.min_time = self.min_time.min(row.time_seconds);
         self.max_time = self.max_time.max(row.time_seconds);
         if self.unique_time_bits.insert(row.time_seconds.to_bits()) {
@@ -518,17 +603,17 @@ impl SolveAccumulator {
     fn accumulate_sample(
         &mut self,
         graph_index: usize,
-        row: &SelectedSolveRow,
-        inputs: &SolveRowInputs<'_>,
+        row: &SolveSampleRow,
+        samples: &SolveSamples<'_>,
         options: &SolveGroupOptions,
         corr_index: usize,
         chan_index: usize,
     ) -> f32 {
-        let weight = inputs.weights[[corr_index, chan_index]];
-        if weight <= 0.0 || solve_sample_flagged(&inputs.flags, options.gain_type, chan_index) {
+        let weight = samples.weights[[corr_index, chan_index]];
+        if weight <= 0.0 || solve_sample_flagged(&samples.flags, options.gain_type, chan_index) {
             return 0.0;
         }
-        let model = match inputs.model {
+        let model = match samples.model {
             Some(model_data) => model_data[[corr_index, chan_index]],
             None => Complex32::new(options.stokes_i, 0.0),
         };
@@ -536,7 +621,7 @@ impl SolveAccumulator {
         if model_norm_sqr <= f32::EPSILON {
             return 0.0;
         }
-        let sample = inputs.data[[corr_index, chan_index]] / model;
+        let sample = samples.data[[corr_index, chan_index]] / model;
         if sample.norm() <= f32::EPSILON {
             return 0.0;
         }
@@ -620,6 +705,67 @@ impl SolveAccumulator {
         } else {
             self.aggregate_time()
         };
+    }
+
+    /// Add `other`'s accumulation, of the same group, to this one before
+    /// [`Self::finalize_for_solve`], as if its samples had been observed
+    /// here: the fragment work units of the MSv2/MSv4 trial accumulate apart
+    /// and merge before the group closes. Sums change order, so results
+    /// agree to rounding, not bitwise.
+    #[cfg(test)]
+    pub(crate) fn merge(&mut self, other: Self) {
+        self.min_time = self.min_time.min(other.min_time);
+        self.max_time = self.max_time.max(other.max_time);
+        for bits in other.unique_time_bits {
+            if self.unique_time_bits.insert(bits) {
+                self.unique_time_sum += f64::from_bits(bits);
+                self.unique_time_count += 1;
+            }
+        }
+        self.total_interval += other.total_interval;
+        self.sample_rows += other.sample_rows;
+        self.field_ids.extend(other.field_ids);
+        self.scan_numbers.extend(other.scan_numbers);
+        self.antenna_ids.extend(other.antenna_ids);
+        self.solution_channels = self.solution_channels.max(other.solution_channels);
+        for (baseline, centroid) in other.baseline_centroids {
+            let mine = self.baseline_centroids.entry(baseline).or_default();
+            mine.weighted_sum += centroid.weighted_sum;
+            mine.weight += centroid.weight;
+        }
+        if self.receptor_accumulations.len() < other.receptor_accumulations.len() {
+            self.receptor_accumulations
+                .resize_with(other.receptor_accumulations.len(), HashMap::new);
+        }
+        for (mine, theirs) in self
+            .receptor_accumulations
+            .iter_mut()
+            .zip(other.receptor_accumulations)
+        {
+            for (key, accumulation) in theirs {
+                let entry = mine.entry(key).or_default();
+                entry.weighted_sum += accumulation.weighted_sum;
+                entry.weight += accumulation.weight;
+                entry.weighted_sample_power += accumulation.weighted_sample_power;
+                entry.sample_count += accumulation.sample_count;
+            }
+        }
+    }
+
+    /// Entries the accumulation's sets and maps hold: its state grows with
+    /// the group's distinct times, antennas, baselines and baseline
+    /// correlations, not with its samples.
+    #[cfg(test)]
+    pub(crate) fn state_entries(&self) -> usize {
+        self.unique_time_bits.len()
+            + self.scan_numbers.len()
+            + self.antenna_ids.len()
+            + self.baseline_centroids.len()
+            + self
+                .receptor_accumulations
+                .iter()
+                .map(HashMap::len)
+                .sum::<usize>()
     }
 
     /// The mean of the interval's distinct TIMEs (`SDBList::aggregateTime`,
@@ -808,7 +954,11 @@ pub(crate) fn solve_flags<'a>(
 
 /// Correlation-independent flags, as `CalSolvingVi2::corrIndepFlags` makes
 /// them: a channel any correlation flags is flagged for all.
-fn solve_sample_flagged(flags: &ArrayD<bool>, gain_type: GainType, chan_index: usize) -> bool {
+fn solve_sample_flagged(
+    flags: &ArrayView2<'_, bool>,
+    gain_type: GainType,
+    chan_index: usize,
+) -> bool {
     match gain_type {
         GainType::G | GainType::T => {
             (0..flags.shape()[0]).any(|corr_index| flags[[corr_index, chan_index]])

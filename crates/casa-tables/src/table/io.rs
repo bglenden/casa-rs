@@ -1442,6 +1442,28 @@ impl Table {
             })
     }
 
+    /// The tile shape of a tiled array column, in casacore's axis order
+    /// (the cell's axes, then rows): the store's natural read unit.
+    ///
+    /// Non-tiled columns and in-memory tables return `Ok(None)`.
+    ///
+    /// # Errors
+    ///
+    /// When the table's description or the manager's header cannot be read.
+    pub fn array_column_tile_shape(&self, column: &str) -> Result<Option<Vec<usize>>, TableError> {
+        let Some(path) = self.path() else {
+            return Ok(None);
+        };
+        crate::storage::CompositeStorage
+            .array_column_tile_shape(path, column)
+            .map_err(|err| {
+                TableError::Storage(format!(
+                    "failed to inspect the tile shape of column '{column}' in table {}: {err}",
+                    path.display()
+                ))
+            })
+    }
+
     /// Returns the channel-axis tile width for a tiled rank-2 array column.
     ///
     /// Non-tiled columns, in-memory tables, or columns whose tiled shape is not
