@@ -125,7 +125,7 @@ impl Msv4Observation {
         let mut observation = Self {
             catalogue: Arc::new(Catalogue::default()),
             datasets: Vec::new(),
-            options: CodecOptions::default().with_concurrent_target(1),
+            options: super::codec_options(),
             open: options.clone(),
         };
         for name in names {

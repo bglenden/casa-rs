@@ -459,7 +459,7 @@ impl Msv4Writer {
             written: vec![false; grid.times_s.len()],
             chunk_times,
             target,
-            options: CodecOptions::default().with_concurrent_target(1),
+            options: super::codec_options(),
             scratch: payload::Scratch::default(),
             held: chunks::Held::default(),
             counters: Msv4WriteCounters::default(),
