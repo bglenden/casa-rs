@@ -542,9 +542,11 @@ This is delivered as four PRs, in order.
 - **5d:** `synthetic-ms`, a developer binary hosting the old family mode
   unchanged, with its callers moved to it. Rebuilding the families on the
   new session stays in Phase 7.
-- **5c:** the `simobserve` task at contract 5 on the session. Owner decision,
-  2026-10-26: `overwrite` keeps CASA's default, True, with no confirmation,
-  since the task writes only inside its project directory.
+- **5c:** the `simobserve` task at contract 5 on the session, with the
+  `alma/simmos` data-path resolver its antenna-list search uses (moved from
+  5a). Owner decision, 2026-10-26: `overwrite` keeps CASA's default, True,
+  with no confirmation, since the task writes only inside its project
+  directory.
 - **5e:** graphics, rendered in Python from Rust plot documents, and
   `.quick.psf`.
 - **The acceptance data:** the ppdisk model is casatestdata's
