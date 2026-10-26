@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! A narrow MSv4 writer: one known-shape `VisibilityXds` dataset in a new
-//! local processing set, filled from batches and published whole.
+//! A narrow MSv4 writer: known-shape `VisibilityXds` datasets in a new
+//! local processing set ([`Msv4ProcessingSetWriter`]), each filled from
+//! batches ([`Msv4Writer`]) and the set published whole.
 //!
 //! What the dataset *is* comes from the common vocabulary: the source's
 //! [`Catalogue`] (antennas, fields, scans, the partition and its data
@@ -17,15 +18,17 @@
 //! from batches whose coordinates and context match the declaration
 //! ([`Msv4Writer::write_batch`]); the payload variables' fill values are
 //! the padding convention (flag true, values and weights NaN, as XRADIO
-//! pads them), so a cell never delivered reads back as padding; the store
-//! is built in a staging directory of its own and published only by
-//! [`Msv4Writer::finish`].
+//! pads them), so a cell never delivered reads back as padding; the
+//! processing set is built in a staging directory of its own and published
+//! only by [`Msv4ProcessingSetWriter::finish`].
 
 mod chunks;
 mod payload;
+mod set;
+
+pub use set::Msv4ProcessingSetWriter;
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use casa_observation::{
@@ -118,11 +121,12 @@ struct Payload {
     exposure: Array<FilesystemStore>,
 }
 
-/// A dataset being created.
+/// One dataset of a processing set being created
+/// ([`Msv4ProcessingSetWriter::dataset`]).
 pub struct Msv4Writer {
-    /// The staging directory, until published or removed.
-    staging: Option<PathBuf>,
-    destination: PathBuf,
+    /// The dataset's name in the processing set.
+    dataset: String,
+    registry: Arc<set::Registry>,
     payload: Option<Payload>,
     target: Destination,
     shape: [usize; 4],
@@ -387,38 +391,23 @@ fn destination(
 }
 
 impl Msv4Writer {
-    /// Create the dataset that `catalogue`'s partition `partition`, data
-    /// group `data_group` and `grid` describe, in a new processing set at
-    /// `processing_set`, stored as `options` say. Every coordinate and
-    /// sub-dataset is written now, into a staging directory of this
-    /// writer's own; the payload follows from [`Self::write_batch`], and
-    /// nothing appears at `processing_set` until [`Self::finish`].
-    ///
-    /// # Errors
-    ///
-    /// When `processing_set` exists, the declaration is inconsistent, or a
-    /// frame, scale or unit is outside the profile.
-    pub fn create(
-        processing_set: &Path,
+    /// Write the dataset's coordinates and sub-datasets into `store` and
+    /// create its payload variables ([`Msv4ProcessingSetWriter::dataset`]).
+    fn create(
+        store: &Arc<FilesystemStore>,
+        registry: &Arc<set::Registry>,
         catalogue: &Catalogue,
         partition: PartitionId,
         data_group: &str,
         grid: &TimeBaselineGrid,
         options: &Msv4StorageOptions,
     ) -> Result<Self, ObservationError> {
-        if processing_set.exists() {
-            return Err(request_error(format!(
-                "{} exists",
-                processing_set.display()
-            )));
-        }
         let (target, unix_times) = destination(catalogue, partition, data_group, grid)?;
         let chunk_times = usize::try_from(options.chunks[0].max(1))
             .map_err(|_| request_error("a chunk of more times than a usize holds"))?;
-        let staging = payload::create_staging(processing_set)?;
         let mut writer = Self {
-            staging: Some(staging.clone()),
-            destination: processing_set.to_path_buf(),
+            dataset: options.dataset_name.clone(),
+            registry: registry.clone(),
             payload: None,
             shape: [
                 grid.times_s.len(),
@@ -434,22 +423,19 @@ impl Msv4Writer {
             held: chunks::Held::default(),
             counters: Msv4WriteCounters::default(),
         };
-        // From here a failure drops the writer, which removes its staging.
-        let store = Arc::new(FilesystemStore::new(&staging).map_err(storage)?);
-        create_group(&store, "/", json!({"type": "processing_set"}))?;
         let root = format!("/{}", options.dataset_name);
         let fields_xds = format!("field_and_source_{data_group}_xds");
         let observation = catalogue.observation(writer.target.entry.observation);
-        writer.write_main_group(&store, &root, observation, options, &fields_xds)?;
-        writer.write_coordinates(&store, &root, catalogue, &unix_times)?;
+        writer.write_main_group(store, &root, observation, options, &fields_xds)?;
+        writer.write_coordinates(store, &root, catalogue, &unix_times)?;
         write_antennas(
-            &store,
+            store,
             &format!("{root}/antenna_xds"),
             catalogue,
             &observation.telescope,
         )?;
-        writer.write_fields(&store, &format!("{root}/{fields_xds}"), catalogue)?;
-        writer.payload = Some(writer.create_payload(&store, &root, options)?);
+        writer.write_fields(store, &format!("{root}/{fields_xds}"), catalogue)?;
+        writer.payload = Some(writer.create_payload(store, &root, options)?);
         Ok(writer)
     }
 
@@ -973,8 +959,7 @@ fn write_antennas(
 impl std::fmt::Debug for Msv4Writer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Msv4Writer")
-            .field("staging", &self.staging)
-            .field("destination", &self.destination)
+            .field("dataset", &self.dataset)
             .field("shape", &self.shape)
             .finish_non_exhaustive()
     }

@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use casa_ms::MeasurementSet;
-use casa_ms::observation_io::{Msv2Observation, Msv4Observation, Msv4Writer};
+use casa_ms::observation_io::{Msv2Observation, Msv4Observation, Msv4ProcessingSetWriter};
 use casa_observation::{
     AccessRequest, BatchBuffers, FieldId, Grouping, ObservationError, PartitionId, ReadEvent, Roles,
 };
@@ -193,14 +193,9 @@ fn the_msv2_time_reference_is_read_not_assumed() {
     assert_eq!(grid.time_scale, EpochRef::TAI);
     assert!(
         matches!(
-            Msv4Writer::create(
-                &root.path().join("tai.ps.zarr"),
-                v2.catalogue(),
-                PartitionId(0),
-                "base",
-                &grid,
-                &storage(),
-            ),
+            Msv4ProcessingSetWriter::create(&root.path().join("tai.ps.zarr"))
+                .expect("create")
+                .dataset(v2.catalogue(), PartitionId(0), "base", &grid, &storage()),
             Err(ObservationError::Unsupported { .. })
         ),
         "the writer does not label TAI seconds as unix/utc"

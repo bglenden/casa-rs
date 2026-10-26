@@ -1,13 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! The writer's payload: each batch checked against the declaration before
 //! any byte is written, encoded from its views where they are already in
-//! the stored layout and in whole chunks (`chunks`), and the dataset
-//! published from a staging directory of its own.
+//! the stored layout and in whole chunks (`chunks`).
 
-use std::io;
 use std::ops::Range;
-use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use casa_observation::{ObservationError, ScanId, Shared, VisibilityBatch};
 use casa_types::measures::{EpochView, MjdHighPrec, UvwView};
@@ -334,20 +330,17 @@ impl Msv4Writer {
         }
     }
 
-    /// Check every time was written, store any times still held, and
-    /// publish the processing set by
-    /// renaming this writer's staging directory to the destination, which
-    /// must still not exist: the rename refuses to replace it (Linux
-    /// `renameat2(RENAME_NOREPLACE)`, macOS `renamex_np(RENAME_EXCL)`). A
-    /// writer dropped or failing removes its staging directory; a crash
-    /// leaves it under a name no later writer reuses.
+    /// Check every time was written and store any times still held; the
+    /// dataset is then complete, and its processing set may be published
+    /// ([`Msv4ProcessingSetWriter::finish`](super::Msv4ProcessingSetWriter::finish)).
+    /// Returns what the writer did.
     ///
     /// # Errors
     ///
-    /// When a time was not written, or the destination appeared meanwhile
-    /// (another writer published first): the staging directory is then
-    /// removed and nothing is replaced.
-    pub fn finish(mut self) -> Result<PathBuf, ObservationError> {
+    /// When a time was not written, or the held times cannot be stored:
+    /// the dataset stays incomplete and its processing set cannot be
+    /// published.
+    pub fn finish(mut self) -> Result<Msv4WriteCounters, ObservationError> {
         if let Some(time) = self.written.iter().position(|done| !done) {
             return Err(invalid(format!("time {time} was never written")));
         }
@@ -361,63 +354,8 @@ impl Msv4Writer {
                 self.written.len(),
             )?;
         }
-        drop(self.payload.take());
-        let staging = self.staging.take().expect("staging until finish");
-        match rename_noreplace(&staging, &self.destination) {
-            Ok(()) => Ok(std::mem::take(&mut self.destination)),
-            Err(error) => {
-                let _ = std::fs::remove_dir_all(&staging);
-                if error.kind() == io::ErrorKind::AlreadyExists {
-                    Err(request_error(format!(
-                        "{} appeared while the dataset was written; not replaced",
-                        self.destination.display()
-                    )))
-                } else {
-                    Err(storage(error))
-                }
-            }
-        }
-    }
-}
-
-impl Drop for Msv4Writer {
-    fn drop(&mut self) {
-        if let Some(staging) = self.staging.take() {
-            drop(self.payload.take());
-            let _ = std::fs::remove_dir_all(staging);
-        }
-    }
-}
-
-/// A new staging directory beside `destination`, created exclusively under
-/// a name unique to this process and call: two live writers, or a retry
-/// after a crash, never share one, and an existing directory is never
-/// adopted.
-pub(super) fn create_staging(destination: &Path) -> Result<PathBuf, ObservationError> {
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    let name = destination
-        .file_name()
-        .ok_or_else(|| request_error(format!("{} has no file name", destination.display())))?
-        .to_string_lossy()
-        .into_owned();
-    let parent = destination
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."));
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_nanos());
-    loop {
-        let candidate = parent.join(format!(
-            ".{name}.staging-{}-{nanos}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-        match std::fs::create_dir(&candidate) {
-            Ok(()) => return Ok(candidate),
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
-            Err(error) => return Err(storage(error)),
-        }
+        self.registry.finished(&self.dataset);
+        Ok(self.counters)
     }
 }
 
@@ -471,68 +409,4 @@ fn release(
     }
     held.clear();
     Ok(())
-}
-
-/// Rename `from` to `to`, failing with `AlreadyExists` rather than replace
-/// anything at `to`: `renameat2(RENAME_NOREPLACE)`, or the checked rename
-/// where the filesystem does not offer it.
-#[cfg(all(target_os = "linux", target_env = "gnu"))]
-fn rename_noreplace(from: &Path, to: &Path) -> io::Result<()> {
-    let (c_from, c_to) = (c_path(from)?, c_path(to)?);
-    // SAFETY: both paths are NUL-terminated C strings that outlive the
-    // call; renameat2 reads them only.
-    let result = unsafe {
-        libc::renameat2(
-            libc::AT_FDCWD,
-            c_from.as_ptr(),
-            libc::AT_FDCWD,
-            c_to.as_ptr(),
-            libc::RENAME_NOREPLACE,
-        )
-    };
-    if result == 0 {
-        return Ok(());
-    }
-    let error = io::Error::last_os_error();
-    if matches!(error.raw_os_error(), Some(libc::EINVAL | libc::ENOSYS)) {
-        checked_rename(from, to)
-    } else {
-        Err(error)
-    }
-}
-
-/// [`rename_noreplace`] through `renamex_np(RENAME_EXCL)`.
-#[cfg(target_os = "macos")]
-fn rename_noreplace(from: &Path, to: &Path) -> io::Result<()> {
-    let (c_from, c_to) = (c_path(from)?, c_path(to)?);
-    // SAFETY: as for renameat2: NUL-terminated paths, read only.
-    let result = unsafe { libc::renamex_np(c_from.as_ptr(), c_to.as_ptr(), libc::RENAME_EXCL) };
-    if result == 0 {
-        Ok(())
-    } else {
-        Err(io::Error::last_os_error())
-    }
-}
-
-/// [`rename_noreplace`] where no exclusive rename is available.
-#[cfg(not(any(target_os = "macos", all(target_os = "linux", target_env = "gnu"))))]
-fn rename_noreplace(from: &Path, to: &Path) -> io::Result<()> {
-    checked_rename(from, to)
-}
-
-/// A check and a rename: a narrow race this trial accepts where the
-/// platform or filesystem offers no exclusive rename.
-#[cfg(not(target_os = "macos"))]
-fn checked_rename(from: &Path, to: &Path) -> io::Result<()> {
-    if to.exists() {
-        return Err(io::Error::from(io::ErrorKind::AlreadyExists));
-    }
-    std::fs::rename(from, to)
-}
-
-/// `path` as a C string.
-#[cfg(any(target_os = "macos", all(target_os = "linux", target_env = "gnu")))]
-fn c_path(path: &Path) -> io::Result<std::ffi::CString> {
-    use std::os::unix::ffi::OsStrExt;
-    Ok(std::ffi::CString::new(path.as_os_str().as_bytes())?)
 }

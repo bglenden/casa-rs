@@ -18,4 +18,6 @@ mod write;
 
 pub use cursor::Msv4Cursor;
 pub use read::Msv4Observation;
-pub use write::{Msv4Codec, Msv4StorageOptions, Msv4WriteCounters, Msv4Writer};
+pub use write::{
+    Msv4Codec, Msv4ProcessingSetWriter, Msv4StorageOptions, Msv4WriteCounters, Msv4Writer,
+};
