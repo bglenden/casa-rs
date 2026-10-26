@@ -965,6 +965,7 @@ source. Partitions are converted `workers` at a time.
 | `partitions_of_one_window_share_its_name_and_rows` | An MSv2 whose times fall in two sessions has two partitions of one window; both keep the window's one name (`_0`, its row) in the MSv4, and come back as one `SPECTRAL_WINDOW` row and one data description, the two `OBSERVATION` rows each spanning its own times; every sample equal. |
 | `keys_and_subtable_rows_the_destination_drops_are_losses` | An `ARRAY_ID` of 1 is refused as a loss until columns are accepted; then the report names `ARRAY_ID` and a `PROCESSOR` of two rows. |
 | `ephemeris_fields_are_refused` | A field with an `EPHEMERIS_ID` is refused as unsupported; nothing is created. |
+| `a_flag_category_held_in_any_row_is_a_loss` | A `FLAG_CATEGORY` cell held in a middle row only is found (every row is read, in chunks, the first and last first) and refused until flag categories are accepted; nothing is created. |
 | `only_the_telescopes_xradio_renames_get_station_names` | The fixture's antennas, renamed `NAME_STATION` as a VLA's, keep their names when the telescope is MeerKAT. |
 
 **Measurements on `pilot.ms`** (Mac mini `bg-mac-mini`: Apple M2, 8

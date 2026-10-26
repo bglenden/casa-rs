@@ -304,20 +304,37 @@ fn subtables(ms: &crate::MeasurementSet, losses: &mut Vec<Loss>) -> Result<(), O
     Ok(())
 }
 
+/// Rows of `FLAG_CATEGORY` read at once: an undefined or empty cell costs
+/// nothing to read, and a held one ends the search, so this bounds the
+/// cells read past the first held one.
+const CATEGORY_CHUNK: usize = 4096;
+
 /// Whether MAIN's `FLAG_CATEGORY` holds categories: a defined cell with
-/// elements, at the first or the last row (writers fill the column whole
-/// or leave it undefined throughout).
+/// elements in any row. The first and last rows are read first, since
+/// writers usually fill the column whole or leave it undefined throughout.
 fn flag_categories_held(main: &casa_tables::Table) -> Result<bool, ObservationError> {
     let rows = main.row_count();
     if rows == 0 {
         return Ok(false);
     }
+    let column = main.column_accessor("FLAG_CATEGORY").map_err(storage)?;
     // Uncached: the inventory then reads FLAG_ROW from the lazy table.
-    let cells = main
-        .column_accessor("FLAG_CATEGORY")
-        .and_then(|column| column.array_cells_owned_uncached(&[0, rows - 1]))
-        .map_err(storage)?;
-    Ok(cells.iter().flatten().any(|cell| !cell.is_empty()))
+    let held = |chunk: &[usize]| {
+        column
+            .array_cells_owned_uncached(chunk)
+            .map(|cells| cells.iter().flatten().any(|cell| !cell.is_empty()))
+            .map_err(storage)
+    };
+    if held(&[0, rows - 1])? {
+        return Ok(true);
+    }
+    for start in (1..rows.saturating_sub(1)).step_by(CATEGORY_CHUNK) {
+        let chunk: Vec<usize> = (start..(rows - 1).min(start + CATEGORY_CHUNK)).collect();
+        if held(&chunk)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// The main dataset's variables the writer writes, coordinates included.

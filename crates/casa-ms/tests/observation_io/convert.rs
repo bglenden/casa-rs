@@ -785,3 +785,39 @@ fn only_the_telescopes_xradio_renames_get_station_names() {
         .collect();
     assert_eq!(converted, names);
 }
+
+/// `FLAG_CATEGORY` held in one row only, neither the first nor the last,
+/// is still found, and refused until flag categories are accepted.
+#[test]
+fn a_flag_category_held_in_any_row_is_a_loss() {
+    let root = tempfile::tempdir().expect("root");
+    let v2 = fixture(root.path(), "ms_trial.ms");
+    let mut ms = casa_ms::MeasurementSet::open(&v2).expect("ms");
+    let middle = ms.main_table().row_count() / 2;
+    let mut shape = ms
+        .main_table()
+        .cell_accessor(middle, "FLAG")
+        .and_then(|cell| cell.array_shape())
+        .expect("FLAG shape")
+        .expect("an array");
+    shape.push(1);
+    let cells = shape.iter().product();
+    ms.main_table_mut()
+        .cell_accessor_mut(middle, "FLAG_CATEGORY")
+        .and_then(|mut cell| {
+            cell.set(casa_types::Value::Array(casa_types::ArrayValue::Bool(
+                ndarray::ArrayD::from_shape_vec(shape, vec![false; cells]).expect("shape"),
+            )))
+        })
+        .expect("one category");
+    ms.save().expect("save");
+    drop(ms);
+    let out = root.path().join("categories.ps.zarr");
+    let accept = [LossKind::Sigma, LossKind::Tables];
+    let refused = to_msv4(&v2, &out, &options(&accept));
+    assert!(
+        matches!(refused, Err(ObservationError::InvalidRequest { ref reason }) if reason.contains("FLAG_CATEGORY")),
+        "{refused:?}"
+    );
+    assert!(!out.exists());
+}
