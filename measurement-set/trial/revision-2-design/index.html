@@ -1,0 +1,1549 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Rust and Python APIs for CASA-compatible data and tasks">
+      
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
+    
+    
+      
+        <title>MSv2/MSv4 trial: revision 2 design record - casa-rs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/stylesheets/main.57a0d79d.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#msv2msv4-trial-revision-2-design-record" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../../.." title="casa-rs" class="md-header__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            casa-rs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              MSv2/MSv4 trial: revision 2 design record
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../../.." title="casa-rs" class="md-nav__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    casa-rs
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Task Parameters
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Task Parameters
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../task-parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../reference/task-parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Generated Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../rust-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rust API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Python
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../python/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../python/data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../python/tasks-calibrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Calibrate Tasks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../python/versioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../python/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-principle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The principle
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#vocabulary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Vocabulary
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#decisions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Decisions
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Decisions">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#d1-no-redundant-copies-in-the-batch-accepted" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        D1. No redundant copies in the batch (accepted)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#d2-a-partition-is-a-store-unit-described-by-content-keys-accepted" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        D2. A partition is a store unit described by content keys (accepted)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#d3-one-topology-msv2-rows-are-gridded-at-binding-accepted" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        D3. One topology: MSv2 rows are gridded at binding (accepted)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#d4-duplicate-time-baseline-rows-judgement-accepted-by-the-owner" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        D4. Duplicate (time, baseline) rows (judgement, accepted by the owner)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#d5-flag_row-folded-one-weight-view-judgement-accepted-by-the-owner" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        D5. FLAG_ROW folded; one weight view (judgement, accepted by the owner)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#d6-the-request-selects-a-partition-set-one-cursor-per-partition-accepted" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        D6. The request selects a partition set; one cursor per partition (accepted)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#d7-a-byte-budget-replaces-max_samples-with-inquiry-functions-accepted" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        D7. A byte budget replaces max_samples, with inquiry functions (accepted)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#d8-the-estimate-reports-the-stores-natural-blocks-accepted" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        D8. The estimate reports the store's natural blocks (accepted)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#d9-layout-is-deleted-accepted" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        D9. Layout is deleted (accepted)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#d10-estimate-the-inquiry-function-accepted" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        D10. estimate: the inquiry function (accepted)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#d11-bind_read-returns-a-traversal-accepted" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        D11. bind_read returns a traversal (accepted)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#d12-end-of-stream-without-a-buffer-accepted" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        D12. End of stream without a buffer (accepted)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#d13-scan-in-the-group-key-origin-per-field-scan-accepted" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        D13. Scan in the group key; origin per (field, scan) (accepted)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#d14-grouping-gains-casas-other-intervals-accepted" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        D14. Grouping gains CASA's other intervals (accepted)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#d15-groups-across-partitions-stay-the-consumers-accepted" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        D15. Groups across partitions stay the consumer's (accepted)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#d16-validity-stays-an-inline-rule-optional-mask-judgement" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        D16. Validity stays an inline rule; optional mask (judgement)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#d17-correlations-and-flag-policy-in-the-request-judgement" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        D17. Correlations and flag policy in the request (judgement)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#d18-one-correlation-vocabulary-and-a-uvw-measure-in-casa-types-judgement" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        D18. One correlation vocabulary and a UVW measure in casa-types (judgement)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#d19-measure-views-are-built-from-buffers-plus-the-catalogue-entry-judgement" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        D19. Measure views are built from buffers plus the catalogue entry (judgement)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#d20-times-stay-offsets-in-the-stores-scale-judgement" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        D20. Times stay offsets in the store's scale (judgement)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#d21-uvwview-carries-muvw-judgement" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        D21. UvwView carries MUvw (judgement)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#d22-the-payload-is-complex32-judgement" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        D22. The payload is Complex32 (judgement)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#d23-one-creation-declaration-for-both-stores-judgement" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        D23. One creation declaration for both stores (judgement)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#d24-writer-fill-values-are-the-padding-convention-judgement" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        D24. Writer fill values are the padding convention (judgement)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#d25-calibrationbinding-as-contract-judgement" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        D25. CalibrationBinding as contract (judgement)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#facts-verified-during-the-walkthrough" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Facts verified during the walkthrough
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#readme-open-questions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        README open questions
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#risks-and-checks-to-carry-into-revision-2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Risks and checks to carry into revision 2
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#suggested-implementation-order" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Suggested implementation order
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-the-implementation-did-with-each-decision" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What the implementation did with each decision
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#revision-3-refinements" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Revision 3 refinements
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#revision-4-refinements" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Revision 4 refinements
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#provenance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Provenance
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="msv2msv4-trial-revision-2-design-record">MSv2/MSv4 trial: revision 2 design record<a class="headerlink" href="#msv2msv4-trial-revision-2-design-record" title="Permanent link">&para;</a></h1>
+<p>Status: design decisions for revision 2, agreed with the owner on 2026-10-24, implemented on the trial branch on 2026-10-25 (deviations listed under "What the implementation did with each decision"; D18 completed after the ADR-0016 amendment of the same day); refined in revisions 3 and 4 ("Revision 3 refinements", "Revision 4 refinements"); the read contract frozen narrowly for M2 by the owner on 2026-10-25
+Truth class: proposed design
+Date: 2026-10-25
+Evidence index: <a href="../">README.md</a>
+Design branch: <a href="../../architecture/">architecture.md</a>, <a href="../../contracts/">contracts.md</a></p>
+<p>This records the design walkthrough of the trial's shared boundary, held with
+the owner after revision 1 (head <code>2b07a37</code>). It is the durable record of the
+decisions, the reasons for them and the facts they rest on, so that revision 2
+can be implemented from it and reviewed against it. Decisions D1 to D15 were
+taken by the owner; D16 to D25 were delegated to the agent's judgement after
+the owner found the questions detailed enough, and are marked so.</p>
+<h2 id="the-principle">The principle<a class="headerlink" href="#the-principle" title="Permanent link">&para;</a></h2>
+<p><strong>MSv4 is the future.</strong> The shared interface reflects MSv4's native
+capabilities, and the MSv2 adapter assembles MSv2 data into those same
+structures. Where the two stores differ, the interface takes MSv4's shape and
+the MSv2 adapter does the work of fitting, once, at opening or binding. A
+consumer must not be able to tell which store it is reading from the batch.</p>
+<h2 id="vocabulary">Vocabulary<a class="headerlink" href="#vocabulary" title="Permanent link">&para;</a></h2>
+<p>These terms go into <code>GLOSSARY.md</code> with the revision.</p>
+<ul>
+<li><strong>Sample.</strong> One (time, baseline) point: an MSv4 <code>[time, baseline]</code> cell, or
+  an MSv2 row placed on that grid. Payload arrays are
+  <code>[sample, channel, correlation]</code>.</li>
+<li><strong>Batch shape.</strong> What one batch covers: the partition set, the channel
+  window, the roles read, and the number of whole times the byte budget
+  allows. Applications differ here: cube imaging takes a narrow channel window
+  and many times; <code>gaincal</code> takes every channel and time blocks; MFS takes
+  every channel and every time the budget allows.</li>
+<li><strong>Traversal order.</strong> The order batches arrive. Within one cursor it is
+  fixed: time blocks of one channel window of one partition, in time order.
+  Across the observation it is the consumer's, expressed by which cursors it
+  binds and runs, and when: one cursor per channel window for a cube, one
+  cursor for <code>gaincal</code>, one cursor per partition in parallel.</li>
+<li><strong>Payload order.</strong> The element order inside one batch:
+  <code>[sample, channel, correlation]</code>, correlation fastest, with the sample index
+  <code>t * B + b</code>. Both stores deliver it without a transpose (MSv4's dimension
+  order flattened; MSv2 cells <code>[correlation, channel]</code> concatenated by row). A
+  channel-major view is free (<code>permuted_axes</code>), contiguity per plane is not.</li>
+</ul>
+<h2 id="decisions">Decisions<a class="headerlink" href="#decisions" title="Permanent link">&para;</a></h2>
+<p>Each entry gives the decision, why, and what it changes. "Accepted" means
+the owner decided; "judgement" means delegated.</p>
+<h3 id="d1-no-redundant-copies-in-the-batch-accepted">D1. No redundant copies in the batch (accepted)<a class="headerlink" href="#d1-no-redundant-copies-in-the-batch-accepted" title="Permanent link">&para;</a></h3>
+<p>Per-partition constants live once in the <code>Catalogue</code>, linked from the batch by
+<code>PartitionId</code>: channel frequencies, their frame and widths; the correlation
+list; the data group's name, units and UVW frame; the MSv4 baseline table; and
+the time system (scale and epoch origin, today in every <code>BatchHeader</code>). The
+batch keeps <code>first_channel</code> and its channel count and drops <code>frequency</code>,
+<code>correlations</code>, <code>group_name</code> and <code>units</code>; <code>BatchFill::finish</code> and
+<code>BatchBuffers::pack</code> stop copying and checking them. "Same setup as the last
+batch" is <code>PartitionId</code> equality. Application code caches if it needs to.</p>
+<p>Why: the link already existed (<code>batch.partition</code> and
+<code>Catalogue::partition(id)</code>); the copies at <code>msv4/cursor.rs:347-356</code> and
+<code>msv2/mod.rs:379-384</code> were a second description that had to be rechecked.</p>
+<h3 id="d2-a-partition-is-a-store-unit-described-by-content-keys-accepted">D2. A partition is a store unit described by content keys (accepted)<a class="headerlink" href="#d2-a-partition-is-a-store-unit-described-by-content-keys-accepted" title="Permanent link">&para;</a></h3>
+<p><code>PartitionEntry</code> states what defines the partition: spectral window,
+correlation setup, intents (<code>OBS_MODE</code>), observation, ephemeris, and field or
+scan when the partition scheme split by them. The MSv2 adapter partitions the
+way XRADIO does by default (<code>DATA_DESC_ID</code> × <code>OBS_MODE</code> × <code>OBSERVATION_ID</code> ×
+<code>EPHEMERIS_ID</code>, <code>partition_scheme=[]</code>), so the same observation opens as the
+same partition set from either store. The opening options take the scheme, so
+an MSv2 can be presented like a given conversion. Cross-store matching uses
+content keys, never list positions.</p>
+<p>Why: today an MSv2 partition is one <code>DATA_DESCRIPTION</code> row and an MSv4
+partition is one dataset, which XRADIO splits further; the fixture had one of
+everything, so the mismatch never showed. Consequences accepted by the owner:
+more and smaller partitions (an MSv2 with 100 spectral windows, 3 intents and
+2 observations opens as up to 600); imaging one spectral window reads several
+partitions, which can run in parallel; MSv2 opening reads one more MAIN
+integer column (<code>OBSERVATION_ID</code>); the calibration test stops renumbering
+partitions by hand.</p>
+<h3 id="d3-one-topology-msv2-rows-are-gridded-at-binding-accepted">D3. One topology: MSv2 rows are gridded at binding (accepted)<a class="headerlink" href="#d3-one-topology-msv2-rows-are-gridded-at-binding-accepted" title="Permanent link">&para;</a></h3>
+<p><code>SampleTopology::Irregular</code> is deleted. The MSv2 adapter builds the time ×
+baseline grid at binding as XRADIO's converter does: unique times, unique
+baselines, every row mapped to a cell (<code>ANTENNA1</code> and <code>ANTENNA2</code> join the
+columns the binding index reads). A cell with no row is <strong>padding</strong>: flag
+true, weight 0, values NaN. A time block without holes, which the index knows,
+is filled directly as today. Field and scan become per time; binding asserts
+that every row at one time shares a field. Row order stops mattering, which
+removes the "rows not in time order" refusal.</p>
+<p>No presence mask, no <code>Occupancy</code> enum, no refusal threshold: the owner asked
+for the simplest form ("read whatever is there and flag it"). Binding may
+report the padded-cell fraction in the estimate, since it has the row count
+and T × B in hand; nothing acts on it.</p>
+<p>Why "both" (flag and NaN): the MSv4 main-dataset schema is silent on missing
+cells; where the schema does pad (the phased-array sub-dataset,
+<code>schema.py:1993-2000</code>) it pads offsets with NaN and flags with True. XRADIO's
+converter pads NaN with FLAG = false, which <code>validity()</code> still excludes
+through the non-finite test; flag statistics would differ for padded cells
+between our MSv2 read and an XRADIO conversion of the same MS. That is
+XRADIO's divergence from its schema's own precedent and is recorded, not
+copied. The cost is memory proportional to the padding fraction (an antenna
+dropping out partway pads its baselines for the rest: 26 of 351 for the VLA);
+padded cells are not read from disk. Baseline-dependent averaging would pad
+heavily; so would XRADIO; no fixture exercises it.</p>
+<h3 id="d4-duplicate-time-baseline-rows-judgement-accepted-by-the-owner">D4. Duplicate (time, baseline) rows (judgement, accepted by the owner)<a class="headerlink" href="#d4-duplicate-time-baseline-rows-judgement-accepted-by-the-owner" title="Permanent link">&para;</a></h3>
+<p>The feed pair (<code>FEED1</code>, <code>FEED2</code>) becomes a partition content key, so a
+multi-feed MSv2 opens as one partition per feed pair (MSv4 has no feed axis in
+the main dataset). <code>PROCESSOR_ID</code> must be single per partition, as XRADIO
+requires. Any collision left after that is a true duplicate and binding
+refuses it, naming the rows. Never "last row wins".</p>
+<p>Why: the MSv2 main key is wider than (TIME, ANTENNA1, ANTENNA2, DATA_DESC_ID);
+XRADIO ignores the feed and keeps the last colliding row silently
+(<code>_tables/read.py:1494</code>). The design table (<code>architecture.md</code>, "Duplicate
+(time, ordered baseline) acquisitions") already asks for reject-or-split.</p>
+<h3 id="d5-flag_row-folded-one-weight-view-judgement-accepted-by-the-owner">D5. <code>FLAG_ROW</code> folded; one weight view (judgement, accepted by the owner)<a class="headerlink" href="#d5-flag_row-folded-one-weight-view-judgement-accepted-by-the-owner" title="Permanent link">&para;</a></h3>
+<p>The MSv2 adapter folds <code>FLAG_ROW</code> into the flag cube at fill (effective
+<code>FLAG OR FLAG_ROW</code>, the rule the design table already gives for conversion);
+<code>DataGroupView::row_flags</code> is deleted. Accepted consequences: our MSv2 read is
+stricter than today's production <code>gaincal</code>, which ignores <code>FLAG_ROW</code>, on rows
+flagged only by it (whether that is also CASA's behaviour is the check queued
+in the README); an XRADIO-converted MSv4 of the same MS has fewer flags,
+because XRADIO drops <code>FLAG_ROW</code> upstream, and the reader does not repair that.</p>
+<p>Weights are one view, <code>[sample, channel, correlation]</code>, always. MSv2 <code>WEIGHT</code>
+is presented with a zero stride on the channel axis (<code>insert_axis</code> then
+<code>broadcast</code>): no copy, no per-element cost; <code>as_slice()</code> returns <code>None</code> on
+it. The <code>WeightView</code> enum is deleted. This is CASA's meaning of <code>WEIGHT</code>
+without <code>WEIGHT_SPECTRUM</code>, and the shape MSv4 stores physically.</p>
+<h3 id="d6-the-request-selects-a-partition-set-one-cursor-per-partition-accepted">D6. The request selects a partition set; one cursor per partition (accepted)<a class="headerlink" href="#d6-the-request-selects-a-partition-set-one-cursor-per-partition-accepted" title="Permanent link">&para;</a></h3>
+<p><code>AccessRequest.partition</code> becomes a selection over content keys. Binding
+resolves it to an ordered partition set and returns one <code>Send</code> cursor per
+partition, each with its own estimate (D10, D11). A <code>chain()</code> helper serves
+sequential consumers; a parallel consumer gives each cursor a thread.
+<code>GroupKey</code> already carries the partition, so grouping is unaffected. A batch
+never spans a partition.</p>
+<h3 id="d7-a-byte-budget-replaces-max_samples-with-inquiry-functions-accepted">D7. A byte budget replaces <code>max_samples</code>, with inquiry functions (accepted)<a class="headerlink" href="#d7-a-byte-budget-replaces-max_samples-with-inquiry-functions-accepted" title="Permanent link">&para;</a></h3>
+<p>Bytes per sample follow from the roles, the channel window, the correlations
+and the element sizes (plus per-sample scalars); samples per batch is the
+budget divided by that, rounded down to whole times; binding refuses when one
+time exceeds the budget. The owner requires that a planner can ask what a
+cursor shape costs without major I/O: see D10. In passing, the MSv4 payload
+formula counts every role whether requested or not (<code>msv4/cursor.rs:203</code>);
+the budget conversion fixes that.</p>
+<h3 id="d8-the-estimate-reports-the-stores-natural-blocks-accepted">D8. The estimate reports the store's natural blocks (accepted)<a class="headerlink" href="#d8-the-estimate-reports-the-stores-natural-blocks-accepted" title="Permanent link">&para;</a></h3>
+<p>Along time and frequency: the Zarr chunk shape for MSv4 (5 times × 4 channels
+in the fixture), the tile shape for MSv2 (casa-tables reads honour it,
+<code>crates/casa-tables/src/storage/tile_layout.rs</code>). A planner aligns channel
+windows to it; the fixture showed why: 35 chunks decoded resident against 110
+in one-plane waves.</p>
+<h3 id="d9-layout-is-deleted-accepted">D9. <code>Layout</code> is deleted (accepted)<a class="headerlink" href="#d9-layout-is-deleted-accepted" title="Permanent link">&para;</a></h3>
+<p>Payload order follows the store, and both stores deliver sample-major.
+<code>ChannelMajor</code> would only have chosen where to pay a transpose; a channel-major
+view over the same memory is free, and a plane consumer gets contiguity by
+asking for a one-channel window.</p>
+<h3 id="d10-estimate-the-inquiry-function-accepted">D10. <code>estimate</code>: the inquiry function (accepted)<a class="headerlink" href="#d10-estimate-the-inquiry-function-accepted" title="Permanent link">&para;</a></h3>
+<p><code>Observation::estimate(&amp;request) -&gt; Result&lt;Estimate&gt;</code>, pure over the
+catalogue and the store geometry. Per partition of the set: times and
+baselines; bytes per sample for the roles; samples per batch under the budget
+and the batch count; bytes held per batch; decoded against selected elements
+(the amplification); natural blocks (D8); padded fraction (D3). Totals over
+the set. <code>Realization</code> is unified into <code>Estimate</code>: binding returns the
+estimate for the request as bound, so plan and binding cannot drift.</p>
+<p>Cost: arithmetic over the MSv4 chunk grid, which is in <code>zarr.json</code> and loaded
+at opening; for MSv2 the row index moves from binding to opening, about 44
+bytes per row read once, which D2 and D3 need anyway.</p>
+<h3 id="d11-bind_read-returns-a-traversal-accepted">D11. <code>bind_read</code> returns a traversal (accepted)<a class="headerlink" href="#d11-bind_read-returns-a-traversal-accepted" title="Permanent link">&para;</a></h3>
+<p><code>Traversal { cursors: Vec&lt;BoundCursor&gt;, estimate: Estimate }</code>. <code>IoCounters</code>
+stay per cursor; the traversal sums them. <code>Observation</code> is <code>Sync</code> and cursors
+are <code>Send</code>, so threads share the observation by reference.</p>
+<h3 id="d12-end-of-stream-without-a-buffer-accepted">D12. End of stream without a buffer (accepted)<a class="headerlink" href="#d12-end-of-stream-without-a-buffer-accepted" title="Permanent link">&para;</a></h3>
+<p><code>next_owned(Option&lt;BatchBuffers&gt;)</code>: given <code>None</code> the cursor answers <code>End</code>,
+<code>GroupEnd(key)</code> or a new <code>NeedBuffers</code> event; given buffers, as now. No
+wasted buffer, no <code>exhausted()</code> state machine, no reliance on a precomputed
+batch count. Closes README open question 1.</p>
+<h3 id="d13-scan-in-the-group-key-origin-per-field-scan-accepted">D13. Scan in the group key; origin per (field, scan) (accepted)<a class="headerlink" href="#d13-scan-in-the-group-key-origin-per-field-scan-accepted" title="Permanent link">&para;</a></h3>
+<p><code>GroupKey { partition, field: Option&lt;FieldId&gt;, scan: Option&lt;ScanId&gt;, bin }</code>.
+The <code>solint</code> clock starts at the first time of each (field, scan) run, as
+production <code>gaincal</code> does (<code>crates/casa-calibration/src/solve/grouping.rs</code>,
+<code>SolveBaseKey</code> and <code>bucket_starts</code>). Observation and intent are partition
+keys after D2. The trial key had no scan and a per-field origin, so a bin
+could straddle a scan boundary where production splits; the fixture's two
+scans happened to align with its 60 s intervals.</p>
+<h3 id="d14-grouping-gains-casas-other-intervals-accepted">D14. <code>Grouping</code> gains CASA's other intervals (accepted)<a class="headerlink" href="#d14-grouping-gains-casas-other-intervals-accepted" title="Permanent link">&para;</a></h3>
+<p><code>TimeBins { width_s, combine_fields, combine_scans }</code>,
+<code>PerScan { combine_fields }</code> (<code>solint='inf'</code>) and <code>PerIntegration</code>
+(<code>solint='int'</code>).</p>
+<h3 id="d15-groups-across-partitions-stay-the-consumers-accepted">D15. Groups across partitions stay the consumer's (accepted)<a class="headerlink" href="#d15-groups-across-partitions-stay-the-consumers-accepted" title="Permanent link">&para;</a></h3>
+<p>CASA <code>combine='spw'</code> is a merge by (field, scan, bin) across cursors; the
+per-(field, scan) origin makes those bins comparable whenever spectral windows
+share scan times. No shared helper until a consumer needs one. The group
+index, proven closure at delivery, <code>GroupEnd</code> as the fallback,
+<code>GroupCompletion</code> and fragment-free windows all stay; with D3 the index is per
+time for both stores and every fragment is whole times × all baselines.</p>
+<h3 id="d16-validity-stays-an-inline-rule-optional-mask-judgement">D16. Validity stays an inline rule; optional mask (judgement)<a class="headerlink" href="#d16-validity-stays-an-inline-rule-optional-mask-judgement" title="Permanent link">&para;</a></h3>
+<p><code>validity().excluded(s, c, p)</code>: the stored flag is set, or the value or the
+weight is not finite among the roles read (the row-flag test is gone with D5).
+Stored flags are never altered by it. For multi-pass consumers,
+<code>validity().mask_into(&amp;mut Vec&lt;bool&gt;)</code> builds one byte per element in caller
+storage. Folding the rule into the fill was rejected: for one-pass consumers,
+which both examples are, it would add a pass to save the same work later, and
+it would change stored flags. The doc comment at <code>batch.rs:345</code> saying XRADIO
+flags absent slots is wrong (XRADIO pads flag false) and is corrected.</p>
+<h3 id="d17-correlations-and-flag-policy-in-the-request-judgement">D17. Correlations and flag policy in the request (judgement)<a class="headerlink" href="#d17-correlations-and-flag-policy-in-the-request-judgement" title="Permanent link">&para;</a></h3>
+<div class="codehilite"><pre><span></span><code><span class="k">pub</span><span class="w"> </span><span class="k">struct</span><span class="w"> </span><span class="nc">CorrelationRequest</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">deliver</span><span class="p">:</span><span class="w"> </span><span class="nc">Deliver</span><span class="p">,</span><span class="w">        </span><span class="c1">// All | These(Vec&lt;Correlation&gt;), in stored order</span>
+<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">flags_from</span><span class="p">:</span><span class="w"> </span><span class="nc">FlagsFrom</span><span class="p">,</span><span class="w">   </span><span class="c1">// Delivered | All</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p>With <code>flags_from: All</code> the adapter reads the whole flag cube and ORs the
+undelivered correlations' flags into each delivered one; the batch carries
+<code>[sample, channel, delivered]</code>. Production Stokes I is
+<code>These([XX, YY])</code> with <code>flags_from: All</code>: half the visibility memory, the
+same <code>sumwt</code> (selecting XX and YY without the policy moved <code>sumwt</code> by 0.86 %
+in the trial). Values are never altered. Closes README open question 2.</p>
+<h3 id="d18-one-correlation-vocabulary-and-a-uvw-measure-in-casa-types-judgement">D18. One correlation vocabulary and a UVW measure in casa-types (judgement)<a class="headerlink" href="#d18-one-correlation-vocabulary-and-a-uvw-measure-in-casa-types-judgement" title="Permanent link">&para;</a></h3>
+<p><code>Correlation</code> (casacore <code>Stokes</code> codes and MSv4 labels as its persistent
+forms) is defined once in <code>casa-types</code>; <code>casa-observation</code> and
+<code>casa-imaging-model</code> use it. <code>MUvw</code> is added to casa-types. Closes README
+open question 6.</p>
+<h3 id="d19-measure-views-are-built-from-buffers-plus-the-catalogue-entry-judgement">D19. Measure views are built from buffers plus the catalogue entry (judgement)<a class="headerlink" href="#d19-measure-views-are-built-from-buffers-plus-the-catalogue-entry-judgement" title="Permanent link">&para;</a></h3>
+<p><code>EpochView</code>, <code>FrequencyView</code> and <code>UvwView</code> stay. After D1 they are built by
+<code>buffers.batch(&amp;entry)</code> from the partition's entry, so the time system and
+frames are resolved once per batch from the one description and nothing is
+copied into the header.</p>
+<h3 id="d20-times-stay-offsets-in-the-stores-scale-judgement">D20. Times stay offsets in the store's scale (judgement)<a class="headerlink" href="#d20-times-stay-offsets-in-the-stores-scale-judgement" title="Permanent link">&para;</a></h3>
+<p>From a per-partition origin; a consumer that needs another scale converts
+through <code>MEpoch</code>. Adapters keep refusing scales they cannot label (MSv4
+<code>unix</code> in UTC only; MSv2 <code>MEASINFO</code>, UTC when absent).</p>
+<h3 id="d21-uvwview-carries-muvw-judgement">D21. <code>UvwView</code> carries <code>MUvw</code> (judgement)<a class="headerlink" href="#d21-uvwview-carries-muvw-judgement" title="Permanent link">&para;</a></h3>
+<p>The effective frame is still resolved once at opening; the stored label stays
+in the catalogue (<code>UvwFrame { effective, stored_label }</code>).</p>
+<h3 id="d22-the-payload-is-complex32-judgement">D22. The payload is <code>Complex32</code> (judgement)<a class="headerlink" href="#d22-the-payload-is-complex32-judgement" title="Permanent link">&para;</a></h3>
+<p><code>Precision</code> and the unreachable <code>VisibilityValues::Complex64</code> are deleted. No
+consumer asks for native precision, CASA <code>DATA</code> is single precision, and the
+fixture's <code>complex64</code> is already <code>Complex32</code>. A <code>complex128</code> store is refused
+at binding until a store needs it, when the variant returns with a real decode
+path.</p>
+<h3 id="d23-one-creation-declaration-for-both-stores-judgement">D23. One creation declaration for both stores (judgement)<a class="headerlink" href="#d23-one-creation-declaration-for-both-stores-judgement" title="Permanent link">&para;</a></h3>
+<p>The common <code>Catalogue</code> plus a <code>TimeBaselineGrid</code> per partition declares a
+dataset for MSv4 and MSv2 creators alike, now that the grid is the one sample
+layout (D3): cells in time order become MSv2 rows, and padded cells become
+flagged NaN rows. A reverse conversion that must reproduce an original sparse
+row set is a declared policy or a refusal (<code>architecture.md</code>, "Absent slots
+versus actual NaN-valued acquisitions"), since padding and flagged data are
+indistinguishable by design. Closes README open question 7.</p>
+<h3 id="d24-writer-fill-values-are-the-padding-convention-judgement">D24. Writer fill values are the padding convention (judgement)<a class="headerlink" href="#d24-writer-fill-values-are-the-padding-convention-judgement" title="Permanent link">&para;</a></h3>
+<p><code>Msv4Writer</code>'s Zarr fill values become NaN for values, true for flags and 0
+for weights, so a cell never delivered reads back as padding. The writer's
+row-flag refusal is moot after D5.</p>
+<h3 id="d25-calibrationbinding-as-contract-judgement">D25. <code>CalibrationBinding</code> as contract (judgement)<a class="headerlink" href="#d25-calibrationbinding-as-contract-judgement" title="Permanent link">&para;</a></h3>
+<p><code>Catalogue::bind_to(&amp;other, tolerance) -&gt; Binding</code>: antennas matched by
+station and position within a stated tolerance, fields by phase centre, scans
+by number, partitions by content keys (D2); any ambiguity refused. It is what
+applying a caltable solved on one store to the other needs; the calibration
+test's <code>rebind</code> is its prototype. Closes README open question 5.</p>
+<h2 id="facts-verified-during-the-walkthrough">Facts verified during the walkthrough<a class="headerlink" href="#facts-verified-during-the-walkthrough" title="Permanent link">&para;</a></h2>
+<p>XRADIO at the pinned commit <code>3ed76586</code> (paths under
+<code>src/xradio/measurement_set/_utils/_msv2/</code>):</p>
+<ul>
+<li>Rows are gridded onto (time, baseline): unique times merged within a
+  quarter of the smallest time step (<code>_tables/read_main_table.py:12</code>), unique
+  baselines, <code>tidxs</code>/<code>bidxs</code> per row (<code>conversion.py:616</code>).</li>
+<li>Cells with no row are padded by dtype (<code>xradio/_utils/list_and_array.py:15</code>):
+  floats and complex NaN, integers <code>INT_MIN</code>, booleans <strong>False</strong>. So
+  <code>VISIBILITY</code>, <code>WEIGHT</code> and <code>UVW</code> are NaN and <code>FLAG</code> is false.</li>
+<li>Duplicated (time, baseline) rows: the last row wins, silently
+  (<code>_tables/read.py:1494</code>). <code>PROCESSOR_ID</code> must be single per partition
+  (<code>msv4_info_dicts.py:61</code>). <code>FEED1</code>/<code>FEED2</code> are read only for the antenna
+  dataset (<code>conversion.py:1947</code>).</li>
+<li><code>FLAG_ROW</code> is dropped: only <code>ANTENNA::FLAG_ROW</code> is referenced.</li>
+<li><code>WEIGHT</code> is expanded across frequency physically
+  (<code>conversion.py:971</code>, <code>frequency_constant</code>); MSv4 <code>WEIGHT</code> is always
+  <code>[time, baseline, frequency, polarization]</code>.</li>
+<li>The default partition scheme is <code>[]</code> (mandatory keys only), the fixture's.</li>
+<li>The MSv4 schema (<code>schema.py</code>) says nothing about missing main-dataset
+  cells; <code>FlagArray</code> is "the cumulative flags applying to this data matrix";
+  the phased-array sub-dataset is "nan-padded" and "True-padded".</li>
+</ul>
+<p>The trial at <code>2b07a37</code>:</p>
+<ul>
+<li>The MSv4 reader runs zarrs with <code>concurrent_target(1)</code>
+  (<code>msv4/read.rs:122</code>) and decodes a batch's variables one after another; one
+  cursor reads one partition; a factored batch always carries the whole
+  baseline table. These are adapter limits, not interface limits; D6, D7 and
+  D8 address the interface side, the rest is revision-2 adapter work with
+  measurements.</li>
+<li>Views cost nothing per element: an <code>ArrayView3</code> is a pointer, a shape and
+  strides, built once per batch (<code>buffers.rs:338</code>); workers on an
+  <code>Arc&lt;FilledBatch&gt;</code> dereference the <code>Arc</code> once.</li>
+<li>The MSv2 binding index reads <code>DATA_DESC_ID</code>, <code>TIME</code> and <code>FIELD_ID</code> per row
+  and binds only time-ordered rows; group fragments are contiguous for that
+  reason.</li>
+<li>Production <code>gaincal</code> keys solutions by field, spectral window, observation
+  and scan with the <code>solint</code> origin per key; no imaging or calibration crate
+  references <code>FLAG_ROW</code>.</li>
+</ul>
+<h2 id="readme-open-questions">README open questions<a class="headerlink" href="#readme-open-questions" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Question</th>
+<th>Resolved by</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1. End of stream without a buffer</td>
+<td>D12</td>
+</tr>
+<tr>
+<td>2. Correlations and flag policy</td>
+<td>D17</td>
+</tr>
+<tr>
+<td>3. Validity cost</td>
+<td>D16</td>
+</tr>
+<tr>
+<td>4. <code>FLAG_ROW</code> in production <code>gaincal</code></td>
+<td>D5; the CASA behaviour check stays queued</td>
+</tr>
+<tr>
+<td>5. Cross-store rebinding</td>
+<td>D25</td>
+</tr>
+<tr>
+<td>6. One vocabulary</td>
+<td>D18</td>
+</tr>
+<tr>
+<td>7. Creation catalogue for MSv2</td>
+<td>D23</td>
+</tr>
+</tbody>
+</table>
+<h2 id="risks-and-checks-to-carry-into-revision-2">Risks and checks to carry into revision 2<a class="headerlink" href="#risks-and-checks-to-carry-into-revision-2" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Padding growth</strong> on sparse MSv2 (antenna dropouts, baseline-dependent
+  averaging): measure the padded fraction on real MSs; the estimate reports
+  it.</li>
+<li><strong>Flag statistics</strong> differ between our MSv2 read and an XRADIO conversion of
+  the same MS on padded cells and on <code>FLAG_ROW</code>-only rows. Record in the
+  README; do not repair on read.</li>
+<li><strong>CASA's <code>FLAG_ROW</code> behaviour</strong> in <code>gaincal</code> and <code>tclean</code>: instrument CASA
+  before claiming parity on an MS with <code>FLAG_ROW</code>-only rows.</li>
+<li><strong>Opening cost</strong>: the MSv2 index (about nine key columns per row) moves to
+  opening; measure on a 10^8-row MS; consider lazy construction if it hurts.
+  (Measured at 4.2 M rows, README "Scale check": 75–80 bytes a row at the
+  peak, so the index is now built in row chunks and holds four bytes a
+  cell; opening reads about 0.2 µs a row.)</li>
+<li><strong>Fold versus inline validity</strong>: D16 is a judgement on one-pass consumers;
+  measure if a multi-pass consumer appears.</li>
+<li><strong>Throughput</strong>: raise zarrs concurrency and overlap variable decodes in the
+  adapter; run cursors per partition in parallel; measure with matched
+  timings before any performance claim.</li>
+</ul>
+<h2 id="suggested-implementation-order">Suggested implementation order<a class="headerlink" href="#suggested-implementation-order" title="Permanent link">&para;</a></h2>
+<ol>
+<li>Catalogue and partitions: D2, D4, D1, D18 (vocabulary), D25. Tests:
+   partition sets from both fixtures agree by content keys; feed pairs;
+   duplicate refusal; <code>bind_to</code>.</li>
+<li>Grid and payload: D3, D5, D9, D22, D19 to D21, D16. Tests: gridded MSv2
+   batches equal MSv4 batches cell for cell; padding convention; folded
+   <code>FLAG_ROW</code>; broadcast weights; both examples bit-identical to production.</li>
+<li>Request and binding: D6, D7, D8, D10 to D12, D17. Tests: estimate equals
+   the bound realization; byte budget rounding; natural blocks; partition
+   sets; <code>NeedBuffers</code>; Stokes I <code>sumwt</code> unchanged with <code>These([XX, YY])</code>.</li>
+<li>Groups: D13 to D15. Tests: bins restart per (field, scan); <code>PerScan</code> and
+   <code>PerIntegration</code> against production <code>gaincal</code>.</li>
+<li>Creation: D23, D24. Tests: MSv2 and MSv4 written from one declaration
+   read back identically; unwritten cells read as padding.</li>
+</ol>
+<p>Each step keeps the two examples and the interop checks green before the
+next; the PR stays a draft until the owner says otherwise.</p>
+<h2 id="what-the-implementation-did-with-each-decision">What the implementation did with each decision<a class="headerlink" href="#what-the-implementation-did-with-each-decision" title="Permanent link">&para;</a></h2>
+<p>Revision 2 implemented every decision as recorded, with these qualifications.
+The evidence is in <a href="../">README.md</a>, "Revision 2".</p>
+<ul>
+<li><strong>D2, D4 grid.</strong> Times on an MSv2 grid are the exact distinct <code>TIME</code>
+  values; XRADIO merges times within a quarter of the smallest step. An MS
+  whose times jitter opens with more times (and padding) than XRADIO's
+  conversion of it would; no fixture exercises this, and a tolerance is a
+  policy the record should take explicitly if it is wanted.</li>
+<li><strong>D2 partition keys.</strong> <code>EPHEMERIS_ID</code> splits MSv2 partitions but is not
+  exposed in <code>PartitionEntry</code> (the MSv4 reader does not read ephemerides);
+  two partitions that differ only by ephemeris have the same content keys
+  and <code>bind_to</code> refuses them as ambiguous until it does.</li>
+<li><strong>D8 MSv2 natural blocks.</strong> The tile shape of the data group's
+  visibility column, read through a new <code>casa-tables</code> accessor
+  (<code>Table::array_column_tile_shape</code>); the time extent reported is the
+  tile's rows divided by the baselines, which is exact only when the
+  partition's rows are stored by whole times.</li>
+<li><strong>D10 MSv2 amplification.</strong> Not modelled: decoded elements are the rows
+  read, as before; the tile-level amplification of a channel window on a
+  tiled column is a later refinement.</li>
+<li><strong>D17 subsets.</strong> Both adapters read the whole correlation axis and
+  gather the delivered products (MSv4 decodes the full cube into scratch);
+  a strided in-place decode per product is a later optimization, to be
+  measured.</li>
+<li><strong>D18 vocabulary.</strong> <code>Correlation</code> and <code>MUvw</code> live in <code>casa-types</code>. The
+  ADR-0016 dependency policy first allowed <code>casa-imaging-model</code> no workspace
+  dependency, so the model kept its own <code>CorrelationType</code>; on owner direction
+  (2026-10-25) ADR-0016 now lets every imaging crate depend on the
+  definitional crates (<code>casa-values</code>, <code>casa-types</code>, <code>casa-coordinates</code>), and
+  the model's private type is gone. Both adapters, <code>casa-observation</code>, the
+  imaging crates and the simulator use the one <code>Correlation</code>, and the imaging
+  example's batch and operator share one list of products. Unifying showed
+  that revision 2's <code>Correlation</code>, the eight feed products, was narrower
+  than MSv4: the schema allows all 32 casacore <code>Stokes</code> types in its
+  <code>polarization</code> coordinate, as an MSv2 <code>CORR_TYPE</code> may store them, so
+  <code>Correlation</code> now holds all 32 under MSv4's labels and a consumer refuses
+  the types it cannot use (the operator refuses mixed and quasi-orthogonal
+  feeds, as before).</li>
+<li><strong>D23 one declaration.</strong> The common declaration (<code>Catalogue</code> plus
+  <code>TimeBaselineGrid</code> per partition) and the rule for padded cells are in
+  place and the MSv4 creator uses them; an MSv2 creator from batches was
+  not built in revision 2.</li>
+<li><strong>D25.</strong> <code>Catalogue::bind_to</code> with an explicit <code>BindingTolerance</code>;
+  example B's comparison uses it in place of its test-code <code>rebind</code>.</li>
+</ul>
+<h2 id="revision-3-refinements">Revision 3 refinements<a class="headerlink" href="#revision-3-refinements" title="Permanent link">&para;</a></h2>
+<p>Revision 3 (README, "Revision 3") kept every decision and changed the form
+of four of them where revision 2's implementation proved awkward:</p>
+<ul>
+<li><strong>D1.</strong> Batches still borrow the per-partition constants, now through an
+  <code>Arc&lt;Catalogue&gt;</code> the buffers keep from <code>BatchFill::finish</code>: a batch is
+  self-contained and cannot be paired with another observation's catalogue.</li>
+<li><strong>D10.</strong> The byte budget counts the cursor's decode scratch
+  (<code>scratch_bytes_per_sample</code>), so <code>batch_bytes</code> bounds what a batch and its
+  decode hold, not only the delivered products.</li>
+<li><strong>D12.</strong> <code>next_owned(Option&lt;BatchBuffers&gt;)</code> and <code>NeedBuffers</code> are replaced
+  by a bounded <code>BufferPool</code>: a buffer is taken only for a batch, the producer
+  waits while none is free, and a <code>FilledBatch</code> returns its buffer when
+  dropped. Nothing is lent at the end, as D12 required.</li>
+<li><strong>D14.</strong> <code>GroupCompletion</code> hands out move-only <code>WorkToken</code>s, so the join of
+  a group's input and its work cannot be miscounted.</li>
+</ul>
+<h2 id="revision-4-refinements">Revision 4 refinements<a class="headerlink" href="#revision-4-refinements" title="Permanent link">&para;</a></h2>
+<p>Revision 4 (README, "Revision 4") answered Astra's and Fable's reviews of
+revision 3. It keeps every decision; these changed form or gained a rule:</p>
+<ul>
+<li><strong>D1.</strong> The correlation axis is resolved once per traversal and shared
+  (<code>CorrelationAxis</code>): batches of every product borrow the catalogue's list,
+  and a subset's products are one <code>Arc</code> for every batch and packed piece.
+  Nothing per partition is copied per batch any more.</li>
+<li><strong>D2, D25.</strong> A partition's content now includes its channel widths, its
+  session, and the fields and scans its samples visit; sessions keep MSv4's
+  archive UIDs. Binding is one to one: a key one store lacks does not
+  distinguish, but two entities one catalogue keeps apart never bind to one.
+  A calibration binding that survives solve, persist, reopen and apply is
+  still provisional.</li>
+<li><strong>D3, D24.</strong> Padding has no interval: neither the grid declaration nor the
+  writer compares one, so a padded partition is declared and written. The
+  MSv4 adapter folds a non-finite stored weight into the delivered flag, so
+  padding is flagged in every store and validity gives one answer whichever
+  roles are read. The MSv2 cursor spreads padded rows in place.</li>
+<li><strong>D7, D10, D12.</strong> Pool buffers have a byte envelope that holds whatever
+  they are filled with, the estimate states exactly what a full batch's
+  buffer holds (<code>buffer_bytes</code>, with per-time arrays counted), and a pool
+  wait can be bounded (<code>waiting_at_most</code>, <code>PoolExhausted</code>).</li>
+<li><strong>D14.</strong> A work token dropped unfinished reports its group abandoned
+  instead of leaving the join waiting; the completion keeps one closed bin
+  per series, not every finalized group.</li>
+<li><strong>D23.</strong> The declaration comes from the boundary (<code>Observation::grid</code>),
+  from the store's index; <code>TimeBaselineGrid::from_cursor</code> is gone. The writer
+  holds a batch's times in a chunk it covers only partly until the chunk is
+  complete (the owner's choice), so batches in time order encode every
+  chunk once, and it states the most it holds (<code>buffer_bytes</code>).</li>
+<li><strong>Profile refusals.</strong> <code>polarization_mixed</code> (a per-baseline basis) and,
+  when centroids are requested, <code>TIME_CENTROID_EXTRA_PRECISION</code> are refused
+  rather than read as something they are not; a grouping keyed by scan
+  needs a store with scans.</li>
+</ul>
+<h2 id="provenance">Provenance<a class="headerlink" href="#provenance" title="Permanent link">&para;</a></h2>
+<p>Walkthrough held on 2026-10-24 against head <code>2b07a37</code> of
+<code>claude/ms-v4-contract-trial</code>; every answer was re-verified against the code
+and the pinned XRADIO source before it was given. Figures for human readers
+are the two artifact pages from the walkthrough, linked from the PR #898
+thread.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../../..", "features": [], "search": "../../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../../assets/javascripts/bundle.c21346df.min.js"></script>
+      
+    
+  </body>
+</html>

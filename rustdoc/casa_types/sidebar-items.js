@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["ArrayValue","PrimitiveType","ScalarValue","Value","ValueKind","ValueRank"],"mod":["measures","quanta"],"struct":["RecordField","RecordValue","TypeTag"],"type":["Array2","Array3","ArrayD","Complex32","Complex64"]};
+window.SIDEBAR_ITEMS = {"enum":["ArrayValue","PrimitiveType","ScalarValue","Value","ValueKind","ValueRank"],"mod":["correlation","measures","quanta"],"struct":["RecordField","RecordValue","TypeTag"],"type":["Array2","Array3","ArrayD","Complex32","Complex64"]};

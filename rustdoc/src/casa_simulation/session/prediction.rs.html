@@ -28,13 +28,13 @@
 <a href=#28 id=28 data-nosnippet>28</a><span class="kw">use </span>std::sync::Arc;
 <a href=#29 id=29 data-nosnippet>29</a>
 <a href=#30 id=30 data-nosnippet>30</a><span class="kw">use </span>casa_components::ComponentList;
-<a href=#31 id=31 data-nosnippet>31</a><span class="kw">use </span>casa_imaging_model::CorrelationType;
-<a href=#32 id=32 data-nosnippet>32</a><span class="kw">use </span>casa_imaging_operator::{
-<a href=#33 id=33 data-nosnippet>33</a>    ConvolutionFunctionSet, GridPrecision, MAX_W_PLANES, MosaicPb, MosaicRules, OperatorError,
-<a href=#34 id=34 data-nosnippet>34</a>    PaddingFactor, PreparedModelGrids, Spheroidal, WPlaneCount, WPlanes,
-<a href=#35 id=35 data-nosnippet>35</a>};
-<a href=#36 id=36 data-nosnippet>36</a><span class="kw">use </span>casa_imaging_runtime::pass::WorkerTeam;
-<a href=#37 id=37 data-nosnippet>37</a><span class="kw">use </span>casa_imaging_runtime::{Demand, Reservation, admit, charge_process_caches, free_memory};
+<a href=#31 id=31 data-nosnippet>31</a><span class="kw">use </span>casa_imaging_operator::{
+<a href=#32 id=32 data-nosnippet>32</a>    ConvolutionFunctionSet, GridPrecision, MAX_W_PLANES, MosaicPb, MosaicRules, OperatorError,
+<a href=#33 id=33 data-nosnippet>33</a>    PaddingFactor, PreparedModelGrids, Spheroidal, WPlaneCount, WPlanes,
+<a href=#34 id=34 data-nosnippet>34</a>};
+<a href=#35 id=35 data-nosnippet>35</a><span class="kw">use </span>casa_imaging_runtime::pass::WorkerTeam;
+<a href=#36 id=36 data-nosnippet>36</a><span class="kw">use </span>casa_imaging_runtime::{Demand, Reservation, admit, charge_process_caches, free_memory};
+<a href=#37 id=37 data-nosnippet>37</a><span class="kw">use </span>casa_types::Correlation;
 <a href=#38 id=38 data-nosnippet>38</a>
 <a href=#39 id=39 data-nosnippet>39</a><span class="kw">use </span><span class="kw">super</span>::error::{SimulatorError, SimulatorResult};
 <a href=#40 id=40 data-nosnippet>40</a><span class="kw">use </span><span class="kw">super</span>::resources::SessionResources;
@@ -545,7 +545,7 @@
 <a href=#545 id=545 data-nosnippet>545</a>    </span><span class="kw">fn </span>prepare_image(
 <a href=#546 id=546 data-nosnippet>546</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
 <a href=#547 id=547 data-nosnippet>547</a>        model: <span class="kw-2">&amp;</span>SkyModel,
-<a href=#548 id=548 data-nosnippet>548</a>        correlations: <span class="kw-2">&amp;</span>[CorrelationType],
+<a href=#548 id=548 data-nosnippet>548</a>        correlations: <span class="kw-2">&amp;</span>[Correlation],
 <a href=#549 id=549 data-nosnippet>549</a>        beam: <span class="prelude-ty">Option</span>&lt;PrimaryBeam&gt;,
 <a href=#550 id=550 data-nosnippet>550</a>    ) -&gt; SimulatorResult&lt;Prediction&gt; {
 <a href=#551 id=551 data-nosnippet>551</a>        <span class="kw">let </span>machine = <span class="self">self</span>.ft_machine()<span class="question-mark">?</span>;
@@ -709,7 +709,7 @@
 <a href=#709 id=709 data-nosnippet>709</a>
 <a href=#710 id=710 data-nosnippet>710</a>    <span class="doccomment">/// The correlations of the scans observed so far, which one operator
 <a href=#711 id=711 data-nosnippet>711</a>    /// predicts.
-<a href=#712 id=712 data-nosnippet>712</a>    </span><span class="kw">fn </span>predicted_correlations(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; SimulatorResult&lt;Vec&lt;CorrelationType&gt;&gt; {
+<a href=#712 id=712 data-nosnippet>712</a>    </span><span class="kw">fn </span>predicted_correlations(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; SimulatorResult&lt;Vec&lt;Correlation&gt;&gt; {
 <a href=#713 id=713 data-nosnippet>713</a>        <span class="self">self</span>.check_visibility_correlations(<span class="string">"predicted"</span>)<span class="question-mark">?</span>;
 <a href=#714 id=714 data-nosnippet>714</a>        <span class="kw">let </span>window = |scan: <span class="kw-2">&amp;</span><span class="kw">super</span>::observe::Scan| <span class="kw-2">&amp;</span><span class="self">self</span>.spectral_windows[scan.spectral_window_id];
 <a href=#715 id=715 data-nosnippet>715</a>        <span class="kw">let </span>first = <span class="kw-2">&amp;</span>window(<span class="kw-2">&amp;</span><span class="self">self</span>.scans[<span class="number">0</span>]).correlations;
@@ -726,7 +726,7 @@
 <a href=#726 id=726 data-nosnippet>726</a>        first
 <a href=#727 id=727 data-nosnippet>727</a>            .iter()
 <a href=#728 id=728 data-nosnippet>728</a>            .map(|<span class="kw-2">&amp;</span>code| {
-<a href=#729 id=729 data-nosnippet>729</a>                CorrelationType::from_casa_code(code).ok_or_else(|| {
+<a href=#729 id=729 data-nosnippet>729</a>                Correlation::from_casacore_code(code).ok_or_else(|| {
 <a href=#730 id=730 data-nosnippet>730</a>                    SimulatorError::not_yet_implemented(<span class="macro">format!</span>(
 <a href=#731 id=731 data-nosnippet>731</a>                        <span class="string">"predicting correlation code {code} is not yet implemented in casa-rs \
 <a href=#732 id=732 data-nosnippet>732</a>                         (#841)"
@@ -1013,7 +1013,7 @@
 <a href=#1013 id=1013 data-nosnippet>1013</a>
 <a href=#1014 id=1014 data-nosnippet>1014</a><span class="doccomment">/// An operator refusal for `correlations`: a correlation set the Stokes I
 <a href=#1015 id=1015 data-nosnippet>1015</a>/// model cannot feed is not yet implemented; the rest is raised.
-<a href=#1016 id=1016 data-nosnippet>1016</a></span><span class="kw">fn </span>correlation_error(error: PredictError, correlations: <span class="kw-2">&amp;</span>[CorrelationType]) -&gt; SimulatorError {
+<a href=#1016 id=1016 data-nosnippet>1016</a></span><span class="kw">fn </span>correlation_error(error: PredictError, correlations: <span class="kw-2">&amp;</span>[Correlation]) -&gt; SimulatorError {
 <a href=#1017 id=1017 data-nosnippet>1017</a>    <span class="kw">match </span>error {
 <a href=#1018 id=1018 data-nosnippet>1018</a>        PredictError::Operator(OperatorError::Polarization { reason }) =&gt; {
 <a href=#1019 id=1019 data-nosnippet>1019</a>            SimulatorError::not_yet_implemented(<span class="macro">format!</span>(

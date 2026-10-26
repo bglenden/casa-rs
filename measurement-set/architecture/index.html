@@ -1,0 +1,1421 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Rust and Python APIs for CASA-compatible data and tasks">
+      
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
+    
+    
+      
+        <title>Native observation I/O for MSv2 and MSv4 - casa-rs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.57a0d79d.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#native-observation-io-for-msv2-and-msv4" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="casa-rs" class="md-header__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            casa-rs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Native observation I/O for MSv2 and MSv4
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="casa-rs" class="md-nav__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    casa-rs
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Task Parameters
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Task Parameters
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../task-parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/task-parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Generated Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../rust-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rust API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Python
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/tasks-calibrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Calibrate Tasks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/versioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-outcome-and-boundaries" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Outcome and boundaries
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-the-important-distinctions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. The important distinctions
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. The important distinctions">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#converter-evidence-for-mosaics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Converter evidence for mosaics
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-proposed-ownership" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Proposed ownership
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-access-is-negotiated-once-then-executed-in-bulk" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Access is negotiated once, then executed in bulk
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-persistent-support-profiles" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Persistent support profiles
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="5. Persistent support profiles">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#conversion-fidelity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Conversion fidelity
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-existing-decisions-and-deliberate-changes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Existing decisions and deliberate changes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-reference-baseline" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. Reference baseline
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="native-observation-io-for-msv2-and-msv4">Native observation I/O for MSv2 and MSv4<a class="headerlink" href="#native-observation-io-for-msv2-and-msv4" title="Permanent link">&para;</a></h1>
+<p>Status: revision 7; working design; the read contract (<a href="../contracts/">contracts</a> sections 1–6 and creation) frozen narrowly for M2 on 2026-10-25, the rest not frozen
+Truth class: design proposal
+Date: 2026-10-25
+Companion documents: <a href="../contracts/">contracts</a>, <a href="../implementation-plan/">implementation plan</a></p>
+<p>Revision 5 retains Pro and Fable's review changes and owner discussion of
+independent lifetimes, guaranteed units, the <code>VisibilityBatch</code> name and explicit
+access-pattern negotiation from processing planners to adapters. Native Measures
+types and bulk conversion are now owner requirements; this changes the proposed
+type ownership and adds a prerequisite Measures trial to M1.
+The owner also agrees to <code>ndarray</code> numerical arrays/views under thin domain
+types; concrete ownership APIs remain subject to M1 evidence and review.
+On 2026-10-24 the owner agreed to proceed with the <a href="../trial-handoff/">M0/M1 trial</a>.
+The detailed APIs remain open to trial evidence and owner iteration; interface
+stabilization and broad production migration follow the M1 acceptance gate.</p>
+<p>Revisions 6 and 7 (2026-10-25) record what the trial settled with the owner
+and its reviewers. MSv4 is the future: the shared interface takes MSv4's
+native shape, and the MSv2 adapter assembles MSv2 data into it at opening. The
+decisions are D1 to D25 of the <a href="../trial/revision-2-design/">trial's design record</a>,
+refined by the trial's revisions 3 and 4 (<a href="../trial/">README</a>); the
+<a href="../contracts/">contracts</a> now state the current read contract directly and
+keep what is not realized in a separate provisional section. On the same day
+ADR-0016 was amended so that every imaging crate may depend on the
+definitional crates (<code>casa-values</code>, <code>casa-types</code>, <code>casa-coordinates</code>), and the
+imaging model now shares the observation boundary's <code>Correlation</code>.</p>
+<h2 id="1-outcome-and-boundaries">1. Outcome and boundaries<a class="headerlink" href="#1-outcome-and-boundaries" title="Permanent link">&para;</a></h2>
+<p>Imaging, calibration, flagging, transforms, and simulation exchange the same
+scientific observation types regardless of persistent MS format. An algorithm
+specifies the information, grouping, ordering, precision, and memory layout it
+needs. A source binds those requirements to the storage implementation and
+returns bounded batches. A sink accepts bounded creation batches or addressed
+updates. Only opening, creation, capabilities, and diagnostics expose storage
+profiles; scientific inner loops do not branch on MS versions.</p>
+<p>The processing and I/O paths run in native Rust without Python, Xarray, Dask,
+CASA, or casacore C++ at runtime. Commodity codec libraries may contain native
+C; this proposal does not promise an all-Rust transitive dependency graph.
+Python/XRADIO and CASA/casacore remain independent interoperability oracles and
+optional surrounding tools.</p>
+<p>Internal API compatibility is not a goal. Delete displaced routes as each
+consumer moves. Existing persistent MSv2 interoperability and performance are
+goals; a cleaner API is not permission to regress them. MSv4 must be able to
+benefit from large native array reads, not inherit a row-count ceiling from the
+old implementation. These are measured requirements, not assertions of free
+abstraction or universal zero-copy.</p>
+<p>XRADIO image persistence, new calibration-table formats, distributed scheduling,
+and general Xarray/Dask emulation are outside this programme. CASA image output
+remains usable with MSv4 input. Shared Zarr transport/codec code may later serve
+an image backend; image coordinates, masks, beams, and products retain their
+existing owners.</p>
+<h2 id="2-the-important-distinctions">2. The important distinctions<a class="headerlink" href="#2-the-important-distinctions" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Concept</th>
+<th>Meaning and owner</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Persistent partition</td>
+<td>A compatible spectral/polarization and observation context; backend discovers and maps it. Not necessarily one field or pointing.</td>
+</tr>
+<tr>
+<td>Data group</td>
+<td>A named association of visibility, flags, weights, UVW, and field/source context. Variables can be shared between groups.</td>
+</tr>
+<tr>
+<td>Scientific group</td>
+<td>Samples an algorithm treats together, such as a calibration solution interval. May span batches and partitions.</td>
+</tr>
+<tr>
+<td>Storage chunk/tile</td>
+<td>Physical decode/update unit chosen at creation or already present on disk.</td>
+</tr>
+<tr>
+<td>Visibility batch</td>
+<td>Bounded aggregation delivered by a source; may contain many physical chunks.</td>
+</tr>
+<tr>
+<td>Compute window</td>
+<td>A borrowed subset or explicitly packed projection of a batch for a kernel.</td>
+</tr>
+<tr>
+<td>Work unit</td>
+<td>One or more windows executed by a worker or cooperating workers on the existing admitted team. Owns or borrows buffers until its actual completion; distinct from a scientific group.</td>
+</tr>
+</tbody>
+</table>
+<p>Use <code>VisibilityBatch</code> for the shared intermediate. Avoid the observatory meaning
+of observation/scheduling blocks, and reserve chunk/tile for physical storage.
+The name remains provisional; the crate still describes complete observations.</p>
+<p>An MSv2 MAIN row contains a channel-by-correlation visibility matrix for an
+integration/baseline/data-description context, not one polarization scalar
+spectrum. MSv3 beta changes schema and column associations; it is not merely
+another label for today's MSv2 files. MSv4's principal visibility variable is
+<code>[time, baseline_id, frequency, polarization]</code> within a dataset; a Processing
+Set collects datasets. In the pinned schema, <code>field_name</code> is an auxiliary
+coordinate indexed by time, not another dimension of the visibility array.
+Sequential mosaic fields can therefore vary along time within a compatible
+partition: at each integration the coordinate identifies that integration's
+field. This does <strong>not</strong> require all fields of a mosaic to share one hypercube.
+XRADIO's converter permits additional <code>FIELD_ID</code> partitioning, yielding separate
+datasets per field and other partition keys. Its default extra partition scheme
+is empty and is explicitly recommended for rapidly changing phase centres in
+on-the-fly mosaics; mandatory partition keys still apply.
+Different spectral windows generally occupy different partitions, including
+when continuum and line data are processed together.</p>
+<p>The antenna beam-pointing history is separately associated by time and antenna
+in <code>pointing_xds</code>. It is not the same as the correlated field/phase centre.
+See the pinned <a href="https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/src/xradio/measurement_set/schema.py#L1020">visibility dimensions</a>,
+<a href="https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/src/xradio/measurement_set/schema.py#L1734">time-indexed field coordinate</a>,
+<a href="https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/src/xradio/measurement_set/convert_msv2_to_processing_set.py#L97">optional field partitioning</a>,
+and <a href="https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/src/xradio/measurement_set/_utils/_msv2/partition_queries.py#L39">mandatory keys</a>.</p>
+<p>The shared interface therefore cannot use a casacore row number, DATA_DESC_ID,
+one field, or one spectral window for the whole observation as its universal
+identity. It also cannot assume every observation is a complete time–baseline
+rectangle. See <a href="../contracts/#2-topology-and-identity">topology and identity</a>.</p>
+<h3 id="converter-evidence-for-mosaics">Converter evidence for mosaics<a class="headerlink" href="#converter-evidence-for-mosaics" title="Permanent link">&para;</a></h3>
+<p>This behavior is implemented in XRADIO's
+<a href="https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/src/xradio/measurement_set/convert_msv2_to_processing_set.py#L67"><code>convert_msv2_to_processing_set</code></a>,
+not just permitted by its schema. The
+<a href="https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/src/xradio/measurement_set/_utils/_msv2/conversion.py#L2080">conversion code</a>
+places MAIN <code>FIELD_ID</code> values into a time-by-baseline array, reduces it to one
+field ID per time, and assigns <code>field_name=("time", field_names)</code>. The
+<a href="https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/src/xradio/measurement_set/_utils/_msv2/create_field_and_source_xds.py#L792">field/source helper</a>
+loads the distinct fields, appends the original field ID to each name to make
+names unique, and looks up the time-ordered names, including repeated visits.
+Ordinary phase-centre directions live in the field/source dataset keyed by
+field name; ephemeris fields have additional time-dependent coordinates.</p>
+<p>The pinned upstream tests include conversions of real mosaic datasets:</p>
+<table>
+<thead>
+<tr>
+<th>Fixture</th>
+<th>What the test exercises</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>VLA <code>SNR_G55_10s.split.ms</code></td>
+<td><a href="https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/tests/stakeholder/test_measure_set_stakeholder.py#L753"><code>test_VLA</code></a> uses the <a href="https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/tests/stakeholder/test_measure_set_stakeholder.py#L336">default test schemes</a>, both <code>[]</code> and <code>["FIELD_ID"]</code>.</td>
+</tr>
+<tr>
+<td>ALMA solar mosaic <code>ALMA_uid___A002_X1003af4_X75a3.split.avg.ms</code></td>
+<td><a href="https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/tests/stakeholder/test_measure_set_stakeholder.py#L597"><code>test_alma_ephemeris_mosaic</code></a> converts with <code>[]</code>, selects a target SPW/line/intent, requires one resulting dataset, and checks ephemeris variables.</td>
+</tr>
+<tr>
+<td>VLASS <code>VLASS3.2.sb45755730.eb46170641.60480.16266136574.split.v6.ms</code></td>
+<td><a href="https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/tests/stakeholder/test_measure_set_stakeholder.py#L697"><code>test_vlass</code></a> uses <code>[]</code> and explicitly avoids field partitioning because of partition proliferation.</td>
+</tr>
+</tbody>
+</table>
+<p>The shared test helper writes and reopens Zarr, checks schema and weighted
+visibility aggregates. These are source-inspected upstream tests, <strong>not tests
+run for this proposal</strong>, nor a proof of every original row's field association.</p>
+<p>The reduction above is specifically <code>np.max(field_id, axis=1)</code>, with <code>-42</code> for
+missing baselines. It assumes all present baselines at a given time share a
+field; that operation does not validate the assumption. If populated baselines
+have different field IDs, the reduction chooses the largest, losing their
+distinction. Proposed casa-rs conversion must validate agreement within each
+destination time slice, partition compatibly or reject. It must also preserve
+distinct acquisitions that would otherwise collide in a time/baseline cell.
+The common intermediate carries the field per time, as MSv4 does; a store
+whose baselines disagree on the field at a time is refused rather than
+reduced, and needs partitioning by field.</p>
+<h2 id="3-proposed-ownership">3. Proposed ownership<a class="headerlink" href="#3-proposed-ownership" title="Permanent link">&para;</a></h2>
+<div class="codehilite"><pre><span></span><code>imaging operator/runtime   calibration   flagging/transforms   simulation
+              \               |                |                /
+               casa-observation: scientific batch/access contracts
+                                  |
+                       casa-ms: open/create/bind
+                      /                         \
+          casacore MSv2 adapter           XRADIO MSv4 adapter
+                 |                            |
+             casa-tables                    zarrs
+</code></pre></div>
+
+<p>The diagram shows the participating owners, not a dependency of the contract
+crate on its implementations. The algorithm planner sends an <code>AccessRequest</code>
+downward through the common interface; the adapter returns its bound realization
+and streams <code>VisibilityBatch</code> views upward. The partitions, data group, roles,
+channel window, correlations, scientific grouping and a byte budget travel in
+the request; the payload order is fixed, units are canonical, compute windows
+are views and a revisit is a new traversal. Only the planner negotiates I/O;
+numerical inner loops consume the resulting views.
+The proposed dependency direction is:</p>
+<table>
+<thead>
+<tr>
+<th>Owner</th>
+<th>Responsibilities</th>
+<th>Dependencies and exclusions</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>casa-types::measures</code> / <code>quanta</code></td>
+<td>Canonical coordinate/reference/unit types, scalar and borrowed bulk views, prepared conversion routes and kernels</td>
+<td>Existing numerical foundations and injected Measures provider; no dependency on MS, observation contracts, imaging, storage discovery or task execution. Rework the Measures APIs as needed.</td>
+</tr>
+<tr>
+<td>New <code>casa-observation</code>, policy layer <code>science</code></td>
+<td>Observation catalogue identities, ordered antenna/feed pairs, topology, payload/coordinate association, batches, access requirements and source/sink contracts</td>
+<td>Uses <code>casa-types</code> Measures/quanta types directly; no duplicate measure vocabulary, filesystem, task runtime or independent frame-conversion engine.</td>
+</tr>
+<tr>
+<td><code>casa-imaging-model</code>, policy layer <code>science</code></td>
+<td>Compiled imaging geometry and scientific problem definitions</td>
+<td>Proposed dependencies on <code>casa-observation</code> and <code>casa-types</code> for their shared contracts/Measures types; no dependency on storage, execution or a device.</td>
+</tr>
+<tr>
+<td><code>casa-ms</code></td>
+<td>Dataset lifecycle, catalogue access, backend dispatch, source binding, bounded fill/update/create adapters</td>
+<td><code>casa-observation</code>, existing storage/measures facilities, and pinned <code>zarrs</code>. Initial adapters can be modules; no new storage crate is required merely for symmetry.</td>
+</tr>
+<tr>
+<td><code>casa-tables</code></td>
+<td>Existing generic casacore table and storage-manager machinery</td>
+<td>Retains its table API and persistent compatibility. It does not depend on observation or imaging contracts.</td>
+</tr>
+<tr>
+<td>Imaging/calibration and other domain owners</td>
+<td>Request layouts, evaluate geometry, solve/project/reduce, apply scientific transforms</td>
+<td>Consume <code>casa-observation</code>; no table/Zarr addressing in their numerical loops.</td>
+</tr>
+<tr>
+<td>Existing execution owners</td>
+<td>Resource admission, worker teams, cancellation, pass lifecycle</td>
+<td>Continue to govern I/O/decode/packing work; no independent backend worker pool or scheduler.</td>
+</tr>
+</tbody>
+</table>
+<p>The owner requires the MS interfaces to use casa-rs Measures types directly,
+including their reference frames, and authorizes substantial Measures API
+reworking for natural bulk operation. This supersedes the earlier proposal to
+place independent coordinate primitives in a dependency-free <code>casa-observation</code>.
+The preferred implementation home is the existing <code>casa-types</code> Measures/quanta
+foundation, extended with native array views and prepared bulk conversions.
+<code>casa-observation</code> may re-export those exact types; it does not define another
+<code>Epoch</code>, frequency-frame enum or direction type that needs conversion to them.
+Imaging's duplicate raw coordinate types are consolidated into Measures while
+imaging retains its compiled projections and geometry. Preserve split epoch
+precision and distinguish Measures errors from imaging compile errors.</p>
+<p>The initial proposed dependency chain is
+<code>casa-imaging-model → casa-observation → casa-types → casa-values</code>, with a direct
+model-to-<code>casa-types</code> edge for Measures use. A later justified crate extraction
+must move the one authoritative type/engine definition and its consumers
+together; it cannot introduce a parallel MS-specific representation. No new
+crate extraction is required merely to keep the old dependency-free ideal.</p>
+<p>Existing <code>SelectedObservationRunRow</code> must not simply be renamed and moved: it
+mixes physical row/DDI identities with imaging projection. Factor observation
+identity into the catalogue, use native Measures views for coordinates and
+retain derived imaging types with their owner. M1 passes the same Measures
+types through read, conversion, calibration, imaging and creation, without
+boundary translation or per-value object construction.</p>
+<p>Bulk conversion is a system-wide Measures/quanta responsibility covering all
+supported families and future additions; LSRK↔TOPO is one example. Bind the route once, prepare
+context-dependent coefficients once at their valid scope, then apply to many
+values in reusable buffers. Consolidate the existing
+<code>PreparedFrequencyFrameConversion</code> in <code>casa-ms</code> and the stateful
+<code>MFrequencyConverter</code> into this shared capability without losing their distinct
+scientific policies. Preserve CASA-compatible ordered interpolation where
+required; preparation order and worker completion order are separate. Details
+are in <a href="../contracts/#shared-measures-types-and-bulk-conversion">shared Measures types and bulk conversion</a>.</p>
+<p>The dependency policy already has what the contract needs.
+<code>casa-observation</code> is registered in the <code>science</code> layer of
+<code>resources/imaging-architecture/dependency-policy.json</code> with an empty exact
+workspace-dependency set, and the amendment of ADR-0016's decision 10 is
+applied: every crate in the imaging policy may depend on the definitional
+crates (<code>casa-values</code>, <code>casa-types</code>, <code>casa-coordinates</code>), which therefore
+appear in no exact set (the checker refuses them there). Direct Measures
+dependencies need no further change. <code>casa-ms</code> depends on <code>casa-observation</code>,
+which the layers already permit (<code>observation</code> on <code>science</code>).</p>
+<p>The remaining M2 delta is only the production consumer edges, each added to
+its crate's exact set as that consumer moves: <code>casa-imaging-runtime</code> and
+<code>casa-imaging-application</code> on <code>casa-observation</code> when the pass reads batches
+directly (today the application uses it only in its trial tests), and
+<code>casa-imaging-model</code> if the compiled geometry takes catalogue types.
+Calibration is outside the imaging policy. <code>casa-observation</code> stays a science
+contract crate: not a definitional crate and not an execution owner, and it
+gains no table or file I/O. Audit the transitive graph and the Measures
+provider boundary with each edge; do not broadly relax the layer rules.
+Preserve ADR-0016's single compile/plan/run path, shared operators, and
+resource authority. There is no new execution DAG, runtime migration matrix,
+receipt system, plan hash, or replay store. One source binding may be
+revisited each major cycle without caching the whole visibility dataset.</p>
+<h2 id="4-access-is-negotiated-once-then-executed-in-bulk">4. Access is negotiated once, then executed in bulk<a class="headerlink" href="#4-access-is-negotiated-once-then-executed-in-bulk" title="Permanent link">&para;</a></h2>
+<ol>
+<li><code>open</code> detects a supported schema/profile and supplies bounded metadata
+   access, named data groups, and precise read/write capabilities. Selection
+   resolves semantic catalogue IDs within this opened observation.</li>
+<li>The processing algorithm's planner compiles an <code>AccessRequest</code>: the
+   partitions, one data group, the roles it reads, a channel window, the
+   correlation products and their flag policy, the scientific grouping and a
+   byte budget. Topology (the time × baseline grid), payload order, precision
+   and units are fixed by the contract; compute windows are views, and each
+   pass is its own traversal. It states a budget, not a physical tile size.
+   The request travels through the common source interface to the selected
+   adapter before iteration.</li>
+<li>The backend binds a realization under the existing resource budget. Its
+   summary states actual layout, aggregation, scratch/decode/queue requirements,
+   reorder costs, physical read/decode amplification per window and traversal,
+   and minimum physical working set. An unsatisfied hard
+   requirement is an error; it is never silently weakened.</li>
+<li>The admitted cursor repeatedly fills reusable storage and lends batch views.
+   Format/type dispatch happens per binding or batch, outside numerical loops.
+   The algorithm borrows compute windows or requests accounted packing.</li>
+<li>A write session batches addressed patches and coalesces changes at actual
+   tile/chunk/shard boundaries. Finishing reports completion or partial failure
+   according to the selected backend's declared guarantee.</li>
+</ol>
+<p>The backend chooses among the algorithm's permitted layouts and traversal orders
+using concrete storage geometry. It need not build a general cost optimizer.
+Start with explicit, inspectable heuristics and measure them. Existing tiles
+may force whole-cell or whole-chunk reads for narrow selections; expose and
+account for that amplification. A larger visibility batch does not require a larger
+kernel window or duplicated kernel scratch.</p>
+<p>The normal processing views guarantee Hz, m, rad and s for the corresponding
+coordinate quantities. Explicit alternative units are negotiated at binding;
+unit parsing/checks stay outside the numerical loop. Flux-density data use Jy
+when that meaning is established, with coherent weight/sigma scaling when their
+semantics permit it; arbitrary instrumental data are not inferred to be calibrated.
+Frames and time scales remain explicit and scientifically converted only on
+request. See <a href="../contracts/#units-and-measure-references">units and measure references</a>.</p>
+<p>Work units may finish independently and reuse their private buffers while other
+units continue, subject to scientific/order/write dependencies. Sharing a large
+allocation can let one slow window pin it; the realization must account for that
+lifetime or use admitted independent pieces/packing. Cube minor-cycle state has
+its own imaging owner and does not extend the lifetime of streamed visibilities.
+See <a href="../contracts/#independent-work-unit-lifetimes">independent work-unit lifetimes</a>;
+this extends the representation's requirements, not the number of schedulers or
+resource authorities.</p>
+<table>
+<thead>
+<tr>
+<th>Consumer</th>
+<th>Typical request, not a universal mandate</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Continuum imaging</td>
+<td>Selected groups/SPWs; UVW, frequency, correlation, validity and weights; bounded <code>[sample, channel, correlation]</code> views of whole times of the time × baseline grid, channel windows as views. Revisit selection each major cycle.</td>
+</tr>
+<tr>
+<td>Cube imaging</td>
+<td>Frequency-local work with many samples per channel and explicit spectral mapping. Full-frequency storage chunks may be decoded repeatedly across plane waves; bind reports that cost and admits feasible traversal alternatives.</td>
+</tr>
+<tr>
+<td>Gain/bandpass solve</td>
+<td>Scientific grouping by solution interval and configured field/SPW rules; correlations/channels arranged for the solver; sequential or bounded concurrent fragments feed admitted accumulators.</td>
+</tr>
+<tr>
+<td>Apply calibration</td>
+<td>Streaming visibility/flag/weight updates, with gains interpolated by the calibration owner. No need to materialize a whole solve group.</td>
+</tr>
+<tr>
+<td>Flagging</td>
+<td>Metadata plus flags and requested diagnostics; flags-only operations read no visibility payload unless the algorithm requests it.</td>
+</tr>
+</tbody>
+</table>
+<p>Layouts do not perform science. Reordering/packing may preserve samples; channel
+averaging, correlation conversion, spectral interpolation, UVW rotation,
+conjugation, and calibration change their interpretation and belong to explicit
+scientific operators. Their output cannot inherit writable source provenance
+without a separately defined update rule.</p>
+<p>XRADIO's pinned converter defaults to time chunks spanning the other axes,
+targeting roughly 128 MiB for the largest variable; it splits frequency and
+then baseline when even one time step exceeds the codec limit. Therefore a cube
+processed in channel waves can decode an entire band once per wave. Aggregation
+alone cannot repair that geometry. The existing imaging resource planner may
+choose a wider admitted plane wave, bounded chunk reuse, or a proven compatible
+traversal that accounts for both visibility and image-state I/O. It cannot make
+all plane grids resident merely because a decoded chunk fits. No hidden grid
+paging scheme, whole-observation cache, or rechunk-on-open is authorized here.
+If available realizations must reread, report and measure that amplification.</p>
+<p>Creation exposes workload-oriented chunk policies. The proposed cube-oriented
+default splits frequency as well as time/baseline, with concrete extents selected
+from channel access and decode budgets; M1 benchmarks determine the actual
+heuristic. A continuum-oriented policy may favor full-frequency chunks. Record
+the resolved chunk shape at creation and preserve existing stores on update.
+M3 compares both layouts on continuum, restricted-wave cube and bandpass work;
+no claim that one chunk shape is best for every algorithm follows.</p>
+<h2 id="5-persistent-support-profiles">5. Persistent support profiles<a class="headerlink" href="#5-persistent-support-profiles" title="Permanent link">&para;</a></h2>
+<p>The pinned MSv4 schema constrains the main coordinate units: frequency in Hz,
+UVW in m, time attributes in s, and angular coordinates in rad (spatial distances
+in m). Time also declares <code>format</code> and <code>scale</code>; both must be decoded with the
+units, and alternative time-format combinations need oracle evidence rather than
+a bare unit rescale. This is not an all-SI rule: visibility <code>units</code> is a string
+defaulting to Jy. Noncanonical data must be validated against the declared
+profile; do not silently label a nonconforming store as compliant MSv4.</p>
+<p>There is no single <code>supports_v4</code> boolean. Track read, create, selected update,
+structural extension/append, conversion fidelity, codecs, and concurrency
+separately. This table is a target, not an implemented-capability claim.</p>
+<table>
+<thead>
+<tr>
+<th>Profile</th>
+<th>Planned scope</th>
+<th>Acceptance oracle</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Existing CASA MSv2</td>
+<td>Retain current read/create/update and supported storage managers, including variable cell shapes and extension metadata</td>
+<td>CASA/casacore ↔ casa-rs; existing release cross-matrix and science workloads</td>
+</tr>
+<tr>
+<td>XRADIO MSv4 schema 4.0.1, local Zarr v3</td>
+<td>First native v4 target is interferometric <code>VisibilityXds</code>: read, create, selected updates of supported existing variables and planned group creation</td>
+<td>Pinned XRADIO/Xarray/Zarr environment ↔ Rust in both directions, plus CASA science comparisons on matched MSv2 data</td>
+</tr>
+<tr>
+<td>Note 264 MSv3 beta</td>
+<td>Deferred pending a concrete dataset/producer need; no present completion dependency or generic support claim</td>
+<td>Future independent producer/reader for the precise accepted profile; self-roundtrip alone is insufficient</td>
+</tr>
+<tr>
+<td>Producer dialects such as SKA MSV3B</td>
+<td>Deferred named profiles; never infer full note-264 compliance from a product name</td>
+<td>Future pinned producer release, inspected schema, independent read/write fixtures</td>
+</tr>
+<tr>
+<td>MSv4 schema 4.0.0 / Zarr v2</td>
+<td>Distinct compatibility profiles only when independently tested; not implied by 4.0.1/Zarr v3</td>
+<td>Version-specific fixtures and upgrade rules</td>
+</tr>
+<tr>
+<td>Remote/object stores</td>
+<td>Keep transport capability pluggable; local implementation does not claim distributed-safe update or atomic publication</td>
+<td>Separate transport/concurrency evidence before advertising support</td>
+</tr>
+</tbody>
+</table>
+<p>The owner selected MSv2 + MSv4 with MSv3 deferred on 2026-10-23. The shared
+contract must not hard-code v2 associations in ways that preclude a future
+adapter. Initial v4 scope does not include XRADIO's antenna-axis <code>SpectrumXds</code>
+schema; that is distinct from retaining current real-valued MSv2 capabilities.</p>
+<p>Start the v4 codec profile with uncompressed and XRADIO's bytes/Blosc-LZ4 path,
+native complex64/128, supported boolean/unsigned flags, and numeric weight/UVW
+types. Preserve dtype or explicitly reject it; f16 weights/UVW can widen exactly
+to f32 for computation without implying permission to change persistent dtype.
+M0/M1 must lock exact crate/dependency versions and fixture environments, inspect
+dimension names, strings, fill values, endian codecs, CF/Xarray attributes,
+nested metadata, and consolidation behavior. Generic Zarr support is necessary
+but is not proof of XRADIO interoperability.</p>
+<p>Pin the complete Rust store/codec feature graph, including <code>zarrs_filesystem</code>,
+and the complete Python oracle environment. Inspected zarrs 0.23.14 references
+filesystem 0.3.9, whose per-key lock registry grows with visited keys; the
+inspected development tree instead uses filesystem 0.4.0 with different cache,
+locking and sync behavior. These are feasibility findings, not a selected
+compatible dependency pair. M0/M1 must select a bounded realization and prove
+long-session retention, admitted codec concurrency, and replacement working set.</p>
+<p>The proposed local v4 write profile uses per-object atomic replacement under
+exclusive mutation ownership, with no dataset snapshot/transaction or shared
+cross-process lock protocol. See <a href="../contracts/#7-updates-and-creation">failure and creation rules</a>.
+Default new flags are boolean; reason-preserving integer flags require an
+explicit width and reason mapping. Creation without an input MS must use the
+same catalogue and batch vocabulary, not depend on backend-retained metadata.</p>
+<p>MSv4 does not imply that current CASA directly opens that format. Maintain
+CASA compatibility for MSv2 and require XRADIO compatibility for MSv4; conversion
+to CASA is an explicit supported mapping, with a preflight loss/unsupported
+report where semantics cannot be preserved. No arbitrary MSv2→v4→MSv2 exact-row
+roundtrip is promised. Original row existence can be unknowable after NaN
+padding, and format extensions may have no destination representation.</p>
+<p>Successful same-format updates retain unselected data, unknown extensions, and physical
+storage arrangements. Do not normalize an existing dataset on open. Data-group
+aliasing and flag semantics require special care; the
+<a href="../contracts/#7-updates-and-creation">write contract</a> is authoritative for this
+proposal.</p>
+<h3 id="conversion-fidelity">Conversion fidelity<a class="headerlink" href="#conversion-fidelity" title="Permanent link">&para;</a></h3>
+<p>This is the minimum audited loss table for the pinned XRADIO converter, not a
+claim that every MSv2 extension has been inventoried. M0 enumerates every column,
+keyword and subtable in the accepted input profiles. Any unmapped item needs an
+explicit preservation mapping, a reported loss decision or rejection before
+conversion; same-format updates continue to preserve it. Default casa-rs
+conversion rejects unapproved loss. The table proposes conversion behavior for
+owner review, not a change to the MSv4 schema.</p>
+<table>
+<thead>
+<tr>
+<th>MSv2 source fact</th>
+<th>Pinned XRADIO conversion / v4 representation</th>
+<th>Proposed casa-rs creation and reverse-conversion rule</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>DATA, CORRECTED_DATA, MODEL_DATA and their associations</td>
+<td>Named correlated-data variables/data groups; group context includes flags, weights, UVW and field/source</td>
+<td>Map every selected group explicitly; preserve associations/aliases and numeric precision, or reject. Group labels do not recreate missing native roles automatically.</td>
+</tr>
+<tr>
+<td>FLAG</td>
+<td>Copied to boolean FLAG</td>
+<td>Preserve element badness. Existing integer flags retain their declared reasons on same-format writes; projection to boolean loses reasons unless a separately accepted category mapping exists.</td>
+</tr>
+<tr>
+<td>FLAG_ROW</td>
+<td>Omitted; FLAG is not automatically ORed with it</td>
+<td>Encode effective <code>FLAG OR FLAG_ROW</code> for every affected channel/correlation. Report loss of row-versus-element provenance; reverse conversion cannot recover the original row flag. Never infer omitted row flags when reading an already converted file.</td>
+</tr>
+<tr>
+<td>FLAG_CATEGORY</td>
+<td>Not mapped</td>
+<td>Require an explicit reason/category mapping or reject/report approved loss. Do not assume category reasons equal the cumulative FLAG, or silently discard them.</td>
+</tr>
+<tr>
+<td>INTERVAL</td>
+<td>Median if values vary, stored as scalar <code>time.integration_time</code></td>
+<td>Preserve nominal interval through compatible partitioning or a separately accepted representation; otherwise reject/report approved loss. A median cannot recover per-sample values. Do not put INTERVAL into effective integration time.</td>
+</tr>
+<tr>
+<td>EXPOSURE</td>
+<td>Maps to EFFECTIVE_INTEGRATION_TIME when present</td>
+<td>Preserve independently of nominal INTERVAL; neither implies the other. Reverse mapping uses this variable, not the nominal sampling interval.</td>
+</tr>
+<tr>
+<td>TIME, TIME_CENTROID and extra-precision metadata</td>
+<td>Time/centroid have different roles; centroid extra precision is supported, but not every legacy precision column is mapped</td>
+<td>Audit each supplied precision field and epoch/unit conversion; preserve split precision where supported or reject/report loss. Optional absence is not evidence that midpoint and centroid were originally equal.</td>
+</tr>
+<tr>
+<td>FIELD_ID per acquisition</td>
+<td>Converted to <code>field_name(time)</code> using the maximum populated baseline field ID at each time; optional field partitioning is available</td>
+<td>Validate field agreement within each destination time slice; partition compatibly or reject conflicting fields. Preserve associations under selection/reordering and repeated mosaic visits. A reader cannot reconstruct distinctions already discarded upstream. See <a href="#converter-evidence-for-mosaics">converter evidence</a>.</td>
+</tr>
+<tr>
+<td>WEIGHT and WEIGHT_SPECTRUM</td>
+<td>Spectrum preferred; row weights may be broadcast on fallback, and distinct row summaries may be dropped</td>
+<td>Bind fallback per cell and report the native-role information retained/lost. Keep effective channel values; preserve a distinct row summary only through an accepted mapping. Reverse reduction is an explicit scientific policy, never an automatic inverse.</td>
+</tr>
+<tr>
+<td>SIGMA and SIGMA_SPECTRUM</td>
+<td>Not mapped</td>
+<td>Preserve through an accepted explicit mapping or reject/report approved loss. Do not reconstruct as <code>1/sqrt(WEIGHT)</code> without a separately justified scientific relation.</td>
+</tr>
+<tr>
+<td>Duplicate <code>(time, ordered baseline)</code> acquisitions within one partition</td>
+<td>Dense converter keeps the last row</td>
+<td>Reject or split into valid compatible partitions while preserving every acquisition; never alter times or average to force uniqueness. A reader cannot recover acquisitions already discarded upstream.</td>
+</tr>
+<tr>
+<td>Absent slots versus actual NaN-valued acquisitions</td>
+<td>NaN payload padding, possibly FLAG=false; standard output need not retain legacy row occupancy</td>
+<td>Retain unknown occupancy; reverse row creation requires an explicit declared policy or rejection. Chunk presence and flags do not prove measured-row existence.</td>
+</tr>
+<tr>
+<td>Original row/subtable IDs, other optional columns/keywords</td>
+<td>Some IDs are replaced by local names/subsets; many optional fields have no standard mapping</td>
+<td>Use explicit catalogue/caltable namespace bindings. Inventory remaining metadata; no opaque sidecar is used to claim a lossless CASA roundtrip.</td>
+</tr>
+</tbody>
+</table>
+<p>For each row, M1 retains the original MSv2 fixture, reads the pinned converter's
+actual output, tests the proposed Rust conversion or typed rejection, and checks
+what an independent reverse reader can establish. Where the converter lost
+information, compare the Rust reader to the file that actually exists and
+separately document divergence from the original MSv2. It must not invent a
+repair. Scientific paired fixtures used to claim equivalence must either avoid
+those losses or apply an explicit, independently checked mapping.</p>
+<h2 id="6-existing-decisions-and-deliberate-changes">6. Existing decisions and deliberate changes<a class="headerlink" href="#6-existing-decisions-and-deliberate-changes" title="Permanent link">&para;</a></h2>
+<p>Retain <a href="../../adr/0008-casacore-storage-and-bounded-measurementset-writes/">ADR-0008</a>
+for table storage-manager bindings, bounded writes, locking, and ordinary
+in-place partial failure. Extend its observation-facing scope to the new
+source/sink interface and define Zarr-specific guarantees in a reviewed new ADR;
+do not silently apply casacore locks or filesystem rename promises to an object
+store. Retain <a href="../../adr/0015-run-local-imaging-ownership-without-content-attestation/">ADR-0015</a>
+and <a href="../../adr/0016-imaging-foundation/">ADR-0016</a>: ownership establishes
+within-run association, with no private source markers, payload hashes, whole
+column backups, or verification-only data rereads.</p>
+<p>The dependency amendment has landed: ADR-0016's decision 10, accepted on
+<code>main</code> (<code>1eed6e9</code>), lets every imaging crate depend on the definitional crates,
+and the trial uses it. This proposal modifies no other accepted ADR. The Zarr
+write profile above (atomic object replacement, staging and publication) and
+any change to ADR-0008's locking and partial-failure guarantees are future
+decisions for a reviewed new ADR. Existing persistent contracts are expanded
+only through profile-specific reviewed tests; an unavailable capability is
+never reported as complete.</p>
+<p>Rejected designs include forcing v4 through per-row table calls, materializing
+a densified copy of legacy rows (the MSv2 adapter indexes rows onto the grid at
+opening and pads only inside the batches it fills), a layout choice per
+request (one payload order, which both stores hold, with permuted views for
+other kernel layouts), a Python bridge on the hot path, a universal per-sample
+trait object, and retaining a second production imaging route for comparison. Frozen binaries/test harnesses provide
+the old performance baseline without maintaining duplicate production engines.</p>
+<h2 id="7-reference-baseline">7. Reference baseline<a class="headerlink" href="#7-reference-baseline" title="Permanent link">&para;</a></h2>
+<p>Sources were inspected on 2026-10-23. XRADIO source links are pinned to
+<code>3ed765867515095d852eb68c073165c1f6c58761</code>; its source declares schema 4.0.1.
+The source package version string is not evidence of a published release.
+Implementation acceptance must record its full oracle dependency lock.</p>
+<ul>
+<li><a href="https://casacore.github.io/casacore-notes/229.html">MSv2, casacore note 229</a>
+  and <a href="https://casacore.github.io/casacore-notes/264.html">MSv3 beta, note 264</a>.</li>
+<li><a href="https://casadocs.readthedocs.io/en/stable/notebooks/casa-fundamentals.html#MS-v2.0-Layout">CASAdocs: MS v2.0 layout</a>
+  explicitly names MSv2 as CASA's internal working format;
+  <a href="https://github.com/casacore/casacore/blob/a1399b6b99907bd14021920a089403a93c10aba1/ms/MeasurementSets/MeasurementSet.cc#L926">casacore's version check</a>
+  requires version 2.0. These establish CASA support, not an exhaustive survey
+  of observatory data or a claim that no v3 variants exist.</li>
+<li><a href="https://developer.skao.int/projects/ska-sdp-realtime-receive-core/en/latest/measurement_set_utilities_and_format.html">SKA receive-core format documentation</a>:
+  MSV3B is a producer profile to investigate, not a proven universal v3 oracle.</li>
+<li><a href="https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/src/xradio/measurement_set/schema.py">XRADIO schema, including data groups</a>
+  and <a href="https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/docs/source/measurement_set/overview.rst">MSv4 overview</a>.</li>
+<li>MSv4 unit evidence: <a href="https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/src/xradio/schema/measures.py#L56">literal coordinate units and time measures</a>,
+  <a href="https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/src/xradio/measurement_set/schema.py#L432">frequency in Hz</a>,
+  <a href="https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/src/xradio/measurement_set/schema.py#L637">UVW in m</a>,
+  and <a href="https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/src/xradio/measurement_set/schema.py#L1035">visibility units defaulting to Jy</a>.</li>
+<li><a href="https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/src/xradio/_utils/zarr/config.py">XRADIO Zarr format configuration</a>
+  and <a href="https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/src/xradio/measurement_set/convert_msv2_to_processing_set.py">conversion defaults</a>.</li>
+<li><a href="https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/src/xradio/_utils/list_and_array.py">Padding values</a>
+  and <a href="https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/src/xradio/measurement_set/_utils/_msv2/conversion.py#L2148">optional conversion test row indices</a>.</li>
+<li>Conversion-loss evidence: <a href="https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/src/xradio/measurement_set/_utils/_msv2/msv2_to_msv4_meta.py#L3">MAIN role mapping</a>,
+  <a href="https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/src/xradio/measurement_set/_utils/_msv2/conversion.py#L916">weight preference</a>,
+  <a href="https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/src/xradio/measurement_set/_utils/_msv2/conversion.py#L1865">interval median</a>,
+  <a href="https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/src/xradio/measurement_set/schema.py#L1785">EXPOSURE destination</a>,
+  and <a href="https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/src/xradio/measurement_set/_utils/_msv2/_tables/read.py#L1494">duplicate/padding behavior</a>.</li>
+<li><a href="https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/src/xradio/measurement_set/_utils/_msv2/conversion.py#L427">XRADIO default chunk sizing</a>
+  and <a href="https://github.com/casangi/xradio/blob/3ed765867515095d852eb68c073165c1f6c58761/docs/source/measurement_set/schema.rst#L344">suggested flag meanings</a>.</li>
+<li><a href="https://zarr-specs.readthedocs.io/en/latest/v3/core/index.html">Zarr v3 specification</a>,
+  <a href="https://docs.xarray.dev/en/stable/internals/zarr-encoding-spec.html">Xarray encoding conventions</a>,
+  <a href="https://docs.rs/zarrs/0.23.14/zarrs/">zarrs</a>, and
+  <a href="https://docs.rs/zarrs_object_store/">zarrs object-store adapter</a>.</li>
+<li>Store feasibility evidence: <a href="https://github.com/zarrs/zarrs/blob/f2c77ea616507cd5837f32eafb4f4bf317db8896/Cargo.toml#L66">release filesystem dependency</a>,
+  <a href="https://github.com/zarrs/zarrs/blob/f2c77ea616507cd5837f32eafb4f4bf317db8896/zarrs_filesystem/src/lib.rs#L164">retained per-key locks and in-place writes</a>,
+  <a href="https://github.com/zarrs/zarrs/blob/f2c77ea616507cd5837f32eafb4f4bf317db8896/zarrs/src/array/concurrency.rs#L23">release concurrency initialization</a>,
+  and <a href="https://github.com/zarrs/zarrs/blob/7b13a7fac68bbdcdd543a2b805df9de48e5c4b20/zarrs_filesystem/src/lib.rs#L79">different development-store behavior</a>.</li>
+<li><a href="https://github.com/zarr-developers/zarr-python/blob/957a5f682b46b4055d5619d01b4a3a3cc36c04db/src/zarr/storage/_local.py#L107">Inspected zarr-python atomic local replacement</a>
+  is evidence about that commit, not every XRADIO dependency lock, dataset
+  consistency or power-loss durability.</li>
+<li><a href="https://xradio.readthedocs.io/en/latest/image_data/schema.html">XRADIO image schema</a>:
+  a separate schema, deferred from this visibility programme.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.c21346df.min.js"></script>
+      
+    
+  </body>
+</html>

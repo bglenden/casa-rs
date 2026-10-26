@@ -7,16 +7,16 @@
 <a href=#7 id=7 data-nosnippet>7</a></span><span class="kw">use </span>std::collections::{BTreeMap, BTreeSet};
 <a href=#8 id=8 data-nosnippet>8</a>
 <a href=#9 id=9 data-nosnippet>9</a><span class="kw">use </span>casa_imaging_model::{
-<a href=#10 id=10 data-nosnippet>10</a>    CorrelationProduct, CorrelationSelection, CorrelationType, ObservationSelection,
-<a href=#11 id=11 data-nosnippet>11</a>    SelectedMainRow, SelectedRows, SelectedRowsBuilder, SpectralWindowSelection,
-<a href=#12 id=12 data-nosnippet>12</a>    VisibilityColumn <span class="kw">as </span>OwnerVisibilityColumn,
-<a href=#13 id=13 data-nosnippet>13</a>};
-<a href=#14 id=14 data-nosnippet>14</a><span class="kw">use </span>casa_ms::{
-<a href=#15 id=15 data-nosnippet>15</a>    MeasurementSet, SelectedObservationContentBudget, SelectedObservationRow,
-<a href=#16 id=16 data-nosnippet>16</a>    SelectedObservationRowSelection, SelectedObservationSpectralEnvelope,
-<a href=#17 id=17 data-nosnippet>17</a>    SelectedObservationSpectralEnvelopeReducer, SelectedObservationSpectralWindow,
-<a href=#18 id=18 data-nosnippet>18</a>    VisibilityDataColumn, parse_spw_selector, resolve_channel_selector_selection,
-<a href=#19 id=19 data-nosnippet>19</a>};
+<a href=#10 id=10 data-nosnippet>10</a>    CorrelationProduct, CorrelationSelection, ObservationSelection, SelectedMainRow, SelectedRows,
+<a href=#11 id=11 data-nosnippet>11</a>    SelectedRowsBuilder, SpectralWindowSelection, VisibilityColumn <span class="kw">as </span>OwnerVisibilityColumn,
+<a href=#12 id=12 data-nosnippet>12</a>};
+<a href=#13 id=13 data-nosnippet>13</a><span class="kw">use </span>casa_ms::{
+<a href=#14 id=14 data-nosnippet>14</a>    MeasurementSet, SelectedObservationContentBudget, SelectedObservationRow,
+<a href=#15 id=15 data-nosnippet>15</a>    SelectedObservationRowSelection, SelectedObservationSpectralEnvelope,
+<a href=#16 id=16 data-nosnippet>16</a>    SelectedObservationSpectralEnvelopeReducer, SelectedObservationSpectralWindow,
+<a href=#17 id=17 data-nosnippet>17</a>    VisibilityDataColumn, parse_spw_selector, resolve_channel_selector_selection,
+<a href=#18 id=18 data-nosnippet>18</a>};
+<a href=#19 id=19 data-nosnippet>19</a><span class="kw">use </span>casa_types::Correlation;
 <a href=#20 id=20 data-nosnippet>20</a><span class="kw">use </span>casa_types::measures::frequency::FrequencyRef;
 <a href=#21 id=21 data-nosnippet>21</a>
 <a href=#22 id=22 data-nosnippet>22</a><span class="kw">use </span><span class="kw">super</span>::PrepareError;
@@ -514,8 +514,8 @@
 <a href=#514 id=514 data-nosnippet>514</a>    })
 <a href=#515 id=515 data-nosnippet>515</a>}
 <a href=#516 id=516 data-nosnippet>516</a>
-<a href=#517 id=517 data-nosnippet>517</a><span class="kw">fn </span>correlation_type(code: i32) -&gt; <span class="prelude-ty">Result</span>&lt;CorrelationType, PrepareError&gt; {
-<a href=#518 id=518 data-nosnippet>518</a>    CorrelationType::from_casa_code(code).ok_or(PrepareError::UnsupportedCorrelation { code })
+<a href=#517 id=517 data-nosnippet>517</a><span class="kw">fn </span>correlation_type(code: i32) -&gt; <span class="prelude-ty">Result</span>&lt;Correlation, PrepareError&gt; {
+<a href=#518 id=518 data-nosnippet>518</a>    Correlation::from_casacore_code(code).ok_or(PrepareError::UnsupportedCorrelation { code })
 <a href=#519 id=519 data-nosnippet>519</a>}
 <a href=#520 id=520 data-nosnippet>520</a>
 <a href=#521 id=521 data-nosnippet>521</a><span class="attr">#[cfg(test)]

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["GroupClosure"],"fn":["open"],"struct":["Msv2Cursor","Msv2Observation","OpenOptions","PartitionScheme"]};

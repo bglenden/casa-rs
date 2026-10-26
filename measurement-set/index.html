@@ -1,0 +1,941 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Rust and Python APIs for CASA-compatible data and tasks">
+      
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
+    
+    
+      
+        <title>MeasurementSet architecture review - casa-rs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.57a0d79d.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#measurementset-architecture-review" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="casa-rs" class="md-header__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            casa-rs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              MeasurementSet architecture review
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="casa-rs" class="md-nav__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    casa-rs
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Task Parameters
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Task Parameters
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../task-parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/task-parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Generated Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../rust-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rust API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Python
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../python/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../python/data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../python/tasks-calibrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Calibrate Tasks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../python/versioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../python/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#reading-order" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reading order
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#decisions-for-the-owner-and-independent-reviewers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Decisions for the owner and independent reviewers
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#github-review-protocol" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GitHub review protocol
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#source-map-for-external-reviewers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Source map for external reviewers
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="measurementset-architecture-review">MeasurementSet architecture review<a class="headerlink" href="#measurementset-architecture-review" title="Permanent link">&para;</a></h1>
+<p>Status: revision 5; authorized for M0/M1 trial; the read contract frozen narrowly for M2 on 2026-10-25, the rest not frozen
+Truth class: design proposal
+Date: 2026-10-24
+Repository baseline: <code>221ec71545fe36a758ab0869e7512349b5db7c0e</code></p>
+<p>This proposal gives MSv2 and XRADIO MSv4
+one native Rust observation interface. Algorithms request scientific grouping
+and memory layout; each backend realizes that request with bounded I/O. Existing
+Rust interfaces may change completely. Persistent interoperability, science,
+and measured performance remain acceptance requirements.</p>
+<p>The owner agreed on 2026-10-24 to proceed with a separately implemented,
+independently reviewed trial. Start with the <a href="trial-handoff/">trial handoff</a>.
+The first assignment is two small worked examples—image channel planes and a
+gain solve—plus an early bidirectional XRADIO interoperability check, followed
+by review and interface revision before expanding M1.
+This accepts D1–D6 as the working direction for M0/M1; interface stabilization,
+production migration and merging still require the trial evidence and review.</p>
+<h2 id="reading-order">Reading order<a class="headerlink" href="#reading-order" title="Permanent link">&para;</a></h2>
+<p>For a guided introduction, open the standalone <a href="walkthrough.html">HTML walkthrough</a>
+in a browser (download the file when reading on GitHub). It builds the revision 5
+proposal in twelve steps, with interactive layout/completion examples, review
+questions, and links to the exact draft sources. It works offline; optional notes
+stay in the browser and can be exported. The Markdown contracts below remain the
+detailed proposal; the walkthrough does not finalize any decision.</p>
+<table>
+<thead>
+<tr>
+<th>Document</th>
+<th>Review focus</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="trial-handoff/">Trial handoff</a></td>
+<td>Two initial worked examples, branch setup, review checkpoints and subsequent M1 evidence; start here to implement the trial.</td>
+</tr>
+<tr>
+<td><a href="architecture/">Architecture</a></td>
+<td>Boundaries, decisions, format scope, and alternatives; start here for the overall design.</td>
+</tr>
+<tr>
+<td><a href="contracts/">Intermediate contracts</a></td>
+<td>The arrays and metadata shared by storage, imaging, calibration, and flagging; the principal design review.</td>
+</tr>
+<tr>
+<td><a href="implementation-plan/">Implementation plan</a></td>
+<td>Sequenced work packets, evidence, agent responsibilities, and change control.</td>
+</tr>
+</tbody>
+</table>
+<p>Everything needed to review the proposal is committed here or linked to public
+sources. Review does not require access to the author's execution environment.
+The Rust sketches describe contracts; they are not implemented or compilable
+library APIs yet. No performance or format-interoperability experiment is
+claimed by this documentation PR.</p>
+<p>This revision incorporates Pro and Fable's reviews of commit <code>526d706c</code> and
+owner discussion of work groups that finish at different rates, canonical units,
+explicit access-pattern negotiation, and a provisional <code>VisibilityBatch</code> name
+that avoids observatory terminology.
+The <a href="architecture/#converter-evidence-for-mosaics">mosaic converter evidence</a>
+traces actual XRADIO field mapping and upstream VLA/ALMA/VLASS tests, including
+the consistency assumption that casa-rs must validate before a v4 write.
+Step 04 now expands the nested data group into a
+<a href="contracts/#concrete-batch-example">concrete numeric batch</a>, with selectable
+visibility/flag/weight elements and explicit
+<a href="contracts/#autocorrelations-and-real-valued-data">autocorrelation scalar semantics</a>.
+It distinguishes <a href="contracts/#buffer-ownership-and-array-views">buffer ownership from array views</a>:
+the batch carries actual numerical data, and a borrowed view provides direct
+access without copying. <a href="contracts/#using-ndarray">Using <code>ndarray</code></a> is the
+owner-agreed direction, with thin scientific types and M1 checks for buffer
+reuse, ownership transfer and performance; concrete types remain open for review.
+The owner also requires <a href="contracts/#shared-measures-types-and-bulk-conversion">native Measures types and bulk conversion</a>,
+authorizing substantial Measures refactoring. The revised ownership keeps those
+types and conversions in the Measures foundation, directly used by the batch.
+Bulk operation applies across all supported Measures/quanta families and future
+additions. LSRK↔TOPO is a non-exhaustive example; the M1 gate requires a family
+coverage matrix, including scalar/vector and nonlinear operations.
+The documents and PR remain provisional: neither addressing a comment nor an
+agent recommendation finalizes the design. The MSv2 + MSv4 scope, MSv3 deferral,
+Measures requirement and use of <code>ndarray</code> are owner directions; they do not
+freeze the concrete APIs or authorize broad implementation before M1 review.
+After the trial, the owner froze the read contract narrowly for M2 on
+2026-10-25 (<a href="contracts/">contracts</a>, sections 1–6 and creation from
+batches); the rest stays provisional
+(<a href="implementation-plan/">implementation plan</a>, section 10).</p>
+<h2 id="decisions-for-the-owner-and-independent-reviewers">Decisions for the owner and independent reviewers<a class="headerlink" href="#decisions-for-the-owner-and-independent-reviewers" title="Permanent link">&para;</a></h2>
+<ol>
+<li><strong>D1 — Shared representation:</strong> approve irregular and rectangular topology,
+   typed array views, explicit numeric precision, and separate presence,
+   validity, flags, weights, and coordinate context. Guarantee canonical coordinate
+   units by default and bind explicit unit requests before computation. Use native
+   Measures types/views and prepared bulk transformations directly. Reject a universal
+   per-physical-MS-row object interface or a universal dense cube. Factored
+   coordinates can accompany the same sample-major values without a transpose.</li>
+<li><strong>D2 — Algorithm-led access:</strong> approve hard layout/grouping requirements
+   with bounded fragments, sequential or bounded concurrent group realization,
+   proven group completion, and backend chunk aggregation within those
+   requirements. Calibration grouping does not require a whole solve in memory.</li>
+<li><strong>D3 — Ownership and writes:</strong> approve reusable borrowed batches with
+   independent work-unit lifetimes and explicit shared-allocation pinning, opaque
+   session-local inverse mappings, native-role broadcast/group alias scopes,
+   and bulk patches. The proposed local v4 profile replaces individual objects
+   atomically; it does not promise a dataset transaction or power-loss durability.</li>
+<li><strong>D4 — Boundaries:</strong> approve a small shared <code>casa-observation</code> contract crate,
+   using the authoritative Measures/quanta types in <code>casa-types</code>, with
+   <code>casa-imaging-model</code> depending on both; keep compiled geometry in imaging and
+   storage adapters under <code>casa-ms</code>. Consolidate MS-specific conversion helpers
+   into Measures. This supersedes a dependency-free observation base and is an
+   explicit proposed amendment of the model's current dependency rule.
+   Keep one existing execution/resource owner.</li>
+<li><strong>D5 — Support scope:</strong> approve native local MSv4 read/create/update first,
+   no Python on the processing path, preservation of existing MSv2 support,
+   with MSv3 deferred until concrete datasets justify a named profile.
+   Object-store mutation and XRADIO
+   image persistence require later, explicit work.</li>
+<li><strong>D6 — Sequence and stability:</strong> approve an early executable contract trial
+   across imaging, calibration, writes, and source-free creation before broad migration. Freeze
+   semantics after that trial, with reviewed changes still possible.</li>
+</ol>
+<p>The owner confirmed the MSv2 + MSv4 scope and deferral of MSv3 on 2026-10-23,
+and agreed to trial the remaining design on 2026-10-24. D1–D6 guide that trial;
+the concrete contracts remain open to evidence-led revision. MSv3 is a beta
+specification with producer-specific variants; no generic MSv3 interoperability is promised.
+The interface should accommodate a future adapter without making it a
+completion dependency now.</p>
+<p>The trial must challenge D2's concurrent grouping and
+closure, D3's object-replacement/durability boundary, D4's shared primitive owner,
+and the proposed creation/conversion policies (frequency chunking for cubes and
+explicit loss/rejection rules). Dependency versions, exact chunk extents and
+performance feasibility remain M0/M1 evidence questions. The plan makes
+those experiments mandatory rather than treating them as settled by prose.</p>
+<h2 id="github-review-protocol">GitHub review protocol<a class="headerlink" href="#github-review-protocol" title="Permanent link">&para;</a></h2>
+<p>Keep the proposal PR in <strong>draft</strong> while the owner and independent reviewers,
+including Anthropic Fable, review it. Leave findings on the relevant Markdown
+lines using GitHub's normal review process. Each finding should identify the
+violated invariant or concrete counterexample, the consequence, and a proposed
+resolution when known. Use blocking findings for correctness, unsupported
+claims, unbounded memory, performance regressions, or irreversible information
+loss; distinguish those from editorial preferences.</p>
+<p>The author responds in the PR and updates these documents. Resolve a finding
+only when its resolution is in the diff or the owner explicitly accepts the
+tradeoff. Record accepted D1–D6 decisions in the PR; absence of a comment is not
+approval. Architecture and implementation-plan approval are separate from
+passing documentation checks. The accepted ADRs remain binding until their
+explicit amendments are reviewed; this proposal changes none of them.</p>
+<p>Implementation PRs link the accepted design revision and their work issue.
+Milestone reviewers receive exact commands, fixture provenance, and compact
+results in GitHub, including failures and skips. Large data need not live in
+Git, but fixture recipes, small legal fixtures, environment requirements, and
+numerical summaries must not exist only in a private filesystem. The
+<a href="implementation-plan/#10-review-and-change-control">implementation plan</a>
+specifies how the cheaper implementers and stronger reviewers work together.</p>
+<h2 id="source-map-for-external-reviewers">Source map for external reviewers<a class="headerlink" href="#source-map-for-external-reviewers" title="Permanent link">&para;</a></h2>
+<p>The following casa-rs links are pinned to the inspected baseline
+<code>221ec71545fe36a758ab0869e7512349b5db7c0e</code>. Use the PR's <strong>Files changed</strong> view
+for the proposed documents and normal repository browsing for context. Search
+the named symbols in these files when line numbers have moved. Implementation
+PRs must update the baseline and link the changed production entrypoints.</p>
+<table>
+<thead>
+<tr>
+<th>Question</th>
+<th>Source to inspect</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>How do current arrays and requests work?</td>
+<td><a href="https://github.com/bglenden/casa-rs/blob/221ec71545fe36a758ab0869e7512349b5db7c0e/crates/casa-ms/src/selected_observation_buffer.rs">selected_observation_buffer.rs</a>: <code>SelectedObservationBufferRequest</code>, <code>SelectedObservationNumericColumns</code>, buffer capacity and read footprint.</td>
+</tr>
+<tr>
+<td>Where are physical rows and current buffer limits bound?</td>
+<td><a href="https://github.com/bglenden/casa-rs/blob/221ec71545fe36a758ab0869e7512349b5db7c0e/crates/casa-ms/src/visibility_buffer.rs">visibility_buffer.rs</a>, <a href="https://github.com/bglenden/casa-rs/blob/221ec71545fe36a758ab0869e7512349b5db7c0e/crates/casa-ms/src/selected_observation/access.rs">selected_observation/access.rs</a>, and <a href="https://github.com/bglenden/casa-rs/blob/221ec71545fe36a758ab0869e7512349b5db7c0e/crates/casa-ms/src/selected_observation/content_plan.rs">content_plan.rs</a>.</td>
+</tr>
+<tr>
+<td>What is raw metadata versus imaging projection today?</td>
+<td><a href="https://github.com/bglenden/casa-rs/blob/221ec71545fe36a758ab0869e7512349b5db7c0e/crates/casa-imaging-model/src/selected_observation_sample.rs">selected_observation_sample.rs</a>: <code>SelectedObservationRunRow</code>; <a href="https://github.com/bglenden/casa-rs/blob/221ec71545fe36a758ab0869e7512349b5db7c0e/crates/casa-imaging-operator/src/sample.rs">operator sample.rs</a>: <code>SampleBlock</code>.</td>
+</tr>
+<tr>
+<td>What Measures types and bulk mechanisms already exist?</td>
+<td><a href="https://github.com/bglenden/casa-rs/tree/221ec71545fe36a758ab0869e7512349b5db7c0e/crates/casa-types/src/measures">Measures modules</a>; <a href="https://github.com/bglenden/casa-rs/blob/221ec71545fe36a758ab0869e7512349b5db7c0e/crates/casa-types/src/measures/frequency.rs#L201">MFrequencyConverter</a> retains ordered aberration/dUT1 state but its scalar <code>convert_hz</code> still finds a route and prepares frames; <a href="https://github.com/bglenden/casa-rs/blob/221ec71545fe36a758ab0869e7512349b5db7c0e/crates/casa-types/src/measures/frame.rs#L99">MeasFrame and its cache</a>; <a href="https://github.com/bglenden/casa-rs/blob/221ec71545fe36a758ab0869e7512349b5db7c0e/crates/casa-types/src/measures/baseline.rs#L30">UvwFrame</a> prepares geometry for many baselines.</td>
+</tr>
+<tr>
+<td>Which duplicate Measures interfaces should be consolidated?</td>
+<td><a href="https://github.com/bglenden/casa-rs/blob/221ec71545fe36a758ab0869e7512349b5db7c0e/crates/casa-imaging-model/src/geometry.rs#L678">Imaging frequency/epoch types</a>, <a href="https://github.com/bglenden/casa-rs/blob/221ec71545fe36a758ab0869e7512349b5db7c0e/crates/casa-ms/src/selected_observation/spectral_evaluation.rs#L642">frame-enum translation</a>, and <a href="https://github.com/bglenden/casa-rs/blob/221ec71545fe36a758ab0869e7512349b5db7c0e/crates/casa-ms/src/spectral_selection.rs#L1815">MS-specific prepared frequency factors</a>. Preserve the <a href="https://github.com/bglenden/casa-rs/blob/221ec71545fe36a758ab0869e7512349b5db7c0e/crates/casa-ms/src/selected_observation/spectral_evaluation.rs#L122">ordered spectral-envelope behavior</a>, rather than benchmarking only against a repeated scalar conversion the production path already avoids.</td>
+</tr>
+<tr>
+<td>Who owns imaging source execution and resources?</td>
+<td><a href="https://github.com/bglenden/casa-rs/blob/221ec71545fe36a758ab0869e7512349b5db7c0e/crates/casa-imaging-runtime/src/source_access.rs">runtime source_access.rs</a>, <a href="https://github.com/bglenden/casa-rs/tree/221ec71545fe36a758ab0869e7512349b5db7c0e/crates/casa-imaging-runtime/src/pass">runtime pass</a>, and <a href="https://github.com/bglenden/casa-rs/blob/221ec71545fe36a758ab0869e7512349b5db7c0e/crates/casa-imaging-application/src/imaging/source.rs">application source.rs</a>.</td>
+</tr>
+<tr>
+<td>What does calibration currently assume?</td>
+<td><a href="https://github.com/bglenden/casa-rs/blob/221ec71545fe36a758ab0869e7512349b5db7c0e/crates/casa-calibration/src/session.rs">session.rs</a>, <a href="https://github.com/bglenden/casa-rs/blob/221ec71545fe36a758ab0869e7512349b5db7c0e/crates/casa-calibration/src/solve/grouping.rs">solve/grouping.rs</a>, and <a href="https://github.com/bglenden/casa-rs/blob/221ec71545fe36a758ab0869e7512349b5db7c0e/crates/casa-calibration/src/execute.rs">execute.rs</a>.</td>
+</tr>
+<tr>
+<td>What write performance/semantics must survive?</td>
+<td><a href="https://github.com/bglenden/casa-rs/blob/221ec71545fe36a758ab0869e7512349b5db7c0e/crates/casa-ms/src/observation_owner/visibility_write.rs">visibility_write.rs</a>, <a href="https://github.com/bglenden/casa-rs/blob/221ec71545fe36a758ab0869e7512349b5db7c0e/crates/casa-ms/src/write_session.rs">write_session.rs</a>, <a href="https://github.com/bglenden/casa-rs/blob/221ec71545fe36a758ab0869e7512349b5db7c0e/crates/casa-ms/src/flagging.rs">flagging.rs</a>.</td>
+</tr>
+<tr>
+<td>Which producer paths also need migration?</td>
+<td><a href="https://github.com/bglenden/casa-rs/tree/221ec71545fe36a758ab0869e7512349b5db7c0e/crates/casa-simulation/src/write">simulation write pipeline</a> and <a href="https://github.com/bglenden/casa-rs/tree/221ec71545fe36a758ab0869e7512349b5db7c0e/crates/casa-vla">casa-vla</a>.</td>
+</tr>
+<tr>
+<td>What existing architectural constraints bind the proposal?</td>
+<td><a href="../adr/0008-casacore-storage-and-bounded-measurementset-writes/">ADR-0008</a>, <a href="../adr/0009-mathematical-imaging-architecture/">ADR-0009</a>, <a href="../adr/0015-run-local-imaging-ownership-without-content-attestation/">ADR-0015</a>, <a href="../adr/0016-imaging-foundation/">ADR-0016</a>, dependency policy (<code>resources/imaging-architecture/dependency-policy.json</code>). These relative links resolve in the PR branch.</td>
+</tr>
+<tr>
+<td>What counts as validation?</td>
+<td><code>TESTING.md</code>, performance skill (<code>.agents/skills/casa-rs-imaging-performance/SKILL.md</code>), representative science matrix (<code>resources/imaging-architecture/representative-science-matrix.json</code>).</td>
+</tr>
+<tr>
+<td>What defines MSv4 and its stack?</td>
+<td><a href="architecture/#7-reference-baseline">Architecture reference baseline</a>: pinned XRADIO schema, group definitions, padding, conversion and Zarr configuration; Zarr specification, Xarray conventions, and Rust library links.</td>
+</tr>
+</tbody>
+</table>
+<p>For a focused independent review, read the proposed contracts alongside the
+existing buffer/write APIs and the pinned XRADIO schema. Check whether any real
+source data would lose meaning, whether an algorithm must know the storage
+format, whether promised writes are implementable with bounded memory, and
+whether the milestone evidence can actually disprove the performance claims.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": [], "search": "../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.c21346df.min.js"></script>
+      
+    
+  </body>
+</html>

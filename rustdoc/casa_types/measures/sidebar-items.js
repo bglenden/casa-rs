@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["baseline","direction","doppler","earth_magnetic","epoch","error","frame","frequency","position","provider","radial_velocity","record"]};
+window.SIDEBAR_ITEMS = {"mod":["baseline","direction","doppler","earth_magnetic","epoch","error","frame","frequency","position","provider","radial_velocity","record","uvw","views"]};

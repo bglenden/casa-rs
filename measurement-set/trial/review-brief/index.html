@@ -1,0 +1,994 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Rust and Python APIs for CASA-compatible data and tasks">
+      
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
+    
+    
+      
+        <title>MSv2/MSv4 trial: review brief - casa-rs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/stylesheets/main.57a0d79d.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#msv2msv4-trial-review-brief" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../../.." title="casa-rs" class="md-header__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            casa-rs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              MSv2/MSv4 trial: review brief
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../../.." title="casa-rs" class="md-nav__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    casa-rs
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Task Parameters
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Task Parameters
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../task-parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../reference/task-parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Generated Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../rust-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rust API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Python
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../python/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../python/data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../python/tasks-calibrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Calibrate Tasks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../python/versioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../python/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-question" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The question
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#read-first-in-this-order" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Read first, in this order
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#code-map" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Code map
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#how-to-run" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How to run
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-each-reviewer-is-asked" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What each reviewer is asked
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="What each reviewer is asked">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#astra-the-design" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Astra: the design
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fable-independent-code-review" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fable: independent code review
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#known-open-items" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Known open items
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#how-to-report" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How to report
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="msv2msv4-trial-review-brief">MSv2/MSv4 trial: review brief<a class="headerlink" href="#msv2msv4-trial-review-brief" title="Permanent link">&para;</a></h1>
+<p>Status: revision 3 reviewed (Astra, Fable; 2026-10-25, at <code>a6852cc</code>); revision 4 answers both reviews; the owner waived a re-review and froze the read contract narrowly for M2 (2026-10-25)
+Truth class: review instructions
+Date: 2026-10-25</p>
+<p>This brief is self-contained: everything it refers to is on GitHub in the
+public repository <code>bglenden/casa-rs</code>. The trial is draft pull request
+<a href="https://github.com/bglenden/casa-rs/pull/898">bglenden/casa-rs#898</a> from
+branch <code>claude/ms-v4-contract-trial</code> into the design branch
+<code>codex/ms-v4-architecture-plan</code> (trial base
+<code>ae2060162a0eb58e527f057543447f370c25567c</code>). Review the branch head at the
+time you start and cite the SHA you reviewed. Revision 3 (<code>a6852cc</code>) had a
+design review by Astra and an independent code review by Fable, both on the
+PR; revision 4 answers every finding (README, "Revision 4"), and a re-review
+should check those answers first: each finding's thread on the PR names the
+change and the law that tests it.</p>
+<div class="codehilite"><pre><span></span><code>git clone https://github.com/bglenden/casa-rs &amp;&amp; cd casa-rs
+git checkout claude/ms-v4-contract-trial
+</code></pre></div>
+
+<h2 id="the-question">The question<a class="headerlink" href="#the-question" title="Permanent link">&para;</a></h2>
+<p>Is the shared observation boundary ready to freeze as the contract that M2
+moves into production, and is the code clean, correct and free of gross
+performance or memory problems? The owner's governing principle: <strong>MSv4 is
+the future; the interface reflects its native capabilities, and MSv2 is
+assembled into the same structures.</strong> The owner has also asked that the
+design be clean rather than merely working, and that no performance be
+lost.</p>
+<h2 id="read-first-in-this-order">Read first, in this order<a class="headerlink" href="#read-first-in-this-order" title="Permanent link">&para;</a></h2>
+<ol>
+<li>The design record, <code>docs/measurement-set/trial/revision-2-design.md</code>:
+   the principle, decisions D1 to D25 (D1–D15 the owner's, D16–D25
+   delegated judgements), "What the implementation did with each decision"
+   and the "Revision 3" and "Revision 4 refinements".</li>
+<li>The evidence index, <code>docs/measurement-set/trial/README.md</code>: the
+   "Revision 4", "Revision 3", "Revision 2" and "Revision 1" tables, "What
+   revision 2 taught", the scale check on real MeasurementSets, both
+   examples, the interoperability results, and "Keep, change or discard".</li>
+<li>The design: <code>docs/measurement-set/contracts.md</code> (revision 7: the current
+   read contract in sections 1–7 and the provisional capabilities in
+   section 8) and <code>docs/measurement-set/architecture.md</code> (its revision 7
+   note and section 3).</li>
+<li>The ADR-0016 amendment on <code>main</code> (<code>1eed6e9</code>, ported to the branch as
+   <code>2fd4f06</code>): <code>docs/adr/0016-imaging-foundation.md</code> decision 10, which lets
+   every imaging crate depend on the definitional crates <code>casa-values</code>,
+   <code>casa-types</code> and <code>casa-coordinates</code>, with its checker in
+   <code>scripts/check-imaging-dependencies.py</code>.</li>
+</ol>
+<h2 id="code-map">Code map<a class="headerlink" href="#code-map" title="Permanent link">&para;</a></h2>
+<ul>
+<li><code>crates/casa-observation/src/</code>: the boundary. <code>lib.rs</code> (overview and
+  example), <code>catalogue.rs</code> (partitions by content, <code>bind_to</code>), <code>request.rs</code>
+  (<code>AccessRequest</code>, <code>CorrelationRequest</code>, <code>Estimate</code>, the byte budget and
+  decode scratch), <code>batch.rs</code> (<code>VisibilityBatch</code>, <code>Validity</code>, windows),
+  <code>buffers.rs</code> (the one checked fill, packing), <code>pool.rs</code> (<code>BufferPool</code>,
+  <code>FilledBatch</code>), <code>cursor.rs</code> (<code>Observation</code>, <code>Traversal</code>,
+  <code>VisibilityCursor</code>), <code>grouping.rs</code> (<code>GroupKey</code>, fragments,
+  <code>GroupCompletion</code> and <code>WorkToken</code>), <code>creation.rs</code> (<code>TimeBaselineGrid</code>).</li>
+<li><code>crates/casa-types/src/correlation.rs</code> (the 32 casacore <code>Stokes</code> types
+  under MSv4's labels) and <code>crates/casa-types/src/measures/uvw.rs</code> (<code>MUvw</code>).</li>
+<li><code>crates/casa-ms/src/observation_io/</code>: <code>mod.rs</code> (opening and dispatch),
+  <code>grouping.rs</code>, <code>msv2/</code> (<code>index.rs</code> the chunked opening index,
+  <code>catalogue.rs</code>, <code>cursor.rs</code>, <code>mod.rs</code>), <code>msv4/</code> (<code>read.rs</code>, <code>cursor.rs</code>,
+  <code>metadata.rs</code>, <code>write/mod.rs</code>, <code>write/payload.rs</code>).</li>
+<li>Example A (imaging): <code>crates/casa-imaging-application/tests/ms_trial_imaging.rs</code>
+  and <code>tests/ms_trial/{source,work_units}.rs</code>.</li>
+<li>Example B (calibration): <code>crates/casa-calibration/src/solve/batch_trial.rs</code>
+  and <code>batch_trial/feed.rs</code>.</li>
+<li>Interoperability: <code>crates/casa-ms/examples/ms_trial_interop.rs</code> and
+  <code>tools/ms-trial/</code> (pinned XRADIO environment, <code>uv.lock</code>). Scale probe:
+  <code>crates/casa-ms/examples/ms_trial_probe.rs</code>.</li>
+<li>Adapter laws: <code>crates/casa-ms/tests/observation_io.rs</code> and
+  <code>tests/observation_io/{refusals,work,writer}.rs</code>. Fixtures (a simulated
+  MSv2 and XRADIO's conversion of it) are committed under
+  <code>crates/casa-ms/tests/fixtures/ms_trial/</code>.</li>
+</ul>
+<h2 id="how-to-run">How to run<a class="headerlink" href="#how-to-run" title="Permanent link">&para;</a></h2>
+<p>Rust 1.99 or newer, <code>CARGO_INCREMENTAL=0</code>; nothing below needs data outside
+the repository except where noted.</p>
+<table>
+<thead>
+<tr>
+<th>What</th>
+<th>Command</th>
+<th>Expected at revision 4</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Boundary unit tests and doctest</td>
+<td><code>cargo test -p casa-observation</code></td>
+<td>12 + 1 pass</td>
+</tr>
+<tr>
+<td>Adapter laws, refusals, writer, work units</td>
+<td><code>cargo test -p casa-ms --features msv4 --test observation_io</code></td>
+<td>28 pass (and the <code>casa-ms</code> library: 431)</td>
+</tr>
+<tr>
+<td>Example A</td>
+<td><code>cargo test -p casa-imaging-application --test ms_trial_imaging -- --nocapture --test-threads 1</code></td>
+<td>5 pass; planes bit-identical to the production imager</td>
+</tr>
+<tr>
+<td>Example B</td>
+<td><code>cargo test -p casa-calibration --lib batch_trial -- --nocapture --test-threads 1</code></td>
+<td>5 pass; gains identical to production <code>gaincal</code></td>
+</tr>
+<tr>
+<td>Interoperability, both directions</td>
+<td><code>tools/ms-trial/check_interop.sh</code> (needs <code>uv</code>)</td>
+<td>26/26 and 74/74; committed reports unchanged</td>
+</tr>
+<tr>
+<td>Imaging T0 and T1 (the shared <code>Correlation</code> touched them)</td>
+<td><code>cargo nextest run -p casa-imaging-operator -p casa-imaging-runtime</code> and <code>cargo nextest run -p casars-imager --test t1</code></td>
+<td>pass</td>
+</tr>
+<tr>
+<td>Gates</td>
+<td><code>just arch-check</code>, <code>just docs-check</code>, clippy <code>-D warnings</code> on the touched crates with <code>--all-targets</code> and <code>--features casa-ms/msv4</code></td>
+<td>clean</td>
+</tr>
+<tr>
+<td>Scale probe (needs a real MeasurementSet)</td>
+<td><code>cargo run --release -p casa-ms --example ms_trial_probe -- STORE [--open-only]</code> under <code>/usr/bin/time -l</code></td>
+<td>README "Scale check"</td>
+</tr>
+</tbody>
+</table>
+<h2 id="what-each-reviewer-is-asked">What each reviewer is asked<a class="headerlink" href="#what-each-reviewer-is-asked" title="Permanent link">&para;</a></h2>
+<h3 id="astra-the-design">Astra: the design<a class="headerlink" href="#astra-the-design" title="Permanent link">&para;</a></h3>
+<p>You wrote the MS design and gave the trial's first review. Judge whether the
+trial realizes the design the owner wants to freeze:</p>
+<ol>
+<li>Does the boundary take MSv4's native shape everywhere, with MSv2 only
+   assembled into it? Name any place where MSv2 concepts leak into the
+   interface or an MSv4 capability is lost.</li>
+<li>Is <code>contracts.md</code> a faithful single account of decisions D1–D25 and
+   revisions 3 and 4, and is its provisional table complete, each with the
+   right acceptance obligation? What else is stale, wrong, or should be
+   removed?</li>
+<li>Which contracts are ready to freeze for M2, which need changes first, and
+   which should stay explicitly provisional (updates, creation from batches
+   for MSv2, bitmask flags, revisits)?</li>
+<li>Is the M2 path clear: imaging reading batches directly (dropping the
+   runtime's <code>NativeBlock</code> copy), the buffer pool joining <code>HostResources</code>
+   admission, <code>casa-observation</code>'s place in the ADR-0016 dependency policy,
+   and the model's remaining private measure vocabulary (<code>DirectionFrame</code>,
+   <code>FrequencyFrame</code>, <code>Epoch</code>)?</li>
+</ol>
+<h3 id="fable-independent-code-review">Fable: independent code review<a class="headerlink" href="#fable-independent-code-review" title="Permanent link">&para;</a></h3>
+<p>Review the code as if you had not seen any of the trial's reasoning; the
+author's own assessment is deliberately not given here. <code>AGENTS.md</code> requires
+this independent review before science, persistence and interoperability
+changes are marked ready.</p>
+<ol>
+<li><strong>Correctness.</strong> Bugs, unsound invariants, panics reachable from data
+   (<code>expect</code>, indexing), concurrency hazards in <code>BufferPool</code> and
+   <code>GroupCompletion</code>, error paths that leak or lose a buffer, and refusals
+   that should exist but do not.</li>
+<li><strong>Clean design.</strong> Anything janky: awkward protocols, duplicated
+   vocabulary, two ways to do one thing, types that do not carry the
+   invariants they rely on, functions or modules that should be split or
+   merged. Compare with <code>AGENTS.md</code> ("Clarity follows the mathematics",
+   prefer deleting and consolidating).</li>
+<li><strong>Performance and memory.</strong> Whether the evidence supports "no gross
+   performance problem" and "memory bounded by the budget": per-element
+   costs in hot paths (the validity rule, gathers, padding placement),
+   copies, the opening index, decode scratch, <code>zarrs</code> concurrency and its
+   internal codec scratch. For any doubt, propose the cheapest measurement
+   that would settle it.</li>
+<li><strong>Science and interoperability.</strong> Measures and units at the boundary
+   (time scales, UVW frames, frequencies), flag and weight semantics
+   (padding, <code>FLAG_ROW</code>, broadcast weights, subset flag policy), and whether
+   the MSv4 writer's output is what XRADIO and casacore expect.</li>
+</ol>
+<h2 id="known-open-items">Known open items<a class="headerlink" href="#known-open-items" title="Permanent link">&para;</a></h2>
+<p>These are recorded already and are not new findings, though a reviewer may
+argue any of them should block the freeze:</p>
+<ul>
+<li>The MSv2 grid uses exact <code>TIME</code> values; XRADIO merges times within a
+  quarter of the smallest step. Jittered times would give more padding.</li>
+<li>Ephemeris is not a content key of a partition.</li>
+<li>MSv2 tile-level read amplification is not modelled.</li>
+<li>A correlation subset is decoded whole and gathered (counted in the
+  budget since revision 3); a strided in-place decode is not built.</li>
+<li>An MSv2 creator from batches does not exist; the writer is MSv4 only.</li>
+<li>CASA excludes <code>FLAG_ROW</code> rows in <code>gaincal</code> and <code>tclean</code> by its sources
+  (as the adapter does); neither CASA nor production casa-rs <code>gaincal</code>,
+  which does not, has been instrumented on such a row.</li>
+<li>The buffer pool is bounded in bytes but not yet connected to the
+  runtime's admission, and <code>zarrs</code>' internal codec scratch is not counted.</li>
+<li>The MSv4 writer holds a batch's times in a chunk it covers only partly,
+  so batches in time order encode every chunk once; the held chunk
+  (<code>buffer_bytes</code>) is not yet admitted through the runtime.</li>
+<li>The batch read was not compared with the production reader on the same
+  large data; the trial's only like-for-like timings are on a 120-sample
+  fixture.</li>
+</ul>
+<h2 id="how-to-report">How to report<a class="headerlink" href="#how-to-report" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Post a GitHub review on
+  <a href="https://github.com/bglenden/casa-rs/pull/898">bglenden/casa-rs#898</a>:
+  inline comments on the lines concerned, and a summary comment.</li>
+<li>Label each finding <strong>blocking</strong>, <strong>should fix</strong> or <strong>nit</strong>, with the
+  file and line, the concrete failure or cost (inputs or state and what goes
+  wrong), and a suggested fix.</li>
+<li>State the SHA you reviewed.</li>
+<li>Do not push to the branch; the trial's author addresses each finding and
+  answers on its thread.</li>
+<li>End the summary with a verdict: ready to freeze for M2; ready after the
+  listed fixes; or not ready, and why.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../../..", "features": [], "search": "../../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../../assets/javascripts/bundle.c21346df.min.js"></script>
+      
+    
+  </body>
+</html>

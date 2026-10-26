@@ -1,0 +1,2423 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Rust and Python APIs for CASA-compatible data and tasks">
+      
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
+    
+    
+      
+        <title>MSv2/MSv4 trial evidence - casa-rs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.57a0d79d.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#msv2msv4-trial-evidence" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="casa-rs" class="md-header__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            casa-rs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              MSv2/MSv4 trial evidence
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="casa-rs" class="md-nav__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    casa-rs
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Task Parameters
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Task Parameters
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../task-parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/task-parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Generated Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../rust-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rust API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Python
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/tasks-calibrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Calibrate Tasks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/versioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#revision-4-the-reviews-of-revision-3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Revision 4: the reviews of revision 3
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Revision 4: the reviews of revision 3">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-owners-decisions-on-revision-4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The owner's decisions on revision 4
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#revision-3-the-weak-spots-revision-2-exposed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Revision 3: the weak spots revision 2 exposed
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#revision-1-what-the-design-review-changed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Revision 1: what the design review changed
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#revision-2-the-design-walkthroughs-decisions-implemented" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Revision 2: the design walkthrough's decisions, implemented
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Revision 2: the design walkthrough&#39;s decisions, implemented">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-revision-2-taught" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What revision 2 taught
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#provenance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Provenance
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fixtures" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fixtures
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Fixtures">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#fixture-findings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fixture findings
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#commands" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Commands
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#adapter-laws" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Adapter laws
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#example-a-dirty-image-channel-planes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Example A: dirty-image channel planes
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Example A: dirty-image channel planes">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#work-units-with-unequal-completion" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Work units with unequal completion
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#narrow-timings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Narrow timings
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#scale-check-on-real-measurementsets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Scale check on real MeasurementSets
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#copies-and-allocation-in-example-a" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Copies and allocation in example A
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#example-b-gain-solve" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Example B: gain solve
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Example B: gain solve">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#gaps-example-b-exposed-and-what-revision-1-did" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Gaps example B exposed, and what revision 1 did
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#msv4-interoperability" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        MSv4 interoperability
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="MSv4 interoperability">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#interop-findings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Interop findings
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#keep-change-or-discard-the-trials-summary-for-design-review" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Keep, change or discard: the trial's summary for design review
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Keep, change or discard: the trial&#39;s summary for design review">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#keep" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Keep
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#open-questions-for-the-next-iteration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Open questions for the next iteration
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#discard-or-defer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Discard or defer
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#m1-coverage-of-this-pass" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        M1 coverage of this pass
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#unsupported-in-the-trial-typed-refusals" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Unsupported in the trial (typed refusals)
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="msv2msv4-trial-evidence">MSv2/MSv4 trial evidence<a class="headerlink" href="#msv2msv4-trial-evidence" title="Permanent link">&para;</a></h1>
+<p>Status: revision 4 (the walkthrough's decisions, the cleanups revision 2 exposed, and the answers to the reviews of revision 3); the read contract frozen narrowly for M2 by the owner, who waived a re-review (2026-10-25); not M0/M1 acceptance
+Truth class: trial evidence
+Date: 2026-10-25
+Handoff: <a href="../trial-handoff/">trial-handoff.md</a>
+Review brief: <a href="review-brief/">review-brief.md</a></p>
+<p>This is the evidence index for the trial's first assignment: two worked
+examples (A, dirty-image channel planes; B, a gain solve) and the early
+bidirectional XRADIO check. It records what ran, with what, and what it
+showed, including what is missing. Nothing here claims M0 or M1 complete:
+the full caller and Measures inventory, every Measures family's bulk route,
+general updates and creation, failure injection and the benchmark matrix
+remain later requirements.</p>
+<h2 id="revision-4-the-reviews-of-revision-3">Revision 4: the reviews of revision 3<a class="headerlink" href="#revision-4-the-reviews-of-revision-3" title="Permanent link">&para;</a></h2>
+<p>Astra's design review and Fable's independent code review of revision 3
+(<code>a6852cc</code>) on <a href="https://github.com/bglenden/casa-rs/pull/898">bglenden/casa-rs#898</a>
+found three blocking and four should-fix design points (Astra: B1–B3,
+S1–S4) and two blocking, seven should-fix and seven minor code points
+(Fable). Revision 4 answers every one; the design documents now state the
+current contract directly (<a href="../contracts/">contracts</a>, revision 7).</p>
+<table>
+<thead>
+<tr>
+<th>Finding</th>
+<th>Change</th>
+<th>Evidence</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Astra B1: partitions bound by spectral content alone</td>
+<td>Sessions keep MSv4's archive UIDs (MSv2's from <code>OBSERVATION::SCHEDULE</code>) and bind first; partitions bind by content with channel widths, the bound session, the bound field and scan sets, and the feed pair where both stores have one; every binding is one to one, so a key one store lacks never collapses two entities the other keeps apart.</td>
+<td><code>partitions_bind_by_session_fields_scans_feeds_and_widths</code> (same spectrum in two sessions, field and scan splits, asymmetric subsets, feeds, widths), <code>catalogues_describe_the_same_observation</code></td>
+</tr>
+<tr>
+<td>Astra B2: a buffer count is not a byte bound</td>
+<td>Every pool buffer has a byte <strong>envelope</strong>: <code>begin</code> checks the header against the catalogue and reserves exactly the batch's arrays, refuses a batch over the envelope before allocating, and frees what earlier fills kept when keeping it would exceed the envelope; a returned buffer over it is emptied. The estimate gains per-time bytes and <code>buffer_bytes</code> (exactly what a fill reserves); <code>peak_buffer_bytes</code> is a traversal's envelope.</td>
+<td><code>a_pool_buffer_never_holds_more_than_its_envelope</code> (values-heavy then weights-heavy fills, Astra's reproduction), <code>the_budget_fits_whole_times_or_refuses_binding</code> (a batch's buffer is exactly <code>buffer_bytes</code>; an envelope a byte short refuses before allocating)</td>
+</tr>
+<tr>
+<td>Astra B3: centroid extra precision dropped</td>
+<td>A dataset with <code>TIME_CENTROID_EXTRA_PRECISION</code> refuses a request for centroids (<code>Unsupported</code>); one without them reads.</td>
+<td><code>a_split_msv4_centroid_is_refused_not_truncated</code></td>
+</tr>
+<tr>
+<td>Astra S1: correlations copied per batch</td>
+<td><code>CorrelationAxis</code> (<code>All</code>, or a <code>Subset</code> of shared products and indices) is resolved once at binding; every batch and packed piece shares it, and all-products batches borrow the catalogue's list. The MSv2 cursor no longer builds an index list per fill.</td>
+<td><code>the_correlation_axis_is_shared_not_copied</code></td>
+</tr>
+<tr>
+<td>Astra S4: per-baseline polarization basis ignored</td>
+<td>An MSv4 dataset with <code>polarization_mixed</code> is refused at opening.</td>
+<td><code>a_baseline_dependent_polarization_basis_is_refused</code> (two different baseline mappings)</td>
+</tr>
+<tr>
+<td>Astra S2, S3: superseded contract text</td>
+<td><code>contracts.md</code> revision 7: one current read contract (sections 1–6 and creation) and a provisional table with each capability's acceptance obligation; <code>architecture.md</code> states the landed ADR-0016 amendment and only the remaining M2 consumer edges.</td>
+<td>docs gates</td>
+</tr>
+<tr>
+<td>Fable: validity differs by store on a flags-only read</td>
+<td>The MSv4 adapter folds a non-finite stored weight into every delivered flag (XRADIO pads with NaN and <code>FLAG</code> false), so a delivered flag marks every absent acquisition in both stores.</td>
+<td><code>absent_acquisitions_are_excluded_whichever_roles_are_read</code> (XRADIO-style padding written into the fixture; an MSv2 with a row removed)</td>
+</tr>
+<tr>
+<td>Fable: a padded partition can be neither declared nor written</td>
+<td><code>Observation::grid</code> gives the declaration from the store's index (no payload read; <code>from_cursor</code> is gone); padding has no interval, so neither the grid nor the writer compares one.</td>
+<td><code>a_padded_partition_is_declared_and_written</code></td>
+</tr>
+<tr>
+<td>Fable: grouped read without <code>scan_name</code> panics</td>
+<td>A grouping keyed by scan on a store that names none is refused at binding; <code>field_name</code> and <code>scan_name</code> lengths are checked at opening.</td>
+<td><code>a_grouping_needs_the_scans_it_keys_by</code></td>
+</tr>
+<tr>
+<td>Fable: abandoned work hangs the join</td>
+<td>A <code>WorkToken</code> dropped unfinished abandons its group; <code>finish</code>, <code>close</code> and <code>is_idle</code> report <code>WorkAbandoned</code>. The completion keeps each series' latest closed bin instead of every finalized group.</td>
+<td><code>abandoned_work_is_an_error_not_a_wait</code>, <code>a_group_is_ready_once_after_its_input_and_its_work</code></td>
+</tr>
+<tr>
+<td>Fable: the pool's wait is unbounded</td>
+<td><code>BufferPool::waiting_at_most(limit)</code> fails with <code>PoolExhausted</code>; a refused <code>next_owned</code> consumes nothing.</td>
+<td><code>a_limited_take_reports_an_exhausted_pool</code>, the budget law (retry delivers the next time)</td>
+</tr>
+<tr>
+<td>Fable: chunk-straddling writes are unaligned</td>
+<td>The writer holds a batch's times in a chunk it covers only partly until the chunk is complete, then stores it whole; whole chunks are stored straight from the batch (the owner's choice of three: count only, refuse unaligned batches, or hold). <code>Msv4Writer::buffer_bytes</code> is the most it holds, one chunk of times; <code>held_elements</code> counts the copies and <code>partial_chunks</code> any chunk still stored partly.</td>
+<td>writer law (four-time batches on five-time chunks: no partial chunk, times 0..10 held; twelve-time batches: nothing held), <code>batches_out_of_time_order_are_written_and_counted</code>, the plan's unit laws; interop write counters (partial chunks 24 → 0)</td>
+</tr>
+<tr>
+<td>Fable: padded and subset paths, parallel cursors unmeasured</td>
+<td>The probe gains <code>--products</code> and <code>--parallel</code>, and <code>ms_trial_pad</code> pads a copy; the MSv2 cursor now spreads padded rows in place instead of decoding into scratch and copying.</td>
+<td>scale check below; <code>spreading_in_place_is_placing</code></td>
+</tr>
+<tr>
+<td>Fable: clippy fails on macOS</td>
+<td>One <code>rename_noreplace</code> per platform, each ending in a tail expression.</td>
+<td>clippy on the Mac mini</td>
+</tr>
+<tr>
+<td>Fable: request resolved twice; per-element validity in the examples; ignored <code>model_source</code>; <code>time_s</code> dropping the origin's fraction; <code>FlagsFrom</code> attribution; duplicated sentence</td>
+<td>Resolved once per bind; <code>mask_into</code> once per batch or fragment; the parameter removed; the epoch view's own conversion; attributed to casa-rs's operator; contracts rewritten.</td>
+<td>every law and example</td>
+</tr>
+</tbody>
+</table>
+<p>Gates for revision 4: clippy <code>-D warnings</code> on <code>casa-observation</code>, <code>casa-ms</code>
+(<code>msv4</code>), <code>casa-imaging-application</code>, <code>casa-calibration</code> and <code>casa-types</code>,
+every target, on Linux and on the Mac mini (macOS 27.0.1); <code>casa-observation</code>
+12 unit tests and its doctest; <code>casa-ms</code> library, 431 pass, and adapter laws,
+28 pass; example A, 5 pass; example B, 5 pass;
+<code>tools/ms-trial/check_interop.sh</code> 26/26 and 74/74 with both oracle reports
+unchanged (the write counters gain <code>partial_chunks</code>); imaging T0 and T1;
+<code>just arch-check</code>, <code>just docs-check</code>, strict MkDocs, rustdoc with broken and
+private links denied. The held chunks came after: <code>casa-ms</code> library and
+adapter laws again (432 and 29 pass), the interoperability check
+again (26/26 and 74/74, oracle reports unchanged; the write counters gain
+<code>held_elements</code> and lose every partial chunk).</p>
+<h3 id="the-owners-decisions-on-revision-4">The owner's decisions on revision 4<a class="headerlink" href="#the-owners-decisions-on-revision-4" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>No re-review.</strong> The owner waived an independent re-review of revision
+  4: what remains open is implementation, to be found as the applications
+  are ported, not design.</li>
+<li><strong>A narrow freeze.</strong> The read contract, <a href="../contracts/">contracts</a>
+  sections 1–6 and creation from batches, is frozen for M2; updates and the
+  provisional capabilities (its section 8) are not. Porting the applications
+  is expected to show where the design is not sufficient, and such a finding
+  reopens the contract concerned under the implementation plan's change
+  control.</li>
+<li><strong>Whole-chunk writes.</strong> Of counting partial chunks, refusing unaligned
+  batches, or holding partial chunks in the writer, the owner chose holding
+  (the Fable row above).</li>
+</ul>
+<h2 id="revision-3-the-weak-spots-revision-2-exposed">Revision 3: the weak spots revision 2 exposed<a class="headerlink" href="#revision-3-the-weak-spots-revision-2-exposed" title="Permanent link">&para;</a></h2>
+<p>Revision 2's own review (this document's "What revision 2 taught", the scale
+check below, and the owner's questions on performance and memory) found
+places where the boundary was right in substance but awkward or unsafe in
+form. Revision 3 changes them, and nothing else; the examples, the
+interoperability checks and every adapter law are unchanged in what they
+assert.</p>
+<table>
+<thead>
+<tr>
+<th>Change</th>
+<th>What it replaces</th>
+<th>Evidence</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>A batch carries its catalogue.</strong> <code>BatchFill::finish</code> keeps an <code>Arc&lt;Catalogue&gt;</code> in the buffers; <code>BatchBuffers::batch()</code>, <code>FilledBatch::batch()</code> and <code>BatchBuffers::pack(batch)</code> take no catalogue, and <code>VisibilityBatch::catalogue</code> names it. <code>Observation::catalogue()</code> returns the shared <code>Arc</code>.</td>
+<td>Every consumer passing the observation's catalogue back in; another observation's catalogue gave a panic or silently wrong frequencies.</td>
+<td><code>buffers.rs</code> unit tests, every adapter law</td>
+</tr>
+<tr>
+<td><strong>A bounded <code>BufferPool</code> for owned batches.</strong> <code>next_owned(&amp;pool)</code> takes a free buffer only for a batch and waits while none is free (the backpressure); a <code>FilledBatch</code> returns its buffer when dropped, or when its last <code>Arc</code> is. <code>BufferPool::pack</code> copies a window into a pooled piece. <code>OwnedEvent</code> is <code>Batch</code>, <code>GroupEnd</code> or <code>End</code>.</td>
+<td><code>next_owned(Option&lt;BatchBuffers&gt;)</code> with <code>NeedBuffers</code>, buffers handed back in every variant, and a boxed <code>Reclaimed</code> error: each consumer kept its own pool and handshake, and one development bug was an infinite loop in it.</td>
+<td><code>pool.rs</code> unit tests (a full pool waits; failures return the buffer), <code>the_budget_fits_whole_times_or_refuses_binding</code>, the work-unit probe and example B's concurrent solve (every buffer back at the end)</td>
+</tr>
+<tr>
+<td><strong>Work tokens.</strong> <code>GroupCompletion::begin</code> returns a <code>WorkToken</code>, which <code>finish</code> consumes.</td>
+<td><code>begin(key)</code> / <code>finish(key)</code> counting: a unit could finish work it never began, or twice.</td>
+<td>grouping unit test, <code>split_channel_windows_complete_each_group_once</code>, example B</td>
+</tr>
+<tr>
+<td><strong>The budget counts decode scratch.</strong> <code>PartitionEstimate::scratch_bytes_per_sample</code> is what the cursor's own scratch holds per sample (MSv4: the flag bytes, and every stored product of values and weights when a subset is delivered; MSv2: each present row's number, sample, <code>FLAG_ROW</code> and time auxiliaries, and every stored product when a time has padding or a subset is delivered). <code>times_per_batch</code> budgets <code>held_bytes_per_sample()</code>; <code>Estimate::peak_held_bytes()</code> is what a pool buffer and its cursor hold.</td>
+<td>A budget that counted only the delivered products: a two-of-four subset roughly doubled real use.</td>
+<td><code>the_estimate_is_the_bound_realization_and_models_the_store</code>, <code>a_correlation_subset_carries_the_flags_it_is_asked_for</code></td>
+</tr>
+<tr>
+<td><strong>The writer validates into a <code>Checked</code> batch</strong> holding the views it proved present (payload, centroid, exposure, scan) and its placement.</td>
+<td>Checks followed by <code>expect("checked")</code> where the views were used.</td>
+<td>writer laws</td>
+</tr>
+<tr>
+<td><strong><code>Traversal</code> turns are an enum</strong>, not an <code>Err</code> carrying a group end.</td>
+<td><code>Result&lt;Option&lt;usize&gt;, Step&gt;</code> with <code>unreachable!</code> arms.</td>
+<td>every traversal</td>
+</tr>
+<tr>
+<td><strong>The MSv2 opening index is built in row chunks</strong> (<code>msv2/index.rs</code>, earlier on this branch).</td>
+<td>75–80 bytes per MAIN row at opening.</td>
+<td><code>the_index_does_not_depend_on_the_chunk_size</code>, scale check</td>
+</tr>
+</tbody>
+</table>
+<p>Gates for revision 3: clippy <code>-D warnings</code> on <code>casa-observation</code>, <code>casa-ms</code>
+(<code>msv4</code>), <code>casa-imaging-application</code> and <code>casa-calibration</code>, every target;
+<code>casa-observation</code> 8 unit tests and its doctest; <code>casa-ms</code> library and
+adapter laws, 458 pass; example A, 5 pass, with the work-unit probe below
+re-measured; example B, 5 pass; <code>tools/ms-trial/check_interop.sh</code> 26/26 and
+74/74 with the committed reports unchanged; rustdoc with broken and private
+links denied.</p>
+<h2 id="revision-1-what-the-design-review-changed">Revision 1: what the design review changed<a class="headerlink" href="#revision-1-what-the-design-review-changed" title="Permanent link">&para;</a></h2>
+<p>Astra's review of the first pass (PR #898) asked for a smaller, cleaner
+boundary and for refusals where the first pass accepted inputs it then
+mishandled. Each change below has a test; the sections that follow give the
+results.</p>
+<table>
+<thead>
+<tr>
+<th>Review item</th>
+<th>Change</th>
+<th>Test</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>One shared boundary</td>
+<td><code>casa_observation::Observation</code> (catalogue + <code>bind_read</code>) is all algorithm code sees; <code>casa_ms::observation_io::open</code> chooses the adapter once. The imaging source, its work-unit probe and the calibration feed take <code>&amp;dyn Observation</code> and import no store type.</td>
+<td><code>consumer_modules_import_no_store_type</code>, <code>the_feed_imports_no_store_type</code></td>
+</tr>
+<tr>
+<td>Metadata the consumers need</td>
+<td>Requestable roles for time centroid, interval, exposure and scan, each in its stored sharing (per sample, per time, or one per batch); a role the store lacks fails binding. The gain solve now takes its solution times, intervals and scans from the batch, and the comparison asserts them.</td>
+<td><code>time_auxiliaries_are_main_columns</code>, <code>missing_metadata_fails_binding</code></td>
+</tr>
+<tr>
+<td>One validity rule</td>
+<td><code>VisibilityBatch::validity()</code>: a value is excluded when its stored flag or row flag is set or its value or weight is not finite. Stored flags stay separate. Both consumers use it.</td>
+<td>adapter and example tests</td>
+</tr>
+<tr>
+<td>MSv2 <code>TIME</code> reference</td>
+<td>Read from <code>MEASINFO</code>, kept when fixed (TAI is delivered as TAI), refused when variable or when <code>TIME_CENTROID</code> disagrees.</td>
+<td><code>the_msv2_time_reference_is_read_not_assumed</code></td>
+</tr>
+<tr>
+<td>MSv4 <code>unix</code> + <code>tai</code></td>
+<td>Refused: astropy's Unix epoch is UTC in every scale. The writer writes <code>unix</code>/<code>utc</code> only. The oracle compares represented instants.</td>
+<td><code>an_msv4_unix_time_in_tai_is_refused</code>; interop instant checks</td>
+</tr>
+<tr>
+<td>UVW convention</td>
+<td>Resolved once at opening into <code>UvwFrame { effective, stored_label }</code>; the batch carries the effective frame. MSv2 <code>ITRF</code>-labelled UVW is the phase centres' frame (CASA's convention), a different celestial label is refused; no consumer or writer relabels.</td>
+<td><code>catalogues_describe_the_same_observation</code></td>
+</tr>
+<tr>
+<td>Units</td>
+<td>MSv2 <code>DATA</code> units read from <code>QuantumUnits</code>; time, UVW, position, diameter, angle and frequency units checked in both adapters. Catalogue positions are <code>MPosition</code>, diameters and angles <code>Quantity</code>.</td>
+<td>catalogue test</td>
+</tr>
+<tr>
+<td>Exact MSv4 dtypes and dimensions</td>
+<td><code>complex64</code>, <code>bool</code>, <code>float32</code>, <code>float64</code> and the dimension order checked at opening, and again at each decode.</td>
+<td><code>msv4_payload_types_and_dimensions_are_checked_at_opening</code></td>
+</tr>
+<tr>
+<td>Per-group context</td>
+<td>Each data group keeps its own fields (from its <code>field_and_source</code> dataset) and UVW frame; fields merge only when name, phase centre and source agree.</td>
+<td><code>each_data_group_keeps_its_own_field_context</code></td>
+</tr>
+<tr>
+<td>Checked batch construction</td>
+<td><code>BatchBuffers</code> arrays are private; a cursor fills them through <code>begin</code> and <code>BatchFill::finish</code>, which checks lengths (overflow-checked), antenna/field/scan identities and fragment tiling once, and keeps the one <code>BatchHeader</code> the batch is built from. Packing goes through the same check.</td>
+<td><code>casa-observation</code> unit tests</td>
+</tr>
+<tr>
+<td>End of stream</td>
+<td><code>next_owned</code> hands the buffers back at the end (<code>OwnedEvent::End</code>) and on error (<code>Reclaimed</code>): no batch count or extra state.</td>
+<td>work-unit probe, calibration feed</td>
+</tr>
+<tr>
+<td>Channel windows and closure</td>
+<td>Windows carry no fragments, so a split batch announces a group's end once; <code>GroupCompletion</code> joins input completion with work completion.</td>
+<td><code>split_channel_windows_complete_each_group_once</code></td>
+</tr>
+<tr>
+<td><code>Closure::Deferred</code></td>
+<td>Removed from <code>AccessRequest</code>; deferral is an opening option (<code>OpenOptions::group_closure</code>), a test mechanism.</td>
+<td>grouping laws</td>
+</tr>
+<tr>
+<td>Creation metadata vs storage</td>
+<td>The writer takes the common <code>Catalogue</code>, a partition, a data group and a <code>TimeBaselineGrid</code>; <code>Msv4StorageOptions</code> holds name, provenance, chunks and codec.</td>
+<td>writer tests</td>
+</tr>
+<tr>
+<td>Writer validation</td>
+<td>Every batch is checked against the declaration before any byte is written: partition, frequencies and frame, correlation products, units, UVW frame, time scale, and each sample's time, baseline, field, scan and interval. A row flag is refused.</td>
+<td><code>the_writer_refuses_batches_that_disagree_with_the_declaration</code></td>
+</tr>
+<tr>
+<td>Exclusive staging</td>
+<td>Each writer creates its own uniquely named staging directory and publishes with a no-replace rename; a dropped or failed writer removes its staging.</td>
+<td><code>writers_stage_apart_and_never_replace_a_published_dataset</code></td>
+</tr>
+<tr>
+<td>Comparators</td>
+<td>Shape, count and finiteness are checked before any reduction; a NaN is the worst difference; every claimed metric, calibration weights included, is asserted.</td>
+<td><code>comparators_never_pass_a_nan_or_a_mismatch</code>, <code>agreement_never_passes_a_nan_or_a_mismatch</code></td>
+</tr>
+<tr>
+<td>Catalogue rebinding</td>
+<td>The calibration comparison maps antennas by station and position and fields by phase centre, refusing unmatched or ambiguous entries, instead of relying on list order.</td>
+<td>example B tests</td>
+</tr>
+<tr>
+<td><code>decode_units</code> wording</td>
+<td>Documented as chunks the selection touches, modelled from the chunk grid (the realization and the counter use the same model), not decodes observed inside zarrs.</td>
+<td>adapter laws</td>
+</tr>
+</tbody>
+</table>
+<h2 id="revision-2-the-design-walkthroughs-decisions-implemented">Revision 2: the design walkthrough's decisions, implemented<a class="headerlink" href="#revision-2-the-design-walkthroughs-decisions-implemented" title="Permanent link">&para;</a></h2>
+<p>After revision 1 the owner walked through the design chunk by chunk. The 25
+decisions, the principle behind them (MSv4 is the future; MSv2 is assembled
+into its structures), the vocabulary (batch shape, traversal order, payload
+order; now in <code>GLOSSARY.md</code>), the facts verified against the pinned XRADIO
+source and the implementation order are recorded in
+<a href="revision-2-design/">revision-2-design.md</a>, whose last section says what
+the implementation did with each decision. Revision 2 implemented them all,
+with the qualifications listed there (an MSv2 creator from batches was not
+built). D18 was completed once ADR-0016 was amended to let imaging depend on
+the definitional crates: both adapters, imaging and the simulator share one
+<code>Correlation</code> of all 32 casacore <code>Stokes</code> types. Every open question listed at the end of this
+document is resolved. Both examples run unchanged in their science: the
+planes and the gains are bit-identical to production from both stores.</p>
+<p>What changed at the boundary:</p>
+<table>
+<thead>
+<tr>
+<th>Decision</th>
+<th>Change</th>
+<th>Test</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>D1</td>
+<td>Per-partition constants (frequencies and frame, correlations, baseline table, time system, data groups with units and UVW frame) live once in <code>PartitionEntry</code>; a batch's views borrow them (<code>buffers.batch(&amp;catalogue)</code>) and copy nothing; <code>BatchFill::finish</code> checks the batch against the catalogue.</td>
+<td><code>both_stores_deliver_one_batch_shape</code> (frequency and baseline pointers are the catalogue's)</td>
+</tr>
+<tr>
+<td>D2, D4</td>
+<td>A partition is a store unit described by content (spectral setup, intents, observing session, feed pair). The MSv2 adapter partitions MAIN rows as XRADIO does (<code>DATA_DESC_ID</code> × <code>OBS_MODE</code> × <code>OBSERVATION_ID</code> × <code>EPHEMERIS_ID</code> × feed pair, plus <code>OpenOptions::partition_scheme</code>); duplicate (time, baseline) rows and several <code>PROCESSOR_ID</code>s are refused at opening.</td>
+<td><code>catalogues_describe_the_same_observation</code>, <code>duplicate_rows_are_refused_at_opening</code></td>
+</tr>
+<tr>
+<td>D3</td>
+<td>One topology: the MSv2 adapter places rows on the time × baseline grid at opening (<code>msv2/index.rs</code>); a cell no row fills is padding (flag true, weight 0, NaN values and auxiliaries). <code>Irregular</code>, <code>Occupancy</code> and the row-order refusal are gone.</td>
+<td><code>msv2_cells_no_row_fills_are_padding</code></td>
+</tr>
+<tr>
+<td>D5</td>
+<td><code>FLAG_ROW</code> is folded into the flags at fill; <code>row_flags</code> is gone. One weight view <code>[sample, channel, correlation]</code>: MSv2 <code>WEIGHT</code> is seen through a zero channel stride.</td>
+<td><code>flag_row_is_folded_into_the_flags</code>, <code>both_stores_deliver_one_batch_shape</code></td>
+</tr>
+<tr>
+<td>D6, D11</td>
+<td>The request names a partition set; <code>bind_read</code> returns a <code>Traversal</code> of one <code>Send</code> cursor per partition with the estimate.</td>
+<td><code>the_estimate_is_the_bound_realization_and_models_the_store</code></td>
+</tr>
+<tr>
+<td>D7, D10</td>
+<td>A byte budget (<code>batch_bytes</code>) replaces <code>max_samples</code>; <code>Observation::estimate</code> costs a batch shape from the catalogue and the store's geometry (times, baselines, bytes per sample, whole times per batch, batches, decode units, amplification, natural blocks, padded fraction) without reading payload, and binding returns the same <code>Estimate</code>.</td>
+<td>same, <code>the_budget_fits_whole_times_or_refuses_binding</code></td>
+</tr>
+<tr>
+<td>D8</td>
+<td><code>NaturalBlocks</code>: the Zarr chunk shape (5 times × 4 channels) and the casacore tile shape, through a new <code>Table::array_column_tile_shape</code>.</td>
+<td>same</td>
+</tr>
+<tr>
+<td>D9, D22</td>
+<td><code>Layout</code> and <code>Precision</code> are gone: payload order follows the store; visibilities are <code>Complex&lt;f32&gt;</code>.</td>
+<td>compile-time</td>
+</tr>
+<tr>
+<td>D12</td>
+<td><code>next_owned(Option&lt;BatchBuffers&gt;)</code>: without buffers the cursor answers <code>End</code>, <code>GroupEnd</code> or <code>NeedBuffers</code>; nothing is lent at the end.</td>
+<td><code>the_budget_fits_whole_times_or_refuses_binding</code>, both examples' producers</td>
+</tr>
+<tr>
+<td>D13–D15</td>
+<td><code>GroupKey</code> carries the scan; <code>Grouping::{TimeBins {combine_fields, combine_scans}, PerScan, PerIntegration}</code> with the clock of each (field, scan) key starting at its first time, as production <code>gaincal</code>.</td>
+<td><code>group_fragments_do_not_depend_on_batch_size</code>, grouping unit tests</td>
+</tr>
+<tr>
+<td>D16</td>
+<td><code>Validity</code> stays inline; <code>mask_into</code> for multi-pass consumers.</td>
+<td>consumers</td>
+</tr>
+<tr>
+<td>D17</td>
+<td><code>CorrelationRequest { deliver, flags_from }</code>: a subset is delivered in the partition's order with its own flags or the OR over every product.</td>
+<td><code>a_correlation_subset_carries_the_flags_it_is_asked_for</code></td>
+</tr>
+<tr>
+<td>D18, D21</td>
+<td><code>Correlation</code> (the 32 casacore <code>Stokes</code> types under MSv4's labels) and <code>MUvw</code> in <code>casa-types</code>; the imaging model's <code>CorrelationType</code> is gone; <code>UvwView::get</code> is an <code>MUvw</code>.</td>
+<td>casa-types unit tests, imaging T0 and T1</td>
+</tr>
+<tr>
+<td>D19, D20</td>
+<td>Measure views are built from the buffers and the catalogue entry; times stay offsets in the store's scale from the partition's origin.</td>
+<td><code>time_origins_re_express_each_other_exactly</code></td>
+</tr>
+<tr>
+<td>D23, D24</td>
+<td>One declaration (<code>Catalogue</code> + <code>TimeBaselineGrid::from_cursor</code>); the writer's fill values are the padding convention and its row-flag refusal is gone; a batch's grid is the dataset's, so the writer's scatter path is gone.</td>
+<td>writer laws</td>
+</tr>
+<tr>
+<td>D25</td>
+<td><code>Catalogue::bind_to(&amp;other, &amp;BindingTolerance) -&gt; Binding</code>; example B binds with it.</td>
+<td><code>catalogues_describe_the_same_observation</code>, example B</td>
+</tr>
+</tbody>
+</table>
+<h3 id="what-revision-2-taught">What revision 2 taught<a class="headerlink" href="#what-revision-2-taught" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>The grid removes code everywhere it reaches.</strong> Deleting <code>Irregular</code>
+  removed every topology <code>match</code> from the consumers, the writer's scatter
+  path and the "rows not in time order" refusal; the MSv2 cursor's only new
+  code is the placement of present rows (and padding) when a time is
+  incomplete or a correlation subset is delivered. The complete, all-product
+  case still reads straight into the batch arrays.</li>
+<li><strong>Linking to the catalogue removed a class of disagreement.</strong> Two writer
+  refusal tests (reversed correlation labels, a shifted frequency in a batch)
+  became impossible to write: a batch can no longer carry those values, so
+  the writer checks only what a batch states (its times, intervals,
+  baseline table) and what the declaration states (correlations, units).</li>
+<li><strong>A byte budget changes a consumer's bookkeeping.</strong> The imaging source
+  sized its maximum block from the full window and the pass's own assertion
+  caught the narrower one-plane wave fitting more times; the block is now
+  sized from the narrowest window's estimate. The estimate made that a
+  one-line fix, which is what D10 is for.</li>
+<li><strong>Asking before lending</strong> (<code>next_owned(None)</code>) removed the extra buffer
+  wait at the end of a traversal from both producers; the work-unit probe
+  and the concurrent solve ask first and lend only for a batch.</li>
+<li><strong>The estimate equals the realization by construction</strong>, since binding
+  computes it once and the cursors carry it; the test asserts equality
+  rather than re-deriving it.</li>
+<li><strong>Subset gathering costs a copy</strong> on both adapters (MSv4 decodes the full
+  correlation axis into scratch; MSv2 reads full cells), counted in
+  <code>copied_elements</code>. A strided in-place decode per product is the next
+  measurement, not a design question.</li>
+<li><strong>The dependency policy bounded vocabulary unification, until it was
+  amended.</strong> <code>casa-types</code> owns <code>Correlation</code> and <code>MUvw</code>, but ADR-0016 let
+  <code>casa-imaging-model</code> depend on no workspace crate, so the model kept
+  <code>CorrelationType</code> and private copies of other measure vocabulary. The
+  amendment of 2026-10-25 lets every imaging crate use the definitional
+  crates; the model now uses <code>casa_types::Correlation</code>. Moving the model to
+  the shared vocabulary exposed that revision 2's eight-product
+  <code>Correlation</code> was narrower than MSv4, which allows all 32 <code>Stokes</code> types.
+  The model's <code>DirectionFrame</code>, <code>FrequencyFrame</code> and <code>Epoch</code> remain its own
+  and are the next candidates.</li>
+</ul>
+<h2 id="provenance">Provenance<a class="headerlink" href="#provenance" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Trial branch</td>
+<td><code>claude/ms-v4-contract-trial</code></td>
+</tr>
+<tr>
+<td>Starting SHA</td>
+<td><code>ae2060162a0eb58e527f057543447f370c25567c</code> (design branch head)</td>
+</tr>
+<tr>
+<td>Host</td>
+<td>Claude Code cloud container: Linux 6.18 x86_64, 4 vCPU Intel Xeon @ 2.10 GHz, 15 GiB</td>
+</tr>
+<tr>
+<td>Toolchain</td>
+<td>rustc 1.99.1 (58cf8f9c3 2026-10-13), cargo 1.99.1</td>
+</tr>
+<tr>
+<td>FFTW</td>
+<td>Ubuntu <code>libfftw3-dev</code> 3.3.10-1ubuntu3 through pkg-config (not the SIMD release build)</td>
+</tr>
+<tr>
+<td>Rust Zarr stack</td>
+<td><code>zarrs =0.23.14</code> with features <code>filesystem</code>, <code>blosc</code>, <code>zstd</code> (no default features); <code>zarrs_filesystem 0.3.14</code>, <code>zarrs_codec 0.2.1</code>, <code>blosc-src 0.3.8</code> (c-blosc with lz4), <code>zstd-sys 2.1.2+zstd.1.5.7</code>, <code>unsafe_cell_slice =0.2.2</code>. Exact versions are in <code>Cargo.lock</code>. Optional, behind <code>casa-ms</code>'s <code>msv4</code> feature.</td>
+</tr>
+<tr>
+<td>Oracle environment</td>
+<td>XRADIO at commit <code>3ed765867515095d852eb68c073165c1f6c58761</code> (v1.3.0 plus 7 commits; package version 1.3.1, schema 4.0.1), zarr 3.4.1, numcodecs 0.17.1, xarray 2026.9.0, numpy 2.5.4, arcae 0.5.8, dask 2026.8.0, toolviper 0.1.12, CPython 3.13.17; the full lock is <code>tools/ms-trial/uv.lock</code>. Python is used only to build fixtures and as an oracle.</td>
+</tr>
+<tr>
+<td>Workers</td>
+<td>One unless a row says otherwise; the work-unit probe uses one thread per channel</td>
+</tr>
+<tr>
+<td>Cache state</td>
+<td>Fixtures unpacked to a fresh temporary directory per test; the page cache is warm after the first read. Timings are diagnostics, not performance acceptance.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="fixtures">Fixtures<a class="headerlink" href="#fixtures" title="Permanent link">&para;</a></h2>
+<p>Both fixtures describe the same observation and live in
+<code>crates/casa-ms/tests/fixtures/ms_trial/</code>
+(53 KB and 43 KB compressed), with
+<code>crates/casa-ms/tests/fixtures/ms_trial/manifest.json</code>
+recording the oracle versions, the true gains and every array's shape,
+chunks, codecs and fill value as XRADIO wrote them.</p>
+<ul>
+<li><strong>MSv2 <code>ms_trial.ms</code>.</strong> Written by the casa-rs synthetic simulator
+  (<code>crates/casa-ms/examples/ms_trial_fixture.rs</code>): five VLA-A antennas (ten
+  baselines, no autocorrelations), one field, twelve 10 s integrations,
+  eight 128 MHz Q-band channels in LSRK and four linear correlations. The sky
+  is a 1 Jy point at the phase centre and a 0.1 Jy point 14 × 9 cells away,
+  8 % Q and −5 % U so the cross hands carry signal. Then
+  <code>tools/ms-trial/make_fixtures.py</code> (casacore through arcae) adds seeded
+  complex noise (σ = 0.02 Jy per component) and known per-antenna,
+  per-receptor gains that change every 60 s (two solution intervals); sets
+  <code>WEIGHT</code> varying by row and correlation (SIGMA = 1/√WEIGHT) and 62 element
+  flags of 3,840 (one channel, single cross hands, a whole correlation, a whole row,
+  the last channel of four rows); and writes <code>UVW</code>'s MEASINFO reference ITRF.
+  <code>FLAG_ROW</code> stays false, because XRADIO does not carry it.</li>
+<li><strong>MSv4 <code>ms_trial.ps.zarr</code>.</strong> XRADIO's <code>convert_msv2_to_processing_set</code> of
+  that MSv2 with <code>partition_scheme=[]</code>, <code>main_chunksize={"time": 5,
+  "frequency": 4}</code> (three time chunks, the last a ragged edge, by two
+  frequency chunks), default Blosc-LZ4 for the data variables and Zstandard
+  for coordinates, and <code>with_pointing=False</code>. XRADIO's own
+  <code>check_datatree</code> reports no schema issues.</li>
+</ul>
+<p>Regenerate both with <code>tools/ms-trial/make_fixtures.sh</code> (needs <code>cargo</code> and
+<code>uv</code>). The payload is identical on every run; XRADIO's creation dates in the
+metadata are not. Origin and licence: generated for this repository, no
+external data.</p>
+<h3 id="fixture-findings">Fixture findings<a class="headerlink" href="#fixture-findings" title="Permanent link">&para;</a></h3>
+<ul>
+<li>casa-rs's synthetic writer leaves <code>UVW</code>'s MEASINFO without <code>Ref</code>; XRADIO
+  then writes <code>frame: null</code> and fails its own schema. The fixture script
+  writes <code>Ref: ITRF</code>, as CASA does.</li>
+<li>XRADIO's pointing dataset types <code>time_pointing</code> as <code>time</code>, which its own
+  schema rejects; the fixture omits pointing.</li>
+<li>The synthetic writer's corruption panics for four correlations (it
+  indexes antenna gains by correlation, for at most two), so noise and gains
+  are applied by the fixture script.</li>
+<li>XRADIO relabels MSv2's <code>UVW</code> ITRF as the phase centre's frame (<code>fk5</code>),
+  following CASA <code>fixvis</code>'s note that the label is usually wrong; names
+  antennas <code>NAME_STATION</code> and fields <code>NAME_FIELDID</code>; and declares the
+  visibility unit as <code>"unkown"</code>.</li>
+</ul>
+<h2 id="commands">Commands<a class="headerlink" href="#commands" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>What</th>
+<th>Command</th>
+<th>Needs</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Adapter laws, refusals, writer, work units</td>
+<td><code>cargo test -p casa-ms --features msv4 --test observation_io</code></td>
+<td>Rust only</td>
+</tr>
+<tr>
+<td>Example A</td>
+<td><code>cargo test -p casa-imaging-application --test ms_trial_imaging -- --nocapture --test-threads 1</code></td>
+<td>Rust only</td>
+</tr>
+<tr>
+<td>Example A timings</td>
+<td><code>cargo test --release -p casa-imaging-application --test ms_trial_imaging narrow_timings -- --ignored --nocapture</code></td>
+<td>Rust only</td>
+</tr>
+<tr>
+<td>Example B</td>
+<td><code>cargo test -p casa-calibration --lib batch_trial -- --nocapture --test-threads 1</code></td>
+<td>Rust only</td>
+</tr>
+<tr>
+<td>Shared types</td>
+<td><code>cargo test -p casa-observation -p casa-types</code></td>
+<td>Rust only</td>
+</tr>
+<tr>
+<td>Interoperability, both directions</td>
+<td><code>tools/ms-trial/check_interop.sh</code></td>
+<td>cargo, uv (pinned XRADIO environment)</td>
+</tr>
+<tr>
+<td>Fixtures</td>
+<td><code>tools/ms-trial/make_fixtures.sh</code></td>
+<td>cargo, uv, network for the first <code>uv sync</code></td>
+</tr>
+<tr>
+<td>Scale check on a real store</td>
+<td><code>/usr/bin/time -l cargo run --release -p casa-ms --example ms_trial_probe -- STORE [--open-only]</code></td>
+<td>Rust only; a MeasurementSet or MSv4 store</td>
+</tr>
+</tbody>
+</table>
+<h2 id="adapter-laws">Adapter laws<a class="headerlink" href="#adapter-laws" title="Permanent link">&para;</a></h2>
+<p><code>crates/casa-ms/tests/observation_io.rs</code> and its modules <code>refusals</code>,
+<code>writer</code> and <code>work</code>: 28 tests, all passing (the writer laws are described
+under interoperability, the refusals in revision 1's table and revision 4's).
+The shared types have 12 unit tests of their own
+(<code>cargo test -p casa-observation</code>), and the adapters' group index, padding
+spread, <code>SCHEDULE</code> parser and partial-chunk count 7.</p>
+<ul>
+<li>Both catalogues describe the same observation in each store's own names
+  (antennas with equal positions, field, phase centre, scan 1 with its
+  intent, one observing session, one partition of the same content:
+  frequencies and widths, LSRK, correlation order, intent; data-group roles,
+  units and UVW frames: effective J2000 in both, stored <code>ITRF</code> in MSv2; the
+  MSv2 partition keys its feed pair, the MSv4 one has none), and bind to
+  each other by content.</li>
+<li><strong>Every sample XRADIO wrote equals its MSv2 row exactly</strong>: visibilities,
+  flags, weights (MSv2's per-correlation <code>WEIGHT</code> seen through every
+  channel, MSv4's spectral <code>WEIGHT</code>), UVW, time, time centroid, interval,
+  exposure and scan. This holds for the whole band and for channel windows
+  2–5 and 7, at 1, 2, 5 and 12 whole times per v4 batch and 1, 3 and 5 per
+  v2 batch. The v4 store holds exactly the 120 v2 acquisitions.</li>
+<li>The v2 batch's time auxiliaries equal MAIN's <code>TIME_CENTROID</code>,
+  <code>INTERVAL</code>, <code>EXPOSURE</code> and <code>SCAN_NUMBER</code> as the production typed column
+  accessors read them cell by cell, each sample finding its row by time and
+  antennas (the grid, not MAIN's row order, orders the batch).</li>
+<li>Both stores deliver one batch shape: 4 times × 10 baselines under a
+  four-time budget, field and scan per time, frequencies and baselines
+  borrowed from the catalogue, the <code>[40, 8, 4]</code> value view the decode
+  buffer itself. The stores differ only in sharing and strides: MSv2
+  <code>WEIGHT</code> has strides <code>[4, 0, 1]</code> and its interval is per sample; MSv4
+  weights are standard layout and its interval one constant.</li>
+<li>MSv4 Unix-second times re-express the MSv2 MJD-second times exactly.</li>
+<li>60 s groups keyed by field and scan: each bin's 60 samples arrive once, in
+  order, whatever the batch size (1–12 times). Closure is announced exactly
+  once, either as a <code>Last</code>/<code>Whole</code> fragment or, from a store opened to defer
+  it, as a later <code>GroupEnd</code>.</li>
+<li>A correlation subset (<code>These([YY, XX])</code>) is delivered as <code>[XX, YY]</code> with
+  the values and weights of those products and flags either their own or
+  the OR over all four, from both stores; the fixture flags some cross hands
+  alone, so the two policies differ on it.</li>
+<li>One time that does not fit the byte budget fails binding; a traversal
+  read through a pool of one buffer gets each batch in that buffer, has it
+  back whenever the batch is dropped, and takes none at the end (revision 3;
+  revision 2 asked without buffers, <code>NeedBuffers</code>).</li>
+<li>An MSv2 row removed from the fixture leaves a padded cell: flagged, NaN
+  values, UVW and auxiliaries, weight 0, excluded by the validity rule; the
+  other 119 samples are unchanged, the batch count is the grid's and the
+  estimate reports the padded fraction (1/120). A duplicated row is refused
+  at opening, naming both rows. A row with <code>FLAG_ROW</code> set has every value
+  flagged in the batch, its values untouched, and writes to MSv4 without
+  refusal.</li>
+<li>A grouped batch split into two channel windows on two threads, one held
+  back, completes each group's input once and finalizes each group once,
+  after both windows' work; per-group sums equal a sequential traversal's,
+  from both stores.</li>
+<li>The estimate models read amplification from the chunk grid before
+  reading: 15/12 for the whole band (Zarr stores the ragged last time chunk
+  at full size), and twice that for a two-channel window of four-channel
+  chunks; it reports the natural blocks (5 times × 4 channels for MSv4, the
+  tile shape for MSv2), the bytes per sample of the roles (352 for the MSv2
+  batch with its per-correlation weight and three per-sample scalars, 456
+  for the MSv4 batch) and the padded fraction. Binding returns the same
+  estimate, and the cursor's count of touched chunks, by the same model,
+  matches.</li>
+</ul>
+<h2 id="example-a-dirty-image-channel-planes">Example A: dirty-image channel planes<a class="headerlink" href="#example-a-dirty-image-channel-planes" title="Permanent link">&para;</a></h2>
+<p><code>crates/casa-imaging-application/tests/ms_trial_imaging.rs</code>. A four-plane
+LSRK cube (native channels 2–5) of 64 × 64 cells of 0.012″, natural
+weighting, standard gridder, Stokes I. The production <code>MeasurementOperator</code>,
+spectral resampler (linear) and major-cycle pass (<code>run_major_cycle</code>) read
+<code>VisibilityBatch</code>es through a trial <code>BoundedSource</code>
+(<code>crates/casa-imaging-application/tests/ms_trial/source.rs</code>), which takes
+<code>&amp;dyn Observation</code> and imports no store type; the test opens both fixtures
+through <code>casa_ms::observation_io::open</code>. Each wave binds its own
+<code>AccessRequest</code> for the native channels that reach its planes. Each cell's
+flag is the batch's validity rule. The baseline is the production imager
+(<code>casa_imaging_application::execute</code>, <code>niter=0</code>) on the MSv2. The
+comparators check shapes, counts and finiteness first, so a NaN can never
+read as agreement.</p>
+<table>
+<thead>
+<tr>
+<th>Run</th>
+<th>Image NRMS vs production</th>
+<th>PSF NRMS</th>
+<th><code>sumwt</code></th>
+<th>Traversal windows</th>
+<th>Decode units</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>v2 batches, every plane resident</td>
+<td>0</td>
+<td>0</td>
+<td>equal</td>
+<td>2–5</td>
+<td>120 rows</td>
+</tr>
+<tr>
+<td>v4 batches, every plane resident</td>
+<td>0</td>
+<td>0</td>
+<td>equal</td>
+<td>2–5</td>
+<td>35 chunks</td>
+</tr>
+<tr>
+<td>v2 batches, one-plane waves</td>
+<td>0</td>
+<td>0</td>
+<td>equal</td>
+<td>2–3, 2–4, 3–5, 4–5</td>
+<td>480 rows</td>
+</tr>
+<tr>
+<td>v4 batches, one-plane waves</td>
+<td>0</td>
+<td>0</td>
+<td>equal</td>
+<td>same</td>
+<td>74 chunks</td>
+</tr>
+<tr>
+<td>either, 1, 3 or 7 times per batch, 2 workers</td>
+<td>0 vs 12-time run</td>
+<td>0</td>
+<td>equal</td>
+<td>2–5</td>
+<td>—</td>
+</tr>
+</tbody>
+</table>
+<p>The planes are bit-identical to the production imager's: the same samples
+reach the same operator in the same order. A cube in waves on full-height
+time chunks decodes each frequency chunk once per wave that reaches it, so
+the v4 waves decode 74 chunks against 35 resident (revision 1 decoded 110:
+under a byte budget a narrower wave carries more times per batch, so fewer
+batches straddle the five-time chunks). This is the design's predicted
+amplification, measured, and the estimate reports it before the wave binds.</p>
+<h3 id="work-units-with-unequal-completion">Work units with unequal completion<a class="headerlink" href="#work-units-with-unequal-completion" title="Permanent link">&para;</a></h3>
+<p><code>crates/casa-imaging-application/tests/ms_trial/work_units.rs</code>:
+each of the four channels is a work unit gridding its one-channel window of
+every batch (four times, three batches) on its own thread. Unit 0 waits 60 ms
+before each batch. Every unit's plane equals the pass's (NRMS &lt; 1e-6).</p>
+<table>
+<thead>
+<tr>
+<th>Strategy</th>
+<th>Fast units done</th>
+<th>Slow unit done</th>
+<th>Producer stall</th>
+<th>Batch buffers</th>
+<th>Peak pinned</th>
+<th>Copied</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Shared batch (<code>Arc&lt;FilledBatch&gt;</code>, <code>BufferPool</code> of 2), v2</td>
+<td>61.5 ms</td>
+<td>181.6 ms</td>
+<td>60.5 ms</td>
+<td>2 × 7.4 KB</td>
+<td>14.8 KB of batches</td>
+<td>0</td>
+</tr>
+<tr>
+<td>Packed pieces (<code>BufferPool::pack</code>, a pool of 2 per unit), v2</td>
+<td>1.1 ms</td>
+<td>181.8 ms</td>
+<td>60.2 ms</td>
+<td>1 × 7.4 KB</td>
+<td>7.4 KB batch + 12.4 KB pieces</td>
+<td>7,200 elements</td>
+</tr>
+<tr>
+<td>Shared batch, v4</td>
+<td>64.3 ms</td>
+<td>183.5 ms</td>
+<td>60.6 ms</td>
+<td>2 × 9.7 KB</td>
+<td>19.4 KB of batches</td>
+<td>0</td>
+</tr>
+<tr>
+<td>Packed pieces, v4</td>
+<td>4.7 ms</td>
+<td>183.1 ms</td>
+<td>58.0 ms</td>
+<td>1 × 9.7 KB</td>
+<td>9.7 KB batch + 15.4 KB pieces</td>
+<td>7,200 elements</td>
+</tr>
+</tbody>
+</table>
+<p>Revision 3, debug build, one run. The slow unit's 3 × 60 ms delay dominates
+its time by design. The v2 batch is smaller than in revision 1: it no
+longer carries frequencies, correlations, antennas, a group name or row
+flags, and its weight is one per correlation (its packed pieces keep that
+per-correlation weight, so a v2 piece is a different size from a v4 one
+while holding the same values).</p>
+<p>The producer draws on the pool, which hands out a buffer only for a batch,
+so the shared-batch stall is the one 60 ms wait for the slow unit's buffer
+and nothing is lent at the end; every buffer of every pool is back when the
+run finishes, which the probe asserts.</p>
+<p>Sharing costs no copy, but a slow unit pins every batch it has not finished,
+and once the pool is used up the fast units wait for its buffers. Packing
+lets the fast units finish while the slow one works. It costs one copy of
+each window and leaves the slow unit holding only its own pieces, bounded by
+its queue; the batch buffer is refilled at once. In both cases the producer
+waits only for storage, never for a scheduler, and every queue is bounded.</p>
+<h3 id="narrow-timings">Narrow timings<a class="headerlink" href="#narrow-timings" title="Permanent link">&para;</a></h3>
+<p><code>cargo test --release -p casa-imaging-application --test ms_trial_imaging narrow_timings -- --ignored --nocapture</code>,
+25 runs each, one worker, warm page cache. <strong>Measured on the first pass
+(<code>21e0dde</code>) and not rerun for revision 1</strong>, whose batch construction check
+and per-element validity rule may change them slightly:</p>
+<table>
+<thead>
+<tr>
+<th>Path</th>
+<th>Median</th>
+<th>Minimum</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Production imager, <code>major cycle 1</code> phase (its MSv2 source, admission and the pass)</td>
+<td>3.74 ms</td>
+<td>3.23 ms</td>
+</tr>
+<tr>
+<td>Trial pass reading v2 batches (adapter read 0.10 ms, packing 0.014 ms)</td>
+<td>1.26 ms</td>
+<td>1.00 ms</td>
+</tr>
+<tr>
+<td>Trial pass reading v4 batches (adapter read 0.62 ms, packing 0.017 ms)</td>
+<td>1.50 ms</td>
+<td>1.33 ms</td>
+</tr>
+</tbody>
+</table>
+<p>The production phase also opens and admits its source, so these are not
+matched like for like. They show the batch path adds no visible cost at this
+size. On 120 samples the v4 read is per-call overhead: zarrs opens each
+subset read and decodes Blosc and Zstandard chunks. No noise band has been
+measured; nothing here is a performance claim.</p>
+<h3 id="scale-check-on-real-measurementsets">Scale check on real MeasurementSets<a class="headerlink" href="#scale-check-on-real-measurementsets" title="Permanent link">&para;</a></h3>
+<p>A check for gross costs before the design is finalized, not a benchmark.
+<code>crates/casa-ms/examples/ms_trial_probe.rs</code> opens a store through the
+trial adapter, prints each partition's estimate and reads every partition
+once (first data group, every role and product, all channels, 256 MiB
+budget). Run on the Mac mini (<code>bg-mac-mini</code>: macOS 27.0.1, 8 cores, 24 GB),
+release build, one thread, page cache warm, on 2026-10-25, before (<code>e3f42dc</code>)
+and after (<code>4046d6c</code>) the opening index was built in row chunks:</p>
+<table>
+<thead>
+<tr>
+<th>MeasurementSet</th>
+<th>MAIN rows</th>
+<th>Partitions</th>
+<th>Open, before → after</th>
+<th>Peak RSS open only, before → after</th>
+<th>Traversal</th>
+<th>Peak RSS traversal, before → after</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>pilot.ms</code> (4.1 GB; 351 baselines, 64 SPWs × 64 channels × 4 products)</td>
+<td>2,021,760</td>
+<td>64</td>
+<td>0.37 → 0.24 s</td>
+<td>164 → 30 MB</td>
+<td>4,566 MiB in 1.96 s (2,325 MiB/s) both</td>
+<td>278 → 146 MB</td>
+</tr>
+<tr>
+<td><code>wave3-vla-aw-widefield-medium.ms</code> (33 GB; 351 baselines, 512 channels × 2 products)</td>
+<td>4,212,000</td>
+<td>1</td>
+<td>0.81 → 0.78 s</td>
+<td>313 → 42 MB</td>
+<td>not run</td>
+<td>—</td>
+</tr>
+</tbody>
+</table>
+<ul>
+<li><strong>No gross cost in the read.</strong> One thread delivers 2.3 GB/s of batches
+  (about 250 million visibilities a second with their flags, weights, UVW
+  and time auxiliaries) against 0.35 s for <code>cat</code> of the same cached files:
+  the adapter decodes the tiled columns, unpacks <code>FLAG</code> bits and places time
+  auxiliaries, at about a sixth of a memory copy's speed. With the cache
+  cold the same traversal took 16.2 s (282 MiB/s) for the same 1.9 s of
+  user time: the external disk sets the pace, not the adapter. No grid was
+  padded.</li>
+<li><strong>Batch memory is what the estimate says.</strong> Each <code>pilot.ms</code> partition is
+  one 71.3 MiB batch; the traversal's peak is the opening's plus about
+  114 MB.</li>
+<li><strong>The opening index was the one cost that grew with the MeasurementSet:</strong>
+  75–80 bytes per MAIN row at its peak, so a 10⁸-row MeasurementSet would
+  have needed about 7.5 GB to open, outside any admission. The index now
+  reads the key columns 2¹⁸ rows at a time in two passes (<code>msv2/index.rs</code>)
+  and holds only the grids (four bytes a cell) and one chunk: about 0.45 GB
+  for 10⁸ rows. Opening still reads every row's keys, about 0.2 µs a row
+  (about 20 s for 10⁸ rows); it became faster here because building a key
+  no longer allocates.</li>
+</ul>
+<p>Revision 4 measured what that run did not exercise: the padded and
+correlation-subset paths, and parallel cursors. Same machine, release build,
+page cache warm; each figure is one of two or three alternating runs, which
+agreed within 2%. <code>padded</code> is a copy of <code>pilot.ms</code> from which
+<code>ms_trial_pad</code> removed antenna 5's rows for the second half of its times
+(37,440 rows; 32 of the 64 partitions padded, up to 3.7% of their cells):</p>
+<table>
+<thead>
+<tr>
+<th>Read of <code>pilot.ms</code> (4,566 MiB delivered)</th>
+<th>Revision 3 (<code>a6852cc</code>)</th>
+<th>Revision 4</th>
+<th>Peak RSS, 3 → 4</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Every product, unpadded</td>
+<td>1.93–1.96 s</td>
+<td>1.92–1.96 s</td>
+<td>146 → 146 MB</td>
+</tr>
+<tr>
+<td>Every product, <code>padded</code> copy</td>
+<td>2.85–2.90 s</td>
+<td>2.56–2.60 s</td>
+<td>241 → 170 MB</td>
+</tr>
+<tr>
+<td><code>RR,LL</code> (2,329 MiB delivered)</td>
+<td>—</td>
+<td>2.31–2.34 s</td>
+<td>183 MB</td>
+</tr>
+<tr>
+<td>Every product, 8 workers (<code>--parallel</code>)</td>
+<td>—</td>
+<td>0.52 s (8.8 GB/s)</td>
+<td>760 MB</td>
+</tr>
+<tr>
+<td><code>padded</code>, 8 workers</td>
+<td>—</td>
+<td>0.82 s (5.5 GB/s)</td>
+<td>815 MB</td>
+</tr>
+</tbody>
+</table>
+<ul>
+<li><strong>No change where nothing was padded,</strong> and the parallel reads deliver
+  every partition's samples with the same checksum as the sequential read.
+  Eight workers read 3.8 times as fast as one.</li>
+<li><strong>Padding now costs nothing measurable in the adapter.</strong> Revision 3
+  decoded a padded batch into scratch, pre-filled the batch with padding and
+  copied each row; revision 4 decodes the present rows straight into the
+  batch and spreads them to their samples in place, one move of runs, with no
+  payload scratch (70 MB less at the peak). The copy's padded partitions now
+  read in 1.28 s and its unpadded ones in 1.31 s, against 0.98 s for the same
+  partitions of <code>pilot.ms</code>. The remaining 30% is the table <code>remove_rows</code> and
+  <code>save</code> leave behind, which slows every partition alike; it is a property
+  of that edit, not of the padding path.</li>
+<li><strong>A two-of-four subset</strong> decodes every product and gathers two: 19% longer
+  than the whole read for half the bytes.</li>
+</ul>
+<p>The read was not compared with the production reader on the same data;
+the narrow timings above are the only like-for-like evidence.</p>
+<h3 id="copies-and-allocation-in-example-a">Copies and allocation in example A<a class="headerlink" href="#copies-and-allocation-in-example-a" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Path</th>
+<th>Store → buffer</th>
+<th>Buffer → kernel</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Production v2 (<code>MeasurementSetSource</code>)</td>
+<td>typed <code>[row][channel][correlation]</code> fill</td>
+<td>one copy into <code>NativeBlock</code></td>
+<td>—</td>
+</tr>
+<tr>
+<td>Trial v2 batch</td>
+<td>the same typed fills, straight into <code>BatchBuffers</code> (a complete time, every product); present rows placed and padded otherwise</td>
+<td>one copy into <code>NativeBlock</code> (5,760 elements resident)</td>
+<td>time auxiliaries placed from scratch (0 copied elements counted for the payload)</td>
+</tr>
+<tr>
+<td>Trial v4 batch</td>
+<td>zarrs decodes each chunk's selection straight into <code>BatchBuffers</code> (<code>retrieve_array_subset_into</code>)</td>
+<td>one copy into <code>NativeBlock</code></td>
+<td>flags decoded as bytes, checked and converted to <code>bool</code> (1,920 elements); target zeroed before decode</td>
+</tr>
+</tbody>
+</table>
+<p>Batch buffers grow once, on the first fill, and are reused after that; they
+grow again only when a later wave asks for a wider window. Each Zarr chunk
+decode still allocates inside zarrs.</p>
+<h2 id="example-b-gain-solve">Example B: gain solve<a class="headerlink" href="#example-b-gain-solve" title="Permanent link">&para;</a></h2>
+<p><code>crates/casa-calibration/src/solve/batch_trial.rs</code> (setup and tests) and
+<code>batch_trial/feed.rs</code> (the consumer, which takes <code>&amp;dyn Observation</code> and
+imports no store type); crate-internal, test-only. The request is
+<code>gaincal(gaintype='G', calmode='ap', solint='60s', refant=0, minsnr=3,
+minblperant=4)</code> against a 1 Jy point source. Production's
+<code>SolveAccumulator</code> and solver (<code>solve_closed_group</code>, split out of
+<code>solve_gain</code> unchanged) consume batch fragments. The <code>[sample, channel,
+correlation]</code> views are transposed to the accumulator's <code>[correlation,
+channel]</code> without copying; the flags are the batch's validity rule,
+written into one small array per fragment. Each sample's time, time
+centroid, interval and scan come from the batch. For the comparison,
+<code>solve_gain</code> was split into <code>solve_gain_rows</code> plus the caltable write; the
+production run still writes its caltable (10 rows).</p>
+<p>To feed both paths, <code>SolveAccumulator::observe</code> was split into its MAIN-cell
+reads and <code>observe_samples</code>, which accumulates arrays from any source. The
+arithmetic and its order are unchanged, and all 134 existing casa-calibration
+tests pass. The split also brought <code>observe</code> under the function-length limit,
+so its grandfathered <code>too_many_lines</code> exception is removed.</p>
+<p>The comparison binds each solve's antennas and fields to the production
+MeasurementSet's with <code>Catalogue::bind_to</code> (antenna station and position,
+field phase centre, exact), which refuses unmatched or ambiguous entries,
+and asserts every row's antenna, field, spectral window, reference antenna,
+observation, scan and interval, then the gains, SNRs, weights and flags,
+with NaN as the worst difference. The request names every partition of the
+catalogue, 60 s bins per field and scan, and a byte budget of whole times.</p>
+<table>
+<thead>
+<tr>
+<th>Realization</th>
+<th>Whole times per batch</th>
+<th>Closure</th>
+<th>Gains vs production</th>
+<th>SNR vs production</th>
+<th>Weights vs production</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Sequential, v2</td>
+<td>1, 3, 4, 7, 12</td>
+<td>at delivery and deferred</td>
+<td>≤ 1.3e-7 absolute</td>
+<td>≤ 2.5e-6 relative</td>
+<td>≤ 1.6e-7 relative</td>
+</tr>
+<tr>
+<td>Sequential, v4</td>
+<td>1, 3, 4, 7, 12</td>
+<td>at delivery and deferred</td>
+<td>≤ 1.3e-7</td>
+<td>≤ 2.5e-6</td>
+<td>≤ 1.6e-7</td>
+</tr>
+<tr>
+<td>Concurrent fragments, first held back 50 ms, v2 / v4</td>
+<td>3</td>
+<td>both</td>
+<td>≤ 1.3e-7</td>
+<td>≤ 2.1e-6</td>
+<td>≤ 2.0e-7</td>
+</tr>
+<tr>
+<td>Production against itself</td>
+<td>—</td>
+<td>—</td>
+<td>identical</td>
+<td>≤ 1.2e-7</td>
+<td>≤ 1.6e-7</td>
+</tr>
+</tbody>
+</table>
+<p>Scans, identities and times are equal in every row of every run, times to
+a few ulps of MJD seconds (about 1 µs each): production's solution time is
+a weighted mean over baselines summed in hash-map order, so it differs by
+an ulp from itself too. These figures are after merging <code>main</code> into the
+design branch (below); before it, the gains were identical. The two stores now give the same traces batch for batch (12, 4, 3, 2
+and 1 batches; at most two groups live), differing only in buffer bytes
+(3.8–42.7 KB for v2 with its per-correlation weight, 5.0–55.4 KB for v4).</p>
+<ul>
+<li><strong>Groups cross batches.</strong> At one time per batch a 60 s group spans six
+  batches with one group's sufficient statistics (32 entries) resident; at
+  four times per batch a group's two fragments straddle a batch boundary.
+  Accumulator state depends on the group's distinct times, antennas and
+  baseline-correlations, not its samples. No visibility is retained across
+  batches.</li>
+<li><strong>Closure is exact.</strong> Each group closes exactly once: two <code>Last</code>/<code>Whole</code>
+  fragments at delivery, or two <code>GroupEnd</code> events from a store opened to
+  defer closure. In the concurrent realization <code>GroupCompletion</code> joins the
+  two completions: both groups' input completed while fragment work was
+  pending (<code>closed_with_pending = 2</code>), and each group was solved only after
+  its partial accumulations had joined and merged.</li>
+<li><strong>Agreement.</strong> The sequential solves match production as closely as
+  production matches itself: its solver iterates hash maps in a per-run
+  order. Merged partial sums change summation order, hence the 1e-7 gain
+  differences in the concurrent run.</li>
+<li><strong>Science check.</strong> The solutions recover the fixture's known gains,
+  referred to antenna 0, to 0.092 rad in phase and 10.7 % in amplitude; the
+  point-source model omits the 0.1 Jy offset source.</li>
+</ul>
+<h3 id="gaps-example-b-exposed-and-what-revision-1-did">Gaps example B exposed, and what revision 1 did<a class="headerlink" href="#gaps-example-b-exposed-and-what-revision-1-did" title="Permanent link">&para;</a></h3>
+<ul>
+<li><em>Time auxiliaries and scan</em> (first pass: missing, supplied by the trial):
+  now requested roles, delivered from both stores and asserted against
+  production.</li>
+<li><em>Antenna identity</em> (first pass: list order; revision 1: rebound by
+  context in test code): now <code>Catalogue::bind_to</code>, the contract's
+  <code>CalibrationBinding</code> over two opened observations. Binding a caltable's
+  own namespace is still untested.</li>
+<li><em>Closure bookkeeping</em> (first pass: hand-written in the consumer): now
+  <code>casa_observation::GroupCompletion</code>, shared with the work-unit law.</li>
+<li><strong>Finding, resolved on <code>main</code>:</strong> production <code>gaincal</code> accumulated from
+  <code>FLAG</code> and did not read <code>FLAG_ROW</code>, while the MSv2 adapter folds
+  <code>FLAG_ROW</code> into the flags (D5). <code>main</code>'s <code>0ddb970</code> made both solves treat
+  such a row as fully flagged, confirmed against a CASA 6.7.5.18 oracle, so
+  D5 and production now agree. The fixture's <code>FLAG_ROW</code> is still false
+  everywhere; a case that sets it is what remains of #907.</li>
+<li><strong>Finding from merging <code>main</code>: the solve weights are not the batch's
+  weights.</strong> <code>main</code>'s <code>4eeaab2</code> makes production <code>gaincal</code> weight each
+  sample by 1/σ² from <code>SIGMA</code> (<code>SIGMA_SPECTRUM</code> where the MeasurementSet
+  has <code>WEIGHT_SPECTRUM</code>), as CASA's <code>CalSolvingVi2::calibrateCurrentVB</code>
+  does through <code>resetWeightsUsingSigma</code>; it no longer reads <code>WEIGHT</code>. The
+  batch carries <code>WEIGHT</code> and no <code>SIGMA</code> (contracts, section 8), and XRADIO's
+  conversion maps no <code>SIGMA</code> into MSv4 (architecture, conversion
+  fidelity). The fixture's <code>WEIGHT</code> is 1/σ² to 1.3e-7, so example B, which
+  solves with the batch's weights, still agrees with production to
+  rounding, but on data whose <code>WEIGHT</code> is not 1/σ² (after <code>statwt</code>, say)
+  a batch-fed solve would differ from CASA. Before calibration moves onto
+  batches, the contract needs the weight role a solve uses: <code>SIGMA</code> as a
+  requestable role for MSv2, and a stated rule for MSv4, which has only
+  <code>WEIGHT</code>.</li>
+</ul>
+<h2 id="msv4-interoperability">MSv4 interoperability<a class="headerlink" href="#msv4-interoperability" title="Permanent link">&para;</a></h2>
+<p><code>tools/ms-trial/check_interop.sh</code> runs both directions on the committed
+fixtures and writes the reports in <a href="interop/"><code>interop/</code></a>. Rust does all the
+reading and writing; Python is only the oracle
+(<code>tools/ms-trial/check_interop.py</code>, in the pinned
+environment).</p>
+<table>
+<thead>
+<tr>
+<th>Direction</th>
+<th>What runs</th>
+<th>Checks</th>
+<th>Result</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>XRADIO writes, Rust reads</td>
+<td><code>ms_trial_interop dump</code> reads XRADIO's store through the trial reader and dumps every array the batch delivers, with each time's instant as the epoch views represent it. XRADIO's <code>open_processing_set</code> loads the same store, and the oracle compares the two.</td>
+<td>26</td>
+<td><strong>all pass</strong> (<a href="interop/xradio_writes_rust_reads.json">report</a>)</td>
+</tr>
+<tr>
+<td>Rust writes, XRADIO reads</td>
+<td><code>ms_trial_interop write</code> converts the MSv2 through four-time batches (which straddle the five-time chunks; the writer holds the partial ones) into a fresh store with the trial writer. XRADIO opens it, <code>check_datatree</code> validates it and <code>.load()</code> forces every array. The oracle compares it with XRADIO's own conversion and with the MSv2 rows read through casacore.</td>
+<td>74</td>
+<td><strong>all pass</strong> (<a href="interop/rust_writes_xradio_reads.json">report</a>)</td>
+</tr>
+</tbody>
+</table>
+<p>Array comparisons are exact; nothing in these conversions is lossy. Time
+comparisons are of the represented instants, as astropy (XRADIO's
+reference for its time attributes) reads each side: they agree to
+1e-11 s, the two-part MJD's rounding. Revision 2's conversion packs 4,080
+elements where revision 1 packed 12,120
+(<a href="interop/rust_write_counters.json">counters</a>): the MSv2 batch is already on
+the dataset's grid, so only the per-correlation weight is written per
+channel and the time centroids re-expressed from MJD 0.</p>
+<ul>
+<li><strong>XRADIO writes, Rust reads.</strong> The oracle compares every value, flag and
+  weight; <code>TIME_CENTROID</code> and <code>EFFECTIVE_INTEGRATION_TIME</code>; UVW, time and
+  frequency coordinates; polarization labels, baseline antennas, the
+  per-time field and scan; the instants of every time and time centroid;
+  the interval against <code>time.integration_time</code>; and the time origin and
+  scale, frequency frame, UVW frame, visibility units, data group, channel
+  width, phase centre, and antenna names and positions.</li>
+<li><strong>Rust writes, XRADIO reads.</strong> <code>VISIBILITY</code>, <code>FLAG</code>, <code>WEIGHT</code>, <code>UVW</code>,
+  <code>TIME_CENTROID</code> and <code>EFFECTIVE_INTEGRATION_TIME</code> match in dims, dtype and
+  every element. Every coordinate matches, as do the time, frequency, UVW
+  and time-auxiliary measure attributes and the visibility units. The
+  <code>antenna_xds</code> and <code>field_and_source_base_xds</code> variables match, with their
+  measure attributes, as do the scan intents and the <code>base</code> data group's
+  roles. The store now holds every main-dataset variable XRADIO's own
+  conversion writes. Against the MSv2: every row has its own slot, with no
+  padding; DATA, FLAG, the broadcast WEIGHT, UVW and EXPOSURE are equal,
+  and the time and time-centroid instants equal the MSv2's (UTC).</li>
+<li><strong>Rust-only laws.</strong> <code>observation_io</code>'s <code>writer</code> module, run in CI:
+  stores written from MSv2 batches (their grid is the dataset's, so the
+  only packing left is the per-correlation weight written per channel and
+  the time centroids re-expressed from MJD 0, 4,080 elements) and from MSv4
+  batches (encoded straight from their views, 0 elements packed) read back
+  equal to the MSv2, time auxiliaries, scans and intents included; nothing
+  is published until every time is written, a time is written once, a
+  channel window is refused and a dropped writer removes its staging; a
+  batch that disagrees with the declaration in value (a time the dataset
+  lacks, another interval at a time) or a declaration that disagrees with
+  the batches (reversed correlation products, other units, a field the
+  catalogue lacks) is refused before anything of it is written, from either
+  store; two live writers stage apart and the second finish is refused
+  rather than replacing the first's dataset; and stale staging directories
+  with another dataset inside are never adopted.</li>
+</ul>
+<p><strong>Writer profile.</strong> The writer takes the common <code>Catalogue</code>, a partition,
+a data group and a <code>TimeBaselineGrid</code> (the scientific declaration) and
+<code>Msv4StorageOptions</code> (dataset name, provenance, chunks, codec). It writes
+the main dataset's coordinates, the data group (<code>complex64</code>, <code>bool</code>,
+<code>float32</code>, <code>float64</code>), <code>TIME_CENTROID</code> and <code>EFFECTIVE_INTEGRATION_TIME</code>, an
+<code>antenna_xds</code> and a <code>field_and_source_&lt;group&gt;_xds</code>. The payload variables'
+fill values are the padding convention (NaN, flag true, weight 0). Chunks
+are regular (here <code>[5, 10, 4, 4]</code>). Payload variables use Blosc-LZ4, none or
+Zstandard; coordinates use Zstandard. Each writer creates its own staging
+directory beside the destination (exclusively, under a name no other
+writer or later retry uses) and publishes with a rename that refuses to
+replace (<code>renameat2(RENAME_NOREPLACE)</code> on Linux, <code>renamex_np(RENAME_EXCL)</code>
+on macOS, a checked rename elsewhere). It does not write pointing,
+system-calibration or weather datasets, <code>EFFECTIVE_CHANNEL_WIDTH</code>, or
+consolidated metadata, so XRADIO warns that it fell back to
+non-consolidated reads. It writes no dataset larger than one partition,
+only <code>unix</code>/<code>utc</code> times, and offers no update, append or resize.</p>
+<p><strong>Conversion conventions applied explicitly.</strong> XRADIO names antennas
+<code>NAME_STATION</code>, fields and spectral windows <code>NAME_ID</code>, and an absent source
+<code>Unknown</code>, and spells undeclared visibility units <code>"unkown"</code>. The trial's
+MSv2 → MSv4 conversion renames antennas, fields and the spectral window in
+its copy of the catalogue, as a stated policy, so the stores compare equal.
+It does not relabel UVW: the MSv2 adapter already resolved MSv2's
+<code>ITRF</code>-labelled UVW to the phase centres' J2000, which the writer checks
+each batch against. Scans and intents come from the batch and the
+catalogue.</p>
+<h3 id="interop-findings">Interop findings<a class="headerlink" href="#interop-findings" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>zarrs writes a configuration-less codec as a bare name.</strong> zarr-python
+  3.4.1 refuses to open it (<code>Expected dict, got str</code>), so the writer always
+  gives the bytes codec its <code>endian</code>. zarrs also adds a <code>_zarrs</code> provenance
+  attribute unless <code>include_zarrs_metadata(false)</code> is set per call; the
+  writer sets it.</li>
+<li><strong>Zarr stores edge chunks at full size.</strong> Reading the twelve times of
+  five-time chunks decodes fifteen (amplification 1.25). Writing batches that
+  straddle chunk boundaries makes zarrs read, modify and rewrite the partial
+  chunks in place. Revision 4's writer holds a batch's times in such a chunk
+  until the chunk is complete, so creation in time order encodes each chunk
+  once; an update that covers a chunk partly still reads, modifies and
+  rewrites it, which is not the contract's atomic object replacement.</li>
+<li><strong>XRADIO's own outputs need care.</strong> Without a UVW reference it writes
+  <code>frame: null</code>; its pointing dataset fails its own schema; and it writes
+  visibility units <code>"unkown"</code>.</li>
+<li><strong><code>unix</code> times are UTC-based in every scale.</strong> XRADIO defines its time
+  attributes by astropy, whose <code>unix</code> format counts from 1970-01-01 UTC
+  whatever the scale: <code>Time(1700000000., format="unix", scale="tai")</code> is
+  22:13:57 TAI, while "Unix epoch in TAI plus the offset" gives 22:13:20.
+  The first pass made exactly that error for <code>tai</code>; revision 1 reads and
+  writes <code>unix</code>/<code>utc</code> only, and the oracle now compares instants.</li>
+</ul>
+<h2 id="keep-change-or-discard-the-trials-summary-for-design-review">Keep, change or discard: the trial's summary for design review<a class="headerlink" href="#keep-change-or-discard-the-trials-summary-for-design-review" title="Permanent link">&para;</a></h2>
+<p>Revision 1 kept what the review asked to keep and made the changes it
+asked for (table at the top); revision 2 implemented the walkthrough's
+decisions (second table). What remains open:</p>
+<h3 id="keep">Keep<a class="headerlink" href="#keep" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>One boundary, one interchange structure.</strong> <code>Observation</code> (catalogue
+  plus <code>bind_read</code>) is the only thing the two consumers see; behind it the
+  same <code>VisibilityBatch</code> fed the production imaging pass and the production
+  gain accumulator from MSv2 and MSv4 with bit-identical science.
+  Dispatch is one virtual call per bind and per batch.</li>
+<li><strong><code>ndarray</code> views under thin types.</strong> Channel windows, time windows,
+  transposes for the calibration layout, the <code>[T·B, F, P]</code> view and the
+  zero-stride weight view all borrow without copying; the MSv4 view is the
+  decode buffer itself.</li>
+<li><strong>Shared quantities in their stored form.</strong> <code>Shared::{PerSample, PerTime,
+  Constant}</code> carries an MSv4 interval once per batch and a scan once per
+  time without expanding them, and <code>batch.interval_s(sample)</code> resolves any
+  form, so consumers need no format rule.</li>
+<li><strong>One checked construction path.</strong> Every batch, including packed
+  windows, is built through <code>BatchFill::finish</code>, the one place lengths,
+  identities and fragments are checked.</li>
+<li><strong>Input completion separate from work completion,</strong> joined by
+  <code>GroupCompletion</code> in the consumer.</li>
+<li><strong>Native Measures views</strong> whose references are resolved, or refused, at
+  opening.</li>
+</ul>
+<h3 id="open-questions-for-the-next-iteration">Open questions for the next iteration<a class="headerlink" href="#open-questions-for-the-next-iteration" title="Permanent link">&para;</a></h3>
+<p>Each of these was decided in <a href="revision-2-design/">revision-2-design.md</a>
+(D12, D17, D16, D5, D25, D18 and D23 in order) and implemented in revision
+2, with the qualifications recorded there; they are kept here as the record
+of what revision 1 left open. What revision 2 leaves open is in that
+record's last section: the time tolerance of the MSv2 grid, ephemeris as a
+content key, MSv2 tile-level amplification, strided subset decodes, and an
+MSv2 creator from batches.</p>
+<ol>
+<li><strong>End of stream without a buffer.</strong> <code>next_owned</code> returns the buffer at
+   the end, as the review asked, but still needs one to ask; with an
+   exhausted pool that costs a wait (measured above). <code>next_owned(Option&lt;…&gt;)</code>
+   would answer <code>End</code> without one.</li>
+<li><strong>Correlations and flag policy in the request.</strong> Production imaging
+   routes every stored correlation, so a flagged cross hand drops the Stokes
+   I sample, as CASA does; gaincal flags a channel if any correlation is
+   flagged. The request should name the correlations a consumer reads and
+   the flag policy over unread ones.</li>
+<li><strong>Validity cost.</strong> <code>Validity::excluded</code> is evaluated per element, with
+   up to four optional checks; revision 4's examples evaluate it once per
+   batch or fragment with <code>mask_into</code>. Folding the rule into the fill
+   remains an option.</li>
+<li><strong>Solve weights</strong> (example B finding after merging <code>main</code>): production
+   <code>gaincal</code> weights by 1/σ² as CASA does, and the batch has no <code>SIGMA</code>;
+   see example B. (<code>FLAG_ROW</code> in production <code>gaincal</code>, the earlier
+   finding here, is fixed on <code>main</code>.)</li>
+<li><strong>Cross-store rebinding as a contract.</strong> The calibration comparison
+   rebinds by context in test code; the design's <code>CalibrationBinding</code> is
+   still to be built and tested with a caltable.</li>
+<li><strong>One vocabulary.</strong> Move <code>CorrelationType</code> from the imaging model into
+   <code>casa-observation</code> (or casa-types), and add a UVW measure to casa-types;
+   <code>UvwView</code> still carries a <code>DirectionRef</code>.</li>
+<li><strong>Creation catalogue for MSv2.</strong> The writer's declaration is the common
+   <code>Catalogue</code> plus a <code>TimeBaselineGrid</code>; an MSv2 creator needs a rows
+   description in its place.</li>
+</ol>
+<h3 id="discard-or-defer">Discard or defer<a class="headerlink" href="#discard-or-defer" title="Permanent link">&para;</a></h3>
+<ul>
+<li>The runtime's <code>NativeBlock</code> copy: the trial kept it so the production pass
+  ran unchanged. M2 should let the pass place directly from batch views
+  (<code>NativeRow</code> already borrows slices).</li>
+<li>The MSv2 opening index reads every row's key columns, in chunks of 2¹⁸
+  rows, and keeps four bytes per grid cell (scale check above). Its time,
+  about 0.2 µs a row, is what M2 should watch on the largest
+  MeasurementSets; lazy construction per partition remains the option.</li>
+<li>Pool buffers are bounded by their envelope (revision 4), but allocations
+  inside zarrs or casacore are not counted: the envelope plus each cursor's
+  counted scratch is not yet an admission bound for the whole read.</li>
+</ul>
+<h2 id="m1-coverage-of-this-pass">M1 coverage of this pass<a class="headerlink" href="#m1-coverage-of-this-pass" title="Permanent link">&para;</a></h2>
+<p>This pass touches parts of the M1 checklist and completes none of it.</p>
+<table>
+<thead>
+<tr>
+<th>M1 packet</th>
+<th>Touched here</th>
+<th>Still required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>layout-precision</code></td>
+<td>One sample-major layout from both stores, the grid's axes, Hz/m/s views, <code>complex64</code>, correlation subsets with a flag policy</td>
+<td>Unit requests and conversions, Jy/weight scaling, <code>complex128</code> when a store needs it</td>
+</tr>
+<tr>
+<td><code>measures-bulk</code></td>
+<td>Native epoch, frequency and UVW array views only</td>
+<td>Every family's prepared bulk conversion, ordered interpolation, scalar/CASA agreement, performance</td>
+</tr>
+<tr>
+<td><code>group-lifecycle</code></td>
+<td>Time-bin, per-scan and per-integration groups keyed by field and scan, closure, concurrent fragments, split channel windows, <code>GroupCompletion</code>, one cursor per partition, <code>Catalogue::bind_to</code></td>
+<td>Groups merged across partitions by a consumer, late samples, solve → caltable → reopen → apply</td>
+</tr>
+<tr>
+<td><code>work-unit-lifetimes</code></td>
+<td>Unequal channel units, shared pinning against packing, pools bounded in buffers and bytes, buffers returned at the end, abandoned work reported, a pool wait that can be bounded</td>
+<td>Cooperating workers on the admitted team, cancellation in flight, cube minor-cycle separation</td>
+</tr>
+<tr>
+<td><code>native-role-updates</code></td>
+<td>—</td>
+<td>All</td>
+</tr>
+<tr>
+<td><code>conversion-fidelity</code></td>
+<td>One loss-free MSv2 → MSv4 profile, both converters</td>
+<td>Every audited loss row, rejection policies</td>
+</tr>
+<tr>
+<td><code>source-free-create</code></td>
+<td>Common catalogue + grid declaration for both stores (the grid from the store's index), padding fill values and padded partitions, storage options, the narrow writer with per-batch validation, whole-chunk writes (partial chunks held), exclusive staging and no-replace publication</td>
+<td>v2 creation from batches, producer seam, backpressure, publication failure injection, the held chunk admitted with the producer's batches</td>
+</tr>
+<tr>
+<td><code>store-retention-executor</code></td>
+<td>zarrs pinned; concurrency target 1</td>
+<td>Key/handle retention plateau, W1/W4 thread and buffer counts</td>
+</tr>
+<tr>
+<td><code>object-failure</code></td>
+<td>—</td>
+<td>All</td>
+</tr>
+<tr>
+<td><code>production-access-cost</code></td>
+<td>Narrow diagnostics on a tiny fixture; the estimate (bytes, batches, amplification, natural blocks, padding) as the planner's inquiry</td>
+<td>The named MFS/cube/bandpass rows on both chunk geometries, noise bands</td>
+</tr>
+</tbody>
+</table>
+<h2 id="unsupported-in-the-trial-typed-refusals">Unsupported in the trial (typed refusals)<a class="headerlink" href="#unsupported-in-the-trial-typed-refusals" title="Permanent link">&para;</a></h2>
+<p><code>complex128</code> stores; more than one data group per traversal; MSv2 times
+merged by tolerance (distinct <code>TIME</code> values are distinct grid times); two
+rows of one time, baseline and partition, or several <code>PROCESSOR_ID</code>s in one
+partition; two fields or scans at one time of one partition; MSv4 time
+formats other than <code>unix</code>,
+<code>unix</code> times in a scale other than UTC, and MSv4 writes in other than
+<code>unix</code>/<code>utc</code>; MSv2 measure columns with a variable reference, and <code>TIME</code>
+and <code>TIME_CENTROID</code> in different scales; MSv2 UVW labelled with a celestial
+frame other than the phase centres'; MSv4 groups whose UVW frame is not
+their phase centres'; frames other than fk5/icrs for directions and UVW;
+units other than the schema's (none are converted); MSv4 variables of other
+data types or dimension orders (bitmask flags included); MSv4 datasets
+with <code>polarization_mixed</code>; centroids from a dataset with
+<code>TIME_CENTROID_EXTRA_PRECISION</code>; <code>field_name</code> or <code>scan_name</code> not one per
+time; a grouping keyed by scan on a store without scans; one antenna name
+with two positions; a batch budget smaller than one time; a batch over its
+pool buffer's envelope; per-cell
+<code>WEIGHT_SPECTRUM</code> fallback; <code>SIGMA</code>, <code>FLAG_CATEGORY</code>; writing channel
+windows, correlation subsets, or batches that disagree with the
+declaration; MSv4 sharding (not exercised); remote stores.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.c21346df.min.js"></script>
+      
+    
+  </body>
+</html>
