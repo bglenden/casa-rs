@@ -332,8 +332,8 @@ fn a_model_data_write_holds_at_most_its_bytes() {
         let cell = cell_shape(&path, "DATA");
         let bound =
             SelectedVisibilityWrite::retained_bytes(&path, targets).expect("the writer's bytes");
-        // The first write creates MODEL_DATA, zero-filled; the second
-        // rewrites it.
+        // The first write creates MODEL_DATA, seeded with CASA's initial
+        // model; the second rewrites it.
         for write in ["creating", "rewriting"] {
             let peak = peak_of(|| write_cells(&path, targets, 0..rows, cell));
             eprintln!("{write} {rows} rows of {cell:?} cells: peak {peak} bytes, bound {bound}");

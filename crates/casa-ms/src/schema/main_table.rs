@@ -539,9 +539,10 @@ impl VisibilityDataColumn {
 ///
 /// CASA initializes a `MODEL_DATA` column it adds to a unit point source at
 /// the phase centre: 1 in every product except the cross hands `RL`, `LR`,
-/// `XY` and `YX`, which hold 0 (`VisSetUtil::initScrCols` in casacore's
-/// `msvis`, which tclean's `VisSetUtil::addScrCols` and
-/// `VisSet::initCalSet` call). Every other code, Stokes and mixed products
+/// `XY` and `YX`, which hold 0 (in CASA's `msvis`, not casacore:
+/// `VisSetUtil::initScrCols`, which `VisSetUtil::addScrCols` calls for
+/// tclean, and `VisSet::initCalSet`, which applies the same rule). Every
+/// other code, Stokes and mixed products
 /// and codes casa-rs does not name included, holds 1 as in CASA. Every
 /// casa-rs writer that adds `MODEL_DATA` fills it with this; a model
 /// prediction written later replaces it.
