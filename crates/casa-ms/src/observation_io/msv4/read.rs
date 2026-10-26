@@ -2,7 +2,8 @@
 //! Opening an MSv4 processing set: each `VisibilityXds` dataset is a
 //! partition, with its catalogue checked against the profile once.
 
-use std::collections::BTreeMap;
+use std::cmp::Reverse;
+use std::collections::{BTreeMap, BinaryHeap, HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -128,6 +129,19 @@ impl Msv4Observation {
             options: super::codec_options(),
             open: options.clone(),
         };
+        // A dataset lists only the antennas its baselines name, in one
+        // order (an MSv2's ANTENNA order, from either converter): the
+        // catalogue's order keeps every dataset's, so a store converted
+        // back numbers its antennas as the MSv2 did.
+        let lists = names
+            .iter()
+            .map(|name| read_antennas(&store, &format!("/{name}/antenna_xds")))
+            .collect::<Result<Vec<_>, _>>()?;
+        for antenna in merge_orders(lists, |antenna| {
+            (antenna.name.clone(), antenna.station.clone())
+        }) {
+            observation.antenna(antenna)?;
+        }
         for name in names {
             observation.add_dataset(&store, path.as_ref(), &format!("/{name}"))?;
         }
@@ -659,6 +673,64 @@ fn open_group(
     })
 }
 
+/// The items of `lists`, each once (by `key`), in an order that keeps each
+/// list's: a topological order of the lists' successions, the item first
+/// seen first among those free to come next. Lists that disagree are
+/// reconciled the same way, the earliest seen item breaking the cycle.
+fn merge_orders<T, K: Eq + std::hash::Hash>(lists: Vec<Vec<T>>, key: impl Fn(&T) -> K) -> Vec<T> {
+    let mut index: HashMap<K, usize> = HashMap::new();
+    let mut items: Vec<Option<T>> = Vec::new();
+    let mut ranks: Vec<Vec<usize>> = Vec::with_capacity(lists.len());
+    for list in lists {
+        let mut ranked = Vec::with_capacity(list.len());
+        for item in list {
+            let next = items.len();
+            let rank = *index.entry(key(&item)).or_insert(next);
+            if rank == next {
+                items.push(Some(item));
+            }
+            ranked.push(rank);
+        }
+        ranks.push(ranked);
+    }
+    let mut successors: Vec<HashSet<usize>> = vec![HashSet::new(); items.len()];
+    let mut predecessors = vec![0_usize; items.len()];
+    for ranked in &ranks {
+        for pair in ranked.windows(2) {
+            if pair[0] != pair[1] && successors[pair[0]].insert(pair[1]) {
+                predecessors[pair[1]] += 1;
+            }
+        }
+    }
+    let mut free: BinaryHeap<Reverse<usize>> = (0..items.len())
+        .filter(|item| predecessors[*item] == 0)
+        .map(Reverse)
+        .collect();
+    let mut merged = Vec::with_capacity(items.len());
+    while merged.len() < items.len() {
+        let Reverse(item) = free.pop().unwrap_or_else(|| {
+            // A cycle: the lists disagree; the earliest seen item left goes
+            // next.
+            let item = (0..items.len())
+                .find(|item| items[*item].is_some() && predecessors[*item] > 0)
+                .expect("an item is left");
+            Reverse(item)
+        });
+        let Some(value) = items[item].take() else {
+            continue;
+        };
+        predecessors[item] = 0;
+        for next in std::mem::take(&mut successors[item]) {
+            predecessors[next] = predecessors[next].saturating_sub(1);
+            if predecessors[next] == 0 && items[next].is_some() {
+                free.push(Reverse(next));
+            }
+        }
+        merged.push(value);
+    }
+    merged
+}
+
 /// The antennas of the `antenna_xds` at `path`.
 fn read_antennas(
     store: &Arc<FilesystemStore>,
@@ -814,5 +886,36 @@ impl Msv4Observation {
                 .interval_s
                 .ok_or_else(|| lacks("time.integration_time"))?,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::merge_orders;
+
+    fn merged(lists: &[&[&str]]) -> Vec<String> {
+        let lists = lists
+            .iter()
+            .map(|list| list.iter().map(ToString::to_string).collect())
+            .collect();
+        merge_orders(lists, Clone::clone)
+    }
+
+    #[test]
+    fn merged_antennas_keep_every_datasets_order() {
+        // The first dataset lacks a middle antenna the second places.
+        assert_eq!(
+            merged(&[&["W08", "W16", "W32"], &["W08", "W16", "W24", "W32"]]),
+            ["W08", "W16", "W24", "W32"]
+        );
+        // Disjoint datasets keep the order they are seen in.
+        assert_eq!(merged(&[&["A", "B"], &["C", "D"]]), ["A", "B", "C", "D"]);
+        // Chains across datasets: B < C only through the third.
+        assert_eq!(
+            merged(&[&["A", "C"], &["B", "D"], &["A", "B", "C"]]),
+            ["A", "B", "C", "D"]
+        );
+        // Disagreeing lists still give each item once.
+        assert_eq!(merged(&[&["A", "B"], &["B", "A"]]), ["A", "B"]);
     }
 }

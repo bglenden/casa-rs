@@ -20,7 +20,7 @@
 
 use std::path::Path;
 
-use casa_observation::{Catalogue, Observation, ObservationError};
+use casa_observation::{Catalogue, ObservationError};
 use casa_tables::{RequiredScalarColumnDestination, RequiredScalarColumnValuesMut};
 use casa_types::Value;
 
@@ -94,33 +94,31 @@ pub(super) fn inventory(
     if source.join("zarr.json").is_file() {
         msv4(source, &mut losses)?;
     } else {
-        msv2(source, &mut losses)?;
+        msv2(source, catalogue, &mut losses)?;
     }
     losses.sort();
     losses.dedup();
     Ok(losses)
 }
 
-/// The antennas of `observation`'s catalogue that no partition's baselines
-/// (the grids of `group`) name, as a loss when there are any: an MSv4
-/// dataset holds only its baselines' antennas.
-pub(super) fn unused_antennas(
-    observation: &dyn Observation,
-    group: &str,
-) -> Result<Option<Loss>, ObservationError> {
-    let catalogue = observation.catalogue();
+/// The antennas of `catalogue` that no partition's baselines name, as a
+/// loss when there are any: an MSv4 dataset holds only its baselines'
+/// antennas.
+pub(super) fn unused_antennas(catalogue: &Catalogue) -> Option<Loss> {
     let mut named = vec![false; catalogue.antennas.len()];
-    for id in catalogue.partition_ids() {
-        for baseline in &observation.grid(id, group)?.baselines {
-            for antenna in [baseline.antenna1, baseline.antenna2] {
-                if let Some(named) = named.get_mut(antenna.0 as usize) {
-                    *named = true;
-                }
+    for baseline in catalogue
+        .partitions
+        .iter()
+        .flat_map(|entry| &entry.baselines)
+    {
+        for antenna in [baseline.antenna1, baseline.antenna2] {
+            if let Some(named) = named.get_mut(antenna.0 as usize) {
+                *named = true;
             }
         }
     }
     let unused = named.iter().filter(|named| !**named).count();
-    Ok((unused > 0).then_some(Loss::UnusedAntennas(unused)))
+    (unused > 0).then_some(Loss::UnusedAntennas(unused))
 }
 
 /// Refuse the first of `losses` whose kind is not in `accept`.
@@ -182,9 +180,13 @@ const UNCARRIED_SUBTABLES: &[SubtableId] = &[
 /// Rows of `FLAG_ROW` read at a time.
 const ROW_CHUNK: usize = 1 << 18;
 
-fn msv2(source: &Path, losses: &mut Vec<Loss>) -> Result<(), ObservationError> {
+fn msv2(
+    source: &Path,
+    catalogue: &Catalogue,
+    losses: &mut Vec<Loss>,
+) -> Result<(), ObservationError> {
     let ms = crate::MeasurementSet::open_retained_read(source).map_err(storage)?;
-    refuse_moving_fields(&ms)?;
+    refuse_moving_fields(&ms, catalogue)?;
     let main = ms.main_table();
     let columns: Vec<String> = main
         .schema()
@@ -217,13 +219,24 @@ fn msv2(source: &Path, losses: &mut Vec<Loss>) -> Result<(), ObservationError> {
     subtables(&ms, losses)
 }
 
-/// Refuse fields whose direction moves: those that follow an ephemeris,
-/// whose directions casacore reads as offsets from it, and those whose
-/// directions are polynomials in time (`NUM_POLY` above 0), as XRADIO's
-/// converter refuses them. The catalogue holds one constant direction.
-fn refuse_moving_fields(ms: &crate::MeasurementSet) -> Result<(), ObservationError> {
+/// Refuse fields whose direction moves, among those `catalogue`'s
+/// partitions name (an MSv2 catalogue's fields are its `FIELD` rows): those
+/// that follow an ephemeris, whose directions casacore reads as offsets
+/// from it, and those whose directions are polynomials in time (`NUM_POLY`
+/// above 0), as XRADIO's converter refuses the fields it converts. The
+/// catalogue holds one constant direction.
+fn refuse_moving_fields(
+    ms: &crate::MeasurementSet,
+    catalogue: &Catalogue,
+) -> Result<(), ObservationError> {
     let fields = ms.field().map_err(storage)?;
-    for row in 0..fields.row_count() {
+    let mut named = vec![false; fields.row_count()];
+    for field in catalogue.partitions.iter().flat_map(|entry| &entry.fields) {
+        if let Some(named) = named.get_mut(field.0 as usize) {
+            *named = true;
+        }
+    }
+    for row in (0..fields.row_count()).filter(|row| named[*row]) {
         if fields
             .ephemeris_id(row)
             .map_err(storage)?

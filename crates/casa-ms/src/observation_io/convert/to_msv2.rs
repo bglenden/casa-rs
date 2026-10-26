@@ -51,7 +51,9 @@ const SECONDS_PER_DAY: f64 = 86_400.0;
 /// it), as D23 decided. With [`PaddingRows::Omitted`], padding becomes no
 /// row, which reproduces an original sparse MSv2. `SIGMA` is derived
 /// from the weights ([`Loss::SigmaDerived`]), so the caller must accept
-/// [`LossKind::Sigma`](super::LossKind::Sigma).
+/// [`LossKind::Sigma`](super::LossKind::Sigma). Names are the source's: an
+/// MSv4 converted from an MSv2 holds XRADIO's suffixed names
+/// (`NAME_FIELDID`, `NAME_STATION`, ...), so a round trip renames.
 ///
 /// An MSv2's row count is fixed before its rows are written. With padding
 /// omitted it is the acquisitions, which only the weights record, so a

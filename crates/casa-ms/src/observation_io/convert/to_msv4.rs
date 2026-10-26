@@ -10,6 +10,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use casa_observation::{Catalogue, Observation, ObservationError, PartitionId, Roles};
 
 use super::{ConversionOptions, ConversionReport, lockstep, losses};
+use crate::observation_io::msv4::STATION_NAMED;
 use crate::observation_io::update::storage;
 use crate::observation_io::{
     Msv2Observation, Msv4Observation, Msv4ProcessingSetWriter, Msv4StorageOptions,
@@ -64,7 +65,7 @@ pub fn to_msv4(
     let catalogue = observation.catalogue();
     let groups = losses::selected_groups(catalogue, options.data_groups.as_deref())?;
     let mut found = losses::inventory(source, catalogue, &groups)?;
-    found.extend(losses::unused_antennas(observation.as_ref(), &groups[0])?);
+    found.extend(losses::unused_antennas(catalogue));
     found.sort();
     losses::refuse_unaccepted(&found, &options.accept)?;
     let set = Msv4ProcessingSetWriter::create(destination)?;
@@ -170,12 +171,17 @@ fn open_named(source: &Path) -> Result<Named, ObservationError> {
 }
 
 /// Each partition's dataset name, as XRADIO's converter names an MSv2's:
-/// the file name without `.ms` (of the path made absolute, so `.` and a
-/// trailing `/` still name the MeasurementSet), then the partition's
-/// number in the order of `first_rows`, the partitions' first MAIN rows,
-/// padded with zeros to the width of the largest.
+/// the file name without `.ms`, then the partition's number in the order
+/// of `first_rows`, the partitions' first MAIN rows, padded with zeros to
+/// the width of the largest. The path is made absolute, and resolved when
+/// that leaves no file name, so `.`, `..` and a trailing `/` name the
+/// MeasurementSet they stand for (XRADIO's converter names `.`'s datasets
+/// `_0` and so on).
 fn dataset_names(source: &Path, first_rows: &[Option<u32>]) -> Vec<String> {
-    let path = std::path::absolute(source).unwrap_or_else(|_| source.to_path_buf());
+    let mut path = std::path::absolute(source).unwrap_or_else(|_| source.to_path_buf());
+    if path.file_name().is_none() {
+        path = std::fs::canonicalize(source).unwrap_or(path);
+    }
     let stem = path.file_name().map_or_else(
         || "dataset".to_string(),
         |name| name.to_string_lossy().replace(".ms", ""),
@@ -189,10 +195,6 @@ fn dataset_names(source: &Path, first_rows: &[Option<u32>]) -> Vec<String> {
     }
     names
 }
-
-/// Telescopes whose antennas XRADIO's converter names `NAME_STATION`;
-/// others keep their names.
-const STATION_NAMED: [&str; 4] = ["ALMA", "VLA", "NOEMA", "EVLA"];
 
 /// `catalogue` with XRADIO's names, as its converter names an MSv2's:
 /// antennas `NAME_STATION` for the telescopes it names so
@@ -287,10 +289,12 @@ mod tests {
         let names = dataset_names(Path::new("pilot.ms/"), &eleven);
         assert_eq!(names[10], "pilot_00");
         assert_eq!(names[0], "pilot_10");
-        let here = dataset_names(Path::new("."), &[Some(0)]);
-        assert!(
-            !here[0].starts_with("dataset") && !here[0].starts_with('_'),
-            "{here:?}"
-        );
+        for path in [".", ".."] {
+            let named = dataset_names(Path::new(path), &[Some(0)]);
+            assert!(
+                !named[0].starts_with("dataset") && !named[0].starts_with('_'),
+                "{path}: {named:?}"
+            );
+        }
     }
 }

@@ -55,7 +55,10 @@ struct Partition {
 /// XRADIO's converter does (`DATA_DESC_ID` × `OBS_MODE` × `OBSERVATION_ID`
 /// × `EPHEMERIS_ID` and the opening's
 /// [`PartitionScheme`](super::PartitionScheme)), and further by the feed
-/// pair, which XRADIO does not split by; each partition's rows are
+/// pair, which XRADIO does not split by. A row whose `STATE_ID` is -1 has
+/// no intents here, where XRADIO's converter gives it the last `STATE`
+/// row's `OBS_MODE` (NumPy's index -1), so an MS mixing such rows with
+/// `STATE` rows partitions differently. Each partition's rows are
 /// placed on its time × baseline grid (the `index` module). Each partition
 /// has one data group, `base`, associating `DATA`, `FLAG`,
 /// `WEIGHT_SPECTRUM` (when MAIN has it, else `WEIGHT`) and `UVW`. Antenna,

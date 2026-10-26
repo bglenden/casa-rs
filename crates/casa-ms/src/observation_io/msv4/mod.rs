@@ -23,6 +23,11 @@ pub use read::Msv4Observation;
 /// without one and the reader reads as none.
 pub(super) const UNKNOWN_SOURCE: &str = "Unknown";
 
+/// Telescopes whose antennas XRADIO's converter names `NAME_STATION` and
+/// marks `relocatable_antennas` (`create_antenna_xds.py`); others keep
+/// their names.
+pub(in crate::observation_io) const STATION_NAMED: [&str; 4] = ["ALMA", "VLA", "NOEMA", "EVLA"];
+
 /// Whether `name` is XRADIO's placeholder for an absent source:
 /// [`UNKNOWN_SOURCE`], or `Unknown_<SOURCE_ID>` where its converter pads a
 /// field's missing `SOURCE` row in a partition of several fields.

@@ -91,7 +91,7 @@ impl fmt::Display for Loss {
             Self::Table(table) => write!(f, "{table} is not carried"),
             Self::Column(column) => write!(f, "{column} is not carried"),
             Self::UnusedAntennas(count) => {
-                write!(f, "{count} antennas no baseline names are not carried")
+                write!(f, "antennas no baseline names are not carried ({count})")
             }
         }
     }

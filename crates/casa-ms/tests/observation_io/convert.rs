@@ -403,21 +403,6 @@ fn an_msv2_survives_the_round_trip_through_msv4() {
     }
     // The MSv4 holds XRADIO's names, and the MSv2 made from it says them:
     // the round trip renames as XRADIO's conversion does.
-    let names = |path: &Path, id, column: &str| -> Vec<String> {
-        let ms = casa_ms::MeasurementSet::open(path).expect("ms");
-        let table = ms.subtable(id).expect("subtable");
-        (0..table.row_count())
-            .map(|row| {
-                match table
-                    .cell_accessor(row, column)
-                    .and_then(|cell| cell.scalar())
-                {
-                    Ok(casa_types::ScalarValue::String(name)) => name.clone(),
-                    other => panic!("{column} of row {row}: {other:?}"),
-                }
-            })
-            .collect()
-    };
     let suffixed = |names: Vec<String>, suffixes: Vec<String>| -> Vec<String> {
         names
             .iter()
@@ -427,14 +412,17 @@ fn an_msv2_survives_the_round_trip_through_msv4() {
     };
     let rows = |count: usize| (0..count).map(|row| row.to_string()).collect();
     use casa_ms::SubtableId::{Antenna, Field};
-    let fields = names(&v2, Field, "NAME");
+    let fields = subtable_strings(&v2, Field, "NAME");
     assert_eq!(
-        names(&back, Field, "NAME"),
+        subtable_strings(&back, Field, "NAME"),
         suffixed(fields.clone(), rows(fields.len()))
     );
     assert_eq!(
-        names(&back, Antenna, "NAME"),
-        suffixed(names(&v2, Antenna, "NAME"), names(&v2, Antenna, "STATION"))
+        subtable_strings(&back, Antenna, "NAME"),
+        suffixed(
+            subtable_strings(&v2, Antenna, "NAME"),
+            subtable_strings(&v2, Antenna, "STATION")
+        )
     );
 }
 
@@ -557,6 +545,40 @@ fn weights_varying_over_channels_are_refused() {
         "{refused:?}"
     );
     assert!(!out.exists());
+}
+
+/// The strings of `column` of the subtable `id` of the MSv2 at `path`, by
+/// row.
+fn subtable_strings(path: &Path, id: casa_ms::SubtableId, column: &str) -> Vec<String> {
+    let ms = casa_ms::MeasurementSet::open(path).expect("ms");
+    let table = ms.subtable(id).expect("subtable");
+    (0..table.row_count())
+        .map(|row| {
+            match table
+                .cell_accessor(row, column)
+                .and_then(|cell| cell.scalar())
+            {
+                Ok(casa_types::ScalarValue::String(name)) => name.clone(),
+                other => panic!("{column} of row {row}: {other:?}"),
+            }
+        })
+        .collect()
+}
+
+/// MAIN's `Int32` `column` of the MSv2 `ms`, by row.
+fn main_ints(ms: &casa_ms::MeasurementSet, column: &str) -> Vec<i32> {
+    (0..ms.main_table().row_count())
+        .map(|row| {
+            match ms
+                .main_table()
+                .cell_accessor(row, column)
+                .and_then(|cell| cell.scalar())
+            {
+                Ok(casa_types::ScalarValue::Int32(value)) => *value,
+                other => panic!("{column} of row {row}: {other:?}"),
+            }
+        })
+        .collect()
 }
 
 /// The fixture MSv2 with half its times in a second observation (session):
@@ -1031,5 +1053,47 @@ fn processors_are_lost_only_when_named_or_not_a_correlator() {
             .contains(&Loss::Table("PROCESSOR".to_string())),
         "{:?}",
         report.losses
+    );
+}
+
+/// Each MSv4 dataset lists only its baselines' antennas, and the reader
+/// merges the lists keeping each one's order: a round trip numbers the
+/// antennas as the original did even when the first dataset lacks a
+/// middle antenna, and no baseline comes back reversed.
+#[test]
+fn a_round_trip_keeps_the_antenna_order() {
+    let root = tempfile::tempdir().expect("root");
+    let v2 = two_sessions(root.path(), false);
+    let mut ms = casa_ms::MeasurementSet::open(&v2).expect("ms");
+    let (first, second) = (main_ints(&ms, "ANTENNA1"), main_ints(&ms, "ANTENNA2"));
+    assert!(
+        first[0] != 2 && second[0] != 2,
+        "row 0 is in the first dataset"
+    );
+    for (row, pair) in first.iter().zip(&second).enumerate() {
+        let session = i32::from(*pair.0 == 2 || *pair.1 == 2);
+        ms.main_table_mut()
+            .cell_accessor_mut(row, "OBSERVATION_ID")
+            .and_then(|mut cell| {
+                cell.set(casa_types::Value::Scalar(casa_types::ScalarValue::Int32(
+                    session,
+                )))
+            })
+            .expect("the session of antenna 2");
+    }
+    ms.save().expect("save");
+    drop(ms);
+    let v4 = root.path().join("order.ps.zarr");
+    let back = root.path().join("order.ms");
+    let accept = [LossKind::Sigma, LossKind::Tables];
+    to_msv4(&v2, &v4, &options(&accept)).expect("to MSv4");
+    to_msv2(&v4, &back, &options(&accept)).expect("to MSv2");
+    let stations = |path: &Path| subtable_strings(path, casa_ms::SubtableId::Antenna, "STATION");
+    assert_eq!(stations(&back), stations(&v2));
+    let back = casa_ms::MeasurementSet::open(&back).expect("back");
+    let (first, second) = (main_ints(&back, "ANTENNA1"), main_ints(&back, "ANTENNA2"));
+    assert!(
+        first.iter().zip(&second).all(|(a, b)| a <= b),
+        "no baseline reversed"
     );
 }

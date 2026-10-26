@@ -14,14 +14,16 @@ oracle.
         and first time; every payload variable and coordinate exactly; and
         XRADIO's names: each dataset's own, its antennas', and its base
         group's fields' and sources'. Where XRADIO found no SOURCE row for a
-        field in a window it names the source "Unknown" and the converter
-        names it from the field; those are counted, not mismatches.
+        field in a window it names the source "Unknown" (or "Unknown_ID")
+        and the converter may name it from the field; those are counted,
+        not mismatches.
 
 Each prints a JSON report and exits non-zero on any mismatch.
 """
 
 import argparse
 import json
+import re
 import sys
 import time
 from pathlib import Path
@@ -89,8 +91,9 @@ def compare_names(name, node, expected_name, expected, mismatches):
     for label in ours:
         a, b = ours[label], theirs[label]
         if label == "source_name" and a.shape == b.shape:
-            unknown += int(np.sum((b == "Unknown") & (a != b)))
-            b = np.where(b == "Unknown", a, b)
+            placeholder = np.array([re.fullmatch(r"Unknown(_-?\d+)?", str(name)) is not None for name in b], dtype=bool)
+            unknown += int(np.sum(placeholder & (a != b)))
+            b = np.where(placeholder, a, b)
         if a.shape != b.shape or not np.array_equal(a, b):
             mismatches.append({"dataset": name, "names": label, "ours": list(a)[:8], "theirs": list(b)[:8]})
     return unknown

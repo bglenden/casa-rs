@@ -85,16 +85,37 @@ fn scan_numbers(catalogue: &Catalogue) -> Result<Vec<i32>, ObservationError> {
         .collect()
 }
 
-/// The receptors `CORR_PRODUCT` indexes: those of every antenna that has a
-/// feed, which must agree.
+/// The receptors `CORR_PRODUCT` indexes: those of every antenna a
+/// baseline names that has a feed, which must agree (ignoring case, as
+/// [`receptor_pair`] matches them).
 fn feed_receptors(catalogue: &Catalogue) -> Result<&[String], ObservationError> {
+    let mut named = vec![false; catalogue.antennas.len()];
+    for baseline in catalogue
+        .partitions
+        .iter()
+        .flat_map(|entry| &entry.baselines)
+    {
+        for antenna in [baseline.antenna1, baseline.antenna2] {
+            if let Some(named) = named.get_mut(antenna.0 as usize) {
+                *named = true;
+            }
+        }
+    }
     let mut fed = catalogue
         .antennas
         .iter()
-        .map(|antenna| antenna.receptors.as_slice())
-        .filter(|receptors| !receptors.is_empty());
+        .zip(named)
+        .filter(|(antenna, named)| *named && !antenna.receptors.is_empty())
+        .map(|(antenna, _)| antenna.receptors.as_slice());
     let first = fed.next().unwrap_or(&[]);
-    if fed.any(|receptors| receptors != first) {
+    let same = |receptors: &[String]| {
+        receptors.len() == first.len()
+            && receptors
+                .iter()
+                .zip(first)
+                .all(|(label, first)| label.eq_ignore_ascii_case(first))
+    };
+    if fed.any(|receptors| !same(receptors)) {
         return Err(ObservationError::Unsupported {
             what: "writing MSv2 polarizations for feeds whose receptors differ",
         });

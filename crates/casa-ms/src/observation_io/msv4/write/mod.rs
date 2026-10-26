@@ -905,7 +905,11 @@ fn write_antennas(
     create_group(
         store,
         path,
-        json!({"type": "antenna", "overall_telescope_name": telescope, "relocatable_antennas": true}),
+        json!({
+            "type": "antenna",
+            "overall_telescope_name": telescope,
+            "relocatable_antennas": super::STATION_NAMED.contains(&telescope),
+        }),
     )?;
     let count = antennas.len() as u64;
     let receptors = antennas
