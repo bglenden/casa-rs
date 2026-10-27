@@ -74,6 +74,12 @@ path = "src/bin/flagmanager.rs"
 name = "simobserve"
 path = "src/bin/simobserve.rs"
 
+# The synthetic MeasurementSet generator as a developer tool; not a catalog
+# task, and not installed with the suite.
+[[bin]]
+name = "synthetic-ms"
+path = "src/bin/synthetic-ms.rs"
+
 [[bin]]
 name = "ms-read-probe"
 path = "src/bin/ms-read-probe.rs"
@@ -171,6 +177,10 @@ required-features = ["cpp-interop-tests"]
 [[test]]
 name = "simulation_ms"
 path = "tests/simulation_ms.rs"
+
+[[test]]
+name = "synthetic_ms_cli"
+path = "tests/synthetic_ms_cli.rs"
 
 [[test]]
 name = "row_walk_memory"

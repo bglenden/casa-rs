@@ -29,7 +29,9 @@ from perf_harness.subprocesses import run_command
 
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
-DEFAULT_BINARY = REPO_ROOT / "target" / "release" / "simobserve"
+# The native generator: casa-ms's synthetic-ms developer binary,
+# which takes the run and family requests `simobserve --json-run` took.
+DEFAULT_BINARY = REPO_ROOT / "target" / "release" / "synthetic-ms"
 DEFAULT_OUTPUT_DIR = perf_paths.artifact_path("wave1", "simobserve-bench")
 CASA_MS_TOOLS = pathlib.Path(__file__).resolve().parent / "perf_harness" / "casa_ms_tools.py"
 
@@ -366,7 +368,7 @@ def run_native_repeats(
     channel_workers: int | None,
 ) -> dict[str, Any]:
     if not binary.exists():
-        raise BenchError(f"native simobserve binary does not exist: {binary}")
+        raise BenchError(f"native generator binary does not exist: {binary}")
     output_dir.mkdir(parents=True, exist_ok=True)
     timings = []
     last_ms = None
@@ -396,7 +398,7 @@ def run_native_repeats(
         (run_dir / "stderr.log").write_text(completed.stderr, encoding="utf-8")
         if completed.returncode != 0:
             raise BenchError(
-                f"native simobserve failed with exit {completed.returncode}: "
+                f"native generator failed with exit {completed.returncode}: "
                 f"{completed.stderr.strip()}"
             )
         native_result = parse_native_result(completed.stdout, run_dir / "stdout.json")
