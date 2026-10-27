@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["RegridMethod"],"fn":["regrid"],"struct":["RegridTemplate","Regridded"]};

@@ -1807,6 +1807,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#imregrid-refuses-a-one-channel-template-in-another-spectral-frame" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        imregrid refuses a one-channel template in another spectral frame
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -3841,6 +3852,23 @@ interoperability contract outranks the correction.</p>
 <code>slow-tests</code>) appends CASA's solutions to a casa-rs table. With
 <code>gain_table_windows_match_casa_on_ngc5921</code> and its two-sideband companion,
 it asserts that every column of every window row equals CASA's exactly.</p>
+<h2 id="imregrid-refuses-a-one-channel-template-in-another-spectral-frame"><code>imregrid</code> refuses a one-channel template in another spectral frame<a class="headerlink" href="#imregrid-refuses-a-one-channel-template-in-another-spectral-frame" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-10-27</li>
+<li>Status: CASA behaviour casa-rs does not follow (#841 Phase 6a)</li>
+<li>Affected code: CASA 6.7.6's <code>imregrid</code> (casacore <code>ImageRegrid</code> through
+  <code>ImageRegridder</code>)</li>
+</ul>
+<p>casacore does not regrid an axis whose input and template both have one
+pixel. CASA 6.7.6 keeps the input's coordinate for it in the output: a
+template one channel 3 MHz away, or with its one Stokes plane labelled Q,
+gives the input's channel and Stokes I (<code>tools/images/image_analysis_oracle.py</code>,
+cases <code>imregrid_one_channel_moved</code> and <code>imregrid_one_stokes_plane_relabelled</code>).
+The same template with that one channel in another frame (LSRK to TOPO)
+stops instead, with "Failed to set conversion layer state".</p>
+<p>casa-rs treats that channel as it treats the others: it is not regridded,
+and the output keeps the input's (<code>casa_images::regrid</code>). Converting the
+frame of an axis that is never regridded serves no purpose.</p>
 
 
 

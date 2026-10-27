@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["convolve2d"],"struct":["Convolved"]};
