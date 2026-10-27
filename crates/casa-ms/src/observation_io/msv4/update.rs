@@ -149,7 +149,7 @@ impl Msv4Update {
             partitions,
             open: None,
             channels: request.channels.clone(),
-            options: CodecOptions::default().with_concurrent_target(1),
+            options: super::codec_options(),
             report: UpdateReport::default(),
             start: self.counts(),
         }))

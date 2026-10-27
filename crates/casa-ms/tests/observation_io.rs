@@ -3,6 +3,9 @@
 //! (`docs/measurement-set/trial/README.md`): the MSv4 store XRADIO wrote
 //! from the MSv2, read through both adapters into the same batches.
 
+#[cfg(unix)]
+#[path = "observation_io/convert.rs"]
+mod convert;
 #[path = "observation_io/refusals.rs"]
 mod refusals;
 #[path = "observation_io/update.rs"]
@@ -1092,15 +1095,16 @@ fn flag_row_is_folded_into_the_flags() {
     );
     let out = root.path().join("flagged.ps.zarr");
     let (catalogue, grid) = writer::declaration(&flagged, true);
-    let mut writer = casa_ms::observation_io::Msv4Writer::create(
-        &out,
-        &catalogue,
-        PartitionId(0),
-        "base",
-        &grid,
-        &writer::storage(),
-    )
-    .expect("create");
+    let set = casa_ms::observation_io::Msv4ProcessingSetWriter::create(&out).expect("create");
+    let mut writer = set
+        .dataset(
+            &catalogue,
+            PartitionId(0),
+            &["base"],
+            &grid,
+            &writer::storage(),
+        )
+        .expect("declare");
     let mut traversal = flagged.bind_read(&request(0..8, usize::MAX)).expect("bind");
     let mut buffers = BatchBuffers::default();
     while let Some(ReadEvent::Batch(batch)) = traversal.next(&mut buffers).expect("read") {
@@ -1108,7 +1112,7 @@ fn flag_row_is_folded_into_the_flags() {
             .write_batch(&batch)
             .expect("a folded row flag writes");
     }
-    let written = writer.finish().expect("finish");
+    let written = writer::publish(set, writer).expect("finish");
     let reopened = Msv4Observation::open(&written).expect("reopen");
     let read = samples(
         &mut reopened

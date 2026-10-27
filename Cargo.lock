@@ -606,6 +606,7 @@ dependencies = [
  "tracing",
  "unsafe_cell_slice",
  "zarrs",
+ "zarrs_filesystem",
 ]
 
 [[package]]
