@@ -76,22 +76,33 @@ pub struct MsExploreRunTaskRequest {
 
 impl MsExploreRunTaskRequest {
     /// Execute the request and return structured output metadata.
+    /// Run the request. Everything a refusal can find is checked before the
+    /// first write, as on the command line (#931): the outputs and the plot
+    /// first, then the flag edit, made in memory and saved after the summary
+    /// is written.
     pub fn execute(&self) -> Result<MsExploreRunTaskResult, String> {
-        refuse_existing_outputs(
-            [
-                self.summary_output_path.as_deref(),
-                self.flag_edit
-                    .as_ref()
-                    .and_then(|flag_edit| flag_edit.output_path.as_deref()),
-                self.plot_export
-                    .as_ref()
-                    .map(|plot_export| plot_export.output_path.as_path()),
-            ]
-            .into_iter()
-            .flatten(),
+        refuse_unwritable_outputs(
+            &[
+                ("summary output", self.summary_output_path.as_deref()),
+                (
+                    "flag output",
+                    self.flag_edit
+                        .as_ref()
+                        .and_then(|flag_edit| flag_edit.output_path.as_deref()),
+                ),
+                (
+                    "plot output",
+                    self.plot_export
+                        .as_ref()
+                        .map(|plot_export| plot_export.output_path.as_path()),
+                ),
+            ],
             self.overwrite_outputs,
             "pass overwrite_outputs=true to replace it",
         )?;
+        if self.flag_edit.is_some() || self.plot_export.is_some() {
+            self.spec.validate()?;
+        }
         let mut ms = MeasurementSet::open(&self.spec.ms_path).map_err(|error| {
             if self.spec.ms_path.is_dir() {
                 format!(
@@ -111,34 +122,33 @@ impl MsExploreRunTaskRequest {
             &self.spec.selection.to_summary_options(),
         )
         .map_err(|error| error.to_string())?;
+        let flag_edit_preview = match &self.flag_edit {
+            Some(flag_edit) if flag_edit.apply => Some(
+                crate::apply_msexplore_flag_edit_for_request(&mut ms, &self.spec, &flag_edit.edit)?,
+            ),
+            Some(flag_edit) => Some(preview_msexplore_flag_edit_for_request(
+                &ms,
+                &self.spec,
+                &flag_edit.edit,
+            )?),
+            None => None,
+        };
         if let Some(path) = self.summary_output_path.as_deref() {
             let rendered = summary
                 .render(self.spec.summary_format)
                 .map_err(|error| error.to_string())?;
             write_output(path, self.overwrite_outputs, &rendered)?;
         }
-
-        let flag_edit_preview = if let Some(flag_edit) = &self.flag_edit {
-            let preview = if flag_edit.apply {
-                let preview = crate::apply_msexplore_flag_edit_for_request(
-                    &mut ms,
-                    &self.spec,
-                    &flag_edit.edit,
-                )?;
+        if let (Some(flag_edit), Some(preview)) = (&self.flag_edit, &flag_edit_preview) {
+            if flag_edit.apply {
                 ms.save().map_err(|error| error.to_string())?;
-                preview
-            } else {
-                preview_msexplore_flag_edit_for_request(&ms, &self.spec, &flag_edit.edit)?
-            };
+            }
             if let Some(path) = flag_edit.output_path.as_deref() {
-                let json = serde_json::to_string_pretty(&preview)
+                let json = serde_json::to_string_pretty(preview)
                     .map_err(|error| format!("serialize flag preview: {error}"))?;
                 write_output(path, self.overwrite_outputs, &json)?;
             }
-            Some(preview)
-        } else {
-            None
-        };
+        }
 
         let plot_export = if let Some(plot_export) = &self.plot_export {
             let payload = build_msexplore_payload(&ms, &self.spec)?;
@@ -259,19 +269,36 @@ pub fn msexplore_task_schema_bundle() -> TaskProviderContract {
     }
 }
 
-/// Refuse a run whose outputs already exist unless `overwrite`, before it
-/// writes or flags anything, so a refused run changes nothing; CASA's
-/// `plotms` refuses an existing `plotfile` the same way (#931).
-pub(crate) fn refuse_existing_outputs<'a>(
-    outputs: impl IntoIterator<Item = &'a Path>,
+/// Refuse a run, before it writes or flags anything, whose named outputs
+/// (by role) cannot all be written: two that name one file, or one that
+/// already exists unless `overwrite`. A refused run then changes nothing;
+/// CASA's `plotms` refuses an existing `plotfile` the same way (#931).
+pub(crate) fn refuse_unwritable_outputs(
+    outputs: &[(&str, Option<&Path>)],
     overwrite: bool,
     hint: &str,
 ) -> Result<(), String> {
+    let named = outputs
+        .iter()
+        .filter_map(|(role, path)| Some((*role, (*path)?)))
+        .collect::<Vec<_>>();
+    let resolved = |path: &Path| std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+    for (index, (role, path)) in named.iter().enumerate() {
+        if let Some((earlier, _)) = named[..index]
+            .iter()
+            .find(|(_, earlier)| resolved(earlier) == resolved(path))
+        {
+            return Err(format!(
+                "the {earlier} and the {role} both name {}; give each its own file",
+                path.display()
+            ));
+        }
+    }
     if overwrite {
         return Ok(());
     }
-    match outputs.into_iter().find(|path| path.exists()) {
-        Some(path) => Err(format!(
+    match named.iter().find(|(_, path)| path.exists()) {
+        Some((_, path)) => Err(format!(
             "refusing to overwrite existing output {}; {hint}",
             path.display()
         )),

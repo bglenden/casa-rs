@@ -257,18 +257,26 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
     schema.usage = format!("{program_name} [parameters]");
     schema
 }
+/// Run one command line. Everything a refusal can find is checked before the
+/// first write: the outputs, the flag arguments and the plot (#931). The flag
+/// edit is then made in memory, so a refusal that needs the MeasurementSet
+/// also comes first, and is saved after the summary is written.
 fn run(options: CliOptions) -> Result<(), String> {
-    super::task_contract::refuse_existing_outputs(
-        [
-            options.summary_output.as_deref(),
-            options.flag_output.as_deref(),
-            options.plot_output.as_deref(),
-        ]
-        .into_iter()
-        .flatten(),
+    super::task_contract::refuse_unwritable_outputs(
+        &[
+            ("summary output", options.summary_output.as_deref()),
+            ("flag output", options.flag_output.as_deref()),
+            ("plot output", options.plot_output.as_deref()),
+        ],
         options.overwrite,
         "pass --overwrite to replace it",
     )?;
+    let flag_edit = build_flag_edit_spec(&options)?;
+    let explore_spec = if options.plot_output.is_some() || flag_edit.is_some() {
+        Some(build_explore_spec(&options)?)
+    } else {
+        None
+    };
     let mut ms = MeasurementSet::open(&options.ms_path).map_err(|error| {
         if options.ms_path.is_dir() {
             format!(
@@ -286,50 +294,19 @@ fn run(options: CliOptions) -> Result<(), String> {
     let summary_text = summary
         .render(options.summary_format)
         .map_err(|error| error.to_string())?;
+    let flag_preview =
+        edit_flags_in_memory(&mut ms, &options, flag_edit.as_ref(), explore_spec.as_ref())?;
     write_output(
         options.summary_output.as_deref(),
         options.overwrite,
         &summary_text,
     )?;
-
-    let flag_edit = build_flag_edit_spec(&options)?;
-    let explore_spec = if options.plot_output.is_some() || flag_edit.is_some() {
-        Some(build_explore_spec(&options)?)
-    } else {
-        None
-    };
-
-    if let Some(action) = options.flag_action {
-        if options.flag_selected {
-            let preview = if options.flag_apply && options.flag_output.is_none() {
-                apply_selection_flag_edit_direct(&mut ms, &options.selection, action)?
-            } else {
-                let preview = preview_selection_flag_edit(&ms, &options.selection, action)?;
-                if options.flag_apply {
-                    apply_selection_flag_edit_preview(&mut ms, &preview)?;
-                }
-                preview
-            };
-            if options.flag_apply {
-                ms.save_main_table_only()
-                    .map_err(|error| error.to_string())?;
-            }
-            write_or_log_flag_preview(&options, &preview)?;
-        } else if let Some(explore_spec) = &explore_spec {
-            let flag_edit = flag_edit
-                .as_ref()
-                .ok_or_else(|| "msexplore lost its prepared flag edit".to_string())?;
-            let preview = if options.flag_apply {
-                let preview =
-                    apply_msexplore_flag_edit_for_request(&mut ms, explore_spec, flag_edit)?;
-                ms.save_main_table_only()
-                    .map_err(|error| error.to_string())?;
-                preview
-            } else {
-                preview_msexplore_flag_edit_for_request(&ms, explore_spec, flag_edit)?
-            };
-            write_or_log_flag_preview(&options, &preview)?;
+    if let Some(preview) = &flag_preview {
+        if options.flag_apply {
+            ms.save_main_table_only()
+                .map_err(|error| error.to_string())?;
         }
+        write_or_log_flag_preview(&options, preview)?;
     }
 
     if let Some(plot_output) = &options.plot_output {
@@ -499,6 +476,37 @@ fn build_flag_edit_spec(options: &CliOptions) -> Result<Option<MsFlagEditSpec>, 
         extcorr: options.flag_extcorr,
         extchannel: options.flag_extchannel,
     }))
+}
+
+/// Make the requested flag edit in memory, with `--flag-apply`, and return
+/// its preview; the caller saves it.
+fn edit_flags_in_memory(
+    ms: &mut MeasurementSet,
+    options: &CliOptions,
+    flag_edit: Option<&MsFlagEditSpec>,
+    explore_spec: Option<&MsExploreSpec>,
+) -> Result<Option<MsFlagEditPreview>, String> {
+    let Some(action) = options.flag_action else {
+        return Ok(None);
+    };
+    if options.flag_selected {
+        if options.flag_apply && options.flag_output.is_none() {
+            return apply_selection_flag_edit_direct(ms, &options.selection, action).map(Some);
+        }
+        let preview = preview_selection_flag_edit(ms, &options.selection, action)?;
+        if options.flag_apply {
+            apply_selection_flag_edit_preview(ms, &preview)?;
+        }
+        return Ok(Some(preview));
+    }
+    let (Some(explore_spec), Some(flag_edit)) = (explore_spec, flag_edit) else {
+        return Err("msexplore lost its prepared flag edit".to_string());
+    };
+    if options.flag_apply {
+        apply_msexplore_flag_edit_for_request(ms, explore_spec, flag_edit).map(Some)
+    } else {
+        preview_msexplore_flag_edit_for_request(ms, explore_spec, flag_edit).map(Some)
+    }
 }
 
 fn write_or_log_flag_preview(
