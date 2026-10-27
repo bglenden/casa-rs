@@ -18,9 +18,10 @@
 //! subtables an MSv2 converted from it would hold, built from its
 //! catalogue as the converter builds them.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
-use casa_observation::{ObservationError, PartitionId};
+use casa_observation::{Catalogue, ObservationError, PartitionId};
 use casa_tables::{Table, TableOptions};
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::frequency::FrequencyRef;
@@ -28,7 +29,7 @@ use casa_types::{ArrayValue, ScalarValue};
 
 use super::msv2::catalogue::{measure_reference, require_units};
 use super::update::storage;
-use super::{Msv2Observation, Msv4Observation, convert};
+use super::{Msv2Observation, OpenOptions};
 use crate::columns::direction_columns::DirectionColumn;
 use crate::{MeasurementSet, MsError, SubtableId};
 
@@ -78,8 +79,14 @@ pub struct NamespaceRows {
 }
 
 /// The namespace a calibration table solved on a store persists, and where
-/// each of the store's catalogue entities is in it.
+/// each entity of the store's catalogue, as one opening numbers it, is in
+/// it.
 pub struct PersistedNamespace {
+    /// The store.
+    pub source: PathBuf,
+    /// The catalogue of the opening the namespace describes: the store
+    /// opened with the same options numbers its entities alike.
+    pub catalogue: Arc<Catalogue>,
     /// A MeasurementSet holding the subtables a caltable copies: an MSv2's
     /// own, or for an MSv4 one in memory holding no rows.
     pub subtables: MeasurementSet,
@@ -105,29 +112,51 @@ impl PersistedNamespace {
     pub fn spectral_window(&self, id: PartitionId) -> u32 {
         self.spectral_windows[id.0 as usize]
     }
+
+    /// Whether `catalogue` numbers the store's entities as the namespace's
+    /// opening does: the same antennas, fields and sessions, and the same
+    /// partitions in order, by content and session. A solve's identities
+    /// translate through the namespace only then.
+    #[must_use]
+    pub fn describes(&self, catalogue: &Catalogue) -> bool {
+        let ours = &self.catalogue;
+        ours.antennas.len() == catalogue.antennas.len()
+            && ours.fields.len() == catalogue.fields.len()
+            && ours.observations.len() == catalogue.observations.len()
+            && ours.partitions.len() == catalogue.partitions.len()
+            && ours
+                .partitions
+                .iter()
+                .zip(&catalogue.partitions)
+                .all(|(a, b)| {
+                    a.same_content(b) && a.observation == b.observation && a.fields == b.fields
+                })
+    }
 }
 
-/// The namespace of the store at `source`, opened as [`super::open`] opens
-/// it: an MSv2's own subtables, its catalogue's antennas, fields and
-/// sessions being their rows and each partition naming its data
-/// description's spectral window; or for an MSv4 the subtables its MSv2
-/// conversion would hold, in catalogue order.
+/// The namespace of the store at `source` as [`super::open`] opens it with
+/// `options`, which decide its partitions: an MSv2's own subtables, its
+/// catalogue's antennas, fields and sessions being their rows and each
+/// partition naming its data description's spectral window; or for an
+/// MSv4 the subtables its MSv2 conversion would hold, in catalogue order.
+/// The store is opened again; [`PersistedNamespace::describes`] tells
+/// whether another opening numbers it alike.
 ///
 /// # Errors
 ///
 /// When the store cannot be opened, its subtables cannot be read as
 /// content (a position in other than ITRF, a measure column with a variable
 /// reference), or an MSv4's catalogue holds what an MSv2's subtables cannot
-/// say.
-pub fn persisted_namespace(source: &Path) -> Result<PersistedNamespace, ObservationError> {
+/// say; an MSv4 store without casa-ms's `msv4` feature.
+pub fn persisted_namespace(
+    source: &Path,
+    options: &OpenOptions,
+) -> Result<PersistedNamespace, ObservationError> {
     let (subtables, spectral_windows, catalogue) = if source.join("zarr.json").is_file() {
-        let observation = Msv4Observation::open(source)?;
-        let (subtables, windows) = convert::catalogue_subtables(&observation)?;
-        let windows = windows.into_iter().map(|row| row as u32).collect();
-        (subtables, windows, observation.catalogue().as_ref().clone())
+        msv4_subtables(source, options)?
     } else {
-        let observation = Msv2Observation::open(source)?;
-        let catalogue = observation.catalogue().as_ref().clone();
+        let observation = Msv2Observation::open_with(source, options)?;
+        let catalogue = Arc::clone(observation.catalogue());
         let windows = catalogue
             .partition_ids()
             .into_iter()
@@ -143,7 +172,32 @@ pub fn persisted_namespace(source: &Path) -> Result<PersistedNamespace, Observat
         fields: identity(catalogue.fields.len()),
         spectral_windows,
         observations: identity(catalogue.observations.len()),
+        catalogue,
+        source: source.to_path_buf(),
         subtables,
+    })
+}
+
+/// An MSv4's namespace: the subtables its MSv2 conversion would hold, each
+/// partition's window row, and the catalogue.
+#[cfg(all(feature = "msv4", unix))]
+fn msv4_subtables(
+    source: &Path,
+    options: &OpenOptions,
+) -> Result<(MeasurementSet, Vec<u32>, Arc<Catalogue>), ObservationError> {
+    let observation = super::Msv4Observation::open_with(source, options)?;
+    let (subtables, windows) = super::convert::catalogue_subtables(&observation)?;
+    let windows = windows.into_iter().map(|row| row as u32).collect();
+    Ok((subtables, windows, Arc::clone(observation.catalogue())))
+}
+
+#[cfg(not(all(feature = "msv4", unix)))]
+fn msv4_subtables(
+    _source: &Path,
+    _options: &OpenOptions,
+) -> Result<(MeasurementSet, Vec<u32>, Arc<Catalogue>), ObservationError> {
+    Err(ObservationError::Unsupported {
+        what: "an MSv4 store's namespace without casa-ms's msv4 feature",
     })
 }
 

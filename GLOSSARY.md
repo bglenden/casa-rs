@@ -208,16 +208,17 @@ weight mode
 **Persisted Namespace**:
 The `ANTENNA`, `FIELD` and `SPECTRAL_WINDOW` rows a calibration table solved
 on a store carries, and the row of each of the store's catalogue entities
-there: an MSv2's own subtables, or those an MSv4's MSv2 conversion holds.
-Catalogue identities are never persisted.
+there, for the store opened with given options: an MSv2's own subtables, or
+those an MSv4's MSv2 conversion holds. Catalogue identities are never
+persisted.
 _Avoid_: Caltable IDs, native IDs
 
 **Calibration Binding**:
 A calibration table's rows for each entity of a store's catalogue: stated
 associations first (CASA's `spwmap`), then CASA's own index association
 where the table's namespace is the store's, then content (station and
-position, phase centre, channels), names deciding nothing and ambiguity
-refused.
+position, phase centre, channels), names never binding but an antenna whose
+name disagrees refused, and ambiguity refused.
 _Avoid_: Rebinding by name, antenna mapping
 
 **Traversal Order**:

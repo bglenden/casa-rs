@@ -129,11 +129,10 @@ impl Msv2Observation {
         let time_scale = catalogue::time_scale(main)?;
         let setups = catalogue::spectral_setups(&ms)?;
         let modes = catalogue::read_state_modes(&ms)?;
-        let has = |column: &str| {
-            main.schema()
-                .is_some_and(|schema| schema.contains_column(column))
-        };
-        let (spectral_weights, spectral_sigmas) = (has("WEIGHT_SPECTRUM"), has("SIGMA_SPECTRUM"));
+        let (spectral_weights, spectral_sigmas) = (
+            has_content(main, "WEIGHT_SPECTRUM")?,
+            has_content(main, "SIGMA_SPECTRUM")?,
+        );
         let index = Index::build(
             main,
             options.partition_scheme,
@@ -548,6 +547,31 @@ fn weight_source(
 /// converter names them: `base` (`DATA`), and `corrected`
 /// (`CORRECTED_DATA`) and `model` (`MODEL_DATA`) where the columns exist.
 /// Every group reads the same flags, weights and UVW.
+/// Whether MAIN's `column` holds content, as casacore's
+/// `TableColumn::hasContent` tells, by which CASA's `VisBufferImpl2` picks
+/// `WEIGHT_SPECTRUM` and `SIGMA_SPECTRUM` over `WEIGHT` and `SIGMA`: the
+/// column is there, its first cell is defined, and no axis of that cell is
+/// empty. A column added and never filled holds none.
+fn has_content(main: &casa_tables::Table, column: &str) -> Result<bool, ObservationError> {
+    if main.row_count() == 0
+        || !main
+            .schema()
+            .is_some_and(|schema| schema.contains_column(column))
+    {
+        return Ok(false);
+    }
+    // One cell, read without the row cache the opening's lazy fills need
+    // left empty.
+    let first = main
+        .column_accessor(column)
+        .and_then(|cells| cells.array_cells_owned_uncached(&[0]))
+        .map_err(table_error)?;
+    Ok(first.into_iter().next().flatten().is_some_and(|cell| {
+        let shape = cell.shape();
+        !shape.is_empty() && shape.iter().all(|axis| *axis > 0)
+    }))
+}
+
 pub(super) fn data_groups(
     main: &casa_tables::Table,
     spectral_weights: bool,

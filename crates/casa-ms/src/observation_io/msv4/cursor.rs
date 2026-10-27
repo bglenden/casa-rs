@@ -384,6 +384,8 @@ impl Msv4Cursor<'_> {
             correlations: self.resolved.correlations.clone(),
             roles: self.roles,
             weights_per_channel: true,
+            // An MSv4 holds no sigmas: its weights are always the stored ones.
+            weight_rule: WeightRule::Stored,
             interval: Sharing::Constant(self.dataset.interval_s.unwrap_or(f64::NAN)),
             exposure: Sharing::PerSample,
         }

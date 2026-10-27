@@ -21,7 +21,6 @@ mod grouping;
 mod msv2;
 #[cfg(feature = "msv4")]
 mod msv4;
-#[cfg(all(feature = "msv4", unix))]
 mod namespace;
 mod update;
 
@@ -35,7 +34,6 @@ pub use msv4::{
     Msv4Codec, Msv4Cursor, Msv4Observation, Msv4ProcessingSetWriter, Msv4StorageOptions,
     Msv4WriteCounters, Msv4Writer,
 };
-#[cfg(all(feature = "msv4", unix))]
 pub use namespace::{
     NamespaceAntenna, NamespaceField, NamespaceRows, NamespaceWindow, PersistedNamespace,
     persisted_namespace,

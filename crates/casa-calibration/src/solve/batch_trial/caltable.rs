@@ -15,8 +15,8 @@ use casa_ms::observation_io::{
 };
 use casa_ms::selection::MsSelection;
 use casa_ms::{
-    MeasurementSetBuilder, SyntheticAntenna, SyntheticObservationRequest, SyntheticSpectralSetup,
-    generate_synthetic_observation_ms,
+    MeasurementSetBuilder, SyntheticAntenna, SyntheticField, SyntheticObservationRequest,
+    SyntheticSpectralSetup, generate_synthetic_observation_ms,
 };
 use casa_observation::{
     AccessRequest, AntennaId, BatchBuffers, BindingTolerance, CorrelationRequest, Grouping,
@@ -175,17 +175,13 @@ fn through_binding(
         sample / batch.samples_per_time(),
         casa_types::measures::MjdHighPrec::new(0.0, 0.0),
     );
-    let field = binding.fields[batch.field[sample / batch.samples_per_time()].0 as usize];
+    let field = binding.fields[batch.field[sample / batch.samples_per_time()].0 as usize]
+        .expect("a bound field");
     let window = binding.spectral_windows[batch.partition.0 as usize].expect("a window");
     let solution = |antenna: AntennaId| {
         let row = binding.antennas[antenna.0 as usize]?;
         lookup
-            .solution(
-                field.map_or(0, |row| row as i32),
-                window as i32,
-                row as i32,
-                time,
-            )
+            .solution(field as i32, window as i32, row as i32, time)
             .expect("lookup")
     };
     let (first, second) = (solution(baseline.antenna1), solution(baseline.antenna2));
@@ -223,7 +219,7 @@ fn a_batch_solve_persists_the_msv2s_own_namespace() {
     let production = gain_request(root.path().join("production.G"));
     solve_gain(&MeasurementSet::open(&path).expect("ms"), &production).expect("production");
     let observation = open(&path, &OpenOptions::default()).expect("open");
-    let namespace = persisted_namespace(&path).expect("namespace");
+    let namespace = persisted_namespace(&path, &OpenOptions::default()).expect("namespace");
     let request = gain_request(root.path().join("batch.G"));
     let (rows, _) = solve_sequential(&*observation, &request, &access(&*observation, 3), 0);
     write_gain_table(
@@ -337,7 +333,8 @@ fn a_caltable_rebinds_to_a_store_numbered_otherwise() {
             &access(&*observation, 3),
             refant.0 as i32,
         );
-        let namespace = persisted_namespace(&converted).expect("namespace");
+        let namespace =
+            persisted_namespace(&converted, &OpenOptions::default()).expect("namespace");
         write_gain_table(&namespace, observation.catalogue(), &request, refant, &rows)
             .expect("write");
     }
@@ -363,7 +360,7 @@ fn a_caltable_rebinds_to_a_store_numbered_otherwise() {
     }
 
     // Reopen the full MSv2, bind, apply.
-    let target = persisted_namespace(&full).expect("namespace");
+    let target = persisted_namespace(&full, &OpenOptions::default()).expect("namespace");
     let table = NamespaceRows::read(&request.output_table).expect("table");
     let binding = CalibrationBinding::bind(
         &table,
@@ -375,6 +372,10 @@ fn a_caltable_rebinds_to_a_store_numbered_otherwise() {
     assert_eq!(
         binding.antennas,
         vec![None, Some(0), Some(1), Some(2), Some(3)]
+    );
+    assert_eq!(
+        (&binding.fields, &binding.spectral_windows),
+        (&vec![Some(0)], &vec![Some(0)])
     );
     let lookup =
         CalibrationTableLookup::open(&request.output_table, ApplyInterpolationMode::Linear)
@@ -450,12 +451,25 @@ fn window(name: &str, start_hz: f64) -> SyntheticSpectralSetup {
     }
 }
 
-/// A simulated MSv2 of `antennas` and `windows`.
+/// How far a field's phase centre moves when a store is converted: the
+/// catalogue holds directions as direction cosines (as casacore's
+/// `MVDirection` does), so each crossing between angles and cosines may
+/// move an angle by a few units in the last place.
+const ACROSS_STORES: BindingTolerance = BindingTolerance {
+    position_m: 0.0,
+    direction_rad: 1e-12,
+};
+
+/// Two fields' phase centres, `[right ascension, declination]`.
+const FIELDS: [[f64; 2]; 2] = [[1.23, -0.45], [1.25, -0.40]];
+
+/// A simulated MSv2 of `antennas`, `windows` and `fields`.
 fn simulated(
     root: &Path,
     name: &str,
     antennas: Vec<SyntheticAntenna>,
     windows: Vec<SyntheticSpectralSetup>,
+    fields: &[[f64; 2]],
 ) -> PathBuf {
     let mut request = SyntheticObservationRequest::vla_ppdisk(
         root.join("unused.fits"),
@@ -468,51 +482,74 @@ fn simulated(
     request.duration_seconds = 25.0;
     request.integration_seconds = 10.0;
     request.spectral_windows = windows;
+    request.fields = fields
+        .iter()
+        .map(|centre| SyntheticField {
+            name: format!("dec{:+.2}", centre[1]),
+            phase_center_rad: *centre,
+        })
+        .collect();
     generate_synthetic_observation_ms(&request).expect("simulate");
     request.output_ms
 }
 
 /// The gain written for the antenna at `station` in the window starting at
-/// `start_hz`, receptor `receptor`: distinct for every triple.
-fn known_gain(station: &str, start_hz: f64, receptor: usize) -> Complex32 {
+/// `start_hz`, for the field at declination `declination`, receptor
+/// `receptor`: distinct for every four.
+fn known_gain(station: &str, start_hz: f64, declination: f64, receptor: usize) -> Complex32 {
     let antenna: f32 = station[1..].parse().expect("N0k");
     Complex32::new(
         1.0 + 0.1 * antenna + 0.01 * receptor as f32,
-        (start_hz / 1.0e9) as f32 * 0.001,
+        (start_hz / 1.0e9) as f32 * 0.001 + declination as f32 * 0.1,
     )
 }
 
-/// Write a gain table through the namespace of the MSv2 at `path`: one
-/// solution per antenna and partition, [`known_gain`] of its station and
-/// window, at the store's first time; return that time.
+/// A field's declination.
+fn declination(catalogue: &casa_observation::Catalogue, field: usize) -> f64 {
+    catalogue.fields[field].phase_centre.as_angles().1
+}
+
+/// A partition's first time, MJD seconds.
+fn first_time(observation: &dyn Observation) -> f64 {
+    let grid = observation.grid(PartitionId(0), "base").expect("grid");
+    (grid.time_origin.day() + grid.time_origin.frac()) * 86_400.0 + grid.times_s[0]
+}
+
+/// Write a gain table through the namespace of the store at `path`: one
+/// solution per antenna, partition and field the partition visits,
+/// [`known_gain`] of its station, window and field, at the store's first
+/// time; return that time, MJD seconds.
 fn write_known_gains(path: &Path, table: &Path) -> f64 {
     let observation = open(path, &OpenOptions::default()).expect("open");
     let catalogue = observation.catalogue();
-    let grid = observation.grid(PartitionId(0), "base").expect("grid");
-    let time = grid.times_s[0];
+    let time = first_time(&*observation);
     let mut rows = Vec::new();
     for partition in catalogue.partition_ids() {
-        let start = catalogue.partition(partition).frequencies_hz[0];
-        for (antenna, entry) in catalogue.antennas.iter().enumerate() {
-            rows.push(SolutionRow {
-                time_seconds: time,
-                field_id: 0,
-                spw_id: partition.0 as i32,
-                antenna_id: antenna as i32,
-                scan_number: 1,
-                observation_id: 0,
-                refant_id: 0,
-                gains: (0..2)
-                    .map(|r| known_gain(&entry.station, start, r))
-                    .collect(),
-                flags: vec![false; 2],
-                param_errors: vec![0.0; 2],
-                snrs: vec![100.0; 2],
-                weights: vec![1.0; 2],
-            });
+        let entry = catalogue.partition(partition);
+        let start = entry.frequencies_hz[0];
+        for field in &entry.fields {
+            let dec = declination(catalogue, field.0 as usize);
+            for (antenna, antenna_entry) in catalogue.antennas.iter().enumerate() {
+                rows.push(SolutionRow {
+                    time_seconds: time,
+                    field_id: field.0 as i32,
+                    spw_id: partition.0 as i32,
+                    antenna_id: antenna as i32,
+                    scan_number: 1,
+                    observation_id: 0,
+                    refant_id: 0,
+                    gains: (0..2)
+                        .map(|r| known_gain(&antenna_entry.station, start, dec, r))
+                        .collect(),
+                    flags: vec![false; 2],
+                    param_errors: vec![0.0; 2],
+                    snrs: vec![100.0; 2],
+                    weights: vec![1.0; 2],
+                });
+            }
         }
     }
-    let namespace = persisted_namespace(path).expect("namespace");
+    let namespace = persisted_namespace(path, &OpenOptions::default()).expect("namespace");
     write_gain_table(
         &namespace,
         catalogue,
@@ -524,14 +561,67 @@ fn write_known_gains(path: &Path, table: &Path) -> f64 {
     time
 }
 
-/// A table written through one store's namespace binds to another that
-/// enumerates its antennas and windows otherwise and holds an overlapping
-/// subset of the antennas, as an MSv2 and as its MSv4 conversion (whose
-/// names XRADIO's way differ); each bound antenna and partition looks up
-/// the gain written for its own station and window, and an antenna the
-/// table lacks binds to nothing.
+/// Check that every bound antenna, partition and field of the store at
+/// `target` looks up, through `binding`, the gain [`write_known_gains`]
+/// wrote for its own station, window and field; that every field and
+/// window binds; and that only the antenna at `unknown` binds to nothing.
+fn check_known_gains(
+    target: &Path,
+    binding: &CalibrationBinding,
+    table: &Path,
+    time: f64,
+    unknown: &str,
+) {
+    let observation = open(target, &OpenOptions::default()).expect("open");
+    let catalogue = observation.catalogue();
+    let lookup =
+        CalibrationTableLookup::open(table, ApplyInterpolationMode::Nearest).expect("lookup");
+    for (antenna, entry) in catalogue.antennas.iter().enumerate() {
+        assert_eq!(
+            binding.antennas[antenna].is_none(),
+            entry.station == unknown,
+            "{target:?} {}",
+            entry.station
+        );
+    }
+    for partition in catalogue.partition_ids() {
+        let entry = catalogue.partition(partition);
+        let start = entry.frequencies_hz[0];
+        let window = binding.spectral_windows[partition.0 as usize].expect("a window");
+        for field in &entry.fields {
+            let row_field = binding.fields[field.0 as usize].expect("a field");
+            let dec = declination(catalogue, field.0 as usize);
+            for (antenna, antenna_entry) in catalogue.antennas.iter().enumerate() {
+                let Some(row) = binding.antennas[antenna] else {
+                    continue;
+                };
+                let solution = lookup
+                    .solution(row_field as i32, window as i32, row as i32, time)
+                    .expect("lookup")
+                    .expect("a solution");
+                for receptor in 0..2 {
+                    assert_eq!(
+                        solution.value(receptor, 0),
+                        known_gain(&antenna_entry.station, start, dec, receptor),
+                        "{target:?} {} field {}",
+                        antenna_entry.station,
+                        field.0
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// A table written through one store's namespace, an MSv2's or its MSv4
+/// conversion's, binds to another that enumerates its antennas, windows
+/// and fields otherwise and holds an overlapping subset of the antennas,
+/// as an MSv2 and as its MSv4 conversion (whose names XRADIO's way
+/// differ). Each bound antenna, partition and field looks up the gain
+/// written for its own station, window and field, and only the antenna
+/// the table lacks binds to nothing.
 #[test]
-fn antennas_and_windows_rebind_after_reordering() {
+fn antennas_windows_and_fields_rebind_after_reordering() {
     let root = tempfile::tempdir().expect("root");
     let [a, b, c, d] = synthetic_antennas();
     let (low, high) = (window("low", 672.0e9), window("high", 676.0e9));
@@ -540,59 +630,34 @@ fn antennas_and_windows_rebind_after_reordering() {
         "solved.ms",
         vec![a.clone(), b, c.clone()],
         vec![low.clone(), high.clone()],
+        &FIELDS,
     );
-    let table = root.path().join("known.G");
-    let time = write_known_gains(&solved, &table);
-    let reordered = simulated(root.path(), "reordered.ms", vec![c, d, a], vec![high, low]);
-    let converted = root.path().join("reordered.ps.zarr");
-    to_msv4(&reordered, &converted, &conversion_options()).expect("convert");
-    let rows = NamespaceRows::read(&table).expect("table");
-    let lookup =
-        CalibrationTableLookup::open(&table, ApplyInterpolationMode::Nearest).expect("lookup");
-    for target in [&reordered, &converted] {
-        let observation = open(target, &OpenOptions::default()).expect("open");
-        let catalogue = observation.catalogue();
-        let namespace = persisted_namespace(target).expect("namespace");
-        let binding = CalibrationBinding::bind(
-            &rows,
-            &namespace,
-            &BindingTolerance::EXACT,
-            &StatedAssociations::default(),
-        )
-        .expect("bind");
-        let stations: Vec<&str> = catalogue
-            .antennas
-            .iter()
-            .map(|antenna| antenna.station.as_str())
-            .collect();
-        for (antenna, station) in stations.iter().enumerate() {
-            let expected = match *station {
-                "N01" => Some(0),
-                "N03" => Some(2),
-                _ => None,
-            };
-            assert_eq!(binding.antennas[antenna], expected, "{target:?} {station}");
-        }
-        for partition in catalogue.partition_ids() {
-            let start = catalogue.partition(partition).frequencies_hz[0];
-            let window = binding.spectral_windows[partition.0 as usize].expect("a window");
-            assert_eq!(window, u32::from(start > 674.0e9), "{target:?}");
-            for (antenna, station) in stations.iter().enumerate() {
-                let Some(row) = binding.antennas[antenna] else {
-                    continue;
-                };
-                let solution = lookup
-                    .solution(0, window as i32, row as i32, time)
-                    .expect("lookup")
-                    .expect("a solution");
-                for receptor in 0..2 {
-                    assert_eq!(
-                        solution.value(receptor, 0),
-                        known_gain(station, start, receptor),
-                        "{target:?} {station}"
-                    );
-                }
-            }
+    let solved_v4 = root.path().join("solved.ps.zarr");
+    to_msv4(&solved, &solved_v4, &conversion_options()).expect("convert");
+    let reordered = simulated(
+        root.path(),
+        "reordered.ms",
+        vec![c, d, a],
+        vec![high, low],
+        &[FIELDS[1], FIELDS[0]],
+    );
+    let reordered_v4 = root.path().join("reordered.ps.zarr");
+    to_msv4(&reordered, &reordered_v4, &conversion_options()).expect("convert");
+    for (index, source) in [&solved, &solved_v4].into_iter().enumerate() {
+        let table = root.path().join(format!("known{index}.G"));
+        let time = write_known_gains(source, &table);
+        let rows = NamespaceRows::read(&table).expect("table");
+        for target in [&reordered, &reordered_v4] {
+            let namespace =
+                persisted_namespace(target, &OpenOptions::default()).expect("namespace");
+            let binding = CalibrationBinding::bind(
+                &rows,
+                &namespace,
+                &ACROSS_STORES,
+                &StatedAssociations::default(),
+            )
+            .expect("bind");
+            check_known_gains(target, &binding, &table, time, "N04");
         }
     }
 }
@@ -614,6 +679,7 @@ fn equal_windows_need_their_own_namespace_or_a_stated_association() {
         "solved.ms",
         antennas.clone(),
         vec![first.clone(), second.clone()],
+        &FIELDS[..1],
     );
     let table = root.path().join("equal.G");
     write_known_gains(&solved, &table);
@@ -621,14 +687,20 @@ fn equal_windows_need_their_own_namespace_or_a_stated_association() {
     let bind = |target: &Path, stated: &StatedAssociations| {
         CalibrationBinding::bind(
             &rows,
-            &persisted_namespace(target).expect("namespace"),
+            &persisted_namespace(target, &OpenOptions::default()).expect("namespace"),
             &BindingTolerance::EXACT,
             stated,
         )
     };
     let own = bind(&solved, &StatedAssociations::default()).expect("its own namespace");
     assert_eq!(own.spectral_windows, vec![Some(0), Some(1)]);
-    let swapped = simulated(root.path(), "swapped.ms", antennas, vec![second, first]);
+    let swapped = simulated(
+        root.path(),
+        "swapped.ms",
+        antennas,
+        vec![second, first],
+        &FIELDS[..1],
+    );
     match bind(&swapped, &StatedAssociations::default()) {
         Err(ObservationError::InvalidRequest { reason }) => {
             assert!(reason.contains("state the association"), "{reason}");
@@ -677,6 +749,8 @@ fn namespace(antennas: &[(&str, &str, f64)], windows: &[(&str, f64)]) -> Persist
             .collect(),
     };
     PersistedNamespace {
+        source: PathBuf::new(),
+        catalogue: std::sync::Arc::new(casa_observation::Catalogue::default()),
         subtables: MeasurementSet::create_memory(MeasurementSetBuilder::new()).expect("ms"),
         antennas: (0..antennas.len() as u32).collect(),
         fields: Vec::new(),
@@ -694,8 +768,9 @@ fn bound(
     CalibrationBinding::bind(&table.rows, target, &BindingTolerance::EXACT, stated)
 }
 
-/// An antenna binds by station and position: renamed, it still binds;
-/// another antenna holding a table antenna's name binds to nothing.
+/// An antenna binds by station and position: renamed as a converter
+/// renames it (`NAME_STATION`), it still binds; another antenna holding a
+/// table antenna's name, elsewhere, binds to nothing.
 #[test]
 fn antennas_bind_by_station_and_position_never_by_name() {
     let table = namespace(
@@ -708,7 +783,7 @@ fn antennas_bind_by_station_and_position_never_by_name() {
     );
     let target = namespace(
         &[
-            ("ea03", "N01", 1.0),
+            ("ea01_N01", "N01", 1.0),
             ("ea01", "N09", 9.0),
             ("ea02", "N02", 2.0),
         ],
@@ -720,10 +795,15 @@ fn antennas_bind_by_station_and_position_never_by_name() {
 
 /// Two antennas of one station and position are told apart by their own
 /// namespace, row for row with names (CASA's association), or by a stated
-/// association; content alone refuses them, whatever their names.
+/// association; content alone refuses them, even when both names agree
+/// with the table antenna's.
 #[test]
 fn antennas_of_one_content_need_their_own_namespace_or_a_statement() {
-    let twins = [("x", "N01", 1.0), ("y", "N01", 1.0), ("ea02", "N02", 2.0)];
+    let twins = [
+        ("ea01", "N01", 1.0),
+        ("ea01_N01", "N01", 1.0),
+        ("ea02", "N02", 2.0),
+    ];
     let own = bound(
         &namespace(&twins, &[]),
         &namespace(&twins, &[]),
@@ -750,6 +830,14 @@ fn antennas_of_one_content_need_their_own_namespace_or_a_statement() {
         spectral_windows: Vec::new(),
     };
     assert!(bound(&table, &target, &twice).is_err(), "one to one");
+    let both = StatedAssociations {
+        antennas: vec![(AntennaId(0), 0), (AntennaId(0), 1)],
+        spectral_windows: Vec::new(),
+    };
+    assert!(
+        bound(&table, &target, &both).is_err(),
+        "one antenna, one row"
+    );
 }
 
 /// Windows bind by frame and channels, renamed or reordered; a window the
@@ -767,4 +855,113 @@ fn windows_bind_by_content_and_statements_may_share_a_row() {
     };
     let mapped = bound(&table, &target, &stated).expect("stated");
     assert_eq!(mapped.spectral_windows, vec![Some(1), Some(0), Some(0)]);
+}
+
+/// An antenna on a table antenna's pad whose name disagrees, beyond the
+/// `_STATION` suffixes converters append, is another antenna: refused, not
+/// given that antenna's gains.
+#[test]
+fn an_antenna_on_another_antennas_pad_is_refused() {
+    let table = namespace(&[("ea01", "N01", 1.0)], &[]);
+    for (name, binds) in [
+        ("ea01", true),
+        ("ea01_N01", true),
+        ("ea01_N01_N01", true),
+        ("ea05", false),
+    ] {
+        let target = namespace(&[(name, "N01", 1.0)], &[]);
+        let result = bound(&table, &target, &StatedAssociations::default());
+        match (result, binds) {
+            (Ok(binding), true) => assert_eq!(binding.antennas, vec![Some(0)], "{name}"),
+            (Err(ObservationError::InvalidRequest { reason }), false) => {
+                assert!(reason.contains("not by name"), "{reason}");
+            }
+            (other, _) => panic!("{name}: {other:?}"),
+        }
+    }
+}
+
+/// A gain table's window is one channel: CASA's `gaincal` writes it at the
+/// channels' mean frequency, casa-rs's writer at the centre channel's, both
+/// of the summed width, and either binds to the window it collapses. A table
+/// window that overlaps a store's window but collapses it neither way (a
+/// solve over some of its channels) is refused, never left unbound.
+#[test]
+fn collapsed_windows_bind_either_way_and_overlaps_are_refused() {
+    let target = namespace(&[], &[("w", 1.0e9)]);
+    let collapsed = |frequency: f64| NamespaceWindow {
+        name: "w".to_string(),
+        frame: FrequencyRef::TOPO,
+        frequencies_hz: vec![frequency],
+        widths_hz: vec![2.0e6],
+    };
+    let rows = |windows: Vec<NamespaceWindow>| NamespaceRows {
+        antennas: Vec::new(),
+        fields: Vec::new(),
+        spectral_windows: windows,
+    };
+    let bind = |windows| {
+        CalibrationBinding::bind(
+            &rows(windows),
+            &target,
+            &BindingTolerance::EXACT,
+            &StatedAssociations::default(),
+        )
+    };
+    // Channels at 1.000 and 1.001 GHz: mean 1.0005, centre 1.001.
+    for frequency in [1.0005e9, 1.001e9] {
+        let binding = bind(vec![collapsed(frequency)]).expect("collapsed");
+        assert_eq!(binding.spectral_windows, vec![Some(0)], "{frequency}");
+    }
+    match bind(vec![collapsed(1.00025e9)]) {
+        Err(ObservationError::InvalidRequest { reason }) => {
+            assert!(reason.contains("overlaps"), "{reason}");
+        }
+        other => panic!("refused, not {other:?}"),
+    }
+    let elsewhere = bind(vec![collapsed(5.0e9)]).expect("no overlap");
+    assert_eq!(elsewhere.spectral_windows, vec![None]);
+}
+
+/// A solve's catalogue must be the opening's the namespace describes: the
+/// writer refuses a namespace of the store opened otherwise, here by scan
+/// against the whole.
+#[test]
+fn the_writer_refuses_a_namespace_of_another_opening() {
+    let root = tempfile::tempdir().expect("root");
+    let path = fixture(root.path(), "ms_trial.ms");
+    let mut ms = MeasurementSet::open(&path).expect("ms");
+    ms.main_table_mut()
+        .fill_column_range(
+            "SCAN_NUMBER",
+            casa_tables::RowRange::new(60, 120),
+            casa_types::Value::Scalar(ScalarValue::Int32(2)),
+        )
+        .expect("scan");
+    ms.save().expect("save");
+    drop(ms);
+    let by_scan = OpenOptions {
+        partition_scheme: casa_ms::observation_io::PartitionScheme {
+            scans: true,
+            ..Default::default()
+        },
+        ..OpenOptions::default()
+    };
+    let namespace = persisted_namespace(&path, &OpenOptions::default()).expect("namespace");
+    let observation = open(&path, &by_scan).expect("open");
+    assert_eq!(observation.catalogue().partitions.len(), 2);
+    let request = gain_request(root.path().join("refused.G"));
+    match write_gain_table(
+        &namespace,
+        observation.catalogue(),
+        &request,
+        AntennaId(0),
+        &[],
+    ) {
+        Err(ObservationError::InvalidRequest { reason }) => {
+            assert!(reason.contains("namespace describes"), "{reason}");
+        }
+        other => panic!("refused, not {:?}", other.map(|_| ())),
+    }
+    assert!(!request.output_table.exists());
 }

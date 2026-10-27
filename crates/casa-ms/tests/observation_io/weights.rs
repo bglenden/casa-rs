@@ -12,8 +12,8 @@ use casa_ms::column_def::build_table_schema;
 use casa_ms::observation_io::{Msv2Observation, OpenOptions, open_update};
 use casa_observation::{
     AccessRequest, BatchBuffers, CorrelationRequest, Deliver, FlagsFrom, Observation,
-    ObservationError, PartitionId, ReadEvent, Roles, SigmaFallback, UpdateTarget, WeightRequest,
-    WeightRule, WeightSource, WritableRole, inverse_sigma_squared,
+    ObservationError, PartitionId, PatchValues, ReadEvent, Roles, SigmaFallback, UpdateTarget,
+    WeightChannels, WeightRequest, WeightRule, WeightSource, WritableRole, inverse_sigma_squared,
 };
 use casa_types::{ArrayValue, Value};
 use ndarray::ArrayD;
@@ -280,4 +280,128 @@ fn a_weight_write_refuses_sigma_derived_weights() {
     session
         .updater(&sigma_request, &[1])
         .expect("a flag write is bound");
+    // Bound to the stored weights, the updater still refuses a weight
+    // patch from a batch whose weights were made from the sigmas: each
+    // batch states its rule.
+    let stored_request = request(0..8, usize::MAX);
+    let mut updater = session.updater(&stored_request, &[0]).expect("bound");
+    let mut traversal = session
+        .observation()
+        .bind_read(&sigma_request)
+        .expect("bind");
+    let mut buffers = BatchBuffers::default();
+    let Some(ReadEvent::Batch(batch)) = traversal.next(&mut buffers).expect("read") else {
+        panic!("a batch");
+    };
+    assert_eq!(batch.group.weight_rule, WeightRule::InverseSigmaSquared);
+    let weights = batch.group.weights.expect("weights").to_owned();
+    match updater.write(
+        &batch,
+        &[PatchValues::Weights {
+            values: weights.view(),
+            channels: WeightChannels::All,
+        }],
+    ) {
+        Err(ObservationError::InvalidRequest { reason }) => {
+            assert!(reason.contains("made from the sigmas"), "{reason}");
+        }
+        other => panic!("refused, not {other:?}"),
+    }
+}
+
+/// An MSv4's fallback reads its stored weights, so a weight write may be
+/// bound beside it, and its batches state the stored rule.
+#[test]
+fn a_weight_write_binds_beside_an_msv4_fallback() {
+    let root = tempfile::tempdir().expect("root");
+    let path = fixture(root.path(), "ms_trial.ps.zarr");
+    let targets = [UpdateTarget::new("base", WritableRole::Weights)];
+    let session = open_update(&path, &OpenOptions::default(), &targets).expect("session");
+    let fallback = AccessRequest {
+        weights: from_sigmas(SigmaFallback::StoredWeights),
+        ..request(0..8, usize::MAX)
+    };
+    let mut updater = session.updater(&fallback, &[0]).expect("bound");
+    let mut traversal = session.observation().bind_read(&fallback).expect("bind");
+    let mut buffers = BatchBuffers::default();
+    while let Some(ReadEvent::Batch(batch)) = traversal.next(&mut buffers).expect("read") {
+        assert_eq!(batch.group.weight_rule, WeightRule::Stored);
+        let weights = batch.group.weights.expect("weights").to_owned();
+        updater
+            .write(
+                &batch,
+                &[PatchValues::Weights {
+                    values: weights.view(),
+                    channels: WeightChannels::Delivered,
+                }],
+            )
+            .expect("stored weights write back");
+    }
+    updater.finish().expect("finish");
+}
+
+/// A spectral column added and never filled holds no content, and CASA's
+/// rule reads past it, as casacore's `hasContent` tells: with
+/// `WEIGHT_SPECTRUM` and `SIGMA_SPECTRUM` both empty the stored weights are
+/// `WEIGHT` and the sigmas `SIGMA`; with only `SIGMA_SPECTRUM` filled the
+/// sigmas are still `SIGMA`, since CASA reads `SIGMA_SPECTRUM` only beside
+/// a `WEIGHT_SPECTRUM` with content.
+#[test]
+fn spectral_columns_without_content_are_read_past() {
+    for fill_sigmas in [false, true] {
+        let root = tempfile::tempdir().expect("root");
+        let path = fixture(root.path(), "ms_trial.ms");
+        let plain = {
+            let observation = Msv2Observation::open(&path).expect("v2");
+            delivered_weights(&observation, &request(0..8, usize::MAX))
+        };
+        let mut ms = casa_ms::MeasurementSet::open(&path).expect("ms");
+        let columns = [
+            *OptionalMainColumn::WeightSpectrum.column_def(),
+            *OptionalMainColumn::SigmaSpectrum.column_def(),
+        ];
+        let schema = build_table_schema(&columns).expect("schema");
+        for name in ["WEIGHT_SPECTRUM", "SIGMA_SPECTRUM"] {
+            let definition = schema.column(name).expect("definition").clone();
+            ms.main_table_mut()
+                .add_column(definition, None)
+                .expect("add column");
+        }
+        if fill_sigmas {
+            for row in 0..ms.main_table().row_count() {
+                ms.main_table_mut()
+                    .cell_accessor_mut(row, "SIGMA_SPECTRUM")
+                    .and_then(|mut cell| {
+                        cell.set(Value::Array(ArrayValue::Float32(ArrayD::from_elem(
+                            vec![4, 8],
+                            0.25,
+                        ))))
+                    })
+                    .expect("set cell");
+            }
+        }
+        ms.save().expect("save");
+        drop(ms);
+        let observation = Msv2Observation::open(&path).expect("v2");
+        let stored = request(0..8, usize::MAX);
+        let sigma = AccessRequest {
+            weights: from_sigmas(SigmaFallback::Refuse),
+            ..stored.clone()
+        };
+        let source = |request: &AccessRequest| {
+            observation.estimate(request).expect("estimate").partitions[0]
+                .weights
+                .clone()
+                .expect("weights read")
+        };
+        assert_eq!(
+            (
+                source(&stored).variable.as_str(),
+                source(&sigma).variable.as_str()
+            ),
+            ("WEIGHT", "SIGMA"),
+            "SIGMA_SPECTRUM filled: {fill_sigmas}"
+        );
+        assert_eq!(delivered_weights(&observation, &stored), plain);
+    }
 }

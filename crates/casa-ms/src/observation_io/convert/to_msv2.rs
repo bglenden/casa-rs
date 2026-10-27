@@ -7,7 +7,10 @@
 use std::fs;
 use std::path::Path;
 
-use casa_observation::{Catalogue, Observation, ObservationError, Roles, VisibilityUnits};
+use casa_observation::{
+    Catalogue, Observation, ObservationError, ObservationId, Roles, TimeBaselineGrid,
+    VisibilityUnits,
+};
 use casa_tables::table_quantum::TableQuantumDesc;
 use casa_types::measures::EpochRef;
 use casa_types::measures::direction::DirectionRef;
@@ -181,45 +184,71 @@ fn refuse_unwritable(catalogue: &Catalogue) -> Result<(), ObservationError> {
 /// session's edge to edge, as fillers write `TIME_RANGE`.
 pub(super) fn spans(observation: &dyn Observation, group: &str) -> Result<Spans, ObservationError> {
     let catalogue = observation.catalogue();
-    let empty = [f64::INFINITY, f64::NEG_INFINITY];
-    let mut range = empty;
-    let mut observation_ranges = vec![empty; catalogue.observations.len()];
+    let mut spanned = Spanning::new(catalogue.observations.len());
     for id in catalogue.partition_ids() {
-        let grid = observation.grid(id, group)?;
-        let origin = (grid.time_origin.day() + grid.time_origin.frac()) * SECONDS_PER_DAY;
-        if let (Some(first), Some(last)) = (grid.times_s.first(), grid.times_s.last()) {
-            let span = |known: [f64; 2], half: f64| {
-                [
-                    known[0].min(origin + first - half),
-                    known[1].max(origin + last + half),
-                ]
-            };
-            range = span(range, 0.0);
-            // A session's TIME_RANGE spans its integrations, edge to edge,
-            // as fillers write it.
-            let half = if grid.interval_s.is_finite() {
-                grid.interval_s / 2.0
-            } else {
-                0.0
-            };
-            if let Some(session) =
-                observation_ranges.get_mut(catalogue.partition(id).observation.0 as usize)
-            {
-                *session = span(*session, half);
-            }
+        spanned.add(
+            &observation.grid(id, group)?,
+            catalogue.partition(id).observation,
+        );
+    }
+    Ok(spanned.finish())
+}
+
+/// The times grids span, gathered grid by grid.
+struct Spanning {
+    range: [f64; 2],
+    sessions: Vec<[f64; 2]>,
+}
+
+impl Spanning {
+    const EMPTY: [f64; 2] = [f64::INFINITY, f64::NEG_INFINITY];
+
+    fn new(sessions: usize) -> Self {
+        Self {
+            range: Self::EMPTY,
+            sessions: vec![Self::EMPTY; sessions],
         }
     }
-    let spanned = |range: [f64; 2]| {
-        if range[0] > range[1] {
-            [0.0, 0.0]
+
+    /// Widen the spans by `grid`, a partition of observing session
+    /// `session`.
+    fn add(&mut self, grid: &TimeBaselineGrid, session: ObservationId) {
+        let origin = (grid.time_origin.day() + grid.time_origin.frac()) * SECONDS_PER_DAY;
+        let (Some(first), Some(last)) = (grid.times_s.first(), grid.times_s.last()) else {
+            return;
+        };
+        let span = |known: [f64; 2], half: f64| {
+            [
+                known[0].min(origin + first - half),
+                known[1].max(origin + last + half),
+            ]
+        };
+        self.range = span(self.range, 0.0);
+        // A session's TIME_RANGE spans its integrations, edge to edge, as
+        // fillers write it.
+        let half = if grid.interval_s.is_finite() {
+            grid.interval_s / 2.0
         } else {
-            range
+            0.0
+        };
+        if let Some(known) = self.sessions.get_mut(session.0 as usize) {
+            *known = span(*known, half);
         }
-    };
-    Ok(Spans {
-        time_range: spanned(range),
-        observation_ranges: observation_ranges.into_iter().map(spanned).collect(),
-    })
+    }
+
+    fn finish(self) -> Spans {
+        let spanned = |range: [f64; 2]| {
+            if range[0] > range[1] {
+                [0.0, 0.0]
+            } else {
+                range
+            }
+        };
+        Spans {
+            time_range: spanned(self.range),
+            observation_ranges: self.sessions.into_iter().map(spanned).collect(),
+        }
+    }
 }
 
 /// Each partition's rows and interval from its grid, the first selected
@@ -234,8 +263,10 @@ fn occupancy(
     let groups = [group.to_string()];
     let mut rows = Vec::with_capacity(catalogue.partitions.len());
     let mut intervals = Vec::with_capacity(catalogue.partitions.len());
+    let mut spanned = Spanning::new(catalogue.observations.len());
     for id in catalogue.partition_ids() {
         let grid = observation.grid(id, group)?;
+        spanned.add(&grid, catalogue.partition(id).observation);
         intervals.push(grid.interval_s);
         if options.padding == PaddingRows::Flagged {
             rows.push(grid.times_s.len() * grid.baselines.len());
@@ -264,7 +295,7 @@ fn occupancy(
     Ok(Occupancy {
         rows,
         intervals,
-        spans: spans(observation, group)?,
+        spans: spanned.finish(),
     })
 }
 

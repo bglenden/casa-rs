@@ -443,17 +443,24 @@ impl Updater for Msv2Updater<'_> {
 impl Msv2Updater<'_> {
     /// `batch`'s first grid time, after checking it is the traversal's
     /// next batch: the same partition from the next time, or the next
-    /// partition from its first selected time.
+    /// partition from its first selected time, passing partitions whose
+    /// selection holds no time (they deliver no batch).
     fn place(&mut self, batch: &VisibilityBatch<'_>) -> Result<usize, ObservationError> {
         let partitions = &self.request.partitions;
         let observation = &self.update.observation;
         let selections = &self.selections;
         let mut position = self.position;
         let done = |position: Position| selections[position.partition].end == position.time;
+        let passes = |partition: usize| {
+            partitions[partition] != batch.partition && selections[partition].is_empty()
+        };
         if partitions.get(position.partition) != Some(&batch.partition)
             || (done(position) && position.partition + 1 < partitions.len())
         {
-            let next = position.partition + 1;
+            let mut next = position.partition + 1;
+            while next + 1 < partitions.len() && passes(next) {
+                next += 1;
+            }
             position = Position {
                 partition: next,
                 time: selections.get(next).map_or(0, |selection| selection.start),

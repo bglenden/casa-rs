@@ -100,13 +100,20 @@ of its own `ANTENNA`, `FIELD` and `SPECTRAL_WINDOW` subtables. Catalogue
 identities are scoped to one opening, so a table never holds them: a store's
 **persisted namespace** (`casa_ms::observation_io::persisted_namespace`) gives
 the subtables a table solved on it carries and the row of each catalogue
-entity there. An MSv2's namespace is its own subtables, its catalogue's
-antennas, fields and sessions being their rows and each partition naming its
-data description's window, so a table written through it is the table CASA's
-`gaincal` writes and applies to that MeasurementSet unchanged. An MSv4 has no
-such rows; its namespace is the subtables its MSv2 conversion holds, in
-catalogue order. The writer translates a solve's catalogue identities to
-those rows and copies the subtables; it never writes a catalogue identity.
+entity there, for the store opened with given options (partitioning by field
+or scan changes the partitions, so the namespace keeps the catalogue it
+describes and the writer refuses a solve from another opening). An MSv2's
+namespace is its own subtables, its catalogue's antennas, fields and
+sessions being their rows and each partition naming its data description's
+window, so a table written through it has the rows CASA's `gaincal` copies
+and CASA applies it to that MeasurementSet by its own association. (casa-rs's
+writer collapses a solved window at the centre channel where CASA's
+collapses at the mean frequency, #917.) An MSv4 has no such rows; its
+namespace is the subtables its MSv2 conversion holds, in catalogue order, so
+a table written through it applies by CASA's association only to that
+conversion, and is bound to any other store. The writer translates a solve's
+catalogue identities to those rows, copies the subtables and records the
+store's path as `MSName`; it never writes a catalogue identity.
 
 Binding a table to a store (`CalibrationBinding`, owned by calibration)
 compares the table's rows with the store's namespace rows, in this order:
@@ -118,12 +125,19 @@ compares the table's rows with the store's namespace rows, in this order:
    where two rows hold the same content.
 3. **Content** otherwise: an antenna by station and position, a field by
    phase centre, a window by frame and channels, or the one channel a gain
-   table collapses them to (the centre channel's frequency, the summed width).
-   Names decide nothing. An entity the other side lacks binds to nothing, so
-   an antenna subset applies as CASA applies a table missing an antenna
-   (`calflag` flags its samples). Two candidates, or two entities claiming
-   one row, are refused: equal grids or positions alone do not prove two rows
-   are one entity.
+   table collapses them to, of the summed width at the channels' mean
+   frequency (CASA's `gaincal`) or the centre channel's (casa-rs's writer,
+   #917). Names never bind, since converters rewrite them, but an antenna
+   whose name disagrees beyond a converter's `_STATION` suffixes is refused:
+   another antenna on the same pad does not take its gains. An entity the
+   other side lacks binds to nothing, so an antenna subset applies as CASA
+   applies a table missing an antenna (`calflag` flags its samples), except
+   a window some table window overlaps in frequency, which is refused (a
+   solve over part of its channels). Two candidates, or two entities
+   claiming one row, are refused: equal grids or positions alone do not
+   prove two rows are one entity. Directions compare within a stated
+   tolerance: the catalogue holds them as direction cosines, which move an
+   angle by a few units in the last place at each store crossing (#918).
 
 ### One topology: the time × baseline grid
 
@@ -580,8 +594,11 @@ grid's own values; slices aligned to the estimate's natural time blocks
 decode no unit twice. The MSv2 adapter reads the selected rows from its
 opening index; the MSv4 adapter reads only the chunks the selection
 touches. Updaters address samples by the batch's own times, so a sliced
-traversal writes back (several slices of one store at once need several
-updaters, which a session does not yet provide). A batch holds whole times; the budget
+traversal writes back, passing partitions whose selection holds no time; an
+updater bound to a slice refuses a batch of times outside it (several slices
+of one store at once need several updaters, which a session does not yet
+provide). A group a slice cuts is closed within the slice, and under deferred
+closure its `GroupEnd` ends the slice's part, not the group. A batch holds whole times; the budget
 counts each time's samples, its per-time arrays and the cursor's decode
 scratch for it, and binding fails when one time does not fit.
 
@@ -589,17 +606,23 @@ scratch for it, and binding fails when one time does not fit.
 (`WeightRequest::Stored`) or the weights CASA's solvers use, 1/σ² of the
 stored sigmas (`WeightRequest::InverseSigmaSquared`), 0 where σ is not
 positive or is NaN (`VisBufferImpl2::resetWeightsUsingSigma`). An MSv2 reads
-`SIGMA_SPECTRUM` when MAIN has both it and `WEIGHT_SPECTRUM`, else `SIGMA`
-broadcast over channels, as `VisBufferImpl2` does; the value is made a weight
+`SIGMA_SPECTRUM` when MAIN's `WEIGHT_SPECTRUM` and `SIGMA_SPECTRUM` both hold
+content, else `SIGMA` broadcast over channels, as `VisBufferImpl2` does by
+casacore's `hasContent` (the first cell defined, no axis empty: a column added
+and never filled holds none, and the stored weights are then `WEIGHT`); the
+value is made a weight
 before padding is spread, so padding stays NaN. An MSv4 holds no sigmas, so
 the request names its fallback: refuse a traversal that reads weights
 (`SigmaFallback::Refuse`), or read the stored weights
 (`SigmaFallback::StoredWeights`). Which rule and which column or variable a
 partition's weights come from is recorded in its estimate
 (`PartitionEstimate::weights`, `None` when weights are not read), so a
-fallback is never silent. An updater writing weights binds only to a
-traversal of the stored weights: patches computed from 1/σ² would otherwise
-write sigmas back as weights. `casa_observation::inverse_sigma_squared`
+fallback is never silent. Each batch states its rule
+(`DataGroupView::weight_rule`), and a weight patch from a batch of
+sigma-derived weights is refused: patches computed from 1/σ² would otherwise
+write sigmas back as weights. An updater writing weights is also refused at
+binding beside a request that makes them (an MSv4's fallback reads stored
+weights, so it binds). `casa_observation::inverse_sigma_squared`
 states the rule; production `gaincal`, which reads the MeasurementSet
 directly until calibration moves onto batches, applies the same rule, and a
 law holds the two solves equal.

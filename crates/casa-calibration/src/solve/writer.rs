@@ -26,6 +26,23 @@ pub(crate) fn write_gain_caltable(
     refant_id: i32,
     rows: &[SolutionRow],
 ) -> Result<GainSolveReport, GainSolveError> {
+    let name = ms
+        .path()
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| "<in-memory>".to_string());
+    write_gain_caltable_named(ms, name, request, refant_id, rows)
+}
+
+/// [`write_gain_caltable`], recording `measurement_set_name` as the table's
+/// `MSName`: the store the subtables of `ms` describe, when `ms` holds
+/// them in memory.
+pub(crate) fn write_gain_caltable_named(
+    ms: &MeasurementSet,
+    measurement_set_name: String,
+    request: &GainSolveRequest,
+    refant_id: i32,
+    rows: &[SolutionRow],
+) -> Result<GainSolveReport, GainSolveError> {
     let schema = TableSchema::new(vec![
         ColumnSchema::scalar(COL_TIME, casa_types::PrimitiveType::Float64),
         ColumnSchema::scalar(COL_FIELD_ID, casa_types::PrimitiveType::Int32),
@@ -51,10 +68,7 @@ pub(crate) fn write_gain_caltable(
             schema,
             subtype: request.gain_type.vis_cal(),
             parameter_type: Some("Complex"),
-            measurement_set_name: ms
-                .path()
-                .map(|path| path.display().to_string())
-                .unwrap_or_else(|| "<in-memory>".to_string()),
+            measurement_set_name,
             include_polarization_basis: true,
             time_extra_precision_column: Some(COL_TIME_EXTRA_PREC),
         },

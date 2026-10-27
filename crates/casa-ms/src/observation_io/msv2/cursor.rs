@@ -109,6 +109,11 @@ impl<'o> Msv2Cursor<'o> {
             correlations: self.resolved.correlations.clone(),
             roles: self.roles,
             weights_per_channel: self.weights_per_channel(),
+            weight_rule: self
+                .estimate
+                .weights
+                .as_ref()
+                .map_or(WeightRule::Stored, |source| source.rule),
             interval: Sharing::PerSample,
             exposure: Sharing::PerSample,
         }

@@ -341,11 +341,11 @@ impl TimeRange {
     ///
     /// # Panics
     ///
-    /// If `times` starts after it ends or after the grid's last time.
+    /// If `times` starts after it ends or ends past the grid's times.
     #[must_use]
     pub fn of_grid(grid: &TimeBaselineGrid, times: Range<usize>) -> Self {
         assert!(
-            times.start <= times.end && times.start <= grid.times_s.len(),
+            times.start <= times.end && times.end <= grid.times_s.len(),
             "grid times {times:?} of {}",
             grid.times_s.len()
         );

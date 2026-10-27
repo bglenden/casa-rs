@@ -4,10 +4,10 @@
 //! its MSv2 conversion holds, in catalogue order.
 
 use casa_ms::observation_io::convert::{ConversionOptions, LossKind, PaddingRows, to_msv2};
-use casa_ms::observation_io::{Msv4Codec, NamespaceRows, open, persisted_namespace};
+use casa_ms::observation_io::{Msv4Codec, NamespaceRows, OpenOptions, open, persisted_namespace};
 use casa_observation::PartitionId;
 
-use super::{fixture, open_both};
+use super::{by_scan, fixture, open_both, three_scans};
 
 /// An MSv2's namespace is its own `ANTENNA`, `FIELD` and `SPECTRAL_WINDOW`
 /// rows, read back from the store's directory as from the namespace; its
@@ -17,7 +17,7 @@ use super::{fixture, open_both};
 fn an_msv2s_namespace_is_its_own_subtables() {
     let root = tempfile::tempdir().expect("root");
     let path = fixture(root.path(), "ms_trial.ms");
-    let namespace = persisted_namespace(&path).expect("namespace");
+    let namespace = persisted_namespace(&path, &OpenOptions::default()).expect("namespace");
     let (v2, _) = open_both(&root.path().join("again"));
     let catalogue = casa_observation::Observation::catalogue(&v2);
     assert_eq!(namespace.antennas, (0..5).collect::<Vec<_>>());
@@ -50,7 +50,7 @@ fn an_msv2s_namespace_is_its_own_subtables() {
 fn an_msv4s_namespace_is_its_conversions() {
     let root = tempfile::tempdir().expect("root");
     let xradio = fixture(root.path(), "ms_trial.ps.zarr");
-    let namespace = persisted_namespace(&xradio).expect("namespace");
+    let namespace = persisted_namespace(&xradio, &OpenOptions::default()).expect("namespace");
     let converted = root.path().join("converted.ms");
     let options = ConversionOptions {
         data_groups: None,
@@ -93,4 +93,20 @@ fn an_msv4s_namespace_is_its_conversions() {
         namespace.antennas,
         (0..names.len() as u32).collect::<Vec<_>>()
     );
+}
+
+/// The namespace is the opening's the options make: partitioned by scan,
+/// the MSv2's three partitions each name its one window, and the namespace
+/// describes that opening's catalogue and not the default opening's.
+#[test]
+fn the_namespace_follows_the_opening_options() {
+    let root = tempfile::tempdir().expect("root");
+    let path = fixture(root.path(), "ms_trial.ms");
+    three_scans(&path);
+    let namespace = persisted_namespace(&path, &by_scan()).expect("namespace");
+    assert_eq!(namespace.spectral_windows, vec![0, 0, 0]);
+    let by_scan = open(&path, &by_scan()).expect("open");
+    let whole = open(&path, &OpenOptions::default()).expect("open");
+    assert!(namespace.describes(by_scan.catalogue()));
+    assert!(!namespace.describes(whole.catalogue()));
 }

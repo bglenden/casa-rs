@@ -52,6 +52,34 @@ pub(crate) fn fixture(root: &Path, name: &str) -> PathBuf {
     root.join(name)
 }
 
+/// Relabel the MSv2 fixture at `path`'s twelve times as scans 1, 2 and 3
+/// of four times each (ten rows per time, in time order), so that
+/// partitioning by scan splits it in three.
+pub(crate) fn three_scans(path: &Path) {
+    let mut ms = casa_ms::MeasurementSet::open(path).expect("ms");
+    for (scan, rows) in [(2, 40..80), (3, 80..120)] {
+        ms.main_table_mut()
+            .fill_column_range(
+                "SCAN_NUMBER",
+                casa_tables::RowRange::new(rows.start, rows.end),
+                casa_types::Value::Scalar(casa_types::ScalarValue::Int32(scan)),
+            )
+            .expect("scan");
+    }
+    ms.save().expect("save");
+}
+
+/// Options that partition an MSv2 by scan as well.
+pub(crate) fn by_scan() -> OpenOptions {
+    OpenOptions {
+        partition_scheme: casa_ms::observation_io::PartitionScheme {
+            scans: true,
+            ..Default::default()
+        },
+        ..OpenOptions::default()
+    }
+}
+
 /// Every role of `channels` of the first partition, under `batch_bytes`.
 pub(crate) fn request(channels: std::ops::Range<usize>, batch_bytes: usize) -> AccessRequest {
     AccessRequest {

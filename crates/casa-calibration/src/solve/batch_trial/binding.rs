@@ -19,16 +19,20 @@
 //!    content.
 //! 3. **Content** otherwise: an antenna by station and position, a field
 //!    by phase centre, a spectral window by its frame and channels (or the
-//!    one channel a gain table collapses them to). Names decide nothing,
-//!    since converters rewrite them; an entity the other side lacks binds
-//!    to nothing (a subset of antennas); and two candidates are refused,
-//!    never resolved by name or position, since equal content alone does
-//!    not prove two rows are one entity.
+//!    one channel a gain table collapses them to). Names never bind, since
+//!    converters rewrite them, but an antenna whose name disagrees beyond a
+//!    converter's `_STATION` suffix is refused: another antenna on the same
+//!    pad does not take its gains. An entity the other side lacks binds to
+//!    nothing (a subset of antennas), except a window some table window
+//!    overlaps, which is refused; and two candidates are refused, never
+//!    resolved by name or position, since equal content alone does not
+//!    prove two rows are one entity.
 //!
 //! The calibration port moves this into production; it sees casa-ms only
 //! through the namespace and the gain table writer.
 
 use std::collections::BTreeMap;
+use std::path::Path;
 
 use casa_ms::observation_io::{
     NamespaceAntenna, NamespaceField, NamespaceRows, NamespaceWindow, PersistedNamespace,
@@ -36,8 +40,8 @@ use casa_ms::observation_io::{
 use casa_observation::{AntennaId, BindingTolerance, Catalogue, ObservationError, PartitionId};
 
 use crate::solve::kernel::SolutionRow;
-use crate::solve::writer::write_gain_caltable;
-use crate::solve::{GainSolveError, GainSolveReport, GainSolveRequest};
+use crate::solve::writer::write_gain_caltable_named;
+use crate::solve::{GainSolveReport, GainSolveRequest};
 
 /// Associations a caller states, which binding takes before anything it
 /// could infer: CASA's `spwmap` and its like for antennas.
@@ -69,8 +73,11 @@ impl CalibrationBinding {
     /// # Errors
     ///
     /// When a stated association names a row or entity that does not exist,
-    /// or two antennas for one row; or when an entity matches more than one
-    /// row of the other side by content, or two entities one row.
+    /// two antennas for one row or two rows for one antenna; when an entity
+    /// matches more than one row of the other side by content, or two
+    /// entities one row; when an antenna's station and position match but
+    /// its name does not; or when a partition's window binds to no table
+    /// window though one overlaps it.
     pub(super) fn bind(
         table: &NamespaceRows,
         target: &PersistedNamespace,
@@ -115,16 +122,22 @@ impl CalibrationBinding {
             Kind::one_to_one("antenna"),
             &table.antennas,
             &target.rows.antennas,
-            |a, b| same_antenna(a, b, tolerance),
-            |a, b| a.name == b.name,
+            Rules {
+                content: |a: &NamespaceAntenna, b: &NamespaceAntenna| same_antenna(a, b, tolerance),
+                name: |a: &NamespaceAntenna, b: &NamespaceAntenna| a.name == b.name,
+                agree: names_agree,
+            },
             &stated_antennas,
         )?;
         let field_rows = associate(
             Kind::one_to_one("field"),
             &table.fields,
             &target.rows.fields,
-            |a, b| same_field(a, b, tolerance),
-            |a, b| a.name == b.name,
+            Rules {
+                content: |a: &NamespaceField, b: &NamespaceField| same_field(a, b, tolerance),
+                name: |a: &NamespaceField, b: &NamespaceField| a.name == b.name,
+                agree: |_: &NamespaceField, _: &NamespaceField| true,
+            },
             &[],
         )?;
         let window_rows = associate(
@@ -134,10 +147,29 @@ impl CalibrationBinding {
             },
             &table.spectral_windows,
             &target.rows.spectral_windows,
-            solves,
-            |a, b| a.name == b.name,
+            Rules {
+                content: solves,
+                name: |a: &NamespaceWindow, b: &NamespaceWindow| a.name == b.name,
+                agree: |_: &NamespaceWindow, _: &NamespaceWindow| true,
+            },
             &stated_windows,
         )?;
+        // A window no table window solves, though one overlaps it, has
+        // solutions the binding cannot place: refused, not left unbound.
+        for &row in &target.spectral_windows {
+            let window = &target.rows.spectral_windows[row as usize];
+            if window_rows[row as usize].is_none()
+                && let Some(other) = table
+                    .spectral_windows
+                    .iter()
+                    .position(|solved| overlaps(solved, window))
+            {
+                return Err(refused(format!(
+                    "spectral window row {row} of the store binds to no table window, but table \
+                     window {other} overlaps it in frequency; state the association"
+                )));
+            }
+        }
         let through = |rows: &[Option<u32>], ids: &[u32]| -> Vec<Option<u32>> {
             ids.iter().map(|row| rows[*row as usize]).collect()
         };
@@ -167,23 +199,32 @@ impl Kind {
     }
 }
 
+/// How [`associate`] compares a table row with a target row.
+struct Rules<C, N, A> {
+    /// Whether they hold the same entity's content.
+    content: C,
+    /// Whether their names are the same.
+    name: N,
+    /// Whether a content match may stand: false refuses it.
+    agree: A,
+}
+
 fn refused(reason: String) -> ObservationError {
     ObservationError::InvalidRequest { reason }
 }
 
 /// The table row of each target row of one kind: `stated` pairs (target
 /// row, table row) first; then, where the namespaces have the same rows in
-/// the same order (`same_content` and `same_name` row for row), each row's
-/// own index; otherwise the one table row `same_content` matches, a row
-/// stated one to one being no other's. No two target rows bind to one
-/// table row unless both are stated and the kind lets statements share a
-/// row.
+/// the same order (content and name row for row), each row's own index;
+/// otherwise the one table row whose content matches, a row stated one to
+/// one being no other's, provided the rules' `agree` lets it stand. No two
+/// target rows bind to one table row unless both are stated and the kind
+/// lets statements share a row.
 fn associate<T>(
     kind: Kind,
     table: &[T],
     target: &[T],
-    same_content: impl Fn(&T, &T) -> bool,
-    same_name: impl Fn(&T, &T) -> bool,
+    rules: Rules<impl Fn(&T, &T) -> bool, impl Fn(&T, &T) -> bool, impl Fn(&T, &T) -> bool>,
     stated: &[(usize, u32)],
 ) -> Result<Vec<Option<u32>>, ObservationError> {
     let what = kind.what;
@@ -193,6 +234,11 @@ fn associate<T>(
         if *row as usize >= table.len() || *target_row >= target.len() {
             return Err(refused(format!(
                 "a stated association names {what} row {row}, which the table lacks"
+            )));
+        }
+        if bound[*target_row].is_some_and(|earlier| earlier != *row) {
+            return Err(refused(format!(
+                "{what} {target_row} is stated as two table rows"
             )));
         }
         if let Some(earlier) = claimed.insert(*row, *target_row)
@@ -208,7 +254,7 @@ fn associate<T>(
         && table
             .iter()
             .zip(target)
-            .all(|(a, b)| same_content(a, b) && same_name(a, b));
+            .all(|(a, b)| (rules.content)(a, b) && (rules.name)(a, b));
     let mut first = BTreeMap::new();
     for (target_row, entity) in target.iter().enumerate() {
         if bound[target_row].is_some() {
@@ -220,10 +266,16 @@ fn associate<T>(
             // A row stated one to one is no other entity's.
             let mut candidates = (0..table.len())
                 .filter(|row| kind.statements_share || !claimed.contains_key(&(*row as u32)))
-                .filter(|row| same_content(&table[*row], entity));
+                .filter(|row| (rules.content)(&table[*row], entity));
             match (candidates.next(), candidates.next()) {
                 (None, _) => None,
-                (Some(row), None) => Some(row),
+                (Some(row), None) if (rules.agree)(&table[row], entity) => Some(row),
+                (Some(row), None) => {
+                    return Err(refused(format!(
+                        "{what} row {target_row} of the store matches table row {row} by \
+                         content but not by name; state the association"
+                    )));
+                }
                 (Some(a), Some(b)) => {
                     return Err(refused(format!(
                         "{what} row {target_row} of the store matches table rows {a} and {b} \
@@ -255,6 +307,22 @@ fn same_antenna(a: &NamespaceAntenna, b: &NamespaceAntenna, tolerance: &BindingT
             .all(|(x, y)| (x - y).abs() <= tolerance.position_m)
 }
 
+/// Whether two antennas' names agree: the same once each loses the
+/// `_STATION` suffixes a converter appends (XRADIO names an MSv2 antenna
+/// `NAME_STATION`, and a round trip appends it again).
+fn names_agree(a: &NamespaceAntenna, b: &NamespaceAntenna) -> bool {
+    fn bare<'n>(mut name: &'n str, station: &str) -> &'n str {
+        while let Some(stripped) = name
+            .strip_suffix(station)
+            .and_then(|rest| rest.strip_suffix('_'))
+        {
+            name = stripped;
+        }
+        name
+    }
+    bare(&a.name, &a.station) == bare(&b.name, &b.station)
+}
+
 fn same_field(a: &NamespaceField, b: &NamespaceField, tolerance: &BindingTolerance) -> bool {
     let (al, ab) = a.phase_centre.as_angles();
     let (bl, bb) = b.phase_centre.as_angles();
@@ -263,40 +331,84 @@ fn same_field(a: &NamespaceField, b: &NamespaceField, tolerance: &BindingToleran
         && (ab - bb).abs() <= tolerance.direction_rad
 }
 
+/// Whether two frequencies, or widths, are one: equal to a part in
+/// 10^12, far below any channel's width, so that a mean CASA summed in
+/// another order still matches.
+fn same_hz(a: f64, b: f64) -> bool {
+    (a - b).abs() <= 1e-12 * a.abs().max(b.abs())
+}
+
 /// Whether table window `solved` holds solutions for target window
-/// `window`: the same frame and channels, bit for bit, or the one channel
-/// a gain table collapses them to (the centre channel's frequency and the
-/// summed width, as the writer collapses them).
+/// `window`: the same frame, and the same channels, or the one channel a
+/// gain table collapses them to, of their summed width at their mean
+/// frequency (CASA's `gaincal`, `SolvableVisCal`) or at the centre
+/// channel's (casa-rs's gain table writer, which differs from CASA there,
+/// #917).
 fn solves(solved: &NamespaceWindow, window: &NamespaceWindow) -> bool {
-    let bits = |values: &[f64]| values.iter().map(|v| v.to_bits()).collect::<Vec<_>>();
+    let same =
+        |a: &[f64], b: &[f64]| a.len() == b.len() && a.iter().zip(b).all(|(a, b)| same_hz(*a, *b));
     if solved.frame != window.frame {
         return false;
     }
-    if bits(&solved.frequencies_hz) == bits(&window.frequencies_hz)
-        && bits(&solved.widths_hz) == bits(&window.widths_hz)
+    if same(&solved.frequencies_hz, &window.frequencies_hz)
+        && same(&solved.widths_hz, &window.widths_hz)
     {
         return true;
     }
     let channels = window.frequencies_hz.len();
-    channels > 1
-        && solved.frequencies_hz.len() == 1
-        && solved.widths_hz.len() == 1
-        && solved.frequencies_hz[0].to_bits() == window.frequencies_hz[channels / 2].to_bits()
-        && solved.widths_hz[0].to_bits() == window.widths_hz.iter().copied().sum::<f64>().to_bits()
+    if channels < 2 || solved.frequencies_hz.len() != 1 || solved.widths_hz.len() != 1 {
+        return false;
+    }
+    let frequency = solved.frequencies_hz[0];
+    let mean = window.frequencies_hz.iter().sum::<f64>() / channels as f64;
+    same_hz(solved.widths_hz[0], window.widths_hz.iter().sum())
+        && (same_hz(frequency, mean) || same_hz(frequency, window.frequencies_hz[channels / 2]))
+}
+
+/// Whether two windows' bands overlap: each channel spans its frequency
+/// plus or minus half its width.
+fn overlaps(a: &NamespaceWindow, b: &NamespaceWindow) -> bool {
+    let band = |window: &NamespaceWindow| {
+        window
+            .frequencies_hz
+            .iter()
+            .zip(&window.widths_hz)
+            .fold((f64::INFINITY, f64::NEG_INFINITY), |(low, high), (f, w)| {
+                (low.min(f - w.abs() / 2.0), high.max(f + w.abs() / 2.0))
+            })
+    };
+    let ((a_low, a_high), (b_low, b_high)) = (band(a), band(b));
+    a_low < b_high && b_low < a_high
 }
 
 /// Write `rows`, a solve in `catalogue`'s numbering, as a CASA gain table
 /// through `namespace`, the namespace of the store `catalogue` describes:
-/// its subtables copied, and each row's antennas, field, spectral window
-/// (the solve's partition) and session translated to their rows there.
-/// Catalogue identities are never written.
+/// its subtables copied, each row's antennas, field, spectral window (the
+/// solve's partition) and session translated to their rows there, and the
+/// store's path recorded as the table's `MSName`. Catalogue identities are
+/// never written. A table written through an MSv4's namespace applies by
+/// CASA's own association only to that store's MSv2 conversion; to any
+/// other store it is bound.
+///
+/// # Errors
+///
+/// When `catalogue` does not number the store as the namespace's opening
+/// does ([`PersistedNamespace::describes`]), or the table cannot be
+/// written.
 pub(super) fn write_gain_table(
     namespace: &PersistedNamespace,
     catalogue: &Catalogue,
     request: &GainSolveRequest,
     refant: AntennaId,
     rows: &[SolutionRow],
-) -> Result<GainSolveReport, GainSolveError> {
+) -> Result<GainSolveReport, ObservationError> {
+    if !namespace.describes(catalogue) {
+        return Err(refused(
+            "the solve's catalogue is not the one the namespace describes: open the store \
+             with the namespace's options"
+                .to_string(),
+        ));
+    }
     let antenna = |id: i32| namespace.antennas[id as usize] as i32;
     let translated: Vec<SolutionRow> = rows
         .iter()
@@ -312,10 +424,16 @@ pub(super) fn write_gain_table(
             }
         })
         .collect();
-    write_gain_caltable(
+    write_gain_caltable_named(
         &namespace.subtables,
+        name(&namespace.source),
         request,
         antenna(refant.0 as i32),
         &translated,
     )
+    .map_err(|error| ObservationError::Storage(Box::new(error)))
+}
+
+fn name(source: &Path) -> String {
+    source.display().to_string()
 }

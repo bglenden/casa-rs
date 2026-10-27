@@ -18,7 +18,7 @@
 use ndarray::{ArrayView3, Axis};
 use num_complex::Complex32;
 
-use crate::{ObservationError, VisibilityBatch};
+use crate::{ObservationError, VisibilityBatch, WeightRule};
 
 /// A role a session writes, of one data group.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -261,6 +261,16 @@ pub fn check_values(
                 clear: Some(clear),
             } if set.iter().zip(clear).any(|(set, clear)| *set && *clear) => {
                 return refuse(format!("patch value {index} both sets and clears a flag"));
+            }
+            // Weights patched from weights made from the sigmas would write
+            // sigmas back as weights, unannounced.
+            PatchValues::Weights { .. } if batch.group.weight_rule != WeightRule::Stored => {
+                return refuse(format!(
+                    "patch value {index} writes weights for a batch whose weights were made \
+                     from the sigmas ({:?}); patch weights from a traversal of the stored \
+                     weights",
+                    batch.group.weight_rule
+                ));
             }
             PatchValues::Weights {
                 values,

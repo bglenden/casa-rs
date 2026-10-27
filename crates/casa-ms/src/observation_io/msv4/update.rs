@@ -48,6 +48,8 @@ enum Target {
 struct Partition {
     id: PartitionId,
     times: HashMap<u64, usize>,
+    /// The dataset times the traversal selects.
+    selected: Range<usize>,
     targets: Vec<Target>,
 }
 
@@ -94,9 +96,9 @@ impl Msv4Update {
         targets: &[&ResolvedTarget],
         busy: Busy<'s>,
     ) -> Result<Box<dyn Updater + 's>, ObservationError> {
-        self.observation.estimate(request)?;
+        let estimate = self.observation.estimate(request)?;
         let mut partitions = Vec::with_capacity(request.partitions.len());
-        for id in &request.partitions {
+        for (id, selection) in request.partitions.iter().zip(&estimate.partitions) {
             let (dataset, _) = self.observation.dataset(*id)?;
             let mut windows = Vec::with_capacity(targets.len());
             for target in targets {
@@ -139,6 +141,7 @@ impl Msv4Update {
                     .enumerate()
                     .map(|(index, time)| (time.to_bits(), index))
                     .collect(),
+                selected: selection.first_time..selection.first_time + selection.times,
                 targets: windows,
             });
         }
@@ -227,6 +230,12 @@ impl Updater for Msv4Updater<'_> {
             .ok_or_else(|| request_error("the batch's partition is not the traversal's"))?;
         let entry = batch.catalogue.partition(batch.partition);
         let times = dataset_times(batch, entry, &self.partitions[index].times)?;
+        let selected = &self.partitions[index].selected;
+        if times.start < selected.start || times.end > selected.end {
+            return Err(request_error(
+                "the batch's times are outside the traversal's time selection",
+            ));
+        }
         let products = product_indices(batch, entry)?;
         for value in values {
             refuse_padding_changes(batch, value)?;

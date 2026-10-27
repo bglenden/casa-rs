@@ -1213,11 +1213,16 @@ could make the group ready before slice 1's work on it had begun.
 | `aligned_slices_decode_no_unit_twice` | Slices aligned to the natural time blocks add up to the whole traversal's decode units, modelled and counted; an MSv4 slice that splits a chunk decodes it in both. |
 | `empty_ranges_are_empty_and_malformed_ones_refused` | A range between two times, past the end or before the first is an empty traversal; one reversed, with a NaN end, or in another scale or origin is refused at binding. |
 | `a_sliced_traversal_writes_back_its_times` | On both stores an updater writes a slice's flags; the slice's samples change and no other's. |
+| `a_sliced_write_back_passes_partitions_the_range_leaves_empty` | The fixture relabelled as three scans and partitioned by them: a range over the first two leaves the third empty, listed between them or first; the MSv2 updater passes it and the two partitions write back (independent review B1). |
+| `an_updater_of_a_slice_refuses_times_outside_it` | On both stores an updater bound to a slice refuses a batch from before it. |
 
 Unit laws: `a_time_range_selects_the_grid_times_it_holds` and
 `ranges_of_grid_indices_select_those_times` (casa-observation), and
 `a_selection_closes_the_parts_it_holds_and_marks_cut_groups` (the shared
-group index).
+group index). For an MSv2 a decode unit is a row, so the decode law there
+says each row is read once, not that a tile is; for an MSv4 it counts
+chunks. Under deferred closure a slice's `GroupEnd` for a clipped group ends
+the slice's part, not the group.
 
 **Measurement** (`ms_trial_read_passes --split partitions|times [--only I]`
 on `pilot.ms` converted to MSv4: 64 partitions of 90 times in 10-time
@@ -1271,7 +1276,9 @@ equal.
 | `msv2_weights_from_sigmas_are_inverse_sigma_squared` | With `SIGMA` and then with `SIGMA_SPECTRUM` beside `WEIGHT_SPECTRUM`, made to differ from 1/√weight by a factor varying over products and channels and to be zero, negative or NaN for some cells, every delivered weight is 1/σ² of its own cell bit for bit, 0 where σ is not positive; the padding cell stays NaN; the estimate records rule and column for both readings. |
 | `a_product_subset_takes_its_own_sigmas` | A subset of products delivers the subset's 1/σ², in the partition's order: the transform precedes the gather. |
 | `msv4_states_its_sigma_fallback` | An MSv4 refuses a sigma request that reads weights, at estimate and binding, and not one that does not; with `StoredWeights` it delivers its stored weights and records the stored rule. |
-| `a_weight_write_refuses_sigma_derived_weights` | An update session refuses a weight updater bound to a sigma-weighted traversal and binds a flag updater to it. |
+| `a_weight_write_refuses_sigma_derived_weights` | An update session refuses a weight updater bound to a sigma-weighted traversal and binds a flag updater to it; a weight updater bound to the stored weights still refuses a patch from a sigma-weighted batch, which states its rule. |
+| `a_weight_write_binds_beside_an_msv4_fallback` | Beside an MSv4's `StoredWeights` fallback a weight updater binds; its batches state the stored rule and write back. |
+| `spectral_columns_without_content_are_read_past` | `WEIGHT_SPECTRUM` and `SIGMA_SPECTRUM` added and never filled hold no content (casacore's `hasContent`): the stored weights are `WEIGHT` and the sigmas `SIGMA`, and with only `SIGMA_SPECTRUM` filled still `SIGMA`. |
 | `sigma_weighted_batch_solves_equal_the_production_gaincal` | Example B with `SIGMA` not 1/√`WEIGHT` (casa-calibration): the batch-fed solve reading 1/σ² equals production to 1.3e-7 in weight; the one reading `WEIGHT` differs by 2,500×. |
 | `an_msv4_converts_to_an_msv2_of_every_acquisition` | 1/σ² of the converter's derived `SIGMA` gives the MSv4's weights back to 1e-6. |
 
@@ -1302,25 +1309,30 @@ Step (4)'s third item (contracts, section 2, "Binding a calibration table"):
 a solve from batches is persisted as a CASA caltable, the store is closed,
 and the table is bound to a store that numbers its entities otherwise and
 applied from batches. `casa_ms::observation_io::persisted_namespace` gives a
-store's namespace: an MSv2's own subtables, or for an MSv4 the subtables its
-MSv2 conversion holds (the converter's builders, now shared:
-`catalogue_subtables`). The calibration trial's `binding.rs` holds the
+store's namespace as it opens with given options: an MSv2's own subtables,
+or for an MSv4 the subtables its MSv2 conversion holds (the converter's
+builders, now shared: `catalogue_subtables`). The calibration trial's `binding.rs` holds the
 `CalibrationBinding` and the writer, which translates the solve's catalogue
 identities to namespace rows and hands them to production's gain-table
 writer; it moves into production with the calibration port.
 
 | Law | What it shows |
 | --- | --- |
-| `a_batch_solve_persists_the_msv2s_own_namespace` | A batch solve on the MSv2 fixture, written through its namespace, has production `gaincal`'s `ANTENNA` and `SPECTRAL_WINDOW` rows (the window collapsed to one channel as CASA collapses it) and its solutions to 1e-5; binding it back is CASA's own association. |
-| `a_caltable_rebinds_to_a_store_numbered_otherwise` | Solved on an MSv4 converted from the fixture without antenna 0 (four antennas, numbered from 0), written through that store's namespace, closed; bound to the full MSv2 (five antennas, those four numbered from 1) by station and position; applied from batches: every sample equals production `gaincal` on the MSv2 without antenna 0 then `applycal` on the full MSv2, values to 1e-5 relative and flags exactly, antenna 0's 48 samples flagged both ways for want of a solution. |
-| `antennas_and_windows_rebind_after_reordering` | A table written through a simulated MSv2 of antennas N01–N03 and windows (low, high) binds to one of N03, N04, N01 and (high, low), and to its MSv4 conversion (XRADIO's names): each bound antenna and partition looks up the gain written for its own station and window; N04 binds to nothing. |
+| `a_batch_solve_persists_the_msv2s_own_namespace` | A batch solve on the MSv2 fixture, written through its namespace, has production `gaincal`'s `ANTENNA` and `SPECTRAL_WINDOW` rows (the window collapsed to one channel, at the centre channel where CASA's `gaincal` uses the mean: #917) and its solutions to 1e-5; binding it back is CASA's own association. |
+| `a_caltable_rebinds_to_a_store_numbered_otherwise` | Solved on an MSv4 converted from the fixture without antenna 0 (four antennas, numbered from 0), written through that store's namespace, closed; bound to the full MSv2 (five antennas, those four numbered from 1) by station and position, its field and window asserted; applied from batches: every sample equals production `gaincal` on the MSv2 without antenna 0 then `applycal` on the full MSv2, values to 1e-5 relative and flags exactly, antenna 0's 48 samples flagged both ways for want of a solution. Swapping two antennas' rows fails it on values. |
+| `antennas_windows_and_fields_rebind_after_reordering` | Tables written through a simulated MSv2 of antennas N01–N03, windows (low, high) and two fields, and through its MSv4 conversion's namespace, each bind to a store of N03, N04, N01, windows (high, low) and the fields reversed, as an MSv2 and as its MSv4 conversion (XRADIO's names): every bound antenna, partition and field looks up the gain written for its own station, window and field; only N04 binds to nothing. Fields bind within 1e-12 rad, since a conversion moves a direction by a few ulps (#918). |
+| `collapsed_windows_bind_either_way_and_overlaps_are_refused` | A one-channel window at the channels' mean frequency (CASA's `gaincal`, checked against CASA 6.7.5.18 on the fixture: 44.448 GHz, not channel 4's 44.512) or at the centre channel's (casa-rs's writer) binds; one overlapping the window but collapsing it neither way is refused, and one elsewhere binds to nothing. |
+| `an_antenna_on_another_antennas_pad_is_refused` | Names agreeing up to XRADIO's `_STATION` suffixes (once or twice) bind; another name on the same pad is refused. |
+| `the_writer_refuses_a_namespace_of_another_opening` | A solve's catalogue opened by scan against the namespace of the whole store is refused, and nothing is written. |
 | `equal_windows_need_their_own_namespace_or_a_stated_association` | Two windows of equal channels bind to their own rows in the store the table was written through; in a store listing them the other way round the binding is refused; stating the windows' rows, as `spwmap` does, resolves it. |
-| `antennas_bind_by_station_and_position_never_by_name` | A renamed antenna binds; another antenna bearing a table antenna's name, elsewhere, binds to nothing. |
-| `antennas_of_one_content_need_their_own_namespace_or_a_statement` | Two antennas at one station and position bind to their own rows in their own namespace, are refused by content elsewhere whatever their names, and bind as stated; a statement is one to one. |
+| `antennas_bind_by_station_and_position_never_by_name` | An antenna renamed as a converter renames it binds; another antenna bearing a table antenna's name, elsewhere, binds to nothing. |
+| `antennas_of_one_content_need_their_own_namespace_or_a_statement` | Two antennas at one station and position bind to their own rows in their own namespace, are refused by content elsewhere even when both names agree, and bind as stated; a statement is one to one, and one antenna stated twice is refused. |
 | `windows_bind_by_content_and_statements_may_share_a_row` | Reordered and renamed windows bind by channels, a window the table lacks to nothing; two partitions may be stated to one row. |
 
-casa-ms laws: `an_msv2s_namespace_is_its_own_subtables` and
-`an_msv4s_namespace_is_its_conversions`.
+casa-ms laws: `an_msv2s_namespace_is_its_own_subtables`,
+`an_msv4s_namespace_is_its_conversions` and
+`the_namespace_follows_the_opening_options` (partitioned by scan, three
+partitions, describing that opening and not the default one).
 
 **CASA oracle** (`tools/ms-trial/check_caltable.py`, CASA 6.7.5.18 on the
 Mac mini, from the outputs the rebind law keeps under
@@ -1333,7 +1345,11 @@ namespace the writer persisted as casa-rs binds it.
 **Not done:** the binding in production, with `gainfield` and nearest-field
 selection through bound fields; bandpass and other per-channel tables (their
 windows keep their channels, which the content rule already accepts);
-tables solved over combined windows; `FEED` and receptor association.
+tables solved over combined windows or over part of a window's channels
+(refused as an overlap until stated); `FEED` and receptor association; a
+`FIELD` whose `PHASE_DIR` has a variable reference (refused, as the MSv2
+adapter refuses it); the gain writer collapsing windows as CASA does (#917);
+directions exact across stores (#918).
 
 ## Keep, change or discard: the trial's summary for design review
 

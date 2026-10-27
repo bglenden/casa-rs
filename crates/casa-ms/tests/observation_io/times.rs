@@ -16,7 +16,7 @@ use casa_observation::{
 use casa_types::measures::{EpochRef, MjdHighPrec};
 use ndarray::Array3;
 
-use super::{Key, Sample, fixture, open_both, per_times, request, samples};
+use super::{Key, Sample, by_scan, fixture, open_both, per_times, request, samples, three_scans};
 
 /// `request` restricted to grid times `times` of partition 0.
 fn sliced(
@@ -358,5 +358,113 @@ fn a_sliced_traversal_writes_back_its_times() {
                 assert_eq!(written.flags, sample.flags, "{name}: {key:?}");
             }
         }
+    }
+}
+
+/// A time range can hold no time of some requested partitions, at the start
+/// of the request or between others: the updater passes them, and the
+/// slice writes back. The MSv2 fixture, its twelve times relabelled as
+/// scans 1, 2 and 3 of four times each and split by scan, has three
+/// partitions in time order; a range over the first two leaves the third
+/// empty, listed between them or first.
+#[test]
+fn a_sliced_write_back_passes_partitions_the_range_leaves_empty() {
+    let options = by_scan();
+    for order in [[0, 2, 1], [2, 0, 1]] {
+        let root = tempfile::tempdir().expect("root");
+        let path = fixture(root.path(), "ms_trial.ms");
+        three_scans(&path);
+        let target = UpdateTarget::new("base", WritableRole::Flags);
+        let session = open_update(&path, &options, &[target]).expect("session");
+        let observation = session.observation();
+        let mut firsts: Vec<(f64, PartitionId)> = observation
+            .catalogue()
+            .partition_ids()
+            .into_iter()
+            .map(|id| (observation.grid(id, "base").expect("grid").times_s[0], id))
+            .collect();
+        firsts.sort_by(|a, b| a.0.total_cmp(&b.0));
+        assert_eq!(firsts.len(), 3, "three scans");
+        let in_time = [firsts[0].1, firsts[1].1, firsts[2].1];
+        let last = observation.grid(in_time[2], "base").expect("grid");
+        let sliced = AccessRequest {
+            partitions: order.iter().map(|index| in_time[*index]).collect(),
+            times: TimeSelection::Within(TimeRange {
+                start_s: firsts[0].0,
+                ..TimeRange::of_grid(&last, 0..0)
+            }),
+            ..request(0..8, usize::MAX)
+        };
+        let mut traversal = observation.bind_read(&sliced).expect("bind");
+        let mut updater = session.updater(&sliced, &[0]).expect("updater");
+        let mut buffers = BatchBuffers::default();
+        let mut written = Vec::new();
+        while let Some(event) = traversal.next(&mut buffers).expect("read") {
+            let ReadEvent::Batch(batch) = event else {
+                continue;
+            };
+            written.push(batch.partition);
+            let set = Array3::from_elem(batch.shape(), true);
+            updater
+                .write(
+                    &batch,
+                    &[PatchValues::Flags {
+                        set: Some(set.view()),
+                        clear: None,
+                    }],
+                )
+                .expect("the empty partition is passed");
+        }
+        updater.finish().expect("finish");
+        drop(traversal);
+        drop(session);
+        written.dedup();
+        assert_eq!(written, [in_time[0], in_time[1]], "{order:?}");
+        let reopened = casa_ms::observation_io::open(&path, &options).expect("reopen");
+        for (index, id) in in_time.iter().enumerate() {
+            let samples = read(
+                &*reopened,
+                &AccessRequest {
+                    partitions: vec![*id],
+                    ..request(0..8, usize::MAX)
+                },
+            );
+            let flagged = samples
+                .values()
+                .all(|sample| sample.flags.iter().all(|flag| *flag));
+            assert_eq!(flagged, index < 2, "{order:?}: partition {index} in time");
+        }
+    }
+}
+
+/// An updater bound to a slice writes only the slice's times: a batch of
+/// the whole traversal from before the slice is refused, on both stores.
+#[test]
+fn an_updater_of_a_slice_refuses_times_outside_it() {
+    let root = tempfile::tempdir().expect("root");
+    for name in ["ms_trial.ms", "ms_trial.ps.zarr"] {
+        let path = fixture(root.path(), name);
+        let target = UpdateTarget::new("base", WritableRole::Flags);
+        let session = open_update(&path, &OpenOptions::default(), &[target]).expect("session");
+        let whole = per_times(session.observation(), request(0..8, 0), 2);
+        let slice = sliced(session.observation(), &whole, 6..10);
+        let mut updater = session.updater(&slice, &[0]).expect("updater");
+        let mut traversal = session.observation().bind_read(&whole).expect("bind");
+        let mut buffers = BatchBuffers::default();
+        let Some(ReadEvent::Batch(batch)) = traversal.next(&mut buffers).expect("read") else {
+            panic!("a batch");
+        };
+        let set = Array3::from_elem(batch.shape(), true);
+        let written = updater.write(
+            &batch,
+            &[PatchValues::Flags {
+                set: Some(set.view()),
+                clear: None,
+            }],
+        );
+        assert!(
+            matches!(written, Err(ObservationError::InvalidRequest { .. })),
+            "{name}: {written:?}"
+        );
     }
 }

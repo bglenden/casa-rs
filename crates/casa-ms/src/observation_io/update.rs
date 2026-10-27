@@ -24,7 +24,7 @@ use std::sync::{Mutex, OnceLock};
 
 use casa_observation::{
     AccessRequest, Catalogue, Observation, ObservationError, ResolvedTarget, UpdateGuarantees,
-    UpdateTarget, Updater, WeightRequest, WritableRole,
+    UpdateTarget, Updater, WeightRequest, WeightRule, WritableRole,
 };
 
 use super::OpenOptions;
@@ -220,11 +220,21 @@ impl UpdateSession {
             }
         }
         // A weight write replaces stored weights: patches made from 1/σ²
-        // weights would write sigmas as weights unannounced.
+        // weights would write sigmas as weights unannounced. Refused here
+        // when the request would make them (an MSv4's fallback reads the
+        // stored weights), and batch for batch by the patch check, which
+        // reads each batch's weight rule.
         if request.weights != WeightRequest::Stored
             && bound
                 .iter()
                 .any(|target| target.target.role == WritableRole::Weights)
+            && self
+                .observation()
+                .estimate(request)?
+                .partitions
+                .iter()
+                .filter_map(|partition| partition.weights.as_ref())
+                .any(|source| source.rule != WeightRule::Stored)
         {
             return Err(request_error(
                 "a weight write is bound to a traversal of the stored weights \
