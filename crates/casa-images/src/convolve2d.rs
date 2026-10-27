@@ -23,9 +23,11 @@
 //! unit volume) are refused: the simulation tasks convolve Jy/pixel images
 //! only.
 
-use std::f64::consts::LN_2;
+use std::f64::consts::{LN_2, PI};
 
-use casa_coordinates::{Coordinate, CoordinateModel, CoordinateSystem, CoordinateType};
+use casa_coordinates::{
+    Coordinate, CoordinateModel, CoordinateSystem, CoordinateType, DirectionCoordinate,
+};
 use casa_fft::Fft2;
 use casa_types::ArrayD;
 use num_complex::Complex64;
@@ -46,8 +48,10 @@ pub struct Convolved {
     pub beam: GaussianBeam,
 }
 
-/// The direction coordinate's first pixel axis and its increments, rad.
-fn direction_axes(coordinates: &CoordinateSystem) -> Result<(usize, [f64; 2]), ImageError> {
+/// The direction coordinate and its first pixel axis.
+fn direction_axes(
+    coordinates: &CoordinateSystem,
+) -> Result<(usize, &DirectionCoordinate), ImageError> {
     let index = coordinates
         .find_coordinate(CoordinateType::Direction)
         .ok_or_else(|| {
@@ -59,8 +63,28 @@ fn direction_axes(coordinates: &CoordinateSystem) -> Result<(usize, [f64; 2]), I
     let CoordinateModel::Direction(direction) = coordinates.coordinate(index) else {
         unreachable!("find_coordinate found a direction coordinate");
     };
-    let increment = direction.increment();
-    Ok((first, [increment[0], increment[1]]))
+    Ok((first, direction))
+}
+
+/// The sky offsets (east, north), rad, of a pixel step along each axis at
+/// the reference pixel: `[[east per x, east per y], [north per x, north per
+/// y]]`, by central differences of the coordinate's own conversion. It
+/// carries the increments, the PC matrix and the projection, as casacore's
+/// `GaussianShape::toPixel` does when `worldWidthsToPixel` turns a beam into
+/// pixels.
+fn sky_per_pixel(direction: &DirectionCoordinate) -> Result<[[f64; 2]; 2], ImageError> {
+    const STEP: f64 = 0.5;
+    let crpix = direction.reference_pixel();
+    let world = |dx: f64, dy: f64| direction.to_world(&[crpix[0] + dx, crpix[1] + dy]);
+    let centre = world(0.0, 0.0)?;
+    let mut jacobian = [[0.0; 2]; 2];
+    for (axis, (dx, dy)) in [(STEP, 0.0), (0.0, STEP)].into_iter().enumerate() {
+        let (plus, minus) = (world(dx, dy)?, world(-dx, -dy)?);
+        let dlon = (plus[0] - minus[0] + PI).rem_euclid(2.0 * PI) - PI;
+        jacobian[0][axis] = dlon * centre[1].cos() / (2.0 * STEP);
+        jacobian[1][axis] = (plus[1] - minus[1]) / (2.0 * STEP);
+    }
+    Ok(jacobian)
 }
 
 /// `Image2DConvolver::_sizeOfGaussian`: twice (5σ rounded, plus one).
@@ -69,17 +93,39 @@ fn size_of_gaussian(fwhm_pixels: f64) -> usize {
     ((5.0 * sigma + 0.5) as usize + 1) * 2
 }
 
-/// The Gaussian kernel for `beam` on pixels of `increment` rad: its side
-/// (odd) and values, first axis fastest, peak 1 at the centre.
-fn kernel(beam: &GaussianBeam, increment: [f64; 2]) -> (usize, Vec<f64>) {
-    let scale = increment[0].abs();
-    let (major, minor) = (beam.major / scale, beam.minor / scale);
-    // The major axis points (east, north) = (sin θ, cos θ); a pixel step
-    // moves increment[0] in longitude and increment[1] in latitude.
+/// The Gaussian kernel for `beam` on pixels whose sky offsets are `sky`
+/// ([`sky_per_pixel`]): its side (odd) and values, first axis fastest, peak
+/// 1 at the centre. The major axis points north through east, (east,
+/// north) = (sin θ, cos θ). The side is sized from the beam's widths in
+/// pixels, the axes of the pixel-frame ellipse.
+fn kernel(beam: &GaussianBeam, sky: [[f64; 2]; 2]) -> (usize, Vec<f64>) {
     let (sin_pa, cos_pa) = beam.position_angle.sin_cos();
-    let angle = (cos_pa / increment[1]).atan2(sin_pa / increment[0]);
-    let (sin_a, cos_a) = angle.sin_cos();
-    let mut side = size_of_gaussian(major).max(size_of_gaussian(minor));
+    // The exponent's quadratic form on pixel offsets, q(d) = dᵀ Q d, with the
+    // value exp(−4 ln 2 q): half maximum at q = 1/4.
+    let along = [
+        sky[0][0] * sin_pa + sky[1][0] * cos_pa,
+        sky[0][1] * sin_pa + sky[1][1] * cos_pa,
+    ];
+    let across = [
+        sky[0][0] * cos_pa - sky[1][0] * sin_pa,
+        sky[0][1] * cos_pa - sky[1][1] * sin_pa,
+    ];
+    let (a2, b2) = (beam.major.powi(2), beam.minor.powi(2));
+    let q = [
+        [
+            along[0] * along[0] / a2 + across[0] * across[0] / b2,
+            along[0] * along[1] / a2 + across[0] * across[1] / b2,
+        ],
+        [
+            along[1] * along[0] / a2 + across[1] * across[0] / b2,
+            along[1] * along[1] / a2 + across[1] * across[1] / b2,
+        ],
+    ];
+    let (trace, det) = (q[0][0] + q[1][1], q[0][0] * q[1][1] - q[0][1] * q[1][0]);
+    let root = (trace * trace / 4.0 - det).max(0.0).sqrt();
+    let (small, large) = (trace / 2.0 - root, trace / 2.0 + root);
+    let (major_pixels, minor_pixels) = (1.0 / small.sqrt(), 1.0 / large.sqrt());
+    let mut side = size_of_gaussian(major_pixels).max(size_of_gaussian(minor_pixels));
     if side.is_multiple_of(2) {
         side += 1;
     }
@@ -88,9 +134,8 @@ fn kernel(beam: &GaussianBeam, increment: [f64; 2]) -> (usize, Vec<f64>) {
     for j in 0..side {
         for i in 0..side {
             let (dx, dy) = (i as f64 - centre, j as f64 - centre);
-            let along = dx * cos_a + dy * sin_a;
-            let across = -dx * sin_a + dy * cos_a;
-            values.push((-4.0 * LN_2 * ((along / major).powi(2) + (across / minor).powi(2))).exp());
+            let form = q[0][0] * dx * dx + 2.0 * q[0][1] * dx * dy + q[1][1] * dy * dy;
+            values.push((-4.0 * LN_2 * form).exp());
         }
     }
     (side, values)
@@ -188,7 +233,8 @@ pub fn convolve2d(
     input: &impl ImageInterface<f32>,
     beam: &GaussianBeam,
 ) -> Result<Convolved, ImageError> {
-    let (axis, increment) = direction_axes(input.coordinates())?;
+    let (axis, direction) = direction_axes(input.coordinates())?;
+    let increment = direction.increment();
     let (x, y) = (increment[0].abs(), increment[1].abs());
     if (x - y).abs() > 1e-13 * x.max(y) {
         return Err(ImageError::InvalidMetadata(
@@ -203,7 +249,7 @@ pub fn convolve2d(
     }
     let shape = input.shape().to_vec();
     let plane = [shape[axis], shape[axis + 1]];
-    let (side, values) = kernel(beam, increment);
+    let (side, values) = kernel(beam, sky_per_pixel(direction)?);
     let mut convolver = PlaneConvolver::new(plane, side, &values)?;
     let mut data = input.get()?;
     let mask = input.default_mask()?;
@@ -256,7 +302,7 @@ pub fn convolve2d(
 
 /// A position angle in [−90°, 90°], as casacore's `GaussianBeam` keeps it.
 fn unwrap_position_angle(angle: f64) -> f64 {
-    use std::f64::consts::{FRAC_PI_2, PI};
+    use std::f64::consts::FRAC_PI_2;
     let mut pa = angle % PI;
     if pa > FRAC_PI_2 {
         pa -= PI;
@@ -270,12 +316,18 @@ fn unwrap_position_angle(angle: f64) -> f64 {
 mod tests {
     use super::*;
 
+    use casa_coordinates::{Projection, ProjectionType};
+    use casa_types::measures::direction::DirectionRef;
+
+    /// Sky offsets of RA increasing to the left and Dec up, 1e-6 rad pixels.
+    const UNROTATED: [[f64; 2]; 2] = [[-1.0e-6, 0.0], [0.0, 1.0e-6]];
+
     #[test]
     fn kernel_sizes_round_as_image2dconvolver_rounds_them() {
         // σ = 5 / √(8 ln 2) ≈ 2.123: 5σ = 10.6 → (11 + 1) × 2 = 24, made odd.
         assert_eq!(size_of_gaussian(5.0), 24);
         let beam = GaussianBeam::new(5.0e-6, 2.0e-6, 0.0);
-        assert_eq!(kernel(&beam, [-1.0e-6, 1.0e-6]).0, 25);
+        assert_eq!(kernel(&beam, UNROTATED).0, 25);
     }
 
     #[test]
@@ -283,13 +335,35 @@ mod tests {
         // RA increases to the left (negative increment): a position angle of
         // 90° (east) puts the major axis along −x, the same line as +x.
         let beam = GaussianBeam::new(6.0e-6, 2.0e-6, std::f64::consts::FRAC_PI_2);
-        let (side, values) = kernel(&beam, [-1.0e-6, 1.0e-6]);
+        let (side, values) = kernel(&beam, UNROTATED);
         let c = (side - 1) / 2;
         let along_x = values[(c + 3) + c * side];
         let along_y = values[c + (c + 3) * side];
         assert!(along_x > along_y, "{along_x} {along_y}");
         // Peak 1 at the centre.
         assert!((values[c + c * side] - 1.0).abs() < 1e-15);
+    }
+
+    #[test]
+    fn a_rotated_grid_turns_the_kernel_with_it() {
+        // The #941 review's case: PC [[0, −1], [1, 0]], 1″ pixels, a 6″ × 2″
+        // beam at PA 0°. Pixel x then runs north, so the major axis lies
+        // along x: half maximum 3 pixels out, as CASA 6.7.6 gives 0.5 there
+        // and 0.00195 three pixels along y.
+        let arcsec = PI / 648_000.0;
+        let rotated = DirectionCoordinate::new(
+            DirectionRef::J2000,
+            Projection::new(ProjectionType::SIN),
+            [1.0, 0.3],
+            [-arcsec, arcsec],
+            [10.0, 10.0],
+        )
+        .with_pc_matrix(ndarray::array![[0.0, -1.0], [1.0, 0.0]]);
+        let beam = GaussianBeam::new(6.0 * arcsec, 2.0 * arcsec, 0.0);
+        let (side, values) = kernel(&beam, sky_per_pixel(&rotated).unwrap());
+        let c = (side - 1) / 2;
+        assert!((values[(c + 3) + c * side] - 0.5).abs() < 1e-9);
+        assert!((values[c + (c + 3) * side] - 0.001_953_125).abs() < 1e-9);
     }
 
     #[test]

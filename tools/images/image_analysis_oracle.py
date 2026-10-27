@@ -12,7 +12,9 @@ For each image of the case file it builds a CASA image:
 - `flat` images as `simutil.flatimage` writes them: a default image dropped
   to [RA, Dec] and given a Stokes I axis;
 - `cube` images as `tclean` and `tsdimaging` write them: [RA, Dec, Stokes I,
-  Frequency], at 330.076 GHz with a 50 MHz channel.
+  Frequency], from 330.076 GHz in 50 MHz channels, channel c scaled by
+  1 + c/2;
+- a `pc` matrix, when given, as the direction coordinate's linear transform.
 
 It records each image's pixels and mask, as built in float32, and its world
 coordinates at a few pixels. The Rust test builds the same images from them,
@@ -28,9 +30,10 @@ shape and direction coordinate:
 
 Both regrids take the case's `decimate`, CASA's default 10 when absent. Most
 cases use 0, the exact position of every output pixel, which is what casa-rs
-computes: casacore interpolates the positions from a grid decimated that
-many times, and with decimation it masks every pixel of a cubic regrid onto
-a small output, such as 48 × 52 from 21 × 21, though it regrids 60 × 64.
+computes; casacore otherwise interpolates the positions between a coarser
+grid of converted ones. A template may also move a cube's one channel
+(`spectral_shift_hz`) or relabel its one Stokes plane (`stokes`), to record
+what CASA keeps for axes it does not regrid.
 - `convolve2d`: `ia.convolve2d` with a Gaussian;
 - `statistics`: `ia.statistics(robust=True)`;
 - `impbcor`, `immath` (`evalexpr`) and `feather`, the tasks at the
@@ -58,7 +61,8 @@ ARCSEC = math.pi / (180.0 * 3600.0)
 
 
 def pixels_of(spec):
-    """The image's pixels: its sources summed on its shape, in float64."""
+    """The image's pixels: its sources summed on its shape, in float64; a
+    cube's channel c is scaled by 1 + c/2."""
     shape = spec["shape"]
     nx, ny = shape[0], shape[1]
     x = np.arange(nx, dtype=np.float64)[:, None]
@@ -70,7 +74,13 @@ def pixels_of(spec):
         else:
             r2 = (x - source["x"]) ** 2 + (y - source["y"]) ** 2
             plane += source["peak"] * np.exp(-r2 / (2.0 * source["sigma"] ** 2))
-    return plane.reshape([nx, ny] + [1] * (len(shape) - 2))
+    pixels = np.zeros(shape, dtype=np.float64)
+    for channel in range(shape[3] if len(shape) == 4 else 1):
+        if len(shape) == 4:
+            pixels[:, :, 0, channel] = plane * (1.0 + 0.5 * channel)
+        else:
+            pixels[:, :, 0] = plane
+    return pixels
 
 
 def mask_of(spec):
@@ -88,7 +98,8 @@ def build(spec, path):
     """Build the image `spec` describes at `path` and return its record."""
     ia = image()
     nx, ny = spec["shape"][0], spec["shape"][1]
-    ia.fromshape(path + ".tmp4", shape=[nx, ny, 1, 1], overwrite=True)
+    nchan = spec["shape"][3] if spec["axes"] == "cube" else 1
+    ia.fromshape(path + ".tmp4", shape=[nx, ny, 1, nchan], overwrite=True)
     if spec["axes"] == "flat":
         flat = ia.subimage(path + ".tmp2", dropdeg=True, overwrite=True)
         ia.done()
@@ -110,6 +121,8 @@ def build(spec, path):
     cs.setreferencevalue(value=list(spec["refval_rad"]), type="direction")
     cs.setreferencepixel(value=list(spec["refpix"]), type="direction")
     cs.setincrement(value=[v * ARCSEC for v in spec["inc_arcsec"]], type="direction")
+    if "pc" in spec:
+        cs.setlineartransform(type="direction", value=np.array(spec["pc"], dtype=np.float64))
     if spec["axes"] == "cube":
         cs.setreferencecode("LSRK", "spectral", True)
         cs.setreferencevalue(value="330.076GHz", type="spectral")
@@ -170,7 +183,12 @@ def describe(path):
         "refpix": [float(v) for v in cs.referencepixel(type="direction")["numeric"]],
         "refval_rad": [float(v) for v in cs.referencevalue(type="direction", format="n")["numeric"]],
         "inc_rad": [float(v) for v in cs.increment(type="direction", format="n")["numeric"]],
+        "stokes": list(cs.stokes()),
+        "spectral_refval_hz": None,
     }
+    if cs.findcoordinate("spectral")["return"]:
+        out["spectral_refval_hz"] = float(
+            qa.convert(cs.referencevalue(type="spectral", format="q")["quantity"]["*1"], "Hz")["value"])
     if beam and "major" in beam:
         out["beam"] = {
             "major_arcsec": qa.convert(beam["major"], "arcsec")["value"],
@@ -183,7 +201,10 @@ def describe(path):
 
 
 def template_record(case, paths):
-    """The template record `simanalyze` builds from `imregrid(template='get')`."""
+    """The template record `simanalyze` builds from `imregrid(template='get')`:
+    another image's grid with its reference pixel, its direction increments
+    scaled and its shape changed, and, to probe the other axes, its one
+    channel moved or its one Stokes plane relabelled."""
     spec = case["template"]
     template = imregrid(imagename=paths[spec["from"]], template="get")
     if "refpix" in spec:
@@ -198,6 +219,11 @@ def template_record(case, paths):
         template["csys"] = cs.torecord()
         cs.done()
         template["shap"] = list(spec["shape"])
+    if "spectral_shift_hz" in spec:
+        wcs = template["csys"]["spectral2"]["wcs"]
+        wcs["crval"] = wcs["crval"] + spec["spectral_shift_hz"]
+    if "stokes" in spec:
+        template["csys"]["stokes1"]["stokes"] = np.array(spec["stokes"])
     return template
 
 
@@ -210,18 +236,14 @@ def run(case, paths, work):
                  decimate=case.get("decimate", 10), overwrite=True)
         return describe(out)
     if op == "ia_regrid":
+        template = template_record(case, paths)
         ia = image()
-        ia.open(paths[case["template"]["from"]])
-        cs = ia.coordsys()
-        shape = list(ia.shape())
-        ia.done()
         ia.open(paths[case["input"]])
-        regridded = ia.regrid(outfile=out, csys=cs.torecord(), shape=shape,
+        regridded = ia.regrid(outfile=out, csys=template["csys"], shape=list(template["shap"]),
                               method=case["method"], decimate=case.get("decimate", 10),
                               asvelocity=False, overwrite=True)
         regridded.done()
         ia.done()
-        cs.done()
         return describe(out)
     if op == "convolve2d":
         beam = case["beam"]

@@ -389,7 +389,8 @@ pub struct ImregridRequest {
     pub template: PathBuf,
     /// Output CASA image path.
     pub output: PathBuf,
-    /// Interpolation method. Tutorial support accepts `linear` and `nearest`.
+    /// Interpolation method: `nearest`, `linear` or `cubic`, read by its
+    /// first letter as casacore reads it (`casa_images::RegridMethod`).
     #[serde(default = "default_regrid_interpolation")]
     pub interpolation: String,
     /// Replace an existing output image.
@@ -2730,8 +2731,8 @@ where
     }
     let method = RegridMethod::from_casa(&request.interpolation)?;
     let output_shape = template.shape().to_vec();
-    let Regridded { data, mask, .. } = regrid(input, &RegridTemplate::of(template), method)?;
-    save_regridded_image(input, template, request, output_shape, data, mask)
+    let regridded = regrid(input, &RegridTemplate::of(template), method)?;
+    save_regridded_image(input, template, request, output_shape, regridded)
 }
 
 fn save_regridded_image<T>(
@@ -2739,21 +2740,31 @@ fn save_regridded_image<T>(
     template: &PagedImage<T>,
     request: &ImregridRequest,
     output_shape: Vec<usize>,
-    output_data: ArrayD<T>,
-    output_mask: ArrayD<bool>,
+    regridded: Regridded<T>,
 ) -> Result<ImageRegridSummary, ImageError>
 where
     T: ImagePixel + Into<f64> + From<f32> + Copy,
 {
+    let Regridded {
+        data: output_data,
+        mask: output_mask,
+        coordinates,
+        template_coordinates,
+        ..
+    } = regridded;
     let mut output = TempImage::<T>::new(
         output_shape.clone(),
-        template.coordinates().clone(),
+        coordinates,
         casa_lattices::TempStoragePolicy::Auto {
             memory_budget_bytes: 64 * 1024 * 1024,
             scratch: casa_lattices::ScratchSpace::SystemTemp,
         },
     )?;
-    let legacy_coordinates = template.table().keywords().get("coords").cloned();
+    // The template's own record, kept verbatim unless a coordinate of one
+    // pixel came from the input.
+    let legacy_coordinates = template_coordinates
+        .then(|| template.table().keywords().get("coords").cloned())
+        .flatten();
     output.set_units(input.units())?;
     output.set_image_info(&input.image_info()?)?;
     output.set_misc_info(input.misc_info())?;

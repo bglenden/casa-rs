@@ -12,20 +12,25 @@
 //!
 //! Pixels are compared on the pixels both sides keep, to a fraction of the
 //! largest of CASA's: float32 rounding for regrids, products and quotients,
-//! and CASA's single-precision FFTs for `convolve2d` and `feather`.
+//! and CASA's single-precision FFTs for `convolve2d` and `feather`. Every
+//! value on either side must be finite. At least nine tenths of CASA's valid
+//! pixels must be valid in casa-rs too, so an output masked entirely, or
+//! nearly, cannot pass.
 //!
-//! Masks are compared exactly where the input positions fall between whole
-//! pixels. Where the grids' increments divide evenly, as in `simanalyze`'s
-//! recipe and `convimage`'s Jy/pixel regrid, positions fall on whole pixels:
-//! casa-rs computes them exactly on a shared tangent plane, and casacore to
-//! about 1e-12 pixel on either side. The two truncate to neighbouring
-//! pixels, so their stencils differ by one. Where a masked pixel or the
-//! image's edge lies at the stencil's edge, the masks differ at that output
-//! pixel; its value is the input pixel's either way. That is rounding at a
-//! tie, which bitwise reproducibility is not a goal to break: those cases
-//! allow mask differences only at outputs whose positions fall on whole
-//! pixels. The one regrid CASA decimates allows a few more, where its
-//! interpolated positions differ more from casa-rs's exact ones.
+//! Masks are compared exactly, except where positions fall on whole pixels.
+//! Where the grids' increments divide evenly, as in `simanalyze`'s recipe
+//! and `convimage`'s Jy/pixel regrid, casa-rs computes those positions
+//! exactly on a shared tangent plane, and casacore to about 1e-12 pixel on
+//! either side. The two truncate to neighbouring pixels, so their stencils
+//! differ by one, and where a masked pixel or the image's edge lies at the
+//! stencil's edge, the masks differ. That is rounding at a tie, which
+//! bitwise reproducibility is not a goal to break. Such a case regrids again
+//! onto the template moved by ±1e-6 pixel on each axis, which puts every
+//! tied position on one side or the other. At each output where the masks
+//! differ, both CASA's mask and casa-rs's must be one of those regrids'.
+//! Where CASA kept the pixel, one of those regrids must keep it with CASA's
+//! value. Every other output must agree exactly. Cases whose positions avoid
+//! whole pixels have no such allowance.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -92,13 +97,22 @@ fn coordinates_of(spec: &Value) -> CoordinateSystem {
     let inc = numbers(&spec["inc_arcsec"]);
     let frame: DirectionRef = spec["frame"].as_str().unwrap().parse().expect("a frame");
     let mut coordinates = CoordinateSystem::new();
-    coordinates.add_coordinate(DirectionCoordinate::new(
+    let mut direction = DirectionCoordinate::new(
         frame,
         Projection::new(ProjectionType::SIN),
         [refval[0], refval[1]],
         [inc[0] * ARCSEC, inc[1] * ARCSEC],
         [refpix[0], refpix[1]],
-    ));
+    );
+    if let Some(pc) = spec["pc"].as_array() {
+        // The coordsys tool's `setlineartransform` reads the Python rows as
+        // casacore's columns: element [i][j] is casa-rs's pc[[j, i]], as the
+        // world-coordinate check below confirms.
+        let pc: Vec<Vec<f64>> = pc.iter().map(numbers).collect();
+        direction =
+            direction.with_pc_matrix(ndarray::array![[pc[0][0], pc[1][0]], [pc[0][1], pc[1][1]]]);
+    }
+    coordinates.add_coordinate(direction);
     coordinates.add_coordinate(StokesCoordinate::new(vec![StokesType::I]));
     if spec["axes"] == "cube" {
         coordinates.add_coordinate(SpectralCoordinate::new(
@@ -194,24 +208,49 @@ fn case<'a>(cases: &'a Value, name: &str) -> &'a Value {
         .unwrap_or_else(|| panic!("case {name}"))
 }
 
+/// CASA's pixels, mask (all kept when it recorded none) and largest
+/// magnitude.
+fn casa_pixels(casa: &Value) -> (Vec<f64>, Vec<bool>, f64) {
+    let values = numbers(&casa["pixels"]);
+    let mask = bools(&casa["mask"]).unwrap_or_else(|| vec![true; values.len()]);
+    let peak = values.iter().fold(0.0f64, |m, v| m.max(v.abs()));
+    (values, mask, peak)
+}
+
 /// The largest difference on the pixels both keep, over CASA's largest
-/// magnitude, and the pixels whose masks differ.
+/// magnitude, and the pixels whose masks differ. Every value must be
+/// finite, and at least nine tenths of the pixels CASA keeps kept by
+/// casa-rs too.
 fn mismatches(name: &str, ours: &[f64], our_mask: &[bool], casa: &Value) -> (f64, Vec<usize>) {
-    let theirs = numbers(&casa["pixels"]);
-    let their_mask = bools(&casa["mask"]).unwrap_or_else(|| vec![true; theirs.len()]);
+    let (theirs, their_mask, peak) = casa_pixels(casa);
     assert_eq!(ours.len(), theirs.len(), "{name}: sizes");
-    let peak = theirs.iter().fold(0.0f64, |m, v| m.max(v.abs()));
+    assert!(
+        ours.iter().chain(&theirs).all(|v| v.is_finite()),
+        "{name}: a value is not finite"
+    );
     let mut worst = 0.0f64;
     let mut masks = Vec::new();
+    let mut compared = 0usize;
     for k in 0..theirs.len() {
         if our_mask[k] != their_mask[k] {
             masks.push(k);
         } else if our_mask[k] {
+            compared += 1;
             worst = worst.max((ours[k] - theirs[k]).abs() / peak);
         }
     }
+    let kept = their_mask.iter().filter(|v| **v).count();
+    assert!(
+        kept > 0 && peak > 0.0,
+        "{name}: CASA kept nothing to compare"
+    );
+    assert!(
+        10 * compared >= 9 * kept,
+        "{name}: {compared} pixels compared of the {kept} CASA kept"
+    );
     println!(
-        "{name}: max |difference| / peak {worst:.3e}, {} mask differences",
+        "{name}: max |difference| / peak {worst:.3e} over {compared} pixels, {} mask \
+         differences",
         masks.len()
     );
     (worst, masks)
@@ -222,15 +261,92 @@ fn compare(name: &str, ours: &[f64], our_mask: &[bool], casa: &Value) -> (f64, u
     (worst, masks.len())
 }
 
-/// Whether output pixel `k`'s position on the input falls within 1e-6 of a
-/// whole pixel on either axis: a tie, where the stencil depends on rounding.
-fn on_a_whole_pixel(k: usize, input: &CoordinateSystem, template: &RegridTemplate) -> bool {
-    let mut pixel = vec![0.0; template.shape.len()];
-    pixel[0] = (k % template.shape[0]) as f64;
-    pixel[1] = ((k / template.shape[0]) % template.shape[1]) as f64;
-    let world = template.coordinates.to_world(&pixel).unwrap();
-    let at = input.to_pixel(&world).unwrap();
-    at[..2].iter().any(|v| (v - v.round()).abs() < 1e-6)
+/// `template` with its direction reference pixel moved by `shift` pixels.
+fn nudged(template: &RegridTemplate, shift: [f64; 2]) -> RegridTemplate {
+    let mut moved = template.clone();
+    let index = moved
+        .coordinates
+        .find_coordinate(CoordinateType::Direction)
+        .unwrap();
+    let CoordinateModel::Direction(direction) = moved.coordinates.coordinate(index) else {
+        unreachable!()
+    };
+    let refpix = direction.reference_pixel();
+    let changed = direction
+        .clone()
+        .with_reference_pixel([refpix[0] + shift[0], refpix[1] + shift[1]]);
+    moved.coordinates.replace_coordinate(index, changed);
+    moved
+}
+
+/// Each mask difference explained as a tie: CASA's mask and casa-rs's are
+/// both those of the regrid onto `template` moved ±1e-6 pixel on each axis,
+/// and where CASA keeps the pixel, one of those regrids keeps it with CASA's
+/// value.
+fn ties_explain(
+    name: &str,
+    (input, template, method): (&PagedImage<f32>, &RegridTemplate, RegridMethod),
+    (masks, our_mask): (&[usize], &[bool]),
+    casa: &Value,
+    tolerance: f64,
+) {
+    const NUDGE: f64 = 1e-6;
+    let (theirs, their_mask, peak) = casa_pixels(casa);
+    let neighbours: Vec<(Vec<f64>, Vec<bool>)> = [
+        [NUDGE, NUDGE],
+        [NUDGE, -NUDGE],
+        [-NUDGE, NUDGE],
+        [-NUDGE, -NUDGE],
+    ]
+    .iter()
+    .map(|shift| {
+        let moved = regrid(input, &nudged(template, *shift), method).unwrap();
+        (flat(&moved.data), flat_mask(&moved.mask))
+    })
+    .collect();
+    for &k in masks {
+        let options: Vec<bool> = neighbours.iter().map(|(_, mask)| mask[k]).collect();
+        assert!(
+            options.contains(&their_mask[k]) && options.contains(&our_mask[k]),
+            "{name}: output {k}'s masks are not those of neighbouring stencils"
+        );
+        if their_mask[k] {
+            assert!(
+                neighbours
+                    .iter()
+                    .any(|(values, mask)| mask[k]
+                        && (values[k] - theirs[k]).abs() <= tolerance * peak),
+                "{name}: output {k}'s value is no neighbouring stencil's"
+            );
+        }
+    }
+}
+
+/// The output keeps the axes CASA keeps: its Stokes labels and its channel.
+fn check_other_axes(name: &str, coordinates: &CoordinateSystem, casa: &Value) {
+    for k in 0..coordinates.n_coordinates() {
+        match coordinates.coordinate(k) {
+            CoordinateModel::Stokes(stokes) => {
+                let ours: Vec<String> = stokes.stokes().iter().map(|s| format!("{s:?}")).collect();
+                let theirs: Vec<String> = casa["stokes"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|s| s.as_str().unwrap().to_string())
+                    .collect();
+                assert_eq!(ours, theirs, "{name}: Stokes");
+            }
+            CoordinateModel::Spectral(spectral) => {
+                let theirs = casa["spectral_refval_hz"].as_f64().unwrap();
+                let ours = spectral.reference_value()[0];
+                assert!(
+                    (ours - theirs).abs() <= 1e-12 * theirs,
+                    "{name}: channel {ours} Hz against CASA's {theirs}"
+                );
+            }
+            _ => {}
+        }
+    }
 }
 
 fn flat(array: &ArrayD<f32>) -> Vec<f64> {
@@ -241,36 +357,58 @@ fn flat_mask(array: &ArrayD<bool>) -> Vec<bool> {
     array.t().iter().copied().collect()
 }
 
-/// The `imregrid` template a case names: another image's grid, changed as
-/// `simanalyze` changes it.
+/// The template a case names: another image's grid, changed as `simanalyze`
+/// changes it, and with its one channel moved or its one Stokes plane
+/// relabelled to probe the axes casacore does not regrid.
 fn template_of(spec: &Value, images: &Images) -> RegridTemplate {
     let mut template = RegridTemplate::of(&images.open(spec["from"].as_str().unwrap()));
-    if spec["refpix"].is_null() {
-        return template;
+    if !spec["refpix"].is_null() {
+        let index = template
+            .coordinates
+            .find_coordinate(CoordinateType::Direction)
+            .unwrap();
+        let CoordinateModel::Direction(direction) = template.coordinates.coordinate(index) else {
+            unreachable!()
+        };
+        let scale = spec["inc_scale"].as_f64().unwrap();
+        let increment = direction.increment();
+        let refpix = numbers(&spec["refpix"]);
+        let changed = direction
+            .clone()
+            .with_reference_pixel([refpix[0], refpix[1]])
+            .with_increment([increment[0] * scale, increment[1] * scale]);
+        template.coordinates.replace_coordinate(index, changed);
+        template.shape = usizes(&spec["shape"]);
     }
-    let index = template
-        .coordinates
-        .find_coordinate(CoordinateType::Direction)
-        .unwrap();
-    let CoordinateModel::Direction(direction) = template.coordinates.coordinate(index) else {
-        unreachable!()
-    };
-    let scale = spec["inc_scale"].as_f64().unwrap();
-    let increment = direction.increment();
-    let refpix = numbers(&spec["refpix"]);
-    let changed = direction
-        .clone()
-        .with_reference_pixel([refpix[0], refpix[1]])
-        .with_increment([increment[0] * scale, increment[1] * scale]);
-    template.coordinates.replace_coordinate(index, changed);
-    template.shape = usizes(&spec["shape"]);
+    if let Some(shift) = spec["spectral_shift_hz"].as_f64() {
+        let index = template
+            .coordinates
+            .find_coordinate(CoordinateType::Spectral)
+            .unwrap();
+        let moved =
+            SpectralCoordinate::new(FrequencyRef::LSRK, 330.076e9 + shift, 50e6, 0.0, 330.076e9);
+        template.coordinates.replace_coordinate(index, moved);
+    }
+    if let Some(stokes) = spec["stokes"].as_array() {
+        let index = template
+            .coordinates
+            .find_coordinate(CoordinateType::Stokes)
+            .unwrap();
+        let labels = stokes
+            .iter()
+            .map(|s| StokesType::from_name(s.as_str().unwrap()).unwrap())
+            .collect();
+        template
+            .coordinates
+            .replace_coordinate(index, StokesCoordinate::new(labels));
+    }
     template
 }
 
-/// Compare a regrid with CASA's: the values to `tolerance` of the peak, and
-/// the masks exactly except, when `ties` is set, at outputs on whole pixels;
-/// at most `decimated` more where CASA decimates.
-fn check_regrid(name: &str, tolerance: f64, ties: bool, decimated: usize) {
+/// Compare a regrid with CASA's: the values to `tolerance` of the peak, the
+/// axes it keeps, and the masks exactly except, for a case whose positions
+/// fall on whole pixels (`ties`), where neighbouring stencils explain them.
+fn check_regrid(name: &str, tolerance: f64, ties: bool) {
     let (cases, casa, images) = fixtures();
     let case = case(&cases, name);
     let method = case
@@ -278,26 +416,26 @@ fn check_regrid(name: &str, tolerance: f64, ties: bool, decimated: usize) {
         .or_else(|| case.get("method"))
         .and_then(Value::as_str)
         .unwrap();
+    let method = RegridMethod::from_casa(method).unwrap();
     let input = images.open(case["input"].as_str().unwrap());
     let template = template_of(&case["template"], &images);
-    let regridded = regrid(&input, &template, RegridMethod::from_casa(method).unwrap()).unwrap();
+    let regridded = regrid(&input, &template, method).unwrap();
     let theirs = &casa["cases"][name];
     assert_eq!(template.shape, usizes(&theirs["shape"]), "{name}: shape");
-    let (worst, masks) = mismatches(
-        name,
-        &flat(&regridded.data),
-        &flat_mask(&regridded.mask),
-        theirs,
-    );
+    check_other_axes(name, &regridded.coordinates, theirs);
+    let our_mask = flat_mask(&regridded.mask);
+    let (worst, masks) = mismatches(name, &flat(&regridded.data), &our_mask, theirs);
     assert!(worst <= tolerance, "{name}: {worst:e}");
-    let untied = masks
-        .iter()
-        .filter(|k| !(ties && on_a_whole_pixel(**k, input.coordinates(), &template)))
-        .count();
-    assert!(
-        untied <= decimated,
-        "{name}: {untied} mask differences off whole pixels"
-    );
+    if !masks.is_empty() {
+        assert!(ties, "{name}: {} mask differences", masks.len());
+        ties_explain(
+            name,
+            (&input, &template, method),
+            (&masks, &our_mask),
+            theirs,
+            tolerance,
+        );
+    }
 }
 
 #[test]
@@ -305,33 +443,46 @@ fn imregrid_of_simanalyzes_template_record_matches_casa() {
     // Its positions fall on whole pixels (see the module docs). Nearest is
     // tested on the edge grid: on half pixels it would be a tie everywhere.
     for method in ["cubic", "linear"] {
-        check_regrid(
-            &format!("imregrid_simanalyze_recipe_{method}"),
-            2e-7,
-            true,
-            0,
-        );
+        check_regrid(&format!("imregrid_simanalyze_recipe_{method}"), 2e-7, true);
     }
 }
 
 #[test]
 fn imregrid_near_masked_pixels_and_past_the_edges_matches_casa() {
     for method in ["cubic", "linear", "nearest"] {
-        check_regrid(&format!("imregrid_edges_{method}"), 2e-7, false, 0);
+        check_regrid(&format!("imregrid_edges_{method}"), 2e-7, false);
     }
 }
 
 #[test]
-fn casas_decimated_positions_differ_only_slightly_from_exact_ones() {
-    // CASA interpolates positions between every tenth output pixel.
-    check_regrid("imregrid_simanalyze_recipe_cubic_decimated", 1e-3, true, 8);
+fn casas_decimated_positions_differ_only_at_ties_from_exact_ones() {
+    // CASA interpolates the positions between a coarser grid of converted
+    // ones; on a shared tangent plane they are affine, so the interpolation
+    // is exact but for rounding, and the masks differ only at ties.
+    check_regrid("imregrid_simanalyze_recipe_cubic_decimated", 2e-7, true);
 }
 
 #[test]
 fn regrid_of_a_jy_per_pixel_model_scales_by_the_pixel_area_as_casa_does() {
-    // Its positions fall on whole pixels too, at the image's edge.
-    check_regrid("regrid_convimage", 2e-7, true, 0);
-    check_regrid("regrid_jypixel_cubic", 2e-7, true, 0);
+    // `convimage`'s grids put positions on whole pixels at the image's edge;
+    // the shifted grid puts none there, and its masks agree exactly.
+    check_regrid("regrid_convimage", 2e-7, true);
+    check_regrid("regrid_jypixel_cubic", 2e-7, true);
+    check_regrid("regrid_jypixel_shifted_cubic", 2e-7, false);
+    check_regrid("regrid_jypixel_shifted_linear", 2e-7, false);
+}
+
+#[test]
+fn every_channel_of_a_cube_is_regridded_as_casa_regrids_it() {
+    check_regrid("imregrid_two_channels_cubic", 2e-7, false);
+}
+
+#[test]
+fn axes_of_one_pixel_keep_the_inputs_coordinate_as_casa_does() {
+    // CASA keeps the input's channel for a template one channel away, and
+    // its Stokes I for a template labelled Q.
+    check_regrid("imregrid_one_channel_moved", 2e-7, false);
+    check_regrid("imregrid_one_stokes_plane_relabelled", 2e-7, false);
 }
 
 #[test]
@@ -342,6 +493,7 @@ fn convolve2d_matches_casa() {
         "convolve2d_negative_pa",
         "convolve2d_oblong_cube",
         "convolve2d_convimage",
+        "convolve2d_rotated",
     ] {
         let case = case(&cases, name);
         let input = images.open(case["input"].as_str().unwrap());

@@ -21,18 +21,26 @@
 //! it. A Jy/pixel image is scaled by the ratio of the output to the input
 //! pixel area (`ImageRegrid::findScaleFactor`), so the flux is kept.
 //!
-//! casacore converts the positions on a grid decimated `decimate` times (10
-//! by default) and interpolates between them. casa-rs converts every output
-//! pixel, as casacore does with `decimate=0`: the positions are exact, and a
-//! cubic regrid onto a small output, which casacore's decimation can mask
-//! entirely, is regridded.
+//! casacore converts the positions on a coarser grid when `decimate` is above
+//! 1 (10 by default): every `floor(n / (floor(n / decimate) − 1))`-th output
+//! pixel, interpolating between them (`make2DCoordinateGrid`). casa-rs
+//! converts every output pixel, as casacore does with `decimate=0`, so its
+//! positions are exact.
 //!
-//! Only the direction axes are regridded. Every other axis must be the same
-//! in the input and the template, as it is in every regrid the simulation
-//! tasks make; a different one is refused, as is a different direction frame.
+//! Only the direction axes are regridded, in the same frame. For every other
+//! coordinate:
+//! - where all its axes have one pixel in both images, casacore does not
+//!   regrid it and the output keeps the input's coordinate (CASA 6.7.6 keeps
+//!   the input's channel and Stokes for a template at another frequency or
+//!   Stokes), and so does casa-rs;
+//! - otherwise the template's must be the input's: the same type, names,
+//!   units, spectral frame and rest frequency or Stokes list, and the same
+//!   world value at every pixel. A different one is refused rather than
+//!   relabelled.
 
 use casa_coordinates::{
     Coordinate, CoordinateModel, CoordinateSystem, CoordinateType, DirectionCoordinate,
+    ProjectionType,
 };
 use casa_types::ArrayD;
 use ndarray::{IxDyn, ShapeBuilder};
@@ -104,6 +112,11 @@ pub struct Regridded<T> {
     /// Whether each pixel was sampled: false where it is 0 because it could
     /// not be.
     pub mask: ArrayD<bool>,
+    /// The output's coordinate system: the template's, with each one-pixel
+    /// coordinate other than the direction taken from the input.
+    pub coordinates: CoordinateSystem,
+    /// Whether that is the template's coordinate system unchanged.
+    pub template_coordinates: bool,
     /// The Jy/pixel scale applied, 1 for other units.
     pub scale: f64,
 }
@@ -124,32 +137,62 @@ fn direction(coordinates: &CoordinateSystem, index: usize) -> &DirectionCoordina
     }
 }
 
-/// Whether two coordinates other than the direction map pixels to the same
-/// world values.
-fn same_mapping(a: &CoordinateModel, b: &CoordinateModel) -> bool {
-    let close = |x: &[f64], y: &[f64]| {
-        x.len() == y.len()
-            && x.iter()
-                .zip(y)
-                .all(|(p, q)| (p - q).abs() <= 1e-9 * p.abs().max(q.abs()).max(1e-30))
+/// Whether two coordinates other than the direction are the same: type,
+/// names, units, the spectral frame and rest frequency or the Stokes list,
+/// and the world value at each of the `shape` pixels of their axes.
+fn same_axes(a: &CoordinateModel, b: &CoordinateModel, shape: &[usize]) -> bool {
+    let close = |x: f64, y: f64| (x - y).abs() <= 1e-12 * x.abs().max(y.abs());
+    let identity = match (a, b) {
+        (CoordinateModel::Spectral(a), CoordinateModel::Spectral(b)) => {
+            a.frequency_ref() == b.frequency_ref() && close(a.rest_frequency(), b.rest_frequency())
+        }
+        (CoordinateModel::Stokes(a), CoordinateModel::Stokes(b)) => a.stokes() == b.stokes(),
+        _ => true,
     };
-    a.coordinate_type() == b.coordinate_type()
+    if !(identity
+        && a.coordinate_type() == b.coordinate_type()
         && a.axis_names() == b.axis_names()
-        && close(&a.reference_value(), &b.reference_value())
-        && close(&a.reference_pixel(), &b.reference_pixel())
-        && close(&a.increment(), &b.increment())
+        && a.axis_units() == b.axis_units())
+    {
+        return false;
+    }
+    let pixels: usize = shape.iter().product();
+    (0..pixels).all(|k| {
+        let mut rest = k;
+        let pixel: Vec<f64> = shape
+            .iter()
+            .map(|n| {
+                let p = rest % n;
+                rest /= n;
+                p as f64
+            })
+            .collect();
+        match (a.to_world(&pixel), b.to_world(&pixel)) {
+            (Ok(x), Ok(y)) => x.iter().zip(&y).all(|(p, q)| close(*p, *q)),
+            _ => false,
+        }
+    })
 }
 
 /// A direction coordinate and its first pixel axis.
 type DirectionAxes<'a> = (&'a DirectionCoordinate, usize);
 
-/// The input's and the template's direction coordinates, and their first
-/// pixel axes, once the two are checked to differ only there.
-fn check_axes<'a>(
+/// How an image is regridded onto a template: the two direction coordinates
+/// and their first pixel axes, and the output's coordinate system.
+struct AxesPlan<'a> {
+    input: DirectionAxes<'a>,
+    output: DirectionAxes<'a>,
+    coordinates: CoordinateSystem,
+    template_coordinates: bool,
+}
+
+/// The plan, once the two images are checked to differ only on the
+/// direction axes and on coordinates of one pixel.
+fn plan_axes<'a>(
     input: &'a CoordinateSystem,
     input_shape: &[usize],
     template: &'a RegridTemplate,
-) -> Result<(DirectionAxes<'a>, DirectionAxes<'a>), ImageError> {
+) -> Result<AxesPlan<'a>, ImageError> {
     let refuse = |why: String| ImageError::InvalidMetadata(format!("regrid: {why}"));
     if input_shape.len() != template.shape.len()
         || input.n_coordinates() != template.coordinates.n_coordinates()
@@ -170,22 +213,31 @@ fn check_axes<'a>(
             "the direction coordinates are in different places".into(),
         ));
     }
+    let mut coordinates = template.coordinates.clone();
+    let mut template_coordinates = true;
+    let mut first = 0;
     for k in 0..input.n_coordinates() {
+        let ours = input.coordinate(k);
+        let theirs = template.coordinates.coordinate(k);
+        let axes = first..first + ours.n_pixel_axes();
+        first = axes.end;
         if k == in_index {
             continue;
         }
-        if !same_mapping(input.coordinate(k), template.coordinates.coordinate(k)) {
+        let in_shape = &input_shape[axes.clone()];
+        let out_shape = &template.shape[axes];
+        let degenerate = in_shape.iter().chain(out_shape).all(|n| *n == 1);
+        if degenerate && ours.coordinate_type() == theirs.coordinate_type() {
+            // Not regridded: the output keeps the input's coordinate.
+            if !same_axes(ours, theirs, in_shape) {
+                coordinates.replace_coordinate(k, ours.clone());
+                template_coordinates = false;
+            }
+        } else if in_shape != out_shape || !same_axes(ours, theirs, in_shape) {
             return Err(refuse(format!(
-                "the {} axes differ; casa-rs regrids the direction axes only",
-                input.coordinate(k).coordinate_type()
-            )));
-        }
-    }
-    for (axis, (a, b)) in input_shape.iter().zip(&template.shape).enumerate() {
-        if axis != in_axis && axis != in_axis + 1 && a != b {
-            return Err(refuse(format!(
-                "axis {axis} has length {a} in the input and {b} in the template; casa-rs \
-                 regrids the direction axes only"
+                "the {} axes differ between the input and the template; casa-rs regrids the \
+                 direction axes only",
+                ours.coordinate_type()
             )));
         }
     }
@@ -199,7 +251,12 @@ fn check_axes<'a>(
             output_direction.direction_ref()
         )));
     }
-    Ok(((input_direction, in_axis), (output_direction, out_axis)))
+    Ok(AxesPlan {
+        input: (input_direction, in_axis),
+        output: (output_direction, out_axis),
+        coordinates,
+        template_coordinates,
+    })
 }
 
 /// `ImageRegrid::findScaleFactor`: the output-to-input pixel area for a
@@ -227,6 +284,32 @@ fn same_tangent_plane(a: &DirectionCoordinate, b: &DirectionCoordinate) -> bool 
         && a.latpole() == b.latpole()
 }
 
+/// Whether every output pixel of an `[nx, ny]` plane has a sky position,
+/// shown by its four corners, for a zenithal projection with the identity
+/// PC matrix. Those projections are valid on a disk about the reference
+/// point in the intermediate plane, which the identity PC maps to the pixel
+/// grid by an axis-aligned affine map: the grid's rectangle lies in the
+/// disk when its corners do.
+fn corners_cover_the_plane(output: &DirectionCoordinate, [nx, ny]: [usize; 2]) -> bool {
+    let zenithal = matches!(
+        output.projection().projection_type(),
+        ProjectionType::SIN
+            | ProjectionType::TAN
+            | ProjectionType::ARC
+            | ProjectionType::ZEA
+            | ProjectionType::STG
+    ) && output.projection().parameters().iter().all(|p| *p == 0.0);
+    let (last_x, last_y) = (nx as f64 - 1.0, ny as f64 - 1.0);
+    zenithal
+        && [[0.0, 0.0], [last_x, 0.0], [0.0, last_y], [last_x, last_y]]
+            .iter()
+            .all(|corner| {
+                output
+                    .to_world(corner)
+                    .is_ok_and(|world| world.iter().all(|v| v.is_finite()))
+            })
+}
+
 /// For each output pixel of the direction plane (first axis fastest), the
 /// input pixel at its world position, or `None` where the conversion fails.
 ///
@@ -234,13 +317,18 @@ fn same_tangent_plane(a: &DirectionCoordinate, b: &DirectionCoordinate) -> bool 
 /// world coordinates are the same, so the mapping is exactly affine on each
 /// axis: `crpix_in + (p − crpix_out) × cdelt_out / cdelt_in`. That is the
 /// `simanalyze` and `simalma` total-power regrid, which keeps the reference
-/// direction.
+/// direction. It is taken where the projection's domain is known to cover the
+/// output ([`corners_cover_the_plane`]), so no pixel without a sky position
+/// is sampled.
 fn positions(
     input: &DirectionCoordinate,
     output: &DirectionCoordinate,
     [nx, ny]: [usize; 2],
 ) -> Vec<Option<[f64; 2]>> {
-    if same_tangent_plane(input, output) && *input.pc_matrix() == ndarray::Array2::<f64>::eye(2) {
+    if same_tangent_plane(input, output)
+        && *input.pc_matrix() == ndarray::Array2::<f64>::eye(2)
+        && corners_cover_the_plane(output, [nx, ny])
+    {
         let (in_pix, out_pix) = (input.reference_pixel(), output.reference_pixel());
         let (in_inc, out_inc) = (input.increment(), output.increment());
         let ratio = [out_inc[0] / in_inc[0], out_inc[1] / in_inc[1]];
@@ -274,7 +362,8 @@ fn positions(
 /// # Errors
 ///
 /// A template whose axes other than the direction differ from the input's,
-/// or whose direction frame does, and a failure to read the input.
+/// where they have more than one pixel, or whose direction frame does, and a
+/// failure to read the input.
 pub fn regrid<T, I>(
     input: &I,
     template: &RegridTemplate,
@@ -285,8 +374,8 @@ where
     I: ImageInterface<T>,
 {
     let input_shape = input.shape().to_vec();
-    let ((input_direction, in_axis), (output_direction, out_axis)) =
-        check_axes(input.coordinates(), &input_shape, template)?;
+    let plan = plan_axes(input.coordinates(), &input_shape, template)?;
+    let ((input_direction, in_axis), (output_direction, out_axis)) = (plan.input, plan.output);
     let scale = jy_per_pixel_scale(input.units(), input_direction, output_direction);
     let in_plane = [input_shape[in_axis], input_shape[in_axis + 1]];
     let out_plane = [template.shape[out_axis], template.shape[out_axis + 1]];
@@ -324,6 +413,8 @@ where
     Ok(Regridded {
         data: out_data,
         mask: out_mask,
+        coordinates: plan.coordinates,
+        template_coordinates: plan.template_coordinates,
         scale,
     })
 }
@@ -626,6 +717,83 @@ mod tests {
             let at = at.unwrap();
             assert!((at[0] - full[0]).abs() < 1e-9 && (at[1] - full[1]).abs() < 1e-9);
         }
+    }
+
+    #[test]
+    fn a_shared_tangent_plane_past_the_projections_domain_is_not_sampled() {
+        // The #941 review's case: SIN at 0.05 rad a pixel, so the corners of
+        // a 33 × 33 grid lie beyond the projection's disk and have no sky
+        // position. The affine map would give them one; they stay unsampled.
+        use casa_coordinates::{Projection, ProjectionType};
+        use casa_types::measures::direction::DirectionRef;
+        let input = DirectionCoordinate::new(
+            DirectionRef::J2000,
+            Projection::new(ProjectionType::SIN),
+            [1.0, 0.3],
+            [-0.05, 0.05],
+            [16.0, 16.0],
+        );
+        let output = input.clone().with_reference_pixel([16.1, 16.0]);
+        assert!(output.to_world(&[0.0, 0.0]).is_err());
+        let grid = positions(&input, &output, [33, 33]);
+        assert!(grid[0].is_none(), "{:?}", grid[0]);
+        assert!(grid[16 + 16 * 33].is_some());
+    }
+
+    fn image_with_stokes(stokes: &[casa_coordinates::StokesType]) -> crate::TempImage<f32> {
+        use casa_coordinates::{Projection, ProjectionType, StokesCoordinate};
+        use casa_types::measures::direction::DirectionRef;
+        let mut coordinates = CoordinateSystem::new();
+        coordinates.add_coordinate(DirectionCoordinate::new(
+            DirectionRef::J2000,
+            Projection::new(ProjectionType::SIN),
+            [1.0, 0.3],
+            [-1e-5, 1e-5],
+            [2.0, 2.0],
+        ));
+        coordinates.add_coordinate(StokesCoordinate::new(stokes.to_vec()));
+        let mut image = crate::TempImage::<f32>::new(
+            vec![4, 4, stokes.len()],
+            coordinates,
+            casa_lattices::TempStoragePolicy::Auto {
+                memory_budget_bytes: 1 << 20,
+                scratch: casa_lattices::ScratchSpace::SystemTemp,
+            },
+        )
+        .unwrap();
+        let data = ArrayD::from_elem(IxDyn(&[4, 4, stokes.len()]).f(), 42.0f32);
+        image.put_slice(&data, &[0, 0, 0]).unwrap();
+        image
+    }
+
+    #[test]
+    fn a_template_relabelling_a_stokes_plane_is_refused() {
+        // The #941 review's case: [I, Q] onto a template of [I, U] would put
+        // Q's pixels in U's plane.
+        use casa_coordinates::StokesType;
+        let input = image_with_stokes(&[StokesType::I, StokesType::Q]);
+        let template = RegridTemplate::of(&image_with_stokes(&[StokesType::I, StokesType::U]));
+        let error = regrid(&input, &template, RegridMethod::Linear).unwrap_err();
+        assert!(error.to_string().contains("Stokes axes differ"), "{error}");
+        // The same axes regrid, onto the template's coordinates.
+        let same = RegridTemplate::of(&input);
+        let regridded = regrid(&input, &same, RegridMethod::Linear).unwrap();
+        assert!(regridded.template_coordinates);
+    }
+
+    #[test]
+    fn a_one_plane_axis_keeps_the_inputs_coordinate_as_casa_does() {
+        // CASA 6.7.6 regrids an I plane onto a template labelled Q and keeps
+        // I; casa-rs keeps the input's coordinate too, rather than relabel.
+        use casa_coordinates::StokesType;
+        let input = image_with_stokes(&[StokesType::I]);
+        let template = RegridTemplate::of(&image_with_stokes(&[StokesType::Q]));
+        let regridded = regrid(&input, &template, RegridMethod::Linear).unwrap();
+        assert!(!regridded.template_coordinates);
+        let CoordinateModel::Stokes(stokes) = regridded.coordinates.coordinate(1) else {
+            panic!("a Stokes coordinate")
+        };
+        assert_eq!(stokes.stokes(), &[StokesType::I]);
     }
 
     #[test]

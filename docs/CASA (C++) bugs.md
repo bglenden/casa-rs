@@ -2178,28 +2178,21 @@ The law `casa_appends_to_a_casa_rs_gain_table` (casa-calibration
 `gain_table_windows_match_casa_on_ngc5921` and its two-sideband companion,
 it asserts that every column of every window row equals CASA's exactly.
 
-## `imregrid`'s decimated positions mask a small cubic regrid entirely
+## `imregrid` refuses a one-channel template in another spectral frame
 
 - Date noted: 2026-10-27
-- Status: casacore defect; casa-rs does not follow it (#841 Phase 6a)
-- Affected code: casacore `images/Images/ImageRegrid.tcc`,
-  `ImageRegrid::make2DCoordinateGrid` (decimation) and
-  `regridTwoAxisCoordinate`, called by CASA 6.7.6's `imregrid` and the image
-  tool's `regrid` at their default `decimate=10`
+- Status: CASA behaviour casa-rs does not follow (#841 Phase 6a)
+- Affected code: CASA 6.7.6's `imregrid` (casacore `ImageRegrid` through
+  `ImageRegridder`)
 
-`ImageRegrid` converts the input position of only every `n/decimate`-th
-output pixel and interpolates the positions between them. For a small
-output the grid of converted positions is coarse and does not reach the last
-rows. With cubic interpolation and the default `axes=[-1]`, CASA 6.7.6 then
-masks every output pixel and raises "All output pixels are masked". This
-happens for a 48 × 52 regrid of a 21 × 21 image, the shape `simanalyze`'s
-total-power recipe gives a small map. The same regrid onto 60 × 64 works, as
-do `decimate=0`, linear interpolation and `axes=[0, 1]`.
+casacore does not regrid an axis whose input and template both have one
+pixel. CASA 6.7.6 keeps the input's coordinate for it in the output: a
+template one channel 3 MHz away, or with its one Stokes plane labelled Q,
+gives the input's channel and Stokes I (`tools/images/image_analysis_oracle.py`,
+cases `imregrid_one_channel_moved` and `imregrid_one_stokes_plane_relabelled`).
+The same template with that one channel in another frame (LSRK to TOPO)
+stops instead, with "Failed to set conversion layer state".
 
-casa-rs converts the position of every output pixel (`casa_images::regrid`),
-as casacore does with `decimate=0`. The positions are exact, and a small
-cubic regrid is regridded. Where the input and output share a tangent plane,
-casa-rs computes the positions as the exact affine map between the two
-grids. Against CASA's decimated positions (`decimate=10`, 60 × 64), the
-pixels differ by at most 8e-8 of the peak
-(`crates/casa-images/tests/image_analysis_casa.rs`).
+casa-rs treats that channel as it treats the others: it is not regridded,
+and the output keeps the input's (`casa_images::regrid`). Converting the
+frame of an axis that is never regridded serves no purpose.
