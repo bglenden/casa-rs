@@ -577,17 +577,102 @@ This is delivered as four PRs, in order.
 
 ### Phase 6: `simanalyze` and `simalma`
 
-**Scope.**
-- Both tasks, built on `imager`, `feather`, `imregrid`, `impbcor` and
-  `immath`.
-- The analysis step: the convolved model, the difference and the fidelity.
+**Scope** (planned 2026-10-27; the split is on #841).
+- **Both tasks,** ported to Rust (ADR-0018) from CASA 6.7.6's installed
+  `task_simanalyze.py` and `task_simalma.py`. The port includes the `simutil`
+  and `sdbeamutil` parts they use: `imtclean`, `convimage`, `statim`,
+  `cellsize`, `ismstp`, `primaryBeamArcsec` and `TheoreticalBeam`.
+- **`simanalyze`:**
+  - finds the project's MeasurementSets and sky model;
+  - grids total power with `tsdimaging`;
+  - concatenates several interferometric MeasurementSets and images them
+    through the imager, with `tclean`'s arguments as `imtclean` builds them;
+  - feathers;
+  - analyses: the convolved model, the difference, the fidelity and the
+    statistics.
+- **`simalma`:** it runs `simobserve`, `simanalyze`, `concat` and `feather`. Its
+  own logic chooses the configurations and allocates the time. It also lays out
+  the total-power pointings, scales the total power, and makes the
+  primary-beam-weighted feather.
+- **The Python surfaces** mimic CASA's exactly from the start (#931).
 
-**Dependencies, planned separately.** Both tasks need:
-- a `concat` task;
-- single-dish imaging (`tsdimaging`).
+**What casa-rs lacks** (research of 2026-10-27):
+- single-dish gridding of any kind;
+- `concat`;
+- in the imager: `startmodel`, `uvtaper`, non-square `imsize` and CASA's
+  optimum image size;
+- in `imregrid`: `cubic` interpolation and a record template
+  (`template='get'`);
+- an `ia.convolve2d` equivalent, and a public regrid that takes a coordinate
+  system and a shape;
+- `convimage`, `statim`, `cellsize` and `imtclean`;
+- CASA comparisons of `feather`, `imregrid` and `impbcor`.
 
-**Acceptance.** Parity with CASA products for an ALMA case combining 12 m,
-7 m and total power.
+**Owner decisions (2026-10-27).**
+- **The single-dish gridder goes in a new library crate,**
+  `casa-imaging-singledish` (#938). It holds the kernels and the image-plane
+  gridder, and `simobserve`'s total-power predictor, which is the gridder's
+  adjoint, moves there too. ADR-0016 gains a note: single-dish image-plane
+  gridding is its own operator family, outside the four interferometric kernel
+  sets.
+- **`tsdimaging` and `concat` read and write through `casa-observation`**
+  (#937, #938, #939), not through today's `casa-ms` paths. They wait for the
+  MeasurementSet programme to provide pointing windows, autocorrelation reads
+  and creation of one MeasurementSet from several.
+
+**Decided in planning.** Each part records these in `docs/CASA (C++) bugs.md`
+when it implements them.
+- **Total-power intensity scaling:** each task keeps its own formula, which
+  differ by 8.7%. A part departs from one only if it measures that formula to
+  be physically wrong.
+- **`simalma`'s `TypeError`** for configuration names without "cycleN"
+  (`task_simalma.py:523`) is fixed.
+- **The user's `modelimage`** is not changed in place; CASA's master branch has
+  removed those lines.
+- **No `.tclean.last`** is written (#931: no Last profiles from Python).
+- **Products do not depend on `graphics`.** In CASA, `simalma`'s combine figure
+  deletes `simanalyze`'s flat images.
+- **Sky-model discovery** takes candidates in sorted order, not in `glob`
+  order.
+- **Acceptance avoids `simanalyze`'s feather of total power with interferometer
+  data,** which is not primary-beam weighted. CASA skips its own test of that
+  path because `feather` fails. The `simanalyze` part decides it by the
+  better-physics rule; `simalma`'s weighted feather is the candidate.
+
+**Parts,** one PR each:
+
+| Part | Content | Waits for |
+|---|---|---|
+| 6a | Image-analysis gaps in `casa-images`: `imregrid` with `cubic` and a record template; a public regrid by coordinate system and shape; `convolve2d` with Jy/pixel to Jy/beam and no wrap-around at the edges; the channel-mean moment; robust statistics; `feather` at its defaults against CASA | none; surface changes go with #931's image PRs |
+| 6b | Imager: `startmodel`, `uvtaper`, non-square `imsize`, CASA's optimum size; T0, T1 and T1.5 | none; the names follow #931 4e; #932's source path is not touched |
+| 6c | `casa-imaging-singledish` core: kernels, gridder over in-memory samples, `sdbeamutil`, the predictor moved in (#938 part 1) | none |
+| 6d | `tsdimaging` on `casa-observation` (#938 part 2) | 6c, #937, #931 2a and 3 |
+| 6e | `concat` core on `casa-observation` (#939) | #937, #931 2a and 3 |
+| 6f | `simanalyze`'s analysis: `convimage`, `statim`, `cellsize`, a public `ismstp`, flat images of cubes, difference, fidelity and statistics | 6a |
+| 6g | `simanalyze`: discovery, imaging, total power, concat, feather; its host and Python surface | 6b, 6d, 6e, 6f, #931 3 |
+| 6h | `simalma` | 6g |
+| 6i | Graphics for both, on 5e's plot document | 5e, which waits for #931 1 |
+
+6a, 6b, 6c and 6f can start now.
+
+**Acceptance.**
+- **`regression/sim_multi_arrays_and_TP`.** It runs `simobserve` for 12 m, 7 m
+  and total power, then `simanalyze` twice.
+  - The oracle is CASA 6.7.6-14's products, regenerated by a committed recipe.
+    The references in the test data are from an older CASA: 6.7.6-14 differs
+    from them by 4–7% NRMS in DATA.
+  - Compared by NRMS: the MeasurementSets (DATA within 1e-6, as in Phase 5),
+    the total-power image, and the images and difference images.
+- **`regression/simalma_12m_ACA_combination`.** CASA's test checks only that 14
+  PNGs and 5 MeasurementSets exist. Acceptance instead compares every product
+  with CASA 6.7.6-14's:
+  - the MeasurementSets, the concatenation included;
+  - the total-power image, each configuration's image and the concatenation's;
+  - the feathered image, the differences and the fidelities.
+  
+  The PNGs come after 6i.
+- **Timing rows** for both cases, against CASA. The multi-array case takes about
+  30 s in CASA 6.7.6-14 on the Mac mini.
 
 ### Phase 7: retire the old code
 
