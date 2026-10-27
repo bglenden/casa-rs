@@ -131,9 +131,11 @@ fn measure_close(
 /// none of the fields' grids, and what it keeps is what it charges; `close`
 /// holds no more than its admission and the allowance with a budget for
 /// every field's grids, preparing each once, and with the least budget that
-/// closes, which holds one set and prepares one at every visit: a set
-/// evicted is freed before the next is prepared. Two sets of about 40 MB
-/// held where one is admitted would be far beyond the allowance.
+/// closes, which holds one set and prepares one at every visit. A set
+/// evicted is freed before the next is prepared: the cache refuses to evict
+/// a set anything else still holds, so a predictor kept past its segment
+/// fails the close here. The heap alone cannot show it: the writer's
+/// admission has room for a second set (#922 review).
 #[test]
 fn a_per_field_predict_keeps_its_planes_and_close_holds_its_admission() {
     if !alone("field_grids::a_per_field_predict_keeps_its_planes_and_close_holds_its_admission") {

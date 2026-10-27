@@ -257,6 +257,9 @@ impl<'s> PredictionStage<'s> {
             }
             scan_segments.push(Some(segment));
         }
+        // An opened MeasurementSet may have a segment a row, gathered with
+        // room to spare.
+        segments.shrink_to_fit();
         let frequencies = session
             .spectral_windows()
             .iter()
@@ -467,26 +470,31 @@ impl<'s> PredictionStage<'s> {
     /// segment, of which an opened MeasurementSet may have one a row (#886
     /// review), each segment's steps, the windows' channel frequencies, the
     /// antennas' dish classes, the per-field grids' bookkeeping and a
-    /// selection's domains and keys.
+    /// selection's domains and keys, each as allocated.
     fn state_bytes(&self) -> u64 {
-        let step = size_of::<usize>() + size_of::<GridFtProjection>() + size_of::<[f64; 2]>();
         let segments: usize = self
             .segments
             .iter()
-            .map(|segment| size_of::<Segment>() + segment.steps.len() * step)
+            .map(|segment| {
+                segment.steps.capacity() * size_of::<usize>()
+                    + segment.projections.capacity() * size_of::<GridFtProjection>()
+                    + segment.pointing_offsets.capacity() * size_of::<[f64; 2]>()
+            })
             .sum();
         let frequencies: usize = self
             .frequencies
             .iter()
-            .map(|window| size_of::<Vec<f64>>() + window.len() * size_of::<f64>())
+            .map(|window| window.capacity() * size_of::<f64>())
             .sum();
         let selection =
             self.largest_domains() * (size_of::<PredictionDomain<'_>>() + size_of::<GridKey>());
-        (self.predictions.len() * size_of::<&Prediction>()
-            + self.scan_segments.len() * size_of::<Option<usize>>()
+        (self.predictions.capacity() * size_of::<&Prediction>()
+            + self.scan_segments.capacity() * size_of::<Option<usize>>()
+            + self.segments.capacity() * size_of::<Segment>()
             + segments
+            + self.frequencies.capacity() * size_of::<Vec<f64>>()
             + frequencies
-            + self.antenna_types.len()
+            + self.antenna_types.capacity()
             + selection) as u64
             + self.grids.state_bytes()
     }

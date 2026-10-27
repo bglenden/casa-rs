@@ -48,11 +48,14 @@ impl<G> FieldGridCache<G> {
     /// A cache of sets costing `costs` bytes by step, whose keys are used
     /// in the visits `visits` (each key's visits by their first scans, in
     /// any order). It holds nothing until it is given its bytes
-    /// ([`Self::set_capacity`]).
+    /// ([`Self::set_capacity`]). Visits gathered scan by scan carry spare
+    /// room, up to as much again; the cache gives it back.
     pub(super) fn new(costs: Vec<u64>, mut visits: Vec<(GridKey, Vec<usize>)>) -> Self {
         visits.sort_unstable_by_key(|(key, _)| *key);
+        visits.shrink_to_fit();
         for (_, firsts) in &mut visits {
             firsts.sort_unstable();
+            firsts.shrink_to_fit();
         }
         Self {
             costs,
@@ -76,18 +79,17 @@ impl<G> FieldGridCache<G> {
         self.visits.iter().map(|(key, _)| self.cost(*key)).sum()
     }
 
-    /// Bytes the cache's bookkeeping holds: its visits, and room to list
-    /// every set it may hold.
+    /// Bytes the cache's bookkeeping holds: its visits and costs, as
+    /// allocated, and room to list every set it may hold.
     pub(super) fn state_bytes(&self) -> u64 {
-        let visits: usize = self
+        let firsts: usize = self
             .visits
             .iter()
-            .map(|(_, firsts)| {
-                size_of::<(GridKey, Vec<usize>)>() + firsts.len() * size_of::<usize>()
-            })
+            .map(|(_, firsts)| firsts.capacity() * size_of::<usize>())
             .sum();
-        (visits
-            + self.costs.len() * size_of::<u64>()
+        (firsts
+            + self.visits.capacity() * size_of::<(GridKey, Vec<usize>)>()
+            + self.costs.capacity() * size_of::<u64>()
             + self.visits.len() * size_of::<(GridKey, Arc<G>)>()) as u64
     }
 
@@ -107,10 +109,16 @@ impl<G> FieldGridCache<G> {
     /// prepared by `prepare` once the sets used again latest, other than
     /// the visit's own `keep`, are evicted to make room.
     ///
+    /// An evicted set is freed before the next is prepared: the cache must
+    /// hold its only reference then, as the stage drops its predictor
+    /// before it selects another.
+    ///
     /// # Errors
     ///
     /// `prepare`'s error, or a raised one when the sets of `keep` and this
-    /// one do not fit the cache, which is admitted to hold them.
+    /// one do not fit the cache, which is admitted to hold them, or when a
+    /// set to evict is still in use, whose bytes would stay beside the
+    /// next.
     pub(super) fn grids(
         &mut self,
         key: GridKey,
@@ -136,8 +144,14 @@ impl<G> FieldGridCache<G> {
                         self.capacity, self.held
                     ))
                 })?;
-            let (evicted, _) = self.resident.swap_remove(victim);
+            let (evicted, grids) = self.resident.swap_remove(victim);
             self.held -= self.cost(evicted);
+            if Arc::into_inner(grids).is_none() {
+                return Err(SimulatorError::raised(format!(
+                    "the per-field model grids of step {}, field {}, are still in use when evicted",
+                    evicted.0, evicted.1
+                )));
+            }
         }
         let started = Instant::now();
         let grids = Arc::new(prepare()?);
@@ -229,5 +243,63 @@ mod tests {
             .grids((1, 0), (0, &keep), || Ok(()))
             .expect_err("two sets do not fit one byte");
         assert!(error.to_string().contains("cannot hold"), "{error}");
+    }
+
+    #[test]
+    fn a_set_still_in_use_is_not_evicted_silently() {
+        // A predictor kept past its segment would keep its grids: evicting
+        // them would free nothing (#922 review).
+        let mut cache =
+            FieldGridCache::<usize>::new(vec![1], vec![((0, 0), vec![0]), ((0, 1), vec![1])]);
+        cache.set_capacity(1);
+        let in_use = cache
+            .grids((0, 0), (0, &[(0, 0)]), || Ok(0))
+            .expect("one set fits");
+        let mut prepared = false;
+        let error = cache
+            .grids((0, 1), (1, &[(0, 1)]), || {
+                prepared = true;
+                Ok(1)
+            })
+            .expect_err("the set to evict is in use");
+        assert!(error.to_string().contains("still in use"), "{error}");
+        assert!(!prepared, "nothing is prepared beside a set in use");
+        assert_eq!(*in_use, 0);
+    }
+
+    #[test]
+    fn the_bookkeeping_charges_what_its_visits_keep() {
+        // Two fields alternating over 2 × 65,537 scans: visits gathered by
+        // pushing keep room for 131,072 scans each, about twice their
+        // length (#922 review).
+        const VISITS: usize = 65_537;
+        let mut visits: Vec<(GridKey, Vec<usize>)> = Vec::new();
+        for field in 0..2 {
+            let mut firsts = Vec::new();
+            for visit in 0..VISITS {
+                firsts.push(2 * visit + field);
+            }
+            assert!(firsts.capacity() > VISITS * 3 / 2);
+            visits.push(((0, field), firsts));
+        }
+        let cache = FieldGridCache::<()>::new(vec![1], visits);
+        let kept = cache.visits.capacity() * size_of::<(GridKey, Vec<usize>)>()
+            + cache
+                .visits
+                .iter()
+                .map(|(_, firsts)| firsts.capacity() * size_of::<usize>())
+                .sum::<usize>()
+            + cache.costs.capacity() * size_of::<u64>();
+        assert!(
+            cache.state_bytes() >= kept as u64,
+            "charged {} bytes for {kept} kept",
+            cache.state_bytes()
+        );
+        // The cache gives the spare room back.
+        assert!(
+            kept < 2 * VISITS * size_of::<usize>() * 5 / 4,
+            "{kept} bytes kept for {} visits",
+            2 * VISITS
+        );
     }
 }
