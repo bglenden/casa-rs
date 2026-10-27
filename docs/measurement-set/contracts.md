@@ -609,14 +609,25 @@ decode no unit twice. The MSv2 adapter reads the selected rows from its
 opening index; the MSv4 adapter reads only the chunks the selection
 touches. Updaters address samples by the batch's own times, so a sliced
 traversal writes back, passing partitions whose selection holds no time; an
-updater bound to a slice refuses a batch of times outside it (several slices
-of one store at once need several updaters, which a session does not yet
-provide); an updater writes batch for batch, and refuses a later partition
-while an earlier one's selected times are unwritten. A group a slice cuts is
-closed within the slice, and under deferred closure its `GroupEnd` ends the
-slice's part, not the group: `clipped` is not a completion protocol across
-slices, so a consumer that splits a partition merges the clipped parts and
-knows every slice before it finalizes such a group. A batch holds whole times; the budget
+updater bound to a slice refuses a batch of times outside it; an updater
+writes batch for batch, and refuses a later partition while an earlier
+one's selected times are unwritten. Several updaters of one session write
+the slices of a split at once, each claiming its times (section 7).
+
+**Time splits.** Workers that split a request by time plan the slices
+together: `TimeSplit::plan` cuts the request at consecutive epoch ranges
+that must tile its times in every partition (a gap, an overlap, or a time
+left outside every slice is refused), and counts, from the store's group
+index (`Observation::group_keys`, reading no payload), the scientific
+groups the cuts divide and how many slices hold part of each. Each slice's
+traversal delivers its part of a divided group, positioned and closed
+within the slice and marked `clipped`; the split's `SplitCompletion`, shared
+by the slices (each through its own `SliceCompletion`), makes such a group
+ready once, after every part's input has completed in its slice and the
+work begun on any part has finished, however the slices interleave. So a
+consumer writes the same code for one traversal and for a split. A
+standalone time range is not a split: a group it cuts is delivered as its
+part, marked `clipped`, and the rest never arrives. A batch holds whole times; the budget
 counts each time's samples, its per-time arrays and the cursor's decode
 scratch for it, and binding fails when one time does not fit.
 
@@ -675,12 +686,11 @@ sample ranges of each group, whole times, with `First`, `Middle`, `Last` or
 `Whole`. Completion is signalled exactly once: `Last` or `Whole` when proven at
 delivery, otherwise a later `GroupEnd`. Under a time selection the positions
 and the completion describe the part of each group the selection holds, and
-a fragment says whether the selection cut its group (`clipped`): a consumer
-that splits a partition by time merges a clipped group's parts across its
-traversals before finalizing it, and finalizes the others in place. Closing
-each part in its own traversal keeps one completion per traversal; a
-completion shared between slices could otherwise make a group ready before
-another slice's work on it had begun. Compute windows (`channel_window`,
+a fragment says whether the selection cut its group (`clipped`). The slices
+of a time split share one completion that joins a divided group's parts
+(section 4, "Time splits"): it counts each group's parts from the split, so
+a later slice closing its part never releases the group before an earlier
+slice's work on it has begun. Compute windows (`channel_window`,
 `sample_window`) carry no fragments, so a closing position is seen once however
 many work units share the batch.
 
@@ -690,9 +700,11 @@ move-only `WorkToken` and ends by finishing it; the call that makes a group
 ready returns `true` once. A token dropped unfinished (its unit panicked,
 failed or was cancelled) abandons its group, and the join reports
 `WorkAbandoned` instead of waiting for work that will not come. One completion
-serves one traversal; since a source completes each (partition, field, scan)
-series' bins in order, it keeps only each series' latest closed bin, so its
-memory is the series and the groups in flight, not the traversal's length.
+serves one traversal, or the slices of one split; since a source completes
+each (partition, field, scan) series' bins in order within a traversal, it
+keeps only each series' latest closed bin per traversal, and the divided
+groups' outstanding parts, so its memory is the series, the cuts and the
+groups in flight, not the traversal's length.
 
 A solver with splittable accumulation consumes fragments and keeps only its
 sufficient state. An algorithm that needs all samples of a group at once
@@ -818,10 +830,14 @@ The trial's adapters open stores read-only and hold no locks beyond the
 storage libraries' own. An **update session** (`open_update`, section 7) is
 the one mixed owner: it takes the process's write intent on the store, so a
 second update session is refused, lends the same observation for reading and
-one updater at a time for writing, and lets independent read-only
-observations open beside it. MSv2 updaters hold casacore's table lock for
-their life; MSv4 has no cross-process lock protocol, and the session says
-so (`UpdateGuarantees`).
+updaters for writing, and lets independent read-only observations open
+beside it. Several updaters may be live at once, each claiming the times of
+each variable and partition it writes (on MSv4 widened to whole chunk rows);
+one that meets a live claim is refused. An MSv2 updater takes casacore's
+table lock for each batch it writes, so a session's updaters write one batch
+at a time; MSv4 updaters replace disjoint chunks at once, and MSv4 has no
+cross-process lock protocol, which the session states
+(`UpdateGuarantees`).
 
 ## 7. Updates and creation
 
@@ -875,7 +891,8 @@ loss-policy coverage beyond the converter's inventory, are provisional
 
 The write-back trial (trial README, "Write-back") realizes a narrow part of
 this subsection: update sessions with declared targets (data group, role,
-alias scope, creation), one updater per traversal writing visibilities,
+alias scope, creation), one updater per traversal (several per session,
+claiming disjoint times, for the slices of a split) writing visibilities,
 flag set/clear changes and weights for the batches the session delivered,
 the broadcast-weight rule below (Pro R1), data-group aliases accepted
 explicitly (a group the session creates included), one binding per
@@ -998,7 +1015,7 @@ when its acceptance obligation is met.
 | Revisit and compute-window requirements as request fields | A new traversal per pass; windows are views | Binding states what depends on an estimated pass count; a revisit does not imply cached values |
 | Updates | The write-back trial's update sessions (section 7) | Section 7's remaining obligations: bit flags and flag categories, conflicting queued patches, structural writes (a new MSv4 data group), per-batch MSv2 planning, a killed process, stray temporary files and the synchronization cost at scale |
 | MSv2 creation from batches; general creation and loss policy | The MSv4 writer (one dataset or a processing set of many), and the converter's MSv2 creator: padded cells flagged NaN rows, or no row by declared policy (the occupancy row above), losses inventoried and refused unless accepted before anything is written, `SIGMA` derived from the weights as an accepted loss | Cells in time order become rows, padded cells flagged NaN rows; cross-format creation preflights metadata, flag and occupancy mappings and rejects unapproved loss |
-| Mixed read/update sessions and locking | One update session per store in a process, one updater per session, read-only opens beside them; casacore's lock per MSv2 updater | Plan read and write access before locking, no implicit upgrade; original-input semantics need disjoint read and write regions after resolving aliases, or a proven read-before-write order; casacore cross-process locks stay authoritative for v2; the v4 profile reports that it has no cross-process lock protocol |
+| Mixed read/update sessions and locking | One update session per store in a process, its updaters claiming disjoint times (whole chunk rows on MSv4), read-only opens beside them; casacore's lock per MSv2 batch written | Plan read and write access before locking, no implicit upgrade; original-input semantics need disjoint read and write regions after resolving aliases, or a proven read-before-write order; casacore cross-process locks stay authoritative for v2; the v4 profile reports that it has no cross-process lock protocol |
 | Calibration binding across stores | Section 2's persisted namespace and calibration binding, in the calibration trial (test code until the calibration port): a batch solve persisted through an MSv2's namespace is production `gaincal`'s table; one solved on an MSv4 lacking an antenna, rebound to the full MSv2 that numbers its antennas otherwise and applied from batches, equals production `gaincal` and `applycal`, and CASA's `applycal` reads the MSv4-namespace table as casa-rs does; reordered antennas and windows, renamed entities, subsets, equal content refused unless the namespace is the table's own or the association is stated (trial README, "Caltable round trip") | The binding in production, with `gainfield` and nearest-field selection through bound fields; bandpass and other per-channel tables, whose windows keep their channels; tables solved over combined windows; `FEED` and receptor association; a field binding tolerant of ephemeris fields |
 | Ephemeris, pointing and time-dependent metadata | Ephemeris is not a partition key; pointing not read | Queried in bounded windows; ephemeris keys partitions as XRADIO's converter does |
 | Baseline-dependent polarization (`polarization_mixed`) | Refused at opening | A checked per-baseline basis mapping in the common metadata |

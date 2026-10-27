@@ -10,7 +10,7 @@ use crate::catalogue::{Catalogue, PartitionId};
 use crate::creation::TimeBaselineGrid;
 use crate::grouping::{GroupKey, ReadEvent};
 use crate::pool::{BufferPool, FilledBatch};
-use crate::request::{AccessRequest, Estimate, IoCounters, PartitionEstimate};
+use crate::request::{AccessRequest, Estimate, Grouping, IoCounters, PartitionEstimate};
 
 /// An opened observation, whatever stores it.
 ///
@@ -60,6 +60,26 @@ pub trait Observation: Sync {
     /// more than one integration interval.
     fn grid(&self, id: PartitionId, data_group: &str)
     -> Result<TimeBaselineGrid, ObservationError>;
+
+    /// The scientific group of each of partition `id`'s grid times under
+    /// `grouping`, as data group `data_group` places them (its fields),
+    /// keyed as a traversal keys them (over the whole grid, whatever its
+    /// time selection), or `None` when `grouping` asks for no groups: from
+    /// the store's index, reading no payload. A
+    /// [`TimeSplit`](crate::TimeSplit) counts the groups its cuts divide
+    /// from these.
+    ///
+    /// # Errors
+    ///
+    /// When the observation has no such partition or data group, or
+    /// `grouping` cannot key its times (by scan, when the store names none;
+    /// by a time bin that is not positive).
+    fn group_keys(
+        &self,
+        id: PartitionId,
+        data_group: &str,
+        grouping: Grouping,
+    ) -> Result<Option<Vec<GroupKey>>, ObservationError>;
 }
 
 /// A bound traversal of one partition of an [`Observation`].

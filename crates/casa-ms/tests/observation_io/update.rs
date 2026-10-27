@@ -448,10 +448,11 @@ fn msv4_padding_stays_flagged() {
 }
 
 /// One update session per store in a process, and one live updater per
-/// session, binding each variable once; read-only observations open beside
-/// them.
+/// time of each variable, binding each variable once; read-only
+/// observations open beside them. Updaters over disjoint times live at
+/// once (`split::live_updaters_claim_disjoint_times`).
 #[test]
-fn one_update_session_per_store_and_one_updater_per_session() {
+fn one_update_session_per_store_and_one_updater_per_time() {
     let root = tempfile::tempdir().expect("root");
     for name in ["ms_trial.ms", "ms_trial.ps.zarr"] {
         let path = fixture(root.path(), name);
@@ -473,10 +474,13 @@ fn one_update_session_per_store_and_one_updater_per_session() {
             "one variable bound twice"
         );
         let first = session.updater(&one, &[0]).expect("one updater");
-        assert!(matches!(
-            session.updater(&one, &[0]),
-            Err(ObservationError::Conflict { .. })
-        ));
+        assert!(
+            matches!(
+                session.updater(&one, &[0]),
+                Err(ObservationError::Conflict { .. })
+            ),
+            "a second updater over the same times"
+        );
         drop(first);
         drop(
             session

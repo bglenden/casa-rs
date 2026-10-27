@@ -16,10 +16,10 @@ use std::path::Path;
 use std::sync::Arc;
 
 use casa_observation::{
-    AccessRequest, BoundCursor, Catalogue, DataGroupEntry, Estimate, NaturalBlocks, Observation,
-    ObservationError, ObservationId, PartitionEntry, PartitionEstimate, PartitionId,
-    ResolvedRequest, Roles, TimeBaselineGrid, Traversal, WeightRequest, WeightRule, WeightSource,
-    times_per_batch,
+    AccessRequest, BoundCursor, Catalogue, DataGroupEntry, Estimate, GroupKey, Grouping,
+    NaturalBlocks, Observation, ObservationError, ObservationId, PartitionEntry, PartitionEstimate,
+    PartitionId, ResolvedRequest, Roles, TimeBaselineGrid, Traversal, WeightRequest, WeightRule,
+    WeightSource, times_per_batch,
 };
 use casa_tables::{RequiredScalarColumnDestination, RequiredScalarColumnValuesMut};
 use casa_types::measures::{EpochRef, MjdHighPrec};
@@ -512,6 +512,28 @@ impl Observation for Msv2Observation {
         data_group: &str,
     ) -> Result<TimeBaselineGrid, ObservationError> {
         Msv2Observation::grid(self, id, data_group)
+    }
+
+    fn group_keys(
+        &self,
+        id: PartitionId,
+        data_group: &str,
+        grouping: Grouping,
+    ) -> Result<Option<Vec<GroupKey>>, ObservationError> {
+        let (partition, entry) = self.partition(id)?;
+        if entry.data_group(data_group).is_none() {
+            return Err(ObservationError::InvalidRequest {
+                reason: format!("{id:?} has no data group {data_group}"),
+            });
+        }
+        let grid = &partition.grid;
+        super::grouping::group_keys(
+            id,
+            grouping,
+            &grid.times_s,
+            &grid.field_per_time,
+            Some(&grid.scan_per_time),
+        )
     }
 }
 

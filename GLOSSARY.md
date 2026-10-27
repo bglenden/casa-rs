@@ -193,8 +193,16 @@ half-open range of epochs, stated in the partitions' own time origin and
 scale so that selecting a time rounds nothing. Group keys stay those of the
 whole grid; a group the selection cuts is delivered as its part, marked
 clipped, and closed within the traversal. Workers that split a partition by
-time each take a selection aligned to the store's natural time blocks.
+time plan a Time Split.
 _Avoid_: Time slice (informally fine), row range, time window
+
+**Time Split**:
+A request's times cut into consecutive slices that tile them, planned
+together so that the slices' traversals share one completion: a scientific
+group the cuts divide becomes ready once, after every slice's part of it
+and the work on each. Slices aligned to the store's natural time blocks
+decode no unit twice and, on MSv4, write back at once.
+_Avoid_: Partitioning (which divides a store, not a traversal), sharding
 
 **Weight Request**:
 What a traversal's weight role holds: the stored weights, or the weights
@@ -237,8 +245,9 @@ _Avoid_: Layout, memory order
 **Update Session**:
 One owner of a store that reads it and writes declared targets back: it
 holds the process's write intent on the store, lends the observation for
-reading and one updater at a time for writing, and resolves each target's
-variable and the data groups sharing it before any payload is written.
+reading and updaters for writing (several at once, each claiming disjoint
+times), and resolves each target's variable and the data groups sharing it
+before any payload is written.
 _Avoid_: Writer (which creates a new store), read-write handle
 
 **Patch**:

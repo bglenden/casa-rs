@@ -13,7 +13,9 @@
 //!
 //! **Trial status.** This is the write-back trial (`docs/measurement-set/
 //! trial/README.md`, "Write-back"): one updater per traversal, written batch
-//! for batch in delivery order, boolean flags only.
+//! for batch in delivery order, boolean flags only; the slices of a
+//! [`TimeSplit`](crate::TimeSplit) each have their own updater, live at
+//! once.
 
 use ndarray::{ArrayView3, Axis};
 use num_complex::Complex32;

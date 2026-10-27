@@ -104,6 +104,7 @@ mod cursor;
 mod grouping;
 mod pool;
 mod request;
+mod split;
 mod update;
 
 pub use batch::{DataGroupView, SampleCoordinate, SampleTiming, Shared, Validity, VisibilityBatch};
@@ -126,6 +127,7 @@ pub use request::{
     IoCounters, NaturalBlocks, PartitionEstimate, ResolvedRequest, Roles, SigmaFallback, TimeRange,
     TimeSelection, WeightRequest, WeightRule, WeightSource, inverse_sigma_squared, times_per_batch,
 };
+pub use split::{SliceCompletion, SplitCompletion, TimeSplit};
 pub use update::{
     AliasScope, PatchValues, ResolvedTarget, UpdateGuarantees, UpdateReport, UpdateTarget, Updater,
     WeightChannels, WritableRole, check_values, uniform_over_channels,
@@ -187,7 +189,8 @@ pub enum ObservationError {
         reason: String,
     },
     /// Another session in this process already holds what this one needs:
-    /// write intent on the store, or the session's one live updater.
+    /// write intent on the store, or times a live updater of the session
+    /// claims.
     /// Nothing was opened or written.
     #[error("conflict: {reason}")]
     Conflict {

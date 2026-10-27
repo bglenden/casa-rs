@@ -741,8 +741,9 @@ flag change writes (Fable).
 - `open_update(path, options, targets)` takes this process's write intent
   on the store, opens it once, and resolves the declared `UpdateTarget`s
   (data group, role, alias scope, create) before any payload. The session
-  lends the observation for reading and one `Updater` at a time for
-  writing, bound to a traversal and some targets.
+  lends the observation for reading and `Updater`s for writing, each bound
+  to a traversal and some targets; live updaters claim disjoint times of
+  each variable (time selection, "Updaters of a split").
 - `Updater::write(batch, values)` takes one `PatchValues` per bound target
   for a batch the session delivered: visibilities, a flag change (set and
   clear masks; elements neither names keep their stored flag), or weights
@@ -767,7 +768,7 @@ flag change writes (Fable).
 | `clearing_every_msv4_flag_erases_chunks_and_finishes` | Clearing every flag makes each `FLAG` chunk equal to the fill value, which zarrs erases rather than stores, an absent chunk included; the update finishes (its directories synchronized) and reads back unflagged. |
 | `an_msv4_batch_of_other_channels_is_refused_whole` | A batch whose channels are not the updater's traversal's is refused before any target takes it, so nothing of it is written. |
 | `a_session_reads_what_its_updaters_wrote` | A second traversal of the session's observation delivers what its first updater wrote, in both stores. |
-| `one_update_session_per_store_and_one_updater_per_session` | A second update session on a store, or a second live updater of a session, is a `Conflict`; one variable bound twice to an updater is refused (whichever wrote last would win); read-only observations open beside them. MSv2 states casacore's cross-process lock; MSv4 states atomic units and no cross-process lock. |
+| `one_update_session_per_store_and_one_updater_per_time` | A second update session on a store, or a second live updater of a session over the same times, is a `Conflict`; one variable bound twice to an updater is refused (whichever wrote last would win); read-only observations open beside them. MSv2 states casacore's cross-process lock; MSv4 states atomic units and no cross-process lock. |
 | `an_msv2_updater_takes_its_batches_in_order` | The MSv2 updater plans its rows up front: a batch after a skipped one is refused, and finishing with rows unwritten fails. |
 | `a_failed_replacement_leaves_each_chunk_old_or_new` | Pro R3: a replacement failing after its temporary file is written (as a killed process leaves it) publishes nothing of that chunk: times 0..5 read new, 5..12 old, the temporary file stays unread beside the old chunk. |
 | `a_failed_first_write_leaves_an_absent_chunk_absent` | `FLAG`'s chunk `c/2/0/0/0` is absent (equal to the fill value); its failed first write leaves it absent, reading as the fill value, and the four chunks before it replaced. |
@@ -1208,10 +1209,19 @@ writes over the selection, and the MSv4 one already addressed times by value.
 
 Groups keep the keys they have over the whole grid. A traversal delivers
 and closes the part of each group its selection holds and marks a group the
-selection cuts (`GroupFragment::clipped`), so a consumer merges only those
-parts across its slices. Joining the parts through one completion shared by
-the slices, as #910 first proposed, was not done: slice 2's closing fragment
-could make the group ready before slice 1's work on it had begun.
+selection cuts (`GroupFragment::clipped`). Workers that split a request plan
+the slices together: `TimeSplit::plan` takes consecutive cuts, checks that
+the slices tile the request in every partition, and counts from the store's
+group keys (`Observation::group_keys`) the groups more than one slice holds.
+The slices share one completion (`SplitCompletion`, a `SliceCompletion`
+handle per slice), which makes a divided group ready once, after every slice
+has closed its part and all the work begun on it has finished, whatever
+order the slices run in. #910 first proposed a shared completion that
+counted closings only, so slice 2's closing fragment could make the group
+ready before slice 1's work on it had begun; the owner chose the shared
+completion as the cleaner interface for application programmers, and it
+counts parts as well as work. `clipped` stays for a traversal of one range
+on its own.
 
 | Law | What it shows |
 | --- | --- |
@@ -1223,9 +1233,14 @@ could make the group ready before slice 1's work on it had begun.
 | `a_sliced_write_back_passes_partitions_the_range_leaves_empty` | The fixture relabelled as three scans and partitioned by them: a range over the first two leaves the third empty, listed between them or first; the MSv2 updater passes it and the two partitions write back (independent review B1). |
 | `an_updater_of_a_slice_refuses_times_outside_it` | On both stores an updater bound to a slice refuses a batch from before it. |
 | `an_updater_refuses_a_partition_before_the_last_is_written` | The MSv2 updater refuses a later partition's batch while an earlier partition's selected times are unwritten. |
+| `a_time_split_finalizes_each_group_once_after_all_its_parts` | On both stores, grouped by time bins and by scan, cut several ways, the slices run on a thread each and in reverse order: each of the whole traversal's groups becomes ready exactly once, with all its samples, and the split names as divided the groups more than one slice holds. |
+| `a_time_split_must_tile_the_request` | Cuts with a gap or an overlap, starting after the request's first time, ending before its last, or missing are refused before anything is read. |
+| `a_split_writes_back_its_slices_at_once` | On both stores the slices of a split write back at once, an updater each on its own thread, and leave the store as one updater over the whole traversal does. |
+| `live_updaters_claim_disjoint_times` | Live updaters of one session claim disjoint times of each variable: any cut on MSv2, whole chunk rows on MSv4; a slice sharing times or an MSv4 chunk row with a live updater is a `Conflict` until that updater is gone. |
 
-Unit laws: `a_time_range_selects_the_grid_times_it_holds` and
-`ranges_of_grid_indices_select_those_times` (casa-observation), and
+Unit laws: `a_time_range_selects_the_grid_times_it_holds`,
+`ranges_of_grid_indices_select_those_times` and the split's own
+(casa-observation), and
 `a_selection_closes_the_parts_it_holds_and_marks_cut_groups` (the shared
 group index). For an MSv2 a decode unit is a row, so the decode law there
 says each row is read once, not that a tile is; for an MSv4 it counts
@@ -1264,9 +1279,17 @@ nine chunks run 2.4–2.8 times faster with four or eight workers. The
 one-worker pass with zarrs' hidden pool took 1.75 s (finding 2); four
 workers on slices now take 0.81 s, every codec on a worker's own thread.
 
-**Not done:** several updaters of one session at once (each slice's writes
-from its own updater); slices of a partition read concurrently by one
-cursor.
+**Updaters of a split.** Each slice writes back through its own updater,
+live at once. An updater claims the (partition, variable, times) it writes
+when it is made and releases them when dropped; one that overlaps a live
+claim is a `Conflict`. An MSv4 updater claims whole chunk rows, since it
+replaces whole chunk objects, so its slices are cut at chunk rows. The MSv2
+updater writes each batch in a short write session of its own, serialized
+by the session's writer, instead of holding one for its life; on `pilot.ms`
+(Mac mini, release, update pass, two runs) that took 23.40 and 24.33 s
+against 24.20 and 23.77 s before, RSS 386–390 MB either way.
+
+**Not done:** slices of a partition read concurrently by one cursor.
 
 ## Weights from sigmas: the solve weight role
 

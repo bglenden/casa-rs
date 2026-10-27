@@ -363,12 +363,18 @@ impl TimeRange {
     }
 }
 
+impl TimeRange {
+    /// Whether `other` counts its epochs from the same origin on the same
+    /// scale, so the two compare offset for offset.
+    #[must_use]
+    pub fn same_frame(&self, other: &Self) -> bool {
+        self.scale == other.scale && same_origin(self.origin, other.origin)
+    }
+}
+
 impl PartialEq for TimeRange {
     fn eq(&self, other: &Self) -> bool {
-        self.scale == other.scale
-            && same_origin(self.origin, other.origin)
-            && self.start_s == other.start_s
-            && self.end_s == other.end_s
+        self.same_frame(other) && self.start_s == other.start_s && self.end_s == other.end_s
     }
 }
 
@@ -450,7 +456,8 @@ pub struct AccessRequest {
     /// The grid times to deliver: every time, or those within one range
     /// of epochs, in each partition. Scientific groups keep the keys they
     /// have over the whole grid; a group the range cuts is delivered as the
-    /// part it holds ([`GroupFragment::clipped`]).
+    /// part it holds ([`GroupFragment::clipped`]). Workers that split a
+    /// request by time plan the slices together ([`TimeSplit`](crate::TimeSplit)).
     pub times: TimeSelection,
     /// The correlation products to deliver and whose flags they carry.
     pub correlations: CorrelationRequest,

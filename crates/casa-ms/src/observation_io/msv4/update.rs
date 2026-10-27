@@ -27,7 +27,7 @@ use super::metadata::storage;
 use super::store::ReplacingStore;
 use super::window::Window;
 use crate::observation_io::OpenOptions;
-use crate::observation_io::update::{Busy, request_error};
+use crate::observation_io::update::{Claim, Unit, request_error};
 
 /// An MSv4 opened for update: the observation it reads and the store its
 /// updaters replace chunks through.
@@ -55,7 +55,7 @@ struct Partition {
 
 struct Msv4Updater<'s> {
     update: &'s Msv4Update,
-    _busy: Busy<'s>,
+    _claim: Claim<'s>,
     roles: Vec<WritableRole>,
     partitions: Vec<Partition>,
     /// The partition whose windows hold values.
@@ -89,12 +89,14 @@ impl Msv4Update {
         &self.store
     }
 
-    /// Open the windows of `targets` in each partition `request` reads.
+    /// Open the windows of `targets` in each partition `request` reads,
+    /// and claim the chunk rows of times they may replace: the selected
+    /// times widened to whole chunk rows of each variable.
     pub(in crate::observation_io) fn updater<'s>(
         &'s self,
         request: &AccessRequest,
         targets: &[&ResolvedTarget],
-        busy: Busy<'s>,
+        claim: impl FnOnce(Vec<Unit>) -> Result<Claim<'s>, ObservationError>,
     ) -> Result<Box<dyn Updater + 's>, ObservationError> {
         let estimate = self.observation.estimate(request)?;
         let mut partitions = Vec::with_capacity(request.partitions.len());
@@ -145,9 +147,24 @@ impl Msv4Update {
                 targets: windows,
             });
         }
+        let units = partitions
+            .iter()
+            .flat_map(|partition| {
+                partition
+                    .targets
+                    .iter()
+                    .zip(targets)
+                    .map(|(window, target)| Unit {
+                        partition: partition.id,
+                        variable: target.variable.clone(),
+                        times: window.chunk_rows(partition.selected.clone()),
+                    })
+            })
+            .collect();
+        let claim = claim(units)?;
         Ok(Box::new(Msv4Updater {
             update: self,
-            _busy: busy,
+            _claim: claim,
             roles: targets.iter().map(|target| target.target.role).collect(),
             partitions,
             open: None,
@@ -166,6 +183,17 @@ impl Msv4Update {
             counters.replaced.load(Ordering::Relaxed),
             counters.erased.load(Ordering::Relaxed),
         ]
+    }
+}
+
+impl Target {
+    /// The grid times `times` widened to whole chunk rows of the variable.
+    fn chunk_rows(&self, times: Range<usize>) -> Range<usize> {
+        match self {
+            Self::Visibilities(window) => window.chunk_rows(times),
+            Self::Flags(window) => window.chunk_rows(times),
+            Self::Weights(window) => window.chunk_rows(times),
+        }
     }
 }
 

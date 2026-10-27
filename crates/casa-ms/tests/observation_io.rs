@@ -11,6 +11,8 @@ mod convert;
 mod namespace;
 #[path = "observation_io/refusals.rs"]
 mod refusals;
+#[path = "observation_io/split.rs"]
+mod split;
 #[path = "observation_io/times.rs"]
 mod times;
 #[path = "observation_io/update.rs"]
