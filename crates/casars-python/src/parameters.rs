@@ -370,7 +370,7 @@ pub(crate) fn provider_invocation(
 pub(crate) fn parameter_catalog(py: Python<'_>) -> PyResult<Bound<'_, PyAny>> {
     let catalog = builtin_surface_catalog()
         .map_err(|error| reason_error(py, parameter_error("load parameter catalog", error)))?;
-    to_python(py, &CatalogEnvelopeView::new(&catalog))
+    to_python(py, &CatalogEnvelopeView::new(catalog))
 }
 
 /// One self-contained surface definition and the concepts it references.

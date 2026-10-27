@@ -30,7 +30,7 @@ fn defaults(surface_id: &str) -> SnapshotView {
 
 #[test]
 fn the_catalog_view_projects_every_task_surface() {
-    let catalog = CatalogEnvelopeView::new(&builtin_surface_catalog().expect("catalog"));
+    let catalog = CatalogEnvelopeView::new(builtin_surface_catalog().expect("catalog"));
     let json = serde_json::to_value(&catalog).expect("serialize");
     assert_eq!(json["surfaces"].as_array().expect("surfaces").len(), 27);
     let imstat = BundleView::from(&parameter_bundle("imstat").expect("imstat bundle"));
