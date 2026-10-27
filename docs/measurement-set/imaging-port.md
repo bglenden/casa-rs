@@ -125,6 +125,21 @@ Measures as the plan requires, with no translation layer left behind.
 per-row geometry to 1e-12 relative, sample for sample. Only summation order
 may differ.
 
+*As landed in step 3b* (#932): `casa_imaging_model::GeometryPlan` compiles
+once from the problem and the catalogue and evaluates each batch; the shared
+arithmetic (casacore's `UVWMachine`, the prepared frequency conversion and
+the position angle in `casa-types`; `GridFtProjection`, the pointing law and
+the AW pointing groups in `casa-imaging-model`) moved out of `casa-ms`, whose
+route now calls it. `casa_imaging_application::geometry_law` runs both
+routes for one request and compares every row; the T1 fixture checks it
+after every T1 run and two T1 laws add `usepointing` (AW over two windows,
+the mosaic gridder). On all 27 T1 runs, the 51 T1.5 cases that run on the
+Mac mini (the four native-AW variants need the EVLA surface from
+`~/.casa/data`), the two `mawproject` cases with `usepointing` and CAS-7841,
+5.6 M rows in all, every quantity is bit-identical: projections, pointing,
+parallactic angles, AW pointing pixels, aperture classes and output-frame
+frequencies. Receipts: NAS `casa-rs/issue-932/step3b/`.
+
 ### 2.2.1 What geometry needs from the boundary
 
 Added 2026-10-27, when step 3 began. Section 2.2 assumed that the catalogue
@@ -168,12 +183,30 @@ Two consequences:
   converter reports `INTERVAL`, `TARGET`, `NAME` and `TRACKING` as a table
   loss. Today's covering rule is casa-rs's, not casacore's (#948); step 3b
   settles which the batch route keeps.
+  *Measured in step 3b* (the batch geometry of an MSv2 against its MSv4
+  conversion, `geometry_law::compare_stores`): on ALMA CAS-7841, whose
+  `POINTING` is sampled every 48 ms, imaged with the mosaic gridder and
+  `usepointing`, the MSv4 route's pointing differs from the MSv2's by at
+  most 1.4e-10 rad (0.03 mas) and its UVW and phase shift by under 1e-15
+  relative; on the EVLA `mawproject` pair under AW projection with
+  `usepointing`, not at all. The native AW workloads need the EVLA surface
+  from `~/.casa/data`, which the Mac mini lacks. The batch route keeps
+  today's covering rule (the boundary's bracket, #948 open).
 - **AW pointing epochs.** Today's epochs follow MAIN order, which interleaves
   windows; batches are partition-major. Refresh decisions carry state across
   consecutive epochs, so the order can change which epochs refresh. CASA's
   imager iterates by field, then window, then time. Step 3b instruments both
   orders against CASA before choosing, and the equality law runs on the
   native AW workloads.
+  *As landed in step 3b*: the batch route carries the refresh state in
+  delivery order, partition by partition and each in time order
+  (`GeometryTraversal`). On every workload measured (T1's two-window AW with
+  `usepointing`, the EVLA `mawproject` pair with `usepointing`) its pixels
+  equal today's MAIN-order plan bit for bit. Both casa-rs orders refresh at
+  every field change; CASA's field-major order does not, so a multi-field AW
+  mosaic with `usepointing` can group differently from CASA on either route.
+  No acceptance workload images AW with `usepointing` over several fields
+  (native-aw-evla runs without it); instrumenting CASA's epochs is #957.
 
 ### 2.3 Selection
 

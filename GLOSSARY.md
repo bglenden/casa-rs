@@ -173,6 +173,15 @@ at or before it and the first at or after it. Imaging's pointing law chooses
 among them (covering, nearest, interpolation, hold or refusal).
 _Avoid_: Pointing lookup, nearest pointing
 
+**Batch Geometry**:
+What imaging needs of each row sample of a batch, evaluated from the
+catalogue and the batch rather than per MAIN row: per chart the reprojected
+UVW and phase shift, the antennas' pointing, parallactic angles and aperture
+classes, the AW pointing pixel, and per time the output-frame frequencies.
+A Geometry Plan (`casa_imaging_model::GeometryPlan`) compiles it once per
+problem and observation; each quantity is computed as often as it changes.
+_Avoid_: Row geometry (today's per-MAIN-row evaluation in `casa-ms`)
+
 **Sample**:
 One (time, baseline) point of a partition's time × baseline grid: an MSv4
 `[time, baseline]` cell, or an MSv2 row placed on that grid. Payload arrays are
