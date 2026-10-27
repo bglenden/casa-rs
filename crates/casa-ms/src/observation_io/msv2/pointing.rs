@@ -9,10 +9,13 @@ use casa_observation::{ObservationError, PointingDirection, PointingRequest, Poi
 use casa_types::measures::direction::DirectionRef;
 
 use super::{Msv2Observation, storage};
+use crate::selected_pointing::SCALAR_SCAN_BYTES_PER_ROW;
 use crate::{MsError, PointingDirectionColumn, PointingReadPlan, SelectedPointingQueryDomain};
 
-/// Rows of `POINTING` scanned per block while reading.
-const SCAN_ROWS: usize = 1024;
+/// The most rows of `POINTING` scanned per block while reading. Each block
+/// re-reads the storage manager's index, so blocks are as large as a
+/// quarter of the request's budget allows, up to this.
+const SCAN_ROWS: usize = 1 << 16;
 
 /// The polynomial terms a `POINTING` row may have (`NUM_POLY` + 1): the
 /// bound the production imaging source plans with.
@@ -52,7 +55,8 @@ impl Msv2Observation {
             PointingDirection::Beam => PointingDirectionColumn::Direction,
             PointingDirection::Target => PointingDirectionColumn::Target,
         };
-        let plan = PointingReadPlan::new(SCAN_ROWS, POLYNOMIAL_TERMS, request.budget_bytes.max(1))
+        let scan_rows = (request.budget_bytes / 4 / SCALAR_SCAN_BYTES_PER_ROW).clamp(1, SCAN_ROWS);
+        let plan = PointingReadPlan::new(scan_rows, POLYNOMIAL_TERMS, request.budget_bytes.max(1))
             .map_err(storage)?;
         self.ms
             .prepare_selected_pointing_catalog(

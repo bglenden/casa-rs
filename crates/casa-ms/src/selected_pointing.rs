@@ -260,7 +260,8 @@ struct CatalogRow {
     source_ref: DirectionRef,
 }
 
-const SCALAR_SCAN_BYTES_PER_ROW: usize = size_of::<usize>() + 5 * size_of::<Option<ScalarValue>>();
+pub(crate) const SCALAR_SCAN_BYTES_PER_ROW: usize =
+    size_of::<usize>() + 5 * size_of::<Option<ScalarValue>>();
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct SelectedPointingCatalogMeasurements {

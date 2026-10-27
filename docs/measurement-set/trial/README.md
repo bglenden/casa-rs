@@ -1416,6 +1416,19 @@ written (`convert/pointing_plan.rs`):
   a counted loss.
 - A partition's pointing beyond the batch budget refuses the conversion.
 
+**Cost, measured** (Mac mini, `ms_trial_convert to-msv4`, casatestdata's
+ALMA `CAS-7841.ms`: 12 partitions, 193,050 samples, `POINTING` of 1,830,984
+rows with a per-row `PHASE_DIR` frame, which the converter refused before
+step 3a): 18.5 s and 234 MB peak RSS, against 13.3 s and 121 MB for the same
+MS with `POINTING` emptied. The plan's scan of `POINTING` takes under 0.25 s;
+the rest is one read per partition through today's reader. In blocks of
+1,024 rows those reads took 141 s, nearly all re-parsing StandardStMan's
+index per block (#949), so the adapter now scans in blocks as large as a
+quarter of its budget allows, up to 65,536 rows. 1,580,654 of the rows lie
+beyond every partition's times and each antenna's nearest either side, and
+are reported lost, as XRADIO's converter takes only rows within each
+dataset's times.
+
 A converted store therefore has no covering sample, and imaging's law
 chooses between the samples either side; step 3b measures what that
 changes. Field ephemerides are not carried yet; the converter still refuses
