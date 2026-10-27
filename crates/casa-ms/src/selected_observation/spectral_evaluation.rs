@@ -607,8 +607,8 @@ pub(super) fn prepare_row_frequency_conversion(
     source_frame: FrequencyFrame,
     output_frame: FrequencyFrame,
 ) -> Result<PreparedFrequencyConversion, BoundObservationSourceError> {
-    let source_ref = frequency_ref(source_frame);
-    let output_ref = frequency_ref(output_frame);
+    let source_ref = source_frame.frequency_ref();
+    let output_ref = output_frame.frequency_ref();
     if source_ref == output_ref {
         return prepare_frequency_conversion(source_ref, output_ref, None, None)
             .map_err(BoundObservationSourceError::from);
@@ -638,15 +638,6 @@ pub(super) fn prepare_row_frequency_conversion(
         Some(target_frame),
     )
     .map_err(BoundObservationSourceError::from)
-}
-
-const fn frequency_ref(frame: FrequencyFrame) -> FrequencyRef {
-    match frame {
-        FrequencyFrame::Rest => FrequencyRef::REST,
-        FrequencyFrame::Topocentric => FrequencyRef::TOPO,
-        FrequencyFrame::Barycentric => FrequencyRef::BARY,
-        FrequencyFrame::Lsrk => FrequencyRef::LSRK,
-    }
 }
 
 #[cfg(test)]

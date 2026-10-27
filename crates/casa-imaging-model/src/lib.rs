@@ -5,6 +5,7 @@
 mod aw_pointing;
 mod batch_geometry;
 mod compiled_problem;
+mod frame_refs;
 mod geometry;
 mod measurement_equation;
 mod model_state;

@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! The position angle of one direction seen from another.
+//! The position angle of one direction seen from another, and the
+//! parallactic angle.
 
-use super::direction::MDirection;
+use super::MeasFrame;
+use super::direction::{DirectionRef, MDirection};
+use super::error::MeasureError;
 
 impl MDirection {
     /// The position angle of `target` seen from `self`, in radians: from
@@ -22,5 +25,25 @@ impl MDirection {
         let x = origin_lat.cos() * target_lat.sin()
             - origin_lat.sin() * target_lat.cos() * delta_lon.cos();
         y.atan2(x)
+    }
+}
+
+impl MDirection {
+    /// The parallactic angle of this direction for the observer `frame`
+    /// places (its epoch and position), in radians: the position angle of
+    /// the celestial pole seen from the direction, both in the observer's
+    /// `AZEL`.
+    ///
+    /// Cf. C++ `MSCalEngine::getPA`.
+    ///
+    /// # Errors
+    ///
+    /// When a conversion to `AZEL` fails (the frame lacks its epoch or
+    /// position).
+    pub fn parallactic_angle(&self, frame: &MeasFrame) -> Result<f64, MeasureError> {
+        let source = self.convert_to(DirectionRef::AZEL, frame)?;
+        let pole = Self::from_angles(0.0, std::f64::consts::FRAC_PI_2, DirectionRef::HADEC)
+            .convert_to(DirectionRef::AZEL, frame)?;
+        Ok(source.position_angle(&pole))
     }
 }

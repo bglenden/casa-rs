@@ -177,14 +177,14 @@ impl MsCalEngine {
             let pos = ant.position(row)?;
             antenna_positions.push(MPosition::new_itrf(pos[0], pos[1], pos[2]));
             let mount = ant.mount(row)?;
-            antenna_mount_alt_az.push(mount.to_ascii_lowercase().starts_with("alt-az"));
+            antenna_mount_alt_az.push(casa_observation::alt_az_mount(&mount));
         }
 
         let observatory_position =
             resolve_observatory_position(ms, &antenna_positions, measures.as_ref());
         let antenna_response_classes = casa_alma_aca_response_classes(ms)?;
         let antenna_response_family_envelope =
-            casa_alma_aca_family_envelope(&antenna_response_classes);
+            AntennaResponseClass::family_envelope(&antenna_response_classes);
         let field = ms.field()?;
         let n_field = field.row_count();
         let mut field_directions = Vec::with_capacity(n_field);
@@ -250,19 +250,14 @@ impl MsCalEngine {
             antenna_positions.push(MPosition::new_itrf(position[0], position[1], position[2]));
             drop(position);
             let mount = selected_string_value(antenna.table(), row, "MOUNT")?;
-            antenna_mount_alt_az.push(
-                mount
-                    .as_bytes()
-                    .get(.."alt-az".len())
-                    .is_some_and(|prefix| prefix.eq_ignore_ascii_case(b"alt-az")),
-            );
+            antenna_mount_alt_az.push(casa_observation::alt_az_mount(&mount));
         }
 
         let observatory_position =
             resolve_observatory_position_selected(ms, &antenna_positions, measures.as_ref());
         let antenna_response_classes = casa_alma_aca_response_classes(ms)?;
         let antenna_response_family_envelope =
-            casa_alma_aca_family_envelope(&antenna_response_classes);
+            AntennaResponseClass::family_envelope(&antenna_response_classes);
         let field = ms.field()?;
         let mut field_directions = Vec::with_capacity(field.row_count());
         let mut field_phase_offsets = Vec::with_capacity(field.row_count());
@@ -693,13 +688,7 @@ impl MsCalEngine {
             return Ok(0.0);
         }
         let frame = self.make_frame(time_mjd_sec, antenna_id)?;
-        let source_azel = self
-            .field_dir(field_id)?
-            .convert_to(DirectionRef::AZEL, &frame)?;
-        let pole_azel =
-            MDirection::from_angles(0.0, std::f64::consts::FRAC_PI_2, DirectionRef::HADEC)
-                .convert_to(DirectionRef::AZEL, &frame)?;
-        let value = source_azel.position_angle(&pole_azel);
+        let value = self.field_dir(field_id)?.parallactic_angle(&frame)?;
         store_geometry_value(&self.parallactic_angle_cache, key, value);
         Ok(value)
     }
@@ -726,13 +715,7 @@ impl MsCalEngine {
     ) -> MsResult<f64> {
         let frame =
             self.make_frame_with_position(time_mjd_sec, self.observatory_position.clone())?;
-        let source_azel = self
-            .field_dir(field_id)?
-            .convert_to(DirectionRef::AZEL, &frame)?;
-        let pole_azel =
-            MDirection::from_angles(0.0, std::f64::consts::FRAC_PI_2, DirectionRef::HADEC)
-                .convert_to(DirectionRef::AZEL, &frame)?;
-        Ok(source_azel.position_angle(&pole_azel))
+        Ok(self.field_dir(field_id)?.parallactic_angle(&frame)?)
     }
 
     /// Compute azimuth and elevation (radians) for a given time, field, and antenna.
@@ -1134,30 +1117,11 @@ fn casa_alma_aca_response_classes(
     }
     (0..antenna.row_count())
         .map(|row| {
-            selected_f64_value(antenna.table(), row, "DISH_DIAMETER").map(|diameter| {
-                if (diameter - 12.0).abs() < 0.5 {
-                    Some(AntennaResponseClass::CasaAlma12m)
-                } else if (diameter - 7.0).abs() < 1.0 {
-                    Some(AntennaResponseClass::CasaAca7m)
-                } else {
-                    None
-                }
-            })
+            selected_f64_value(antenna.table(), row, "DISH_DIAMETER")
+                .map(AntennaResponseClass::casa_alma_aca)
         })
         .collect::<MsResult<Vec<_>>>()
         .map(Vec::into_boxed_slice)
-}
-
-fn casa_alma_aca_family_envelope(
-    classes: &[Option<AntennaResponseClass>],
-) -> Option<AntennaResponseClass> {
-    if classes.contains(&Some(AntennaResponseClass::CasaAlma12m)) {
-        Some(AntennaResponseClass::CasaAlma12m)
-    } else if classes.contains(&Some(AntennaResponseClass::CasaAca7m)) {
-        Some(AntennaResponseClass::CasaAca7m)
-    } else {
-        None
-    }
 }
 
 fn uvw_rotation_matrix(

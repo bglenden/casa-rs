@@ -77,13 +77,3 @@ pub(super) fn reprojection(
         GridFtProjection::between_directions(&source, &target)
     })
 }
-
-/// The `casa-types` frame of an imaging direction frame.
-pub(super) const fn direction_ref(frame: DirectionFrame) -> DirectionRef {
-    match frame {
-        DirectionFrame::Icrs => DirectionRef::ICRS,
-        DirectionFrame::J2000 => DirectionRef::J2000,
-        DirectionFrame::B1950 => DirectionRef::B1950,
-        DirectionFrame::Galactic => DirectionRef::GALACTIC,
-    }
-}

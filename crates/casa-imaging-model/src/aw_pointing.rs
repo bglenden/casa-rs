@@ -10,13 +10,10 @@ use std::sync::Arc;
 use casa_coordinates::{
     Coordinate, DirectionCoordinate, Projection as CoordinateProjection, ProjectionType,
 };
-use casa_types::measures::direction::DirectionRef;
 use ndarray::arr2;
 
 use crate::compiled_problem::CompiledProblem;
-use crate::geometry::{
-    DirectionCoordinateSpec, DirectionFrame, PointingCentreLaw, Projection, SkyDirection,
-};
+use crate::geometry::{DirectionCoordinateSpec, PointingCentreLaw, Projection, SkyDirection};
 
 /// Why AW pointing pixels cannot be formed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
@@ -134,14 +131,8 @@ fn chart(spec: DirectionCoordinateSpec) -> Result<DirectionCoordinate, AwPointin
         return Err(AwPointingError::UnsupportedProjection);
     }
     let reference = spec.reference_direction();
-    let frame = match reference.frame() {
-        DirectionFrame::Icrs => DirectionRef::ICRS,
-        DirectionFrame::J2000 => DirectionRef::J2000,
-        DirectionFrame::B1950 => DirectionRef::B1950,
-        DirectionFrame::Galactic => DirectionRef::GALACTIC,
-    };
     Ok(DirectionCoordinate::new(
-        frame,
+        reference.frame().direction_ref(),
         CoordinateProjection::new(ProjectionType::SIN),
         [reference.longitude_rad(), reference.latitude_rad()],
         spec.increment_rad(),

@@ -483,8 +483,9 @@ fn assert_geometry_law(name: &str, request: &ImagingRequest) {
     eprintln!("{name}: geometry law {comparison:?}");
     assert!(comparison.rows > 0, "{name}: no rows to compare");
     assert_eq!(comparison.unmatched, 0, "{name}: {comparison:?}");
+    assert_eq!(comparison.duplicates, 0, "{name}: {comparison:?}");
     assert!(
-        comparison.largest() <= 1.0e-12,
+        comparison.holds(),
         "{name}: batch geometry departs from today's: {comparison:?}"
     );
 }

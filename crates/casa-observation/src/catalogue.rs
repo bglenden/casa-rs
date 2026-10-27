@@ -101,6 +101,26 @@ pub struct AntennaEntry {
     pub dish_diameter: Quantity,
 }
 
+impl AntennaEntry {
+    /// Whether the antenna has an alt-az mount ([`alt_az_mount`]).
+    #[must_use]
+    pub fn alt_az(&self) -> bool {
+        alt_az_mount(&self.mount)
+    }
+}
+
+/// Whether the mount type `mount` is alt-az: it starts with `alt-az`,
+/// whatever the case (MSv2 `ANTENNA::MOUNT` holds `ALT-AZ`, `alt-az` or
+/// `ALT-AZ+ROTATOR`). Only an alt-az mount turns the sky by the parallactic
+/// angle.
+#[must_use]
+pub fn alt_az_mount(mount: &str) -> bool {
+    mount
+        .as_bytes()
+        .get(.."alt-az".len())
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case(b"alt-az"))
+}
+
 /// An antenna's receptors in one partition's spectral window: MSv2 `FEED`
 /// rows of the window (or of every window) and the partition's feed, MSv4
 /// the dataset's `antenna_xds`.

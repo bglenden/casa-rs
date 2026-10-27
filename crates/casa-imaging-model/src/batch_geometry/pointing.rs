@@ -2,7 +2,7 @@
 //! The antennas' pointing directions of a time's rows, and the AW pointing
 //! pixels of its epoch.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use casa_observation::{AntennaId, FieldId, PointingCandidate, PointingSeries, VisibilityBatch};
 use casa_types::measures::{EpochRef, MjdHighPrec};
@@ -30,9 +30,22 @@ pub(super) struct TimeContext<'a, 'b> {
 
 impl TimeContext<'_, '_> {
     /// The time's row samples.
-    fn row_samples(&self) -> impl Iterator<Item = usize> + '_ {
+    pub(super) fn row_samples(&self) -> impl Iterator<Item = usize> + '_ {
         let per_time = self.batch.samples_per_time();
         (self.time * per_time..(self.time + 1) * per_time).filter(|sample| self.rows[*sample])
+    }
+
+    /// The antennas of the time's rows, in order.
+    pub(super) fn row_antennas(&self) -> Vec<AntennaId> {
+        let per_time = self.batch.samples_per_time();
+        let antennas: BTreeSet<AntennaId> = self
+            .row_samples()
+            .flat_map(|sample| {
+                let baseline = self.batch.baselines[sample % per_time];
+                [baseline.antenna1, baseline.antenna2]
+            })
+            .collect();
+        antennas.into_iter().collect()
     }
 
     /// The time on the partition's time system.
@@ -45,6 +58,22 @@ impl TimeContext<'_, '_> {
     }
 }
 
+/// The antennas' pointing directions at one time, each resolved once: at
+/// the visibility time (for the rows and the AW epoch alike) and at each
+/// sample's time centroid.
+#[derive(Default)]
+pub(super) struct TimeDirections {
+    visibility: BTreeMap<AntennaId, SkyDirection>,
+    centroid: HashMap<(AntennaId, u64), SkyDirection>,
+}
+
+impl TimeDirections {
+    pub(super) fn clear(&mut self) {
+        self.visibility.clear();
+        self.centroid.clear();
+    }
+}
+
 impl GeometryPlan {
     /// The pointing directions of the time's rows under the plan's centre
     /// law.
@@ -52,6 +81,7 @@ impl GeometryPlan {
         &self,
         context: &TimeContext<'_, '_>,
         series: Option<&PointingSeries>,
+        directions: &mut TimeDirections,
         out: &mut BatchGeometry,
     ) -> Result<(), BatchGeometryError> {
         let both = |direction| SelectedPointingDirections {
@@ -60,69 +90,59 @@ impl GeometryPlan {
         };
         let law = match &self.pointing {
             PointingCentreLaw::PhaseTrackingCentre => {
-                return fill(context, out, both(context.phase));
+                fill(context, out, both(context.phase));
+                return Ok(());
             }
-            PointingCentreLaw::FieldCentre => return fill(context, out, both(context.observation)),
-            PointingCentreLaw::Fixed(direction) => return fill(context, out, both(*direction)),
+            PointingCentreLaw::FieldCentre => {
+                fill(context, out, both(context.observation));
+                return Ok(());
+            }
+            PointingCentreLaw::Fixed(direction) => {
+                fill(context, out, both(*direction));
+                return Ok(());
+            }
             PointingCentreLaw::Observation(law) => *law,
         };
         let series = series.ok_or(BatchGeometryError::MissingInput("pointing samples"))?;
         let batch = context.batch;
         let per_time = batch.samples_per_time();
-        match law.time_sampling() {
-            PointingTimeSampling::VisibilityTime => {
-                let mut known = BTreeMap::new();
-                for sample in context.row_samples() {
-                    let baseline = batch.baselines[sample % per_time];
-                    let mut direction = |antenna| -> Result<SkyDirection, BatchGeometryError> {
-                        if let Some(direction) = known.get(&antenna) {
-                            return Ok(*direction);
-                        }
-                        let direction = self.antenna_direction(
-                            series,
-                            law,
-                            antenna,
-                            [context.partition_time_s(), context.time_mjd_s],
-                            context.scale(),
-                            context.phase,
-                        )?;
-                        known.insert(antenna, direction);
-                        Ok(direction)
-                    };
-                    out.pointing[sample] = SelectedPointingDirections {
-                        antenna1: direction(baseline.antenna1)?,
-                        antenna2: direction(baseline.antenna2)?,
-                    };
-                }
-            }
-            PointingTimeSampling::VisibilityTimeCentroid => {
-                let centroid = batch
+        let centroid = match law.time_sampling() {
+            PointingTimeSampling::VisibilityTime => None,
+            PointingTimeSampling::VisibilityTimeCentroid => Some(
+                batch
                     .timing
                     .centroid
-                    .ok_or(BatchGeometryError::MissingInput("time centroids"))?;
-                let mjd_origin = MjdHighPrec::new(0.0, 0.0);
-                for sample in context.row_samples() {
-                    let baseline = batch.baselines[sample % per_time];
-                    let times = [
-                        centroid.offsets_s()[sample],
-                        centroid.seconds_since(sample, mjd_origin),
-                    ];
-                    let direction = |antenna| {
-                        self.antenna_direction(
-                            series,
-                            law,
-                            antenna,
-                            times,
-                            context.scale(),
-                            context.phase,
-                        )
-                    };
-                    out.pointing[sample] = SelectedPointingDirections {
-                        antenna1: direction(baseline.antenna1)?,
-                        antenna2: direction(baseline.antenna2)?,
-                    };
+                    .ok_or(BatchGeometryError::MissingInput("time centroids"))?,
+            ),
+        };
+        let mjd_origin = MjdHighPrec::new(0.0, 0.0);
+        for sample in context.row_samples() {
+            let baseline = batch.baselines[sample % per_time];
+            let mut direction = |antenna| match centroid {
+                None => self.visibility_direction(context, series, law, antenna, directions),
+                Some(centroid) => {
+                    let time_s = centroid.offsets_s()[sample];
+                    if let Some(known) = directions.centroid.get(&(antenna, time_s.to_bits())) {
+                        return Ok(*known);
+                    }
+                    let direction = self.antenna_direction(
+                        series,
+                        law,
+                        antenna,
+                        [time_s, centroid.seconds_since(sample, mjd_origin)],
+                        context.scale(),
+                        context.phase,
+                    )?;
+                    directions
+                        .centroid
+                        .insert((antenna, time_s.to_bits()), direction);
+                    Ok(direction)
                 }
-            }
+            };
+            out.pointing[sample] = SelectedPointingDirections {
+                antenna1: direction(baseline.antenna1)?,
+                antenna2: direction(baseline.antenna2)?,
+            };
         }
         Ok(())
     }
@@ -134,6 +154,7 @@ impl GeometryPlan {
         context: &TimeContext<'_, '_>,
         series: &PointingSeries,
         grouping: &AwPointingGrouping,
+        directions: &mut TimeDirections,
         epochs: &mut AwPointingEpochs<AntennaId>,
         out: &mut BatchGeometry,
     ) -> Result<(), BatchGeometryError> {
@@ -142,36 +163,23 @@ impl GeometryPlan {
                 "an observation pointing law",
             ));
         };
-        let batch = context.batch;
-        let per_time = batch.samples_per_time();
-        let mut antennas = BTreeSet::new();
-        let mut row_count = 0;
-        for sample in context.row_samples() {
-            let baseline = batch.baselines[sample % per_time];
-            antennas.extend([baseline.antenna1, baseline.antenna2]);
-            row_count += 1;
-        }
+        let row_count = context.row_samples().count();
         if row_count == 0 {
             return Ok(());
         }
-        let directions = antennas
+        let resolved = context
+            .row_antennas()
             .into_iter()
             .map(|antenna| {
-                self.antenna_direction(
-                    series,
-                    law,
-                    antenna,
-                    [context.partition_time_s(), context.time_mjd_s],
-                    context.scale(),
-                    context.phase,
-                )
-                .map(|direction| (antenna, direction))
+                self.visibility_direction(context, series, law, antenna, directions)
+                    .map(|direction| (antenna, direction))
             })
             .collect::<Result<BTreeMap<_, _>, BatchGeometryError>>()?;
-        let pixels = grouping.pixels(&directions)?;
+        let pixels = grouping.pixels(&resolved)?;
         let grouped = epochs.next(grouping, context.field.0, row_count, &pixels)?;
+        let per_time = context.batch.samples_per_time();
         for sample in context.row_samples() {
-            let baseline = batch.baselines[sample % per_time];
+            let baseline = context.batch.baselines[sample % per_time];
             for (chart, pixels) in grouped.iter().enumerate() {
                 let [first, second] =
                     [baseline.antenna1, baseline.antenna2].map(|antenna| pixels[&antenna]);
@@ -180,6 +188,30 @@ impl GeometryPlan {
             }
         }
         Ok(())
+    }
+
+    /// `antenna`'s direction at the visibility time, resolved once a time.
+    fn visibility_direction(
+        &self,
+        context: &TimeContext<'_, '_>,
+        series: &PointingSeries,
+        law: ObservationPointingLaw,
+        antenna: AntennaId,
+        directions: &mut TimeDirections,
+    ) -> Result<SkyDirection, BatchGeometryError> {
+        if let Some(known) = directions.visibility.get(&antenna) {
+            return Ok(*known);
+        }
+        let direction = self.antenna_direction(
+            series,
+            law,
+            antenna,
+            [context.partition_time_s(), context.time_mjd_s],
+            context.scale(),
+            context.phase,
+        )?;
+        directions.visibility.insert(antenna, direction);
+        Ok(direction)
     }
 
     /// `antenna`'s direction under `law` at `times` (on the partition's
@@ -230,9 +262,8 @@ fn fill(
     context: &TimeContext<'_, '_>,
     out: &mut BatchGeometry,
     directions: SelectedPointingDirections,
-) -> Result<(), BatchGeometryError> {
+) {
     for sample in context.row_samples() {
         out.pointing[sample] = directions;
     }
-    Ok(())
 }

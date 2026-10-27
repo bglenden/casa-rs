@@ -90,7 +90,7 @@ pub(super) fn evaluate_row_geometry(
         let anchor_j2000 = source.geometry_engine.direction_angles_j2000(
             stored.time_mjd_seconds(),
             [anchor.longitude_rad(), anchor.latitude_rad()],
-            direction_ref(anchor.frame()),
+            anchor.frame().direction_ref(),
         )?;
         Some([
             phase_direction.longitude_rad() - anchor_j2000[0],
@@ -217,7 +217,7 @@ fn evaluate_phase_centre_projection(
             request.target_direction.longitude_rad(),
             request.target_direction.latitude_rad(),
         ],
-        direction_ref(request.target_direction.frame()),
+        request.target_direction.frame().direction_ref(),
     )?;
     if let Some([longitude, latitude]) = request.moving_direction_shift {
         target_angles[0] += longitude;
@@ -267,15 +267,6 @@ fn evaluate_phase_centre_projection(
     };
     SelectedPhaseCentreProjection::new(transformed_uvw_m, phase_shift_m)
         .ok_or(BoundObservationSourceError::InvalidRowGeometry)
-}
-
-const fn direction_ref(frame: DirectionFrame) -> DirectionRef {
-    match frame {
-        DirectionFrame::Icrs => DirectionRef::ICRS,
-        DirectionFrame::J2000 => DirectionRef::J2000,
-        DirectionFrame::B1950 => DirectionRef::B1950,
-        DirectionFrame::Galactic => DirectionRef::GALACTIC,
-    }
 }
 
 pub(super) fn evaluate_observation_pointings(

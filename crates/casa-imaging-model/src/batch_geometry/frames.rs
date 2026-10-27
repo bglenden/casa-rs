@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! The reference frames batch geometry converts in: the observatory and
 //! each antenna at a time, the fields' J2000 directions, and the
-//! parallactic angle.
+//! parallactic angles.
 
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::mem::size_of;
+use std::sync::{Arc, Mutex};
 
 use casa_observation::{AntennaId, Catalogue, FieldId};
 use casa_types::measures::direction::{DirectionRef, MDirection};
@@ -23,10 +24,14 @@ pub(super) struct Frames {
     antennas: Vec<Antenna>,
     /// Each field's phase centre in J2000.
     fields: Vec<MDirection>,
-    /// Parallactic angles by (time bits, field, antenna): an antenna's
-    /// angle at a time is the same in every partition.
-    parallactic: RwLock<HashMap<(u64, FieldId, AntennaId), f64>>,
+    /// Each antenna's parallactic angle by (time bits, field), NaN where
+    /// not yet computed: an antenna's angle at a time is the same in every
+    /// partition, and the batches visit the partitions one after another.
+    parallactic: Mutex<ParallacticAngles>,
 }
+
+/// Every antenna's parallactic angle by (time bits, field).
+type ParallacticAngles = HashMap<(u64, FieldId), Box<[f64]>>;
 
 struct Antenna {
     position: MPosition,
@@ -37,8 +42,10 @@ struct Antenna {
 impl Frames {
     /// The frames of `catalogue`: the observatory named by its first
     /// observation's telescope ([`MPosition::casa_observatory`], else the
-    /// first antenna's position), and its fields' phase centres in J2000, a centre in
-    /// another frame converted at its reference epoch from the observatory.
+    /// first antenna's position), and its fields' phase centres in J2000.
+    /// A centre in another frame is converted from the observatory at its
+    /// reference epoch, or with no epoch where the field states none (an
+    /// MSv4 field: ICRS or another frame whose tie to J2000 is fixed).
     pub(super) fn new(
         catalogue: &Catalogue,
         measures: Arc<dyn MeasuresProvider>,
@@ -50,13 +57,9 @@ impl Frames {
             .map(|antenna| {
                 Ok(Antenna {
                     position: antenna.position.clone(),
-                    alt_az: antenna
-                        .mount
-                        .as_bytes()
-                        .get(.."alt-az".len())
-                        .is_some_and(|prefix| prefix.eq_ignore_ascii_case(b"alt-az")),
+                    alt_az: antenna.alt_az(),
                     dish_diameter_m: antenna.dish_diameter.get_value_in(&metres).map_err(|_| {
-                        BatchGeometryError::Catalogue("a dish diameter is not a length")
+                        BatchGeometryError::Catalogue("states a dish diameter that is not a length")
                     })?,
                 })
             })
@@ -76,14 +79,11 @@ impl Frames {
                 if field.phase_centre.refer() == DirectionRef::J2000 {
                     return Ok(field.phase_centre.clone());
                 }
-                let epoch = field
-                    .reference_epoch
-                    .clone()
-                    .ok_or(BatchGeometryError::Catalogue(
-                        "a field outside J2000 states no reference epoch",
-                    ))?;
-                let frame = MeasFrame::new()
-                    .with_epoch(epoch)
+                let mut frame = MeasFrame::new();
+                if let Some(epoch) = field.reference_epoch.clone() {
+                    frame = frame.with_epoch(epoch);
+                }
+                let frame = frame
                     .with_position(observatory.clone())
                     .with_measures(Arc::clone(&measures));
                 Ok(field.phase_centre.convert_to(DirectionRef::J2000, &frame)?)
@@ -94,7 +94,7 @@ impl Frames {
             observatory,
             antennas,
             fields,
-            parallactic: RwLock::new(HashMap::new()),
+            parallactic: Mutex::new(HashMap::new()),
         })
     }
 
@@ -145,51 +145,67 @@ impl Frames {
         Ok(MDirection::from_source_name(name, &frame)?.convert_to(DirectionRef::J2000, &frame)?)
     }
 
-    /// The parallactic angle of `field` at `antenna` and `time_mjd_s` (zero
-    /// for a mount that is not alt-az): the position angle of the celestial
-    /// pole seen from the field, both in the antenna's `AZEL`.
-    ///
-    /// Cf. C++ `MSCalEngine::getPA`.
-    pub(super) fn parallactic_angle(
+    /// The parallactic angles of `field` at `time_mjd_s` for every antenna,
+    /// computed for `antennas` (zero for a mount that is not alt-az; NaN
+    /// for an antenna no batch has asked for at this time):
+    /// [`MDirection::parallactic_angle`] in each antenna's frame. The cache
+    /// is consulted once a time, not once a sample.
+    pub(super) fn parallactic_angles(
         &self,
         time_mjd_s: f64,
         scale: EpochRef,
         field: FieldId,
-        antenna: AntennaId,
-    ) -> Result<f64, BatchGeometryError> {
-        let key = (time_mjd_s.to_bits(), field, antenna);
-        if let Some(angle) = self
+        antennas: &[AntennaId],
+    ) -> Result<Box<[f64]>, BatchGeometryError> {
+        let key = (time_mjd_s.to_bits(), field);
+        let mut angles = self
             .parallactic
-            .read()
+            .lock()
             .expect("parallactic angle cache poisoned")
             .get(&key)
-        {
-            return Ok(*angle);
+            .cloned()
+            .unwrap_or_else(|| vec![f64::NAN; self.antennas.len()].into_boxed_slice());
+        let mut computed = false;
+        for antenna in antennas {
+            let slot = antenna.0 as usize;
+            if !angles[slot].is_nan() {
+                continue;
+            }
+            let site = &self.antennas[slot];
+            angles[slot] = if site.alt_az {
+                let frame = MeasFrame::new()
+                    .with_epoch(MEpoch::from_mjd_seconds(time_mjd_s, scale))
+                    .with_position(site.position.clone())
+                    .with_measures(Arc::clone(&self.measures));
+                self.field(field).parallactic_angle(&frame)?
+            } else {
+                0.0
+            };
+            computed = true;
         }
-        let site = &self.antennas[antenna.0 as usize];
-        let angle = if site.alt_az {
-            let frame = MeasFrame::new()
-                .with_epoch(MEpoch::from_mjd_seconds(time_mjd_s, scale))
-                .with_position(site.position.clone())
-                .with_measures(Arc::clone(&self.measures));
-            let source = self.field(field).convert_to(DirectionRef::AZEL, &frame)?;
-            let pole =
-                MDirection::from_angles(0.0, std::f64::consts::FRAC_PI_2, DirectionRef::HADEC)
-                    .convert_to(DirectionRef::AZEL, &frame)?;
-            source.position_angle(&pole)
-        } else {
-            0.0
-        };
-        self.parallactic
-            .write()
-            .expect("parallactic angle cache poisoned")
-            .insert(key, angle);
-        Ok(angle)
+        if computed {
+            self.parallactic
+                .lock()
+                .expect("parallactic angle cache poisoned")
+                .insert(key, angles.clone());
+        }
+        Ok(angles)
     }
 
-    /// CASA's aperture class of each antenna, when every observation is an
-    /// ALMA or ACA one: 12 m dishes within 0.5 m, 7 m dishes within 1 m;
-    /// `None` for another dish or another telescope.
+    /// The bytes the parallactic angles computed so far hold: one angle an
+    /// antenna for each (time, field) a batch has asked for.
+    pub(super) fn parallactic_bytes(&self) -> usize {
+        let entries = self
+            .parallactic
+            .lock()
+            .expect("parallactic angle cache poisoned")
+            .len();
+        entries * (size_of::<(u64, FieldId)>() + self.antennas.len() * size_of::<f64>())
+    }
+
+    /// CASA's aperture class of each antenna
+    /// ([`AntennaResponseClass::casa_alma_aca`]) when every observation is
+    /// an ALMA or ACA one; `None` throughout for another telescope.
     pub(super) fn alma_aca_classes(
         &self,
         catalogue: &Catalogue,
@@ -202,13 +218,8 @@ impl Frames {
         self.antennas
             .iter()
             .map(|antenna| {
-                let diameter = antenna.dish_diameter_m;
-                if !alma {
-                    None
-                } else if (diameter - 12.0).abs() < 0.5 {
-                    Some(AntennaResponseClass::CasaAlma12m)
-                } else if (diameter - 7.0).abs() < 1.0 {
-                    Some(AntennaResponseClass::CasaAca7m)
+                if alma {
+                    AntennaResponseClass::casa_alma_aca(antenna.dish_diameter_m)
                 } else {
                     None
                 }

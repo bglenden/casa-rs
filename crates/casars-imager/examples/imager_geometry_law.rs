@@ -81,12 +81,12 @@ fn geometry_law(args: &[OsString]) -> Result<bool, String> {
         summary: None,
     };
     let comparison = compare_geometry(&request, &context).map_err(|error| error.to_string())?;
-    let holds = comparison.rows > 0 && comparison.unmatched == 0 && comparison.largest() <= 1.0e-12;
     let receipt = json!({
         "law": "imaging port step 3b: batch geometry equals the selected rows' to 1e-12",
-        "holds": holds,
+        "holds": comparison.holds(),
         "rows": comparison.rows,
         "unmatched": comparison.unmatched,
+        "duplicates": comparison.duplicates,
         "largest": comparison.largest(),
         "differences": comparison
             .differences
@@ -112,6 +112,7 @@ fn geometry_law(args: &[OsString]) -> Result<bool, String> {
             "converted": std::path::Path::new(&converted).display().to_string(),
             "rows": stores.rows,
             "unmatched": stores.unmatched,
+            "duplicates": stores.duplicates,
             "largest": stores.largest(),
             "differences": stores
                 .differences
@@ -128,5 +129,5 @@ fn geometry_law(args: &[OsString]) -> Result<bool, String> {
         std::fs::write(&path, text).map_err(|error| error.to_string())?;
         eprintln!("geometry stores: {receipt}");
     }
-    Ok(holds)
+    Ok(comparison.holds())
 }
