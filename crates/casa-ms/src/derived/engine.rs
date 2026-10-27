@@ -1505,13 +1505,7 @@ fn resolve_observatory_position_selected(
                 selected_string_value(observation.table(), row, "TELESCOPE_NAME").ok()
             })
         })
-        .and_then(|name| {
-            known_observatory_position(&name).or_else(|| {
-                MPosition::from_observatory_name(&name, measures)
-                    .ok()
-                    .flatten()
-            })
-        })
+        .and_then(|name| MPosition::casa_observatory(&name, measures))
         .or_else(|| antenna_positions.first().cloned())
         .unwrap_or_else(|| MPosition::new_itrf(0.0, 0.0, 0.0))
 }
@@ -1630,28 +1624,9 @@ fn resolve_observatory_position(
             (0..observation.row_count())
                 .find_map(|row| observation.string(row, "TELESCOPE_NAME").ok())
         })
-        .and_then(|name| {
-            known_observatory_position(&name).or_else(|| {
-                MPosition::from_observatory_name(&name, measures)
-                    .ok()
-                    .flatten()
-            })
-        })
+        .and_then(|name| MPosition::casa_observatory(&name, measures))
         .or_else(|| antenna_positions.first().cloned())
         .unwrap_or_else(|| MPosition::new_itrf(0.0, 0.0, 0.0))
-}
-
-fn known_observatory_position(name: &str) -> Option<MPosition> {
-    // Some casacore geodetic tables predate the EVLA row even though current
-    // CASA resolves that telescope name. Preserve the current CASA
-    // MeasTable::Observatory("EVLA") ITRF position as a bounded fallback.
-    name.trim().eq_ignore_ascii_case("EVLA").then(|| {
-        MPosition::new_itrf(
-            -1_601_156.673_287_362,
-            -5_041_988.986_065_895,
-            3_554_879.236_820_509_7,
-        )
-    })
 }
 
 fn resolve_field_phase_direction_j2000_with_observatory(
@@ -1817,12 +1792,13 @@ mod tests {
 
     #[test]
     fn evla_observatory_fallback_matches_current_casa_position() {
-        let position = known_observatory_position(" EVLA ").expect("known EVLA position");
+        let measures = casa_test_support::deterministic_measures_provider();
+        let position =
+            MPosition::casa_observatory(" EVLA ", measures.as_ref()).expect("known EVLA position");
         let (longitude_rad, latitude_rad, radius_m) = position.as_spherical();
         assert!((longitude_rad - -1.878_288_434_411_257_6).abs() < 1.0e-15);
         assert!((latitude_rad - 0.591_675_343_072_337_6).abs() < 1.0e-15);
         assert!((radius_m - 6_373_580.000_000_001).abs() < 1.0e-6);
-        assert!(known_observatory_position("VLA").is_none());
     }
 
     fn add_vla_antenna(ms: &mut MeasurementSet) {

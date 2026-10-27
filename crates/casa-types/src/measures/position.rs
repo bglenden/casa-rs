@@ -158,6 +158,21 @@ impl MPosition {
         }))
     }
 
+    /// The position CASA gives the observatory `name`: casacore's own
+    /// `MeasTable::Observatory` position for `EVLA`, which some geodetic
+    /// tables predate, else the provider's observatory table's; `None`
+    /// when neither knows the name.
+    pub fn casa_observatory(name: &str, provider: &dyn MeasuresProvider) -> Option<Self> {
+        if name.trim().eq_ignore_ascii_case("EVLA") {
+            return Some(Self::new_itrf(
+                -1_601_156.673_287_362,
+                -5_041_988.986_065_895,
+                3_554_879.236_820_509_7,
+            ));
+        }
+        Self::from_observatory_name(name, provider).ok().flatten()
+    }
+
     /// Returns the raw coordinate triplet.
     pub fn values(&self) -> [f64; 3] {
         self.values

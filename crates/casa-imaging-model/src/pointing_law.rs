@@ -144,3 +144,126 @@ fn unit(direction: [f64; 2]) -> [f64; 3] {
         direction[1].sin(),
     ]
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{PointingLawError, PointingSample, PointingSamples};
+    use crate::geometry::{
+        DirectionFrame, MissingPointingPolicy, ObservationPointingLaw, PointingDirectionColumn,
+        PointingDirectionSemantic, PointingExtrapolation, PointingInterpolation,
+        PointingTimeSampling, SkyDirection,
+    };
+
+    fn law(
+        interpolation: PointingInterpolation,
+        extrapolation: PointingExtrapolation,
+        missing: MissingPointingPolicy,
+    ) -> ObservationPointingLaw {
+        ObservationPointingLaw::new(
+            PointingDirectionColumn::Direction,
+            PointingDirectionSemantic::AntennaBoresight,
+            PointingTimeSampling::VisibilityTime,
+            interpolation,
+            extrapolation,
+            missing,
+        )
+    }
+
+    fn sample(sample: usize, time_s: f64, ra: f64) -> Option<PointingSample> {
+        Some(PointingSample {
+            sample,
+            time_s,
+            direction_rad: [ra, 0.0],
+        })
+    }
+
+    const FALLBACK: SkyDirection = SkyDirection::new(DirectionFrame::J2000, 3.0, 0.5);
+
+    /// A covering sample wins; otherwise the bracketing pair gives the
+    /// nearest (the earlier on a tie) or the great-circle interpolation.
+    #[test]
+    fn covering_then_bracketing_samples_give_the_direction() {
+        let nearest = law(
+            PointingInterpolation::Nearest,
+            PointingExtrapolation::Reject,
+            MissingPointingPolicy::Reject,
+        );
+        let around = PointingSamples {
+            covering: None,
+            before: sample(0, 10.0, 0.1),
+            after: sample(1, 20.0, 0.3),
+        };
+        let covered = PointingSamples {
+            covering: sample(2, 14.0, 0.7),
+            ..around
+        };
+        assert_eq!(
+            nearest
+                .resolve(covered, 15.0, FALLBACK)
+                .unwrap()
+                .longitude_rad(),
+            0.7
+        );
+        assert_eq!(
+            nearest
+                .resolve(around, 15.0, FALLBACK)
+                .unwrap()
+                .longitude_rad(),
+            0.1
+        );
+        assert_eq!(
+            nearest
+                .resolve(around, 16.0, FALLBACK)
+                .unwrap()
+                .longitude_rad(),
+            0.3
+        );
+        let arc = law(
+            PointingInterpolation::GreatCircleShortestArc,
+            PointingExtrapolation::Reject,
+            MissingPointingPolicy::Reject,
+        );
+        let middle = arc.resolve(around, 15.0, FALLBACK).unwrap();
+        assert!((middle.longitude_rad() - 0.2).abs() < 1e-15);
+        assert!(middle.latitude_rad().abs() < 1e-15);
+    }
+
+    /// Beyond the samples the law holds the nearest or refuses; without
+    /// samples it falls back to the phase-tracking centre or refuses.
+    #[test]
+    fn endpoints_and_missing_samples_follow_the_law() {
+        let after_only = PointingSamples {
+            after: sample(0, 20.0, 0.3),
+            ..PointingSamples::default()
+        };
+        let hold = law(
+            PointingInterpolation::Nearest,
+            PointingExtrapolation::HoldNearest,
+            MissingPointingPolicy::UsePhaseTrackingCentre,
+        );
+        assert_eq!(
+            hold.resolve(after_only, 5.0, FALLBACK)
+                .unwrap()
+                .longitude_rad(),
+            0.3
+        );
+        assert_eq!(
+            hold.resolve(PointingSamples::default(), 5.0, FALLBACK)
+                .unwrap(),
+            FALLBACK
+        );
+        let reject = law(
+            PointingInterpolation::Nearest,
+            PointingExtrapolation::Reject,
+            MissingPointingPolicy::Reject,
+        );
+        assert_eq!(
+            reject.resolve(after_only, 5.0, FALLBACK),
+            Err(PointingLawError::OutsideCoverage)
+        );
+        assert_eq!(
+            reject.resolve(PointingSamples::default(), 5.0, FALLBACK),
+            Err(PointingLawError::Missing)
+        );
+    }
+}

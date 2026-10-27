@@ -3,6 +3,7 @@
 //! Logical, backend-independent imaging problem compilation.
 
 mod aw_pointing;
+mod batch_geometry;
 mod compiled_problem;
 mod geometry;
 mod measurement_equation;
@@ -95,6 +96,9 @@ pub use transaction::{
 
 pub use aw_pointing::{
     AwChartPixels, AwPointingEpochs, AwPointingError, AwPointingGrouping, aw_grouped_pixels,
+};
+pub use batch_geometry::{
+    BatchGeometry, BatchGeometryError, ChartProjection, GeometryPlan, GeometryTraversal,
 };
 pub use pointing_law::{PointingLawError, PointingSample, PointingSamples};
 pub use uvw_projection::GridFtProjection;

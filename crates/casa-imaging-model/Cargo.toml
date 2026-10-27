@@ -13,6 +13,7 @@ workspace = true
 
 [dependencies]
 casa-coordinates = { path = "../casa-coordinates" }
+casa-observation = { path = "../casa-observation" }
 casa-types = { path = "../casa-types" }
 ndarray.workspace = true
 num-complex.workspace = true
