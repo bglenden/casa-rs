@@ -17,7 +17,7 @@ use super::antennas::Array;
 use super::pointings::Pointings;
 use super::schedule::{Calibrator, Schedule, Step, schedule};
 use super::sky::Sky;
-use super::{Run, SimobserveError, open_session, python};
+use super::{Run, SimobserveError, entry_exists, make_way, open_session, python};
 use crate::session::Simulator;
 use crate::simutil::direction::direction_measure;
 use crate::simutil::qa;
@@ -51,12 +51,15 @@ pub(super) fn observe(
     }
     let band = band_name(qa::value_in(&model.specrefval, "GHz")?);
     let schedule = schedule(run, pointings, calibrator.is_some())?;
-    if ms.exists() && !run.parameters.overwrite {
+    if entry_exists(&ms) && !run.parameters.overwrite {
         return Err(SimobserveError::raised(format!(
             "measurement set {} already exists and user does not wish to overwrite",
             ms.display()
         )));
     }
+    // A MeasurementSet of the project's own stays until the new one
+    // replaces it at `close`.
+    make_way(&ms)?;
     let mut sm = open_session(run, &ms);
     set_up(run, &mut sm, sky, array, &band)?;
     let integration_s = qa::value_in(&qa::read(&pointings.integration)?, "s")?;

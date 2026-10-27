@@ -56,6 +56,11 @@
 //! - **A project path.** CASA names the files `<project>.<cfg>` inside the
 //!   directory `<project>`, which nests a path inside itself; casa-rs names
 //!   them by the directory's last component.
+//! - **A link in the project.** CASA writes the pointing file through a
+//!   symbolic link in the project directory, replacing or creating the file
+//!   outside the project that it names, and fails on a link to a table it replaces
+//!   (`shutil.rmtree` refuses links). casa-rs replaces the link itself
+//!   (`make_way`) and counts a dangling link as an existing file.
 //!
 //! A predicted model under the primary beam holds one grid per field
 //! (the session's [`Simulator::predict`]), so a mosaic of many pointings
@@ -288,7 +293,7 @@ impl<'a> Run<'a> {
             return Ok(());
         }
         let ms = self.measurement_set();
-        if ms.exists() {
+        if entry_exists(&ms) {
             return Err(SimobserveError::raised(format!(
                 "{} exists but overwrite=F",
                 ms.display()
@@ -372,7 +377,31 @@ fn exists(path: &str) -> bool {
     !path.is_empty() && Path::new(path).exists()
 }
 
-/// `shutil.rmtree` or `os.remove` of `path` when it exists.
+/// Whether the project has an entry at `path`, a symbolic link counted as
+/// itself, dangling or not (`os.path.lexists`): what `overwrite=False`
+/// keeps.
+fn entry_exists(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok()
+}
+
+/// Make way for a file or table the task writes at `path` in the project.
+/// A symbolic link there is removed, the link itself and never what it
+/// points to, so the write makes a new entry in the project rather than
+/// replacing a file outside it: `overwrite` replaces the project's own
+/// files only (the owner's decision of 2026-10-26). A file or table of the
+/// project's own is left for the write to replace; [`remove`], which the
+/// copies use, never follows a link either.
+fn make_way(path: &Path) -> Result<(), SimobserveError> {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            std::fs::remove_file(path).map_err(SimobserveError::io(path))
+        }
+        _ => Ok(()),
+    }
+}
+
+/// `shutil.rmtree` or `os.remove` of `path` when it exists; a symbolic link
+/// is removed itself.
 fn remove(path: &Path) -> Result<(), SimobserveError> {
     let Ok(metadata) = std::fs::symlink_metadata(path) else {
         return Ok(());

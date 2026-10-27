@@ -11,7 +11,7 @@ use casa_types::ArrayValue;
 
 use super::antennas::Array;
 use super::sky::Sky;
-use super::{Run, SimobserveError, copy_tree, python, remove};
+use super::{Run, SimobserveError, copy_tree, make_way, python, remove};
 use crate::session::Simulator;
 use crate::simutil::receivers::noise_temperature;
 use crate::{AtmosphereSpec, LeakageSpec, NoiseSpec, TsysParameters};
@@ -54,6 +54,7 @@ fn leak(run: &mut Run<'_>) -> Result<PathBuf, SimobserveError> {
         remove(&fullpol)?;
         copy_tree(&ms, &fullpol)?;
         let table = run.file(".fullpol.cal");
+        make_way(&table)?;
         let mut sm = Simulator::open_from_ms(&fullpol, run.request.options.clone())?;
         sm.set_data(&[], &[], "")?;
         sm.set_leakage(&LeakageSpec {

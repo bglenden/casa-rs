@@ -10,7 +10,7 @@ use casa_components::ComponentList;
 use casa_types::quanta::Quantity;
 
 use super::antennas::Array;
-use super::{Run, SimobserveError, exists, python, remove};
+use super::{Run, SimobserveError, entry_exists, exists, make_way, python, remove};
 use crate::simutil::qa;
 use crate::simutil::skymodel::{
     ComponentModel, ModelOverrides, SkyModelError, flat_image, modify_model,
@@ -105,7 +105,7 @@ fn image_model(run: &mut Run<'_>, skymodel: &Path) -> Result<SkyInput, Simobserv
     } else {
         run.file(".skymodel")
     };
-    if newmodel.exists() {
+    if entry_exists(&newmodel) {
         if same_file(skymodel, &newmodel) {
             return Err(SimobserveError::raised(format!(
                 "skymodel {} is the model image simobserve writes; copy it elsewhere first",
@@ -148,6 +148,8 @@ fn image_model(run: &mut Run<'_>, skymodel: &Path) -> Result<SkyInput, Simobserv
     } else {
         let complist =
             Some(Path::new(&parameters.complist)).filter(|path| !path.as_os_str().is_empty());
+        make_way(&flat)?;
+        make_way(&flat_of(&newmodel))?;
         let written = flat_image(&newmodel, complist)?;
         if written != flat {
             remove(&flat)?;
@@ -173,6 +175,12 @@ fn image_model(run: &mut Run<'_>, skymodel: &Path) -> Result<SkyInput, Simobserv
             flat,
         },
     })
+}
+
+/// `<image>.flat`, the flat image `flatimage` and a component model write
+/// beside `image`.
+fn flat_of(image: &Path) -> PathBuf {
+    PathBuf::from(format!("{}.flat", image.display()))
 }
 
 /// Whether `a` and `b` are the same file.
@@ -242,7 +250,7 @@ pub(super) fn complete(
             let cell = qa::read(&format!("{}arcsec", python(array.resolution_arcsec / 20.)))?;
             model.cell = [cell.clone(), cell];
             let image = run.file(".compskymodel");
-            if image.exists() {
+            if entry_exists(&image) {
                 if !run.parameters.overwrite {
                     return Err(SimobserveError::raised(format!(
                         "{} exists and is inconsistent with required size={} and direction. \
@@ -253,6 +261,7 @@ pub(super) fn complete(
                 }
                 remove(&image)?;
             }
+            make_way(&flat_of(&image))?;
             let flat = components.write(&list, &model.cell, &image)?;
             run.wrote(&image);
             run.wrote(&flat);

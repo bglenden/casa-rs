@@ -8,7 +8,7 @@ use casa_types::quanta::Quantity;
 
 use super::antennas::Array;
 use super::sky::Sky;
-use super::{Run, SimobserveError, python, remove};
+use super::{Run, SimobserveError, entry_exists, make_way, python, remove};
 use crate::simutil::direction::{
     average_direction, is_direction, median_direction, split_direction,
 };
@@ -85,7 +85,7 @@ pub(super) fn prepare(
     };
     let overlap = overlaps(&pointings.pointings, sky, beam)?;
     if parameters.setpointings {
-        if ptgfile.exists() {
+        if entry_exists(&ptgfile) {
             if !parameters.overwrite {
                 return Err(SimobserveError::raised(format!(
                     "pointing file {} already exists and user does not want to overwrite",
@@ -223,7 +223,8 @@ fn map_size(mapsize: &[String], model: &[Quantity; 2]) -> Result<[Quantity; 2], 
 /// The pointings of `ptgfile` (with `$project` the stem), copied into the
 /// project as `<stem>.ptg.txt`, or read there; their times, or the
 /// integration time when none is positive; and the integration shortened to
-/// the shortest time.
+/// the shortest time. The copy replaces a link at `<stem>.ptg.txt`, not the
+/// file it points to, unless that is `ptgfile` itself, which is read.
 fn read_file(
     run: &Run<'_>,
     mut integration: String,
@@ -233,6 +234,7 @@ fn read_file(
     let project_file = run.file(".ptg.txt");
     let path = if !name.is_empty() && Path::new(&name).exists() {
         if !same_file(Path::new(&name), &project_file) {
+            make_way(&project_file)?;
             std::fs::copy(&name, &project_file).map_err(SimobserveError::io(Path::new(&name)))?;
         }
         project_file

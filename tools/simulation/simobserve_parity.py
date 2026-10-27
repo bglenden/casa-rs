@@ -249,15 +249,24 @@ def make_complist(t, spec: dict, where: str) -> None:
     cl.done()
 
 
+def casa_params(case: dict, out: str) -> dict:
+    """The case's parameters as CASA's run takes them: the inputs under
+    `OUT/inputs` and a `complist_from` list in `OUT/casa`, all absolute, so
+    they do not depend on the caller's working directory."""
+    params = absolute(case["params"], out)
+    if "complist_from" in case:
+        params["complist"] = os.path.join(out, "casa", case["complist_from"]["name"])
+    return params
+
+
 def run_casa(t, case: dict, out: str) -> str:
     from casatasks import simobserve
 
     work = os.path.join(out, "casa")
     os.makedirs(work, exist_ok=True)
-    params = absolute(case["params"], out)
+    params = casa_params(case, out)
     if "complist_from" in case:
         make_complist(t, case["complist_from"], work)
-        params["complist"] = os.path.join(work, case["complist_from"]["name"])
     cwd = os.getcwd()
     os.chdir(work)
     try:
@@ -349,7 +358,14 @@ def compare_images(t, casa: str, casars: str) -> list[str]:
     for key in ("refval", "refpix", "incr"):
         if len(a[key]) != len(b[key]) or not np.allclose(a[key], b[key], rtol=1e-12, atol=0):
             differences.append(f"{name}: {key} {list(a[key])} against {list(b[key])}")
-    if a["pixels"].shape == b["pixels"].shape:
+    # A NaN would make the largest difference NaN, which no bound fails.
+    finite = True
+    for side, record in (("CASA", a), ("casa-rs", b)):
+        nonfinite = int(np.count_nonzero(~np.isfinite(record["pixels"])))
+        if nonfinite:
+            differences.append(f"{name}: {side} has {nonfinite} pixels that are not finite")
+            finite = False
+    if finite and a["pixels"].shape == b["pixels"].shape:
         peak = float(np.abs(a["pixels"]).max())
         largest = float(np.abs(a["pixels"] - b["pixels"]).max())
         if largest > 1e-6 * peak:
@@ -388,12 +404,14 @@ def compare_components(t, casa: str, casars: str) -> list[str]:
     return differences
 
 
-def repredict(t, case: dict, project: str) -> None:
+def repredict(t, case: dict, project: str, out: str) -> None:
     """CASA's `.ms` predicted again over every field, from its model image
-    and its component lists merged into one: what `simobserve` meant."""
+    and its component lists merged into one: what `simobserve` meant. The
+    lists are the run's (`casa_params`), resolved against `OUT`."""
     sm, cl = t["sm"], t["cl"]
     ms = stem_of(project, ".ms")
-    lists = [path for path in (case["params"].get("complist"), stem_of(project, ".cal.cclist")) if path]
+    complist = casa_params(case, out).get("complist")
+    lists = [path for path in (complist, stem_of(project, ".cal.cclist")) if path]
     merged = None
     if lists:
         merged = os.path.join(project, "merged.cl")
@@ -560,7 +578,7 @@ def main() -> int:
                 casa = run_casa(t, case, out)
                 casa_s = time.perf_counter() - started
                 if case.get("repredict"):
-                    repredict(t, case, casa)
+                    repredict(t, case, casa, out)
             except Exception as error:  # noqa: BLE001 - CASA's task raises what it refuses
                 with open(error_file, "w", encoding="utf-8") as handle:
                     handle.write(str(error))

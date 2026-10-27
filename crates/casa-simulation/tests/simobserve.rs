@@ -191,16 +191,24 @@ fn a_component_list_alone_writes_casas_products() {
     }
 }
 
+/// Whether `path` is a symbolic link.
+fn is_link(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_symlink())
+}
+
+/// A calibrator, leakage and noise, so the run writes every table it can.
+fn with_copies(parameters: &mut SimobserveParameters) {
+    parameters.leakage = 0.02;
+    parameters.thermalnoise = "tsys-manual".to_string();
+    parameters.caldirection = "J2000 19h00m00 -22d00m00".to_string();
+    parameters.calflux = "2Jy".to_string();
+    parameters.totaltime = "2".to_string();
+}
+
 #[test]
 fn a_calibrator_leakage_and_noise_write_their_copies() {
     let fixture = Fixture::new();
-    let parameters = fixture.parameters(|parameters| {
-        parameters.leakage = 0.02;
-        parameters.thermalnoise = "tsys-manual".to_string();
-        parameters.caldirection = "J2000 19h00m00 -22d00m00".to_string();
-        parameters.calflux = "2Jy".to_string();
-        parameters.totaltime = "2".to_string();
-    });
+    let parameters = fixture.parameters(with_copies);
     let outcome = simobserve(&fixture.request(parameters)).expect("simobserve");
     assert_eq!(
         names(&outcome.products),
@@ -238,6 +246,105 @@ fn a_calibrator_leakage_and_noise_write_their_copies() {
         .count();
     assert_eq!(changed, leaked.len(), "the noise reaches every row");
     assert!(!fixture.path("p/p.tiny.noisier.T.cal").exists());
+}
+
+/// The pointing file replaces a symbolic link in the project, the link
+/// itself (#920 review): copied from `ptgfile` over a link to a file outside
+/// the project, which is left as it was, and laid out over a dangling link,
+/// whose target is not made. CASA writes through both.
+#[cfg(unix)]
+#[test]
+fn a_pointing_file_replaces_a_link_not_its_target() {
+    let fixture = Fixture::new();
+    simobserve(&fixture.request(fixture.parameters(|_| {}))).expect("simobserve");
+    let pointings = fixture.path("p/p.tiny.ptg.txt");
+    let given = fixture.path("given.ptg.txt");
+    std::fs::copy(&pointings, &given).expect("a pointing file");
+    let expected = std::fs::read_to_string(&given).expect("the pointings");
+    let outside = fixture.path("outside.txt");
+    std::fs::write(&outside, "outside").expect("a file outside the project");
+    let absent = fixture.path("absent.txt");
+    for (setpointings, target) in [(false, &outside), (true, &absent)] {
+        std::fs::remove_file(&pointings).expect("the pointing file");
+        std::os::unix::fs::symlink(target, &pointings).expect("a link");
+        let parameters = fixture.parameters(|parameters| {
+            parameters.setpointings = setpointings;
+            parameters.ptgfile = given.display().to_string();
+        });
+        simobserve(&fixture.request(parameters)).expect("simobserve");
+        assert!(!is_link(&pointings), "setpointings={setpointings}");
+        assert_eq!(
+            std::fs::read_to_string(&pointings).expect("the pointings"),
+            expected,
+            "setpointings={setpointings}"
+        );
+    }
+    assert_eq!(
+        std::fs::read_to_string(&outside).expect("the file outside"),
+        "outside"
+    );
+    assert!(!absent.exists());
+}
+
+/// The tables the task writes replace symbolic links in the project, the
+/// links themselves (#920 review): a directory outside the project that a
+/// link points to is left as it was, and a dangling link's target is not
+/// made. `overwrite=False` counts a dangling link as an existing entry.
+#[cfg(unix)]
+#[test]
+fn a_table_replaces_a_link_not_what_it_points_to() {
+    let fixture = Fixture::new();
+    let project = fixture.path("p");
+    let outside = fixture.path("outside");
+    std::fs::create_dir_all(&project).expect("the project");
+    let tables = [
+        "p.tiny.compskymodel",
+        "p.tiny.compskymodel.flat",
+        "p.tiny.cal.cclist",
+        "p.tiny.ms",
+        "p.tiny.fullpol.ms",
+        "p.tiny.fullpol.cal",
+        "p.tiny.noisier.ms",
+    ];
+    // Every other link dangles, the MeasurementSet's among them.
+    let dangles = |index: usize| index % 2 == 1;
+    for (index, table) in tables.iter().enumerate() {
+        let target = outside.join(table);
+        if !dangles(index) {
+            std::fs::create_dir_all(&target).expect("a directory outside the project");
+            std::fs::write(target.join("sentinel"), "outside").expect("its sentinel");
+        }
+        std::os::unix::fs::symlink(&target, project.join(table)).expect("a link");
+    }
+    let refused = simobserve(&fixture.request(fixture.parameters(|parameters| {
+        with_copies(parameters);
+        parameters.overwrite = false;
+    })))
+    .expect_err("an existing MeasurementSet's link");
+    assert_eq!(
+        refused.to_string(),
+        format!("{}/p.tiny.ms exists but overwrite=F", project.display())
+    );
+    simobserve(&fixture.request(fixture.parameters(with_copies))).expect("simobserve");
+    for (index, table) in tables.iter().enumerate() {
+        let entry = project.join(table);
+        assert!(!is_link(&entry) && entry.is_dir(), "{table}");
+        let target = outside.join(table);
+        if dangles(index) {
+            assert!(!target.exists(), "{table}");
+        } else {
+            let names: Vec<_> = std::fs::read_dir(&target)
+                .expect("the directory outside")
+                .map(|entry| entry.expect("an entry").file_name())
+                .collect();
+            assert_eq!(names, ["sentinel"], "{table}");
+            assert_eq!(
+                std::fs::read_to_string(target.join("sentinel")).expect("the sentinel"),
+                "outside"
+            );
+        }
+    }
+    assert!(!data(&project.join("p.tiny.noisier.ms")).is_empty());
 }
 
 #[test]

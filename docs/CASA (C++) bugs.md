@@ -2085,3 +2085,30 @@ as a path, `a/b`, names its files `a/b/a/b.<cfg>…`, in a directory that does
 not exist. Only a plain name in the working directory works. casa-rs names
 the files by the directory's last component, `a/b/b.<cfg>…`. For a plain
 name the two are the same.
+
+## simobserve writes through a symbolic link in the project
+
+- Date noted: 2026-10-27
+- Status: CASA limitation; casa-rs departs (#841 Phase 5c, #920 review)
+- Affected code: `casatasks/src/private/task_simobserve.py` (CASA 6.7.6,
+  `shutil.copyfile(ptgfile, ...ptg.txt)`, `util.write_pointings` after
+  `os.path.exists`, and the `shutil.rmtree` calls before each product is
+  written)
+
+`overwrite=True` replaces the project's files without asking. CASA writes
+`<stem>.ptg.txt` through a symbolic link there in two ways:
+- a pointing file copied from `ptgfile` replaces the file outside the
+  project that the link points to (`shutil.copyfile` follows it);
+- laid-out pointings over a dangling link create the file the link names
+  outside the project. `os.path.exists` follows the link, finds nothing to
+  remove, and `open(..., 'w')` follows it.
+
+A link to a table that it replaces stops the task instead, since
+`shutil.rmtree` refuses links. Its existence checks follow links, so a
+dangling link does not count as an existing file under `overwrite=False`.
+
+casa-rs replaces a link in the project with the new file or table and
+leaves what the link points to as it was. A link counts as an existing file
+under `overwrite=False`, dangling or not. The project's own files are the
+only ones `overwrite` replaces (the owner's decision of 2026-10-26, recorded
+with the provider contracts' overwrite exception).
