@@ -5,7 +5,7 @@
 //!
 //! | CASA | casa-rs |
 //! |---|---|
-//! | `direction_splitter`, `isdirection`, `dir_m2s`, `wrapang` | [`direction::split_direction`], [`direction::is_direction`], [`direction::format_direction`], [`direction::wrap_angle`] |
+//! | `direction_splitter`, `isdirection`, `dir_m2s`, `wrapang` | [`direction::Directions::split`] (a string or a list), [`direction::split_direction`] (a string), [`direction::is_direction`], [`direction::format_direction`], [`direction::wrap_angle`] |
 //! | `average_direction`, `median_direction` | [`direction::average_direction`], [`direction::median_direction`] |
 //! | `calc_pointings2` (`hexagonal`, `square`, `ALMA`, `ALMA2012`) | [`pointings::calc_pointings`] |
 //! | `read_pointings`, `write_pointings` | [`pointings::read_pointings`], [`pointings::write_pointings`] |
@@ -39,6 +39,10 @@
 //! - `direction_splitter` reads its second and third fields whatever the
 //!   field count, so a direction without an epoch raises `IndexError` in
 //!   CASA; casa-rs refuses it with a message.
+//!
+//! Where CASA has no answer, casa-rs refuses: `calc_pointings2` lays out
+//! no map of more than [`pointings::MOST_POINTINGS`] pointings, where CASA
+//! runs for hours or out of memory (a spacing tiny beside the map).
 
 pub mod baselines;
 pub mod direction;
@@ -79,6 +83,9 @@ pub enum SimutilError {
     /// A frequency that is not positive and finite.
     #[error("frequency {0} GHz is not positive")]
     Frequency(f64),
+    /// A map of more pointings than casa-rs lays out.
+    #[error("the map would have more than {} pointings", pointings::MOST_POINTINGS)]
+    TooManyPointings,
 }
 
 impl From<casa_types::quanta::casacore::QuantumError> for SimutilError {

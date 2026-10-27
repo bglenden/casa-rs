@@ -10,9 +10,15 @@
 //! and method signatures, and its state: `direction`, `verbose`,
 //! `centerfreq`, `bandwidth` and `totaltime` from the constructor, the
 //! `pointings` that `calc_pointings2` and `read_pointings` set, and the
-//! `telescopename` that `noisetemp` reads when it is given no telescope
-//! (`None` until set; CASA's class has no such attribute until a caller
-//! sets it).
+//! `telescopename` that `noisetemp` reads when it is given no telescope:
+//! `None` until `readantenna` (or `baselineLengths` or `approxBeam`, which
+//! read a configuration with it) sets it, or a caller does; CASA's class
+//! has no such attribute until then.
+//!
+//! `direction` is a string or a list of them, and the methods keep the two
+//! apart as CASA does: a list, even of one direction, is split at its mean,
+//! which CASA writes at precision 5 and reads back
+//! ([`casa_simulation::simutil::direction::Directions`]).
 //!
 //! Declared so far (simulation Phases 5a and 5b): `readantenna`; the
 //! direction helpers `direction_splitter`, `average_direction`,
@@ -50,7 +56,7 @@ use std::path::PathBuf;
 use casa_simulation::readantenna::{AntennaConfigFile, ReadAntennaError, read_antenna_config};
 use casa_simulation::simutil::baselines::{approximate_beam, baseline_lengths, itrf_to_local};
 use casa_simulation::simutil::direction::{
-    average_direction, format_direction, median_direction, split_direction, wrap_angle,
+    Directions, average_direction, format_direction, median_direction, wrap_angle,
 };
 use casa_simulation::simutil::pointings::{calc_pointings, format_pointings, parse_pointings};
 use casa_simulation::simutil::receivers::{band_name, noise_temperature, polarization_settings};
@@ -157,9 +163,10 @@ impl PySimutil {
     }
 
     /// Read an antenna configuration file: `(x, y, z, d, padnames,
-    /// antnames, telescopename, posobs)`.
+    /// antnames, telescopename, posobs)`. The telescope is kept as
+    /// `self.telescopename`, as in CASA.
     #[pyo3(signature = (antab = None), text_signature = "($self, antab=None)")]
-    fn readantenna(&self, py: Python<'_>, antab: Option<PathBuf>) -> PyResult<Py<PyAny>> {
+    fn readantenna(&mut self, py: Python<'_>, antab: Option<PathBuf>) -> PyResult<Py<PyAny>> {
         let Some(path) = antab else {
             return Err(PyTypeError::new_err(
                 "readantenna needs the antenna configuration file (antab)",
@@ -175,15 +182,18 @@ impl PySimutil {
         )?;
         // The file is read and CASA's tuple built without the GIL; only the
         // Python objects are made with it.
-        let value = py.detach(move || -> PyResult<CasaValue> {
-            Ok(readantenna_value(configuration(&path)?))
+        let (telescope, value) = py.detach(move || -> PyResult<(String, CasaValue)> {
+            let config = configuration(&path)?;
+            Ok((config.telescope.clone(), readantenna_value(config)))
         })?;
+        self.keep_telescope(py, telescope);
         value.into_python(py)
     }
 
     /// Pointings for a mosaic of `size` with pointings `spacing` apart about
-    /// `direction` (else `self.direction`), from the top row. A list of
-    /// more than one direction is returned as it is.
+    /// `direction` (else `self.direction`), from the top row. The direction
+    /// is checked first, as CASA's `isdirection` checks it; a list of more
+    /// than one is then returned as it is.
     #[pyo3(
         signature = (spacing, size, maptype = "hex".to_string(), direction = None, relmargin = 0.5, beam = 0.0),
         text_signature = "($self, spacing, size, maptype='hex', direction=None, relmargin=0.5, beam=0.0)"
@@ -204,18 +214,23 @@ impl PySimutil {
             self.direction = direction;
         }
         let directions = ops::directions(self.direction.bind(py))?;
-        if directions.len() > 1 {
+        if py.detach(|| directions.split()).is_err() {
+            return Err(PyRuntimeError::new_err(format!(
+                "can't interpret '{}' as a direction",
+                self.direction.bind(py).str()?
+            )));
+        }
+        if matches!(&directions, Directions::List(listed) if listed.len() > 1) {
             return Ok(self.direction.clone_ref(py));
         }
         let spacing = ops::quantity(&spacing)?;
-        let centre = directions[0].clone();
         let pointings = py
             .detach(|| {
                 calc_pointings(
                     &spacing,
                     [&sizes[0], &sizes[1]],
                     &maptype,
-                    &centre,
+                    &directions,
                     relmargin,
                     beam,
                 )
@@ -288,7 +303,7 @@ impl PySimutil {
     ) -> PyResult<Py<PyAny>> {
         let directions = match directions {
             Some(directions) => directions.0,
-            None => ops::directions(self.direction.bind(py))?,
+            None => ops::listed(ops::directions(self.direction.bind(py))?),
         };
         let centred = py
             .detach(|| average_direction(&directions))
@@ -306,7 +321,7 @@ impl PySimutil {
     ) -> PyResult<Py<PyAny>> {
         let directions = match directions {
             Some(directions) => directions.0,
-            None => ops::directions(self.direction.bind(py))?,
+            None => ops::listed(ops::directions(self.direction.bind(py))?),
         };
         let centred = py
             .detach(|| median_direction(&directions))
@@ -316,26 +331,15 @@ impl PySimutil {
 
     /// A direction's `(epoch, longitude, latitude)`: the epoch with a space
     /// after it (or `''`), the angles as quantities in degrees. A list of
-    /// directions is split at its mean.
+    /// directions, even of one, is split at its mean.
     #[pyo3(signature = (direction = None), text_signature = "($self, direction=None)")]
     fn direction_splitter(
         &self,
         py: Python<'_>,
-        direction: Option<StringList>,
+        direction: Option<Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        let directions = match direction {
-            Some(direction) => direction.0,
-            None => ops::directions(self.direction.bind(py))?,
-        };
-        let split = py
-            .detach(|| {
-                let one = match directions.as_slice() {
-                    [one] => one.clone(),
-                    many => average_direction(many)?.centre,
-                };
-                split_direction(&one)
-            })
-            .map_err(ops::raised)?;
+        let directions = ops::directions(direction.as_ref().unwrap_or(self.direction.bind(py)))?;
+        let split = py.detach(|| directions.split()).map_err(ops::raised)?;
         let angle = |value: &casa_types::quanta::Quantity| {
             CasaValue::quantity(value.value(), value.unit().name())
         };
@@ -486,22 +490,31 @@ impl PySimutil {
         CasaValue::Tuple(vec![axis(0), axis(1), axis(2)]).into_python(py)
     }
 
-    /// Every antenna pair's distance in a configuration file, metres.
+    /// Every antenna pair's distance in a configuration file, metres. The
+    /// file is read as `readantenna` reads it, keeping its telescope.
     #[pyo3(name = "baselineLengths", signature = (configfile), text_signature = "($self, configfile)")]
-    fn baseline_lengths(&self, py: Python<'_>, configfile: PathBuf) -> PyResult<Py<PyAny>> {
-        let lengths = py.detach(|| -> PyResult<Vec<f64>> {
-            baseline_lengths(&configuration(&configfile)?).map_err(ops::raised)
+    fn baseline_lengths(&mut self, py: Python<'_>, configfile: PathBuf) -> PyResult<Py<PyAny>> {
+        let (telescope, lengths) = py.detach(|| -> PyResult<(String, Vec<f64>)> {
+            let config = configuration(&configfile)?;
+            let lengths = baseline_lengths(&config).map_err(ops::raised)?;
+            Ok((config.telescope, lengths))
         })?;
+        self.keep_telescope(py, telescope);
         CasaValue::floats(lengths).into_python(py)
     }
 
     /// λ over the 90th-percentile baseline of a configuration, arcsec, at
-    /// `freq` GHz.
+    /// `freq` GHz. The file is read as `readantenna` reads it, keeping its
+    /// telescope.
     #[pyo3(name = "approxBeam", signature = (configfile, freq), text_signature = "($self, configfile, freq)")]
-    fn approx_beam(&self, py: Python<'_>, configfile: PathBuf, freq: f64) -> PyResult<f64> {
-        py.detach(|| -> PyResult<f64> {
-            approximate_beam(&configuration(&configfile)?, freq).map_err(ops::raised)
-        })
+    fn approx_beam(&mut self, py: Python<'_>, configfile: PathBuf, freq: f64) -> PyResult<f64> {
+        let (telescope, beam) = py.detach(|| -> PyResult<(String, f64)> {
+            let config = configuration(&configfile)?;
+            let beam = approximate_beam(&config, freq).map_err(ops::raised)?;
+            Ok((config.telescope, beam))
+        })?;
+        self.keep_telescope(py, telescope);
+        Ok(beam)
     }
 
     /// The model image `inimage` (a CASA image or a FITS file) fitted into
@@ -604,14 +617,8 @@ impl PySimutil {
     /// with `halt`, one that is not raises.
     #[pyo3(signature = (s, halt = true), text_signature = "($self, s, halt=True)")]
     fn isdirection(&self, py: Python<'_>, s: &Bound<'_, PyAny>, halt: bool) -> PyResult<bool> {
-        let directions = s.extract::<StringList>().map(|list| list.0);
-        let valid = py.detach(|| match directions.as_deref() {
-            Ok([one]) => split_direction(one).is_ok(),
-            Ok(many) if !many.is_empty() => average_direction(many)
-                .and_then(|c| split_direction(&c.centre))
-                .is_ok(),
-            _ => false,
-        });
+        let valid =
+            ops::directions(s).is_ok_and(|directions| py.detach(|| directions.split().is_ok()));
         if !valid && halt {
             return Err(PyRuntimeError::new_err(format!(
                 "can't interpret '{}' as a direction",
@@ -619,6 +626,14 @@ impl PySimutil {
             )));
         }
         Ok(valid)
+    }
+}
+
+impl PySimutil {
+    /// Keep the telescope of a configuration just read, as CASA's
+    /// `readantenna` sets `self.telescopename`.
+    fn keep_telescope(&mut self, py: Python<'_>, telescope: String) {
+        self.telescopename = Some(PyString::new(py, &telescope).into_any().unbind());
     }
 }
 
