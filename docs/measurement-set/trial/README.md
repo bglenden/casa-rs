@@ -806,9 +806,10 @@ flag change writes (Fable).
    batch (`contracts.md` section 8, "Occupancy") would make this uniform.
 3. **Production's MSv2 mutation plans its rows up front** and takes
    values as one `ArrayValue` per cell. The updater now plans per batch,
-   one mutation per batch under the lock the session holds, so a flag pass
-   could skip unchanged batches; the M2 hot path still needs typed
-   columns.
+   one mutation per batch under the lock the session holds, so the
+   mutation no longer needs the traversal planned whole; skipping
+   unchanged batches would still need the updater to accept gaps (it takes
+   every batch in order), and the M2 hot path still needs typed columns.
 4. **MSv4 cannot gain a data group.** Writing a model to an MSv4 store needs
    a structural write (a new variable and group); MSv2 adds the column.
 5. **Data groups are now the stores' own.** The MSv2 adapter lists
@@ -1298,7 +1299,11 @@ handle whenever it takes the lock, so a merge never reads a table older
 than the lock (independent review, finding 1). A slice that ends without
 completing its parts, or whose view is dropped, abandons their groups:
 the other slices and the split report `WorkAbandoned` rather than wait
-(finding 2).
+(finding 2). On `pilot.ms` (Mac mini, release, update pass, fresh copies,
+alternating) the MSv2 pass took 36.75 and 36.72 s against main's 36.38 and
+38.86 s and per-batch locking's 36.67 and 37.09 s, RSS 386–389 MB in each;
+reopening the MeasurementSet when the lock is taken costs about 0.27 s of
+CPU per pass (8.5 s user against 8.2 s).
 
 **Not done:** slices of a partition read concurrently by one cursor.
 

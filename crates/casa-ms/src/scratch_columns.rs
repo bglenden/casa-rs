@@ -102,8 +102,8 @@ pub fn prepare_write(
 ///
 /// # Errors
 ///
-/// As [`prepare_write`]; a MAIN whose write fails is left to the caller,
-/// whose lock publishes what reached it.
+/// As [`prepare_write`]; a MAIN whose write fails is reloaded as it is on
+/// disk, and the caller's lock publishes what reached it.
 pub fn prepare_write_holding(
     ms: &mut MeasurementSet,
     column: VisibilityDataColumn,
@@ -308,8 +308,9 @@ fn holds_write_lock(table: &Table) -> bool {
 /// handle holds it or the caller does through `held`, whose write is then
 /// recorded for the caller's release to publish. A table not on disk is
 /// changed in memory alone. When the change or the write fails, a lock
-/// taken here has the table reloaded as it is on disk and is released; a
-/// lock the caller holds is left to it.
+/// taken here has the table reloaded as it is on disk and is released, and
+/// under `held` the table is reloaded and the lock left to the caller; a
+/// lock the handle holds is left to it.
 fn change_in_place(
     table: &mut Table,
     attempts: u32,
@@ -330,7 +331,11 @@ fn change_in_place(
     };
     if let Some(lock) = held {
         lock.record_write();
-        return written(table);
+        let result = written(table);
+        if result.is_err() {
+            let _ = table.resync();
+        }
+        return result;
     }
     #[cfg(unix)]
     if table.lock_options().is_some() {

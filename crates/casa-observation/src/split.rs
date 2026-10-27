@@ -209,7 +209,8 @@ fn divided(
 /// with one traversal, and so does a slice's view that ends
 /// ([`SliceCompletion::end`]) or is dropped while a part of the group it
 /// holds is open: a slice whose traversal failed is reported, not waited
-/// for.
+/// for. Such a slice is not run again within the split: its groups are
+/// abandoned, so a retry plans a fresh completion.
 #[derive(Clone, Debug)]
 pub struct SplitCompletion {
     joins: Arc<Mutex<Joins>>,
