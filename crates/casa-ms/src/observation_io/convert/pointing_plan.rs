@@ -19,7 +19,8 @@
 //! a reported loss, rather than refused part way through writing. Each read
 //! is checked against the budget with the catalog's own bound, and an MSv2
 //! destination's gathered rows with the writer's; beyond it the conversion
-//! is refused.
+//! is refused. (An MSv2 destination's `POINTING` table itself is held in
+//! memory until it is saved: #950.)
 
 use std::path::Path;
 
@@ -125,7 +126,9 @@ fn lost_whole(table: &str, reason: &str) -> (PointingPlan, Vec<Loss>) {
 }
 
 /// Refuse gathering `samples` samples of `terms` terms into an MSv2 beyond
-/// `budget`.
+/// `budget`: the rows the writer gathers and sorts. The destination table
+/// then holds its rows in memory until it is saved, as MSv2 creation holds
+/// every subtable (#950).
 fn check_gathered(samples: usize, terms: usize, budget: usize) -> Result<(), ObservationError> {
     let bytes = samples.saturating_mul(gathered_bytes(terms));
     if bytes > budget {

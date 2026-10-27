@@ -1429,18 +1429,23 @@ written (`convert/pointing_plan.rs`):
   times together, reading every antenna's directions outward in blocks of
   4,096 times that double up to 16,384, so each chunk is decoded once.
 
-**Cost, measured** (Mac mini, `ms_trial_convert to-msv4`, casatestdata's
-ALMA `CAS-7841.ms`: 12 partitions, 193,050 samples, `POINTING` of 1,830,984
-rows with a per-row `PHASE_DIR` frame, which the converter refused before
-step 3a): 18.5 s and 234 MB peak RSS, against 13.3 s and 121 MB for the same
-MS with `POINTING` emptied. The plan's scan of `POINTING` takes under 0.25 s;
-the rest is one read per partition through today's reader. In blocks of
-1,024 rows those reads took 141 s, nearly all re-parsing StandardStMan's
-index per block (#949), so the adapter now scans in blocks as large as a
-sixteenth of its budget allows, up to 65,536 rows. 1,580,654 of the rows lie
-beyond every partition's times and each antenna's nearest either side, and
-are reported lost, as XRADIO's converter takes only rows within each
-dataset's times.
+**Cost, measured** (Mac mini, `ms_trial_convert`, batch budget 256 MB,
+casatestdata's ALMA `CAS-7841.ms`: 12 partitions, 193,050 samples,
+`POINTING` of 1,830,984 rows, a per-row `PHASE_DIR` frame, which the
+converter refused before step 3a):
+
+| Direction | With `POINTING` | `POINTING` emptied | Pointing carried |
+| --- | --- | --- | --- |
+| to MSv4 | 21–26 s, 7.4 s user, 250 MB | 13.3 s, 0.7 s user, 121 MB | 250,330 rows into 12 datasets; 1,580,654 beyond every partition's times and each antenna's nearest reported lost |
+| to MSv2 | 7.2 s, 1.49 GB | 1.2 s, 122 MB | 590,640 rows, each antenna read once; 1,240,344 of antennas no partition names reported lost |
+
+The plan's scan of `POINTING` takes under 0.25 s; the reads go through
+today's reader. In blocks of 1,024 rows those reads took 141 s into an
+MSv4, nearly all re-parsing StandardStMan's index per block (#949), so the
+adapter scans in blocks as large as a sixteenth of its budget allows, up to
+65,536 rows. The MSv2 destination's memory is its `POINTING` table, which
+MSv2 creation holds in memory until it is saved, about 2.3 KB a row
+whatever the budget (#950); the reads themselves fit the budget.
 
 A converted store therefore has no covering sample, and imaging's law
 chooses between the samples either side; step 3b measures what that
