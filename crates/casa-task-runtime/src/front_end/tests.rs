@@ -345,6 +345,18 @@ fn help_and_machine_actions_describe_the_hosted_surfaces() {
 }
 
 #[test]
+fn main_writes_only_to_the_streams_its_binary_passes() {
+    // `main` initialises the process's logging, so a process calls it once.
+    let calls = Calls::default();
+    let front_end = front_end(&calls);
+    let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
+    let code = front_end.main(args(&["--template", "x.image"]), &mut stdout, &mut stderr);
+    assert_eq!(code, std::process::ExitCode::from(2));
+    assert!(stdout.is_empty());
+    assert!(String::from_utf8(stderr).unwrap().contains("--template takes no other arguments"));
+}
+
+#[test]
 fn a_front_end_hosts_only_surfaces_its_contract_carries() {
     let error = TaskFrontEnd::new("x", contract(), &["split"], |_: &TaskInvocation<'_>| {
         TaskSuccess::new(&(), &())

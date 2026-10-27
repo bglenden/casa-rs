@@ -33,6 +33,7 @@ mod outcome;
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -269,22 +270,32 @@ where
 
     /// Run as the binary's `main`: initialise logging, dispatch the command
     /// line, write the output and flush the log.
-    pub fn main(&self) -> ExitCode {
-        let (guard, args) =
-            match casa_logging::init_global_from_env_and_args(std::env::args_os().skip(1)) {
-                Ok(initialised) => initialised,
-                Err(error) => {
-                    eprintln!("Error: failed to initialize logging: {error}");
-                    return exit_code(EXIT_EXECUTION_FAILED);
-                }
-            };
+    ///
+    /// The binary owns the process: its `main` passes its arguments without
+    /// the program name (`args_os().skip(1)`) and its standard output and
+    /// error, and returns the exit code. The front end reads no environment
+    /// and writes nowhere else (ADR-0016).
+    pub fn main(
+        &self,
+        args: impl IntoIterator<Item = OsString>,
+        stdout: &mut dyn Write,
+        stderr: &mut dyn Write,
+    ) -> ExitCode {
+        let (guard, args) = match casa_logging::init_global_from_env_and_args(args) {
+            Ok(initialised) => initialised,
+            Err(error) => {
+                let _ = writeln!(stderr, "Error: failed to initialize logging: {error}");
+                return exit_code(EXIT_EXECUTION_FAILED);
+            }
+        };
         let output = self.dispatch(&args);
-        print!("{}", output.stdout);
+        let _ = stdout.write_all(output.stdout.as_bytes());
+        let _ = stdout.flush();
         for line in &output.stderr {
-            eprintln!("{line}");
+            let _ = writeln!(stderr, "{line}");
         }
         if let Err(error) = guard.flush() {
-            eprintln!("Error: failed to flush logging: {error}");
+            let _ = writeln!(stderr, "Error: failed to flush logging: {error}");
         }
         exit_code(output.code)
     }
