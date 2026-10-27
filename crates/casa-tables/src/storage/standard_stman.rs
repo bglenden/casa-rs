@@ -34,7 +34,7 @@ use super::cell_elements::{cell_bools, encode_fixed_cell};
 use super::data_type::CasacoreDataType;
 use super::scalar_sources::SCALAR_BLOCK_CELLS;
 use super::stman_aipsio::{ColumnRawData, extract_row_value};
-use super::stman_array_file::{StManArrayFileReader, StManArrayFileWriter};
+use super::stman_array_file::{StManArrayFileReader, StManArrayFileWriter, stored_shape};
 use super::table_control::ColumnDescContents;
 use super::{ColumnSources, RequiredScalarColumnData, StorageError};
 
@@ -2776,7 +2776,7 @@ fn write_cell_to_bucket(
                 // arrays prefix ndim, shape, and a filled flag.
                 let (shape, strings) = match value {
                     Some(Value::Array(ArrayValue::String(arr))) => (
-                        arr.shape().to_vec(),
+                        stored_shape(arr.shape()),
                         arr.t().iter().cloned().collect::<Vec<_>>(),
                     ),
                     // An unwritten cell of a variable-shape column stays

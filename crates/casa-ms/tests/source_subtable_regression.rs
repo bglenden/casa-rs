@@ -29,9 +29,9 @@ fn ngc5921_with_flags_source_subtable_materializes_source_model_records() {
 }
 
 /// casacore stores the empty SOURCE cells of `alma/multiobs.ms` (rows 0 and
-/// 2 of `TRANSITION`, `REST_FREQUENCY` and `SYSVEL`; rows 1 and 3 are
-/// undefined) with a 0-dimensional shape, an array of no elements (#923).
-/// casa-rs reads each as CASA does: empty, not one element.
+/// 2 of `TRANSITION`, `POSITION`, `REST_FREQUENCY` and `SYSVEL`; rows 1 and
+/// 3 are undefined) with a 0-dimensional shape, an array of no elements
+/// (#923). casa-rs reads each as CASA does: empty, not one element.
 #[test]
 fn multiobs_source_reads_zero_dimensional_cells_as_empty() {
     let Some(ms_path) =
@@ -45,7 +45,7 @@ fn multiobs_source_reads_zero_dimensional_cells_as_empty() {
     let source = ms.source().expect("SOURCE accessor");
     let table = source.table();
     assert_eq!(table.row_count(), 4);
-    for column in ["TRANSITION", "REST_FREQUENCY", "SYSVEL"] {
+    for column in ["TRANSITION", "POSITION", "REST_FREQUENCY", "SYSVEL"] {
         for row_index in [0, 2] {
             let row = table.row_accessor().row(row_index).expect("SOURCE row");
             let shape = match row.get(column) {

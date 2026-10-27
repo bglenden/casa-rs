@@ -378,12 +378,16 @@ fn verify_external_ms_matches_cpp() {
     assert_eq!(rust_manifest, cpp_manifest);
 }
 
-/// casacore and casa-rs read `alma/multiobs.ms` alike, and casacore reads
-/// back alike what casa-rs saves of it. Its SOURCE holds 0-dimensional
-/// cells, casacore's empty `IPosition`: string cells in StandardStMan
-/// buckets (`TRANSITION`) and numeric cells in its array file
-/// (`REST_FREQUENCY`, `SYSVEL`), which casa-rs once read as one element
-/// (#923).
+/// casacore and casa-rs read `alma/multiobs.ms` alike, and read alike what
+/// casa-rs saves of it. Its SOURCE holds 0-dimensional cells, casacore's
+/// empty `IPosition`: string cells in StandardStMan buckets (`TRANSITION`)
+/// and numeric cells in its array file (`POSITION`, `REST_FREQUENCY`,
+/// `SYSVEL`), which casa-rs once read as one element (#923).
+///
+/// casa-rs, which has no 0-dimensional empty array, reads such a cell as
+/// `[0]` and saves it so: casacore then reads `[0]` where it read `[]`,
+/// either holding no elements. The C++ digest counts the two alike, so the
+/// manifests compare what each table holds.
 #[test]
 fn multiobs_reads_and_resaves_as_casacore_reads_it() {
     if !casacore_oracle_available() {
@@ -410,10 +414,10 @@ fn multiobs_reads_and_resaves_as_casacore_reads_it() {
     let mut ms = MeasurementSet::open(&ms_path).expect("open multiobs.ms");
     ms.save().expect("resave multiobs.ms");
     drop(ms);
-    assert_eq!(
-        MeasurementSetOracle::digest_manifest(&ms_path).expect("C++ manifest of the resave"),
-        original
-    );
+    let resaved =
+        MeasurementSetOracle::digest_manifest(&ms_path).expect("C++ manifest of the resave");
+    assert_eq!(ms_digest::measurement_set_manifest(&ms_path), resaved);
+    assert_eq!(resaved, original);
 }
 
 fn copy_tree(from: &Path, to: &Path) {

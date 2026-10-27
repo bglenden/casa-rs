@@ -242,6 +242,19 @@ pub(crate) struct StManArrayFileReader {
     pos: u64,
 }
 
+/// The shape casacore stores for an array cell of shape `shape`. A
+/// 0-dimensional casa-types array holds one element, which casacore's
+/// 0-dimensional shape, the empty `IPosition`, cannot: casacore reads such
+/// a shape as no elements (#923). It is stored as `[1]`, so its element
+/// survives.
+pub(super) fn stored_shape(shape: &[usize]) -> Vec<usize> {
+    if shape.is_empty() {
+        vec![1]
+    } else {
+        shape.to_vec()
+    }
+}
+
 impl StManArrayFileReader {
     /// Open an existing array file.
     pub(crate) fn open(path: &Path, big_endian: bool) -> Result<Self, StorageError> {
@@ -547,7 +560,7 @@ impl StManArrayFileWriter {
     ) -> Result<i64, StorageError> {
         let (shape, total) = match value {
             Value::Array(av) => {
-                let s: Vec<usize> = av.shape().to_vec();
+                let s = stored_shape(av.shape());
                 let t: usize = s.iter().product();
                 (s, t)
             }
@@ -1143,9 +1156,44 @@ mod tests {
 
     /// A 0-dimensional shape is casacore's empty `IPosition`, an array of
     /// no elements (`alma/multiobs.ms`'s SOURCE `REST_FREQUENCY`, #923):
-    /// read as `[0]`, whatever follows the header.
+    /// read as `[0]`. casacore writes it as its reference count and a
+    /// dimension count of 0, with no extents and no data; the cell here is
+    /// an empty `[0]` written by casa-rs with that count patched to 0, so
+    /// its extent is left over and must not be read.
     #[test]
     fn a_zero_dimensional_cell_holds_no_elements() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("test.arr");
+        let empty = Value::Array(ArrayValue::Float64(ArrayD::from_elem(IxDyn(&[0]), 0.0)));
+        let offset = {
+            let mut writer = StManArrayFileWriter::create(&path, true, 1).unwrap();
+            let off = writer
+                .write_array(&empty, CasacoreDataType::TpDouble)
+                .unwrap();
+            writer.finish().unwrap();
+            off
+        };
+        {
+            // After the version-1 reference count, the dimension count.
+            let mut file = OpenOptions::new().write(true).open(&path).unwrap();
+            file.seek(SeekFrom::Start(offset as u64 + 4)).unwrap();
+            file.write_all(&0u32.to_be_bytes()).unwrap();
+        }
+        let mut reader = StManArrayFileReader::open(&path, true).unwrap();
+        match reader
+            .read_array_at(offset, CasacoreDataType::TpDouble)
+            .unwrap()
+        {
+            Some(Value::Array(ArrayValue::Float64(read))) => assert_eq!(read.shape(), [0]),
+            other => panic!("an empty array, not {other:?}"),
+        }
+    }
+
+    /// A 0-dimensional casa-types array holds one element, which casacore's
+    /// empty shape cannot: it is written as `[1]` and read back with its
+    /// element.
+    #[test]
+    fn a_zero_dimensional_array_is_written_with_its_element() {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("test.arr");
         let zero_dim = Value::Array(ArrayValue::Float64(ArrayD::from_elem(IxDyn(&[]), 7.0)));
@@ -1162,8 +1210,11 @@ mod tests {
             .read_array_at(offset, CasacoreDataType::TpDouble)
             .unwrap()
         {
-            Some(Value::Array(ArrayValue::Float64(read))) => assert_eq!(read.shape(), [0]),
-            other => panic!("an empty array, not {other:?}"),
+            Some(Value::Array(ArrayValue::Float64(read))) => {
+                assert_eq!(read.shape(), [1]);
+                assert_eq!(read[[0]], 7.0);
+            }
+            other => panic!("a one-element array, not {other:?}"),
         }
     }
 }
