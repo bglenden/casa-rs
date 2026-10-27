@@ -12163,28 +12163,38 @@
     {
       "kind": "task",
       "id": "simobserve",
-      "contract_version": 4,
+      "contract_version": 5,
       "display_name": "SimObserve",
       "category": "Simulation",
-      "summary": "Generate a CASA-compatible synthetic VLA MeasurementSet",
+      "summary": "Simulate an observation of a sky model: CASA's simobserve",
       "provider_family": "simobserve",
       "execution": {
         "invocation_name": "simobserve",
         "fixed_args": [],
-        "managed_output": null,
+        "managed_output": {
+          "inject_arguments": [
+            {
+              "flag": "--managed-output",
+              "value": "true"
+            }
+          ],
+          "raw_stderr_available": true,
+          "raw_stdout_available": true,
+          "stdout_format": "json",
+          "decoder": "simobserve-run-v1"
+        },
         "products": {
           "kind": "declared",
           "products": [
             {
-              "id": "output_ms",
+              "id": "simobserve-products",
               "role": "primary",
               "resource_kind": "measurement_set",
               "source": {
-                "kind": "parameter",
-                "parameter": "output_ms"
+                "kind": "decoded_artifacts"
               },
-              "cardinality": "one",
-              "optional": true,
+              "cardinality": "many",
+              "optional": false,
               "probe_supported": true
             }
           ]
@@ -12196,24 +12206,13 @@
           "when": {
             "kind": "always"
           }
-        },
-        {
-          "class": "overwrite",
-          "when": {
-            "kind": "equals",
-            "parameter": "overwrite",
-            "value": {
-              "kind": "bool",
-              "value": true
-            }
-          }
         }
       ],
       "bindings": [
         {
-          "name": "request_kind",
+          "name": "project",
           "concept": {
-            "id": "parameter.request_kind",
+            "id": "simulation.project",
             "semantic_revision": 1
           },
           "order": 0,
@@ -12221,7 +12220,7 @@
             "kind": "literal",
             "value": {
               "kind": "string",
-              "value": "run"
+              "value": "sim"
             }
           },
           "required_when": {
@@ -12236,123 +12235,76 @@
           "projections": {
             "cli": {
               "positional": null,
-              "flags": [],
+              "flags": [
+                "--project"
+              ],
               "false_flags": [],
-              "metavar": "run|family"
+              "metavar": "NAME"
             },
             "provider": {
-              "field": "request_kind",
+              "field": "project",
               "adapter": "identity"
             },
             "python": {
-              "name": "request_kind",
+              "name": "project",
               "type_hint": null
             },
             "presentation": {
-              "label": "Request Kind",
-              "group": "Request",
+              "label": "Project",
+              "group": "Project",
               "advanced": false,
               "hidden": false
             }
           },
           "aliases": [],
-          "reviewed_homonym": null
+          "reviewed_homonym": {
+            "review_id": "ADR-0006",
+            "reason": "The simulation project, a directory and the stem of its files, is distinct from importvla's project-code selector."
+          }
         },
         {
-          "name": "model",
+          "name": "skymodel",
           "concept": {
-            "id": "simobserve.model",
-            "semantic_revision": 1
+            "id": "parameter.skymodel",
+            "semantic_revision": 2
           },
           "order": 1,
           "default": {
-            "kind": "required"
-          },
-          "required_when": {
-            "kind": "always"
-          },
-          "active_when": {
-            "kind": "equals",
-            "parameter": "request_kind",
+            "kind": "literal",
             "value": {
               "kind": "string",
-              "value": "run"
+              "value": ""
             }
           },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
           "refinements": [],
-          "context_role": null,
+          "context_role": "input_dataset",
           "surface_note": null,
           "projections": {
             "cli": {
               "positional": null,
               "flags": [
-                "--model"
+                "--skymodel"
               ],
               "false_flags": [],
               "metavar": "PATH"
             },
             "provider": {
-              "field": "model",
+              "field": "skymodel",
               "adapter": "identity"
             },
             "python": {
-              "name": "model",
+              "name": "skymodel",
               "type_hint": null
             },
             "presentation": {
-              "label": "Model FITS",
-              "group": "Synthetic Observation",
-              "advanced": false,
-              "hidden": false
-            }
-          },
-          "aliases": [],
-          "reviewed_homonym": null
-        },
-        {
-          "name": "out",
-          "concept": {
-            "id": "parameter.out",
-            "semantic_revision": 1
-          },
-          "order": 2,
-          "default": {
-            "kind": "required"
-          },
-          "required_when": {
-            "kind": "always"
-          },
-          "active_when": {
-            "kind": "equals",
-            "parameter": "request_kind",
-            "value": {
-              "kind": "string",
-              "value": "run"
-            }
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": null,
-          "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "--out"
-              ],
-              "false_flags": [],
-              "metavar": "PATH"
-            },
-            "provider": {
-              "field": "out",
-              "adapter": "identity"
-            },
-            "python": {
-              "name": "out",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Output MS",
-              "group": "Synthetic Observation",
+              "label": "Sky Model",
+              "group": "Sky model",
               "advanced": false,
               "hidden": false
             }
@@ -12366,24 +12318,19 @@
             "id": "parameter.inbright",
             "semantic_revision": 1
           },
-          "order": 3,
+          "order": 2,
           "default": {
             "kind": "literal",
             "value": {
               "kind": "string",
-              "value": "3e-5"
+              "value": ""
             }
           },
           "required_when": {
             "kind": "never"
           },
           "active_when": {
-            "kind": "equals",
-            "parameter": "request_kind",
-            "value": {
-              "kind": "string",
-              "value": "run"
-            }
+            "kind": "always"
           },
           "refinements": [],
           "context_role": null,
@@ -12392,10 +12339,10 @@
             "cli": {
               "positional": null,
               "flags": [
-                "--inbright-jy-per-pixel"
+                "--inbright"
               ],
               "false_flags": [],
-              "metavar": "JY"
+              "metavar": "QUANTITY"
             },
             "provider": {
               "field": "inbright",
@@ -12406,9 +12353,9 @@
               "type_hint": null
             },
             "presentation": {
-              "label": "Peak Jy/pixel",
-              "group": "Synthetic Observation",
-              "advanced": false,
+              "label": "Peak Brightness",
+              "group": "Sky model",
+              "advanced": true,
               "hidden": false
             }
           },
@@ -12416,29 +12363,24 @@
           "reviewed_homonym": null
         },
         {
-          "name": "duration",
+          "name": "indirection",
           "concept": {
-            "id": "parameter.duration",
+            "id": "parameter.indirection",
             "semantic_revision": 1
           },
-          "order": 4,
+          "order": 3,
           "default": {
             "kind": "literal",
             "value": {
-              "kind": "float",
-              "value": 3600.0
+              "kind": "string",
+              "value": ""
             }
           },
           "required_when": {
             "kind": "never"
           },
           "active_when": {
-            "kind": "equals",
-            "parameter": "request_kind",
-            "value": {
-              "kind": "string",
-              "value": "run"
-            }
+            "kind": "always"
           },
           "refinements": [],
           "context_role": null,
@@ -12447,23 +12389,425 @@
             "cli": {
               "positional": null,
               "flags": [
-                "--duration"
+                "--indirection"
               ],
               "false_flags": [],
-              "metavar": "SECONDS"
+              "metavar": "DIRECTION"
             },
             "provider": {
-              "field": "duration",
+              "field": "indirection",
               "adapter": "identity"
             },
             "python": {
-              "name": "duration",
+              "name": "indirection",
               "type_hint": null
             },
             "presentation": {
-              "label": "Duration (s)",
-              "group": "Synthetic Observation",
+              "label": "Model Direction",
+              "group": "Sky model",
+              "advanced": true,
+              "hidden": false
+            }
+          },
+          "aliases": [],
+          "reviewed_homonym": null
+        },
+        {
+          "name": "incell",
+          "concept": {
+            "id": "parameter.incell",
+            "semantic_revision": 1
+          },
+          "order": 4,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--incell"
+              ],
+              "false_flags": [],
+              "metavar": "QUANTITY"
+            },
+            "provider": {
+              "field": "incell",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "incell",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Model Cell",
+              "group": "Sky model",
+              "advanced": true,
+              "hidden": false
+            }
+          },
+          "aliases": [],
+          "reviewed_homonym": null
+        },
+        {
+          "name": "incenter",
+          "concept": {
+            "id": "parameter.incenter",
+            "semantic_revision": 1
+          },
+          "order": 5,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--incenter"
+              ],
+              "false_flags": [],
+              "metavar": "QUANTITY"
+            },
+            "provider": {
+              "field": "incenter",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "incenter",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Model Frequency",
+              "group": "Sky model",
+              "advanced": true,
+              "hidden": false
+            }
+          },
+          "aliases": [],
+          "reviewed_homonym": null
+        },
+        {
+          "name": "inwidth",
+          "concept": {
+            "id": "parameter.inwidth",
+            "semantic_revision": 1
+          },
+          "order": 6,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--inwidth"
+              ],
+              "false_flags": [],
+              "metavar": "QUANTITY"
+            },
+            "provider": {
+              "field": "inwidth",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "inwidth",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Channel Width",
+              "group": "Sky model",
+              "advanced": true,
+              "hidden": false
+            }
+          },
+          "aliases": [],
+          "reviewed_homonym": null
+        },
+        {
+          "name": "complist",
+          "concept": {
+            "id": "parameter.complist",
+            "semantic_revision": 1
+          },
+          "order": 7,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--complist"
+              ],
+              "false_flags": [],
+              "metavar": "PATH"
+            },
+            "provider": {
+              "field": "complist",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "complist",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Component List",
+              "group": "Components",
               "advanced": false,
+              "hidden": false
+            }
+          },
+          "aliases": [],
+          "reviewed_homonym": null
+        },
+        {
+          "name": "compwidth",
+          "concept": {
+            "id": "parameter.compwidth",
+            "semantic_revision": 1
+          },
+          "order": 8,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "\"8GHz\""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--compwidth"
+              ],
+              "false_flags": [],
+              "metavar": "QUANTITY"
+            },
+            "provider": {
+              "field": "compwidth",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "compwidth",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Component Bandwidth",
+              "group": "Components",
+              "advanced": true,
+              "hidden": false
+            }
+          },
+          "aliases": [],
+          "reviewed_homonym": null
+        },
+        {
+          "name": "comp_nchan",
+          "concept": {
+            "id": "simulation.comp_nchan",
+            "semantic_revision": 1
+          },
+          "order": 9,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "integer",
+              "value": 1
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--comp-nchan"
+              ],
+              "false_flags": [],
+              "metavar": "N"
+            },
+            "provider": {
+              "field": "comp_nchan",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "comp_nchan",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Component Channels",
+              "group": "Components",
+              "advanced": true,
+              "hidden": false
+            }
+          },
+          "aliases": [],
+          "reviewed_homonym": null
+        },
+        {
+          "name": "setpointings",
+          "concept": {
+            "id": "parameter.setpointings",
+            "semantic_revision": 1
+          },
+          "order": 10,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": true
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--setpointings"
+              ],
+              "false_flags": [
+                "--no-setpointings"
+              ],
+              "metavar": null
+            },
+            "provider": {
+              "field": "setpointings",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "setpointings",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Lay Out Pointings",
+              "group": "Pointings",
+              "advanced": false,
+              "hidden": false
+            }
+          },
+          "aliases": [],
+          "reviewed_homonym": null
+        },
+        {
+          "name": "ptgfile",
+          "concept": {
+            "id": "parameter.ptgfile",
+            "semantic_revision": 2
+          },
+          "order": 11,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "$project.ptg.txt"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--ptgfile"
+              ],
+              "false_flags": [],
+              "metavar": "PATH"
+            },
+            "provider": {
+              "field": "ptgfile",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "ptgfile",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Pointing File",
+              "group": "Pointings",
+              "advanced": true,
               "hidden": false
             }
           },
@@ -12476,24 +12820,19 @@
             "id": "parameter.integration",
             "semantic_revision": 1
           },
-          "order": 5,
+          "order": 12,
           "default": {
             "kind": "literal",
             "value": {
               "kind": "string",
-              "value": "2"
+              "value": "10s"
             }
           },
           "required_when": {
             "kind": "never"
           },
           "active_when": {
-            "kind": "equals",
-            "parameter": "request_kind",
-            "value": {
-              "kind": "string",
-              "value": "run"
-            }
+            "kind": "always"
           },
           "refinements": [],
           "context_role": null,
@@ -12505,7 +12844,7 @@
                 "--integration"
               ],
               "false_flags": [],
-              "metavar": "SECONDS"
+              "metavar": "QUANTITY"
             },
             "provider": {
               "field": "integration",
@@ -12516,8 +12855,8 @@
               "type_hint": null
             },
             "presentation": {
-              "label": "Integration (s)",
-              "group": "Synthetic Observation",
+              "label": "Integration",
+              "group": "Pointings",
               "advanced": false,
               "hidden": false
             }
@@ -12526,29 +12865,24 @@
           "reviewed_homonym": null
         },
         {
-          "name": "start_frequency_hz",
+          "name": "direction",
           "concept": {
-            "id": "parameter.start_frequency_hz",
-            "semantic_revision": 1
+            "id": "parameter.direction",
+            "semantic_revision": 2
           },
-          "order": 6,
+          "order": 13,
           "default": {
             "kind": "literal",
             "value": {
-              "kind": "float",
-              "value": 44000000000.0
+              "kind": "array",
+              "value": []
             }
           },
           "required_when": {
             "kind": "never"
           },
           "active_when": {
-            "kind": "equals",
-            "parameter": "request_kind",
-            "value": {
-              "kind": "string",
-              "value": "run"
-            }
+            "kind": "always"
           },
           "refinements": [],
           "context_role": null,
@@ -12557,22 +12891,22 @@
             "cli": {
               "positional": null,
               "flags": [
-                "--start-frequency-hz"
+                "--direction"
               ],
               "false_flags": [],
-              "metavar": "HZ"
+              "metavar": "DIRECTION"
             },
             "provider": {
-              "field": "start_frequency_hz",
+              "field": "direction",
               "adapter": "identity"
             },
             "python": {
-              "name": "start_frequency_hz",
+              "name": "direction",
               "type_hint": null
             },
             "presentation": {
-              "label": "Start Frequency (Hz)",
-              "group": "Synthetic Observation",
+              "label": "Direction",
+              "group": "Pointings",
               "advanced": false,
               "hidden": false
             }
@@ -12581,29 +12915,33 @@
           "reviewed_homonym": null
         },
         {
-          "name": "channel_width_hz",
+          "name": "mapsize",
           "concept": {
-            "id": "parameter.channel_width_hz",
-            "semantic_revision": 1
+            "id": "parameter.mapsize",
+            "semantic_revision": 2
           },
-          "order": 7,
+          "order": 14,
           "default": {
             "kind": "literal",
             "value": {
-              "kind": "float",
-              "value": 128000000.0
+              "kind": "array",
+              "value": [
+                {
+                  "kind": "string",
+                  "value": ""
+                },
+                {
+                  "kind": "string",
+                  "value": ""
+                }
+              ]
             }
           },
           "required_when": {
             "kind": "never"
           },
           "active_when": {
-            "kind": "equals",
-            "parameter": "request_kind",
-            "value": {
-              "kind": "string",
-              "value": "run"
-            }
+            "kind": "always"
           },
           "refinements": [],
           "context_role": null,
@@ -12612,22 +12950,22 @@
             "cli": {
               "positional": null,
               "flags": [
-                "--channel-width-hz"
+                "--mapsize"
               ],
               "false_flags": [],
-              "metavar": "HZ"
+              "metavar": "QUANTITY"
             },
             "provider": {
-              "field": "channel_width_hz",
+              "field": "mapsize",
               "adapter": "identity"
             },
             "python": {
-              "name": "channel_width_hz",
+              "name": "mapsize",
               "type_hint": null
             },
             "presentation": {
-              "label": "Channel Width (Hz)",
-              "group": "Synthetic Observation",
+              "label": "Map Size",
+              "group": "Pointings",
               "advanced": false,
               "hidden": false
             }
@@ -12636,29 +12974,524 @@
           "reviewed_homonym": null
         },
         {
-          "name": "channel_count",
+          "name": "maptype",
           "concept": {
-            "id": "parameter.channel_count",
+            "id": "simulation.maptype",
             "semantic_revision": 1
           },
-          "order": 8,
+          "order": 15,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "hexagonal"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--maptype"
+              ],
+              "false_flags": [],
+              "metavar": "TYPE"
+            },
+            "provider": {
+              "field": "maptype",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "maptype",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Map Type",
+              "group": "Pointings",
+              "advanced": false,
+              "hidden": false
+            }
+          },
+          "aliases": [],
+          "reviewed_homonym": null
+        },
+        {
+          "name": "pointingspacing",
+          "concept": {
+            "id": "simulation.pointingspacing",
+            "semantic_revision": 1
+          },
+          "order": 16,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--pointingspacing"
+              ],
+              "false_flags": [],
+              "metavar": "QUANTITY"
+            },
+            "provider": {
+              "field": "pointingspacing",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "pointingspacing",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Pointing Spacing",
+              "group": "Pointings",
+              "advanced": true,
+              "hidden": false
+            }
+          },
+          "aliases": [],
+          "reviewed_homonym": null
+        },
+        {
+          "name": "caldirection",
+          "concept": {
+            "id": "simulation.caldirection",
+            "semantic_revision": 1
+          },
+          "order": 17,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--caldirection"
+              ],
+              "false_flags": [],
+              "metavar": "DIRECTION"
+            },
+            "provider": {
+              "field": "caldirection",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "caldirection",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Calibrator Direction",
+              "group": "Calibrator",
+              "advanced": true,
+              "hidden": false
+            }
+          },
+          "aliases": [],
+          "reviewed_homonym": null
+        },
+        {
+          "name": "calflux",
+          "concept": {
+            "id": "simulation.calflux",
+            "semantic_revision": 1
+          },
+          "order": 18,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "1Jy"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--calflux"
+              ],
+              "false_flags": [],
+              "metavar": "QUANTITY"
+            },
+            "provider": {
+              "field": "calflux",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "calflux",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Calibrator Flux",
+              "group": "Calibrator",
+              "advanced": true,
+              "hidden": false
+            }
+          },
+          "aliases": [],
+          "reviewed_homonym": null
+        },
+        {
+          "name": "obsmode",
+          "concept": {
+            "id": "simulation.obsmode",
+            "semantic_revision": 1
+          },
+          "order": 19,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "int"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--obsmode"
+              ],
+              "false_flags": [],
+              "metavar": "MODE"
+            },
+            "provider": {
+              "field": "obsmode",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "obsmode",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Observing Mode",
+              "group": "Observation",
+              "advanced": false,
+              "hidden": false
+            }
+          },
+          "aliases": [],
+          "reviewed_homonym": null
+        },
+        {
+          "name": "refdate",
+          "concept": {
+            "id": "simulation.refdate",
+            "semantic_revision": 1
+          },
+          "order": 20,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "2014/01/01"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--refdate"
+              ],
+              "false_flags": [],
+              "metavar": "DATE"
+            },
+            "provider": {
+              "field": "refdate",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "refdate",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Date",
+              "group": "Observation",
+              "advanced": false,
+              "hidden": false
+            }
+          },
+          "aliases": [],
+          "reviewed_homonym": null
+        },
+        {
+          "name": "hourangle",
+          "concept": {
+            "id": "parameter.hourangle",
+            "semantic_revision": 1
+          },
+          "order": 21,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "transit"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--hourangle"
+              ],
+              "false_flags": [],
+              "metavar": "QUANTITY"
+            },
+            "provider": {
+              "field": "hourangle",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "hourangle",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Hour Angle",
+              "group": "Observation",
+              "advanced": false,
+              "hidden": false
+            }
+          },
+          "aliases": [],
+          "reviewed_homonym": null
+        },
+        {
+          "name": "totaltime",
+          "concept": {
+            "id": "parameter.totaltime",
+            "semantic_revision": 1
+          },
+          "order": 22,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "7200s"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--totaltime"
+              ],
+              "false_flags": [],
+              "metavar": "QUANTITY"
+            },
+            "provider": {
+              "field": "totaltime",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "totaltime",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Total Time",
+              "group": "Observation",
+              "advanced": false,
+              "hidden": false
+            }
+          },
+          "aliases": [],
+          "reviewed_homonym": null
+        },
+        {
+          "name": "antennalist",
+          "concept": {
+            "id": "parameter.antennalist",
+            "semantic_revision": 1
+          },
+          "order": 23,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--antennalist"
+              ],
+              "false_flags": [],
+              "metavar": "CONFIG"
+            },
+            "provider": {
+              "field": "antennalist",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "antennalist",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Antenna List",
+              "group": "Observation",
+              "advanced": false,
+              "hidden": false
+            }
+          },
+          "aliases": [],
+          "reviewed_homonym": null
+        },
+        {
+          "name": "sdantlist",
+          "concept": {
+            "id": "simulation.sdantlist",
+            "semantic_revision": 1
+          },
+          "order": 24,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "aca.tp.cfg"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--sdantlist"
+              ],
+              "false_flags": [],
+              "metavar": "CONFIG"
+            },
+            "provider": {
+              "field": "sdantlist",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "sdantlist",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Single-Dish Antenna List",
+              "group": "Observation",
+              "advanced": true,
+              "hidden": false
+            }
+          },
+          "aliases": [],
+          "reviewed_homonym": null
+        },
+        {
+          "name": "sdant",
+          "concept": {
+            "id": "simulation.sdant",
+            "semantic_revision": 1
+          },
+          "order": 25,
           "default": {
             "kind": "literal",
             "value": {
               "kind": "integer",
-              "value": 1
+              "value": 0
             }
           },
           "required_when": {
             "kind": "never"
           },
           "active_when": {
-            "kind": "equals",
-            "parameter": "request_kind",
-            "value": {
-              "kind": "string",
-              "value": "run"
-            }
+            "kind": "always"
           },
           "refinements": [],
           "context_role": null,
@@ -12667,23 +13500,576 @@
             "cli": {
               "positional": null,
               "flags": [
-                "--channels"
+                "--sdant"
               ],
               "false_flags": [],
               "metavar": "N"
             },
             "provider": {
-              "field": "channel_count",
+              "field": "sdant",
               "adapter": "identity"
             },
             "python": {
-              "name": "channel_count",
+              "name": "sdant",
               "type_hint": null
             },
             "presentation": {
-              "label": "Channels",
-              "group": "Synthetic Observation",
+              "label": "Single-Dish Antenna",
+              "group": "Observation",
+              "advanced": true,
+              "hidden": false
+            }
+          },
+          "aliases": [],
+          "reviewed_homonym": null
+        },
+        {
+          "name": "outframe",
+          "concept": {
+            "id": "simulation.outframe",
+            "semantic_revision": 1
+          },
+          "order": 26,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "LSRK"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--outframe"
+              ],
+              "false_flags": [],
+              "metavar": "FRAME"
+            },
+            "provider": {
+              "field": "outframe",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "outframe",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Frequency Frame",
+              "group": "Observation",
+              "advanced": true,
+              "hidden": false
+            }
+          },
+          "aliases": [],
+          "reviewed_homonym": {
+            "review_id": "ADR-0006",
+            "reason": "The simulated spectral window's frequency frame is distinct from the frame of an imager cube's output axis."
+          }
+        },
+        {
+          "name": "thermalnoise",
+          "concept": {
+            "id": "simulation.thermalnoise",
+            "semantic_revision": 1
+          },
+          "order": 27,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "tsys-atm"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--thermalnoise"
+              ],
+              "false_flags": [],
+              "metavar": "MODE"
+            },
+            "provider": {
+              "field": "thermalnoise",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "thermalnoise",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Thermal Noise",
+              "group": "Noise",
               "advanced": false,
+              "hidden": false
+            }
+          },
+          "aliases": [],
+          "reviewed_homonym": null
+        },
+        {
+          "name": "user_pwv",
+          "concept": {
+            "id": "simulation.user_pwv",
+            "semantic_revision": 1
+          },
+          "order": 28,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "float",
+              "value": 0.5
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--user-pwv"
+              ],
+              "false_flags": [],
+              "metavar": "MM"
+            },
+            "provider": {
+              "field": "user_pwv",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "user_pwv",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "PWV",
+              "group": "Noise",
+              "advanced": true,
+              "hidden": false
+            }
+          },
+          "aliases": [],
+          "reviewed_homonym": null
+        },
+        {
+          "name": "t_ground",
+          "concept": {
+            "id": "simulation.t_ground",
+            "semantic_revision": 1
+          },
+          "order": 29,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "float",
+              "value": 270.0
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--t-ground"
+              ],
+              "false_flags": [],
+              "metavar": "K"
+            },
+            "provider": {
+              "field": "t_ground",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "t_ground",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Ground Temperature",
+              "group": "Noise",
+              "advanced": true,
+              "hidden": false
+            }
+          },
+          "aliases": [],
+          "reviewed_homonym": null
+        },
+        {
+          "name": "t_sky",
+          "concept": {
+            "id": "simulation.t_sky",
+            "semantic_revision": 1
+          },
+          "order": 30,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "float",
+              "value": 260.0
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--t-sky"
+              ],
+              "false_flags": [],
+              "metavar": "K"
+            },
+            "provider": {
+              "field": "t_sky",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "t_sky",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Sky Temperature",
+              "group": "Noise",
+              "advanced": true,
+              "hidden": false
+            }
+          },
+          "aliases": [],
+          "reviewed_homonym": null
+        },
+        {
+          "name": "tau0",
+          "concept": {
+            "id": "simulation.tau0",
+            "semantic_revision": 1
+          },
+          "order": 31,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "float",
+              "value": 0.1
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--tau0"
+              ],
+              "false_flags": [],
+              "metavar": "TAU"
+            },
+            "provider": {
+              "field": "tau0",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "tau0",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Zenith Opacity",
+              "group": "Noise",
+              "advanced": true,
+              "hidden": false
+            }
+          },
+          "aliases": [],
+          "reviewed_homonym": null
+        },
+        {
+          "name": "seed",
+          "concept": {
+            "id": "simulation.seed",
+            "semantic_revision": 1
+          },
+          "order": 32,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "integer",
+              "value": 11111
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--seed"
+              ],
+              "false_flags": [],
+              "metavar": "N"
+            },
+            "provider": {
+              "field": "seed",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "seed",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Seed",
+              "group": "Noise",
+              "advanced": true,
+              "hidden": false
+            }
+          },
+          "aliases": [],
+          "reviewed_homonym": null
+        },
+        {
+          "name": "leakage",
+          "concept": {
+            "id": "simulation.leakage",
+            "semantic_revision": 1
+          },
+          "order": 33,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "float",
+              "value": 0.0
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--leakage"
+              ],
+              "false_flags": [],
+              "metavar": "AMPLITUDE"
+            },
+            "provider": {
+              "field": "leakage",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "leakage",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Leakage",
+              "group": "Noise",
+              "advanced": true,
+              "hidden": false
+            }
+          },
+          "aliases": [],
+          "reviewed_homonym": null
+        },
+        {
+          "name": "correlator",
+          "concept": {
+            "id": "parameter.correlator",
+            "semantic_revision": 2
+          },
+          "order": 34,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--correlator"
+              ],
+              "false_flags": [],
+              "metavar": "NAME"
+            },
+            "provider": {
+              "field": "correlator",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "correlator",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Correlator",
+              "group": "Noise",
+              "advanced": true,
+              "hidden": false
+            }
+          },
+          "aliases": [],
+          "reviewed_homonym": null
+        },
+        {
+          "name": "graphics",
+          "concept": {
+            "id": "parameter.graphics",
+            "semantic_revision": 2
+          },
+          "order": 35,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "both"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--graphics"
+              ],
+              "false_flags": [],
+              "metavar": "MODE"
+            },
+            "provider": {
+              "field": "graphics",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "graphics",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Graphics",
+              "group": "Output",
+              "advanced": false,
+              "hidden": false
+            }
+          },
+          "aliases": [],
+          "reviewed_homonym": null
+        },
+        {
+          "name": "verbose",
+          "concept": {
+            "id": "parameter.verbose",
+            "semantic_revision": 1
+          },
+          "order": 36,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--verbose"
+              ],
+              "false_flags": [],
+              "metavar": null
+            },
+            "provider": {
+              "field": "verbose",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "verbose",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Verbose",
+              "group": "Output",
+              "advanced": true,
               "hidden": false
             }
           },
@@ -12696,12 +14082,12 @@
             "id": "output.overwrite",
             "semantic_revision": 1
           },
-          "order": 9,
+          "order": 37,
           "default": {
             "kind": "literal",
             "value": {
               "kind": "bool",
-              "value": false
+              "value": true
             }
           },
           "required_when": {
@@ -12734,1774 +14120,7 @@
             },
             "presentation": {
               "label": "Overwrite",
-              "group": "Synthetic Observation",
-              "advanced": false,
-              "hidden": false
-            }
-          },
-          "aliases": [],
-          "reviewed_homonym": null
-        },
-        {
-          "name": "predict_model",
-          "concept": {
-            "id": "parameter.predict_model",
-            "semantic_revision": 1
-          },
-          "order": 10,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "bool",
-              "value": true
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "equals",
-            "parameter": "request_kind",
-            "value": {
-              "kind": "string",
-              "value": "run"
-            }
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": null,
-          "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "--predict-model"
-              ],
-              "false_flags": [
-                "--no-predict-model"
-              ],
-              "metavar": null
-            },
-            "provider": {
-              "field": "predict_model",
-              "adapter": "identity"
-            },
-            "python": {
-              "name": "predict_model",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Predict Model",
-              "group": "Synthetic Observation",
-              "advanced": false,
-              "hidden": false
-            }
-          },
-          "aliases": [],
-          "reviewed_homonym": null
-        },
-        {
-          "name": "polarizations",
-          "concept": {
-            "id": "parameter.polarizations",
-            "semantic_revision": 1
-          },
-          "order": 11,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "string",
-              "value": "2"
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "always"
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": null,
-          "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "--polarizations"
-              ],
-              "false_flags": [],
-              "metavar": "N"
-            },
-            "provider": {
-              "field": "polarizations",
-              "adapter": "identity"
-            },
-            "python": {
-              "name": "polarizations",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Polarizations",
-              "group": "Synthetic Observation",
-              "advanced": false,
-              "hidden": false
-            }
-          },
-          "aliases": [],
-          "reviewed_homonym": null
-        },
-        {
-          "name": "polarization_basis",
-          "concept": {
-            "id": "parameter.polarization_basis",
-            "semantic_revision": 1
-          },
-          "order": 12,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "string",
-              "value": "circular"
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "equals",
-            "parameter": "request_kind",
-            "value": {
-              "kind": "string",
-              "value": "run"
-            }
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": null,
-          "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "--polarization-basis"
-              ],
-              "false_flags": [],
-              "metavar": "circular|linear"
-            },
-            "provider": {
-              "field": "polarization_basis",
-              "adapter": "identity"
-            },
-            "python": {
-              "name": "polarization_basis",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Polarization Basis",
-              "group": "Synthetic Observation",
-              "advanced": false,
-              "hidden": false
-            }
-          },
-          "aliases": [],
-          "reviewed_homonym": null
-        },
-        {
-          "name": "worker_policy",
-          "concept": {
-            "id": "parameter.worker_policy",
-            "semantic_revision": 1
-          },
-          "order": 13,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "string",
-              "value": "auto"
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "always"
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": null,
-          "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "--worker-policy"
-              ],
-              "false_flags": [],
-              "metavar": "auto|fixed"
-            },
-            "provider": {
-              "field": "worker_policy",
-              "adapter": "identity"
-            },
-            "python": {
-              "name": "worker_policy",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Worker Policy",
-              "group": "Workers",
-              "advanced": false,
-              "hidden": false
-            }
-          },
-          "aliases": [],
-          "reviewed_homonym": null
-        },
-        {
-          "name": "row_workers",
-          "concept": {
-            "id": "parameter.row_workers",
-            "semantic_revision": 1
-          },
-          "order": 14,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "string",
-              "value": "none"
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "always"
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": null,
-          "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "--row-workers"
-              ],
-              "false_flags": [],
-              "metavar": "N"
-            },
-            "provider": {
-              "field": "row_workers",
-              "adapter": "omit_none"
-            },
-            "python": {
-              "name": "row_workers",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Row Workers",
-              "group": "Workers",
-              "advanced": false,
-              "hidden": false
-            }
-          },
-          "aliases": [],
-          "reviewed_homonym": null
-        },
-        {
-          "name": "channel_workers",
-          "concept": {
-            "id": "parameter.channel_workers",
-            "semantic_revision": 1
-          },
-          "order": 15,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "string",
-              "value": "none"
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "always"
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": null,
-          "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "--channel-workers"
-              ],
-              "false_flags": [],
-              "metavar": "N"
-            },
-            "provider": {
-              "field": "channel_workers",
-              "adapter": "omit_none"
-            },
-            "python": {
-              "name": "channel_workers",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Channel Workers",
-              "group": "Workers",
-              "advanced": false,
-              "hidden": false
-            }
-          },
-          "aliases": [],
-          "reviewed_homonym": null
-        },
-        {
-          "name": "corruption_seed",
-          "concept": {
-            "id": "parameter.corruption_seed",
-            "semantic_revision": 1
-          },
-          "order": 16,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "string",
-              "value": "1"
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "equals",
-            "parameter": "request_kind",
-            "value": {
-              "kind": "string",
-              "value": "run"
-            }
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": null,
-          "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "--corruption-seed"
-              ],
-              "false_flags": [],
-              "metavar": "N"
-            },
-            "provider": {
-              "field": "corruption_seed",
-              "adapter": "identity"
-            },
-            "python": {
-              "name": "corruption_seed",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Corruption Seed",
-              "group": "Synthetic Observation",
-              "advanced": false,
-              "hidden": false
-            }
-          },
-          "aliases": [],
-          "reviewed_homonym": null
-        },
-        {
-          "name": "noise_simplenoise_jy",
-          "concept": {
-            "id": "parameter.noise_simplenoise_jy",
-            "semantic_revision": 1
-          },
-          "order": 17,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "string",
-              "value": "none"
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "equals",
-            "parameter": "request_kind",
-            "value": {
-              "kind": "string",
-              "value": "run"
-            }
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": null,
-          "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "--noise-simplenoise-jy"
-              ],
-              "false_flags": [],
-              "metavar": "JY"
-            },
-            "provider": {
-              "field": "noise_simplenoise_jy",
-              "adapter": "omit_none"
-            },
-            "python": {
-              "name": "noise_simplenoise_jy",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Noise SimpleNoise (Jy)",
-              "group": "Synthetic Observation",
-              "advanced": false,
-              "hidden": false
-            }
-          },
-          "aliases": [],
-          "reviewed_homonym": null
-        },
-        {
-          "name": "gain_mode",
-          "concept": {
-            "id": "parameter.gain_mode",
-            "semantic_revision": 1
-          },
-          "order": 18,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "string",
-              "value": "fbm"
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "equals",
-            "parameter": "request_kind",
-            "value": {
-              "kind": "string",
-              "value": "run"
-            }
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": null,
-          "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "--gain-mode"
-              ],
-              "false_flags": [],
-              "metavar": "MODE"
-            },
-            "provider": {
-              "field": "gain_mode",
-              "adapter": "identity"
-            },
-            "python": {
-              "name": "gain_mode",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Gain Mode",
-              "group": "Synthetic Observation",
-              "advanced": false,
-              "hidden": false
-            }
-          },
-          "aliases": [],
-          "reviewed_homonym": null
-        },
-        {
-          "name": "gain_interval_seconds",
-          "concept": {
-            "id": "parameter.gain_interval_seconds",
-            "semantic_revision": 1
-          },
-          "order": 19,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "float",
-              "value": 10.0
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "equals",
-            "parameter": "request_kind",
-            "value": {
-              "kind": "string",
-              "value": "run"
-            }
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": null,
-          "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "--gain-interval-seconds"
-              ],
-              "false_flags": [],
-              "metavar": "SECONDS"
-            },
-            "provider": {
-              "field": "gain_interval_seconds",
-              "adapter": "identity"
-            },
-            "python": {
-              "name": "gain_interval_seconds",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Gain Interval",
-              "group": "Synthetic Observation",
-              "advanced": false,
-              "hidden": false
-            }
-          },
-          "aliases": [],
-          "reviewed_homonym": null
-        },
-        {
-          "name": "gain_amplitude",
-          "concept": {
-            "id": "parameter.gain_amplitude",
-            "semantic_revision": 1
-          },
-          "order": 20,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "string",
-              "value": "none"
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "equals",
-            "parameter": "request_kind",
-            "value": {
-              "kind": "string",
-              "value": "run"
-            }
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": null,
-          "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "--gain-amplitude"
-              ],
-              "false_flags": [],
-              "metavar": "REAL[,IMAG]"
-            },
-            "provider": {
-              "field": "gain_amplitude",
-              "adapter": "omit_none"
-            },
-            "python": {
-              "name": "gain_amplitude",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Gain Amplitude",
-              "group": "Synthetic Observation",
-              "advanced": false,
-              "hidden": false
-            }
-          },
-          "aliases": [],
-          "reviewed_homonym": null
-        },
-        {
-          "name": "bandpass_mode",
-          "concept": {
-            "id": "parameter.bandpass_mode",
-            "semantic_revision": 1
-          },
-          "order": 21,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "string",
-              "value": "calculate"
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "equals",
-            "parameter": "request_kind",
-            "value": {
-              "kind": "string",
-              "value": "run"
-            }
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": null,
-          "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "--bandpass-mode"
-              ],
-              "false_flags": [],
-              "metavar": "MODE"
-            },
-            "provider": {
-              "field": "bandpass_mode",
-              "adapter": "identity"
-            },
-            "python": {
-              "name": "bandpass_mode",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Bandpass Mode",
-              "group": "Synthetic Observation",
-              "advanced": false,
-              "hidden": false
-            }
-          },
-          "aliases": [],
-          "reviewed_homonym": null
-        },
-        {
-          "name": "bandpass_interval_seconds",
-          "concept": {
-            "id": "parameter.bandpass_interval_seconds",
-            "semantic_revision": 1
-          },
-          "order": 22,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "float",
-              "value": 3600.0
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "equals",
-            "parameter": "request_kind",
-            "value": {
-              "kind": "string",
-              "value": "run"
-            }
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": null,
-          "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "--bandpass-interval-seconds"
-              ],
-              "false_flags": [],
-              "metavar": "SECONDS"
-            },
-            "provider": {
-              "field": "bandpass_interval_seconds",
-              "adapter": "identity"
-            },
-            "python": {
-              "name": "bandpass_interval_seconds",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Bandpass Interval",
-              "group": "Synthetic Observation",
-              "advanced": false,
-              "hidden": false
-            }
-          },
-          "aliases": [],
-          "reviewed_homonym": null
-        },
-        {
-          "name": "bandpass_amplitude",
-          "concept": {
-            "id": "parameter.bandpass_amplitude",
-            "semantic_revision": 1
-          },
-          "order": 23,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "string",
-              "value": "none"
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "equals",
-            "parameter": "request_kind",
-            "value": {
-              "kind": "string",
-              "value": "run"
-            }
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": null,
-          "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "--bandpass-amplitude"
-              ],
-              "false_flags": [],
-              "metavar": "AMP[,PHASE]"
-            },
-            "provider": {
-              "field": "bandpass_amplitude",
-              "adapter": "omit_none"
-            },
-            "python": {
-              "name": "bandpass_amplitude",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Bandpass Amplitude",
-              "group": "Synthetic Observation",
-              "advanced": false,
-              "hidden": false
-            }
-          },
-          "aliases": [],
-          "reviewed_homonym": null
-        },
-        {
-          "name": "leakage_amplitude",
-          "concept": {
-            "id": "parameter.leakage_amplitude",
-            "semantic_revision": 1
-          },
-          "order": 24,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "string",
-              "value": "none"
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "equals",
-            "parameter": "request_kind",
-            "value": {
-              "kind": "string",
-              "value": "run"
-            }
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": null,
-          "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "--leakage-amplitude"
-              ],
-              "false_flags": [],
-              "metavar": "REAL[,IMAG]"
-            },
-            "provider": {
-              "field": "leakage_amplitude",
-              "adapter": "omit_none"
-            },
-            "python": {
-              "name": "leakage_amplitude",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Leakage Amplitude",
-              "group": "Synthetic Observation",
-              "advanced": false,
-              "hidden": false
-            }
-          },
-          "aliases": [],
-          "reviewed_homonym": null
-        },
-        {
-          "name": "leakage_offset",
-          "concept": {
-            "id": "parameter.leakage_offset",
-            "semantic_revision": 1
-          },
-          "order": 25,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "string",
-              "value": "none"
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "equals",
-            "parameter": "request_kind",
-            "value": {
-              "kind": "string",
-              "value": "run"
-            }
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": null,
-          "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "--leakage-offset"
-              ],
-              "false_flags": [],
-              "metavar": "REAL[,IMAG]"
-            },
-            "provider": {
-              "field": "leakage_offset",
-              "adapter": "omit_none"
-            },
-            "python": {
-              "name": "leakage_offset",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Leakage Offset",
-              "group": "Synthetic Observation",
-              "advanced": false,
-              "hidden": false
-            }
-          },
-          "aliases": [],
-          "reviewed_homonym": null
-        },
-        {
-          "name": "pointing_offset_ra_arcsec",
-          "concept": {
-            "id": "parameter.pointing_offset_ra_arcsec",
-            "semantic_revision": 1
-          },
-          "order": 26,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "string",
-              "value": "none"
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "equals",
-            "parameter": "request_kind",
-            "value": {
-              "kind": "string",
-              "value": "run"
-            }
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": null,
-          "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "--pointing-offset-ra-arcsec"
-              ],
-              "false_flags": [],
-              "metavar": "ARCSEC"
-            },
-            "provider": {
-              "field": "pointing_offset_ra_arcsec",
-              "adapter": "omit_none"
-            },
-            "python": {
-              "name": "pointing_offset_ra_arcsec",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Pointing RA Offset",
-              "group": "Synthetic Observation",
-              "advanced": false,
-              "hidden": false
-            }
-          },
-          "aliases": [],
-          "reviewed_homonym": null
-        },
-        {
-          "name": "pointing_offset_dec_arcsec",
-          "concept": {
-            "id": "parameter.pointing_offset_dec_arcsec",
-            "semantic_revision": 1
-          },
-          "order": 27,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "string",
-              "value": "none"
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "equals",
-            "parameter": "request_kind",
-            "value": {
-              "kind": "string",
-              "value": "run"
-            }
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": null,
-          "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "--pointing-offset-dec-arcsec"
-              ],
-              "false_flags": [],
-              "metavar": "ARCSEC"
-            },
-            "provider": {
-              "field": "pointing_offset_dec_arcsec",
-              "adapter": "omit_none"
-            },
-            "python": {
-              "name": "pointing_offset_dec_arcsec",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Pointing Dec Offset",
-              "group": "Synthetic Observation",
-              "advanced": false,
-              "hidden": false
-            }
-          },
-          "aliases": [],
-          "reviewed_homonym": null
-        },
-        {
-          "name": "source_model",
-          "concept": {
-            "id": "parameter.source_model",
-            "semantic_revision": 1
-          },
-          "order": 28,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "string",
-              "value": "{\"kind\":\"analytic_components\",\"components\":[{\"kind\":\"point\",\"l_rad\":0.0,\"m_rad\":0.0,\"spectrum\":{\"flux_jy\":1.0}}]}"
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "equals",
-            "parameter": "request_kind",
-            "value": {
-              "kind": "string",
-              "value": "family"
-            }
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": null,
-          "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [],
-              "false_flags": [],
-              "metavar": "JSON"
-            },
-            "provider": {
-              "field": "source_model",
-              "adapter": "identity"
-            },
-            "python": {
-              "name": "source_model",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Source Model",
-              "group": "Family Parameters",
-              "advanced": false,
-              "hidden": false
-            }
-          },
-          "aliases": [],
-          "reviewed_homonym": null
-        },
-        {
-          "name": "telescope",
-          "concept": {
-            "id": "parameter.telescope",
-            "semantic_revision": 1
-          },
-          "order": 29,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "string",
-              "value": "VLA"
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "equals",
-            "parameter": "request_kind",
-            "value": {
-              "kind": "string",
-              "value": "family"
-            }
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": null,
-          "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [],
-              "false_flags": [],
-              "metavar": "NAME"
-            },
-            "provider": {
-              "field": "telescope",
-              "adapter": "identity"
-            },
-            "python": {
-              "name": "telescope",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Telescope",
-              "group": "Family Parameters",
-              "advanced": false,
-              "hidden": false
-            }
-          },
-          "aliases": [],
-          "reviewed_homonym": null
-        },
-        {
-          "name": "array_config",
-          "concept": {
-            "id": "parameter.array_config",
-            "semantic_revision": 1
-          },
-          "order": 30,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "string",
-              "value": "A"
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "equals",
-            "parameter": "request_kind",
-            "value": {
-              "kind": "string",
-              "value": "family"
-            }
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": null,
-          "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [],
-              "false_flags": [],
-              "metavar": "CONFIG"
-            },
-            "provider": {
-              "field": "array_config",
-              "adapter": "identity"
-            },
-            "python": {
-              "name": "array_config",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Array Config",
-              "group": "Family Parameters",
-              "advanced": false,
-              "hidden": false
-            }
-          },
-          "aliases": [],
-          "reviewed_homonym": null
-        },
-        {
-          "name": "band",
-          "concept": {
-            "id": "parameter.band",
-            "semantic_revision": 1
-          },
-          "order": 31,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "string",
-              "value": "Q"
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "equals",
-            "parameter": "request_kind",
-            "value": {
-              "kind": "string",
-              "value": "family"
-            }
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": null,
-          "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [],
-              "false_flags": [],
-              "metavar": "BAND"
-            },
-            "provider": {
-              "field": "band",
-              "adapter": "identity"
-            },
-            "python": {
-              "name": "band",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Band",
-              "group": "Family Parameters",
-              "advanced": false,
-              "hidden": false
-            }
-          },
-          "aliases": [],
-          "reviewed_homonym": null
-        },
-        {
-          "name": "target_ms_size_gib",
-          "concept": {
-            "id": "parameter.target_ms_size_gib",
-            "semantic_revision": 1
-          },
-          "order": 32,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "float",
-              "value": 0.01
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "equals",
-            "parameter": "request_kind",
-            "value": {
-              "kind": "string",
-              "value": "family"
-            }
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": null,
-          "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [],
-              "false_flags": [],
-              "metavar": "GiB"
-            },
-            "provider": {
-              "field": "target_ms_size_gib",
-              "adapter": "identity"
-            },
-            "python": {
-              "name": "target_ms_size_gib",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Target MS Size (GiB)",
-              "group": "Family Parameters",
-              "advanced": false,
-              "hidden": false
-            }
-          },
-          "aliases": [],
-          "reviewed_homonym": null
-        },
-        {
-          "name": "output_ms",
-          "concept": {
-            "id": "parameter.output_ms",
-            "semantic_revision": 1
-          },
-          "order": 33,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "string",
-              "value": "simobserve-family.ms"
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "equals",
-            "parameter": "request_kind",
-            "value": {
-              "kind": "string",
-              "value": "family"
-            }
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": null,
-          "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [],
-              "false_flags": [],
-              "metavar": "PATH"
-            },
-            "provider": {
-              "field": "output_ms",
-              "adapter": "identity"
-            },
-            "python": {
-              "name": "output_ms",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Family Output MS",
-              "group": "Family Parameters",
-              "advanced": false,
-              "hidden": false
-            }
-          },
-          "aliases": [],
-          "reviewed_homonym": null
-        },
-        {
-          "name": "ms_channels",
-          "concept": {
-            "id": "parameter.ms_channels",
-            "semantic_revision": 1
-          },
-          "order": 34,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "integer",
-              "value": 4
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "equals",
-            "parameter": "request_kind",
-            "value": {
-              "kind": "string",
-              "value": "family"
-            }
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": null,
-          "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [],
-              "false_flags": [],
-              "metavar": "N"
-            },
-            "provider": {
-              "field": "ms_channels",
-              "adapter": "identity"
-            },
-            "python": {
-              "name": "ms_channels",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "MS Channels",
-              "group": "Family Dimensions",
-              "advanced": false,
-              "hidden": false
-            }
-          },
-          "aliases": [],
-          "reviewed_homonym": null
-        },
-        {
-          "name": "image_channels",
-          "concept": {
-            "id": "parameter.image_channels",
-            "semantic_revision": 1
-          },
-          "order": 35,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "integer",
-              "value": 1
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "equals",
-            "parameter": "request_kind",
-            "value": {
-              "kind": "string",
-              "value": "family"
-            }
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": null,
-          "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [],
-              "false_flags": [],
-              "metavar": "N"
-            },
-            "provider": {
-              "field": "image_channels",
-              "adapter": "identity"
-            },
-            "python": {
-              "name": "image_channels",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Image Channels",
-              "group": "Family Dimensions",
-              "advanced": false,
-              "hidden": false
-            }
-          },
-          "aliases": [],
-          "reviewed_homonym": null
-        },
-        {
-          "name": "pointing_count",
-          "concept": {
-            "id": "parameter.pointing_count",
-            "semantic_revision": 1
-          },
-          "order": 36,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "integer",
-              "value": 1
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "equals",
-            "parameter": "request_kind",
-            "value": {
-              "kind": "string",
-              "value": "family"
-            }
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": null,
-          "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [],
-              "false_flags": [],
-              "metavar": "N"
-            },
-            "provider": {
-              "field": "pointing_count",
-              "adapter": "identity"
-            },
-            "python": {
-              "name": "pointing_count",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Pointings",
-              "group": "Family Dimensions",
-              "advanced": false,
-              "hidden": false
-            }
-          },
-          "aliases": [],
-          "reviewed_homonym": null
-        },
-        {
-          "name": "time_sample_count",
-          "concept": {
-            "id": "parameter.time_sample_count",
-            "semantic_revision": 1
-          },
-          "order": 37,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "string",
-              "value": "none"
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "equals",
-            "parameter": "request_kind",
-            "value": {
-              "kind": "string",
-              "value": "family"
-            }
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": null,
-          "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [],
-              "false_flags": [],
-              "metavar": "N"
-            },
-            "provider": {
-              "field": "time_sample_count",
-              "adapter": "omit_none"
-            },
-            "python": {
-              "name": "time_sample_count",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Time Samples",
-              "group": "Family Dimensions",
-              "advanced": false,
-              "hidden": false
-            }
-          },
-          "aliases": [],
-          "reviewed_homonym": null
-        },
-        {
-          "name": "integration_seconds",
-          "concept": {
-            "id": "parameter.integration_seconds",
-            "semantic_revision": 1
-          },
-          "order": 38,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "string",
-              "value": "none"
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "equals",
-            "parameter": "request_kind",
-            "value": {
-              "kind": "string",
-              "value": "family"
-            }
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": null,
-          "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [],
-              "false_flags": [],
-              "metavar": "SECONDS"
-            },
-            "provider": {
-              "field": "integration_seconds",
-              "adapter": "omit_none"
-            },
-            "python": {
-              "name": "integration_seconds",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Integration Seconds",
-              "group": "Family Dimensions",
-              "advanced": false,
-              "hidden": false
-            }
-          },
-          "aliases": [],
-          "reviewed_homonym": null
-        },
-        {
-          "name": "start_time_mjd_seconds",
-          "concept": {
-            "id": "parameter.start_time_mjd_seconds",
-            "semantic_revision": 1
-          },
-          "order": 39,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "string",
-              "value": "none"
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "equals",
-            "parameter": "request_kind",
-            "value": {
-              "kind": "string",
-              "value": "family"
-            }
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": null,
-          "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [],
-              "false_flags": [],
-              "metavar": "MJD_SECONDS"
-            },
-            "provider": {
-              "field": "start_time_mjd_seconds",
-              "adapter": "omit_none"
-            },
-            "python": {
-              "name": "start_time_mjd_seconds",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Start Time",
-              "group": "Family Dimensions",
-              "advanced": false,
-              "hidden": false
-            }
-          },
-          "aliases": [],
-          "reviewed_homonym": null
-        },
-        {
-          "name": "imaging_mode",
-          "concept": {
-            "id": "parameter.imaging_mode",
-            "semantic_revision": 1
-          },
-          "order": 40,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "string",
-              "value": "mfs"
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "equals",
-            "parameter": "request_kind",
-            "value": {
-              "kind": "string",
-              "value": "family"
-            }
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": null,
-          "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [],
-              "false_flags": [],
-              "metavar": "MODE"
-            },
-            "provider": {
-              "field": "imaging_mode",
-              "adapter": "identity"
-            },
-            "python": {
-              "name": "imaging_mode",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Imaging Mode",
-              "group": "Family Dimensions",
-              "advanced": false,
-              "hidden": false
-            }
-          },
-          "aliases": [],
-          "reviewed_homonym": null
-        },
-        {
-          "name": "observation_mode",
-          "concept": {
-            "id": "parameter.observation_mode",
-            "semantic_revision": 1
-          },
-          "order": 41,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "string",
-              "value": "interferometric"
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "equals",
-            "parameter": "request_kind",
-            "value": {
-              "kind": "string",
-              "value": "family"
-            }
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": null,
-          "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [],
-              "false_flags": [],
-              "metavar": "interferometric|total_power"
-            },
-            "provider": {
-              "field": "observation_mode",
-              "adapter": "identity"
-            },
-            "python": {
-              "name": "observation_mode",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Observation Mode",
-              "group": "Family Dimensions",
-              "advanced": false,
-              "hidden": false
-            }
-          },
-          "aliases": [],
-          "reviewed_homonym": null
-        },
-        {
-          "name": "measure_actual_size",
-          "concept": {
-            "id": "parameter.measure_actual_size",
-            "semantic_revision": 1
-          },
-          "order": 42,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "bool",
-              "value": false
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "equals",
-            "parameter": "request_kind",
-            "value": {
-              "kind": "string",
-              "value": "family"
-            }
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": null,
-          "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [],
-              "false_flags": [],
-              "metavar": "BOOL"
-            },
-            "provider": {
-              "field": "measure_actual_size",
-              "adapter": "identity"
-            },
-            "python": {
-              "name": "measure_actual_size",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Measure Actual Size",
-              "group": "Family Workers",
+              "group": "Output",
               "advanced": false,
               "hidden": false
             }
@@ -14510,26 +14129,7 @@
           "reviewed_homonym": null
         }
       ],
-      "migrations": [
-        {
-          "from_contract": 1,
-          "to_contract": 2,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 2,
-          "to_contract": 3,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 3,
-          "to_contract": 4,
-          "steps": [],
-          "changed_defaults": []
-        }
-      ]
+      "migrations": []
     },
     {
       "kind": "task",

@@ -587,6 +587,11 @@
       "fingerprint": "45ad657611a12cd16b1d8d6130fb95d2c7002d48788177a2c8fd777646a3f907"
     },
     {
+      "id": "parameter.correlator",
+      "semantic_revision": 2,
+      "fingerprint": "714bcd92fd6751d04c9ad0f618c859b0a31770c449fd690d2e59f7dc730457da"
+    },
+    {
       "id": "parameter.corruption_seed",
       "semantic_revision": 1,
       "fingerprint": "d5c511610fdc06547264e6828542da7df8bde9a19b278077f9f4603e2b36acd6"
@@ -620,6 +625,11 @@
       "id": "parameter.direction",
       "semantic_revision": 1,
       "fingerprint": "0b78d77c1f4f7c0735c290d5196e54950254a72605b3fb9daff22fba967fce0f"
+    },
+    {
+      "id": "parameter.direction",
+      "semantic_revision": 2,
+      "fingerprint": "6288724790be462425c861bd0ffa85a05061120d06a1f232c22aafc09164a0b3"
     },
     {
       "id": "parameter.dirtol",
@@ -927,6 +937,11 @@
       "fingerprint": "20566c26bd1aadecaeca5b218a84e77f61dca07db778a0e399e98de8f8a316c4"
     },
     {
+      "id": "parameter.graphics",
+      "semantic_revision": 2,
+      "fingerprint": "5d3ee17cf84acb57ce60418b62e403932983d11f1d4df4fa3f759a72798bf995"
+    },
+    {
       "id": "parameter.gridcols",
       "semantic_revision": 1,
       "fingerprint": "b2b3d36289253a45956b4abae46487032d4bd2a97f02f2fbe99259b3658fe9cd"
@@ -1195,6 +1210,11 @@
       "id": "parameter.mapsize",
       "semantic_revision": 1,
       "fingerprint": "d38892d21d987300f27e386a32dbe22793ec352a6ef8b289679767b8587bbda6"
+    },
+    {
+      "id": "parameter.mapsize",
+      "semantic_revision": 2,
+      "fingerprint": "19ec26dbee38d98b4f1db97f7d362afd53d6c6debff1f406c276cbe178a5f780"
     },
     {
       "id": "parameter.mask",
@@ -1617,6 +1637,11 @@
       "fingerprint": "42645e5ab657efc0bf3d69660a2d086c4f53ceeb66d18d2a1998e4a7bf5cfbc3"
     },
     {
+      "id": "parameter.ptgfile",
+      "semantic_revision": 2,
+      "fingerprint": "d6d47697251bb3aa3093cbc156b566e364af7d06a055fc63f38be30c556b5436"
+    },
+    {
       "id": "parameter.pwv",
       "semantic_revision": 1,
       "fingerprint": "46f9f5472d062fd87873e57cac3a66d4606311cd42ca8d231424a0baed8859af"
@@ -1810,6 +1835,11 @@
       "id": "parameter.skymodel",
       "semantic_revision": 1,
       "fingerprint": "824f20dd3f60bc2b837f14ce667a621183080eb9154b2a28bc11e7fe0b23cf58"
+    },
+    {
+      "id": "parameter.skymodel",
+      "semantic_revision": 2,
+      "fingerprint": "e84051100baacf5f84360c75a0488d1fcdf6e1a4e5d4913457272fd0894a76da"
     },
     {
       "id": "parameter.slidetimebin",
@@ -2227,9 +2257,99 @@
       "fingerprint": "f2ba1388fe23d1ece4dd50e0b333719d37379078cdb8ce7e0311f6005cfe0ece"
     },
     {
+      "id": "simulation.caldirection",
+      "semantic_revision": 1,
+      "fingerprint": "e6a66dba2e99260ce49fa891e5a8e884e75d3607054c8f9103a04da4f8a284e5"
+    },
+    {
+      "id": "simulation.calflux",
+      "semantic_revision": 1,
+      "fingerprint": "0020e059d7c1af1bdb5e5610115fd5e5d2df67d3b677e4b2bbc50c78c54c3698"
+    },
+    {
+      "id": "simulation.comp_nchan",
+      "semantic_revision": 1,
+      "fingerprint": "59041412b56e1b45e81d65ddd836d80eb761945fc80311f1843abba2aa73b405"
+    },
+    {
       "id": "simulation.image",
       "semantic_revision": 1,
       "fingerprint": "28da1a7779ea8d57aab749793e74023469bb93de4db283740f2a4ba1f4c40149"
+    },
+    {
+      "id": "simulation.leakage",
+      "semantic_revision": 1,
+      "fingerprint": "6c3afd1edf831855c01c065eca0afc0c1d34de5cd76051484e86858db4692fbb"
+    },
+    {
+      "id": "simulation.maptype",
+      "semantic_revision": 1,
+      "fingerprint": "b7f98a09c5f0bc3a1593d3d98f9e6b720c00ec3cde9668543fbd5f5c5fc974e1"
+    },
+    {
+      "id": "simulation.obsmode",
+      "semantic_revision": 1,
+      "fingerprint": "21c16e649c1294a8aa58c1a526462b102d1263603f49e23fb910e9bf78c7aa3e"
+    },
+    {
+      "id": "simulation.outframe",
+      "semantic_revision": 1,
+      "fingerprint": "05654e6f84846e8e601efe28dfd3da2856231999ee09fb725103f58c3bd2c2dc"
+    },
+    {
+      "id": "simulation.pointingspacing",
+      "semantic_revision": 1,
+      "fingerprint": "7756f9d492ff6c98bc0ee2ceb6f650e36f48b2ae1545bb9912ab95de387f2aa4"
+    },
+    {
+      "id": "simulation.project",
+      "semantic_revision": 1,
+      "fingerprint": "9f9b21cbd92ffebd4c208f8a4b6c41c5b4335916913338ca106624f6c3dcaf94"
+    },
+    {
+      "id": "simulation.refdate",
+      "semantic_revision": 1,
+      "fingerprint": "97b23520e57ccfc6d9d60f8e6f76eca9971c13d785a19316d16333779f143334"
+    },
+    {
+      "id": "simulation.sdant",
+      "semantic_revision": 1,
+      "fingerprint": "62c811b1c4c0b19df102d805a83844d9ee3ff66ebc7c9666b5892f97ce91daf2"
+    },
+    {
+      "id": "simulation.sdantlist",
+      "semantic_revision": 1,
+      "fingerprint": "7e612d37c4eace167eedbc5d4ce7b42401b95bbc8079c390c82d23670e52bf53"
+    },
+    {
+      "id": "simulation.seed",
+      "semantic_revision": 1,
+      "fingerprint": "1232f6c14434f35e083b23ca31bc7076217badece44f76c99894b572e37a12cc"
+    },
+    {
+      "id": "simulation.t_ground",
+      "semantic_revision": 1,
+      "fingerprint": "82e522e19a9a535440491f0011ddacca3d11493031463ea78b2916bde8478b8f"
+    },
+    {
+      "id": "simulation.t_sky",
+      "semantic_revision": 1,
+      "fingerprint": "799fb74ad752f7944692af1ac97805c9aac089aa455c410aa13e7cf0d8a686b2"
+    },
+    {
+      "id": "simulation.tau0",
+      "semantic_revision": 1,
+      "fingerprint": "ad87fbd853f77c93687fffccc4265338b133eb395ecce75a866fcf5efb6d99b8"
+    },
+    {
+      "id": "simulation.thermalnoise",
+      "semantic_revision": 1,
+      "fingerprint": "61d126cdc098d88a113efc6fc4752eb8c865bad68b1401c41004c1debb83832a"
+    },
+    {
+      "id": "simulation.user_pwv",
+      "semantic_revision": 1,
+      "fingerprint": "7d46336624115b8b966121e1521ce0da650c1fba9dbb1d3f8c0cd265fbda3c0b"
     },
     {
       "id": "split.width",
@@ -2962,6 +3082,11 @@
       "id": "simobserve",
       "contract_version": 4,
       "fingerprint": "1f194ee4c981adf072722faa6e563ee2e3d96fc5788ed38c18e72cd2e7e11349"
+    },
+    {
+      "id": "simobserve",
+      "contract_version": 5,
+      "fingerprint": "72b1f7001c366920e322e1852dfd960651c6e81fda22554b585143c4ae7c7f2f"
     },
     {
       "id": "split",

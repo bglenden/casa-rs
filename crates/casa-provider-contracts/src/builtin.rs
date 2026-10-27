@@ -219,6 +219,30 @@ mod tests {
             "update the safety inventory intentionally"
         );
         for (surface, binding) in surfaces {
+            // The one recorded exception: simobserve replaces only its own
+            // project's files, with CASA's default of true and no
+            // confirmation.
+            if crate::PROJECT_DIRECTORY_OVERWRITE_SURFACES.contains(&surface.id()) {
+                assert!(
+                    surface
+                        .safety_rules()
+                        .iter()
+                        .all(|rule| rule.class != RunSafetyClass::Overwrite),
+                    "{} asks no confirmation",
+                    surface.id()
+                );
+                assert!(
+                    matches!(
+                        &binding.default,
+                        crate::DefaultSpec::Literal {
+                            value: ParameterValue::Bool(true)
+                        }
+                    ),
+                    "{} keeps CASA's default",
+                    surface.id()
+                );
+                continue;
+            }
             let rule = surface
                 .safety_rules()
                 .iter()
@@ -237,67 +261,69 @@ mod tests {
     }
 
     #[test]
-    fn simobserve_modes_have_disjoint_provider_inputs_and_shared_worker_controls() {
+    fn simobserve_has_casas_parameters_in_casas_order_for_the_current_contract_only() {
         let catalog = builtin_surface_catalog().expect("valid built-in parameter catalog");
         let surface = catalog.surface("simobserve").unwrap();
-        let predicate = |value: &str| Predicate::Equals {
-            parameter: "request_kind".to_string(),
-            value: ParameterValue::String(value.to_string()),
-        };
-        for name in ["model", "out", "inbright", "duration", "integration"] {
-            let binding = surface
-                .bindings()
-                .iter()
-                .find(|binding| binding.name == name)
-                .unwrap();
-            assert_eq!(binding.active_when, predicate("run"), "{name}");
+        assert_eq!(surface.contract_version(), 5);
+        let names: Vec<&str> = surface
+            .bindings()
+            .iter()
+            .map(|binding| binding.name.as_str())
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "project",
+                "skymodel",
+                "inbright",
+                "indirection",
+                "incell",
+                "incenter",
+                "inwidth",
+                "complist",
+                "compwidth",
+                "comp_nchan",
+                "setpointings",
+                "ptgfile",
+                "integration",
+                "direction",
+                "mapsize",
+                "maptype",
+                "pointingspacing",
+                "caldirection",
+                "calflux",
+                "obsmode",
+                "refdate",
+                "hourangle",
+                "totaltime",
+                "antennalist",
+                "sdantlist",
+                "sdant",
+                "outframe",
+                "thermalnoise",
+                "user_pwv",
+                "t_ground",
+                "t_sky",
+                "tau0",
+                "seed",
+                "leakage",
+                "correlator",
+                "graphics",
+                "verbose",
+                "overwrite",
+            ]
+        );
+        // Every parameter is CASA's and always active, as in CASA's task.
+        for binding in surface.bindings() {
+            assert_eq!(binding.active_when, Predicate::Always, "{}", binding.name);
+            assert!(
+                !matches!(binding.default, crate::DefaultSpec::Required),
+                "{} has CASA's default",
+                binding.name
+            );
         }
-        for name in [
-            "source_model",
-            "telescope",
-            "array_config",
-            "band",
-            "target_ms_size_gib",
-            "output_ms",
-            "ms_channels",
-            "image_channels",
-            "pointing_count",
-            "time_sample_count",
-            "integration_seconds",
-            "start_time_mjd_seconds",
-            "imaging_mode",
-            "observation_mode",
-            "measure_actual_size",
-        ] {
-            let binding = surface
-                .bindings()
-                .iter()
-                .find(|binding| binding.name == name)
-                .unwrap();
-            assert_eq!(binding.active_when, predicate("family"), "{name}");
-        }
-        for name in [
-            "request_kind",
-            "overwrite",
-            "polarizations",
-            "worker_policy",
-            "row_workers",
-            "channel_workers",
-        ] {
-            let binding = surface
-                .bindings()
-                .iter()
-                .find(|binding| binding.name == name)
-                .unwrap();
-            assert_eq!(binding.active_when, Predicate::Always, "{name}");
-        }
-        assert!(["model", "out"].into_iter().all(|name| {
-            surface
-                .bindings()
-                .iter()
-                .find(|binding| binding.name == name)
-                .is_some_and(|binding| matches!(binding.default, crate::DefaultSpec::Required))
-        }));
+        // Contract 4's casa-rs-only profiles are refused, not migrated.
+        assert!(surface.migrations().is_empty());
     }
 
     #[test]
@@ -651,11 +677,18 @@ mod tests {
                             RunProductSource::DecodedArtifacts => None,
                         })
                         .collect::<BTreeSet<_>>();
-                    if surface.id() == "imager" {
-                        assert!(products.iter().any(|product| {
-                            matches!(product.source, RunProductSource::DecodedArtifacts)
-                        }));
-                    } else {
+                    // The imager and simobserve name their products in their
+                    // managed results; the others by their output bindings.
+                    let decoded = products.iter().any(|product| {
+                        matches!(product.source, RunProductSource::DecodedArtifacts)
+                    });
+                    assert_eq!(
+                        decoded,
+                        matches!(surface.id(), "imager" | "simobserve"),
+                        "{} product sources",
+                        surface.id()
+                    );
+                    if !decoded {
                         assert_eq!(
                             parameter_sources,
                             output_parameters,

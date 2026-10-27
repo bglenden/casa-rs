@@ -172,9 +172,32 @@ mod tests {
     use super::*;
 
     #[test]
-    fn product_writes_drive_only_the_interactive_gate() {
+    fn simobserve_overwrites_its_project_without_confirmation() {
+        // CASA's default, overwrite=True, writes only inside the project
+        // directory (PROJECT_DIRECTORY_OVERWRITE_SURFACES).
         let bundle = builtin_surface_bundle("simobserve").unwrap();
+        let session = ParameterSession::defaults(bundle).unwrap();
+        let requirements = session.required_run_safety().unwrap();
+        assert_eq!(
+            requirements.classes(),
+            &BTreeSet::from([RunSafetyClass::ProductWrite])
+        );
+        assert!(!requirements.requires_overwrite_confirmation());
+    }
+
+    #[test]
+    fn product_writes_drive_only_the_interactive_gate() {
+        let bundle = builtin_surface_bundle("feather").unwrap();
         let mut session = ParameterSession::defaults(bundle).unwrap();
+        for (name, path) in [
+            ("imagename", "feathered.image"),
+            ("highres", "high.image"),
+            ("lowres", "low.image"),
+        ] {
+            session
+                .set(name, ParameterValue::String(path.into()))
+                .unwrap();
+        }
 
         session
             .set("overwrite", ParameterValue::Bool(true))
