@@ -39,7 +39,7 @@ use casa_imaging_operator::{
 pub use block::{BlockShape, DomainProjection, NativeBlock, NativeRowHeader, RowAddress};
 pub use casa_imaging_metal::{MetalNoiseRow, MetalNoiseTerm};
 pub use partition::{PLACEMENT_WORK, Partition, Region, Residency, WEIGHT_SUM_WORK, WaveDemand};
-pub use prediction::{BlockPredictor, DeviceNoise, PredictionDomain};
+pub use prediction::{BlockPredictor, DeviceNoise, DomainModel, PredictionDomain};
 pub use row_work::{
     MeasuredRowWork, ModeWork, needs_row_work, row_work_pass_bytes, run_row_work_pass,
 };

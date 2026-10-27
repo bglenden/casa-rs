@@ -295,16 +295,27 @@ pub(crate) fn solve_gain(
     ms: &MeasurementSet,
     request: &GainSolveRequest,
 ) -> Result<GainSolveReport, GainSolveError> {
-    let (solution_rows, refant_id) = solve_gain_rows(ms, request)?;
-    write_gain_caltable(ms, request, refant_id, &solution_rows)
+    let solved = solve_gain_rows(ms, request)?;
+    write_gain_caltable(ms, request, &solved)
 }
 
-/// The solution rows of [`solve_gain`] and the resolved reference antenna,
-/// before the caltable is written.
+/// A gain solve's solutions, before they are written.
+pub(crate) struct SolvedGains {
+    /// The solution rows, flagged ones included.
+    pub(crate) rows: Vec<kernel::SolutionRow>,
+    /// The reference antenna.
+    pub(crate) refant_id: i32,
+    /// The spectral windows an interval reached a solve in, whether or not
+    /// it succeeded ([`grouping::SolveAccumulator::attempted`]).
+    pub(crate) attempted_spw_ids: BTreeSet<i32>,
+}
+
+/// The solutions of [`solve_gain`], the resolved reference antenna and the
+/// windows a solve reached, before the caltable is written.
 pub(crate) fn solve_gain_rows(
     ms: &MeasurementSet,
     request: &GainSolveRequest,
-) -> Result<(Vec<kernel::SolutionRow>, i32), GainSolveError> {
+) -> Result<SolvedGains, GainSolveError> {
     if matches!(request.model_source, GainSolveModelSource::PointSource) {
         validate_smodel(request.smodel)?;
     } else if !ms
@@ -341,7 +352,11 @@ pub(crate) fn solve_gain_rows(
     }
 
     let mut solution_rows = Vec::new();
+    let mut attempted_spw_ids = BTreeSet::new();
     for ((base_key, bucket_key), mut group) in groups {
+        if group.attempted {
+            attempted_spw_ids.insert(group.spw_id);
+        }
         group.finalize_for_solve(request.solve_mode);
         trace::trace_group(&base_key, &bucket_key, &group, request);
         let Some(group_rows) = solve_closed_group(
@@ -369,7 +384,11 @@ pub(crate) fn solve_gain_rows(
         context.refant_id,
         &refant_distance_order(ms, context.refant_id)?,
     );
-    Ok((solution_rows, context.refant_id))
+    Ok(SolvedGains {
+        rows: solution_rows,
+        refant_id: context.refant_id,
+        attempted_spw_ids,
+    })
 }
 
 /// Solve one complete group whose accumulation is finalized

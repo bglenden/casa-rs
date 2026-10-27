@@ -203,6 +203,14 @@ impl<'s> Pipeline<'s> {
             .map_or(Duration::ZERO, PredictionStage::fill_time)
     }
 
+    /// Per-field sets of grids the prediction prepared, and the time that
+    /// took ([`PredictionStage::grid_preparations`]).
+    pub(super) fn grid_preparations(&self) -> (usize, Duration) {
+        self.prediction
+            .as_ref()
+            .map_or((0, Duration::ZERO), PredictionStage::grid_preparations)
+    }
+
     /// Write every row of the scans: `next` yields each integration with
     /// rows, as (scan, stored TIME), in MAIN order.
     pub(super) fn write_rows(

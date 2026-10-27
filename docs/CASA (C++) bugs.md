@@ -85,6 +85,8 @@ ATM behaviours casa-rs follows:
 [(16)O(17)O](#atm-omits-16o17o).
 ATM behaviours casa-rs does not follow:
 [the averaged non-dispersive wet phase](#refractiveindexprofiles-averaged-non-dispersive-wet-phase-reads-a-channel-as-a-water-column).
+Calibration behaviours casa-rs follows:
+[a gain table's resolution and total bandwidth](#a-gain-tables-solved-window-records-its-frequency-as-its-resolution-and-total-bandwidth).
 Calibration behaviours casa-rs does not follow:
 [a solve that fits exactly](#viscalsolver2-fails-a-solve-whose-chi-square-is-exactly-zero).
 `simutil` behaviours casa-rs does not follow:
@@ -502,20 +504,22 @@ CASA's formula rather than the physical one.
 
 `observe` converts the reference epoch to TAI and adds its seconds to the
 start and stop offsets, then writes the result into TIME, whose MEASINFO says
-UTC. The data therefore start 37 s (TAI − UTC since 2017) after the requested
-epoch. The geometry is computed with the stored number read as UT1 (line
-1546), so CASA's data are self-consistent; only the schedule is shifted.
+UTC. The data therefore start TAI − UTC at the reference epoch after the
+requested epoch (37 s since 2017, 35 s in 2014). The geometry is computed with
+the stored number read as UT1 (line 1546), so CASA's data are
+self-consistent; only the schedule is shifted.
 
 casa-rs stores the requested UTC, and also reads the stored TIME as UT1 for
 the geometry, so its uvw agree with CASA's at equal stored TIME. A parity run
-requests a start 37 s later on the casa-rs side and compares rows at equal
-TIME (`tools/simulation/compare_sm_ms.py`).
+requests a start later by TAI − UTC at the reference epoch on the casa-rs
+side, taken from the measures data and never written in as a number, and
+compares rows at equal TIME (`tools/simulation/compare_sm_ms.py`).
 
 The same offset separates the calibration tables the two simulators write
 (`setgain` and `setleakage` with `table=`): CASA's TIME is TAI under the UTC
 label. `sm.setapply` of a CASA-simulated table to a casa-rs MeasurementSet,
-or the reverse, therefore takes its solutions 37 s away, several solutions
-of 10 s integrations. The `corrupt-setapply-*` scenarios agree with CASA
+or the reverse, therefore takes its solutions TAI − UTC away (37 s today),
+several solutions of 10 s integrations. The `corrupt-setapply-*` scenarios agree with CASA
 because their runs are shifted as above; tables solved from real data carry
 true UTC and are not affected.
 
@@ -1977,3 +1981,42 @@ Components in the image's own frame, the usual case, are unaffected. The
 oracle's matched-frame cases (LSRK spectra on an LSRK cube, TOPO spectra
 on a TOPO cube) agree with CASA to 1e-6, where the same cube with spectra
 in the other frame and only the placeholder differs by 1.1e-4.
+
+## A gain table's solved window records its frequency as its resolution and total bandwidth
+
+- Date noted: 2026-10-27
+- Status: CASA behaviour casa-rs follows, for CASA's append (#917)
+- Affected code: `synthesis/MeasurementComponents/SolvableVisCal.cc`,
+  `SolvableVisCal::setCTFrequencies`, CASA 6.7.5.18
+
+A G or T table holds one channel per spectral window. For a window a solve
+reaches, `setCTFrequencies` writes that channel's frequency and width from
+`FreqMetaData`. It then takes `const Vector<Double>& chres(chfr); //
+resolution same as freq` and `Double totbw=sum(chfr);`, so `RESOLUTION` and
+`TOTAL_BANDWIDTH` both hold the frequency. On ngc5921 (`gaincal`, `spw='0'`)
+the table's window reads `CHAN_FREQ` 1413421909.706 Hz, `CHAN_WIDTH`
+1538085.9 Hz, and `RESOLUTION` and `TOTAL_BANDWIDTH` 1413421909.706 Hz.
+
+The values are plainly meant to be widths:
+- the same function sets `EFFECTIVE_BW` to the width;
+- the older `setOrVerifyCTFrequencies` sets resolution, effective bandwidth
+  and total bandwidth to the width;
+- `NewCalTable::setSpwFreqs` sets `TOTAL_BANDWIDTH` to the summed width;
+- a window no solve reached keeps its summed resolution and the
+  MeasurementSet's total bandwidth (`createMemCalTable2`).
+
+Nothing in CASA's apply path reads either column, so the error does not
+change calibrated data. But CASA's `gaincal(append=True)` merges the new
+solutions' windows into the table's (`NewCalTable::mergeSpwMetaInfo`). It
+requires `NUM_CHAN`, `CHAN_FREQ`, `CHAN_WIDTH`, `RESOLUTION`,
+`EFFECTIVE_BW`, `REF_FREQUENCY` and `TOTAL_BANDWIDTH` to equal its own
+exactly for any window both hold.
+
+A casa-rs table that wrote the widths there was refused ("Error merging
+spw=0's meta info"). So casa-rs writes the frequency as CASA does: the
+interoperability contract outranks the correction.
+
+The law `casa_appends_to_a_casa_rs_gain_table` (casa-calibration
+`slow-tests`) appends CASA's solutions to a casa-rs table. With
+`gain_table_windows_match_casa_on_ngc5921` and its two-sideband companion,
+it asserts that every column of every window row equals CASA's exactly.
