@@ -43,7 +43,7 @@
 pub mod baselines;
 pub mod direction;
 pub mod pointings;
-mod qa;
+pub(crate) mod qa;
 pub mod receivers;
 pub mod skymodel;
 
