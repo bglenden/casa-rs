@@ -732,10 +732,20 @@ boundary, make it hold nothing. Held times the next batch does not continue
 (batches out of time order) are stored as they are, and zarrs decodes, merges
 and re-encodes that chunk when its other times come (`partial_chunks`).
 
-An MSv2 creator from batches is not built: the declaration is designed to serve
-one (cells in time order become rows, padded cells flagged NaN rows), and that
-creator, publication semantics beyond the MSv4 writer's and loss-policy
-coverage are provisional (section 8).
+An MSv2 creator from batches is built narrowly, inside the trial's converter
+(trial README, "Converter"): subtables from the common catalogue, then MAIN's
+rows through production's variable-shape creation writers, in time order per
+partition. As the declaration was designed to serve one (revision 2 design,
+D23), cells in time order become rows, and a padded cell a row flagged
+throughout with NaN data and weights; its interval, exposure (0) and time
+centroid stay valid so the MeasurementSet reopens. A conversion that must
+reproduce an original sparse row set declares it, and padding then becomes
+no row: since a batch carries no presence mask and an MSv2's row count is
+fixed before its rows are written, that policy first reads the weights to
+count the acquisitions. `SIGMA` is derived from the weights, a loss the
+caller accepts. Publication semantics beyond staging and rename, and
+loss-policy coverage beyond the converter's inventory, are provisional
+(section 8).
 
 ### Updates (provisional)
 
@@ -854,20 +864,20 @@ when its acceptance obligation is met.
 | Requested precision | `Complex<f32>`, `bool`, `f32`, `f64` only; complex128 refused | Native precision, lossless widening or explicitly approved narrowing per role, charged and fused with decode; the writer checks representability; the existing science tolerances hold |
 | Real-valued data (`FLOAT_DATA`, `SPECTRUM`) | Refused | Its own typed variant under its profile, not reinterpreted as frequency visibilities |
 | More than one data group per traversal; role aliases | One group per traversal; each group keeps its own field and UVW context | Each group keeps its UVW and field/source context and explicit alias relationships to the others |
-| Occupancy and conversion to rows | Absence only as flagged padding with a NaN weight in both stores; the batch carries no presence mask, so an update infers padding (a missing MSv2 row, a non-finite MSv4 weight, which a traversal must read weights to see) and refuses to clear its flags or give it a finite weight | Unknown occupancy representable; conversion to a row format resolves it by declared policy or reports the ambiguity, never recovering an imaginary MSv2 row; writing new measurements into holes needs an explicit fill policy |
+| Occupancy and conversion to rows | Absence only as flagged padding with a NaN weight in both stores; the batch carries no presence mask, so an update infers padding (a missing MSv2 row, a non-finite MSv4 weight, which a traversal must read weights to see) and refuses to clear its flags or give it a finite weight. The converter writes padding as D23's flagged NaN rows, or, declared, as no row (a sample whose every weight is non-finite is padding), counting the acquisitions by a first pass over the weights | Unknown occupancy representable; conversion to a row format resolves it by declared policy or reports the ambiguity, never recovering an imaginary MSv2 row; writing new measurements into holes needs an explicit fill policy |
 | Native flags: bitmasks, reason bits, categories, row flags as their own view | `bool` only; `uint8` refused; row flags folded on read; a flag change sets and clears element flags and never writes `FLAG_ROW` or `FLAG_CATEGORY` | Native dtype and reason bits preserved for lossless writes; `UNSPECIFIED_BIT` for generic flagging, bound to its actual bit; clearing an effective flag never clears unknown reasons |
 | Weight roles and fallback; `SIGMA` | One broadcast weight view; `SIGMA` not read. Production `gaincal` solves with 1/σ² from `SIGMA`, as CASA does, so the calibration port needs this first (trial README, example B) | The request names the weight role and fallback for undefined cells, recording which rule and cell supplied each value; `SIGMA` never silently equated with weights |
 | Revisit and compute-window requirements as request fields | A new traversal per pass; windows are views | Binding states what depends on an estimated pass count; a revisit does not imply cached values |
 | Updates | The write-back trial's update sessions (section 7) | Section 7's remaining obligations: bit flags and flag categories, conflicting queued patches, structural writes (a new MSv4 data group), per-batch MSv2 planning, a killed process, stray temporary files and the synchronization cost at scale |
-| MSv2 creation from batches; general creation and loss policy | The MSv4 writer only | Cells in time order become rows, padded cells flagged NaN rows; cross-format creation preflights metadata, flag and occupancy mappings and rejects unapproved loss |
+| MSv2 creation from batches; general creation and loss policy | The MSv4 writer (one dataset or a processing set of many), and the converter's MSv2 creator: padded cells flagged NaN rows, or no row by declared policy (the occupancy row above), losses inventoried and refused unless accepted before anything is written, `SIGMA` derived from the weights as an accepted loss | Cells in time order become rows, padded cells flagged NaN rows; cross-format creation preflights metadata, flag and occupancy mappings and rejects unapproved loss |
 | Mixed read/update sessions and locking | One update session per store in a process, one updater per session, read-only opens beside them; casacore's lock per MSv2 updater | Plan read and write access before locking, no implicit upgrade; original-input semantics need disjoint read and write regions after resolving aliases, or a proven read-before-write order; casacore cross-process locks stay authoritative for v2; the v4 profile reports that it has no cross-process lock protocol |
 | Calibration binding across stores | Observation-to-observation `bind_to` | Solve, persist, close, permute partition and catalogue enumeration, reopen and apply, with overlapping antenna subsets and ambiguous-name rejection; CASA's v2 associations and SPW mapping preserved |
 | Ephemeris, pointing and time-dependent metadata | Ephemeris is not a partition key; pointing not read | Queried in bounded windows; ephemeris keys partitions as XRADIO's converter does |
 | Baseline-dependent polarization (`polarization_mixed`) | Refused at opening | A checked per-baseline basis mapping in the common metadata |
 | Centroid extra precision (`TIME_CENTROID_EXTRA_PRECISION`) | Refused when centroids are requested | The residual carried through the epoch view, slicing, packing and writing; adding it to a large f64 is not a substitute |
 | Four-dimensional `EFFECTIVE_INTEGRATION_TIME` | Refused | Per-channel exposure in the batch's timing |
-| Resource admission | Pool envelope, estimate and writer bounds; not connected | Pool allocations, cursor scratch, the opening index, packed pieces, the writer's held chunk and queues admitted through `HostResources` (`Reservation`/`Admitted<T>`), with cancellation-compatible backpressure; zarrs codec scratch discovered or conservatively bounded before work, failing with the minimum requirement; caches bounded by bytes and plateauing over increasing prefixes of present and missing chunk keys (`zarrs_filesystem` and codecs audited, not just `zarrs`) |
-| Decode on the admitted executor | zarrs' concurrency target set to one | Executing threads and simultaneously live codec buffers counted on the real decode path; no fall-through to a global pool |
+| Resource admission | Pool envelope, estimate and writer bounds; not connected. `zarrs_filesystem` pinned; its per-key lock registry grows with distinct keys visited and plateaued over 30 passes of `pilot.ms` (trial README, converter finding 3) | Pool allocations, cursor scratch, the opening index, packed pieces, the writer's held chunk and queues admitted through `HostResources` (`Reservation`/`Admitted<T>`), with cancellation-compatible backpressure; zarrs codec scratch discovered or conservatively bounded before work, failing with the minimum requirement; caches bounded by bytes and plateauing over increasing prefixes of present and missing chunk keys (`zarrs_filesystem` and codecs audited, not just `zarrs`) |
+| Decode on the admitted executor | zarrs' concurrency target and its chunk concurrency minimum (default 4, which overrode the target) set to one, so codecs run on the calling thread; rayon's global pool is still started, idle (trial README, converter finding 2) | Executing threads and simultaneously live codec buffers counted on the real decode path; no fall-through to a global pool |
 | Matched performance | Gross-cost checks on real data, a 120-sample like-for-like | Production-versus-batch timings on representative workloads, including sparse grids and restricted channel waves, before any no-loss claim |
 
 ## 9. Worked counterexamples for contract review

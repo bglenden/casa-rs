@@ -1,8 +1,8 @@
 # MSv2/MSv4 trial evidence
 
-Status: revision 4 (the walkthrough's decisions, the cleanups revision 2 exposed, and the answers to the reviews of revision 3); the read contract frozen narrowly for M2 by the owner, who waived a re-review (2026-10-25); not M0/M1 acceptance
+Status: revision 4 (the walkthrough's decisions, the cleanups revision 2 exposed, and the answers to the reviews of revision 3); the read contract frozen narrowly for M2 by the owner, who waived a re-review (2026-10-25); the write-back and converter steps added (2026-10-26); not M0/M1 acceptance
 Truth class: trial evidence
-Date: 2026-10-25
+Date: 2026-10-26 (converter section)
 Handoff: [trial-handoff.md](../trial-handoff.md)
 Review brief: [review-brief.md](review-brief.md)
 
@@ -276,6 +276,11 @@ external data.
 | Interoperability, both directions | `tools/ms-trial/check_interop.sh` | cargo, uv (pinned XRADIO environment) |
 | Fixtures | `tools/ms-trial/make_fixtures.sh` | cargo, uv, network for the first `uv sync` |
 | Scale check on a real store | `/usr/bin/time -l cargo run --release -p casa-ms --example ms_trial_probe -- STORE [--open-only]` | Rust only; a MeasurementSet or MSv4 store |
+| Convert either store | `cargo run --release -p casa-ms --features msv4 --example ms_trial_convert -- to-msv4\|to-msv2 SOURCE DEST [--workers N] [--chunk-times T] [--codec blosc\|zstd\|none] [--padding flagged\|omitted] [--accept sigma,tables,…]` (chunks of 10 times unless `T` is given) | Rust only |
+| Read passes (retention, threads) | `cargo run --release -p casa-ms --features msv4 --example ms_trial_read_passes -- STORE [--passes N] [--workers W]` | Rust only |
+| Update pass (replacement and synchronization cost) | `cargo run --release -p casa-ms --features msv4 --example ms_trial_update_pass -- COPY_OF_STORE` | Rust only; changes the store |
+| Converter against XRADIO | `tools/ms-trial/check_convert.py xradio-convert --ms MS --out PS`; `… compare --ours PS --theirs PS` | the pinned XRADIO environment |
+| Converted MSv2 against its original | `python tools/ms-trial/check_v2_readback.py ORIGINAL CONVERTED` | a CASA install's Python (casatools) |
 
 ## Adapter laws
 
@@ -440,7 +445,7 @@ and after (`4046d6c`) the opening index was built in row chunks:
 
 | MeasurementSet | MAIN rows | Partitions | Open, before → after | Peak RSS open only, before → after | Traversal | Peak RSS traversal, before → after |
 | --- | --- | --- | --- | --- | --- | --- |
-| `pilot.ms` (4.1 GB; 351 baselines, 64 SPWs × 64 channels × 4 products) | 2,021,760 | 64 | 0.37 → 0.24 s | 164 → 30 MB | 4,566 MiB in 1.96 s (2,325 MiB/s) both | 278 → 146 MB |
+| `pilot.ms` (4.1 GB; 351 baselines, 64 partitions over 32 spectral windows × 64 channels × 4 products) | 2,021,760 | 64 | 0.37 → 0.24 s | 164 → 30 MB | 4,566 MiB in 1.96 s (2,325 MiB/s) both | 278 → 146 MB |
 | `wave3-vla-aw-widefield-medium.ms` (33 GB; 351 baselines, 512 channels × 2 products) | 4,212,000 | 1 | 0.81 → 0.78 s | 313 → 42 MB | not run | — |
 
 - **No gross cost in the read.** One thread delivers 2.3 GB/s of batches
@@ -830,8 +835,9 @@ flag change writes (Fable).
 process actually killed during a replacement (the injected failure leaves
 what a kill leaves); sweeping stray temporary files; the MSv2 read-back of
 partly covered cells one cell at a time; a failure while `MODEL_DATA` is
-being seeded, which leaves the rows not yet seeded holding `DATA`; the cost of synchronizing each
-replaced chunk at scale (step 3's converter measures it).
+being seeded, which leaves the rows not yet seeded holding `DATA`. The cost
+of synchronizing each replaced chunk at scale is measured in the converter
+section (finding 4).
 
 **Independent review.** A separate agent reviewed the first version and
 found three blocking defects, all fixed with laws: a flag change with
@@ -844,6 +850,329 @@ reached, all done. Its check of the fixes found one more defect (finishing
 failed after an absent chunk was erased, since its directory did not exist)
 and a batch of other channels taken by one target before another refused
 it; both are fixed with laws.
+
+## Converter: MSv2 ↔ MSv4 through the boundary
+
+Step (3) of the order agreed with the owner on 2026-10-26: a converter in
+both directions, with MSv2 creation, the conversion-loss policy, and the
+retention, codec-thread, pin and synchronization measurements on real
+data. Both directions read the source as any consumer reads it (catalogue,
+grids, batches) and create the destination from those alone.
+
+**The interface** (`casa_ms::observation_io::convert`):
+
+- `to_msv4(source, destination, options)` and `to_msv2(…)` take either
+  store. `ConversionOptions` names the data groups (default every group,
+  `base` first), the accepted losses, the batch budget, MSv4 workers,
+  chunks, codec and provenance. A `ConversionReport` returns the losses
+  taken, partitions, batches, samples, and the MSv2 rows or MSv4 elements
+  written.
+- **Losses are inventoried and refused before anything is written.** A
+  `Loss` names what the destination cannot hold and its `LossKind`
+  (`Sigma`, `RowFlags`, `FlagCategories`, `DataGroups`, `Tables`,
+  `Columns`) is what a caller accepts:
+  - from an MSv2: `SIGMA`/`SIGMA_SPECTRUM`, any `FLAG_ROW` set, held
+    `FLAG_CATEGORY` cells (every row is read, 256 at a time, so at most
+    about 100 MB of held cells at once; that costs about 60 ms per 2
+    million rows over reading 4,096 at a time, as measured on a simulated
+    MS of 2,016,000 rows), MAIN columns outside the boundary's roles, an
+    `ARRAY_ID` or `PROCESSOR_ID` above 0 (a negative id names nothing:
+    casacore's UVFITS filler writes `PROCESSOR_ID` −1), the `WEIGHT`
+    summary beside `WEIGHT_SPECTRUM`, subtables the catalogue does not
+    carry (pointing, system calibration, weather, flag commands, history,
+    Doppler, frequency offsets, sources, and any further table a keyword
+    names), a `PROCESSOR` of more than one row or of one that is not a
+    correlator, and `STATE` rows that say more than an intent (a sub-scan,
+    calibration or load, a reference or non-signal row);
+  - from an MSv4: sub-datasets other than antennas and fields and
+    variables the writer does not write;
+  - in either, unselected data groups;
+  - into an MSv4, antennas no partition's baselines name
+    (`Loss::UnusedAntennas`, below);
+  - into an MSv2, `SIGMA` itself (`Loss::SigmaDerived`, below).
+
+  Columns of the subtables the catalogue does carry (an antenna's offset,
+  a field's delay direction) are not inventoried. Fields whose direction
+  moves are refused in either direction: those that follow an ephemeris
+  (`EPHEMERIS_ID` ≥ 0) and those whose direction is a polynomial in time
+  (`NUM_POLY` > 0, which XRADIO refuses too), since the catalogue would
+  hold an offset or a constant term as the phase centre. Into an MSv4
+  only the fields MAIN's rows name are checked, as XRADIO checks the
+  fields it converts; into an MSv2, which writes every `FIELD` row, every
+  row is.
+- **Lockstep groups.** A partition's selected groups are read by one
+  traversal each, sized to the same whole times per batch (the first with
+  every role, the others their visibilities only), so a destination writes
+  every variable of a time range together (`convert/lockstep.rs`).
+  Batches align to the destination's chunk or, for an MSv2, to the
+  source's natural time block.
+
+**To MSv4.** One dataset per partition in one processing set
+(`Msv4ProcessingSetWriter`: one staging directory, datasets written
+concurrently, published by one rename that refuses to replace). Further
+groups are `VISIBILITY_<GROUP>` variables beside one `FLAG`, `WEIGHT` and
+`UVW`. Each dataset's `antenna_xds` lists the antennas its baselines
+name, as XRADIO writes it, and an antenna no partition names is reported
+(`Loss::UnusedAntennas`); `relocatable_antennas` is set only for the
+telescopes whose antennas XRADIO renames, by the dataset's telescope as
+XRADIO sets it (names follow the first session's telescope, below, so in
+an MSv2 whose sessions name different telescopes the two can disagree). Both converters
+list a dataset's antennas in the MSv2's `ANTENNA` order, so the MSv4
+reader merges the datasets' lists keeping every one's order (a
+topological merge, the antenna first seen first among those free to
+come next): an MSv2 written back numbers its antennas as the original
+did whenever the datasets determine the order, XRADIO's stores
+included, and no baseline of either converter's store comes back
+reversed (both of a baseline's antennas are in one list). Each
+`antenna_xds` is read once, and checked there; opening 3,001 datasets
+took as long as before the merge (24.0–24.9 s against 24.2–24.8 s, a
+debug build; in a release build 4.89–5.42 s against 4.96–5.53 s, where
+reading every `antenna_xds` twice had taken 6.37–6.61 s), and each
+dataset's baselines resolve their antenna names by hash rather than by a
+scan of its antennas. An MSv4's datasets keep their names. An MSv2's
+datasets are named as XRADIO names them: the file name without `.ms`,
+then the partition's number in the order the partitions' first MAIN rows
+appear (XRADIO groups with `sort=False`), padded with zeros to the width
+of the largest (`Msv2Observation::first_row`). Its names are XRADIO's
+too: antennas `NAME_STATION` for the telescopes it renames (ALMA, VLA,
+NOEMA and EVLA, judged by the first observation's telescope where XRADIO
+judges each partition's; others keep their names), fields `NAME_FIELDID`,
+sources `NAME_SOURCEID` by the field's `SOURCE_ID`, and spectral windows
+`NAME_SPWID` by the partition's `SPECTRAL_WINDOW` row (`spw_ID` when
+unnamed), which the MSv2 adapter now reports
+(`Msv2Observation::spectral_window_id`). XRADIO names a source it finds
+no `SOURCE` row for in the window `Unknown` (or `Unknown_SOURCEID` in a
+partition of several fields); this converter names it from the field
+when another window's `SOURCE` row names it, and writes `Unknown` when
+none does. The MSv4 reader reads both placeholders as no source. Two
+partitionings differ from XRADIO's: the MSv2 adapter splits partitions
+by feed pair as well, and gives a row with `STATE_ID` −1 no intents
+where XRADIO gives it the last `STATE` row's (NumPy's index −1). The
+first makes more datasets here; the second can, or can give the same
+datasets other intents. Either way the datasets numbered after the
+first difference can hold other data than XRADIO's of the same name.
+Partitions are converted `workers` at a time.
+
+**To MSv2.** A new MeasurementSet through production's creation path:
+
+- subtables from the catalogue: an antenna and a feed per antenna, a field
+  per field, a source per source in each spectral window, an observation
+  per session whose `TIME_RANGE` spans its integrations edge to edge,
+  polarizations whose products name receptors by their place in the
+  feeds (which must agree), and
+  spectral windows, polarizations, data descriptions and states shared by
+  partitions of equal content (`convert/msv2_tables.rs`). A data
+  description is shared only by partitions whose state or observation
+  differs, since an MSv2 keys partitions by data description, state and
+  observation and would read two alike back as one.
+- MAIN rows through the variable-shape creation writers
+  (`MeasurementSetWritePlan::variable_array_creation`), one hypercube per
+  visibility shape, partition after partition, in time and baseline order.
+  `base`, `corrected` and `model` become `DATA`, `CORRECTED_DATA` and
+  `MODEL_DATA`; another group name is refused.
+- **Names are the MSv4's.** An MSv4 made from an MSv2 holds XRADIO's names
+  (above), so the MSv2 converted back from it says them: a round trip
+  renames field `trial` to `trial_0` and antenna `W08` of a VLA to
+  `W08_W08`, and a second round trip suffixes again, as XRADIO's
+  conversion of the round-tripped MSv2 would. The converter writes what
+  the MSv4 says rather than guessing which suffixes XRADIO added; a CASA
+  script that selects by the original names needs the MSv4's (finding 8).
+- **Padding, as decided in D23** (`revision-2-design.md`). A sample whose
+  every weight is non-finite is padding (section 3's one mark), and an
+  acquisition is everything else. By default every grid cell becomes a
+  row, and a padded cell a row flagged throughout with NaN data, weights
+  and UVW (`FLAG_ROW` stays false: its flags already exclude it, and a
+  reader folding `FLAG_ROW` in reads the same); its keys stay valid (the grid's interval, exposure 0, time
+  centroid at its time), so the MSv2 reopens, and it reads back, and
+  converts back, as padding. A conversion that must reproduce an original
+  sparse row set declares it (`PaddingRows::Omitted`): padding then
+  becomes no row. An MSv2's row count is fixed before its rows are written
+  and the batch carries no presence mask, so that policy first reads the
+  first group's weights to count each partition's acquisitions (finding
+  5); the default takes the count from the grids.
+- **`SIGMA` is derived** as CASA's `mstransform` derives it when corrected
+  data become data (`weightToSigma`): `1/√w`, and −1 where `w` is not
+  positive. This is reported as `Loss::SigmaDerived` and must be accepted,
+  since no batch carries sigma; right for weights never recalibrated,
+  wrong for the others (finding 6).
+- Refused before anything is written: times in a scale other than UTC,
+  feeds other than 0, units that differ between partitions of one column,
+  fields in a frame other than J2000, a scan without a casacore number,
+  feeds whose receptors differ, a correlation product the feeds cannot
+  name (a Stokes product, or a receptor they lack), a data group selected
+  twice, a source with nothing to write.
+  Weights that vary over channels (an MSv2 `WEIGHT` holds one per
+  correlation and no `WEIGHT_SPECTRUM` is written) are refused by the
+  counting pass when there is one, and otherwise when reached. The MSv2 is
+  written by one thread into a staging directory renamed into place, and
+  removed on failure, so a refusal publishes nothing.
+
+| Law | What it shows |
+| --- | --- |
+| `an_msv2_converts_to_the_msv4_xradio_makes_of_it` | Refused until `SIGMA` is accepted, with nothing written; then losses exactly `SIGMA`, `HISTORY` and `POINTING`; every sample equal to the MSv2's and to XRADIO's own conversion; XRADIO's names. |
+| `partitions_and_data_groups_convert_together` | Two windows of four and three channels and two groups become two datasets with `VISIBILITY_MODEL`; every group reads back equal; whole five-time chunks hold nothing; leaving `model` out is refused as a loss. |
+| `an_msv4_converts_to_an_msv2_of_every_acquisition` | XRADIO's store to an MSv2: refused until `SIGMA` is accepted, 120 rows, every sample equal to XRADIO's and to the original MSv2's, `SIGMA` = `1/√WEIGHT` (−1 where not positive), and antennas, fields (source names included), scans, observations, windows, products and intents equal to XRADIO's catalogue. |
+| `an_msv2_survives_the_round_trip_through_msv4` | The two-window MSv2 to MSv4 and back: the original's row count, `DATA` and `MODEL_DATA` of both partitions equal; fields and antennas named as the MSv4 names them (`NAME_FIELDID`, `NAME_STATION`). |
+| `padding_becomes_a_flagged_row_or_none_as_declared` | An MSv2 missing a row is padding in the MSv4. By default the MSv2 made from it has 120 rows: the padded one flagged throughout with NaN data and weights, centred on its time, the grid's interval and exposure 0; it reads back as padding and is padding again in an MSv4 made from it. Declared `Omitted`, it has the original's 119. Every acquisition equal throughout. |
+| `weights_varying_over_channels_are_refused` | An MSv4 whose weights vary over channels is refused naming `WEIGHT_SPECTRUM`; nothing is created. |
+| `partitions_of_one_window_share_its_name_and_rows` | An MSv2 whose times fall in two sessions has two partitions of one window; both keep the window's one name (`_0`, its row) in the MSv4, and come back as one `SPECTRAL_WINDOW` row and one data description, the two `OBSERVATION` rows each spanning its own times; every sample equal. |
+| `keys_and_subtable_rows_the_destination_drops_are_losses` | An `ARRAY_ID` of 1 is refused as a loss until columns are accepted; then the report names `ARRAY_ID` and a `PROCESSOR` of two rows. |
+| `moving_fields_are_refused` | A field with an `EPHEMERIS_ID`, and one with `NUM_POLY` 1, are refused as unsupported; nothing is created. |
+| `datasets_are_numbered_as_their_first_rows_appear` | A second session holding the earlier times is dataset `ms_trial_0`, as XRADIO numbers it, though its partition key sorts second. |
+| `a_round_trip_keeps_the_antenna_order` | The first dataset lacks a middle antenna the second names; the MSv2 converted back has the original's `ANTENNA` order and no row with `ANTENNA1` > `ANTENNA2` (first-appearance order, before the merge, put that antenna last). |
+| `an_unused_moving_field_is_refused_only_where_it_is_written` | A `FIELD` row with an `EPHEMERIS_ID` that no row names converts to an MSv4 and is refused into an MSv2, which would write it as a fixed direction. |
+| `processors_are_lost_only_when_named_or_not_a_correlator` | `PROCESSOR_ID` −1 in every row is no loss; a lone `PROCESSOR` row of type `RADIOMETER` is one. |
+| `antennas_no_baseline_names_are_a_loss` | An antenna (with its feed) that no row names is reported as `UnusedAntennas(1)` and is in no dataset's `antenna_xds`. |
+| `a_flag_category_held_in_any_row_is_a_loss` | A `FLAG_CATEGORY` cell held in a middle row only is found (every row is read, in chunks, the first and last first) and refused until flag categories are accepted; nothing is created. |
+| `only_the_telescopes_xradio_renames_get_station_names` | The fixture's antennas, renamed `NAME_STATION` as a VLA's, keep their names when the telescope is MeerKAT. |
+
+**Measurements on `pilot.ms`** (Mac mini `bg-mac-mini`: Apple M2, 8
+cores, 24 GiB, macOS 27.0.1, rustc 1.99.0; data on an external USB SSD,
+APFS; release build, page cache warm unless noted; `378b472` unless
+noted). `pilot.ms` has 2,021,760 rows in 64 partitions over 32 spectral
+windows of 64 channels and 63 data descriptions, 4 products, 4.1 GB.
+Commands: `ms_trial_convert`, `ms_trial_read_passes`,
+`ms_trial_update_pass` (examples of `casa-ms`), and
+`tools/ms-trial/check_convert.py` and `check_v2_readback.py`.
+
+| Run | Wall | CPU (user + sys) | Peak RSS | Output |
+| --- | --- | --- | --- | --- |
+| MSv2 → MSv4, 1 worker, Blosc-LZ4, 10-time chunks | 22.3–22.5 s | 6.2 + 1.9 s | 203 MB | 1.6 GB |
+| the same, 8 workers | 12.2–13.1 s | 10.1 + 7.0 s | 1.09 GB | 1.6 GB |
+| the same, 1 worker, cold cache (`31c7456`) | 31.8 s | 7.9 + 3.1 s | 226 MB | 1.6 GB |
+| 1 worker, Zstandard (`31c7456`) | 18.8 s | 10.5 + 2.4 s | 214 MB | 1.1 GB |
+| 1 worker, uncompressed (`31c7456`) | 32.8 s | 2.9 + 3.3 s | 206 MB | 6.4 GB |
+| XRADIO's `convert_msv2_to_processing_set` (`partition_scheme=[]`, no pointing) | 27.3 s (39.0 s with interpreter start) | 20.2 + 6.0 s | 1.33 GB | 1.6 GB |
+| MSv4 → MSv2 (one writer thread), padding flagged (the default; D23 commit) | 15.8–19.6 s | 7.0 + 0.9–1.2 s | 148 MB | 4.0 GB |
+| the same, padding omitted (counting pass first; D23 commit) | 17.0–17.2 s | 7.8 + 0.9 s | 146 MB | 4.0 GB |
+| Update pass, MSv4: rewrite `base` visibilities | 17.6 s (23.5 s first) | 7.0 + 0.9 s | 149 MB | 576 chunks replaced, none read |
+| Update pass, MSv2: the same | 24.6 s (37.6 s first) | 8.2 + 2.4 s | 386 MB | 2,021,760 cells |
+
+- **Interoperability at scale.** XRADIO's schema check passes on the
+  converted processing set, and every one of its 64 datasets equals
+  XRADIO's own conversion of `pilot.ms`, every payload variable and
+  coordinate exactly (`check_convert.py compare`). casacore (CASA 6.7.5.18's
+  casatools) opens the MSv2 converted back and every one of its 2,021,760
+  rows equals the original's, matched per spectral window on time and
+  baseline: `TIME`, antennas, fields, scans, `DATA`, `FLAG` (row flags
+  folded in), `WEIGHT`, `UVW`, `TIME_CENTROID`, `INTERVAL`, `EXPOSURE`;
+  its derived `SIGMA` equals the original's exactly, since `pilot.ms`'s
+  weights are `1/σ²` (`check_v2_readback.py`).
+- **Rechecked after the review fixes (`d5d0bce`).** Every dataset now
+  also matches XRADIO's in name (`pilot_00` … `pilot_63`, numbered by
+  first row), antennas (each dataset's 27 of the 54) and fields; the 64
+  source names differ only where XRADIO, finding no `SOURCE` row for the
+  window, says `Unknown`. casacore reads back every row as before and the
+  1,888 subtable rows the matched rows point at, equal to the original's:
+  each spectral window's channels and reference, each polarization's
+  `CORR_TYPE` and `CORR_PRODUCT`, each field's `PHASE_DIR`, each
+  antenna's position and diameter, each session's telescope and a
+  `TIME_RANGE` covering its rows; and each field has a `SOURCE` row in
+  every window it is observed in. The losses are unchanged. The fixes cost
+  nothing measurable: MSv2 → MSv4 with one worker took 31.5–32.6 s and
+  7.5–8.0 s of user CPU both before the first round of fixes (`4a402ac`)
+  and after it (`30fab54`), run alternately on the Mac mini while system
+  indexing loaded it (load average 7–9, so slower than the 22 s above);
+  at `d5d0bce` it took 7.6 s of user CPU, and MSv4 → MSv2 15.1 s.
+  At `64668a3` (the reader's antenna merge) the same checks pass, and
+  XRADIO's own processing set, converted to an MSv2 by `to_msv2`, reads
+  back through casacore equal to `pilot.ms` too, row for row and in the
+  same 1,888 subtable rows: its datasets hold 27 of the 54 antennas each,
+  and the merge numbers them as `pilot.ms` does (the read-back pairs rows
+  by antenna id). MSv4 → MSv2 from XRADIO's store took 20.7 s.
+- **The converters are write-bound.** Writing to the external disk
+  (about 200–250 MB/s) sets the pace: one worker spends about 8 s of CPU
+  in a 22 s conversion, and the uncompressed run, with the least CPU, is
+  the slowest because it writes four times the bytes. The MSv2 created is
+  4.0 GB in 16 s.
+
+**Findings.**
+
+1. **XRADIO names a spectral window by its MSv2 row, not by partition.**
+   The first `to_msv4` suffixed each window with its partition's index,
+   which equals XRADIO's `SPECTRAL_WINDOW` id only when every window is one
+   partition; `pilot.ms` has two partitions per window. Fixed (above); the
+   scale check above, which had called `pilot.ms`'s 64 partitions 64
+   spectral windows, now says 32.
+2. **"Concurrency target 1" was not one thread (E1).** zarrs 0.23.14
+   encodes and decodes `min(chunk_concurrent_minimum, chunks)` chunks of
+   one access at once on rayon's global pool whatever the target, and the
+   minimum defaults to 4; building its options also starts that pool (one
+   thread per core, 8 here). Every MSv4 read, write and update now uses
+   one `codec_options()` with both set to 1, so a codec runs on the
+   calling thread and parallelism is the caller's workers. The pool still
+   starts, idle: one worker's process has 10 threads, four workers' 13,
+   eight workers' 17 (an MSv2 read, 2), and one worker's three read passes
+   spend 7.8 s of CPU in 7.9 s. The cost of no longer borrowing those threads:
+   a one-worker read pass of the converted `pilot.ms` went from 1.75 s to
+   2.49–2.59 s and four workers from 0.72–0.77 s to 0.82–0.86 s; eight
+   workers take 0.64 s; conversion with eight workers is unchanged and
+   with one about 2 s slower (19.5–20.7 s before, with 10.4 s of CPU).
+   In-partition parallelism comes back by giving workers disjoint parts
+   of a partition, which needs a time range in the request
+   ([#910](https://github.com/bglenden/casa-rs/issues/910)), or by an
+   admitted pool zarrs runs inside.
+3. **Retention plateaus (R4).** Thirty read passes of every partition in
+   one process: peak RSS 138.87 MB after the first and 138.95 MB after
+   the thirtieth with one worker, 518.85 and 519.34 MB with four.
+   `zarrs_filesystem 0.3.14` keeps one lock per key it has touched, never
+   removed: bounded by the store's keys (6,977 files here), so it grows
+   with the distinct keys a process visits, not with passes. Before
+   finding 2's change the one-worker peak crept from 163.2 to 165.4 MB
+   over 20 passes, which the busy rayon threads explain. `zarrs_filesystem`
+   is now pinned (`=0.3.14`) beside `zarrs`.
+4. **Synchronizing each replaced chunk costs about a fifth of an update
+   pass.** An MSv4 update replaces each chunk through a temporary file
+   synchronized before its rename, and Rust's `sync_all` on macOS is
+   `F_FULLFSYNC`. Replacing 576 files of 2.9 MB (the pass's chunk count
+   and mean size) on the same disk took 6.9–7.9 s with a full
+   synchronization each and 4.0 s with one at the end, so about 3–4 s of
+   the 17.6 s pass. Its 64 finishes, which write each partition's last
+   chunk-row and synchronize the directories, took 3.2 s. That is the price of each chunk being old or new after a power
+   loss; workers updating disjoint partitions would overlap it.
+5. **Omitting padding needs occupancy up front.** The creation plan fixes
+   the row count, and padding is known only from the weights, so with
+   padding omitted `to_msv2` reads every weight twice: about 0.9 s of CPU
+   on `pilot.ms` (7.8 s against 7.0 s), lost in the disk's pace here. D23's
+   default, every cell a row, needs no such pass. A presence role in the
+   batch (`contracts.md` section 8, "Occupancy") would reduce the pass to
+   a read of the mask alone.
+6. **`SIGMA` into an MSv2 is a policy, not a mapping.** The architecture's
+   loss table asks that `SIGMA` not be rebuilt as `1/√WEIGHT` without a
+   justified relation. But `SIGMA` is a required MAIN column (casacore's
+   `MeasurementSet::requiredTableDesc`), so every row needs a value, and an
+   MSv4 holds no sigma: refusing would make every MSv4 unconvertible, and a
+   sentinel such as −1 would make tools that weight by `1/σ²` (CASA's, and
+   production `gaincal`) treat every sample as unusable. The converter
+   applies CASA's own rule for corrected-to-data and makes the caller
+   accept it. The owner kept this as the interim rule (2026-10-26), to be
+   revisited with step 4's `SIGMA` weight role.
+7. **Fast creation and per-element flags.** Production's fast creation
+   stream (one shape, background writer) takes a row flag per row and no
+   per-element `FLAG`, `CORRECTED_DATA` or `MODEL_DATA`, so `to_msv2` uses
+   the variable-shape writers, which the simulator calls several times
+   slower. Here the disk, not those writers, sets the pace (8 s of CPU in
+   16 s).
+8. **A round trip renames.** XRADIO's names are suffixes on the MSv2's
+   (field `NAME_FIELDID`, antenna `NAME_STATION`, window `NAME_SPWID`,
+   source `NAME_SOURCEID`), and `to_msv2` writes the MSv4's names, so
+   MSv2 → MSv4 → MSv2 renames every field, window and source (and a VLA's
+   antennas), and repeating it suffixes again. Undoing a suffix would
+   guess at what XRADIO added (a native MSv4 field may be named `x_0`), so
+   the names stay the MSv4's. **Owner decision (2026-10-27):** keep the
+   MSv4's names for now; full round trips should be rare outside testing,
+   and stripping the suffixes can be reconsidered if it proves necessary.
+
+**Not done:** an MSv2 `WEIGHT_SPECTRUM` or `FLAG_CATEGORY` written; feeds
+other than 0; the MSv4 `processor_info` (written empty, where XRADIO
+writes the `PROCESSOR` row's type and sub-type, so a lone correlator's
+sub-type is not carried; `to_msv2` writes one correlator); fields that follow an ephemeris or whose direction is a
+polynomial in time, refused in either direction since the MSv2 adapter's
+catalogue would hold an offset or a constant term as the phase centre; MSv2 subtable rows beyond the catalogue (an MSv2 → MSv2
+conversion drops `POINTING`, `SOURCE` detail and `HISTORY`, as reported);
+a loss inventory at subtable-column level; a v4 → v2 reference converter
+to compare with (XRADIO has none; casacore read-back stands in); MSv2
+creation from parallel workers.
 
 ## Keep, change or discard: the trial's summary for design review
 
@@ -909,7 +1238,8 @@ MSv2 creator from batches.
    `UvwView` still carries a `DirectionRef`.
 7. **Creation catalogue for MSv2.** The writer's declaration is the common
    `Catalogue` plus a `TimeBaselineGrid`; an MSv2 creator needs a rows
-   description in its place.
+   description in its place. Answered by D23 and the converter: the
+   catalogue and batches suffice, every cell a row (converter section).
 
 ### Discard or defer
 
@@ -935,10 +1265,10 @@ This pass touches parts of the M1 checklist and completes none of it.
 | `group-lifecycle` | Time-bin, per-scan and per-integration groups keyed by field and scan, closure, concurrent fragments, split channel windows, `GroupCompletion`, one cursor per partition, `Catalogue::bind_to` | Groups merged across partitions by a consumer, late samples, solve → caltable → reopen → apply |
 | `work-unit-lifetimes` | Unequal channel units, shared pinning against packing, pools bounded in buffers and bytes, buffers returned at the end, abandoned work reported, a pool wait that can be bounded | Cooperating workers on the admitted team, cancellation in flight, cube minor-cycle separation |
 | `native-role-updates` | Update sessions on both stores: visibilities, flag set/clear changes and weights of declared targets; broadcast-weight and data-group alias rules; `FLAG_ROW` and padding preserved; whole-unit writes without read-back (write-back section) | `WEIGHT_SPECTRUM` and `FLAG_CATEGORY`, bit flags, per-batch MSv2 planning, MSv4 structural writes, conflicting queued patches |
-| `conversion-fidelity` | One loss-free MSv2 → MSv4 profile, both converters | Every audited loss row, rejection policies |
-| `source-free-create` | Common catalogue + grid declaration for both stores (the grid from the store's index), padding fill values and padded partitions, storage options, the narrow writer with per-batch validation, whole-chunk writes (partial chunks held), exclusive staging and no-replace publication | v2 creation from batches, producer seam, backpressure, publication failure injection, the held chunk admitted with the producer's batches |
-| `store-retention-executor` | zarrs pinned; concurrency target 1 | Key/handle retention plateau, W1/W4 thread and buffer counts |
-| `object-failure` | MSv4 chunk replacement through a temporary file and rename, with injected failures before writing and before the rename (including an absent chunk's first write); the changed directories synchronized at finish | A process killed mid-replacement, ENOSPC, the finish and synchronization boundary at scale |
+| `conversion-fidelity` | MSv2 ↔ MSv4 through the boundary: a loss inventory refused unless accepted, every group, padding as D23's flagged rows or omitted as declared, `pilot.ms` equal to XRADIO's conversion and back through casacore (converter section) | Subtable-column inventory, `WEIGHT_SPECTRUM` and `FLAG_CATEGORY` into an MSv2, the `SIGMA` policy, every audited loss row |
+| `source-free-create` | Common catalogue + grid declaration for both stores (the grid from the store's index), padding fill values and padded partitions, storage options, the narrow writer with per-batch validation, whole-chunk writes (partial chunks held), exclusive staging and no-replace publication; a processing set of many datasets; MSv2 creation from the catalogue and batches (converter) | Producer seam, backpressure, publication failure injection, the held chunk admitted with the producer's batches, omitting padding without a counting pass |
+| `store-retention-executor` | `zarrs` and `zarrs_filesystem` pinned; codecs one chunk at a time on the caller's thread; retention plateau over 30 passes and W1/W4/W8 thread counts on `pilot.ms` (converter findings 2, 3) | Codec buffer counts, rayon's idle global pool, an admitted pool for in-partition parallelism or a time range (#910) |
+| `object-failure` | MSv4 chunk replacement through a temporary file and rename, with injected failures before writing and before the rename (including an absent chunk's first write); the changed directories synchronized at finish; its cost at scale (converter finding 4) | A process killed mid-replacement, ENOSPC |
 | `production-access-cost` | Narrow diagnostics on a tiny fixture; the estimate (bytes, batches, amplification, natural blocks, padding) as the planner's inquiry | The named MFS/cube/bandpass rows on both chunk geometries, noise bands |
 
 ## Unsupported in the trial (typed refusals)
@@ -960,6 +1290,8 @@ with `polarization_mixed`; centroids from a dataset with
 time; a grouping keyed by scan on a store without scans; one antenna name
 with two positions; a batch budget smaller than one time; a batch over its
 pool buffer's envelope; per-cell
-`WEIGHT_SPECTRUM` fallback; `SIGMA`, `FLAG_CATEGORY`; writing channel
+`WEIGHT_SPECTRUM` fallback; converting into an MSv2 weights that vary over
+channels, feeds other than 0 or data groups other than `base`,
+`corrected` and `model`; `SIGMA`, `FLAG_CATEGORY`; writing channel
 windows, correlation subsets, or batches that disagree with the
 declaration; MSv4 sharding (not exercised); remote stores.

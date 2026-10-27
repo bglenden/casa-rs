@@ -45,14 +45,20 @@ fn invalid(reason: impl Into<String>) -> ObservationError {
 #[derive(Debug)]
 struct Partition {
     grid: Grid,
+    /// The `SPECTRAL_WINDOW` row of its data description.
+    spectral_window_id: u32,
 }
 
 /// An opened MeasurementSet v2 and its catalogue.
 ///
 /// Opening reads MAIN's key columns in row chunks and partitions the rows the way
 /// XRADIO's converter does (`DATA_DESC_ID` × `OBS_MODE` × `OBSERVATION_ID`
-/// × `EPHEMERIS_ID`, the feed pair, and the opening's
-/// [`PartitionScheme`](super::PartitionScheme)); each partition's rows are
+/// × `EPHEMERIS_ID` and the opening's
+/// [`PartitionScheme`](super::PartitionScheme)), and further by the feed
+/// pair, which XRADIO does not split by. A row whose `STATE_ID` is -1 has
+/// no intents here, where XRADIO's converter gives it the last `STATE`
+/// row's `OBS_MODE` (NumPy's index -1), so an MS mixing such rows with
+/// `STATE` rows partitions differently. Each partition's rows are
 /// placed on its time × baseline grid (the `index` module). Each partition
 /// has one data group, `base`, associating `DATA`, `FLAG`,
 /// `WEIGHT_SPECTRUM` (when MAIN has it, else `WEIGHT`) and `UVW`. Antenna,
@@ -173,7 +179,10 @@ impl Msv2Observation {
                 time_origin: MjdHighPrec::new(0.0, 0.0),
                 data_groups: groups.clone(),
             });
-            partitions.push(Partition { grid });
+            partitions.push(Partition {
+                grid,
+                spectral_window_id: setup.spectral_window_id,
+            });
         }
         Ok(Self {
             catalogue: Arc::new(Catalogue {
@@ -194,6 +203,36 @@ impl Msv2Observation {
     #[must_use]
     pub fn catalogue(&self) -> &Arc<Catalogue> {
         &self.catalogue
+    }
+
+    /// The `SPECTRAL_WINDOW` row of partition `id`'s data description:
+    /// the identifier XRADIO's converter names an MSv2's spectral window by
+    /// (`NAME_<id>`), which the format-neutral catalogue does not carry.
+    ///
+    /// # Panics
+    ///
+    /// If `id` is not a partition of the observation.
+    #[must_use]
+    pub fn spectral_window_id(&self, id: PartitionId) -> u32 {
+        self.partitions[id.0 as usize].spectral_window_id
+    }
+
+    /// The first MAIN row of partition `id`, `None` when it holds none:
+    /// XRADIO's converter numbers an MSv2's partitions in the order their
+    /// first rows appear.
+    ///
+    /// # Panics
+    ///
+    /// If `id` is not a partition of the observation.
+    #[must_use]
+    pub fn first_row(&self, id: PartitionId) -> Option<u32> {
+        self.partitions[id.0 as usize]
+            .grid
+            .cells
+            .iter()
+            .copied()
+            .filter(|row| *row != index::NO_ROW)
+            .min()
     }
 
     /// The MeasurementSet.

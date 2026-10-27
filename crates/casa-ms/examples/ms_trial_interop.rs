@@ -19,7 +19,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use casa_ms::observation_io::{
-    Msv4Codec, Msv4Observation, Msv4StorageOptions, Msv4Writer, OpenOptions,
+    Msv4Codec, Msv4Observation, Msv4ProcessingSetWriter, Msv4StorageOptions, OpenOptions,
 };
 use casa_observation::{
     AccessRequest, BatchBuffers, CorrelationRequest, Grouping, Observation, PartitionId, ReadEvent,
@@ -75,7 +75,8 @@ fn write(ms: &Path, out: &Path) -> Result<(), Error> {
         chunks: [5, 10, 4, 4],
         codec: Msv4Codec::BloscLz4,
     };
-    let mut writer = Msv4Writer::create(out, &catalogue, PartitionId(0), "base", &grid, &options)?;
+    let set = Msv4ProcessingSetWriter::create(out)?;
+    let mut writer = set.dataset(&catalogue, PartitionId(0), &["base"], &grid, &options)?;
     // Four times per batch, so batches straddle the five-time chunks and
     // the writer holds their partial chunks.
     let mut traversal = observation.bind_read(&per_times(&*observation, 4)?)?;
@@ -86,8 +87,8 @@ fn write(ms: &Path, out: &Path) -> Result<(), Error> {
         };
         writer.write_batch(&batch)?;
     }
-    let counters = writer.counters();
-    let published = writer.finish()?;
+    let counters = writer.finish()?;
+    let published = set.finish()?;
     println!(
         "{}",
         json!({

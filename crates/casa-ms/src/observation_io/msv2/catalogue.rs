@@ -370,6 +370,8 @@ pub(super) fn scans(
 
 /// The spectral window and correlation products of one data description.
 pub(super) struct SpectralSetup {
+    /// The `SPECTRAL_WINDOW` row.
+    pub(super) spectral_window_id: u32,
     pub(super) spectral_window: String,
     pub(super) frequencies_hz: Vec<f64>,
     pub(super) frequency_frame: FrequencyRef,
@@ -405,6 +407,7 @@ pub(super) fn spectral_setups(ms: &MeasurementSet) -> Result<Vec<SpectralSetup>,
                 })
                 .collect::<Result<_, _>>()?;
             Ok(SpectralSetup {
+                spectral_window_id: window as u32,
                 spectral_window: windows.name(window).map_err(storage)?,
                 frequencies_hz: windows.chan_freq(window).map_err(storage)?,
                 frequency_frame,

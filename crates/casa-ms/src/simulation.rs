@@ -22,7 +22,7 @@ use casa_types::measures::frame::MeasFrame;
 use casa_types::measures::frequency::FrequencyRef;
 use casa_types::measures::position::MPosition;
 use casa_types::measures::{MeasuresProvider, UvwFrame};
-use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
+use casa_types::{ArrayValue, ScalarValue, Value};
 use libm::j1;
 use ndarray::{Array2, ArrayD};
 use num_complex::Complex32;
@@ -34,12 +34,14 @@ use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crate::column_def::{ColumnDef, ColumnKind};
 use crate::derived::engine::polarization_operator_angle;
 use crate::error::{MsError, MsResult};
 use crate::schema::{self, SubtableId};
 use crate::shadowing::{
     CASA_SHADOW_FRACTION_LIMIT, ProjectedBaseline, ShadowedAntenna, shadowed_antennas,
+};
+use crate::subtable_rows::{
+    b, complex_array, f, f64_array, i, i32_array, row_from_defs, s, string_array, subtable_mut,
 };
 use crate::write_session::{MeasurementSetCreateTarget, MeasurementSetWriteSession};
 use crate::{MeasurementSet, MeasurementSetBuilder, OptionalMainColumn};
@@ -4711,11 +4713,6 @@ fn fits_value<'a>(cards: &'a [String], key: &str) -> Option<&'a str> {
     })
 }
 
-fn subtable_mut(ms: &mut MeasurementSet, id: SubtableId) -> MsResult<&mut casa_tables::Table> {
-    ms.subtable_mut(id)
-        .ok_or_else(|| MsError::MissingSubtable(id.name().to_string()))
-}
-
 fn time_sample_count(duration_seconds: f64, integration_seconds: f64) -> usize {
     (duration_seconds / integration_seconds).ceil().max(1.0) as usize
 }
@@ -4941,106 +4938,6 @@ fn vector_norm(vector: [f64; 3]) -> f64 {
     (vector[0] * vector[0] + vector[1] * vector[1] + vector[2] * vector[2]).sqrt()
 }
 
-fn row_from_defs(defs: &[ColumnDef], overrides: &[(&str, Value)]) -> RecordValue {
-    let fields = defs
-        .iter()
-        .map(|definition| {
-            if let Some((_, value)) = overrides.iter().find(|(name, _)| *name == definition.name) {
-                RecordField::new(definition.name, value.clone())
-            } else {
-                RecordField::new(definition.name, default_value(definition))
-            }
-        })
-        .collect();
-    RecordValue::new(fields)
-}
-
-fn default_value(definition: &ColumnDef) -> Value {
-    match definition.column_kind {
-        ColumnKind::Scalar => match definition.data_type {
-            casa_types::PrimitiveType::Bool => b(false),
-            casa_types::PrimitiveType::Int32 => i(0),
-            casa_types::PrimitiveType::Float64 => f(0.0),
-            casa_types::PrimitiveType::String => s(""),
-            casa_types::PrimitiveType::Float32 => Value::Scalar(ScalarValue::Float32(0.0)),
-            casa_types::PrimitiveType::Complex32 => {
-                Value::Scalar(ScalarValue::Complex32(Complex32::new(0.0, 0.0)))
-            }
-            _ => i(0),
-        },
-        ColumnKind::FixedArray { shape } => {
-            let total = shape.iter().product();
-            match definition.data_type {
-                casa_types::PrimitiveType::Bool => bool_array(&vec![false; total], shape.to_vec()),
-                casa_types::PrimitiveType::Float32 => f32_array(&vec![0.0; total], shape.to_vec()),
-                casa_types::PrimitiveType::Int32 => i32_array(&vec![0; total], shape.to_vec()),
-                casa_types::PrimitiveType::String => string_array(&vec![""; total], shape.to_vec()),
-                _ => f64_array(&vec![0.0; total], shape.to_vec()),
-            }
-        }
-        ColumnKind::VariableArray { ndim } => {
-            let shape = vec![1; ndim];
-            let total = shape.iter().product();
-            match definition.data_type {
-                casa_types::PrimitiveType::Bool => bool_array(&vec![false; total], shape),
-                casa_types::PrimitiveType::Float32 => f32_array(&vec![0.0; total], shape),
-                casa_types::PrimitiveType::Int32 => i32_array(&vec![0; total], shape),
-                casa_types::PrimitiveType::String => string_array(&vec![""; total], shape),
-                casa_types::PrimitiveType::Complex32 => {
-                    complex_array(&vec![Complex32::new(0.0, 0.0); total], shape)
-                }
-                _ => f64_array(&vec![0.0; total], shape),
-            }
-        }
-    }
-}
-
-fn s(value: &str) -> Value {
-    Value::Scalar(ScalarValue::String(value.to_string()))
-}
-
-fn i(value: i32) -> Value {
-    Value::Scalar(ScalarValue::Int32(value))
-}
-
-fn f(value: f64) -> Value {
-    Value::Scalar(ScalarValue::Float64(value))
-}
-
-fn b(value: bool) -> Value {
-    Value::Scalar(ScalarValue::Bool(value))
-}
-
-fn bool_array(values: &[bool], shape: Vec<usize>) -> Value {
-    Value::Array(ArrayValue::Bool(
-        ArrayD::from_shape_vec(shape, values.to_vec()).unwrap(),
-    ))
-}
-
-fn i32_array(values: &[i32], shape: Vec<usize>) -> Value {
-    Value::Array(ArrayValue::Int32(
-        ArrayD::from_shape_vec(shape, values.to_vec()).unwrap(),
-    ))
-}
-
-fn f32_array(values: &[f32], shape: Vec<usize>) -> Value {
-    Value::Array(ArrayValue::Float32(
-        ArrayD::from_shape_vec(shape, values.to_vec()).unwrap(),
-    ))
-}
-
-fn f64_array(values: &[f64], shape: Vec<usize>) -> Value {
-    Value::Array(ArrayValue::Float64(
-        ArrayD::from_shape_vec(shape, values.to_vec()).unwrap(),
-    ))
-}
-
-fn complex_array(values: &[Complex32], shape: Vec<usize>) -> Value {
-    Value::Array(ArrayValue::Complex32(
-        ArrayD::from_shape_vec(shape, values.to_vec()).unwrap(),
-    ))
-}
-
 #[cfg(test)]
 fn complex_array_from_ms_data_storage(
     values: &[Complex32],
@@ -5057,16 +4954,6 @@ fn complex_array_from_ms_data_storage(
 
 fn ms_data_index(correlation: usize, channel: usize, num_corr: usize) -> usize {
     channel * num_corr + correlation
-}
-
-fn string_array(values: &[&str], shape: Vec<usize>) -> Value {
-    Value::Array(ArrayValue::String(
-        ArrayD::from_shape_vec(
-            shape,
-            values.iter().map(|value| value.to_string()).collect(),
-        )
-        .unwrap(),
-    ))
 }
 
 #[cfg(test)]
