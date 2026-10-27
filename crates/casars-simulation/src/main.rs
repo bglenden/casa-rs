@@ -10,7 +10,7 @@ fn main() {
             }
         };
     tracing::info!("simobserve started");
-    if let Err(error) = casa_ms::simulation_task::run_with_cli_args(args) {
+    if let Err(error) = casars_simulation::run_with_cli_args(args) {
         tracing::error!(casa.priority = "SEVERE", error = %error, "simobserve failed");
         eprintln!("Error: {error}");
         let _ = logging_guard.flush();

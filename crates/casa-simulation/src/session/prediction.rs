@@ -87,8 +87,11 @@ pub struct PredictSpec {
     /// `imagename`: the model images; empty names are skipped, as CASA skips
     /// them.
     pub images: Vec<PathBuf>,
-    /// `complist`: a component list, or `None` for `''`.
-    pub component_list: Option<PathBuf>,
+    /// `complist`: the component lists, predicted together; empty names are
+    /// skipped. CASA's binding takes one list, `''` for none. `simobserve`
+    /// predicts its model's list and its calibrator's at once, which CASA
+    /// cannot (`docs/CASA (C++) bugs.md`).
+    pub component_lists: Vec<PathBuf>,
     /// `incremental`: add the prediction to DATA rather than replace it.
     pub incremental: bool,
 }
@@ -96,11 +99,12 @@ pub struct PredictSpec {
 impl PredictSpec {
     /// The model images named, without the empty names.
     fn named_images(&self) -> Vec<&Path> {
-        self.images
-            .iter()
-            .map(PathBuf::as_path)
-            .filter(|path| !path.as_os_str().is_empty())
-            .collect()
+        named(&self.images)
+    }
+
+    /// The component lists named, without the empty names.
+    fn named_lists(&self) -> Vec<&Path> {
+        named(&self.component_lists)
     }
 
     /// The check casatools' binding makes before `Simulator::predict`, even
@@ -529,11 +533,10 @@ impl Simulator {
     pub fn predict(&mut self, spec: &PredictSpec) -> SimulatorResult<()> {
         spec.check_images()?;
         let images = spec.named_images();
+        let lists = spec.named_lists();
         tracing::info!(
             "Predicting visibilities using model: {images:?} and componentList: {}",
-            spec.component_list
-                .as_deref()
-                .map_or(String::new(), |path| path.display().to_string())
+            list_label(&lists)
         );
         if spec.incremental {
             tracing::info!("The data column will be incremented");
@@ -555,11 +558,7 @@ impl Simulator {
                  yet implemented in casa-rs (simulation Phase 3)",
             ));
         }
-        let list = spec
-            .component_list
-            .as_deref()
-            .filter(|path| !path.as_os_str().is_empty());
-        if images.is_empty() && list.is_none() {
+        if images.is_empty() && lists.is_empty() {
             return Err(SimulatorError::refused(
                 "Failed to create SkyEquation: No model images found",
             ));
@@ -574,9 +573,7 @@ impl Simulator {
             )));
         }
         // `createSkyEquation` reads the component list before the images.
-        let list = list
-            .map(|path| read_component_list(path, &self.options.resources))
-            .transpose()?;
+        let list = read_component_lists(&lists, &self.options.resources)?;
         let model = images
             .first()
             .map(|path| SkyModel::open(path).map_err(model_error))
@@ -622,7 +619,7 @@ impl Simulator {
             return self.predict_single_dish(model, kernel, beam, spec.incremental);
         }
         let components = list
-            .map(|(path, list, held)| self.prepare_components(&path, (list, held), beam))
+            .map(|(label, list, held)| self.prepare_components(&label, (list, held), beam))
             .transpose()?;
         let prediction = model
             .map(|model| self.prepare_image(model, &correlations, beam))
@@ -719,7 +716,7 @@ impl Simulator {
     /// admission, `held_list`, is released when the list is dropped here.
     fn prepare_components(
         &self,
-        path: &Path,
+        label: &str,
         (list, held_list): (ComponentList, Reservation),
         beam: Option<PrimaryBeam>,
     ) -> SimulatorResult<ComponentPrediction> {
@@ -729,10 +726,9 @@ impl Simulator {
             && let Some(beam) = beam.filter(|beam| beam.squints())
         {
             return Err(SimulatorError::not_yet_implemented(format!(
-                "predict(complist='{}') under the {beam:?} primary beam with beam squint is \
-                 not yet implemented in casa-rs (#841): CASA squints the RR and LL beams for \
-                 components; setvp(dosquint=False) predicts them unsquinted",
-                path.display()
+                "predict(complist='{label}') under the {beam:?} primary beam with beam squint \
+                 is not yet implemented in casa-rs (#841): CASA squints the RR and LL beams \
+                 for components; setvp(dosquint=False) predicts them unsquinted"
             )));
         }
         if self
@@ -796,8 +792,7 @@ impl Simulator {
         let prediction = ComponentPrediction::new(&list, targets, reservation).map_err(
             |ComponentRefusal::NotYetImplemented(reason)| {
                 SimulatorError::not_yet_implemented(format!(
-                    "predict(complist='{}'): {reason} (#841)",
-                    path.display()
+                    "predict(complist='{label}'): {reason} (#841)"
                 ))
             },
         )?;
@@ -805,8 +800,7 @@ impl Simulator {
         tracing::info!(
             components = list.len(),
             bytes = prediction.bytes(),
-            "prepared the component list {}",
-            path.display()
+            "prepared the component list {label}"
         );
         drop(list);
         drop(held_list);
@@ -1131,6 +1125,48 @@ impl Simulator {
     }
 }
 
+/// The names in `paths` that are not empty.
+fn named(paths: &[PathBuf]) -> Vec<&Path> {
+    paths
+        .iter()
+        .map(PathBuf::as_path)
+        .filter(|path| !path.as_os_str().is_empty())
+        .collect()
+}
+
+/// Component list names as one label, comma-separated as CASA's
+/// `simobserve` joins them.
+fn list_label(paths: &[&Path]) -> String {
+    paths
+        .iter()
+        .map(|path| path.display().to_string())
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+/// The component lists at `paths` as one list, their components in order,
+/// with the label naming them and what [`read_component_list`] holds for
+/// each; `None` for no lists.
+fn read_component_lists(
+    paths: &[&Path],
+    resources: &SessionResources,
+) -> SimulatorResult<Option<(String, ComponentList, Reservation)>> {
+    let mut joined: Option<(ComponentList, Reservation)> = None;
+    for path in paths {
+        let (list, held) = read_component_list(path, resources)?;
+        match &mut joined {
+            None => joined = Some((list, held)),
+            Some((components, reservation)) => {
+                for component in list.into_components() {
+                    components.push(component);
+                }
+                reservation.join(held);
+            }
+        }
+    }
+    Ok(joined.map(|(list, held)| (list_label(paths), list, held)))
+}
+
 /// The component list at `path`, as `createSkyEquation` reads it: CASA's
 /// `False` when the path is not a readable table ("ComponentList … not
 /// readable"), and when the table is not a component list CASA reads
@@ -1141,7 +1177,7 @@ impl Simulator {
 fn read_component_list(
     path: &Path,
     resources: &SessionResources,
-) -> SimulatorResult<(PathBuf, ComponentList, Reservation)> {
+) -> SimulatorResult<(ComponentList, Reservation)> {
     if !path.join("table.dat").is_file() {
         return Err(SimulatorError::refused(format!(
             "Failed to create SkyEquation: ComponentList {} not readable",
@@ -1161,7 +1197,7 @@ fn read_component_list(
     .map_err(SimulatorError::admission)?;
     let list = ComponentList::read_table(path).map_err(refused)?;
     let held = reading.split(list.bytes().min(reading_bytes));
-    Ok((path.to_path_buf(), list, held))
+    Ok((list, held))
 }
 
 /// A model that cannot be read or prepared, as CASA reports it: a layout

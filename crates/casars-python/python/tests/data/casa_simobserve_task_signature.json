@@ -1,0 +1,196 @@
+{
+  "casa_version": "6.7.6-14",
+  "parameters": [
+    {
+      "default": "'sim'",
+      "kind": "POSITIONAL_OR_KEYWORD",
+      "name": "project"
+    },
+    {
+      "default": "''",
+      "kind": "POSITIONAL_OR_KEYWORD",
+      "name": "skymodel"
+    },
+    {
+      "default": "''",
+      "kind": "POSITIONAL_OR_KEYWORD",
+      "name": "inbright"
+    },
+    {
+      "default": "''",
+      "kind": "POSITIONAL_OR_KEYWORD",
+      "name": "indirection"
+    },
+    {
+      "default": "''",
+      "kind": "POSITIONAL_OR_KEYWORD",
+      "name": "incell"
+    },
+    {
+      "default": "''",
+      "kind": "POSITIONAL_OR_KEYWORD",
+      "name": "incenter"
+    },
+    {
+      "default": "''",
+      "kind": "POSITIONAL_OR_KEYWORD",
+      "name": "inwidth"
+    },
+    {
+      "default": "''",
+      "kind": "POSITIONAL_OR_KEYWORD",
+      "name": "complist"
+    },
+    {
+      "default": "'\"8GHz\"'",
+      "kind": "POSITIONAL_OR_KEYWORD",
+      "name": "compwidth"
+    },
+    {
+      "default": "1",
+      "kind": "POSITIONAL_OR_KEYWORD",
+      "name": "comp_nchan"
+    },
+    {
+      "default": "True",
+      "kind": "POSITIONAL_OR_KEYWORD",
+      "name": "setpointings"
+    },
+    {
+      "default": "'$project.ptg.txt'",
+      "kind": "POSITIONAL_OR_KEYWORD",
+      "name": "ptgfile"
+    },
+    {
+      "default": "'10s'",
+      "kind": "POSITIONAL_OR_KEYWORD",
+      "name": "integration"
+    },
+    {
+      "default": "[]",
+      "kind": "POSITIONAL_OR_KEYWORD",
+      "name": "direction"
+    },
+    {
+      "default": "['', '']",
+      "kind": "POSITIONAL_OR_KEYWORD",
+      "name": "mapsize"
+    },
+    {
+      "default": "'hexagonal'",
+      "kind": "POSITIONAL_OR_KEYWORD",
+      "name": "maptype"
+    },
+    {
+      "default": "''",
+      "kind": "POSITIONAL_OR_KEYWORD",
+      "name": "pointingspacing"
+    },
+    {
+      "default": "''",
+      "kind": "POSITIONAL_OR_KEYWORD",
+      "name": "caldirection"
+    },
+    {
+      "default": "'1Jy'",
+      "kind": "POSITIONAL_OR_KEYWORD",
+      "name": "calflux"
+    },
+    {
+      "default": "'int'",
+      "kind": "POSITIONAL_OR_KEYWORD",
+      "name": "obsmode"
+    },
+    {
+      "default": "'2014/01/01'",
+      "kind": "POSITIONAL_OR_KEYWORD",
+      "name": "refdate"
+    },
+    {
+      "default": "'transit'",
+      "kind": "POSITIONAL_OR_KEYWORD",
+      "name": "hourangle"
+    },
+    {
+      "default": "'7200s'",
+      "kind": "POSITIONAL_OR_KEYWORD",
+      "name": "totaltime"
+    },
+    {
+      "default": "''",
+      "kind": "POSITIONAL_OR_KEYWORD",
+      "name": "antennalist"
+    },
+    {
+      "default": "'aca.tp.cfg'",
+      "kind": "POSITIONAL_OR_KEYWORD",
+      "name": "sdantlist"
+    },
+    {
+      "default": "0",
+      "kind": "POSITIONAL_OR_KEYWORD",
+      "name": "sdant"
+    },
+    {
+      "default": "'LSRK'",
+      "kind": "POSITIONAL_OR_KEYWORD",
+      "name": "outframe"
+    },
+    {
+      "default": "'tsys-atm'",
+      "kind": "POSITIONAL_OR_KEYWORD",
+      "name": "thermalnoise"
+    },
+    {
+      "default": "0.5",
+      "kind": "POSITIONAL_OR_KEYWORD",
+      "name": "user_pwv"
+    },
+    {
+      "default": "270.0",
+      "kind": "POSITIONAL_OR_KEYWORD",
+      "name": "t_ground"
+    },
+    {
+      "default": "260.0",
+      "kind": "POSITIONAL_OR_KEYWORD",
+      "name": "t_sky"
+    },
+    {
+      "default": "0.1",
+      "kind": "POSITIONAL_OR_KEYWORD",
+      "name": "tau0"
+    },
+    {
+      "default": "11111",
+      "kind": "POSITIONAL_OR_KEYWORD",
+      "name": "seed"
+    },
+    {
+      "default": "0.0",
+      "kind": "POSITIONAL_OR_KEYWORD",
+      "name": "leakage"
+    },
+    {
+      "default": "''",
+      "kind": "POSITIONAL_OR_KEYWORD",
+      "name": "correlator"
+    },
+    {
+      "default": "'both'",
+      "kind": "POSITIONAL_OR_KEYWORD",
+      "name": "graphics"
+    },
+    {
+      "default": "False",
+      "kind": "POSITIONAL_OR_KEYWORD",
+      "name": "verbose"
+    },
+    {
+      "default": "True",
+      "kind": "POSITIONAL_OR_KEYWORD",
+      "name": "overwrite"
+    }
+  ],
+  "task": "simobserve"
+}

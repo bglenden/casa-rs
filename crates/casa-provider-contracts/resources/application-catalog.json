@@ -75,7 +75,7 @@
       "kind": "task",
       "launch": {
         "executable": "simobserve",
-        "cargo_package": "casa-ms",
+        "cargo_package": "casars-simulation",
         "override_env": "CASARS_SIMOBSERVE_BIN"
       },
       "shell_kind": "workflow",
@@ -86,7 +86,7 @@
       ],
       "show_in_tui": true,
       "show_in_swift": true,
-      "include_in_suite": false
+      "include_in_suite": true
     },
     {
       "id": "imhead",

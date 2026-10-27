@@ -271,7 +271,7 @@ pub fn session_with_dishes(
 pub fn predict_spec(image: &Path, incremental: bool) -> PredictSpec {
     PredictSpec {
         images: vec![image.to_path_buf()],
-        component_list: None,
+        component_lists: Vec::new(),
         incremental,
     }
 }

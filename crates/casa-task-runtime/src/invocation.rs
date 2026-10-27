@@ -357,8 +357,6 @@ fn is_explicit_absence(value: &ParameterValue) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeSet;
-
     use casa_provider_contracts::{
         ParameterValue, ProviderInvocationAdaptation, builtin_surface_bundle,
     };
@@ -367,49 +365,42 @@ mod tests {
 
     use super::*;
 
-    #[test]
-    fn simobserve_run_mode_remains_a_direct_cli_invocation() {
-        let bundle = builtin_surface_bundle("simobserve").unwrap();
+    /// The feather surface, its three images set.
+    fn feather_session(bundle: casa_provider_contracts::SurfaceContractBundle) -> ParameterSession {
         let mut session = ParameterSession::defaults(bundle).unwrap();
+        for (name, path) in [
+            ("imagename", "products/feathered.image"),
+            ("highres", "high.image"),
+            ("lowres", "low.image"),
+        ] {
+            session
+                .set(name, ParameterValue::String(path.into()))
+                .unwrap();
+        }
         session
-            .set("model", ParameterValue::String("model.fits".into()))
-            .unwrap();
-        session
-            .set("out", ParameterValue::String("products/run.ms".into()))
-            .unwrap();
+    }
 
-        let invocation = project_provider_invocation(&session, |family, values, direct| {
-            assert_eq!(family, "simobserve");
-            assert_eq!(
-                values.get("request_kind"),
-                Some(&ParameterValue::String("run".into()))
-            );
-            Ok(ProviderInvocationAdaptation {
-                invocation: direct,
-                consumed_parameters: BTreeSet::from(["request_kind".to_string()]),
-            })
+    #[test]
+    fn a_surface_without_an_adapter_is_a_direct_cli_invocation() {
+        let session = feather_session(builtin_surface_bundle("feather").unwrap());
+        let invocation = project_provider_invocation(&session, |family, _values, direct| {
+            assert_eq!(family, "image_analysis");
+            Ok(ProviderInvocationAdaptation::direct(direct))
         })
         .unwrap();
         assert_eq!(invocation.stdin, None);
         assert!(!invocation.args.iter().any(|arg| arg == "--json-run"));
-        assert!(
-            invocation
-                .args
-                .windows(2)
-                .any(|pair| pair == ["--model", "model.fits"])
-        );
-        assert!(
-            invocation
-                .args
-                .windows(2)
-                .any(|pair| pair == ["--out", "products/run.ms"])
-        );
-        assert!(
-            invocation
-                .args
-                .windows(2)
-                .any(|pair| pair == ["--worker-policy", "auto"])
-        );
+        for pair in [
+            ["--imagename", "products/feathered.image"],
+            ["--highres", "high.image"],
+            ["--lowres", "low.image"],
+        ] {
+            assert!(
+                invocation.args.windows(2).any(|window| window == pair),
+                "{pair:?}: {:?}",
+                invocation.args
+            );
+        }
     }
 
     #[test]
@@ -491,41 +482,40 @@ mod tests {
 
     #[test]
     fn provider_adapter_must_consume_every_active_parameter_without_cli_spelling() {
-        let bundle = builtin_surface_bundle("simobserve").unwrap();
-        let mut session = ParameterSession::defaults(bundle).unwrap();
-        session
-            .set("request_kind", ParameterValue::String("family".to_string()))
+        // A fixture: feather with `sdfactor` given no command-line spelling.
+        let mut bundle = builtin_surface_bundle("feather").unwrap();
+        let casa_provider_contracts::SurfaceDefinition::Task(definition) = &mut bundle.surface;
+        let sdfactor = definition
+            .bindings
+            .iter_mut()
+            .find(|binding| binding.name == "sdfactor")
             .unwrap();
-        session.render_sparse().expect("complete family draft");
-        assert!(!session.states()["model"].active);
-        assert!(!session.states()["out"].active);
-        assert!(session.states()["source_model"].active);
+        let cli = sdfactor.projections.cli.as_mut().unwrap();
+        cli.flags.clear();
+        cli.false_flags.clear();
+        let session = feather_session(bundle);
 
         let error = project_provider_invocation(&session, |_family, _values, direct| {
             Ok(ProviderInvocationAdaptation::direct(direct))
         })
-        .expect_err("family-only fields cannot be silently dropped");
+        .expect_err("a value without a spelling cannot be silently dropped");
         let ProviderInvocationError::UnprojectedParameters { parameters, .. } = error else {
             panic!("unexpected error: {error}")
         };
-        assert!(parameters.contains(&"request_kind".to_string()));
-        assert!(parameters.contains(&"source_model".to_string()));
-        assert!(parameters.contains(&"output_ms".to_string()));
-        assert!(!parameters.contains(&"model".to_string()));
-        assert!(!parameters.contains(&"out".to_string()));
+        assert_eq!(parameters, ["sdfactor"]);
 
         let invocation = project_provider_invocation(&session, |_family, values, _direct| {
             Ok(ProviderInvocationAdaptation {
                 invocation: ProviderInvocation {
                     args: vec!["--json-run".into(), "-".into()],
-                    stdin: Some("{\"kind\":\"family\"}\n".into()),
+                    stdin: Some("{\"kind\":\"run\"}\n".into()),
                 },
                 consumed_parameters: values.keys().cloned().collect(),
             })
         })
-        .expect("adapter consumed every active family value");
+        .expect("adapter consumed every active value");
         assert_eq!(invocation.args, ["--json-run", "-"]);
-        assert_eq!(invocation.stdin.as_deref(), Some("{\"kind\":\"family\"}\n"));
+        assert_eq!(invocation.stdin.as_deref(), Some("{\"kind\":\"run\"}\n"));
     }
 
     #[test]

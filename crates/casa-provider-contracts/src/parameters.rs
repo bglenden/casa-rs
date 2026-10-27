@@ -18,6 +18,13 @@ pub const FIELD_CONCEPT_ID: &str = "ms.selection.field";
 pub const SPW_CONCEPT_ID: &str = "ms.selection.spw";
 pub const OVERWRITE_CONCEPT_ID: &str = "output.overwrite";
 
+/// The surfaces whose `overwrite=true` needs no confirmation, the one
+/// recorded exception to the fail-closed overwrite rule (owner decision,
+/// 2026-10-26, #841): CASA's `simobserve` defaults it to true and replaces
+/// only the files it writes inside its own project directory, so an
+/// unchanged CASA script must run without confirming.
+pub const PROJECT_DIRECTORY_OVERWRITE_SURFACES: [&str; 1] = ["simobserve"];
+
 /// Stable semantic identity of a parameter concept.
 #[derive(
     Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
@@ -259,6 +266,10 @@ pub enum SelectorGrammar {
     Stokes,
 }
 
+/// The token a [`NormalizationRule::ProjectPath`] value may hold for the
+/// task's project.
+pub const PROJECT_TOKEN: &str = "$project";
+
 /// Invariant canonicalization and semantic-equality rule.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -267,6 +278,11 @@ pub enum NormalizationRule {
     Trim,
     Lowercase,
     Path,
+    /// A path that may name the task's project as [`PROJECT_TOKEN`], which
+    /// the task replaces (CASA's `simobserve` names `$project.ptg.txt`):
+    /// cleaned as a [`Path`](Self::Path), the token kept. Any other `$` or
+    /// backtick is refused, as everywhere.
+    ProjectPath,
     CasaSelector {
         grammar: SelectorGrammar,
         #[serde(default)]
@@ -773,6 +789,8 @@ pub enum ManagedResultDecoder {
     CalibrationReportV1,
     #[serde(rename = "imager-run-v1")]
     ImagerRunV1,
+    #[serde(rename = "simobserve-run-v1")]
+    SimobserveRunV1,
 }
 
 /// One argument injected to select a provider's managed result representation.
@@ -1507,12 +1525,25 @@ fn validate_safety_rules(
     if overwrite_bindings.is_empty() {
         return;
     }
-
-    let Some(rule) = surface
+    let overwrite_rule = surface
         .safety_rules()
         .iter()
-        .find(|rule| rule.class == RunSafetyClass::Overwrite)
-    else {
+        .find(|rule| rule.class == RunSafetyClass::Overwrite);
+    if PROJECT_DIRECTORY_OVERWRITE_SURFACES.contains(&surface.id()) {
+        if overwrite_rule.is_some() {
+            errors.push(
+                ContractValidationError::new(
+                    "confirmed_project_overwrite",
+                    "this surface overwrites only inside its project directory, with no \
+                     confirmation (PROJECT_DIRECTORY_OVERWRITE_SURFACES)",
+                )
+                .at(surface.id(), None),
+            );
+        }
+        return;
+    }
+
+    let Some(rule) = overwrite_rule else {
         errors.push(
             ContractValidationError::new(
                 "missing_overwrite_safety",
@@ -2466,6 +2497,36 @@ mod tests {
             },
         });
         bundle.validate().unwrap();
+    }
+
+    #[test]
+    fn a_project_directory_surface_overwrites_without_confirmation() {
+        let concept = concept(OVERWRITE_CONCEPT_ID, "overwrite", ParameterType::Bool);
+        let binding = binding(
+            &concept,
+            DefaultSpec::Literal {
+                value: ParameterValue::Bool(true),
+            },
+        );
+        let mut bundle = bundle(concept, binding);
+        let SurfaceDefinition::Task(definition) = &mut bundle.surface;
+        definition.id = PROJECT_DIRECTORY_OVERWRITE_SURFACES[0].to_string();
+        bundle.validate().unwrap();
+        // The exception is exact: such a surface asks for no confirmation.
+        let SurfaceDefinition::Task(definition) = &mut bundle.surface;
+        definition.safety_rules.push(TaskSafetyRule {
+            class: RunSafetyClass::Overwrite,
+            when: Predicate::Equals {
+                parameter: "overwrite".to_string(),
+                value: ParameterValue::Bool(true),
+            },
+        });
+        let errors = bundle.validate().unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.code == "confirmed_project_overwrite")
+        );
     }
 
     #[test]

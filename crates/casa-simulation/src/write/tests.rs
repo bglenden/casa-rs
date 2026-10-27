@@ -151,7 +151,7 @@ fn session_predicting(
             session
                 .predict(&PredictSpec {
                     images: vec![model.to_path_buf()],
-                    component_list: None,
+                    component_lists: Vec::new(),
                     incremental,
                 })
                 .expect("predict");

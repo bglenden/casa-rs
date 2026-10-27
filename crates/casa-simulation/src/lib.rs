@@ -25,6 +25,7 @@
 //! | `sm.setapply` of a `G` or `D` table | [`Simulator::set_apply`] |
 //! | `simutil.readantenna(antab)` | [`readantenna::read_antenna_config`] |
 //! | `simutil`'s directions, pointings (`calc_pointings2`, pointing files), receiver temperatures and baselines | [`simutil`] |
+//! | the `simobserve` task | [`simobserve::simobserve`] |
 //!
 //! CASA's `sm` has no execution controls; a session's memory budget, workers
 //! and backend ([`ExecutionControls`], [`SessionResources`]) are the Python
@@ -37,6 +38,7 @@ mod corrupt;
 pub mod predict;
 pub mod readantenna;
 pub mod session;
+pub mod simobserve;
 pub mod simutil;
 mod write;
 

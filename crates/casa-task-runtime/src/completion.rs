@@ -97,17 +97,15 @@ pub fn decode_task_completion(
                 products.push(product_from_parameter(descriptor, value, workspace));
             }
             RunProductSource::DecodedArtifacts => {
-                let Some(DecodedManagedResult::Imager(result)) = decoded.as_ref() else {
+                let Some(artifacts) = decoded.as_ref().and_then(DecodedManagedResult::artifacts)
+                else {
                     return Err(TaskCompletionError::MissingDecoder {
                         surface: bundle.surface.id().to_string(),
                     });
                 };
-                products.extend(
-                    result
-                        .artifacts
-                        .iter()
-                        .map(|artifact| product_from_imager(descriptor, artifact, workspace)),
-                );
+                products.extend(artifacts.iter().map(|artifact| {
+                    product_from_artifact(bundle.surface.id(), descriptor, artifact, workspace)
+                }));
             }
         }
     }
@@ -152,9 +150,12 @@ fn product_from_parameter(
     }
 }
 
-fn product_from_imager(
+/// A product a managed result names; its own resource kind, when it gives
+/// one, over the descriptor's.
+fn product_from_artifact(
+    surface: &str,
     descriptor: &RunProductDescriptor,
-    artifact: &ImagerArtifactWire,
+    artifact: &ArtifactWire,
     workspace: &Path,
 ) -> RunProductReference {
     let path = resolve_product_path(workspace, &artifact.path);
@@ -162,7 +163,7 @@ fn product_from_imager(
     RunProductReference {
         id: format!("{}:{}", descriptor.id, artifact.kind),
         role: descriptor.role,
-        resource_kind: descriptor.resource_kind,
+        resource_kind: artifact.resource_kind.unwrap_or(descriptor.resource_kind),
         label: artifact.label.clone(),
         path: path.clone(),
         exists,
@@ -170,7 +171,7 @@ fn product_from_imager(
         preview_exists: false,
         diagnostic: (!exists).then(|| {
             format!(
-                "imager declared product {} but an exact path check did not find it",
+                "{surface} declared product {} but an exact path check did not find it",
                 path.display()
             )
         }),
@@ -189,9 +190,19 @@ fn resolve_product_path(workspace: &Path, value: &str) -> PathBuf {
 enum DecodedManagedResult {
     Calibration(CalibrationResultWire),
     Imager(ImagerOutputWire),
+    Simobserve(SimobserveOutputWire),
 }
 
 impl DecodedManagedResult {
+    /// The products the result names, for a decoder that names them.
+    fn artifacts(&self) -> Option<&[ArtifactWire]> {
+        match self {
+            Self::Calibration(_) => None,
+            Self::Imager(result) => Some(&result.artifacts),
+            Self::Simobserve(result) => Some(&result.artifacts),
+        }
+    }
+
     fn summary_and_diagnostics(self) -> (String, Vec<String>) {
         match self {
             Self::Calibration(result) => {
@@ -204,6 +215,10 @@ impl DecodedManagedResult {
                     result.run.major_cycles,
                     result.run.minor_iterations
                 ),
+                result.run.warnings,
+            ),
+            Self::Simobserve(result) => (
+                format!("{} products of {}", result.artifacts.len(), result.run.stem),
                 result.run.warnings,
             ),
         }
@@ -226,6 +241,9 @@ fn decode_managed_result(
         ManagedResultDecoder::ImagerRunV1 => serde_json::from_str(stdout)
             .map(DecodedManagedResult::Imager)
             .map_err(malformed),
+        ManagedResultDecoder::SimobserveRunV1 => serde_json::from_str(stdout)
+            .map(DecodedManagedResult::Simobserve)
+            .map_err(malformed),
     }
 }
 
@@ -237,7 +255,20 @@ struct CalibrationResultWire {
 #[derive(Deserialize)]
 struct ImagerOutputWire {
     run: ImagerRunWire,
-    artifacts: Vec<ImagerArtifactWire>,
+    artifacts: Vec<ArtifactWire>,
+}
+
+#[derive(Deserialize)]
+struct SimobserveOutputWire {
+    run: SimobserveRunWire,
+    artifacts: Vec<ArtifactWire>,
+}
+
+#[derive(Deserialize)]
+struct SimobserveRunWire {
+    stem: String,
+    #[serde(default)]
+    warnings: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -249,12 +280,17 @@ struct ImagerRunWire {
     minor_iterations: u64,
 }
 
+/// One product a managed result names.
 #[derive(Deserialize)]
-struct ImagerArtifactWire {
+struct ArtifactWire {
     kind: String,
     label: String,
     path: String,
     exists: bool,
+    /// Its kind when it differs from the descriptor's (simobserve writes
+    /// images, tables and files beside its MeasurementSets).
+    #[serde(default)]
+    resource_kind: Option<RunProductKind>,
 }
 
 #[cfg(test)]
@@ -307,6 +343,44 @@ mod tests {
         assert!(!completion.products[1].exists);
         assert!(completion.products[1].diagnostic.is_some());
         assert_eq!(completion.diagnostics, ["science warning"]);
+    }
+
+    #[test]
+    fn simobserve_products_keep_their_own_kinds() {
+        let root = tempdir().unwrap();
+        fs::create_dir_all(root.path().join("p/p.alma.out01.ms")).unwrap();
+        fs::write(root.path().join("p/p.alma.out01.ptg.txt"), "").unwrap();
+        let stdout = serde_json::json!({
+            "request": {},
+            "run": {"stem": "p.alma.out01", "elapsed_ns": 1},
+            "artifacts": [
+                {"kind": "ms", "label": "MeasurementSet", "path": "p/p.alma.out01.ms",
+                 "exists": true, "resource_kind": "measurement_set"},
+                {"kind": "ptg.txt", "label": "Pointings", "path": "p/p.alma.out01.ptg.txt",
+                 "exists": true, "resource_kind": "file"}
+            ]
+        })
+        .to_string();
+        let completion = decode_task_completion(
+            &builtin_surface_bundle("simobserve").unwrap(),
+            &stdout,
+            root.path(),
+            &[],
+        )
+        .unwrap();
+        assert_eq!(completion.summary, "2 products of p.alma.out01");
+        let kinds: Vec<_> = completion
+            .products
+            .iter()
+            .map(|product| (product.resource_kind, product.exists))
+            .collect();
+        assert_eq!(
+            kinds,
+            [
+                (RunProductKind::MeasurementSet, true),
+                (RunProductKind::File, true)
+            ]
+        );
     }
 
     #[test]

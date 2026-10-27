@@ -1982,6 +1982,163 @@ oracle's matched-frame cases (LSRK spectra on an LSRK cube, TOPO spectra
 on a TOPO cube) agree with CASA to 1e-6, where the same cube with spectra
 in the other frame and only the placeholder differs by 1.1e-4.
 
+## simobserve's calibrator: the last pass, its scans and two component lists
+
+- Date noted: 2026-10-27
+- Status: CASA bugs; casa-rs does not follow them (#841 Phase 5c)
+- Affected code: `casatasks/src/private/task_simobserve.py` (CASA 6.7.6:
+  the observing loop, `sm.setdata(fieldid=range(0,nfld))`, and the
+  `complist+","+cal.cclist` joins); `Simulator::createSkyEquation`
+
+With a phase calibrator (`caldirection` and `calflux`), CASA 6.7.6's
+`simobserve` has three faults. Each was measured by
+`tools/simulation/simobserve_parity.py`'s CASA runs.
+
+**The last pass.** The observing loop calls `observemany` for the map's
+pointings only when a pass over them completes, and observes the
+calibrator after it. Pointings of a pass that `totaltime` ends inside are
+collected but never observed. With `totaltime='300s'` over a 105-pointing
+map at 10 s, CASA's MeasurementSet holds the calibrator's one scan and no
+pointing at all. casa-rs observes the pointings the time allows, as CASA
+does without a calibrator. With `totaltime` a whole number of passes,
+the two schedules are the same.
+
+**The calibrator's scans.** Before predicting, the task selects the map's
+fields, `setdata(fieldid=range(0,nfld))`. The calibrator's field is `nfld`,
+so its scans keep the zeros `observe` wrote; noise is then added to them.
+casa-rs predicts every scan, the calibrator's included.
+
+**Two component lists.** With a `complist` and a calibrator, the task
+predicts from `complist + "," + <stem>.cal.cclist`. `createSkyEquation`
+opens that string as one table, which does not exist ("ComponentList …
+not readable"), so `predict` returns `False`. The task does not check it:
+the MeasurementSet is left unpredicted, every visibility zero, for a model
+image with a list or for a list alone. casa-rs predicts both lists, as one
+list of their components (`PredictSpec::component_lists`).
+
+The parity cases `calibrator` and `calibrator_lists` compare casa-rs with
+CASA's own simulator doing what the task meant: CASA's MeasurementSet
+predicted again over every field, from the model image and the lists
+merged into one. DATA agrees to an NRMS of 5.3e-9 and 5.5e-9.
+
+## simobserve leaves `<stem>.noisier.T.cal`
+
+- Date noted: 2026-10-27
+- Status: CASA bug; casa-rs does not follow it (#841 Phase 5c)
+- Affected code: `casatasks/src/private/task_simobserve.py` (CASA 6.7.6,
+  `setnoise(..., table=noisymsroot)` and the clean-up)
+
+`tsys-atm` noise is set with `table=<noisy root>`, so CASA writes the `T`
+term's table beside the noisy MeasurementSet. The task's clean-up deletes
+`<stem>.noisy.T.cal` and `<stem>.noisy.sd.T.cal`, but not
+`<stem>.noisier.T.cal`, the one written when leakage comes first. The table
+is a by-product the task means to remove; casa-rs writes no Tsys table for
+any of the three.
+
+## simobserve's observing loop never ends for pointings of no length
+
+- Date noted: 2026-10-27
+- Status: CASA bug; casa-rs refuses the input (#841 Phase 5c)
+- Affected code: `casatasks/src/private/task_simobserve.py` (CASA 6.7.6,
+  the `while (sttime-scanstart) < totalsec` loop)
+
+The loop advances the time by each pointing's scan length. When the
+lengths of a pass sum to zero, as they do for `integration='0s'` or a
+pointing file of zero times, the time never advances and CASA loops
+forever, collecting pointings. casa-rs refuses such a schedule with a
+message.
+
+## `simutil.ismstp` takes any zero UVW value for total power
+
+- Date noted: 2026-10-27
+- Status: CASA bug; casa-rs does not follow it (#841 Phase 5c)
+- Affected code: `casatasks/src/private/simutil.py` (`ismstp`)
+
+When `simobserve` corrupts an existing MeasurementSet (`obsmode=''`), it
+asks `ismstp` whether the data are total power. For a MeasurementSet whose
+first antenna's name has no `TP` and which has more than one antenna, the
+test is `uvw.all() == 0.`. That is true when any UVW value is zero, not
+when all are. An interferometer's MeasurementSet with one zero coordinate
+is then corrupted as a single dish's, with the wrong file names and
+sensitivity constant. casa-rs tests whether every value is zero.
+
+## simobserve deletes a sky model that is the model it writes
+
+- Date noted: 2026-10-27
+- Status: CASA bug; casa-rs refuses the input (#841 Phase 5c)
+- Affected code: `casatasks/src/private/task_simobserve.py` (CASA 6.7.6,
+  the `newmodel` set-up)
+
+The task writes `<project>/<stem>.skymodel`, or `<stem>.newmodel` when
+`skymodel` is the bare name `<stem>.skymodel`. Given the full path
+`<project>/<stem>.skymodel`, as a rerun on an earlier run's model would
+give it, the output is the input: with `overwrite=True`, the default, CASA
+deletes it and then fails to read it. casa-rs refuses it, and the model is
+left in place.
+
+## simobserve nests a project path inside itself
+
+- Date noted: 2026-10-27
+- Status: CASA limitation; casa-rs departs (#841 Phase 5c)
+- Affected code: `casatasks/src/private/task_simobserve.py` (CASA 6.7.6,
+  `fileroot + "/" + project`)
+
+The task makes the directory `project` and names its files
+`fileroot + "/" + project + "." + <configuration>`, so a `project` given
+as a path, `a/b`, names its files `a/b/a/b.<cfg>…`, in a directory that does
+not exist. Only a plain name in the working directory works. casa-rs names
+the files by the directory's last component, `a/b/b.<cfg>…`. For a plain
+name the two are the same.
+
+## simobserve writes through a symbolic link in the project
+
+- Date noted: 2026-10-27
+- Status: CASA limitation; casa-rs departs (#841 Phase 5c, #920 review)
+- Affected code: `casatasks/src/private/task_simobserve.py` (CASA 6.7.6,
+  `shutil.copyfile(ptgfile, ...ptg.txt)`, `util.write_pointings` after
+  `os.path.exists`, and the `shutil.rmtree` calls before each product is
+  written)
+
+`overwrite=True` replaces the project's files without asking. CASA writes
+`<stem>.ptg.txt` through a symbolic link there in two ways:
+- a pointing file copied from `ptgfile` replaces the file outside the
+  project that the link points to (`shutil.copyfile` follows it);
+- laid-out pointings over a dangling link create the file the link names
+  outside the project. `os.path.exists` follows the link, finds nothing to
+  remove, and `open(..., 'w')` follows it.
+
+A link to a table that it replaces stops the task instead, since
+`shutil.rmtree` refuses links. Its existence checks follow links, so a
+dangling link does not count as an existing file under `overwrite=False`.
+
+casa-rs replaces a link in the project with the new file or table and
+leaves what the link points to as it was. A link counts as an existing file
+under `overwrite=False`, dangling or not. The project's own files are the
+only ones `overwrite` replaces (the owner's decision of 2026-10-26, recorded
+with the provider contracts' overwrite exception).
+
+## simobserve rounds a `direction` list of one to its mean
+
+- Date noted: 2026-10-27
+- Status: CASA artefact; casa-rs simobserve departs (#841 Phase 5c, after
+  the #913 review)
+- Affected code: `casatasks/src/private/task_simobserve.py` (CASA 6.7.6,
+  `dir = direction` for a list) and `simutil.direction_splitter`
+
+CASA passes a `direction` list to `calc_pointings2` as a list, even a list
+of one. `direction_splitter` centres a list at its mean, written at
+precision 5 and read back. So `['J2000 18h00m00.123456789s …']` lays its
+map out about 1e-5 s of right ascension (0.15 mas) from the same direction
+given as a string.
+
+casa-rs's `simutil` tool follows CASA here, since its lists must match
+CASA's (#913 review). casa-rs's `simobserve` cannot tell the two apart.
+The task contract resolves a string to a list of one, as it does for every
+parameter that takes a string or a list. So `simobserve` lays a map out at
+a single direction exactly as given, whether a string or a list of one. A
+list of several is the pointings themselves, as in CASA. The rounding
+carries no information, so the exact direction is the better answer.
+
 ## A gain table's solved window records its frequency as its resolution and total bandwidth
 
 - Date noted: 2026-10-27

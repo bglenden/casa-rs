@@ -45,7 +45,7 @@ fn observed(path: &Path, stokes: &str, point: &Path) -> Simulator {
         .expect("a second scan");
     sm.predict(&PredictSpec {
         images: Vec::new(),
-        component_list: Some(point.to_path_buf()),
+        component_lists: vec![point.to_path_buf()],
         incremental: false,
     })
     .expect("predict");

@@ -292,9 +292,7 @@ pub(crate) fn project_task_invocation(
 ) -> Result<ProviderInvocation, String> {
     project_provider_invocation(session, |family, values, direct| match family {
         "imager" => casars_imager::imager_provider_invocation(values, direct.args),
-        "simobserve" => {
-            casa_ms::simulation_task::simobserve_provider_invocation(values, direct.args)
-        }
+        "simobserve" => casars_simulation::simobserve_provider_invocation(values, direct.args),
         _ => Ok(ProviderInvocationAdaptation::direct(direct)),
     })
     .map_err(|error| error.to_string())
@@ -658,21 +656,38 @@ mod tests {
     }
 
     #[test]
-    fn cli_projection_carries_simobserve_family_request_over_stdin() {
+    fn cli_projection_carries_the_simobserve_request_over_stdin() {
         let bundle = builtin_surface_bundle("simobserve").unwrap();
-        let options =
-            parse_surface_options(&bundle, &["--request-kind".into(), "family".into()], true)
-                .unwrap();
+        let options = parse_surface_options(
+            &bundle,
+            &[
+                "--project".into(),
+                "psim2".into(),
+                "--antennalist".into(),
+                "alma.out20.cfg".into(),
+            ],
+            true,
+        )
+        .unwrap();
         let session = ParameterRuntime::default()
             .open_session(open_session_request(bundle, &options))
             .unwrap();
         let invocation = project_task_invocation(&session).unwrap();
 
-        assert_eq!(invocation.args, ["--json-run", "-"]);
+        assert_eq!(
+            invocation.args,
+            ["--managed-output", "true", "--json-run", "-"]
+        );
         let request: serde_json::Value =
             serde_json::from_str(invocation.stdin.as_deref().unwrap()).unwrap();
-        assert_eq!(request["kind"], "family");
-        assert_eq!(request["request"]["telescope"], "VLA");
+        assert_eq!(request["kind"], "run");
+        assert_eq!(request["request"]["project"], "psim2");
+        assert_eq!(request["request"]["antennalist"], "alma.out20.cfg");
+        // CASA's defaults travel with the request.
+        assert_eq!(request["request"]["ptgfile"], "$project.ptg.txt");
+        assert_eq!(request["request"]["overwrite"], true);
+        // Overwriting the project's own files needs no confirmation.
+        enforce_runtime_confirmations(&session, &options).unwrap();
     }
 
     #[test]

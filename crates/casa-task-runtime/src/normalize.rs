@@ -4,8 +4,8 @@ use std::collections::BTreeMap;
 use std::path::{Component, Path};
 
 use casa_provider_contracts::{
-    Constraint, NarrowingConstraint, NormalizationRule, ParameterConcept, ParameterType,
-    ParameterValue, validate_parameter_value, validate_selector_capabilities,
+    Constraint, NarrowingConstraint, NormalizationRule, PROJECT_TOKEN, ParameterConcept,
+    ParameterType, ParameterValue, validate_parameter_value, validate_selector_capabilities,
 };
 use casa_types::quanta::{Quantity, Unit};
 use thiserror::Error;
@@ -15,7 +15,7 @@ pub fn normalize_value(
     value: &ParameterValue,
     concept: &ParameterConcept,
 ) -> Result<ParameterValue, NormalizationError> {
-    reject_forbidden_strings(value)?;
+    reject_forbidden_strings(value, names_project(&concept.normalization))?;
     let typed = normalize_domain(value, &concept.value_domain)?;
     let normalized = apply_rule(typed, &concept.normalization)?;
     validate_parameter_value(&normalized, &concept.value_domain)
@@ -24,24 +24,43 @@ pub fn normalize_value(
     Ok(normalized)
 }
 
-fn reject_forbidden_strings(value: &ParameterValue) -> Result<(), NormalizationError> {
+/// Whether `rule` lets a value name the project as [`PROJECT_TOKEN`].
+fn names_project(rule: &NormalizationRule) -> bool {
+    match rule {
+        NormalizationRule::ProjectPath => true,
+        NormalizationRule::Sequence { rules } => rules.iter().any(names_project),
+        _ => false,
+    }
+}
+
+/// Refuse URLs and shell expressions; `project` lets a value hold
+/// [`PROJECT_TOKEN`].
+fn reject_forbidden_strings(
+    value: &ParameterValue,
+    project: bool,
+) -> Result<(), NormalizationError> {
     match value {
         ParameterValue::String(value) => {
             if value.contains("://") {
                 return Err(NormalizationError::Url(value.clone()));
             }
-            if value.contains('$') || value.contains('`') {
+            let checked = if project {
+                value.replace(PROJECT_TOKEN, "")
+            } else {
+                value.clone()
+            };
+            if checked.contains('$') || checked.contains('`') {
                 return Err(NormalizationError::EnvironmentExpression(value.clone()));
             }
         }
         ParameterValue::Array(values) => {
             for value in values {
-                reject_forbidden_strings(value)?;
+                reject_forbidden_strings(value, project)?;
             }
         }
         ParameterValue::Table(values) => {
             for value in values.values() {
-                reject_forbidden_strings(value)?;
+                reject_forbidden_strings(value, project)?;
             }
         }
         ParameterValue::Bool(_) | ParameterValue::Integer(_) | ParameterValue::Float(_) => {}
@@ -193,6 +212,7 @@ fn apply_rule(
             map_strings(value, |value| Ok(value.trim().to_ascii_lowercase()))
         }
         NormalizationRule::Path => map_strings(value, normalize_path),
+        NormalizationRule::ProjectPath => map_strings(value, normalize_project_path),
         NormalizationRule::CasaSelector {
             grammar,
             capabilities,
@@ -234,7 +254,7 @@ pub(crate) fn normalize_quantity_unit(
     value: ParameterValue,
     canonical_unit: &str,
 ) -> Result<ParameterValue, NormalizationError> {
-    reject_forbidden_strings(&value)?;
+    reject_forbidden_strings(&value, false)?;
     map_strings(value, |value| normalize_quantity(value, canonical_unit))
 }
 
@@ -317,6 +337,24 @@ fn normalize_path(value: &str) -> Result<String, NormalizationError> {
     } else {
         Ok(joined)
     }
+}
+
+/// [`normalize_path`] of a path that may hold [`PROJECT_TOKEN`], kept as
+/// it is.
+fn normalize_project_path(value: &str) -> Result<String, NormalizationError> {
+    // A stand-in no path part can hold, and with no `$` for the check.
+    const STAND_IN: &str = "\0project\0";
+    if value.contains(STAND_IN) {
+        return Err(NormalizationError::EnvironmentExpression(value.to_string()));
+    }
+    normalize_path(&value.replace(PROJECT_TOKEN, STAND_IN))
+        .map(|path| path.replace(STAND_IN, PROJECT_TOKEN))
+        .map_err(|error| match error {
+            NormalizationError::EnvironmentExpression(_) => {
+                NormalizationError::EnvironmentExpression(value.to_string())
+            }
+            other => other,
+        })
 }
 
 fn normalize_selector(value: &str) -> String {
@@ -784,6 +822,44 @@ mod tests {
         assert!(normalize_value(&"https://example.invalid/a".into(), &concept).is_err());
         assert!(normalize_value(&"${HOME}/a".into(), &concept).is_err());
         assert!(normalize_value(&"$HOME/a".into(), &concept).is_err());
+        // `$project` is a path's own token only where the rule allows it.
+        assert!(normalize_value(&"$project.ptg.txt".into(), &concept).is_err());
+    }
+
+    #[test]
+    fn project_paths_keep_the_project_token_and_nothing_else() {
+        let concept = concept(
+            ParameterType::Path {
+                resource_kind: None,
+            },
+            NormalizationRule::ProjectPath,
+        );
+        for (given, normalized) in [
+            ("$project.ptg.txt", "$project.ptg.txt"),
+            ("./sims/../$project.skymodel", "$project.skymodel"),
+            ("data/model.fits", "data/model.fits"),
+            // CASA replaces the token as a string.
+            ("$projects/a", "$projects/a"),
+            ("", ""),
+        ] {
+            assert_eq!(
+                normalize_value(&given.into(), &concept).unwrap(),
+                ParameterValue::String(normalized.into()),
+                "{given}"
+            );
+        }
+        for forbidden in [
+            "$HOME/a",
+            "${project}.ptg.txt",
+            "`date`.txt",
+            "https://example.invalid/$project",
+            "a\0project\0b",
+        ] {
+            assert!(
+                normalize_value(&forbidden.into(), &concept).is_err(),
+                "{forbidden:?}"
+            );
+        }
     }
 
     #[test]

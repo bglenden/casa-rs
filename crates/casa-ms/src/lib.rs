@@ -185,10 +185,8 @@ pub use simulation::{
     tutorial_vla_a_antennas,
 };
 pub use simulation_task::{
-    SIMOBSERVE_TASK_PROTOCOL_NAME, SIMOBSERVE_TASK_PROTOCOL_VERSION, SimobserveFamilyManifest,
-    SimobserveFamilyTaskRequest, SimobserveFamilyTaskResult, SimobserveRunTaskRequest,
-    SimobserveRunTaskResult, SimobserveTaskRequest, SimobserveTaskResult,
-    simobserve_protocol_descriptor, simobserve_task_schema_bundle,
+    SimobserveFamilyManifest, SimobserveFamilyTaskRequest, SimobserveFamilyTaskResult,
+    SimobserveRunTaskRequest, SimobserveRunTaskResult, SimobserveTaskRequest, SimobserveTaskResult,
 };
 pub use spectral_selection::{
     CubeAxisConfig, CubeAxisValue, CubeChannelContribution, CubeInterpolation, CubeSpecMode,

@@ -105,6 +105,16 @@ class NonFiniteDataTests(unittest.TestCase):
         noise[3, 1, 2] = complex(np.nan, 0.0)
         self.assertEqual(noise_classes(noise, auto, 0.01)[1], ["noise: 1 non-finite values"])
 
+    def test_autocorrelations_alone_are_classed_without_cross_variances(self) -> None:
+        # A single dish: real autocorrelation noise, no cross-correlations.
+        rng = np.random.default_rng(2)
+        noise = rng.normal(size=(64, 2, 8)).astype(np.complex64) * 0.1
+        classes, failures = noise_classes(noise, np.ones(64, dtype=bool), 0.01)
+        self.assertEqual(failures, [])
+        self.assertEqual(classes["corr0"]["n_cross"], 0)
+        self.assertNotIn("cross_re_var", classes["corr0"])
+        self.assertIn("auto_re_var", classes["corr0"])
+
     def test_a_nan_ks_p_value_fails(self) -> None:
         self.assertEqual(ks_failures(0.01, 0.5), [])
         self.assertEqual(len(ks_failures(0.2, 1e-5)), 1)
