@@ -7,15 +7,17 @@
 //!
 //! ```text
 //! ms_trial_read_passes SOURCE [--passes N] [--workers W] [--batch-mib M]
-//!     [--split partitions|times] [--only I]
+//!     [--split partitions|times] [--only I] [--weights stored|sigma]
 //! ```
 //!
 //! Work is read `W` units at a time, each by its own thread: whole
 //! partitions (the default), or with `--split times` each partition's
 //! times cut into `W` slices aligned to the store's natural time blocks
 //! (#910), so the workers share every partition. `--only I` reads partition
-//! `I` alone, where only a time split lets workers share the work. Prints
-//! one JSON object per pass, with the decode units the reads touched.
+//! `I` alone, where only a time split lets workers share the work.
+//! `--weights sigma` reads weights as 1/σ² of the sigmas (an MSv4 falls back
+//! to its stored weights). Prints one JSON object per pass, with the decode
+//! units the reads touched.
 
 use std::ops::Range;
 use std::path::PathBuf;
@@ -26,7 +28,7 @@ use std::time::Instant;
 use casa_ms::observation_io::{OpenOptions, open};
 use casa_observation::{
     AccessRequest, BatchBuffers, CorrelationRequest, Grouping, Observation, PartitionId, ReadEvent,
-    Roles, TimeRange, TimeSelection,
+    Roles, SigmaFallback, TimeRange, TimeSelection, WeightRequest,
 };
 use serde_json::json;
 
@@ -55,13 +57,20 @@ struct Unit {
     times: TimeSelection,
 }
 
+/// How every unit is read.
+#[derive(Clone, Copy)]
+struct Reading {
+    weights: WeightRequest,
+    budget: usize,
+}
+
 /// The work over partitions `ids`: each whole, or cut into `slices` slices
 /// of its times, each a whole number of the store's natural time blocks.
 fn units(
     observation: &dyn Observation,
     ids: Vec<PartitionId>,
     slices: Option<usize>,
-    budget: usize,
+    reading: Reading,
 ) -> Result<Vec<Unit>, Error> {
     let mut units = Vec::new();
     for id in ids {
@@ -74,7 +83,7 @@ fn units(
         };
         let grid = observation.grid(id, "base")?;
         let block = observation
-            .estimate(&request(observation, id, TimeSelection::All, budget))?
+            .estimate(&request(observation, id, TimeSelection::All, reading))?
             .partitions[0]
             .natural_blocks
             .times
@@ -99,7 +108,7 @@ fn request(
     observation: &dyn Observation,
     id: PartitionId,
     times: TimeSelection,
-    budget: usize,
+    reading: Reading,
 ) -> AccessRequest {
     let entry = observation.catalogue().partition(id);
     AccessRequest {
@@ -108,9 +117,10 @@ fn request(
         roles: Roles::ALL,
         channels: 0..entry.frequencies_hz.len(),
         times,
+        weights: reading.weights,
         correlations: CorrelationRequest::ALL,
         grouping: Grouping::None,
-        batch_bytes: budget,
+        batch_bytes: reading.budget,
     }
 }
 
@@ -118,9 +128,9 @@ fn request(
 fn read(
     observation: &dyn Observation,
     unit: &Unit,
-    budget: usize,
+    reading: Reading,
 ) -> Result<(usize, usize, usize), Error> {
-    let request = request(observation, unit.partition, unit.times, budget);
+    let request = request(observation, unit.partition, unit.times, reading);
     let mut traversal = observation.bind_read(&request)?;
     let mut buffers = BatchBuffers::default();
     let (mut samples, mut batches) = (0, 0);
@@ -139,6 +149,7 @@ fn main() -> Result<(), Error> {
     let (mut passes, mut workers, mut budget) = (3usize, 1usize, 256usize << 20);
     let mut split_times = false;
     let mut only = None;
+    let mut weights = WeightRequest::Stored;
     while let Some(flag) = args.next() {
         let value = args.next().ok_or_else(|| format!("{flag} needs a value"))?;
         match flag.as_str() {
@@ -153,9 +164,19 @@ fn main() -> Result<(), Error> {
                 }
             }
             "--only" => only = Some(PartitionId(value.parse()?)),
+            "--weights" => {
+                weights = match value.as_str() {
+                    "stored" => WeightRequest::Stored,
+                    "sigma" => WeightRequest::InverseSigmaSquared {
+                        fallback: SigmaFallback::StoredWeights,
+                    },
+                    other => return Err(format!("unknown weights {other}").into()),
+                }
+            }
             other => return Err(format!("unknown option {other}").into()),
         }
     }
+    let reading = Reading { weights, budget };
     let opened = Instant::now();
     let observation = open(&source, &OpenOptions::default()).map_err(|e| e.to_string())?;
     let partitions = match only {
@@ -166,7 +187,7 @@ fn main() -> Result<(), Error> {
         observation.as_ref(),
         partitions,
         split_times.then_some(workers.max(1)),
-        budget,
+        reading,
     )?;
     println!(
         "{}",
@@ -181,7 +202,7 @@ fn main() -> Result<(), Error> {
             for _ in 0..workers.clamp(1, ids.len().max(1)) {
                 scope.spawn(|| {
                     while let Some(unit) = ids.get(next.fetch_add(1, Ordering::Relaxed)) {
-                        match read(observation.as_ref(), unit, budget) {
+                        match read(observation.as_ref(), unit, reading) {
                             Ok((samples, batches, units)) => {
                                 let mut totals = totals.lock().expect("totals");
                                 totals.0 += samples;
@@ -208,6 +229,7 @@ fn main() -> Result<(), Error> {
                 "seconds": started.elapsed().as_secs_f64(),
                 "workers": workers,
                 "split": if split_times { "times" } else { "partitions" },
+                "weights": if weights == WeightRequest::Stored { "stored" } else { "sigma" },
                 "samples": samples,
                 "batches": batches,
                 "decode_units": decode_units,

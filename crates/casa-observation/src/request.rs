@@ -105,6 +105,78 @@ impl Roles {
     }
 }
 
+/// Which weights a traversal delivers when it reads the weights role.
+///
+/// A store's weights and its sigmas are different quantities: after
+/// `statwt` or `mstransform`, CASA's `WEIGHT` need not be 1/σ². CASA's
+/// calibration solvers weight samples by 1/σ² from the sigmas
+/// (`VisBufferImpl2::resetWeightsUsingSigma`), so a solve asks for those;
+/// the request never equates one with the other silently, and the estimate
+/// records which rule and variable supplied each partition's weights
+/// ([`PartitionEstimate::weights`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum WeightRequest {
+    /// The data group's stored weights (MSv2 `WEIGHT_SPECTRUM` when MAIN
+    /// has it, else `WEIGHT` per correlation; MSv4 `WEIGHT`).
+    #[default]
+    Stored,
+    /// CASA's solve weights: [`inverse_sigma_squared`] of the store's
+    /// sigmas. MSv2 has them (`SIGMA_SPECTRUM` when MAIN has both it and
+    /// `WEIGHT_SPECTRUM`, as CASA's rule is, else `SIGMA` per correlation;
+    /// in CASA these describe `DATA`, whatever the data group read); an MSv4
+    /// store holds none, so `fallback` says what it delivers.
+    InverseSigmaSquared {
+        /// What a store without sigmas delivers.
+        fallback: SigmaFallback,
+    },
+}
+
+/// What a store that holds no sigmas delivers for
+/// [`WeightRequest::InverseSigmaSquared`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SigmaFallback {
+    /// Nothing: binding is refused.
+    Refuse,
+    /// The store's weights, recorded as such
+    /// ([`WeightRule::Stored`] in the estimate's [`WeightSource`]).
+    StoredWeights,
+}
+
+/// How a partition's delivered weights were made.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WeightRule {
+    /// The stored weights, as stored.
+    Stored,
+    /// [`inverse_sigma_squared`] of stored sigmas.
+    InverseSigmaSquared,
+}
+
+/// Which rule and stored variable supplied a partition's delivered
+/// weights: what binding resolved a [`WeightRequest`] to.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WeightSource {
+    /// How the values were made.
+    pub rule: WeightRule,
+    /// The variable or column read (`WEIGHT_SPECTRUM`, `WEIGHT`,
+    /// `SIGMA_SPECTRUM`, `SIGMA`).
+    pub variable: String,
+    /// Whether it holds one value per channel, or one per correlation that
+    /// the batch broadcasts over channels.
+    pub per_channel: bool,
+}
+
+/// The weight CASA's solvers give a sample whose noise is `sigma`
+/// (`VisBufferImpl2::resetWeightsUsingSigma`): 1/σ², and 0 where σ is not
+/// positive (or is NaN).
+#[must_use]
+pub fn inverse_sigma_squared(sigma: f32) -> f32 {
+    if sigma > 0.0 {
+        1.0 / (sigma * sigma)
+    } else {
+        0.0
+    }
+}
+
 /// Which correlation products a traversal delivers.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Deliver {
@@ -370,6 +442,9 @@ pub struct AccessRequest {
     pub data_group: String,
     /// The roles to read.
     pub roles: Roles,
+    /// Which weights the weights role delivers: the stored ones, or the
+    /// solve weights from the sigmas.
+    pub weights: WeightRequest,
     /// The partitions' native channels to deliver.
     pub channels: Range<usize>,
     /// The grid times to deliver: every time, or those within one range
@@ -494,6 +569,9 @@ pub struct PartitionEstimate {
     /// The first of them, as an index into the grid's times (0 without a
     /// selection).
     pub first_time: usize,
+    /// Which rule and variable supply the delivered weights, when the
+    /// weights role is read.
+    pub weights: Option<WeightSource>,
     /// Baselines on its grid.
     pub baselines: usize,
     /// Bytes one sample of the requested roles holds in a batch

@@ -7,8 +7,9 @@ use std::sync::Arc;
 
 use casa_observation::{
     AccessRequest, BatchArrays, BatchBuffers, BatchHeader, Catalogue, IoCounters, NaturalBlocks,
-    ObservationError, PartitionEstimate, PartitionId, ResolvedRequest, Roles, Sharing, Step,
-    VisibilityCursor, times_per_batch,
+    ObservationError, PartitionEstimate, PartitionId, ResolvedRequest, Roles, Sharing,
+    SigmaFallback, Step, VisibilityCursor, WeightRequest, WeightRule, WeightSource,
+    times_per_batch,
 };
 use num_complex::Complex32;
 use zarrs::array::{
@@ -181,6 +182,24 @@ pub(super) fn estimate(
             });
         }
     }
+    // An MSv4 dataset holds weights and no sigmas: the sigma rule takes
+    // its fallback, recorded, or is refused.
+    let weights = match request.weights {
+        WeightRequest::InverseSigmaSquared {
+            fallback: SigmaFallback::Refuse,
+        } if roles.weights => {
+            return Err(ObservationError::InvalidRequest {
+                reason: "an MSv4 dataset holds no sigmas for 1/sigma^2 weights, and the request \
+                         names no fallback"
+                    .to_string(),
+            });
+        }
+        _ => WeightSource {
+            rule: WeightRule::Stored,
+            variable: entry.data_groups[resolved.data_group].weights.clone(),
+            per_channel: true,
+        },
+    };
     let span = resolved.times.clone();
     let (times, baselines) = (span.len(), entry.baselines.len());
     let channels = request.channels.len();
@@ -237,6 +256,7 @@ pub(super) fn estimate(
         partition: id,
         times,
         first_time: span.start,
+        weights: roles.weights.then_some(weights),
         baselines,
         bytes_per_sample,
         bytes_per_time,

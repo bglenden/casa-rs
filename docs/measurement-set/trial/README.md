@@ -608,7 +608,12 @@ and 1 batches; at most two groups live), differing only in buffer bytes
   a batch-fed solve would differ from CASA. Before calibration moves onto
   batches, the contract needs the weight role a solve uses: `SIGMA` as a
   requestable role for MSv2, and a stated rule for MSv4, which has only
-  `WEIGHT`.
+  `WEIGHT`. **Resolved in step 4** (section "Weights from sigmas" below):
+  `sigma_weighted_batch_solves_equal_the_production_gaincal` gives the
+  fixture `SIGMA` that is not 1/√`WEIGHT` by a factor varying over rows and
+  correlations; the batch-fed solve reading 1/σ² equals production to
+  1.3e-7 in solution weight, while one reading `WEIGHT` differs by a factor
+  of 2,500.
 
 ## MSv4 interoperability
 
@@ -1146,7 +1151,14 @@ Commands: `ms_trial_convert`, `ms_trial_read_passes`,
    production `gaincal`) treat every sample as unusable. The converter
    applies CASA's own rule for corrected-to-data and makes the caller
    accept it. The owner kept this as the interim rule (2026-10-26), to be
-   revisited with step 4's `SIGMA` weight role.
+   revisited with step 4's `SIGMA` weight role. **Revisited:** with the role
+   in place the rule is consistent: 1/σ² of the derived `SIGMA` is the
+   MSv4's weight to rounding (checked in
+   `an_msv4_converts_to_an_msv2_of_every_acquisition`), and a weight that is
+   not positive becomes σ = −1 and so weight 0, so a solve weighted as
+   CASA's weighs the converted MSv2 as it weighs the MSv4 under
+   `SigmaFallback::StoredWeights`. What stays a loss is information the MSv4
+   never held: a sigma that differed from 1/√weight.
 7. **Fast creation and per-element flags.** Production's fast creation
    stream (one shape, background writer) takes a row flag per row and no
    per-element `FLAG`, `CORRECTED_DATA` or `MODEL_DATA`, so `to_msv2` uses
@@ -1233,6 +1245,42 @@ workers on slices now take 0.81 s, every codec on a worker's own thread.
 from its own updater); slices of a partition read concurrently by one
 cursor.
 
+## Weights from sigmas: the solve weight role
+
+Step (4)'s second item (example B's finding): a solve weights by 1/σ² of
+the stored sigmas, as CASA's do, so the request names what the weight role
+holds (contracts, section 4). `WeightRequest::Stored` reads the stored
+weights as before; `WeightRequest::InverseSigmaSquared` reads
+`SIGMA_SPECTRUM` from an MSv2 whose MAIN has both it and `WEIGHT_SPECTRUM`,
+else `SIGMA` broadcast over channels (`VisBufferImpl2`'s rule), and makes each
+value a weight by `casa_observation::inverse_sigma_squared`, 0 where σ is not
+positive (`resetWeightsUsingSigma`), before padding is spread. An MSv4 has no
+sigmas, so the request names a fallback: `SigmaFallback::Refuse` refuses a
+traversal that reads weights, `SigmaFallback::StoredWeights` reads the
+stored weights. The estimate records each partition's rule and column
+(`PartitionEstimate::weights`), so a fallback taken is visible to the
+planner, and an updater refuses to write weights beside a traversal of
+sigma-derived ones. Production `gaincal` keeps its own statement of the
+rule until it moves onto batches (casa-calibration depends on
+casa-observation only in its tests), and the parity law below holds the two
+equal.
+
+| Law | What it shows |
+| --- | --- |
+| `msv2_weights_from_sigmas_are_inverse_sigma_squared` | With `SIGMA` and then with `SIGMA_SPECTRUM` beside `WEIGHT_SPECTRUM`, made to differ from 1/√weight by a factor varying over products and channels and to be zero, negative or NaN for some cells, every delivered weight is 1/σ² of its own cell bit for bit, 0 where σ is not positive; the padding cell stays NaN; the estimate records rule and column for both readings. |
+| `a_product_subset_takes_its_own_sigmas` | A subset of products delivers the subset's 1/σ², in the partition's order: the transform precedes the gather. |
+| `msv4_states_its_sigma_fallback` | An MSv4 refuses a sigma request that reads weights, at estimate and binding, and not one that does not; with `StoredWeights` it delivers its stored weights and records the stored rule. |
+| `a_weight_write_refuses_sigma_derived_weights` | An update session refuses a weight updater bound to a sigma-weighted traversal and binds a flag updater to it. |
+| `sigma_weighted_batch_solves_equal_the_production_gaincal` | Example B with `SIGMA` not 1/√`WEIGHT` (casa-calibration): the batch-fed solve reading 1/σ² equals production to 1.3e-7 in weight; the one reading `WEIGHT` differs by 2,500×. |
+| `an_msv4_converts_to_an_msv2_of_every_acquisition` | 1/σ² of the converter's derived `SIGMA` gives the MSv4's weights back to 1e-6. |
+
+Unit law: `sigma_weights_follow_casas_column_rule` (the MSv2 adapter's column
+choice for the four combinations of spectral columns).
+
+**Not done:** a per-cell fallback where a sigma cell is undefined (an
+undefined cell is a read error, as for every role); `SIGMA` written by an
+updater.
+
 ## Keep, change or discard: the trial's summary for design review
 
 Revision 1 kept what the review asked to keep and made the changes it
@@ -1286,8 +1334,8 @@ MSv2 creator from batches.
    batch or fragment with `mask_into`. Folding the rule into the fill
    remains an option.
 4. **Solve weights** (example B finding after merging `main`): production
-   `gaincal` weights by 1/σ² as CASA does, and the batch has no `SIGMA`;
-   see example B. (`FLAG_ROW` in production `gaincal`, the earlier
+   `gaincal` weights by 1/σ² as CASA does, and the batch had no `SIGMA`;
+   see example B. Resolved in step 4: the request reads 1/σ² weights. (`FLAG_ROW` in production `gaincal`, the earlier
    finding here, is fixed on `main`.)
 5. **Cross-store rebinding as a contract.** The calibration comparison
    rebinds by context in test code; the design's `CalibrationBinding` is

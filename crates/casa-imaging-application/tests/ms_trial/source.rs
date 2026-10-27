@@ -18,6 +18,7 @@ use casa_imaging_runtime::pass::{
 use casa_observation::{
     AccessRequest, BatchBuffers, Correlation, CorrelationRequest, Grouping, IoCounters,
     Observation, PartitionId, ReadEvent, Roles, TimeSelection, Traversal, VisibilityBatch,
+    WeightRequest,
 };
 use casa_types::measures::MjdHighPrec;
 
@@ -39,6 +40,7 @@ pub fn request(
         },
         channels,
         times: TimeSelection::All,
+        weights: WeightRequest::Stored,
         correlations: CorrelationRequest::ALL,
         grouping: Grouping::None,
         batch_bytes,

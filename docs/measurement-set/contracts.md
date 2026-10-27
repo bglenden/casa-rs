@@ -491,8 +491,9 @@ mask a read of every role gives.
 **Weights.** One broadcast view: per channel when the store holds spectral
 weights (MSv4 `WEIGHT`), or one per correlation seen through every channel by
 a zero channel stride (MSv2 `WEIGHT`), without expansion. Padding weighs 0 in
-MSv2 and NaN in an XRADIO store; both are excluded. `SIGMA` is not read, and no
-unit weights are invented.
+MSv2 and NaN in an XRADIO store; both are excluded. No unit weights are
+invented. The request chooses what the view holds: the stored weights, or
+weights made from the stored sigmas (section 4).
 
 ## 4. Access requests and scientific groups
 
@@ -520,6 +521,7 @@ pub struct AccessRequest {
     pub roles: Roles,                   // what is read at all
     pub channels: Range<usize>,         // native channel window
     pub times: TimeSelection,           // every grid time, or those in one epoch range
+    pub weights: WeightRequest,         // the stored weights, or 1/σ² of the sigmas
     pub correlations: CorrelationRequest, // products delivered and whose flags
     pub grouping: Grouping,             // scientific groups, as gaincal keys them
     pub batch_bytes: usize,             // budget per batch, scratch included
@@ -550,7 +552,28 @@ touches. Updaters address samples by the batch's own times, so a sliced
 traversal writes back (several slices of one store at once need several
 updaters, which a session does not yet provide). A batch holds whole times; the budget
 counts each time's samples, its per-time arrays and the cursor's decode
-scratch for it, and binding fails when one time does not fit. Opening chose the
+scratch for it, and binding fails when one time does not fit.
+
+**Weights from sigmas.** The weight role reads the stored weights
+(`WeightRequest::Stored`) or the weights CASA's solvers use, 1/σ² of the
+stored sigmas (`WeightRequest::InverseSigmaSquared`), 0 where σ is not
+positive or is NaN (`VisBufferImpl2::resetWeightsUsingSigma`). An MSv2 reads
+`SIGMA_SPECTRUM` when MAIN has both it and `WEIGHT_SPECTRUM`, else `SIGMA`
+broadcast over channels, as `VisBufferImpl2` does; the value is made a weight
+before padding is spread, so padding stays NaN. An MSv4 holds no sigmas, so
+the request names its fallback: refuse a traversal that reads weights
+(`SigmaFallback::Refuse`), or read the stored weights
+(`SigmaFallback::StoredWeights`). Which rule and which column or variable a
+partition's weights come from is recorded in its estimate
+(`PartitionEstimate::weights`, `None` when weights are not read), so a
+fallback is never silent. An updater writing weights binds only to a
+traversal of the stored weights: patches computed from 1/σ² would otherwise
+write sigmas back as weights. `casa_observation::inverse_sigma_squared`
+states the rule; production `gaincal`, which reads the MeasurementSet
+directly until calibration moves onto batches, applies the same rule, and a
+law holds the two solves equal.
+
+Opening chose the
 store and its options (`casa_ms::observation_io::open`); after that an
 algorithm handles only the catalogue, requests, the traversal and batch views,
 and imports no store type.
@@ -895,7 +918,7 @@ when its acceptance obligation is met.
 | More than one data group per traversal; role aliases | One group per traversal; each group keeps its own field and UVW context | Each group keeps its UVW and field/source context and explicit alias relationships to the others |
 | Occupancy and conversion to rows | Absence only as flagged padding with a NaN weight in both stores; the batch carries no presence mask, so an update infers padding (a missing MSv2 row, a non-finite MSv4 weight, which a traversal must read weights to see) and refuses to clear its flags or give it a finite weight. The converter writes padding as D23's flagged NaN rows, or, declared, as no row (a sample whose every weight is non-finite is padding), counting the acquisitions by a first pass over the weights | Unknown occupancy representable; conversion to a row format resolves it by declared policy or reports the ambiguity, never recovering an imaginary MSv2 row; writing new measurements into holes needs an explicit fill policy |
 | Native flags: bitmasks, reason bits, categories, row flags as their own view | `bool` only; `uint8` refused; row flags folded on read; a flag change sets and clears element flags and never writes `FLAG_ROW` or `FLAG_CATEGORY` | Native dtype and reason bits preserved for lossless writes; `UNSPECIFIED_BIT` for generic flagging, bound to its actual bit; clearing an effective flag never clears unknown reasons |
-| Weight roles and fallback; `SIGMA` | One broadcast weight view; `SIGMA` not read. Production `gaincal` solves with 1/σ² from `SIGMA`, as CASA does, so the calibration port needs this first (trial README, example B) | The request names the weight role and fallback for undefined cells, recording which rule and cell supplied each value; `SIGMA` never silently equated with weights |
+| Weight roles and fallback; `SIGMA` | The request reads stored weights or 1/σ² of the sigmas by CASA's column rule; an MSv4, holding no sigmas, refuses or falls back to its stored weights as the request names; the estimate records the rule and column per partition; a weight write refuses sigma-derived weights (section 4). A batch-fed gain solve weighted from the sigmas equals production `gaincal` where `WEIGHT` is not 1/σ² (trial README, example B) | A fallback per cell where a sigma cell is undefined, recorded per cell; today an undefined cell is a read error, as for every role |
 | Revisit and compute-window requirements as request fields | A new traversal per pass; windows are views | Binding states what depends on an estimated pass count; a revisit does not imply cached values |
 | Updates | The write-back trial's update sessions (section 7) | Section 7's remaining obligations: bit flags and flag categories, conflicting queued patches, structural writes (a new MSv4 data group), per-batch MSv2 planning, a killed process, stray temporary files and the synchronization cost at scale |
 | MSv2 creation from batches; general creation and loss policy | The MSv4 writer (one dataset or a processing set of many), and the converter's MSv2 creator: padded cells flagged NaN rows, or no row by declared policy (the occupancy row above), losses inventoried and refused unless accepted before anything is written, `SIGMA` derived from the weights as an accepted loss | Cells in time order become rows, padded cells flagged NaN rows; cross-format creation preflights metadata, flag and occupancy mappings and rejects unapproved loss |

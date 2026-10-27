@@ -196,6 +196,15 @@ clipped, and closed within the traversal. Workers that split a partition by
 time each take a selection aligned to the store's natural time blocks.
 _Avoid_: Time slice (informally fine), row range, time window
 
+**Weight Request**:
+What a traversal's weight role holds: the stored weights, or the weights
+CASA's solvers use, 1/σ² of the stored sigmas (0 where σ is not positive),
+read from the column CASA's rule picks. A store holding no sigmas (MSv4)
+takes the fallback the request names or refuses; the estimate records which
+rule and column each partition's weights came from.
+_Avoid_: Sigma weights (the sigmas themselves, or weights made from them?),
+weight mode
+
 **Traversal Order**:
 The order batches arrive. Within one cursor it is fixed: whole times of one
 channel window of one partition's time selection, in time order. Across the observation it is

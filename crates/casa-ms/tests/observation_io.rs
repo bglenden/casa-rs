@@ -12,6 +12,8 @@ mod refusals;
 mod times;
 #[path = "observation_io/update.rs"]
 mod update;
+#[path = "observation_io/weights.rs"]
+mod weights;
 #[path = "observation_io/work.rs"]
 mod work;
 #[path = "observation_io/writer.rs"]
@@ -27,7 +29,7 @@ use casa_observation::{
     AccessRequest, BatchBuffers, BindingTolerance, BufferPool, Catalogue, Correlation,
     CorrelationRequest, Deliver, FieldId, FlagsFrom, FragmentPosition, GroupKey, Grouping,
     Observation, ObservationError, ObservationId, OwnedEvent, PartitionId, ReadEvent, Roles,
-    ScanId, Shared, TimeSelection, Traversal,
+    ScanId, Shared, TimeSelection, Traversal, WeightRequest,
 };
 use casa_types::measures::MjdHighPrec;
 use casa_types::measures::direction::DirectionRef;
@@ -55,6 +57,7 @@ pub(crate) fn request(channels: std::ops::Range<usize>, batch_bytes: usize) -> A
         roles: Roles::ALL,
         channels,
         times: TimeSelection::All,
+        weights: WeightRequest::Stored,
         correlations: CorrelationRequest::ALL,
         grouping: Grouping::None,
         batch_bytes,

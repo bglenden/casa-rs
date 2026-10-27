@@ -24,7 +24,7 @@ use std::sync::{Mutex, OnceLock};
 
 use casa_observation::{
     AccessRequest, Catalogue, Observation, ObservationError, ResolvedTarget, UpdateGuarantees,
-    UpdateTarget, Updater, WritableRole,
+    UpdateTarget, Updater, WeightRequest, WritableRole,
 };
 
 use super::OpenOptions;
@@ -219,6 +219,18 @@ impl UpdateSession {
                 )));
             }
         }
+        // A weight write replaces stored weights: patches made from 1/σ²
+        // weights would write sigmas as weights unannounced.
+        if request.weights != WeightRequest::Stored
+            && bound
+                .iter()
+                .any(|target| target.target.role == WritableRole::Weights)
+        {
+            return Err(request_error(
+                "a weight write is bound to a traversal of the stored weights \
+                 (WeightRequest::Stored), not of weights made from the sigmas",
+            ));
+        }
         if self.updating.swap(true, Ordering::AcqRel) {
             return Err(ObservationError::Conflict {
                 reason: "another updater of this session is live".to_string(),
@@ -368,6 +380,7 @@ mod tests {
             roles: Roles::ALL,
             channels: 0..8,
             times: TimeSelection::All,
+            weights: WeightRequest::Stored,
             correlations: CorrelationRequest::ALL,
             grouping: Grouping::None,
             batch_bytes: usize::MAX,

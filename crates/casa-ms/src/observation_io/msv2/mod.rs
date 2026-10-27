@@ -18,7 +18,8 @@ use std::sync::Arc;
 use casa_observation::{
     AccessRequest, BoundCursor, Catalogue, DataGroupEntry, Estimate, NaturalBlocks, Observation,
     ObservationError, ObservationId, PartitionEntry, PartitionEstimate, PartitionId,
-    ResolvedRequest, Roles, TimeBaselineGrid, Traversal, times_per_batch,
+    ResolvedRequest, Roles, TimeBaselineGrid, Traversal, WeightRequest, WeightRule, WeightSource,
+    times_per_batch,
 };
 use casa_tables::{RequiredScalarColumnDestination, RequiredScalarColumnValuesMut};
 use casa_types::measures::{EpochRef, MjdHighPrec};
@@ -75,6 +76,8 @@ pub struct Msv2Observation {
     catalogue: Arc<Catalogue>,
     partitions: Vec<Partition>,
     spectral_weights: bool,
+    /// Whether MAIN has `SIGMA_SPECTRUM`.
+    spectral_sigmas: bool,
     options: OpenOptions,
 }
 
@@ -126,9 +129,11 @@ impl Msv2Observation {
         let time_scale = catalogue::time_scale(main)?;
         let setups = catalogue::spectral_setups(&ms)?;
         let modes = catalogue::read_state_modes(&ms)?;
-        let spectral_weights = main
-            .schema()
-            .is_some_and(|schema| schema.contains_column("WEIGHT_SPECTRUM"));
+        let has = |column: &str| {
+            main.schema()
+                .is_some_and(|schema| schema.contains_column(column))
+        };
+        let (spectral_weights, spectral_sigmas) = (has("WEIGHT_SPECTRUM"), has("SIGMA_SPECTRUM"));
         let index = Index::build(
             main,
             options.partition_scheme,
@@ -194,6 +199,7 @@ impl Msv2Observation {
             }),
             partitions,
             spectral_weights,
+            spectral_sigmas,
             options: options.clone(),
             ms,
         })
@@ -277,6 +283,13 @@ impl Msv2Observation {
         let (partition, entry) = self.partition(id)?;
         let resolved = request.resolve(entry, &partition.grid.times_s)?;
         let roles = request.roles;
+        let weights = weight_source(
+            request.weights,
+            &entry.data_groups[resolved.data_group],
+            self.spectral_weights,
+            self.spectral_sigmas,
+        );
+        let per_channel = weights.per_channel;
         let channels = request.channels.len();
         let (delivered, stored) = (
             resolved.correlations.products(entry).len(),
@@ -286,8 +299,7 @@ impl Msv2Observation {
             .into_iter()
             .filter(|wanted| *wanted)
             .count();
-        let bytes_per_sample =
-            roles.sample_bytes(channels, delivered, self.spectral_weights, scalars);
+        let bytes_per_sample = roles.sample_bytes(channels, delivered, per_channel, scalars);
         let grid = &partition.grid;
         // The cursor's scratch: each present row's number, sample, FLAG_ROW
         // and time auxiliaries; and, when a subset is delivered, every stored
@@ -301,7 +313,7 @@ impl Msv2Observation {
             + usize::from(roles.flags)
             + 8 * scalars
             + if resolved.correlations.indices().is_some() {
-                gathered.sample_bytes(channels, stored, self.spectral_weights, 0)
+                gathered.sample_bytes(channels, stored, per_channel, 0)
             } else {
                 0
             };
@@ -309,7 +321,7 @@ impl Msv2Observation {
             usize::from(roles.values) * channels * correlations
                 + usize::from(roles.flags) * channels * correlations
                 + usize::from(roles.weights)
-                    * if self.spectral_weights {
+                    * if per_channel {
                         channels * correlations
                     } else {
                         correlations
@@ -337,6 +349,7 @@ impl Msv2Observation {
             partition: id,
             times,
             first_time: resolved.times.start,
+            weights: roles.weights.then_some(weights),
             baselines,
             bytes_per_sample,
             bytes_per_time,
@@ -493,6 +506,39 @@ impl Observation for Msv2Observation {
     }
 }
 
+/// What the weights role of data group `group` delivers under `request`,
+/// on a MAIN with or without `WEIGHT_SPECTRUM` and `SIGMA_SPECTRUM`: the
+/// group's stored weights, or 1/σ² from `SIGMA_SPECTRUM` when MAIN has both
+/// it and `WEIGHT_SPECTRUM` (CASA's rule, `VisBufferImpl2`), else from
+/// `SIGMA`. Every MSv2 has `SIGMA`, so no fallback is taken.
+fn weight_source(
+    request: WeightRequest,
+    group: &DataGroupEntry,
+    spectral_weights: bool,
+    spectral_sigmas: bool,
+) -> WeightSource {
+    match request {
+        WeightRequest::Stored => WeightSource {
+            rule: WeightRule::Stored,
+            variable: group.weights.clone(),
+            per_channel: spectral_weights,
+        },
+        WeightRequest::InverseSigmaSquared { .. } => {
+            let per_channel = spectral_weights && spectral_sigmas;
+            WeightSource {
+                rule: WeightRule::InverseSigmaSquared,
+                variable: if per_channel {
+                    "SIGMA_SPECTRUM"
+                } else {
+                    "SIGMA"
+                }
+                .to_string(),
+                per_channel,
+            }
+        }
+    }
+}
+
 /// The data groups MAIN's visibility columns form, named as XRADIO's
 /// converter names them: `base` (`DATA`), and `corrected`
 /// (`CORRECTED_DATA`) and `model` (`MODEL_DATA`) where the columns exist.
@@ -528,4 +574,57 @@ pub(super) fn data_groups(
         uvw_frame,
     })
     .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use casa_observation::{
+        DataGroupEntry, SigmaFallback, UvwFrame, VisibilityUnits, WeightRequest, WeightRule,
+    };
+
+    use casa_types::measures::direction::DirectionRef;
+
+    use super::weight_source;
+
+    /// CASA's rule: per-channel sigmas only when MAIN has both
+    /// `SIGMA_SPECTRUM` and `WEIGHT_SPECTRUM`, else `SIGMA`; stored weights
+    /// are the group's.
+    #[test]
+    fn sigma_weights_follow_casas_column_rule() {
+        let group = DataGroupEntry {
+            name: "base".to_string(),
+            visibilities: "DATA".to_string(),
+            flags: "FLAG".to_string(),
+            weights: "WEIGHT_SPECTRUM".to_string(),
+            uvw: "UVW".to_string(),
+            units: VisibilityUnits::Undeclared,
+            uvw_frame: UvwFrame {
+                effective: DirectionRef::J2000,
+                stored_label: None,
+            },
+        };
+        let sigma = WeightRequest::InverseSigmaSquared {
+            fallback: SigmaFallback::Refuse,
+        };
+        let cases = [
+            (true, true, "SIGMA_SPECTRUM", true),
+            (true, false, "SIGMA", false),
+            (false, true, "SIGMA", false),
+            (false, false, "SIGMA", false),
+        ];
+        for (weights, sigmas, variable, per_channel) in cases {
+            let source = weight_source(sigma, &group, weights, sigmas);
+            assert_eq!(source.rule, WeightRule::InverseSigmaSquared);
+            assert_eq!(
+                (source.variable.as_str(), source.per_channel),
+                (variable, per_channel),
+                "WEIGHT_SPECTRUM {weights}, SIGMA_SPECTRUM {sigmas}"
+            );
+        }
+        let stored = weight_source(WeightRequest::Stored, &group, true, true);
+        assert_eq!(
+            (stored.rule, stored.variable.as_str(), stored.per_channel),
+            (WeightRule::Stored, "WEIGHT_SPECTRUM", true)
+        );
+    }
 }

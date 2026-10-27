@@ -23,7 +23,7 @@ use std::time::Instant;
 use casa_ms::observation_io::{OpenOptions, open};
 use casa_observation::{
     AccessRequest, BatchBuffers, BoundCursor, Correlation, CorrelationRequest, Deliver, FlagsFrom,
-    Grouping, PartitionId, ReadEvent, Roles, TimeSelection, VisibilityCursor,
+    Grouping, PartitionId, ReadEvent, Roles, TimeSelection, VisibilityCursor, WeightRequest,
 };
 
 const USAGE: &str = "usage: ms_trial_probe STORE [--open-only] [--batch-mib N] [--channels N] \
@@ -150,6 +150,7 @@ fn main() -> Result<(), Error> {
             roles: Roles::ALL,
             channels: 0..entry.frequencies_hz.len().min(channel_limit),
             times: TimeSelection::All,
+            weights: WeightRequest::Stored,
             correlations: correlations.clone(),
             grouping: Grouping::None,
             batch_bytes: batch_mib << 20,
@@ -222,6 +223,7 @@ fn main() -> Result<(), Error> {
             roles: Roles::ALL,
             channels: 0..channels,
             times: TimeSelection::All,
+            weights: WeightRequest::Stored,
             correlations,
             grouping: Grouping::None,
             batch_bytes: batch_mib << 20,

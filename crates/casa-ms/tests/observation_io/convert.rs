@@ -16,7 +16,8 @@ use casa_ms::{
 };
 use casa_observation::{
     AccessRequest, BatchBuffers, CorrelationRequest, Grouping, ObservationError, PartitionId,
-    PatchValues, ReadEvent, Roles, TimeSelection, UpdateTarget, WeightChannels, WritableRole,
+    PatchValues, ReadEvent, Roles, SigmaFallback, TimeSelection, UpdateTarget, WeightChannels,
+    WeightRequest, WritableRole,
 };
 use num_complex::Complex32;
 
@@ -38,6 +39,16 @@ fn options(accept: &[LossKind]) -> ConversionOptions {
 
 /// Every sample of `group` in partition `id` of the store at `path`.
 fn read(path: &Path, id: PartitionId, group: &str) -> BTreeMap<Key, Sample> {
+    read_weighted(path, id, group, WeightRequest::Stored)
+}
+
+/// [`read`], with the weights `weights` names.
+fn read_weighted(
+    path: &Path,
+    id: PartitionId,
+    group: &str,
+    weights: WeightRequest,
+) -> BTreeMap<Key, Sample> {
     let observation = open(path, &OpenOptions::default()).expect("open");
     let channels = observation.catalogue().partition(id).frequencies_hz.len();
     let request = AccessRequest {
@@ -46,6 +57,7 @@ fn read(path: &Path, id: PartitionId, group: &str) -> BTreeMap<Key, Sample> {
         roles: Roles::ALL,
         channels: 0..channels,
         times: TimeSelection::All,
+        weights,
         correlations: CorrelationRequest::ALL,
         grouping: Grouping::None,
         batch_bytes: usize::MAX,
@@ -173,6 +185,7 @@ fn two_windows(root: &Path) -> PathBuf {
             roles: Roles::ALL,
             channels: 0..catalogue.partition(id).frequencies_hz.len(),
             times: TimeSelection::All,
+            weights: WeightRequest::Stored,
             correlations: CorrelationRequest::ALL,
             grouping: Grouping::None,
             batch_bytes: usize::MAX,
@@ -341,6 +354,26 @@ fn an_msv4_converts_to_an_msv2_of_every_acquisition() {
                 -1.0
             }
         );
+    }
+    // The derived SIGMA gives the weights back: 1/σ² of the converted MSv2
+    // is XRADIO's stored weight to rounding, so a solve weighting by 1/σ²,
+    // as CASA's do, weighs the converted MSv2 as it weighs the MSv4.
+    let stored = read(&xradio, PartitionId(0), "base");
+    let from_sigmas = read_weighted(
+        &out,
+        PartitionId(0),
+        "base",
+        WeightRequest::InverseSigmaSquared {
+            fallback: SigmaFallback::Refuse,
+        },
+    );
+    for (key, sample) in &from_sigmas {
+        for (&derived, &weight) in sample.weights.iter().zip(&stored[key].weights) {
+            assert!(
+                (derived / weight - 1.0).abs() < 1e-6,
+                "{key:?}: {derived} from SIGMA, {weight} stored"
+            );
+        }
     }
     let ours = open(&out, &OpenOptions::default()).expect("open");
     let theirs = open(&xradio, &OpenOptions::default()).expect("open");
@@ -515,6 +548,7 @@ fn weights_varying_over_channels_are_refused() {
             .frequencies_hz
             .len(),
         times: TimeSelection::All,
+        weights: WeightRequest::Stored,
         correlations: CorrelationRequest::ALL,
         grouping: Grouping::None,
         batch_bytes: usize::MAX,

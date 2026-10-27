@@ -123,8 +123,8 @@ pub use grouping::{
 pub use pool::{BufferPool, FilledBatch};
 pub use request::{
     AccessRequest, CorrelationAxis, CorrelationRequest, Deliver, Estimate, FlagsFrom, Grouping,
-    IoCounters, NaturalBlocks, PartitionEstimate, ResolvedRequest, Roles, TimeRange, TimeSelection,
-    times_per_batch,
+    IoCounters, NaturalBlocks, PartitionEstimate, ResolvedRequest, Roles, SigmaFallback, TimeRange,
+    TimeSelection, WeightRequest, WeightRule, WeightSource, inverse_sigma_squared, times_per_batch,
 };
 pub use update::{
     AliasScope, PatchValues, ResolvedTarget, UpdateGuarantees, UpdateReport, UpdateTarget, Updater,
