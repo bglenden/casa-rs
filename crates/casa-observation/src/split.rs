@@ -26,7 +26,8 @@ use crate::request::{AccessRequest, Estimate, Grouping, TimeRange, TimeSelection
 /// knows which scientific groups the cuts divide and which slices hold
 /// their parts.
 ///
-/// Group keys are those of the whole grid, so a divided group arrives in
+/// Group keys do not depend on the time selection (they are those of the
+/// grid's field-selected times), so a divided group arrives in
 /// each slice holding part of it under the same key, marked
 /// [`clipped`](crate::GroupFragment::clipped) there; the split's
 /// [`SplitCompletion`] joins the parts. A slice may hold no time of a

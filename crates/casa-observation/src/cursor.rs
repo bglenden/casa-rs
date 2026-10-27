@@ -66,8 +66,8 @@ pub trait Observation: Sync {
     /// `fields` holds under `grouping`, as data group `data_group` places
     /// them (its fields), keyed as a traversal keys them (over the grid's
     /// field-selected times, whatever its time selection: bins count from
-    /// the first such time, as production `gaincal` bins the selected
-    /// rows); `None` for a time `fields` excludes, and `None` overall when
+    /// the first such time of their key, [`GroupKey`]); `None` for a time
+    /// `fields` excludes, and `None` overall when
     /// `grouping` asks for no groups. From the store's index, reading no
     /// payload. A [`TimeSplit`](crate::TimeSplit) counts the groups its
     /// cuts divide from these.

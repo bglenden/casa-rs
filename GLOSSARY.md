@@ -191,8 +191,8 @@ _Avoid_: Buffer cache, free list, lending
 The grid times one traversal reads: every time, or those within one
 half-open range of epochs, stated in the partitions' own time origin and
 scale so that selecting a time rounds nothing. Group keys stay those of the
-whole grid; a group the selection cuts is delivered as its part, marked
-clipped, and closed within the traversal. Workers that split a partition by
+grid's field-selected times, whatever the range; a group the selection cuts
+is delivered as its part, marked clipped, and closed within the traversal. Workers that split a partition by
 time plan a Time Split. A Field Selection narrows it to whole times of some
 fields.
 _Avoid_: Time slice (informally fine), row range, time window

@@ -1335,10 +1335,12 @@ is per sample.
 - UV distance stays with imaging, tested per sample as it packs (step 4).
 
 Group keys are taken over the selected fields' times, as production
-`gaincal` keys the rows it selects. A group keyed by field is held whole or
-not at all. A group combining fields holds the selected fields' times
-alone, with bins counted from the first of them, so a field selection cuts
-no group and nothing is marked `clipped`. Time splits tile the selected
+`gaincal` bins only the rows it selects. A group keyed by field is held
+whole or not at all. A group combining fields holds the selected fields'
+times alone, with bins counted from the earliest of them (production
+`gaincal` counts from the lowest-numbered field's first time: #936), so a
+field selection cuts no group and marks nothing `clipped` (a time range
+still does). Time splits tile the selected
 runs, and updaters claim and write them. An update session merges each
 updater's runs per variable and checks claims in time order, so a selection
 of many short runs claims cheaply.

@@ -20,8 +20,8 @@ use super::GroupClosure as Closure;
 ///
 /// Keys are those of the grid's field-selected times, so traversals of
 /// different time selections agree on every time's group, and bins count
-/// from the first selected time of their key, as production `gaincal` bins
-/// the selected rows. Each group's extent is the part of it the
+/// from the first selected time of their key ([`GroupKey`]). Each group's
+/// extent is the part of it the
 /// traversal's time selection holds, so fragments are positioned and closed
 /// within it and marked `clipped` when it cuts the group.
 #[derive(Debug)]
@@ -41,9 +41,9 @@ pub(super) struct GroupIndex {
 
 /// The group of each of the grid times `times` (seconds, ascending) with
 /// `fields` and `scans` (when the store names scans) at each, keyed as
-/// production `gaincal` keys solutions over the times `selection` holds;
-/// `None` for the times it excludes, and `None` overall when `grouping`
-/// asks for no groups.
+/// production `gaincal` keys solutions ([`GroupKey`]) over the times
+/// `selection` holds; `None` for the times it excludes, and `None` overall
+/// when `grouping` asks for no groups.
 pub(super) fn group_keys(
     partition: PartitionId,
     grouping: Grouping,
@@ -394,10 +394,9 @@ mod tests {
         assert_eq!(fragments[2].samples, 4..5);
     }
 
-    /// A field selection keys groups over the times it holds, as
-    /// production `gaincal` keys the selected rows: bins count from the
-    /// first selected time, and a group that combines fields is the
-    /// selected fields' times alone, held whole and never clipped.
+    /// A field selection keys groups over the times it holds: bins count
+    /// from the first selected time, and a group that combines fields is
+    /// the selected fields' times alone, held whole and never clipped.
     #[test]
     fn a_field_selection_keys_and_closes_groups_within_its_fields() {
         let times: Vec<f64> = (0..7).map(|t| f64::from(t) * 10.0).collect();

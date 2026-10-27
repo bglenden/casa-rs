@@ -456,16 +456,20 @@ pub struct AccessRequest {
     pub channels: Range<usize>,
     /// The grid times to deliver: every time, or those within one range
     /// of epochs, in each partition. Scientific groups keep the keys they
-    /// have over the whole grid; a group the range cuts is delivered as the
-    /// part it holds ([`GroupFragment::clipped`]). Workers that split a
+    /// have over the grid's field-selected times, whatever the range; a
+    /// group the range cuts is delivered as the part it holds
+    /// ([`GroupFragment::clipped`]). Workers that split a
     /// request by time plan the slices together ([`TimeSplit`](crate::TimeSplit)).
     pub times: TimeSelection,
     /// The fields to deliver: the selected times phased to one of them,
-    /// whole times, so a traversal decodes nothing of the others.
-    /// Scientific groups are keyed over these fields' times, as production
-    /// `gaincal` keys the rows it selects: a group that combines fields
-    /// holds the selected fields' times alone, its bins counted from the
-    /// first of them, so a field selection cuts no group. Intents are
+    /// whole times, so no batch holds the others' times. The MSv2 adapter
+    /// reads none of their rows; the MSv4 adapter decodes each chunk row a
+    /// batch touches whole, gap times included
+    /// (`docs/measurement-set/contracts.md`, section 4). Scientific groups
+    /// are keyed over these fields' times, as production `gaincal` bins
+    /// only the rows it selects: a group that combines fields holds the
+    /// selected fields' times alone, its bins counted from the first of
+    /// them, so a field selection cuts no group. Intents are
     /// selected by the partitions requested: a partition's samples share
     /// theirs.
     pub fields: FieldSelection,
@@ -578,7 +582,9 @@ impl AccessRequest {
 
 /// The store's natural read units along the axes a batch shape chooses:
 /// the Zarr chunk shape of MSv4, the tile shape of MSv2. A planner that
-/// aligns channel windows and time blocks to them decodes nothing twice.
+/// aligns channel windows and time blocks to them decodes nothing twice,
+/// without a field selection: on MSv4 the runs of a field selection that
+/// share a chunk row each decode it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct NaturalBlocks {
     /// Times per unit (for MSv2 the tile's rows divided by the baselines).

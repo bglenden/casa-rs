@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Field selection (#932, step 2): a request names the fields it reads, and
-//! both adapters deliver the whole times phased to them, decoding none of
-//! the others, in batches that never span a gap. Groups are keyed over the
-//! selected times, as production `gaincal` keys the selected rows. A time
-//! split and an updater take the selection as they take a time range.
+//! both adapters deliver the whole times phased to them, in batches that
+//! never span a gap; the MSv2 adapter reads no other row, and the MSv4
+//! adapter decodes each chunk row a batch touches. Groups are keyed over the
+//! selected times. A time split and an updater take the selection as they
+//! take a time range.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -217,10 +218,9 @@ fn a_field_selection_decodes_no_unselected_time() {
     assert_eq!(elements, 6 * fine_elements, "each a six-time chunk");
 }
 
-/// A field selection keys groups over its fields' times, as production
-/// `gaincal` keys the selected rows: a group that combines fields holds
-/// only their times, so it is never clipped, and its bins count from the
-/// first selected time. A time split of the selection tiles it and names
+/// A field selection keys groups over its fields' times: a group that
+/// combines fields holds only their times, so it is never clipped, and its
+/// bins count from the first selected time. A time split of the selection tiles it and names
 /// the groups it divides, as for a time range.
 #[test]
 fn a_field_selection_keys_groups_over_its_fields_and_splits_tile_it() {

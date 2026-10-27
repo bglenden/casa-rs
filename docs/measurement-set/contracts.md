@@ -604,8 +604,8 @@ every partition of a request, so a calibration solution interval selects the
 same epochs in each spectral window. A planner that splits a partition by
 time cuts it at grid indices, through `Observation::grid`, which reads no
 payload, and states each slice with `TimeRange::of_grid`, which uses the
-grid's own values; slices aligned to the estimate's natural time blocks
-decode no unit twice. The MSv2 adapter reads the selected rows from its
+grid's own values; without a field selection, slices aligned to the
+estimate's natural time blocks decode no unit twice. The MSv2 adapter reads the selected rows from its
 opening index; the MSv4 adapter reads only the chunks the selection
 touches. Updaters address samples by the batch's own times, so a sliced
 traversal writes back, passing partitions whose selection holds no time; an
@@ -625,15 +625,18 @@ What the adapters decode, as the estimate models it:
 - The MSv2 adapter reads only the selected rows of its opening index.
 - The MSv4 adapter reads the chunks each batch's times touch. A chunk row
   also holds the gap times beside a run, and a chunk row that holds several
-  runs is decoded once for each batch that reads it. A selection whose runs
-  are shorter than a chunk row therefore decodes up to a chunk row per run
-  (#935 would hold a decoded chunk row across batches).
+  runs is decoded once for each batch that reads it. Each batch decodes
+  every chunk row its times touch: one for a run inside a chunk row, two
+  for a run that crosses a chunk-row boundary (#935 would hold a decoded
+  chunk row across batches).
 
 Group keys are taken over the selected fields' times, as production
-`gaincal` keys the rows it selects. A group keyed by field is held whole or
-not at all. A group that combines fields holds the selected fields' times
-alone, with its bins counted from the first of them. So a field selection
-cuts no group, and `clipped` stays for time ranges. Time splits and
+`gaincal` bins only the rows it selects. A group keyed by field is held
+whole or not at all. A group that combines fields holds the selected
+fields' times alone, with its bins counted from the earliest of them;
+production `gaincal` counts from the lowest-numbered field's first time,
+which differs when that field is not observed first (#936). So a field
+selection cuts no group, and `clipped` stays for time ranges. Time splits and
 updaters take a field selection as they take a time range: slices tile the
 selected times, and an updater claims and writes its runs.
 
@@ -712,9 +715,9 @@ decoded and the subset as selected, and its scratch is in the budget.
 
 Scientific groups come from declared keys: production `gaincal`'s rules, keyed
 by partition, field unless combined, scan unless combined, and the time bin
-counted from the first time of the (field, scan) run, over the whole grid
-whatever the time selection, so traversals of different slices agree on
-every time's group. A grouping keyed by scan
+counted from the first time of the (field, scan) run, over the grid's
+field-selected times whatever the time selection, so traversals of
+different slices agree on every time's group. A grouping keyed by scan
 on a store that names none is refused at binding. Groups can span batches and
 storage chunks; the backend executes the requested grouping and does not decide
 which fields a solver may combine. A delivered batch lists its fragments: the

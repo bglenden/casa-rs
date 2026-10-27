@@ -17,8 +17,10 @@ use crate::catalogue::{FieldId, PartitionId, ScanId};
 /// fields, scan unless it combines scans, and the time bin counted from the
 /// first time of the (field, scan) run. Keys are taken over the times of
 /// the request's field selection ([`AccessRequest::fields`]), as `gaincal`
-/// keys the rows it selects, and over every grid time whatever the time
-/// selection, so the slices of a time split agree on them.
+/// bins only the rows it selects, and over those times whatever the time
+/// selection, so the slices of a time split agree on them. With fields
+/// combined, bins count from the earliest selected time; production
+/// `gaincal` counts from the lowest-numbered field's first time (#936).
 ///
 /// [`AccessRequest::fields`]: crate::AccessRequest::fields
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
