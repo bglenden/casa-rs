@@ -425,7 +425,7 @@ pub enum ApplyExecutionError {
         path: String,
         /// Underlying flag-version error.
         #[source]
-        source: FlaggingError,
+        source: Box<FlaggingError>,
     },
 
     /// Opening an auxiliary calibration subtable failed.
@@ -744,7 +744,7 @@ fn save_apply_flag_backup(
         .map(Some)
         .map_err(|source| ApplyExecutionError::FlagBackup {
             path: display_ms_path(ms),
-            source,
+            source: Box::new(source),
         })
 }
 

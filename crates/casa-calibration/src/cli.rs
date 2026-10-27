@@ -403,6 +403,8 @@ fn run(request: RunRequest) -> Result<(), String> {
     let format = request.command.format();
     let output_path = request.command.output_path().map(Path::to_path_buf);
     let overwrite = request.command.overwrite();
+    // Checked before the task runs, so a refused report changes nothing (#931).
+    refuse_existing_output(output_path.as_deref(), overwrite)?;
     let result = request.command.into_task_request().execute()?;
     let rendered = match format {
         OutputFormat::Text => render_text_task_result(&result),
@@ -2383,15 +2385,20 @@ fn render_value_stats_block(out: &mut String, stats: &crate::CalibrationValueSta
     );
 }
 
+fn refuse_existing_output(path: Option<&Path>, overwrite: bool) -> Result<(), String> {
+    match path {
+        Some(path) if path.exists() && !overwrite => Err(format!(
+            "refusing to overwrite existing output {}; pass --overwrite to replace it",
+            path.display()
+        )),
+        _ => Ok(()),
+    }
+}
+
 fn write_output(path: Option<&Path>, overwrite: bool, text: &str) -> Result<(), String> {
+    refuse_existing_output(path, overwrite)?;
     match path {
         Some(path) => {
-            if path.exists() && !overwrite {
-                return Err(format!(
-                    "refusing to overwrite existing output {}; pass --overwrite to replace it",
-                    path.display()
-                ));
-            }
             fs::write(path, text).map_err(|error| format!("write {}: {error}", path.display()))
         }
         None => {

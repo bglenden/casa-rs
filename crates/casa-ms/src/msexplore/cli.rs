@@ -258,6 +258,17 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
     schema
 }
 fn run(options: CliOptions) -> Result<(), String> {
+    super::task_contract::refuse_existing_outputs(
+        [
+            options.summary_output.as_deref(),
+            options.flag_output.as_deref(),
+            options.plot_output.as_deref(),
+        ]
+        .into_iter()
+        .flatten(),
+        options.overwrite,
+        "pass --overwrite to replace it",
+    )?;
     let mut ms = MeasurementSet::open(&options.ms_path).map_err(|error| {
         if options.ms_path.is_dir() {
             format!(

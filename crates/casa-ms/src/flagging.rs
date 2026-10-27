@@ -321,6 +321,9 @@ pub fn flagdata(
             path: ms_path.clone(),
             reason: source.to_string(),
         })?;
+    if let Some(selections) = &channel_selections {
+        check_channel_selections(ms, selections)?;
+    }
 
     if request.mode == FlagDataMode::Summary {
         let report = report_after(
@@ -1065,6 +1068,43 @@ fn extend_autoflag_grouped(
             }
         }
     }
+}
+
+/// Resolve every requested window's channels before anything is written, so
+/// a refused selection leaves no flag backup behind; CASA's `flagdata`
+/// rejects the selection before it backs up (#931).
+fn check_channel_selections(
+    ms: &MeasurementSet,
+    selections: &BTreeMap<i32, ChannelSelection>,
+) -> Result<(), FlaggingError> {
+    let path = display_ms_path(ms);
+    let spectral_window = ms
+        .spectral_window()
+        .map_err(|source| FlaggingError::MutateFlags {
+            path: path.clone(),
+            reason: format!("open SPECTRAL_WINDOW: {source}"),
+        })?;
+    for (&spw, selection) in selections {
+        let resolved = usize::try_from(spw)
+            .map_err(|_| format!("SPW {spw} is negative"))
+            .and_then(|row| {
+                let count = spectral_window
+                    .num_chan(row)
+                    .map_err(|source| format!("read SPECTRAL_WINDOW.NUM_CHAN row {spw}: {source}"))?;
+                usize::try_from(count).map_err(|_| format!("SPW {spw} has a negative NUM_CHAN"))
+            })
+            .and_then(|channels| {
+                selection
+                    .indices(channels)
+                    .map(|_| ())
+                    .map_err(|source| format!("resolve SPW {spw} channels: {source}"))
+            });
+        resolved.map_err(|reason| FlaggingError::MutateFlags {
+            path: path.clone(),
+            reason,
+        })?;
+    }
+    Ok(())
 }
 
 fn mutate_selected_samples<F>(

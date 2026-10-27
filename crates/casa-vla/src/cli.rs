@@ -215,8 +215,10 @@ fn run(options: ImportVlaOptions, json_output: bool) -> Result<(), VlaError> {
         json_output,
         "importvla run started"
     );
+    // A failed import removes the default output it started, never one that
+    // existed before the run: that one is a product it refused to replace.
     let cleanup_vis = if options.vis.is_none() {
-        Some(options.effective_vis_for_import()?)
+        Some(options.effective_vis_for_import()?).filter(|path| !path.exists())
     } else {
         None
     };
@@ -728,6 +730,36 @@ mod tests {
         let error = result.expect_err("synthetic archive import should fail later in import");
         assert!(!error.to_string().contains("scan"));
         assert!(!error.to_string().contains("required for import"));
+    }
+
+    #[test]
+    fn run_without_vis_keeps_an_existing_default_output() {
+        let path = synthetic_archive_file().path().to_path_buf();
+        let error = with_temp_cwd(|temp| {
+            let existing = temp.join(
+                path.file_stem()
+                    .expect("archive stem")
+                    .to_string_lossy()
+                    .to_string()
+                    + ".ms",
+            );
+            fs::create_dir(&existing).expect("existing default output");
+            fs::write(existing.join("table.dat"), b"first product").expect("product file");
+            let result = run(
+                ImportVlaOptions {
+                    archivefiles: vec![path.clone()],
+                    ..ImportVlaOptions::default()
+                },
+                true,
+            );
+            assert_eq!(
+                fs::read(existing.join("table.dat")).expect("product kept"),
+                b"first product"
+            );
+            result
+        })
+        .expect_err("an existing output is refused");
+        assert!(error.to_string().contains("already exists"), "{error}");
     }
 
     #[test]

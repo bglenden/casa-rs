@@ -727,13 +727,13 @@ fn prepare_output_root(input_root: &Path, output_root: &Path) -> Result<(), Flux
             reason: "input_table and output_table must differ".to_string(),
         });
     }
+    // CASA's fluxscale refuses an existing fluxtable unless `append=True`;
+    // casa-rs has no append (#931).
     if output_root.exists() {
-        fs::remove_dir_all(output_root)
-            .or_else(|_| fs::remove_file(output_root))
-            .map_err(|error| FluxScaleError::PrepareOutput {
-                path: output_root.display().to_string(),
-                reason: error.to_string(),
-            })?;
+        return Err(FluxScaleError::PrepareOutput {
+            path: output_root.display().to_string(),
+            reason: "fluxtable exists; please specify a different name".to_string(),
+        });
     }
     if let Some(parent) = output_root.parent() {
         fs::create_dir_all(parent).map_err(|error| FluxScaleError::PrepareOutput {

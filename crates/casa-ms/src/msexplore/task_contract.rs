@@ -77,6 +77,21 @@ pub struct MsExploreRunTaskRequest {
 impl MsExploreRunTaskRequest {
     /// Execute the request and return structured output metadata.
     pub fn execute(&self) -> Result<MsExploreRunTaskResult, String> {
+        refuse_existing_outputs(
+            [
+                self.summary_output_path.as_deref(),
+                self.flag_edit
+                    .as_ref()
+                    .and_then(|flag_edit| flag_edit.output_path.as_deref()),
+                self.plot_export
+                    .as_ref()
+                    .map(|plot_export| plot_export.output_path.as_path()),
+            ]
+            .into_iter()
+            .flatten(),
+            self.overwrite_outputs,
+            "pass overwrite_outputs=true to replace it",
+        )?;
         let mut ms = MeasurementSet::open(&self.spec.ms_path).map_err(|error| {
             if self.spec.ms_path.is_dir() {
                 format!(
@@ -241,6 +256,26 @@ pub fn msexplore_task_schema_bundle() -> TaskProviderContract {
             result_schema,
             additional: NoAdditionalProviderSchemas {},
         },
+    }
+}
+
+/// Refuse a run whose outputs already exist unless `overwrite`, before it
+/// writes or flags anything, so a refused run changes nothing; CASA's
+/// `plotms` refuses an existing `plotfile` the same way (#931).
+pub(crate) fn refuse_existing_outputs<'a>(
+    outputs: impl IntoIterator<Item = &'a Path>,
+    overwrite: bool,
+    hint: &str,
+) -> Result<(), String> {
+    if overwrite {
+        return Ok(());
+    }
+    match outputs.into_iter().find(|path| path.exists()) {
+        Some(path) => Err(format!(
+            "refusing to overwrite existing output {}; {hint}",
+            path.display()
+        )),
+        None => Ok(()),
     }
 }
 
