@@ -12,7 +12,7 @@ use std::process::{Command, Output};
 use casa_coordinates::{
     CoordinateSystem, DirectionCoordinate, Projection, ProjectionType, SpectralCoordinate,
 };
-use casa_images::{GaussianBeam, ImageBeamSet, ImageInfo, ImageInterface, ImageType, PagedImage};
+use casa_images::{GaussianBeam, ImageBeamSet, ImageInfo, ImageType, PagedImage};
 use casa_types::measures::direction::DirectionRef;
 use casa_types::measures::frequency::FrequencyRef;
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
