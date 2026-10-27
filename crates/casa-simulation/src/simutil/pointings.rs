@@ -9,7 +9,7 @@ use std::path::Path;
 
 use casa_types::quanta::Quantity;
 
-use super::direction::split_direction;
+use super::direction::Directions;
 use super::{SimutilError, qa};
 use crate::readantenna::parse::{python_float, python_split};
 
@@ -17,6 +17,11 @@ use crate::readantenna::parse::{python_float, python_split};
 /// ALMA tiling uses it for its default beam, where CASA reads an undefined
 /// name.
 pub const PBCOEFF: f64 = 1.13;
+
+/// The most pointings [`calc_pointings`] lays out. CASA lays out a map of
+/// any size, and with a spacing tiny beside the map runs for hours or out
+/// of memory; casa-rs refuses such a map before laying any of it out.
+pub const MOST_POINTINGS: i64 = 10_000_000;
 
 /// The layouts `calc_pointings2` knows, by the first three characters of
 /// `maptype` in upper case (`hex`, `hexagonal`, `ALMA-OT`, `alma`, ...).
@@ -50,21 +55,40 @@ impl MapType {
 }
 
 /// `simutil.calc_pointings2(spacing, size, maptype, direction, relmargin,
-/// beam)` for one centre `direction`: the pointings of a map `size` (x, y)
-/// with pointings `spacing` apart, starting at the top row. A map too small
-/// for any pointing, or a layout CASA does not know, gives the centre
-/// alone, as it was given. `relmargin` is the margin in spacings left at
-/// each edge (hexagonal and square maps); `beam_arcsec` is the primary beam
-/// the ALMA tiling fills to (`spacing × 1.13 × √3` when not positive).
+/// beam)`: the pointings of a map `size` (x, y) with pointings `spacing`
+/// apart about `direction`, starting at the top row. `relmargin` is the
+/// margin in spacings left at each edge (hexagonal and square maps);
+/// `beam_arcsec` is the primary beam the ALMA tiling fills to (`spacing ×
+/// 1.13 × √3` when not positive).
+///
+/// As in CASA, the direction is checked first ([`Directions::split`]); a
+/// list of more than one is then returned as it is. A list of one is
+/// centred at its mean, which CASA writes at precision 5 and reads back, so
+/// its pointings can differ from those of the same direction as a string
+/// in the last digit. A map too small for any pointing, or a layout CASA
+/// does not know, gives the direction alone, as it was given.
+///
+/// # Errors
+///
+/// A direction that does not split; a zero spacing, or a count of rows or
+/// columns that is not finite, which CASA refuses with Python's
+/// `ZeroDivisionError`, `OverflowError` or `ValueError` (their messages);
+/// a map of more than [`MOST_POINTINGS`] pointings.
 pub fn calc_pointings(
     spacing: &Quantity,
     size: [&Quantity; 2],
     maptype: &str,
-    direction: &str,
+    direction: &Directions,
     relmargin: f64,
     beam_arcsec: f64,
 ) -> Result<Vec<String>, SimutilError> {
-    let centre = split_direction(direction)?;
+    let centre = direction.split()?;
+    let direction = match direction {
+        Directions::List(directions) if directions.len() > 1 => return Ok(directions.clone()),
+        // A list that splits is not empty.
+        Directions::List(directions) => &directions[0],
+        Directions::One(direction) => direction,
+    };
     let layout = MapType::from_casa(maptype);
     let mut pointings = match layout {
         MapType::Hexagonal | MapType::Square => lattice(
@@ -76,19 +100,23 @@ pub fn calc_pointings(
         )?,
         MapType::Alma | MapType::Alma2012 => {
             let spacing = qa::value_in(spacing, "arcsec")?;
+            // CASA's tilings divide by the spacing as a Python float.
+            if spacing == 0.0 {
+                return Err(SimutilError::Arithmetic("float division by zero".into()));
+            }
             let (width, height) = (
                 qa::value_in(size[0], "arcsec")?,
                 qa::value_in(size[1], "arcsec")?,
             );
             let offsets = if layout == MapType::Alma2012 {
-                triangle_points(width, height, 0.0, spacing)
+                triangle_points(width, height, 0.0, spacing)?
             } else {
                 let beam = if beam_arcsec <= 0.0 {
                     spacing * PBCOEFF * 3.0_f64.sqrt()
                 } else {
                     beam_arcsec
                 };
-                triangular_tiling(width, height, 0.0, spacing, beam)
+                triangular_tiling(width, height, 0.0, spacing, beam)?
             };
             tiled(
                 &offsets,
@@ -123,11 +151,11 @@ fn lattice(
         spacing.clone()
     };
     let row_margin = if hexagonal { 2.309401077 } else { 2.0 };
-    let rows = 1
-        + (qa::value_in(&qa::div(size[1], &y_spacing)?, "")? - row_margin * relmargin).floor()
-            as i64;
+    let rows =
+        1 + count(qa::value_in(&qa::div(size[1], &y_spacing)?, "")? - row_margin * relmargin)?;
     let available = 1.0 + qa::value_in(&qa::div(size[0], spacing)?, "")? - 2.0 * relmargin;
-    let columns = available.floor() as i64;
+    let columns = count(available)?;
+    bounded(rows, columns)?;
     // Hexagonal maps: the even rows are shifted half a spacing ahead, and
     // possibly shorter, so the top and bottom rows of an odd count are short.
     let (even_columns, to_first) = if !hexagonal {
@@ -198,21 +226,58 @@ fn trig(angle_deg: f64) -> (f64, f64) {
     (radians.cos(), radians.sin())
 }
 
-/// Python's `int(floor(value))`.
-fn floor(value: f64) -> i64 {
-    value.floor() as i64
+/// Python's `int(floor(value))` for a count of rows or columns: NaN and
+/// the infinities are refused with Python's messages, and a count above
+/// [`MOST_POINTINGS`] as too many. A count below −[`MOST_POINTINGS`] is
+/// held there; like any negative count it lays out nothing.
+fn count(value: f64) -> Result<i64, SimutilError> {
+    if value.is_nan() {
+        return Err(SimutilError::Arithmetic(
+            "cannot convert float NaN to integer".into(),
+        ));
+    }
+    if value.is_infinite() {
+        return Err(SimutilError::Arithmetic(
+            "cannot convert float infinity to integer".into(),
+        ));
+    }
+    let floor = value.floor();
+    if floor > MOST_POINTINGS as f64 {
+        return Err(SimutilError::TooManyPointings);
+    }
+    Ok(floor.max(-(MOST_POINTINGS as f64)) as i64)
+}
+
+/// Refuse a layout of `rows` rows of at most `columns` pointings each that
+/// may hold more than [`MOST_POINTINGS`], before it is laid out.
+fn bounded(rows: i64, columns: i64) -> Result<(), SimutilError> {
+    if rows.max(0) * columns.max(0) > MOST_POINTINGS {
+        return Err(SimutilError::TooManyPointings);
+    }
+    Ok(())
 }
 
 /// `simutil.getTrianglePoints`: the Cycle 0 tiling, offsets in arcsec.
-pub fn triangle_points(width: f64, height: f64, angle_deg: f64, spacing: f64) -> Vec<(f64, f64)> {
+///
+/// # Errors
+///
+/// A count of rows or columns that is not finite, or more than
+/// [`MOST_POINTINGS`] points.
+pub fn triangle_points(
+    width: f64,
+    height: f64,
+    angle_deg: f64,
+    spacing: f64,
+) -> Result<Vec<(f64, f64)>, SimutilError> {
     let (cos_angle, sin_angle) = trig(angle_deg);
     let mut points = Vec::new();
     let mut push = |x: f64, y: f64| points.push(rotate(x, y, cos_angle, sin_angle));
     if width >= height {
         let (w_spacing, h_spacing) = (spacing, (3.0_f64.sqrt() / 2.0) * spacing);
-        let w_even = floor((width / 2.0) / w_spacing);
-        let w_odd = floor((width / 2.0) / w_spacing + 0.5);
-        let h = floor((height / 2.0) / h_spacing);
+        let w_even = count((width / 2.0) / w_spacing)?;
+        let w_odd = count((width / 2.0) / w_spacing + 0.5)?;
+        let h = count((height / 2.0) / h_spacing)?;
+        bounded(2 * h + 1, 2 * w_even.max(w_odd) + 1)?;
         for ih in -h..=h {
             if even(ih) {
                 for iw in -w_even..=w_even {
@@ -226,9 +291,10 @@ pub fn triangle_points(width: f64, height: f64, angle_deg: f64, spacing: f64) ->
         }
     } else {
         let (w_spacing, h_spacing) = ((3.0_f64.sqrt() / 2.0) * spacing, spacing);
-        let w = floor((width / 2.0) / w_spacing);
-        let h_even = floor((height / 2.0) / h_spacing);
-        let h_odd = floor((height / 2.0) / h_spacing + 0.5);
+        let w = count((width / 2.0) / w_spacing)?;
+        let h_even = count((height / 2.0) / h_spacing)?;
+        let h_odd = count((height / 2.0) / h_spacing + 0.5)?;
+        bounded(2 * w + 1, 2 * h_even.max(h_odd) + 1)?;
         for iw in -w..=w {
             if even(iw) {
                 for ih in -h_even..=h_even {
@@ -241,20 +307,24 @@ pub fn triangle_points(width: f64, height: f64, angle_deg: f64, spacing: f64) ->
             }
         }
     }
-    points
+    Ok(points)
 }
 
 /// `simutil.getTriangularTiling`: the Observing Tool's tiling (Cycle 1 on),
 /// laid along the map's longer side, offsets in arcsec. An odd number of
 /// rows across the short side takes the base tiling, an even number the
 /// shifted one.
+///
+/// # Errors
+///
+/// As [`triangle_points`].
 pub fn triangular_tiling(
     long_length: f64,
     lat_length: f64,
     angle_deg: f64,
     spacing: f64,
     beam: f64,
-) -> Vec<(f64, f64)> {
+) -> Result<Vec<(f64, f64)>, SimutilError> {
     // The OT's landscape test is `>=`; CASA's is `>`.
     let (width, height, angle) = if long_length > lat_length {
         (long_length, lat_length, angle_deg)
@@ -277,15 +347,22 @@ fn needs_filler(length: f64, spacing: f64, beam: f64, points: i64) -> i64 {
 }
 
 /// `simutil.getBaseTriangularTiling` (`y` negated, as in CASA).
-fn base_tiling(width: f64, height: f64, angle: f64, spacing: f64, beam: f64) -> Vec<(f64, f64)> {
+fn base_tiling(
+    width: f64,
+    height: f64,
+    angle: f64,
+    spacing: f64,
+    beam: f64,
+) -> Result<Vec<(f64, f64)>, SimutilError> {
     let (cos_angle, sin_angle) = trig(angle);
     let (w_spacing, h_spacing) = (spacing, (3.0_f64.sqrt() / 2.0) * spacing);
-    let mut w_even = floor((width / 2.0) / w_spacing);
+    let mut w_even = count((width / 2.0) / w_spacing)?;
     w_even += needs_filler(width, w_spacing, beam, w_even * 2 + 1);
-    let mut w_odd = floor((width / 2.0) / w_spacing + 0.5);
+    let mut w_odd = count((width / 2.0) / w_spacing + 0.5)?;
     w_odd += needs_filler(width, w_spacing, beam, w_odd * 2);
-    let mut h = floor((height / 2.0) / h_spacing);
+    let mut h = count((height / 2.0) / h_spacing)?;
     h += needs_filler(height, h_spacing, beam, h * 2 + 1);
+    bounded(2 * h + 1, 2 * w_even.max(w_odd) + 1)?;
     let mut points = Vec::new();
     for ih in -h..=h {
         let columns: Vec<f64> = if even(ih) {
@@ -300,19 +377,26 @@ fn base_tiling(width: f64, height: f64, angle: f64, spacing: f64, beam: f64) -> 
             points.push((x, -y));
         }
     }
-    points
+    Ok(points)
 }
 
 /// `simutil.getShiftTriangularTiling` (`y` negated, as in CASA).
-fn shifted_tiling(width: f64, height: f64, angle: f64, spacing: f64, beam: f64) -> Vec<(f64, f64)> {
+fn shifted_tiling(
+    width: f64,
+    height: f64,
+    angle: f64,
+    spacing: f64,
+    beam: f64,
+) -> Result<Vec<(f64, f64)>, SimutilError> {
     let (cos_angle, sin_angle) = trig(angle);
     let (w_spacing, h_spacing) = (spacing, (3.0_f64.sqrt() / 2.0) * spacing);
-    let mut w_even = floor((width / 2.0) / w_spacing + 0.5);
+    let mut w_even = count((width / 2.0) / w_spacing + 0.5)?;
     w_even += needs_filler(width, w_spacing, beam, w_even * 2);
-    let mut w_odd = floor((width / 2.0) / w_spacing);
+    let mut w_odd = count((width / 2.0) / w_spacing)?;
     w_odd += needs_filler(width, w_spacing, beam, w_odd * 2 + 1);
-    let mut h = floor((height - h_spacing) / 2.0 / h_spacing + 1.0);
+    let mut h = count((height - h_spacing) / 2.0 / h_spacing + 1.0)?;
     h += needs_filler(height, h_spacing, beam, h * 2);
+    bounded(2 * h, 2 * w_even.max(w_odd) + 1)?;
     let mut points = Vec::new();
     for ih in -h..h {
         let columns: Vec<f64> = if even(ih) {
@@ -327,7 +411,7 @@ fn shifted_tiling(width: f64, height: f64, angle: f64, spacing: f64, beam: f64) 
             points.push((x, -y));
         }
     }
-    points
+    Ok(points)
 }
 
 /// A pointing file's pointings and their times in seconds (0 where a line
@@ -447,7 +531,113 @@ pub fn write_pointings(
 
 #[cfg(test)]
 mod tests {
-    use super::MapType;
+    use super::{Directions, MapType, SimutilError, calc_pointings, qa};
+
+    const CENTRE: &str = "J2000 19h00m00 -23d00m00";
+
+    /// `calc_pointings2(spacing, [size, size], maptype, CENTRE, relmargin,
+    /// beam 25 arcsec)`.
+    fn laid_out(
+        spacing: &str,
+        size: &str,
+        maptype: &str,
+        relmargin: f64,
+    ) -> Result<Vec<String>, SimutilError> {
+        let (spacing, size) = (qa::read(spacing).unwrap(), qa::read(size).unwrap());
+        calc_pointings(
+            &spacing,
+            [&size, &size],
+            maptype,
+            &Directions::One(CENTRE.to_string()),
+            relmargin,
+            25.0,
+        )
+    }
+
+    /// Where CASA's integer conversions raise (#913 review), casa-rs refuses
+    /// with Python's message before it converts, allocates or loops: a zero
+    /// spacing on every layout, and a margin that is not finite. A negative
+    /// spacing gives the centre alone, as in CASA.
+    #[test]
+    fn spacings_casa_cannot_count_are_refused() {
+        let refused = |spacing: &str, size: &str, maptype: &str, relmargin: f64| match laid_out(
+            spacing, size, maptype, relmargin,
+        ) {
+            Err(SimutilError::Arithmetic(message)) => message,
+            other => panic!("{spacing} {size} {maptype} {relmargin}: {other:?}"),
+        };
+        let infinity = "cannot convert float infinity to integer";
+        assert_eq!(refused("0arcsec", "30arcsec", "hexagonal", 0.5), infinity);
+        assert_eq!(refused("0arcsec", "30arcsec", "square", 0.5), infinity);
+        assert_eq!(
+            refused("0arcsec", "0arcsec", "hexagonal", 0.5),
+            "cannot convert float NaN to integer"
+        );
+        for maptype in ["ALMA", "ALMA2012"] {
+            assert_eq!(
+                refused("0arcsec", "30arcsec", maptype, 0.5),
+                "float division by zero"
+            );
+        }
+        assert_eq!(
+            refused("10arcsec", "30arcsec", "hexagonal", f64::INFINITY),
+            infinity
+        );
+        assert_eq!(
+            refused("10arcsec", "30arcsec", "square", f64::NAN),
+            "cannot convert float NaN to integer"
+        );
+        for maptype in ["hexagonal", "square", "ALMA", "ALMA2012"] {
+            assert_eq!(
+                laid_out("-10arcsec", "30arcsec", maptype, 0.5).unwrap(),
+                [CENTRE]
+            );
+        }
+    }
+
+    /// A spacing tiny beside the map, which CASA lays out for hours, is
+    /// refused before any pointing is laid out.
+    #[test]
+    fn maps_of_too_many_pointings_are_refused() {
+        for maptype in ["hexagonal", "square", "ALMA", "ALMA2012"] {
+            assert_eq!(
+                laid_out("1e-300arcsec", "30arcsec", maptype, 0.5),
+                Err(SimutilError::TooManyPointings),
+                "{maptype}"
+            );
+            // Rows and columns each within the bound, their product beyond.
+            assert_eq!(
+                laid_out("0.005arcsec", "30arcsec", maptype, 0.5),
+                Err(SimutilError::TooManyPointings),
+                "{maptype}"
+            );
+        }
+    }
+
+    /// A list of more than one direction is checked, then returned as it is.
+    #[test]
+    fn listed_directions_are_checked_and_returned() {
+        let spacing = qa::read("10arcsec").unwrap();
+        let size = qa::read("30arcsec").unwrap();
+        let lay_out = |directions: &[&str]| {
+            calc_pointings(
+                &spacing,
+                [&size, &size],
+                "hexagonal",
+                &Directions::List(directions.iter().map(ToString::to_string).collect()),
+                0.5,
+                0.0,
+            )
+        };
+        let listed = ["J2000 10h00m00 -30d00m00", "J2000 10h00m01 -30d00m00"];
+        assert_eq!(lay_out(&listed).unwrap(), listed);
+        assert_eq!(
+            lay_out(&["not-a-direction", "also-not-a-direction"]),
+            Err(SimutilError::Direction("not-a-direction".to_string()))
+        );
+        assert!(lay_out(&[listed[0], "also-not-a-direction"]).is_err());
+        assert!(lay_out(&[]).is_err());
+    }
 
     #[test]
     fn map_types_go_by_their_first_characters() {
