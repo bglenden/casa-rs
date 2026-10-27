@@ -2196,3 +2196,49 @@ stops instead, with "Failed to set conversion layer state".
 casa-rs treats that channel as it treats the others: it is not regridded,
 and the output keeps the input's (`casa_images::regrid`). Converting the
 frame of an axis that is never regridded serves no purpose.
+
+## `simanalyze` writes the fidelity's floor to six decimal places
+
+- Date noted: 2026-10-27
+- Status: CASA bug; casa-rs does not follow it (#841 Phase 6f)
+- Affected code: `casatasks/src/private/task_simanalyze.py` (CASA 6.7.6,
+  `"max(abs('%s'), %f)" % (difference, maxdiff/pl.sqrt(2.0))`)
+
+The fidelity image divides the convolved model by the difference, floored at
+the difference's median absolute deviation over √2. The floor goes into the
+image expression through `%f`, which keeps six decimal places. A floor of
+5.19e-7 Jy/beam is written 0.000001, nearly twice its value, and one under
+5e-7 is written 0, so a pixel where the difference is zero divides by zero.
+Simulations of faint sources have differences that small
+(`tools/simulation/simanalyze_analysis_oracle.py`, case `faint`). casa-rs
+uses the floor itself (`casa_simulation::simutil::analysis::fidelity`).
+
+## `simanalyze`'s fidelity image is labelled Jy/beam
+
+- Date noted: 2026-10-27
+- Status: CASA artefact; casa-rs departs (#841 Phase 6f)
+- Affected code: `casatasks/src/private/task_simanalyze.py` (CASA 6.7.6,
+  `ia.imagecalc(fidelityim, "abs('%s') / '%s'" % (convolved, absdiff))`)
+
+The fidelity is the ratio of two images in Jy/beam. CASA's image expression
+copies its unit from the first image it names, so the fidelity is labelled
+Jy/beam. casa-rs writes it without a unit.
+
+## Image expressions containing "pa" are labelled as position angles
+
+- Date noted: 2026-10-27
+- Status: CASA bug; casa-rs does not follow it (#841 Phase 6f)
+- Affected code: casatools
+  `imageanalysis/ImageAnalysis/ImageExprCalculator.tcc`
+  (`_expr.contains(casacore::Regex("pa\\(*"))`)
+
+`ImageExprCalculator` looks for the `pa()` function with the regular
+expression `pa\(*`, which matches "pa" followed by any number of
+parentheses, so any "pa" at all. An expression whose image paths contain
+"pa" (a project named `pancake`, or a path through `scratchpad`) has its
+output's unit set to deg and its Stokes axis replaced by `Pangle`.
+`simanalyze`'s difference, absolute difference, fidelity and absolute model
+are all image expressions over `<project>/<project>.<configuration>`, so a
+project whose path contains "pa" gets a fidelity labelled deg, and
+difference and fidelity images whose Stokes plane is a position angle. casa-rs
+computes those images directly and keeps the Stokes axis.

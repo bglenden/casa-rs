@@ -7,12 +7,12 @@
 use std::path::{Path, PathBuf};
 
 use casa_ms::MeasurementSet;
-use casa_types::ArrayValue;
 
 use super::antennas::Array;
 use super::sky::Sky;
 use super::{Run, SimobserveError, copy_tree, make_way, python, remove};
 use crate::session::Simulator;
+use crate::simutil::analysis::{self, AnalysisError};
 use crate::simutil::receivers::noise_temperature;
 use crate::{AtmosphereSpec, LeakageSpec, NoiseSpec, TsysParameters};
 
@@ -189,40 +189,13 @@ fn observing_telescope(ms: &Path) -> Result<String, SimobserveError> {
         .map_err(|error| failed(&error))
 }
 
-/// `simutil.ismstp`: the MeasurementSet is total power when its first
-/// antenna is named `…TP…`, when it has one antenna, or when every UVW
-/// value is zero. CASA tests `uvw.all() == 0`, true when any value is zero;
-/// casa-rs tests what was meant.
+/// `simutil.ismstp` ([`analysis::is_total_power`]).
 pub(super) fn is_total_power(ms: &Path) -> Result<bool, SimobserveError> {
-    let failed = |reason: &dyn std::fmt::Display| SimobserveError::Table {
-        table: ms.to_path_buf(),
-        reason: reason.to_string(),
-    };
-    let set = MeasurementSet::open(ms).map_err(|error| failed(&error))?;
-    let antennas = set.antenna().map_err(|error| failed(&error))?;
-    let names = (0..antennas.row_count())
-        .map(|row| antennas.name(row))
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| failed(&error))?;
-    if names.first().is_some_and(|name| name.contains("TP")) || names.len() == 1 {
-        return Ok(true);
-    }
-    let main = set.main_table();
-    let column = main
-        .column_accessor("UVW")
-        .map_err(|error| failed(&error))?;
-    let rows: Vec<usize> = (0..main.row_count()).collect();
-    for chunk in rows.chunks(1 << 16) {
-        for cell in column
-            .array_cells_owned(chunk)
-            .map_err(|error| failed(&error))?
-        {
-            if let Some(ArrayValue::Float64(uvw)) = cell
-                && uvw.iter().any(|&value| value != 0.)
-            {
-                return Ok(false);
-            }
-        }
-    }
-    Ok(true)
+    analysis::is_total_power(ms).map_err(|error| match error {
+        AnalysisError::Table { table, reason } => SimobserveError::Table { table, reason },
+        other => SimobserveError::Table {
+            table: ms.to_path_buf(),
+            reason: other.to_string(),
+        },
+    })
 }
