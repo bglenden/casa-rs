@@ -25,13 +25,13 @@ use std::path::{Path, PathBuf};
 use casa_simulation::readantenna::read_antenna_config;
 use casa_simulation::simutil::baselines::{approximate_beam, baseline_lengths};
 use casa_simulation::simutil::direction::{
-    average_direction, median_direction, split_direction, wrap_angle,
+    Directions, average_direction, median_direction, split_direction, wrap_angle,
 };
 use casa_simulation::simutil::pointings::{
     PBCOEFF, calc_pointings, format_pointings, parse_pointings,
 };
-use casa_simulation::simutil::python_float;
 use casa_simulation::simutil::receivers::{band_name, noise_temperature, polarization_settings};
+use casa_simulation::simutil::{SimutilError, python_float};
 use casa_types::quanta::casacore::casacore_unit;
 use casa_types::quanta::{Quantity, casacore};
 use serde_json::Value;
@@ -86,16 +86,24 @@ fn quantity(value: &Value) -> Quantity {
     }
 }
 
+/// A direction as CASA's `direction` takes one: a string or a list.
+fn directions(value: &Value) -> Directions {
+    match value {
+        Value::String(direction) => Directions::One(direction.clone()),
+        listed => Directions::List(strings(listed)),
+    }
+}
+
 #[test]
 fn pointing_lists_are_casas() {
     let fixture = fixture();
     let mut compared = 0;
+    let (mut listed, mut refused) = (0, 0);
     let mut failures = Vec::new();
     for case in cases(&fixture, "calc_pointings2") {
-        // A list of directions is returned as it is (the Python binding's job).
-        let Some(direction) = case["direction"].as_str() else {
-            continue;
-        };
+        let given = directions(&case["direction"]);
+        let direction = &case["direction"];
+        listed += usize::from(matches!(given, Directions::List(_)));
         let spacing = quantity(&case["spacing"]);
         let sizes: Vec<Quantity> = match &case["size"] {
             Value::Array(sizes) => sizes.iter().map(quantity).collect(),
@@ -104,6 +112,25 @@ fn pointing_lists_are_casas() {
         let maptype = text(&case["maptype"]);
         let relmargin = case["relmargin"].as_f64().expect("relmargin");
         let mut beam = case["beam"].as_f64().expect("beam");
+        if let Some(raised) = case.get("refused") {
+            // CASA raises: an unsplittable direction, or a count Python
+            // cannot convert, with Python's message after the error's name.
+            let ours = calc_pointings(
+                &spacing,
+                [&sizes[0], &sizes[1]],
+                maptype,
+                &given,
+                relmargin,
+                beam,
+            );
+            match ours {
+                Err(SimutilError::Direction(_)) if text(raised).starts_with("Exception: ") => {}
+                Err(SimutilError::Arithmetic(message)) if text(raised).ends_with(&message) => {}
+                other => failures.push(format!("{case}: {other:?}, where CASA raises {raised}")),
+            }
+            refused += 1;
+            continue;
+        }
         let expected = if case.get("error").is_some() {
             // CASA's NameError: compare with the beam casa-rs defaults to.
             let spacing_arcsec =
@@ -114,7 +141,7 @@ fn pointing_lists_are_casas() {
                 &spacing,
                 [&sizes[0], &sizes[1]],
                 maptype,
-                direction,
+                &given,
                 relmargin,
                 beam,
             )
@@ -128,7 +155,7 @@ fn pointing_lists_are_casas() {
             &spacing,
             [&sizes[0], &sizes[1]],
             maptype,
-            direction,
+            &given,
             relmargin,
             beam,
         )
@@ -152,6 +179,9 @@ fn pointing_lists_are_casas() {
         }
     }
     assert!(compared > 10_000, "{compared} pointings compared");
+    // Lists of one direction (#913 review) and of more, and CASA's refusals.
+    assert!(listed >= 11, "{listed} lists compared");
+    assert!(refused >= 7, "{refused} refusals compared");
     assert!(
         failures.is_empty(),
         "{} cases differ:\n{}",
@@ -211,8 +241,12 @@ fn pointing_files_read_and_write_as_casas() {
 fn directions_split_average_and_wrap_as_casas() {
     let fixture = fixture();
     for case in cases(&fixture, "direction_splitter") {
-        let direction = text(&case["direction"]);
-        let ours = split_direction(direction);
+        // A list, even of one direction, is split at its mean.
+        let direction = &case["direction"];
+        let ours = match direction.as_str() {
+            Some(direction) => split_direction(direction),
+            None => directions(direction).split(),
+        };
         if case.get("error").is_some() {
             assert!(ours.is_err(), "{direction}: CASA raises {}", case["error"]);
             continue;

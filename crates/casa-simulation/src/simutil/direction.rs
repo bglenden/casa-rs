@@ -102,6 +102,34 @@ pub fn is_direction(text: &str) -> bool {
     split_direction(text).is_ok()
 }
 
+/// A direction as `simutil`'s methods take one (`direction`, which CASA's
+/// tasks pass as a string or a list): a string, or a list of strings.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Directions {
+    /// One direction string.
+    One(String),
+    /// A list of direction strings, even of one.
+    List(Vec<String>),
+}
+
+impl Directions {
+    /// `simutil.direction_splitter(direction)`: a string split as it is, or
+    /// a list, even of one direction, split at its mean
+    /// ([`average_direction`]), which CASA writes at precision 5 and reads
+    /// back. Every direction of a list is split, so one that does not split
+    /// refuses the list, as `simutil.isdirection` does.
+    ///
+    /// # Errors
+    ///
+    /// A direction that does not split, or an empty list.
+    pub fn split(&self) -> Result<SplitDirection, SimutilError> {
+        match self {
+            Self::One(direction) => split_direction(direction),
+            Self::List(directions) => split_direction(&average_direction(directions)?.centre),
+        }
+    }
+}
+
 /// `simutil.dir_m2s`: a direction measure's reference code and its
 /// longitude and latitude as `simutil` writes them.
 pub fn format_direction(
@@ -234,7 +262,7 @@ fn centred(
 
 #[cfg(test)]
 mod tests {
-    use super::latitude_fields;
+    use super::{Directions, latitude_fields, split_direction};
 
     fn fields(text: &str) -> Option<(String, String, String)> {
         latitude_fields(text)
@@ -257,5 +285,28 @@ mod tests {
         assert_eq!(fields("123456"), owned("12", "4", "6"));
         assert_eq!(fields("-23d00m"), None);
         assert_eq!(fields("20.0deg"), None);
+    }
+
+    /// A list of one direction is split at its mean, written at precision
+    /// 5 and read back, so it differs from the string in the last digits
+    /// (#913 review); CASA's values, from `direction_splitter`.
+    #[test]
+    fn a_list_of_one_direction_splits_at_its_rounded_mean() {
+        let direction = "J2000 18h00m00.123456789s -23d00m00.123456789s";
+        let one = Directions::One(direction.to_string()).split().unwrap();
+        let listed = Directions::List(vec![direction.to_string()])
+            .split()
+            .unwrap();
+        assert_eq!(one, split_direction(direction).unwrap());
+        assert_eq!(listed.epoch, "J2000 ");
+        assert!((one.longitude.value() - 270.000_514_403_287_5).abs() < 1e-12);
+        assert!((listed.longitude.value() - 270.000_514_416_666_65).abs() < 1e-12);
+        assert!((listed.latitude.value() + 23.000_034_293_611_11).abs() < 1e-12);
+        assert!(Directions::List(Vec::new()).split().is_err());
+        assert!(
+            Directions::List(vec![direction.to_string(), "not-a-direction".to_string()])
+                .split()
+                .is_err()
+        );
     }
 }

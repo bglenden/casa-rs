@@ -3,7 +3,7 @@
 //! `simutil` takes and returns them, over [`casa_simulation::simutil`].
 
 use casa_simulation::simutil::SimutilError;
-use casa_simulation::simutil::direction::CentredDirections;
+use casa_simulation::simutil::direction::{CentredDirections, Directions};
 use casa_types::quanta::Quantity;
 use pyo3::exceptions::{PyRuntimeError, PyTypeError};
 use pyo3::prelude::*;
@@ -23,15 +23,28 @@ pub(super) fn quantity(value: &Variant) -> PyResult<Quantity> {
     Ok(casa_quantity(value)?)
 }
 
-/// A direction string or a list of them (CASA's `self.direction`).
-pub(super) fn directions(value: &Bound<'_, PyAny>) -> PyResult<Vec<String>> {
+/// A direction string or a list of them (CASA's `self.direction`), kept
+/// apart: CASA splits a list, even of one direction, at its mean.
+pub(super) fn directions(value: &Bound<'_, PyAny>) -> PyResult<Directions> {
+    if let Ok(text) = value.cast::<PyString>() {
+        return Ok(Directions::One(text.to_str()?.to_string()));
+    }
     let directions = value.extract::<StringList>()?.0;
     if directions.is_empty() {
         return Err(PyRuntimeError::new_err(
             "can't interpret '[]' as a direction",
         ));
     }
-    Ok(directions)
+    Ok(Directions::List(directions))
+}
+
+/// The directions of a string (one) or a list, for the methods that take
+/// a list.
+pub(super) fn listed(directions: Directions) -> Vec<String> {
+    match directions {
+        Directions::One(direction) => vec![direction],
+        Directions::List(directions) => directions,
+    }
 }
 
 /// `calc_pointings2`'s `size`: one quantity (a string or a record) for

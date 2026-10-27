@@ -17,7 +17,8 @@ It records, from CASA's `casatasks.private.simutil.simutil` and `casatools.quant
   read back by its regular expression, times the primary beam, as
   `"%farcsec"`. The directions include RA near 0h and 24h, high and southern
   declinations, galactic coordinates, and the `formxxx` form `modifymodel`
-  returns;
+  returns; lists of one direction (centred at their rounded mean) and of
+  more, valid and not; and the spacings CASA refuses (`refused`);
 - `read_pointings` of pointing files in both formats (casa-rs's own and the
   ALMA OT's SEXAGESIMAL lines), and `write_pointings`' text;
 - `average_direction`, `median_direction`, `direction_splitter`, `wrapang`;
@@ -60,6 +61,10 @@ DIRECTIONS = [
     "GALACTIC 10d00m00 +20d00m00",
 ]
 
+# A direction whose seconds are finer than simutil's precision 5, so that a
+# list of it, centred at its rounded mean, differs from the string.
+SINGLETON = "J2000 18h00m00.123456789s -23d00m00.123456789s"
+
 MAPTYPES = ["hexagonal", "hex", "square", "ALMA", "alma", "ALMA-OT", "ALMA2012"]
 
 MAPSIZES = [
@@ -99,6 +104,10 @@ def pointing_cases(util: simutil) -> list[dict]:
         except NameError as error:
             # The ALMA tiling's beam default reads an undefined `pbcoeff`.
             case["error"] = f"NameError: {error}"
+        except Exception as error:
+            # A direction that does not split, or a count of rows or columns
+            # Python cannot convert to an integer.
+            case["refused"] = f"{type(error).__name__}: {error}"
         cases.append(case)
 
     for freq, dish in BEAMS:
@@ -134,8 +143,26 @@ def pointing_cases(util: simutil) -> list[dict]:
     for spacing_text in ("10arcsec", "0.1arcmin", "0.002deg"):
         run(spacing_text, ["40arcsec", "40arcsec"], "hexagonal", DIRECTIONS[1], pb)
         run(spacing_text, ["40arcsec", "40arcsec"], "ALMA", DIRECTIONS[1], pb)
-    # A list of more than one direction is returned as given.
+    # A list of more than one direction is returned as given, once every
+    # direction in it splits.
     run(spacing, ["30arcsec", "30arcsec"], "hexagonal", ["J2000 10h00m00 -30d00m00", "J2000 10h00m01 -30d00m00"], pb)
+    run(spacing, ["30arcsec", "30arcsec"], "hexagonal", ["not-a-direction", "also-not-a-direction"], pb)
+    run(spacing, ["30arcsec", "30arcsec"], "hexagonal", ["J2000 10h00m00 -30d00m00", "also-not-a-direction"], pb)
+    # A list of one direction is centred at its mean, written at precision 5
+    # and read back (#913 review); a map too small for a pointing gives the
+    # direction as it was given.
+    for direction in (SINGLETON, DIRECTIONS[0]):
+        for maptype in ("hexagonal", "square", "ALMA", "ALMA2012"):
+            run("10arcsec", ["30arcsec", "30arcsec"], maptype, [direction], pb)
+            run("10arcsec", ["30arcsec", "30arcsec"], maptype, direction, pb)
+    run("10arcsec", ["1arcsec", "1arcsec"], "hexagonal", [SINGLETON], pb)
+    # Counts Python cannot convert: a zero spacing (a margin that is not
+    # finite, which JSON cannot hold, is casa-rs's unit test). A negative
+    # spacing lays out nothing.
+    for maptype in ("hexagonal", "square", "ALMA", "ALMA2012"):
+        run("0arcsec", ["30arcsec", "30arcsec"], maptype, DIRECTIONS[1], pb)
+        run("-10arcsec", ["30arcsec", "30arcsec"], maptype, DIRECTIONS[1], pb)
+    run("0arcsec", ["0arcsec", "0arcsec"], "hexagonal", DIRECTIONS[1], pb)
     return [case_with_records(case) for case in cases]
 
 
@@ -205,7 +232,9 @@ def direction_cases(util: simutil) -> dict:
         text, offsets = util.median_direction(directions)
         median.append({"directions": directions, "direction": text, "offsets": offsets.tolist()})
     splitter = []
-    for direction in DIRECTIONS + ["18h00m00 -23d00m00", "J2000 18h00m00 23.00.00", "J2000 18h00m00 -23d00m"]:
+    # A list, even of one direction, is split at its mean.
+    for direction in DIRECTIONS + ["18h00m00 -23d00m00", "J2000 18h00m00 23.00.00", "J2000 18h00m00 -23d00m",
+                                   SINGLETON, [SINGLETON], [DIRECTIONS[0]], lists[0]]:
         try:
             epoch, x, y = util.direction_splitter(direction)
         except (IndexError, AttributeError) as error:

@@ -200,6 +200,68 @@ def test_a_list_of_directions_is_returned_as_given() -> None:
     assert simutil.simutil().calc_pointings2("10arcsec", "30arcsec", direction=directions) == directions
 
 
+def test_a_list_of_directions_is_checked_before_it_is_returned() -> None:
+    # #913 review: CASA's `isdirection` refuses the list before the list is
+    # returned as given.
+    for directions in (["not-a-direction", "also-not-a-direction"],
+                       ["J2000 10h00m00 -30d00m00", "also-not-a-direction"]):
+        with pytest.raises(RuntimeError, match=r"can't interpret '\[.*\]' as a direction"):
+            simutil.simutil().calc_pointings2("10arcsec", ["30arcsec", "30arcsec"], direction=directions)
+
+
+def test_lists_of_one_direction_are_centred_at_their_rounded_mean() -> None:
+    # #913 review: CASA splits a list, even of one direction, at its mean,
+    # which it writes at precision 5 and reads back.
+    cases = [case for case in FIXTURE["calc_pointings2"]
+             if isinstance(case["direction"], list) and len(case["direction"]) == 1]
+    assert len(cases) >= 9
+    for case in cases:
+        u = simutil.simutil()
+        found = u.calc_pointings2(case["spacing"], case["size"], maptype=case["maptype"],
+                                  direction=case["direction"], relmargin=case["relmargin"], beam=case["beam"])
+        assert found == case["pointings"], case
+        assert u.direction == case["direction"]
+    d = "J2000 18h00m00.123456789s -23d00m00.123456789s"
+    listed = simutil.simutil().calc_pointings2("10arcsec", ["30arcsec", "30arcsec"], maptype="square", direction=[d])
+    one = simutil.simutil().calc_pointings2("10arcsec", ["30arcsec", "30arcsec"], maptype="square", direction=d)
+    assert listed[2].startswith("J2000 18:00:00.84769") and one[2].startswith("J2000 18:00:00.84768")
+
+
+def test_spacings_casa_cannot_count_are_refused() -> None:
+    # #913 review: where CASA's integer conversions raise, casa-rs raises
+    # Python's message rather than panicking.
+    cases = [case for case in FIXTURE["calc_pointings2"]
+             if "refused" in case and isinstance(case["direction"], str)]
+    assert len(cases) >= 5
+    for case in cases:
+        message = case["refused"].split(": ", 1)[1]
+        with pytest.raises(RuntimeError, match=message):
+            simutil.simutil().calc_pointings2(case["spacing"], case["size"], maptype=case["maptype"],
+                                              direction=case["direction"], relmargin=case["relmargin"],
+                                              beam=case["beam"])
+    with pytest.raises(RuntimeError, match="more than 10000000 pointings"):
+        simutil.simutil().calc_pointings2("1e-300arcsec", "30arcsec", direction="J2000 19h00m00 -23d00m00")
+
+
+@needs_measures_data
+def test_readantenna_keeps_the_telescope_noisetemp_defaults_to() -> None:
+    # #913 review: CASA's `readantenna` sets `self.telescopename`.
+    u = simutil.simutil()
+    assert u.readantenna(str(CONFIGS / "vla.a.cfg"))[6] == "VLA"
+    assert u.telescopename == "VLA"
+    # CASA 6.7.6's for the same two calls (probed 2026-10-27).
+    assert u.noisetemp(freq="44GHz") == pytest.approx((0.7362803630484018, 0.95, 0.9997880064, 0.72, 0.86, 110.0),
+                                                      rel=1e-12)
+    for case in [c for c in FIXTURE["noisetemp"] if c["telescope"] == "VLA" and c["correlator"] is None
+                 and "result" in c and c.get("diam") is None and c.get("epsilon") is None][:3]:
+        assert u.noisetemp(freq=case["freq"]) == pytest.approx(tuple(case["result"]), rel=1e-12), case
+    # baselineLengths and approxBeam read the file as readantenna does.
+    for method, arguments in (("baselineLengths", ()), ("approxBeam", (100.0,))):
+        v = simutil.simutil()
+        getattr(v, method)(str(CONFIGS / "alma.out01.cfg"), *arguments)
+        assert v.telescopename == "ALMA", method
+
+
 def test_pointing_files_read_and_write_as_casas(tmp_path: Path) -> None:
     for case in FIXTURE["read_pointings"]:
         path = write(tmp_path, case["name"] + ".ptg.txt", case["text"])
