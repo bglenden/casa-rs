@@ -1760,10 +1760,20 @@ beside its batches; batches of a multiple of <code>chunk_times</code> times, fro
 boundary, make it hold nothing. Held times the next batch does not continue
 (batches out of time order) are stored as they are, and zarrs decodes, merges
 and re-encodes that chunk when its other times come (<code>partial_chunks</code>).</p>
-<p>An MSv2 creator from batches is not built: the declaration is designed to serve
-one (cells in time order become rows, padded cells flagged NaN rows), and that
-creator, publication semantics beyond the MSv4 writer's and loss-policy
-coverage are provisional (section 8).</p>
+<p>An MSv2 creator from batches is built narrowly, inside the trial's converter
+(trial README, "Converter"): subtables from the common catalogue, then MAIN's
+rows through production's variable-shape creation writers, in time order per
+partition. As the declaration was designed to serve one (revision 2 design,
+D23), cells in time order become rows, and a padded cell a row flagged
+throughout with NaN data and weights; its interval, exposure (0) and time
+centroid stay valid so the MeasurementSet reopens. A conversion that must
+reproduce an original sparse row set declares it, and padding then becomes
+no row: since a batch carries no presence mask and an MSv2's row count is
+fixed before its rows are written, that policy first reads the weights to
+count the acquisitions. <code>SIGMA</code> is derived from the weights, a loss the
+caller accepts. Publication semantics beyond staging and rename, and
+loss-policy coverage beyond the converter's inventory, are provisional
+(section 8).</p>
 <h3 id="updates-provisional">Updates (provisional)<a class="headerlink" href="#updates-provisional" title="Permanent link">&para;</a></h3>
 <p>The write-back trial (trial README, "Write-back") realizes a narrow part of
 this subsection: update sessions with declared targets (data group, role,
@@ -1893,7 +1903,7 @@ when its acceptance obligation is met.</p>
 </tr>
 <tr>
 <td>Occupancy and conversion to rows</td>
-<td>Absence only as flagged padding with a NaN weight in both stores; the batch carries no presence mask, so an update infers padding (a missing MSv2 row, a non-finite MSv4 weight, which a traversal must read weights to see) and refuses to clear its flags or give it a finite weight</td>
+<td>Absence only as flagged padding with a NaN weight in both stores; the batch carries no presence mask, so an update infers padding (a missing MSv2 row, a non-finite MSv4 weight, which a traversal must read weights to see) and refuses to clear its flags or give it a finite weight. The converter writes padding as D23's flagged NaN rows, or, declared, as no row (a sample whose every weight is non-finite is padding), counting the acquisitions by a first pass over the weights</td>
 <td>Unknown occupancy representable; conversion to a row format resolves it by declared policy or reports the ambiguity, never recovering an imaginary MSv2 row; writing new measurements into holes needs an explicit fill policy</td>
 </tr>
 <tr>
@@ -1918,7 +1928,7 @@ when its acceptance obligation is met.</p>
 </tr>
 <tr>
 <td>MSv2 creation from batches; general creation and loss policy</td>
-<td>The MSv4 writer only</td>
+<td>The MSv4 writer (one dataset or a processing set of many), and the converter's MSv2 creator: padded cells flagged NaN rows, or no row by declared policy (the occupancy row above), losses inventoried and refused unless accepted before anything is written, <code>SIGMA</code> derived from the weights as an accepted loss</td>
 <td>Cells in time order become rows, padded cells flagged NaN rows; cross-format creation preflights metadata, flag and occupancy mappings and rejects unapproved loss</td>
 </tr>
 <tr>
@@ -1953,12 +1963,12 @@ when its acceptance obligation is met.</p>
 </tr>
 <tr>
 <td>Resource admission</td>
-<td>Pool envelope, estimate and writer bounds; not connected</td>
+<td>Pool envelope, estimate and writer bounds; not connected. <code>zarrs_filesystem</code> pinned; its per-key lock registry grows with distinct keys visited and plateaued over 30 passes of <code>pilot.ms</code> (trial README, converter finding 3)</td>
 <td>Pool allocations, cursor scratch, the opening index, packed pieces, the writer's held chunk and queues admitted through <code>HostResources</code> (<code>Reservation</code>/<code>Admitted&lt;T&gt;</code>), with cancellation-compatible backpressure; zarrs codec scratch discovered or conservatively bounded before work, failing with the minimum requirement; caches bounded by bytes and plateauing over increasing prefixes of present and missing chunk keys (<code>zarrs_filesystem</code> and codecs audited, not just <code>zarrs</code>)</td>
 </tr>
 <tr>
 <td>Decode on the admitted executor</td>
-<td>zarrs' concurrency target set to one</td>
+<td>zarrs' concurrency target and its chunk concurrency minimum (default 4, which overrode the target) set to one, so codecs run on the calling thread; rayon's global pool is still started, idle (trial README, converter finding 2)</td>
 <td>Executing threads and simultaneously live codec buffers counted on the real decode path; no fall-through to a global pool</td>
 </tr>
 <tr>
