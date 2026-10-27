@@ -35,6 +35,7 @@ POSITIONAL: dict[str, tuple[str, ...]] = {
 PREFIX: dict[str, tuple[str, ...]] = {
     "imhead": ("imhead",),
     "imstat": ("imstat",),
+    "split": ("split",),
 }
 
 FLAG_NAMES = {
@@ -56,7 +57,7 @@ FLAG_NAMES = {
 }
 
 TASK_FLAG_NAMES = {
-    "split": {"vis": "ms", "outputvis": "out"},
+    "split": {"vis": "vis", "outputvis": "outputvis"},
 }
 
 OMIT_FOR_CLI = {"json"}

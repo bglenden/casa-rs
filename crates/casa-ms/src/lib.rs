@@ -75,6 +75,7 @@ mod subtable_overrides;
 mod subtable_rows;
 pub mod subtables;
 pub mod task_contract;
+mod task_front_end;
 pub mod transform;
 pub mod validate;
 pub mod visibility_buffer;
@@ -215,6 +216,7 @@ pub use task_contract::{
     MsTransformTaskRequest, flagdata_task_schema_bundle, flagmanager_task_schema_bundle,
     mstransform_task_schema_bundle,
 };
+pub use task_front_end::{ms_task_success, task_flag_merge, task_selection_text};
 pub use transform::{
     MsTransformError, MsTransformReport, MsTransformRequest, TransformDataColumn, mstransform,
 };

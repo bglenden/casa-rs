@@ -44,48 +44,20 @@ fn msexplore_help_mentions_plot_controls() {
 
     let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
     assert!(stdout.contains("Usage:"));
-    assert!(stdout.contains("--preset <PRESET>"));
-    assert!(stdout.contains("--xaxis <AXIS>"));
-    assert!(stdout.contains("--yaxis <AXIS>"));
-    assert!(stdout.contains("--yaxis2 <AXIS>"));
-    assert!(stdout.contains("--data-column <COLUMN>"));
-    assert!(stdout.contains("--color-by <AXIS>"));
-    assert!(stdout.contains("--avgchannel <N>"));
-    assert!(stdout.contains("--avgtime <SECONDS>"));
-    assert!(stdout.contains("--avgscan"));
-    assert!(stdout.contains("--avgfield"));
-    assert!(stdout.contains("--avgbaseline"));
-    assert!(stdout.contains("--avgantenna"));
-    assert!(stdout.contains("--avgspw"));
-    assert!(stdout.contains("--freqframe <FRAME>"));
-    assert!(stdout.contains("--restfreq <FREQ>"));
-    assert!(stdout.contains("--veldef <DEF>"));
-    assert!(stdout.contains("--iteraxis <AXIS>"));
-    assert!(stdout.contains("--gridrows <N>"));
-    assert!(stdout.contains("--gridcols <N>"));
-    assert!(stdout.contains("--showlegend"));
-    assert!(stdout.contains("--legendposition <POSITION>"));
-    assert!(stdout.contains("--headeritems <ITEMS>"));
-    assert!(stdout.contains("--max-points <N>"));
-    assert!(stdout.contains("--flag-action <ACTION>"));
-    assert!(stdout.contains("--flag-xmin <VALUE>"));
-    assert!(stdout.contains("--flag-xmax <VALUE>"));
-    assert!(stdout.contains("--flag-ymin <VALUE>"));
-    assert!(stdout.contains("--flag-ymax <VALUE>"));
-    assert!(stdout.contains("--flag-plotindex <INDEX>"));
-    assert!(stdout.contains("--flag-panel <KEY>"));
-    assert!(stdout.contains("--flag-extcorr"));
-    assert!(stdout.contains("--flag-extchannel"));
-    assert!(stdout.contains("--flag-selected"));
-    assert!(stdout.contains("--flag-apply"));
-    assert!(stdout.contains("--flag-output <PATH>"));
-    assert!(stdout.contains("--plot-output <PATH>"));
-    assert!(stdout.contains("--plot-format <FORMAT>"));
-    assert!(stdout.contains("--msselect <EXPR>"));
-    assert!(stdout.contains("--page-spec <PATH>"));
-    assert!(stdout.contains("--json-schema"));
-    assert!(stdout.contains("--protocol-info"));
-    assert!(stdout.contains("--json-run <SOURCE>"));
+    for flag in [
+        "--preset PRESET",
+        "--xaxis AXIS",
+        "--avgtime",
+        "--flag-action",
+        "--flag-output PATH",
+        "--plot-output PATH",
+        "--page-spec PATH",
+        "--json-schema",
+        "--protocol-info",
+        "--json-run <SOURCE>",
+    ] {
+        assert!(stdout.contains(flag), "help omits {flag}:\n{stdout}");
+    }
 }
 
 #[test]
@@ -182,15 +154,30 @@ fn msexplore_run_task_writes_summary_and_flag_preview_artifacts() {
 }
 
 #[test]
-fn msexplore_presentation_form_round_trips_help() {
-    let help = Command::new(env!("CARGO_BIN_EXE_msexplore"))
-        .arg("--help")
-        .output()
-        .expect("run msexplore --help");
-    assert!(help.status.success());
-
-    let help_text = String::from_utf8(help.stdout).expect("utf8 help stdout");
-    assert!(help_text.contains(&command_schema("msexplore").render_help()));
+fn each_hosted_surface_lists_every_parameter_in_its_help() {
+    // The help is generated from the surface the first word selects, so
+    // every parameter's own spelling appears in it.
+    for surface in ["msexplore", "plotms"] {
+        let help = Command::new(env!("CARGO_BIN_EXE_msexplore"))
+            .args([surface, "--help"])
+            .output()
+            .expect("run msexplore --help");
+        assert!(help.status.success());
+        let help = String::from_utf8(help.stdout).expect("utf8 help stdout");
+        assert!(
+            help.contains(&format!("Parameters of {surface}:")),
+            "{help}"
+        );
+        let bundle = casa_provider_contracts::builtin_surface_bundle(surface).unwrap();
+        for binding in bundle.surface.bindings() {
+            let cli = binding.projections.cli.as_ref().expect("CLI projection");
+            let spelling = match cli.flags.first() {
+                Some(flag) => flag.clone(),
+                None => binding.name.to_uppercase(),
+            };
+            assert!(help.contains(&spelling), "{surface} help omits {spelling}");
+        }
+    }
 }
 
 #[test]

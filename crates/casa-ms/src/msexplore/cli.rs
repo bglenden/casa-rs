@@ -2,17 +2,20 @@
 //! Schema-backed CLI support for `msexplore`.
 
 use std::collections::BTreeMap;
-use std::ffi::OsString;
 use std::fs;
 use std::path::PathBuf;
 
+use casa_provider_contracts::ParameterValue;
+use casa_task_runtime::{TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess};
 use casa_types::{ArrayValue, ScalarValue, Value};
 use serde::Deserialize;
 
-use super::task_contract::{MsExploreTaskRequest, msexplore_task_schema_bundle};
+use super::task_contract::{
+    MsExplorePlotArtifact, MsExploreRunTaskResult, msexplore_task_schema_bundle,
+};
 use super::{
-    DEFAULT_MAX_PLOT_POINTS, MsAxis, MsColorAxis, MsDataColumn, MsExploreSpec, MsExportFormat,
-    MsFlagAction, MsFlagEditPreview, MsFlagEditSpec, MsFlagRegion, MsFlagRowEdit, MsFlagSampleEdit,
+    MsAxis, MsColorAxis, MsDataColumn, MsExploreSpec, MsExportFormat, MsFlagAction,
+    MsFlagEditPreview, MsFlagEditSpec, MsFlagRegion, MsFlagRowEdit, MsFlagSampleEdit,
     MsIterationAxis, MsLegendPosition, MsPageExportRange, MsPageHeaderItem, MsPlotPreset,
     MsPlotSpec, MsPlotStyleSpec, apply_msexplore_flag_edit_for_request, build_msexplore_payload,
     export_msexplore_plot, preview_msexplore_flag_edit_for_request,
@@ -20,12 +23,6 @@ use super::{
 pub use crate::presentation::{UiActionKind, UiArgumentParser, UiCommandSchema, UiValueKind};
 use crate::{MeasurementSet, MsSelection};
 use crate::{MeasurementSetSummary, MeasurementSetSummaryOutputFormat};
-
-#[derive(Debug)]
-enum CliAction {
-    Help,
-    Run(Box<CliOptions>),
-}
 
 #[derive(Debug)]
 struct CliOptions {
@@ -164,86 +161,33 @@ const fn one() -> usize {
     1
 }
 
-/// Parse environment arguments, run `msexplore`, and return a process exit code.
-pub fn run_env(program_name: &str) -> i32 {
-    let (logging_guard, args) =
-        match casa_logging::init_global_from_env_and_args(std::env::args_os().skip(1)) {
-            Ok((guard, args)) => (guard, args),
-            Err(error) => {
-                eprintln!("Error: failed to initialize logging: {error}");
-                return 1;
-            }
-        };
-    tracing::info!("msexplore started");
-    let code = run_with_cli_args(program_name, args);
-    if code == 0 {
-        tracing::info!("msexplore completed");
-    } else {
-        tracing::error!(
-            casa.priority = "SEVERE",
-            exit_code = code,
-            "msexplore failed"
-        );
-    }
-    if let Err(error) = logging_guard.flush() {
-        eprintln!("Error: failed to flush logging: {error}");
-        return 1;
-    }
-    code
-}
-
-/// Run `msexplore` with already-filtered CLI arguments.
-pub fn run_with_cli_args(program_name: &str, args: impl IntoIterator<Item = OsString>) -> i32 {
-    let args = args.into_iter().collect::<Vec<_>>();
-    let host = casa_task_runtime::TaskCliHost::new(
+/// The front end of the `msexplore` binary, which hosts `msexplore` (the
+/// default) and `plotms`.
+pub fn task_front_end()
+-> TaskFrontEnd<impl Fn(&TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>> {
+    TaskFrontEnd::new(
+        "msexplore",
         msexplore_task_schema_bundle(),
-        |request: MsExploreTaskRequest| request.execute(),
-    );
-    match host.dispatch(&args) {
-        Ok(Some(output)) => {
-            println!("{output}");
-            return 0;
-        }
-        Ok(None) => {}
-        Err(error) => {
-            eprintln!("Error: {error}");
-            return error.exit_code();
-        }
-    }
-    let schema = command_schema(program_name);
-    match parse_args(args) {
-        Ok(CliAction::Help) => {
-            print!("{}", render_help(&schema));
-            0
-        }
-        Ok(CliAction::Run(options)) => match run(*options) {
-            Ok(()) => 0,
-            Err(error) => {
-                eprintln!("Error: {error}");
-                1
-            }
-        },
-        Err(error) => {
-            eprintln!("Error: {error}\n");
-            eprintln!("{}", render_help(&schema));
-            1
-        }
-    }
+        &["msexplore", "plotms"],
+        run_task,
+    )
+    .expect("the msexplore contract carries msexplore and plotms")
 }
 
-/// Parse CLI-style arguments and build a validated [`MsExploreSpec`].
-///
-/// This is intended for schema-driven callers such as `casars` that need to
-/// preview the current form state without spawning the `msexplore` binary.
-pub fn build_explore_spec_from_args(
-    args: impl IntoIterator<Item = OsString>,
-) -> Result<MsExploreSpec, String> {
-    let args = casa_logging::strip_cli_logging_args(args)
-        .map_err(|error| format!("invalid logging argument: {error}"))?;
-    match parse_args(args)? {
-        CliAction::Run(options) => build_explore_spec(&options),
-        CliAction::Help => Err("help actions do not produce an msexplore spec".to_string()),
-    }
+/// Run one resolved `msexplore` or `plotms` request. `msexplore` returns its
+/// summary, as CASA's `listobs` returns its record; `plotms` returns None.
+fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
+    let outcome = run(options_from(task)?)?;
+    let success = if task.surface() == "plotms" {
+        TaskSuccess::new(&(), &outcome.result)?
+    } else {
+        TaskSuccess::new(&outcome.result.summary, &outcome.result)?
+    };
+    let success = success.with_text(outcome.text);
+    Ok(match outcome.note {
+        Some(note) => success.with_note(note),
+        None => success,
+    })
 }
 
 /// Build the machine-readable command schema for `msexplore`.
@@ -261,7 +205,9 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
 /// first write: the outputs, the flag arguments and the plot (#931). The flag
 /// edit is then made in memory, so a refusal that needs the MeasurementSet
 /// also comes first, and is saved after the summary is written.
-fn run(options: CliOptions) -> Result<(), String> {
+fn run(options: CliOptions) -> Result<RunOutcome, TaskFailure> {
+    let refused = TaskFailure::validation;
+    let failed = TaskFailure::execution;
     super::task_contract::refuse_unwritable_outputs(
         &[
             ("summary output", options.summary_output.as_deref()),
@@ -270,56 +216,88 @@ fn run(options: CliOptions) -> Result<(), String> {
         ],
         options.overwrite,
         "pass --overwrite to replace it",
-    )?;
-    let flag_edit = build_flag_edit_spec(&options)?;
+    )
+    .map_err(refused)?;
+    let flag_edit = build_flag_edit_spec(&options).map_err(refused)?;
     let explore_spec = if options.plot_output.is_some() || flag_edit.is_some() {
-        Some(build_explore_spec(&options)?)
+        Some(build_explore_spec(&options).map_err(refused)?)
     } else {
         None
     };
     let mut ms = MeasurementSet::open(&options.ms_path).map_err(|error| {
-        if options.ms_path.is_dir() {
+        failed(if options.ms_path.is_dir() {
             format!(
                 "msexplore currently supports MeasurementSets only; failed to open {} as an MS: {error}",
                 options.ms_path.display()
             )
         } else {
             format!("open MeasurementSet {}: {error}", options.ms_path.display())
-        }
+        })
     })?;
 
     let summary =
         MeasurementSetSummary::from_ms_with_options(&ms, &options.selection.to_summary_options())
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| failed(error.to_string()))?;
     let summary_text = summary
         .render(options.summary_format)
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| failed(error.to_string()))?;
+    // Refused here, before anything is written: the edit is in memory.
     let flag_preview =
-        edit_flags_in_memory(&mut ms, &options, flag_edit.as_ref(), explore_spec.as_ref())?;
-    write_output(
-        options.summary_output.as_deref(),
-        options.overwrite,
-        &summary_text,
-    )?;
+        edit_flags_in_memory(&mut ms, &options, flag_edit.as_ref(), explore_spec.as_ref())
+            .map_err(refused)?;
+    let mut text = String::new();
+    match options.summary_output.as_deref() {
+        Some(path) => write_output(path, options.overwrite, &summary_text).map_err(failed)?,
+        None => text = summary_text,
+    }
+    let mut note = None;
     if let Some(preview) = &flag_preview {
         if options.flag_apply {
             ms.save_main_table_only()
-                .map_err(|error| error.to_string())?;
+                .map_err(|error| failed(error.to_string()))?;
         }
-        write_or_log_flag_preview(&options, preview)?;
+        note = write_or_describe_flag_preview(&options, preview).map_err(failed)?;
     }
 
-    if let Some(plot_output) = &options.plot_output {
-        let explore_spec = explore_spec
-            .as_ref()
-            .ok_or_else(|| "msexplore plot export lost its prepared explore spec".to_string())?;
-        let payload = build_msexplore_payload(&ms, explore_spec)?;
-        match options.plot_format {
-            MsExportFormat::Txt => export_msexplore_plot(&payload, plot_output)?,
+    let plot_export = match &options.plot_output {
+        Some(plot_output) => {
+            let explore_spec = explore_spec.as_ref().ok_or_else(|| {
+                failed("msexplore plot export lost its prepared explore spec".to_string())
+            })?;
+            let payload = build_msexplore_payload(&ms, explore_spec).map_err(failed)?;
+            match options.plot_format {
+                MsExportFormat::Txt => {
+                    export_msexplore_plot(&payload, plot_output).map_err(failed)?;
+                }
+            }
+            Some(MsExplorePlotArtifact {
+                output_path: plot_output.clone(),
+                format: options.plot_format,
+            })
         }
-    }
+        None => None,
+    };
 
-    Ok(())
+    Ok(RunOutcome {
+        result: MsExploreRunTaskResult {
+            summary,
+            summary_output_path: options.summary_output,
+            flag_edit_preview: flag_preview,
+            flag_edit_output_path: options.flag_output,
+            plot_export,
+        },
+        text,
+        note,
+    })
+}
+
+/// What one run produced: the provider's result, the summary for stdout
+/// when no `output` file was named, and the flag-edit line for stderr when
+/// no `flag_output` file was.
+struct RunOutcome {
+    result: MsExploreRunTaskResult,
+    text: String,
+    note: Option<String>,
 }
 
 fn build_explore_spec(options: &CliOptions) -> Result<MsExploreSpec, String> {
@@ -509,24 +487,21 @@ fn edit_flags_in_memory(
     }
 }
 
-fn write_or_log_flag_preview(
+/// Write the preview to `flag_output`, or describe it in one line.
+fn write_or_describe_flag_preview(
     options: &CliOptions,
     preview: &MsFlagEditPreview,
-) -> Result<(), String> {
+) -> Result<Option<String>, String> {
     if let Some(path) = options.flag_output.as_deref() {
         let json = serde_json::to_string_pretty(preview)
             .map_err(|error| format!("serialize flag preview: {error}"))?;
-        write_output(Some(path), options.overwrite, &json)?;
-    } else {
-        eprintln!(
-            "Flag edit preview: matched_points={} affected_rows={} affected_samples={} apply={}",
-            preview.matched_points,
-            preview.affected_rows,
-            preview.affected_samples,
-            options.flag_apply
-        );
+        write_output(path, options.overwrite, &json)?;
+        return Ok(None);
     }
-    Ok(())
+    Ok(Some(format!(
+        "Flag edit preview: matched_points={} affected_rows={} affected_samples={} apply={}",
+        preview.matched_points, preview.affected_rows, preview.affected_samples, options.flag_apply
+    )))
 }
 
 fn preview_selection_flag_edit(
@@ -864,1051 +839,252 @@ fn merge_header_items(target: &mut Vec<MsPageHeaderItem>, extra: Vec<MsPageHeade
     }
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "predates the function-length limit; #705"
-)]
-fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<CliAction, String> {
-    let args = args.into_iter().collect::<Vec<_>>();
-    if args.iter().any(|arg| arg == "-h" || arg == "--help") {
-        return Ok(CliAction::Help);
-    }
+/// The single-plot controls, which a run that names a page spec cannot set.
+const PLOT_CONTROLS: &[&str] = &[
+    "preset",
+    "x_axis",
+    "y_axis",
+    "y_axis2",
+    "datacolumn",
+    "color_by",
+    "avgchannel",
+    "avgtime",
+    "avgscan",
+    "avgfield",
+    "avgbaseline",
+    "avgantenna",
+    "avgspw",
+    "scalar",
+    "freqframe",
+    "restfreq",
+    "veldef",
+    "iteraxis",
+    "gridrows",
+    "gridcols",
+    "xselfscale",
+    "yselfscale",
+    "xsharedaxis",
+    "ysharedaxis",
+    "title",
+    "xlabel",
+    "ylabel",
+    "symbol_size",
+    "showlegend",
+    "legendposition",
+    "showmajorgrid",
+    "showminorgrid",
+    "max_points",
+];
 
-    let mut index = 0usize;
-    let mut ms_path = None;
-    let mut summary_format = "text".to_string();
-    let mut summary_output = None;
-    let mut overwrite = false;
-    let mut selection = MsSelection::default();
-    let mut page_spec = None;
-    let mut preset = None;
-    let mut x_axis = None;
-    let mut y_axis = None;
-    let mut y_axis2 = None;
-    let mut data_column = MsDataColumn::Data;
-    let mut color_by = MsColorAxis::Field;
-    let mut avgchannel = None;
-    let mut avgtime = None;
-    let mut avgscan = false;
-    let mut avgfield = false;
-    let mut avgbaseline = false;
-    let mut avgantenna = false;
-    let mut avgspw = false;
-    let mut scalar = false;
-    let mut freqframe = None;
-    let mut restfreq = None;
-    let mut veldef = "RADIO".to_string();
-    let mut iteraxis = None;
-    let mut gridrows = 1usize;
-    let mut gridcols = 1usize;
-    let mut xselfscale = false;
-    let mut yselfscale = false;
-    let mut xsharedaxis = false;
-    let mut ysharedaxis = false;
-    let mut title = None;
-    let mut xlabel = None;
-    let mut ylabel = None;
-    let mut symbol_size = None;
-    let mut showlegend = false;
-    let mut legendposition = MsLegendPosition::UpperRight;
-    let mut showmajorgrid = false;
-    let mut showminorgrid = false;
-    let mut headeritems = None;
-    let mut max_points = DEFAULT_MAX_PLOT_POINTS;
-    let mut flag_action = None;
-    let mut flag_xmin = None;
-    let mut flag_xmax = None;
-    let mut flag_ymin = None;
-    let mut flag_ymax = None;
-    let mut flag_plotindex = None;
-    let mut flag_panel = None;
-    let mut flag_extcorr = false;
-    let mut flag_extchannel = false;
-    let mut flag_selected = false;
-    let mut flag_apply = false;
-    let mut flag_output = None;
-    let mut plot_output = None;
-    let mut plot_format = MsExportFormat::Txt;
-    let mut plot_control_used = false;
-
-    while index < args.len() {
-        let raw = args[index].to_string_lossy().to_string();
-        let take_value =
-            |index: &mut usize, args: &[OsString], flag: &str| -> Result<String, String> {
-                *index += 1;
-                args.get(*index)
-                    .map(|value| value.to_string_lossy().to_string())
-                    .ok_or_else(|| format!("missing value for {flag}"))
-            };
-        match raw.as_str() {
-            "--format" => summary_format = take_value(&mut index, &args, "--format")?,
-            "-o" | "--output" => {
-                summary_output = Some(PathBuf::from(take_value(&mut index, &args, raw.as_str())?))
-            }
-            "--overwrite" => overwrite = true,
-            "--selectdata" => selection.selectdata = true,
-            "--no-selectdata" => selection.selectdata = false,
-            "--field" => selection.field = Some(take_value(&mut index, &args, "--field")?),
-            "--spw" => selection.spw = Some(take_value(&mut index, &args, "--spw")?),
-            "--timerange" => {
-                selection.timerange = Some(take_value(&mut index, &args, "--timerange")?)
-            }
-            "--uvrange" => selection.uvrange = Some(take_value(&mut index, &args, "--uvrange")?),
-            "--antenna" => selection.antenna = Some(take_value(&mut index, &args, "--antenna")?),
-            "--scan" => selection.scan = Some(take_value(&mut index, &args, "--scan")?),
-            "--correlation" => {
-                selection.correlation = Some(take_value(&mut index, &args, "--correlation")?)
-            }
-            "--observation" => {
-                selection.observation = Some(take_value(&mut index, &args, "--observation")?)
-            }
-            "--array" => selection.array = Some(take_value(&mut index, &args, "--array")?),
-            "--intent" => selection.intent = Some(take_value(&mut index, &args, "--intent")?),
-            "--feed" => selection.feed = Some(take_value(&mut index, &args, "--feed")?),
-            "--msselect" => selection.msselect = Some(take_value(&mut index, &args, "--msselect")?),
-            "--page-spec" => {
-                page_spec = Some(PathBuf::from(take_value(&mut index, &args, "--page-spec")?))
-            }
-            "--preset" => {
-                plot_control_used = true;
-                preset = Some(MsPlotPreset::parse(&take_value(
-                    &mut index, &args, "--preset",
-                )?)?)
-            }
-            "--xaxis" => {
-                plot_control_used = true;
-                x_axis = Some(MsAxis::parse(&take_value(&mut index, &args, "--xaxis")?)?)
-            }
-            "--yaxis" => {
-                plot_control_used = true;
-                y_axis = Some(MsAxis::parse(&take_value(&mut index, &args, "--yaxis")?)?)
-            }
-            "--yaxis2" => {
-                plot_control_used = true;
-                y_axis2 = Some(MsAxis::parse(&take_value(&mut index, &args, "--yaxis2")?)?)
-            }
-            "--data-column" => {
-                plot_control_used = true;
-                data_column = MsDataColumn::parse(&take_value(&mut index, &args, "--data-column")?)?
-            }
-            "--color-by" => {
-                plot_control_used = true;
-                color_by = MsColorAxis::parse(&take_value(&mut index, &args, "--color-by")?)?
-            }
-            "--avgchannel" => {
-                plot_control_used = true;
-                avgchannel = Some(
-                    take_value(&mut index, &args, "--avgchannel")?
-                        .parse::<usize>()
-                        .map_err(|_| "invalid integer value for --avgchannel".to_string())?,
-                )
-            }
-            "--avgtime" => {
-                plot_control_used = true;
-                avgtime = Some(
-                    take_value(&mut index, &args, "--avgtime")?
-                        .parse::<f64>()
-                        .map_err(|_| "invalid floating-point value for --avgtime".to_string())?,
-                )
-            }
-            "--avgscan" => {
-                plot_control_used = true;
-                avgscan = true
-            }
-            "--avgfield" => {
-                plot_control_used = true;
-                avgfield = true
-            }
-            "--avgbaseline" => {
-                plot_control_used = true;
-                avgbaseline = true
-            }
-            "--avgantenna" => {
-                plot_control_used = true;
-                avgantenna = true
-            }
-            "--avgspw" => {
-                plot_control_used = true;
-                avgspw = true
-            }
-            "--scalar" => {
-                plot_control_used = true;
-                scalar = true
-            }
-            "--freqframe" => {
-                plot_control_used = true;
-                freqframe = Some(take_value(&mut index, &args, "--freqframe")?)
-            }
-            "--restfreq" => {
-                plot_control_used = true;
-                restfreq = Some(take_value(&mut index, &args, "--restfreq")?)
-            }
-            "--veldef" => {
-                plot_control_used = true;
-                veldef = take_value(&mut index, &args, "--veldef")?
-            }
-            "--iteraxis" => {
-                plot_control_used = true;
-                iteraxis = Some(MsIterationAxis::parse(&take_value(
-                    &mut index,
-                    &args,
-                    "--iteraxis",
-                )?)?)
-            }
-            "--gridrows" => {
-                plot_control_used = true;
-                gridrows = take_value(&mut index, &args, "--gridrows")?
-                    .parse::<usize>()
-                    .map_err(|_| "invalid integer value for --gridrows".to_string())?
-            }
-            "--gridcols" => {
-                plot_control_used = true;
-                gridcols = take_value(&mut index, &args, "--gridcols")?
-                    .parse::<usize>()
-                    .map_err(|_| "invalid integer value for --gridcols".to_string())?
-            }
-            "--xselfscale" => {
-                plot_control_used = true;
-                xselfscale = true
-            }
-            "--yselfscale" => {
-                plot_control_used = true;
-                yselfscale = true
-            }
-            "--xsharedaxis" => {
-                plot_control_used = true;
-                xsharedaxis = true
-            }
-            "--ysharedaxis" => {
-                plot_control_used = true;
-                ysharedaxis = true
-            }
-            "--title" => {
-                plot_control_used = true;
-                title = Some(take_value(&mut index, &args, "--title")?)
-            }
-            "--xlabel" => {
-                plot_control_used = true;
-                xlabel = Some(take_value(&mut index, &args, "--xlabel")?)
-            }
-            "--ylabel" => {
-                plot_control_used = true;
-                ylabel = Some(take_value(&mut index, &args, "--ylabel")?)
-            }
-            "--symbolsize" | "--marker-size" => {
-                plot_control_used = true;
-                symbol_size = Some(
-                    take_value(&mut index, &args, raw.as_str())?
-                        .parse::<u32>()
-                        .map_err(|_| format!("invalid integer value for {raw}"))?,
-                )
-            }
-            "--showlegend" => {
-                plot_control_used = true;
-                showlegend = true
-            }
-            "--legendposition" => {
-                plot_control_used = true;
-                legendposition =
-                    serde_json::from_str::<MsLegendPosition>(&format!(
-                        "\"{}\"",
-                        take_value(&mut index, &args, "--legendposition")?
-                    ))
-                    .map_err(|_| {
-                        "unsupported value for --legendposition; expected one of: upperRight, upperLeft, lowerRight, lowerLeft, exteriorRight, exteriorLeft, exteriorTop, exteriorBottom".to_string()
-                    })?
-            }
-            "--showmajorgrid" => {
-                plot_control_used = true;
-                showmajorgrid = true
-            }
-            "--showminorgrid" => {
-                plot_control_used = true;
-                showminorgrid = true
-            }
-            "--headeritems" => headeritems = Some(take_value(&mut index, &args, "--headeritems")?),
-            "--max-points" => {
-                plot_control_used = true;
-                max_points = take_value(&mut index, &args, "--max-points")?
-                    .parse::<usize>()
-                    .map_err(|_| "invalid integer value for --max-points".to_string())?
-            }
-            "--flag-action" => {
-                flag_action = Some(
-                    match take_value(&mut index, &args, "--flag-action")?
-                        .to_ascii_lowercase()
-                        .as_str()
-                    {
-                        "flag" => MsFlagAction::Flag,
-                        "unflag" => MsFlagAction::Unflag,
-                        other => {
-                            return Err(format!(
-                                "unsupported value for --flag-action {other:?}; expected flag or unflag"
-                            ));
-                        }
-                    },
-                )
-            }
-            "--flag-xmin" => {
-                flag_xmin = Some(
-                    take_value(&mut index, &args, "--flag-xmin")?
-                        .parse::<f64>()
-                        .map_err(|_| "invalid floating-point value for --flag-xmin".to_string())?,
-                )
-            }
-            "--flag-xmax" => {
-                flag_xmax = Some(
-                    take_value(&mut index, &args, "--flag-xmax")?
-                        .parse::<f64>()
-                        .map_err(|_| "invalid floating-point value for --flag-xmax".to_string())?,
-                )
-            }
-            "--flag-ymin" => {
-                flag_ymin = Some(
-                    take_value(&mut index, &args, "--flag-ymin")?
-                        .parse::<f64>()
-                        .map_err(|_| "invalid floating-point value for --flag-ymin".to_string())?,
-                )
-            }
-            "--flag-ymax" => {
-                flag_ymax = Some(
-                    take_value(&mut index, &args, "--flag-ymax")?
-                        .parse::<f64>()
-                        .map_err(|_| "invalid floating-point value for --flag-ymax".to_string())?,
-                )
-            }
-            "--flag-plotindex" => {
-                flag_plotindex = Some(
-                    take_value(&mut index, &args, "--flag-plotindex")?
-                        .parse::<usize>()
-                        .map_err(|_| "invalid integer value for --flag-plotindex".to_string())?,
-                )
-            }
-            "--flag-panel" => flag_panel = Some(take_value(&mut index, &args, "--flag-panel")?),
-            "--flag-extcorr" => flag_extcorr = true,
-            "--flag-extchannel" => flag_extchannel = true,
-            "--flag-selected" => flag_selected = true,
-            "--flag-apply" => flag_apply = true,
-            "--flag-output" => {
-                flag_output = Some(PathBuf::from(take_value(
-                    &mut index,
-                    &args,
-                    "--flag-output",
-                )?))
-            }
-            "--plot-output" => {
-                plot_output = Some(PathBuf::from(take_value(
-                    &mut index,
-                    &args,
-                    "--plot-output",
-                )?))
-            }
-            "--plot-format" => {
-                plot_format =
-                    MsExportFormat::parse(&take_value(&mut index, &args, "--plot-format")?)?
-            }
-            value if value.starts_with('-') => return Err(format!("unknown option {value:?}")),
-            value => {
-                if ms_path.is_some() {
-                    return Err("expected exactly one MeasurementSet path".to_string());
-                }
-                ms_path = Some(PathBuf::from(value));
-            }
-        }
-        index += 1;
-    }
-
-    let ms_path = ms_path.ok_or_else(|| "missing required MeasurementSet path".to_string())?;
-    let summary_format = match summary_format.as_str() {
-        "text" => MeasurementSetSummaryOutputFormat::Text,
-        "json" => MeasurementSetSummaryOutputFormat::Json,
-        other => {
-            return Err(format!(
+/// The resolved run as [`CliOptions`], refused where its parameters
+/// contradict one another.
+fn options_from(task: &TaskInvocation<'_>) -> Result<CliOptions, TaskFailure> {
+    let text = |name: &str| task.text(name);
+    let path = |name: &str| Ok::<_, TaskFailure>(task.text(name)?.map(PathBuf::from));
+    let flag = |name: &str| task.flag(name);
+    let options = CliOptions {
+        ms_path: task.path("vis")?,
+        summary_format: required(task, "format", |format| match format {
+            "text" => Ok(MeasurementSetSummaryOutputFormat::Text),
+            "json" => Ok(MeasurementSetSummaryOutputFormat::Json),
+            other => Err(format!(
                 "unsupported format {other:?}; expected text or json"
-            ));
-        }
+            )),
+        })?,
+        summary_output: path("output")?,
+        overwrite: flag("overwrite")?,
+        selection: MsSelection {
+            selectdata: flag("selectdata")?,
+            field: text("field")?,
+            spw: text("spw")?,
+            timerange: text("timerange")?,
+            uvrange: text("uvrange")?,
+            antenna: text("antenna")?,
+            scan: text("scan")?,
+            correlation: text("correlation")?,
+            observation: text("observation")?,
+            array: text("array")?,
+            intent: text("intent")?,
+            feed: text("feed")?,
+            msselect: text("msselect")?,
+            ..MsSelection::default()
+        },
+        page_spec: path("page_spec")?,
+        preset: parsed(task, "preset", MsPlotPreset::parse)?,
+        x_axis: parsed(task, "x_axis", MsAxis::parse)?,
+        y_axis: parsed(task, "y_axis", MsAxis::parse)?,
+        y_axis2: parsed(task, "y_axis2", MsAxis::parse)?,
+        data_column: required(task, "datacolumn", MsDataColumn::parse)?,
+        color_by: required(task, "color_by", MsColorAxis::parse)?,
+        avgchannel: parsed(task, "avgchannel", number::<usize>)?,
+        avgtime: parsed(task, "avgtime", number::<f64>)?,
+        avgscan: flag("avgscan")?,
+        avgfield: flag("avgfield")?,
+        avgbaseline: flag("avgbaseline")?,
+        avgantenna: flag("avgantenna")?,
+        avgspw: flag("avgspw")?,
+        scalar: flag("scalar")?,
+        freqframe: text("freqframe")?,
+        restfreq: text("restfreq")?,
+        veldef: task.required_text("veldef")?,
+        iteraxis: parsed(task, "iteraxis", MsIterationAxis::parse)?,
+        gridrows: count(task, "gridrows")?.max(1),
+        gridcols: count(task, "gridcols")?.max(1),
+        xselfscale: flag("xselfscale")?,
+        yselfscale: flag("yselfscale")?,
+        xsharedaxis: flag("xsharedaxis")?,
+        ysharedaxis: flag("ysharedaxis")?,
+        title: text("title")?,
+        xlabel: text("xlabel")?,
+        ylabel: text("ylabel")?,
+        symbol_size: parsed(task, "symbol_size", number::<u32>)?,
+        showlegend: flag("showlegend")?,
+        legendposition: required(task, "legendposition", legend_position)?,
+        showmajorgrid: flag("showmajorgrid")?,
+        showminorgrid: flag("showminorgrid")?,
+        headeritems: text("headeritems")?,
+        max_points: count(task, "max_points")?,
+        flag_action: parsed(task, "flag_action", flag_action)?,
+        flag_xmin: parsed(task, "flag_xmin", number::<f64>)?,
+        flag_xmax: parsed(task, "flag_xmax", number::<f64>)?,
+        flag_ymin: parsed(task, "flag_ymin", number::<f64>)?,
+        flag_ymax: parsed(task, "flag_ymax", number::<f64>)?,
+        flag_plotindex: parsed(task, "flag_plotindex", number::<usize>)?,
+        flag_panel: text("flag_panel")?,
+        flag_extcorr: flag("flag_extcorr")?,
+        flag_extchannel: flag("flag_extchannel")?,
+        flag_selected: flag("flag_selected")?,
+        flag_apply: flag("flag_apply")?,
+        flag_output: path("flag_output")?,
+        plot_output: path("plot_output")?,
+        plot_format: required(task, "plot_format", MsExportFormat::parse)?,
     };
-    if page_spec.is_some() && plot_control_used {
+    let plot_control_used = PLOT_CONTROLS.iter().any(|name| task.is_set(name));
+    check_options(&options, plot_control_used).map_err(TaskFailure::validation)?;
+    Ok(options)
+}
+
+/// Refuse the combinations a plot or flag edit cannot take.
+fn check_options(options: &CliOptions, plot_control_used: bool) -> Result<(), String> {
+    let single_plot =
+        options.preset.is_some() || (options.x_axis.is_some() && options.y_axis.is_some());
+    if options.page_spec.is_some() && plot_control_used {
         return Err(
             "--page-spec cannot be combined with the single-plot preset/axis/layout flags; put those settings in the JSON page spec instead".to_string(),
         );
     }
-    if plot_output.is_some()
-        && page_spec.is_none()
-        && preset.is_none()
-        && (x_axis.is_none() || y_axis.is_none())
-    {
+    if options.plot_output.is_some() && options.page_spec.is_none() && !single_plot {
         return Err(
             "--plot-output requires either --preset or both --xaxis and --yaxis".to_string(),
         );
     }
-    if flag_action.is_some()
-        && !flag_selected
-        && page_spec.is_none()
-        && preset.is_none()
-        && (x_axis.is_none() || y_axis.is_none())
+    if options.flag_action.is_some()
+        && !options.flag_selected
+        && options.page_spec.is_none()
+        && !single_plot
     {
         return Err(
             "--flag-action requires either --preset or both --xaxis and --yaxis".to_string(),
         );
     }
-    if flag_plotindex.is_some() && flag_panel.is_some() {
+    if options.flag_plotindex.is_some() && options.flag_panel.is_some() {
         return Err(
             "msexplore staged flag editing accepts either --flag-plotindex or --flag-panel, not both".to_string(),
         );
     }
-    if flag_selected
-        && (flag_xmin.is_some()
-            || flag_xmax.is_some()
-            || flag_ymin.is_some()
-            || flag_ymax.is_some()
-            || flag_plotindex.is_some()
-            || flag_panel.is_some()
-            || flag_extcorr
-            || flag_extchannel)
-    {
+    let region_controls = options.flag_xmin.is_some()
+        || options.flag_xmax.is_some()
+        || options.flag_ymin.is_some()
+        || options.flag_ymax.is_some()
+        || options.flag_plotindex.is_some()
+        || options.flag_panel.is_some()
+        || options.flag_extcorr
+        || options.flag_extchannel;
+    if options.flag_selected && region_controls {
         return Err(
             "msexplore --flag-selected cannot be combined with plot-region flag-edit controls"
                 .to_string(),
         );
     }
-    if flag_action.is_none()
-        && (flag_xmin.is_some()
-            || flag_xmax.is_some()
-            || flag_ymin.is_some()
-            || flag_ymax.is_some()
-            || flag_plotindex.is_some()
-            || flag_panel.is_some()
-            || flag_extcorr
-            || flag_extchannel
-            || flag_selected
-            || flag_apply
-            || flag_output.is_some())
+    if options.flag_action.is_none()
+        && (region_controls
+            || options.flag_selected
+            || options.flag_apply
+            || options.flag_output.is_some())
     {
         return Err(
             "msexplore flag-edit region, extension, apply, and output flags require --flag-action"
                 .to_string(),
         );
     }
-    Ok(CliAction::Run(Box::new(CliOptions {
-        ms_path,
-        summary_format,
-        summary_output,
-        overwrite,
-        selection,
-        page_spec,
-        preset,
-        x_axis,
-        y_axis,
-        y_axis2,
-        data_column,
-        color_by,
-        avgchannel,
-        avgtime,
-        avgscan,
-        avgfield,
-        avgbaseline,
-        avgantenna,
-        avgspw,
-        scalar,
-        freqframe,
-        restfreq,
-        veldef,
-        iteraxis,
-        gridrows: gridrows.max(1),
-        gridcols: gridcols.max(1),
-        xselfscale,
-        yselfscale,
-        xsharedaxis,
-        ysharedaxis,
-        title,
-        xlabel,
-        ylabel,
-        symbol_size,
-        showlegend,
-        legendposition,
-        showmajorgrid,
-        showminorgrid,
-        headeritems,
-        max_points,
-        flag_action,
-        flag_xmin,
-        flag_xmax,
-        flag_ymin,
-        flag_ymax,
-        flag_plotindex,
-        flag_panel,
-        flag_extcorr,
-        flag_extchannel,
-        flag_selected,
-        flag_apply,
-        flag_output,
-        plot_output,
-        plot_format,
-    })))
+    Ok(())
 }
 
-fn render_help(schema: &UiCommandSchema) -> String {
-    format!(
-        "{}\n\n{}\n",
-        schema.render_help(),
-        casa_task_runtime::task_cli_machine_help("MsExploreTaskRequest")
-    )
+/// `name` parsed by `parse`, or `None` when unset; a refusal names it. A
+/// number or `none` resolves as a number when it is one.
+fn parsed<T>(
+    task: &TaskInvocation<'_>,
+    name: &str,
+    parse: impl Fn(&str) -> Result<T, String>,
+) -> Result<Option<T>, TaskFailure> {
+    let text = match task.value(name) {
+        Some(ParameterValue::Integer(value)) => Some(value.to_string()),
+        Some(ParameterValue::Float(value)) => Some(value.to_string()),
+        _ => task.text(name)?,
+    };
+    text.map(|text| parse(&text).map_err(|message| TaskFailure::validation(message).at(name)))
+        .transpose()
 }
 
-fn write_output(path: Option<&std::path::Path>, overwrite: bool, text: &str) -> Result<(), String> {
-    match path {
-        Some(path) => {
-            if path.exists() && !overwrite {
-                return Err(format!(
-                    "refusing to overwrite existing output {}; pass --overwrite to replace it",
-                    path.display()
-                ));
-            }
-            fs::write(path, text).map_err(|error| error.to_string())
-        }
-        None => {
-            print!("{text}");
-            Ok(())
-        }
+/// `name` parsed by `parse`; it must be set.
+fn required<T>(
+    task: &TaskInvocation<'_>,
+    name: &str,
+    parse: impl Fn(&str) -> Result<T, String>,
+) -> Result<T, TaskFailure> {
+    parsed(task, name, parse)?
+        .ok_or_else(|| TaskFailure::validation(format!("parameter {name:?} is required")).at(name))
+}
+
+fn number<T: std::str::FromStr>(text: &str) -> Result<T, String> {
+    text.trim()
+        .parse()
+        .map_err(|_| format!("invalid numeric value {text:?}"))
+}
+
+/// `name`, a count, which cannot be negative.
+fn count(task: &TaskInvocation<'_>, name: &str) -> Result<usize, TaskFailure> {
+    let value = task.integer(name)?;
+    usize::try_from(value).map_err(|_| {
+        TaskFailure::validation(format!("{name} cannot be negative, found {value}")).at(name)
+    })
+}
+
+fn legend_position(text: &str) -> Result<MsLegendPosition, String> {
+    serde_json::from_value(serde_json::Value::String(text.to_string())).map_err(|_| {
+        "unsupported value for --legendposition; expected one of: upperRight, upperLeft, lowerRight, lowerLeft, exteriorRight, exteriorLeft, exteriorTop, exteriorBottom".to_string()
+    })
+}
+
+fn flag_action(text: &str) -> Result<MsFlagAction, String> {
+    match text.to_ascii_lowercase().as_str() {
+        "flag" => Ok(MsFlagAction::Flag),
+        "unflag" => Ok(MsFlagAction::Unflag),
+        other => Err(format!(
+            "unsupported value for --flag-action {other:?}; expected flag or unflag"
+        )),
     }
+}
+
+fn write_output(path: &std::path::Path, overwrite: bool, text: &str) -> Result<(), String> {
+    if path.exists() && !overwrite {
+        return Err(format!(
+            "refusing to overwrite existing output {}; pass --overwrite to replace it",
+            path.display()
+        ));
+    }
+    fs::write(path, text).map_err(|error| error.to_string())
 }
 
 #[cfg(test)]
-mod tests {
-    use std::ffi::OsString;
-
-    use tempfile::tempdir;
-
-    use super::*;
-
-    fn cli_args(args: &[&str]) -> Vec<OsString> {
-        args.iter().map(OsString::from).collect()
-    }
-
-    #[test]
-    fn command_schema_describes_core_arguments_and_actions() {
-        let schema = command_schema("msexplore-test");
-
-        assert_eq!(schema.command_id, "msexplore");
-        assert_eq!(schema.invocation_name, "msexplore-test");
-        assert_eq!(schema.display_name, "MSExplore");
-        assert_eq!(schema.category, "MeasurementSet");
-        assert_eq!(schema.usage, "msexplore-test [parameters]");
-        assert!(schema.render_help().contains("<ms-path>"));
-        assert!(schema.render_help().contains("--plot-output"));
-
-        let ms_path = schema.argument("vis").expect("canonical vis argument");
-        assert!(matches!(
-            ms_path.parser,
-            UiArgumentParser::Positional { .. }
-        ));
-        assert_eq!(ms_path.group, "Input");
-        assert!(ms_path.required);
-
-        let format = schema.argument("format").expect("format argument");
-        assert_eq!(format.default.as_deref(), Some("text"));
-        assert_eq!(format.group, "Output");
-        assert!(matches!(format.value_kind, UiValueKind::Choice));
-
-        let selectdata = schema.argument("selectdata").expect("selectdata argument");
-        assert_eq!(selectdata.default_bool(), Some(true));
-        assert_eq!(selectdata.group, "Selection");
-        assert!(matches!(selectdata.parser, UiArgumentParser::Toggle { .. }));
-
-        let help = schema.argument("help").expect("help action");
-        assert!(matches!(
-            help.parser,
-            UiArgumentParser::Action {
-                action: UiActionKind::Help,
-                ..
-            }
-        ));
-
-        // The runner injects nothing, so the user's `format` decides stdout.
-        assert!(schema.managed_output.is_none());
-    }
-
-    #[test]
-    fn parse_args_captures_dense_single_plot_configuration() {
-        let action = parse_args(cli_args(&[
-            "--format",
-            "json",
-            "-o",
-            "summary.json",
-            "--overwrite",
-            "--field",
-            "0",
-            "--spw",
-            "0:3~7",
-            "--timerange",
-            "09:00:00~10:00:00",
-            "--uvrange",
-            ">100m",
-            "--antenna",
-            "DV01&DV02",
-            "--scan",
-            "5",
-            "--correlation",
-            "RR,LL",
-            "--observation",
-            "0",
-            "--array",
-            "1",
-            "--intent",
-            "CALIBRATE_BANDPASS",
-            "--feed",
-            "0",
-            "--msselect",
-            "DATA_DESC_ID==0",
-            "--preset",
-            "amp_frequency",
-            "--data-column",
-            "corrected_div_model_scalar",
-            "--color-by",
-            "corr",
-            "--avgchannel",
-            "8",
-            "--avgtime",
-            "30.5",
-            "--avgscan",
-            "--avgfield",
-            "--avgbaseline",
-            "--scalar",
-            "--freqframe",
-            "BARY",
-            "--restfreq",
-            "1.420GHz",
-            "--veldef",
-            "OPTICAL",
-            "--iteraxis",
-            "spw",
-            "--gridrows",
-            "2",
-            "--gridcols",
-            "3",
-            "--xselfscale",
-            "--ysharedaxis",
-            "--title",
-            "Amplitude",
-            "--xlabel",
-            "Time",
-            "--ylabel",
-            "Amp",
-            "--symbolsize",
-            "2",
-            "--showlegend",
-            "--legendposition",
-            "exteriorRight",
-            "--showmajorgrid",
-            "--showminorgrid",
-            "--headeritems",
-            "filename,observer",
-            "--max-points",
-            "12345",
-            "--plot-output",
-            "plot.txt",
-            "--plot-format",
-            "txt",
-            "example.ms",
-        ]))
-        .expect("parse args");
-
-        let CliAction::Run(options) = action else {
-            panic!("expected run action");
-        };
-        assert_eq!(options.ms_path, PathBuf::from("example.ms"));
-        assert_eq!(
-            options.summary_format,
-            MeasurementSetSummaryOutputFormat::Json
-        );
-        assert_eq!(
-            options.summary_output.as_deref(),
-            Some(std::path::Path::new("summary.json"))
-        );
-        assert!(options.overwrite);
-        assert_eq!(options.selection.field.as_deref(), Some("0"));
-        assert_eq!(options.selection.spw.as_deref(), Some("0:3~7"));
-        assert_eq!(
-            options.selection.timerange.as_deref(),
-            Some("09:00:00~10:00:00")
-        );
-        assert_eq!(options.selection.uvrange.as_deref(), Some(">100m"));
-        assert_eq!(options.selection.antenna.as_deref(), Some("DV01&DV02"));
-        assert_eq!(options.selection.scan.as_deref(), Some("5"));
-        assert_eq!(options.selection.correlation.as_deref(), Some("RR,LL"));
-        assert_eq!(options.selection.observation.as_deref(), Some("0"));
-        assert_eq!(options.selection.array.as_deref(), Some("1"));
-        assert_eq!(
-            options.selection.intent.as_deref(),
-            Some("CALIBRATE_BANDPASS")
-        );
-        assert_eq!(options.selection.feed.as_deref(), Some("0"));
-        assert_eq!(
-            options.selection.msselect.as_deref(),
-            Some("DATA_DESC_ID==0")
-        );
-        assert_eq!(options.preset, Some(MsPlotPreset::AmplitudeVsFrequency));
-        assert_eq!(options.data_column, MsDataColumn::CorrectedDivModelScalar);
-        assert_eq!(options.color_by, MsColorAxis::Correlation);
-        assert_eq!(options.avgchannel, Some(8));
-        assert_eq!(options.avgtime, Some(30.5));
-        assert!(options.avgscan);
-        assert!(options.avgfield);
-        assert!(options.avgbaseline);
-        assert!(!options.avgantenna);
-        assert!(!options.avgspw);
-        assert!(options.scalar);
-        assert_eq!(options.freqframe.as_deref(), Some("BARY"));
-        assert_eq!(options.restfreq.as_deref(), Some("1.420GHz"));
-        assert_eq!(options.veldef, "OPTICAL");
-        assert_eq!(options.iteraxis, Some(MsIterationAxis::SpectralWindow));
-        assert_eq!(options.gridrows, 2);
-        assert_eq!(options.gridcols, 3);
-        assert!(options.xselfscale);
-        assert!(!options.yselfscale);
-        assert!(!options.xsharedaxis);
-        assert!(options.ysharedaxis);
-        assert_eq!(options.title.as_deref(), Some("Amplitude"));
-        assert_eq!(options.xlabel.as_deref(), Some("Time"));
-        assert_eq!(options.ylabel.as_deref(), Some("Amp"));
-        assert_eq!(options.symbol_size, Some(2));
-        assert!(options.showlegend);
-        assert_eq!(options.legendposition, MsLegendPosition::ExteriorRight);
-        assert!(options.showmajorgrid);
-        assert!(options.showminorgrid);
-        assert_eq!(options.headeritems.as_deref(), Some("filename,observer"));
-        assert_eq!(options.max_points, 12345);
-        assert_eq!(
-            options.plot_output.as_deref(),
-            Some(std::path::Path::new("plot.txt"))
-        );
-        assert_eq!(options.plot_format, MsExportFormat::Txt);
-
-        let spec = build_explore_spec(&options).expect("build spec");
-        assert_eq!(spec.ms_path, PathBuf::from("example.ms"));
-        assert_eq!(spec.summary_format, MeasurementSetSummaryOutputFormat::Json);
-        assert_eq!(
-            spec.header_items,
-            vec![MsPageHeaderItem::Filename, MsPageHeaderItem::Observer]
-        );
-        assert_eq!(spec.max_plot_points, 12345);
-        assert_eq!(spec.plots.len(), 1);
-        let plot = &spec.plots[0];
-        assert_eq!(plot.preset, Some(MsPlotPreset::AmplitudeVsFrequency));
-        assert_eq!(plot.data_column, MsDataColumn::CorrectedDivModelScalar);
-        assert_eq!(plot.color_by, MsColorAxis::Correlation);
-        assert_eq!(plot.averaging.avgchannel, Some(8));
-        assert_eq!(plot.averaging.avgtime, Some(30.5));
-        assert!(plot.averaging.avgscan);
-        assert!(plot.averaging.avgfield);
-        assert!(plot.averaging.avgbaseline);
-        assert!(!plot.averaging.avgantenna);
-        assert!(!plot.averaging.avgspw);
-        assert!(plot.averaging.scalar);
-        assert_eq!(plot.transforms.freqframe.as_deref(), Some("BARY"));
-        assert_eq!(plot.transforms.restfreq.as_deref(), Some("1.420GHz"));
-        assert_eq!(plot.transforms.veldef, "OPTICAL");
-        assert_eq!(
-            plot.iteration.iteraxis,
-            Some(MsIterationAxis::SpectralWindow)
-        );
-        assert!(plot.iteration.xselfscale);
-        assert!(!plot.iteration.yselfscale);
-        assert!(!plot.iteration.xsharedaxis);
-        assert!(plot.iteration.ysharedaxis);
-        assert_eq!(plot.style.title.as_deref(), Some("Amplitude"));
-        assert_eq!(plot.style.xlabel.as_deref(), Some("Time"));
-        assert_eq!(plot.style.ylabel.as_deref(), Some("Amp"));
-        assert_eq!(plot.style.symbol_size, Some(2));
-        assert!(plot.style.showlegend);
-        assert_eq!(plot.style.legendposition, MsLegendPosition::ExteriorRight);
-        assert!(plot.style.showmajorgrid);
-        assert!(plot.style.showminorgrid);
-    }
-
-    #[test]
-    fn page_spec_build_merges_header_items_without_duplicates() {
-        let temp = tempdir().expect("tempdir");
-        let page_spec_path = temp.path().join("page.json");
-        fs::write(
-            &page_spec_path,
-            r#"{
-              "gridrows": 2,
-              "gridcols": 2,
-              "page_title": "Page Title",
-              "exprange": "all",
-              "headeritems": "filename,ycolumn",
-              "plots": [
-                {
-                  "preset": "amplitude_vs_frequency",
-                  "iteraxis": "field",
-                  "rowindex": 0,
-                  "colindex": 0,
-                  "plotindex": 0,
-                  "showlegend": true,
-                  "legendposition": "upperLeft",
-                  "showmajorgrid": true,
-                  "showminorgrid": true,
-                  "symbol_size": 1
-                },
-                {
-                  "preset": "amplitude_vs_frequency",
-                  "iteraxis": "field",
-                  "rowindex": 0,
-                  "colindex": 1,
-                  "plotindex": 1
-                }
-              ]
-            }"#,
-        )
-        .expect("write page spec");
-
-        let action = parse_args(vec![
-            OsString::from("--format"),
-            OsString::from("json"),
-            OsString::from("--page-spec"),
-            page_spec_path.as_os_str().to_os_string(),
-            OsString::from("--headeritems"),
-            OsString::from("telescope,filename"),
-            OsString::from("example.ms"),
-        ])
-        .expect("parse args");
-
-        let CliAction::Run(options) = action else {
-            panic!("expected run action");
-        };
-        let spec = build_explore_spec(&options).expect("build spec from page spec");
-
-        assert_eq!(spec.ms_path, PathBuf::from("example.ms"));
-        assert_eq!(spec.summary_format, MeasurementSetSummaryOutputFormat::Json);
-        assert_eq!(spec.page_title.as_deref(), Some("Page Title"));
-        assert_eq!(spec.exprange, MsPageExportRange::All);
-        assert_eq!(
-            spec.header_items,
-            vec![
-                MsPageHeaderItem::Filename,
-                MsPageHeaderItem::YColumn,
-                MsPageHeaderItem::Telescope,
-            ]
-        );
-        assert_eq!(spec.plots.len(), 2);
-        let plot = &spec.plots[0];
-        assert_eq!(plot.preset, Some(MsPlotPreset::AmplitudeVsFrequency));
-        assert_eq!(plot.layout.gridrows, 2);
-        assert_eq!(plot.layout.gridcols, 2);
-        assert_eq!(plot.layout.rowindex, 0);
-        assert_eq!(plot.layout.colindex, 0);
-        assert_eq!(plot.layout.plotindex, 0);
-        assert!(plot.style.showlegend);
-        assert_eq!(plot.style.legendposition, MsLegendPosition::UpperLeft);
-        assert!(plot.style.showmajorgrid);
-        assert!(plot.style.showminorgrid);
-        assert_eq!(plot.style.symbol_size, Some(1));
-        let second_plot = &spec.plots[1];
-        assert_eq!(second_plot.preset, Some(MsPlotPreset::AmplitudeVsFrequency));
-        assert_eq!(second_plot.layout.colindex, 1);
-        assert_eq!(second_plot.layout.plotindex, 1);
-    }
-
-    #[test]
-    fn parse_and_build_helpers_reject_invalid_combinations() {
-        assert!(
-            parse_args(cli_args(&["--flag-xmin", "0.0", "example.ms"]))
-                .unwrap_err()
-                .contains("require --flag-action")
-        );
-        assert!(
-            parse_args(cli_args(&[
-                "--page-spec",
-                "page.json",
-                "--preset",
-                "uv",
-                "example.ms"
-            ]))
-            .unwrap_err()
-            .contains("--page-spec cannot be combined")
-        );
-        assert!(
-            parse_args(cli_args(&["--plot-output", "plot.txt", "example.ms"]))
-                .unwrap_err()
-                .contains("--plot-output requires either --preset or both --xaxis and --yaxis")
-        );
-        assert!(
-            parse_args(cli_args(&[
-                "--flag-action",
-                "flag",
-                "--flag-plotindex",
-                "0",
-                "--flag-panel",
-                "panel",
-                "--preset",
-                "uv",
-                "example.ms"
-            ]))
-            .unwrap_err()
-            .contains("either --flag-plotindex or --flag-panel")
-        );
-        assert!(
-            build_plot_spec_from_values(
-                Some(MsPlotPreset::AmplitudePhaseVsTimeStacked),
-                None,
-                None,
-                Some(MsAxis::Phase),
-                MsDataColumn::Data,
-                MsColorAxis::Field,
-                None,
-                None,
-                false,
-                false,
-                false,
-                false,
-                false,
-                false,
-                None,
-                None,
-                "RADIO".to_string(),
-                None,
-                1,
-                1,
-                0,
-                0,
-                0,
-                false,
-                false,
-                false,
-                false,
-                None,
-                None,
-                None,
-                None,
-                false,
-                MsLegendPosition::UpperRight,
-                false,
-                false,
-            )
-            .unwrap_err()
-            .contains("--yaxis2 is not supported")
-        );
-        let action = parse_args(cli_args(&[
-            "--preset",
-            "amp_time",
-            "--xselfscale",
-            "--xsharedaxis",
-            "example.ms",
-        ]))
-        .expect("parse args");
-        let CliAction::Run(options) = action else {
-            panic!("expected run action");
-        };
-        assert!(
-            build_explore_spec(&options)
-                .unwrap_err()
-                .contains("cannot request both self-scaled and shared axes")
-        );
-        let action = parse_args(cli_args(&[
-            "--preset",
-            "amp_time",
-            "--avgantenna",
-            "--avgbaseline",
-            "example.ms",
-        ]))
-        .expect("parse args");
-        let CliAction::Run(options) = action else {
-            panic!("expected run action");
-        };
-        assert!(
-            build_explore_spec(&options)
-                .unwrap_err()
-                .contains("mutually exclusive")
-        );
-        let action = parse_args(cli_args(&[
-            "--preset",
-            "amp_time",
-            "--iteraxis",
-            "spw",
-            "--avgspw",
-            "example.ms",
-        ]))
-        .expect("parse args");
-        let CliAction::Run(options) = action else {
-            panic!("expected run action");
-        };
-        assert!(
-            build_explore_spec(&options).unwrap_err().contains(
-                "cannot iterate by spectral window while averaging across spectral windows"
-            )
-        );
-    }
-
-    #[test]
-    fn build_explore_spec_strips_shared_logging_controls() {
-        let spec = build_explore_spec_from_args(cli_args(&[
-            "--log-table",
-            "msexplore.log",
-            "--log-table-priority",
-            "INFO",
-            "--log-stderr-priority=off",
-            "--preset",
-            "amp_time",
-            "example.ms",
-        ]))
-        .expect("build spec with logging controls");
-
-        assert_eq!(spec.ms_path, PathBuf::from("example.ms"));
-        assert_eq!(
-            spec.plots.first().expect("plot spec").preset,
-            Some(MsPlotPreset::AmplitudeVsTime)
-        );
-    }
-
-    #[test]
-    fn build_flag_edit_spec_and_write_output_handle_expected_edges() {
-        let action = parse_args(cli_args(&[
-            "--preset",
-            "amp_time",
-            "--flag-action",
-            "flag",
-            "--flag-xmin",
-            "1.0",
-            "--flag-xmax",
-            "2.0",
-            "--flag-ymin",
-            "3.0",
-            "--flag-ymax",
-            "4.0",
-            "--flag-plotindex",
-            "7",
-            "--flag-extcorr",
-            "--flag-extchannel",
-            "example.ms",
-        ]))
-        .expect("parse args");
-        let CliAction::Run(options) = action else {
-            panic!("expected run action");
-        };
-        let flag_edit = build_flag_edit_spec(&options)
-            .expect("build flag edit spec")
-            .expect("flag edit");
-        assert_eq!(flag_edit.action, MsFlagAction::Flag);
-        assert_eq!(flag_edit.region.x_min, 1.0);
-        assert_eq!(flag_edit.region.x_max, 2.0);
-        assert_eq!(flag_edit.region.y_min, 3.0);
-        assert_eq!(flag_edit.region.y_max, 4.0);
-        assert_eq!(flag_edit.plot_index, Some(7));
-        assert!(flag_edit.extcorr);
-        assert!(flag_edit.extchannel);
-
-        let temp = tempdir().expect("tempdir");
-        let output_path = temp.path().join("out.txt");
-        write_output(Some(&output_path), false, "first").expect("write first");
-        assert_eq!(fs::read_to_string(&output_path).unwrap(), "first");
-        assert!(
-            write_output(Some(&output_path), false, "second")
-                .unwrap_err()
-                .contains("refusing to overwrite")
-        );
-        write_output(Some(&output_path), true, "second").expect("overwrite");
-        assert_eq!(fs::read_to_string(&output_path).unwrap(), "second");
-    }
-}
+mod tests;

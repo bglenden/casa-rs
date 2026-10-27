@@ -44,6 +44,15 @@ impl TaskInvocation<'_> {
         }
     }
 
+    /// Whether the run sets `name`, from its base profile or an override,
+    /// rather than taking the default.
+    pub fn is_set(&self, name: &str) -> bool {
+        self.session
+            .states()
+            .get(name)
+            .is_some_and(|state| state.active && state.explicit)
+    }
+
     /// `name` as text, which must be set.
     pub fn required_text(&self, name: &str) -> Result<String, TaskFailure> {
         self.text(name)?.ok_or_else(|| missing(name))

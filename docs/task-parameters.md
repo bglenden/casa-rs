@@ -185,8 +185,10 @@ Direct provider binaries continue to expose their idiomatic execution
 transports (`--protocol-info`, `--json-schema`, `--json-run`); source selection
 and profile lifecycle are owned by `casars run` and `casars params`, and by a
 front-end binary's own command line. The
-image binaries and `imexplore` run on the shared task front end in
-`casa-task-runtime`, which gives each binary those same sources and controls,
+image binaries, `imexplore` and the MeasurementSet binaries (`msexplore`,
+`mstransform`, `flagdata`, `flagmanager`, `importvla`) run on the shared task
+front end in `casa-task-runtime`, which gives each binary those same sources
+and controls,
 `--show`, `--template` (`--profile-template` on imregrid, whose `--template`
 is its template image), `--describe` and `--validate`, and a typed
 `--json-run` reply. A run started from a front-end binary's command line

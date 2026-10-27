@@ -176,7 +176,11 @@ pub fn parse_parameter_cli_overrides(
             index += 2;
             continue;
         }
-        if raw.starts_with("--") {
+        // A surface may declare a short spelling too, such as msexplore's `-o`.
+        let declared_short = !raw.starts_with("--")
+            && raw.starts_with('-')
+            && cli_flag_binding(bundle, raw).is_some();
+        if raw.starts_with("--") || declared_short {
             let (flag, inline) = raw
                 .split_once('=')
                 .map_or((raw, None), |(flag, value)| (flag, Some(value)));
@@ -511,6 +515,46 @@ mod tests {
             parse_parameter_cli_overrides(&bundle, &["--ms".into(), "target.ms".into()]).unwrap();
         assert_eq!(declared.values["vis"], patch.values["vis"]);
         assert_eq!(patch.values["flagbackup"], ParameterValue::Bool(false));
+    }
+
+    #[test]
+    fn every_declared_spelling_reaches_its_parameter_short_ones_included() {
+        // msexplore's `-o` was read as a positional before.
+        let catalog = casa_provider_contracts::builtin_surface_catalog().unwrap();
+        let mut short = 0;
+        for surface in &catalog.surfaces {
+            let bundle = casa_provider_contracts::builtin_surface_bundle(surface.id()).unwrap();
+            for binding in bundle.surface.bindings() {
+                let Some(cli) = binding.projections.cli.as_ref() else {
+                    continue;
+                };
+                for flag in cli.flags.iter().chain(&cli.false_flags) {
+                    let Some((found, _)) = cli_flag_binding(&bundle, flag) else {
+                        panic!("{}: {flag} names nothing", surface.id());
+                    };
+                    assert_eq!(found.name, binding.name, "{}: {flag}", surface.id());
+                    if !flag.starts_with("--") {
+                        short += 1;
+                    }
+                }
+            }
+        }
+        assert!(short > 0, "the catalog declares no short spelling to test");
+
+        let bundle = casa_provider_contracts::builtin_surface_bundle("msexplore").unwrap();
+        let patch = parse_parameter_cli_overrides(
+            &bundle,
+            &["-o".into(), "summary.txt".into(), "in.ms".into()],
+        )
+        .unwrap();
+        assert_eq!(
+            patch.values["output"],
+            ParameterValue::String("summary.txt".into())
+        );
+        assert_eq!(
+            patch.values["vis"],
+            ParameterValue::Array(vec![ParameterValue::String("in.ms".into())])
+        );
     }
 
     #[test]

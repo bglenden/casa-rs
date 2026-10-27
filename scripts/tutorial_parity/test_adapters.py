@@ -57,11 +57,11 @@ class CliPlanningTests(unittest.TestCase):
             ["/bin/immoments", "in.image", "--outfile", "mom0", "--moments", "0", "--includepix", "0.03,100.0"],
         )
 
-    def test_split_uses_native_ms_and_out_flags(self) -> None:
+    def test_split_runs_mstransforms_split_surface_by_casa_names(self) -> None:
         operation = Operation("split", {"vis": "in.ms", "outputvis": "out.ms", "width": 8}, ("out.ms",))
         self.assertEqual(
             build_operation_argv(operation, self.resources),
-            ["/bin/mstransform", "--ms", "in.ms", "--out", "out.ms", "--width", "8"],
+            ["/bin/mstransform", "split", "--vis", "in.ms", "--outputvis", "out.ms", "--width", "8"],
         )
 
     def test_a_return_value_is_run_through_one_json_run_request(self) -> None:
