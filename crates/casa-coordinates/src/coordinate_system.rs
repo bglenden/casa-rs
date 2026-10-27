@@ -63,6 +63,29 @@ impl CoordinateSystem {
         &self.coordinates[index]
     }
 
+    /// Replaces the coordinate at `index` with `coord`, returning the one it
+    /// replaces.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `index >= n_coordinates()`, or if `coord` has a different
+    /// number of pixel or world axes, which would move the axes of the
+    /// coordinates after it.
+    pub fn replace_coordinate(
+        &mut self,
+        index: usize,
+        coord: impl Into<CoordinateModel>,
+    ) -> CoordinateModel {
+        let coord = coord.into();
+        let old = &self.coordinates[index];
+        assert_eq!(
+            (coord.n_pixel_axes(), coord.n_world_axes()),
+            (old.n_pixel_axes(), old.n_world_axes()),
+            "a replacing coordinate has the same axes"
+        );
+        std::mem::replace(&mut self.coordinates[index], coord)
+    }
+
     /// Returns the total number of pixel axes across all coordinates.
     pub fn n_pixel_axes(&self) -> usize {
         self.coordinates.iter().map(|c| c.n_pixel_axes()).sum()
@@ -328,6 +351,47 @@ mod tests {
     use casa_types::measures::epoch::MEpoch;
     use casa_types::measures::frequency::{FrequencyRef, MFrequency};
     use casa_types::measures::position::MPosition;
+
+    fn direction() -> DirectionCoordinate {
+        DirectionCoordinate::new(
+            DirectionRef::J2000,
+            Projection::new(ProjectionType::SIN),
+            [1.0, 0.5],
+            [-1e-5, 1e-5],
+            [10.0, 20.0],
+        )
+    }
+
+    #[test]
+    fn a_replaced_direction_moves_its_reference_pixel_and_increments() {
+        let mut cs = CoordinateSystem::new();
+        cs.add_coordinate(direction());
+        cs.add_coordinate(StokesCoordinate::new(vec![StokesType::I]));
+        let before = cs.to_world(&[10.0, 20.0, 0.0]).unwrap();
+        let changed = direction()
+            .with_reference_pixel([30.0, 40.0])
+            .with_increment([-2.5e-6, 2.5e-6]);
+        let old = cs.replace_coordinate(0, changed);
+        assert_eq!(old.reference_pixel(), vec![10.0, 20.0]);
+        // The reference value now sits at the new reference pixel, and a
+        // pixel step is a quarter of what it was.
+        assert_eq!(cs.to_world(&[30.0, 40.0, 0.0]).unwrap(), before);
+        let step = cs.to_world(&[31.0, 40.0, 0.0]).unwrap();
+        let old_step = {
+            let mut old_cs = CoordinateSystem::new();
+            old_cs.add_coordinate(direction());
+            old_cs.to_world(&[10.25, 20.0]).unwrap()
+        };
+        assert!((step[0] - old_step[0]).abs() < 1e-12);
+    }
+
+    #[test]
+    #[should_panic(expected = "the same axes")]
+    fn a_replacing_coordinate_keeps_the_axes() {
+        let mut cs = CoordinateSystem::new();
+        cs.add_coordinate(direction());
+        cs.replace_coordinate(0, StokesCoordinate::new(vec![StokesType::I]));
+    }
     use casa_types::measures::{EpochRef, MeasFrame, PositionRef};
     use casa_types::{ArrayD, ArrayValue, RecordField, ScalarValue};
     use ndarray::IxDyn;

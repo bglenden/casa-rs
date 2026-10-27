@@ -28,6 +28,7 @@ use schemars::{JsonSchema, schema_for};
 use serde::{Deserialize, Serialize};
 
 use crate::fits_read::{PrimaryHdu, image_info_from_fits_header};
+use crate::regrid::{RegridMethod, RegridTemplate, Regridded, regrid};
 use crate::{
     AnyPagedImage, GaussianBeam, ImageBeamSet, ImageError, ImageInfo, ImageInterface, ImagePixel,
     ImagePixelType, ImageType, PagedImage, TempImage,
@@ -54,7 +55,6 @@ const IMAGE_ANALYSIS_TASK_SURFACES: [&str; 11] = [
 
 const SPEED_OF_LIGHT_KM_S: f64 = 299_792.458;
 const SPEED_OF_LIGHT_M_S: f64 = 299_792_458.0;
-const LINEAR_REGRID_VALID_WEIGHT_MIN: f64 = f64::MIN_POSITIVE;
 
 /// Build the current image-analysis protocol descriptor.
 pub fn image_analysis_protocol_descriptor() -> ProviderProtocolDescriptor {
@@ -389,7 +389,8 @@ pub struct ImregridRequest {
     pub template: PathBuf,
     /// Output CASA image path.
     pub output: PathBuf,
-    /// Interpolation method. Tutorial support accepts `linear` and `nearest`.
+    /// Interpolation method: `nearest`, `linear` or `cubic`, read by its
+    /// first letter as casacore reads it (`casa_images::RegridMethod`).
     #[serde(default = "default_regrid_interpolation")]
     pub interpolation: String,
     /// Replace an existing output image.
@@ -2728,81 +2729,10 @@ where
             )));
         }
     }
-    let method = request.interpolation.to_ascii_lowercase();
-    if method != "linear" && method != "nearest" {
-        return Err(ImageError::InvalidMetadata(format!(
-            "unsupported imregrid interpolation {:?}; expected linear or nearest",
-            request.interpolation
-        )));
-    }
-    if input.ndim() != template.ndim() {
-        return Err(ImageError::ShapeMismatch {
-            expected: input.shape().to_vec(),
-            got: template.shape().to_vec(),
-        });
-    }
+    let method = RegridMethod::from_casa(&request.interpolation)?;
     let output_shape = template.shape().to_vec();
-    let origin = vec![0; input.ndim()];
-    let input_data = input.get_slice(&origin, input.shape())?;
-    let input_mask = input.get_mask_slice(&origin, input.shape(), &vec![1; input.ndim()])?;
-    if method == "linear"
-        && let Some((output_data, output_mask)) =
-            regrid_four_axis_fast(input, template, &input_data, input_mask.as_ref())?
-    {
-        return save_regridded_image(
-            input,
-            template,
-            request,
-            output_shape,
-            output_data,
-            output_mask,
-        );
-    }
-    let mut output_data = ArrayD::<T>::from_elem(IxDyn(&output_shape).f(), T::from(0.0));
-    let mut output_mask = ArrayD::<bool>::from_elem(IxDyn(&output_shape).f(), false);
-    for_each_index(&output_shape, |out_index| -> Result<(), ImageError> {
-        let output_pixel = out_index
-            .iter()
-            .map(|value| *value as f64)
-            .collect::<Vec<_>>();
-        let world = template
-            .coordinates()
-            .to_world(&output_pixel)
-            .map_err(|error| {
-                ImageError::InvalidMetadata(format!(
-                    "template pixel/world conversion failed: {error}"
-                ))
-            })?;
-        let input_pixel = input.coordinates().to_pixel(&world).map_err(|error| {
-            ImageError::InvalidMetadata(format!("input world/pixel conversion failed: {error}"))
-        })?;
-        let sampled = if method == "nearest" {
-            sample_nearest(&input_data, input_mask.as_ref(), &input_pixel)
-                .map(|value| (value, true))
-        } else {
-            sample_linear_weighted(&input_data, input_mask.as_ref(), &input_pixel).map(
-                |(sum, weight_sum)| {
-                    (
-                        sum / weight_sum,
-                        weight_sum >= LINEAR_REGRID_VALID_WEIGHT_MIN,
-                    )
-                },
-            )
-        };
-        if let Some((value, valid)) = sampled {
-            output_data[IxDyn(out_index)] = T::from(value as f32);
-            output_mask[IxDyn(out_index)] = valid;
-        }
-        Ok(())
-    })?;
-    save_regridded_image(
-        input,
-        template,
-        request,
-        output_shape,
-        output_data,
-        output_mask,
-    )
+    let regridded = regrid(input, &RegridTemplate::of(template), method)?;
+    save_regridded_image(input, template, request, output_shape, regridded)
 }
 
 fn save_regridded_image<T>(
@@ -2810,21 +2740,31 @@ fn save_regridded_image<T>(
     template: &PagedImage<T>,
     request: &ImregridRequest,
     output_shape: Vec<usize>,
-    output_data: ArrayD<T>,
-    output_mask: ArrayD<bool>,
+    regridded: Regridded<T>,
 ) -> Result<ImageRegridSummary, ImageError>
 where
     T: ImagePixel + Into<f64> + From<f32> + Copy,
 {
+    let Regridded {
+        data: output_data,
+        mask: output_mask,
+        coordinates,
+        template_coordinates,
+        ..
+    } = regridded;
     let mut output = TempImage::<T>::new(
         output_shape.clone(),
-        template.coordinates().clone(),
+        coordinates,
         casa_lattices::TempStoragePolicy::Auto {
             memory_budget_bytes: 64 * 1024 * 1024,
             scratch: casa_lattices::ScratchSpace::SystemTemp,
         },
     )?;
-    let legacy_coordinates = template.table().keywords().get("coords").cloned();
+    // The template's own record, kept verbatim unless a coordinate of one
+    // pixel came from the input.
+    let legacy_coordinates = template_coordinates
+        .then(|| template.table().keywords().get("coords").cloned())
+        .flatten();
     output.set_units(input.units())?;
     output.set_image_info(&input.image_info()?)?;
     output.set_misc_info(input.misc_info())?;
@@ -2863,7 +2803,12 @@ fn feather_typed(
         }
     }
     let high_shape = high.shape().to_vec();
-    let (low_data, low_mask) = regrid_image_to_template_f32(low, high)?;
+    // Feather::setSDImage regrids the low-resolution image linearly.
+    let Regridded {
+        data: low_data,
+        mask: low_mask,
+        ..
+    } = regrid(low, &RegridTemplate::of(high), RegridMethod::Linear)?;
     let origin = vec![0; high.ndim()];
     let high_data = high.get_slice(&origin, &high_shape)?;
     let high_mask = high.get_mask_slice(&origin, &high_shape, &vec![1; high.ndim()])?;
@@ -2950,346 +2895,6 @@ fn feather_typed(
         sdfactor: request.sdfactor,
         valid_pixels: output_mask.iter().filter(|value| **value).count(),
     })
-}
-
-fn regrid_image_to_template_f32(
-    input: &PagedImage<f32>,
-    template: &PagedImage<f32>,
-) -> Result<(ArrayD<f32>, ArrayD<bool>), ImageError> {
-    if input.ndim() != template.ndim() {
-        return Err(ImageError::ShapeMismatch {
-            expected: input.shape().to_vec(),
-            got: template.shape().to_vec(),
-        });
-    }
-    let output_shape = template.shape().to_vec();
-    let origin = vec![0; input.ndim()];
-    let input_data = input.get_slice(&origin, input.shape())?;
-    let input_mask = input.get_mask_slice(&origin, input.shape(), &vec![1; input.ndim()])?;
-    if let Some(result) = regrid_four_axis_fast(input, template, &input_data, input_mask.as_ref())?
-    {
-        return Ok(result);
-    }
-    let mut output_data = ArrayD::<f32>::zeros(IxDyn(&output_shape).f());
-    let mut output_mask = ArrayD::<bool>::from_elem(IxDyn(&output_shape).f(), false);
-    for_each_index(&output_shape, |out_index| -> Result<(), ImageError> {
-        let output_pixel = out_index
-            .iter()
-            .map(|value| *value as f64)
-            .collect::<Vec<_>>();
-        let world = template
-            .coordinates()
-            .to_world(&output_pixel)
-            .map_err(|error| {
-                ImageError::InvalidMetadata(format!(
-                    "template pixel/world conversion failed: {error}"
-                ))
-            })?;
-        let input_pixel = input.coordinates().to_pixel(&world).map_err(|error| {
-            ImageError::InvalidMetadata(format!("input world/pixel conversion failed: {error}"))
-        })?;
-        if let Some((sum, weight_sum)) =
-            sample_linear_weighted(&input_data, input_mask.as_ref(), &input_pixel)
-        {
-            output_data[IxDyn(out_index)] = (sum / weight_sum) as f32;
-            output_mask[IxDyn(out_index)] = weight_sum >= LINEAR_REGRID_VALID_WEIGHT_MIN;
-        }
-        Ok(())
-    })?;
-    Ok((output_data, output_mask))
-}
-
-type AxisLinearMap = Option<(usize, usize, f64)>;
-type RegridArrayPair<T> = (ArrayD<T>, ArrayD<bool>);
-type RegridFastResult<T> = Result<Option<RegridArrayPair<T>>, ImageError>;
-
-fn regrid_four_axis_fast<T>(
-    input: &PagedImage<T>,
-    template: &PagedImage<T>,
-    input_data: &ArrayD<T>,
-    input_mask: Option<&ArrayD<bool>>,
-) -> RegridFastResult<T>
-where
-    T: ImagePixel + Into<f64> + From<f32> + Copy,
-{
-    if input.ndim() != 4 || template.ndim() != 4 {
-        return Ok(None);
-    }
-    let output_shape = template.shape().to_vec();
-    let mut x_map = Vec::with_capacity(output_shape[0]);
-    for x in 0..output_shape[0] {
-        let world = template
-            .coordinates()
-            .to_world(&[x as f64, 0.0, 0.0, 0.0])
-            .map_err(|error| {
-                ImageError::InvalidMetadata(format!(
-                    "template pixel/world conversion failed: {error}"
-                ))
-            })?;
-        let input_pixel = input.coordinates().to_pixel(&world).map_err(|error| {
-            ImageError::InvalidMetadata(format!("input world/pixel conversion failed: {error}"))
-        })?;
-        x_map.push(axis_linear_map(input_pixel[0], input.shape()[0]));
-    }
-    let mut y_map = Vec::with_capacity(output_shape[1]);
-    for y in 0..output_shape[1] {
-        let world = template
-            .coordinates()
-            .to_world(&[0.0, y as f64, 0.0, 0.0])
-            .map_err(|error| {
-                ImageError::InvalidMetadata(format!(
-                    "template pixel/world conversion failed: {error}"
-                ))
-            })?;
-        let input_pixel = input.coordinates().to_pixel(&world).map_err(|error| {
-            ImageError::InvalidMetadata(format!("input world/pixel conversion failed: {error}"))
-        })?;
-        y_map.push(axis_linear_map(input_pixel[1], input.shape()[1]));
-    }
-    let mut chan_map = Vec::with_capacity(output_shape[3]);
-    for chan in 0..output_shape[3] {
-        let world = template
-            .coordinates()
-            .to_world(&[0.0, 0.0, 0.0, chan as f64])
-            .map_err(|error| {
-                ImageError::InvalidMetadata(format!(
-                    "template pixel/world conversion failed: {error}"
-                ))
-            })?;
-        let input_pixel = input.coordinates().to_pixel(&world).map_err(|error| {
-            ImageError::InvalidMetadata(format!("input world/pixel conversion failed: {error}"))
-        })?;
-        chan_map.push(axis_linear_map(input_pixel[3], input.shape()[3]));
-    }
-    let mut output_data = ArrayD::<T>::from_elem(IxDyn(&output_shape).f(), T::from(0.0));
-    let mut output_mask = ArrayD::<bool>::from_elem(IxDyn(&output_shape).f(), false);
-    for x in 0..output_shape[0] {
-        let Some(x_axis) = x_map[x] else { continue };
-        for y in 0..output_shape[1] {
-            let Some(y_axis) = y_map[y] else { continue };
-            for stokes in 0..output_shape[2] {
-                if stokes >= input.shape()[2] {
-                    continue;
-                }
-                for chan in 0..output_shape[3] {
-                    let Some(chan_axis) = chan_map[chan] else {
-                        continue;
-                    };
-                    if let Some((sum, weight_sum)) = sample_four_axis_linear_weighted(
-                        input_data, input_mask, x_axis, y_axis, stokes, chan_axis,
-                    ) {
-                        let value = sum / weight_sum;
-                        output_data[IxDyn(&[x, y, stokes, chan])] = T::from(value as f32);
-                        output_mask[IxDyn(&[x, y, stokes, chan])] =
-                            weight_sum >= LINEAR_REGRID_VALID_WEIGHT_MIN;
-                    }
-                }
-            }
-        }
-    }
-    Ok(Some((output_data, output_mask)))
-}
-
-fn axis_linear_map(coordinate: f64, len: usize) -> AxisLinearMap {
-    if !coordinate.is_finite() {
-        return None;
-    }
-    if len == 1 {
-        return (coordinate.abs() <= 0.5).then_some((0, 0, 0.0));
-    }
-    if coordinate < -0.5 || coordinate > (len as f64 - 0.5) {
-        return None;
-    }
-    let coordinate = coordinate.clamp(0.0, (len - 1) as f64);
-    let lo = coordinate.floor() as usize;
-    let hi = (lo + 1).min(len - 1);
-    Some((lo, hi, coordinate - lo as f64))
-}
-
-fn sample_four_axis_linear_weighted<T>(
-    data: &ArrayD<T>,
-    mask: Option<&ArrayD<bool>>,
-    x_axis: (usize, usize, f64),
-    y_axis: (usize, usize, f64),
-    stokes: usize,
-    chan_axis: (usize, usize, f64),
-) -> Option<(f64, f64)>
-where
-    T: Into<f64> + Copy,
-{
-    let axes = [
-        [(x_axis.0, 1.0 - x_axis.2), (x_axis.1, x_axis.2)],
-        [(y_axis.0, 1.0 - y_axis.2), (y_axis.1, y_axis.2)],
-        [(stokes, 1.0), (stokes, 0.0)],
-        [(chan_axis.0, 1.0 - chan_axis.2), (chan_axis.1, chan_axis.2)],
-    ];
-    let mut index = [0usize; 4];
-    let mut sum = 0.0;
-    let mut weight_sum = 0.0;
-    let mut state = LinearSampleState {
-        index: &mut index,
-        sum: &mut sum,
-        weight_sum: &mut weight_sum,
-    };
-    sample_four_axis_recursive(data, mask, &axes, 0, 1.0, &mut state);
-    (weight_sum > 0.0).then_some((sum, weight_sum))
-}
-
-struct LinearSampleState<'a> {
-    index: &'a mut [usize],
-    sum: &'a mut f64,
-    weight_sum: &'a mut f64,
-}
-
-fn sample_four_axis_recursive<T>(
-    data: &ArrayD<T>,
-    mask: Option<&ArrayD<bool>>,
-    axes: &[[(usize, f64); 2]; 4],
-    axis: usize,
-    weight: f64,
-    state: &mut LinearSampleState<'_>,
-) where
-    T: Into<f64> + Copy,
-{
-    if axis == 4 {
-        if let Some(mask) = mask
-            && !mask[IxDyn(state.index)]
-        {
-            return;
-        }
-        let value = data[IxDyn(state.index)].into();
-        if value.is_finite() {
-            *state.sum += value * weight;
-            *state.weight_sum += weight;
-        }
-        return;
-    }
-    for (coordinate, axis_weight) in axes[axis] {
-        if axis_weight == 0.0 {
-            continue;
-        }
-        state.index[axis] = coordinate;
-        sample_four_axis_recursive(data, mask, axes, axis + 1, weight * axis_weight, state);
-    }
-}
-
-fn sample_nearest<T>(data: &ArrayD<T>, mask: Option<&ArrayD<bool>>, pixel: &[f64]) -> Option<f64>
-where
-    T: Into<f64> + Copy,
-{
-    let mut index = Vec::with_capacity(pixel.len());
-    for (axis, coordinate) in pixel.iter().copied().enumerate() {
-        let rounded = coordinate.round();
-        if !(rounded.is_finite() && rounded >= 0.0 && rounded < data.shape()[axis] as f64) {
-            return None;
-        }
-        index.push(rounded as usize);
-    }
-    if let Some(mask) = mask
-        && !mask[IxDyn(&index)]
-    {
-        return None;
-    }
-    Some(data[IxDyn(&index)].into())
-}
-
-fn sample_linear_weighted<T>(
-    data: &ArrayD<T>,
-    mask: Option<&ArrayD<bool>>,
-    pixel: &[f64],
-) -> Option<(f64, f64)>
-where
-    T: Into<f64> + Copy,
-{
-    let mut axes = Vec::<[(usize, f64); 2]>::with_capacity(pixel.len());
-    for (axis, coordinate) in pixel.iter().copied().enumerate() {
-        if !coordinate.is_finite() {
-            return None;
-        }
-        let len = data.shape()[axis];
-        if len == 1 {
-            if coordinate.abs() > 0.5 {
-                return None;
-            }
-            axes.push([(0, 1.0), (0, 0.0)]);
-            continue;
-        }
-        if coordinate < -0.5 || coordinate > (len as f64 - 0.5) {
-            return None;
-        }
-        let coordinate = coordinate.clamp(0.0, (len - 1) as f64);
-        let lo = coordinate.floor() as usize;
-        let hi = (lo + 1).min(len - 1);
-        let frac = coordinate - lo as f64;
-        axes.push([(lo, 1.0 - frac), (hi, frac)]);
-    }
-    let mut index = vec![0usize; pixel.len()];
-    let mut sum = 0.0;
-    let mut weight_sum = 0.0;
-    let mut state = LinearSampleState {
-        index: &mut index,
-        sum: &mut sum,
-        weight_sum: &mut weight_sum,
-    };
-    sample_linear_recursive(data, mask, &axes, 0, 1.0, &mut state);
-    (weight_sum > 0.0).then_some((sum, weight_sum))
-}
-
-fn sample_linear_recursive<T>(
-    data: &ArrayD<T>,
-    mask: Option<&ArrayD<bool>>,
-    axes: &[[(usize, f64); 2]],
-    axis: usize,
-    weight: f64,
-    state: &mut LinearSampleState<'_>,
-) where
-    T: Into<f64> + Copy,
-{
-    if axis == axes.len() {
-        if let Some(mask) = mask
-            && !mask[IxDyn(state.index)]
-        {
-            return;
-        }
-        let value = data[IxDyn(state.index)].into();
-        if value.is_finite() {
-            *state.sum += value * weight;
-            *state.weight_sum += weight;
-        }
-        return;
-    }
-    for (coordinate, axis_weight) in axes[axis] {
-        if axis_weight == 0.0 {
-            continue;
-        }
-        state.index[axis] = coordinate;
-        sample_linear_recursive(data, mask, axes, axis + 1, weight * axis_weight, state);
-    }
-}
-
-fn for_each_index<F>(shape: &[usize], mut f: F) -> Result<(), ImageError>
-where
-    F: FnMut(&[usize]) -> Result<(), ImageError>,
-{
-    if shape.is_empty() {
-        return f(&[]);
-    }
-    let mut index = vec![0usize; shape.len()];
-    loop {
-        f(&index)?;
-        let mut axis = shape.len();
-        loop {
-            if axis == 0 {
-                return Ok(());
-            }
-            axis -= 1;
-            index[axis] += 1;
-            if index[axis] < shape[axis] {
-                break;
-            }
-            index[axis] = 0;
-        }
-    }
 }
 
 fn feather_crossover_weight(
