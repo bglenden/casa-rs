@@ -75,6 +75,14 @@ impl Writer {
             return Ok(());
         }
         let lock = TableWriteLock::acquire_to_reread(path, 0).map_err(storage)?;
+        self.reopen(path, rows)?;
+        self.lock = Some(lock);
+        Ok(())
+    }
+
+    /// Open the handle afresh, refusing a MAIN whose rows the session's
+    /// grids no longer address.
+    fn reopen(&mut self, path: &Path, rows: usize) -> Result<(), ObservationError> {
         let ms = MeasurementSet::open(path).map_err(storage)?;
         if ms.main_table().row_count() != rows {
             return Err(request_error(format!(
@@ -84,7 +92,6 @@ impl Writer {
             )));
         }
         self.ms = ms;
-        self.lock = Some(lock);
         Ok(())
     }
 }
@@ -182,10 +189,17 @@ impl Msv2Update {
         request: &AccessRequest,
         targets: &[ResolvedTarget],
     ) -> Result<usize, ObservationError> {
-        if writer.lock.is_none() {
-            // Cleared before MAIN's lock is taken, so SOURCE's lock is
-            // waited for as casacore waits; under the lock, below, there is
-            // then nothing left to clear.
+        let scratch_targets = targets
+            .iter()
+            .map(|target| scratch(&writer.ms, target).map(|column| column.is_some()))
+            .collect::<Result<Vec<_>, _>>()?;
+        if writer.lock.is_none() && scratch_targets.contains(&true) {
+            // Cleared before MAIN's lock is taken, from a handle opened
+            // now, so SOURCE's lock is waited for as casacore waits; under
+            // the lock, below, there is then nothing left to clear. While
+            // another updater is live the lock is held, and SOURCE's is
+            // tried once, as while any holder of MAIN's lock clears.
+            writer.reopen(&self.path, self.rows)?;
             for target in targets {
                 clear(&mut writer.ms, target, None)?;
             }
