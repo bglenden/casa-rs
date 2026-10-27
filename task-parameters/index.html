@@ -846,7 +846,7 @@ designed to paste cleanly into Markdown:</p>
 <span class="n">format</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span>
 <span class="n">surface</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"imager"</span>
 <span class="n">kind</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"task"</span>
-<span class="n">contract</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">25</span>
+<span class="n">contract</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">26</span>
 
 <span class="k">[parameters]</span>
 <span class="n">vis</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"data/target.ms"</span>
@@ -893,8 +893,7 @@ CASA-readable</strong> and cannot also be supplied as <code>cfcache</code>.</p>
 <p><code>native_cf_policy</code> defaults to <code>"reuse-only"</code>: an incomplete or invalid cache
 fails without generation. <code>"generate-missing"</code> creates absent cells and retains
 valid completed cells; corruption remains an error. <code>"regenerate"</code> explicitly
-replaces all requested cells and carries the provider's overwrite safety
-classification. Neither source falls back to the other. These parameters are
+replaces all requested cells. Neither source falls back to the other. These parameters are
 available through the same CLI flags, task JSON, sparse profiles, and generated
 Python wrapper. Profiles store the requested paths/action/bounds, not compiled
 plans, generated cells, cache inventory, or publication state. This exposes the
@@ -926,10 +925,16 @@ Defaults.</p>
 &lt;workspace&gt;/.casa-rs/parameters/&lt;surface-id&gt;/last-successful.toml
 </code></pre></div>
 
-<p>Last attempted is saved after resolution and validation, immediately before
-execution. Last successful changes only after a successful result. Cancellation
-or failure leaves Last successful unchanged. <code>--no-save-last</code> (or
-<code>save_last=False</code> in Python) skips both writes for one run.</p>
+<p>Last records command-line runs. Last attempted is saved after resolution and
+validation, immediately before execution. Last successful changes only after a
+successful result. Cancellation or failure leaves Last successful unchanged.
+<code>--no-save-last</code> skips both writes for one run.</p>
+<p>A Python task call saves neither file; reading an existing Last
+(<code>parameters.last(...)</code>) and writing one explicitly
+(<code>TaskParameters.write_last()</code>) remain available. A provider binary's
+<code>--json-run</code> reads and writes no Last either. Each run therefore has exactly
+one owner of Last: <code>casars run</code> for the runs it launches, the task front end
+for a binary's own command line.</p>
 <p><code>casa-task-runtime::ParameterRuntime</code> owns source resolution and managed Last
 persistence; the CLI and Python projections call that boundary rather than
 keeping their own Last-state logic.</p>
@@ -945,8 +950,6 @@ the state location, not the workspace used for relative task paths.</p>
   [--workspace DIR]
   [--save-params FILE]
   [--no-save-last]
-  [--confirm-overwrite]
-  [--confirm-mutation]
 </code></pre></div>
 
 <p>The parameter utilities are:</p>
@@ -959,12 +962,23 @@ casars params describe &lt;parameter-or-surface&gt;
 
 <p><code>template</code> writes a documented example with defaults and units in comments;
 commented defaults are not active overrides. Overrides use the generated CLI
-flag spellings listed in the generated parameter reference. <code>--confirm-overwrite</code>
-and <code>--confirm-mutation</code> are runtime safety confirmations for tasks whose
-safety rules require them; they are never saved in a profile.</p>
+flag spellings listed in the generated parameter reference, or the parameter's
+own name, such as <code>--vis</code> or <code>--threshold</code>.</p>
+<p>There are no run-time confirmations. CASA's own parameters are the consent:
+<code>overwrite=true</code> replaces a product, and a task that changes data in place
+does so, as in CASA. Where CASA guards a change, casa-rs does too, for example
+<code>applycal</code> and <code>flagdata</code> saving the flags to a new flag version first
+(<code>flagbackup</code>, default on). <code>casars run</code> still accepts the retired
+<code>--confirm-overwrite</code> and <code>--confirm-mutation</code> and ignores them until the
+launcher is retired (#931).</p>
 <p>Direct provider binaries continue to expose their idiomatic execution
 transports (<code>--protocol-info</code>, <code>--json-schema</code>, <code>--json-run</code>); source selection
-and profile lifecycle are owned by <code>casars run</code> and <code>casars params</code>.</p>
+and profile lifecycle are owned by <code>casars run</code> and <code>casars params</code>. The
+shared task front end in <code>casa-task-runtime</code>, which the binaries move onto
+next, gives each binary those same sources and controls, <code>--show</code>,
+<code>--template</code> (<code>--profile-template</code> on imregrid, whose <code>--template</code> is its
+template image), <code>--describe</code> and <code>--validate</code>, and a typed <code>--json-run</code> reply
+(<a href="../provider-contracts/#the-shared-task-front-end-and-typed-replies">provider contracts</a>).</p>
 <h2 id="python-contract">Python contract<a class="headerlink" href="#python-contract" title="Permanent link">&para;</a></h2>
 <p>The Python API exposes the same profile model:</p>
 <div class="codehilite"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">casars</span><span class="w"> </span><span class="kn">import</span> <span class="n">parameters</span><span class="p">,</span> <span class="n">tasks</span>
@@ -982,7 +996,6 @@ and profile lifecycle are owned by <code>casars run</code> and <code>casars para
     <span class="s2">"imager"</span><span class="p">,</span>
     <span class="n">parameters</span><span class="o">=</span><span class="n">p</span><span class="p">,</span>
     <span class="n">workspace</span><span class="o">=</span><span class="s2">"project"</span><span class="p">,</span>
-    <span class="n">save_last</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
 <span class="p">)</span>
 </code></pre></div>
 
@@ -1002,7 +1015,7 @@ second provider-specific task API.</p>
 <h2 id="what-profiles-intentionally-exclude">What profiles intentionally exclude<a class="headerlink" href="#what-profiles-intentionally-exclude" title="Permanent link">&para;</a></h2>
 <ul>
 <li><code>casars.data.Image</code> and <code>casars.data.Table</code> object-handle lifecycle</li>
-<li>progress files, executable overrides, confirmations, and telemetry</li>
+<li>progress files, executable overrides, Last controls, and telemetry</li>
 <li>saved region and mask mutations, which are dataset artifacts</li>
 <li>an exact resolved historical replay record</li>
 </ul>

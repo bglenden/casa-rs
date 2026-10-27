@@ -727,13 +727,13 @@
 <a href=#727 id=727 data-nosnippet>727</a>            reason: <span class="string">"input_table and output_table must differ"</span>.to_string(),
 <a href=#728 id=728 data-nosnippet>728</a>        });
 <a href=#729 id=729 data-nosnippet>729</a>    }
-<a href=#730 id=730 data-nosnippet>730</a>    <span class="kw">if </span>output_root.exists() {
-<a href=#731 id=731 data-nosnippet>731</a>        fs::remove_dir_all(output_root)
-<a href=#732 id=732 data-nosnippet>732</a>            .or_else(|<span class="kw">_</span>| fs::remove_file(output_root))
-<a href=#733 id=733 data-nosnippet>733</a>            .map_err(|error| FluxScaleError::PrepareOutput {
-<a href=#734 id=734 data-nosnippet>734</a>                path: output_root.display().to_string(),
-<a href=#735 id=735 data-nosnippet>735</a>                reason: error.to_string(),
-<a href=#736 id=736 data-nosnippet>736</a>            })<span class="question-mark">?</span>;
+<a href=#730 id=730 data-nosnippet>730</a>    <span class="comment">// CASA's fluxscale refuses an existing fluxtable unless `append=True`;
+<a href=#731 id=731 data-nosnippet>731</a>    // casa-rs has no append (#931).
+<a href=#732 id=732 data-nosnippet>732</a>    </span><span class="kw">if </span>output_root.exists() {
+<a href=#733 id=733 data-nosnippet>733</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(FluxScaleError::PrepareOutput {
+<a href=#734 id=734 data-nosnippet>734</a>            path: output_root.display().to_string(),
+<a href=#735 id=735 data-nosnippet>735</a>            reason: <span class="string">"fluxtable exists; please specify a different name"</span>.to_string(),
+<a href=#736 id=736 data-nosnippet>736</a>        });
 <a href=#737 id=737 data-nosnippet>737</a>    }
 <a href=#738 id=738 data-nosnippet>738</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(parent) = output_root.parent() {
 <a href=#739 id=739 data-nosnippet>739</a>        fs::create_dir_all(parent).map_err(|error| FluxScaleError::PrepareOutput {

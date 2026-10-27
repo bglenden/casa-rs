@@ -681,9 +681,11 @@ overrides, saves Last state, and launches the provider. See
 files, and the <a href="../reference/task-parameters/">generated parameter reference</a>
 for every parameter and its CLI flag.</p>
 <p>Use a writable copy of the dataset when you intend to apply calibration,
-because <code>applycal</code> (and <code>calibrate --mode apply</code>) writes <code>CORRECTED_DATA</code>.
-That mutation is a declared safety rule, so the run needs
-<code>--confirm-mutation</code>.</p>
+because <code>applycal</code> (and <code>calibrate --mode apply</code>) writes <code>CORRECTED_DATA</code> in
+place, as CASA's does. As in CASA, a <code>calflag</code> run first saves the flags to the
+next <code>applycal_N</code> flag version (<code>flagbackup</code>, default on), so
+<code>flagmanager</code> can restore them; <code>--no-flagbackup</code> skips it, and <code>calonly</code> and
+<code>trial</code> change no flags and save none.</p>
 <h2 id="ngc5921ms-walkthrough"><code>ngc5921.ms</code> walkthrough<a class="headerlink" href="#ngc5921ms-walkthrough" title="Permanent link">&para;</a></h2>
 <p>Expected field roles:</p>
 <ul>
@@ -715,7 +717,7 @@ cp<span class="w"> </span>-R<span class="w"> </span><span class="s2">"</span><sp
 </ol>
 <p><code>bash
    casars run applycal --ms ngc5921.ms \
-     --gaintables ngc5921.G0,ngc5921.B0 --field 0 --confirm-mutation</code></p>
+     --gaintables ngc5921.G0,ngc5921.B0 --field 0</code></p>
 <ol>
 <li>Inspect the solutions and the corrected data with <code>calibrate --mode stats</code>
    or <code>--mode summary</code>, <code>plotcal</code>, and <code>plotms</code>.</li>
@@ -729,8 +731,14 @@ and <code>--save-params FILE</code> to keep a run's resolved profile for reuse w
 <h2 id="python">Python<a class="headerlink" href="#python" title="Permanent link">&para;</a></h2>
 <p>The same surfaces are generated CASA-named functions under <code>casars.tasks</code>
 (<code>casars.tasks.gaincal(...)</code>, <code>casars.tasks.applycal(...)</code>, and so on), and
-<code>casars.tasks.run("gaincal", ...)</code> accepts the same parameters. Runtime safety
-confirmations are keyword arguments such as <code>confirm_mutation=True</code>.</p>
+<code>casars.tasks.run("gaincal", ...)</code> accepts the same parameters. CASA's
+parameters are the consent; there are no separate confirmations.</p>
+<p><code>overwrite=True</code> replaces only the <code>-o</code> report today. A run that would write
+a calibration table or MeasurementSet that already exists is refused whatever
+<code>overwrite</code> says: gaincal, bandpass and gencal caltables, the fluxscale
+table, and the corrected-data export. Choose a new name, or remove the old
+product first. Bringing these in line with CASA, whose gaincal replaces an
+existing caltable, is <a href="https://github.com/bglenden/casa-rs/issues/945">#945</a>.</p>
 <h2 id="current-limitations">Current limitations<a class="headerlink" href="#current-limitations" title="Permanent link">&para;</a></h2>
 <ul>
 <li>there is not yet a dedicated <code>setjy</code> task</li>

@@ -706,6 +706,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#the-shared-task-front-end-and-typed-replies" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The shared task front end and typed replies
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#shared-versioned-component-schemas" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -971,8 +982,10 @@ a catalog concept even when a legacy CLI happens to spell them alike.</p>
 name on that surface.</p>
 <p>Concept roles are part of the contract. A path that is safe as an input does not become
 an output merely because both serialize as strings. Runtime-only controls such
-as executable overrides, progress paths, telemetry, and safety confirmations
-are explicitly non-persistable.</p>
+as executable overrides, progress paths, telemetry, and Last controls are
+explicitly non-persistable. There are no run-time confirmations: CASA's own
+parameters, such as <code>overwrite</code>, are the consent to replace or change data
+(#931).</p>
 <p>A task <code>SurfaceDefinition</code> maps the resolved CASA-named parameter set into a
 one-shot provider invocation.</p>
 <p>Every optional parameter has an explicit default. Conditional defaults depend
@@ -981,8 +994,8 @@ an explicit suggestion or override, never an undeclared default.</p>
 <p>Semantic evolution is guarded by the append-only fingerprints in
 <code>resources/parameter-contract-history.json</code>. Changing a concept's type,
 normalization, constraints, units, role, or persistence requires a new semantic
-revision. Changing a surface's bindings, defaults, predicates, safety rules,
-provider projections, or migrations requires a new surface contract version.
+revision. Changing a surface's bindings, defaults, predicates, provider
+projections, or migrations requires a new surface contract version.
 Run <code>scripts/check-parameter-contract-history.py --update</code> only after making and
 reviewing those version bumps; the normal architecture gate is check-only.</p>
 <h2 id="sparse-parameter-documents">Sparse Parameter Documents<a class="headerlink" href="#sparse-parameter-documents" title="Permanent link">&para;</a></h2>
@@ -1013,6 +1026,46 @@ expose no second schema-discovery action or cached presentation payload.</p>
 stdin/file ingestion, JSON decoding and encoding, and stable failure wording.
 Provider CLIs retain only their human argument projection and typed execution
 function.</p>
+<h2 id="the-shared-task-front-end-and-typed-replies">The shared task front end and typed replies<a class="headerlink" href="#the-shared-task-front-end-and-typed-replies" title="Permanent link">&para;</a></h2>
+<p><code>casa-task-runtime::TaskFrontEnd</code> is the one entry every task binary's <code>main</code>
+is to call; the binaries move onto it by family (#931, PRs 2b–2d), and until
+then use <code>TaskCliHost</code>. The front end is generic over the binary's execution
+callback and owns the surface's declared flags, the base sources,
+<code>--workspace</code>, <code>--unset</code>, <code>--save-params</code>, <code>--no-save-last</code>, the
+non-executing <code>--show</code>, <code>--template</code> (also <code>--profile-template</code>), <code>--describe</code>
+and <code>--validate</code>, and the machine actions. A spelling the surface declares is
+always its parameter, so imregrid's <code>--template</code> names its template image and
+<code>--profile-template</code> gives its profile. A family binary's first word names the
+surface it runs, such as <code>mstransform split</code>; the first hosted surface runs
+otherwise.</p>
+<p>The binary's <code>main</code> owns the process. It reads the logging configuration from
+the environment (<code>CasaLoggingConfig::from_env</code>) and passes it, with its
+arguments and its standard output and error, to <code>TaskFrontEnd::main</code>. The front
+end reads no environment variable (ADR-0016): it applies the logging flags,
+and for a run installs logging that writes to the stderr it was handed and to
+a log table only when one is named. An action that runs nothing installs no
+logging, so a bad <code>CASA_RS_LOG_*</code> setting refuses only a run.</p>
+<p><code>--json-run SOURCE</code> takes a <code>TaskRunRequest</code>, <code>{"surface": ..., "values":
+{...}}</code> with the CASA-named values the caller set, and resolves it against the
+surface's contract inside the binary. It writes one <code>TaskReply</code> to stdout:</p>
+<ul>
+<li><code>{"status": "succeeded", "surface", "value", "result"}</code>, where <code>value</code> is
+  what CASA's task returns (<code>null</code> for <code>None</code>), kept ahead of the provider's
+  full <code>result</code>, from which products are projected;</li>
+<li><code>{"status": "failed", "surface", "kind", "message", "parameter"?}</code>, where
+  <code>kind</code> is <code>validation</code> (refused before anything changed; Python
+  <code>ValueError</code>) or <code>execution</code> (Python <code>RuntimeError</code>).</li>
+</ul>
+<p>The exit status agrees with the reply: 0 for success, 2 for a validation
+failure and 1 for an execution failure. <code>classify_task_exit</code> reads a finished
+process from its exit status and stdout alone, never stderr, and keeps a launch
+failure, a signal and a malformed reply distinct from the task's own failures.
+A provider contract carries both schemas under <code>semantic.front_end</code> once its
+binary runs on the front end.</p>
+<p>Last has one owner on each path: a command line run of a binary records Last
+before the callback and Last Successful only after success, unless
+<code>--no-save-last</code>; <code>--json-run</code> reads and writes neither. <code>casars run</code> owns Last
+for the runs it launches, and Python task calls save none.</p>
 <h2 id="shared-versioned-component-schemas">Shared Versioned Component Schemas<a class="headerlink" href="#shared-versioned-component-schemas" title="Permanent link">&para;</a></h2>
 <p>Protocol-independent basic types have versioned shared schemas, reused across
 task and object surfaces rather than redefined per provider. Component
