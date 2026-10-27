@@ -179,6 +179,50 @@ fn a_refused_report_runs_nothing() {
     assert!(!PathBuf::from(versions).exists());
 }
 
+#[test]
+fn overwrite_reaches_the_report_but_not_the_caltable() {
+    // As the calibration guide says: `--overwrite` replaces the `-o` report
+    // and an existing caltable is refused and kept (#945).
+    let dir = TempDir::new().unwrap();
+    let ms = common::create_gain_solve_fixture_ms(dir.path(), common::SyntheticGainFixtureKind::G);
+    let first_table = dir.path().join("first.gcal");
+    let report = dir.path().join("report.txt");
+    let solve = |table: &Path| {
+        Command::new(env!("CARGO_BIN_EXE_calibrate"))
+            .arg("solve-gain")
+            .arg("--ms")
+            .arg(&ms)
+            .arg("--out")
+            .arg(table)
+            .args(["--refant", "0", "--minsnr", "0", "--minblperant", "0"])
+            .arg("-o")
+            .arg(&report)
+            .arg("--overwrite")
+            .output()
+            .unwrap()
+    };
+    std::fs::write(&report, "an earlier report").unwrap();
+    let first = solve(&first_table);
+    assert!(
+        first.status.success(),
+        "{}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+    let replaced = std::fs::read_to_string(&report).unwrap();
+    assert_ne!(
+        replaced, "an earlier report",
+        "overwrite replaces the report"
+    );
+
+    let before = snapshot(&first_table);
+    let second = solve(&first_table);
+    assert!(!second.status.success());
+    let stderr = String::from_utf8_lossy(&second.stderr);
+    assert!(stderr.contains("output already exists"), "{stderr}");
+    assert_eq!(snapshot(&first_table), before);
+    assert_eq!(std::fs::read_to_string(&report).unwrap(), replaced);
+}
+
 fn applycal(ms: &Path, table: &Path, selection: MsSelection, apply_mode: ApplyMode) {
     CalibrationTaskRequest::ExecuteApply(ExecuteApplyTaskRequest {
         measurement_set: ms.to_path_buf(),

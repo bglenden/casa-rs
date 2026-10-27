@@ -82,7 +82,14 @@ and `--save-params FILE` to keep a run's resolved profile for reuse with
 The same surfaces are generated CASA-named functions under `casars.tasks`
 (`casars.tasks.gaincal(...)`, `casars.tasks.applycal(...)`, and so on), and
 `casars.tasks.run("gaincal", ...)` accepts the same parameters. CASA's
-parameters are the consent: `overwrite=True` replaces a calibration table.
+parameters are the consent; there are no separate confirmations.
+
+`overwrite=True` replaces only the `-o` report today. A run that would write
+a calibration table or MeasurementSet that already exists is refused whatever
+`overwrite` says: gaincal, bandpass and gencal caltables, the fluxscale
+table, and the corrected-data export. Choose a new name, or remove the old
+product first. Bringing these in line with CASA, whose gaincal replaces an
+existing caltable, is [#945](https://github.com/bglenden/casa-rs/issues/945).
 
 ## Current limitations
 
