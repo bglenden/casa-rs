@@ -356,6 +356,7 @@ mod tests {
                     request_kind: "run".into(),
                     result_kind: Some("run".into()),
                 }],
+                front_end: None,
             },
             components: casa_provider_contracts::merged_components([
                 &request_schema,

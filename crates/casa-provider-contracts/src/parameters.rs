@@ -18,11 +18,9 @@ pub const FIELD_CONCEPT_ID: &str = "ms.selection.field";
 pub const SPW_CONCEPT_ID: &str = "ms.selection.spw";
 pub const OVERWRITE_CONCEPT_ID: &str = "output.overwrite";
 
-/// The surfaces whose `overwrite=true` needs no confirmation, the one
-/// recorded exception to the fail-closed overwrite rule (owner decision,
-/// 2026-10-26, #841): CASA's `simobserve` defaults it to true and replaces
-/// only the files it writes inside its own project directory, so an
-/// unchanged CASA script must run without confirming.
+/// The surfaces whose `overwrite` defaults to true, as CASA's do: CASA's
+/// `simobserve` replaces only the files it writes inside its own project
+/// directory. Every other `overwrite` defaults to false (#931).
 pub const PROJECT_DIRECTORY_OVERWRITE_SURFACES: [&str; 1] = ["simobserve"];
 
 /// Stable semantic identity of a parameter concept.

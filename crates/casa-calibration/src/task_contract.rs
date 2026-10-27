@@ -50,6 +50,7 @@ pub fn calibration_task_schema_bundle() -> TaskProviderContract {
             request_schema: request_schema.clone(),
             result_schema: result_schema.clone(),
             operations: calibration_task_operations(),
+            front_end: None,
         },
         components: merged_components([&request_schema, &result_schema]),
         annotations: serde_json::json!({}),

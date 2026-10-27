@@ -214,6 +214,7 @@ pub fn msexplore_task_schema_bundle() -> TaskProviderContract {
                 request_kind: "run".to_string(),
                 result_kind: Some("run".to_string()),
             }],
+            front_end: None,
         },
         components: merged_components([&request_schema, &result_schema]),
         annotations: serde_json::json!({}),
