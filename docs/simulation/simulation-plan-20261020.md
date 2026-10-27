@@ -273,6 +273,15 @@ These choices are open to objection.
   The simulator builds no second budget or worker model.
 - **Backends.** `auto` chooses Metal where it is available and pays: standard
   and mosaic kernels. W-projection is CPU-only until Metal W lands (#653).
+- **Per-field beam grids.** Under `setvp(dovp=True)` with several fields,
+  each field's grids have the beam centred on it. `predict` holds the
+  model's planes, and `close` prepares a field's grids as its write
+  reaches the field, keeping as many sets as its budget leaves after the
+  workers. It evicts the set used again latest, and prepares a field again
+  when it returns, as CASA's `GridFT` transforms the model again at each
+  field change. The MeasurementSet does not depend on the budget. Holding
+  one set per field from `predict` refused a 106-pointing mosaic of a
+  1873² model, which needed 5.3 GB.
 - **Total power (`sd`)** is image-plane sampling of the model convolved with
   the primary beam, inside `casa-simulation`. ADR-0016 keeps the operator to
   four kernel sets.
