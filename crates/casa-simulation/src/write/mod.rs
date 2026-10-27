@@ -20,6 +20,7 @@
 
 mod components;
 mod geometry;
+mod grids;
 mod patch;
 mod pipeline;
 mod prediction;
@@ -224,7 +225,11 @@ fn write_main<'s>(
     let started = Instant::now();
     let batch_rows = admission.plan.batch_rows().max(1);
     if let Some(stage) = &mut prediction {
-        stage.start(admission.block_rows, admission.cores.streaming_workers);
+        stage.start(
+            admission.block_rows,
+            admission.cores.streaming_workers,
+            admission.grid_bytes,
+        );
     }
     let backend = prediction.as_ref().map_or_else(
         || session.options().resources.resolved_backend(false),
@@ -270,6 +275,7 @@ fn write_main<'s>(
     let written = writer.finish(ms, shape.rows, target.generated)?;
     let finish = finishing.elapsed();
     let times = &pipeline.times;
+    let (grid_preparations, grid_prepare) = pipeline.grid_preparations();
     tracing::info!(
         rows = shape.rows,
         batch_rows,
@@ -284,6 +290,9 @@ fn write_main<'s>(
         zero_s = times.zero.as_secs_f64(),
         predict_s = times.predict.as_secs_f64(),
         block_fill_s = pipeline.block_fill_time().as_secs_f64(),
+        grid_bytes = admission.grid_bytes,
+        grid_preparations,
+        grid_prepare_s = grid_prepare.as_secs_f64(),
         cells_s = times.cells.as_secs_f64(),
         send_wait_s = times.send.as_secs_f64(),
         setup_s = setup.as_secs_f64(),

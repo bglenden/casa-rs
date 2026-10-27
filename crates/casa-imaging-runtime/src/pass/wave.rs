@@ -685,7 +685,7 @@ impl<'w, 'p> Wave<'w, 'p> {
                 .map(|(domain, model)| PredictionDomain {
                     operator: domain.operator,
                     resampler: domain.resampler,
-                    model,
+                    model: model.into(),
                 })
                 .collect()
         });

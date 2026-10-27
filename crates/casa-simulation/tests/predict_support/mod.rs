@@ -58,6 +58,16 @@ pub const ANTENNAS: usize = 8;
 /// `(x, y, flux)` points, centred on [`CENTRE_RAD`]: one plane per channel,
 /// or one plane spanning the band.
 pub fn write_model(dir: &Path, name: &str, planes: &[Vec<(usize, usize, f32)>]) -> PathBuf {
+    write_model_of(dir, name, N, planes)
+}
+
+/// [`write_model`] of `n` pixels a side, centred on pixel `n / 2`.
+pub fn write_model_of(
+    dir: &Path,
+    name: &str,
+    n: usize,
+    planes: &[Vec<(usize, usize, f32)>],
+) -> PathBuf {
     let path = dir.join(name);
     let mut coordinates = ImageCoordinates::new();
     coordinates.add_coordinate(DirectionCoordinate::new(
@@ -65,7 +75,7 @@ pub fn write_model(dir: &Path, name: &str, planes: &[Vec<(usize, usize, f32)>]) 
         Projection::new(ProjectionType::SIN),
         CENTRE_RAD,
         [-CELL_RAD, CELL_RAD],
-        [(N / 2) as f64, (N / 2) as f64],
+        [(n / 2) as f64, (n / 2) as f64],
     ));
     coordinates.add_coordinate(StokesCoordinate::new(vec![StokesType::I]));
     let (first, width) = if planes.len() == 1 {
@@ -84,9 +94,9 @@ pub fn write_model(dir: &Path, name: &str, planes: &[Vec<(usize, usize, f32)>]) 
         first,
     ));
     let count = planes.len();
-    let mut image = PagedImage::<f32>::create(vec![N, N, 1, count], coordinates, &path)
+    let mut image = PagedImage::<f32>::create(vec![n, n, 1, count], coordinates, &path)
         .expect("create model image");
-    let mut pixels = ArrayD::zeros(IxDyn(&[N, N, 1, count]));
+    let mut pixels = ArrayD::zeros(IxDyn(&[n, n, 1, count]));
     for (plane, points) in planes.iter().enumerate() {
         for &(x, y, flux) in points {
             pixels[IxDyn(&[x, y, 0, plane])] = flux;

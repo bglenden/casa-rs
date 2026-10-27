@@ -26,6 +26,9 @@ pub struct PassSummary {
     /// held at once while it ran.
     pub reserved_bytes: u64,
     pub peak_reserved_bytes: u64,
+    /// Bytes the per-field model grids could hold, and the sets prepared.
+    pub grid_bytes: u64,
+    pub grid_preparations: u64,
 }
 
 impl Visit for PassSummary {
@@ -38,6 +41,8 @@ impl Visit for PassSummary {
             "block_rows" => self.block_rows = value,
             "reserved_bytes" => self.reserved_bytes = value,
             "peak_reserved_bytes" => self.peak_reserved_bytes = value,
+            "grid_bytes" => self.grid_bytes = value,
+            "grid_preparations" => self.grid_preparations = value,
             _ => {}
         }
     }

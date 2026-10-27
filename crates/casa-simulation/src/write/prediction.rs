@@ -10,11 +10,12 @@
 //! `girarUVW`, the others' `rotateUVW`), and through the mosaic machine
 //! pointed by its kernels' phase ramp. Scans with the same steps, field and
 //! phase centre share a segment, and one predictor serves a segment; it
-//! is rebuilt when the batches reach a scan of another segment. A run of a
-//! segment's rows is predicted in blocks, straight into the batch's DATA,
-//! which a scan no step covers leaves zero: a block is the whole write
-//! batch when the budget allows, else about [`SMALL_BLOCK_BYTES`] of native
-//! rows.
+//! is rebuilt when the batches reach a scan of another segment, after the
+//! segment's per-field grids are found or prepared ([`super::grids`]). A
+//! run of a segment's rows is predicted in blocks, straight into the
+//! batch's DATA, which a scan no step covers leaves zero: a block is the
+//! whole write batch when the budget allows, else about
+//! [`SMALL_BLOCK_BYTES`] of native rows.
 //!
 //! On Metal the stage also corrupts the rows it predicts: the device adds
 //! their scans' noise to the model in its memory, with the draws of
@@ -30,23 +31,27 @@
 //! the blocks or the batches.
 
 use std::collections::HashMap;
+use std::time::Duration;
 
 use casa_imaging_operator::{RowContext, RowSpectrum};
 use casa_imaging_runtime::pass::{
-    BackendChoice, BlockPredictor, BlockShape, DeviceNoise, DomainProjection, MetalNoiseRow,
-    MetalNoiseTerm, NativeBlock, NativeRowHeader, PredictionDomain, RowAddress, WorkerTeam,
+    BackendChoice, BlockPredictor, BlockShape, DeviceNoise, DomainModel, DomainProjection,
+    MetalNoiseRow, MetalNoiseTerm, NativeBlock, NativeRowHeader, PredictionDomain, RowAddress,
+    WorkerTeam,
 };
 use casa_ms::derived::GridFtProjection;
 use casa_numerics::cell_noise::metal_draws_exactly;
 use casa_types::Complex32;
 
 use super::geometry::RowGeometry;
+use super::grids::{FieldGridCache, GridKey};
 use crate::corrupt::NoiseApplication;
 use crate::predict::FtMachine;
 use crate::session::Simulator;
 use crate::session::error::{SimulatorError, SimulatorResult};
 use crate::session::observe::Scan;
 use crate::session::plan::DataPlan;
+use crate::session::prediction::{FieldGrids, Prediction};
 
 /// The noise of scan `scan` in `plan` that a stage predicting the scan may
 /// add on the device ([`PredictionStage::predict`]): all of it, but none
@@ -85,12 +90,55 @@ const SMALL_BLOCK_BYTES: u64 = 16 << 20;
 const METAL_STAGE_TIMING: &str = "casa_imaging::metal_stage_timing";
 
 /// The scans with the same predict steps, field and phase centre: the
-/// domains a predictor sums, each row's rotation to each domain's tangent
+/// steps whose domains a predictor sums (indices of the stage's
+/// predictions), the field, each row's rotation to each domain's tangent
 /// point, and the pointing offset each domain's kernels ramp by.
-struct Segment<'s> {
-    domains: Vec<PredictionDomain<'s>>,
+struct Segment {
+    steps: Vec<usize>,
+    field: usize,
     projections: Vec<GridFtProjection>,
     pointing_offsets: Vec<[f64; 2]>,
+}
+
+/// The segment of `scan`, which the predict steps `steps` of `predictions`
+/// cover.
+///
+/// # Errors
+///
+/// A step without grids for the scan's field, which `predict` prepares, or
+/// holds the model to prepare, for every field it covers.
+fn segment_of(
+    predictions: &[&Prediction],
+    steps: std::ops::Range<usize>,
+    scan: &Scan,
+) -> SimulatorResult<Segment> {
+    let mut projections = Vec::with_capacity(steps.len());
+    let mut pointing_offsets = Vec::with_capacity(steps.len());
+    for step in steps.clone() {
+        let prediction = predictions[step];
+        if prediction.grids_for(scan.field_id).is_none() {
+            return Err(SimulatorError::raised(format!(
+                "predict prepared no grids for field {}",
+                scan.field_id
+            )));
+        }
+        // `MosaicFT` reprojects through `girarUVW`, the others through
+        // `rotateUVW`.
+        let project = match prediction.model.machine() {
+            FtMachine::Mosaic => GridFtProjection::mosaic_between_j2000_directions,
+            FtMachine::Grid(_) | FtMachine::WProject(_) => {
+                GridFtProjection::between_j2000_directions
+            }
+        };
+        projections.push(project(scan.phase_center_rad, prediction.tangent_rad));
+        pointing_offsets.push(prediction.pointing_offset_rad(scan.pointing_rad));
+    }
+    Ok(Segment {
+        steps: steps.collect(),
+        field: scan.field_id,
+        projections,
+        pointing_offsets,
+    })
 }
 
 /// The prediction stage's state across batches.
@@ -98,7 +146,9 @@ pub(super) struct PredictionStage<'s> {
     backend: BackendChoice,
     correlations: usize,
     channels: usize,
-    segments: Vec<Segment<'s>>,
+    /// The plan's predict steps, in order.
+    predictions: Vec<&'s Prediction>,
+    segments: Vec<Segment>,
     /// Each scan's segment; `None` for a scan no step covers.
     scan_segments: Vec<Option<usize>>,
     /// Each spectral window's channel frequencies.
@@ -106,8 +156,12 @@ pub(super) struct PredictionStage<'s> {
     /// Each antenna's dish class, which keys the mosaic machine's kernels
     /// (the other machines ignore it); empty without a mosaic step.
     antenna_types: Vec<u8>,
-    /// Bytes of every model grid the steps hold, which a device copies.
-    grid_bytes: u64,
+    /// Bytes of the model grids `predict` prepared, which a device copies.
+    prepared_bytes: u64,
+    /// The per-field grids `close` prepares, and the keys of the segment
+    /// being selected, which it keeps.
+    grids: FieldGridCache,
+    keep: Vec<GridKey>,
     /// Rows of a block, once started.
     block_rows: usize,
     workers: usize,
@@ -136,15 +190,15 @@ impl<'s> PredictionStage<'s> {
     ///
     /// # Errors
     ///
-    /// A covered scan's field without grids, which `predict` prepares for
-    /// every field it covers.
+    /// A covered scan's field without grids, which `predict` prepares, or
+    /// holds the model to prepare, for every field it covers.
     pub(super) fn new(
         session: &'s Simulator,
         (correlations, channels): (usize, usize),
         backend: BackendChoice,
     ) -> SimulatorResult<Option<Self>> {
         let plan = session.data_plan();
-        let predictions: Vec<_> = plan
+        let predictions: Vec<&'s Prediction> = plan
             .predictions()
             .map(|(prediction, _)| prediction)
             .collect();
@@ -165,6 +219,9 @@ impl<'s> PredictionStage<'s> {
         let mut keys = HashMap::new();
         let mut segments = Vec::new();
         let mut scan_segments = Vec::with_capacity(session.scans().len());
+        // Each per-field set's visits, by their first scans: a visit is a
+        // run of scans of one segment.
+        let mut visits: HashMap<GridKey, Vec<usize>> = HashMap::new();
         for (index, scan) in session.scans().iter().enumerate() {
             let steps = plan.predictions_for_scan(index);
             if steps.is_empty() {
@@ -182,42 +239,22 @@ impl<'s> PredictionStage<'s> {
             let segment = match keys.get(&key) {
                 Some(segment) => *segment,
                 None => {
-                    let mut domains = Vec::with_capacity(key.0.len());
-                    let mut projections = Vec::with_capacity(key.0.len());
-                    let mut pointing_offsets = Vec::with_capacity(key.0.len());
-                    for step in key.0.clone() {
-                        let prediction = predictions[step];
-                        let model = prediction.grids_for(scan.field_id).ok_or_else(|| {
-                            SimulatorError::raised(format!(
-                                "predict prepared no grids for field {}",
-                                scan.field_id
-                            ))
-                        })?;
-                        domains.push(PredictionDomain {
-                            operator: &prediction.model.operator,
-                            resampler: &prediction.model.resampler,
-                            model,
-                        });
-                        // `MosaicFT` reprojects through `girarUVW`, the
-                        // others through `rotateUVW`.
-                        let project = match prediction.model.machine() {
-                            FtMachine::Mosaic => GridFtProjection::mosaic_between_j2000_directions,
-                            FtMachine::Grid(_) | FtMachine::WProject(_) => {
-                                GridFtProjection::between_j2000_directions
-                            }
-                        };
-                        projections.push(project(scan.phase_center_rad, prediction.tangent_rad));
-                        pointing_offsets.push(prediction.pointing_offset_rad(scan.pointing_rad));
-                    }
-                    segments.push(Segment {
-                        domains,
-                        projections,
-                        pointing_offsets,
-                    });
+                    segments.push(segment_of(&predictions, key.0.clone(), scan)?);
                     keys.insert(key, segments.len() - 1);
                     segments.len() - 1
                 }
             };
+            if scan_segments.last() != Some(&Some(segment)) {
+                let Segment { steps, field, .. } = &segments[segment];
+                for &step in steps {
+                    if matches!(
+                        predictions[step].grids_for(*field),
+                        Some(FieldGrids::PerField)
+                    ) {
+                        visits.entry((step, *field)).or_default().push(index);
+                    }
+                }
+            }
             scan_segments.push(Some(segment));
         }
         let frequencies = session
@@ -225,10 +262,31 @@ impl<'s> PredictionStage<'s> {
             .iter()
             .map(|window| window.channel_frequencies_hz())
             .collect();
-        let grid_bytes = predictions
+        let prepared_bytes = predictions
             .iter()
-            .map(|prediction| prediction.grid_bytes())
+            .map(|prediction| prediction.prepared_bytes())
             .sum();
+        // A device copies each per-field set it predicts from.
+        let copies = match backend {
+            BackendChoice::Cpu => 1,
+            BackendChoice::Metal => 2,
+        };
+        let costs = predictions
+            .iter()
+            .map(|prediction| {
+                if prediction.per_field() {
+                    copies * prediction.set_bytes()
+                } else {
+                    0
+                }
+            })
+            .collect();
+        let grids = FieldGridCache::new(costs, visits.into_iter().collect());
+        let largest_segment = segments
+            .iter()
+            .map(|segment| segment.steps.len())
+            .max()
+            .unwrap_or(0);
         // A mosaic step classes the antennas of its time in first-seen
         // order, so a later step's classes extend an earlier one's.
         let antenna_types = predictions
@@ -245,11 +303,14 @@ impl<'s> PredictionStage<'s> {
             backend,
             correlations,
             channels,
+            predictions,
             segments,
             scan_segments,
             frequencies,
             antenna_types,
-            grid_bytes,
+            prepared_bytes,
+            grids,
+            keep: Vec::with_capacity(largest_segment),
             block_rows: 0,
             workers: 0,
             block: NativeBlock::default(),
@@ -275,6 +336,12 @@ impl<'s> PredictionStage<'s> {
         self.fill_time
     }
 
+    /// Per-field sets of grids prepared so far, and the time preparing
+    /// them took, part of the prediction's.
+    pub(super) fn grid_preparations(&self) -> (usize, Duration) {
+        self.grids.preparations()
+    }
+
     /// Whether a step predicts scan `scan`'s rows.
     pub(super) fn predicts(&self, scan: usize) -> bool {
         self.scan_segments[scan].is_some()
@@ -284,7 +351,44 @@ impl<'s> PredictionStage<'s> {
     fn largest_domains(&self) -> usize {
         self.segments
             .iter()
-            .map(|segment| segment.domains.len())
+            .map(|segment| segment.steps.len())
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// Bytes of the per-field grids the segment that needs most holds at
+    /// once: the least the cache is admitted with.
+    pub(super) fn minimum_grid_bytes(&self) -> u64 {
+        self.segments
+            .iter()
+            .map(|segment| {
+                segment
+                    .steps
+                    .iter()
+                    .map(|&step| self.grids.cost((step, segment.field)))
+                    .sum::<u64>()
+            })
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// Bytes of the per-field grids `close` may hold beyond the least it is
+    /// admitted with ([`Self::bytes`]): enough to prepare each set once.
+    /// `close` admits as much of them as its budget leaves free, after its
+    /// workers ([`Self::start`]).
+    pub(super) fn extra_grid_bytes(&self) -> u64 {
+        self.grids
+            .all_bytes()
+            .saturating_sub(self.minimum_grid_bytes())
+    }
+
+    /// Bytes preparing a per-field set holds beside it with `workers`
+    /// workers, for the step that needs most; one set is prepared at a
+    /// time.
+    fn preparation_bytes(&self, workers: usize) -> u64 {
+        self.predictions
+            .iter()
+            .map(|prediction| prediction.preparation_bytes(workers))
             .max()
             .unwrap_or(0)
     }
@@ -314,9 +418,12 @@ impl<'s> PredictionStage<'s> {
 
     /// Bytes the stage holds while `close` predicts blocks of `rows` rows
     /// with `workers` workers: the predictor of the segment that needs most
-    /// ([`BlockPredictor::bytes`]), one block of native rows sharing their
-    /// samples ([`BlockShape::shared_bytes`]) and each row's projections,
-    /// and on Metal the device copy of every model grid
+    /// ([`BlockPredictor::bytes_for`]), one block of native rows sharing
+    /// their samples ([`BlockShape::shared_bytes`]) and each row's
+    /// projections; the per-field grids of the segment that needs most,
+    /// and a set's preparation ([`Self::extra_grid_bytes`] are admitted
+    /// apart); on Metal the device copy of every model grid `predict`
+    /// prepared
     /// ([`casa_imaging_operator::PreparedModelGrids::device_copy`]) and a
     /// block's noise rows and the most noise terms of a scan, here and in
     /// the predictor ([`BlockPredictor::noise_bytes`]); and what it keeps
@@ -326,15 +433,19 @@ impl<'s> PredictionStage<'s> {
             .segments
             .iter()
             .map(|segment| {
-                BlockPredictor::bytes(
-                    &segment.domains,
+                BlockPredictor::bytes_for(
+                    segment.steps.iter().map(|&step| {
+                        let model = &self.predictions[step].model;
+                        (&model.operator, &model.resampler)
+                    }),
                     self.backend,
-                    self.block_shape(rows, segment.domains.len()),
+                    self.block_shape(rows, segment.steps.len()),
                     workers,
                 )
             })
             .max()
             .unwrap_or(0);
+        let grids = self.minimum_grid_bytes() + self.preparation_bytes(workers);
         let domains = self.largest_domains();
         let shape = self.block_shape(rows, domains);
         let projections = (domains * size_of::<DomainProjection>()) as u64;
@@ -344,41 +455,48 @@ impl<'s> PredictionStage<'s> {
             BackendChoice::Metal => {
                 // The noise's rows and terms here, and the predictor's copy.
                 let noise = rows * size_of::<MetalNoiseRow>() + terms * size_of::<MetalNoiseTerm>();
-                self.grid_bytes
+                self.prepared_bytes
                     + noise as u64
                     + BlockPredictor::noise_bytes(self.backend, shape, terms)
             }
         };
-        predictor + shape.shared_bytes() + projections + device + self.state_bytes()
+        predictor + shape.shared_bytes() + projections + grids + device + self.state_bytes()
     }
 
-    /// Bytes the stage keeps across blocks: each scan's segment, of which an
-    /// opened MeasurementSet may have one a row (#886 review), each
-    /// segment's domains, the windows' channel frequencies and the antennas'
-    /// dish classes.
+    /// Bytes the stage keeps across blocks: the predict steps, each scan's
+    /// segment, of which an opened MeasurementSet may have one a row (#886
+    /// review), each segment's steps, the windows' channel frequencies, the
+    /// antennas' dish classes, the per-field grids' bookkeeping and a
+    /// selection's domains and keys.
     fn state_bytes(&self) -> u64 {
-        let domain = size_of::<PredictionDomain<'_>>()
-            + size_of::<GridFtProjection>()
-            + size_of::<[f64; 2]>();
+        let step = size_of::<usize>() + size_of::<GridFtProjection>() + size_of::<[f64; 2]>();
         let segments: usize = self
             .segments
             .iter()
-            .map(|segment| size_of::<Segment<'_>>() + segment.domains.len() * domain)
+            .map(|segment| size_of::<Segment>() + segment.steps.len() * step)
             .sum();
         let frequencies: usize = self
             .frequencies
             .iter()
             .map(|window| size_of::<Vec<f64>>() + window.len() * size_of::<f64>())
             .sum();
-        (self.scan_segments.len() * size_of::<Option<usize>>()
+        let selection =
+            self.largest_domains() * (size_of::<PredictionDomain<'_>>() + size_of::<GridKey>());
+        (self.predictions.len() * size_of::<&Prediction>()
+            + self.scan_segments.len() * size_of::<Option<usize>>()
             + segments
             + frequencies
-            + self.antenna_types.len()) as u64
+            + self.antenna_types.len()
+            + selection) as u64
+            + self.grids.state_bytes()
     }
 
     /// Allocate the block of `rows` rows, predicted with `workers` workers,
-    /// as [`Self::bytes`] charged it.
-    pub(super) fn start(&mut self, rows: usize, workers: usize) {
+    /// as [`Self::bytes`] charged it, and give the per-field grids
+    /// `grid_bytes`, at least the [`Self::bytes`] charged them and at most
+    /// [`Self::extra_grid_bytes`] more.
+    pub(super) fn start(&mut self, rows: usize, workers: usize, grid_bytes: u64) {
+        self.grids.set_capacity(grid_bytes);
         self.block_rows = rows.max(1);
         self.workers = workers.max(1);
         let domains = self.largest_domains();
@@ -435,7 +553,7 @@ impl<'s> PredictionStage<'s> {
             let Some(segment) = self.scan_segments[scan] else {
                 continue;
             };
-            self.select(segment)?;
+            self.select(segment, scan, team)?;
             self.noise_terms.clear();
             if self.noises_on_device(noise(scan)) {
                 // A term of σ = 0 adds nothing on either side.
@@ -493,8 +611,10 @@ impl<'s> PredictionStage<'s> {
         Ok(())
     }
 
-    /// Make the predictor `segment`'s, unless it is.
-    fn select(&mut self, segment: usize) -> SimulatorResult<()> {
+    /// Make the predictor `segment`'s, unless it is, for the visit at scan
+    /// `scan`: its per-field grids found or prepared on `team`
+    /// ([`FieldGridCache::grids`]).
+    fn select(&mut self, segment: usize, scan: usize, team: &WorkerTeam) -> SimulatorResult<()> {
         if self
             .predictor
             .as_ref()
@@ -502,17 +622,42 @@ impl<'s> PredictionStage<'s> {
         {
             return Ok(());
         }
-        // The previous predictor is dropped first, so at most one is held.
+        // The previous predictor is dropped first, so at most one is held,
+        // and the grids it kept can be evicted.
         self.predictor = None;
-        let domains = &self.segments[segment].domains;
+        let Segment { steps, field, .. } = &self.segments[segment];
+        let field = *field;
+        self.keep.clear();
+        self.keep.extend(steps.iter().map(|&step| (step, field)));
+        let mut domains = Vec::with_capacity(steps.len());
+        for &step in steps {
+            let prediction = self.predictions[step];
+            let model = match prediction.grids_for(field) {
+                Some(FieldGrids::Prepared(grids)) => DomainModel::Borrowed(grids),
+                Some(FieldGrids::PerField) => DomainModel::Shared(self.grids.grids(
+                    (step, field),
+                    (scan, &self.keep),
+                    || prediction.prepare_field(field, team),
+                )?),
+                // `segment_of` found every step's.
+                None => unreachable!("a segment's steps have its field's grids"),
+            };
+            domains.push(PredictionDomain {
+                operator: &prediction.model.operator,
+                resampler: &prediction.model.resampler,
+                model,
+            });
+        }
         let predictor = BlockPredictor::new(
-            domains,
+            &domains,
             self.backend,
             self.block_shape(self.block_rows, domains.len()),
             self.workers,
             tracing::enabled!(target: METAL_STAGE_TIMING, tracing::Level::INFO),
         )
         .map_err(|error| SimulatorError::raised(format!("the predictor: {error}")))?;
+        // The predictor keeps its own domains, and with them the grids.
+        drop(domains);
         self.predictor = Some((segment, predictor));
         Ok(())
     }
@@ -524,7 +669,7 @@ impl<'s> PredictionStage<'s> {
         // Every row of the scan has its window's frequencies, and unit
         // weights and no sample flags, so the block keeps them once.
         self.block.reset_shared(
-            segment.domains.len(),
+            segment.steps.len(),
             &self.channel_indices,
             &self.correlation_indices,
             &self.frequencies[scan.spectral_window_id],
