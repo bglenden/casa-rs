@@ -923,15 +923,15 @@ fn an_antenna_on_another_antennas_pad_is_refused() {
     }
 }
 
-/// A gain table's window is one channel: CASA's `gaincal` writes it at the
-/// channels' arithmetic mean frequency, unweighted even where widths
-/// differ, casa-rs's writer at the centre channel's, both of the summed
-/// width, and either binds to the window it collapses. A table window that
-/// overlaps a store's window but collapses it neither way (a solve over
-/// some of its channels, or a width-weighted mean) is refused, never left
-/// unbound.
+/// A gain table's window is one channel: CASA's `gaincal` and casa-rs's
+/// writer write it at the channels' arithmetic mean frequency, unweighted
+/// even where widths differ, of the summed width, and it binds to the
+/// window it collapses. A table window that overlaps a store's window but
+/// does not collapse it (a solve over some of its channels, a
+/// width-weighted mean, or the centre channel casa-rs wrote before #917)
+/// is refused, never left unbound.
 #[test]
-fn collapsed_windows_bind_either_way_and_overlaps_are_refused() {
+fn collapsed_windows_bind_and_overlaps_are_refused() {
     let target = namespace(&[], &[("w", 1.0e9)]);
     let collapsed = |frequency: f64| NamespaceWindow {
         name: "w".to_string(),
@@ -954,15 +954,15 @@ fn collapsed_windows_bind_either_way_and_overlaps_are_refused() {
         )
     };
     // Channels at 1.000 and 1.001 GHz: mean 1.0005, centre 1.001.
-    for frequency in [1.0005e9, 1.001e9] {
-        let binding = bind(vec![collapsed(frequency)]).expect("collapsed");
-        assert_eq!(binding.spectral_windows, vec![Some(0)], "{frequency}");
-    }
-    match bind(vec![collapsed(1.00025e9)]) {
-        Err(ObservationError::InvalidRequest { reason }) => {
-            assert!(reason.contains("overlaps"), "{reason}");
+    let binding = bind(vec![collapsed(1.0005e9)]).expect("collapsed");
+    assert_eq!(binding.spectral_windows, vec![Some(0)]);
+    for frequency in [1.00025e9, 1.001e9] {
+        match bind(vec![collapsed(frequency)]) {
+            Err(ObservationError::InvalidRequest { reason }) => {
+                assert!(reason.contains("overlaps"), "{frequency}: {reason}");
+            }
+            other => panic!("{frequency}: refused, not {other:?}"),
         }
-        other => panic!("refused, not {other:?}"),
     }
     let elsewhere = bind(vec![collapsed(5.0e9)]).expect("no overlap");
     assert_eq!(elsewhere.spectral_windows, vec![None]);
@@ -1055,7 +1055,7 @@ fn the_writer_refuses_a_namespace_of_another_opening() {
 }
 
 /// Two windows of different channels can collapse to one gain-table row
-/// alike (here both at 2 GHz, 2 GHz wide, at their centre channel). Names
+/// alike (here both at 1.5 GHz, their mean, 2 GHz wide). Names
 /// and row counts do not prove the table's namespace is the store's, so a
 /// store listing the two the other way round is refused by content, and
 /// binds by index only when the caller states the namespaces are one.
@@ -1068,8 +1068,8 @@ fn collapsed_windows_alike_are_refused_unless_the_namespace_is_stated() {
         frequencies_hz: frequencies,
     };
     let narrow = window(vec![1.0e9, 2.0e9], 1.0e9);
-    let fine = window(vec![1.0e9, 1.5e9, 2.0e9, 2.5e9], 0.5e9);
-    let collapsed = window(vec![2.0e9], 2.0e9);
+    let fine = window(vec![0.75e9, 1.25e9, 1.75e9, 2.25e9], 0.5e9);
+    let collapsed = window(vec![1.5e9], 2.0e9);
     let mut target = namespace(&[], &[("w", 1.0e9), ("w", 1.0e9)]);
     target.rows.spectral_windows = vec![fine, narrow];
     let table = NamespaceRows {

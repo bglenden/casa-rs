@@ -219,9 +219,10 @@ pub(crate) struct Joins {
     closed: BTreeSet<GroupKey>,
     /// Each traversal's series' latest bin whose input completed there.
     closed_through: BTreeMap<(usize, Series), u64>,
-    /// Groups divided among traversals, with their parts whose input has
-    /// yet to complete; a group held whole by one traversal is not here.
-    open_parts: BTreeMap<GroupKey, usize>,
+    /// Groups divided among traversals, with the traversals whose part's
+    /// input has yet to complete; a group held whole by one traversal is
+    /// not here.
+    open_parts: BTreeMap<GroupKey, BTreeSet<usize>>,
     /// Groups whose tokens were dropped unfinished, until counted.
     abandoned: Arc<Mutex<Vec<GroupKey>>>,
     /// Groups with abandoned work.
@@ -230,8 +231,8 @@ pub(crate) struct Joins {
 
 impl Joins {
     /// Joins over traversals that divide the groups `parts` names, each
-    /// into that many parts (two or more).
-    pub(crate) fn divided(parts: BTreeMap<GroupKey, usize>) -> Self {
+    /// among the traversals named (two or more).
+    pub(crate) fn divided(parts: BTreeMap<GroupKey, BTreeSet<usize>>) -> Self {
         Self {
             open_parts: parts,
             ..Self::default()
@@ -282,8 +283,8 @@ impl Joins {
         self.closed_through
             .insert((traversal, series(key)), key.bin);
         if let Some(open) = self.open_parts.get_mut(&key) {
-            *open -= 1;
-            if *open > 0 {
+            open.remove(&traversal);
+            if !open.is_empty() {
                 return Ok(false);
             }
             self.open_parts.remove(&key);
@@ -294,6 +295,28 @@ impl Joins {
         } else {
             Ok(true)
         }
+    }
+
+    /// Traversal `traversal` is over: each divided group whose part it
+    /// left open is abandoned, as its input will not complete.
+    ///
+    /// # Errors
+    ///
+    /// [`ObservationError::WorkAbandoned`] when it left a part open, or
+    /// work was abandoned before.
+    pub(crate) fn end(&mut self, traversal: usize) -> Result<(), ObservationError> {
+        let left: Vec<GroupKey> = self
+            .open_parts
+            .iter()
+            .filter(|(_, open)| open.contains(&traversal))
+            .map(|(key, _)| *key)
+            .collect();
+        for key in left {
+            self.open_parts.remove(&key);
+            self.closed.remove(&key);
+            self.failed.insert(key);
+        }
+        self.settle()
     }
 
     /// As [`GroupCompletion::pending`].

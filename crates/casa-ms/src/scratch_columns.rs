@@ -90,6 +90,35 @@ pub fn prepare_write(
     column: VisibilityDataColumn,
     adds: bool,
 ) -> MsResult<()> {
+    prepare(ms, column, adds, None)
+}
+
+/// [`prepare_write`] for a caller that holds MAIN's write lock through
+/// `main_lock`, a [`TableWriteLock`] on the MAIN of `ms` (opened without
+/// locking), as a writer of several mutation sessions in turn holds it:
+/// MAIN's metadata is written under it, the write recorded so that the
+/// caller's release publishes it, and SOURCE's lock is tried once, as while
+/// a caller holds MAIN's through its handle.
+///
+/// # Errors
+///
+/// As [`prepare_write`]; a MAIN whose write fails is left to the caller,
+/// whose lock publishes what reached it.
+pub fn prepare_write_holding(
+    ms: &mut MeasurementSet,
+    column: VisibilityDataColumn,
+    adds: bool,
+    main_lock: &mut TableWriteLock,
+) -> MsResult<()> {
+    prepare(ms, column, adds, Some(main_lock))
+}
+
+fn prepare(
+    ms: &mut MeasurementSet,
+    column: VisibilityDataColumn,
+    adds: bool,
+    main_lock: Option<&mut TableWriteLock>,
+) -> MsResult<()> {
     if column == VisibilityDataColumn::Data {
         return Err(MsError::InvalidInput(
             "DATA is not a scratch column".to_string(),
@@ -108,12 +137,12 @@ pub fn prepare_write(
                 .map(|name| name.to_string()),
         );
     }
-    let holds_main = holds_write_lock(ms.main_table());
+    let holds_main = main_lock.is_some() || holds_write_lock(ms.main_table());
     if let Some(source) = ms.subtable_mut(SubtableId::Source)
         && !(clearing.source.is_empty() && clearing.source_cells.is_empty())
     {
         let attempts = if holds_main { 1 } else { 0 };
-        change_in_place(source, attempts, Write::Full, |source| {
+        change_in_place(source, attempts, Write::Full, None, |source| {
             for row in &clearing.source_cells {
                 source
                     .cell_accessor_mut(*row, "SOURCE_MODEL")
@@ -124,7 +153,7 @@ pub fn prepare_write(
         })?;
     }
     if !clearing.main.is_empty() {
-        change_in_place(ms.main_table_mut(), 0, Write::Metadata, |main| {
+        change_in_place(ms.main_table_mut(), 0, Write::Metadata, main_lock, |main| {
             remove(main, &clearing.main);
             Ok(())
         })?;
@@ -276,14 +305,16 @@ fn holds_write_lock(table: &Table) -> bool {
 
 /// Apply `change` to `table` and write it to its directory under
 /// casacore's write lock on it, taken in `attempts` (0 waits) unless the
-/// handle holds it. A table not on disk is changed in memory alone. When
-/// the change or the write fails, a lock taken here has the table reloaded
-/// as it is on disk and is released; a lock the caller holds is left to
-/// it.
+/// handle holds it or the caller does through `held`, whose write is then
+/// recorded for the caller's release to publish. A table not on disk is
+/// changed in memory alone. When the change or the write fails, a lock
+/// taken here has the table reloaded as it is on disk and is released; a
+/// lock the caller holds is left to it.
 fn change_in_place(
     table: &mut Table,
     attempts: u32,
     write: Write,
+    held: Option<&mut TableWriteLock>,
     change: impl FnOnce(&mut Table) -> MsResult<()>,
 ) -> MsResult<()> {
     let Some(path) = table.path().map(Path::to_path_buf) else {
@@ -297,6 +328,10 @@ fn change_in_place(
         }
         Ok(())
     };
+    if let Some(lock) = held {
+        lock.record_write();
+        return written(table);
+    }
     #[cfg(unix)]
     if table.lock_options().is_some() {
         if holds_write_lock(table) {

@@ -42,6 +42,10 @@ pub(in crate::observation_io) enum FailurePoint {
     BeforeRename,
 }
 
+/// Numbers every temporary file of this process, whichever store writes
+/// it: concurrent updaters each replace through a store of their own.
+static NEXT_TEMPORARY: AtomicUsize = AtomicUsize::new(0);
+
 /// What the store did.
 #[derive(Debug, Default)]
 pub(super) struct StoreCounters {
@@ -58,10 +62,9 @@ pub(super) struct StoreCounters {
 pub(in crate::observation_io) struct ReplacingStore {
     inner: FilesystemStore,
     root: PathBuf,
-    /// Names this store's temporary files apart from another process's
+    /// Names this process's temporary files apart from another process's
     /// with the same id.
     token: u32,
-    next: AtomicUsize,
     /// Directories changed since the last [`Self::sync`].
     touched: Mutex<HashSet<PathBuf>>,
     pub(super) counters: Arc<StoreCounters>,
@@ -79,7 +82,6 @@ impl ReplacingStore {
             token: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .map_or(0, |since| since.subsec_nanos()),
-            next: AtomicUsize::new(0),
             touched: Mutex::new(HashSet::new()),
             counters: Arc::new(StoreCounters::default()),
             #[cfg(test)]
@@ -189,7 +191,7 @@ impl WritableStorageTraits for ReplacingStore {
             ".{name}.replacing-{}-{:08x}-{}",
             std::process::id(),
             self.token,
-            self.next.fetch_add(1, Ordering::Relaxed)
+            NEXT_TEMPORARY.fetch_add(1, Ordering::Relaxed)
         ));
         let mut file = File::create_new(&temporary).map_err(io)?;
         file.write_all(&value)

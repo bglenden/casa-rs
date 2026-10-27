@@ -103,8 +103,9 @@ pub struct UpdateGuarantees {
     /// never a mixture. Units already replaced stay replaced: there is no
     /// transaction across units.
     pub atomic_units: bool,
-    /// Another process is excluded while an updater writes (casacore's
-    /// table lock for MSv2). MSv4 has no cross-process lock protocol.
+    /// Another process is excluded while any of the session's updaters is
+    /// live (casacore's write lock on MAIN for MSv2). MSv4 has no
+    /// cross-process lock protocol.
     pub cross_process_lock: bool,
 }
 

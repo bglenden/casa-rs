@@ -769,7 +769,8 @@ flag change writes (Fable).
 | `an_msv4_batch_of_other_channels_is_refused_whole` | A batch whose channels are not the updater's traversal's is refused before any target takes it, so nothing of it is written. |
 | `a_session_reads_what_its_updaters_wrote` | A second traversal of the session's observation delivers what its first updater wrote, in both stores. |
 | `one_update_session_per_store_and_one_updater_per_time` | A second update session on a store, or a second live updater of a session over the same times, is a `Conflict`; one variable bound twice to an updater is refused (whichever wrote last would win); read-only observations open beside them. MSv2 states casacore's cross-process lock; MSv4 states atomic units and no cross-process lock. |
-| `an_msv2_updater_takes_its_batches_in_order` | The MSv2 updater plans its rows up front: a batch after a skipped one is refused, and finishing with rows unwritten fails. |
+| `an_msv2_updater_takes_its_batches_in_order` | The MSv2 updater takes its traversal's batches in delivery order: a batch after a skipped one is refused, and finishing with selected times unwritten fails. |
+| `an_msv2_session_holds_mains_lock_while_an_updater_is_live` | casacore's write lock on MAIN is held from the first live updater to the last, between batches too, and free when none is live. |
 | `a_failed_replacement_leaves_each_chunk_old_or_new` | Pro R3: a replacement failing after its temporary file is written (as a killed process leaves it) publishes nothing of that chunk: times 0..5 read new, 5..12 old, the temporary file stays unread beside the old chunk. |
 | `a_failed_first_write_leaves_an_absent_chunk_absent` | `FLAG`'s chunk `c/2/0/0/0` is absent (equal to the fill value); its failed first write leaves it absent, reading as the fill value, and the four chunks before it replaced. |
 | `a_failure_before_writing_changes_nothing` | A failure before any byte is written changes nothing. |
@@ -777,11 +778,12 @@ flag change writes (Fable).
 **How each store writes.**
 
 - **MSv2** reuses production's bounded selected-row mutation
-  (`MeasurementSetWriteSession`): it plans the traversal's present rows,
-  takes casacore's write lock for the updater's life, and writes each
-  batch's cells in place, reading a cell back only when a patch covers it
-  partly. A failure leaves the rows already written, as casacore's writes
-  do.
+  (`MeasurementSetWriteSession`), one per batch over its present rows,
+  under casacore's write lock on MAIN, which the session holds from its
+  first live updater to its last and takes with its handle reopened, so a
+  merge never reads a table older than the lock. Each batch's cells are
+  written in place, a cell read back only when a patch covers it partly. A
+  failure leaves the rows already written, as casacore's writes do.
 - **MSv4** holds one chunk-row of times per target variable (the window),
   over the channel chunks the traversal reaches (every channel for
   weights), and replaces each chunk whole through a store whose writes go
@@ -802,10 +804,11 @@ flag change writes (Fable).
    weight; the batch carries no presence mask, so the MSv4 updater needs
    weights read to keep padding flagged. An explicit presence role in the
    batch (`contracts.md` section 8, "Occupancy") would make this uniform.
-3. **Production's MSv2 mutation plans every row up front** and takes
-   values as one `ArrayValue` per cell. Sparse updates (a flag pass that
-   skips unchanged batches) and the M2 hot path need it to plan per batch
-   and take typed columns.
+3. **Production's MSv2 mutation plans its rows up front** and takes
+   values as one `ArrayValue` per cell. The updater now plans per batch,
+   one mutation per batch under the lock the session holds, so a flag pass
+   could skip unchanged batches; the M2 hot path still needs typed
+   columns.
 4. **MSv4 cannot gain a data group.** Writing a model to an MSv4 store needs
    a structural write (a new variable and group); MSv2 adds the column.
 5. **Data groups are now the stores' own.** The MSv2 adapter lists
@@ -1282,12 +1285,21 @@ workers on slices now take 0.81 s, every codec on a worker's own thread.
 **Updaters of a split.** Each slice writes back through its own updater,
 live at once. An updater claims the (partition, variable, times) it writes
 when it is made and releases them when dropped; one that overlaps a live
-claim is a `Conflict`. An MSv4 updater claims whole chunk rows, since it
-replaces whole chunk objects, so its slices are cut at chunk rows. The MSv2
-updater writes each batch in a short write session of its own, serialized
-by the session's writer, instead of holding one for its life; on `pilot.ms`
-(Mac mini, release, update pass, two runs) that took 23.40 and 24.33 s
-against 24.20 and 23.77 s before, RSS 386–390 MB either way.
+claim is a `Conflict`; a slice of no times claims nothing. An MSv4 updater
+claims whole chunk rows, since it replaces whole chunk objects, so its
+slices are cut at chunk rows; each replaces through a store of its own, so
+its report counts its own chunks and its finish synchronizes the
+directories its own renames changed. The MSv2 updaters write one batch at
+a time, each batch a mutation of its own, under casacore's write lock on
+MAIN, which the session holds while any updater is live: another process
+waits once for a pass, not at every batch (a casacore `AutoLocking` reader
+gives a lock up only at its next inspection), and the session reopens its
+handle whenever it takes the lock, so a merge never reads a table older
+than the lock (independent review, finding 1). A slice that ends without
+completing its parts, or whose view is dropped, abandons their groups:
+the other slices and the split report `WorkAbandoned` rather than wait
+(finding 2). On `pilot.ms` (Mac mini, release, update pass) the MSv2 pass
+took PERF_PENDING.
 
 **Not done:** slices of a partition read concurrently by one cursor.
 
@@ -1358,10 +1370,10 @@ writer; it moves into production with the calibration port.
 
 | Law | What it shows |
 | --- | --- |
-| `a_batch_solve_persists_the_msv2s_own_namespace` | A batch solve on the MSv2 fixture, written through its namespace, has production `gaincal`'s `ANTENNA` and `SPECTRAL_WINDOW` rows (the window collapsed to one channel, at the centre channel where CASA's `gaincal` uses the mean: #917) and its solutions to 1e-5; binding it back is CASA's own association. |
+| `a_batch_solve_persists_the_msv2s_own_namespace` | A batch solve on the MSv2 fixture, written through its namespace, has production `gaincal`'s `ANTENNA` and `SPECTRAL_WINDOW` rows (the window collapsed to one channel at the channels' mean, as CASA's `gaincal` collapses it: #917) and its solutions to 1e-5; binding it back is CASA's own association. |
 | `a_caltable_rebinds_to_a_store_numbered_otherwise` | Solved on an MSv4 converted from the fixture without antenna 0 (four antennas, numbered from 0), written through that store's namespace, closed; bound to the full MSv2 (five antennas, those four numbered from 1) by station and position, its field and window asserted; applied from batches: every sample equals production `gaincal` on the MSv2 without antenna 0 then `applycal` on the full MSv2, values to 1e-5 relative and flags exactly, antenna 0's 48 samples flagged both ways for want of a solution. Swapping two antennas' rows fails it on values. |
 | `antennas_windows_and_fields_rebind_after_reordering` | Tables written through a simulated MSv2 of antennas N01–N03, windows (low, high) and two fields, and through its MSv4 conversion's namespace, each bind to a store of N03, N04, N01, windows (high, low) and the fields reversed, as an MSv2 and as its MSv4 conversion (XRADIO's names): every bound antenna, partition and field looks up the gain written for its own station, window and field; only N04 binds to nothing. Fields bind within 1e-12 rad, since a conversion moves a direction by a few ulps (#918). |
-| `collapsed_windows_bind_either_way_and_overlaps_are_refused` | A one-channel window at the channels' arithmetic mean frequency (CASA's `gaincal`, checked against CASA 6.7.5.18 on the fixture, 44.448 GHz not channel 4's 44.512, and on ngc5921 with its widths rewritten to differ, where CASA's frequency stays the unweighted mean) or at the centre channel's (casa-rs's writer) binds; a window of decreasing frequency binds to its collapse whether the summed width is signed (CASA's unsolved rows) or not (its solved ones, measured on alma/multiobs.ms); one overlapping the window but collapsing it neither way, a width-weighted mean included, is refused, and one elsewhere binds to nothing. |
+| `collapsed_windows_bind_and_overlaps_are_refused` | A one-channel window at the channels' arithmetic mean frequency (CASA's `gaincal`, checked against CASA 6.7.5.18 on the fixture, 44.448 GHz not channel 4's 44.512, and on ngc5921 with its widths rewritten to differ, where CASA's frequency stays the unweighted mean; casa-rs's writer since #917) binds; a window of decreasing frequency binds to its collapse whether the summed width is signed (CASA's unsolved rows) or not (its solved ones, measured on alma/multiobs.ms); one overlapping the window but not collapsing it, a width-weighted mean or the centre channel casa-rs wrote before #917 included, is refused, and one elsewhere binds to nothing. |
 | `an_antenna_on_another_antennas_pad_is_refused` | Names agreeing up to XRADIO's `_STATION` suffixes (once or twice) bind; another name on the same pad is refused. |
 | `the_writer_refuses_a_namespace_of_another_opening` | A solve's catalogue opened by scan against the namespace of the whole store is refused, and nothing is written. |
 | `equal_windows_need_their_own_namespace_or_a_stated_association` | Two windows of equal channels are refused by content even in the store the table was written through, and bind to their own rows there when the caller states the namespaces are one; in a store listing them the other way round stating the windows' rows, as `spwmap` does, resolves it. |
@@ -1394,8 +1406,9 @@ windows keep their channels, which the content rule already accepts);
 tables solved over combined windows or over part of a window's channels
 (refused as an overlap until stated); `FEED` and receptor association; a
 `FIELD` whose `PHASE_DIR` has a variable reference (refused, as the MSv2
-adapter refuses it); the gain writer collapsing windows as CASA does (#917);
-directions exact across stores (#918).
+adapter refuses it); directions exact across stores (#918). The gain writer
+now collapses windows as CASA does (#917), so the binding's rule for
+casa-rs's former centre-channel collapse is gone.
 
 ## Keep, change or discard: the trial's summary for design review
 

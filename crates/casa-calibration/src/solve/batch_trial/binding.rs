@@ -391,12 +391,12 @@ fn same_hz(a: f64, b: f64) -> bool {
 /// Whether table window `solved` holds solutions for target window
 /// `window`: the same frame, and the same channels, or the one channel a
 /// gain table collapses them to, of their summed width at their arithmetic
-/// mean frequency (CASA's `gaincal`: its `ChannelAverageTVI` averages the
-/// frequencies plainly and sums the widths before a G or T solve) or at
-/// the centre channel's (casa-rs's gain table writer, which differs from
-/// CASA there, #917). The summed width is compared in magnitude: CASA's
-/// solve sums the widths' magnitudes (`VisibilityIteratorImpl2` holds
-/// widths positive), and its unsolved rows keep their sign.
+/// mean frequency (CASA's `gaincal`, whose `ChannelAverageTVI` averages
+/// the frequencies plainly and sums the widths before a G or T solve, and
+/// casa-rs's gain table writer since #917). The summed width is compared
+/// in magnitude: CASA's solve sums the widths' magnitudes
+/// (`VisibilityIteratorImpl2` holds widths positive), and its unsolved
+/// rows keep their sign.
 fn solves(solved: &NamespaceWindow, window: &NamespaceWindow) -> bool {
     let same =
         |a: &[f64], b: &[f64]| a.len() == b.len() && a.iter().zip(b).all(|(a, b)| same_hz(*a, *b));
@@ -418,7 +418,7 @@ fn solves(solved: &NamespaceWindow, window: &NamespaceWindow) -> bool {
     same_hz(
         solved.widths_hz[0].abs(),
         window.widths_hz.iter().map(|width| width.abs()).sum(),
-    ) && (same_hz(frequency, mean) || same_hz(frequency, window.frequencies_hz[channels / 2]))
+    ) && same_hz(frequency, mean)
 }
 
 /// Whether `solved`, one channel, lies within `window`'s band in its frame:

@@ -84,9 +84,12 @@ pub(super) struct Unit {
 }
 
 impl Unit {
-    /// Whether `other` writes some of the same native units.
+    /// Whether `other` writes some of the same native units. A unit of no
+    /// times writes nothing, so meets none.
     fn meets(&self, other: &Self) -> bool {
-        self.partition == other.partition
+        !self.times.is_empty()
+            && !other.times.is_empty()
+            && self.partition == other.partition
             && self.variable == other.variable
             && self.times.start < other.times.end
             && other.times.start < self.times.end
@@ -527,7 +530,7 @@ mod tests {
         let Store::V4(update) = &session.store else {
             panic!("an MSv4 session");
         };
-        update.store().fail_after(completed, point);
+        update.fail_after(completed, point);
         let request = request(session.observation());
         let mut traversal = session.observation().bind_read(&request)?;
         let mut updater = session.updater(&request, &[0])?;

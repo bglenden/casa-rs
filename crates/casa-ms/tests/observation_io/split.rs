@@ -6,14 +6,14 @@
 //! slices that do not tile the request are refused. The slices write back
 //! at once through an updater each, claiming disjoint times.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Mutex, PoisonError};
 
 use casa_ms::observation_io::{OpenOptions, UpdateSession, open_update};
 use casa_observation::{
     AccessRequest, BatchBuffers, GroupKey, Grouping, Observation, ObservationError, PartitionId,
-    PatchValues, ReadEvent, SliceCompletion, TimeBaselineGrid, TimeRange, TimeSplit, UpdateTarget,
-    VisibilityBatch, WritableRole,
+    PatchValues, ReadEvent, SliceCompletion, TimeBaselineGrid, TimeRange, TimeSplit, UpdateReport,
+    UpdateTarget, VisibilityBatch, WritableRole,
 };
 use ndarray::Array3;
 
@@ -55,11 +55,11 @@ impl Tally {
 /// Consume one slice's traversal as a consumer of the split does: begin
 /// work on each of a batch's fragments, close the parts the batch
 /// completes, then finish the batch's work, so a part often closes with
-/// its work still pending.
+/// its work still pending; end the slice once its traversal is over.
 fn consume(
     observation: &dyn Observation,
     slice: &AccessRequest,
-    completion: &SliceCompletion,
+    completion: SliceCompletion,
     tally: &Tally,
 ) {
     let mut traversal = observation.bind_read(slice).expect("bind");
@@ -92,6 +92,7 @@ fn consume(
             }
         }
     }
+    completion.end().expect("every part completed");
 }
 
 /// Each group's samples in one traversal of `request`.
@@ -160,10 +161,14 @@ fn a_time_split_finalizes_each_group_once_after_all_its_parts() {
                     .iter()
                     .map(|slice| groups(observation, slice))
                     .collect();
-                let divided: BTreeMap<GroupKey, usize> = whole
+                let divided: BTreeMap<GroupKey, BTreeSet<usize>> = whole
                     .keys()
-                    .map(|key| (*key, held.iter().filter(|g| g.contains_key(key)).count()))
-                    .filter(|(_, parts)| *parts > 1)
+                    .map(|key| {
+                        let holders = held.iter().enumerate();
+                        let holders = holders.filter(|(_, g)| g.contains_key(key));
+                        (*key, holders.map(|(slice, _)| slice).collect())
+                    })
+                    .filter(|(_, slices): &(_, BTreeSet<usize>)| slices.len() > 1)
                     .collect();
                 assert_eq!(*split.divided(), divided, "{store} {grouping:?} {at:?}");
                 if at.len() > 2 && matches!(grouping, Grouping::PerScan { .. }) {
@@ -176,13 +181,12 @@ fn a_time_split_finalizes_each_group_once_after_all_its_parts() {
                         std::thread::scope(|scope| {
                             for (index, slice) in split.slices().iter().enumerate() {
                                 let (completion, tally) = (completion.slice(index), &tally);
-                                scope
-                                    .spawn(move || consume(observation, slice, &completion, tally));
+                                scope.spawn(move || consume(observation, slice, completion, tally));
                             }
                         });
                     } else {
                         for (index, slice) in split.slices().iter().enumerate().rev() {
-                            consume(observation, slice, &completion.slice(index), &tally);
+                            consume(observation, slice, completion.slice(index), &tally);
                         }
                     }
                     let mut ready = tally
@@ -263,8 +267,8 @@ fn flag_pattern(batch: &VisibilityBatch<'_>, grid: &TimeBaselineGrid) -> Array3<
 }
 
 /// Write the pattern over `request`'s traversal through one updater of
-/// `session`.
-fn write_pattern(session: &UpdateSession, request: &AccessRequest) {
+/// `session`, and report what it wrote.
+fn write_pattern(session: &UpdateSession, request: &AccessRequest) -> UpdateReport {
     let grid = session
         .observation()
         .grid(PartitionId(0), "base")
@@ -286,7 +290,7 @@ fn write_pattern(session: &UpdateSession, request: &AccessRequest) {
                 .expect("write");
         }
     }
-    updater.finish().expect("finish");
+    updater.finish().expect("finish")
 }
 
 /// Everything `path` holds, read after its session closed.
@@ -320,7 +324,8 @@ fn slice_times(name: &str, partition: &casa_observation::PartitionEstimate) -> u
 /// A time split's slices write back at once, an updater per slice on its
 /// own thread, and leave the store as one updater writing the whole
 /// traversal does, on both stores. The cuts follow the store's natural
-/// time blocks, so MSv4 updaters replace disjoint chunks.
+/// time blocks, so MSv4 updaters replace disjoint chunks; each reports its
+/// own reads and writes, which add up to the whole traversal's.
 #[test]
 fn a_split_writes_back_its_slices_at_once() {
     let target = [UpdateTarget::new("base", WritableRole::Flags)];
@@ -333,15 +338,15 @@ fn a_split_writes_back_its_slices_at_once() {
             fixture(whole_root.path(), name),
             fixture(split_root.path(), name),
         );
-        {
+        let whole = {
             let session =
                 open_update(&whole_path, &OpenOptions::default(), &target).expect("session");
             write_pattern(
                 &session,
                 &per_times(session.observation(), request(0..8, 0), 2),
-            );
-        }
-        {
+            )
+        };
+        let reports = {
             let session =
                 open_update(&split_path, &OpenOptions::default(), &target).expect("session");
             let observation = session.observation();
@@ -357,20 +362,39 @@ fn a_split_writes_back_its_slices_at_once() {
             let split =
                 TimeSplit::plan(observation, &traversal, &cuts(observation, &at)).expect("plan");
             std::thread::scope(|scope| {
-                for slice in split.slices() {
-                    let session = &session;
-                    scope.spawn(move || write_pattern(session, slice));
-                }
-            });
-        }
+                let workers: Vec<_> = split
+                    .slices()
+                    .iter()
+                    .map(|slice| {
+                        let session = &session;
+                        scope.spawn(move || write_pattern(session, slice))
+                    })
+                    .collect();
+                workers
+                    .into_iter()
+                    .map(|worker| worker.join().expect("slice"))
+                    .collect::<Vec<_>>()
+            })
+        };
         assert_eq!(stored(&split_path), stored(&whole_path), "{name}");
+        let sum = |count: fn(&UpdateReport) -> usize| reports.iter().map(count).sum::<usize>();
+        assert_eq!(
+            (
+                sum(|r| r.samples),
+                sum(|r| r.units_read),
+                sum(|r| r.units_written)
+            ),
+            (whole.samples, whole.units_read, whole.units_written),
+            "{name}: {reports:?} against {whole:?}"
+        );
     }
 }
 
 /// Live updaters of one session claim disjoint times of each variable:
 /// slices cut anywhere on MSv2, whose rows no slice shares, and on MSv4
 /// slices of whole chunk rows; a slice that shares a chunk row, or the
-/// same times, with a live updater is refused until it is gone.
+/// same times, with a live updater is refused until it is gone. A slice
+/// of no times claims nothing.
 #[test]
 fn live_updaters_claim_disjoint_times() {
     let root = tempfile::tempdir().expect("root");
@@ -402,6 +426,13 @@ fn live_updaters_claim_disjoint_times() {
         );
         drop(live);
         let first = session.updater(&slice(0..block / 2), &[0]).expect("first");
+        // A slice of no times, inside the first's chunk row, writes
+        // nothing, so claims nothing.
+        drop(
+            session
+                .updater(&slice(block / 2 + 1..block / 2 + 1), &[0])
+                .expect("an empty slice"),
+        );
         let second = session.updater(&slice(block / 2..times), &[0]);
         if name.ends_with(".ms") {
             assert!(second.is_ok(), "{name}: rows no other slice writes");

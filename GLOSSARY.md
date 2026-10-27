@@ -247,7 +247,8 @@ One owner of a store that reads it and writes declared targets back: it
 holds the process's write intent on the store, lends the observation for
 reading and updaters for writing (several at once, each claiming disjoint
 times), and resolves each target's variable and the data groups sharing it
-before any payload is written.
+before any payload is written. An MSv2 session holds casacore's write lock
+on MAIN while any updater is live.
 _Avoid_: Writer (which creates a new store), read-write handle
 
 **Patch**:

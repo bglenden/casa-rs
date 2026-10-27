@@ -503,8 +503,49 @@ fn one_update_session_per_store_and_one_updater_per_time() {
     }
 }
 
-/// The MSv2 updater plans its traversal's rows up front: it takes the
-/// batches in delivery order and finishes only once all are written.
+/// An MSv2 update session holds casacore's write lock on MAIN while any of
+/// its updaters is live, between batches too, so another writer waits for
+/// a pass, not for each batch; the last updater to go releases it, and a
+/// session with none holds nothing.
+#[cfg(unix)]
+#[test]
+fn an_msv2_session_holds_mains_lock_while_an_updater_is_live() {
+    let root = tempfile::tempdir().expect("root");
+    let path = fixture(root.path(), "ms_trial.ms");
+    let free = || casa_tables::TableWriteLock::acquire(&path, 1).is_ok();
+    let session = open_update(
+        &path,
+        &OpenOptions::default(),
+        &[UpdateTarget::new("base", WritableRole::Flags)],
+    )
+    .expect("session");
+    assert!(free(), "no updater yet");
+    let observation = session.observation();
+    let grid = observation
+        .grid(casa_observation::PartitionId(0), "base")
+        .expect("grid");
+    let half = |times: std::ops::Range<usize>| AccessRequest {
+        times: casa_observation::TimeSelection::Within(casa_observation::TimeRange::of_grid(
+            &grid, times,
+        )),
+        ..per_times(observation, request(0..8, 0), 2)
+    };
+    let later = session.updater(&half(6..12), &[0]).expect("later half");
+    let mut batches = 0;
+    pass(&session, &half(0..6), &[0], |batch| {
+        batches += 1;
+        assert!(!free(), "held before batch {batches}");
+        clear_all(batch)
+    })
+    .expect("earlier half");
+    assert!(batches > 1, "{batches} batches");
+    assert!(!free(), "the later half's updater is live");
+    drop(later);
+    assert!(free(), "the last updater has gone");
+}
+
+/// The MSv2 updater takes its traversal's batches in delivery order and
+/// finishes only once every selected time is written.
 #[test]
 fn an_msv2_updater_takes_its_batches_in_order() {
     let root = tempfile::tempdir().expect("root");

@@ -98,7 +98,27 @@ impl TableWriteLock {
     /// `table.lock` cannot be opened or `fcntl` fails for a reason other than
     /// a held lock or missing lock support.
     pub fn acquire(table_dir: impl AsRef<Path>, nattempts: u32) -> Result<Self, TableError> {
-        let path = table_dir.as_ref().to_path_buf();
+        Self::take(table_dir.as_ref(), nattempts, true)
+    }
+
+    /// Take the write lock as [`acquire`](Self::acquire) does, for a writer
+    /// that reads the table afresh once it holds it (it reopens the table
+    /// under the lock): a write another process published while it waited
+    /// is not stale for that writer, so it is not refused.
+    ///
+    /// # Errors
+    ///
+    /// As [`acquire`](Self::acquire), except for a write published while
+    /// this writer waited.
+    pub fn acquire_to_reread(
+        table_dir: impl AsRef<Path>,
+        nattempts: u32,
+    ) -> Result<Self, TableError> {
+        Self::take(table_dir.as_ref(), nattempts, false)
+    }
+
+    fn take(table_dir: &Path, nattempts: u32, refuse_stale: bool) -> Result<Self, TableError> {
+        let path = table_dir.to_path_buf();
         #[cfg(unix)]
         {
             let lock_io = |error: std::io::Error| TableError::LockIo {
@@ -122,7 +142,10 @@ impl TableWriteLock {
                 outcome = lock_file
                     .acquire(LockType::Write, nattempts)
                     .map_err(lock_io)?;
-                if outcome.is_acquired() && published_modify_counter(&lock_file) != published {
+                if refuse_stale
+                    && outcome.is_acquired()
+                    && published_modify_counter(&lock_file) != published
+                {
                     return Err(lock_failed(
                         "another process wrote the table while this writer waited for its \
                          write lock; reopen the table and retry"
@@ -144,7 +167,7 @@ impl TableWriteLock {
         }
         #[cfg(not(unix))]
         {
-            let _ = nattempts;
+            let _ = (nattempts, refuse_stale);
             Ok(Self {
                 path,
                 written: false,

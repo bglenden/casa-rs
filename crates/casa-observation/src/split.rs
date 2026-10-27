@@ -8,9 +8,11 @@
 //! request on its own worker, and gives each worker its slice's view of the
 //! split's [`SplitCompletion`]. It writes the same code as for one
 //! traversal: whatever the cuts, every group becomes ready once, after the
-//! input and the work of each of its parts.
+//! input and the work of each of its parts. A slice that ends without
+//! completing its parts abandons their groups, which the others then
+//! report instead of waiting.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use crate::ObservationError;
@@ -20,7 +22,8 @@ use crate::request::{AccessRequest, Estimate, Grouping, TimeRange, TimeSelection
 
 /// A request's times cut into consecutive slices that tile them, planned
 /// together: each slice is the request with its own times, and the split
-/// knows which scientific groups the cuts divide and into how many parts.
+/// knows which scientific groups the cuts divide and which slices hold
+/// their parts.
 ///
 /// Group keys are those of the whole grid, so a divided group arrives in
 /// each slice holding part of it under the same key, marked
@@ -30,7 +33,7 @@ use crate::request::{AccessRequest, Estimate, Grouping, TimeRange, TimeSelection
 #[derive(Clone, Debug)]
 pub struct TimeSplit {
     slices: Vec<AccessRequest>,
-    divided: BTreeMap<GroupKey, usize>,
+    divided: BTreeMap<GroupKey, BTreeSet<usize>>,
 }
 
 impl TimeSplit {
@@ -97,10 +100,10 @@ impl TimeSplit {
         &self.slices
     }
 
-    /// The groups the cuts divide, each with the number of slices holding
-    /// part of it: two or more.
+    /// The groups the cuts divide, each with the slices holding part of
+    /// it: two or more.
     #[must_use]
-    pub fn divided(&self) -> &BTreeMap<GroupKey, usize> {
+    pub fn divided(&self) -> &BTreeMap<GroupKey, BTreeSet<usize>> {
         &self.divided
     }
 
@@ -110,7 +113,7 @@ impl TimeSplit {
     pub fn completion(&self) -> SplitCompletion {
         SplitCompletion {
             joins: Arc::new(Mutex::new(Joins::divided(self.divided.clone()))),
-            slices: self.slices.len(),
+            taken: Arc::new(Mutex::new(vec![false; self.slices.len()])),
         }
     }
 }
@@ -164,20 +167,19 @@ fn check_tiling(whole: &Estimate, parts: &[Estimate]) -> Result<(), ObservationE
     Ok(())
 }
 
-/// The groups more than one slice holds part of, with the number holding
+/// The groups more than one slice holds part of, with the slices holding
 /// part of each.
 fn divided(
     observation: &(impl Observation + ?Sized),
     request: &AccessRequest,
     parts: &[Estimate],
-) -> Result<BTreeMap<GroupKey, usize>, ObservationError> {
+) -> Result<BTreeMap<GroupKey, BTreeSet<usize>>, ObservationError> {
     let mut divided = BTreeMap::new();
     for (index, id) in request.partitions.iter().enumerate() {
         let Some(keys) = observation.group_keys(*id, &request.data_group, request.grouping)? else {
             continue;
         };
-        // Each group's slices so far, and the last that held part of it.
-        let mut holders = BTreeMap::<GroupKey, (usize, usize)>::new();
+        let mut holders = BTreeMap::<GroupKey, BTreeSet<usize>>::new();
         for (slice, part) in parts.iter().enumerate() {
             let times = &part.partitions[index];
             let held = keys
@@ -186,19 +188,10 @@ fn divided(
                     reason: format!("{id:?}'s group index does not cover its selected times"),
                 })?;
             for key in held {
-                let (count, last) = holders.entry(*key).or_insert((0, slice));
-                if *count == 0 || *last != slice {
-                    *count += 1;
-                    *last = slice;
-                }
+                holders.entry(*key).or_default().insert(slice);
             }
         }
-        divided.extend(
-            holders
-                .into_iter()
-                .filter(|(_, (count, _))| *count > 1)
-                .map(|(key, (count, _))| (key, count)),
-        );
+        divided.extend(holders.into_iter().filter(|(_, slices)| slices.len() > 1));
     }
     Ok(divided)
 }
@@ -210,32 +203,40 @@ fn divided(
 /// the slices interleave.
 ///
 /// Each slice's consumer works through its own [`SliceCompletion`]
-/// ([`Self::slice`]), which is `Send` and cheap to clone; any one of them
-/// may finish a token another began. Whichever call makes a group ready
-/// returns `true`, once across the slices. A token dropped unfinished
-/// abandons its group, as with one traversal.
+/// ([`Self::slice`]), which is `Send`; any one of them may finish a token
+/// another began. Whichever call makes a group ready returns `true`, once
+/// across the slices. A token dropped unfinished abandons its group, as
+/// with one traversal, and so does a slice's view that ends
+/// ([`SliceCompletion::end`]) or is dropped while a part of the group it
+/// holds is open: a slice whose traversal failed is reported, not waited
+/// for.
 #[derive(Clone, Debug)]
 pub struct SplitCompletion {
     joins: Arc<Mutex<Joins>>,
-    slices: usize,
+    /// Which slices' views have been given.
+    taken: Arc<Mutex<Vec<bool>>>,
 }
 
 impl SplitCompletion {
-    /// Slice `index`'s view, in the split's slice order.
+    /// Slice `index`'s view, in the split's slice order. Each slice has one
+    /// view, given once.
     ///
     /// # Panics
     ///
-    /// If the split has no slice `index`.
+    /// If the split has no slice `index`, or its view was given before.
     #[must_use]
     pub fn slice(&self, index: usize) -> SliceCompletion {
-        assert!(
-            index < self.slices,
-            "slice {index} of a split of {}",
-            self.slices
-        );
+        let mut taken = self.taken.lock().unwrap_or_else(PoisonError::into_inner);
+        let slices = taken.len();
+        let given = taken
+            .get_mut(index)
+            .unwrap_or_else(|| panic!("slice {index} of a split of {slices}"));
+        assert!(!*given, "slice {index}'s view was given before");
+        *given = true;
         SliceCompletion {
             joins: Arc::clone(&self.joins),
             slice: index,
+            ended: false,
         }
     }
 
@@ -245,7 +246,8 @@ impl SplitCompletion {
     ///
     /// # Errors
     ///
-    /// [`ObservationError::WorkAbandoned`] if a unit of work was abandoned.
+    /// [`ObservationError::WorkAbandoned`] if a unit of work was abandoned,
+    /// or a slice ended with a part open.
     pub fn is_idle(&self) -> Result<bool, ObservationError> {
         self.lock().is_idle()
     }
@@ -257,11 +259,14 @@ impl SplitCompletion {
 
 /// One slice's view of a [`SplitCompletion`]: the calls of
 /// [`GroupCompletion`](crate::GroupCompletion), for the consumer of that
-/// slice's traversal.
-#[derive(Clone, Debug)]
+/// slice's traversal, and [`Self::end`] when it is over. Dropped before
+/// its traversal has completed every part it holds (the traversal failed,
+/// or its worker did), it abandons their groups.
+#[derive(Debug)]
 pub struct SliceCompletion {
     joins: Arc<Mutex<Joins>>,
     slice: usize,
+    ended: bool,
 }
 
 impl SliceCompletion {
@@ -307,8 +312,30 @@ impl SliceCompletion {
         self.lock().pending(key)
     }
 
+    /// This slice's traversal is over. A divided group whose part it has
+    /// not completed is abandoned: its input will not complete, so the
+    /// other slices' calls and [`SplitCompletion::is_idle`] report it.
+    ///
+    /// # Errors
+    ///
+    /// [`ObservationError::WorkAbandoned`] when the slice left a part open,
+    /// or work was abandoned before.
+    pub fn end(mut self) -> Result<(), ObservationError> {
+        self.ended = true;
+        self.lock().end(self.slice)
+    }
+
     fn lock(&self) -> std::sync::MutexGuard<'_, Joins> {
         self.joins.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+impl Drop for SliceCompletion {
+    fn drop(&mut self) {
+        if !self.ended {
+            // Reported to the other slices and the split.
+            let _ = self.lock().end(self.slice);
+        }
     }
 }
 
@@ -326,15 +353,16 @@ mod tests {
         }
     }
 
-    /// The completion of three slices dividing the groups of `parts`.
-    fn split(parts: &[(u64, usize)]) -> SplitCompletion {
+    /// The completion of three slices dividing the groups of `parts`, each
+    /// among the slices named.
+    fn split(parts: &[(u64, &[usize])]) -> SplitCompletion {
         let divided = parts
             .iter()
-            .map(|(bin, count)| (key(*bin), *count))
+            .map(|(bin, slices)| (key(*bin), slices.iter().copied().collect()))
             .collect();
         SplitCompletion {
             joins: Arc::new(Mutex::new(Joins::divided(divided))),
-            slices: 3,
+            taken: Arc::new(Mutex::new(vec![false; 3])),
         }
     }
 
@@ -343,7 +371,7 @@ mod tests {
     /// first does not release it while an earlier slice has yet to begin.
     #[test]
     fn a_divided_group_waits_for_every_part() {
-        let completion = split(&[(1, 2)]);
+        let completion = split(&[(1, &[0, 1])]);
         let (early, late) = (completion.slice(0), completion.slice(1));
         assert!(!late.close(key(1)).expect("late part"), "one part of two");
         let work = early.begin(key(1)).expect("early work");
@@ -356,7 +384,7 @@ mod tests {
     /// slice's part stays open, and a whole group is ready on its one close.
     #[test]
     fn each_slice_closes_its_own_part() {
-        let completion = split(&[(1, 3)]);
+        let completion = split(&[(1, &[0, 1, 2])]);
         let slices: Vec<_> = (0..3).map(|index| completion.slice(index)).collect();
         assert!(slices[0].close(key(0)).expect("whole group"), "ready now");
         assert!(!slices[0].close(key(1)).expect("first part"));
@@ -378,7 +406,11 @@ mod tests {
     #[test]
     fn concurrent_slices_make_each_group_ready_once() {
         let groups = 64;
-        let completion = split(&(0..groups).map(|bin| (bin, 3)).collect::<Vec<_>>());
+        let completion = split(
+            &(0..groups)
+                .map(|bin| (bin, &[0, 1, 2][..]))
+                .collect::<Vec<_>>(),
+        );
         let ready = std::sync::atomic::AtomicUsize::new(0);
         std::thread::scope(|scope| {
             for index in 0..3 {
@@ -398,5 +430,47 @@ mod tests {
         });
         assert_eq!(ready.into_inner(), groups as usize);
         assert!(completion.is_idle().expect("idle"));
+    }
+
+    /// A slice whose traversal fails with a part open, or whose view is
+    /// dropped, abandons the group: the other slices and the split report
+    /// it rather than wait. A slice that completed its parts ends cleanly.
+    #[test]
+    fn a_slice_that_ends_with_a_part_open_abandons_its_group() {
+        for dropped in [false, true] {
+            let completion = split(&[(1, &[0, 1]), (2, &[1, 2])]);
+            let (first, second, third) = (
+                completion.slice(0),
+                completion.slice(1),
+                completion.slice(2),
+            );
+            assert!(!first.close(key(1)).expect("first part"));
+            first.end().expect("its parts are complete");
+            if dropped {
+                drop(second);
+            } else {
+                assert!(
+                    matches!(
+                        second.end(),
+                        Err(ObservationError::WorkAbandoned { group }) if group == key(1)
+                    ),
+                    "its parts of 1 and 2 are open"
+                );
+            }
+            assert!(matches!(
+                completion.is_idle(),
+                Err(ObservationError::WorkAbandoned { .. })
+            ));
+            assert!(third.close(key(2)).is_err(), "reported to the others");
+        }
+    }
+
+    /// Each slice's view is given once.
+    #[test]
+    #[should_panic(expected = "given before")]
+    fn a_slice_has_one_view() {
+        let completion = split(&[]);
+        let _first = completion.slice(0);
+        let _again = completion.slice(0);
     }
 }

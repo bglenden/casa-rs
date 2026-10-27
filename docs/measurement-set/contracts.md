@@ -106,9 +106,7 @@ describes and the writer refuses a solve from another opening). An MSv2's
 namespace is its own subtables, its catalogue's antennas, fields and
 sessions being their rows and each partition naming its data description's
 window, so a table written through it has the rows CASA's `gaincal` copies
-and CASA applies it to that MeasurementSet by its own association. (casa-rs's
-writer collapses a solved window at the centre channel where CASA's
-collapses at the channels' arithmetic mean, #917.) An MSv4 has no such rows; its
+and CASA applies it to that MeasurementSet by its own association. An MSv4 has no such rows; its
 namespace is the subtables its MSv2 conversion holds, in catalogue order, so
 a table written through it applies by CASA's association only to that
 conversion, and is bound to any other store. The writer translates a solve's
@@ -135,8 +133,8 @@ compares the table's rows with the store's namespace rows, in this order:
    table collapses them to, of the summed width (in magnitude: CASA's solve
    holds widths positive) at the channels' arithmetic mean frequency (CASA's
    `gaincal`, whose `ChannelAverageTVI` averages frequencies unweighted
-   before a G or T solve, whatever the widths) or the centre channel's
-   (casa-rs's writer, #917). Names never bind, since converters rewrite them, but an antenna
+   before a G or T solve, whatever the widths, and casa-rs's writer since
+   #917). Names never bind, since converters rewrite them, but an antenna
    whose name disagrees beyond a converter's `_STATION` suffixes is refused:
    another antenna on the same pad does not take its gains. An entity the
    other side lacks binds to nothing, so an antenna subset applies as CASA
@@ -833,11 +831,13 @@ second update session is refused, lends the same observation for reading and
 updaters for writing, and lets independent read-only observations open
 beside it. Several updaters may be live at once, each claiming the times of
 each variable and partition it writes (on MSv4 widened to whole chunk rows);
-one that meets a live claim is refused. An MSv2 updater takes casacore's
-table lock for each batch it writes, so a session's updaters write one batch
-at a time; MSv4 updaters replace disjoint chunks at once, and MSv4 has no
-cross-process lock protocol, which the session states
-(`UpdateGuarantees`).
+one that meets a live claim is refused. An MSv2 session holds casacore's
+write lock on MAIN from its first live updater to its last, so another
+process waits for a pass rather than at every batch, and reopens its handle
+whenever it takes the lock, so what it merges is never older than the lock;
+its updaters write one batch at a time. MSv4 updaters replace disjoint
+chunks at once, and MSv4 has no cross-process lock protocol, which the
+session states (`UpdateGuarantees`).
 
 ## 7. Updates and creation
 
@@ -1015,7 +1015,7 @@ when its acceptance obligation is met.
 | Revisit and compute-window requirements as request fields | A new traversal per pass; windows are views | Binding states what depends on an estimated pass count; a revisit does not imply cached values |
 | Updates | The write-back trial's update sessions (section 7) | Section 7's remaining obligations: bit flags and flag categories, conflicting queued patches, structural writes (a new MSv4 data group), per-batch MSv2 planning, a killed process, stray temporary files and the synchronization cost at scale |
 | MSv2 creation from batches; general creation and loss policy | The MSv4 writer (one dataset or a processing set of many), and the converter's MSv2 creator: padded cells flagged NaN rows, or no row by declared policy (the occupancy row above), losses inventoried and refused unless accepted before anything is written, `SIGMA` derived from the weights as an accepted loss | Cells in time order become rows, padded cells flagged NaN rows; cross-format creation preflights metadata, flag and occupancy mappings and rejects unapproved loss |
-| Mixed read/update sessions and locking | One update session per store in a process, its updaters claiming disjoint times (whole chunk rows on MSv4), read-only opens beside them; casacore's lock per MSv2 batch written | Plan read and write access before locking, no implicit upgrade; original-input semantics need disjoint read and write regions after resolving aliases, or a proven read-before-write order; casacore cross-process locks stay authoritative for v2; the v4 profile reports that it has no cross-process lock protocol |
+| Mixed read/update sessions and locking | One update session per store in a process, its updaters claiming disjoint times (whole chunk rows on MSv4), read-only opens beside them; casacore's MSv2 lock held while an updater is live | Plan read and write access before locking, no implicit upgrade; original-input semantics need disjoint read and write regions after resolving aliases, or a proven read-before-write order; casacore cross-process locks stay authoritative for v2; the v4 profile reports that it has no cross-process lock protocol |
 | Calibration binding across stores | Section 2's persisted namespace and calibration binding, in the calibration trial (test code until the calibration port): a batch solve persisted through an MSv2's namespace is production `gaincal`'s table; one solved on an MSv4 lacking an antenna, rebound to the full MSv2 that numbers its antennas otherwise and applied from batches, equals production `gaincal` and `applycal`, and CASA's `applycal` reads the MSv4-namespace table as casa-rs does; reordered antennas and windows, renamed entities, subsets, equal content refused unless the namespace is the table's own or the association is stated (trial README, "Caltable round trip") | The binding in production, with `gainfield` and nearest-field selection through bound fields; bandpass and other per-channel tables, whose windows keep their channels; tables solved over combined windows; `FEED` and receptor association; a field binding tolerant of ephemeris fields |
 | Ephemeris, pointing and time-dependent metadata | Ephemeris is not a partition key; pointing not read | Queried in bounded windows; ephemeris keys partitions as XRADIO's converter does |
 | Baseline-dependent polarization (`polarization_mixed`) | Refused at opening | A checked per-baseline basis mapping in the common metadata |

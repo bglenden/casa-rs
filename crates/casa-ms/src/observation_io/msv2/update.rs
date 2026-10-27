@@ -2,14 +2,17 @@
 //! Writing back to a MeasurementSet v2 through production's bounded
 //! selected-row mutation (`MeasurementSetWriteSession`).
 //!
-//! An updater plans its traversal's MAIN rows up front, every present cell
-//! of the requested partitions in delivery order, and takes casacore's
-//! write lock for its life. Each batch's samples are their grid cells'
-//! rows; a padded cell has no row and receives nothing. A cell the patch
-//! supplies whole (every channel and product, and for flags every element
-//! set or cleared) is written without reading it; any other is read and
-//! merged. Writes are in place, as casacore's are: a failure leaves the
-//! rows already written.
+//! The session holds casacore's write lock on MAIN while any of its
+//! updaters is live, so another process waits for a pass, not for each
+//! batch, and it reopens its handle each time it takes the lock, so what
+//! an updater reads and merges is never older than the lock it writes
+//! under. Each batch is written by a mutation session of its own under that
+//! lock; the session's updaters write one batch at a time whatever their
+//! number. A batch's samples are their grid cells' rows; a padded cell has
+//! no row and receives nothing. A cell the patch supplies whole (every
+//! channel and product, and for flags every element set or cleared) is
+//! written without reading it; any other is read and merged. Writes are in
+//! place, as casacore's are: a failure leaves the rows already written.
 //!
 //! A `CORRECTED_DATA` the session creates starts as `DATA`'s copy and a
 //! `MODEL_DATA` as CASA's initial model (1, 0 in the cross hands), as CASA
@@ -17,7 +20,10 @@
 //! uncorrected data and a unit point source.
 
 use std::ops::Range;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+
+use casa_tables::TableWriteLock;
 
 use casa_observation::{
     AccessRequest, ObservationError, PartitionEntry, PatchValues, ResolvedTarget, UpdateReport,
@@ -44,7 +50,66 @@ use crate::{
 /// MeasurementSet handle its updaters write through.
 pub(in crate::observation_io) struct Msv2Update {
     observation: Msv2Observation,
-    writer: Mutex<MeasurementSet>,
+    path: PathBuf,
+    /// MAIN's rows, each of which one grid cell addresses.
+    rows: usize,
+    writer: Mutex<Writer>,
+}
+
+/// The handle the updaters write through, and casacore's write lock on
+/// MAIN while any of them is live.
+struct Writer {
+    ms: MeasurementSet,
+    /// Taken for the first live updater and released, publishing the
+    /// session's writes, when the last goes; taken again, with `ms`
+    /// reopened under it, after a failed write released it.
+    lock: Option<TableWriteLock>,
+    live: usize,
+}
+
+impl Writer {
+    /// Hold MAIN's write lock: take it, waiting as casacore does, when it
+    /// is not held, and reopen the handle under it.
+    fn hold(&mut self, path: &Path, rows: usize) -> Result<(), ObservationError> {
+        if self.lock.is_some() {
+            return Ok(());
+        }
+        let lock = TableWriteLock::acquire_to_reread(path, 0).map_err(storage)?;
+        let ms = MeasurementSet::open(path).map_err(storage)?;
+        if ms.main_table().row_count() != rows {
+            return Err(request_error(format!(
+                "MAIN has {} rows and had {rows} when the session opened: another process \
+                 changed it, so the session's grids no longer address its rows",
+                ms.main_table().row_count()
+            )));
+        }
+        self.ms = ms;
+        self.lock = Some(lock);
+        Ok(())
+    }
+}
+
+/// A live updater's share of the session's lock on MAIN: the last to go
+/// releases it, publishing what the session wrote.
+struct Lease<'s> {
+    update: &'s Msv2Update,
+    ended: bool,
+}
+
+impl Lease<'_> {
+    /// Leave, releasing the lock if this was the last live updater.
+    fn end(mut self) -> Result<(), ObservationError> {
+        self.ended = true;
+        self.update.leave()
+    }
+}
+
+impl Drop for Lease<'_> {
+    fn drop(&mut self) {
+        if !self.ended {
+            let _ = self.update.leave();
+        }
+    }
 }
 
 /// A bound target: the role and the MAIN column it writes.
@@ -62,12 +127,11 @@ struct Position {
 }
 
 /// Writes one traversal through production's selected-row mutation, a
-/// session per batch: each takes casacore's write lock on MAIN for the
-/// batch's rows alone, so the session's updaters write one batch at a time
-/// whatever their number.
+/// mutation session per batch under the update session's lock on MAIN.
 struct Msv2Updater<'s> {
     update: &'s Msv2Update,
     _claim: Claim<'s>,
+    lease: Lease<'s>,
     columns: Vec<Column>,
     /// The bound targets, which plan each batch's columns.
     targets: Vec<ResolvedTarget>,
@@ -88,10 +152,16 @@ impl Msv2Update {
         options: &OpenOptions,
     ) -> Result<Self, ObservationError> {
         let observation = Msv2Observation::open_with(path, options)?;
-        let writer = MeasurementSet::open(path).map_err(super::storage)?;
+        let ms = MeasurementSet::open(path).map_err(super::storage)?;
         Ok(Self {
             observation,
-            writer: Mutex::new(writer),
+            path: path.to_path_buf(),
+            rows: ms.main_table().row_count(),
+            writer: Mutex::new(Writer {
+                ms,
+                lock: None,
+                live: 0,
+            }),
         })
     }
 
@@ -99,9 +169,61 @@ impl Msv2Update {
         &self.observation
     }
 
-    /// Claim `request`'s times of `targets`' columns, create and seed the
-    /// columns the session creates, and bind an updater that writes each
-    /// batch through production's selected-row mutation.
+    fn writer(&self) -> MutexGuard<'_, Writer> {
+        self.writer.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Hold MAIN's lock, clear what CASA clears before `targets` are
+    /// written, and create and seed the columns the session creates;
+    /// returns the cells seeded.
+    fn prepare(
+        &self,
+        writer: &mut Writer,
+        request: &AccessRequest,
+        targets: &[ResolvedTarget],
+    ) -> Result<usize, ObservationError> {
+        writer.hold(&self.path, self.rows)?;
+        let Writer { ms, lock, .. } = writer;
+        let mut seeded = 0;
+        for target in targets {
+            prepare_column(ms, target, lock.as_mut().expect("held"))?;
+            if target.created
+                && target.variable == "MODEL_DATA"
+                && !persisted(ms.main_table(), "MODEL_DATA")
+            {
+                seeded += seed_model(ms, lock, &self.observation)?;
+            }
+        }
+        // Install the columns the session creates (CORRECTED_DATA cloned
+        // from DATA) now, with a session of no rows.
+        mutate(
+            ms,
+            lock,
+            &self.observation,
+            request,
+            targets,
+            &[],
+            |_, _| Ok(()),
+        )?;
+        Ok(seeded)
+    }
+
+    /// An updater has gone: the last releases MAIN's lock.
+    fn leave(&self) -> Result<(), ObservationError> {
+        let mut writer = self.writer();
+        writer.live -= 1;
+        match writer.lock.take() {
+            Some(lock) if writer.live == 0 => lock.release().map_err(storage),
+            held => {
+                writer.lock = held;
+                Ok(())
+            }
+        }
+    }
+
+    /// Claim `request`'s times of `targets`' columns, hold MAIN's lock,
+    /// create and seed the columns the session creates, and bind an updater
+    /// that writes each batch through production's selected-row mutation.
     ///
     /// What CASA clears before the targets' columns are written is cleared
     /// first ([`prepare_column`]), before any batch: a write then refused
@@ -134,30 +256,26 @@ impl Msv2Update {
                 .collect(),
         )?;
         let targets: Vec<ResolvedTarget> = targets.iter().map(|target| (*target).clone()).collect();
-        let mut writer = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
-        let mut seeded = 0;
-        for target in &targets {
-            prepare_column(&mut writer, target)?;
-            if target.created
-                && target.variable == "MODEL_DATA"
-                && !persisted(writer.main_table(), "MODEL_DATA")
-            {
-                seeded += seed_model(&mut writer, &self.observation)?;
+        let mut writer = self.writer();
+        let seeded = match self.prepare(&mut writer, request, &targets) {
+            Ok(seeded) => seeded,
+            Err(error) => {
+                if writer.live == 0 {
+                    // Released, publishing what reached MAIN.
+                    drop(writer.lock.take());
+                }
+                return Err(error);
             }
-        }
-        // Install the columns the session creates (CORRECTED_DATA cloned
-        // from DATA) now, with a session of no rows.
-        mutate(
-            &mut writer,
-            &self.observation,
-            request,
-            &targets,
-            &[],
-            |_, _| Ok(()),
-        )?;
+        };
+        writer.live += 1;
+        drop(writer);
         Ok(Box::new(Msv2Updater {
             update: self,
             _claim: claim,
+            lease: Lease {
+                update: self,
+                ended: false,
+            },
             columns: targets
                 .iter()
                 .map(|target| Column {
@@ -182,12 +300,14 @@ impl Msv2Update {
 
 /// One session of production's selected-row mutation of `targets`' columns
 /// over MAIN rows `rows`, which `write` writes in the session's batches
-/// ([`MeasurementSetWriteSession::next_mutation_rows`]): casacore's write
-/// lock on MAIN is taken for it and released, publishing the write, once
-/// every row is written. Columns the session creates and MAIN lacks are
-/// installed as it starts, so a session of no rows only installs them.
+/// ([`MeasurementSetWriteSession::next_mutation_rows`]), under `lock`,
+/// casacore's write lock on MAIN, held: it is handed back once every row
+/// is written, and released, publishing what was written, if the session
+/// fails. Columns the session creates and MAIN lacks are installed as it
+/// starts, so a session of no rows only installs them.
 fn mutate(
     writer: &mut MeasurementSet,
+    lock: &mut Option<TableWriteLock>,
     observation: &Msv2Observation,
     request: &AccessRequest,
     targets: &[ResolvedTarget],
@@ -225,10 +345,13 @@ fn mutate(
         },
     )
     .map_err(storage)?;
+    let held = lock.take().expect("MAIN's write lock is held");
     let mut session =
-        MeasurementSetWriteSession::start_selected_row_mutation(writer, plan).map_err(storage)?;
+        MeasurementSetWriteSession::start_selected_row_mutation_holding(writer, plan, held)
+            .map_err(storage)?;
     write(&mut session, writer)?;
-    session.finish_mutation().map_err(storage)?;
+    let (_, held) = session.finish_mutation_holding().map_err(storage)?;
+    *lock = Some(held);
     Ok(())
 }
 
@@ -251,6 +374,7 @@ const SEED_BATCH_BYTES: usize = 64 << 20;
 /// own values over the seed. Every MAIN row lies in one partition's grid.
 fn seed_model(
     ms: &mut MeasurementSet,
+    lock: &mut Option<TableWriteLock>,
     observation: &Msv2Observation,
 ) -> Result<usize, ObservationError> {
     let catalogue = observation.catalogue();
@@ -298,8 +422,10 @@ fn seed_model(
     )
     .map_err(storage)?;
     let batch_rows = plan.batch_rows().max(1);
+    let held = lock.take().expect("MAIN's write lock is held");
     let mut session =
-        MeasurementSetWriteSession::start_selected_row_mutation(ms, plan).map_err(storage)?;
+        MeasurementSetWriteSession::start_selected_row_mutation_holding(ms, plan, held)
+            .map_err(storage)?;
     for (batch, indices) in rows.chunks(batch_rows).zip(row_seeds.chunks(batch_rows)) {
         session
             .write_mutation_batch(
@@ -316,7 +442,8 @@ fn seed_model(
             )
             .map_err(storage)?;
     }
-    session.finish_mutation().map_err(storage)?;
+    let (_, held) = session.finish_mutation_holding().map_err(storage)?;
+    *lock = Some(held);
     Ok(rows.len())
 }
 
@@ -332,6 +459,7 @@ fn seed_model(
 fn prepare_column(
     ms: &mut MeasurementSet,
     target: &ResolvedTarget,
+    lock: &mut TableWriteLock,
 ) -> Result<(), ObservationError> {
     let name = target.variable.as_str();
     let column = match name {
@@ -350,7 +478,7 @@ fn prepare_column(
             .schema()
             .is_some_and(|schema| schema.contains_column(name));
     if adds || column == VisibilityDataColumn::ModelData {
-        crate::scratch_columns::prepare_write(ms, column, adds).map_err(storage)?;
+        crate::scratch_columns::prepare_write_holding(ms, column, adds, lock).map_err(storage)?;
     }
     if !adds {
         return Ok(());
@@ -447,20 +575,19 @@ impl Updater for Msv2Updater<'_> {
             .filter(|(_, row)| **row != NO_ROW)
             .map(|(sample, row)| (sample, *row as usize))
             .collect();
-        let mut writer = self
-            .update
-            .writer
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
+        let mut writer = self.update.writer();
+        writer.hold(&self.update.path, self.update.rows)?;
+        let Writer { ms, lock, .. } = &mut *writer;
         let mut columns = Vec::with_capacity(self.columns.len());
         for (column, value) in self.columns.iter().zip(values) {
-            let (cells, read) = column_cells(&writer, column, value, &present, &window)?;
+            let (cells, read) = column_cells(ms, column, value, &present, &window)?;
             self.report.units_read += read;
             columns.push(cells);
         }
         let rows: Vec<usize> = present.iter().map(|(_, row)| *row).collect();
         mutate(
-            &mut writer,
+            ms,
+            lock,
             observation,
             &self.request,
             &self.targets,
@@ -519,7 +646,9 @@ impl Updater for Msv2Updater<'_> {
                 "the traversal was not written batch for batch: selected times remain unwritten",
             ));
         }
-        Ok(self.report)
+        let report = self.report;
+        self.lease.end()?;
+        Ok(report)
     }
 }
 
