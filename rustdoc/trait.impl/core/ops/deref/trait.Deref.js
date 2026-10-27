@@ -1,9 +1,9 @@
 (function() {
-    const implementors = Object.fromEntries([["casa_imaging_deconvolution",[["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.99.1/core/ops/deref/trait.Deref.html\" title=\"trait core::ops::deref::Deref\">Deref</a> for <a class=\"struct\" href=\"casa_imaging_deconvolution/struct.FinalNormalStateWindow.html\" title=\"struct casa_imaging_deconvolution::FinalNormalStateWindow\">FinalNormalStateWindow</a>&lt;'_&gt;",0]]]]);
+    const implementors = Object.fromEntries([["casa_imaging_deconvolution",[["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.99.1/core/ops/deref/trait.Deref.html\" title=\"trait core::ops::deref::Deref\">Deref</a> for <a class=\"struct\" href=\"casa_imaging_deconvolution/struct.FinalNormalStateWindow.html\" title=\"struct casa_imaging_deconvolution::FinalNormalStateWindow\">FinalNormalStateWindow</a>&lt;'_&gt;",0]]],["casa_imaging_runtime",[["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.99.1/core/ops/deref/trait.Deref.html\" title=\"trait core::ops::deref::Deref\">Deref</a> for <a class=\"enum\" href=\"casa_imaging_runtime/pass/enum.DomainModel.html\" title=\"enum casa_imaging_runtime::pass::DomainModel\">DomainModel</a>&lt;'_&gt;",0]]]]);
     if (window.register_implementors) {
         window.register_implementors(implementors);
     } else {
         window.pending_implementors = implementors;
     }
 })()
-//{"start":59,"fragment_lengths":[386]}
+//{"start":59,"fragment_lengths":[386,341]}
