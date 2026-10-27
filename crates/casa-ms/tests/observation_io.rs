@@ -239,7 +239,6 @@ fn catalogues_describe_the_same_observation() {
         assert_eq!(v2.position.values(), v4.position.values());
         assert_eq!(v2.dish_diameter.value(), v4.dish_diameter.value());
         assert_eq!(v2.dish_diameter.unit().name(), "m");
-        assert_eq!(v2.receptors, v4.receptors);
     }
     assert_eq!((a.fields.len(), b.fields.len()), (1, 1));
     assert_eq!(format!("{}_0", a.fields[0].name), b.fields[0].name);
@@ -259,6 +258,10 @@ fn catalogues_describe_the_same_observation() {
     assert_eq!((a.partitions.len(), b.partitions.len()), (1, 1));
     let (p2, p4) = (&a.partitions[0], &b.partitions[0]);
     assert!(p2.same_content(p4), "one partition of the same content");
+    // Each antenna's receptors in the partition's window: the MSv2's FEED
+    // rows, XRADIO's antenna_xds.
+    assert!(!p2.receptors.is_empty());
+    assert_eq!(p2.receptors, p4.receptors);
     assert_eq!(p2.frequencies_hz, p4.frequencies_hz);
     assert_eq!(p2.channel_widths_hz, p4.channel_widths_hz);
     assert_eq!(p2.frequency_frame, FrequencyRef::LSRK);

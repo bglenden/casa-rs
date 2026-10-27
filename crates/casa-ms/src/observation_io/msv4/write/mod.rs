@@ -34,12 +34,12 @@ mod set;
 
 pub use set::Msv4ProcessingSetWriter;
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 use casa_observation::{
-    AntennaEntry, Catalogue, DataGroupEntry, FieldId, ObservationError, PartitionEntry,
-    PartitionId, ScanId, TimeBaselineGrid, VisibilityUnits,
+    AntennaEntry, AntennaId, Catalogue, DataGroupEntry, FieldId, ObservationError, PartitionEntry,
+    PartitionId, Receptors, ScanId, TimeBaselineGrid, VisibilityUnits,
 };
 use casa_types::measures::position::PositionRef;
 use casa_types::measures::{EpochView, MjdHighPrec};
@@ -477,6 +477,7 @@ impl Msv4Writer {
             store,
             &format!("{root}/antenna_xds"),
             &dataset_antennas(catalogue, grid),
+            &writer.target.entry.receptors,
             &observation.telescope,
         )?;
         writer.write_fields(store, &format!("{root}/{fields_xds}"), catalogue)?;
@@ -874,19 +875,7 @@ impl Msv4Writer {
         series: &casa_observation::PointingSeries,
     ) -> Result<(), ObservationError> {
         let grid = &self.target.grid;
-        let mut named = vec![false; catalogue.antennas.len()];
-        for baseline in &grid.baselines {
-            named[baseline.antenna1.0 as usize] = true;
-            named[baseline.antenna2.0 as usize] = true;
-        }
-        let antennas: Vec<_> = catalogue
-            .antennas
-            .iter()
-            .zip(named)
-            .enumerate()
-            .filter(|(_, (_, named))| *named)
-            .map(|(id, (entry, _))| (casa_observation::AntennaId(id as u32), entry))
-            .collect();
+        let antennas = dataset_antennas(catalogue, grid);
         pointing::write_pointing(
             &self.store,
             &format!("/{}/pointing_xds", self.dataset),
@@ -922,7 +911,7 @@ impl Msv4Writer {
 fn dataset_antennas<'a>(
     catalogue: &'a Catalogue,
     grid: &TimeBaselineGrid,
-) -> Vec<&'a AntennaEntry> {
+) -> Vec<(AntennaId, &'a AntennaEntry)> {
     let mut named = vec![false; catalogue.antennas.len()];
     for baseline in &grid.baselines {
         named[baseline.antenna1.0 as usize] = true;
@@ -932,17 +921,31 @@ fn dataset_antennas<'a>(
         .antennas
         .iter()
         .zip(named)
-        .filter_map(|(antenna, named)| named.then_some(antenna))
+        .enumerate()
+        .filter(|(_, (_, named))| *named)
+        .map(|(id, (antenna, _))| (AntennaId(id as u32), antenna))
         .collect()
 }
 
-/// `antennas` as an `antenna_xds`.
+/// `antennas` as an `antenna_xds`, with their `receptors` in the
+/// dataset's partition (none for an antenna the partition states none
+/// for).
 fn write_antennas(
     store: &Arc<FilesystemStore>,
     path: &str,
-    antennas: &[&AntennaEntry],
+    antennas: &[(AntennaId, &AntennaEntry)],
+    receptors: &BTreeMap<AntennaId, Receptors>,
     telescope: &str,
 ) -> Result<(), ObservationError> {
+    let none = Receptors {
+        types: Vec::new(),
+        angles: Vec::new(),
+    };
+    let own: Vec<&Receptors> = antennas
+        .iter()
+        .map(|(id, _)| receptors.get(id).unwrap_or(&none))
+        .collect();
+    let antennas: Vec<&AntennaEntry> = antennas.iter().map(|(_, antenna)| *antenna).collect();
     create_group(
         store,
         path,
@@ -953,12 +956,11 @@ fn write_antennas(
         }),
     )?;
     let count = antennas.len() as u64;
-    let receptors = antennas
-        .first()
-        .map_or(0, |antenna| antenna.receptors.len());
-    if antennas.iter().any(|antenna| {
-        antenna.receptors.len() != receptors || antenna.receptor_angles.len() != receptors
-    }) {
+    let receptors = own.first().map_or(0, |own| own.types.len());
+    if own
+        .iter()
+        .any(|own| own.types.len() != receptors || own.angles.len() != receptors)
+    {
         return Err(ObservationError::Unsupported {
             what: "antennas with different receptor counts",
         });
@@ -994,25 +996,29 @@ fn write_antennas(
             &values,
         )?;
     }
-    let labels: Vec<String> = (0..receptors).map(|r| format!("pol_{r}")).collect();
-    strings(
-        store,
-        &format!("{path}/receptor_label"),
-        &[receptors as u64],
-        &["receptor_label"],
-        &labels,
-    )?;
-    let types: Vec<String> = antennas
-        .iter()
-        .flat_map(|a| a.receptors.iter().cloned())
-        .collect();
-    strings(
-        store,
-        &format!("{path}/polarization_type"),
-        &[count, receptors as u64],
-        &["antenna_name", "receptor_label"],
-        &types,
-    )?;
+    // Without receptors (FEED states none for the window), XRADIO writes no
+    // receptor variables.
+    if receptors > 0 {
+        let labels: Vec<String> = (0..receptors).map(|r| format!("pol_{r}")).collect();
+        strings(
+            store,
+            &format!("{path}/receptor_label"),
+            &[receptors as u64],
+            &["receptor_label"],
+            &labels,
+        )?;
+        let types: Vec<String> = own
+            .iter()
+            .flat_map(|own| own.types.iter().cloned())
+            .collect();
+        strings(
+            store,
+            &format!("{path}/polarization_type"),
+            &[count, receptors as u64],
+            &["antenna_name", "receptor_label"],
+            &types,
+        )?;
+    }
     strings(
         store,
         &format!("{path}/cartesian_pos_label"),
@@ -1060,9 +1066,12 @@ fn write_antennas(
         &diameters,
         json!({"type": "quantity", "units": "m", "coordinates": "mount station_name telescope_name"}),
     )?;
+    if receptors == 0 {
+        return Ok(());
+    }
     let mut angles = Vec::new();
-    for antenna in antennas {
-        for angle in &antenna.receptor_angles {
+    for own in &own {
+        for angle in &own.angles {
             angles.push(value_in(angle, "rad")?);
         }
     }

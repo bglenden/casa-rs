@@ -770,8 +770,6 @@ pub(crate) mod tests {
             position: casa_types::measures::position::MPosition::new_itrf(0.0, 0.0, 0.0),
             mount: "ALT-AZ".to_string(),
             dish_diameter: casa_types::quanta::Quantity::new(25.0, "m").expect("quantity"),
-            receptors: vec!["X".to_string()],
-            receptor_angles: Vec::new(),
         };
         Arc::new(Catalogue {
             antennas: vec![antenna("A"), antenna("B"), antenna("C")],
@@ -817,6 +815,7 @@ pub(crate) mod tests {
                         stored_label: None,
                     },
                 }],
+                receptors: std::collections::BTreeMap::new(),
             }],
         })
     }

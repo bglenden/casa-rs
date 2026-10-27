@@ -116,7 +116,7 @@ pub use casa_types::measures::{EpochView, FrequencyView, MUvw, UvwView};
 pub use catalogue::{
     AntennaEntry, AntennaId, Binding, BindingTolerance, Catalogue, DataGroupEntry, FieldEntry,
     FieldId, ObservationEntry, ObservationId, OrderedBaseline, PartitionEntry, PartitionId,
-    ScanEntry, ScanId, UvwFrame, VisibilityUnits,
+    Receptors, ScanEntry, ScanId, UvwFrame, VisibilityUnits,
 };
 pub use creation::TimeBaselineGrid;
 pub use cursor::{BoundCursor, Observation, OwnedEvent, Step, Traversal, VisibilityCursor};

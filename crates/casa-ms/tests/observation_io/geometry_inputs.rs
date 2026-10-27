@@ -384,3 +384,117 @@ fn conversion() -> casa_ms::observation_io::convert::ConversionOptions {
         creation_date: "2026-10-27T00:00:00+00:00".to_string(),
     }
 }
+
+/// A two-window simulation (the simulator states each antenna's receptors
+/// for window 0 only) given window 1 receptors of its own: the window-0
+/// rows copied with receptor angles `angle`.
+fn two_windows(root: &Path, angle: f64) -> std::path::PathBuf {
+    let mut request = casa_ms::SyntheticObservationRequest::vla_ppdisk(
+        root.join("unused.fits"),
+        root.join("two.ms"),
+        vec![
+            casa_ms::SyntheticAntenna::vla(
+                "VLA01",
+                "N01",
+                [-1_601_185.4, -5_041_977.5, 3_554_875.9],
+            ),
+            casa_ms::SyntheticAntenna::vla(
+                "VLA02",
+                "N02",
+                [-1_601_085.4, -5_041_977.5, 3_554_875.9],
+            ),
+            casa_ms::SyntheticAntenna::vla(
+                "VLA03",
+                "N03",
+                [-1_601_185.4, -5_041_877.5, 3_554_875.9],
+            ),
+        ],
+    );
+    request.predict_model = false;
+    request.duration_seconds = 40.0;
+    request.integration_seconds = 10.0;
+    request.spectral_windows = [44.0e9, 45.0e9]
+        .iter()
+        .enumerate()
+        .map(|(index, start)| casa_ms::SyntheticSpectralSetup {
+            name: format!("band{index}"),
+            start_frequency_hz: *start,
+            channel_width_hz: 2.0e6,
+            channel_count: 4,
+        })
+        .collect();
+    casa_ms::generate_synthetic_observation_ms(&request).expect("simulate");
+    let mut ms = MeasurementSet::open(&request.output_ms).expect("ms");
+    let feed = ms.subtable_mut(SubtableId::Feed).expect("FEED");
+    for row in 0..feed.row_count() {
+        let mut copy = feed.row_accessor().row(row).expect("row").clone();
+        copy.upsert("SPECTRAL_WINDOW_ID", Value::Scalar(ScalarValue::Int32(1)));
+        copy.upsert(
+            "RECEPTOR_ANGLE",
+            Value::Array(casa_types::ArrayValue::Float64(
+                ndarray::arr1(&[angle, angle]).into_dyn(),
+            )),
+        );
+        feed.add_row(copy).expect("add");
+    }
+    ms.save().expect("save");
+    request.output_ms
+}
+
+/// The receptor angles each partition states, by antenna.
+fn angles(observation: &dyn casa_observation::Observation) -> Vec<Vec<f64>> {
+    observation
+        .catalogue()
+        .partitions
+        .iter()
+        .map(|entry| {
+            entry
+                .receptors
+                .values()
+                .flat_map(|own| own.angles.iter().map(|angle| angle.value()))
+                .collect()
+        })
+        .collect()
+}
+
+/// Each partition states its antennas' receptors in its own window: the
+/// MSv2's `FEED` rows for the window (or every window), the MSv4's
+/// `antenna_xds`; a conversion carries them both ways, writing per-window
+/// `FEED` rows where windows differ. Rows of one antenna, feed and window
+/// that differ in time are refused, as XRADIO's converter refuses them.
+#[test]
+fn receptors_are_each_partitions_own() {
+    let root = tempfile::tempdir().expect("root");
+    let v2 = two_windows(root.path(), 0.25);
+    let msv2 = open(&v2, &OpenOptions::default()).expect("msv2");
+    assert_eq!(angles(msv2.as_ref()), [vec![0.0; 6], vec![0.25; 6]]);
+    let v4 = root.path().join("two.ps.zarr");
+    casa_ms::observation_io::convert::to_msv4(&v2, &v4, &conversion()).expect("to msv4");
+    let msv4 = open(&v4, &OpenOptions::default()).expect("msv4");
+    assert_eq!(angles(msv4.as_ref()), angles(msv2.as_ref()));
+    let back = root.path().join("back.ms");
+    casa_ms::observation_io::convert::to_msv2(&v4, &back, &conversion()).expect("to msv2");
+    let again = open(&back, &OpenOptions::default()).expect("back");
+    assert_eq!(angles(again.as_ref()), angles(msv2.as_ref()));
+
+    let varying = root.path().join("varying");
+    std::fs::create_dir(&varying).expect("dir");
+    let v2 = two_windows(&varying, 0.25);
+    {
+        let mut ms = MeasurementSet::open(&v2).expect("ms");
+        let feed = ms.subtable_mut(SubtableId::Feed).expect("FEED");
+        let mut later = feed.row_accessor().row(0).expect("row").clone();
+        later.upsert(
+            "RECEPTOR_ANGLE",
+            Value::Array(casa_types::ArrayValue::Float64(
+                ndarray::arr1(&[0.5, 0.5]).into_dyn(),
+            )),
+        );
+        feed.add_row(later).expect("add");
+        ms.save().expect("save");
+    }
+    assert!(matches!(
+        open(&v2, &OpenOptions::default()),
+        Err(ObservationError::Unsupported { what }) if what.contains("differ in time")
+    ));
+}

@@ -13,14 +13,16 @@ pub(super) mod update;
 pub(crate) use catalogue::{metres, radians};
 pub use cursor::Msv2Cursor;
 
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
 
 use casa_observation::{
-    AccessRequest, BoundCursor, Catalogue, DataGroupEntry, Estimate, FieldSelection, GroupKey,
-    Grouping, NaturalBlocks, Observation, ObservationError, ObservationId, PartitionEntry,
-    PartitionEstimate, PartitionId, PointingRequest, PointingSeries, ResolvedRequest, Roles,
-    TimeBaselineGrid, Traversal, WeightRequest, WeightRule, WeightSource, times_per_batch,
+    AccessRequest, AntennaId, BoundCursor, Catalogue, DataGroupEntry, Estimate, FieldSelection,
+    GroupKey, Grouping, NaturalBlocks, Observation, ObservationError, ObservationId,
+    OrderedBaseline, PartitionEntry, PartitionEstimate, PartitionId, PointingRequest,
+    PointingSeries, Receptors, ResolvedRequest, Roles, TimeBaselineGrid, Traversal, WeightRequest,
+    WeightRule, WeightSource, times_per_batch,
 };
 use casa_tables::{RequiredScalarColumnDestination, RequiredScalarColumnValuesMut};
 use casa_types::measures::{EpochRef, MjdHighPrec};
@@ -120,6 +122,7 @@ impl Msv2Observation {
         options: &OpenOptions,
     ) -> Result<Self, ObservationError> {
         let antennas = catalogue::read_antennas(&ms)?;
+        let feeds = catalogue::read_feeds(&ms)?;
         let catalogue::Fields {
             entries: fields,
             ephemerides,
@@ -167,6 +170,12 @@ impl Msv2Observation {
             let feed = |feed: i32| {
                 u32::try_from(feed).map_err(|_| invalid(format!("negative feed {feed}")))
             };
+            let receptors = partition_receptors(
+                &feeds,
+                &grid.baselines,
+                key.feeds,
+                setup.spectral_window_id as i32,
+            )?;
             let feeds = [feed(key.feeds[0])?, feed(key.feeds[1])?];
             entries.push(PartitionEntry {
                 spectral_window: setup.spectral_window.clone(),
@@ -183,6 +192,7 @@ impl Msv2Observation {
                 time_scale,
                 time_origin: MjdHighPrec::new(0.0, 0.0),
                 data_groups: groups.clone(),
+                receptors,
             });
             partitions.push(Partition {
                 grid,
@@ -506,6 +516,36 @@ impl Msv2Observation {
             })?,
         })
     }
+}
+
+/// The receptors of each antenna `baselines` name, through the feed pair
+/// `feeds` (`FEED1` for the first antenna, `FEED2` for the second) in
+/// spectral window `window`; an antenna named through two feeds must have
+/// the same receptors through both.
+fn partition_receptors(
+    feeds: &catalogue::Feeds,
+    baselines: &[OrderedBaseline],
+    pair: [i32; 2],
+    window: i32,
+) -> Result<BTreeMap<AntennaId, Receptors>, ObservationError> {
+    let mut receptors = BTreeMap::new();
+    for baseline in baselines {
+        for (antenna, feed) in [(baseline.antenna1, pair[0]), (baseline.antenna2, pair[1])] {
+            let id = i32::try_from(antenna.0).map_err(|_| invalid("an antenna beyond i32"))?;
+            let Some(own) = feeds.receptors(id, feed, window)? else {
+                continue;
+            };
+            if receptors
+                .insert(antenna, own.clone())
+                .is_some_and(|known| known != own)
+            {
+                return Err(ObservationError::Unsupported {
+                    what: "an MSv2 antenna with different receptors through its two feeds",
+                });
+            }
+        }
+    }
+    Ok(receptors)
 }
 
 impl Observation for Msv2Observation {

@@ -6,8 +6,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use casa_observation::{
-    AntennaEntry, Correlation, FieldEntry, ObservationEntry, ObservationError, ScanEntry, ScanId,
-    UvwFrame, VisibilityUnits,
+    AntennaEntry, Correlation, FieldEntry, ObservationEntry, ObservationError, Receptors,
+    ScanEntry, ScanId, UvwFrame, VisibilityUnits,
 };
 use casa_tables::Table;
 use casa_types::measures::direction::{DirectionRef, MDirection};
@@ -278,7 +278,7 @@ pub(super) fn intents(mode: &str) -> Vec<String> {
     set.into_iter().collect()
 }
 
-/// Every `ANTENNA` row, with its first `FEED` row's receptors.
+/// Every `ANTENNA` row.
 pub(super) fn read_antennas(ms: &MeasurementSet) -> Result<Vec<AntennaEntry>, ObservationError> {
     let antenna = ms.antenna().map_err(storage)?;
     let antenna_table = ms
@@ -294,17 +294,37 @@ pub(super) fn read_antennas(ms: &MeasurementSet) -> Result<Vec<AntennaEntry>, Ob
             });
         }
     }
+    (0..antenna.row_count())
+        .map(|row| {
+            let [x, y, z] = antenna.position(row).map_err(storage)?;
+            Ok(AntennaEntry {
+                name: antenna.name(row).map_err(storage)?,
+                station: antenna.station(row).map_err(storage)?,
+                position: MPosition::new_itrf(x, y, z),
+                mount: antenna.mount(row).map_err(storage)?,
+                dish_diameter: metres(antenna.dish_diameter(row).map_err(storage)?),
+            })
+        })
+        .collect()
+}
+
+/// Every `FEED` row's receptors, by (antenna, feed, spectral window), the
+/// window -1 standing for every window.
+pub(super) struct Feeds(BTreeMap<(i32, i32, i32), Vec<Receptors>>);
+
+/// The `FEED` rows.
+pub(super) fn read_feeds(ms: &MeasurementSet) -> Result<Feeds, ObservationError> {
     let feed = ms.feed().map_err(storage)?;
     if let Some(feed_table) = ms.subtable(SubtableId::Feed) {
         require_units(feed_table, "RECEPTOR_ANGLE", "rad")?;
     }
-    let mut receptors = vec![(Vec::new(), Vec::new()); antenna.row_count()];
-    for row in (0..feed.row_count()).rev() {
-        let id = usize::try_from(feed.i32(row, "ANTENNA_ID").map_err(storage)?)
-            .map_err(|_| invalid("negative FEED ANTENNA_ID"))?;
-        let Some(slot) = receptors.get_mut(id) else {
-            continue;
-        };
+    let mut rows = BTreeMap::<(i32, i32, i32), Vec<Receptors>>::new();
+    for row in 0..feed.row_count() {
+        let key = (
+            feed.i32(row, "ANTENNA_ID").map_err(storage)?,
+            feed.i32(row, "FEED_ID").map_err(storage)?,
+            feed.i32(row, "SPECTRAL_WINDOW_ID").map_err(storage)?,
+        );
         let types = match feed.array(row, "POLARIZATION_TYPE").map_err(storage)? {
             ArrayValue::String(types) => types.iter().cloned().collect(),
             _ => return Err(invalid("FEED POLARIZATION_TYPE is not a string array")),
@@ -313,23 +333,38 @@ pub(super) fn read_antennas(ms: &MeasurementSet) -> Result<Vec<AntennaEntry>, Ob
             ArrayValue::Float64(angles) => angles.iter().map(|angle| radians(*angle)).collect(),
             _ => return Err(invalid("FEED RECEPTOR_ANGLE is not a Float64 array")),
         };
-        *slot = (types, angles);
+        rows.entry(key)
+            .or_default()
+            .push(Receptors { types, angles });
     }
-    (0..antenna.row_count())
-        .zip(receptors)
-        .map(|(row, (receptors, receptor_angles))| {
-            let [x, y, z] = antenna.position(row).map_err(storage)?;
-            Ok(AntennaEntry {
-                name: antenna.name(row).map_err(storage)?,
-                station: antenna.station(row).map_err(storage)?,
-                position: MPosition::new_itrf(x, y, z),
-                mount: antenna.mount(row).map_err(storage)?,
-                dish_diameter: metres(antenna.dish_diameter(row).map_err(storage)?),
-                receptors,
-                receptor_angles,
-            })
-        })
-        .collect()
+    Ok(Feeds(rows))
+}
+
+impl Feeds {
+    /// Antenna `antenna`'s receptors through feed `feed` in spectral window
+    /// `window`: its rows for the window and for every window, which must
+    /// agree. `FEED` may state receptors per time; a partition's are one
+    /// set, as XRADIO's converter requires. `None` without a row.
+    pub(super) fn receptors(
+        &self,
+        antenna: i32,
+        feed: i32,
+        window: i32,
+    ) -> Result<Option<Receptors>, ObservationError> {
+        let mut rows = [window, -1]
+            .into_iter()
+            .filter_map(|window| self.0.get(&(antenna, feed, window)))
+            .flatten();
+        let Some(first) = rows.next() else {
+            return Ok(None);
+        };
+        if rows.any(|other| other != first) {
+            return Err(ObservationError::Unsupported {
+                what: "MSv2 FEED receptors of one antenna, feed and window that differ in time",
+            });
+        }
+        Ok(Some(first.clone()))
+    }
 }
 
 pub(crate) fn metres(value: f64) -> Quantity {

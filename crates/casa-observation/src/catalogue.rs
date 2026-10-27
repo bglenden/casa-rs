@@ -7,6 +7,8 @@
 //! the data groups with their units and UVW frame) lives here once; a batch
 //! links to it by [`PartitionId`] and copies none of it.
 
+use std::collections::BTreeMap;
+
 use casa_types::Correlation;
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::frequency::FrequencyRef;
@@ -97,10 +99,17 @@ pub struct AntennaEntry {
     pub mount: String,
     /// Dish diameter.
     pub dish_diameter: Quantity,
-    /// Receptor polarization types in receptor order (`X`, `Y`).
-    pub receptors: Vec<String>,
+}
+
+/// An antenna's receptors in one partition's spectral window: MSv2 `FEED`
+/// rows of the window (or of every window) and the partition's feed, MSv4
+/// the dataset's `antenna_xds`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Receptors {
+    /// Polarization types in receptor order (`X`, `Y`).
+    pub types: Vec<String>,
     /// Receptor angles, in the same order.
-    pub receptor_angles: Vec<Quantity>,
+    pub angles: Vec<Quantity>,
 }
 
 /// One field of the catalogue.
@@ -264,6 +273,10 @@ pub struct PartitionEntry {
     pub time_origin: MjdHighPrec,
     /// The partition's data groups.
     pub data_groups: Vec<DataGroupEntry>,
+    /// The receptors of each antenna the baselines name, in this
+    /// partition's spectral window; an antenna the store states none for
+    /// is absent.
+    pub receptors: BTreeMap<AntennaId, Receptors>,
 }
 
 impl PartitionEntry {
@@ -549,6 +562,7 @@ mod tests {
             time_scale: EpochRef::UTC,
             time_origin: MjdHighPrec::new(0.0, 0.0),
             data_groups: Vec::new(),
+            receptors: BTreeMap::new(),
         }
     }
 
@@ -697,8 +711,6 @@ mod tests {
             position: MPosition::new_itrf(x, 0.0, 0.0),
             mount: "ALT-AZ".to_string(),
             dish_diameter: Quantity::new(25.0, "m").expect("quantity"),
-            receptors: vec!["X".to_string(), "Y".to_string()],
-            receptor_angles: Vec::new(),
         }
     }
 

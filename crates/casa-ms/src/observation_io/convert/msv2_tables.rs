@@ -8,7 +8,9 @@
 //! share a data description, state and observation (an MSv2 would read
 //! them back as one). The layout says where each partition's rows point.
 
-use casa_observation::{Catalogue, Correlation, ObservationError, PartitionEntry};
+use casa_observation::{
+    AntennaId, Catalogue, Correlation, ObservationError, PartitionEntry, Receptors,
+};
 use casa_tables::table_measures::{MeasureType, TableMeasDesc};
 use casa_types::measures::frequency::FrequencyRef;
 use casa_types::quanta::Unit;
@@ -88,27 +90,15 @@ fn scan_numbers(catalogue: &Catalogue) -> Result<Vec<i32>, ObservationError> {
 }
 
 /// The receptors `CORR_PRODUCT` indexes: those of every antenna a
-/// baseline names that has a feed, which must agree (ignoring case, as
+/// partition states receptors for, which must agree (ignoring case, as
 /// [`receptor_pair`] matches them).
 fn feed_receptors(catalogue: &Catalogue) -> Result<&[String], ObservationError> {
-    let mut named = vec![false; catalogue.antennas.len()];
-    for baseline in catalogue
+    let mut fed = catalogue
         .partitions
         .iter()
-        .flat_map(|entry| &entry.baselines)
-    {
-        for antenna in [baseline.antenna1, baseline.antenna2] {
-            if let Some(named) = named.get_mut(antenna.0 as usize) {
-                *named = true;
-            }
-        }
-    }
-    let mut fed = catalogue
-        .antennas
-        .iter()
-        .zip(named)
-        .filter(|(antenna, named)| *named && !antenna.receptors.is_empty())
-        .map(|(antenna, _)| antenna.receptors.as_slice());
+        .flat_map(|entry| entry.receptors.values())
+        .map(|receptors| receptors.types.as_slice())
+        .filter(|types| !types.is_empty());
     let first = fed.next().unwrap_or(&[]);
     let same = |receptors: &[String]| {
         receptors.len() == first.len()
@@ -134,7 +124,7 @@ pub(super) fn populate(
     spans: &Spans,
 ) -> Result<Layout, ObservationError> {
     let time_range = spans.time_range;
-    antennas(ms, catalogue, time_range)?;
+    antennas(ms, catalogue)?;
     let named_sources = fields(ms, catalogue, time_range[0])?;
     observations(ms, catalogue, &spans.observation_ranges)?;
     let scan_number = scan_numbers(catalogue)?;
@@ -175,6 +165,7 @@ pub(super) fn populate(
         layout.state.push(state as i32);
     }
     spectral_windows(ms, &windows)?;
+    feeds(ms, catalogue, &layout.spectral_window, time_range)?;
     sources(ms, &named_sources, windows.len(), time_range)?;
     let receptors = feed_receptors(catalogue)?;
     for correlations in &polarizations {
@@ -250,13 +241,8 @@ fn same_window(a: &PartitionEntry, b: &PartitionEntry) -> bool {
         && bits(&a.channel_widths_hz) == bits(&b.channel_widths_hz)
 }
 
-fn antennas(
-    ms: &mut MeasurementSet,
-    catalogue: &Catalogue,
-    time_range: [f64; 2],
-) -> Result<(), ObservationError> {
+fn antennas(ms: &mut MeasurementSet, catalogue: &Catalogue) -> Result<(), ObservationError> {
     let metres = Unit::new("m").expect("metres");
-    let radians = Unit::new("rad").expect("radians");
     for antenna in &catalogue.antennas {
         let diameter = antenna
             .dish_diameter
@@ -277,55 +263,107 @@ fn antennas(
             })
             .map_err(storage)?;
     }
-    for (index, antenna) in catalogue.antennas.iter().enumerate() {
-        let receptors = antenna.receptors.len();
-        let angles = antenna
-            .receptor_angles
-            .iter()
-            .map(|angle| {
-                angle
-                    .get_value_in(&radians)
-                    .map_err(|_| request_error("a receptor angle is not an angle"))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let types: Vec<&str> = antenna.receptors.iter().map(String::as_str).collect();
-        let identity: Vec<Complex32> = (0..receptors * receptors)
-            .map(|k| {
-                if k % (receptors + 1) == 0 {
-                    Complex32::new(1.0, 0.0)
-                } else {
-                    Complex32::new(0.0, 0.0)
+    Ok(())
+}
+
+/// One `FEED` row per antenna, from the receptors its partitions state:
+/// for every window (`SPECTRAL_WINDOW_ID` -1) when they agree, else one row
+/// per window (`windows`: each partition's). An antenna no partition states
+/// receptors for has a row of none.
+fn feeds(
+    ms: &mut MeasurementSet,
+    catalogue: &Catalogue,
+    windows: &[i32],
+    time_range: [f64; 2],
+) -> Result<(), ObservationError> {
+    let none = Receptors {
+        types: Vec::new(),
+        angles: Vec::new(),
+    };
+    for index in 0..catalogue.antennas.len() {
+        let antenna = AntennaId(index as u32);
+        let mut stated: Vec<(i32, &Receptors)> = Vec::new();
+        for (entry, window) in catalogue.partitions.iter().zip(windows) {
+            let Some(receptors) = entry.receptors.get(&antenna) else {
+                continue;
+            };
+            match stated.iter().find(|(known, _)| known == window) {
+                Some((_, known)) if *known != receptors => {
+                    return Err(ObservationError::Unsupported {
+                        what: "partitions of one window with different receptors for an antenna",
+                    });
                 }
-            })
-            .collect();
-        let row = row_from_defs(
-            schema::feed::REQUIRED_COLUMNS,
-            &[
-                ("ANTENNA_ID", i(index as i32)),
-                ("BEAM_ID", i(-1)),
-                (
-                    "BEAM_OFFSET",
-                    f64_array(&vec![0.0; 2 * receptors], vec![2, receptors]),
-                ),
-                ("FEED_ID", i(0)),
-                ("INTERVAL", f(time_range[1] - time_range[0])),
-                ("NUM_RECEPTORS", i(receptors as i32)),
-                (
-                    "POL_RESPONSE",
-                    complex_array(&identity, vec![receptors, receptors]),
-                ),
-                ("POLARIZATION_TYPE", string_array(&types, vec![receptors])),
-                ("POSITION", f64_array(&[0.0; 3], vec![3])),
-                ("RECEPTOR_ANGLE", f64_array(&angles, vec![receptors])),
-                ("SPECTRAL_WINDOW_ID", i(-1)),
-                ("TIME", f(0.5 * (time_range[0] + time_range[1]))),
-            ],
-        );
-        subtable_mut(ms, SubtableId::Feed)
-            .and_then(|table| table.add_row(row).map_err(Into::into))
-            .map_err(storage)?;
+                Some(_) => {}
+                None => stated.push((*window, receptors)),
+            }
+        }
+        let rows: Vec<(i32, &Receptors)> = match stated.first() {
+            None => vec![(-1, &none)],
+            Some((_, first)) if stated.iter().all(|(_, own)| own == first) => vec![(-1, *first)],
+            Some(_) => stated,
+        };
+        for (window, receptors) in rows {
+            feed_row(ms, index, window, receptors, time_range)?;
+        }
     }
     Ok(())
+}
+
+/// One `FEED` row: antenna `index`'s feed 0 in spectral window `window`.
+fn feed_row(
+    ms: &mut MeasurementSet,
+    index: usize,
+    window: i32,
+    own: &Receptors,
+    time_range: [f64; 2],
+) -> Result<(), ObservationError> {
+    let radians = Unit::new("rad").expect("radians");
+    let receptors = own.types.len();
+    let angles = own
+        .angles
+        .iter()
+        .map(|angle| {
+            angle
+                .get_value_in(&radians)
+                .map_err(|_| request_error("a receptor angle is not an angle"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let types: Vec<&str> = own.types.iter().map(String::as_str).collect();
+    let identity: Vec<Complex32> = (0..receptors * receptors)
+        .map(|k| {
+            if k % (receptors + 1) == 0 {
+                Complex32::new(1.0, 0.0)
+            } else {
+                Complex32::new(0.0, 0.0)
+            }
+        })
+        .collect();
+    let row = row_from_defs(
+        schema::feed::REQUIRED_COLUMNS,
+        &[
+            ("ANTENNA_ID", i(index as i32)),
+            ("BEAM_ID", i(-1)),
+            (
+                "BEAM_OFFSET",
+                f64_array(&vec![0.0; 2 * receptors], vec![2, receptors]),
+            ),
+            ("FEED_ID", i(0)),
+            ("INTERVAL", f(time_range[1] - time_range[0])),
+            ("NUM_RECEPTORS", i(receptors as i32)),
+            (
+                "POL_RESPONSE",
+                complex_array(&identity, vec![receptors, receptors]),
+            ),
+            ("POLARIZATION_TYPE", string_array(&types, vec![receptors])),
+            ("POSITION", f64_array(&[0.0; 3], vec![3])),
+            ("RECEPTOR_ANGLE", f64_array(&angles, vec![receptors])),
+            ("SPECTRAL_WINDOW_ID", i(window)),
+            ("TIME", f(0.5 * (time_range[0] + time_range[1]))),
+        ],
+    );
+    subtable_mut(ms, SubtableId::Feed)
+        .and_then(|table| table.add_row(row).map_err(Into::into))
+        .map_err(storage)
 }
 
 /// The fields, and the sources they name: each name once, at its first
