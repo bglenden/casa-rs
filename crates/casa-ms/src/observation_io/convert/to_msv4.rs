@@ -7,7 +7,10 @@ use std::path::Path;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use casa_observation::{Catalogue, Observation, ObservationError, PartitionId, Roles};
+use casa_observation::{
+    AntennaId, Catalogue, Observation, ObservationError, PartitionId, PointingDirection,
+    PointingRequest, Roles,
+};
 
 use super::{ConversionOptions, ConversionReport, lockstep, losses};
 use crate::observation_io::msv4::STATION_NAMED;
@@ -267,6 +270,27 @@ fn partition(
     };
     let names: Vec<&str> = groups.iter().map(String::as_str).collect();
     let mut writer = set.dataset(named, id, &names, &grid, &storage)?;
+    // The pointing of the antennas the partition's baselines name, over its
+    // times.
+    let antennas: Vec<AntennaId> = grid
+        .baselines
+        .iter()
+        .flat_map(|baseline| [baseline.antenna1, baseline.antenna2])
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    let span = match (grid.times_s.first(), grid.times_s.last()) {
+        (Some(first), Some(last)) => *first..=*last,
+        _ => 0.0..=0.0,
+    };
+    let pointing = observation.pointing(&PointingRequest {
+        partition: id,
+        direction: PointingDirection::Beam,
+        antennas,
+        times: span,
+        budget_bytes: usize::MAX,
+    })?;
+    writer.write_pointing(named, &pointing)?;
     let budget = (options.batch_bytes, Some(writer.chunk_times()));
     let read = lockstep::read(observation, id, groups, Roles::ALL, budget, |batches| {
         writer.write_groups(batches)

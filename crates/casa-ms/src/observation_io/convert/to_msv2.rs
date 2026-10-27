@@ -18,7 +18,8 @@ use ndarray::Axis;
 
 use super::msv2_rows::{MainRows, Occupancy, Spans, acquired};
 use super::{
-    ConversionOptions, ConversionReport, Loss, PaddingRows, lockstep, losses, msv2_tables,
+    ConversionOptions, ConversionReport, Loss, PaddingRows, lockstep, losses, msv2_pointing,
+    msv2_tables,
 };
 use crate::observation_io::update::{request_error, storage};
 use crate::observation_io::{OpenOptions, open};
@@ -354,6 +355,7 @@ fn create(
         }
     }
     let layout = msv2_tables::populate(&mut ms, catalogue, &occupancy.spans)?;
+    msv2_pointing::write(&mut ms, observation)?;
     let names = optional.iter().map(|column| column.name()).collect();
     let mut main = MainRows::start(
         staging,

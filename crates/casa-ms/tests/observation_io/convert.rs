@@ -92,9 +92,10 @@ fn an_msv2_converts_to_the_msv4_xradio_makes_of_it() {
         [
             Loss::Sigma,
             Loss::Table("HISTORY".to_string()),
-            Loss::Table("POINTING".to_string())
+            Loss::Table("POINTING INTERVAL, NAME, TARGET, TRACKING".to_string())
         ],
-        "MSv4 holds no sigma; the writer writes no history or pointing"
+        "MSv4 holds no sigma; the writer writes no history, and of POINTING the \
+         beam directions alone"
     );
     assert_eq!((report.partitions, report.samples), (1, 120));
     let converted = read(&out, PartitionId(0), "base");

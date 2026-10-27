@@ -66,6 +66,8 @@ pub(super) struct Dataset {
     /// Catalogue scan at each time, when `scan_name` is present.
     pub(super) scans: Option<Vec<ScanId>>,
     pub(super) groups: Vec<GroupArrays>,
+    /// The dataset's `antenna_xds` names, each with its catalogue id.
+    pub(super) antennas: Vec<(String, AntennaId)>,
 }
 
 /// An opened MSv4 processing set (XRADIO `VisibilityXds` schema 4.0.1 on
@@ -85,6 +87,7 @@ pub(super) struct Dataset {
 /// data type and dimensions, and every unit and frame, against the profile
 /// and refuses others rather than reinterpreting or rescaling them.
 pub struct Msv4Observation {
+    pub(super) store: Arc<FilesystemStore>,
     pub(super) catalogue: Arc<Catalogue>,
     pub(super) datasets: Vec<Dataset>,
     pub(super) options: CodecOptions,
@@ -127,6 +130,7 @@ impl Msv4Observation {
             .collect::<Vec<_>>();
         names.sort();
         let mut observation = Self {
+            store: store.clone(),
             catalogue: Arc::new(Catalogue::default()),
             datasets: Vec::new(),
             options: super::codec_options(),
@@ -305,6 +309,7 @@ impl Msv4Observation {
             exposure,
             scans,
             groups,
+            antennas: antennas.to_vec(),
         });
         Ok(())
     }
@@ -861,6 +866,13 @@ impl Observation for Msv4Observation {
         data_group: &str,
     ) -> Result<TimeBaselineGrid, ObservationError> {
         Msv4Observation::grid(self, id, data_group)
+    }
+
+    fn pointing(
+        &self,
+        request: &casa_observation::PointingRequest,
+    ) -> Result<casa_observation::PointingSeries, ObservationError> {
+        self.read_pointing(request)
     }
 
     fn group_keys(

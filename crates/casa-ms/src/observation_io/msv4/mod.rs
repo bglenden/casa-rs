@@ -10,6 +10,7 @@
 
 mod cursor;
 mod metadata;
+mod pointing;
 mod read;
 pub(super) mod store;
 pub(super) mod update;

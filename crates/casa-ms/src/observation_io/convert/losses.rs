@@ -178,7 +178,6 @@ const CARRIED_COLUMNS: &[&str] = &[
 
 /// Subtables whose content the catalogue does not carry.
 const UNCARRIED_SUBTABLES: &[SubtableId] = &[
-    SubtableId::Pointing,
     SubtableId::SysCal,
     SubtableId::Weather,
     SubtableId::FlagCmd,
@@ -228,7 +227,44 @@ fn msv2(
         ));
     }
     main_keys(main, losses)?;
+    pointing(&ms, destination, losses)?;
     subtables(&ms, losses)
+}
+
+/// `POINTING`'s columns a conversion does not carry, as a table loss (the
+/// table was lost whole before conversions carried pointing): it carries
+/// each row's antenna, time, direction and its polynomial in time, and into
+/// an MSv2 its interval; MSv4 states no interval and no target.
+fn pointing(
+    ms: &crate::MeasurementSet,
+    destination: Destination,
+    losses: &mut Vec<Loss>,
+) -> Result<(), ObservationError> {
+    let Some(table) = ms.subtable(SubtableId::Pointing) else {
+        return Ok(());
+    };
+    if table.row_count() == 0 {
+        return Ok(());
+    }
+    let mut carried = vec!["ANTENNA_ID", "TIME", "DIRECTION", "NUM_POLY", "TIME_ORIGIN"];
+    if destination == Destination::Msv2 {
+        carried.push("INTERVAL");
+    }
+    let lost: Vec<String> = table
+        .schema()
+        .map(|schema| {
+            schema
+                .columns()
+                .iter()
+                .map(|column| column.name().to_string())
+                .filter(|name| !carried.contains(&name.as_str()))
+                .collect()
+        })
+        .unwrap_or_default();
+    if !lost.is_empty() {
+        losses.push(Loss::Table(format!("POINTING {}", lost.join(", "))));
+    }
+    Ok(())
 }
 
 /// Refuse fields whose direction moves, among those `destination` writes:
@@ -357,6 +393,7 @@ fn subtables(ms: &crate::MeasurementSet, losses: &mut Vec<Loss>) -> Result<(), O
     let standard: Vec<&str> = SubtableId::ALL_REQUIRED
         .iter()
         .chain(UNCARRIED_SUBTABLES)
+        .chain(&[SubtableId::Pointing])
         .map(SubtableId::name)
         .collect();
     for field in main.keywords().fields() {
@@ -442,13 +479,38 @@ fn msv4(source: &Path, losses: &mut Vec<Loss>) -> Result<(), ObservationError> {
                     || metadata.contains("\"node_type\":\"group\"")
             });
             if is_group {
-                if name != "antenna_xds" && !name.starts_with("field_and_source_") {
+                if name == "pointing_xds" {
+                    pointing_variables(&child, losses)?;
+                } else if name != "antenna_xds" && !name.starts_with("field_and_source_") {
                     losses.push(Loss::Table(name));
                 }
             } else if !CARRIED_VARIABLES.contains(&name.as_str()) && !name.starts_with("VISIBILITY")
             {
                 losses.push(Loss::Column(name));
             }
+        }
+    }
+    Ok(())
+}
+
+/// A `pointing_xds`'s variables a conversion does not carry, as table
+/// losses: it carries `POINTING_BEAM` and its coordinates.
+fn pointing_variables(path: &Path, losses: &mut Vec<Loss>) -> Result<(), ObservationError> {
+    const CARRIED: [&str; 5] = [
+        "POINTING_BEAM",
+        "time_pointing",
+        "time",
+        "antenna_name",
+        "local_sky_dir_label",
+    ];
+    for child in std::fs::read_dir(path).map_err(storage)? {
+        let name = child
+            .map_err(storage)?
+            .file_name()
+            .to_string_lossy()
+            .into_owned();
+        if name != "zarr.json" && !CARRIED.contains(&name.as_str()) {
+            losses.push(Loss::Table(format!("pointing_xds {name}")));
         }
     }
     Ok(())

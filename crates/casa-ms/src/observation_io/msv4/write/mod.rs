@@ -29,6 +29,7 @@
 
 mod chunks;
 mod payload;
+mod pointing;
 mod set;
 
 pub use set::Msv4ProcessingSetWriter;
@@ -133,6 +134,7 @@ struct Payload {
 pub struct Msv4Writer {
     /// The dataset's name in the processing set.
     dataset: String,
+    store: Arc<FilesystemStore>,
     registry: Arc<set::Registry>,
     payload: Option<Payload>,
     target: Destination,
@@ -449,6 +451,7 @@ impl Msv4Writer {
             .map_err(|_| request_error("a chunk of more times than a usize holds"))?;
         let mut writer = Self {
             dataset: options.dataset_name.clone(),
+            store: store.clone(),
             registry: registry.clone(),
             payload: None,
             shape: [
@@ -854,6 +857,44 @@ impl Msv4Writer {
         array
             .store_array_subset(&ArraySubset::new_with_shape(shape.to_vec()), &centres)
             .map_err(storage)
+    }
+
+    /// Write the dataset's `pointing_xds`: `series`, the partition's
+    /// pointing ([`casa_observation::Observation::pointing`], times in the
+    /// partition's time system), for the antennas the dataset's baselines
+    /// name. Nothing is written when none has a sample.
+    ///
+    /// # Errors
+    ///
+    /// [`ObservationError::Unsupported`] for a frame MSv4 does not name, or
+    /// two samples of an antenna at one time; any error writing the store.
+    pub fn write_pointing(
+        &self,
+        catalogue: &Catalogue,
+        series: &casa_observation::PointingSeries,
+    ) -> Result<(), ObservationError> {
+        let grid = &self.target.grid;
+        let mut named = vec![false; catalogue.antennas.len()];
+        for baseline in &grid.baselines {
+            named[baseline.antenna1.0 as usize] = true;
+            named[baseline.antenna2.0 as usize] = true;
+        }
+        let antennas: Vec<_> = catalogue
+            .antennas
+            .iter()
+            .zip(named)
+            .enumerate()
+            .filter(|(_, (_, named))| *named)
+            .map(|(id, (entry, _))| (casa_observation::AntennaId(id as u32), entry))
+            .collect();
+        pointing::write_pointing(
+            &self.store,
+            &format!("/{}/pointing_xds", self.dataset),
+            &antennas,
+            series,
+            grid.time_scale,
+            grid.time_origin,
+        )
     }
 
     /// What the writer has done.

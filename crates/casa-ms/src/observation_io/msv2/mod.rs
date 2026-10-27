@@ -6,6 +6,7 @@
 pub(super) mod catalogue;
 mod cursor;
 mod index;
+mod pointing;
 pub(super) mod update;
 
 #[cfg(feature = "msv4")]
@@ -18,8 +19,8 @@ use std::sync::Arc;
 use casa_observation::{
     AccessRequest, BoundCursor, Catalogue, DataGroupEntry, Estimate, FieldSelection, GroupKey,
     Grouping, NaturalBlocks, Observation, ObservationError, ObservationId, PartitionEntry,
-    PartitionEstimate, PartitionId, ResolvedRequest, Roles, TimeBaselineGrid, Traversal,
-    WeightRequest, WeightRule, WeightSource, times_per_batch,
+    PartitionEstimate, PartitionId, PointingRequest, PointingSeries, ResolvedRequest, Roles,
+    TimeBaselineGrid, Traversal, WeightRequest, WeightRule, WeightSource, times_per_batch,
 };
 use casa_tables::{RequiredScalarColumnDestination, RequiredScalarColumnValuesMut};
 use casa_types::measures::{EpochRef, MjdHighPrec};
@@ -526,6 +527,10 @@ impl Observation for Msv2Observation {
         data_group: &str,
     ) -> Result<TimeBaselineGrid, ObservationError> {
         Msv2Observation::grid(self, id, data_group)
+    }
+
+    fn pointing(&self, request: &PointingRequest) -> Result<PointingSeries, ObservationError> {
+        self.read_pointing(request)
     }
 
     fn group_keys(

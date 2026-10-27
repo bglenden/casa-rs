@@ -308,6 +308,75 @@ impl PreparedSelectedPointingCatalog {
         self.measurements
     }
 
+    /// The rows as the observation boundary's pointing series: per antenna
+    /// (an antenna's catalogue id is its `ANTENNA` row), in the catalog's
+    /// (time, row) order, with their intervals and polynomial origins, and
+    /// coefficients padded with zeros to the most terms any row has.
+    ///
+    /// # Errors
+    ///
+    /// [`casa_observation::ObservationError::Unsupported`] when the rows'
+    /// directions are in several frames.
+    pub(crate) fn series(
+        &self,
+    ) -> Result<casa_observation::PointingSeries, casa_observation::ObservationError> {
+        let frame = self
+            .rows
+            .first()
+            .map_or(DirectionRef::J2000, |row| row.source_ref);
+        if self.rows.iter().any(|row| row.source_ref != frame) {
+            return Err(casa_observation::ObservationError::Unsupported {
+                what: "MSv2 POINTING directions in several frames",
+            });
+        }
+        let terms = self
+            .rows
+            .iter()
+            .map(|row| row.metadata.polynomial_terms)
+            .max()
+            .unwrap_or(1);
+        let mut series = casa_observation::PointingSeries {
+            terms,
+            ..casa_observation::PointingSeries::empty(frame)
+        };
+        for rows in self
+            .rows
+            .chunk_by(|left, right| left.metadata.antenna_id == right.metadata.antenna_id)
+        {
+            let mut coefficients = Vec::with_capacity(rows.len() * 2 * terms);
+            for row in rows {
+                let own = row.metadata.polynomial_terms;
+                for axis in 0..2 {
+                    let start = row.coefficient_offset + axis * own;
+                    coefficients.extend_from_slice(&self.coefficients[start..start + own]);
+                    coefficients.extend(std::iter::repeat_n(0.0, terms - own));
+                }
+            }
+            let antenna = casa_observation::AntennaId(
+                u32::try_from(rows[0].metadata.antenna_id).expect("ANTENNA_ID is non-negative"),
+            );
+            series.antennas.insert(
+                antenna,
+                casa_observation::AntennaPointing::new(
+                    rows.iter()
+                        .map(|row| row.metadata.time_mjd_seconds)
+                        .collect(),
+                    Some(
+                        rows.iter()
+                            .map(|row| row.metadata.interval_seconds)
+                            .collect(),
+                    ),
+                    rows.iter()
+                        .map(|row| row.metadata.time_origin_mjd_seconds)
+                        .collect(),
+                    terms,
+                    coefficients,
+                )?,
+            );
+        }
+        Ok(series)
+    }
+
     pub(crate) fn direction_brackets(
         &self,
         engine: &MsCalEngine,
