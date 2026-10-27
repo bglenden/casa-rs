@@ -299,8 +299,14 @@ impl StManArrayFileReader {
             shape.push(read_i32(&mut self.file, self.bo)? as usize);
         }
 
-        let total: usize = shape.iter().product();
+        // A 0-dimensional shape is casacore's empty `IPosition`, an array of
+        // no elements (not the one element of an empty product): read as
+        // `[0]`, as the AipsIO reader reads one.
+        let total: usize = if ndim == 0 { 0 } else { shape.iter().product() };
         if total == 0 {
+            if ndim == 0 {
+                shape.push(0);
+            }
             let header_bytes = if self.version > 0 { 4u64 } else { 0 } + 4 + (ndim as u64 * 4);
             self.pos = target + header_bytes;
             return Ok(Some(make_empty_array(dt, &shape)));
@@ -1133,5 +1139,31 @@ mod tests {
             .unwrap();
 
         assert_eq!(result, arr);
+    }
+
+    /// A 0-dimensional shape is casacore's empty `IPosition`, an array of
+    /// no elements (`alma/multiobs.ms`'s SOURCE `REST_FREQUENCY`, #923):
+    /// read as `[0]`, whatever follows the header.
+    #[test]
+    fn a_zero_dimensional_cell_holds_no_elements() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("test.arr");
+        let zero_dim = Value::Array(ArrayValue::Float64(ArrayD::from_elem(IxDyn(&[]), 7.0)));
+        let offset = {
+            let mut writer = StManArrayFileWriter::create(&path, true, 1).unwrap();
+            let off = writer
+                .write_array(&zero_dim, CasacoreDataType::TpDouble)
+                .unwrap();
+            writer.finish().unwrap();
+            off
+        };
+        let mut reader = StManArrayFileReader::open(&path, true).unwrap();
+        match reader
+            .read_array_at(offset, CasacoreDataType::TpDouble)
+            .unwrap()
+        {
+            Some(Value::Array(ArrayValue::Float64(read))) => assert_eq!(read.shape(), [0]),
+            other => panic!("an empty array, not {other:?}"),
+        }
     }
 }
