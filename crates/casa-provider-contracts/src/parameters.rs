@@ -558,31 +558,6 @@ impl Predicate {
     }
 }
 
-/// Durable task risk described by the canonical surface contract.
-///
-/// Frontends keep the actual confirmation gesture outside parameter profiles,
-/// but they consume these classes instead of inferring safety from task or
-/// parameter names.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum RunSafetyClass {
-    /// The task creates one or more persistent products.
-    ProductWrite,
-    /// The resolved invocation authorizes replacement of an existing product.
-    Overwrite,
-    /// The resolved invocation mutates an existing input dataset in place.
-    InputMutation,
-}
-
-/// One catalog-owned safety predicate for a one-shot task.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct TaskSafetyRule {
-    pub class: RunSafetyClass,
-    pub when: Predicate,
-}
-
 /// One branch of a deterministic conditional default.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ConditionalDefault {
@@ -973,8 +948,6 @@ pub struct TaskDefinition {
     pub provider_family: String,
     #[serde(default)]
     pub execution: SurfaceExecutionProjection,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub safety_rules: Vec<TaskSafetyRule>,
     pub bindings: Vec<SurfaceParameterBinding>,
     #[serde(default)]
     pub migrations: Vec<SurfaceMigration>,
@@ -1016,10 +989,6 @@ impl SurfaceDefinition {
 
     pub fn execution(&self) -> &SurfaceExecutionProjection {
         &self.task().execution
-    }
-
-    pub fn safety_rules(&self) -> &[TaskSafetyRule] {
-        &self.task().safety_rules
     }
 
     pub fn migrations(&self) -> &[SurfaceMigration] {
@@ -1234,7 +1203,7 @@ fn validate_one_surface(bundle: &SurfaceContractBundle, errors: &mut Vec<Contrac
         );
     }
 
-    validate_safety_rules(bundle, &known, errors);
+    validate_overwrite_defaults(bundle, errors);
 
     for binding in surface.bindings() {
         if !names.insert(binding.name.clone()) {
@@ -1482,134 +1451,33 @@ fn validate_profile_parameter_name(
     }
 }
 
-fn validate_safety_rules(
+/// An overwrite binding defaults to `false`, as CASA's tasks do, so a task
+/// replaces a product only when asked. A surface that writes only inside its
+/// own project directory keeps CASA's `true`
+/// ([`PROJECT_DIRECTORY_OVERWRITE_SURFACES`]).
+fn validate_overwrite_defaults(
     bundle: &SurfaceContractBundle,
-    known: &BTreeSet<String>,
     errors: &mut Vec<ContractValidationError>,
 ) {
     let surface = &bundle.surface;
-    let mut classes = BTreeSet::new();
-    for rule in surface.safety_rules() {
-        if !classes.insert(rule.class) {
-            errors.push(
-                ContractValidationError::new(
-                    "duplicate_safety_class",
-                    format!("duplicate {:?} task safety rule", rule.class),
-                )
-                .at(surface.id(), None),
-            );
-        }
-
-        let mut refs = BTreeSet::new();
-        rule.when.referenced_parameters(&mut refs);
-        for reference in refs.difference(known) {
-            errors.push(
-                ContractValidationError::new(
-                    "unknown_safety_parameter",
-                    format!(
-                        "{:?} safety predicate references unknown parameter {reference}",
-                        rule.class
-                    ),
-                )
-                .at(surface.id(), None),
-            );
-        }
-        validate_safety_predicate_values(&rule.when, bundle, rule.class, errors);
-    }
-
-    let overwrite_bindings = surface
+    let expected = PROJECT_DIRECTORY_OVERWRITE_SURFACES.contains(&surface.id());
+    for binding in surface
         .bindings()
         .iter()
         .filter(|binding| binding.concept.id.as_str() == OVERWRITE_CONCEPT_ID)
-        .collect::<Vec<_>>();
-    if overwrite_bindings.is_empty() {
-        return;
-    }
-    let overwrite_rule = surface
-        .safety_rules()
-        .iter()
-        .find(|rule| rule.class == RunSafetyClass::Overwrite);
-    if PROJECT_DIRECTORY_OVERWRITE_SURFACES.contains(&surface.id()) {
-        if overwrite_rule.is_some() {
-            errors.push(
-                ContractValidationError::new(
-                    "confirmed_project_overwrite",
-                    "this surface overwrites only inside its project directory, with no \
-                     confirmation (PROJECT_DIRECTORY_OVERWRITE_SURFACES)",
-                )
-                .at(surface.id(), None),
-            );
-        }
-        return;
-    }
-
-    let Some(rule) = overwrite_rule else {
-        errors.push(
-            ContractValidationError::new(
-                "missing_overwrite_safety",
-                "an output.overwrite binding requires an overwrite safety rule",
-            )
-            .at(surface.id(), None),
+    {
+        let matches = matches!(
+            &binding.default,
+            DefaultSpec::Literal { value: ParameterValue::Bool(value) } if *value == expected
         );
-        return;
-    };
-    for binding in overwrite_bindings {
-        let expected = Predicate::Equals {
-            parameter: binding.name.clone(),
-            value: ParameterValue::Bool(true),
-        };
-        if rule.when != expected {
+        if !matches {
             errors.push(
                 ContractValidationError::new(
-                    "unsafe_overwrite_predicate",
-                    format!("overwrite safety must be exactly {} == true", binding.name),
+                    "overwrite_default",
+                    format!("{} must default to {expected}", binding.name),
                 )
                 .at(surface.id(), Some(&binding.name)),
             );
-        }
-    }
-}
-
-fn validate_safety_predicate_values(
-    predicate: &Predicate,
-    bundle: &SurfaceContractBundle,
-    class: RunSafetyClass,
-    errors: &mut Vec<ContractValidationError>,
-) {
-    match predicate {
-        Predicate::Always | Predicate::Never | Predicate::IsSet { .. } => {}
-        Predicate::Equals { parameter, value } => {
-            let Some(binding) = bundle
-                .surface
-                .bindings()
-                .iter()
-                .find(|binding| binding.name == *parameter)
-            else {
-                return;
-            };
-            let Some(concept) = bundle.catalog.concept(&binding.concept) else {
-                return;
-            };
-            if let Err(reason) = validate_parameter_value(value, &concept.value_domain) {
-                errors.push(
-                    ContractValidationError::new(
-                        "invalid_safety_value",
-                        format!(
-                            "{:?} safety predicate value does not match {parameter}: {reason}",
-                            class
-                        ),
-                    )
-                    .at(bundle.surface.id(), Some(parameter)),
-                );
-            }
-        }
-        Predicate::Not { predicate } => {
-            validate_safety_predicate_values(predicate, bundle, class, errors);
-        }
-        Predicate::All { predicates } | Predicate::Any { predicates } => {
-            for predicate in predicates {
-                validate_safety_predicate_values(predicate, bundle, class, errors);
-            }
         }
     }
 }
@@ -2370,7 +2238,6 @@ mod tests {
                 summary: "Example".to_string(),
                 provider_family: "test".to_string(),
                 execution: SurfaceExecutionProjection::default(),
-                safety_rules: Vec::new(),
                 bindings: vec![binding],
                 migrations: Vec::new(),
             }),
@@ -2471,104 +2338,34 @@ mod tests {
         assert!(errors.iter().any(|error| error.code == "duplicate_alias"));
     }
 
-    #[test]
-    fn overwrite_concepts_require_an_exact_true_predicate() {
+    fn overwrite_bundle(default: bool) -> SurfaceContractBundle {
         let concept = concept(OVERWRITE_CONCEPT_ID, "overwrite", ParameterType::Bool);
         let binding = binding(
             &concept,
             DefaultSpec::Literal {
-                value: ParameterValue::Bool(false),
+                value: ParameterValue::Bool(default),
             },
         );
-        let mut bundle = bundle(concept, binding);
-        let errors = bundle.validate().unwrap_err();
-        assert!(
-            errors
-                .iter()
-                .any(|error| error.code == "missing_overwrite_safety")
-        );
-
-        let SurfaceDefinition::Task(definition) = &mut bundle.surface;
-        definition.safety_rules.push(TaskSafetyRule {
-            class: RunSafetyClass::Overwrite,
-            when: Predicate::Equals {
-                parameter: "overwrite".to_string(),
-                value: ParameterValue::Bool(true),
-            },
-        });
-        bundle.validate().unwrap();
+        bundle(concept, binding)
     }
 
     #[test]
-    fn a_project_directory_surface_overwrites_without_confirmation() {
-        let concept = concept(OVERWRITE_CONCEPT_ID, "overwrite", ParameterType::Bool);
-        let binding = binding(
-            &concept,
-            DefaultSpec::Literal {
-                value: ParameterValue::Bool(true),
-            },
-        );
-        let mut bundle = bundle(concept, binding);
-        let SurfaceDefinition::Task(definition) = &mut bundle.surface;
-        definition.id = PROJECT_DIRECTORY_OVERWRITE_SURFACES[0].to_string();
-        bundle.validate().unwrap();
-        // The exception is exact: such a surface asks for no confirmation.
-        let SurfaceDefinition::Task(definition) = &mut bundle.surface;
-        definition.safety_rules.push(TaskSafetyRule {
-            class: RunSafetyClass::Overwrite,
-            when: Predicate::Equals {
-                parameter: "overwrite".to_string(),
-                value: ParameterValue::Bool(true),
-            },
-        });
-        let errors = bundle.validate().unwrap_err();
+    fn overwrite_defaults_to_false() {
+        overwrite_bundle(false).validate().unwrap();
+        let errors = overwrite_bundle(true).validate().unwrap_err();
         assert!(
-            errors
-                .iter()
-                .any(|error| error.code == "confirmed_project_overwrite")
+            errors.iter().any(|error| error.code == "overwrite_default"),
+            "{errors:?}"
         );
     }
 
     #[test]
-    fn safety_rules_reject_duplicate_classes_unknown_parameters_and_bad_types() {
-        let concept = concept("example.mode", "mode", ParameterType::String);
-        let binding = binding(
-            &concept,
-            DefaultSpec::Literal {
-                value: ParameterValue::String("safe".to_string()),
-            },
-        );
-        let mut bundle = bundle(concept, binding);
-        let SurfaceDefinition::Task(definition) = &mut bundle.surface;
-        definition.safety_rules = vec![
-            TaskSafetyRule {
-                class: RunSafetyClass::InputMutation,
-                when: Predicate::Equals {
-                    parameter: "mode".to_string(),
-                    value: ParameterValue::Bool(true),
-                },
-            },
-            TaskSafetyRule {
-                class: RunSafetyClass::ProductWrite,
-                when: Predicate::IsSet {
-                    parameter: "missing".to_string(),
-                },
-            },
-            TaskSafetyRule {
-                class: RunSafetyClass::ProductWrite,
-                when: Predicate::Always,
-            },
-        ];
-        let errors = bundle.validate().unwrap_err();
-        for expected in [
-            "invalid_safety_value",
-            "unknown_safety_parameter",
-            "duplicate_safety_class",
-        ] {
-            assert!(
-                errors.iter().any(|error| error.code == expected),
-                "missing {expected}: {errors:?}"
-            );
+    fn a_project_directory_surface_keeps_casas_overwrite_default() {
+        for (default, valid) in [(true, true), (false, false)] {
+            let mut bundle = overwrite_bundle(default);
+            let SurfaceDefinition::Task(definition) = &mut bundle.surface;
+            definition.id = PROJECT_DIRECTORY_OVERWRITE_SURFACES[0].to_string();
+            assert_eq!(bundle.validate().is_ok(), valid, "default {default}");
         }
     }
 
@@ -3070,7 +2867,6 @@ mod tests {
                 summary: "Cycle".to_string(),
                 provider_family: "test".to_string(),
                 execution: SurfaceExecutionProjection::default(),
-                safety_rules: Vec::new(),
                 bindings: vec![first_binding, second_binding],
                 migrations: Vec::new(),
             }),

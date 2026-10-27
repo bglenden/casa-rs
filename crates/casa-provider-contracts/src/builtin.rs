@@ -76,7 +76,7 @@ mod tests {
 
     use crate::{
         CELL_CONCEPT_ID, IMSIZE_CONCEPT_ID, MigrationStep, OVERWRITE_CONCEPT_ID, ParameterRole,
-        ParameterType, ParameterValue, Predicate, ResourceKind, RunProductSource, RunSafetyClass,
+        ParameterType, ParameterValue, Predicate, ResourceKind, RunProductSource,
         SemanticRevision, SurfaceKind, SurfaceProductContract, ValueAdapter,
     };
 
@@ -199,72 +199,70 @@ mod tests {
         }
     }
 
+    /// CASA's parameters are the consent (#931): a task replaces a product
+    /// only when `overwrite` is true, so every `overwrite` binding has
+    /// CASA's default. The inventory lists each surface, so adding one is a
+    /// deliberate change.
     #[test]
-    fn every_overwrite_binding_has_the_exact_fail_closed_safety_rule() {
+    fn every_overwrite_binding_has_casas_default() {
+        // CASA 6.7.6 tasks with an `overwrite` parameter, and its default.
+        let casa = BTreeMap::from([
+            ("exportfits", false),
+            ("importfits", false),
+            ("impbcor", false),
+            ("impv", false),
+            ("imregrid", false),
+            ("imsubimage", false),
+            ("simobserve", true),
+        ]);
+        // casa-rs's own `overwrite` on CASA tasks that have none, and on the
+        // casa-rs tasks; CASA's tasks never replace an output unasked.
+        let extras = BTreeSet::from([
+            "applycal",
+            "bandpass",
+            "calibrate",
+            "feather",
+            "fluxscale",
+            "gaincal",
+            "gencal",
+            "immath",
+            "immoments",
+            "msexplore",
+            "plotms",
+        ]);
         let catalog = builtin_surface_catalog().expect("valid built-in parameter catalog");
-        let surfaces = catalog
-            .surfaces
-            .iter()
-            .filter_map(|surface| {
-                surface
-                    .bindings()
-                    .iter()
-                    .find(|binding| binding.concept.id.as_str() == OVERWRITE_CONCEPT_ID)
-                    .map(|binding| (surface, binding))
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(
-            surfaces.len(),
-            18,
-            "update the safety inventory intentionally"
-        );
-        for (surface, binding) in surfaces {
-            // The one recorded exception: simobserve replaces only its own
-            // project's files, with CASA's default of true and no
-            // confirmation.
-            if crate::PROJECT_DIRECTORY_OVERWRITE_SURFACES.contains(&surface.id()) {
-                assert!(
-                    surface
-                        .safety_rules()
-                        .iter()
-                        .all(|rule| rule.class != RunSafetyClass::Overwrite),
-                    "{} asks no confirmation",
-                    surface.id()
-                );
-                assert!(
-                    matches!(
-                        &binding.default,
-                        crate::DefaultSpec::Literal {
-                            value: ParameterValue::Bool(true)
-                        }
-                    ),
-                    "{} keeps CASA's default",
-                    surface.id()
-                );
-                continue;
-            }
-            let rule = surface
-                .safety_rules()
+        let mut found = BTreeSet::new();
+        for surface in &catalog.surfaces {
+            for binding in surface
+                .bindings()
                 .iter()
-                .find(|rule| rule.class == RunSafetyClass::Overwrite)
-                .unwrap_or_else(|| panic!("{} is missing overwrite safety", surface.id()));
-            assert_eq!(
-                rule.when,
-                Predicate::Equals {
-                    parameter: binding.name.clone(),
-                    value: ParameterValue::Bool(true),
-                },
-                "{} must confirm every resolved overwrite=true",
-                surface.id()
-            );
+                .filter(|binding| binding.concept.id.as_str() == OVERWRITE_CONCEPT_ID)
+            {
+                let id = surface.id();
+                assert!(found.insert(id), "{id} has one overwrite binding");
+                let expected = casa.get(id).copied().unwrap_or_else(|| {
+                    assert!(extras.contains(id), "{id} is missing from the inventory");
+                    false
+                });
+                assert_eq!(
+                    binding.default,
+                    crate::DefaultSpec::Literal {
+                        value: ParameterValue::Bool(expected)
+                    },
+                    "{id}.{}",
+                    binding.name
+                );
+            }
         }
+        let listed = casa.keys().copied().chain(extras).collect::<BTreeSet<_>>();
+        assert_eq!(found, listed, "update the inventory intentionally");
     }
 
     #[test]
     fn simobserve_has_casas_parameters_in_casas_order_for_the_current_contract_only() {
         let catalog = builtin_surface_catalog().expect("valid built-in parameter catalog");
         let surface = catalog.surface("simobserve").unwrap();
-        assert_eq!(surface.contract_version(), 5);
+        assert_eq!(surface.contract_version(), 6);
         let names: Vec<&str> = surface
             .bindings()
             .iter()
@@ -330,7 +328,7 @@ mod tests {
     fn imager_wide_field_controls_share_one_catalog_owned_surface() {
         let catalog = builtin_surface_catalog().unwrap();
         let surface = catalog.surface("imager").unwrap();
-        assert_eq!(surface.contract_version(), 25);
+        assert_eq!(surface.contract_version(), 26);
         assert_eq!(surface.bindings().len(), 81);
         for binding in surface.bindings() {
             let concept = catalog
@@ -549,7 +547,7 @@ mod tests {
         );
 
         let surface = catalog.surface("importvla").unwrap();
-        assert_eq!(surface.contract_version(), 3);
+        assert_eq!(surface.contract_version(), 4);
         let archivefiles = surface
             .bindings()
             .iter()

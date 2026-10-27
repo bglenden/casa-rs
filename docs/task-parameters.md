@@ -28,7 +28,7 @@ designed to paste cleanly into Markdown:
 format = 1
 surface = "imager"
 kind = "task"
-contract = 25
+contract = 26
 
 [parameters]
 vis = "data/target.ms"

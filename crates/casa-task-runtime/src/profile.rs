@@ -1051,7 +1051,6 @@ mod tests {
                 summary: "Image".into(),
                 provider_family: "imager".into(),
                 execution: SurfaceExecutionProjection::default(),
-                safety_rules: Vec::new(),
                 bindings,
                 migrations: Vec::new(),
             }),

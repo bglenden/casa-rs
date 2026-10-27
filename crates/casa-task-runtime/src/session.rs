@@ -136,13 +136,6 @@ impl ParameterSession {
             .collect()
     }
 
-    /// Return the active catalog-owned risks for this resolved draft.
-    pub fn required_run_safety(
-        &self,
-    ) -> Result<crate::RunSafetyRequirements, crate::RunSafetyEvaluationError> {
-        crate::required_run_safety(&self.bundle, &self.states)
-    }
-
     /// Apply an accepted launch/project-context patch.
     pub fn apply_context_patch(
         &mut self,
@@ -342,7 +335,6 @@ mod tests {
                 summary: "Test".into(),
                 provider_family: "test".into(),
                 execution: SurfaceExecutionProjection::default(),
-                safety_rules: Vec::new(),
                 bindings: vec![SurfaceParameterBinding {
                     name: "niter".into(),
                     concept: concept.reference(),

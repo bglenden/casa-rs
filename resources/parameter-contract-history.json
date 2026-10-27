@@ -2391,7 +2391,7 @@
     {
       "id": "applycal",
       "contract_version": 4,
-      "fingerprint": "4cff1106fe28b831da6dcdc1962957ad93f77db7a2d19052357aaad87fd29882"
+      "fingerprint": "44f5751fc01e9fe740ad2f79419f95ebed54d34ecd3d668e2c96efcec8277ce3"
     },
     {
       "id": "bandpass",
@@ -2407,6 +2407,11 @@
       "id": "bandpass",
       "contract_version": 3,
       "fingerprint": "c9540166b007d82058ccdc2ec5d2be90431500298ce1f2aada28c8d6566b5787"
+    },
+    {
+      "id": "bandpass",
+      "contract_version": 4,
+      "fingerprint": "118871695378f414c26e633854df3dcd29edcdaff4c190757f42efb9063be596"
     },
     {
       "id": "calibrate",
@@ -2431,7 +2436,7 @@
     {
       "id": "calibrate",
       "contract_version": 5,
-      "fingerprint": "f375c8abaa8e8490e241c76e74e167809a8694295daa3a006d28f3b2bd7774ce"
+      "fingerprint": "e9baf094e5dd72fede02fc1182275acc056f3d8e0ead049e0fe8971ab08766a5"
     },
     {
       "id": "clearcal",
@@ -2494,6 +2499,11 @@
       "fingerprint": "a573d3f00f481736cc47ad233909735bc9799114d356094e114592e3f5aac973"
     },
     {
+      "id": "exportfits",
+      "contract_version": 4,
+      "fingerprint": "15c8366ae9319141134734b923dce1feecbb9843f92928f069630f02034d6b8a"
+    },
+    {
       "id": "feather",
       "contract_version": 1,
       "fingerprint": "47eca72ff00a63886a0a1c32e774a79ebb264c8757f0198ae709d231d33867df"
@@ -2507,6 +2517,11 @@
       "id": "feather",
       "contract_version": 3,
       "fingerprint": "551b3e949a74cac8a4a0495cc60edaa5fb319d7cf6704c75370413365bf2fff8"
+    },
+    {
+      "id": "feather",
+      "contract_version": 4,
+      "fingerprint": "c43982a9b87a59021952af393f50f9b9f9fd7d28e6c1dcbbbf3275114824ef4f"
     },
     {
       "id": "flagdata",
@@ -2524,6 +2539,11 @@
       "fingerprint": "653069db5112454c3965ad03e999f679506e2d026906e1f349b70dece2358f6e"
     },
     {
+      "id": "flagdata",
+      "contract_version": 4,
+      "fingerprint": "a8c2bebfb738382f5c81f76fd6b6e67e3930ca16108cfe9c84bdc3e102cfd874"
+    },
+    {
       "id": "flagmanager",
       "contract_version": 1,
       "fingerprint": "56e7413e8f36ff58291502c0cdd10b47d22cf4d768deea9057243c30fe27d272"
@@ -2539,6 +2559,11 @@
       "fingerprint": "9f2bd764c1d33a329058249837a45214601e5c692a7790efccbf71013a37ad92"
     },
     {
+      "id": "flagmanager",
+      "contract_version": 4,
+      "fingerprint": "12ddee1187ac85d263f2fdcff25fe15dab3f8ac3f988d9bf30826e92cabc49ea"
+    },
+    {
       "id": "fluxscale",
       "contract_version": 1,
       "fingerprint": "1da25fd859b4d0e88be841d613b63f53c2036fef2e1c47b3b9ce998089222fed"
@@ -2552,6 +2577,11 @@
       "id": "fluxscale",
       "contract_version": 3,
       "fingerprint": "5b1eb398f70f2a61d73e4807fff4552c9f85219042e38a4b2723d2c8a9e86d70"
+    },
+    {
+      "id": "fluxscale",
+      "contract_version": 4,
+      "fingerprint": "259769027bf9398008ccaf4913669dd77413b3a6f83eb645f0b387e1bba4cb66"
     },
     {
       "id": "ft",
@@ -2584,6 +2614,11 @@
       "fingerprint": "ba3d14986b8637892091129cb974a1e23f03688029854acbe3b1eb47aef9e40b"
     },
     {
+      "id": "gaincal",
+      "contract_version": 4,
+      "fingerprint": "0ec4a1581daa068f9eae30042a2418d9e3365d8caa6462d991129e76a4db1cf5"
+    },
+    {
       "id": "gencal",
       "contract_version": 1,
       "fingerprint": "a77ef8bb565b7257ff3a0c0484e72e730fe0f2f431a111bb3d789241d2d2b29b"
@@ -2597,6 +2632,11 @@
       "id": "gencal",
       "contract_version": 3,
       "fingerprint": "4296630f83b570a82f11c2d81be02db91a740682ef3ec694ed1592a188c7dfc1"
+    },
+    {
+      "id": "gencal",
+      "contract_version": 4,
+      "fingerprint": "a3194ef07687c1f420849ef04940612627aac5254b74ee3290f3755e3635b65a"
     },
     {
       "id": "hanningsmooth",
@@ -2739,6 +2779,11 @@
       "fingerprint": "929068c256bf85fb22ef5b35bf47f095cb31f54baef825d3b94d8900ed5c4574"
     },
     {
+      "id": "imager",
+      "contract_version": 26,
+      "fingerprint": "94941a9ddbbd3bfb11b3aef6fcaca6e3ea44c81e9ec5df647e341ef347745a9e"
+    },
+    {
       "id": "imcollapse",
       "contract_version": 1,
       "fingerprint": "9d4b4bfa43e8f9f7a7e1037756abf26d99c48762d28ddb60b4caea69cc44978d"
@@ -2814,6 +2859,11 @@
       "fingerprint": "d28fed61abe54c6532840a51d9c1039df424232677cf6f5017562d83110c0c71"
     },
     {
+      "id": "imhead",
+      "contract_version": 4,
+      "fingerprint": "7ce318ee7b0fd45a40030052c6618a8e754b69cefb4508b80713abe4efebbfb4"
+    },
+    {
       "id": "immath",
       "contract_version": 1,
       "fingerprint": "5cd79104d7ca83f4273c36dd5a33855309ddf4c10f0f95f20f504d2c90d6cc7e"
@@ -2827,6 +2877,11 @@
       "id": "immath",
       "contract_version": 3,
       "fingerprint": "90f47022f0b2259c79d99c2cfb11d70ef666571ab0bf60c3f0111890d3279310"
+    },
+    {
+      "id": "immath",
+      "contract_version": 4,
+      "fingerprint": "b44a577e5dee9670ae66715d561aeb8d608d3a0c6ceb3ab52d7eb1164b670311"
     },
     {
       "id": "immoments",
@@ -2844,6 +2899,11 @@
       "fingerprint": "282aa3464da8bea809828cc971311a36624ff4fefd60e68f144436edf1de0ec4"
     },
     {
+      "id": "immoments",
+      "contract_version": 4,
+      "fingerprint": "2bf16cb2aac34504f5da9777a1d4acc5ceae496237ec39a8a51fb60f93e80fbb"
+    },
+    {
       "id": "impbcor",
       "contract_version": 1,
       "fingerprint": "dd0523a8cc02d03f5500bf99fc5eda7dacb49f50918d821bf9a626f3b6989f27"
@@ -2857,6 +2917,11 @@
       "id": "impbcor",
       "contract_version": 3,
       "fingerprint": "f44e440d61624bc072c2c4296cae2e6b650f02240029b5f534fc935a47b46376"
+    },
+    {
+      "id": "impbcor",
+      "contract_version": 4,
+      "fingerprint": "f1c33df5b4ff7b5b2b89d95a51c36c490d2629a1d63ed9d8631d38bbf2ef16b3"
     },
     {
       "id": "importfits",
@@ -2874,6 +2939,11 @@
       "fingerprint": "362ad601fc86632d152062a210c6935912b44183bf5ebc5bc1b6688272b915b4"
     },
     {
+      "id": "importfits",
+      "contract_version": 4,
+      "fingerprint": "88465e24df4a933f075520d9a547934436f0d69524ed0d7b44808ded745ae7d9"
+    },
+    {
       "id": "importvla",
       "contract_version": 1,
       "fingerprint": "e8750c98bdf822526b1cc31a33d892bd85234f88d4adf9fba10d1a8a5a6a36c1"
@@ -2887,6 +2957,11 @@
       "id": "importvla",
       "contract_version": 3,
       "fingerprint": "d3a8341ca510d9d48fdf541903683cd426767d095d622e338d7333054e627e14"
+    },
+    {
+      "id": "importvla",
+      "contract_version": 4,
+      "fingerprint": "d4fe6af6b3dcda7a8df27cbe92c7e87f0103a20fd973b35ef61e1a80075162f8"
     },
     {
       "id": "impv",
@@ -2904,6 +2979,11 @@
       "fingerprint": "619dc8ed0b20dbb5b9b18c53341c35cc2bd3f9ee63760b2d5f221a4c3a217853"
     },
     {
+      "id": "impv",
+      "contract_version": 4,
+      "fingerprint": "44ea1d7b16b6ee964fa2a2ebbe13babd237488954d2b94ec32e86f348a2e29fa"
+    },
+    {
       "id": "imregrid",
       "contract_version": 1,
       "fingerprint": "603fa9bdd8ce717679b8f4ed1acc0dbb30bcf5116d50421d73e82b4c29b06293"
@@ -2917,6 +2997,11 @@
       "id": "imregrid",
       "contract_version": 3,
       "fingerprint": "92a8e570c25c5955f5ef89baa6a924ac1ee4167d0494657d344694988516784d"
+    },
+    {
+      "id": "imregrid",
+      "contract_version": 4,
+      "fingerprint": "ae2c5c9380181aa967c3b46b82aeb4a7b02472e1970bd15a35740b1f28ec8ef8"
     },
     {
       "id": "imstat",
@@ -2949,6 +3034,11 @@
       "fingerprint": "81f1d08beafd2140ea3c7a22ae77fae827a68a291318380ce1a51a79cf1989f7"
     },
     {
+      "id": "imsubimage",
+      "contract_version": 4,
+      "fingerprint": "bcdb0de7795ba1e8532dc890e70cc8c6ebcc15f676e939987b397981dcfa6c90"
+    },
+    {
       "id": "msexplore",
       "contract_version": 1,
       "fingerprint": "3e74d9c7ce87a22a8197bbda18c92e734e719ea56d16035db764c9386c7867a9"
@@ -2979,6 +3069,11 @@
       "fingerprint": "959958ddaa70b6e2d13294f93323adeff01c02fdb25e973b146b40ff234841d1"
     },
     {
+      "id": "msexplore",
+      "contract_version": 7,
+      "fingerprint": "40569654b270f4dd4a4ef21d2bf1ba961e37cbdb38fbbdf26420e366799c7e3e"
+    },
+    {
       "id": "mstransform",
       "contract_version": 1,
       "fingerprint": "15638e976f8274dfffb535362848375bb7c40079481a2e8d5daa41942502e8be"
@@ -2992,6 +3087,11 @@
       "id": "mstransform",
       "contract_version": 3,
       "fingerprint": "2505fcb391a73daf2df1436b875ce7022c38ee122115a15765888bb9861de82f"
+    },
+    {
+      "id": "mstransform",
+      "contract_version": 4,
+      "fingerprint": "067125aa0fed8257886ad014c955dc4d723f7c0efc2f68d16729bb60b4720ee9"
     },
     {
       "id": "plotcal",
@@ -3042,6 +3142,11 @@
       "id": "plotms",
       "contract_version": 6,
       "fingerprint": "ca6adc76b0ee8c19352d5d40a0420ecfc361753212e4b28dd14362769ad1ca09"
+    },
+    {
+      "id": "plotms",
+      "contract_version": 7,
+      "fingerprint": "760f352fadd1bc06a4bbf7d255e8741bb1cf1043f58495f1d18307c0c6228129"
     },
     {
       "id": "simalma",
@@ -3099,6 +3204,11 @@
       "fingerprint": "72b1f7001c366920e322e1852dfd960651c6e81fda22554b585143c4ae7c7f2f"
     },
     {
+      "id": "simobserve",
+      "contract_version": 6,
+      "fingerprint": "835c6905d7f4be2dd60fa19ee281306ea05700fb26f1fa492bdd84ee5fdb011a"
+    },
+    {
       "id": "split",
       "contract_version": 1,
       "fingerprint": "0943dfdb4e4f4044731b314f8db6346e7294c208258852de4e0711c967b165e2"
@@ -3112,6 +3222,11 @@
       "id": "split",
       "contract_version": 3,
       "fingerprint": "bdcee51d409ec13277428a4e3a7d89ede7201bd74182e037bd03226a6bebe1b3"
+    },
+    {
+      "id": "split",
+      "contract_version": 4,
+      "fingerprint": "a5e771c35fb8ec753246f3dfedb7c93e78177478dbd590a08bb22f815a7bdb84"
     },
     {
       "id": "statwt",

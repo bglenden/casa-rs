@@ -119,7 +119,6 @@ fn run_task(args: &[OsString]) -> Result<(), String> {
     let session = ParameterRuntime::default()
         .open_session(open_session_request(bundle, &options))
         .map_err(|error| error.to_string())?;
-    enforce_runtime_confirmations(&session, &options)?;
     let invocation = project_task_invocation(&session)?;
 
     if let Some(path) = &options.save_params {
@@ -190,8 +189,6 @@ struct SurfaceOptions {
     overrides: ResolutionPatch,
     save_params: Option<PathBuf>,
     no_save_last: bool,
-    confirm_overwrite: bool,
-    confirm_mutation: bool,
 }
 
 fn parse_surface_options(
@@ -204,8 +201,6 @@ fn parse_surface_options(
     let context = ResolutionPatch::default();
     let mut save_params = None;
     let mut no_save_last = false;
-    let mut confirm_overwrite = false;
-    let mut confirm_mutation = false;
     let mut parameter_args = Vec::new();
     let mut index = 0usize;
     while index < args.len() {
@@ -232,10 +227,12 @@ fn parse_surface_options(
             save_params = Some(required_path(args.get(index), "--save-params file")?);
         } else if raw == "--no-save-last" {
             no_save_last = true;
-        } else if raw == "--confirm-overwrite" && allow_runtime_controls {
-            confirm_overwrite = true;
-        } else if raw == "--confirm-mutation" && allow_runtime_controls {
-            confirm_mutation = true;
+        } else if matches!(raw, "--confirm-overwrite" | "--confirm-mutation")
+            && allow_runtime_controls
+        {
+            // Retired (#931): CASA's own parameters, such as `overwrite`, are
+            // the consent. The flags are accepted, and change nothing, until
+            // the launcher goes.
         } else {
             parameter_args.push(args[index].clone());
         }
@@ -251,8 +248,6 @@ fn parse_surface_options(
         overrides,
         save_params,
         no_save_last,
-        confirm_overwrite,
-        confirm_mutation,
     })
 }
 
@@ -296,28 +291,6 @@ pub(crate) fn project_task_invocation(
         _ => Ok(ProviderInvocationAdaptation::direct(direct)),
     })
     .map_err(|error| error.to_string())
-}
-
-fn enforce_runtime_confirmations(
-    session: &ParameterSession,
-    options: &SurfaceOptions,
-) -> Result<(), String> {
-    let requirements = session
-        .required_run_safety()
-        .map_err(|error| format!("evaluate resolved run safety: {error}"))?;
-    if requirements.requires_overwrite_confirmation() && !options.confirm_overwrite {
-        return Err(
-            "resolved profile requests overwrite; pass the runtime control --confirm-overwrite to authorize it"
-                .to_string(),
-        );
-    }
-    if requirements.requires_input_mutation_confirmation() && !options.confirm_mutation {
-        return Err(
-            "resolved profile requests a mutation; pass the runtime control --confirm-mutation to authorize it"
-                .to_string(),
-        );
-    }
-    Ok(())
 }
 
 fn show_session(session: &ParameterSession) -> String {
@@ -522,7 +495,7 @@ pub(crate) fn source_and_control_help() -> &'static str {
     "SOURCE is exactly one of --defaults (the default), --last, --last-successful, or --params FILE.\n\
 OVERRIDES use generated CLI spellings such as --ms, --imsize, --cell-arcsec, or --unset NAME.\n\
 RUNTIME CONTROLS: --workspace DIR (where Last and Last Successful live), --save-params FILE,\n\
-  --no-save-last; casars run also takes --confirm-overwrite and --confirm-mutation.\n"
+  --no-save-last. CASA's parameters are the consent: overwrite=true replaces a product.\n"
 }
 
 #[cfg(test)]
@@ -686,39 +659,35 @@ mod tests {
         // CASA's defaults travel with the request.
         assert_eq!(request["request"]["ptgfile"], "$project.ptg.txt");
         assert_eq!(request["request"]["overwrite"], true);
-        // Overwriting the project's own files needs no confirmation.
-        enforce_runtime_confirmations(&session, &options).unwrap();
     }
 
     #[test]
-    fn loaded_overwrite_cannot_bypass_runtime_confirmation() {
+    fn retired_confirmation_flags_are_accepted_and_change_nothing() {
         let bundle = builtin_surface_bundle("importfits").unwrap();
-        let mut options = parse_surface_options(
+        let plain = parse_surface_options(
             &bundle,
             &["input.fits".into(), "out".into(), "--overwrite".into()],
             true,
         )
         .unwrap();
+        let confirmed = parse_surface_options(
+            &bundle,
+            &[
+                "input.fits".into(),
+                "out".into(),
+                "--overwrite".into(),
+                "--confirm-overwrite".into(),
+                "--confirm-mutation".into(),
+            ],
+            true,
+        )
+        .unwrap();
+        assert_eq!(plain.overrides, confirmed.overrides);
         let session = ParameterRuntime::default()
-            .open_session(open_session_request(bundle, &options))
+            .open_session(open_session_request(bundle, &plain))
             .unwrap();
-        assert!(enforce_runtime_confirmations(&session, &options).is_err());
-        options.confirm_overwrite = true;
-        enforce_runtime_confirmations(&session, &options).unwrap();
-    }
-
-    #[test]
-    fn catalog_input_mutation_rules_gate_mutating_tasks() {
-        let surface = "applycal";
-        let bundle = builtin_surface_bundle(surface).unwrap();
-        let mut options = parse_surface_options(&bundle, &[], true).unwrap();
-        let session = ParameterRuntime::default()
-            .open_session(open_session_request(bundle, &options))
-            .unwrap();
-        let error = enforce_runtime_confirmations(&session, &options).unwrap_err();
-        assert!(error.contains("--confirm-mutation"), "{surface}: {error}");
-        options.confirm_mutation = true;
-        enforce_runtime_confirmations(&session, &options).unwrap();
+        assert_eq!(session.values()["overwrite"], ParameterValue::Bool(true));
+        project_task_invocation(&session).unwrap();
     }
 
     #[test]
