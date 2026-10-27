@@ -54,7 +54,13 @@ fn the_catalog_view_projects_every_task_surface() {
         .expect("imagename concept");
     assert_eq!(
         image_path["value_domain"],
-        serde_json::json!({"kind": "path", "resource_kind": "image"})
+        serde_json::json!({
+            "kind": "array",
+            "elements": [{"kind": "path", "resource_kind": "image"}],
+            "min_items": 0,
+            "max_items": null,
+            "allow_scalar": true,
+        })
     );
     assert!(parameter_bundle("imexplore").is_err());
 }
