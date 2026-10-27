@@ -201,8 +201,10 @@ name on that surface.
 
 Concept roles are part of the contract. A path that is safe as an input does not become
 an output merely because both serialize as strings. Runtime-only controls such
-as executable overrides, progress paths, telemetry, and safety confirmations
-are explicitly non-persistable.
+as executable overrides, progress paths, telemetry, and Last controls are
+explicitly non-persistable. There are no run-time confirmations: CASA's own
+parameters, such as `overwrite`, are the consent to replace or change data
+(#931).
 
 A task `SurfaceDefinition` maps the resolved CASA-named parameter set into a
 one-shot provider invocation.
@@ -214,8 +216,8 @@ an explicit suggestion or override, never an undeclared default.
 Semantic evolution is guarded by the append-only fingerprints in
 `resources/parameter-contract-history.json`. Changing a concept's type,
 normalization, constraints, units, role, or persistence requires a new semantic
-revision. Changing a surface's bindings, defaults, predicates, safety rules,
-provider projections, or migrations requires a new surface contract version.
+revision. Changing a surface's bindings, defaults, predicates, provider
+projections, or migrations requires a new surface contract version.
 Run `scripts/check-parameter-contract-history.py --update` only after making and
 reviewing those version bumps; the normal architecture gate is check-only.
 
@@ -254,6 +256,40 @@ One-shot provider binaries use `casa-task-runtime::TaskCliHost` for
 stdin/file ingestion, JSON decoding and encoding, and stable failure wording.
 Provider CLIs retain only their human argument projection and typed execution
 function.
+
+## The shared task front end and typed replies
+
+`casa-task-runtime::TaskFrontEnd` is the one entry every task binary's `main`
+is to call; the binaries move onto it by family (#931, PRs 2b–2d), and until
+then use `TaskCliHost`. The front end is generic over the binary's execution
+callback and owns logging initialisation, the surface's declared flags, the
+base sources, `--workspace`, `--unset`, `--save-params`, `--no-save-last`, the
+non-executing `--show`, `--template`, `--describe` and `--validate`, and the
+machine actions. A family binary's first word names the surface it runs, such
+as `mstransform split`; the first hosted surface runs otherwise.
+
+`--json-run SOURCE` takes a `TaskRunRequest`, `{"surface": ..., "values":
+{...}}` with the CASA-named values the caller set, and resolves it against the
+surface's contract inside the binary. It writes one `TaskReply` to stdout:
+
+- `{"status": "succeeded", "surface", "value", "result"}`, where `value` is
+  what CASA's task returns (`null` for `None`), kept ahead of the provider's
+  full `result`, from which products are projected;
+- `{"status": "failed", "surface", "kind", "message", "parameter"?}`, where
+  `kind` is `validation` (refused before anything changed; Python
+  `ValueError`) or `execution` (Python `RuntimeError`).
+
+The exit status agrees with the reply: 0 for success, 2 for a validation
+failure and 1 for an execution failure. `classify_task_exit` reads a finished
+process from its exit status and stdout alone, never stderr, and keeps a launch
+failure, a signal and a malformed reply distinct from the task's own failures.
+A provider contract carries both schemas under `semantic.front_end` once its
+binary runs on the front end.
+
+Last has one owner on each path: a command line run of a binary records Last
+before the callback and Last Successful only after success, unless
+`--no-save-last`; `--json-run` reads and writes neither. `casars run` owns Last
+for the runs it launches, and Python task calls save none.
 
 ## Shared Versioned Component Schemas
 
