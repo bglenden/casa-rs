@@ -551,7 +551,7 @@ native-only write-path benchmark on a fast local disk, not on
 `/Volumes/GLENDENNING`:
 
 ```sh
-cargo build --release -p casa-simulation --bin synthetic-ms
+cargo build --release -p casa-ms --bin synthetic-ms
 
 python3 tools/perf/imager/bench_simobserve.py target/imperformance-wave1/plan/wave1-dataset-plan.json \
   --dataset wave1-vla-single-medium \

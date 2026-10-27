@@ -89,7 +89,7 @@ imaging-t48-heterogeneous-response-casa:
     #!/usr/bin/env bash
     set -euo pipefail
     mkdir -p target/t48-testdata/imaging/t48
-    CARGO_INCREMENTAL=0 cargo run --release -p casa-simulation --bin synthetic-ms -- --json-run tools/perf/imager/fixtures/t48-mixed-alma-aca-request.json
+    CARGO_INCREMENTAL=0 cargo run --release -p casa-ms --bin synthetic-ms -- --json-run tools/perf/imager/fixtures/t48-mixed-alma-aca-request.json
     CASA_RS_TESTDATA_ROOT="{{justfile_directory()}}/target/t48-testdata" python3 tools/perf/imager/run_workload.py t48-heterogeneous-mosaic-mfs --stream-log
 
 # Focused #528 MT-MFS weight grouping and Taylor reconstruction gate.

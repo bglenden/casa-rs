@@ -650,7 +650,6 @@ dependencies = [
  "casa-imaging-model",
  "casa-imaging-operator",
  "casa-imaging-runtime",
- "casa-logging",
  "casa-ms",
  "casa-numerics",
  "casa-tables",

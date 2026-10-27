@@ -25,12 +25,6 @@
 //! | `sm.setapply` of a `G` or `D` table | [`Simulator::set_apply`] |
 //! | `simutil.readantenna(antab)` | [`readantenna::read_antenna_config`] |
 //!
-//! The crate also builds `synthetic-ms`, a developer binary that runs casa-rs's
-//! own synthetic MeasurementSet generator (`casa_ms::simulation`) from the
-//! JSON run and family requests the `simobserve` binary took with
-//! `--json-run`. The benchmark and dataset tools under `tools/perf/imager`
-//! call it (Phase 5d). It is not a catalog task.
-//!
 //! CASA's `sm` has no execution controls; a session's memory budget, workers
 //! and backend ([`ExecutionControls`], [`SessionResources`]) are the Python
 //! tool's constructor arguments. `close` predicts a model on the CPU or the

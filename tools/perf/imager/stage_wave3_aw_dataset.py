@@ -24,7 +24,7 @@ except ImportError as exc:  # pragma: no cover - local tooling requires numpy.
 TOOL_DIR = pathlib.Path(__file__).resolve().parent
 REPO_ROOT = TOOL_DIR.parents[2]
 DEFAULT_DATA_ROOT = pathlib.Path("/Volumes/GLENDENNING/casa-rs-imperformance")
-# The native generator: casa-simulation's synthetic-ms developer binary.
+# The native generator: casa-ms's synthetic-ms developer binary.
 DEFAULT_BINARY = REPO_ROOT / "target" / "release" / "synthetic-ms"
 DATASET_ID = "wave3-vla-aw-widefield-medium"
 

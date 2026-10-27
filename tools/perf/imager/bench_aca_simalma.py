@@ -33,7 +33,7 @@ from perf_harness.subprocesses import run_command
 
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
-# The native generator: casa-simulation's synthetic-ms developer binary.
+# The native generator: casa-ms's synthetic-ms developer binary.
 DEFAULT_BINARY = REPO_ROOT / "target" / "release" / "synthetic-ms"
 DEFAULT_IMAGER_BINARY = REPO_ROOT / "target" / "release" / "casars-imager"
 DEFAULT_OUTPUT_DIR = perf_paths.artifact_path("simulation-breadth", "aca-simalma")

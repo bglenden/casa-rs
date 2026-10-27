@@ -29,7 +29,7 @@ from perf_harness.subprocesses import run_command
 
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
-# The native generator: casa-simulation's synthetic-ms developer binary,
+# The native generator: casa-ms's synthetic-ms developer binary,
 # which takes the run and family requests `simobserve --json-run` took.
 DEFAULT_BINARY = REPO_ROOT / "target" / "release" / "synthetic-ms"
 DEFAULT_OUTPUT_DIR = perf_paths.artifact_path("wave1", "simobserve-bench")
