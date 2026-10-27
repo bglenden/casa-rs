@@ -4,8 +4,9 @@
 //! A casa-types array of no dimensions holds one element. casacore's
 //! 0-dimensional shape, the empty `IPosition`, holds none, and casacore and
 //! casa-rs read a cell stored with it as empty. Such a cell is therefore
-//! stored as `[1]`, numeric or string, in every manager of variable-shape
-//! cells, and reads back as one element.
+//! stored as `[1]`, numeric or string, by StManAipsIO and StandardStMan,
+//! and reads back as one element. ISM and the tiled managers refuse such a
+//! cell, except TiledCellStMan, which drops it (#930).
 
 use casa_tables::{ColumnSchema, DataManagerKind, Table, TableOptions, TableSchema};
 use casa_types::{ArrayValue, PrimitiveType, RecordField, RecordValue, Value};

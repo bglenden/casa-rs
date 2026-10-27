@@ -133,6 +133,11 @@ std::string array_shape_tag(const casacore::RecordInterface& rec, casacore::uInt
     os << '[';
     auto emit_shape = [&](const auto& arr) {
         const auto& shape = arr.shape();
+        // An empty IPosition is shown as [0], as casa-rs reads it (#923).
+        if (shape.nelements() == 0) {
+            os << 0;
+            return;
+        }
         for (casacore::uInt axis = 0; axis < shape.nelements(); ++axis) {
             if (axis > 0) {
                 os << ',';
