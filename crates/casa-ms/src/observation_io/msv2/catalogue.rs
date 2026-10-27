@@ -164,7 +164,7 @@ pub(super) fn fields_and_uvw(ms: &MeasurementSet) -> Result<Fields, ObservationE
     let phase_dir = DirectionColumn::phase_dir(field_table);
     let fields = (0..field.row_count())
         .map(|row| {
-            let (longitude, latitude) = phase_dir.get_direction(row).map_err(storage)?.as_angles();
+            let (longitude, latitude) = phase_dir.get_angles(row).map_err(storage)?;
             let source = field.source_id(row).map_err(storage)?;
             let time_s = field.time(row).map_err(storage)?;
             Ok(FieldEntry {
