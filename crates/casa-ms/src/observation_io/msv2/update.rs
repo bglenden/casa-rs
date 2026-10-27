@@ -264,7 +264,8 @@ fn seed_model(
 
 /// Add visibility column `name` (`MODEL_DATA` or `CORRECTED_DATA`) to
 /// MAIN's schema with `DATA`'s keywords, as applycal adds `CORRECTED_DATA`,
-/// unless it is there. `CORRECTED_DATA`'s storage is then installed by the
+/// unless it is there, after clearing what CASA clears for it
+/// ([`crate::scratch_columns`]). `CORRECTED_DATA`'s storage is then installed by the
 /// updater's mutation, cloned from `DATA` values included, as CASA seeds it,
 /// so rows a pass skips read as uncorrected; `MODEL_DATA` is installed and
 /// seeded with CASA's initial model by [`seed_model`].
@@ -285,6 +286,7 @@ fn add_column(ms: &mut MeasurementSet, name: &str) -> Result<(), ObservationErro
             )));
         }
     };
+    crate::scratch_columns::clear_before_adding(ms, column).map_err(storage)?;
     let schema = build_table_schema(&[*column.optional_column().column_def()]).map_err(storage)?;
     let definition = schema
         .column(name)

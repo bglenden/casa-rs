@@ -761,7 +761,10 @@ store holds a NaN weight), whole-unit writes that read nothing, MSv4 chunks
 replaced atomically through a temporary object with the changed directories
 synchronized at finish, and new `CORRECTED_DATA` and `MODEL_DATA`
 initialized as CASA initializes them (from `DATA`; 1, and 0 in the cross
-hands). A batch's own times and baselines address its samples in
+hands), after clearing what CASA's `addScrCols` clears: the cached sort
+keywords and, for `MODEL_DATA`, every field's virtual model
+(`casa_ms::scratch_columns`, #912), so that CASA reads the column written.
+A batch's own times and baselines address its samples in
 both stores, so no update map is added to the read side. The rest of this
 subsection, and its acceptance obligations, stand for M1/M2.
 

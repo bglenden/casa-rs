@@ -11,7 +11,7 @@ use casa_tables::{ColumnSchema, LockType, Table};
 use casa_types::{ArrayValue, Complex32, PrimitiveType, ScalarValue, Value};
 
 use super::ObservationOwnerError;
-use crate::schema::main_table::initial_model_visibility;
+use crate::schema::main_table::{VisibilityDataColumn, initial_model_visibility};
 use crate::{MeasurementSet, MsError};
 
 const VISIBILITY_WRITE_BATCH_ROWS: u64 = 10_000;
@@ -134,6 +134,10 @@ impl SelectedVisibilityWrite {
                     .into());
                 }
             }
+            crate::scratch_columns::clear_before_adding(
+                &mut measurement_set,
+                VisibilityDataColumn::ModelData,
+            )?;
             measurement_set.main_table_mut().add_column(
                 ColumnSchema::array_variable("MODEL_DATA", PrimitiveType::Complex32, Some(2)),
                 None,
