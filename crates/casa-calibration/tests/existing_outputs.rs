@@ -105,7 +105,7 @@ fn solved_and_scaled_tables_are_refused_and_kept() {
     };
     solve().expect("first gaincal");
     let before = snapshot(&table);
-    let error = solve().err().expect("second gaincal refused");
+    let error = solve().expect_err("second gaincal refused");
     assert!(
         error.to_string().contains("output already exists"),
         "{error}"
@@ -127,7 +127,7 @@ fn solved_and_scaled_tables_are_refused_and_kept() {
     };
     scale().expect("first fluxscale");
     let before = snapshot(&scaled);
-    let error = scale().err().expect("second fluxscale refused");
+    let error = scale().expect_err("second fluxscale refused");
     assert!(error.to_string().contains("fluxtable exists"), "{error}");
     assert_eq!(snapshot(&scaled), before);
 }
@@ -137,16 +137,14 @@ fn the_corrected_export_refuses_an_existing_measurement_set() {
     let dir = TempDir::new().unwrap();
     let ms = common::create_apply_fixture_ms(dir.path(), true);
     let output = dir.path().join("exported.ms");
-    let export = || {
-        export_corrected_data(&ExportCorrectedDataRequest {
-            input_ms: ms.clone(),
-            output_ms: output.clone(),
-            selection: MsSelection::new(),
-        })
+    let request = ExportCorrectedDataRequest {
+        input_ms: ms,
+        output_ms: output.clone(),
+        selection: MsSelection::new(),
     };
-    export().expect("first export");
+    export_corrected_data(&request).expect("first export");
     let before = snapshot(&output);
-    let error = export().err().expect("second export refused");
+    let error = export_corrected_data(&request).expect_err("second export refused");
     assert!(error.to_string().contains("already exists"), "{error}");
     assert_eq!(snapshot(&output), before);
 }
