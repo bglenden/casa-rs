@@ -393,18 +393,20 @@ fn same_hz(a: f64, b: f64) -> bool {
 /// gain table collapses them to, of their summed width at their arithmetic
 /// mean frequency (CASA's `gaincal`, whose `ChannelAverageTVI` averages
 /// the frequencies plainly and sums the widths before a G or T solve, and
-/// casa-rs's gain table writer since #917). The summed width is compared
-/// in magnitude: CASA's solve sums the widths' magnitudes
-/// (`VisibilityIteratorImpl2` holds widths positive), and its unsolved
-/// rows keep their sign.
+/// casa-rs's gain table writer since #917). Widths are compared in
+/// magnitude, a channel's and the summed one alike: CASA's solve holds
+/// widths positive (`VisibilityIteratorImpl2`), so a solved row of a
+/// window of decreasing frequency has a positive width, and its unsolved
+/// rows keep their sign; the frequencies give the order.
 fn solves(solved: &NamespaceWindow, window: &NamespaceWindow) -> bool {
-    let same =
-        |a: &[f64], b: &[f64]| a.len() == b.len() && a.iter().zip(b).all(|(a, b)| same_hz(*a, *b));
+    let same = |a: &[f64], b: &[f64], value: fn(f64) -> f64| {
+        a.len() == b.len() && a.iter().zip(b).all(|(a, b)| same_hz(value(*a), value(*b)))
+    };
     if solved.frame != window.frame {
         return false;
     }
-    if same(&solved.frequencies_hz, &window.frequencies_hz)
-        && same(&solved.widths_hz, &window.widths_hz)
+    if same(&solved.frequencies_hz, &window.frequencies_hz, |hz| hz)
+        && same(&solved.widths_hz, &window.widths_hz, f64::abs)
     {
         return true;
     }
