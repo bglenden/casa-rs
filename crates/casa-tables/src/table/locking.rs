@@ -250,17 +250,28 @@ impl Table {
 
     /// Releases the current lock as
     /// [`unlock_metadata_only`](Self::unlock_metadata_only) does and, when
-    /// that fails, releases it all the same: the table is reloaded as it is
-    /// on disk, discarding the changes not yet written, and released again,
-    /// publishing whatever reached the disk. A table dropped while it holds
-    /// the write lock with unwritten changes is written in full with its
-    /// lock's storage manager; a writer that keeps the table's managers
-    /// releases through this instead. Returns the first release's error.
+    /// that fails holding the write lock, releases it all the same: the
+    /// changes not yet written are discarded, the table reloaded as it is on
+    /// disk where it can be, and the lock released again, publishing
+    /// whatever reached the disk. A table dropped while it holds the write
+    /// lock with unwritten changes is written in full with its lock's
+    /// storage manager; a writer that keeps the table's managers releases
+    /// through this instead. Returns the first release's error.
+    ///
+    /// A table held with permanent locking keeps its lock, as `unlock`
+    /// keeps it, and with it its unwritten changes.
     #[cfg(unix)]
     pub fn unlock_metadata_only_or_discard(&mut self) -> Result<(), TableError> {
         let released = self.unlock_metadata_only();
-        if released.is_err() {
-            let _ = self.resync();
+        if released.is_err() && self.has_lock(LockType::Write) {
+            if self.resync().is_err() {
+                // Unreloadable, the changes are discarded all the same:
+                // nothing is left to flush, so a drop only publishes.
+                let generation = self.inner.generation();
+                if let Some(state) = self.lock_state.as_mut() {
+                    state.flushed_generation = generation;
+                }
+            }
             let _ = self.unlock_metadata_only();
         }
         released

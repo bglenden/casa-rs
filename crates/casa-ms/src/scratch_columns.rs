@@ -74,8 +74,7 @@ const SORT_KEYWORDS: [&str; 2] = ["SORT_COLUMNS", "SORTED_TABLE"];
 /// never waits for one table while it holds another, where CASA waits
 /// (casa-rs holders do not yet release a lock on request, #694). The
 /// `FT_MODEL*` model images are deleted last and, as CASA deletes them, at
-/// best: one that cannot be deleted, or that another process holds open,
-/// is logged and left.
+/// best: one that is held open or cannot be deleted is logged and left.
 ///
 /// # Errors
 ///
@@ -332,26 +331,26 @@ fn lock_refused(path: &Path) -> MsError {
     .into()
 }
 
-/// Whether another process holds the table at `path` open (casacore's
-/// `Table::isMultiUsed`).
-fn opened_elsewhere(path: &Path) -> Result<bool, TableError> {
+/// Where the table at `path` is held open, as `TableUtil::canDeleteTable`
+/// asks, read from its lock file without opening the table or waiting for
+/// a lock.
+fn held_open(path: &Path) -> std::io::Result<Option<casa_tables::TableHolder>> {
     #[cfg(unix)]
     {
-        let locking = casa_tables::LockOptions::new(casa_tables::LockMode::AutoLocking);
-        Ok(Table::open_with_lock(TableOptions::new(path), locking)?.is_multi_used())
+        casa_tables::table_holder(path)
     }
     #[cfg(not(unix))]
     {
         let _ = path;
-        Ok(false)
+        Ok(None)
     }
 }
 
 /// Delete every `FT_MODEL*` table in the MeasurementSet's directory and in
-/// its SOURCE's, as `clearModel` does, at best: a table that cannot be
-/// opened or that another process holds open is left, as
-/// `TableUtil::canDeleteTable` leaves it, and so is one that cannot be
-/// deleted, each logged.
+/// its SOURCE's, as `clearModel` does, at best: a table held open, in this
+/// process or another, is left, as `TableUtil::canDeleteTable` leaves it,
+/// and so is one whose lock file cannot be read or that cannot be deleted,
+/// each logged.
 fn delete_model_images(ms: &MeasurementSet) {
     let directories = [
         ms.path(),
@@ -368,9 +367,9 @@ fn delete_model_images(ms: &MeasurementSet) {
             {
                 continue;
             }
-            let deleted = match opened_elsewhere(&image) {
-                Ok(false) => std::fs::remove_dir_all(&image).map_err(|error| error.to_string()),
-                Ok(true) => Err("another process holds it open".to_string()),
+            let deleted = match held_open(&image) {
+                Ok(None) => std::fs::remove_dir_all(&image).map_err(|error| error.to_string()),
+                Ok(Some(holder)) => Err(format!("it is held open {holder}")),
                 Err(error) => Err(error.to_string()),
             };
             if let Err(error) = deleted {
@@ -773,46 +772,94 @@ mod tests {
         assert!(source.keywords().get("definedmodel_field_0").is_some());
     }
 
-    /// A write whose MAIN metadata cannot be written fails and leaves MAIN
-    /// as it was: released, not rewritten in full. Skipped where the
-    /// metadata cannot be made unwritable (a process running as root).
+    /// MAIN's `table.*` files.
+    fn table_files(path: &Path) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(path)
+            .expect("list")
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.starts_with("table."))
+            .collect();
+        names.sort();
+        names
+    }
+
+    /// Restores `table.dat`'s mode when dropped.
+    struct Writable(PathBuf);
+
+    impl Drop for Writable {
+        fn drop(&mut self) {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&self.0, std::fs::Permissions::from_mode(0o644));
+        }
+    }
+
+    /// Make MAIN's `table.dat` read-only, or `None` where it stays
+    /// writable (a process running as root).
+    fn read_only_table_dat(path: &Path) -> Option<Writable> {
+        use std::os::unix::fs::PermissionsExt;
+        let table_dat = path.join("table.dat");
+        std::fs::set_permissions(&table_dat, std::fs::Permissions::from_mode(0o444))
+            .expect("read only");
+        let restore = Writable(table_dat);
+        if std::fs::OpenOptions::new()
+            .write(true)
+            .open(&restore.0)
+            .is_ok()
+        {
+            eprintln!("skipped: table.dat stays writable for this process");
+            return None;
+        }
+        Some(restore)
+    }
+
+    /// A write whose MAIN metadata cannot be written as it begins fails and
+    /// leaves MAIN as it was: released, not rewritten in full.
     #[test]
     fn a_failed_metadata_write_leaves_main_as_it_was() {
-        use std::os::unix::fs::PermissionsExt;
         let root = tempfile::tempdir().expect("root");
         let path = trial(root.path());
         as_casa_left_it(&path);
-        let files = |path: &Path| -> Vec<String> {
-            let mut names: Vec<String> = std::fs::read_dir(path)
-                .expect("list")
-                .flatten()
-                .map(|entry| entry.file_name().to_string_lossy().into_owned())
-                .filter(|name| name.starts_with("table."))
-                .collect();
-            names.sort();
-            names
-        };
-        let files_before = files(&path);
+        let files_before = table_files(&path);
         let keywords_before = main_keywords(&path);
-        let table_dat = path.join("table.dat");
-        let permissions = |mode| std::fs::Permissions::from_mode(mode);
-        std::fs::set_permissions(&table_dat, permissions(0o444)).expect("read only");
-        if std::fs::OpenOptions::new()
-            .write(true)
-            .open(&table_dat)
-            .is_ok()
-        {
-            std::fs::set_permissions(&table_dat, permissions(0o644)).expect("writable");
-            eprintln!("skipped: table.dat stays writable for this process");
+        let Some(read_only) = read_only_table_dat(&path) else {
             return;
-        }
+        };
         let written =
             SelectedVisibilityWrite::begin(&path, SelectedVisibilityWriteTargets::new(true, false))
                 .and_then(SelectedVisibilityWrite::complete);
-        std::fs::set_permissions(&table_dat, permissions(0o644)).expect("writable");
+        drop(read_only);
         assert!(written.is_err(), "the metadata write fails");
-        assert_eq!(files(&path), files_before);
+        assert_eq!(table_files(&path), files_before);
         assert_eq!(main_keywords(&path), keywords_before);
+    }
+
+    /// A write whose completion cannot write MAIN's metadata fails and
+    /// leaves MAIN as the write left it on disk, `MODEL_DATA` created and
+    /// seeded: released, not rewritten in full.
+    #[test]
+    fn a_failed_completion_leaves_main_as_it_was() {
+        let root = tempfile::tempdir().expect("root");
+        let path = trial(root.path());
+        let write =
+            SelectedVisibilityWrite::begin(&path, SelectedVisibilityWriteTargets::new(true, false))
+                .expect("begin");
+        let files_begun = table_files(&path);
+        let Some(read_only) = read_only_table_dat(&path) else {
+            return;
+        };
+        let completed = write.complete();
+        drop(read_only);
+        assert!(completed.is_err(), "the metadata write fails");
+        assert_eq!(table_files(&path), files_begun);
+        let ms = MeasurementSet::open(&path).expect("reopen");
+        assert!(
+            ms.main_table()
+                .data_manager_info()
+                .iter()
+                .any(|manager| manager.columns.iter().any(|name| name == "MODEL_DATA")),
+            "MODEL_DATA's storage stays"
+        );
     }
 
     /// A write to an existing `MODEL_DATA` clears the virtual model, as
