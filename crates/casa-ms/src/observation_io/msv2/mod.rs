@@ -12,6 +12,8 @@ pub(super) mod update;
 #[cfg(feature = "msv4")]
 pub(crate) use catalogue::{metres, radians};
 pub use cursor::Msv2Cursor;
+#[cfg(feature = "msv4")]
+pub(crate) use pointing::{POLYNOMIAL_TERMS, scan_rows};
 
 use std::collections::BTreeMap;
 use std::path::Path;

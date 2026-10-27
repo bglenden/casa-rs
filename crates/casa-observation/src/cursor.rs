@@ -97,8 +97,9 @@ pub trait Observation: Sync {
     /// antenna, times that are not a finite span, or pointing beyond the
     /// request's budget; [`ObservationError::Unsupported`] for pointing the
     /// boundary does not carry (an MSv4 target, samples in several frames,
-    /// a frame or polynomial the store's reader does not take);
-    /// [`ObservationError::InvalidStore`] for malformed pointing.
+    /// an MSv4 frame or polynomial its reader does not take);
+    /// [`ObservationError::InvalidStore`] for malformed pointing, an MSv2
+    /// row of more terms than its reader's bound included.
     fn pointing(&self, request: &PointingRequest) -> Result<PointingSeries, ObservationError>;
 }
 

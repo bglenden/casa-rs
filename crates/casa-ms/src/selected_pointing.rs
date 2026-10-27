@@ -983,6 +983,40 @@ fn elapsed_nanos(started: Instant) -> u64 {
 }
 
 /// Conservative catalog construction peak for content planning.
+/// An upper bound on the bytes preparing a catalog of `rows` retained
+/// `POINTING` rows for `antennas` antennas (two nearest rows each) holds at
+/// any one time, scanning `scan_rows` rows at a time with polynomials of at
+/// most `maximum_polynomial_terms` terms, and the series made from it: the
+/// sum of every budget check [`MeasurementSet::prepare_selected_pointing_catalog`]
+/// makes, so a budget of at least this is never refused. `None` on
+/// overflow.
+#[cfg(feature = "msv4")]
+pub(crate) fn catalog_peak_bytes(
+    rows: usize,
+    antennas: usize,
+    scan_rows: usize,
+    maximum_polynomial_terms: usize,
+) -> Option<usize> {
+    let rows = rows.checked_add(antennas.checked_mul(2)?)?;
+    let coefficients = 2 * maximum_polynomial_terms * size_of::<f64>();
+    // Metadata, row index, direction cell and its heap, catalog row and its
+    // coefficients, and the series' time, interval, origin and coefficients.
+    let per_row = size_of::<CandidateMetadata>()
+        + size_of::<usize>()
+        + size_of::<Option<ArrayValue>>()
+        + coefficients
+        + 4 * size_of::<usize>()
+        + size_of::<CatalogRow>()
+        + coefficients
+        + 3 * size_of::<f64>()
+        + coefficients;
+    catalog_upper_bound_bytes(rows, maximum_polynomial_terms)
+        .ok()?
+        .checked_add(rows.checked_mul(per_row)?)?
+        .checked_add(scan_rows.checked_mul(SCALAR_SCAN_BYTES_PER_ROW)?)?
+        .checked_add(antennas.checked_mul(size_of::<[Option<CandidateMetadata>; 2]>())?)
+}
+
 pub(crate) fn selected_pointing_preparation_peak_bytes(
     selected_rows: usize,
     scan_rows: usize,

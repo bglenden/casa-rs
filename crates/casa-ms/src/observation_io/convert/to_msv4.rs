@@ -7,7 +7,7 @@ use std::path::Path;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use casa_observation::{AntennaId, Catalogue, Observation, ObservationError, PartitionId, Roles};
+use casa_observation::{Catalogue, Observation, ObservationError, PartitionId, Roles};
 
 use super::pointing_plan::{self, PointingPlan};
 use super::{ConversionOptions, ConversionReport, lockstep, losses};
@@ -293,15 +293,8 @@ fn partition(
     let mut writer = set.dataset(named, id, &names, &grid, &storage)?;
     // The pointing of the antennas the partition's baselines name, as
     // planned; dropped before the batches are read.
-    let antennas: Vec<AntennaId> = grid
-        .baselines
-        .iter()
-        .flat_map(|baseline| [baseline.antenna1, baseline.antenna2])
-        .collect::<std::collections::BTreeSet<_>>()
-        .into_iter()
-        .collect();
-    if let Some(request) = pointing.request(id, antennas) {
-        writer.write_pointing(named, &observation.pointing(&request)?)?;
+    if let Some(read) = pointing.read_for(id) {
+        writer.write_pointing(named, &observation.pointing(read)?)?;
     }
     let budget = (options.batch_bytes, Some(writer.chunk_times()));
     let read = lockstep::read(observation, id, groups, Roles::ALL, budget, |batches| {

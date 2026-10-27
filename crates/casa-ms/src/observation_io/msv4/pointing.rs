@@ -9,7 +9,8 @@ use std::mem::size_of;
 use std::ops::Range;
 
 use casa_observation::{
-    AntennaPointing, ObservationError, PointingDirection, PointingRequest, PointingSeries,
+    AntennaId, AntennaPointing, ObservationError, PointingDirection, PointingRequest,
+    PointingSeries,
 };
 use casa_types::measures::direction::DirectionRef;
 use zarrs::array::{Array, ArraySubset};
@@ -29,9 +30,13 @@ pub(crate) const POINTING_FRAMES: [(&str, DirectionRef); 3] = [
     ("altaz", DirectionRef::AZELGEO),
 ];
 
-/// Pointing times read at once while searching outward for an antenna's
-/// nearest sample beyond the requested times.
-const SEARCH_TIMES: u64 = 256;
+/// Pointing times read at first while searching outward for the antennas'
+/// nearest samples beyond the requested times (the casa-rs writer's chunk
+/// of times); each further read doubles, up to [`MOST_SEARCH_TIMES`].
+const SEARCH_TIMES: u64 = 4096;
+
+/// The most pointing times one outward read covers.
+const MOST_SEARCH_TIMES: u64 = 16_384;
 
 impl Msv4Observation {
     /// [`casa_observation::Observation::pointing`] on one dataset: each
@@ -115,10 +120,11 @@ impl Msv4Observation {
         }
         let first = times.partition_point(|time| *time < start);
         let last = times.partition_point(|time| *time <= end);
-        // Read: the time coordinate and the span's values. Held, at most: a
-        // time, an origin and a direction for each requested antenna at
-        // each time of the span and one each side.
-        let read = (times.len() + (last - first) * names.len() * 2) * size_of::<f64>();
+        // Read: the time coordinate, the span's values and the largest
+        // outward block. Held, at most: a time, an origin and a direction for
+        // each requested antenna at each time of the span and one each side.
+        let search = times.len().min(MOST_SEARCH_TIMES as usize);
+        let read = (times.len() + (last - first + search) * names.len() * 2) * size_of::<f64>();
         let held = request.antennas.len() * (last - first + 2) * 4 * size_of::<f64>();
         if read + held > request.budget_bytes {
             return Err(ObservationError::InvalidRequest {
@@ -130,38 +136,43 @@ impl Msv4Observation {
             });
         }
         let span = self.beam_values(&beam, first as u64..last as u64, 0..shape[1])?;
+        // Each requested antenna's column; an antenna the dataset's pointing
+        // does not name has no samples.
+        let columns: Vec<(AntennaId, usize)> = request
+            .antennas
+            .iter()
+            .filter_map(|antenna| {
+                let name = dataset
+                    .antennas
+                    .iter()
+                    .find(|(_, id)| id == antenna)
+                    .map(|(name, _)| name)?;
+                let column = names.iter().position(|known| known == name)?;
+                Some((*antenna, column))
+            })
+            .collect();
+        let wanted: Vec<usize> = columns.iter().map(|(_, column)| *column).collect();
+        let before = self.nearest(&beam, &wanted, first, Outward::Before)?;
+        let after = self.nearest(&beam, &wanted, last, Outward::After)?;
         let mut series = PointingSeries::empty(frame);
-        for antenna in &request.antennas {
-            let name = dataset
-                .antennas
-                .iter()
-                .find(|(_, id)| id == antenna)
-                .map(|(name, _)| name)
-                .expect("checked above");
-            // An antenna the dataset's pointing does not name has no samples.
-            let Some(column) = names.iter().position(|known| known == name) else {
-                continue;
-            };
-            let mut samples: Vec<(usize, [f64; 2])> = (first..last)
-                .filter_map(|time| {
-                    let at = ((time - first) * names.len() + column) * 2;
-                    let direction = [span[at], span[at + 1]];
-                    (!direction[0].is_nan()).then_some((time, direction))
-                })
+        for (index, (antenna, column)) in columns.into_iter().enumerate() {
+            let within = (first..last).filter_map(|time| {
+                let at = ((time - first) * names.len() + column) * 2;
+                let direction = [span[at], span[at + 1]];
+                (!direction[0].is_nan()).then_some((time, direction))
+            });
+            let samples: Vec<(usize, [f64; 2])> = before[index]
+                .into_iter()
+                .chain(within)
+                .chain(after[index])
                 .collect();
-            if let Some(before) = self.nearest(&beam, column, first, Outward::Before)? {
-                samples.insert(0, before);
-            }
-            if let Some(after) = self.nearest(&beam, column, last, Outward::After)? {
-                samples.push(after);
-            }
             let sample_times: Vec<f64> = samples.iter().map(|(time, _)| times[*time]).collect();
             let coefficients = samples
                 .iter()
                 .flat_map(|(_, direction)| *direction)
                 .collect();
             series.antennas.insert(
-                *antenna,
+                antenna,
                 AntennaPointing::new(sample_times.clone(), None, sample_times, 1, coefficients)?,
             );
         }
@@ -184,9 +195,10 @@ impl Msv4Observation {
             .map_err(storage)
     }
 
-    /// Antenna `column`'s nearest sample before time index `from` (the
-    /// samples before it) or at or after it, reading outward a block of
-    /// times at a time until one holds a direction.
+    /// Each of `columns`' nearest sample before time index `from` (the
+    /// samples before it) or at or after it: reading every antenna's
+    /// directions outward, a block of times at a time (so each chunk is
+    /// decoded once), until each column holds one or the times end.
     #[expect(
         clippy::cast_possible_truncation,
         reason = "array extents are in-memory element counts"
@@ -194,37 +206,50 @@ impl Msv4Observation {
     fn nearest(
         &self,
         beam: &Array<FilesystemStore>,
-        column: usize,
+        columns: &[usize],
         from: usize,
         outward: Outward,
-    ) -> Result<Option<(usize, [f64; 2])>, ObservationError> {
-        let (column, times) = (column as u64, beam.shape()[0]);
-        let mut edge = from as u64;
-        loop {
+    ) -> Result<Vec<Nearest>, ObservationError> {
+        let (times, antennas) = (beam.shape()[0], beam.shape()[1]);
+        let mut found = vec![None; columns.len()];
+        let (mut edge, mut size) = (from as u64, SEARCH_TIMES);
+        while found.iter().any(Option::is_none) {
             let block = match outward {
-                Outward::Before if edge == 0 => return Ok(None),
-                Outward::Before => edge.saturating_sub(SEARCH_TIMES)..edge,
-                Outward::After if edge >= times => return Ok(None),
-                Outward::After => edge..(edge + SEARCH_TIMES).min(times),
+                Outward::Before if edge == 0 => break,
+                Outward::Before => edge.saturating_sub(size)..edge,
+                Outward::After if edge >= times => break,
+                Outward::After => edge..(edge + size).min(times),
             };
-            let values = self.beam_values(beam, block.clone(), column..column + 1)?;
-            let found = match outward {
-                Outward::Before => (0..values.len() / 2)
-                    .rev()
-                    .find(|at| !values[2 * at].is_nan()),
-                Outward::After => (0..values.len() / 2).find(|at| !values[2 * at].is_nan()),
-            };
-            if let Some(at) = found {
-                let time = (block.start as usize) + at;
-                return Ok(Some((time, [values[2 * at], values[2 * at + 1]])));
+            let values = self.beam_values(beam, block.clone(), 0..antennas)?;
+            let rows = (block.end - block.start) as usize;
+            for (slot, column) in columns.iter().enumerate() {
+                if found[slot].is_some() {
+                    continue;
+                }
+                let at = |row: usize| (row * antennas as usize + column) * 2;
+                let held = |row: &usize| !values[at(*row)].is_nan();
+                let row = match outward {
+                    Outward::Before => (0..rows).rev().find(held),
+                    Outward::After => (0..rows).find(held),
+                };
+                found[slot] = row.map(|row| {
+                    let at = at(row);
+                    (block.start as usize + row, [values[at], values[at + 1]])
+                });
             }
             edge = match outward {
                 Outward::Before => block.start,
                 Outward::After => block.end,
             };
+            size = (2 * size).min(MOST_SEARCH_TIMES);
         }
+        Ok(found)
     }
 }
+
+/// An antenna's nearest sample one side of the requested times: its time
+/// index and direction.
+type Nearest = Option<(usize, [f64; 2])>;
 
 /// Which way [`Msv4Observation::nearest`] searches.
 #[derive(Clone, Copy)]

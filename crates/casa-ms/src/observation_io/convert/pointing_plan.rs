@@ -1,91 +1,72 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! What a conversion carries of the source's pointing, decided with the
-//! losses that implies before anything is written ([`plan`]).
+//! losses that implies before anything is written ([`plan`]), as the reads
+//! through the boundary ([`Observation::pointing`]) that carry it:
+//! - into an MSv4, one per partition over its own times, as XRADIO's
+//!   converter takes the `POINTING` rows within each dataset's times (the
+//!   boundary adds each antenna's nearest sample either side);
+//! - into an MSv2, reads that gather every sample once: an MSv2 source's
+//!   rows of every named antenna, its antennas grouped so that each read
+//!   fits the budget, or an MSv4 source's datasets whole.
 //!
-//! Each partition's pointing is read through the boundary
-//! ([`Observation::pointing`]) over a span of its times:
-//! - into an MSv4, over the partition's own times, as XRADIO's converter
-//!   takes the `POINTING` rows within each dataset's times (the boundary
-//!   adds each antenna's nearest sample either side);
-//! - into an MSv2, over every time the source's pointing holds, so that an
-//!   MSv2 source's rows are carried whole.
-//!
-//! An MSv2 source's `POINTING` is scanned once for what that cannot carry:
-//! rows outside every span, rows at the antenna and time of an earlier one
-//! (an MSv4 holds one sample there), polynomial terms beyond the direction
-//! (an MSv4 holds one term), and the columns neither destination holds.
-//! Pointing the destination cannot hold at all (directions in several
-//! frames, or in a frame MSv4 has no name for, or polynomials beyond the
-//! reader's bound) is lost whole, as a reported loss, rather than refused
-//! part way through writing. A partition whose pointing would hold more
-//! than the batch budget refuses the conversion.
+//! An MSv2 source's `POINTING` is scanned once ([`pointing_scan`]) for what
+//! those reads cannot carry: rows nothing reads, rows a partition reads at
+//! the antenna and time of another (an MSv4 holds one sample there),
+//! polynomial terms beyond the direction (an MSv4 holds one term), and the
+//! columns neither destination holds. Pointing a read would refuse or the
+//! destination cannot hold at all (directions in several frames, a frame
+//! MSv4 has no name for, rows beyond the reader's bound) is lost whole, as
+//! a reported loss, rather than refused part way through writing. Each read
+//! is checked against the budget with the catalog's own bound, and an MSv2
+//! destination's gathered rows with the writer's; beyond it the conversion
+//! is refused.
 
-use std::mem::size_of;
-use std::ops::RangeInclusive;
 use std::path::Path;
 
 use casa_observation::{
     AntennaId, Observation, ObservationError, PartitionId, PointingDirection, PointingRequest,
 };
-use casa_tables::table_measures::{MeasRefDesc, TableMeasDesc};
-use casa_tables::{RequiredScalarColumnDestination, RequiredScalarColumnValuesMut, Table};
-use casa_types::measures::direction::DirectionRef;
+use casa_tables::Table;
 
 use super::Loss;
 use super::losses::Destination;
-use crate::derived::engine::resolve_direction_reference_selected;
+use super::msv2_pointing::gathered_bytes;
+use super::pointing_scan::{self, Partition, Scan};
+use crate::observation_io::msv2::{POLYNOMIAL_TERMS, scan_rows};
 use crate::observation_io::msv4::POINTING_FRAMES;
 use crate::observation_io::update::{request_error, storage};
 use crate::schema::SubtableId;
+use crate::selected_pointing::catalog_peak_bytes;
 
-/// `POINTING` rows scanned at a time.
-const SCAN_ROWS: usize = 1 << 16;
-
-/// The most polynomial terms a `POINTING` row may have (`NUM_POLY` + 1):
-/// the bound the MSv2 adapter reads with.
-const MAXIMUM_TERMS: usize = 4;
-
-/// What a conversion carries of the source's pointing.
+/// What a conversion carries of the source's pointing: the reads that
+/// carry it, each in the time system of its partition.
 #[derive(Debug, Default)]
 pub(super) struct PointingPlan {
-    /// Each partition's span of times to read, in its time system; `None`
-    /// carries none.
-    spans: Vec<Option<RangeInclusive<f64>>>,
+    reads: Vec<PointingRequest>,
 }
 
 impl PointingPlan {
-    /// The pointing request for `partition`'s `antennas`, when its pointing
-    /// is carried. The plan has checked its size against the budget.
-    pub(super) fn request(
-        &self,
-        partition: PartitionId,
-        antennas: Vec<AntennaId>,
-    ) -> Option<PointingRequest> {
-        let times = self.spans.get(partition.0 as usize)?.clone()?;
-        Some(PointingRequest {
-            partition,
-            direction: PointingDirection::Beam,
-            antennas,
-            times,
-            budget_bytes: usize::MAX,
-        })
+    /// An MSv4 destination's read for `partition`'s dataset, if its
+    /// pointing is carried.
+    pub(super) fn read_for(&self, partition: PartitionId) -> Option<&PointingRequest> {
+        self.reads.iter().find(|read| read.partition == partition)
+    }
+
+    /// An MSv2 destination's reads, which gather every carried sample.
+    pub(super) fn reads(&self) -> &[PointingRequest] {
+        &self.reads
     }
 }
 
-/// One partition as the plan sees it: its antennas and its times.
-struct Partition {
-    antennas: Vec<AntennaId>,
-    times: Option<RangeInclusive<f64>>,
-}
-
 /// What converting `observation` (at `source`) into `destination` carries
-/// of its pointing, and the losses that implies; each partition's pointing
-/// within `budget` bytes.
+/// of its pointing, each read within `budget` bytes, and the losses that
+/// implies.
 ///
 /// # Errors
 ///
-/// [`ObservationError::InvalidRequest`] when a partition's pointing would
-/// hold more than `budget`; any error reading the source.
+/// [`ObservationError::InvalidRequest`] when a read, or an MSv2
+/// destination's gathered rows, would hold more than `budget`; any error
+/// reading the source.
 pub(super) fn plan(
     source: &Path,
     observation: &dyn Observation,
@@ -94,7 +75,7 @@ pub(super) fn plan(
 ) -> Result<(PointingPlan, Vec<Loss>), ObservationError> {
     let partitions = partitions(observation)?;
     if source.join("zarr.json").is_file() {
-        return msv4(observation, &partitions, budget);
+        return msv4(observation, &partitions, destination, budget);
     }
     let ms = crate::MeasurementSet::open_retained_read(source).map_err(storage)?;
     let Some(table) = ms.subtable(SubtableId::Pointing) else {
@@ -137,15 +118,36 @@ fn partitions(observation: &dyn Observation) -> Result<Vec<Partition>, Observati
         .collect()
 }
 
+/// The plan that carries nothing, losing the pointing whole for `reason`.
+fn lost_whole(table: &str, reason: &str) -> (PointingPlan, Vec<Loss>) {
+    let loss = Loss::Table(format!("{table} ({reason})"));
+    (PointingPlan::default(), vec![loss])
+}
+
+/// Refuse gathering `samples` samples of `terms` terms into an MSv2 beyond
+/// `budget`.
+fn check_gathered(samples: usize, terms: usize, budget: usize) -> Result<(), ObservationError> {
+    let bytes = samples.saturating_mul(gathered_bytes(terms));
+    if bytes > budget {
+        return Err(request_error(format!(
+            "the pointing gathered for the MSv2 holds about {bytes} bytes, beyond the batch \
+             budget of {budget}"
+        )));
+    }
+    Ok(())
+}
+
 /// An MSv4 source: each dataset's pointing whole, read once here to find
 /// what the destination cannot hold.
 fn msv4(
     observation: &dyn Observation,
     partitions: &[Partition],
+    destination: Destination,
     budget: usize,
 ) -> Result<(PointingPlan, Vec<Loss>), ObservationError> {
-    let mut spans = Vec::with_capacity(partitions.len());
+    let mut reads = Vec::new();
     let mut frames = Vec::new();
+    let mut samples = 0_usize;
     for (index, partition) in partitions.iter().enumerate() {
         let request = PointingRequest {
             partition: PartitionId(index as u32),
@@ -157,303 +159,189 @@ fn msv4(
         let series = match observation.pointing(&request) {
             Ok(series) => series,
             Err(ObservationError::Unsupported { what }) => {
-                let plan = PointingPlan::default();
-                return Ok((plan, vec![Loss::Table(format!("pointing_xds ({what})"))]));
+                return Ok(lost_whole("pointing_xds", what));
             }
             Err(error) => return Err(error),
         };
         if series.antennas.is_empty() {
-            spans.push(None);
             continue;
         }
         if !frames.contains(&series.frame) {
             frames.push(series.frame);
         }
-        spans.push(Some(f64::MIN..=f64::MAX));
+        samples += series
+            .antennas
+            .values()
+            .map(|own| own.times_s().len())
+            .sum::<usize>();
+        reads.push(request);
     }
-    if frames.len() > 1 {
-        let loss = Loss::Table("pointing_xds (directions in several frames)".to_string());
-        return Ok((PointingPlan::default(), vec![loss]));
-    }
-    Ok((PointingPlan { spans }, Vec::new()))
-}
-
-/// One `POINTING` row's scalar metadata.
-#[derive(Clone, Copy)]
-struct Candidate {
-    row: usize,
-    antenna: i32,
-    time: f64,
-    interval: f64,
-}
-
-impl Candidate {
-    /// Whether the MSv2 adapter reads this row for a span of `times`: its
-    /// interval meets them or its time is within them (as
-    /// `PreparedSelectedPointingCatalog` retains rows); into an MSv2 the
-    /// span is every row's.
-    fn within(&self, times: &RangeInclusive<f64>, destination: Destination) -> bool {
-        let half = 0.5 * self.interval;
-        destination == Destination::Msv2
-            || times.contains(&self.time)
-            || (half > 0.0
-                && self.time + half >= *times.start()
-                && self.time - half <= *times.end())
-    }
-}
-
-/// What one scan of an MSv2's `POINTING` finds.
-#[derive(Default)]
-struct Scan {
-    frames: Vec<DirectionRef>,
-    most_terms: usize,
-    /// The earliest and latest row time.
-    times: Option<(f64, f64)>,
-    /// Rows no partition reads within its times.
-    beyond: usize,
-    /// Each partition's rows within its times.
-    carried: Vec<usize>,
-    /// Each partition's antennas' nearest rows before and after its times,
-    /// as the MSv2 adapter picks them (the latest before and the earliest
-    /// after, the lowest row of a tie).
-    nearest: Vec<Vec<[Option<Candidate>; 2]>>,
-    /// The (antenna, time) of the rows some partition reads.
-    keys: Vec<(i32, u64)>,
-}
-
-impl Scan {
-    /// Account for `candidate` among `partitions`.
-    fn add(&mut self, candidate: Candidate, partitions: &[Partition], destination: Destination) {
-        self.times = Some(
-            self.times
-                .map_or((candidate.time, candidate.time), |(first, last)| {
-                    (first.min(candidate.time), last.max(candidate.time))
-                }),
-        );
-        let mut within = false;
-        for (index, partition) in partitions.iter().enumerate() {
-            let Some(slot) = u32::try_from(candidate.antenna)
-                .ok()
-                .and_then(|id| partition.antennas.binary_search(&AntennaId(id)).ok())
-            else {
-                continue;
-            };
-            let Some(times) = &partition.times else {
-                continue;
-            };
-            if candidate.within(times, destination) {
-                self.carried[index] += 1;
-                within = true;
-                continue;
-            }
-            let [before, after] = &mut self.nearest[index][slot];
-            let earlier = |known: &Candidate| (known.time, known.row);
-            if candidate.time < *times.start()
-                && before.is_none_or(|known| {
-                    candidate.time > known.time
-                        || (candidate.time == known.time && candidate.row < known.row)
-                })
-            {
-                *before = Some(candidate);
-            }
-            if candidate.time > *times.end()
-                && after.is_none_or(|known| (candidate.time, candidate.row) < earlier(&known))
-            {
-                *after = Some(candidate);
-            }
+    // An MSv4 holds a frame per dataset, an MSv2 one for its `POINTING`.
+    if destination == Destination::Msv2 {
+        if frames.len() > 1 {
+            return Ok(lost_whole("pointing_xds", "directions in several frames"));
         }
-        if within {
-            self.keys
-                .push((candidate.antenna, candidate.time.to_bits()));
-        } else {
-            self.beyond += 1;
-        }
+        check_gathered(samples, 1, budget)?;
     }
-
-    /// The rows read beyond every partition's times: each antenna's nearest
-    /// either side, once each, that no partition reads within its times.
-    fn nearest_beyond(&mut self, partitions: &[Partition], destination: Destination) -> usize {
-        let mut nearest: Vec<Candidate> = self
-            .nearest
-            .iter()
-            .flatten()
-            .flatten()
-            .flatten()
-            .copied()
-            .collect();
-        nearest.sort_unstable_by_key(|candidate| candidate.row);
-        nearest.dedup_by_key(|candidate| candidate.row);
-        let mut count = 0;
-        for candidate in nearest {
-            let read_within = partitions.iter().any(|partition| {
-                u32::try_from(candidate.antenna)
-                    .is_ok_and(|id| partition.antennas.binary_search(&AntennaId(id)).is_ok())
-                    && partition
-                        .times
-                        .as_ref()
-                        .is_some_and(|times| candidate.within(times, destination))
-            });
-            if !read_within {
-                count += 1;
-                self.keys
-                    .push((candidate.antenna, candidate.time.to_bits()));
-            }
-        }
-        count
-    }
+    Ok((PointingPlan { reads }, Vec::new()))
 }
 
-/// An MSv2 source: scan `POINTING` once.
+/// An MSv2 source: scan `POINTING` once, then plan its reads.
 fn msv2(
     table: &Table,
     partitions: &[Partition],
     destination: Destination,
     budget: usize,
 ) -> Result<(PointingPlan, Vec<Loss>), ObservationError> {
-    let mut scan = scan(table, partitions, destination)?;
-    let outside = scan.beyond - scan.nearest_beyond(partitions, destination);
-    let whole = |reason: &str| {
-        Ok((
-            PointingPlan::default(),
-            vec![Loss::Table(format!("POINTING ({reason})"))],
-        ))
-    };
-    let frame = match scan.frames.as_slice() {
-        [frame] => *frame,
-        _ => return whole("directions in several frames"),
-    };
-    if destination == Destination::Msv4 && !POINTING_FRAMES.iter().any(|(_, known)| *known == frame)
+    let scan = pointing_scan::scan(table, partitions, destination)?;
+    if let Some(reason) = scan.refused {
+        return Ok(lost_whole("POINTING", reason));
+    }
+    if scan.frames.iter().any(|frames| frames.len() > 1) {
+        return Ok(lost_whole("POINTING", "directions in several frames"));
+    }
+    let mut frames: Vec<_> = scan.frames.iter().flatten().copied().collect();
+    frames.sort_by_key(|frame| frame.as_str());
+    frames.dedup();
+    if destination == Destination::Msv2 && frames.len() > 1 {
+        return Ok(lost_whole("POINTING", "directions in several frames"));
+    }
+    if let Some(frame) = frames
+        .iter()
+        .find(|frame| !POINTING_FRAMES.iter().any(|(_, known)| known == *frame))
+        .filter(|_| destination == Destination::Msv4)
     {
-        return whole(&format!(
-            "directions in {}, which MSv4 does not name",
-            frame.as_str()
-        ));
+        let reason = format!("directions in {}, which MSv4 does not name", frame.as_str());
+        return Ok(lost_whole("POINTING", &reason));
     }
-    if scan.most_terms > MAXIMUM_TERMS {
-        return whole("rows of more than four polynomial terms");
-    }
+    let losses = losses(table, &scan, destination);
+    let reads = match destination {
+        Destination::Msv4 => partition_reads(&scan, partitions, budget)?,
+        Destination::Msv2 => {
+            check_gathered(scan.antenna_rows.values().sum(), scan.most_terms, budget)?;
+            antenna_reads(&scan, partitions, budget)?
+        }
+    };
+    Ok((PointingPlan { reads }, losses))
+}
+
+/// What the reads of an MSv2's `POINTING` do not carry into `destination`.
+fn losses(table: &Table, scan: &Scan, destination: Destination) -> Vec<Loss> {
     let mut losses = lost_columns(table, destination);
     if destination == Destination::Msv4 && scan.most_terms > 1 {
         losses.push(Loss::Table(
             "POINTING polynomial terms (each row's direction at its own time is kept)".to_string(),
         ));
     }
-    let mut keys = scan.keys;
-    keys.sort_unstable();
-    let repeated = keys.windows(2).filter(|pair| pair[0] == pair[1]).count();
-    if destination == Destination::Msv4 && repeated > 0 {
+    if destination == Destination::Msv4 && scan.repeated > 0 {
         losses.push(Loss::Table(format!(
-            "POINTING rows at the antenna and time of an earlier one ({repeated})"
+            "POINTING rows at the antenna and time of an earlier one ({})",
+            scan.repeated
         )));
     }
-    if outside > 0 {
+    if scan.outside > 0 {
         losses.push(Loss::Table(match destination {
             Destination::Msv4 => format!(
-                "POINTING rows beyond every partition's times and each antenna's nearest \
-                 either side ({outside})"
+                "POINTING rows beyond every partition's times and each antenna's nearest either \
+                 side ({})",
+                scan.outside
             ),
-            Destination::Msv2 => {
-                format!("POINTING rows of antennas no partition names ({outside})")
-            }
+            Destination::Msv2 => format!(
+                "POINTING rows of antennas no partition names ({})",
+                scan.outside
+            ),
         }));
     }
-    // A sample's time, interval and origin, and its coefficients.
-    let sample = (3 + 2 * scan.most_terms) * size_of::<f64>();
-    for (index, (partition, rows)) in partitions.iter().zip(&scan.carried).enumerate() {
-        let bytes = (rows + 2 * partition.antennas.len()) * sample;
-        if bytes > budget {
-            return Err(request_error(format!(
-                "the pointing of partition {index} holds about {bytes} bytes, beyond the batch \
-                 budget of {budget}"
-            )));
-        }
-    }
-    let span = scan.times.map(|(first, last)| first..=last);
-    let spans = partitions
-        .iter()
-        .map(|partition| match destination {
-            Destination::Msv4 => partition.times.clone(),
-            Destination::Msv2 => partition.times.as_ref().and(span.clone()),
-        })
-        .collect();
-    Ok((PointingPlan { spans }, losses))
+    losses
 }
 
-/// Scan `POINTING`'s antennas, times, intervals, polynomial orders and
-/// direction frames ([`Scan`]).
-fn scan(
-    table: &Table,
+/// An MSv4 destination's reads: each partition's antennas over its times,
+/// refused when the catalog the read prepares would exceed `budget`.
+fn partition_reads(
+    scan: &Scan,
     partitions: &[Partition],
-    destination: Destination,
-) -> Result<Scan, ObservationError> {
-    let variable = match TableMeasDesc::reconstruct(table, "DIRECTION") {
-        Some(description) => !matches!(description.ref_desc(), MeasRefDesc::Fixed { .. }),
-        None => false,
+    budget: usize,
+) -> Result<Vec<PointingRequest>, ObservationError> {
+    let mut reads = Vec::new();
+    for (index, partition) in partitions.iter().enumerate() {
+        let Some(times) = partition.times.clone() else {
+            continue;
+        };
+        if partition.antennas.is_empty() {
+            continue;
+        }
+        let bytes = catalog_peak_bytes(
+            scan.within[index],
+            partition.antennas.len(),
+            scan_rows(budget),
+            POLYNOMIAL_TERMS,
+        )
+        .unwrap_or(usize::MAX);
+        if bytes > budget {
+            return Err(request_error(format!(
+                "reading the pointing of partition {index} needs up to {bytes} bytes, beyond the \
+                 batch budget of {budget}"
+            )));
+        }
+        reads.push(PointingRequest {
+            partition: PartitionId(index as u32),
+            direction: PointingDirection::Beam,
+            antennas: partition.antennas.clone(),
+            times,
+            budget_bytes: budget,
+        });
+    }
+    Ok(reads)
+}
+
+/// An MSv2 destination's reads from an MSv2 source: each named antenna's
+/// rows once, over every row's time, the antennas in ascending groups each
+/// read within `budget`. An MSv2's partitions share its `POINTING` and its
+/// time system, so a group's read is in any partition naming an antenna.
+fn antenna_reads(
+    scan: &Scan,
+    partitions: &[Partition],
+    budget: usize,
+) -> Result<Vec<PointingRequest>, ObservationError> {
+    let Some((first, last)) = scan.times else {
+        return Ok(Vec::new());
     };
-    let frame = |row: usize| {
-        resolve_direction_reference_selected(table, "POINTING", "DIRECTION", row).map_err(storage)
+    let bytes = |rows: usize, antennas: usize| {
+        catalog_peak_bytes(rows, antennas, scan_rows(budget), POLYNOMIAL_TERMS)
+            .unwrap_or(usize::MAX)
     };
-    let mut scan = Scan {
-        carried: vec![0; partitions.len()],
-        nearest: partitions
+    let mut reads: Vec<PointingRequest> = Vec::new();
+    let mut held = 0;
+    for (antenna, rows) in &scan.antenna_rows {
+        let grows = reads
+            .last()
+            .is_some_and(|read| bytes(held + rows, read.antennas.len() + 1) <= budget);
+        if grows {
+            held += rows;
+            reads.last_mut().expect("a read").antennas.push(*antenna);
+            continue;
+        }
+        if bytes(*rows, 1) > budget {
+            return Err(request_error(format!(
+                "reading the pointing of {antenna:?} needs up to {} bytes, beyond the batch \
+                 budget of {budget}",
+                bytes(*rows, 1)
+            )));
+        }
+        let partition = partitions
             .iter()
-            .map(|partition| vec![[None, None]; partition.antennas.len()])
-            .collect(),
-        ..Scan::default()
-    };
-    if !variable {
-        scan.frames.push(frame(0)?);
+            .position(|partition| partition.antennas.binary_search(antenna).is_ok())
+            .expect("a scanned antenna is named");
+        held = *rows;
+        reads.push(PointingRequest {
+            partition: PartitionId(partition as u32),
+            direction: PointingDirection::Beam,
+            antennas: vec![*antenna],
+            times: first..=last,
+            budget_bytes: budget,
+        });
     }
-    let rows = table.row_count();
-    let (mut antennas, mut times, mut intervals, mut orders) =
-        (Vec::new(), Vec::new(), Vec::new(), Vec::new());
-    for start in (0..rows).step_by(SCAN_ROWS) {
-        let chunk: Vec<usize> = (start..rows.min(start + SCAN_ROWS)).collect();
-        for values in [&mut antennas, &mut orders] {
-            values.clear();
-        }
-        times.clear();
-        intervals.clear();
-        let mut destinations = [
-            RequiredScalarColumnDestination::new(
-                "ANTENNA_ID",
-                RequiredScalarColumnValuesMut::Int32(&mut antennas),
-            ),
-            RequiredScalarColumnDestination::new(
-                "TIME",
-                RequiredScalarColumnValuesMut::Float64(&mut times),
-            ),
-            RequiredScalarColumnDestination::new(
-                "INTERVAL",
-                RequiredScalarColumnValuesMut::Float64(&mut intervals),
-            ),
-            RequiredScalarColumnDestination::new(
-                "NUM_POLY",
-                RequiredScalarColumnValuesMut::Int32(&mut orders),
-            ),
-        ];
-        table
-            .required_scalar_columns_for_rows_into(&chunk, &mut destinations)
-            .map_err(storage)?;
-        for (slot, row) in chunk.iter().enumerate() {
-            if variable {
-                let own = frame(*row)?;
-                if !scan.frames.contains(&own) {
-                    scan.frames.push(own);
-                }
-            }
-            let terms = usize::try_from(orders[slot]).map_or(usize::MAX, |order| order + 1);
-            scan.most_terms = scan.most_terms.max(terms);
-            let candidate = Candidate {
-                row: *row,
-                antenna: antennas[slot],
-                time: times[slot],
-                interval: intervals[slot],
-            };
-            scan.add(candidate, partitions, destination);
-        }
-    }
-    Ok(scan)
+    Ok(reads)
 }
 
 /// `POINTING`'s columns the destination does not hold, as one table loss:
@@ -480,5 +368,69 @@ fn lost_columns(table: &Table, destination: Destination) -> Vec<Loss> {
         Vec::new()
     } else {
         vec![Loss::Table(format!("POINTING {}", lost.join(", ")))]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use casa_observation::AntennaId;
+
+    use super::{Partition, Scan, antenna_reads};
+    use crate::observation_io::msv2::{POLYNOMIAL_TERMS, scan_rows};
+    use crate::selected_pointing::catalog_peak_bytes;
+
+    /// An MSv2 destination reads each antenna once, its antennas grouped in
+    /// ascending order so that each read's catalog fits the budget, the
+    /// group's read in a partition naming its first antenna; an antenna
+    /// alone beyond the budget refuses the conversion.
+    #[test]
+    fn antenna_reads_group_antennas_within_the_budget() {
+        let partitions = [
+            Partition {
+                antennas: vec![AntennaId(0), AntennaId(1)],
+                times: Some(0.0..=10.0),
+            },
+            Partition {
+                antennas: vec![AntennaId(1), AntennaId(2)],
+                times: Some(0.0..=10.0),
+            },
+        ];
+        let mut scan = Scan::default();
+        scan.times = Some((-5.0, 15.0));
+        for antenna in 0..3 {
+            scan.antenna_rows.insert(AntennaId(antenna), 100);
+        }
+        let fits = |rows: usize, antennas: usize, budget: usize| {
+            catalog_peak_bytes(rows, antennas, scan_rows(budget), POLYNOMIAL_TERMS)
+                .is_some_and(|bytes| bytes <= budget)
+        };
+        let budget = 1 << 20;
+        assert!(fits(300, 3, budget));
+        let one_read = antenna_reads(&scan, &partitions, budget).unwrap();
+        assert_eq!(one_read.len(), 1);
+        assert_eq!(
+            one_read[0].antennas,
+            [AntennaId(0), AntennaId(1), AntennaId(2)]
+        );
+        assert_eq!(one_read[0].times, -5.0..=15.0);
+
+        // Room for two antennas' rows, not three.
+        let tight = (1024..budget)
+            .step_by(64)
+            .find(|budget| fits(200, 2, *budget) && !fits(300, 3, *budget))
+            .expect("a budget for two antennas");
+        let reads = antenna_reads(&scan, &partitions, tight).unwrap();
+        let groups: Vec<_> = reads
+            .iter()
+            .map(|read| (read.partition.0, read.antennas.clone()))
+            .collect();
+        assert_eq!(
+            groups,
+            [
+                (0, vec![AntennaId(0), AntennaId(1)]),
+                (1, vec![AntennaId(2)])
+            ]
+        );
+        assert!(antenna_reads(&scan, &partitions, 1024).is_err());
     }
 }

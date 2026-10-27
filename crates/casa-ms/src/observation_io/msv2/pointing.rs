@@ -13,13 +13,19 @@ use crate::selected_pointing::SCALAR_SCAN_BYTES_PER_ROW;
 use crate::{MsError, PointingDirectionColumn, PointingReadPlan, SelectedPointingQueryDomain};
 
 /// The most rows of `POINTING` scanned per block while reading. Each block
-/// re-reads the storage manager's index, so blocks are as large as a
-/// quarter of the request's budget allows, up to this.
+/// re-reads the storage manager's index (#949), so blocks are as large as a
+/// sixteenth of the request's budget allows, up to this.
 const SCAN_ROWS: usize = 1 << 16;
 
 /// The polynomial terms a `POINTING` row may have (`NUM_POLY` + 1): the
 /// bound the production imaging source plans with.
-const POLYNOMIAL_TERMS: usize = 4;
+pub(crate) const POLYNOMIAL_TERMS: usize = 4;
+
+/// The rows of `POINTING` scanned per block for a request of `budget`
+/// bytes: a sixteenth of it, up to [`SCAN_ROWS`].
+pub(crate) fn scan_rows(budget: usize) -> usize {
+    (budget / 16 / SCALAR_SCAN_BYTES_PER_ROW).clamp(1, SCAN_ROWS)
+}
 
 impl Msv2Observation {
     /// [`casa_observation::Observation::pointing`]: an MSv2's times are its
@@ -55,9 +61,12 @@ impl Msv2Observation {
             PointingDirection::Beam => PointingDirectionColumn::Direction,
             PointingDirection::Target => PointingDirectionColumn::Target,
         };
-        let scan_rows = (request.budget_bytes / 4 / SCALAR_SCAN_BYTES_PER_ROW).clamp(1, SCAN_ROWS);
-        let plan = PointingReadPlan::new(scan_rows, POLYNOMIAL_TERMS, request.budget_bytes.max(1))
-            .map_err(storage)?;
+        let plan = PointingReadPlan::new(
+            scan_rows(request.budget_bytes),
+            POLYNOMIAL_TERMS,
+            request.budget_bytes.max(1),
+        )
+        .map_err(storage)?;
         self.ms
             .prepare_selected_pointing_catalog(
                 column,

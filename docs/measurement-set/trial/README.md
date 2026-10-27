@@ -1392,8 +1392,11 @@ ways:
   else the rows for every window), an MSv4 dataset's `antenna_xds`. Rows of
   one antenna, feed and window that differ are refused (owner decision on
   #946). An MSv2 destination writes one `FEED` row per antenna where every
-  antenna's windows agree, and otherwise a row per window for every antenna,
-  so that casacore reads each back. An MSv4 destination omits the receptor
+  antenna states the same receptors in every window it appears in, and
+  otherwise a row per window it states receptors in, so that casacore reads
+  each back; a window stating none (ALMA's WVR window) then has no row, as
+  ALMA writes `FEED`, and rows of no receptors are written only when no
+  antenna states any. An MSv4 destination omits the receptor
   variables of a dataset whose source has no `FEED` row for it, as XRADIO's
   converter does for ALMA's WVR window, although XRADIO's schema marks
   `polarization_type` and `receptor_label` required (the simulator writes
@@ -1411,10 +1414,20 @@ written (`convert/pointing_plan.rs`):
   in several frames or a frame MSv4 does not name is lost whole, as a
   reported loss, rather than refused part way through writing.
 - **Into an MSv2**, every row of the partitions' antennas, in (time,
-  antenna) order; an MSv4's samples become rows of `INTERVAL` 0 with
-  `TARGET` repeating the direction. Rows of antennas no partition names are
-  a counted loss.
-- A partition's pointing beyond the batch budget refuses the conversion.
+  antenna) order: an MSv2 source's antennas each read once, grouped so that
+  each read fits the budget, an MSv4 source's datasets whole (a sample two
+  datasets hold written once). An MSv4's samples become rows of `INTERVAL`
+  0 with `TARGET` repeating the direction. Rows of antennas no partition
+  names are a counted loss.
+- Each read is checked against the batch budget with the catalog's own
+  bound (`catalog_peak_bytes`, the sum of every check the reader makes), and
+  an MSv2 destination's gathered rows with the writer's; beyond it the
+  conversion is refused before anything is written. Rows a read would
+  refuse (more than four polynomial terms, times that are not finite) lose
+  the pointing whole.
+- The MSv4 reader finds the antennas' nearest samples beyond the requested
+  times together, reading every antenna's directions outward in blocks of
+  4,096 times that double up to 16,384, so each chunk is decoded once.
 
 **Cost, measured** (Mac mini, `ms_trial_convert to-msv4`, casatestdata's
 ALMA `CAS-7841.ms`: 12 partitions, 193,050 samples, `POINTING` of 1,830,984
@@ -1424,7 +1437,7 @@ MS with `POINTING` emptied. The plan's scan of `POINTING` takes under 0.25 s;
 the rest is one read per partition through today's reader. In blocks of
 1,024 rows those reads took 141 s, nearly all re-parsing StandardStMan's
 index per block (#949), so the adapter now scans in blocks as large as a
-quarter of its budget allows, up to 65,536 rows. 1,580,654 of the rows lie
+sixteenth of its budget allows, up to 65,536 rows. 1,580,654 of the rows lie
 beyond every partition's times and each antenna's nearest either side, and
 are reported lost, as XRADIO's converter takes only rows within each
 dataset's times.
@@ -1446,7 +1459,9 @@ fields that follow one (#942).
 
 Unit laws: (casa-observation) `brackets_name_the_samples_around_a_time` and
 `samples_must_be_whole_and_in_time_order`; (casa-ms)
-`feed_rows_are_per_window_once_any_antenna_differs`.
+`feed_rows_are_per_window_once_any_antenna_differs`,
+`antenna_reads_group_antennas_within_the_budget` and
+`padding_does_not_make_a_different_sample`.
 
 ## Weights from sigmas: the solve weight role
 

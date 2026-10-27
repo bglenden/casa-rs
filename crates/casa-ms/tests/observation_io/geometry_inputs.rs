@@ -430,8 +430,8 @@ fn edit_pointing(path: &Path, frame: Option<&str>, copies: &[f64]) {
 /// (an MSv2 destination keeps it). A row at the antenna and time of another
 /// is a loss into an MSv4, which holds one sample there, and kept into an
 /// MSv2; rows beyond the partition's times and each antenna's nearest
-/// either side are a counted loss. Partitions sharing an MSv2's rows write
-/// them once.
+/// either side are a counted loss; rows a read would refuse lose the
+/// pointing whole. Partitions sharing an MSv2's rows write them once.
 #[test]
 fn pointing_the_destination_cannot_hold_is_reported_before_writing() {
     let root = tempfile::tempdir().expect("root");
@@ -507,6 +507,13 @@ fn pointing_the_destination_cannot_hold_is_reported_before_writing() {
     let (copy, _) = losses(&v2, false);
     assert_eq!(pointing_rows(&copy).len(), pointing_rows(&v2).len());
 
+    // A row whose times are not finite would refuse the reads, so the
+    // pointing is lost whole.
+    let v2 = variant("nan");
+    edit_pointing(&v2, None, &[f64::NAN]);
+    let (_, lost) = losses(&v2, true);
+    assert_eq!(lost, ["POINTING (rows of non-finite times)"]);
+
     let dir = root.path().join("two");
     std::fs::create_dir(&dir).expect("dir");
     let v2 = two_windows(&dir);
@@ -516,6 +523,12 @@ fn pointing_the_destination_cannot_hold_is_reported_before_writing() {
         pointing_rows(&back).len(),
         pointing_rows(&v2).len(),
         "written once"
+    );
+    let (copy, _) = losses(&v2, false);
+    assert_eq!(
+        pointing_rows(&copy).len(),
+        pointing_rows(&v2).len(),
+        "each antenna read once"
     );
 }
 
