@@ -162,7 +162,8 @@ fn as_stored(batch: &casa_observation::VisibilityBatch<'_>, sample: usize) -> Co
 /// `batch`'s sample `sample` corrected by the gains `lookup` holds for it
 /// through `binding`, as CASA's `applycal` applies one G table with
 /// `calwt=False` and `applymode='calflag'`: `V / (g₁ g₂*)` per product, and
-/// flagged where either antenna has no solution or a flagged one.
+/// flagged where the field or either antenna has no solution or a flagged
+/// one.
 fn through_binding(
     batch: &casa_observation::VisibilityBatch<'_>,
     sample: usize,
@@ -175,10 +176,12 @@ fn through_binding(
         sample / batch.samples_per_time(),
         casa_types::measures::MjdHighPrec::new(0.0, 0.0),
     );
-    let field = binding.fields[batch.field[sample / batch.samples_per_time()].0 as usize]
-        .expect("a bound field");
+    // A field or antenna the table lacks has no solutions, and its samples
+    // are flagged; gainfield and nearest-field policy are not trialled.
+    let field = binding.fields[batch.field[sample / batch.samples_per_time()].0 as usize];
     let window = binding.spectral_windows[batch.partition.0 as usize].expect("a window");
     let solution = |antenna: AntennaId| {
+        let field = field?;
         let row = binding.antennas[antenna.0 as usize]?;
         lookup
             .solution(field as i32, window as i32, row as i32, time)
@@ -239,15 +242,22 @@ fn a_batch_solve_persists_the_msv2s_own_namespace() {
         1,
         "collapsed"
     );
-    let binding = CalibrationBinding::bind(
-        &ours,
-        &namespace,
-        &BindingTolerance::EXACT,
-        &StatedAssociations::default(),
-    )
-    .expect("bind");
-    assert_eq!(binding.antennas, (0..5).map(Some).collect::<Vec<_>>());
-    assert_eq!(binding.spectral_windows, vec![Some(0)]);
+    // By content, and by CASA's own association when stated.
+    for same_namespace in [false, true] {
+        let binding = CalibrationBinding::bind(
+            &ours,
+            &namespace,
+            observation.catalogue(),
+            &BindingTolerance::EXACT,
+            &StatedAssociations {
+                same_namespace,
+                ..StatedAssociations::default()
+            },
+        )
+        .expect("bind");
+        assert_eq!(binding.antennas, (0..5).map(Some).collect::<Vec<_>>());
+        assert_eq!(binding.spectral_windows, vec![Some(0)]);
+    }
     let open = |table: &Path| {
         CalibrationTableLookup::open(table, ApplyInterpolationMode::Nearest).expect("lookup")
     };
@@ -362,9 +372,11 @@ fn a_caltable_rebinds_to_a_store_numbered_otherwise() {
     // Reopen the full MSv2, bind, apply.
     let target = persisted_namespace(&full, &OpenOptions::default()).expect("namespace");
     let table = NamespaceRows::read(&request.output_table).expect("table");
+    let observation = open(&full, &OpenOptions::default()).expect("open");
     let binding = CalibrationBinding::bind(
         &table,
         &target,
+        observation.catalogue(),
         &BindingTolerance::EXACT,
         &StatedAssociations::default(),
     )
@@ -380,7 +392,6 @@ fn a_caltable_rebinds_to_a_store_numbered_otherwise() {
     let lookup =
         CalibrationTableLookup::open(&request.output_table, ApplyInterpolationMode::Linear)
             .expect("lookup");
-    let observation = open(&full, &OpenOptions::default()).expect("open");
     let ours = corrected(&*observation, "base", |batch, sample| {
         through_binding(batch, sample, &binding, &lookup)
     });
@@ -650,9 +661,11 @@ fn antennas_windows_and_fields_rebind_after_reordering() {
         for target in [&reordered, &reordered_v4] {
             let namespace =
                 persisted_namespace(target, &OpenOptions::default()).expect("namespace");
+            let applier = open(target, &OpenOptions::default()).expect("open");
             let binding = CalibrationBinding::bind(
                 &rows,
                 &namespace,
+                applier.catalogue(),
                 &ACROSS_STORES,
                 &StatedAssociations::default(),
             )
@@ -688,12 +701,23 @@ fn equal_windows_need_their_own_namespace_or_a_stated_association() {
         CalibrationBinding::bind(
             &rows,
             &persisted_namespace(target, &OpenOptions::default()).expect("namespace"),
+            open(target, &OpenOptions::default())
+                .expect("open")
+                .catalogue(),
             &BindingTolerance::EXACT,
             stated,
         )
     };
-    let own = bind(&solved, &StatedAssociations::default()).expect("its own namespace");
+    let own_namespace = StatedAssociations {
+        same_namespace: true,
+        ..StatedAssociations::default()
+    };
+    let own = bind(&solved, &own_namespace).expect("its own namespace");
     assert_eq!(own.spectral_windows, vec![Some(0), Some(1)]);
+    assert!(
+        bind(&solved, &StatedAssociations::default()).is_err(),
+        "content alone cannot tell them apart, even in their own store"
+    );
     let swapped = simulated(
         root.path(),
         "swapped.ms",
@@ -711,7 +735,7 @@ fn equal_windows_need_their_own_namespace_or_a_stated_association() {
     // at row 1.
     let stated = StatedAssociations {
         spectral_windows: vec![(PartitionId(0), 1), (PartitionId(1), 0)],
-        antennas: Vec::new(),
+        ..StatedAssociations::default()
     };
     let swapped_names: Vec<String> = open(&swapped, &OpenOptions::default())
         .expect("open")
@@ -765,7 +789,13 @@ fn bound(
     target: &PersistedNamespace,
     stated: &StatedAssociations,
 ) -> Result<CalibrationBinding, ObservationError> {
-    CalibrationBinding::bind(&table.rows, target, &BindingTolerance::EXACT, stated)
+    CalibrationBinding::bind(
+        &table.rows,
+        target,
+        &target.catalogue,
+        &BindingTolerance::EXACT,
+        stated,
+    )
 }
 
 /// An antenna binds by station and position: renamed as a converter
@@ -807,7 +837,10 @@ fn antennas_of_one_content_need_their_own_namespace_or_a_statement() {
     let own = bound(
         &namespace(&twins, &[]),
         &namespace(&twins, &[]),
-        &StatedAssociations::default(),
+        &StatedAssociations {
+            same_namespace: true,
+            ..StatedAssociations::default()
+        },
     )
     .expect("its own namespace");
     assert_eq!(own.antennas, vec![Some(0), Some(1), Some(2)]);
@@ -821,18 +854,18 @@ fn antennas_of_one_content_need_their_own_namespace_or_a_statement() {
     }
     let stated = StatedAssociations {
         antennas: vec![(AntennaId(1), 0)],
-        spectral_windows: Vec::new(),
+        ..StatedAssociations::default()
     };
     let resolved = bound(&table, &target, &stated).expect("stated");
     assert_eq!(resolved.antennas, vec![None, Some(0), Some(1)]);
     let twice = StatedAssociations {
         antennas: vec![(AntennaId(0), 0), (AntennaId(1), 0)],
-        spectral_windows: Vec::new(),
+        ..StatedAssociations::default()
     };
     assert!(bound(&table, &target, &twice).is_err(), "one to one");
     let both = StatedAssociations {
         antennas: vec![(AntennaId(0), 0), (AntennaId(0), 1)],
-        spectral_windows: Vec::new(),
+        ..StatedAssociations::default()
     };
     assert!(
         bound(&table, &target, &both).is_err(),
@@ -851,7 +884,7 @@ fn windows_bind_by_content_and_statements_may_share_a_row() {
     assert_eq!(binding.spectral_windows, vec![Some(1), None, Some(0)]);
     let stated = StatedAssociations {
         spectral_windows: vec![(PartitionId(1), 0), (PartitionId(2), 0)],
-        antennas: Vec::new(),
+        ..StatedAssociations::default()
     };
     let mapped = bound(&table, &target, &stated).expect("stated");
     assert_eq!(mapped.spectral_windows, vec![Some(1), Some(0), Some(0)]);
@@ -904,6 +937,7 @@ fn collapsed_windows_bind_either_way_and_overlaps_are_refused() {
         CalibrationBinding::bind(
             &rows(windows),
             &target,
+            &target.catalogue,
             &BindingTolerance::EXACT,
             &StatedAssociations::default(),
         )
@@ -964,4 +998,199 @@ fn the_writer_refuses_a_namespace_of_another_opening() {
         other => panic!("refused, not {:?}", other.map(|_| ())),
     }
     assert!(!request.output_table.exists());
+}
+
+/// Two windows of different channels can collapse to one gain-table row
+/// alike (here both at 2 GHz, 2 GHz wide, at their centre channel). Names
+/// and row counts do not prove the table's namespace is the store's, so a
+/// store listing the two the other way round is refused by content, and
+/// binds by index only when the caller states the namespaces are one.
+#[test]
+fn collapsed_windows_alike_are_refused_unless_the_namespace_is_stated() {
+    let window = |frequencies: Vec<f64>, width: f64| NamespaceWindow {
+        name: "w".to_string(),
+        frame: FrequencyRef::TOPO,
+        widths_hz: vec![width; frequencies.len()],
+        frequencies_hz: frequencies,
+    };
+    let narrow = window(vec![1.0e9, 2.0e9], 1.0e9);
+    let fine = window(vec![1.0e9, 1.5e9, 2.0e9, 2.5e9], 0.5e9);
+    let collapsed = window(vec![2.0e9], 2.0e9);
+    let mut target = namespace(&[], &[("w", 1.0e9), ("w", 1.0e9)]);
+    target.rows.spectral_windows = vec![fine, narrow];
+    let table = NamespaceRows {
+        antennas: Vec::new(),
+        fields: Vec::new(),
+        spectral_windows: vec![collapsed.clone(), collapsed],
+    };
+    let bind = |stated: &StatedAssociations| {
+        CalibrationBinding::bind(
+            &table,
+            &target,
+            &target.catalogue,
+            &BindingTolerance::EXACT,
+            stated,
+        )
+    };
+    match bind(&StatedAssociations::default()) {
+        Err(ObservationError::InvalidRequest { reason }) => {
+            assert!(reason.contains("state the association"), "{reason}");
+        }
+        other => panic!("refused, not {other:?}"),
+    }
+    let stated = StatedAssociations {
+        same_namespace: true,
+        ..StatedAssociations::default()
+    };
+    assert_eq!(
+        bind(&stated).expect("stated").spectral_windows,
+        vec![Some(0), Some(1)]
+    );
+}
+
+/// A stated same namespace is checked: other row counts, or a row whose
+/// content contradicts its counterpart, are refused.
+#[test]
+fn a_stated_same_namespace_is_checked() {
+    let stated = StatedAssociations {
+        same_namespace: true,
+        ..StatedAssociations::default()
+    };
+    let table = namespace(&[("ea01", "N01", 1.0), ("ea02", "N02", 2.0)], &[]);
+    for target in [
+        namespace(&[("ea01", "N01", 1.0)], &[]),
+        namespace(&[("ea02", "N02", 2.0), ("ea01", "N01", 1.0)], &[]),
+    ] {
+        assert!(bound(&table, &target, &stated).is_err());
+    }
+}
+
+/// Overlap refuses only what it should: a narrow window inside a wide one
+/// the table solves (and has bound to the wide window) binds to nothing,
+/// and a table window in another frame is not compared.
+#[test]
+fn overlaps_spare_windows_bound_elsewhere_and_other_frames() {
+    let window = |frequencies: Vec<f64>, width: f64, frame| NamespaceWindow {
+        name: "w".to_string(),
+        frame,
+        widths_hz: vec![width; frequencies.len()],
+        frequencies_hz: frequencies,
+    };
+    let wide = window(vec![1.0e9, 1.1e9, 1.2e9, 1.3e9], 0.1e9, FrequencyRef::TOPO);
+    let narrow = window(vec![1.1e9, 1.11e9], 0.01e9, FrequencyRef::TOPO);
+    let mut target = namespace(&[], &[("a", 1.0), ("b", 2.0)]);
+    target.rows.spectral_windows = vec![wide.clone(), narrow.clone()];
+    let rows = |windows| NamespaceRows {
+        antennas: Vec::new(),
+        fields: Vec::new(),
+        spectral_windows: windows,
+    };
+    let bind = |table: &NamespaceRows| {
+        CalibrationBinding::bind(
+            table,
+            &target,
+            &target.catalogue,
+            &BindingTolerance::EXACT,
+            &StatedAssociations::default(),
+        )
+    };
+    assert_eq!(
+        bind(&rows(vec![wide.clone()]))
+            .expect("bind")
+            .spectral_windows,
+        vec![Some(0), None]
+    );
+    let elsewhere = window(vec![1.105e9], 0.02e9, FrequencyRef::LSRK);
+    assert_eq!(
+        bind(&rows(vec![wide, elsewhere]))
+            .expect("bind")
+            .spectral_windows,
+        vec![Some(0), None]
+    );
+}
+
+/// A field the table lacks, here the target's phase centre moved, binds to
+/// nothing, and every sample of it is flagged for want of a solution; its
+/// antennas still bind.
+#[test]
+fn an_unbound_field_takes_no_solutions() {
+    let root = tempfile::tempdir().expect("root");
+    let solved = fixture(root.path(), "ms_trial.ms");
+    let request = gain_request(root.path().join("production.G"));
+    solve_gain(&MeasurementSet::open(&solved).expect("ms"), &request).expect("gaincal");
+    let target = fixture(&root.path().join("moved"), "ms_trial.ms");
+    let mut ms = MeasurementSet::open(&target).expect("ms");
+    let moved = casa_types::ArrayValue::Float64(
+        ndarray::ArrayD::from_shape_vec(vec![2, 1], vec![0.3, -0.7]).expect("shape"),
+    );
+    ms.subtable_mut(casa_ms::SubtableId::Field)
+        .expect("FIELD")
+        .cell_accessor_mut(0, "PHASE_DIR")
+        .and_then(|mut cell| cell.set(casa_types::Value::Array(moved)))
+        .expect("move the field");
+    ms.save().expect("save");
+    drop(ms);
+    let observation = open(&target, &OpenOptions::default()).expect("open");
+    let binding = CalibrationBinding::bind(
+        &NamespaceRows::read(&request.output_table).expect("table"),
+        &persisted_namespace(&target, &OpenOptions::default()).expect("namespace"),
+        observation.catalogue(),
+        &BindingTolerance::EXACT,
+        &StatedAssociations::default(),
+    )
+    .expect("bind");
+    assert_eq!(binding.fields, vec![None]);
+    assert_eq!(binding.antennas, (0..5).map(Some).collect::<Vec<_>>());
+    let lookup =
+        CalibrationTableLookup::open(&request.output_table, ApplyInterpolationMode::Linear)
+            .expect("lookup");
+    let applied = corrected(&*observation, "base", |batch, sample| {
+        through_binding(batch, sample, &binding, &lookup)
+    });
+    assert!(!applied.is_empty());
+    assert!(
+        applied
+            .values()
+            .all(|(_, flags)| flags.iter().all(|flag| *flag)),
+        "every sample flagged"
+    );
+}
+
+/// The binding is for the applier's opening: a store opened by scan is not
+/// the opening a default namespace describes, and is refused.
+#[test]
+fn the_binding_refuses_an_applier_of_another_opening() {
+    let root = tempfile::tempdir().expect("root");
+    let path = fixture(root.path(), "ms_trial.ms");
+    let request = gain_request(root.path().join("production.G"));
+    let mut ms = MeasurementSet::open(&path).expect("ms");
+    ms.main_table_mut()
+        .fill_column_range(
+            "SCAN_NUMBER",
+            casa_tables::RowRange::new(60, 120),
+            casa_types::Value::Scalar(ScalarValue::Int32(2)),
+        )
+        .expect("scan");
+    ms.save().expect("save");
+    solve_gain(&ms, &request).expect("gaincal");
+    drop(ms);
+    let by_scan = OpenOptions {
+        partition_scheme: casa_ms::observation_io::PartitionScheme {
+            scans: true,
+            ..Default::default()
+        },
+        ..OpenOptions::default()
+    };
+    let applier = open(&path, &by_scan).expect("open");
+    let result = CalibrationBinding::bind(
+        &NamespaceRows::read(&request.output_table).expect("table"),
+        &persisted_namespace(&path, &OpenOptions::default()).expect("namespace"),
+        applier.catalogue(),
+        &BindingTolerance::EXACT,
+        &StatedAssociations::default(),
+    );
+    assert!(
+        matches!(result, Err(ObservationError::InvalidRequest { ref reason }) if reason.contains("namespace describes")),
+        "{result:?}"
+    );
 }

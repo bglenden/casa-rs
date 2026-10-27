@@ -114,14 +114,25 @@ impl PersistedNamespace {
     }
 
     /// Whether `catalogue` numbers the store's entities as the namespace's
-    /// opening does: the same antennas, fields and sessions, and the same
-    /// partitions in order, by content and session. A solve's identities
-    /// translate through the namespace only then.
+    /// opening does: the same antennas (station and position) and fields
+    /// (phase centre) in order, as many sessions, and the same partitions in
+    /// order, by content and session. A solve's identities translate
+    /// through the namespace only then.
     #[must_use]
     pub fn describes(&self, catalogue: &Catalogue) -> bool {
         let ours = &self.catalogue;
-        ours.antennas.len() == catalogue.antennas.len()
-            && ours.fields.len() == catalogue.fields.len()
+        let same_antennas =
+            ours.antennas.len() == catalogue.antennas.len()
+                && ours.antennas.iter().zip(&catalogue.antennas).all(|(a, b)| {
+                    a.station == b.station && a.position.values() == b.position.values()
+                });
+        let same_fields = ours.fields.len() == catalogue.fields.len()
+            && ours.fields.iter().zip(&catalogue.fields).all(|(a, b)| {
+                a.phase_centre.refer() == b.phase_centre.refer()
+                    && a.phase_centre.as_angles() == b.phase_centre.as_angles()
+            });
+        same_antennas
+            && same_fields
             && ours.observations.len() == catalogue.observations.len()
             && ours.partitions.len() == catalogue.partitions.len()
             && ours

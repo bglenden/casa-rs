@@ -120,20 +120,28 @@ compares the table's rows with the store's namespace rows, in this order:
 
 1. **Stated associations**, as CASA's `spwmap` states them: a partition's
    window (several may share one row) and an antenna (one to one).
-2. **CASA's own association**, where the two namespaces have the same rows in
-   the same order, names included: each row binds to its own index, even
-   where two rows hold the same content.
+2. **CASA's own association**, where the caller states that the table was
+   written through this store's namespace, as CASA assumes of a table applied
+   to the MeasurementSet it was solved on: each row binds to its own index,
+   even where two rows hold the same content, once the rows are checked
+   consistent (as many of each kind; a window may hold a solve over part of
+   its channels). Names, row counts and a gain table's collapsed channels do
+   not establish it: two windows of different channels can collapse to one
+   row alike.
 3. **Content** otherwise: an antenna by station and position, a field by
    phase centre, a window by frame and channels, or the one channel a gain
-   table collapses them to, of the summed width at the channels' mean
-   frequency (CASA's `gaincal`) or the centre channel's (casa-rs's writer,
-   #917). Names never bind, since converters rewrite them, but an antenna
+   table collapses them to, of the summed width at the channels'
+   width-weighted mean frequency (CASA's `gaincal`) or the centre channel's
+   (casa-rs's writer, #917). Names never bind, since converters rewrite them, but an antenna
    whose name disagrees beyond a converter's `_STATION` suffixes is refused:
    another antenna on the same pad does not take its gains. An entity the
    other side lacks binds to nothing, so an antenna subset applies as CASA
-   applies a table missing an antenna (`calflag` flags its samples), except
-   a window some table window overlaps in frequency, which is refused (a
-   solve over part of its channels). Two candidates, or two entities
+   applies a table missing an antenna (`calflag` flags its samples); a field
+   the table lacks likewise has no solutions until a `gainfield` policy is
+   built. A window that a table window in its frame, bound to no other
+   window, overlaps in frequency is refused (a solve over part of its
+   channels), not left unbound. The applier must have opened the store as
+   the namespace's opening did, or binding is refused. Two candidates, or two entities
    claiming one row, are refused: equal grids or positions alone do not
    prove two rows are one entity. Directions compare within a stated
    tolerance: the catalogue holds them as direction cosines, which move an
@@ -597,8 +605,12 @@ touches. Updaters address samples by the batch's own times, so a sliced
 traversal writes back, passing partitions whose selection holds no time; an
 updater bound to a slice refuses a batch of times outside it (several slices
 of one store at once need several updaters, which a session does not yet
-provide). A group a slice cuts is closed within the slice, and under deferred
-closure its `GroupEnd` ends the slice's part, not the group. A batch holds whole times; the budget
+provide); an updater writes batch for batch, and refuses a later partition
+while an earlier one's selected times are unwritten. A group a slice cuts is
+closed within the slice, and under deferred closure its `GroupEnd` ends the
+slice's part, not the group: `clipped` is not a completion protocol across
+slices, so a consumer that splits a partition merges the clipped parts and
+knows every slice before it finalizes such a group. A batch holds whole times; the budget
 counts each time's samples, its per-time arrays and the cursor's decode
 scratch for it, and binding fails when one time does not fit.
 

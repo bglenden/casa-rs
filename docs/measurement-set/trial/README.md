@@ -1215,6 +1215,7 @@ could make the group ready before slice 1's work on it had begun.
 | `a_sliced_traversal_writes_back_its_times` | On both stores an updater writes a slice's flags; the slice's samples change and no other's. |
 | `a_sliced_write_back_passes_partitions_the_range_leaves_empty` | The fixture relabelled as three scans and partitioned by them: a range over the first two leaves the third empty, listed between them or first; the MSv2 updater passes it and the two partitions write back (independent review B1). |
 | `an_updater_of_a_slice_refuses_times_outside_it` | On both stores an updater bound to a slice refuses a batch from before it. |
+| `an_updater_refuses_a_partition_before_the_last_is_written` | The MSv2 updater refuses a later partition's batch while an earlier partition's selected times are unwritten. |
 
 Unit laws: `a_time_range_selects_the_grid_times_it_holds` and
 `ranges_of_grid_indices_select_those_times` (casa-observation), and
@@ -1223,6 +1224,15 @@ group index). For an MSv2 a decode unit is a row, so the decode law there
 says each row is read once, not that a tile is; for an MSv4 it counts
 chunks. Under deferred closure a slice's `GroupEnd` for a clipped group ends
 the slice's part, not the group.
+
+Planning cost (Astra's review): the group index of a whole traversal is the
+same map it was before the time selection (built once, no clipped set), and
+a slice builds one map of its own groups and the set of those it cuts. On
+200,000 per-integration times, release build, medians of nine: the index
+before the time selection 50.6–53.2 ms, now 51.7–54.2 ms for the whole grid
+and 28.9 ms for a quarter slice (an earlier revision took 54–78 ms by
+building two maps). The MSv2 estimate counts the selection's rows only for
+a slice, using the opening's count for the whole grid.
 
 **Measurement** (`ms_trial_read_passes --split partitions|times [--only I]`
 on `pilot.ms` converted to MSv4: 64 partitions of 90 times in 10-time
@@ -1324,9 +1334,14 @@ writer; it moves into production with the calibration port.
 | `collapsed_windows_bind_either_way_and_overlaps_are_refused` | A one-channel window at the channels' mean frequency (CASA's `gaincal`, checked against CASA 6.7.5.18 on the fixture: 44.448 GHz, not channel 4's 44.512) or at the centre channel's (casa-rs's writer) binds; one overlapping the window but collapsing it neither way is refused, and one elsewhere binds to nothing. |
 | `an_antenna_on_another_antennas_pad_is_refused` | Names agreeing up to XRADIO's `_STATION` suffixes (once or twice) bind; another name on the same pad is refused. |
 | `the_writer_refuses_a_namespace_of_another_opening` | A solve's catalogue opened by scan against the namespace of the whole store is refused, and nothing is written. |
-| `equal_windows_need_their_own_namespace_or_a_stated_association` | Two windows of equal channels bind to their own rows in the store the table was written through; in a store listing them the other way round the binding is refused; stating the windows' rows, as `spwmap` does, resolves it. |
+| `equal_windows_need_their_own_namespace_or_a_stated_association` | Two windows of equal channels are refused by content even in the store the table was written through, and bind to their own rows there when the caller states the namespaces are one; in a store listing them the other way round stating the windows' rows, as `spwmap` does, resolves it. |
+| `collapsed_windows_alike_are_refused_unless_the_namespace_is_stated` | Two windows of different channels that collapse to one gain-table row alike (Astra's counterexample) are refused by content, names notwithstanding, and bind by index only when the namespaces are stated one. |
+| `a_stated_same_namespace_is_checked` | A stated same namespace with another row count, or a row contradicting its counterpart, is refused. |
+| `overlaps_spare_windows_bound_elsewhere_and_other_frames` | A narrow window inside a wide one the table solves binds to nothing rather than being refused, and a table window in another frame is not compared. |
+| `an_unbound_field_takes_no_solutions` | The target's field moved: it binds to nothing, its antennas still bind, and every sample applied through the binding is flagged for want of a solution. |
+| `the_binding_refuses_an_applier_of_another_opening` | An applier that opened the store by scan is refused against a default namespace. |
 | `antennas_bind_by_station_and_position_never_by_name` | An antenna renamed as a converter renames it binds; another antenna bearing a table antenna's name, elsewhere, binds to nothing. |
-| `antennas_of_one_content_need_their_own_namespace_or_a_statement` | Two antennas at one station and position bind to their own rows in their own namespace, are refused by content elsewhere even when both names agree, and bind as stated; a statement is one to one, and one antenna stated twice is refused. |
+| `antennas_of_one_content_need_their_own_namespace_or_a_statement` | Two antennas at one station and position bind to their own rows in a namespace stated to be theirs, are refused by content elsewhere even when both names agree, and bind as stated; a statement is one to one, and one antenna stated twice is refused. |
 | `windows_bind_by_content_and_statements_may_share_a_row` | Reordered and renamed windows bind by channels, a window the table lacks to nothing; two partitions may be stated to one row. |
 
 casa-ms laws: `an_msv2s_namespace_is_its_own_subtables`,

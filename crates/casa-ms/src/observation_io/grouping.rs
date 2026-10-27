@@ -3,7 +3,7 @@
 //! MSv2 and MSv4 adapters: the group of every time of a partition's grid,
 //! keyed as production `gaincal` keys solutions.
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::ops::Range;
 
 use casa_observation::{
@@ -25,9 +25,10 @@ use super::GroupClosure as Closure;
 #[derive(Debug)]
 pub(super) struct GroupIndex {
     keys: Vec<GroupKey>,
-    /// Each group's times within the selection, and whether the selection
-    /// cuts it.
-    extent: BTreeMap<GroupKey, (Range<usize>, bool)>,
+    /// Each group's times within the selection.
+    extent: BTreeMap<GroupKey, Range<usize>>,
+    /// The groups the selection cuts: empty for the whole grid.
+    clipped: BTreeSet<GroupKey>,
     closure: Closure,
     /// Groups whose last time was delivered under deferred closure, still
     /// to be announced.
@@ -108,36 +109,25 @@ impl GroupIndex {
                 scan,
                 bin,
             };
-            extent
-                .entry(key)
-                .and_modify(|range| range.end = unit + 1)
-                .or_insert(unit..unit + 1);
+            if selection.contains(&unit) {
+                extent
+                    .entry(key)
+                    .and_modify(|range| range.end = unit + 1)
+                    .or_insert(unit..unit + 1);
+            }
             keys.push(key);
         }
-        // Each group's first and last time within the selection; the
-        // selection cuts a group whose whole extent reaches outside it.
-        let mut held = BTreeMap::<GroupKey, Range<usize>>::new();
-        for (unit, key) in keys
+        // The selection cuts a group it holds that has a time outside it.
+        let clipped = keys[..selection.start]
             .iter()
-            .enumerate()
-            .take(selection.end)
-            .skip(selection.start)
-        {
-            held.entry(*key)
-                .and_modify(|range| range.end = unit + 1)
-                .or_insert(unit..unit + 1);
-        }
-        let extent = held
-            .into_iter()
-            .map(|(key, held)| {
-                let whole = &extent[&key];
-                let clipped = whole.start < selection.start || whole.end > selection.end;
-                (key, (held, clipped))
-            })
+            .chain(&keys[selection.end..])
+            .filter(|key| extent.contains_key(key))
+            .copied()
             .collect();
         Ok(Some(Self {
             keys,
             extent,
+            clipped,
             closure,
             pending_ends: VecDeque::new(),
         }))
@@ -164,7 +154,7 @@ impl GroupIndex {
             while end < times.end && self.keys[end] == key {
                 end += 1;
             }
-            let (extent, clipped) = &self.extent[&key];
+            let extent = &self.extent[&key];
             let first = start == extent.start;
             let last = end == extent.end;
             let position = match (first, last, self.closure) {
@@ -181,7 +171,7 @@ impl GroupIndex {
                 samples: (start - times.start) * samples_per_time
                     ..(end - times.start) * samples_per_time,
                 position,
-                clipped: *clipped,
+                clipped: self.clipped.contains(&key),
             });
             start = end;
         }

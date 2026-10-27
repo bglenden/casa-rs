@@ -216,7 +216,8 @@ _Avoid_: Caltable IDs, native IDs
 **Calibration Binding**:
 A calibration table's rows for each entity of a store's catalogue: stated
 associations first (CASA's `spwmap`), then CASA's own index association
-where the table's namespace is the store's, then content (station and
+where the caller states the table's namespace is the store's, then content
+(station and
 position, phase centre, channels), names never binding but an antenna whose
 name disagrees refused, and ambiguity refused.
 _Avoid_: Rebinding by name, antenna mapping

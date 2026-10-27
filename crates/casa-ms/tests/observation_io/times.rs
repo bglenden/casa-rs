@@ -366,11 +366,11 @@ fn a_sliced_traversal_writes_back_its_times() {
 /// slice writes back. The MSv2 fixture, its twelve times relabelled as
 /// scans 1, 2 and 3 of four times each and split by scan, has three
 /// partitions in time order; a range over the first two leaves the third
-/// empty, listed between them or first.
+/// empty, listed between them, first or last.
 #[test]
 fn a_sliced_write_back_passes_partitions_the_range_leaves_empty() {
     let options = by_scan();
-    for order in [[0, 2, 1], [2, 0, 1]] {
+    for order in [[0, 2, 1], [2, 0, 1], [0, 1, 2]] {
         let root = tempfile::tempdir().expect("root");
         let path = fixture(root.path(), "ms_trial.ms");
         three_scans(&path);
@@ -467,4 +467,43 @@ fn an_updater_of_a_slice_refuses_times_outside_it() {
             "{name}: {written:?}"
         );
     }
+}
+
+/// The MSv2 updater writes batch for batch in delivery order: a batch of a
+/// later partition while an earlier one's selected times are unwritten is
+/// refused.
+#[test]
+fn an_updater_refuses_a_partition_before_the_last_is_written() {
+    let root = tempfile::tempdir().expect("root");
+    let path = fixture(root.path(), "ms_trial.ms");
+    three_scans(&path);
+    let target = UpdateTarget::new("base", WritableRole::Flags);
+    let session = open_update(&path, &by_scan(), &[target]).expect("session");
+    let request = AccessRequest {
+        partitions: session.observation().catalogue().partition_ids(),
+        ..request(0..8, usize::MAX)
+    };
+    let mut updater = session.updater(&request, &[0]).expect("updater");
+    let mut traversal = session.observation().bind_read(&request).expect("bind");
+    let mut buffers = BatchBuffers::default();
+    let mut refused = false;
+    while let Some(event) = traversal.next(&mut buffers).expect("read") {
+        let ReadEvent::Batch(batch) = event else {
+            continue;
+        };
+        if batch.partition == PartitionId(0) {
+            continue;
+        }
+        let set = Array3::from_elem(batch.shape(), true);
+        let written = updater.write(
+            &batch,
+            &[PatchValues::Flags {
+                set: Some(set.view()),
+                clear: None,
+            }],
+        );
+        refused = matches!(written, Err(ObservationError::InvalidRequest { ref reason }) if reason.contains("not all written"));
+        break;
+    }
+    assert!(refused, "partition 0 was skipped");
 }

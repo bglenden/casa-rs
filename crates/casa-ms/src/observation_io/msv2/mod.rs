@@ -334,9 +334,14 @@ impl Msv2Observation {
                 + scalars
         };
         let (times, baselines) = (resolved.times.len(), grid.baselines.len());
-        // The selection's rows: its cells that a row fills.
+        // The selection's rows: its cells that a row fills, counted at
+        // opening for the whole grid.
         let cells = grid.cells(resolved.times.clone());
-        let rows = cells.iter().filter(|row| **row != index::NO_ROW).count();
+        let rows = if resolved.times == (0..grid.times_s.len()) {
+            grid.rows
+        } else {
+            cells.iter().filter(|row| **row != index::NO_ROW).count()
+        };
         let bytes_per_time = roles.time_bytes(0);
         let times_per_batch = times_per_batch(
             request.batch_bytes,
@@ -543,10 +548,6 @@ fn weight_source(
     }
 }
 
-/// The data groups MAIN's visibility columns form, named as XRADIO's
-/// converter names them: `base` (`DATA`), and `corrected`
-/// (`CORRECTED_DATA`) and `model` (`MODEL_DATA`) where the columns exist.
-/// Every group reads the same flags, weights and UVW.
 /// Whether MAIN's `column` holds content, as casacore's
 /// `TableColumn::hasContent` tells, by which CASA's `VisBufferImpl2` picks
 /// `WEIGHT_SPECTRUM` and `SIGMA_SPECTRUM` over `WEIGHT` and `SIGMA`: the
@@ -561,17 +562,25 @@ fn has_content(main: &casa_tables::Table, column: &str) -> Result<bool, Observat
         return Ok(false);
     }
     // One cell, read without the row cache the opening's lazy fills need
-    // left empty.
-    let first = main
+    // left empty. A cell this reader cannot decode (a storage manager it
+    // lacks) is not proof of no content: the column is taken as holding
+    // content, and reading it reports the error, as before.
+    let Ok(first) = main
         .column_accessor(column)
         .and_then(|cells| cells.array_cells_owned_uncached(&[0]))
-        .map_err(table_error)?;
+    else {
+        return Ok(true);
+    };
     Ok(first.into_iter().next().flatten().is_some_and(|cell| {
         let shape = cell.shape();
         !shape.is_empty() && shape.iter().all(|axis| *axis > 0)
     }))
 }
 
+/// The data groups MAIN's visibility columns form, named as XRADIO's
+/// converter names them: `base` (`DATA`), and `corrected`
+/// (`CORRECTED_DATA`) and `model` (`MODEL_DATA`) where the columns exist.
+/// Every group reads the same flags, weights and UVW.
 pub(super) fn data_groups(
     main: &casa_tables::Table,
     spectral_weights: bool,
