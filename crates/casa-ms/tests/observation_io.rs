@@ -7,6 +7,9 @@
 #[path = "observation_io/convert.rs"]
 mod convert;
 #[cfg(unix)]
+#[path = "observation_io/fields.rs"]
+mod fields;
+#[cfg(unix)]
 #[path = "observation_io/namespace.rs"]
 mod namespace;
 #[path = "observation_io/refusals.rs"]
@@ -90,6 +93,7 @@ pub(crate) fn request(channels: std::ops::Range<usize>, batch_bytes: usize) -> A
         roles: Roles::ALL,
         channels,
         times: TimeSelection::All,
+        fields: casa_observation::FieldSelection::All,
         weights: WeightRequest::Stored,
         correlations: CorrelationRequest::ALL,
         grouping: Grouping::None,

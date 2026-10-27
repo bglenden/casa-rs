@@ -12,6 +12,7 @@ use crate::ObservationError;
 use crate::catalogue::{FieldId, PartitionEntry, PartitionId, ScanId};
 use crate::creation::TimeBaselineGrid;
 use crate::grouping::GroupFragment;
+use crate::selection::{FieldSelection, TimeRuns};
 
 /// Which roles a traversal reads: the data group's payload and the
 /// samples' time auxiliaries and scan. A role left out is not read at all
@@ -455,10 +456,23 @@ pub struct AccessRequest {
     pub channels: Range<usize>,
     /// The grid times to deliver: every time, or those within one range
     /// of epochs, in each partition. Scientific groups keep the keys they
-    /// have over the whole grid; a group the range cuts is delivered as the
-    /// part it holds ([`GroupFragment::clipped`]). Workers that split a
+    /// have over the grid's field-selected times, whatever the range; a
+    /// group the range cuts is delivered as the part it holds
+    /// ([`GroupFragment::clipped`]). Workers that split a
     /// request by time plan the slices together ([`TimeSplit`](crate::TimeSplit)).
     pub times: TimeSelection,
+    /// The fields to deliver: the selected times phased to one of them,
+    /// whole times, so no batch holds the others' times. The MSv2 adapter
+    /// reads none of their rows; the MSv4 adapter decodes each chunk row a
+    /// batch touches whole, gap times included
+    /// (`docs/measurement-set/contracts.md`, section 4). Scientific groups
+    /// are keyed over these fields' times, as production `gaincal` bins
+    /// only the rows it selects: a group that combines fields holds the
+    /// selected fields' times alone, its bins counted from the first of
+    /// them, so a field selection cuts no group. Intents are
+    /// selected by the partitions requested: a partition's samples share
+    /// theirs.
+    pub fields: FieldSelection,
     /// The correlation products to deliver and whose flags they carry.
     pub correlations: CorrelationRequest,
     /// Scientific groups. Whether a group's completion arrives on its last
@@ -481,8 +495,9 @@ pub struct ResolvedRequest {
     /// [`data_groups`](PartitionEntry::data_groups).
     pub data_group: usize,
     /// The grid times delivered, as indices into the partition's grid
-    /// times ([`TimeSelection::indices`]).
-    pub times: Range<usize>,
+    /// times: the time selection's ([`TimeSelection::indices`]) whose field
+    /// the field selection holds.
+    pub times: TimeRuns,
     /// The delivered correlation products, shared by every batch.
     pub correlations: CorrelationAxis,
     /// Whether a delivered flag is the OR over every product's: true only
@@ -493,23 +508,35 @@ pub struct ResolvedRequest {
 
 impl AccessRequest {
     /// Resolve this request's data group, channel window, times and
-    /// correlation axis against `entry`, whose grid times are `times_s`.
+    /// correlation axis against `entry`, whose grid times are `times_s`
+    /// and whose requested data group is phased to `fields[t]` at time `t`.
     ///
     /// # Errors
     ///
     /// When the partition lacks the data group or a requested product, the
     /// channel window is empty or outside the partition, no product is
     /// requested, or the time selection is refused
-    /// ([`TimeSelection::indices`]).
+    /// ([`TimeSelection::indices`]); [`ObservationError::InvalidStore`]
+    /// when `fields` has not one field per time.
     pub fn resolve(
         &self,
         entry: &PartitionEntry,
         times_s: &[f64],
+        fields: &[FieldId],
     ) -> Result<ResolvedRequest, ObservationError> {
         let invalid = |reason: String| ObservationError::InvalidRequest { reason };
         let (data_group, _) = entry
             .data_group(&self.data_group)
             .ok_or_else(|| invalid(format!("no data group {}", self.data_group)))?;
+        if fields.len() != times_s.len() {
+            return Err(ObservationError::InvalidStore {
+                reason: format!(
+                    "{} fields for {} grid times: a field per time",
+                    fields.len(),
+                    times_s.len()
+                ),
+            });
+        }
         if self.channels.is_empty() || self.channels.end > entry.frequencies_hz.len() {
             return Err(invalid(format!(
                 "channels {:?} outside the partition's {}",
@@ -545,7 +572,7 @@ impl AccessRequest {
         };
         Ok(ResolvedRequest {
             data_group,
-            times: self.times.indices(entry, times_s)?,
+            times: TimeRuns::selected(self.times.indices(entry, times_s)?, fields, &self.fields),
             flags_from_all: correlations.indices().is_some()
                 && self.correlations.flags_from == FlagsFrom::All,
             correlations,
@@ -555,7 +582,9 @@ impl AccessRequest {
 
 /// The store's natural read units along the axes a batch shape chooses:
 /// the Zarr chunk shape of MSv4, the tile shape of MSv2. A planner that
-/// aligns channel windows and time blocks to them decodes nothing twice.
+/// aligns channel windows and time blocks to them decodes nothing twice,
+/// without a field selection: on MSv4 the runs of a field selection that
+/// share a chunk row each decode it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct NaturalBlocks {
     /// Times per unit (for MSv2 the tile's rows divided by the baselines).
@@ -571,11 +600,10 @@ pub struct PartitionEstimate {
     /// The partition.
     pub partition: PartitionId,
     /// Times the traversal delivers: the grid's, or those the request's
-    /// [`TimeSelection`] holds.
+    /// time and field selections hold.
     pub times: usize,
-    /// The first of them, as an index into the grid's times (0 without a
-    /// selection).
-    pub first_time: usize,
+    /// Which they are, as indices into the grid's times.
+    pub time_runs: TimeRuns,
     /// Which rule and variable supply the delivered weights, when the
     /// weights role is read.
     pub weights: Option<WeightSource>,

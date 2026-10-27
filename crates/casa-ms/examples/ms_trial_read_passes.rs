@@ -112,6 +112,7 @@ fn request(
 ) -> AccessRequest {
     let entry = observation.catalogue().partition(id);
     AccessRequest {
+        fields: casa_observation::FieldSelection::All,
         partitions: vec![id],
         data_group: "base".to_string(),
         roles: Roles::ALL,

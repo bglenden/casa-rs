@@ -578,6 +578,7 @@ pub struct AccessRequest {
     pub roles: Roles,                   // what is read at all
     pub channels: Range<usize>,         // native channel window
     pub times: TimeSelection,           // every grid time, or those in one epoch range
+    pub fields: FieldSelection,         // every field, or the times phased to some
     pub weights: WeightRequest,         // the stored weights, or 1/σ² of the sigmas
     pub correlations: CorrelationRequest, // products delivered and whose flags
     pub grouping: Grouping,             // scientific groups, as gaincal keys them
@@ -586,7 +587,8 @@ pub struct AccessRequest {
 ```
 
 The request is resolved against each partition once, at binding: the data
-group, the channel window, the time selection, and the correlation axis,
+group, the channel window, the time and field selections, and the
+correlation axis,
 which every batch of the traversal and every piece packed from one then
 shares without copying (all products borrow the catalogue's list).
 
@@ -602,8 +604,8 @@ every partition of a request, so a calibration solution interval selects the
 same epochs in each spectral window. A planner that splits a partition by
 time cuts it at grid indices, through `Observation::grid`, which reads no
 payload, and states each slice with `TimeRange::of_grid`, which uses the
-grid's own values; slices aligned to the estimate's natural time blocks
-decode no unit twice. The MSv2 adapter reads the selected rows from its
+grid's own values; without a field selection, slices aligned to the
+estimate's natural time blocks decode no unit twice. The MSv2 adapter reads the selected rows from its
 opening index; the MSv4 adapter reads only the chunks the selection
 touches. Updaters address samples by the batch's own times, so a sliced
 traversal writes back, passing partitions whose selection holds no time; an
@@ -612,12 +614,51 @@ writes batch for batch, and refuses a later partition while an earlier
 one's selected times are unwritten. Several updaters of one session write
 the slices of a split at once, each claiming its times (section 7).
 
+**Field selection.** A request reads every field, or the times phased to
+some fields (`FieldSelection::Only`), in its data group. A field is per
+time, so the selection takes whole times. With the time range, it resolves
+at binding to the partition's selected times as runs of consecutive grid
+times (`TimeRuns`, the estimate's `time_runs`). A batch holds whole times of
+one run, so its times are consecutive on the grid.
+
+What the adapters decode, as the estimate models it:
+- The MSv2 adapter reads only the selected rows of its opening index.
+- The MSv4 adapter reads the chunks each batch's times touch. A chunk row
+  also holds the gap times beside a run, and a chunk row that holds several
+  runs is decoded once for each batch that reads it. Each batch decodes
+  every chunk row its times touch: one for a run inside a chunk row, two
+  for a run that crosses a chunk-row boundary (#935 would hold a decoded
+  chunk row across batches).
+
+Group keys are taken over the selected fields' times, as production
+`gaincal` bins only the rows it selects. A group keyed by field is held
+whole or not at all. A group that combines fields holds the selected
+fields' times alone, with its bins counted from the earliest of them;
+production `gaincal` counts from the lowest-numbered field's first time,
+which differs when that field is not observed first (#936). So a field
+selection cuts no group, and `clipped` stays for time ranges. Time splits and
+updaters take a field selection as they take a time range: slices tile the
+selected times, and an updater claims and writes its runs.
+
+Intents are not selected on the request. A partition's samples share their
+intents (the adapters partition by `OBS_MODE`, as XRADIO's converter does),
+so a consumer selects intents by the partitions it requests. Two
+differences from CASA's selection follow:
+- The catalogue keeps a partition's intents split at commas, sorted and
+  deduplicated. CASA matches an intent pattern against the whole
+  `OBS_MODE` string, so a pattern that depends on an intent's place in
+  that string (`CALIBRATE_BANDPASS*` rather than `*BANDPASS*`) can select
+  otherwise when matched intent by intent.
+- Selection by `STATE_ID` (CASA's intent selection by number) has no
+  counterpart. States with one `OBS_MODE` share a partition, so a
+  consumer cannot select one of them.
+
 **Time splits.** Workers that split a request by time plan the slices
 together: `TimeSplit::plan` cuts the request at consecutive epoch ranges
-that must tile its times in every partition (a gap, an overlap, or a time
-left outside every slice is refused), and counts, from the store's group
+that must tile its selected times in every partition (a gap, an overlap,
+or a time left outside every slice is refused), and counts, from the store's group
 index (`Observation::group_keys`, reading no payload), the scientific
-groups the cuts divide and how many slices hold part of each. Each slice's
+groups the cuts divide and which slices hold part of each. Each slice's
 traversal delivers its part of a divided group, positioned and closed
 within the slice and marked `clipped`; the split's `SplitCompletion`, shared
 by the slices (each through its own `SliceCompletion`), makes such a group
@@ -674,9 +715,9 @@ decoded and the subset as selected, and its scratch is in the budget.
 
 Scientific groups come from declared keys: production `gaincal`'s rules, keyed
 by partition, field unless combined, scan unless combined, and the time bin
-counted from the first time of the (field, scan) run, over the whole grid
-whatever the time selection, so traversals of different slices agree on
-every time's group. A grouping keyed by scan
+counted from the first time of the (field, scan) run, over the grid's
+field-selected times whatever the time selection, so traversals of
+different slices agree on every time's group. A grouping keyed by scan
 on a store that names none is refused at binding. Groups can span batches and
 storage chunks; the backend executes the requested grouping and does not decide
 which fields a solver may combine. A delivered batch lists its fragments: the

@@ -13,6 +13,7 @@
 //! report instead of waiting.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::ops::Range;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use crate::ObservationError;
@@ -25,7 +26,8 @@ use crate::request::{AccessRequest, Estimate, Grouping, TimeRange, TimeSelection
 /// knows which scientific groups the cuts divide and which slices hold
 /// their parts.
 ///
-/// Group keys are those of the whole grid, so a divided group arrives in
+/// Group keys do not depend on the time selection (they are those of the
+/// grid's field-selected times), so a divided group arrives in
 /// each slice holding part of it under the same key, marked
 /// [`clipped`](crate::GroupFragment::clipped) there; the split's
 /// [`SplitCompletion`] joins the parts. A slice may hold no time of a
@@ -139,27 +141,29 @@ fn within(times: TimeSelection, cut: TimeRange) -> Result<TimeRange, Observation
     })
 }
 
-/// Refuse slices whose times do not follow one another without a gap from
-/// the request's first time to its last, in every partition.
+/// Refuse slices whose selected times, taken in order, are not the
+/// request's in every partition: each held once, none missing.
 fn check_tiling(whole: &Estimate, parts: &[Estimate]) -> Result<(), ObservationError> {
     for (index, partition) in whole.partitions.iter().enumerate() {
-        let mut next = partition.first_time;
-        for part in parts {
-            let slice = &part.partitions[index];
-            if slice.times > 0 {
-                if slice.first_time != next {
-                    break;
-                }
-                next = slice.first_time + slice.times;
+        // The slices' runs in order, a run a cut divides joined again.
+        let mut joined: Vec<Range<usize>> = Vec::new();
+        let mut ordered = true;
+        for run in parts
+            .iter()
+            .flat_map(|part| part.partitions[index].time_runs.runs())
+        {
+            match joined.last_mut() {
+                Some(last) if last.end == run.start => last.end = run.end,
+                Some(last) if last.end > run.start => ordered = false,
+                _ => joined.push(run.clone()),
             }
         }
-        if next != partition.first_time + partition.times {
+        if !ordered || joined != partition.time_runs.runs() {
             return Err(ObservationError::InvalidRequest {
                 reason: format!(
-                    "the time split's slices do not tile {:?}'s selected times {}..{}",
+                    "the time split's slices do not tile {:?}'s selected times {:?}",
                     partition.partition,
-                    partition.first_time,
-                    partition.first_time + partition.times
+                    partition.time_runs.span()
                 ),
             });
         }
@@ -176,19 +180,22 @@ fn divided(
 ) -> Result<BTreeMap<GroupKey, BTreeSet<usize>>, ObservationError> {
     let mut divided = BTreeMap::new();
     for (index, id) in request.partitions.iter().enumerate() {
-        let Some(keys) = observation.group_keys(*id, &request.data_group, request.grouping)? else {
+        let Some(keys) =
+            observation.group_keys(*id, &request.data_group, request.grouping, &request.fields)?
+        else {
             continue;
         };
         let mut holders = BTreeMap::<GroupKey, BTreeSet<usize>>::new();
         for (slice, part) in parts.iter().enumerate() {
-            let times = &part.partitions[index];
-            let held = keys
-                .get(times.first_time..times.first_time + times.times)
-                .ok_or_else(|| ObservationError::InvalidStore {
-                    reason: format!("{id:?}'s group index does not cover its selected times"),
-                })?;
-            for key in held {
-                holders.entry(*key).or_default().insert(slice);
+            for run in part.partitions[index].time_runs.runs() {
+                let held = keys
+                    .get(run.clone())
+                    .ok_or_else(|| ObservationError::InvalidStore {
+                        reason: format!("{id:?}'s group index does not cover its selected times"),
+                    })?;
+                for key in held.iter().flatten() {
+                    holders.entry(*key).or_default().insert(slice);
+                }
             }
         }
         divided.extend(holders.into_iter().filter(|(_, slices)| slices.len() > 1));

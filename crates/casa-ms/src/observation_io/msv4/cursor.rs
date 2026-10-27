@@ -61,12 +61,12 @@ impl<'o> Msv4Cursor<'o> {
         let arrays = &dataset.groups[resolved.data_group];
         let groups = GroupIndex::new(
             estimate.partition,
-            request.grouping,
+            request,
             observation.open.group_closure,
             &dataset.times,
             &arrays.fields,
             dataset.scans.as_deref(),
-            resolved.times.clone(),
+            &resolved.times,
         )?;
         Ok(Self {
             observation,
@@ -75,7 +75,7 @@ impl<'o> Msv4Cursor<'o> {
             partition: estimate.partition,
             roles: request.roles,
             channels: request.channels.clone(),
-            next_time: resolved.times.start,
+            next_time: resolved.times.first().unwrap_or(0),
             resolved,
             groups,
             estimate,
@@ -149,7 +149,12 @@ pub(super) fn estimate(
     id: PartitionId,
 ) -> Result<(PartitionEstimate, ResolvedRequest), ObservationError> {
     let (dataset, entry) = observation.dataset(id)?;
-    let resolved = request.resolve(entry, &dataset.times)?;
+    // The requested group's field at each time; a request naming no group
+    // of the partition is refused by the resolution.
+    let fields = entry
+        .data_group(&request.data_group)
+        .map_or(&[][..], |(index, _)| &dataset.groups[index].fields);
+    let resolved = request.resolve(entry, &dataset.times, fields)?;
     let arrays = &dataset.groups[resolved.data_group];
     let roles = request.roles;
     if roles.time_centroid && dataset.centroid_extra_precision {
@@ -200,8 +205,7 @@ pub(super) fn estimate(
             per_channel: true,
         },
     };
-    let span = resolved.times.clone();
-    let (times, baselines) = (span.len(), entry.baselines.len());
+    let (times, baselines) = (resolved.times.len(), entry.baselines.len());
     let channels = request.channels.len();
     let scalars = [roles.time_centroid, roles.exposure]
         .into_iter()
@@ -227,16 +231,15 @@ pub(super) fn estimate(
         baselines * (bytes_per_sample + scratch_bytes_per_sample) + bytes_per_time,
         times,
     )?;
-    let batches = if times_per_batch == 0 {
-        0
+    let blocks: Vec<Range<usize>> = if times_per_batch == 0 {
+        Vec::new()
     } else {
-        times.div_ceil(times_per_batch)
+        resolved.times.blocks(times_per_batch).collect()
     };
+    let batches = blocks.len();
     let (mut decode_units, mut decoded, mut selected) = (0, 0, 0);
     let variables = requested(dataset, arrays, roles);
-    for batch in 0..batches {
-        let rows = span.start + batch * times_per_batch
-            ..span.start + ((batch + 1) * times_per_batch).min(times);
+    for rows in blocks {
         for &(array, extent, delivered) in &variables {
             let subset = subset(array, rows.clone(), &request.channels, extent);
             let (units, elements) = chunk_cost(array, &subset)?;
@@ -255,7 +258,7 @@ pub(super) fn estimate(
     let estimate = PartitionEstimate {
         partition: id,
         times,
-        first_time: span.start,
+        time_runs: resolved.times.clone(),
         weights: roles.weights.then_some(weights),
         baselines,
         bytes_per_sample,
@@ -584,7 +587,7 @@ impl VisibilityCursor for Msv4Cursor<'_> {
         if let Some(key) = self.groups.as_mut().and_then(GroupIndex::pop_end) {
             return Step::GroupEnd(key);
         }
-        if self.next_time == self.resolved.times.end {
+        if self.resolved.times.next_from(self.next_time).is_none() {
             Step::End
         } else {
             Step::Batch
@@ -592,13 +595,15 @@ impl VisibilityCursor for Msv4Cursor<'_> {
     }
 
     fn fill(&mut self, buffers: &mut BatchBuffers) -> Result<(), ObservationError> {
-        let times = self.resolved.times.end;
-        if self.next_time == times {
+        let Some(rows) = self
+            .resolved
+            .times
+            .block_at(self.next_time, self.estimate.times_per_batch)
+        else {
             return Err(ObservationError::InvalidRequest {
                 reason: "fill after the end of the traversal".to_string(),
             });
-        }
-        let rows = self.next_time..(self.next_time + self.estimate.times_per_batch).min(times);
+        };
         self.fill_batch(buffers, rows.clone())?;
         self.next_time = rows.end;
         self.counters.batches += 1;

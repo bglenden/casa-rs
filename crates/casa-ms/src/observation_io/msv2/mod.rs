@@ -16,10 +16,10 @@ use std::path::Path;
 use std::sync::Arc;
 
 use casa_observation::{
-    AccessRequest, BoundCursor, Catalogue, DataGroupEntry, Estimate, GroupKey, Grouping,
-    NaturalBlocks, Observation, ObservationError, ObservationId, PartitionEntry, PartitionEstimate,
-    PartitionId, ResolvedRequest, Roles, TimeBaselineGrid, Traversal, WeightRequest, WeightRule,
-    WeightSource, times_per_batch,
+    AccessRequest, BoundCursor, Catalogue, DataGroupEntry, Estimate, FieldSelection, GroupKey,
+    Grouping, NaturalBlocks, Observation, ObservationError, ObservationId, PartitionEntry,
+    PartitionEstimate, PartitionId, ResolvedRequest, Roles, TimeBaselineGrid, Traversal,
+    WeightRequest, WeightRule, WeightSource, times_per_batch,
 };
 use casa_tables::{RequiredScalarColumnDestination, RequiredScalarColumnValuesMut};
 use casa_types::measures::{EpochRef, MjdHighPrec};
@@ -285,7 +285,11 @@ impl Msv2Observation {
         id: PartitionId,
     ) -> Result<(PartitionEstimate, ResolvedRequest), ObservationError> {
         let (partition, entry) = self.partition(id)?;
-        let resolved = request.resolve(entry, &partition.grid.times_s)?;
+        let resolved = request.resolve(
+            entry,
+            &partition.grid.times_s,
+            &partition.grid.field_per_time,
+        )?;
         let roles = request.roles;
         let weights = weight_source(
             request.weights,
@@ -336,11 +340,21 @@ impl Msv2Observation {
         let (times, baselines) = (resolved.times.len(), grid.baselines.len());
         // The selection's rows: its cells that a row fills, counted at
         // opening for the whole grid.
-        let cells = grid.cells(resolved.times.clone());
-        let rows = if resolved.times == (0..grid.times_s.len()) {
+        let cells = times * baselines;
+        let rows = if times == grid.times_s.len() {
             grid.rows
         } else {
-            cells.iter().filter(|row| **row != index::NO_ROW).count()
+            resolved
+                .times
+                .runs()
+                .iter()
+                .map(|run| {
+                    grid.cells(run.clone())
+                        .iter()
+                        .filter(|row| **row != index::NO_ROW)
+                        .count()
+                })
+                .sum()
         };
         let bytes_per_time = roles.time_bytes(0);
         let times_per_batch = times_per_batch(
@@ -357,7 +371,7 @@ impl Msv2Observation {
         let estimate = PartitionEstimate {
             partition: id,
             times,
-            first_time: resolved.times.start,
+            time_runs: resolved.times.clone(),
             weights: roles.weights.then_some(weights),
             baselines,
             bytes_per_sample,
@@ -367,7 +381,7 @@ impl Msv2Observation {
             batches: if times_per_batch == 0 {
                 0
             } else {
-                times.div_ceil(times_per_batch)
+                resolved.times.blocks(times_per_batch).count()
             },
             decode_units: rows,
             decoded_elements: rows * per_sample(stored),
@@ -383,10 +397,10 @@ impl Msv2Observation {
                     channels: entry.frequencies_hz.len(),
                 },
             },
-            padded_fraction: if cells.is_empty() {
+            padded_fraction: if cells == 0 {
                 0.0
             } else {
-                1.0 - rows as f64 / cells.len() as f64
+                1.0 - rows as f64 / cells as f64
             },
         };
         Ok((estimate, resolved))
@@ -519,7 +533,8 @@ impl Observation for Msv2Observation {
         id: PartitionId,
         data_group: &str,
         grouping: Grouping,
-    ) -> Result<Option<Vec<GroupKey>>, ObservationError> {
+        fields: &FieldSelection,
+    ) -> Result<Option<Vec<Option<GroupKey>>>, ObservationError> {
         let (partition, entry) = self.partition(id)?;
         if entry.data_group(data_group).is_none() {
             return Err(ObservationError::InvalidRequest {
@@ -533,6 +548,7 @@ impl Observation for Msv2Observation {
             &grid.times_s,
             &grid.field_per_time,
             Some(&grid.scan_per_time),
+            fields,
         )
     }
 }
