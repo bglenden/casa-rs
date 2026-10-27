@@ -225,7 +225,13 @@ def resolve_call(call: dict, me, qa) -> tuple[str, dict, dict]:
     if "referencetime" in kwargs:
         epoch = me.epoch(*kwargs["referencetime"])
         kwargs["referencetime"] = epoch
-        resolved["referencetime"] = me.measure(epoch, "UTC")["m0"]["value"]
+        utc = me.measure(epoch, "UTC")["m0"]["value"]
+        resolved["referencetime"] = utc
+        # CASA's simulator stores TAI seconds under the UTC label: TAI - UTC
+        # at the reference epoch, from CASA's measures (good to ~1e-6 s, the
+        # MJD difference's rounding).
+        tai = me.measure(epoch, "TAI")["m0"]["value"]
+        resolved["tai_minus_utc_s"] = (tai - utc) * 86400.0
     return op, kwargs, resolved
 
 
@@ -305,6 +311,16 @@ def run_scenario(
         "openfromms_ms": scenario.get("openfromms_ms", "casa-rs"),
         "calls": calls,
         "seconds": time.perf_counter() - started,
+        # TAI - UTC at the settimes reference epoch, by CASA's measures, which
+        # observe_scenarios checks its own against.
+        "casa_tai_minus_utc_s": next(
+            (
+                call["resolved"]["tai_minus_utc_s"]
+                for call in calls
+                if call["op"] == "settimes" and "tai_minus_utc_s" in call.get("resolved", {})
+            ),
+            None,
+        ),
         **{key: scenario[key] for key in CORRUPTION_KEYS if key in scenario},
     }
     if record_path is not None:
@@ -412,7 +428,6 @@ def main() -> int:
     manifest = {
         "schema_version": 1,
         "purpose": f"simulation Phase 1 sm oracle (#841): {os.path.basename(args.scenarios)}",
-        "casa_tai_minus_utc_s": 37.0,
         "scenarios": results,
     }
     with open(os.path.join(args.out, "manifest.json"), "w", encoding="utf-8") as handle:
