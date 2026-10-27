@@ -205,6 +205,21 @@ rule and column each partition's weights came from.
 _Avoid_: Sigma weights (the sigmas themselves, or weights made from them?),
 weight mode
 
+**Persisted Namespace**:
+The `ANTENNA`, `FIELD` and `SPECTRAL_WINDOW` rows a calibration table solved
+on a store carries, and the row of each of the store's catalogue entities
+there: an MSv2's own subtables, or those an MSv4's MSv2 conversion holds.
+Catalogue identities are never persisted.
+_Avoid_: Caltable IDs, native IDs
+
+**Calibration Binding**:
+A calibration table's rows for each entity of a store's catalogue: stated
+associations first (CASA's `spwmap`), then CASA's own index association
+where the table's namespace is the store's, then content (station and
+position, phase centre, channels), names deciding nothing and ambiguity
+refused.
+_Avoid_: Rebinding by name, antenna mapping
+
 **Traversal Order**:
 The order batches arrive. Within one cursor it is fixed: whole times of one
 channel window of one partition's time selection, in time order. Across the observation it is

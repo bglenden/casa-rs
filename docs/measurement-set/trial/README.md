@@ -586,7 +586,7 @@ and 1 batches; at most two groups live), differing only in buffer bytes
 - *Antenna identity* (first pass: list order; revision 1: rebound by
   context in test code): now `Catalogue::bind_to`, the contract's
   `CalibrationBinding` over two opened observations. Binding a caltable's
-  own namespace is still untested.
+  own namespace: section "Caltable round trip".
 - *Closure bookkeeping* (first pass: hand-written in the consumer): now
   `casa_observation::GroupCompletion`, shared with the work-unit law.
 - **Finding, resolved on `main`:** production `gaincal` accumulated from
@@ -1295,6 +1295,45 @@ transform is one pass over the values already in cache.
 undefined cell is a read error, as for every role); `SIGMA` written by an
 updater.
 
+## Caltable round trip
+
+Step (4)'s third item (contracts, section 2, "Binding a calibration table"):
+a solve from batches is persisted as a CASA caltable, the store is closed,
+and the table is bound to a store that numbers its entities otherwise and
+applied from batches. `casa_ms::observation_io::persisted_namespace` gives a
+store's namespace: an MSv2's own subtables, or for an MSv4 the subtables its
+MSv2 conversion holds (the converter's builders, now shared:
+`catalogue_subtables`). The calibration trial's `binding.rs` holds the
+`CalibrationBinding` and the writer, which translates the solve's catalogue
+identities to namespace rows and hands them to production's gain-table
+writer; it moves into production with the calibration port.
+
+| Law | What it shows |
+| --- | --- |
+| `a_batch_solve_persists_the_msv2s_own_namespace` | A batch solve on the MSv2 fixture, written through its namespace, has production `gaincal`'s `ANTENNA` and `SPECTRAL_WINDOW` rows (the window collapsed to one channel as CASA collapses it) and its solutions to 1e-5; binding it back is CASA's own association. |
+| `a_caltable_rebinds_to_a_store_numbered_otherwise` | Solved on an MSv4 converted from the fixture without antenna 0 (four antennas, numbered from 0), written through that store's namespace, closed; bound to the full MSv2 (five antennas, those four numbered from 1) by station and position; applied from batches: every sample equals production `gaincal` on the MSv2 without antenna 0 then `applycal` on the full MSv2, values to 1e-5 relative and flags exactly, antenna 0's 48 samples flagged both ways for want of a solution. |
+| `antennas_and_windows_rebind_after_reordering` | A table written through a simulated MSv2 of antennas N01–N03 and windows (low, high) binds to one of N03, N04, N01 and (high, low), and to its MSv4 conversion (XRADIO's names): each bound antenna and partition looks up the gain written for its own station and window; N04 binds to nothing. |
+| `equal_windows_need_their_own_namespace_or_a_stated_association` | Two windows of equal channels bind to their own rows in the store the table was written through; in a store listing them the other way round the binding is refused; stating the windows' rows, as `spwmap` does, resolves it. |
+| `antennas_bind_by_station_and_position_never_by_name` | A renamed antenna binds; another antenna bearing a table antenna's name, elsewhere, binds to nothing. |
+| `antennas_of_one_content_need_their_own_namespace_or_a_statement` | Two antennas at one station and position bind to their own rows in their own namespace, are refused by content elsewhere whatever their names, and bind as stated; a statement is one to one. |
+| `windows_bind_by_content_and_statements_may_share_a_row` | Reordered and renamed windows bind by channels, a window the table lacks to nothing; two partitions may be stated to one row. |
+
+casa-ms laws: `an_msv2s_namespace_is_its_own_subtables` and
+`an_msv4s_namespace_is_its_conversions`.
+
+**CASA oracle** (`tools/ms-trial/check_caltable.py`, CASA 6.7.5.18 on the
+Mac mini, from the outputs the rebind law keeps under
+`CASA_RS_TRIAL_KEEP`): CASA's `applycal` of the table written through the
+MSv4's namespace, applied by CASA's own association to that store's MSv2
+conversion, equals CASA's `applycal` of production's table on the MSv2 it
+was solved on, over all 72 samples, to 3.3e-7 relative. CASA reads the
+namespace the writer persisted as casa-rs binds it.
+
+**Not done:** the binding in production, with `gainfield` and nearest-field
+selection through bound fields; bandpass and other per-channel tables (their
+windows keep their channels, which the content rule already accepts);
+tables solved over combined windows; `FEED` and receptor association.
+
 ## Keep, change or discard: the trial's summary for design review
 
 Revision 1 kept what the review asked to keep and made the changes it
@@ -1349,11 +1388,13 @@ MSv2 creator from batches.
    remains an option.
 4. **Solve weights** (example B finding after merging `main`): production
    `gaincal` weights by 1/σ² as CASA does, and the batch had no `SIGMA`;
-   see example B. Resolved in step 4: the request reads 1/σ² weights. (`FLAG_ROW` in production `gaincal`, the earlier
-   finding here, is fixed on `main`.)
+   see example B. (`FLAG_ROW` in production `gaincal`, the earlier
+   finding here, is fixed on `main`.) Resolved in step 4: the request
+   reads 1/σ² weights.
 5. **Cross-store rebinding as a contract.** The calibration comparison
    rebinds by context in test code; the design's `CalibrationBinding` is
-   still to be built and tested with a caltable.
+   still to be built and tested with a caltable. Resolved in step 4
+   (section "Caltable round trip").
 6. **One vocabulary.** Move `CorrelationType` from the imaging model into
    `casa-observation` (or casa-types), and add a UVW measure to casa-types;
    `UvwView` still carries a `DirectionRef`.
@@ -1383,7 +1424,7 @@ This pass touches parts of the M1 checklist and completes none of it.
 | --- | --- | --- |
 | `layout-precision` | One sample-major layout from both stores, the grid's axes, Hz/m/s views, `complex64`, correlation subsets with a flag policy | Unit requests and conversions, Jy/weight scaling, `complex128` when a store needs it |
 | `measures-bulk` | Native epoch, frequency and UVW array views only | Every family's prepared bulk conversion, ordered interpolation, scalar/CASA agreement, performance |
-| `group-lifecycle` | Time-bin, per-scan and per-integration groups keyed by field and scan, closure, concurrent fragments, split channel windows, `GroupCompletion`, one cursor per partition, `Catalogue::bind_to` | Groups merged across partitions by a consumer, late samples, solve → caltable → reopen → apply |
+| `group-lifecycle` | Time-bin, per-scan and per-integration groups keyed by field and scan, closure, concurrent fragments, split channel windows, `GroupCompletion`, one cursor per partition, `Catalogue::bind_to`; time slices of a partition (#910); solve → caltable → reopen → apply through the calibration binding | Groups merged across partitions by a consumer, late samples, the binding in production |
 | `work-unit-lifetimes` | Unequal channel units, shared pinning against packing, pools bounded in buffers and bytes, buffers returned at the end, abandoned work reported, a pool wait that can be bounded | Cooperating workers on the admitted team, cancellation in flight, cube minor-cycle separation |
 | `native-role-updates` | Update sessions on both stores: visibilities, flag set/clear changes and weights of declared targets; broadcast-weight and data-group alias rules; `FLAG_ROW` and padding preserved; whole-unit writes without read-back (write-back section) | `WEIGHT_SPECTRUM` and `FLAG_CATEGORY`, bit flags, per-batch MSv2 planning, MSv4 structural writes, conflicting queued patches |
 | `conversion-fidelity` | MSv2 ↔ MSv4 through the boundary: a loss inventory refused unless accepted, every group, padding as D23's flagged rows or omitted as declared, `pilot.ms` equal to XRADIO's conversion and back through casacore (converter section) | Subtable-column inventory, `WEIGHT_SPECTRUM` and `FLAG_CATEGORY` into an MSv2, the `SIGMA` policy, every audited loss row |

@@ -13,7 +13,7 @@ use casa_types::measures::EpochRef;
 use casa_types::measures::direction::DirectionRef;
 use ndarray::Axis;
 
-use super::msv2_rows::{MainRows, Occupancy, acquired};
+use super::msv2_rows::{MainRows, Occupancy, Spans, acquired};
 use super::{
     ConversionOptions, ConversionReport, Loss, PaddingRows, lockstep, losses, msv2_tables,
 };
@@ -177,18 +177,10 @@ fn refuse_unwritable(catalogue: &Catalogue) -> Result<(), ObservationError> {
     msv2_tables::refuse_unwritable(catalogue)
 }
 
-/// Each partition's rows and interval from its grid, the first selected
-/// group's, and the times the grids span; with padding omitted, the
-/// acquisitions counted from the weights.
-fn occupancy(
-    observation: &dyn Observation,
-    group: &str,
-    options: &ConversionOptions,
-) -> Result<Occupancy, ObservationError> {
+/// The times the grids of `group` span: the whole observation's, and each
+/// session's edge to edge, as fillers write `TIME_RANGE`.
+pub(super) fn spans(observation: &dyn Observation, group: &str) -> Result<Spans, ObservationError> {
     let catalogue = observation.catalogue();
-    let groups = [group.to_string()];
-    let mut rows = Vec::with_capacity(catalogue.partitions.len());
-    let mut intervals = Vec::with_capacity(catalogue.partitions.len());
     let empty = [f64::INFINITY, f64::NEG_INFINITY];
     let mut range = empty;
     let mut observation_ranges = vec![empty; catalogue.observations.len()];
@@ -216,6 +208,34 @@ fn occupancy(
                 *session = span(*session, half);
             }
         }
+    }
+    let spanned = |range: [f64; 2]| {
+        if range[0] > range[1] {
+            [0.0, 0.0]
+        } else {
+            range
+        }
+    };
+    Ok(Spans {
+        time_range: spanned(range),
+        observation_ranges: observation_ranges.into_iter().map(spanned).collect(),
+    })
+}
+
+/// Each partition's rows and interval from its grid, the first selected
+/// group's, and the times the grids span; with padding omitted, the
+/// acquisitions counted from the weights.
+fn occupancy(
+    observation: &dyn Observation,
+    group: &str,
+    options: &ConversionOptions,
+) -> Result<Occupancy, ObservationError> {
+    let catalogue = observation.catalogue();
+    let groups = [group.to_string()];
+    let mut rows = Vec::with_capacity(catalogue.partitions.len());
+    let mut intervals = Vec::with_capacity(catalogue.partitions.len());
+    for id in catalogue.partition_ids() {
+        let grid = observation.grid(id, group)?;
         intervals.push(grid.interval_s);
         if options.padding == PaddingRows::Flagged {
             rows.push(grid.times_s.len() * grid.baselines.len());
@@ -241,19 +261,42 @@ fn occupancy(
         )?;
         rows.push(count);
     }
-    let spanned = |range: [f64; 2]| {
-        if range[0] > range[1] {
-            [0.0, 0.0]
-        } else {
-            range
-        }
-    };
     Ok(Occupancy {
         rows,
         intervals,
-        time_range: spanned(range),
-        observation_ranges: observation_ranges.into_iter().map(spanned).collect(),
+        spans: spans(observation, group)?,
     })
+}
+
+/// An in-memory MeasurementSet holding no rows and the subtables an MSv2
+/// converted from `observation` would hold, and the `SPECTRAL_WINDOW` row
+/// of each partition: the namespace a calibration table solved on a store
+/// without one (MSv4) persists. Antennas, fields and sessions keep their
+/// catalogue order.
+///
+/// # Errors
+///
+/// As [`to_msv2`] for what an MSv2's subtables cannot say.
+pub(crate) fn catalogue_subtables(
+    observation: &dyn Observation,
+) -> Result<(MeasurementSet, Vec<i32>), ObservationError> {
+    let catalogue = observation.catalogue();
+    refuse_unwritable(catalogue)?;
+    let spans = match catalogue
+        .partitions
+        .first()
+        .and_then(|entry| entry.data_groups.first())
+    {
+        Some(group) => spans(observation, &group.name)?,
+        None => Spans {
+            time_range: [0.0, 0.0],
+            observation_ranges: vec![[0.0, 0.0]; catalogue.observations.len()],
+        },
+    };
+    let mut ms =
+        MeasurementSet::create_memory(msv2_tables::builder(catalogue, &[])).map_err(storage)?;
+    let layout = msv2_tables::populate(&mut ms, catalogue, &spans)?;
+    Ok((ms, layout.spectral_window))
 }
 
 /// Create the MSv2 at `staging`: its subtables, then MAIN's rows from a
@@ -279,7 +322,7 @@ fn create(
                 .map_err(storage)?;
         }
     }
-    let layout = msv2_tables::populate(&mut ms, catalogue, occupancy)?;
+    let layout = msv2_tables::populate(&mut ms, catalogue, &occupancy.spans)?;
     let names = optional.iter().map(|column| column.name()).collect();
     let mut main = MainRows::start(
         staging,

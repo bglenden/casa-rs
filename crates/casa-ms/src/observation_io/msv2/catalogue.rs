@@ -32,7 +32,7 @@ fn measinfo<'t>(table: &'t Table, column: &str) -> Option<&'t casa_types::Record
 /// A column's fixed `MEASINFO.Ref`, if it names one. A variable reference
 /// (`VarRefCol`) is refused: the trial's views carry one reference per
 /// batch.
-pub(super) fn measure_reference(
+pub(crate) fn measure_reference(
     table: &Table,
     column: &str,
 ) -> Result<Option<String>, ObservationError> {
@@ -53,7 +53,7 @@ pub(super) fn measure_reference(
 /// Require a column's `QuantumUnits`, when present, to be `expected` in
 /// every position. An absent keyword is the MeasurementSet definition's
 /// unit, which is `expected`.
-pub(super) fn require_units(
+pub(crate) fn require_units(
     table: &Table,
     column: &str,
     expected: &str,

@@ -30,6 +30,7 @@ mod to_msv4;
 
 use std::fmt;
 
+pub(crate) use to_msv2::catalogue_subtables;
 pub use to_msv2::to_msv2;
 pub use to_msv4::to_msv4;
 

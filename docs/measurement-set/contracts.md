@@ -91,8 +91,39 @@ identifiers) does not distinguish, but the binding is **one to one**: two
 entities that one catalogue keeps apart never bind to the same entity of the
 other. An entity that matches nothing, more than one, or the same counterpart
 as another is a typed refusal; an ambiguity is never resolved by position.
-Ephemeris is not yet a partition key, and a general calibration binding that
-survives solve, persist, reopen and apply is provisional (section 8).
+Ephemeris is not yet a partition key.
+
+### Binding a calibration table
+
+A calibration table numbers antennas, fields and spectral windows by the rows
+of its own `ANTENNA`, `FIELD` and `SPECTRAL_WINDOW` subtables. Catalogue
+identities are scoped to one opening, so a table never holds them: a store's
+**persisted namespace** (`casa_ms::observation_io::persisted_namespace`) gives
+the subtables a table solved on it carries and the row of each catalogue
+entity there. An MSv2's namespace is its own subtables, its catalogue's
+antennas, fields and sessions being their rows and each partition naming its
+data description's window, so a table written through it is the table CASA's
+`gaincal` writes and applies to that MeasurementSet unchanged. An MSv4 has no
+such rows; its namespace is the subtables its MSv2 conversion holds, in
+catalogue order. The writer translates a solve's catalogue identities to
+those rows and copies the subtables; it never writes a catalogue identity.
+
+Binding a table to a store (`CalibrationBinding`, owned by calibration)
+compares the table's rows with the store's namespace rows, in this order:
+
+1. **Stated associations**, as CASA's `spwmap` states them: a partition's
+   window (several may share one row) and an antenna (one to one).
+2. **CASA's own association**, where the two namespaces have the same rows in
+   the same order, names included: each row binds to its own index, even
+   where two rows hold the same content.
+3. **Content** otherwise: an antenna by station and position, a field by
+   phase centre, a window by frame and channels, or the one channel a gain
+   table collapses them to (the centre channel's frequency, the summed width).
+   Names decide nothing. An entity the other side lacks binds to nothing, so
+   an antenna subset applies as CASA applies a table missing an antenna
+   (`calflag` flags its samples). Two candidates, or two entities claiming
+   one row, are refused: equal grids or positions alone do not prove two rows
+   are one entity.
 
 ### One topology: the time × baseline grid
 
@@ -923,7 +954,7 @@ when its acceptance obligation is met.
 | Updates | The write-back trial's update sessions (section 7) | Section 7's remaining obligations: bit flags and flag categories, conflicting queued patches, structural writes (a new MSv4 data group), per-batch MSv2 planning, a killed process, stray temporary files and the synchronization cost at scale |
 | MSv2 creation from batches; general creation and loss policy | The MSv4 writer (one dataset or a processing set of many), and the converter's MSv2 creator: padded cells flagged NaN rows, or no row by declared policy (the occupancy row above), losses inventoried and refused unless accepted before anything is written, `SIGMA` derived from the weights as an accepted loss | Cells in time order become rows, padded cells flagged NaN rows; cross-format creation preflights metadata, flag and occupancy mappings and rejects unapproved loss |
 | Mixed read/update sessions and locking | One update session per store in a process, one updater per session, read-only opens beside them; casacore's lock per MSv2 updater | Plan read and write access before locking, no implicit upgrade; original-input semantics need disjoint read and write regions after resolving aliases, or a proven read-before-write order; casacore cross-process locks stay authoritative for v2; the v4 profile reports that it has no cross-process lock protocol |
-| Calibration binding across stores | Observation-to-observation `bind_to` | Solve, persist, close, permute partition and catalogue enumeration, reopen and apply, with overlapping antenna subsets and ambiguous-name rejection; CASA's v2 associations and SPW mapping preserved |
+| Calibration binding across stores | Section 2's persisted namespace and calibration binding, in the calibration trial (test code until the calibration port): a batch solve persisted through an MSv2's namespace is production `gaincal`'s table; one solved on an MSv4 lacking an antenna, rebound to the full MSv2 that numbers its antennas otherwise and applied from batches, equals production `gaincal` and `applycal`, and CASA's `applycal` reads the MSv4-namespace table as casa-rs does; reordered antennas and windows, renamed entities, subsets, equal content refused unless the namespace is the table's own or the association is stated (trial README, "Caltable round trip") | The binding in production, with `gainfield` and nearest-field selection through bound fields; bandpass and other per-channel tables, whose windows keep their channels; tables solved over combined windows; `FEED` and receptor association; a field binding tolerant of ephemeris fields |
 | Ephemeris, pointing and time-dependent metadata | Ephemeris is not a partition key; pointing not read | Queried in bounded windows; ephemeris keys partitions as XRADIO's converter does |
 | Baseline-dependent polarization (`polarization_mixed`) | Refused at opening | A checked per-baseline basis mapping in the common metadata |
 | Centroid extra precision (`TIME_CENTROID_EXTRA_PRECISION`) | Refused when centroids are requested | The residual carried through the epoch view, slicing, packing and writing; adding it to a large f64 is not a substitute |

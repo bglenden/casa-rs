@@ -3,7 +3,7 @@
 //! baseline grid of their partition at opening, delivered as the batches
 //! MSv4 holds natively.
 
-mod catalogue;
+pub(super) mod catalogue;
 mod cursor;
 mod index;
 pub(super) mod update;
@@ -209,6 +209,11 @@ impl Msv2Observation {
     #[must_use]
     pub fn catalogue(&self) -> &Arc<Catalogue> {
         &self.catalogue
+    }
+
+    /// The MeasurementSet it reads.
+    pub(crate) fn into_measurement_set(self) -> MeasurementSet {
+        self.ms
     }
 
     /// The `SPECTRAL_WINDOW` row of partition `id`'s data description:

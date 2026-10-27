@@ -6,6 +6,9 @@
 #[cfg(unix)]
 #[path = "observation_io/convert.rs"]
 mod convert;
+#[cfg(unix)]
+#[path = "observation_io/namespace.rs"]
+mod namespace;
 #[path = "observation_io/refusals.rs"]
 mod refusals;
 #[path = "observation_io/times.rs"]

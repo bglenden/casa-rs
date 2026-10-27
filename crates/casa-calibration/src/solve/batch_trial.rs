@@ -12,6 +12,8 @@
 //! interface; this module opens the stores, runs the production solve, and
 //! compares.
 
+mod binding;
+mod caltable;
 mod feed;
 
 use std::fs::File;
