@@ -15,6 +15,7 @@ use std::path::Path;
 
 use casa_simulation::{
     CasaOutcome, NoiseSpec, PredictionOptions, Simulator, SimulatorOptions, SimulatorResult,
+    VoltagePatternSpec,
 };
 use casa_tables::{Table, TableOptions};
 use casa_types::measures::{EpochRef, MEpoch};
@@ -96,6 +97,29 @@ fn predict_and_corrupt_after_openfromms_write_the_same_data() {
         one.iter()
             .any(|row| row.data.iter().any(|value| value.norm() > 0.0))
     );
+    assert_eq!(bits(&data(&one)), bits(&data(&two)));
+}
+
+/// A `predict` under the beam over the two fields after `openfromms`, whose
+/// grids `close` prepares for each field as the patch reaches it, writes
+/// the DATA the session that observed writes.
+#[test]
+fn a_predict_under_the_beam_after_openfromms_writes_the_same_data() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let model = extended_model(directory.path(), "model.image");
+    let steps = |sm: &mut Simulator| {
+        sm.set_vp(&VoltagePatternSpec::default())?;
+        sm.predict(&predict_spec(&model, false))
+    };
+    let (one, two) = two_stage(directory.path(), &observed, &nothing, &steps);
+    for field in 0..2 {
+        assert!(
+            one.iter()
+                .filter(|row| row.field == field)
+                .any(|row| row.data.iter().any(|value| value.norm() > 0.0)),
+            "field {field} is predicted"
+        );
+    }
     assert_eq!(bits(&data(&one)), bits(&data(&two)));
 }
 

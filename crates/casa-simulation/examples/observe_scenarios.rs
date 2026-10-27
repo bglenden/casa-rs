@@ -8,10 +8,11 @@
 //! for `tools/simulation/compare_sm_ms.py`.
 //!
 //! casa-rs stores TIME as UTC (plan decision 5) where CASA stores TAI under
-//! a UTC label. So that the rows compare at equal stored TIME,
-//! `--casa-time-shift-s` (default 37, TAI − UTC since 2017) is added to every
-//! observe's start and stop. The reference time is left unchanged, so the
-//! hour-angle offset and SOURCE.TIME stay the same.
+//! a UTC label. So that the rows compare at equal stored TIME, TAI − UTC at
+//! the scenario's `settimes` reference epoch, from the measures data, is
+//! added to every observe's start and stop; when the manifest records CASA's
+//! value (`casa_tai_minus_utc_s`), the two must agree. The reference time is
+//! left unchanged, so the hour-angle offset and SOURCE.TIME stay the same.
 //!
 //! Scenarios may also call `setseed`, `setnoise` (`simplenoise` in Jy, or
 //! `tsys-manual` or `tsys-atm` with their parameters; `pwv` in mm, `pground`
@@ -38,7 +39,7 @@
 //!
 //! ```text
 //! cargo run --release -p casa-simulation --example observe_scenarios -- \
-//!     <casa-oracle-dir>/manifest.json <out-dir> [--casa-time-shift-s 37] \
+//!     <casa-oracle-dir>/manifest.json <out-dir> \
 //!     [--simplenoise-jy 0.1 [--seed 11111]] [--workers 4] \
 //!     [--memory-budget 1073741824] [--backend auto]
 //! ```
@@ -46,6 +47,7 @@
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use casa_simulation::{
@@ -56,7 +58,7 @@ use casa_simulation::{
 };
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::frequency::FrequencyRef;
-use casa_types::measures::{EpochRef, MEpoch, MPosition};
+use casa_types::measures::{EpochRef, MEpoch, MPosition, MeasFrame, MeasuresProvider};
 use serde_json::Value;
 use tracing_subscriber::filter::Targets;
 use tracing_subscriber::layer::SubscriberExt;
@@ -412,10 +414,37 @@ fn replace_with_copy(from: &Path, to: &Path) {
     }
 }
 
+/// TAI − UTC at `epoch` (UTC), seconds, from the measures data: CASA's
+/// simulator stores TAI seconds under the UTC label at this offset.
+fn tai_minus_utc_s(epoch: &MEpoch, measures: &Arc<dyn MeasuresProvider>) -> f64 {
+    let frame = MeasFrame::new().with_measures(measures.clone());
+    let tai = epoch
+        .convert_to(EpochRef::TAI, &frame)
+        .expect("the reference epoch in TAI");
+    let (utc, tai) = (epoch.value(), tai.value());
+    // Days and fractions apart, which keeps the microseconds an MJD loses.
+    ((tai.day() - utc.day()) + (tai.frac() - utc.frac())) * 86_400.0
+}
+
+/// The shift of every observe after `settimes(referencetime=reference)`:
+/// TAI − UTC there, which must agree with CASA's when the manifest records
+/// it.
+fn time_shift_s(scenario: &Value, reference: &MEpoch, measures: &Arc<dyn MeasuresProvider>) -> f64 {
+    let shift_s = tai_minus_utc_s(reference, measures);
+    // CASA's value is an MJD difference, rounded to about a microsecond.
+    if let Some(casa) = scenario["casa_tai_minus_utc_s"].as_f64() {
+        assert!(
+            (shift_s - casa).abs() < 1e-3,
+            "{}: TAI - UTC {shift_s} s by casa-rs's measures, {casa} s by CASA's",
+            scenario["name"]
+        );
+    }
+    shift_s
+}
+
 fn run_scenario(
     scenario: &Value,
     out: &Path,
-    shift_s: f64,
     extra_noise: Option<ExtraNoise>,
     resources: SessionResources,
 ) {
@@ -425,6 +454,8 @@ fn run_scenario(
         resources,
         now: now_utc(),
     };
+    // Until `settimes`, CASA's reference is the session's opening.
+    let mut shift_s = time_shift_s(scenario, &options.now, &options.measures);
     let path = out.join(format!("{name}.ms"));
     let mut session = Some(Simulator::open(&path, options.clone()));
     let calls = scenario["calls"].as_array().expect("calls");
@@ -479,13 +510,17 @@ fn run_scenario(
             "setlimits" => {
                 session.set_limits(number(call, "shadowlimit"), number(call, "elevationlimit"))
             }
-            "settimes" => session
-                .set_times(
-                    number(call, "integrationtime"),
-                    call["usehourangle"].as_bool().expect("usehourangle"),
-                    MEpoch::from_mjd(number(call, "referencetime"), EpochRef::UTC),
-                )
-                .expect("settimes"),
+            "settimes" => {
+                let reference = MEpoch::from_mjd(number(call, "referencetime"), EpochRef::UTC);
+                shift_s = time_shift_s(scenario, &reference, &options.measures);
+                session
+                    .set_times(
+                        number(call, "integrationtime"),
+                        call["usehourangle"].as_bool().expect("usehourangle"),
+                        reference,
+                    )
+                    .expect("settimes");
+            }
             "setfield" => {
                 let direction = numbers(call, "sourcedirection");
                 session
@@ -536,15 +571,11 @@ fn main() {
     let mut args = std::env::args().skip(1);
     let manifest = PathBuf::from(args.next().expect("manifest.json"));
     let out = PathBuf::from(args.next().expect("output directory"));
-    let mut shift_s = 37.0;
     let mut sigma_jy = None;
     let mut seed = None;
     let mut controls = ExecutionControls::default();
     while let Some(flag) = args.next() {
         match flag.as_str() {
-            "--casa-time-shift-s" => {
-                shift_s = args.next().expect("seconds").parse().expect("a number");
-            }
             "--simplenoise-jy" => {
                 sigma_jy = Some(args.next().expect("Jy").parse().expect("a number"));
             }
@@ -592,6 +623,6 @@ fn main() {
             .expect("manifest JSON");
     std::fs::create_dir_all(&out).expect("output directory");
     for scenario in manifest["scenarios"].as_array().expect("scenarios") {
-        run_scenario(scenario, &out, shift_s, extra_noise, resources);
+        run_scenario(scenario, &out, extra_noise, resources);
     }
 }

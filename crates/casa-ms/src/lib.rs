@@ -61,6 +61,7 @@ mod plot_visibility;
 pub mod presentation;
 mod probes;
 pub mod schema;
+pub mod scratch_columns;
 mod selected_observation;
 mod selected_observation_buffer;
 mod selected_pointing;

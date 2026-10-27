@@ -23,6 +23,10 @@ pub(crate) struct CalibrationTableDescriptor<'a> {
     pub schema: TableSchema,
     pub subtype: &'a str,
     pub parameter_type: Option<&'a str>,
+    /// The MeasurementSet solved on, as a path or a name; the table records
+    /// its base name as `MSName`, as CASA's `NewCalTable::setMetaInfo`
+    /// does, and CASA appends only to a table whose `MSName` is the one it
+    /// would write.
     pub measurement_set_name: String,
     pub include_polarization_basis: bool,
     pub time_extra_precision_column: Option<&'a str>,
@@ -111,9 +115,14 @@ impl<'a> CalibrationTableWriter<'a> {
             sub_type: descriptor.subtype.to_string(),
             readme: Vec::new(),
         });
+        let measurement_set_name = Path::new(&descriptor.measurement_set_name)
+            .file_name()
+            .map_or(descriptor.measurement_set_name.clone(), |name| {
+                name.to_string_lossy().into_owned()
+            });
         for (key, value) in [
             (KEY_VIS_CAL, descriptor.subtype.to_string()),
-            (KEY_MS_NAME, descriptor.measurement_set_name),
+            (KEY_MS_NAME, measurement_set_name),
             (KEY_CASA_VERSION, "casa-rs".to_string()),
         ] {
             table

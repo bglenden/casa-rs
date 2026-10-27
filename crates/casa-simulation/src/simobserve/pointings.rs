@@ -9,9 +9,7 @@ use casa_types::quanta::Quantity;
 use super::antennas::Array;
 use super::sky::Sky;
 use super::{Run, SimobserveError, entry_exists, make_way, python, remove};
-use crate::simutil::direction::{
-    average_direction, is_direction, median_direction, split_direction,
-};
+use crate::simutil::direction::{Directions, is_direction, median_direction, split_direction};
 use crate::simutil::pointings::{PBCOEFF, calc_pointings, read_pointings, write_pointings};
 use crate::simutil::{SimutilError, qa};
 
@@ -40,9 +38,14 @@ pub(super) fn prepare(
 ) -> Result<Pointings, SimobserveError> {
     let parameters = run.parameters;
     let model = &sky.model;
-    let (directions, centre) = match parameters.direction.first() {
-        Some(first) if is_direction(first) => (parameters.direction.clone(), first.clone()),
-        _ => (vec![model.refdir.clone()], model.refdir.clone()),
+    // A list whose first is a direction, or a direction string; the
+    // model's centre otherwise.
+    let (directions, centre) = match &parameters.direction {
+        Directions::List(list) if list.first().is_some_and(|first| is_direction(first)) => {
+            (parameters.direction.clone(), list[0].clone())
+        }
+        Directions::One(one) if is_direction(one) => (parameters.direction.clone(), one.clone()),
+        _ => (Directions::One(model.refdir.clone()), model.refdir.clone()),
     };
     let (integration, integration_s) = integration(&parameters.integration)?;
     let beam = array.primary_beam_arcsec;
@@ -53,25 +56,22 @@ pub(super) fn prepare(
             tracing::info!("pointing spacing in mosaic = {spacing}");
         }
         let size = map_size(&parameters.mapsize, &model.size)?;
-        let listed = if directions.len() > 1 {
-            average_direction(&directions)?;
-            if parameters.verbose {
-                tracing::warn!(
-                    "you are inputing the precise pointings in 'direction' - if you want to \
-                     calculate a mosaic, give a single direction string and set maptype"
-                );
-            }
-            directions
-        } else {
-            calc_pointings(
-                &qa::read(&spacing)?,
-                [&size[0], &size[1]],
-                &parameters.maptype,
-                &directions[0],
-                RELATIVE_MARGIN,
-                beam,
-            )?
-        };
+        // `calc_pointings2` returns a list of several as it is, once each
+        // splits.
+        let listed = calc_pointings(
+            &qa::read(&spacing)?,
+            [&size[0], &size[1]],
+            &parameters.maptype,
+            &directions,
+            RELATIVE_MARGIN,
+            beam,
+        )?;
+        if parameters.verbose && matches!(&directions, Directions::List(list) if list.len() > 1) {
+            tracing::warn!(
+                "you are inputing the precise pointings in 'direction' - if you want to \
+                 calculate a mosaic, give a single direction string and set maptype"
+            );
+        }
         let scan_s = qa::value_in(&qa::read(&integration)?, "s")?;
         let times_s = vec![scan_s; listed.len()];
         let pointings = Pointings {

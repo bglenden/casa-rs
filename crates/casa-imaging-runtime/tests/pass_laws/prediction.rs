@@ -71,7 +71,7 @@ fn predict_alone(domains: &[PredictionDomain<'_>], rows: &Rows) -> Vec<Complex32
                 .predict_row(
                     domain.operator,
                     &mut CpuBackend::new(),
-                    domain.model,
+                    &domain.model,
                     &block.row(domain_index, index),
                     &mut PredictionScratch::default(),
                     &mut alone,
@@ -121,7 +121,7 @@ fn the_cpu_block_predictor_predicts_each_row_as_alone() {
             let domains = [PredictionDomain {
                 operator: &operator,
                 resampler: &resampler,
-                model: &model,
+                model: (&model).into(),
             }];
             let predicted = predict(&domains, &rows, BackendChoice::Cpu, 2, BLOCK_ROWS);
             assert!(
@@ -156,7 +156,7 @@ fn block_predictions_do_not_depend_on_workers_chunks_or_blocks() {
     let domains = [PredictionDomain {
         operator: &operator,
         resampler: &resampler,
-        model: &model,
+        model: (&model).into(),
     }];
     let reference = predict(&domains, &rows, BackendChoice::Cpu, 1, BLOCK_ROWS);
     for (workers, block_rows) in [(2, BLOCK_ROWS), (3, 5), (4, 1), (1, 5)] {
@@ -198,12 +198,12 @@ fn a_block_predictor_sums_its_domains() {
         PredictionDomain {
             operator: &first,
             resampler: &resampler,
-            model: &first_model,
+            model: (&first_model).into(),
         },
         PredictionDomain {
             operator: &second,
             resampler: &resampler,
-            model: &second_model,
+            model: (&second_model).into(),
         },
     ];
     let summed = predict(&domains, &rows, BackendChoice::Cpu, 3, BLOCK_ROWS);
@@ -228,7 +228,7 @@ fn a_block_predictor_without_domains_or_workers_is_refused() {
     let domains = [PredictionDomain {
         operator: &operator,
         resampler: &resampler,
-        model: &model,
+        model: (&model).into(),
     }];
     assert!(matches!(
         BlockPredictor::new(&domains, BackendChoice::Cpu, shape, 0, false),
@@ -257,12 +257,12 @@ fn metal_block_predictions_equal_the_cpus() {
             PredictionDomain {
                 operator: &first,
                 resampler: &resampler,
-                model: &first_model,
+                model: (&first_model).into(),
             },
             PredictionDomain {
                 operator: &second,
                 resampler: &resampler,
-                model: &second_model,
+                model: (&second_model).into(),
             },
         ];
         for (workers, block_rows) in [(1, BLOCK_ROWS), (3, 29)] {

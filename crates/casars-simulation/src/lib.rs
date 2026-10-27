@@ -22,6 +22,7 @@ use std::time::Instant;
 
 use casa_provider_contracts::{RunProductKind, SurfaceContractBundle};
 use casa_simulation::simobserve::{SimobserveParameters, SimobserveRequest, simobserve};
+use casa_simulation::simutil::direction::Directions;
 use casa_simulation::{ExecutionControls, SessionResources, SimulatorOptions};
 use casa_task_runtime::{
     parse_parameter_cli_overrides, resolve_active_values, resolve_plain_values,
@@ -62,6 +63,16 @@ fn parameters_from(
             _ => Err(missing(name, "a list of strings")),
         }
     };
+    // The contract resolves a direction string to a list of one, so one
+    // direction is taken as a string, and several as the pointings.
+    let directions = |name: &str| -> Result<Directions, String> {
+        let mut many = texts(name)?;
+        Ok(match many.len() {
+            0 => Directions::One(String::new()),
+            1 => Directions::One(many.remove(0)),
+            _ => Directions::List(many),
+        })
+    };
     let flag = |name: &str| {
         resolved
             .get(name)
@@ -94,7 +105,7 @@ fn parameters_from(
         setpointings: flag("setpointings")?,
         ptgfile: text("ptgfile")?,
         integration: text("integration")?,
-        direction: texts("direction")?,
+        direction: directions("direction")?,
         mapsize: texts("mapsize")?,
         maptype: text("maptype")?,
         pointingspacing: text("pointingspacing")?,
@@ -329,9 +340,39 @@ mod tests {
         ))
         .expect("JSON");
         assert_eq!(from_flags, from_json);
-        assert_eq!(from_json.direction, ["J2000 19h00m00 -23d00m00"]);
+        assert_eq!(
+            from_json.direction,
+            Directions::One("J2000 19h00m00 -23d00m00".to_string())
+        );
         assert!(!from_json.overwrite);
         assert_eq!(from_json.ptgfile, "$project.ptg.txt");
+        // A list of one is its direction; several are the pointings.
+        let directions = |value: Value| {
+            let mut json = json.as_object().expect("an object").clone();
+            json.insert("direction".to_string(), value);
+            resolve_request(&SimobserveTaskParameters(json))
+                .expect("JSON")
+                .1
+                .direction
+        };
+        assert_eq!(
+            directions(serde_json::json!(["J2000 19h00m00 -23d00m00"])),
+            from_json.direction
+        );
+        assert_eq!(
+            directions(serde_json::json!([
+                "J2000 19h00m00 -23d00m00",
+                "J2000 19h00m01 -23d00m00"
+            ])),
+            Directions::List(vec![
+                "J2000 19h00m00 -23d00m00".to_string(),
+                "J2000 19h00m01 -23d00m00".to_string()
+            ])
+        );
+        assert_eq!(
+            directions(serde_json::json!([])),
+            Directions::One(String::new())
+        );
     }
 
     #[test]

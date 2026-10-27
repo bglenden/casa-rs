@@ -13,6 +13,7 @@ use casa_components::{
 };
 use casa_ms::MeasurementSet;
 use casa_simulation::simobserve::{SimobserveParameters, SimobserveRequest, simobserve};
+use casa_simulation::simutil::direction::Directions;
 use casa_simulation::{ExecutionControls, SessionResources, SimulatorOptions};
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::frequency::{FrequencyRef, MFrequency};
@@ -364,7 +365,9 @@ fn what_casa_refuses_is_refused_with_its_message() {
         "Invalid reference date 2014-01-01"
     );
     assert_eq!(
-        refusal(|parameters| parameters.direction = vec!["J2000 10h00m00 +40d00m00".to_string()]),
+        refusal(|parameters| {
+            parameters.direction = Directions::One("J2000 10h00m00 +40d00m00".to_string());
+        }),
         "No overlap between model and pointings"
     );
     // CASA's observing loop never ends for pointings of no length.

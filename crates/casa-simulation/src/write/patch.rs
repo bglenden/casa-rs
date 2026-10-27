@@ -37,7 +37,7 @@
 //! sessions' steps, bit for bit; an incremental `predict` adds to the DATA
 //! on disk rather than within the predictor, which rounds apart.
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use casa_imaging_runtime::pass::{BackendChoice, WorkerTeam};
 use casa_imaging_runtime::{
@@ -62,7 +62,7 @@ use super::components::{self, add_components};
 use super::geometry::{ArrayGeometry, RowGeometry};
 use super::pipeline::{MINIMUM_NOISE_JOB_ROWS, NoiseContext, NoiseJob, batch_scales, noise_jobs};
 use super::prediction::{PredictionStage, device_noise};
-use super::resources::NoiseScales;
+use super::resources::{NoiseScales, admit_field_grids};
 use super::{cell_shape, noise_varies_by_row, write_error};
 use crate::session::SessionResources;
 use crate::session::Simulator;
@@ -114,6 +114,8 @@ struct PatchAdmission {
     plan: MeasurementSetWritePlan,
     cores: CoreAllocation,
     block_rows: usize,
+    /// Bytes the per-field model grids may hold.
+    grid_bytes: u64,
     reservation: Reservation,
 }
 
@@ -176,7 +178,11 @@ pub(crate) fn patch_measurement_set(session: &Simulator) -> SimulatorResult<()> 
     }
     refuse_partly_flagged_rows(&ms, &shape, admission.plan.batch_rows().max(1))?;
     if let Some(stage) = &mut prediction {
-        stage.start(admission.block_rows, admission.cores.streaming_workers);
+        stage.start(
+            admission.block_rows,
+            admission.cores.streaming_workers,
+            admission.grid_bytes,
+        );
     }
     let team = WorkerTeam::new(admission.cores.streaming_workers)
         .map_err(|error| SimulatorError::raised(format!("the worker team: {error}")))?;
@@ -225,6 +231,10 @@ pub(crate) fn patch_measurement_set(session: &Simulator) -> SimulatorResult<()> 
     let written = writer
         .finish_mutation()
         .map_err(write_error("finish the MAIN patch"))?;
+    let (grid_preparations, grid_prepare) = patch
+        .prediction
+        .as_ref()
+        .map_or((0, Duration::ZERO), PredictionStage::grid_preparations);
     tracing::info!(
         rows = shape.rows,
         columns = ?columns,
@@ -233,6 +243,9 @@ pub(crate) fn patch_measurement_set(session: &Simulator) -> SimulatorResult<()> 
         backend = ?patch.prediction.as_ref().map(PredictionStage::backend),
         workers = admission.cores.streaming_workers,
         block_rows = admission.block_rows,
+        grid_bytes = admission.grid_bytes,
+        grid_preparations,
+        grid_prepare_s = grid_prepare.as_secs_f64(),
         reserved_bytes = admission.reservation.memory(),
         peak_reserved_bytes = window.close(),
         bytes_written = written.bytes_written,
@@ -722,10 +735,12 @@ fn admit_patch(
     )
     .map_err(SimulatorError::admission)?;
     reservation.join(pipeline);
+    let grid_bytes = admit_field_grids(resources, prediction, &mut reservation)?;
     Ok(PatchAdmission {
         plan,
         cores,
         block_rows,
+        grid_bytes,
         reservation,
     })
 }

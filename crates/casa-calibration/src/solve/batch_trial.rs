@@ -260,7 +260,7 @@ fn production(ms: &MeasurementSet, root: &Path) -> Vec<SolutionRow> {
     let request = gain_request(root.join("production.G"));
     let report = solve_gain(ms, &request).expect("production gaincal");
     assert_eq!(report.solution_row_count, 10, "5 antennas x 2 intervals");
-    solve_gain_rows(ms, &request).expect("production rows").0
+    solve_gain_rows(ms, &request).expect("production rows").rows
 }
 
 /// The production refant (antenna 0 of the MeasurementSet) in `binding`'s
@@ -291,7 +291,7 @@ fn batch_fed_solves_equal_the_production_gaincal() {
         // agrees with itself only to rounding in its SNR and weights.
         let again = solve_gain_rows(&stores.ms, &request)
             .expect("production rows")
-            .0;
+            .rows;
         println!(
             "production against itself: {:?}",
             agreement(&expected, &again)

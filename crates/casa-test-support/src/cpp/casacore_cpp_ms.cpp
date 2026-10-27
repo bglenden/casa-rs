@@ -133,6 +133,11 @@ std::string array_shape_tag(const casacore::RecordInterface& rec, casacore::uInt
     os << '[';
     auto emit_shape = [&](const auto& arr) {
         const auto& shape = arr.shape();
+        // An empty IPosition is shown as [0], as casa-rs reads it (#923).
+        if (shape.nelements() == 0) {
+            os << 0;
+            return;
+        }
         for (casacore::uInt axis = 0; axis < shape.nelements(); ++axis) {
             if (axis > 0) {
                 os << ',';
@@ -169,6 +174,13 @@ template<typename T, typename Emit>
 void digest_array_value(StableDigest& digest, const casacore::Array<T>& value, Emit emit)
 {
     const auto& shape = value.shape();
+    // An empty IPosition holds no elements; casa-rs, which has no
+    // 0-dimensional empty array, reads and stores it as [0] (#923).
+    if (shape.nelements() == 0) {
+        digest.write_u64(1);
+        digest.write_u64(0);
+        return;
+    }
     digest.write_u64(static_cast<uint64_t>(shape.nelements()));
     for (casacore::uInt axis = 0; axis < shape.nelements(); ++axis) {
         digest.write_u64(static_cast<uint64_t>(shape[axis]));

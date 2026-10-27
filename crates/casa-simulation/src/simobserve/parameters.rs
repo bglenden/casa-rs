@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! `simobserve`'s parameters, with CASA 6.7.6's names, types and defaults.
 
+use crate::simutil::direction::Directions;
+
 /// CASA's `simobserve` parameters, as `casatasks.simobserve` takes them.
 ///
 /// The defaults are CASA 6.7.6's. `compwidth`'s is CASA's literal
@@ -39,8 +41,13 @@ pub struct SimobserveParameters {
     /// The integration time (`integration`).
     pub integration: String,
     /// The map's centre, or the pointings themselves when there are several
-    /// (`direction`); the model's centre when empty.
-    pub direction: Vec<String>,
+    /// (`direction`); the model's centre when empty. One direction lays a
+    /// map out ([`Directions::One`]); several are the pointings
+    /// ([`Directions::List`]). A list of one, which CASA centres at its
+    /// mean rounded at precision 5 ([`Directions::split`]), is taken as its
+    /// direction: the task contract resolves a string to a list of one
+    /// (`docs/CASA (C++) bugs.md`).
+    pub direction: Directions,
     /// The map's size (`mapsize`); the model's when empty.
     pub mapsize: Vec<String>,
     /// The map's layout: `hexagonal`, `square`, `ALMA` or `ALMA2012`
@@ -115,7 +122,7 @@ impl Default for SimobserveParameters {
             setpointings: true,
             ptgfile: "$project.ptg.txt".to_string(),
             integration: "10s".to_string(),
-            direction: Vec::new(),
+            direction: Directions::One(String::new()),
             mapsize: vec![String::new(), String::new()],
             maptype: "hexagonal".to_string(),
             pointingspacing: String::new(),

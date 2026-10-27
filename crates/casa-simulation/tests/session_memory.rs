@@ -66,6 +66,12 @@
 //! cells, one set of grids, and a pointing for each phase centre), however
 //! many pointings it keeps.
 //!
+//! A law in `session_memory/field_grids.rs` predicts a 1700² model under
+//! the beam over two fields, observed twice each (#841): `predict` keeps the
+//! model's planes and no field's grids, and `close` holds its admission
+//! with a budget for every field's grids and with the least budget that
+//! closes, which holds one set and frees it before it prepares the next.
+//!
 //! Two laws, in `session_memory/patch.rs`, patch a MeasurementSet
 //! `openfromms` opened (#841 Phase 2): `close` holds no more than it is
 //! admitted, and nothing beyond that grows with the rows, or with the
@@ -84,6 +90,8 @@
 
 #[path = "session_memory/apply.rs"]
 mod apply;
+#[path = "session_memory/field_grids.rs"]
+mod field_grids;
 #[path = "session_memory/gain_setters.rs"]
 mod gain_setters;
 #[path = "session_memory/jones.rs"]
@@ -305,13 +313,18 @@ fn resources(budget: u64) -> SessionResources {
 /// A one-plane Stokes I model of a few points around [`CENTRE_RAD`], its
 /// plane spanning `channels` channels from [`FREQUENCY_HZ`].
 fn write_model(path: &Path, channels: usize) {
+    write_model_of(path, channels, PIXELS);
+}
+
+/// [`write_model`] of `pixels` pixels a side.
+fn write_model_of(path: &Path, channels: usize, pixels: usize) {
     let mut coordinates = ImageCoordinates::new();
     coordinates.add_coordinate(DirectionCoordinate::new(
         DirectionRef::J2000,
         Projection::new(ProjectionType::SIN),
         CENTRE_RAD,
         [-CELL_RAD, CELL_RAD],
-        [(PIXELS / 2) as f64, (PIXELS / 2) as f64],
+        [(pixels / 2) as f64, (pixels / 2) as f64],
     ));
     coordinates.add_coordinate(StokesCoordinate::new(vec![StokesType::I]));
     let centre_hz = FREQUENCY_HZ + (channels as f64 - 1.0) / 2.0 * CHANNEL_HZ;
@@ -322,14 +335,19 @@ fn write_model(path: &Path, channels: usize) {
         0.0,
         centre_hz,
     ));
-    let shape = vec![PIXELS, PIXELS, 1, 1];
+    let shape = vec![pixels, pixels, 1, 1];
     let mut image =
         PagedImage::<f32>::create(shape.clone(), coordinates, path).expect("create model");
-    let mut pixels = ArrayD::zeros(IxDyn(&shape));
-    for (x, y, flux) in [(32, 32, 1.0_f32), (41, 28, 0.5), (12, 50, 0.25)] {
-        pixels[IxDyn(&[x, y, 0, 0])] = flux;
+    let mut values = ArrayD::zeros(IxDyn(&shape));
+    let centre = pixels / 2;
+    for (x, y, flux) in [
+        (centre, centre, 1.0_f32),
+        (centre + 9, centre - 4, 0.5),
+        (centre - 20, centre + 18, 0.25),
+    ] {
+        values[IxDyn(&[x, y, 0, 0])] = flux;
     }
-    image.put_slice(&pixels, &[0, 0, 0, 0]).expect("pixels");
+    image.put_slice(&values, &[0, 0, 0, 0]).expect("pixels");
     image.set_units("Jy/pixel").expect("units");
     image.save().expect("save model");
 }

@@ -100,8 +100,9 @@ Requirements:
     sets 185349251.
   - Task defaults are the Python signature defaults; casashell's differ.
 - **TIME is TAI labelled UTC.** Verified 2026-10-20 with CASA 6.7: data start
-  37 s after the requested epoch. UVW is computed with that stored number read
-  as UT1, so the data are self-consistent; only the schedule is shifted.
+  TAI − UTC at the reference epoch after the requested epoch (37 s for a 2026
+  epoch). UVW is computed with that stored number read as UT1, so the data
+  are self-consistent; only the schedule is shifted.
 - **`simobserve`, `simanalyze`, `simalma` and `simutil` are Python.** They
   cover:
   - sky-model rescaling;
@@ -203,8 +204,9 @@ Requirements:
 5. **TIME honours the requested UTC.**
    - The divergence is recorded.
    - CASA computed its geometry at the requested time + (TAI − UTC). A parity
-     run therefore requests a start 37 s later, and compares rows at equal
-     stored TIME.
+     run therefore requests a start later by TAI − UTC at the reference
+     epoch, taken from the measures data, and compares rows at equal stored
+     TIME.
 6. **DATA only, unless a later step needs MODEL_DATA.**
    - MODEL_DATA is created only when something needs it. Nothing in Phase 1
      does: `predict(incremental=True)` adds its prediction in the deferred
@@ -271,6 +273,15 @@ These choices are open to objection.
   The simulator builds no second budget or worker model.
 - **Backends.** `auto` chooses Metal where it is available and pays: standard
   and mosaic kernels. W-projection is CPU-only until Metal W lands (#653).
+- **Per-field beam grids.** Under `setvp(dovp=True)` with several fields,
+  each field's grids have the beam centred on it. `predict` holds the
+  model's planes, and `close` prepares a field's grids as its write
+  reaches the field, keeping as many sets as its budget leaves after the
+  workers. It evicts the set used again latest, and prepares a field again
+  when it returns, as CASA's `GridFT` transforms the model again at each
+  field change. The MeasurementSet does not depend on the budget. Holding
+  one set per field from `predict` refused a 106-pointing mosaic of a
+  1873² model, which needed 5.3 GB.
 - **Total power (`sd`)** is image-plane sampling of the model convolved with
   the primary beam, inside `casa-simulation`. ADR-0016 keeps the operator to
   four kernel sets.
