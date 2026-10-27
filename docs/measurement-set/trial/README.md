@@ -1277,6 +1277,20 @@ equal.
 Unit law: `sigma_weights_follow_casas_column_rule` (the MSv2 adapter's column
 choice for the four combinations of spectral columns).
 
+**Measurement** (`ms_trial_read_passes --weights stored|sigma` on `pilot.ms`,
+MSv2: 64 partitions, 2.02 million samples, every role; Mac mini, release
+build, passes 2 and 3 of three, two rounds each):
+
+| Read | 1 worker | 4 workers |
+| --- | --- | --- |
+| Stored weights, before this change | 1.89–1.90 s | 0.65–0.66 s |
+| Stored weights | 1.89–1.90 s | 0.65–0.66 s |
+| 1/σ² of `SIGMA` | 1.89–1.90 s | 0.65 s |
+
+The stored path costs what it did, and reading sigmas instead of weights
+costs nothing measurable: the same number of cells is read, and the
+transform is one pass over the values already in cache.
+
 **Not done:** a per-cell fallback where a sigma cell is undefined (an
 undefined cell is a read error, as for every role); `SIGMA` written by an
 updater.
