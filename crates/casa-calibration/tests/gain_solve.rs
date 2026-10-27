@@ -1222,28 +1222,43 @@ impl GainTableWindow {
         }
     }
 
-    /// One channel of `width` at `frequency`, its effective bandwidth,
-    /// resolution and total bandwidth `width` too.
-    fn one(frequency: f64, width: f64, flagged: bool) -> Self {
+    /// A window a solve reached: one channel of `width` at `frequency`, its
+    /// effective bandwidth `width` and its resolution and total bandwidth
+    /// `frequency`, as CASA writes them.
+    fn solved(frequency: f64, width: f64, flagged: bool) -> Self {
         Self {
             channels: 1,
             frequency: vec![frequency],
             width: vec![width],
             effective_bw: vec![width],
-            resolution: vec![width],
-            total_bandwidth: width,
+            resolution: vec![frequency],
+            total_bandwidth: frequency,
             flagged,
+        }
+    }
+
+    /// The fixture's second window, which no solve reached: collapsed over
+    /// its two 1 MHz channels from 1.1 GHz, its total bandwidth the
+    /// MeasurementSet's, and flagged.
+    fn unsolved() -> Self {
+        Self {
+            channels: 1,
+            frequency: vec![1.1005e9],
+            width: vec![2.0e6],
+            effective_bw: vec![2.0e6],
+            resolution: vec![2.0e6],
+            total_bandwidth: 2.0e6,
+            flagged: true,
         }
     }
 }
 
 /// A gain table's windows are CASA's (#917). The solved window is one
-/// channel at its selected channels' arithmetic mean frequency, its width,
-/// effective bandwidth, resolution and total bandwidth their summed width;
-/// the window without solutions (the fixture's second, 1.1 GHz) is one
-/// channel at the mean of all its channels, its widths summed and its
-/// total bandwidth the MeasurementSet's, and flagged. The fixture's
-/// windows are two 1 MHz channels from 1.0 and 1.1 GHz.
+/// channel at its selected channels' arithmetic mean frequency, of their
+/// summed width; the window without solutions (the fixture's second,
+/// 1.1 GHz) is one channel at the mean of all its channels, its widths
+/// summed and its total bandwidth the MeasurementSet's, and flagged. The
+/// fixture's windows are two 1 MHz channels from 1.0 and 1.1 GHz.
 #[test]
 fn solve_gain_writes_windows_collapsed_as_casa_does() {
     let dir = TempDir::new().expect("tempdir");
@@ -1265,13 +1280,53 @@ fn solve_gain_writes_windows_collapsed_as_casa_does() {
         .expect("SPECTRAL_WINDOW");
         assert_eq!(
             GainTableWindow::read(&table, 0),
-            GainTableWindow::one(frequency, width, false),
+            GainTableWindow::solved(frequency, width, false),
             "{name}: solved"
         );
         assert_eq!(
             GainTableWindow::read(&table, 1),
-            GainTableWindow::one(1.1005e9, 2.0e6, true),
+            GainTableWindow::unsolved(),
             "{name}: without solutions"
         );
     }
+}
+
+/// A window a solve reached but could not solve keeps the solved
+/// collapse, flagged, as CASA's: `Calibrater::genericGatherAndSolve` sets
+/// the window's frequencies once an interval has unflagged weight, before
+/// it solves, and `flagAbsentSpws` later flags the window it wrote no row
+/// for. Here the fixture's second window holds one baseline, too few for
+/// two baselines per antenna.
+#[test]
+fn solve_gain_keeps_the_collapse_of_a_window_it_could_not_solve() {
+    let dir = TempDir::new().expect("tempdir");
+    let ms_path =
+        common::create_gain_solve_fixture_ms(dir.path(), common::SyntheticGainFixtureKind::G);
+    {
+        // Row 6 is baseline 0-1 at the third time; it moves to the second
+        // window, which the second data description describes.
+        let mut ms = MeasurementSet::open(&ms_path).expect("open");
+        ms.main_table_mut()
+            .cell_accessor_mut(6, "DATA_DESC_ID")
+            .and_then(|mut cell| cell.set(Value::Scalar(ScalarValue::Int32(1))))
+            .expect("move row 6");
+        ms.save().expect("save");
+    }
+    let mut request = phase_gain_request(dir.path().join("reached.gcal"));
+    request.min_baselines_per_antenna = 2;
+    let report = run_gain_solve(&ms_path, &request).expect("solve");
+    assert_eq!(report.spectral_window_ids, vec![0], "only the first solves");
+    let table = Table::open(TableOptions::new(
+        request.output_table.join("SPECTRAL_WINDOW"),
+    ))
+    .expect("SPECTRAL_WINDOW");
+    assert_eq!(
+        GainTableWindow::read(&table, 0),
+        GainTableWindow::solved(1.0005e9, 2.0e6, false)
+    );
+    assert_eq!(
+        GainTableWindow::read(&table, 1),
+        GainTableWindow::solved(1.1005e9, 2.0e6, true),
+        "reached, not solved"
+    );
 }
