@@ -34,6 +34,7 @@ detailed proposal; the walkthrough does not finalize any decision.
 | [Architecture](architecture.md) | Boundaries, decisions, format scope, and alternatives; start here for the overall design. |
 | [Intermediate contracts](contracts.md) | The arrays and metadata shared by storage, imaging, calibration, and flagging; the principal design review. |
 | [Implementation plan](implementation-plan.md) | Sequenced work packets, evidence, agent responsibilities, and change control. |
+| [Imaging port](imaging-port.md) | M2 packet (c): imaging on the shared batches, its decisions, order of work and blocking performance comparison (draft). |
 
 Everything needed to review the proposal is committed here or linked to public
 sources. Review does not require access to the author's execution environment.
