@@ -131,14 +131,23 @@ arithmetic (casacore's `UVWMachine`, the prepared frequency conversion and
 the position angle in `casa-types`; `GridFtProjection`, the pointing law and
 the AW pointing groups in `casa-imaging-model`) moved out of `casa-ms`, whose
 route now calls it. `casa_imaging_application::geometry_law` runs both
-routes for one request and compares every row; the T1 fixture checks it
-after every T1 run and two T1 laws add `usepointing` (AW over two windows,
-the mosaic gridder). On all 27 T1 runs, the 51 T1.5 cases that run on the
-Mac mini (the four native-AW variants need the EVLA surface from
-`~/.casa/data`), the two `mawproject` cases with `usepointing` and CAS-7841,
-5.6 M rows in all, every quantity is bit-identical: projections, pointing,
-parallactic angles, AW pointing pixels, aperture classes and output-frame
-frequencies. Receipts: NAS `casa-rs/issue-932/step3b/`.
+routes on one MeasurementSet for one request and compares every row, matched
+by MAIN row number; a row matched twice, a row not matched and a NaN on
+either side fail it. The T1 fixture checks it after every T1 run and two T1
+laws add `usepointing` (AW over two windows, the mosaic gridder). On all 27
+T1 runs, the 51 T1.5 cases that run on the Mac mini (the four native-AW
+variants need the EVLA surface from `~/.casa/data`), the two `mawproject`
+cases with `usepointing` and CAS-7841, 5.6 M rows in all, every quantity of
+the two routes on the same MeasurementSet is bit-identical, inside the law's
+1e-12 bound: projections, pointing, parallactic angles, AW pointing pixels,
+aperture classes and output-frame frequencies. An MSv4 conversion of the
+same data is not bit-identical; 2.2.1 records what it changes. Receipts:
+NAS `casa-rs/issue-932/step3b/`.
+
+`GeometryPlan::apply` computes geometry for the samples its row mask names.
+Today's route computes it for every selected row, `FLAG_ROW` rows included,
+so step 4's mask keeps flagged rows and drops only padding (a NaN weight on
+both stores) and the samples the selection excludes.
 
 ### 2.2.1 What geometry needs from the boundary
 
@@ -290,7 +299,9 @@ The cutover PR deletes all of the following:
 - the selected-observation access, buffer, content plan and walk modules;
 - `SelectedRows` and the row-based model types;
 - `SelectedVisibilityWrite` (once nothing else uses it);
-- the `casa-ms → casa-imaging-model` edge.
+- the `casa-ms → casa-imaging-model` edge. Step 3b deepened it: today's
+  route in `casa-ms` now calls `GridFtProjection`, the pointing law and the
+  AW pointing groups from the model, and those callers go with the route.
 
 The imaging dependency checker's grandfathered lists shrink accordingly.
 
