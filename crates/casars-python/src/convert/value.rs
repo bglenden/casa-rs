@@ -243,67 +243,12 @@ fn fortran_array<T>(shape: Vec<usize>, values: Vec<T>) -> PyResult<ArrayD<T>> {
     })
 }
 
-/// `value` as a C++ `ostream` writes a `double` by default: six significant
-/// digits, in fixed or scientific notation as `%g` chooses, without
-/// trailing zeros (`3.14159`, `6.37358e+06`, `58849`).
-pub(crate) fn stream_double(value: f64) -> String {
-    const PRECISION: usize = 6;
-    if value == 0.0 {
-        return if value.is_sign_negative() { "-0" } else { "0" }.to_string();
-    }
-    if !value.is_finite() {
-        return if value.is_nan() {
-            "nan".to_string()
-        } else if value > 0.0 {
-            "inf".to_string()
-        } else {
-            "-inf".to_string()
-        };
-    }
-    let scientific = format!("{:.*e}", PRECISION - 1, value);
-    let (mantissa, exponent) = scientific.split_once('e').expect("Rust writes an exponent");
-    let exponent: i32 = exponent.parse().expect("Rust writes an integer exponent");
-    let trim = |digits: &str| {
-        if digits.contains('.') {
-            digits
-                .trim_end_matches('0')
-                .trim_end_matches('.')
-                .to_string()
-        } else {
-            digits.to_string()
-        }
-    };
-    if exponent < -4 || exponent >= PRECISION as i32 {
-        let sign = if exponent < 0 { '-' } else { '+' };
-        format!("{}e{sign}{:02}", trim(mantissa), exponent.abs())
-    } else {
-        let decimals = usize::try_from(PRECISION as i32 - 1 - exponent).unwrap_or(0);
-        trim(&format!("{value:.decimals$}"))
-    }
-}
+/// `value` as a C++ `ostream` writes a `double` by default.
+pub(crate) use casa_types::quanta::casacore::stream_double;
 
 #[cfg(test)]
 mod tests {
-    use super::{CasaValue, stream_double};
-
-    #[test]
-    fn doubles_stream_as_cpp_writes_them() {
-        for (value, written) in [
-            (std::f64::consts::PI, "3.14159"),
-            (0.785_398_163_397_448_2, "0.785398"),
-            (6_373_576.280_915_651, "6.37358e+06"),
-            (58_849.0, "58849"),
-            (58_849.25, "58849.2"),
-            (1.4e9, "1.4e+09"),
-            (-1.878_294_258_139_436_2, "-1.87829"),
-            (1e-6, "1e-06"),
-            (0.000_123_4, "0.0001234"),
-            (999_999.5, "1e+06"),
-            (30.0, "30"),
-        ] {
-            assert_eq!(stream_double(value), written, "{value}");
-        }
-    }
+    use super::CasaValue;
 
     #[test]
     fn records_sort_their_keys_as_casatools_does() {

@@ -3,30 +3,26 @@
 //! array of values, with a unit, read from arguments as casatools'
 //! `QuantumHolder` reads them and written as its records.
 //!
-//! The arithmetic is casacore's, not [`Quantity`]'s operators:
-//!
-//! - **Conversion** ([`Quantum::convert`]) scales conformant units; between angles
-//!   and times it goes at 360 degrees a day; for other units it keeps the
-//!   value in the target unit times the remaining SI dimensions
-//!   (`'1.5km'` to `s` is `1500 s.m.s-1`). With no target it converts to SI
-//!   base units. Frequencies and wavelengths do not convert to each other.
-//! - **Sums** need units of equal dimensions and take the first unit
-//!   (`'1km' + '1m'` is `1.001 km`); products and quotients name their unit
-//!   `km.s`, `km/(s)` and `(s)-1`.
-//!
-//! Unit names are normalised as casacore's `Unit::check` normalises them.
+//! The arithmetic is casacore's, not [`Quantity`]'s operators
+//! ([`casa_types::quanta::casacore`]): conversions scale by the ratio of
+//! the unit factors (at 360 degrees a day between angles and times, keeping
+//! the remaining SI dimensions otherwise); sums take the first unit; products
+//! and quotients name their unit `km.s`, `km/(s)` and `(s)-1`. Frequencies
+//! and wavelengths do not convert to each other.
 
 use std::collections::BTreeMap;
 
-use casa_types::quanta::{Dimension, Quantity, Unit, UnitDim, UnitVal};
+use casa_types::quanta::casacore::{self, QuantumError, conversion};
+use casa_types::quanta::{Quantity, Unit};
 
 use super::value::CasaValue;
 use super::{ConvertError, ConvertResult, Variant, casacore_unit, quantity, quantity_record};
 
-/// casacore's `C::circle`.
-const CIRCLE: f64 = 2.0 * std::f64::consts::PI;
-/// casacore's `C::day`, s.
-const DAY_S: f64 = 86_400.0;
+impl From<QuantumError> for ConvertError {
+    fn from(error: QuantumError) -> Self {
+        ConvertError::runtime(error.0)
+    }
+}
 
 /// A quantum: one value or an array, and a unit.
 #[derive(Debug, Clone, PartialEq)]
@@ -126,100 +122,22 @@ fn record_quantum(record: &BTreeMap<String, Variant>) -> ConvertResult<Quantum> 
     }
 }
 
-/// What `Quantum<Double>::convert` does to each value, which depends only on
-/// the units: a product with the ratio of their factors, and between an
-/// angle and a time the day's turn.
-#[derive(Debug, Clone, Copy)]
-enum Scaling {
-    /// `value * ratio`.
-    By(f64),
-    /// `value * ratio * C::day / C::circle`.
-    AngleToTime(f64),
-    /// `value * ratio * C::circle / C::day`.
-    TimeToAngle(f64),
-}
-
-impl Scaling {
-    fn apply(self, value: f64) -> f64 {
-        match self {
-            Self::By(ratio) => value * ratio,
-            Self::AngleToTime(ratio) => value * ratio * DAY_S / CIRCLE,
-            Self::TimeToAngle(ratio) => value * ratio * CIRCLE / DAY_S,
-        }
-    }
-}
-
-/// `Quantum<Double>::convert` from `unit` to `target` (SI base units for
-/// `None`): how each value scales and the new unit.
-fn conversion(unit: &Unit, target: Option<&Unit>) -> ConvertResult<(Scaling, Unit)> {
-    let mine = *unit.val();
-    let theirs = target.map_or(UnitVal::NODIM, |target| *target.val());
-    let target_unit = || target.cloned().unwrap_or_else(Unit::dimensionless);
-    let angle = UnitDim::basis(Dimension::Angle);
-    let time = UnitDim::basis(Dimension::Time);
-    let ratio = mine.factor / theirs.factor;
-    if mine.dim == theirs.dim {
-        return Ok((Scaling::By(ratio), target_unit()));
-    }
-    if mine.dim == angle && theirs.dim == time {
-        return Ok((Scaling::AngleToTime(ratio), target_unit()));
-    }
-    if mine.dim == time && theirs.dim == angle {
-        return Ok((Scaling::TimeToAngle(ratio), target_unit()));
-    }
-    let remainder = mine / theirs;
-    let dimensions = remainder.dim.to_string();
-    let name = match target {
-        Some(target) if !target.name().is_empty() => format!("{}.{dimensions}", target.name()),
-        _ => dimensions,
-    };
-    let unit = casacore_unit(&name).map_err(ConvertError::runtime)?;
-    Ok((Scaling::By(remainder.factor), unit))
-}
-
-/// casacore's `Quantum::operator+` (`subtract` for `operator-`): the second
-/// value in the first's unit added.
+/// casacore's `Quantum::operator+` (`subtract` for `operator-`).
 pub(crate) fn add(left: &Quantity, right: &Quantity, subtract: bool) -> ConvertResult<Quantity> {
-    if left.unit().val().dim != right.unit().val().dim {
-        return Err(ConvertError::runtime(format!(
-            "Quantum::operator{} unequal units '{}, '{}'",
-            if subtract { '-' } else { '+' },
-            left.unit().name(),
-            right.unit().name()
-        )));
-    }
-    // `other.getValue(qUnit)`: divided by the ratio of the unit factors.
-    let right = right.value() / (left.unit().val().factor / right.unit().val().factor);
-    let value = if subtract {
-        left.value() - right
+    Ok(if subtract {
+        casacore::sub(left, right)?
     } else {
-        left.value() + right
-    };
-    Ok(Quantity::with_unit(value, left.unit().clone()))
+        casacore::add(left, right)?
+    })
 }
 
 /// casacore's `Quantum::operator*` (`divide` for `operator/`).
 pub(crate) fn multiply(left: &Quantity, right: &Quantity, divide: bool) -> ConvertResult<Quantity> {
-    let (mine, theirs) = (left.unit().name(), right.unit().name());
-    let value = if divide {
-        left.value() / right.value()
+    Ok(if divide {
+        casacore::div(left, right)?
     } else {
-        left.value() * right.value()
-    };
-    let unit = if theirs.is_empty() {
-        left.unit().clone()
-    } else if mine.is_empty() {
-        if divide {
-            casacore_unit(&format!("({theirs})-1")).map_err(ConvertError::runtime)?
-        } else {
-            right.unit().clone()
-        }
-    } else if divide {
-        casacore_unit(&format!("{mine}/({theirs})")).map_err(ConvertError::runtime)?
-    } else {
-        casacore_unit(&format!("{mine}.{theirs}")).map_err(ConvertError::runtime)?
-    };
-    Ok(Quantity::with_unit(value, unit))
+        casacore::mul(left, right)?
+    })
 }
 
 #[cfg(test)]

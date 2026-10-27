@@ -24,6 +24,7 @@
 //! | `sm.settrop(mode='individual' or 'screen')`: tropospheric phase per channel from a water-vapour screen and ATM, and its `Tf Jones` table | [`Simulator::set_trop`], [`TroposphereSpec`] |
 //! | `sm.setapply` of a `G` or `D` table | [`Simulator::set_apply`] |
 //! | `simutil.readantenna(antab)` | [`readantenna::read_antenna_config`] |
+//! | `simutil`'s directions, pointings (`calc_pointings2`, pointing files), receiver temperatures and baselines | [`simutil`] |
 //!
 //! CASA's `sm` has no execution controls; a session's memory budget, workers
 //! and backend ([`ExecutionControls`], [`SessionResources`]) are the Python
@@ -36,6 +37,7 @@ mod corrupt;
 pub mod predict;
 pub mod readantenna;
 pub mod session;
+pub mod simutil;
 mod write;
 
 pub use session::array::{ArrayConfig, CoordinateSystem};

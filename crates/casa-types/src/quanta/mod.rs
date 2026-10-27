@@ -14,6 +14,9 @@
 //!   (equivalent to the formatting subset of C++ `MVTime`).
 //! - **[`format`](mod@format)** — casacore's full `MVAngle::print` and `MVTime::print`
 //!   formatting, with their format names, and `MVTime`'s calendar fields.
+//! - **[`casacore`](mod@casacore)** — casacore's `Quantum` arithmetic, which
+//!   rounds unlike [`Quantity`]'s operators, and the strings CASA's `qa`
+//!   tool writes (`formxxx`, `tos`).
 //! - **[`constants`]** — physical constants as [`Quantity`] values (equivalent
 //!   to C++ `QC`).
 //!
@@ -36,6 +39,7 @@
 //! ```
 
 pub mod angle;
+pub mod casacore;
 pub mod constants;
 pub mod dim;
 pub mod error;

@@ -544,6 +544,31 @@ This is delivered as four PRs, in order.
   configuration: the same output files, with the MS agreeing as in Phase 1.
 - Pointing lists identical to CASA's.
 
+**Split** (2026-10-26; the full text is on #841). Each part is one PR.
+- **5a:** `simutil`'s directions, pointings (`calc_pointings2`, pointing
+  files), `noisetemp`, `bandname`, `polsettings` and baselines; `qa.formxxx`
+  and `qa.tos`.
+- **5b:** sky-model preparation: `modifymodel`, `flatimage`, components
+  sampled on an image, and the component-only model.
+- **5d (done, #915):** `synthetic-ms`, a developer binary hosting the old
+  family mode unchanged, with its callers moved to it. It lives in casa-ms,
+  beside the generator, because ADR-0016's dependency checker keeps
+  casa-simulation free of casa-logging, `eprintln!` and environment reads,
+  binaries included. Rebuilding the families on the new session stays in
+  Phase 7.
+- **5c:** the `simobserve` task at contract 5 on the session, with the
+  `alma/simmos` data-path resolver its antenna-list search uses (moved from
+  5a). The same checker rule means its task binary needs a host the checker
+  admits rather than casa-simulation. Owner decision, 2026-10-26:
+  `overwrite` keeps CASA's default, True, with no confirmation, since the
+  task writes only inside its project directory.
+- **5e:** graphics, rendered in Python from Rust plot documents, and
+  `.quick.psf`.
+- **The acceptance data:** the ppdisk model is casatestdata's
+  `regression/sim_components_and_skymodel/input50pc_672GHz.fits`, and the
+  ALMA case is CASA's regression on `alma.out20` with components. Pointing
+  strings are compared exactly, numbers to tolerances.
+
 ### Phase 6: `simanalyze` and `simalma`
 
 **Scope.**

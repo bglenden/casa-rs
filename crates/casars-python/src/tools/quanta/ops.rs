@@ -8,6 +8,7 @@
 //! `getvalue`, `getunit` and `convert` also take quantity records holding
 //! arrays. A failure CASA raises is a `RuntimeError` with CASA's message.
 
+use casa_types::quanta::casacore;
 use casa_types::quanta::format::{
     CalendarDate, angle_format, format_angle, format_time, time_format,
 };
@@ -225,6 +226,21 @@ pub(super) fn angle(value: &Variant, precision: i64, form: &[String]) -> Convert
         format,
         digits(precision),
     ))]))
+}
+
+/// `qa.formxxx(v, format, prec)`: `None` for a format CASA does not
+/// understand (it writes an empty string and warns).
+pub(super) fn formxxx(
+    value: &Variant,
+    format: &str,
+    precision: i64,
+) -> ConvertResult<Option<String>> {
+    Ok(casacore::formxxx(&quantity(value)?, format, precision)?)
+}
+
+/// `qa.tos(v, prec)`.
+pub(super) fn tos(value: &Variant, precision: i64) -> ConvertResult<CasaValue> {
+    Ok(CasaValue::Text(casacore::tos(&quantity(value)?, precision)))
 }
 
 /// `qa.totime(v)`: a time as it is, an angle as days.

@@ -34,8 +34,12 @@ use casa_simulation::readantenna::{
     AntennaConfigFile, ObservatorySource, ReadAntennaError, geodesy, read_antenna_config,
     read_antenna_config_str,
 };
-use casa_types::measures::{MPosition, MeasuresProvider, ObservatoryPosition};
+use casa_types::measures::{MPosition, MeasuresProvider};
 use serde_json::Value;
+
+#[path = "support/casa_observatories.rs"]
+mod casa_observatories;
+use casa_observatories::CasaObservatories;
 
 fn data_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data")
@@ -69,50 +73,6 @@ fn strings(value: &Value, key: &str) -> Vec<String> {
         .iter()
         .map(|v| v.as_str().expect("a string").to_string())
         .collect()
-}
-
-/// CASA's observatory table, looked up as casa-measures-data looks names up
-/// (trimmed, case-insensitive, first match).
-#[derive(Debug)]
-struct CasaObservatories(Vec<(String, ObservatoryPosition)>);
-
-impl CasaObservatories {
-    fn from_fixture(fixture: &Value) -> Self {
-        let entries = fixture["observatories"]
-            .as_array()
-            .expect("observatories")
-            .iter()
-            .map(|entry| {
-                let name = entry["name"].as_str().expect("name").to_string();
-                let position = if entry["refer"] == "WGS84" {
-                    ObservatoryPosition::Wgs84 {
-                        longitude_rad: number(entry, "longitude_rad"),
-                        latitude_rad: number(entry, "latitude_rad"),
-                        height_m: number(entry, "height_m"),
-                    }
-                } else {
-                    ObservatoryPosition::Itrf {
-                        x_m: number(entry, "x_m"),
-                        y_m: number(entry, "y_m"),
-                        z_m: number(entry, "z_m"),
-                    }
-                };
-                (name, position)
-            })
-            .collect();
-        Self(entries)
-    }
-}
-
-impl MeasuresProvider for CasaObservatories {
-    fn observatory(&self, name: &str) -> Result<Option<ObservatoryPosition>, String> {
-        let name = name.trim();
-        Ok(self
-            .0
-            .iter()
-            .find(|(entry, _)| entry.eq_ignore_ascii_case(name))
-            .map(|(_, position)| position.clone()))
-    }
 }
 
 fn read_case(
