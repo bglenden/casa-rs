@@ -78,12 +78,7 @@ fn predicted(
 }
 
 /// Whether the session closes within `budget`.
-fn closes(
-    ms: &Path,
-    model: &Path,
-    measures: &Arc<dyn MeasuresProvider>,
-    budget: u64,
-) -> bool {
+fn closes(ms: &Path, model: &Path, measures: &Arc<dyn MeasuresProvider>, budget: u64) -> bool {
     let Some(sm) = predicted(ms, model, measures, budget) else {
         return false;
     };
@@ -153,7 +148,10 @@ fn a_per_field_predict_keeps_its_planes_and_close_holds_its_admission() {
     write_model_of(&model, 32, PIXELS);
     let ms = root.path().join("fields.ms");
     // Once unmeasured: state a process keeps once it has predicted.
-    assert!(closes(&ms, &model, &measures, ROOMY), "a roomy budget closes");
+    assert!(
+        closes(&ms, &model, &measures, ROOMY),
+        "a roomy budget closes"
+    );
     let (_, roomy) = measure_close(&ms, &model, &measures, ROOMY);
     assert_eq!(roomy.grid_preparations, FIELDS.len() as u64);
     let set = roomy.grid_bytes / FIELDS.len() as u64;

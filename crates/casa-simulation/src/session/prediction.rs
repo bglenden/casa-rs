@@ -251,7 +251,9 @@ impl std::fmt::Debug for Prediction {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let fields: Vec<Option<usize>> = match &self.grids {
             StepGrids::Prepared(field, _) => vec![*field],
-            StepGrids::PerField(held) => held.centres.iter().map(|(field, _)| Some(*field)).collect(),
+            StepGrids::PerField(held) => {
+                held.centres.iter().map(|(field, _)| Some(*field)).collect()
+            }
         };
         formatter
             .debug_struct("Prediction")
@@ -1106,10 +1108,7 @@ impl Simulator {
             MODEL_PHASE,
             operator.grid_bytes() + operator.plane_scratch_bytes(&model),
         )?);
-        let reading = admitted(
-            PREPARATION_PHASE,
-            model.plane_bytes() + model.cache_bytes(),
-        )?;
+        let reading = admitted(PREPARATION_PHASE, model.plane_bytes() + model.cache_bytes())?;
         let held = model.held().map_err(model_error)?;
         drop(model);
         drop(reading);

@@ -177,7 +177,10 @@ mod tests {
             }
         }
         let mut cache = FieldGridCache::<usize>::new(vec![1], visits);
-        assert_eq!(cache.all_bytes(), order.iter().max().map_or(0, |n| *n as u64 + 1));
+        assert_eq!(
+            cache.all_bytes(),
+            order.iter().max().map_or(0, |n| *n as u64 + 1)
+        );
         cache.set_capacity(slots);
         let mut prepared = Vec::new();
         for (scan, &field) in order.iter().enumerate() {
@@ -219,7 +222,9 @@ mod tests {
             FieldGridCache::<()>::new(vec![1, 1], vec![((0, 0), vec![0]), ((1, 0), vec![0])]);
         cache.set_capacity(1);
         let keep = [(0, 0), (1, 0)];
-        cache.grids((0, 0), (0, &keep), || Ok(())).expect("one set fits");
+        cache
+            .grids((0, 0), (0, &keep), || Ok(()))
+            .expect("one set fits");
         let error = cache
             .grids((1, 0), (0, &keep), || Ok(()))
             .expect_err("two sets do not fit one byte");

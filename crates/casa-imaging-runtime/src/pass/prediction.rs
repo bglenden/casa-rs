@@ -529,8 +529,7 @@ impl<'w> BlockPredictor<'w> {
     /// not depend on its domains' models.
     #[must_use]
     pub fn bytes_for<'d>(
-        domains: impl ExactSizeIterator<Item = (&'d MeasurementOperator, &'d SpectralResampler)>
-        + Clone,
+        domains: impl ExactSizeIterator<Item = (&'d MeasurementOperator, &'d SpectralResampler)> + Clone,
         backend: BackendChoice,
         block: BlockShape,
         workers: usize,
@@ -792,9 +791,10 @@ impl PredictionChunk<'_> {
         scratch.begin(npol);
         for position in rows.clone() {
             let row = block.row(index, row_at(block, ordered, position));
-            let placed = domain
-                .resampler
-                .place_prediction(domain.operator, model, &row, scratch)?;
+            let placed =
+                domain
+                    .resampler
+                    .place_prediction(domain.operator, model, &row, scratch)?;
             domain
                 .resampler
                 .native_terms(&row, npol, placed, scratch, cell_of(position, channels));

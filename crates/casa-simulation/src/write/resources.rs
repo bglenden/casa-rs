@@ -249,9 +249,7 @@ pub(super) fn admit_field_grids(
         return Ok(0);
     };
     let (host, policy) = (resources.host(), resources.policy());
-    let extra = stage
-        .extra_grid_bytes()
-        .min(free_memory(host, policy));
+    let extra = stage.extra_grid_bytes().min(free_memory(host, policy));
     if extra > 0 {
         let grids = admit(
             host,

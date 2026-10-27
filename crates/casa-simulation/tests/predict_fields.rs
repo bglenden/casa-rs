@@ -29,9 +29,10 @@ const SCAN_S: f64 = 60.0;
 fn visits() -> Vec<(&'static str, f64)> {
     (0..PASSES)
         .flat_map(|pass| {
-            FIELDS.iter().enumerate().map(move |(index, field)| {
-                (*field, (pass * FIELDS.len() + index) as f64 * SCAN_S)
-            })
+            FIELDS
+                .iter()
+                .enumerate()
+                .map(move |(index, field)| (*field, (pass * FIELDS.len() + index) as f64 * SCAN_S))
         })
         .collect()
 }
@@ -85,7 +86,8 @@ fn each_fields_rows_are_those_of_a_session_of_that_field_alone() {
         let observed: Vec<_> = rows.iter().filter(|row| row.field == index).collect();
         assert_eq!(observed.len(), expected.len(), "{field}: rows");
         assert!(
-            bits(observed.iter().map(|row| &row.data)) == bits(expected.iter().map(|row| &row.data)),
+            bits(observed.iter().map(|row| &row.data))
+                == bits(expected.iter().map(|row| &row.data)),
             "{field}: the mosaic's rows are the field's alone"
         );
     }
