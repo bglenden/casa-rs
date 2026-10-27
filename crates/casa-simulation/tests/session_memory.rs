@@ -435,7 +435,7 @@ fn simulate(case: Case, ms: &Path, model: &Path, measures: &Arc<dyn MeasuresProv
     sm.set_vp(&VoltagePatternSpec::default()).expect("setvp");
     sm.predict(&PredictSpec {
         images: vec![model.to_path_buf()],
-        component_list: None,
+        component_lists: Vec::new(),
         incremental: false,
     })
     .expect("predict");
@@ -843,7 +843,7 @@ fn close_repeated(
     sm.set_vp(&VoltagePatternSpec::default()).expect("setvp");
     sm.predict(&PredictSpec {
         images: vec![model.to_path_buf()],
-        component_list: None,
+        component_lists: Vec::new(),
         incremental: false,
     })
     .expect("predict");
@@ -960,7 +960,7 @@ fn predict_after(
     EXCESS.store(before, Ordering::Relaxed);
     sm.predict(&PredictSpec {
         images: vec![model.to_path_buf()],
-        component_list: None,
+        component_lists: Vec::new(),
         incremental: false,
     })
     .expect("predict");
@@ -1114,7 +1114,7 @@ fn predict_components(
     EXCESS.store(before, Ordering::Relaxed);
     sm.predict(&PredictSpec {
         images: Vec::new(),
-        component_list: Some(list.to_path_buf()),
+        component_lists: vec![list.to_path_buf()],
         incremental: false,
     })
     .expect("predict");
@@ -1338,7 +1338,7 @@ fn predict_single_dish(model: &Path, measures: &Arc<dyn MeasuresProvider>) -> Pr
     EXCESS.store(before, Ordering::Relaxed);
     sm.predict(&PredictSpec {
         images: vec![model.to_path_buf()],
-        component_list: None,
+        component_lists: Vec::new(),
         incremental: false,
     })
     .expect("predict");

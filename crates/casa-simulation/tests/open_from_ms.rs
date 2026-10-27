@@ -320,7 +320,7 @@ fn pointing_rows_apply_for_the_times_casacore_takes_them_as_valid() {
         sm.set_vp(&VoltagePatternSpec::default()).expect("setvp");
         match sm.predict(&PredictSpec {
             images: Vec::new(),
-            component_list: Some(point.clone()),
+            component_lists: vec![point.clone()],
             incremental: false,
         }) {
             Ok(()) => false,
@@ -371,7 +371,7 @@ fn the_reference_frequency_picks_the_beam_after_openfromms() {
         })?;
         sm.predict(&PredictSpec {
             images: Vec::new(),
-            component_list: Some(list.clone()),
+            component_lists: vec![list.clone()],
             incremental: false,
         })
     };
@@ -434,7 +434,7 @@ fn components_under_the_beam_and_total_power_predict_after_openfromms_as_before(
         sm.set_vp(&VoltagePatternSpec::default())?;
         sm.predict(&PredictSpec {
             images: vec![model.clone()],
-            component_list: Some(points.clone()),
+            component_lists: vec![points.clone()],
             incremental: false,
         })?;
         corrupt(sm)
@@ -511,7 +511,7 @@ fn a_moved_pointing_is_phased_on_its_field_after_openfromms() {
     let predict = move |sm: &mut Simulator| {
         sm.predict(&PredictSpec {
             images: Vec::new(),
-            component_list: Some(point.clone()),
+            component_lists: vec![point.clone()],
             incremental: false,
         })
     };

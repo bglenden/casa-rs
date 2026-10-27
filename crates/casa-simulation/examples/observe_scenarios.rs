@@ -343,12 +343,9 @@ fn predict(session: &mut Simulator, call: &Value) -> SimulatorResult<()> {
             .collect(),
         _ => Vec::new(),
     };
-    let component_list = Some(text(call, "complist", ""))
-        .filter(|list| !list.is_empty())
-        .map(PathBuf::from);
     session.predict(&PredictSpec {
         images,
-        component_list,
+        component_lists: vec![PathBuf::from(text(call, "complist", ""))],
         incremental: flag(call, "incremental", false),
     })
 }

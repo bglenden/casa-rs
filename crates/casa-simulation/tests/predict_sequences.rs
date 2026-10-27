@@ -162,7 +162,7 @@ fn refusal(result: SimulatorResult<()>) -> (CasaOutcome, String) {
 fn spec(images: &[&Path]) -> PredictSpec {
     PredictSpec {
         images: images.iter().map(|path| path.to_path_buf()).collect(),
-        component_list: None,
+        component_lists: Vec::new(),
         incremental: false,
     }
 }
@@ -215,7 +215,7 @@ fn predict_refuses_as_casa_does() {
     assert!(message.contains("Phase 2"), "{message}");
     // A component list that is not a readable table is CASA's False.
     let (outcome, message) = refusal(sm.predict(&PredictSpec {
-        component_list: Some(directory.path().join("model.cl")),
+        component_lists: vec![directory.path().join("model.cl")],
         ..spec(&[&model])
     }));
     assert_eq!(outcome, CasaOutcome::ReturnsFalse);
@@ -243,7 +243,7 @@ fn a_beam_on_a_moved_pointing_is_refused() {
     write_points(&points);
     let list = PredictSpec {
         images: Vec::new(),
-        component_list: Some(points),
+        component_lists: vec![points],
         incremental: false,
     };
     let mosaic = PredictionOptions {
@@ -475,7 +475,7 @@ fn components_are_predicted_at_a_moved_pointing() {
     let mut sm = moved_pointing(&path);
     sm.predict(&PredictSpec {
         images: Vec::new(),
-        component_list: Some(points),
+        component_lists: vec![points],
         incremental: false,
     })
     .expect("predict");
@@ -490,6 +490,52 @@ fn components_are_predicted_at_a_moved_pointing() {
             );
         }
     }
+}
+
+/// Several component lists predict as the one list of their components in
+/// order: `simobserve` predicts its model's list and its calibrator's at
+/// once, which CASA cannot (`docs/CASA (C++) bugs.md`). An empty name is
+/// skipped, as with one list.
+#[test]
+fn component_lists_predict_as_one_list() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let centre = directory.path().join("centre.cl");
+    let north = directory.path().join("north.cl");
+    let both = directory.path().join("both.cl");
+    write_point_list(&centre, CENTRE_RAD, 1.0);
+    write_point_list(&north, [CENTRE_RAD[0], CENTRE_RAD[1] + 1.5e-5], 0.5);
+    write_points(&both);
+    let predicted = |name: &str, lists: Vec<PathBuf>| {
+        let spec = PredictSpec {
+            images: Vec::new(),
+            component_lists: lists,
+            incremental: false,
+        };
+        write(
+            &directory.path().join(name),
+            |sm| sm.predict(&spec),
+            nothing,
+        )
+    };
+    let joined = predicted("joined.ms", vec![both]);
+    assert!(joined.iter().flatten().any(|value| value.norm() > 0.0));
+    let separate = predicted("separate.ms", vec![centre, PathBuf::new(), north.clone()]);
+    assert_same(&separate, &joined, "two lists against their union");
+    let (outcome, message) = refusal(
+        session(
+            &directory.path().join("refused.ms"),
+            "ALMA",
+            "XX YY",
+            resources(3, 2 << 30),
+        )
+        .predict(&PredictSpec {
+            images: Vec::new(),
+            component_lists: vec![north, directory.path().join("missing.cl")],
+            incremental: false,
+        }),
+    );
+    assert_eq!(outcome, CasaOutcome::ReturnsFalse);
+    assert!(message.contains("missing.cl not readable"), "{message}");
 }
 
 /// CASA squints the VLA's and the EVLA's beams for a component list, moving
@@ -510,7 +556,7 @@ fn components_under_a_squinting_beam_are_refused_unless_squint_is_off() {
         sm.observe(&scan("target", 0.0, 20.0)).expect("observe");
         let list = PredictSpec {
             images: Vec::new(),
-            component_list: Some(points.clone()),
+            component_lists: vec![points.clone()],
             incremental: false,
         };
         sm.set_vp(&VoltagePatternSpec::default()).expect("setvp");

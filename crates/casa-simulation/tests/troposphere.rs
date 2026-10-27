@@ -114,7 +114,7 @@ fn observed_in(
     }
     sm.predict(&PredictSpec {
         images: Vec::new(),
-        component_list: Some(point.to_path_buf()),
+        component_lists: vec![point.to_path_buf()],
         incremental: false,
     })
     .expect("predict");
@@ -476,7 +476,7 @@ fn settrop_data_are_the_same_for_any_workers_budget_or_opening() {
     let mut sm = Simulator::open_from_ms(&path, options(2, 2 << 30)).expect("openfromms");
     sm.predict(&PredictSpec {
         images: Vec::new(),
-        component_list: Some(point.clone()),
+        component_lists: vec![point.clone()],
         incremental: false,
     })
     .expect("predict");

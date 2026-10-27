@@ -51,7 +51,7 @@ fn observed(path: &Path, stokes: &str, point: &Path, integration_s: f64) -> Simu
         .expect("a second scan");
     sm.predict(&PredictSpec {
         images: Vec::new(),
-        component_list: Some(point.to_path_buf()),
+        component_lists: vec![point.to_path_buf()],
         incremental: false,
     })
     .expect("predict");
@@ -202,7 +202,7 @@ fn a_scan_observed_after_setapply_takes_the_tables_gains() {
         .expect("a scan after the setapply");
     sm.predict(&PredictSpec {
         images: Vec::new(),
-        component_list: Some(point.clone()),
+        component_lists: vec![point.clone()],
         incremental: false,
     })
     .expect("predict");

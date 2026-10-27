@@ -337,7 +337,7 @@ fn write_predicted_session(path: &Path) {
     session
         .predict(&PredictSpec {
             images: vec![model],
-            component_list: None,
+            component_lists: Vec::new(),
             incremental: false,
         })
         .expect("predict");
