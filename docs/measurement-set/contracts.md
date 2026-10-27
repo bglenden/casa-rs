@@ -519,6 +519,7 @@ pub struct AccessRequest {
     pub data_group: String,             // one group per traversal
     pub roles: Roles,                   // what is read at all
     pub channels: Range<usize>,         // native channel window
+    pub times: TimeSelection,           // every grid time, or those in one epoch range
     pub correlations: CorrelationRequest, // products delivered and whose flags
     pub grouping: Grouping,             // scientific groups, as gaincal keys them
     pub batch_bytes: usize,             // budget per batch, scratch included
@@ -526,9 +527,28 @@ pub struct AccessRequest {
 ```
 
 The request is resolved against each partition once, at binding: the data
-group, the channel window, and the correlation axis, which every batch of the
-traversal and every piece packed from one then shares without copying (all
-products borrow the catalogue's list). A batch holds whole times; the budget
+group, the channel window, the time selection, and the correlation axis,
+which every batch of the traversal and every piece packed from one then
+shares without copying (all products borrow the catalogue's list).
+
+A **time selection** is every grid time, or those within one half-open range
+of epochs, `[start, end)` seconds from an origin on a time scale, either end
+possibly infinite. It is stated in the partitions' own origin and scale
+(MJD 0 for MSv2, the Unix epoch for MSv4; every partition of a store shares
+them), so selecting a grid time compares two offsets from one origin and
+rounds nothing; a range in another origin or scale, a NaN end, or a start
+after the end is refused at binding, and a range holding no grid time
+(between two, or past either end) is an empty traversal. One range serves
+every partition of a request, so a calibration solution interval selects the
+same epochs in each spectral window. A planner that splits a partition by
+time cuts it at grid indices, through `Observation::grid`, which reads no
+payload, and states each slice with `TimeRange::of_grid`, which uses the
+grid's own values; slices aligned to the estimate's natural time blocks
+decode no unit twice. The MSv2 adapter reads the selected rows from its
+opening index; the MSv4 adapter reads only the chunks the selection
+touches. Updaters address samples by the batch's own times, so a sliced
+traversal writes back (several slices of one store at once need several
+updaters, which a session does not yet provide). A batch holds whole times; the budget
 counts each time's samples, its per-time arrays and the cursor's decode
 scratch for it, and binding fails when one time does not fit. Opening chose the
 store and its options (`casa_ms::observation_io::open`); after that an
@@ -550,13 +570,22 @@ decoded and the subset as selected, and its scratch is in the budget.
 
 Scientific groups come from declared keys: production `gaincal`'s rules, keyed
 by partition, field unless combined, scan unless combined, and the time bin
-counted from the first time of the (field, scan) run. A grouping keyed by scan
+counted from the first time of the (field, scan) run, over the whole grid
+whatever the time selection, so traversals of different slices agree on
+every time's group. A grouping keyed by scan
 on a store that names none is refused at binding. Groups can span batches and
 storage chunks; the backend executes the requested grouping and does not decide
 which fields a solver may combine. A delivered batch lists its fragments: the
 sample ranges of each group, whole times, with `First`, `Middle`, `Last` or
 `Whole`. Completion is signalled exactly once: `Last` or `Whole` when proven at
-delivery, otherwise a later `GroupEnd`. Compute windows (`channel_window`,
+delivery, otherwise a later `GroupEnd`. Under a time selection the positions
+and the completion describe the part of each group the selection holds, and
+a fragment says whether the selection cut its group (`clipped`): a consumer
+that splits a partition by time merges a clipped group's parts across its
+traversals before finalizing it, and finalizes the others in place. Closing
+each part in its own traversal keeps one completion per traversal; a
+completion shared between slices could otherwise make a group ready before
+another slice's work on it had begun. Compute windows (`channel_window`,
 `sample_window`) carry no fragments, so a closing position is seen once however
 many work units share the batch.
 

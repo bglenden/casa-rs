@@ -41,6 +41,7 @@ pub struct Msv4Cursor<'o> {
     roles: Roles,
     channels: Range<usize>,
     resolved: ResolvedRequest,
+    /// The next dataset time to deliver, within `resolved.times`.
     next_time: usize,
     groups: Option<GroupIndex>,
     estimate: PartitionEstimate,
@@ -64,6 +65,7 @@ impl<'o> Msv4Cursor<'o> {
             &dataset.times,
             &arrays.fields,
             dataset.scans.as_deref(),
+            resolved.times.clone(),
         )?;
         Ok(Self {
             observation,
@@ -72,8 +74,8 @@ impl<'o> Msv4Cursor<'o> {
             partition: estimate.partition,
             roles: request.roles,
             channels: request.channels.clone(),
+            next_time: resolved.times.start,
             resolved,
-            next_time: 0,
             groups,
             estimate,
             counters: IoCounters::default(),
@@ -146,7 +148,7 @@ pub(super) fn estimate(
     id: PartitionId,
 ) -> Result<(PartitionEstimate, ResolvedRequest), ObservationError> {
     let (dataset, entry) = observation.dataset(id)?;
-    let resolved = request.resolve(entry)?;
+    let resolved = request.resolve(entry, &dataset.times)?;
     let arrays = &dataset.groups[resolved.data_group];
     let roles = request.roles;
     if roles.time_centroid && dataset.centroid_extra_precision {
@@ -179,7 +181,8 @@ pub(super) fn estimate(
             });
         }
     }
-    let (times, baselines) = (dataset.times.len(), entry.baselines.len());
+    let span = resolved.times.clone();
+    let (times, baselines) = (span.len(), entry.baselines.len());
     let channels = request.channels.len();
     let scalars = [roles.time_centroid, roles.exposure]
         .into_iter()
@@ -213,7 +216,8 @@ pub(super) fn estimate(
     let (mut decode_units, mut decoded, mut selected) = (0, 0, 0);
     let variables = requested(dataset, arrays, roles);
     for batch in 0..batches {
-        let rows = batch * times_per_batch..((batch + 1) * times_per_batch).min(times);
+        let rows = span.start + batch * times_per_batch
+            ..span.start + ((batch + 1) * times_per_batch).min(times);
         for &(array, extent, delivered) in &variables {
             let subset = subset(array, rows.clone(), &request.channels, extent);
             let (units, elements) = chunk_cost(array, &subset)?;
@@ -232,6 +236,7 @@ pub(super) fn estimate(
     let estimate = PartitionEstimate {
         partition: id,
         times,
+        first_time: span.start,
         baselines,
         bytes_per_sample,
         bytes_per_time,
@@ -557,7 +562,7 @@ impl VisibilityCursor for Msv4Cursor<'_> {
         if let Some(key) = self.groups.as_mut().and_then(GroupIndex::pop_end) {
             return Step::GroupEnd(key);
         }
-        if self.next_time == self.dataset.times.len() {
+        if self.next_time == self.resolved.times.end {
             Step::End
         } else {
             Step::Batch
@@ -565,7 +570,7 @@ impl VisibilityCursor for Msv4Cursor<'_> {
     }
 
     fn fill(&mut self, buffers: &mut BatchBuffers) -> Result<(), ObservationError> {
-        let times = self.dataset.times.len();
+        let times = self.resolved.times.end;
         if self.next_time == times {
             return Err(ObservationError::InvalidRequest {
                 reason: "fill after the end of the traversal".to_string(),

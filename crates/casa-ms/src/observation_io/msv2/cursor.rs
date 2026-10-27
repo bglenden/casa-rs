@@ -46,6 +46,7 @@ pub struct Msv2Cursor<'o> {
     roles: Roles,
     channels: Range<usize>,
     resolved: ResolvedRequest,
+    /// The next grid time to deliver, within `resolved.times`.
     next_time: usize,
     groups: Option<GroupIndex>,
     estimate: PartitionEstimate,
@@ -69,14 +70,15 @@ impl<'o> Msv2Cursor<'o> {
             &grid.times_s,
             &grid.field_per_time,
             Some(&grid.scan_per_time),
+            resolved.times.clone(),
         )?;
         Ok(Self {
             observation,
             partition: estimate.partition,
             roles: request.roles,
             channels: request.channels.clone(),
+            next_time: resolved.times.start,
             resolved,
-            next_time: 0,
             groups,
             estimate,
             counters: IoCounters::default(),
@@ -522,7 +524,7 @@ impl VisibilityCursor for Msv2Cursor<'_> {
         if let Some(key) = self.groups.as_mut().and_then(GroupIndex::pop_end) {
             return Step::GroupEnd(key);
         }
-        if self.next_time == self.grid().times() {
+        if self.next_time == self.resolved.times.end {
             Step::End
         } else {
             Step::Batch
@@ -530,7 +532,7 @@ impl VisibilityCursor for Msv2Cursor<'_> {
     }
 
     fn fill(&mut self, buffers: &mut BatchBuffers) -> Result<(), ObservationError> {
-        let times = self.grid().times();
+        let times = self.resolved.times.end;
         if self.next_time == times {
             return Err(ObservationError::InvalidRequest {
                 reason: "fill after the end of the traversal".to_string(),

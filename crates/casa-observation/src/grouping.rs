@@ -67,7 +67,19 @@ pub struct GroupFragment {
     /// it: [`VisibilityBatch::channel_window`] and
     /// [`VisibilityBatch::time_window`] carry none, so a closing position
     /// is seen once, however many work units share the batch.
+    ///
+    /// Under a time selection ([`AccessRequest::times`]) the position and
+    /// the completion describe the part of the group the selection holds.
+    ///
+    /// [`AccessRequest::times`]: crate::AccessRequest::times
     pub position: FragmentPosition,
+    /// Whether the request's time selection holds only part of the group:
+    /// the rest of its samples lie outside the selected times, and a
+    /// traversal of those times delivers them, under the same key. A
+    /// consumer that splits a partition by time merges such a group's
+    /// parts across traversals before finalizing it; a group no selection
+    /// cuts is whole in its traversal.
+    pub clipped: bool,
 }
 
 /// Joins the two completions of a group that concurrent work consumes: its

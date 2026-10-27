@@ -22,6 +22,7 @@ use casa_ms::observation_io::{GroupClosure, OpenOptions};
 use casa_ms::selection::MsSelection;
 use casa_observation::{
     AccessRequest, Binding, BindingTolerance, CorrelationRequest, Grouping, Observation, Roles,
+    TimeSelection,
 };
 
 use super::kernel::SolutionRow;
@@ -73,6 +74,7 @@ fn access(observation: &dyn Observation, times: usize) -> AccessRequest {
         data_group: "base".to_string(),
         roles: Roles::ALL,
         channels: 0..8,
+        times: TimeSelection::All,
         correlations: CorrelationRequest::ALL,
         grouping: Grouping::TimeBins {
             width_s: 60.0,

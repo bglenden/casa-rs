@@ -1109,9 +1109,9 @@ Commands: `ms_trial_convert`, `ms_trial_read_passes`,
    workers take 0.64 s; conversion with eight workers is unchanged and
    with one about 2 s slower (19.5–20.7 s before, with 10.4 s of CPU).
    In-partition parallelism comes back by giving workers disjoint parts
-   of a partition, which needs a time range in the request
-   ([#910](https://github.com/bglenden/casa-rs/issues/910)), or by an
-   admitted pool zarrs runs inside.
+   of a partition: a time range in the request
+   ([#910](https://github.com/bglenden/casa-rs/issues/910), section
+   "Time selection" below), or an admitted pool zarrs runs inside.
 3. **Retention plateaus (R4).** Thirty read passes of every partition in
    one process: peak RSS 138.87 MB after the first and 138.95 MB after
    the thirtieth with one worker, 518.85 and 519.34 MB with four.
@@ -1172,6 +1172,66 @@ conversion drops `POINTING`, `SOURCE` detail and `HISTORY`, as reported);
 a loss inventory at subtable-column level; a v4 → v2 reference converter
 to compare with (XRADIO has none; casacore read-back stands in); MSv2
 creation from parallel workers.
+
+## Time selection: workers split a partition by time
+
+Step (4)'s first item ([#910](https://github.com/bglenden/casa-rs/issues/910)):
+a request can select times, so workers can share one partition without a
+hidden pool (converter finding 2). `AccessRequest::times` is every grid time
+or those within one half-open range of epochs, stated in the partitions' own
+time origin and scale (contracts, section 4), so selecting a time rounds
+nothing; `TimeRange::of_grid` states a slice a planner cut at grid indices.
+The estimate gives the selection's times and its first (`first_time`); the
+MSv2 adapter reads the selected rows from its opening index, the MSv4 adapter
+the chunks the selection touches; the MSv2 updater plans and orders its
+writes over the selection, and the MSv4 one already addressed times by value.
+
+Groups keep the keys they have over the whole grid. A traversal delivers
+and closes the part of each group its selection holds and marks a group the
+selection cuts (`GroupFragment::clipped`), so a consumer merges only those
+parts across its slices. Joining the parts through one completion shared by
+the slices, as #910 first proposed, was not done: slice 2's closing fragment
+could make the group ready before slice 1's work on it had begun.
+
+| Law | What it shows |
+| --- | --- |
+| `time_slices_tile_a_partition_sample_for_sample` | On both stores, slices tiling the twelve times (one; two; three uneven; one per time) deliver exactly the whole traversal, each sample once; each slice's estimate gives its times, first time and batches. |
+| `groups_keep_their_keys_and_close_within_each_slice` | Cut at every time, each slice's group parts have the whole traversal's keys, are positioned and closed within the slice, add up to the whole's groups, and are clipped exactly when the cut divides the group. |
+| `aligned_slices_decode_no_unit_twice` | Slices aligned to the natural time blocks add up to the whole traversal's decode units, modelled and counted; an MSv4 slice that splits a chunk decodes it in both. |
+| `empty_ranges_are_empty_and_malformed_ones_refused` | A range between two times, past the end or before the first is an empty traversal; one reversed, with a NaN end, or in another scale or origin is refused at binding. |
+| `a_sliced_traversal_writes_back_its_times` | On both stores an updater writes a slice's flags; the slice's samples change and no other's. |
+
+Unit laws: `a_time_range_selects_the_grid_times_it_holds` and
+`ranges_of_grid_indices_select_those_times` (casa-observation), and
+`a_selection_closes_the_parts_it_holds_and_marks_cut_groups` (the shared
+group index).
+
+**Measurement** (`ms_trial_read_passes --split partitions|times [--only I]`
+on `pilot.ms` converted to MSv4: 64 partitions of 90 times in 10-time
+chunks; Mac mini, release build, three passes; each slice a whole number of
+chunks, spread as evenly as they go):
+
+| Read | Workers | By partition | By time slice |
+| --- | --- | --- | --- |
+| Every partition | 1 | 2.48 s, 139 MB | 2.49 s, 138 MB |
+| | 4 | 0.82 s, 519 MB | 0.81 s, 220 MB |
+| | 8 | 0.60 s, 1.03 GB | 0.58 s, 269 MB |
+| One partition (`--only 0`) | 1 | 0.039 s | 0.039 s |
+| | 4 | 0.039 s | 0.016 s |
+| | 8 | 0.039 s | 0.014–0.016 s |
+
+Both ways decode the same 3,456 units (54 for one partition), so aligned
+slices decode nothing twice. Over the whole store the two splits take the
+same time, but workers sharing partitions hold two fifths of the memory
+with four workers and a quarter with eight;
+within one partition, which the partition split cannot share, slices of
+nine chunks run 2.4–2.8 times faster with four or eight workers. The
+one-worker pass with zarrs' hidden pool took 1.75 s (finding 2); four
+workers on slices now take 0.81 s, every codec on a worker's own thread.
+
+**Not done:** several updaters of one session at once (each slice's writes
+from its own updater); slices of a partition read concurrently by one
+cursor.
 
 ## Keep, change or discard: the trial's summary for design review
 

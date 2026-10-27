@@ -489,20 +489,6 @@ pub(super) struct Grid {
 }
 
 impl Grid {
-    /// Times on the grid.
-    pub(super) fn times(&self) -> usize {
-        self.times_s.len()
-    }
-
-    /// The fraction of cells no row fills.
-    pub(super) fn padded_fraction(&self) -> f64 {
-        if self.cells.is_empty() {
-            0.0
-        } else {
-            1.0 - self.rows as f64 / self.cells.len() as f64
-        }
-    }
-
     /// The cells of times `times`.
     pub(super) fn cells(&self, times: Range<usize>) -> &[u32] {
         let per_time = self.baselines.len();

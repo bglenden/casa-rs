@@ -16,7 +16,7 @@ use casa_ms::{
 };
 use casa_observation::{
     AccessRequest, BatchBuffers, CorrelationRequest, Grouping, ObservationError, PartitionId,
-    PatchValues, ReadEvent, Roles, UpdateTarget, WeightChannels, WritableRole,
+    PatchValues, ReadEvent, Roles, TimeSelection, UpdateTarget, WeightChannels, WritableRole,
 };
 use num_complex::Complex32;
 
@@ -45,6 +45,7 @@ fn read(path: &Path, id: PartitionId, group: &str) -> BTreeMap<Key, Sample> {
         data_group: group.to_string(),
         roles: Roles::ALL,
         channels: 0..channels,
+        times: TimeSelection::All,
         correlations: CorrelationRequest::ALL,
         grouping: Grouping::None,
         batch_bytes: usize::MAX,
@@ -171,6 +172,7 @@ fn two_windows(root: &Path) -> PathBuf {
             data_group: "base".to_string(),
             roles: Roles::ALL,
             channels: 0..catalogue.partition(id).frequencies_hz.len(),
+            times: TimeSelection::All,
             correlations: CorrelationRequest::ALL,
             grouping: Grouping::None,
             batch_bytes: usize::MAX,
@@ -512,6 +514,7 @@ fn weights_varying_over_channels_are_refused() {
             .partition(PartitionId(0))
             .frequencies_hz
             .len(),
+        times: TimeSelection::All,
         correlations: CorrelationRequest::ALL,
         grouping: Grouping::None,
         batch_bytes: usize::MAX,

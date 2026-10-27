@@ -866,6 +866,7 @@ pub(crate) mod tests {
             key: key(),
             samples: 0..4,
             position: FragmentPosition::Whole,
+            clipped: false,
         });
         tweak(&mut header, &mut arrays);
         let mut fill = buffers.begin(header, &catalogue())?;

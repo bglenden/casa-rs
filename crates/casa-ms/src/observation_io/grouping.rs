@@ -17,10 +17,17 @@ use super::GroupClosure as Closure;
 /// once at binding from the grid's times, fields and scans: the traversal's
 /// group index. Its size is two words per time; the trial accepts it in
 /// exchange for proven closure at delivery.
+///
+/// Keys are those of the whole grid, so traversals of different time
+/// selections agree on every time's group; each group's extent is the part
+/// of it the traversal's selection holds, so fragments are positioned and
+/// closed within the selection and marked `clipped` when it cuts the group.
 #[derive(Debug)]
 pub(super) struct GroupIndex {
     keys: Vec<GroupKey>,
-    extent: BTreeMap<GroupKey, Range<usize>>,
+    /// Each group's times within the selection, and whether the selection
+    /// cuts it.
+    extent: BTreeMap<GroupKey, (Range<usize>, bool)>,
     closure: Closure,
     /// Groups whose last time was delivered under deferred closure, still
     /// to be announced.
@@ -29,8 +36,9 @@ pub(super) struct GroupIndex {
 
 impl GroupIndex {
     /// Index the grid times `times` (seconds, ascending) with `fields` and
-    /// `scans` (when the store names scans) at each, or `None` when the
-    /// request asks for no groups.
+    /// `scans` (when the store names scans) at each, for a traversal of the
+    /// grid times `selection`; or `None` when the request asks for no
+    /// groups.
     pub(super) fn new(
         partition: PartitionId,
         grouping: Grouping,
@@ -38,6 +46,7 @@ impl GroupIndex {
         times: &[f64],
         fields: &[FieldId],
         scans: Option<&[ScanId]>,
+        selection: Range<usize>,
     ) -> Result<Option<Self>, ObservationError> {
         let keyed_by_scan = match grouping {
             Grouping::None => return Ok(None),
@@ -105,6 +114,27 @@ impl GroupIndex {
                 .or_insert(unit..unit + 1);
             keys.push(key);
         }
+        // Each group's first and last time within the selection; the
+        // selection cuts a group whose whole extent reaches outside it.
+        let mut held = BTreeMap::<GroupKey, Range<usize>>::new();
+        for (unit, key) in keys
+            .iter()
+            .enumerate()
+            .take(selection.end)
+            .skip(selection.start)
+        {
+            held.entry(*key)
+                .and_modify(|range| range.end = unit + 1)
+                .or_insert(unit..unit + 1);
+        }
+        let extent = held
+            .into_iter()
+            .map(|(key, held)| {
+                let whole = &extent[&key];
+                let clipped = whole.start < selection.start || whole.end > selection.end;
+                (key, (held, clipped))
+            })
+            .collect();
         Ok(Some(Self {
             keys,
             extent,
@@ -134,7 +164,7 @@ impl GroupIndex {
             while end < times.end && self.keys[end] == key {
                 end += 1;
             }
-            let extent = &self.extent[&key];
+            let (extent, clipped) = &self.extent[&key];
             let first = start == extent.start;
             let last = end == extent.end;
             let position = match (first, last, self.closure) {
@@ -151,6 +181,7 @@ impl GroupIndex {
                 samples: (start - times.start) * samples_per_time
                     ..(end - times.start) * samples_per_time,
                 position,
+                clipped: *clipped,
             });
             start = end;
         }
@@ -174,6 +205,7 @@ mod tests {
             &times,
             &fields,
             Some(&scans),
+            0..7,
         )
         .expect("index")
         .expect("groups")
@@ -232,6 +264,54 @@ mod tests {
                 .all(|f| f.position == FragmentPosition::Whole)
         );
         assert_eq!(fragments[6].samples, 60..70);
+    }
+
+    /// A selection keeps the whole grid's keys, positions and closes each
+    /// group within itself, and marks the groups it cuts.
+    #[test]
+    fn a_selection_closes_the_parts_it_holds_and_marks_cut_groups() {
+        let times: Vec<f64> = (0..7).map(|t| f64::from(t) * 10.0).collect();
+        let fields = [0, 0, 1, 1, 0, 1, 1].map(FieldId);
+        let scans = [0, 0, 0, 0, 0, 1, 1].map(ScanId);
+        let grouping = Grouping::TimeBins {
+            width_s: f64::INFINITY,
+            combine_fields: false,
+            combine_scans: true,
+        };
+        let index = |selection| {
+            GroupIndex::new(
+                PartitionId(0),
+                grouping,
+                Closure::AtDelivery,
+                &times,
+                &fields,
+                Some(&scans),
+                selection,
+            )
+            .expect("index")
+            .expect("groups")
+        };
+        let mut whole = Vec::new();
+        index(0..7).fragments(0..7, 1, &mut whole);
+        let mut sliced = Vec::new();
+        index(1..4).fragments(1..4, 1, &mut sliced);
+        // Field A's group (times 0, 1, 4) and B's (2, 3, 5, 6) are both
+        // cut by times 1-3: A's part is time 1, B's times 2-3, each whole
+        // within the selection and closed there.
+        let seen: Vec<_> = sliced
+            .iter()
+            .map(|f| (f.key.field, f.samples.clone(), f.position, f.clipped))
+            .collect();
+        assert_eq!(
+            seen,
+            [
+                (Some(FieldId(0)), 0..1, FragmentPosition::Whole, true),
+                (Some(FieldId(1)), 1..3, FragmentPosition::Whole, true),
+            ]
+        );
+        assert!(whole.iter().all(|f| !f.clipped));
+        assert_eq!(sliced[0].key, whole[0].key);
+        assert_eq!(sliced[1].key, whole[1].key);
     }
 
     #[test]

@@ -275,7 +275,7 @@ impl Msv2Observation {
         id: PartitionId,
     ) -> Result<(PartitionEstimate, ResolvedRequest), ObservationError> {
         let (partition, entry) = self.partition(id)?;
-        let resolved = request.resolve(entry)?;
+        let resolved = request.resolve(entry, &partition.grid.times_s)?;
         let roles = request.roles;
         let channels = request.channels.len();
         let (delivered, stored) = (
@@ -317,7 +317,10 @@ impl Msv2Observation {
                 + usize::from(roles.uvw) * 3
                 + scalars
         };
-        let (times, baselines) = (grid.times(), grid.baselines.len());
+        let (times, baselines) = (resolved.times.len(), grid.baselines.len());
+        // The selection's rows: its cells that a row fills.
+        let cells = grid.cells(resolved.times.clone());
+        let rows = cells.iter().filter(|row| **row != index::NO_ROW).count();
         let bytes_per_time = roles.time_bytes(0);
         let times_per_batch = times_per_batch(
             request.batch_bytes,
@@ -333,6 +336,7 @@ impl Msv2Observation {
         let estimate = PartitionEstimate {
             partition: id,
             times,
+            first_time: resolved.times.start,
             baselines,
             bytes_per_sample,
             bytes_per_time,
@@ -343,9 +347,9 @@ impl Msv2Observation {
             } else {
                 times.div_ceil(times_per_batch)
             },
-            decode_units: grid.rows,
-            decoded_elements: grid.rows * per_sample(stored),
-            selected_elements: grid.rows * per_sample(delivered),
+            decode_units: rows,
+            decoded_elements: rows * per_sample(stored),
+            selected_elements: rows * per_sample(delivered),
             natural_blocks: match tile.as_deref() {
                 // A cell tile is [correlation, channel, rows].
                 Some([_, channels, rows, ..]) => NaturalBlocks {
@@ -357,7 +361,11 @@ impl Msv2Observation {
                     channels: entry.frequencies_hz.len(),
                 },
             },
-            padded_fraction: grid.padded_fraction(),
+            padded_fraction: if cells.is_empty() {
+                0.0
+            } else {
+                1.0 - rows as f64 / cells.len() as f64
+            },
         };
         Ok((estimate, resolved))
     }

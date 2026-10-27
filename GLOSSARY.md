@@ -172,7 +172,8 @@ validity rule excludes it; nothing is read from disk for it.
 _Avoid_: Missing row, absent slot, occupancy
 
 **Batch Shape**:
-What one batch covers: the partition set, the channel window, the roles read,
+What one batch covers: the partition set, the channel window, the time
+selection, the roles read,
 the correlation products delivered, and the number of whole times the byte
 budget admits. The budget counts the batch and the cursor's decode scratch
 for it. The estimate costs a batch shape before anything is read.
@@ -186,9 +187,18 @@ buffer when it is dropped. Each buffer has a byte envelope it never exceeds,
 so the pool holds at most its size times that envelope.
 _Avoid_: Buffer cache, free list, lending
 
+**Time Selection**:
+The grid times one traversal reads: every time, or those within one
+half-open range of epochs, stated in the partitions' own time origin and
+scale so that selecting a time rounds nothing. Group keys stay those of the
+whole grid; a group the selection cuts is delivered as its part, marked
+clipped, and closed within the traversal. Workers that split a partition by
+time each take a selection aligned to the store's natural time blocks.
+_Avoid_: Time slice (informally fine), row range, time window
+
 **Traversal Order**:
 The order batches arrive. Within one cursor it is fixed: whole times of one
-channel window of one partition, in time order. Across the observation it is
+channel window of one partition's time selection, in time order. Across the observation it is
 the consumer's, expressed by which cursors it binds and runs, and when.
 _Avoid_: Iteration order, row order
 

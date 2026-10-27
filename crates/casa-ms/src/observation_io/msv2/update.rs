@@ -16,6 +16,7 @@
 //! initializes them, so rows and channels a pass does not reach read as
 //! uncorrected data and a unit point source.
 
+use std::ops::Range;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use casa_observation::{
@@ -66,6 +67,8 @@ struct Msv2Updater<'s> {
     session: MeasurementSetWriteSession,
     columns: Vec<Column>,
     request: AccessRequest,
+    /// Each requested partition's selected grid times.
+    selections: Vec<Range<usize>>,
     position: Position,
     batch_rows: usize,
     report: UpdateReport,
@@ -101,11 +104,16 @@ impl Msv2Update {
     ) -> Result<Box<dyn Updater + 's>, ObservationError> {
         let estimate = self.observation.estimate(request)?;
         let catalogue = self.observation.catalogue();
+        let selections: Vec<Range<usize>> = estimate
+            .partitions
+            .iter()
+            .map(|partition| partition.first_time..partition.first_time + partition.times)
+            .collect();
         let mut rows = Vec::new();
-        for id in &request.partitions {
+        for (id, selection) in request.partitions.iter().zip(&selections) {
             let grid = &self.observation.partitions[id.0 as usize].grid;
             rows.extend(
-                grid.cells
+                grid.cells(selection.clone())
                     .iter()
                     .filter(|row| **row != NO_ROW)
                     .map(|row| *row as usize),
@@ -163,8 +171,9 @@ impl Msv2Update {
             request: request.clone(),
             position: Position {
                 partition: 0,
-                time: 0,
+                time: selections.first().map_or(0, |selection| selection.start),
             },
+            selections,
             batch_rows,
             report: UpdateReport {
                 units_written: seeded,
@@ -434,23 +443,20 @@ impl Updater for Msv2Updater<'_> {
 impl Msv2Updater<'_> {
     /// `batch`'s first grid time, after checking it is the traversal's
     /// next batch: the same partition from the next time, or the next
-    /// partition from its first.
+    /// partition from its first selected time.
     fn place(&mut self, batch: &VisibilityBatch<'_>) -> Result<usize, ObservationError> {
         let partitions = &self.request.partitions;
         let observation = &self.update.observation;
+        let selections = &self.selections;
         let mut position = self.position;
-        let done = |position: Position| {
-            observation.partitions[partitions[position.partition].0 as usize]
-                .grid
-                .times()
-                == position.time
-        };
+        let done = |position: Position| selections[position.partition].end == position.time;
         if partitions.get(position.partition) != Some(&batch.partition)
             || (done(position) && position.partition + 1 < partitions.len())
         {
+            let next = position.partition + 1;
             position = Position {
-                partition: position.partition + 1,
-                time: 0,
+                partition: next,
+                time: selections.get(next).map_or(0, |selection| selection.start),
             };
         }
         if partitions.get(position.partition) != Some(&batch.partition)

@@ -6,9 +6,11 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use casa_types::Correlation;
+use casa_types::measures::{EpochRef, MjdHighPrec};
 
 use crate::ObservationError;
 use crate::catalogue::{FieldId, PartitionEntry, PartitionId, ScanId};
+use crate::creation::TimeBaselineGrid;
 use crate::grouping::GroupFragment;
 
 /// Which roles a traversal reads: the data group's payload and the
@@ -235,6 +237,128 @@ pub enum Grouping {
     PerIntegration,
 }
 
+/// A half-open interval of epochs, `[start_s, end_s)` seconds from
+/// `origin` on time scale `scale`: the grid times a traversal reads.
+///
+/// It is stated in the partitions' own time origin and scale
+/// ([`PartitionEntry::time_origin`], [`PartitionEntry::time_scale`]), which
+/// every partition of one store shares, so selecting a grid time compares
+/// two offsets from one origin and rounds nothing. A range stated in another
+/// origin or scale is refused at binding, not converted. Either end may be
+/// infinite. [`Self::of_grid`] states the grid times a planner chose by
+/// index with the grid's own values, so its ends are exactly those times;
+/// one range serves every partition of a request, so a calibration solution
+/// interval selects the same epochs in each spectral window.
+#[derive(Clone, Copy, Debug)]
+pub struct TimeRange {
+    /// The time scale of the epochs.
+    pub scale: EpochRef,
+    /// The origin `start_s` and `end_s` count from.
+    pub origin: MjdHighPrec,
+    /// The first epoch selected, seconds from `origin`.
+    pub start_s: f64,
+    /// The epoch after the last selected, seconds from `origin`.
+    pub end_s: f64,
+}
+
+impl TimeRange {
+    /// The grid times `times` of `grid` (indices into
+    /// [`TimeBaselineGrid::times_s`]): from the first one's time to the
+    /// next time after the last, or without end when `times` runs to the
+    /// grid's last time. An empty `times` selects nothing.
+    ///
+    /// # Panics
+    ///
+    /// If `times` starts after it ends or after the grid's last time.
+    #[must_use]
+    pub fn of_grid(grid: &TimeBaselineGrid, times: Range<usize>) -> Self {
+        assert!(
+            times.start <= times.end && times.start <= grid.times_s.len(),
+            "grid times {times:?} of {}",
+            grid.times_s.len()
+        );
+        let at = |index: usize| grid.times_s.get(index).copied().unwrap_or(f64::INFINITY);
+        Self {
+            scale: grid.time_scale,
+            origin: grid.time_origin,
+            start_s: if times.is_empty() {
+                at(times.end)
+            } else {
+                at(times.start)
+            },
+            end_s: at(times.end),
+        }
+    }
+}
+
+impl PartialEq for TimeRange {
+    fn eq(&self, other: &Self) -> bool {
+        self.scale == other.scale
+            && same_origin(self.origin, other.origin)
+            && self.start_s == other.start_s
+            && self.end_s == other.end_s
+    }
+}
+
+/// Whether two origins are the same epoch, part for part.
+fn same_origin(a: MjdHighPrec, b: MjdHighPrec) -> bool {
+    a.day() == b.day() && a.frac() == b.frac()
+}
+
+/// The times a traversal reads.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum TimeSelection {
+    /// Every time of each partition's grid.
+    #[default]
+    All,
+    /// The grid times within a range.
+    Within(TimeRange),
+}
+
+impl TimeSelection {
+    /// The grid times of `entry`'s partition the selection holds, as
+    /// indices into `times_s`: the partition's grid times, seconds from
+    /// `entry`'s [`time_origin`](PartitionEntry::time_origin), ascending. A
+    /// range holding no grid time (between two, or past either end) selects
+    /// none.
+    ///
+    /// # Errors
+    ///
+    /// When the range is stated in another time scale or origin than the
+    /// partition's, either end is NaN, or it starts after it ends.
+    pub fn indices(
+        &self,
+        entry: &PartitionEntry,
+        times_s: &[f64],
+    ) -> Result<Range<usize>, ObservationError> {
+        let Self::Within(range) = self else {
+            return Ok(0..times_s.len());
+        };
+        let invalid = |reason: String| ObservationError::InvalidRequest { reason };
+        if range.scale != entry.time_scale || !same_origin(range.origin, entry.time_origin) {
+            return Err(invalid(format!(
+                "the time range is stated in {:?} from MJD {} + {}, the partition's times in {:?} \
+                 from MJD {} + {}: a range is stated in its partitions' scale and origin",
+                range.scale,
+                range.origin.day(),
+                range.origin.frac(),
+                entry.time_scale,
+                entry.time_origin.day(),
+                entry.time_origin.frac()
+            )));
+        }
+        if range.start_s.is_nan() || range.end_s.is_nan() || range.start_s > range.end_s {
+            return Err(invalid(format!(
+                "the time range [{}, {}) s is not an interval",
+                range.start_s, range.end_s
+            )));
+        }
+        let start = times_s.partition_point(|time| *time < range.start_s);
+        let end = times_s.partition_point(|time| *time < range.end_s);
+        Ok(start..end.max(start))
+    }
+}
+
 /// What a consumer asks one traversal to deliver.
 #[derive(Clone, Debug, PartialEq)]
 pub struct AccessRequest {
@@ -248,6 +372,11 @@ pub struct AccessRequest {
     pub roles: Roles,
     /// The partitions' native channels to deliver.
     pub channels: Range<usize>,
+    /// The grid times to deliver: every time, or those within one range
+    /// of epochs, in each partition. Scientific groups keep the keys they
+    /// have over the whole grid; a group the range cuts is delivered as the
+    /// part it holds ([`GroupFragment::clipped`]).
+    pub times: TimeSelection,
     /// The correlation products to deliver and whose flags they carry.
     pub correlations: CorrelationRequest,
     /// Scientific groups. Whether a group's completion arrives on its last
@@ -262,13 +391,16 @@ pub struct AccessRequest {
     pub batch_bytes: usize,
 }
 
-/// A request's data group and correlation axis resolved against one
+/// A request's data group, times and correlation axis resolved against one
 /// partition: what every adapter checks at binding, once.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ResolvedRequest {
     /// The data group's index in the partition's
     /// [`data_groups`](PartitionEntry::data_groups).
     pub data_group: usize,
+    /// The grid times delivered, as indices into the partition's grid
+    /// times ([`TimeSelection::indices`]).
+    pub times: Range<usize>,
     /// The delivered correlation products, shared by every batch.
     pub correlations: CorrelationAxis,
     /// Whether a delivered flag is the OR over every product's: true only
@@ -278,15 +410,20 @@ pub struct ResolvedRequest {
 }
 
 impl AccessRequest {
-    /// Resolve this request's data group, channel window and correlation
-    /// axis against `entry`.
+    /// Resolve this request's data group, channel window, times and
+    /// correlation axis against `entry`, whose grid times are `times_s`.
     ///
     /// # Errors
     ///
     /// When the partition lacks the data group or a requested product, the
-    /// channel window is empty or outside the partition, or no product is
-    /// requested.
-    pub fn resolve(&self, entry: &PartitionEntry) -> Result<ResolvedRequest, ObservationError> {
+    /// channel window is empty or outside the partition, no product is
+    /// requested, or the time selection is refused
+    /// ([`TimeSelection::indices`]).
+    pub fn resolve(
+        &self,
+        entry: &PartitionEntry,
+        times_s: &[f64],
+    ) -> Result<ResolvedRequest, ObservationError> {
         let invalid = |reason: String| ObservationError::InvalidRequest { reason };
         let (data_group, _) = entry
             .data_group(&self.data_group)
@@ -326,6 +463,7 @@ impl AccessRequest {
         };
         Ok(ResolvedRequest {
             data_group,
+            times: self.times.indices(entry, times_s)?,
             flags_from_all: correlations.indices().is_some()
                 && self.correlations.flags_from == FlagsFrom::All,
             correlations,
@@ -350,8 +488,12 @@ pub struct NaturalBlocks {
 pub struct PartitionEstimate {
     /// The partition.
     pub partition: PartitionId,
-    /// Times on its grid.
+    /// Times the traversal delivers: the grid's, or those the request's
+    /// [`TimeSelection`] holds.
     pub times: usize,
+    /// The first of them, as an index into the grid's times (0 without a
+    /// selection).
+    pub first_time: usize,
     /// Baselines on its grid.
     pub baselines: usize,
     /// Bytes one sample of the requested roles holds in a batch
@@ -559,6 +701,97 @@ impl IoCounters {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn entry(time_scale: EpochRef, time_origin: MjdHighPrec) -> PartitionEntry {
+        PartitionEntry {
+            spectral_window: "spw".to_string(),
+            frequencies_hz: vec![1.0e9],
+            frequency_frame: casa_types::measures::frequency::FrequencyRef::LSRK,
+            channel_widths_hz: vec![1.0e8],
+            correlations: vec![Correlation::XX],
+            intents: Vec::new(),
+            observation: crate::catalogue::ObservationId(0),
+            feeds: None,
+            fields: Vec::new(),
+            scans: Vec::new(),
+            baselines: Vec::new(),
+            time_scale,
+            time_origin,
+            data_groups: Vec::new(),
+        }
+    }
+
+    /// A range selects the grid times it holds, exactly at its ends; one
+    /// holding none (between two times, past either end) selects nothing;
+    /// a range in another scale or origin, or not an interval, is refused.
+    #[test]
+    fn a_time_range_selects_the_grid_times_it_holds() {
+        let origin = MjdHighPrec::new(0.0, 0.0);
+        let entry = entry(EpochRef::UTC, origin);
+        let times = [10.0, 20.0, 30.0, 40.0];
+        let within = |start_s, end_s| {
+            TimeSelection::Within(TimeRange {
+                scale: EpochRef::UTC,
+                origin,
+                start_s,
+                end_s,
+            })
+            .indices(&entry, &times)
+        };
+        assert_eq!(TimeSelection::All.indices(&entry, &times).unwrap(), 0..4);
+        assert_eq!(within(20.0, 40.0).unwrap(), 1..3);
+        assert_eq!(within(15.0, 35.0).unwrap(), 1..3);
+        assert_eq!(within(f64::NEG_INFINITY, f64::INFINITY).unwrap(), 0..4);
+        assert!(within(21.0, 29.0).unwrap().is_empty());
+        assert!(within(50.0, f64::INFINITY).unwrap().is_empty());
+        assert!(within(0.0, 10.0).unwrap().is_empty());
+        assert!(within(30.0, 20.0).is_err());
+        assert!(within(f64::NAN, 20.0).is_err());
+        let tai = TimeSelection::Within(TimeRange {
+            scale: EpochRef::TAI,
+            origin,
+            start_s: 0.0,
+            end_s: 50.0,
+        });
+        assert!(tai.indices(&entry, &times).is_err());
+        let unix = TimeSelection::Within(TimeRange {
+            scale: EpochRef::UTC,
+            origin: MjdHighPrec::new(40_587.0, 0.0),
+            start_s: 0.0,
+            end_s: 50.0,
+        });
+        assert!(unix.indices(&entry, &times).is_err());
+    }
+
+    /// A range stated from grid indices selects exactly those times, and
+    /// ranges of consecutive index ranges tile the grid.
+    #[test]
+    fn ranges_of_grid_indices_select_those_times() {
+        let grid = TimeBaselineGrid {
+            baselines: Vec::new(),
+            time_scale: EpochRef::UTC,
+            time_origin: MjdHighPrec::new(40_587.0, 0.0),
+            times_s: vec![
+                1.7e9 + 0.1,
+                1.7e9 + 1.3,
+                1.7e9 + 2.7,
+                1.7e9 + 3.9,
+                1.7e9 + 5.2,
+            ],
+            field_per_time: Vec::new(),
+            scan_per_time: Vec::new(),
+            interval_s: 1.0,
+        };
+        let entry = entry(grid.time_scale, grid.time_origin);
+        for (start, end) in [(0, 2), (2, 5), (1, 4), (0, 5), (3, 3), (5, 5)] {
+            let selection = TimeSelection::Within(TimeRange::of_grid(&grid, start..end));
+            assert_eq!(
+                selection.indices(&entry, &grid.times_s).unwrap(),
+                start..end,
+                "{start}..{end}"
+            );
+        }
+    }
 
     #[test]
     fn the_budget_fits_whole_times_or_refuses() {

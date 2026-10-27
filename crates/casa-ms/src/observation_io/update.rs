@@ -341,6 +341,7 @@ mod tests {
 
     use casa_observation::{
         BatchBuffers, CorrelationRequest, Grouping, PartitionId, PatchValues, ReadEvent, Roles,
+        TimeSelection,
     };
     use num_complex::Complex32;
 
@@ -366,6 +367,7 @@ mod tests {
             data_group: "base".to_string(),
             roles: Roles::ALL,
             channels: 0..8,
+            times: TimeSelection::All,
             correlations: CorrelationRequest::ALL,
             grouping: Grouping::None,
             batch_bytes: usize::MAX,

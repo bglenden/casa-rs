@@ -8,6 +8,8 @@
 mod convert;
 #[path = "observation_io/refusals.rs"]
 mod refusals;
+#[path = "observation_io/times.rs"]
+mod times;
 #[path = "observation_io/update.rs"]
 mod update;
 #[path = "observation_io/work.rs"]
@@ -25,7 +27,7 @@ use casa_observation::{
     AccessRequest, BatchBuffers, BindingTolerance, BufferPool, Catalogue, Correlation,
     CorrelationRequest, Deliver, FieldId, FlagsFrom, FragmentPosition, GroupKey, Grouping,
     Observation, ObservationError, ObservationId, OwnedEvent, PartitionId, ReadEvent, Roles,
-    ScanId, Shared, Traversal,
+    ScanId, Shared, TimeSelection, Traversal,
 };
 use casa_types::measures::MjdHighPrec;
 use casa_types::measures::direction::DirectionRef;
@@ -52,6 +54,7 @@ pub(crate) fn request(channels: std::ops::Range<usize>, batch_bytes: usize) -> A
         data_group: "base".to_string(),
         roles: Roles::ALL,
         channels,
+        times: TimeSelection::All,
         correlations: CorrelationRequest::ALL,
         grouping: Grouping::None,
         batch_bytes,

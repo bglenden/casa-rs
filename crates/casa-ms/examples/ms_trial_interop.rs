@@ -23,7 +23,7 @@ use casa_ms::observation_io::{
 };
 use casa_observation::{
     AccessRequest, BatchBuffers, CorrelationRequest, Grouping, Observation, PartitionId, ReadEvent,
-    Roles,
+    Roles, TimeSelection,
 };
 use serde_json::json;
 
@@ -35,6 +35,7 @@ fn request(batch_bytes: usize) -> AccessRequest {
         data_group: "base".to_string(),
         roles: Roles::ALL,
         channels: 0..8,
+        times: TimeSelection::All,
         correlations: CorrelationRequest::ALL,
         grouping: Grouping::None,
         batch_bytes,
