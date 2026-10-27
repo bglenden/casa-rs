@@ -1594,6 +1594,7 @@ execution: algorithm &lt;-- VisibilityBatch / GroupEnd ---- cursor
 <span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">roles</span><span class="p">:</span><span class="w"> </span><span class="nc">Roles</span><span class="p">,</span><span class="w">                   </span><span class="c1">// what is read at all</span>
 <span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">channels</span><span class="p">:</span><span class="w"> </span><span class="nc">Range</span><span class="o">&lt;</span><span class="kt">usize</span><span class="o">&gt;</span><span class="p">,</span><span class="w">         </span><span class="c1">// native channel window</span>
 <span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">times</span><span class="p">:</span><span class="w"> </span><span class="nc">TimeSelection</span><span class="p">,</span><span class="w">           </span><span class="c1">// every grid time, or those in one epoch range</span>
+<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">fields</span><span class="p">:</span><span class="w"> </span><span class="nc">FieldSelection</span><span class="p">,</span><span class="w">         </span><span class="c1">// every field, or the times phased to some</span>
 <span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">weights</span><span class="p">:</span><span class="w"> </span><span class="nc">WeightRequest</span><span class="p">,</span><span class="w">         </span><span class="c1">// the stored weights, or 1/σ² of the sigmas</span>
 <span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">correlations</span><span class="p">:</span><span class="w"> </span><span class="nc">CorrelationRequest</span><span class="p">,</span><span class="w"> </span><span class="c1">// products delivered and whose flags</span>
 <span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">grouping</span><span class="p">:</span><span class="w"> </span><span class="nc">Grouping</span><span class="p">,</span><span class="w">             </span><span class="c1">// scientific groups, as gaincal keys them</span>
@@ -1602,7 +1603,8 @@ execution: algorithm &lt;-- VisibilityBatch / GroupEnd ---- cursor
 </code></pre></div>
 
 <p>The request is resolved against each partition once, at binding: the data
-group, the channel window, the time selection, and the correlation axis,
+group, the channel window, the time and field selections, and the
+correlation axis,
 which every batch of the traversal and every piece packed from one then
 shares without copying (all products borrow the catalogue's list).</p>
 <p>A <strong>time selection</strong> is every grid time, or those within one half-open range
@@ -1617,8 +1619,8 @@ every partition of a request, so a calibration solution interval selects the
 same epochs in each spectral window. A planner that splits a partition by
 time cuts it at grid indices, through <code>Observation::grid</code>, which reads no
 payload, and states each slice with <code>TimeRange::of_grid</code>, which uses the
-grid's own values; slices aligned to the estimate's natural time blocks
-decode no unit twice. The MSv2 adapter reads the selected rows from its
+grid's own values; without a field selection, slices aligned to the
+estimate's natural time blocks decode no unit twice. The MSv2 adapter reads the selected rows from its
 opening index; the MSv4 adapter reads only the chunks the selection
 touches. Updaters address samples by the batch's own times, so a sliced
 traversal writes back, passing partitions whose selection holds no time; an
@@ -1626,12 +1628,47 @@ updater bound to a slice refuses a batch of times outside it; an updater
 writes batch for batch, and refuses a later partition while an earlier
 one's selected times are unwritten. Several updaters of one session write
 the slices of a split at once, each claiming its times (section 7).</p>
+<p><strong>Field selection.</strong> A request reads every field, or the times phased to
+some fields (<code>FieldSelection::Only</code>), in its data group. A field is per
+time, so the selection takes whole times. With the time range, it resolves
+at binding to the partition's selected times as runs of consecutive grid
+times (<code>TimeRuns</code>, the estimate's <code>time_runs</code>). A batch holds whole times of
+one run, so its times are consecutive on the grid.</p>
+<p>What the adapters decode, as the estimate models it:
+- The MSv2 adapter reads only the selected rows of its opening index.
+- The MSv4 adapter reads the chunks each batch's times touch. A chunk row
+  also holds the gap times beside a run, and a chunk row that holds several
+  runs is decoded once for each batch that reads it. Each batch decodes
+  every chunk row its times touch: one for a run inside a chunk row, two
+  for a run that crosses a chunk-row boundary (#935 would hold a decoded
+  chunk row across batches).</p>
+<p>Group keys are taken over the selected fields' times, as production
+<code>gaincal</code> bins only the rows it selects. A group keyed by field is held
+whole or not at all. A group that combines fields holds the selected
+fields' times alone, with its bins counted from the earliest of them;
+production <code>gaincal</code> counts from the lowest-numbered field's first time,
+which differs when that field is not observed first (#936). So a field
+selection cuts no group, and <code>clipped</code> stays for time ranges. Time splits and
+updaters take a field selection as they take a time range: slices tile the
+selected times, and an updater claims and writes its runs.</p>
+<p>Intents are not selected on the request. A partition's samples share their
+intents (the adapters partition by <code>OBS_MODE</code>, as XRADIO's converter does),
+so a consumer selects intents by the partitions it requests. Two
+differences from CASA's selection follow:
+- The catalogue keeps a partition's intents split at commas, sorted and
+  deduplicated. CASA matches an intent pattern against the whole
+  <code>OBS_MODE</code> string, so a pattern that depends on an intent's place in
+  that string (<code>CALIBRATE_BANDPASS*</code> rather than <code>*BANDPASS*</code>) can select
+  otherwise when matched intent by intent.
+- Selection by <code>STATE_ID</code> (CASA's intent selection by number) has no
+  counterpart. States with one <code>OBS_MODE</code> share a partition, so a
+  consumer cannot select one of them.</p>
 <p><strong>Time splits.</strong> Workers that split a request by time plan the slices
 together: <code>TimeSplit::plan</code> cuts the request at consecutive epoch ranges
-that must tile its times in every partition (a gap, an overlap, or a time
-left outside every slice is refused), and counts, from the store's group
+that must tile its selected times in every partition (a gap, an overlap,
+or a time left outside every slice is refused), and counts, from the store's group
 index (<code>Observation::group_keys</code>, reading no payload), the scientific
-groups the cuts divide and how many slices hold part of each. Each slice's
+groups the cuts divide and which slices hold part of each. Each slice's
 traversal delivers its part of a divided group, positioned and closed
 within the slice and marked <code>clipped</code>; the split's <code>SplitCompletion</code>, shared
 by the slices (each through its own <code>SliceCompletion</code>), makes such a group
@@ -1684,9 +1721,9 @@ correlation subset is decoded whole and gathered; the estimate counts that as
 decoded and the subset as selected, and its scratch is in the budget.</p>
 <p>Scientific groups come from declared keys: production <code>gaincal</code>'s rules, keyed
 by partition, field unless combined, scan unless combined, and the time bin
-counted from the first time of the (field, scan) run, over the whole grid
-whatever the time selection, so traversals of different slices agree on
-every time's group. A grouping keyed by scan
+counted from the first time of the (field, scan) run, over the grid's
+field-selected times whatever the time selection, so traversals of
+different slices agree on every time's group. A grouping keyed by scan
 on a store that names none is refused at binding. Groups can span batches and
 storage chunks; the backend executes the requested grouping and does not decide
 which fields a solver may combine. A delivered batch lists its fragments: the

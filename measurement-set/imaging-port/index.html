@@ -916,6 +916,17 @@ On a batch:
 mosaic imaged one field at a time. It also serves calibration's field and
 intent selections. It belongs to packet (a), catalogue/selection and read
 binding.</p>
+<p>As landed in step 2, <code>AccessRequest::fields</code> selects fields, and the
+adapters deliver the whole selected times in runs (trial README, "Field
+selection"). Group keys are taken over the selected fields' times, as
+production <code>gaincal</code> bins only its selected rows (the bin origin with fields
+combined is #936). On MSv4 a chunk row holding
+several runs is decoded once per batch (#935). Intents need no request
+field: the adapters partition by intent, as XRADIO's converter does, so the
+imager selects intents by the partitions it requests. The catalogue keeps
+a partition's intents split and sorted, so step 4 matches an intent pattern
+intent by intent, where CASA matches the whole <code>OBS_MODE</code> string; selection
+by <code>STATE_ID</code> is not supported (contracts, section 4).</p>
 <h3 id="24-compile-without-main-walks">2.4 Compile without MAIN walks<a class="headerlink" href="#24-compile-without-main-walks" title="Permanent link">&para;</a></h3>
 <p>The opening's index (the MSv2 adapter grids MAIN's key columns once, in row
 chunks) and the estimate answer what compile walks MAIN for today:
