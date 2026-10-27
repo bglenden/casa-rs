@@ -2496,17 +2496,7 @@ fn field_parallactic_angle_rad(
                 "simobserve parallactic-angle pole conversion failed: {error}"
             ))
         })?;
-    Ok(spherical_position_angle(&source_azel, &pole_azel))
-}
-
-fn spherical_position_angle(origin: &MDirection, target: &MDirection) -> f64 {
-    let (origin_lon, origin_lat) = origin.as_angles();
-    let (target_lon, target_lat) = target.as_angles();
-    let delta_lon = target_lon - origin_lon;
-    let y = delta_lon.sin() * target_lat.cos();
-    let x =
-        origin_lat.cos() * target_lat.sin() - origin_lat.sin() * target_lat.cos() * delta_lon.cos();
-    y.atan2(x)
+    Ok(source_azel.position_angle(&pole_azel))
 }
 
 fn apply_fractional_stokes_to_linear_rows(

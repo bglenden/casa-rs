@@ -11,6 +11,7 @@ mod observation;
 mod product_list;
 mod selected_observation_sample;
 mod transaction;
+mod uvw_projection;
 mod visibility_transform;
 
 pub use compiled_problem::{
@@ -90,6 +91,7 @@ pub use transaction::{
     ObservationTransactionRequirements, ObservationWriteSet, SelectedVisibilityWriteAccess,
 };
 
+pub use uvw_projection::GridFtProjection;
 pub use visibility_transform::{
     ContinuumChannelRole, ContinuumChannelUse, ContinuumCovariancePolicy, ContinuumFitRule,
     ContinuumTransformContractError, SequentialContinuumTransform,
