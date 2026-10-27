@@ -388,11 +388,14 @@ impl SelectedVisibilityWrite {
 impl Drop for SelectedVisibilityWrite {
     /// An abandoned write releases the MAIN write lock without flushing the
     /// cells still queued: the batches persisted so far stay, as after an
-    /// interrupted CASA write, and MAIN is not rewritten.
+    /// interrupted CASA write, and MAIN is not rewritten, even when its
+    /// metadata cannot be written.
     fn drop(&mut self) {
         if !self.completed {
             if let Some(measurement_set) = self.measurement_set.as_mut() {
-                let _ = measurement_set.main_table_mut().unlock_metadata_only();
+                let _ = measurement_set
+                    .main_table_mut()
+                    .unlock_metadata_only_or_discard();
             }
             self.measurement_set = None;
         }

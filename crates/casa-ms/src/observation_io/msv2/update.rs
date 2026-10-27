@@ -93,6 +93,11 @@ impl Msv2Update {
     }
 
     /// Plan `request`'s rows and start production's mutation of `targets`.
+    ///
+    /// What CASA clears before the targets' columns are written is cleared
+    /// first ([`prepare_column`]), before the mutation's lock is taken: a
+    /// mutation then refused leaves it cleared with nothing written, as
+    /// CASA's imager clears it when it selects the data.
     pub(in crate::observation_io) fn updater<'s>(
         &'s self,
         request: &AccessRequest,

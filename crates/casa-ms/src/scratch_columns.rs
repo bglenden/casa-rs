@@ -67,12 +67,15 @@ const SORT_KEYWORDS: [&str; 2] = ["SORT_COLUMNS", "SORTED_TABLE"];
 /// full as [`MeasurementSet::save`] writes it, MAIN's metadata alone. A
 /// table opened with locking is written under its own lock, held already
 /// or taken and released here; one opened without, under a
-/// [`TableWriteLock`] taken and released here. A lock is waited for as
-/// casacore waits, except SOURCE's while the caller holds MAIN's write
-/// lock: one attempt is then made, as a save never waits for one table
-/// while it holds another. The `FT_MODEL*` model images are deleted last
-/// and, as CASA deletes them, at best: one that cannot be deleted is
-/// logged and left.
+/// [`TableWriteLock`] taken and released here, so a caller holds MAIN's
+/// write lock, if at all, through its handle, never through such a guard.
+/// A lock is waited for as casacore waits, except SOURCE's while the
+/// caller holds MAIN's write lock: one attempt is then made, as a save
+/// never waits for one table while it holds another, where CASA waits
+/// (casa-rs holders do not yet release a lock on request, #694). The
+/// `FT_MODEL*` model images are deleted last and, as CASA deletes them, at
+/// best: one that cannot be deleted, or that another process holds open,
+/// is logged and left.
 ///
 /// # Errors
 ///
@@ -308,7 +311,7 @@ fn change_in_place(
         if result.is_err() {
             let _ = table.resync();
         }
-        let released = table.unlock_metadata_only();
+        let released = table.unlock_metadata_only_or_discard();
         return result.and(released.map_err(MsError::from));
     }
     let mut lock = TableWriteLock::acquire(&path, attempts)?;
@@ -329,9 +332,26 @@ fn lock_refused(path: &Path) -> MsError {
     .into()
 }
 
+/// Whether another process holds the table at `path` open (casacore's
+/// `Table::isMultiUsed`).
+fn opened_elsewhere(path: &Path) -> Result<bool, TableError> {
+    #[cfg(unix)]
+    {
+        let locking = casa_tables::LockOptions::new(casa_tables::LockMode::AutoLocking);
+        Ok(Table::open_with_lock(TableOptions::new(path), locking)?.is_multi_used())
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        Ok(false)
+    }
+}
+
 /// Delete every `FT_MODEL*` table in the MeasurementSet's directory and in
 /// its SOURCE's, as `clearModel` does, at best: a table that cannot be
-/// deleted is logged and left.
+/// opened or that another process holds open is left, as
+/// `TableUtil::canDeleteTable` leaves it, and so is one that cannot be
+/// deleted, each logged.
 fn delete_model_images(ms: &MeasurementSet) {
     let directories = [
         ms.path(),
@@ -343,14 +363,21 @@ fn delete_model_images(ms: &MeasurementSet) {
         };
         for entry in entries.flatten() {
             let image = entry.path();
-            if entry.file_name().to_string_lossy().starts_with("FT_MODEL")
-                && image.join("table.dat").is_file()
-                && let Err(error) = std::fs::remove_dir_all(&image)
+            if !entry.file_name().to_string_lossy().starts_with("FT_MODEL")
+                || !image.join("table.dat").is_file()
             {
+                continue;
+            }
+            let deleted = match opened_elsewhere(&image) {
+                Ok(false) => std::fs::remove_dir_all(&image).map_err(|error| error.to_string()),
+                Ok(true) => Err("another process holds it open".to_string()),
+                Err(error) => Err(error.to_string()),
+            };
+            if let Err(error) = deleted {
                 tracing::warn!(
                     image = %image.display(),
                     %error,
-                    "a cleared virtual model's image cannot be deleted"
+                    "a cleared virtual model's image is left"
                 );
             }
         }
@@ -629,16 +656,22 @@ mod tests {
 
     /// Clearing a model under SOURCE removes both keywords and empties the
     /// cell, and writes SOURCE as a MeasurementSet save writes it
-    /// (StandardStMan) and MAIN's metadata alone, its storage kept.
+    /// (StandardStMan) and MAIN's metadata alone, its storage kept; the
+    /// `FT_MODEL*` tables `tclean` leaves in SOURCE go too.
     #[test]
     fn a_model_under_source_is_cleared_and_its_cell_emptied() {
         let root = tempfile::tempdir().expect("root");
         let path = with_model_under_source(root.path());
+        table_at(&path.join("SOURCE/FT_MODEL_y"));
         let before = managers(&path);
         let mut ms = MeasurementSet::open(&path).expect("open");
         prepare_write(&mut ms, VisibilityDataColumn::ModelData, true).expect("clear");
         drop(ms);
         assert_source_cleared(&path);
+        assert!(
+            !path.join("SOURCE/FT_MODEL_y").exists(),
+            "SOURCE's FT_MODEL table"
+        );
         assert_eq!(managers(&path), before);
         assert!(
             main_keywords(&path)
@@ -711,6 +744,75 @@ mod tests {
             main_keywords(&path),
             ["KEEP", "MS_VERSION", "definedmodel_field_7", "model_7"]
         );
+    }
+
+    /// A MeasurementSet opened without locking writes under casacore's
+    /// write lock: while another handle holds SOURCE's, clearing a model
+    /// there is refused and changes nothing.
+    #[test]
+    fn a_plain_handle_writes_under_casacore_s_lock() {
+        let root = tempfile::tempdir().expect("root");
+        let path = with_model_under_source(root.path());
+        let keywords_before = main_keywords(&path);
+        let held = casa_tables::TableWriteLock::acquire(path.join("SOURCE"), 1).expect("lock");
+        let mut ms = MeasurementSet::open(&path).expect("open");
+        assert!(
+            matches!(
+                prepare_write(&mut ms, VisibilityDataColumn::ModelData, true),
+                Err(crate::MsError::Table(
+                    casa_tables::TableError::LockFailed { .. }
+                ))
+            ),
+            "refused while SOURCE is held"
+        );
+        drop(ms);
+        held.release().expect("release");
+        assert_eq!(main_keywords(&path), keywords_before);
+        let ms = MeasurementSet::open(&path).expect("reopen");
+        let source = ms.subtable(SubtableId::Source).expect("SOURCE");
+        assert!(source.keywords().get("definedmodel_field_0").is_some());
+    }
+
+    /// A write whose MAIN metadata cannot be written fails and leaves MAIN
+    /// as it was: released, not rewritten in full. Skipped where the
+    /// metadata cannot be made unwritable (a process running as root).
+    #[test]
+    fn a_failed_metadata_write_leaves_main_as_it_was() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().expect("root");
+        let path = trial(root.path());
+        as_casa_left_it(&path);
+        let files = |path: &Path| -> Vec<String> {
+            let mut names: Vec<String> = std::fs::read_dir(path)
+                .expect("list")
+                .flatten()
+                .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                .filter(|name| name.starts_with("table."))
+                .collect();
+            names.sort();
+            names
+        };
+        let files_before = files(&path);
+        let keywords_before = main_keywords(&path);
+        let table_dat = path.join("table.dat");
+        let permissions = |mode| std::fs::Permissions::from_mode(mode);
+        std::fs::set_permissions(&table_dat, permissions(0o444)).expect("read only");
+        if std::fs::OpenOptions::new()
+            .write(true)
+            .open(&table_dat)
+            .is_ok()
+        {
+            std::fs::set_permissions(&table_dat, permissions(0o644)).expect("writable");
+            eprintln!("skipped: table.dat stays writable for this process");
+            return;
+        }
+        let written =
+            SelectedVisibilityWrite::begin(&path, SelectedVisibilityWriteTargets::new(true, false))
+                .and_then(SelectedVisibilityWrite::complete);
+        std::fs::set_permissions(&table_dat, permissions(0o644)).expect("writable");
+        assert!(written.is_err(), "the metadata write fails");
+        assert_eq!(files(&path), files_before);
+        assert_eq!(main_keywords(&path), keywords_before);
     }
 
     /// A write to an existing `MODEL_DATA` clears the virtual model, as
