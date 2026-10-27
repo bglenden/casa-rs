@@ -614,3 +614,35 @@ fn other_datasets_and_schema_versions_are_refused() {
         "another schema version"
     );
 }
+
+/// A copy of the dataset that is not a visibility dataset, and whose
+/// antennas disagree with the original's, is refused for what it is, not
+/// for the antennas, whether it opens before or after the original.
+#[test]
+fn a_group_is_refused_for_what_it_is_before_its_antennas() {
+    for copy in ["aa_spectrum", "zz_spectrum"] {
+        let root = tempfile::tempdir().expect("root");
+        let store = fixture(root.path(), "ms_trial.ps.zarr");
+        let original = dataset(&store);
+        copy_dir(&original, &store.join(copy));
+        edit_json(&store.join(copy).join("zarr.json"), |value| {
+            value["attributes"]["type"] = "spectrum".into();
+        });
+        let zarr = Arc::new(FilesystemStore::new(&store).expect("store"));
+        let positions =
+            Array::open(zarr, &format!("/{copy}/antenna_xds/ANTENNA_POSITION")).expect("open");
+        let subset = ArraySubset::new_with_shape(positions.shape().to_vec());
+        let mut values: Vec<f64> = positions.retrieve_array_subset(&subset).expect("read");
+        values[0] += 1.0;
+        positions
+            .store_array_subset(&subset, &values)
+            .expect("a moved antenna");
+        assert!(
+            matches!(
+                Msv4Observation::open(&store),
+                Err(ObservationError::Unsupported { what }) if what.contains("visibility")
+            ),
+            "{copy}"
+        );
+    }
+}

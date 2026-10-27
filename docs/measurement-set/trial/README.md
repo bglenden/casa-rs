@@ -926,7 +926,10 @@ included, and no baseline of either converter's store comes back
 reversed (both of a baseline's antennas are in one list). Each
 `antenna_xds` is read once, and checked there; opening 3,001 datasets
 took as long as before the merge (24.0–24.9 s against 24.2–24.8 s, a
-debug build). An MSv4's datasets keep their names. An MSv2's
+debug build; in a release build 4.89–5.42 s against 4.96–5.53 s, where
+reading every `antenna_xds` twice had taken 6.37–6.61 s), and each
+dataset's baselines resolve their antenna names by hash rather than by a
+scan of its antennas. An MSv4's datasets keep their names. An MSv2's
 datasets are named as XRADIO names them: the file name without `.ms`,
 then the partition's number in the order the partitions' first MAIN rows
 appear (XRADIO groups with `sort=False`), padded with zeros to the width

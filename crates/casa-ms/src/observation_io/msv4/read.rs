@@ -638,14 +638,21 @@ fn dataset_antennas(
     let mut known: HashMap<(String, String), usize> = HashMap::new();
     let mut first: Vec<AntennaEntry> = Vec::new();
     let mut lists: Vec<Vec<(String, usize)>> = Vec::with_capacity(names.len());
-    for name in names {
+    // A dataset's group is opened once, by `add_dataset` (an XRADIO
+    // dataset's metadata is consolidated there, so a second open costs
+    // about what its antennas do). An error here is reported as opening
+    // would have: the first of the groups so far that is no visibility
+    // dataset of the profile's schema is refused as such instead.
+    let refused = |error: ObservationError, upto: usize| {
+        names[..=upto]
+            .iter()
+            .find_map(|name| visibility_group(store, &format!("/{name}")).err())
+            .unwrap_or(error)
+    };
+    for (index, name) in names.iter().enumerate() {
         let path = format!("/{name}");
-        // A dataset's group is opened once, by `add_dataset` (an XRADIO
-        // dataset's metadata is consolidated there, so a second open
-        // costs about what its antennas do); a group whose antennas cannot
-        // be read is first refused as no visibility dataset, if it is not.
         let read = read_antennas(store, &format!("{path}/antenna_xds"))
-            .or_else(|error| visibility_group(store, &path).and(Err(error)))?;
+            .map_err(|error| refused(error, index))?;
         let mut list = Vec::new();
         for antenna in read {
             let label = antenna.name.clone();
@@ -656,9 +663,12 @@ fn dataset_antennas(
             if rank == next {
                 first.push(antenna);
             } else if first[rank].position.values() != antenna.position.values() {
-                return Err(ObservationError::Unsupported {
-                    what: "one MSv4 antenna name with two positions",
-                });
+                return Err(refused(
+                    ObservationError::Unsupported {
+                        what: "one MSv4 antenna name with two positions",
+                    },
+                    index,
+                ));
             }
             list.push((label, rank));
         }
@@ -696,17 +706,19 @@ fn baselines(
     path: &str,
     antennas: &[(String, AntennaId)],
 ) -> Result<Vec<OrderedBaseline>, ObservationError> {
+    // By name, the first of a name kept: a scan per baseline would cost
+    // baselines × antennas comparisons.
+    let mut ids: HashMap<&str, AntennaId> = HashMap::with_capacity(antennas.len());
+    for (name, id) in antennas {
+        ids.entry(name.as_str()).or_insert(*id);
+    }
     let baseline_antenna = |which: &str| -> Result<Vec<AntennaId>, ObservationError> {
         strings(store, &format!("{path}/baseline_antenna{which}_name"))?
             .iter()
             .map(|name| {
-                antennas
-                    .iter()
-                    .find(|(known, _)| known == name)
-                    .map(|(_, id)| *id)
-                    .ok_or_else(|| {
-                        invalid(format!("baseline antenna {name} is not in antenna_xds"))
-                    })
+                ids.get(name.as_str()).copied().ok_or_else(|| {
+                    invalid(format!("baseline antenna {name} is not in antenna_xds"))
+                })
             })
             .collect()
     };
