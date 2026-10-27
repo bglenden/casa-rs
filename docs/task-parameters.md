@@ -170,7 +170,8 @@ casars params describe <parameter-or-surface>
 
 `template` writes a documented example with defaults and units in comments;
 commented defaults are not active overrides. Overrides use the generated CLI
-flag spellings listed in the generated parameter reference.
+flag spellings listed in the generated parameter reference, or the parameter's
+own name, such as `--vis` or `--threshold`.
 
 There are no run-time confirmations. CASA's own parameters are the consent:
 `overwrite=true` replaces a product, and a task that changes data in place
