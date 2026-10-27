@@ -1159,8 +1159,9 @@ Commands: `ms_trial_convert`, `ms_trial_read_passes`,
    MSv2 → MSv4 → MSv2 renames every field, window and source (and a VLA's
    antennas), and repeating it suffixes again. Undoing a suffix would
    guess at what XRADIO added (a native MSv4 field may be named `x_0`), so
-   the names stay the MSv4's; whether an MSv2 written for CASA users
-   should strip XRADIO's suffixes is a question for the owner.
+   the names stay the MSv4's. **Owner decision (2026-10-27):** keep the
+   MSv4's names for now; full round trips should be rare outside testing,
+   and stripping the suffixes can be reconsidered if it proves necessary.
 
 **Not done:** an MSv2 `WEIGHT_SPECTRUM` or `FLAG_CATEGORY` written; feeds
 other than 0; the MSv4 `processor_info` (written empty, where XRADIO
