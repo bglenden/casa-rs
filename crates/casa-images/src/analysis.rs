@@ -132,6 +132,7 @@ pub fn image_analysis_task_schema_bundle() -> TaskProviderContract {
                     result_kind: Some("importfits".to_string()),
                 },
             ],
+            front_end: None,
         },
         components: merged_components([&request_schema, &result_schema]),
         annotations: serde_json::json!({}),

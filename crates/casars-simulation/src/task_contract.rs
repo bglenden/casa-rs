@@ -45,6 +45,7 @@ pub fn simobserve_task_schema_bundle() -> TaskProviderContract {
                 request_kind: "run".to_string(),
                 result_kind: Some("run".to_string()),
             }],
+            front_end: None,
         },
         components: merged_components([&request_schema, &result_schema]),
         annotations: serde_json::json!({}),
@@ -225,9 +226,9 @@ mod tests {
     }
 
     #[test]
-    fn the_schema_bundle_carries_the_contract_5_surface() {
+    fn the_schema_bundle_carries_the_contract_6_surface() {
         let bundle = simobserve_task_schema_bundle();
         assert_eq!(bundle.protocol.protocol_name, SIMOBSERVE_TASK_PROTOCOL_NAME);
-        assert_eq!(bundle.parameter_surfaces[0].surface.contract_version(), 5);
+        assert_eq!(bundle.parameter_surfaces[0].surface.contract_version(), 6);
     }
 }

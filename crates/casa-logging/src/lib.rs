@@ -200,6 +200,8 @@ pub enum CasaLoggingError {
     IncompatibleColumn { column: &'static str },
     #[error("sink lock was poisoned")]
     PoisonedLock,
+    #[error("log write failed: {0}")]
+    Write(#[source] std::io::Error),
     #[error("table error: {0}")]
     Table(#[from] casa_tables::TableError),
     #[error("tracing subscriber setup failed: {0}")]
@@ -294,18 +296,64 @@ impl CasaLogSink for StderrSink {
 
     fn write(&self, record: &CasaLogRecord) -> Result<(), CasaLoggingError> {
         if self.enabled(record.priority) {
-            eprintln!(
-                "{} {} {}",
-                record.priority.as_casa_str(),
-                record.location,
-                record.message
-            );
+            eprintln!("{}", text_line(record));
         }
         Ok(())
     }
 
     fn flush(&self) -> Result<(), CasaLoggingError> {
         Ok(())
+    }
+}
+
+/// A record as the text sinks write it: priority, location, message.
+fn text_line(record: &CasaLogRecord) -> String {
+    format!(
+        "{} {} {}",
+        record.priority.as_casa_str(),
+        record.location,
+        record.message
+    )
+}
+
+/// Sink writing [`StderrSink`]'s text lines to a writer its owner shares,
+/// such as the standard error a task binary's `main` hands the task front
+/// end, so the owner's own lines and the log interleave in one stream.
+pub struct WriterSink<W> {
+    threshold: CasaPriority,
+    writer: Arc<Mutex<W>>,
+}
+
+impl<W> WriterSink<W> {
+    pub fn new(writer: Arc<Mutex<W>>, threshold: CasaPriority) -> Self {
+        Self { threshold, writer }
+    }
+}
+
+impl<W: std::io::Write + Send> CasaLogSink for WriterSink<W> {
+    fn enabled(&self, priority: CasaPriority) -> bool {
+        priority >= self.threshold
+    }
+
+    fn write(&self, record: &CasaLogRecord) -> Result<(), CasaLoggingError> {
+        if self.enabled(record.priority) {
+            let mut writer = self
+                .writer
+                .lock()
+                .map_err(|_| CasaLoggingError::PoisonedLock)?;
+            let line = text_line(record) + "\n";
+            std::io::Write::write_all(&mut *writer, line.as_bytes())
+                .map_err(CasaLoggingError::Write)?;
+        }
+        Ok(())
+    }
+
+    fn flush(&self) -> Result<(), CasaLoggingError> {
+        let mut writer = self
+            .writer
+            .lock()
+            .map_err(|_| CasaLoggingError::PoisonedLock)?;
+        std::io::Write::flush(&mut *writer).map_err(CasaLoggingError::Write)
     }
 }
 
@@ -581,6 +629,16 @@ impl CasaLoggingConfig {
                 .unwrap_or(CasaPriority::Info),
             stderr_priority: env_stderr_priority("CASA_RS_LOG_STDERR_PRIORITY")?,
         })
+    }
+
+    /// Apply the shared logging flags in `args` to this configuration and
+    /// return the other arguments. Reads no environment: the caller chose the
+    /// configuration the flags refine.
+    pub fn with_cli_args(
+        self,
+        args: impl IntoIterator<Item = OsString>,
+    ) -> Result<(Vec<OsString>, Self), CasaLoggingError> {
+        apply_cli_logging_args(args, self)
     }
 
     fn fallback() -> Self {
@@ -928,6 +986,25 @@ impl Visit for EventVisitor {
 
 /// Initialize global logging once for an application process.
 pub fn init_global(config: CasaLoggingConfig) -> Result<CasaLoggingGuard, CasaLoggingError> {
+    install_global(config, |priority| Arc::new(StderrSink::new(priority)))
+}
+
+/// [`init_global`], with the stderr records written to `stderr` instead of
+/// the process's standard error: the task front end passes the stream its
+/// binary's `main` handed it.
+pub fn init_global_with_stderr<W: std::io::Write + Send + 'static>(
+    config: CasaLoggingConfig,
+    stderr: Arc<Mutex<W>>,
+) -> Result<CasaLoggingGuard, CasaLoggingError> {
+    install_global(config, |priority| {
+        Arc::new(WriterSink::new(stderr, priority))
+    })
+}
+
+fn install_global(
+    config: CasaLoggingConfig,
+    stderr: impl FnOnce(CasaPriority) -> Arc<dyn CasaLogSink>,
+) -> Result<CasaLoggingGuard, CasaLoggingError> {
     let mut sinks: Vec<Arc<dyn CasaLogSink>> = Vec::new();
     if let Some(path) = config.table_path {
         sinks.push(Arc::new(CasaTableLogSink::new(
@@ -937,7 +1014,7 @@ pub fn init_global(config: CasaLoggingConfig) -> Result<CasaLoggingGuard, CasaLo
         )));
     }
     if let Some(priority) = config.stderr_priority {
-        sinks.push(Arc::new(StderrSink::new(priority)));
+        sinks.push(stderr(priority));
     }
     let sink: Arc<dyn CasaLogSink> = if sinks.is_empty() {
         Arc::new(NullSink)
@@ -969,6 +1046,48 @@ mod tests {
             std::env::remove_var("CASA_RS_LOG_TABLE_PRIORITY");
             std::env::remove_var("CASA_RS_LOG_STDERR_PRIORITY");
         }
+    }
+
+    #[test]
+    fn cli_flags_refine_a_chosen_configuration_without_the_environment() {
+        let _lock = env_lock();
+        clear_log_env();
+        unsafe {
+            std::env::set_var("CASA_RS_LOG_TABLE_PRIORITY", "INVALID");
+            std::env::set_var("CASA_RS_LOG_TABLE", "/from/the/environment");
+        }
+        let chosen = CasaLoggingConfig {
+            table_path: None,
+            table_priority: CasaPriority::Info,
+            stderr_priority: Some(CasaPriority::Warn),
+        };
+        let (rest, config) = chosen
+            .with_cli_args(
+                ["--log-stderr-priority", "off", "x.image"]
+                    .into_iter()
+                    .map(OsString::from),
+            )
+            .unwrap();
+        clear_log_env();
+        assert_eq!(rest, [OsString::from("x.image")]);
+        assert_eq!(config.table_path, None);
+        assert_eq!(config.table_priority, CasaPriority::Info);
+        assert_eq!(config.stderr_priority, None);
+    }
+
+    #[test]
+    fn a_writer_sink_writes_the_stderr_lines_to_its_shared_writer() {
+        let writer = Arc::new(Mutex::new(Vec::<u8>::new()));
+        let sink = WriterSink::new(writer.clone(), CasaPriority::Warn);
+        sink.write(&CasaLogRecord::new(CasaPriority::Info, "quiet", "here"))
+            .unwrap();
+        sink.write(&CasaLogRecord::new(CasaPriority::Severe, "loud", "here"))
+            .unwrap();
+        sink.flush().unwrap();
+        assert_eq!(
+            String::from_utf8(writer.lock().unwrap().clone()).unwrap(),
+            "SEVERE here loud\n"
+        );
     }
 
     #[test]

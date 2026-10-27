@@ -125,9 +125,10 @@ p.update(niter=20000, threshold="1mJy")
 result = tasks.run("imager", parameters=p, workspace="project")
 ```
 
-Task runs normally save Last/Last Successful parameters in the workspace. The
-Python API exposes the `save_last` control and explicit mutation/overwrite
-confirmations.
+`casars run` saves Last and Last Successful parameters in the workspace; Python
+task calls save neither. CASA's own parameters are the consent to change data:
+`overwrite=True` replaces a product, and a task that changes data in place
+does so, as in CASA.
 See [task parameters](docs/task-parameters.md) and the
 [generated reference](docs/reference/task-parameters.md) for defaults and
 supported options.

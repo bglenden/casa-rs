@@ -15,10 +15,15 @@ TaskParameters.update(**values)
 TaskParameters.reset(name)
 TaskParameters.reload()
 TaskParameters.save(path)
-TaskParameters.run(*, workspace=None, save_last=True)
+TaskParameters.run(*, workspace=None)
 
-casars.tasks.run(surface, *, parameters=None, workspace=None, save_last=True)
+casars.tasks.run(surface, *, parameters=None, workspace=None)
 ```
+
+A Python task call saves no Last or Last Successful profile; those record
+command-line runs. `save_last`, `confirm_overwrite` and `confirm_mutation` are
+still accepted and ignored until the task binaries are started directly
+(#931).
 
 `TaskParameters` (a `SurfaceParameters` constrained to a task definition) is
 mapping-like and retains value origins and validation diagnostics. Saving

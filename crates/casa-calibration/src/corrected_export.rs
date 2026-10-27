@@ -129,8 +129,9 @@ pub fn export_corrected_data(
             path: request.input_ms.display().to_string(),
         });
     }
+    // Like CASA's split, refuse an existing output MS (#931).
     let target =
-        MeasurementSetCreateTarget::prepare(&request.output_ms, true).map_err(|error| {
+        MeasurementSetCreateTarget::prepare(&request.output_ms, false).map_err(|error| {
             ExportCorrectedDataError::PrepareOutput {
                 path: request.output_ms.display().to_string(),
                 reason: error.to_string(),
