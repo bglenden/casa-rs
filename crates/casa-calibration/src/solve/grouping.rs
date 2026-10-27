@@ -489,7 +489,7 @@ impl SolveAccumulator {
         let channels = if options.channelized {
             (0..channel_count).collect()
         } else {
-            selected_channels(row, channel_count)?
+            selected_channels(row.channel_selection.as_ref(), channel_count)?
         };
         self.observe_samples(
             &SolveSampleRow::of(row),
@@ -919,11 +919,14 @@ fn median_with_even_mean(values: &mut [f32]) -> f32 {
     }
 }
 
-fn selected_channels(
-    row: &SelectedSolveRow,
+/// The channels of a window of `channel_count` channels that a solve
+/// uses: those `selection` names, else all. The gain table's
+/// `SPECTRAL_WINDOW` row collapses the same channels.
+pub(crate) fn selected_channels(
+    selection: Option<&ChannelSelection>,
     channel_count: usize,
 ) -> Result<Vec<usize>, GainSolveError> {
-    match &row.channel_selection {
+    match selection {
         Some(selection) => {
             selection
                 .indices(channel_count)

@@ -86,7 +86,8 @@ ATM behaviours casa-rs follows:
 ATM behaviours casa-rs does not follow:
 [the averaged non-dispersive wet phase](#refractiveindexprofiles-averaged-non-dispersive-wet-phase-reads-a-channel-as-a-water-column).
 Calibration behaviours casa-rs does not follow:
-[a solve that fits exactly](#viscalsolver2-fails-a-solve-whose-chi-square-is-exactly-zero).
+[a solve that fits exactly](#viscalsolver2-fails-a-solve-whose-chi-square-is-exactly-zero),
+[a gain table's resolution and total bandwidth](#a-gain-tables-solved-window-records-its-frequency-as-its-resolution-and-total-bandwidth).
 
 ## AW-projection pairs the partner hand's visibility with the conjugate-baseline cell
 
@@ -1799,3 +1800,36 @@ on the casa-rs gain fixtures had to add noise to get a table at all. casa-rs's `
 chi-square that is small but not zero follows CASA's convergence rule
 unchanged, so noise-free data that converge only linearly can still reach
 CASA's 50-iteration limit and fail as CASA's would.
+
+## A gain table's solved window records its frequency as its resolution and total bandwidth
+
+- Date noted: 2026-10-27
+- Status: CASA behaviour casa-rs does not follow (#917)
+- Affected code: `synthesis/MeasurementComponents/SolvableVisCal.cc`,
+  `SolvableVisCal::setCTFrequencies`, CASA 6.7.5.18
+
+A G or T table holds one channel per spectral window. For a window with
+solutions, `setCTFrequencies` writes that channel's frequency and width
+from `FreqMetaData`, then takes `const Vector<Double>& chres(chfr); //
+resolution same as freq` and `Double totbw=sum(chfr);`, so `RESOLUTION` and
+`TOTAL_BANDWIDTH` both hold the frequency. On ngc5921 (`gaincal`, `spw='0'`)
+the table's window reads `CHAN_FREQ` 1413421909.706 Hz, `CHAN_WIDTH`
+1538085.9 Hz, and `RESOLUTION` and `TOTAL_BANDWIDTH` 1413421909.706 Hz.
+
+The values are plainly meant to be widths:
+- the same function sets `EFFECTIVE_BW` to the width;
+- the older `setOrVerifyCTFrequencies` sets resolution, effective bandwidth
+  and total bandwidth to the width;
+- `NewCalTable::setSpwFreqs` sets `TOTAL_BANDWIDTH` to the summed width;
+- a window without solutions keeps its summed resolution and the
+  MeasurementSet's total bandwidth (`createMemCalTable2`).
+
+Nothing in CASA's apply path reads either column of a gain table, so the
+error does not change calibrated data.
+
+casa-rs writes the solved channel's width, the summed magnitude of the
+selected channels' widths, as its `RESOLUTION` and `TOTAL_BANDWIDTH`.
+Every other column of every window row is CASA's. The law
+`gain_table_windows_match_casa_on_ngc5921` (and its two-sideband
+companion, casa-calibration `slow-tests`) asserts both: casa-rs's values,
+and CASA's frequency in those two columns, so a CASA fix would show.
