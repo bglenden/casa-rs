@@ -342,7 +342,7 @@ pub fn flagdata(
     }
 
     let backup_version = if request.flagbackup && !selected_rows.is_empty() {
-        Some(save_next_flagdata_backup(ms)?)
+        Some(save_next_flag_backup(ms, "flagdata")?)
     } else {
         None
     };
@@ -2939,13 +2939,21 @@ pub fn rename_flag_version(
     rename_flag_version_entry(path, oldname, versionname, comment)
 }
 
-fn save_next_flagdata_backup(ms: &MeasurementSet) -> Result<String, FlaggingError> {
+/// Save the MAIN flags to the next free `<task>_N` flag version and return its
+/// name.
+///
+/// This is CASA's `flaghelper.backupFlags(prename=task)`: `N` is the smallest
+/// positive integer whose name is not yet taken, and the backup replaces
+/// nothing. `flagdata` and `applycal` call it before they change flags, so
+/// `flagmanager(mode="restore")` can undo the run.
+pub fn save_next_flag_backup(ms: &MeasurementSet, task: &str) -> Result<String, FlaggingError> {
     let versions = list_flag_versions(ms)?;
     let mut index = 1;
     loop {
-        let candidate = format!("flagdata_{index}");
+        let candidate = format!("{task}_{index}");
         if !versions.iter().any(|entry| entry.name == candidate) {
-            save_flag_version(ms, &candidate, "flagdata auto-backup", FlagMerge::Replace)?;
+            let comment = format!("{task} auto-backup");
+            save_flag_version(ms, &candidate, &comment, FlagMerge::Replace)?;
             return Ok(candidate);
         }
         index += 1;

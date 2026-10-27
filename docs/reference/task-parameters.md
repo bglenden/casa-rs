@@ -12,12 +12,12 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 - Parameter surface schema version: `1`
 - Concepts: 346
 - Surfaces: 27 (27 task, 0 session)
-- Surface bindings: 527
+- Surface bindings: 529
 
 | Surface | Kind | Contract | Provider family | Parameters | Summary |
 |---|---|---:|---|---:|---|
 | [MSExplore](#surface-msexplore)<br><code>msexplore</code> | task | 6 | <code>msexplore</code> | 66 | explore and export common MeasurementSet plotms-style plots |
-| [Calibrate](#surface-calibrate)<br><code>calibrate</code> | task | 4 | <code>calibration</code> | 49 | apply, inspect, and solve CASA-style calibration workflows |
+| [Calibrate](#surface-calibrate)<br><code>calibrate</code> | task | 5 | <code>calibration</code> | 50 | apply, inspect, and solve CASA-style calibration workflows |
 | [ImportVLA](#surface-importvla)<br><code>importvla</code> | task | 3 | <code>importvla</code> | 12 | scan or import old VLA export archives from disk |
 | [Imager](#surface-imager)<br><code>imager</code> | task | 25 | <code>imager</code> | 81 | Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet |
 | [SimObserve](#surface-simobserve)<br><code>simobserve</code> | task | 5 | <code>simobserve</code> | 38 | Simulate an observation of a sky model: CASA's simobserve |
@@ -27,7 +27,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | [Export FITS](#surface-exportfits)<br><code>exportfits</code> | task | 3 | <code>image_analysis</code> | 4 | Export CASA images to FITS |
 | [MSTransform](#surface-mstransform)<br><code>mstransform</code> | task | 3 | <code>mstransform</code> | 11 | Materialize a selected MeasurementSet into a new output MS. |
 | [Split](#surface-split)<br><code>split</code> | task | 3 | <code>mstransform</code> | 11 | Create a selected MeasurementSet subset, equivalent to CASA split. |
-| [Applycal](#surface-applycal)<br><code>applycal</code> | task | 3 | <code>calibration</code> | 21 | Apply one or more calibration tables to a MeasurementSet. |
+| [Applycal](#surface-applycal)<br><code>applycal</code> | task | 4 | <code>calibration</code> | 22 | Apply one or more calibration tables to a MeasurementSet. |
 | [Gaincal](#surface-gaincal)<br><code>gaincal</code> | task | 3 | <code>calibration</code> | 28 | Solve antenna gain calibration for a MeasurementSet. |
 | [Bandpass](#surface-bandpass)<br><code>bandpass</code> | task | 3 | <code>calibration</code> | 25 | Solve bandpass calibration for a MeasurementSet. |
 | [Fluxscale](#surface-fluxscale)<br><code>fluxscale</code> | task | 3 | <code>calibration</code> | 10 | Scale gain solutions using reference calibrator fields. |
@@ -128,7 +128,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## Calibrate (<code>calibrate</code>)
 
 - Kind: `task`
-- Contract version: `4`
+- Contract version: `5`
 - Category: Calibration
 - Provider family: `calibration`
 - Summary: apply, inspect, and solve CASA-style calibration workflows
@@ -184,6 +184,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>caltype</code> | <code>parameter.caltype@r1</code> | <code>optional&lt;choice (3 values)&gt; (states: none)</code> | <code>"none"</code>; required when mode="gencal" | Gencal | Generated calibration family. |
 | <code>parameter</code> | <code>parameter.parameter@r1</code> | <code>string</code> | <code>"none"</code>; optional | Gencal | Numeric parameter list for the selected generated calibration type. |
 | <code>gaincurve_table</code> | <code>parameter.gaincurve_table@r1</code> | <code>path (calibration_table)</code> | <code>"none"</code>; optional | Gencal | Optional gaincurve input table for gceff. |
+| <code>flagbackup</code> | <code>parameter.flagbackup@r1</code> | <code>bool</code> | <code>true</code>; optional | Apply | Create a flagmanager backup before mutating flags.<br><em>Surface:</em> Apply mode only: saves the flags to the next applycal_N flag version before a calflag run; calonly and trial change no flags and save none. |
 
 <a id="surface-importvla"></a>
 
@@ -479,7 +480,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## Applycal (<code>applycal</code>)
 
 - Kind: `task`
-- Contract version: `3`
+- Contract version: `4`
 - Category: Calibration
 - Provider family: `calibration`
 - Summary: Apply one or more calibration tables to a MeasurementSet.
@@ -507,6 +508,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>array</code> | <code>ms.selection.array@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Comma-separated ARRAY_ID integers |
 | <code>timerange</code> | <code>ms.selection.timerange@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Inclusive TIME range in MJD seconds |
 | <code>msselect</code> | <code>ms.selection.msselect@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Raw TaQL WHERE expression to AND with the structured selectors |
+| <code>flagbackup</code> | <code>parameter.flagbackup@r1</code> | <code>bool</code> | <code>true</code>; optional | Safety | Create a flagmanager backup before mutating flags.<br><em>Surface:</em> Saves the flags to the next applycal_N flag version before a calflag run; calonly and trial change no flags and save none. |
 
 <a id="surface-gaincal"></a>
 

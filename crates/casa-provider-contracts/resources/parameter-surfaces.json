@@ -3531,7 +3531,7 @@
     {
       "kind": "task",
       "id": "calibrate",
-      "contract_version": 4,
+      "contract_version": 5,
       "display_name": "Calibrate",
       "category": "Calibration",
       "summary": "apply, inspect, and solve CASA-style calibration workflows",
@@ -7150,6 +7150,66 @@
           },
           "aliases": [],
           "reviewed_homonym": null
+        },
+        {
+          "name": "flagbackup",
+          "concept": {
+            "id": "parameter.flagbackup",
+            "semantic_revision": 1
+          },
+          "order": 51,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": true
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": "Apply mode only: saves the flags to the next applycal_N flag version before a calflag run; calonly and trial change no flags and save none.",
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--flagbackup"
+              ],
+              "false_flags": [
+                "--no-flagbackup"
+              ],
+              "metavar": null
+            },
+            "provider": {
+              "field": "flagbackup",
+              "adapter": "identity",
+              "emit_when": {
+                "kind": "equals",
+                "parameter": "mode",
+                "value": {
+                  "kind": "string",
+                  "value": "apply"
+                }
+              }
+            },
+            "python": {
+              "name": "flagbackup",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Create Flag Backup",
+              "group": "Apply",
+              "advanced": false,
+              "hidden": false
+            }
+          },
+          "aliases": [],
+          "reviewed_homonym": null
         }
       ],
       "migrations": [
@@ -7168,6 +7228,12 @@
         {
           "from_contract": 3,
           "to_contract": 4,
+          "steps": [],
+          "changed_defaults": []
+        },
+        {
+          "from_contract": 4,
+          "to_contract": 5,
           "steps": [],
           "changed_defaults": []
         }
@@ -16488,7 +16554,7 @@
     {
       "kind": "task",
       "id": "applycal",
-      "contract_version": 3,
+      "contract_version": 4,
       "display_name": "Applycal",
       "category": "Calibration",
       "summary": "Apply one or more calibration tables to a MeasurementSet.",
@@ -17644,6 +17710,58 @@
           },
           "aliases": [],
           "reviewed_homonym": null
+        },
+        {
+          "name": "flagbackup",
+          "concept": {
+            "id": "parameter.flagbackup",
+            "semantic_revision": 1
+          },
+          "order": 21,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": true
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": "Saves the flags to the next applycal_N flag version before a calflag run; calonly and trial change no flags and save none.",
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--flagbackup"
+              ],
+              "false_flags": [
+                "--no-flagbackup"
+              ],
+              "metavar": null
+            },
+            "provider": {
+              "field": "flagbackup",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "flagbackup",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Create Flag Backup",
+              "group": "Safety",
+              "advanced": false,
+              "hidden": false
+            }
+          },
+          "aliases": [],
+          "reviewed_homonym": null
         }
       ],
       "migrations": [
@@ -17656,6 +17774,12 @@
         {
           "from_contract": 2,
           "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
+        },
+        {
+          "from_contract": 3,
+          "to_contract": 4,
           "steps": [],
           "changed_defaults": []
         }

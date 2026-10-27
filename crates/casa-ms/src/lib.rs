@@ -90,6 +90,7 @@ pub use flagging::{
     FlagDataAction, FlagDataColumn, FlagDataMode, FlagDataReport, FlagDataRequest, FlagMerge,
     FlagVersionEntry, FlaggingError, QuackMode, delete_flag_version, flagdata, flagdata_path,
     list_flag_versions, rename_flag_version, restore_flag_version, save_flag_version,
+    save_next_flag_backup,
 };
 pub use listobs::{
     ListObsOptions as MeasurementSetSummaryOptions,

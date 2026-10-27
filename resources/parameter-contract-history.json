@@ -2389,6 +2389,11 @@
       "fingerprint": "66065f9b24304ac390dbe36e4d3deb4926507660ff19a37ad9acdc5cbf882dac"
     },
     {
+      "id": "applycal",
+      "contract_version": 4,
+      "fingerprint": "4cff1106fe28b831da6dcdc1962957ad93f77db7a2d19052357aaad87fd29882"
+    },
+    {
       "id": "bandpass",
       "contract_version": 1,
       "fingerprint": "32e706780607d535fba5d6e430bea0e6e191554796bc60d9cb250acc41ff28b5"
@@ -2422,6 +2427,11 @@
       "id": "calibrate",
       "contract_version": 4,
       "fingerprint": "a2fc77dfb01b217ad4f2d50b3512c44f13adab1d75b1b64474d12f27174104a1"
+    },
+    {
+      "id": "calibrate",
+      "contract_version": 5,
+      "fingerprint": "f375c8abaa8e8490e241c76e74e167809a8694295daa3a006d28f3b2bd7774ce"
     },
     {
       "id": "clearcal",
