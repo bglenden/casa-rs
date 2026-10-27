@@ -186,7 +186,8 @@ transports (`--protocol-info`, `--json-schema`, `--json-run`); source selection
 and profile lifecycle are owned by `casars run` and `casars params`. The
 shared task front end in `casa-task-runtime`, which the binaries move onto
 next, gives each binary those same sources and controls, `--show`,
-`--template`, `--describe` and `--validate`, and a typed `--json-run` reply
+`--template` (`--profile-template` on imregrid, whose `--template` is its
+template image), `--describe` and `--validate`, and a typed `--json-run` reply
 ([provider contracts](provider-contracts.md#the-shared-task-front-end-and-typed-replies)).
 
 ## Python contract

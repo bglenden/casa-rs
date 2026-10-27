@@ -50,6 +50,10 @@ impl TaskCommandLine {
                 .to_str()
                 .ok_or_else(|| "parameter arguments must be valid UTF-8".to_string())?;
             match raw {
+                // The surface's own spellings win over the controls.
+                _ if crate::cli::surface_declares_flag(bundle, raw) => {
+                    parameter_args.push(args[index].clone());
+                }
                 "--defaults" => set_source(&mut source, BaseSource::Defaults)?,
                 "--last" => set_source(&mut source, BaseSource::Last)?,
                 "--last-successful" => set_source(&mut source, BaseSource::LastSuccessful)?,

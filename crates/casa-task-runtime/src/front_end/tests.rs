@@ -22,6 +22,11 @@ struct Request {
 
 /// A provider contract hosting `imstat` (the default) and `imhead`.
 fn contract() -> TaskProviderContract {
+    contract_hosting(&["imstat", "imhead"])
+}
+
+/// A provider contract carrying the builtin `surfaces`.
+fn contract_hosting(surfaces: &[&str]) -> TaskProviderContract {
     let request_schema = schemars::schema_for!(Request);
     let result_schema = schemars::schema_for!(Request);
     TaskProviderContract {
@@ -48,10 +53,10 @@ fn contract() -> TaskProviderContract {
             }),
             python: None,
         },
-        parameter_surfaces: vec![
-            builtin_surface_bundle("imstat").unwrap(),
-            builtin_surface_bundle("imhead").unwrap(),
-        ],
+        parameter_surfaces: surfaces
+            .iter()
+            .map(|id| builtin_surface_bundle(id).unwrap())
+            .collect(),
         domain_schemas: TaskProviderSchemas {
             request_schema,
             result_schema,
@@ -397,20 +402,323 @@ fn help_and_machine_actions_describe_the_hosted_surfaces() {
     assert!(calls.borrow().is_empty());
 }
 
+/// A stderr a test hands `main` and reads back.
+#[derive(Clone, Default)]
+struct SharedBuffer(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl SharedBuffer {
+    fn text(&self) -> String {
+        String::from_utf8(self.0.lock().unwrap().clone()).unwrap()
+    }
+}
+
+impl std::io::Write for SharedBuffer {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+fn quiet_logging() -> Result<CasaLoggingConfig, CasaLoggingError> {
+    Ok(CasaLoggingConfig {
+        table_path: None,
+        table_priority: casa_logging::CasaPriority::Info,
+        stderr_priority: Some(casa_logging::CasaPriority::Info),
+    })
+}
+
+fn bad_logging() -> Result<CasaLoggingConfig, CasaLoggingError> {
+    Err(CasaLoggingError::InvalidEnvPriority {
+        name: "CASA_RS_LOG_TABLE_PRIORITY",
+        value: "INVALID".into(),
+    })
+}
+
 #[test]
 fn main_writes_only_to_the_streams_its_binary_passes() {
-    // `main` initialises the process's logging, so a process calls it once.
     let calls = Calls::default();
     let front_end = front_end(&calls);
-    let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
-    let code = front_end.main(args(&["--template", "x.image"]), &mut stdout, &mut stderr);
+    let (mut stdout, stderr) = (Vec::new(), SharedBuffer::default());
+    let code = front_end.main(
+        args(&["--template", "x.image"]),
+        quiet_logging(),
+        &mut stdout,
+        stderr.clone(),
+    );
     assert_eq!(code, std::process::ExitCode::from(2));
     assert!(stdout.is_empty());
     assert!(
-        String::from_utf8(stderr)
-            .unwrap()
+        stderr
+            .text()
             .contains("--template takes no other arguments")
     );
+}
+
+#[test]
+fn a_bad_logging_configuration_refuses_only_a_run() {
+    // Astra's #947 S1 probe: CASA_RS_LOG_TABLE_PRIORITY=INVALID failed a
+    // non-executing --template before dispatch.
+    let calls = Calls::default();
+    let front_end = front_end(&calls);
+    let workspace = tempfile::tempdir().unwrap();
+    let main = |line: Vec<OsString>| {
+        let (mut stdout, stderr) = (Vec::new(), SharedBuffer::default());
+        let code = front_end.main(line, bad_logging(), &mut stdout, stderr.clone());
+        (code, String::from_utf8(stdout).unwrap(), stderr.text())
+    };
+
+    for line in [
+        args(&["--template"]),
+        args(&["--describe"]),
+        args(&["--json-schema"]),
+        args(&["--log-stderr-priority", "INFO", "--show", "x.image"]),
+    ] {
+        let (code, stdout, stderr) = main(line.clone());
+        assert_eq!(code, std::process::ExitCode::SUCCESS, "{line:?}: {stderr}");
+        assert!(!stdout.is_empty(), "{line:?}");
+    }
+
+    let (code, stdout, stderr) = main(in_workspace(workspace.path(), &["x.image"]));
+    assert_eq!(code, std::process::ExitCode::from(2));
+    assert!(stdout.is_empty());
+    assert!(
+        stderr.contains("failed to initialize logging: invalid CASA_RS_LOG_TABLE_PRIORITY"),
+        "{stderr}"
+    );
+
+    let request = workspace.path().join("request.json");
+    std::fs::write(
+        &request,
+        r#"{"surface":"imstat","values":{"imagename":"x.image"}}"#,
+    )
+    .unwrap();
+    let (code, stdout, _) = main(args(&["--json-run", request.to_str().unwrap()]));
+    assert_eq!(code, std::process::ExitCode::from(2));
+    let reply: TaskReply = serde_json::from_str(&stdout).unwrap();
+    assert!(
+        matches!(&reply, TaskReply::Failed { kind: TaskFailureKind::Validation, message, .. }
+            if message.contains("failed to initialize logging")),
+        "{reply:?}"
+    );
+
+    // A malformed logging flag is refused on every action.
+    let (code, _, stderr) = main(args(&["--template", "--log-table"]));
+    assert_eq!(code, std::process::ExitCode::from(2));
+    assert!(stderr.contains("missing value for --log-table"), "{stderr}");
+
+    assert!(calls.borrow().is_empty());
+    assert_eq!(last_files(workspace.path()), (None, None));
+}
+
+const LOGGING_CHILD: &str = "CASA_RS_FRONT_END_LOGGING_CHILD";
+
+/// Runs only as the child of the test below, which owns its process: a run
+/// installs the process's global subscriber.
+#[test]
+fn a_failed_run_logged_in_a_child_process() {
+    let Some(report) = std::env::var_os(LOGGING_CHILD) else {
+        return;
+    };
+    let calls = Calls::default();
+    let front_end = front_end(&calls);
+    let workspace = tempfile::tempdir().unwrap();
+    let (mut stdout, stderr) = (Vec::new(), SharedBuffer::default());
+    let code = front_end.main(
+        in_workspace(workspace.path(), &["fail.image", "--no-save-last"]),
+        quiet_logging(),
+        &mut stdout,
+        stderr.clone(),
+    );
+    assert_eq!(code, std::process::ExitCode::from(1));
+    std::fs::write(report, stderr.text()).unwrap();
+}
+
+#[test]
+fn a_runs_log_reaches_only_the_stderr_its_binary_passes() {
+    // Astra's #947 S1 probe: the front end's SEVERE event reached the
+    // process's stderr, not the buffer `main` was handed.
+    if std::env::var_os(LOGGING_CHILD).is_some() {
+        return;
+    }
+    let directory = tempfile::tempdir().unwrap();
+    let report = directory.path().join("stderr.txt");
+    let child = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "front_end::tests::a_failed_run_logged_in_a_child_process",
+            "--nocapture",
+            "--test-threads",
+            "1",
+        ])
+        .env(LOGGING_CHILD, &report)
+        .output()
+        .unwrap();
+    let process_stderr = String::from_utf8_lossy(&child.stderr);
+    assert!(child.status.success(), "{process_stderr}");
+    let supplied = std::fs::read_to_string(&report).expect("the child ran");
+    assert!(supplied.contains("SEVERE"), "{supplied}");
+    assert!(supplied.contains("imstat failed"), "{supplied}");
+    assert!(supplied.contains("INFO"), "{supplied}");
+    assert!(
+        supplied.contains("Error: the image is unreadable"),
+        "{supplied}"
+    );
+    assert!(!process_stderr.contains("SEVERE"), "{process_stderr}");
+    assert!(!process_stderr.contains("imstat"), "{process_stderr}");
+}
+
+/// A front end hosting imregrid, recording each run's template.
+fn imregrid_front_end(
+    templates: &Calls,
+) -> TaskFrontEnd<impl Fn(&TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> + '_> {
+    TaskFrontEnd::new(
+        "imregrid",
+        contract_hosting(&["imregrid"]),
+        &["imregrid"],
+        move |run| {
+            let template = run.plain_values()["template"].as_str().unwrap().to_string();
+            templates.borrow_mut().push(template);
+            TaskSuccess::new(&(), &())
+        },
+    )
+    .unwrap()
+}
+
+#[test]
+fn imregrids_template_reaches_its_parameter_through_full_dispatch() {
+    // Astra's #947 F1 probe: dispatch took --template for the profile.
+    let templates = Calls::default();
+    let front_end = imregrid_front_end(&templates);
+    let workspace = tempfile::tempdir().unwrap();
+    for spelling in [
+        &["--template", "target.image"][..],
+        &["--template=target.image"][..],
+    ] {
+        let mut line = args(&["--imagename", "input.image"]);
+        line.extend(args(spelling));
+        line.extend(args(&["--outfile", "out.image", "--no-save-last"]));
+        line.extend(args(&["--workspace", workspace.path().to_str().unwrap()]));
+        let ran = front_end.dispatch(&line);
+        assert_eq!(ran.code, 0, "{spelling:?}: {ran:?}");
+    }
+    assert_eq!(*templates.borrow(), ["target.image", "target.image"]);
+
+    let shown = front_end.dispatch(&args(&["--show", "--template", "target.image"]));
+    assert_eq!(shown.code, 0, "{shown:?}");
+    assert!(shown.stdout.contains("target.image"), "{}", shown.stdout);
+    let profile = front_end.dispatch(&args(&["--profile-template"]));
+    assert_eq!(profile.code, 0, "{profile:?}");
+    assert!(profile.stdout.contains("surface = \"imregrid\""));
+    let help = front_end.dispatch(&args(&["--help"]));
+    assert!(help.stdout.contains("imregrid --profile-template |"));
+    assert!(!help.stdout.contains("--template |"), "{}", help.stdout);
+    assert_eq!(templates.borrow().len(), 2);
+}
+
+/// Every spelling the front end owns, with a value where it takes one.
+const FRONT_END_SPELLINGS: &[&str] = &[
+    "--help",
+    "-h",
+    "--json-schema",
+    "--protocol-info",
+    "--json-run",
+    "--template",
+    "--profile-template",
+    "--describe",
+    "--validate",
+    "--show",
+    "--defaults",
+    "--last",
+    "--last-successful",
+    "--params",
+    "--workspace",
+    "--save-params",
+    "--no-save-last",
+    "--unset",
+];
+
+#[test]
+fn every_front_end_spelling_does_its_action_through_full_dispatch_on_every_surface() {
+    // Only imregrid declares one of the front end's spellings; a surface that
+    // starts to must make the same visible choice here.
+    let collisions = [("imregrid", "--template")];
+    let catalog = casa_provider_contracts::builtin_surface_catalog().unwrap();
+    let workspace = tempfile::tempdir().unwrap();
+    let directory = workspace.path().to_str().unwrap();
+    let missing = workspace.path().join("missing.toml");
+    let missing = missing.to_str().unwrap();
+    let saved = workspace.path().join("saved.toml");
+    let saved = saved.to_str().unwrap();
+    for surface in &catalog.surfaces {
+        let id = surface.id();
+        let ran = std::cell::Cell::new(false);
+        let front_end = TaskFrontEnd::new(
+            id,
+            contract_hosting(&[id]),
+            &[id],
+            |_: &TaskInvocation<'_>| {
+                ran.set(true);
+                TaskSuccess::new(&(), &())
+            },
+        )
+        .unwrap();
+        let bundle = builtin_surface_bundle(id).unwrap();
+        let first = &bundle.surface.bindings()[0].name;
+        for spelling in FRONT_END_SPELLINGS {
+            let declared = crate::cli::surface_declares_flag(&bundle, spelling);
+            assert_eq!(
+                declared,
+                collisions.contains(&(id, *spelling)),
+                "{id} declares {spelling}: record the choice in this test"
+            );
+            if declared {
+                let shown = front_end.dispatch(&args(&["--show", spelling, "chosen.value"]));
+                assert_eq!(shown.code, 0, "{id} {spelling}: {shown:?}");
+                assert!(shown.stdout.contains("chosen.value"), "{id} {spelling}");
+                continue;
+            }
+            let (line, code, expect): (Vec<&str>, i32, &str) = match *spelling {
+                "--help" | "-h" => (vec![spelling], 0, "Usage:"),
+                "--json-schema" => (vec![spelling], 0, "\"front_end\""),
+                "--protocol-info" => (vec![spelling], 0, "\"protocol_name\""),
+                "--json-run" => (vec![spelling, missing], 2, "failed to read JSON request"),
+                "--template" | "--profile-template" => (vec![spelling], 0, "[casars]"),
+                "--describe" => (vec![spelling], 0, "task "),
+                "--validate" => (vec![spelling, missing], 2, ""),
+                "--show" => (vec![spelling], 0, "source Defaults"),
+                "--defaults" | "--no-save-last" => (vec!["--show", spelling], 0, "source Defaults"),
+                "--last" | "--last-successful" => {
+                    (vec!["--show", spelling, "--workspace", directory], 2, "")
+                }
+                "--params" => (vec!["--show", spelling, missing], 2, ""),
+                "--workspace" => (vec!["--show", spelling, directory], 0, "source Defaults"),
+                "--unset" => (vec!["--show", spelling, first], 0, "source Defaults"),
+                "--save-params" => {
+                    // A surface with a required parameter has no sparse
+                    // profile until it is set.
+                    let output = front_end.dispatch(&args(&["--show", spelling, saved]));
+                    let text = output.stdout + &output.stderr.join("\n");
+                    let expect = if output.code == 0 {
+                        "saved "
+                    } else {
+                        "required parameter"
+                    };
+                    assert!(text.contains(expect), "{id} {spelling}: {text}");
+                    continue;
+                }
+                other => panic!("no expectation for {other}"),
+            };
+            let output = front_end.dispatch(&args(&line));
+            assert_eq!(output.code, code, "{id} {line:?}: {output:?}");
+            let text = output.stdout + &output.stderr.join("\n");
+            assert!(text.contains(expect), "{id} {line:?}: {text}");
+        }
+        assert!(!ran.get(), "{id}: a front-end spelling ran the task");
+    }
 }
 
 #[test]

@@ -27,13 +27,19 @@ pub(super) fn render_help(
         out,
         "  {program}{word} --show [SOURCE] [OVERRIDES] [--save-params FILE]"
     );
+    // A surface that declares `--template` (imregrid) keeps it.
+    let template = if crate::cli::surface_declares_flag(selected, "--template") {
+        "--profile-template"
+    } else {
+        "--template | --profile-template"
+    };
     let _ = writeln!(
         out,
-        "  {program}{word} --template | --describe [NAME] | --validate FILE"
+        "  {program}{word} {template} | --describe [NAME] | --validate FILE"
     );
     let _ = writeln!(
         out,
-        "  {program} --json-run SOURCE | --json-schema | --protocol-info"
+        "  {program} --json-run <SOURCE> | --json-schema | --protocol-info"
     );
     if surfaces.len() > 1 {
         let names = surfaces

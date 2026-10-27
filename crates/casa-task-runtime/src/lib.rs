@@ -17,6 +17,9 @@ mod runtime;
 mod session;
 mod storage;
 
+/// The logging configuration a task binary's `main` reads and hands
+/// [`TaskFrontEnd::main`].
+pub use casa_logging::{CasaLoggingConfig, CasaLoggingError};
 pub use cli::{
     TaskCliAction, TaskCliError, TaskCliHost, parse_parameter_cli_overrides, parse_task_cli_action,
     read_task_request, task_cli_machine_help,

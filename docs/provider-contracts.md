@@ -262,11 +262,22 @@ function.
 `casa-task-runtime::TaskFrontEnd` is the one entry every task binary's `main`
 is to call; the binaries move onto it by family (#931, PRs 2b–2d), and until
 then use `TaskCliHost`. The front end is generic over the binary's execution
-callback and owns logging initialisation, the surface's declared flags, the
-base sources, `--workspace`, `--unset`, `--save-params`, `--no-save-last`, the
-non-executing `--show`, `--template`, `--describe` and `--validate`, and the
-machine actions. A family binary's first word names the surface it runs, such
-as `mstransform split`; the first hosted surface runs otherwise.
+callback and owns the surface's declared flags, the base sources,
+`--workspace`, `--unset`, `--save-params`, `--no-save-last`, the
+non-executing `--show`, `--template` (also `--profile-template`), `--describe`
+and `--validate`, and the machine actions. A spelling the surface declares is
+always its parameter, so imregrid's `--template` names its template image and
+`--profile-template` gives its profile. A family binary's first word names the
+surface it runs, such as `mstransform split`; the first hosted surface runs
+otherwise.
+
+The binary's `main` owns the process. It reads the logging configuration from
+the environment (`CasaLoggingConfig::from_env`) and passes it, with its
+arguments and its standard output and error, to `TaskFrontEnd::main`. The front
+end reads no environment variable (ADR-0016): it applies the logging flags,
+and for a run installs logging that writes to the stderr it was handed and to
+a log table only when one is named. An action that runs nothing installs no
+logging, so a bad `CASA_RS_LOG_*` setting refuses only a run.
 
 `--json-run SOURCE` takes a `TaskRunRequest`, `{"surface": ..., "values":
 {...}}` with the CASA-named values the caller set, and resolves it against the

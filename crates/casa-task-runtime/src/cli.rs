@@ -230,6 +230,12 @@ pub fn parse_parameter_cli_overrides(
     Ok(patch)
 }
 
+/// Whether `flag` is one of `bundle`'s own parameter spellings, which win
+/// over the front end's flags of the same spelling (imregrid's `--template`).
+pub(crate) fn surface_declares_flag(bundle: &SurfaceContractBundle, flag: &str) -> bool {
+    cli_flag_binding(bundle, flag).is_some()
+}
+
 /// The binding a flag names, and whether it is a false flag.
 ///
 /// The surface's declared flags win. Every parameter is also reachable by its

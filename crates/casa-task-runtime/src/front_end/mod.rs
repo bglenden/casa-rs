@@ -6,14 +6,19 @@
 //! command line may name a hosted surface, and the first hosted surface runs
 //! otherwise. The front end owns everything around the callback:
 //!
-//! - logging initialisation, from the environment and the logging flags;
+//! - logging for a run, configured by the binary's `main` and the logging
+//!   flags, and written to the stderr `main` passes;
 //! - the CASA-named flags the surface declares, `--unset NAME`, and one base
 //!   source (`--defaults`, `--last`, `--last-successful` or `--params FILE`);
 //! - `--workspace DIR`, `--save-params FILE` and `--no-save-last`;
-//! - the non-executing `--show`, `--template`, `--describe [NAME]` and
-//!   `--validate FILE`;
+//! - the non-executing `--show`, `--template` (also `--profile-template`),
+//!   `--describe [NAME]` and `--validate FILE`;
 //! - the machine actions `--json-run SOURCE`, `--json-schema` and
 //!   `--protocol-info`.
+//!
+//! A spelling the surface declares is always its parameter: imregrid's
+//! `--template` names its template image, so there `--profile-template`
+//! gives the profile.
 //!
 //! Last has one owner on each path. A command line records Last before the
 //! callback runs and Last Successful only after it succeeds, unless
@@ -36,7 +41,9 @@ use std::ffi::OsString;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::sync::{Arc, Mutex, PoisonError};
 
+use casa_logging::{CasaLoggingConfig, CasaLoggingError, CasaLoggingGuard};
 use casa_provider_contracts::{
     EXIT_EXECUTION_FAILED, EXIT_SUCCEEDED, EXIT_VALIDATION_FAILED, ParameterValue,
     SurfaceContractBundle, TaskFailureKind, TaskFrontEndSchemas, TaskProviderContract, TaskReply,
@@ -268,52 +275,120 @@ where
         })
     }
 
-    /// Run as the binary's `main`: initialise logging, dispatch the command
-    /// line, write the output and flush the log.
+    /// Run as the binary's `main`: dispatch the command line, with the
+    /// process's logging installed for a run, and write the output.
     ///
-    /// The binary owns the process: its `main` passes its arguments without
-    /// the program name (`args_os().skip(1)`) and its standard output and
-    /// error, and returns the exit code. The front end reads no environment
-    /// and writes nowhere else (ADR-0016).
-    pub fn main(
+    /// The binary owns the process. Its `main` passes its arguments without
+    /// the program name (`args_os().skip(1)`), the logging configuration it
+    /// reads from the environment ([`CasaLoggingConfig::from_env`]), and its
+    /// standard output and error, and returns the exit code. The front end
+    /// reads no environment variable and writes nowhere else (ADR-0016): a
+    /// run's log records go to `stderr`, interleaved with the front end's own
+    /// lines, and to a log table only when the configuration or a logging
+    /// flag names one. An action that runs nothing installs no logging, so a
+    /// configuration the environment gets wrong refuses only a run.
+    ///
+    /// A run installs the process's global `tracing` subscriber, so a process
+    /// runs one.
+    ///
+    /// [`CasaLoggingConfig::from_env`]: casa_logging::CasaLoggingConfig::from_env
+    pub fn main<W: Write + Send + 'static>(
         &self,
         args: impl IntoIterator<Item = OsString>,
+        logging: Result<CasaLoggingConfig, CasaLoggingError>,
         stdout: &mut dyn Write,
-        stderr: &mut dyn Write,
+        stderr: W,
     ) -> ExitCode {
-        let (guard, args) = match casa_logging::init_global_from_env_and_args(args) {
-            Ok(initialised) => initialised,
-            Err(error) => {
-                let _ = writeln!(stderr, "Error: failed to initialize logging: {error}");
-                return exit_code(EXIT_EXECUTION_FAILED);
-            }
-        };
-        let output = self.dispatch(&args);
+        let stderr = Arc::new(Mutex::new(stderr));
+        let (output, guard) =
+            self.dispatch_with_logging(args.into_iter().collect(), logging, &stderr);
         let _ = stdout.write_all(output.stdout.as_bytes());
         let _ = stdout.flush();
-        for line in &output.stderr {
-            let _ = writeln!(stderr, "{line}");
-        }
-        if let Err(error) = guard.flush() {
-            let _ = writeln!(stderr, "Error: failed to flush logging: {error}");
+        let write_lines = |lines: &[String]| {
+            let mut stderr = stderr.lock().unwrap_or_else(PoisonError::into_inner);
+            for line in lines {
+                let _ = writeln!(stderr, "{line}");
+            }
+            let _ = stderr.flush();
+        };
+        write_lines(&output.stderr);
+        if let Some(Err(error)) = guard.as_ref().map(CasaLoggingGuard::flush) {
+            write_lines(&[format!("Error: failed to flush logging: {error}")]);
         }
         exit_code(output.code)
     }
 
+    /// [`Self::dispatch`] after taking the logging flags out of `args`, with
+    /// logging to `stderr` installed only for an action that runs the task.
+    fn dispatch_with_logging<W: Write + Send + 'static>(
+        &self,
+        args: Vec<OsString>,
+        logging: Result<CasaLoggingConfig, CasaLoggingError>,
+        stderr: &Arc<Mutex<W>>,
+    ) -> (FrontEndOutput, Option<CasaLoggingGuard>) {
+        let stripped = match casa_logging::strip_cli_logging_args(args.clone()) {
+            Ok(stripped) => stripped,
+            Err(error) => return (FrontEndOutput::refused(error.to_string()), None),
+        };
+        let (bundle, action, rest) = match self.parse(&stripped) {
+            Ok(parsed) => parsed,
+            Err(refused) => return (refused, None),
+        };
+        if !matches!(action, Action::Run | Action::JsonRun(_)) {
+            return (self.perform(bundle, action, &rest), None);
+        }
+        let installed = logging
+            .and_then(|config| config.with_cli_args(args))
+            .and_then(|(_, config)| casa_logging::init_global_with_stderr(config, stderr.clone()));
+        match installed {
+            Ok(guard) => (self.perform(bundle, action, &rest), Some(guard)),
+            Err(error) => {
+                let message = format!("failed to initialize logging: {error}");
+                let refused = match action {
+                    Action::JsonRun(_) => reply_output(&TaskReply::Failed {
+                        surface: bundle.surface.id().to_string(),
+                        kind: TaskFailureKind::Validation,
+                        message,
+                        parameter: None,
+                    }),
+                    _ => FrontEndOutput::refused(message),
+                };
+                (refused, None)
+            }
+        }
+    }
+
     /// Handle one command line, without the program name.
     pub fn dispatch(&self, args: &[OsString]) -> FrontEndOutput {
+        match self.parse(args) {
+            Ok((bundle, action, rest)) => self.perform(bundle, action, &rest),
+            Err(refused) => refused,
+        }
+    }
+
+    /// The surface, the one action, and the arguments left for it.
+    fn parse(
+        &self,
+        args: &[OsString],
+    ) -> Result<(&SurfaceContractBundle, Action, Vec<OsString>), FrontEndOutput> {
         let (bundle, args) = self.select_surface(args);
-        let (action, rest) = match parse_action(args) {
-            Ok(parsed) => parsed,
-            Err(message) => return FrontEndOutput::refused(message),
-        };
+        let (action, rest) = parse_action(bundle, args).map_err(FrontEndOutput::refused)?;
         let takes_arguments = matches!(action, Action::Show | Action::Run | Action::Help);
         if !takes_arguments && !rest.is_empty() {
-            return FrontEndOutput::refused(format!(
+            return Err(FrontEndOutput::refused(format!(
                 "{} takes no other arguments",
                 action_flag(&action)
-            ));
+            )));
         }
+        Ok((bundle, action, rest))
+    }
+
+    fn perform(
+        &self,
+        bundle: &SurfaceContractBundle,
+        action: Action,
+        rest: &[OsString],
+    ) -> FrontEndOutput {
         match action {
             Action::Help => {
                 FrontEndOutput::print(help::render_help(&self.program, &self.surfaces, bundle))
@@ -341,8 +416,8 @@ where
                     path.display()
                 )),
             },
-            Action::Show => self.show(bundle, &rest),
-            Action::Run => self.run_command_line(bundle, &rest),
+            Action::Show => self.show(bundle, rest),
+            Action::Run => self.run_command_line(bundle, rest),
         }
     }
 
@@ -447,22 +522,7 @@ where
     }
 
     fn run_json(&self, default: &SurfaceContractBundle, source: &str) -> FrontEndOutput {
-        let reply = self.json_reply(default, source);
-        let code = reply.exit_code();
-        let stdout = match serde_json::to_string(&reply) {
-            Ok(text) => text + "\n",
-            Err(error) => {
-                return FrontEndOutput::error(
-                    EXIT_EXECUTION_FAILED,
-                    format!("failed to serialize the task reply: {error}"),
-                );
-            }
-        };
-        FrontEndOutput {
-            stdout,
-            stderr: Vec::new(),
-            code,
-        }
+        reply_output(&self.json_reply(default, source))
     }
 
     fn json_reply(&self, default: &SurfaceContractBundle, source: &str) -> TaskReply {
@@ -567,16 +627,29 @@ where
     }
 }
 
-fn parse_action(args: &[OsString]) -> Result<(Action, Vec<OsString>), String> {
+/// The one action `args` asks for, and the arguments left for it. A spelling
+/// the surface declares is its parameter, never an action: imregrid's
+/// `--template` names its template image, and `--profile-template` reaches
+/// the documented profile on every surface.
+fn parse_action(
+    bundle: &SurfaceContractBundle,
+    args: &[OsString],
+) -> Result<(Action, Vec<OsString>), String> {
     let mut action = None;
     let mut rest = Vec::new();
     let mut index = 0usize;
     while index < args.len() {
-        let found = match args[index].to_str() {
+        let raw = args[index].to_str();
+        if raw.is_some_and(|flag| crate::cli::surface_declares_flag(bundle, flag)) {
+            rest.push(args[index].clone());
+            index += 1;
+            continue;
+        }
+        let found = match raw {
             Some("-h" | "--help") => Some(Action::Help),
             Some("--json-schema") => Some(Action::JsonSchema),
             Some("--protocol-info") => Some(Action::ProtocolInfo),
-            Some("--template") => Some(Action::Template),
+            Some("--template" | "--profile-template") => Some(Action::Template),
             Some("--show") => Some(Action::Show),
             Some("--json-run") => {
                 index += 1;
@@ -672,6 +745,21 @@ fn save_sparse(session: &ParameterSession, path: &Path) -> Result<(), String> {
     write_parameter_profile_atomic(path, &text)
         .map(|_| ())
         .map_err(|error| format!("save {}: {error}", path.display()))
+}
+
+/// `reply` on stdout, with the exit status that agrees with it.
+fn reply_output(reply: &TaskReply) -> FrontEndOutput {
+    match serde_json::to_string(reply) {
+        Ok(text) => FrontEndOutput {
+            stdout: text + "\n",
+            stderr: Vec::new(),
+            code: reply.exit_code(),
+        },
+        Err(error) => FrontEndOutput::error(
+            EXIT_EXECUTION_FAILED,
+            format!("failed to serialize the task reply: {error}"),
+        ),
+    }
 }
 
 fn pretty(value: &Value) -> FrontEndOutput {
