@@ -1298,8 +1298,7 @@ handle whenever it takes the lock, so a merge never reads a table older
 than the lock (independent review, finding 1). A slice that ends without
 completing its parts, or whose view is dropped, abandons their groups:
 the other slices and the split report `WorkAbandoned` rather than wait
-(finding 2). On `pilot.ms` (Mac mini, release, update pass) the MSv2 pass
-took PERF_PENDING.
+(finding 2).
 
 **Not done:** slices of a partition read concurrently by one cursor.
 
