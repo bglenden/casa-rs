@@ -91,8 +91,65 @@ identifiers) does not distinguish, but the binding is **one to one**: two
 entities that one catalogue keeps apart never bind to the same entity of the
 other. An entity that matches nothing, more than one, or the same counterpart
 as another is a typed refusal; an ambiguity is never resolved by position.
-Ephemeris is not yet a partition key, and a general calibration binding that
-survives solve, persist, reopen and apply is provisional (section 8).
+Ephemeris is not yet a partition key.
+
+### Binding a calibration table
+
+A calibration table numbers antennas, fields and spectral windows by the rows
+of its own `ANTENNA`, `FIELD` and `SPECTRAL_WINDOW` subtables. Catalogue
+identities are scoped to one opening, so a table never holds them: a store's
+**persisted namespace** (`casa_ms::observation_io::persisted_namespace`) gives
+the subtables a table solved on it carries and the row of each catalogue
+entity there, for the store opened with given options (partitioning by field
+or scan changes the partitions, so the namespace keeps the catalogue it
+describes and the writer refuses a solve from another opening). An MSv2's
+namespace is its own subtables, its catalogue's antennas, fields and
+sessions being their rows and each partition naming its data description's
+window, so a table written through it has the rows CASA's `gaincal` copies
+and CASA applies it to that MeasurementSet by its own association. An MSv4 has no such rows; its
+namespace is the subtables its MSv2 conversion holds, in catalogue order, so
+a table written through it applies by CASA's association only to that
+conversion, and is bound to any other store. The writer translates a solve's
+catalogue identities to those rows, copies the subtables and records the
+store's path as `MSName`; it never writes a catalogue identity.
+
+Binding a table to a store (`CalibrationBinding`, owned by calibration)
+compares the table's rows with the store's namespace rows, in this order:
+
+1. **Stated associations**, as CASA's `spwmap` states them: a partition's
+   window (several may share one row, including the row an unstated window
+   binds to below, as `spwmap` leaves a window unlisted there on its own
+   row) and an antenna (one to one).
+2. **CASA's own association**, where the caller states that the table was
+   written through this store's namespace, as CASA assumes of a table applied
+   to the MeasurementSet it was solved on: each row binds to its own index,
+   even where two rows hold the same content, once the rows are checked
+   consistent (as many of each kind, antenna names agreeing as below; a
+   window may hold a solve over part of its channels). Names, row counts and a gain table's collapsed channels do
+   not establish it: two windows of different channels can collapse to one
+   row alike.
+3. **Content** otherwise: an antenna by station and position, a field by
+   phase centre, a window by frame and channels, or the one channel a gain
+   table collapses them to, of the summed width (in magnitude: CASA's solve
+   holds widths positive) at the channels' arithmetic mean frequency (CASA's
+   `gaincal`, whose `ChannelAverageTVI` averages frequencies unweighted
+   before a G or T solve, whatever the widths, and casa-rs's writer since
+   #917). Names never bind, since converters rewrite them, but an antenna
+   whose name disagrees beyond a converter's `_STATION` suffixes is refused:
+   another antenna on the same pad does not take its gains. An entity the
+   other side lacks binds to nothing, so an antenna subset applies as CASA
+   applies a table missing an antenna (`calflag` flags its samples); a field
+   the table lacks likewise has no solutions until a `gainfield` policy is
+   built. A window that a table window bound to no other window overlaps
+   in frequency is refused (a solve over part of its channels), not left
+   unbound, in any frame: a table solved in one frame and applied to the
+   store regridded to another solves none of its windows, so it must be
+   stated rather than flag every sample. The applier must have opened the store as
+   the namespace's opening did, or binding is refused. Two candidates, or two entities
+   claiming one row, are refused: equal grids or positions alone do not
+   prove two rows are one entity. Directions compare within a stated
+   tolerance: the catalogue holds them as direction cosines, which move an
+   angle by a few units in the last place at each store crossing (#918).
 
 ### One topology: the time × baseline grid
 
@@ -491,8 +548,9 @@ mask a read of every role gives.
 **Weights.** One broadcast view: per channel when the store holds spectral
 weights (MSv4 `WEIGHT`), or one per correlation seen through every channel by
 a zero channel stride (MSv2 `WEIGHT`), without expansion. Padding weighs 0 in
-MSv2 and NaN in an XRADIO store; both are excluded. `SIGMA` is not read, and no
-unit weights are invented.
+MSv2 and NaN in an XRADIO store; both are excluded. No unit weights are
+invented. The request chooses what the view holds: the stored weights, or
+weights made from the stored sigmas (section 4).
 
 ## 4. Access requests and scientific groups
 
@@ -519,6 +577,8 @@ pub struct AccessRequest {
     pub data_group: String,             // one group per traversal
     pub roles: Roles,                   // what is read at all
     pub channels: Range<usize>,         // native channel window
+    pub times: TimeSelection,           // every grid time, or those in one epoch range
+    pub weights: WeightRequest,         // the stored weights, or 1/σ² of the sigmas
     pub correlations: CorrelationRequest, // products delivered and whose flags
     pub grouping: Grouping,             // scientific groups, as gaincal keys them
     pub batch_bytes: usize,             // budget per batch, scratch included
@@ -526,11 +586,75 @@ pub struct AccessRequest {
 ```
 
 The request is resolved against each partition once, at binding: the data
-group, the channel window, and the correlation axis, which every batch of the
-traversal and every piece packed from one then shares without copying (all
-products borrow the catalogue's list). A batch holds whole times; the budget
+group, the channel window, the time selection, and the correlation axis,
+which every batch of the traversal and every piece packed from one then
+shares without copying (all products borrow the catalogue's list).
+
+A **time selection** is every grid time, or those within one half-open range
+of epochs, `[start, end)` seconds from an origin on a time scale, either end
+possibly infinite. It is stated in the partitions' own origin and scale
+(MJD 0 for MSv2, the Unix epoch for MSv4; every partition of a store shares
+them), so selecting a grid time compares two offsets from one origin and
+rounds nothing; a range in another origin or scale, a NaN end, or a start
+after the end is refused at binding, and a range holding no grid time
+(between two, or past either end) is an empty traversal. One range serves
+every partition of a request, so a calibration solution interval selects the
+same epochs in each spectral window. A planner that splits a partition by
+time cuts it at grid indices, through `Observation::grid`, which reads no
+payload, and states each slice with `TimeRange::of_grid`, which uses the
+grid's own values; slices aligned to the estimate's natural time blocks
+decode no unit twice. The MSv2 adapter reads the selected rows from its
+opening index; the MSv4 adapter reads only the chunks the selection
+touches. Updaters address samples by the batch's own times, so a sliced
+traversal writes back, passing partitions whose selection holds no time; an
+updater bound to a slice refuses a batch of times outside it; an updater
+writes batch for batch, and refuses a later partition while an earlier
+one's selected times are unwritten. Several updaters of one session write
+the slices of a split at once, each claiming its times (section 7).
+
+**Time splits.** Workers that split a request by time plan the slices
+together: `TimeSplit::plan` cuts the request at consecutive epoch ranges
+that must tile its times in every partition (a gap, an overlap, or a time
+left outside every slice is refused), and counts, from the store's group
+index (`Observation::group_keys`, reading no payload), the scientific
+groups the cuts divide and how many slices hold part of each. Each slice's
+traversal delivers its part of a divided group, positioned and closed
+within the slice and marked `clipped`; the split's `SplitCompletion`, shared
+by the slices (each through its own `SliceCompletion`), makes such a group
+ready once, after every part's input has completed in its slice and the
+work begun on any part has finished, however the slices interleave. So a
+consumer writes the same code for one traversal and for a split. A
+standalone time range is not a split: a group it cuts is delivered as its
+part, marked `clipped`, and the rest never arrives. A batch holds whole times; the budget
 counts each time's samples, its per-time arrays and the cursor's decode
-scratch for it, and binding fails when one time does not fit. Opening chose the
+scratch for it, and binding fails when one time does not fit.
+
+**Weights from sigmas.** The weight role reads the stored weights
+(`WeightRequest::Stored`) or the weights CASA's solvers use, 1/σ² of the
+stored sigmas (`WeightRequest::InverseSigmaSquared`), 0 where σ is not
+positive or is NaN (`VisBufferImpl2::resetWeightsUsingSigma`). An MSv2 reads
+`SIGMA_SPECTRUM` when MAIN's `WEIGHT_SPECTRUM` and `SIGMA_SPECTRUM` both hold
+content, else `SIGMA` broadcast over channels, as `VisBufferImpl2` does by
+casacore's `hasContent` (the first cell defined, no axis empty: a column added
+and never filled holds none, and the stored weights are then `WEIGHT`); the
+value is made a weight
+before padding is spread, so padding stays NaN. An MSv4 holds no sigmas, so
+the request names its fallback: refuse a traversal that reads weights
+(`SigmaFallback::Refuse`), or read the stored weights
+(`SigmaFallback::StoredWeights`). Which rule and which column or variable a
+partition's weights come from is recorded in its estimate
+(`PartitionEstimate::weights`, `None` when weights are not read), so a
+fallback is never silent. Each batch states its rule
+(`DataGroupView::weight_rule`), and a weight patch from a batch of
+sigma-derived weights is refused: patches computed from 1/σ² would otherwise
+write sigmas back as weights. An updater writing weights is also refused at
+binding beside a request that makes them (an MSv4's fallback reads stored
+weights, so it binds). `casa_observation::inverse_sigma_squared`
+states the rule; production `gaincal`, which reads the MeasurementSet
+directly until calibration moves onto batches, applies the same rule, and a
+law holds the two solves equal.
+
+Opening chose the
 store and its options (`casa_ms::observation_io::open`); after that an
 algorithm handles only the catalogue, requests, the traversal and batch views,
 and imports no store type.
@@ -550,13 +674,21 @@ decoded and the subset as selected, and its scratch is in the budget.
 
 Scientific groups come from declared keys: production `gaincal`'s rules, keyed
 by partition, field unless combined, scan unless combined, and the time bin
-counted from the first time of the (field, scan) run. A grouping keyed by scan
+counted from the first time of the (field, scan) run, over the whole grid
+whatever the time selection, so traversals of different slices agree on
+every time's group. A grouping keyed by scan
 on a store that names none is refused at binding. Groups can span batches and
 storage chunks; the backend executes the requested grouping and does not decide
 which fields a solver may combine. A delivered batch lists its fragments: the
 sample ranges of each group, whole times, with `First`, `Middle`, `Last` or
 `Whole`. Completion is signalled exactly once: `Last` or `Whole` when proven at
-delivery, otherwise a later `GroupEnd`. Compute windows (`channel_window`,
+delivery, otherwise a later `GroupEnd`. Under a time selection the positions
+and the completion describe the part of each group the selection holds, and
+a fragment says whether the selection cut its group (`clipped`). The slices
+of a time split share one completion that joins a divided group's parts
+(section 4, "Time splits"): it counts each group's parts from the split, so
+a later slice closing its part never releases the group before an earlier
+slice's work on it has begun. Compute windows (`channel_window`,
 `sample_window`) carry no fragments, so a closing position is seen once however
 many work units share the batch.
 
@@ -566,9 +698,11 @@ move-only `WorkToken` and ends by finishing it; the call that makes a group
 ready returns `true` once. A token dropped unfinished (its unit panicked,
 failed or was cancelled) abandons its group, and the join reports
 `WorkAbandoned` instead of waiting for work that will not come. One completion
-serves one traversal; since a source completes each (partition, field, scan)
-series' bins in order, it keeps only each series' latest closed bin, so its
-memory is the series and the groups in flight, not the traversal's length.
+serves one traversal, or the slices of one split; since a source completes
+each (partition, field, scan) series' bins in order within a traversal, it
+keeps only each series' latest closed bin per traversal, and the divided
+groups' outstanding parts, so its memory is the series, the cuts and the
+groups in flight, not the traversal's length.
 
 A solver with splittable accumulation consumes fragments and keeps only its
 sufficient state. An algorithm that needs all samples of a group at once
@@ -694,10 +828,16 @@ The trial's adapters open stores read-only and hold no locks beyond the
 storage libraries' own. An **update session** (`open_update`, section 7) is
 the one mixed owner: it takes the process's write intent on the store, so a
 second update session is refused, lends the same observation for reading and
-one updater at a time for writing, and lets independent read-only
-observations open beside it. MSv2 updaters hold casacore's table lock for
-their life; MSv4 has no cross-process lock protocol, and the session says
-so (`UpdateGuarantees`).
+updaters for writing, and lets independent read-only observations open
+beside it. Several updaters may be live at once, each claiming the times of
+each variable and partition it writes (on MSv4 widened to whole chunk rows);
+one that meets a live claim is refused. An MSv2 session holds casacore's
+write lock on MAIN from its first live updater to its last, so another
+process waits for a pass rather than at every batch, and reopens its handle
+whenever it takes the lock, so what it merges is never older than the lock;
+its updaters write one batch at a time. MSv4 updaters replace disjoint
+chunks at once, and MSv4 has no cross-process lock protocol, which the
+session states (`UpdateGuarantees`).
 
 ## 7. Updates and creation
 
@@ -751,7 +891,8 @@ loss-policy coverage beyond the converter's inventory, are provisional
 
 The write-back trial (trial README, "Write-back") realizes a narrow part of
 this subsection: update sessions with declared targets (data group, role,
-alias scope, creation), one updater per traversal writing visibilities,
+alias scope, creation), one updater per traversal (several per session,
+claiming disjoint times, for the slices of a split) writing visibilities,
 flag set/clear changes and weights for the batches the session delivered,
 the broadcast-weight rule below (Pro R1), data-group aliases accepted
 explicitly (a group the session creates included), one binding per
@@ -870,12 +1011,12 @@ when its acceptance obligation is met.
 | More than one data group per traversal; role aliases | One group per traversal; each group keeps its own field and UVW context | Each group keeps its UVW and field/source context and explicit alias relationships to the others |
 | Occupancy and conversion to rows | Absence only as flagged padding with a NaN weight in both stores; the batch carries no presence mask, so an update infers padding (a missing MSv2 row, a non-finite MSv4 weight, which a traversal must read weights to see) and refuses to clear its flags or give it a finite weight. The converter writes padding as D23's flagged NaN rows, or, declared, as no row (a sample whose every weight is non-finite is padding), counting the acquisitions by a first pass over the weights | Unknown occupancy representable; conversion to a row format resolves it by declared policy or reports the ambiguity, never recovering an imaginary MSv2 row; writing new measurements into holes needs an explicit fill policy |
 | Native flags: bitmasks, reason bits, categories, row flags as their own view | `bool` only; `uint8` refused; row flags folded on read; a flag change sets and clears element flags and never writes `FLAG_ROW` or `FLAG_CATEGORY` | Native dtype and reason bits preserved for lossless writes; `UNSPECIFIED_BIT` for generic flagging, bound to its actual bit; clearing an effective flag never clears unknown reasons |
-| Weight roles and fallback; `SIGMA` | One broadcast weight view; `SIGMA` not read. Production `gaincal` solves with 1/σ² from `SIGMA`, as CASA does, so the calibration port needs this first (trial README, example B) | The request names the weight role and fallback for undefined cells, recording which rule and cell supplied each value; `SIGMA` never silently equated with weights |
+| Weight roles and fallback; `SIGMA` | The request reads stored weights or 1/σ² of the sigmas by CASA's column rule; an MSv4, holding no sigmas, refuses or falls back to its stored weights as the request names; the estimate records the rule and column per partition; a weight write refuses sigma-derived weights (section 4). A batch-fed gain solve weighted from the sigmas equals production `gaincal` where `WEIGHT` is not 1/σ² (trial README, example B) | A fallback per cell where a sigma cell is undefined, recorded per cell; today an undefined cell is a read error, as for every role |
 | Revisit and compute-window requirements as request fields | A new traversal per pass; windows are views | Binding states what depends on an estimated pass count; a revisit does not imply cached values |
 | Updates | The write-back trial's update sessions (section 7) | Section 7's remaining obligations: bit flags and flag categories, conflicting queued patches, structural writes (a new MSv4 data group), per-batch MSv2 planning, a killed process, stray temporary files and the synchronization cost at scale |
 | MSv2 creation from batches; general creation and loss policy | The MSv4 writer (one dataset or a processing set of many), and the converter's MSv2 creator: padded cells flagged NaN rows, or no row by declared policy (the occupancy row above), losses inventoried and refused unless accepted before anything is written, `SIGMA` derived from the weights as an accepted loss | Cells in time order become rows, padded cells flagged NaN rows; cross-format creation preflights metadata, flag and occupancy mappings and rejects unapproved loss |
-| Mixed read/update sessions and locking | One update session per store in a process, one updater per session, read-only opens beside them; casacore's lock per MSv2 updater | Plan read and write access before locking, no implicit upgrade; original-input semantics need disjoint read and write regions after resolving aliases, or a proven read-before-write order; casacore cross-process locks stay authoritative for v2; the v4 profile reports that it has no cross-process lock protocol |
-| Calibration binding across stores | Observation-to-observation `bind_to` | Solve, persist, close, permute partition and catalogue enumeration, reopen and apply, with overlapping antenna subsets and ambiguous-name rejection; CASA's v2 associations and SPW mapping preserved |
+| Mixed read/update sessions and locking | One update session per store in a process, its updaters claiming disjoint times (whole chunk rows on MSv4), read-only opens beside them; casacore's MSv2 lock held while an updater is live | Plan read and write access before locking, no implicit upgrade; original-input semantics need disjoint read and write regions after resolving aliases, or a proven read-before-write order; casacore cross-process locks stay authoritative for v2; the v4 profile reports that it has no cross-process lock protocol |
+| Calibration binding across stores | Section 2's persisted namespace and calibration binding, in the calibration trial (test code until the calibration port): a batch solve persisted through an MSv2's namespace is production `gaincal`'s table; one solved on an MSv4 lacking an antenna, rebound to the full MSv2 that numbers its antennas otherwise and applied from batches, equals production `gaincal` and `applycal`, and CASA's `applycal` reads the MSv4-namespace table as casa-rs does; reordered antennas and windows, renamed entities, subsets, equal content refused unless the namespace is the table's own or the association is stated (trial README, "Caltable round trip") | The binding in production, with `gainfield` and nearest-field selection through bound fields; bandpass and other per-channel tables, whose windows keep their channels; tables solved over combined windows; `FEED` and receptor association; a field binding tolerant of ephemeris fields |
 | Ephemeris, pointing and time-dependent metadata | Ephemeris is not a partition key; pointing not read | Queried in bounded windows; ephemeris keys partitions as XRADIO's converter does |
 | Baseline-dependent polarization (`polarization_mixed`) | Refused at opening | A checked per-baseline basis mapping in the common metadata |
 | Centroid extra precision (`TIME_CENTROID_EXTRA_PRECISION`) | Refused when centroids are requested | The residual carried through the epoch view, slicing, packing and writing; adding it to a large f64 is not a substitute |

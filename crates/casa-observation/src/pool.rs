@@ -282,6 +282,7 @@ mod tests {
             correlations: CorrelationAxis::All,
             roles,
             weights_per_channel: true,
+            weight_rule: crate::WeightRule::Stored,
             interval: Sharing::PerSample,
             exposure: Sharing::PerSample,
         };

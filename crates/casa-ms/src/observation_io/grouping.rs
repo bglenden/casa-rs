@@ -3,7 +3,7 @@
 //! MSv2 and MSv4 adapters: the group of every time of a partition's grid,
 //! keyed as production `gaincal` keys solutions.
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::ops::Range;
 
 use casa_observation::{
@@ -15,22 +15,106 @@ use super::GroupClosure as Closure;
 
 /// The group of every time and where each group starts and ends, computed
 /// once at binding from the grid's times, fields and scans: the traversal's
-/// group index. Its size is two words per time; the trial accepts it in
-/// exchange for proven closure at delivery.
+/// group index. It holds a 32-byte key per time and an extent per group;
+/// the trial accepts it in exchange for proven closure at delivery.
+///
+/// Keys are those of the whole grid, so traversals of different time
+/// selections agree on every time's group; each group's extent is the part
+/// of it the traversal's selection holds, so fragments are positioned and
+/// closed within the selection and marked `clipped` when it cuts the group.
 #[derive(Debug)]
 pub(super) struct GroupIndex {
     keys: Vec<GroupKey>,
+    /// Each group's times within the selection.
     extent: BTreeMap<GroupKey, Range<usize>>,
+    /// The groups the selection cuts: empty for the whole grid.
+    clipped: BTreeSet<GroupKey>,
     closure: Closure,
     /// Groups whose last time was delivered under deferred closure, still
     /// to be announced.
     pending_ends: VecDeque<GroupKey>,
 }
 
+/// The group of each of the grid times `times` (seconds, ascending) with
+/// `fields` and `scans` (when the store names scans) at each, keyed as
+/// production `gaincal` keys solutions over the whole grid; or `None` when
+/// `grouping` asks for no groups.
+pub(super) fn group_keys(
+    partition: PartitionId,
+    grouping: Grouping,
+    times: &[f64],
+    fields: &[FieldId],
+    scans: Option<&[ScanId]>,
+) -> Result<Option<Vec<GroupKey>>, ObservationError> {
+    let keyed_by_scan = match grouping {
+        Grouping::None => return Ok(None),
+        Grouping::TimeBins { combine_scans, .. } => !combine_scans,
+        Grouping::PerScan { .. } | Grouping::PerIntegration => true,
+    };
+    if fields.len() != times.len() || scans.is_some_and(|scans| scans.len() != times.len()) {
+        return Err(ObservationError::InvalidStore {
+            reason: "the grid has not one field and scan per time".to_string(),
+        });
+    }
+    if keyed_by_scan && scans.is_none() {
+        return Err(ObservationError::InvalidRequest {
+            reason: "the grouping keys by scan, and the store names none".to_string(),
+        });
+    }
+    if let Grouping::TimeBins { width_s, .. } = grouping
+        && width_s.partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater)
+    {
+        return Err(ObservationError::InvalidRequest {
+            reason: format!("time-bin width {width_s} s is not positive"),
+        });
+    }
+    if times.windows(2).any(|pair| pair[1] < pair[0]) {
+        return Err(ObservationError::InvalidStore {
+            reason: "the grid's times are not ascending".to_string(),
+        });
+    }
+    // Production gaincal's rule: each (field, scan) key's bins count from
+    // its first time; each key's integrations count from zero.
+    let mut origins = BTreeMap::<(Option<FieldId>, Option<ScanId>), (f64, u64)>::new();
+    let mut keys = Vec::with_capacity(times.len());
+    for (unit, (&time, &field)) in times.iter().zip(fields).enumerate() {
+        // Present whenever the grouping keys by it, checked above.
+        let scan = scans.map(|scans| scans[unit]).filter(|_| keyed_by_scan);
+        let field = match grouping {
+            Grouping::None => unreachable!("handled above"),
+            Grouping::TimeBins { combine_fields, .. } | Grouping::PerScan { combine_fields } => {
+                (!combine_fields).then_some(field)
+            }
+            Grouping::PerIntegration => Some(field),
+        };
+        let (origin, count) = origins.entry((field, scan)).or_insert((time, 0));
+        let bin = match grouping {
+            Grouping::TimeBins { width_s, .. } => {
+                ((time - *origin) / width_s).floor().max(0.0) as u64
+            }
+            Grouping::PerScan { .. } => 0,
+            Grouping::PerIntegration => {
+                let bin = *count;
+                *count += 1;
+                bin
+            }
+            Grouping::None => unreachable!("handled above"),
+        };
+        keys.push(GroupKey {
+            partition,
+            field,
+            scan,
+            bin,
+        });
+    }
+    Ok(Some(keys))
+}
+
 impl GroupIndex {
     /// Index the grid times `times` (seconds, ascending) with `fields` and
-    /// `scans` (when the store names scans) at each, or `None` when the
-    /// request asks for no groups.
+    /// `scans` (when the store names scans) at each, for a traversal of the
+    /// grid times `selection`; or `None` when the request asks for no
+    /// groups.
     pub(super) fn new(
         partition: PartitionId,
         grouping: Grouping,
@@ -38,76 +122,34 @@ impl GroupIndex {
         times: &[f64],
         fields: &[FieldId],
         scans: Option<&[ScanId]>,
+        selection: Range<usize>,
     ) -> Result<Option<Self>, ObservationError> {
-        let keyed_by_scan = match grouping {
-            Grouping::None => return Ok(None),
-            Grouping::TimeBins { combine_scans, .. } => !combine_scans,
-            Grouping::PerScan { .. } | Grouping::PerIntegration => true,
+        let Some(keys) = group_keys(partition, grouping, times, fields, scans)? else {
+            return Ok(None);
         };
-        if fields.len() != times.len() || scans.is_some_and(|scans| scans.len() != times.len()) {
-            return Err(ObservationError::InvalidStore {
-                reason: "the grid has not one field and scan per time".to_string(),
-            });
-        }
-        if keyed_by_scan && scans.is_none() {
-            return Err(ObservationError::InvalidRequest {
-                reason: "the grouping keys by scan, and the store names none".to_string(),
-            });
-        }
-        if let Grouping::TimeBins { width_s, .. } = grouping
-            && width_s.partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater)
-        {
-            return Err(ObservationError::InvalidRequest {
-                reason: format!("time-bin width {width_s} s is not positive"),
-            });
-        }
-        if times.windows(2).any(|pair| pair[1] < pair[0]) {
-            return Err(ObservationError::InvalidStore {
-                reason: "the grid's times are not ascending".to_string(),
-            });
-        }
-        // Production gaincal's rule: each (field, scan) key's bins count
-        // from its first time; each key's integrations count from zero.
-        let mut origins = BTreeMap::<(Option<FieldId>, Option<ScanId>), (f64, u64)>::new();
-        let mut keys = Vec::with_capacity(times.len());
         let mut extent = BTreeMap::<GroupKey, Range<usize>>::new();
-        for (unit, (&time, &field)) in times.iter().zip(fields).enumerate() {
-            // Present whenever the grouping keys by it, checked above.
-            let scan = scans.map(|scans| scans[unit]).filter(|_| keyed_by_scan);
-            let field = match grouping {
-                Grouping::None => unreachable!("handled above"),
-                Grouping::TimeBins { combine_fields, .. }
-                | Grouping::PerScan { combine_fields } => (!combine_fields).then_some(field),
-                Grouping::PerIntegration => Some(field),
-            };
-            let (origin, count) = origins.entry((field, scan)).or_insert((time, 0));
-            let bin = match grouping {
-                Grouping::TimeBins { width_s, .. } => {
-                    ((time - *origin) / width_s).floor().max(0.0) as u64
-                }
-                Grouping::PerScan { .. } => 0,
-                Grouping::PerIntegration => {
-                    let bin = *count;
-                    *count += 1;
-                    bin
-                }
-                Grouping::None => unreachable!("handled above"),
-            };
-            let key = GroupKey {
-                partition,
-                field,
-                scan,
-                bin,
-            };
+        for (unit, key) in keys
+            .iter()
+            .enumerate()
+            .take(selection.end)
+            .skip(selection.start)
+        {
             extent
-                .entry(key)
+                .entry(*key)
                 .and_modify(|range| range.end = unit + 1)
                 .or_insert(unit..unit + 1);
-            keys.push(key);
         }
+        // The selection cuts a group it holds that has a time outside it.
+        let clipped = keys[..selection.start]
+            .iter()
+            .chain(&keys[selection.end..])
+            .filter(|key| extent.contains_key(key))
+            .copied()
+            .collect();
         Ok(Some(Self {
             keys,
             extent,
+            clipped,
             closure,
             pending_ends: VecDeque::new(),
         }))
@@ -151,6 +193,7 @@ impl GroupIndex {
                 samples: (start - times.start) * samples_per_time
                     ..(end - times.start) * samples_per_time,
                 position,
+                clipped: self.clipped.contains(&key),
             });
             start = end;
         }
@@ -174,6 +217,7 @@ mod tests {
             &times,
             &fields,
             Some(&scans),
+            0..7,
         )
         .expect("index")
         .expect("groups")
@@ -232,6 +276,54 @@ mod tests {
                 .all(|f| f.position == FragmentPosition::Whole)
         );
         assert_eq!(fragments[6].samples, 60..70);
+    }
+
+    /// A selection keeps the whole grid's keys, positions and closes each
+    /// group within itself, and marks the groups it cuts.
+    #[test]
+    fn a_selection_closes_the_parts_it_holds_and_marks_cut_groups() {
+        let times: Vec<f64> = (0..7).map(|t| f64::from(t) * 10.0).collect();
+        let fields = [0, 0, 1, 1, 0, 1, 1].map(FieldId);
+        let scans = [0, 0, 0, 0, 0, 1, 1].map(ScanId);
+        let grouping = Grouping::TimeBins {
+            width_s: f64::INFINITY,
+            combine_fields: false,
+            combine_scans: true,
+        };
+        let index = |selection| {
+            GroupIndex::new(
+                PartitionId(0),
+                grouping,
+                Closure::AtDelivery,
+                &times,
+                &fields,
+                Some(&scans),
+                selection,
+            )
+            .expect("index")
+            .expect("groups")
+        };
+        let mut whole = Vec::new();
+        index(0..7).fragments(0..7, 1, &mut whole);
+        let mut sliced = Vec::new();
+        index(1..4).fragments(1..4, 1, &mut sliced);
+        // Field A's group (times 0, 1, 4) and B's (2, 3, 5, 6) are both
+        // cut by times 1-3: A's part is time 1, B's times 2-3, each whole
+        // within the selection and closed there.
+        let seen: Vec<_> = sliced
+            .iter()
+            .map(|f| (f.key.field, f.samples.clone(), f.position, f.clipped))
+            .collect();
+        assert_eq!(
+            seen,
+            [
+                (Some(FieldId(0)), 0..1, FragmentPosition::Whole, true),
+                (Some(FieldId(1)), 1..3, FragmentPosition::Whole, true),
+            ]
+        );
+        assert!(whole.iter().all(|f| !f.clipped));
+        assert_eq!(sliced[0].key, whole[0].key);
+        assert_eq!(sliced[1].key, whole[1].key);
     }
 
     #[test]

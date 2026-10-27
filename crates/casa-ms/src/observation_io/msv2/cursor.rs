@@ -8,7 +8,7 @@ use std::sync::Arc;
 use casa_observation::{
     AccessRequest, BatchArrays, BatchBuffers, BatchHeader, Catalogue, DataGroupEntry, IoCounters,
     ObservationError, PartitionEstimate, PartitionId, ResolvedRequest, Roles, Sharing, Step,
-    VisibilityCursor,
+    VisibilityCursor, WeightRule, WeightSource, inverse_sigma_squared,
 };
 use casa_tables::{
     RequiredScalarColumnDestination, RequiredScalarColumnValuesMut, SelectedArray1DCellsMut,
@@ -46,6 +46,7 @@ pub struct Msv2Cursor<'o> {
     roles: Roles,
     channels: Range<usize>,
     resolved: ResolvedRequest,
+    /// The next grid time to deliver, within `resolved.times`.
     next_time: usize,
     groups: Option<GroupIndex>,
     estimate: PartitionEstimate,
@@ -69,14 +70,15 @@ impl<'o> Msv2Cursor<'o> {
             &grid.times_s,
             &grid.field_per_time,
             Some(&grid.scan_per_time),
+            resolved.times.clone(),
         )?;
         Ok(Self {
             observation,
             partition: estimate.partition,
             roles: request.roles,
             channels: request.channels.clone(),
+            next_time: resolved.times.start,
             resolved,
-            next_time: 0,
             groups,
             estimate,
             counters: IoCounters::default(),
@@ -88,6 +90,15 @@ impl<'o> Msv2Cursor<'o> {
         &self.observation.partitions[self.partition.0 as usize].grid
     }
 
+    /// Whether the delivered weights hold one value per channel: their
+    /// source's, when the weights are read.
+    fn weights_per_channel(&self) -> bool {
+        self.estimate
+            .weights
+            .as_ref()
+            .is_some_and(|source| source.per_channel)
+    }
+
     fn header(&self, times: usize) -> BatchHeader {
         BatchHeader {
             partition: self.partition,
@@ -97,7 +108,12 @@ impl<'o> Msv2Cursor<'o> {
             channels: self.channels.len(),
             correlations: self.resolved.correlations.clone(),
             roles: self.roles,
-            weights_per_channel: self.observation.spectral_weights,
+            weights_per_channel: self.weights_per_channel(),
+            weight_rule: self
+                .estimate
+                .weights
+                .as_ref()
+                .map_or(WeightRule::Stored, |source| source.rule),
             interval: Sharing::PerSample,
             exposure: Sharing::PerSample,
         }
@@ -121,6 +137,7 @@ impl<'o> Msv2Cursor<'o> {
             counters,
             groups,
             resolved,
+            estimate,
             ..
         } = self;
         let cells = grid.cells(times.clone());
@@ -167,7 +184,7 @@ impl<'o> Msv2Cursor<'o> {
             group: &entry.data_groups[resolved.data_group],
             channels: &channels,
             roles,
-            weights_per_channel: observation.spectral_weights,
+            weights: estimate.weights.as_ref(),
             stored: entry.correlations.len(),
             resolved,
             samples,
@@ -229,7 +246,8 @@ struct Payload<'a> {
     group: &'a DataGroupEntry,
     channels: &'a Range<usize>,
     roles: Roles,
-    weights_per_channel: bool,
+    /// What the weights role reads, when it is read.
+    weights: Option<&'a WeightSource>,
     /// Correlation products the store holds.
     stored: usize,
     resolved: &'a ResolvedRequest,
@@ -357,26 +375,26 @@ impl Payload<'_> {
                 }
             }
         }
-        if roles.weights {
+        if let Some(source) = self.weights.filter(|_| roles.weights) {
             counters.read_calls += 1;
-            let weight_channels = if self.weights_per_channel {
-                channels
-            } else {
-                1
-            };
+            let weight_channels = if source.per_channel { channels } else { 1 };
+            // The present rows' values, made weights before padding is
+            // spread, so a padded cell stays NaN.
             let read = |target: &mut Vec<f32>| {
-                if self.weights_per_channel {
+                if source.per_channel {
                     cube(
-                        &self.group.weights,
+                        &source.variable,
                         SelectedArray2DCellsMut::RowChannelFloat32(target),
-                    )
+                    )?;
                 } else {
-                    per_row(
-                        &self.group.weights,
-                        SelectedArray1DCellsMut::Float32(target),
-                    )
-                    .map(|_| ())
+                    per_row(&source.variable, SelectedArray1DCellsMut::Float32(target))?;
                 }
+                if source.rule == WeightRule::InverseSigmaSquared {
+                    for value in target.iter_mut() {
+                        *value = inverse_sigma_squared(*value);
+                    }
+                }
+                Ok::<(), ObservationError>(())
             };
             if let Some(keep) = keep {
                 weights.clear();
@@ -522,7 +540,7 @@ impl VisibilityCursor for Msv2Cursor<'_> {
         if let Some(key) = self.groups.as_mut().and_then(GroupIndex::pop_end) {
             return Step::GroupEnd(key);
         }
-        if self.next_time == self.grid().times() {
+        if self.next_time == self.resolved.times.end {
             Step::End
         } else {
             Step::Batch
@@ -530,7 +548,7 @@ impl VisibilityCursor for Msv2Cursor<'_> {
     }
 
     fn fill(&mut self, buffers: &mut BatchBuffers) -> Result<(), ObservationError> {
-        let times = self.grid().times();
+        let times = self.resolved.times.end;
         if self.next_time == times {
             return Err(ObservationError::InvalidRequest {
                 reason: "fill after the end of the traversal".to_string(),

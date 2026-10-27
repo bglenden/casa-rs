@@ -134,6 +134,16 @@ where
         })
     }
 
+    /// The grid times `times` widened to whole chunk rows of the variable:
+    /// the times whose chunks writing `times` may replace.
+    pub(super) fn chunk_rows(&self, times: Range<usize>) -> Range<usize> {
+        if times.is_empty() {
+            return times;
+        }
+        let rows = self.chunk[0];
+        times.start / rows * rows..(times.end.div_ceil(rows) * rows).min(self.shape[0])
+    }
+
     /// The most bytes the window holds: one chunk-row of the variable over
     /// the held channels, its assignment marks and chunk counts.
     pub(super) fn held_bytes(&self) -> usize {

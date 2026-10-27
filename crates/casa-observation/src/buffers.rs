@@ -12,7 +12,7 @@ use crate::ObservationError;
 use crate::batch::{DataGroupView, SampleTiming, Shared, VisibilityBatch};
 use crate::catalogue::{Catalogue, FieldId, PartitionEntry, PartitionId, ScanId};
 use crate::grouping::GroupFragment;
-use crate::request::{CorrelationAxis, Roles};
+use crate::request::{CorrelationAxis, Roles, WeightRule};
 
 /// The storage behind one [`VisibilityBatch`].
 ///
@@ -107,6 +107,8 @@ pub struct BatchHeader {
     /// Whether the weights are per channel (`[sample][channel][correlation]`)
     /// or one per correlation shared by every channel.
     pub weights_per_channel: bool,
+    /// What the weights are: stored, or made from the sigmas.
+    pub weight_rule: WeightRule,
     /// How intervals are stored, when the roles include them.
     pub interval: Sharing<f64>,
     /// How exposures are stored, when the roles include them.
@@ -428,6 +430,7 @@ impl BatchBuffers {
                         .expect("length checked at finish")
                     }
                 }),
+                weight_rule: header.weight_rule,
                 uvw: roles.uvw.then(|| {
                     UvwView::new(
                         group.uvw_frame.effective,
@@ -687,6 +690,7 @@ impl BatchBuffers {
                 scan: batch.scan.is_some(),
             },
             weights_per_channel,
+            weight_rule: group.weight_rule,
             interval: sharing(batch.timing.interval_s),
             exposure: sharing(batch.timing.exposure_s),
         };
@@ -833,6 +837,7 @@ pub(crate) mod tests {
                 ..Roles::ALL
             },
             weights_per_channel: false,
+            weight_rule: WeightRule::Stored,
             interval: Sharing::Constant(10.0),
             exposure: Sharing::PerSample,
         }
@@ -866,6 +871,7 @@ pub(crate) mod tests {
             key: key(),
             samples: 0..4,
             position: FragmentPosition::Whole,
+            clipped: false,
         });
         tweak(&mut header, &mut arrays);
         let mut fill = buffers.begin(header, &catalogue())?;

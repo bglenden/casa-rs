@@ -19,7 +19,7 @@ use std::time::Instant;
 use casa_ms::observation_io::{OpenOptions, open_update};
 use casa_observation::{
     AccessRequest, BatchBuffers, CorrelationRequest, Grouping, PatchValues, ReadEvent, Roles,
-    UpdateTarget, WritableRole,
+    TimeSelection, UpdateTarget, WeightRequest, WritableRole,
 };
 use serde_json::json;
 
@@ -52,6 +52,8 @@ fn main() -> Result<(), Error> {
             data_group: "base".to_string(),
             roles: Roles::ALL,
             channels: 0..catalogue.partition(id).frequencies_hz.len(),
+            times: TimeSelection::All,
+            weights: WeightRequest::Stored,
             correlations: CorrelationRequest::ALL,
             grouping: Grouping::None,
             batch_bytes: budget,

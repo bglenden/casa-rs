@@ -7,8 +7,9 @@ use std::sync::Arc;
 
 use casa_observation::{
     AccessRequest, BatchArrays, BatchBuffers, BatchHeader, Catalogue, IoCounters, NaturalBlocks,
-    ObservationError, PartitionEstimate, PartitionId, ResolvedRequest, Roles, Sharing, Step,
-    VisibilityCursor, times_per_batch,
+    ObservationError, PartitionEstimate, PartitionId, ResolvedRequest, Roles, Sharing,
+    SigmaFallback, Step, VisibilityCursor, WeightRequest, WeightRule, WeightSource,
+    times_per_batch,
 };
 use num_complex::Complex32;
 use zarrs::array::{
@@ -41,6 +42,7 @@ pub struct Msv4Cursor<'o> {
     roles: Roles,
     channels: Range<usize>,
     resolved: ResolvedRequest,
+    /// The next dataset time to deliver, within `resolved.times`.
     next_time: usize,
     groups: Option<GroupIndex>,
     estimate: PartitionEstimate,
@@ -64,6 +66,7 @@ impl<'o> Msv4Cursor<'o> {
             &dataset.times,
             &arrays.fields,
             dataset.scans.as_deref(),
+            resolved.times.clone(),
         )?;
         Ok(Self {
             observation,
@@ -72,8 +75,8 @@ impl<'o> Msv4Cursor<'o> {
             partition: estimate.partition,
             roles: request.roles,
             channels: request.channels.clone(),
+            next_time: resolved.times.start,
             resolved,
-            next_time: 0,
             groups,
             estimate,
             counters: IoCounters::default(),
@@ -146,7 +149,7 @@ pub(super) fn estimate(
     id: PartitionId,
 ) -> Result<(PartitionEstimate, ResolvedRequest), ObservationError> {
     let (dataset, entry) = observation.dataset(id)?;
-    let resolved = request.resolve(entry)?;
+    let resolved = request.resolve(entry, &dataset.times)?;
     let arrays = &dataset.groups[resolved.data_group];
     let roles = request.roles;
     if roles.time_centroid && dataset.centroid_extra_precision {
@@ -179,7 +182,26 @@ pub(super) fn estimate(
             });
         }
     }
-    let (times, baselines) = (dataset.times.len(), entry.baselines.len());
+    // An MSv4 dataset holds weights and no sigmas: the sigma rule takes
+    // its fallback, recorded, or is refused.
+    let weights = match request.weights {
+        WeightRequest::InverseSigmaSquared {
+            fallback: SigmaFallback::Refuse,
+        } if roles.weights => {
+            return Err(ObservationError::InvalidRequest {
+                reason: "an MSv4 dataset holds no sigmas for 1/sigma^2 weights, and the request \
+                         names no fallback"
+                    .to_string(),
+            });
+        }
+        _ => WeightSource {
+            rule: WeightRule::Stored,
+            variable: entry.data_groups[resolved.data_group].weights.clone(),
+            per_channel: true,
+        },
+    };
+    let span = resolved.times.clone();
+    let (times, baselines) = (span.len(), entry.baselines.len());
     let channels = request.channels.len();
     let scalars = [roles.time_centroid, roles.exposure]
         .into_iter()
@@ -213,7 +235,8 @@ pub(super) fn estimate(
     let (mut decode_units, mut decoded, mut selected) = (0, 0, 0);
     let variables = requested(dataset, arrays, roles);
     for batch in 0..batches {
-        let rows = batch * times_per_batch..((batch + 1) * times_per_batch).min(times);
+        let rows = span.start + batch * times_per_batch
+            ..span.start + ((batch + 1) * times_per_batch).min(times);
         for &(array, extent, delivered) in &variables {
             let subset = subset(array, rows.clone(), &request.channels, extent);
             let (units, elements) = chunk_cost(array, &subset)?;
@@ -232,6 +255,8 @@ pub(super) fn estimate(
     let estimate = PartitionEstimate {
         partition: id,
         times,
+        first_time: span.start,
+        weights: roles.weights.then_some(weights),
         baselines,
         bytes_per_sample,
         bytes_per_time,
@@ -359,6 +384,8 @@ impl Msv4Cursor<'_> {
             correlations: self.resolved.correlations.clone(),
             roles: self.roles,
             weights_per_channel: true,
+            // An MSv4 holds no sigmas: its weights are always the stored ones.
+            weight_rule: WeightRule::Stored,
             interval: Sharing::Constant(self.dataset.interval_s.unwrap_or(f64::NAN)),
             exposure: Sharing::PerSample,
         }
@@ -557,7 +584,7 @@ impl VisibilityCursor for Msv4Cursor<'_> {
         if let Some(key) = self.groups.as_mut().and_then(GroupIndex::pop_end) {
             return Step::GroupEnd(key);
         }
-        if self.next_time == self.dataset.times.len() {
+        if self.next_time == self.resolved.times.end {
             Step::End
         } else {
             Step::Batch
@@ -565,7 +592,7 @@ impl VisibilityCursor for Msv4Cursor<'_> {
     }
 
     fn fill(&mut self, buffers: &mut BatchBuffers) -> Result<(), ObservationError> {
-        let times = self.dataset.times.len();
+        let times = self.resolved.times.end;
         if self.next_time == times {
             return Err(ObservationError::InvalidRequest {
                 reason: "fill after the end of the traversal".to_string(),

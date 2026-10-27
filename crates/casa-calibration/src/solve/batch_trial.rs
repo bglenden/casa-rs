@@ -12,6 +12,8 @@
 //! interface; this module opens the stores, runs the production solve, and
 //! compares.
 
+mod binding;
+mod caltable;
 mod feed;
 
 use std::fs::File;
@@ -22,6 +24,7 @@ use casa_ms::observation_io::{GroupClosure, OpenOptions};
 use casa_ms::selection::MsSelection;
 use casa_observation::{
     AccessRequest, Binding, BindingTolerance, CorrelationRequest, Grouping, Observation, Roles,
+    SigmaFallback, TimeSelection, WeightRequest,
 };
 
 use super::kernel::SolutionRow;
@@ -73,6 +76,8 @@ fn access(observation: &dyn Observation, times: usize) -> AccessRequest {
         data_group: "base".to_string(),
         roles: Roles::ALL,
         channels: 0..8,
+        times: TimeSelection::All,
+        weights: WeightRequest::Stored,
         correlations: CorrelationRequest::ALL,
         grouping: Grouping::TimeBins {
             width_s: 60.0,
@@ -303,13 +308,13 @@ fn batch_fed_solves_equal_the_production_gaincal() {
         for (store, observation) in &stores.observations {
             let binding = stores.binding(&**observation);
             for times in [1, 3, 4, 7, 12] {
-                let (rows, trace) = solve_sequential(
+                let (solved, trace) = solve_sequential(
                     &**observation,
                     &request,
                     &access(&**observation, times),
                     refant(&binding),
                 );
-                let agreement = agreement(&expected, &renumbered(rows, &binding));
+                let agreement = agreement(&expected, &renumbered(solved.rows, &binding));
                 println!(
                     "{store} sequential {closure:?} {times} times/batch: {agreement:?}; {trace:?}"
                 );
@@ -339,6 +344,74 @@ fn batch_fed_solves_equal_the_production_gaincal() {
     }
 }
 
+/// Rewrite the MSv2 at `path`'s `SIGMA` so that 1/σ² is not its `WEIGHT`,
+/// by a factor varying over rows and correlations, and is 0 for one
+/// correlation of one row.
+fn rewrite_sigmas(path: &Path) {
+    let mut ms = MeasurementSet::open(path).expect("ms");
+    for row in 0..ms.main_table().row_count() {
+        let sigma = ndarray::ArrayD::from_shape_fn(vec![4], |index| {
+            if (row, index[0]) == (5, 1) {
+                0.0
+            } else {
+                0.5 + 0.25 * ((row * 3 + index[0]) % 7) as f32
+            }
+        });
+        ms.main_table_mut()
+            .cell_accessor_mut(row, "SIGMA")
+            .and_then(|mut cell| {
+                cell.set(casa_types::Value::Array(casa_types::ArrayValue::Float32(
+                    sigma,
+                )))
+            })
+            .expect("SIGMA");
+    }
+    ms.save().expect("save");
+}
+
+/// Production `gaincal` weights its solve by 1/σ² of `SIGMA`, not by
+/// `WEIGHT`. With the two made to differ, a batch-fed solve reading
+/// sigma-derived weights still reproduces production, and one reading the
+/// stored weights does not.
+#[test]
+fn sigma_weighted_batch_solves_equal_the_production_gaincal() {
+    let root = tempfile::tempdir().expect("root");
+    let path = fixture(root.path(), "ms_trial.ms");
+    rewrite_sigmas(&path);
+    let expected = production(&MeasurementSet::open(&path).expect("ms"), root.path());
+    let request = gain_request(root.path().join("unused.G"));
+    let observation = casa_ms::observation_io::open(&path, &OpenOptions::default()).expect("open");
+    let binding = observation
+        .catalogue()
+        .bind_to(observation.catalogue(), &BindingTolerance::EXACT)
+        .expect("binds");
+    let solve = |weights: WeightRequest| {
+        let access = AccessRequest {
+            weights,
+            ..access(&*observation, 3)
+        };
+        let (solved, _) = solve_sequential(&*observation, &request, &access, refant(&binding));
+        agreement(&expected, &renumbered(solved.rows, &binding))
+    };
+    let sigmas = solve(WeightRequest::InverseSigmaSquared {
+        fallback: SigmaFallback::Refuse,
+    });
+    println!("sigma-weighted against production: {sigmas:?}");
+    assert!(
+        sigmas.flags_equal
+            && sigmas.gain < 1e-5
+            && sigmas.snr_relative < 1e-4
+            && sigmas.weight_relative < 1e-4,
+        "{sigmas:?}"
+    );
+    let stored = solve(WeightRequest::Stored);
+    println!("stored-weighted against production: {stored:?}");
+    assert!(
+        stored.weight_relative > 1e-2,
+        "the stored weights are not production's: {stored:?}"
+    );
+}
+
 /// Fragments accumulated as concurrent work units, the first held back:
 /// its group's input completes with work pending, and the group is solved
 /// only after that work joins. Merged partial sums agree with the
@@ -352,13 +425,13 @@ fn concurrent_fragments_close_only_after_their_work_joins() {
         let stores = open(root.path(), closure);
         for (store, observation) in &stores.observations {
             let binding = stores.binding(&**observation);
-            let (rows, trace) = solve_concurrent(
+            let (solved, trace) = solve_concurrent(
                 &**observation,
                 &request,
                 &access(&**observation, 3),
                 refant(&binding),
             );
-            let agreement = agreement(&expected, &renumbered(rows, &binding));
+            let agreement = agreement(&expected, &renumbered(solved.rows, &binding));
             println!("{store} concurrent {closure:?} 3 times/batch: {agreement:?}; {trace:?}");
             assert!(agreement.flags_equal);
             assert!(

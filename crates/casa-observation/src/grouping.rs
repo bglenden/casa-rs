@@ -67,7 +67,19 @@ pub struct GroupFragment {
     /// it: [`VisibilityBatch::channel_window`] and
     /// [`VisibilityBatch::time_window`] carry none, so a closing position
     /// is seen once, however many work units share the batch.
+    ///
+    /// Under a time selection ([`AccessRequest::times`]) the position and
+    /// the completion describe the part of the group the selection holds.
+    ///
+    /// [`AccessRequest::times`]: crate::AccessRequest::times
     pub position: FragmentPosition,
+    /// Whether the request's time selection holds only part of the group:
+    /// the rest of its samples lie outside the selected times, and a
+    /// traversal of those times delivers them, under the same key. The
+    /// slices of a [`TimeSplit`](crate::TimeSplit) share a completion that
+    /// joins such a group's parts; a group no selection cuts is whole in
+    /// its traversal.
+    pub clipped: bool,
 }
 
 /// Joins the two completions of a group that concurrent work consumes: its
@@ -88,23 +100,69 @@ pub struct GroupFragment {
 /// [`ObservationError::WorkAbandoned`] rather than waiting for work that
 /// will not come.
 ///
-/// One completion serves one traversal. A source completes the input of a
-/// (partition, field, scan) series' groups in bin order, since it delivers
-/// whole times in time order, so the completion keeps only each series'
-/// latest closed bin to refuse a second closure or work begun after one:
-/// its memory is the series and the groups in flight, however long the
-/// traversal.
+/// One completion serves one traversal; the traversals of a time split
+/// share a [`SplitCompletion`](crate::SplitCompletion) instead. A source
+/// completes the input of a (partition, field, scan) series' groups in bin
+/// order, since it delivers whole times in time order, so the completion
+/// keeps only each series' latest closed bin to refuse a second closure or
+/// work begun after one: its memory is the series and the groups in
+/// flight, however long the traversal.
 #[derive(Debug, Default)]
 pub struct GroupCompletion {
-    pending: BTreeMap<GroupKey, usize>,
-    /// Groups whose input is complete and whose work is still pending.
-    closed: BTreeSet<GroupKey>,
-    /// Each series' latest bin whose input completed.
-    closed_through: BTreeMap<Series, u64>,
-    /// Groups whose tokens were dropped unfinished, until counted.
-    abandoned: Arc<Mutex<Vec<GroupKey>>>,
-    /// Groups with abandoned work.
-    failed: BTreeSet<GroupKey>,
+    joins: Joins,
+}
+
+impl GroupCompletion {
+    /// A unit of work on `key` has started; finish it with the token.
+    ///
+    /// # Errors
+    ///
+    /// If the group's input has already completed (no work can begin on a
+    /// group after its closure), or its work was abandoned.
+    pub fn begin(&mut self, key: GroupKey) -> Result<WorkToken, ObservationError> {
+        self.joins.begin(0, key)
+    }
+
+    /// The unit of work `token` names has finished; `true` if that makes
+    /// its group ready.
+    ///
+    /// # Errors
+    ///
+    /// [`ObservationError::WorkAbandoned`] if a unit of work was abandoned.
+    ///
+    /// # Panics
+    ///
+    /// If `token` was issued by another `GroupCompletion`.
+    pub fn finish(&mut self, token: WorkToken) -> Result<bool, ObservationError> {
+        self.joins.finish(token)
+    }
+
+    /// The group's input is complete; `true` if no work on it is pending,
+    /// so the group is ready now.
+    ///
+    /// # Errors
+    ///
+    /// If the group was already closed, or a later group of its series;
+    /// [`ObservationError::WorkAbandoned`] if a unit of work was abandoned.
+    pub fn close(&mut self, key: GroupKey) -> Result<bool, ObservationError> {
+        self.joins.close(0, key)
+    }
+
+    /// Units of work pending on `key`.
+    #[must_use]
+    pub fn pending(&self, key: GroupKey) -> usize {
+        self.joins.pending(key)
+    }
+
+    /// Whether no work is pending and no closed group awaits its work.
+    ///
+    /// # Errors
+    ///
+    /// [`ObservationError::WorkAbandoned`] if a unit of work was abandoned:
+    /// the completion then never becomes idle.
+    pub fn is_idle(&mut self) -> Result<bool, ObservationError> {
+        self.joins.is_idle()
+    }
 }
 
 /// A group's series: its key without the bin.
@@ -145,16 +203,50 @@ impl Drop for WorkToken {
     }
 }
 
-impl GroupCompletion {
-    /// A unit of work on `key` has started; finish it with the token.
-    ///
-    /// # Errors
-    ///
-    /// If the group's input has already completed (no work can begin on a
-    /// group after its closure), or its work was abandoned.
-    pub fn begin(&mut self, key: GroupKey) -> Result<WorkToken, ObservationError> {
+/// The joins of groups' input and work over the traversals that deliver
+/// them: one traversal for a [`GroupCompletion`], a split's slices for a
+/// [`SplitCompletion`](crate::SplitCompletion). Traversals are numbered;
+/// each completes its series' groups in bin order.
+///
+/// A group a split divides arrives in several traversals, each completing
+/// its own part: its input is complete only once every part's is, however
+/// the traversals interleave, so work begun on an early part keeps the
+/// group from being ready while a later part closes.
+#[derive(Debug, Default)]
+pub(crate) struct Joins {
+    pending: BTreeMap<GroupKey, usize>,
+    /// Groups whose input is complete and whose work is still pending.
+    closed: BTreeSet<GroupKey>,
+    /// Each traversal's series' latest bin whose input completed there.
+    closed_through: BTreeMap<(usize, Series), u64>,
+    /// Groups divided among traversals, with the traversals whose part's
+    /// input has yet to complete; a group held whole by one traversal is
+    /// not here.
+    open_parts: BTreeMap<GroupKey, BTreeSet<usize>>,
+    /// Groups whose tokens were dropped unfinished, until counted.
+    abandoned: Arc<Mutex<Vec<GroupKey>>>,
+    /// Groups with abandoned work.
+    failed: BTreeSet<GroupKey>,
+}
+
+impl Joins {
+    /// Joins over traversals that divide the groups `parts` names, each
+    /// among the traversals named (two or more).
+    pub(crate) fn divided(parts: BTreeMap<GroupKey, BTreeSet<usize>>) -> Self {
+        Self {
+            open_parts: parts,
+            ..Self::default()
+        }
+    }
+
+    /// As [`GroupCompletion::begin`], for traversal `traversal`.
+    pub(crate) fn begin(
+        &mut self,
+        traversal: usize,
+        key: GroupKey,
+    ) -> Result<WorkToken, ObservationError> {
         self.settle()?;
-        if self.is_closed(key) {
+        if self.is_closed(traversal, key) {
             return Err(ObservationError::InvalidBatch {
                 reason: format!("work begun on {key:?} after its input completed"),
             });
@@ -166,17 +258,8 @@ impl GroupCompletion {
         })
     }
 
-    /// The unit of work `token` names has finished; `true` if that makes
-    /// its group ready.
-    ///
-    /// # Errors
-    ///
-    /// [`ObservationError::WorkAbandoned`] if a unit of work was abandoned.
-    ///
-    /// # Panics
-    ///
-    /// If `token` was issued by another `GroupCompletion`.
-    pub fn finish(&mut self, mut token: WorkToken) -> Result<bool, ObservationError> {
+    /// As [`GroupCompletion::finish`].
+    pub(crate) fn finish(&mut self, mut token: WorkToken) -> Result<bool, ObservationError> {
         token.abandoned = None;
         let key = token.key;
         self.release(key);
@@ -184,21 +267,28 @@ impl GroupCompletion {
         Ok(!self.pending.contains_key(&key) && self.closed.remove(&key))
     }
 
-    /// The group's input is complete; `true` if no work on it is pending,
-    /// so the group is ready now.
-    ///
-    /// # Errors
-    ///
-    /// If the group was already closed, or a later group of its series;
-    /// [`ObservationError::WorkAbandoned`] if a unit of work was abandoned.
-    pub fn close(&mut self, key: GroupKey) -> Result<bool, ObservationError> {
+    /// As [`GroupCompletion::close`], for traversal `traversal`'s part of
+    /// the group: the group's input is complete when every part's is.
+    pub(crate) fn close(
+        &mut self,
+        traversal: usize,
+        key: GroupKey,
+    ) -> Result<bool, ObservationError> {
         self.settle()?;
-        if self.is_closed(key) {
+        if self.is_closed(traversal, key) {
             return Err(ObservationError::InvalidBatch {
                 reason: format!("{key:?} closed twice, or after a later group of its series"),
             });
         }
-        self.closed_through.insert(series(key), key.bin);
+        self.closed_through
+            .insert((traversal, series(key)), key.bin);
+        if let Some(open) = self.open_parts.get_mut(&key) {
+            open.remove(&traversal);
+            if !open.is_empty() {
+                return Ok(false);
+            }
+            self.open_parts.remove(&key);
+        }
         if self.pending.contains_key(&key) {
             self.closed.insert(key);
             Ok(false)
@@ -207,28 +297,45 @@ impl GroupCompletion {
         }
     }
 
-    /// Units of work pending on `key`.
-    #[must_use]
-    pub fn pending(&self, key: GroupKey) -> usize {
-        self.pending.get(&key).copied().unwrap_or(0)
-    }
-
-    /// Whether no work is pending and no closed group awaits its work.
+    /// Traversal `traversal` is over: each divided group whose part it
+    /// left open is abandoned, as its input will not complete.
     ///
     /// # Errors
     ///
-    /// [`ObservationError::WorkAbandoned`] if a unit of work was abandoned:
-    /// the completion then never becomes idle.
-    pub fn is_idle(&mut self) -> Result<bool, ObservationError> {
-        self.settle()?;
-        Ok(self.pending.is_empty() && self.closed.is_empty())
+    /// [`ObservationError::WorkAbandoned`] when it left a part open, or
+    /// work was abandoned before.
+    pub(crate) fn end(&mut self, traversal: usize) -> Result<(), ObservationError> {
+        let left: Vec<GroupKey> = self
+            .open_parts
+            .iter()
+            .filter(|(_, open)| open.contains(&traversal))
+            .map(|(key, _)| *key)
+            .collect();
+        for key in left {
+            self.open_parts.remove(&key);
+            self.closed.remove(&key);
+            self.failed.insert(key);
+        }
+        self.settle()
     }
 
-    /// Whether `key`'s input has completed: its bin is at or before its
-    /// series' latest closed bin.
-    fn is_closed(&self, key: GroupKey) -> bool {
+    /// As [`GroupCompletion::pending`].
+    pub(crate) fn pending(&self, key: GroupKey) -> usize {
+        self.pending.get(&key).copied().unwrap_or(0)
+    }
+
+    /// Whether no work is pending, no closed group awaits its work and no
+    /// divided group awaits a part.
+    pub(crate) fn is_idle(&mut self) -> Result<bool, ObservationError> {
+        self.settle()?;
+        Ok(self.pending.is_empty() && self.closed.is_empty() && self.open_parts.is_empty())
+    }
+
+    /// Whether traversal `traversal`'s part of `key` has completed its
+    /// input: its bin is at or before the series' latest closed bin there.
+    fn is_closed(&self, traversal: usize, key: GroupKey) -> bool {
         self.closed_through
-            .get(&series(key))
+            .get(&(traversal, series(key)))
             .is_some_and(|bin| key.bin <= *bin)
     }
 
@@ -315,7 +422,7 @@ mod tests {
         assert!(completion.close(key(0)).is_err(), "behind its series");
         assert!(completion.is_idle().expect("idle"));
         assert_eq!(
-            completion.closed_through.len(),
+            completion.joins.closed_through.len(),
             1,
             "one series, however many groups"
         );

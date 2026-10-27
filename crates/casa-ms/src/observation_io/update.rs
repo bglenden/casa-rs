@@ -7,24 +7,32 @@
 //! each names an existing variable (or one the store can create), and one
 //! that other data groups share is refused unless its target accepts those
 //! aliases. The session lends the same observation for reading
-//! ([`UpdateSession::observation`]) and one updater at a time for writing
+//! ([`UpdateSession::observation`]) and updaters for writing
 //! ([`UpdateSession::updater`]), so a pass that reads `DATA` and writes
 //! `MODEL_DATA` is one planned owner, not a reader racing a writer.
+//!
+//! Several updaters of a session may be live at once, each writing its own
+//! time slice of a split traversal on its own worker: an updater claims the
+//! times of each variable and partition it writes, widened to the store's
+//! whole write units (an MSv4 chunk row), and an updater whose claim meets
+//! a live one's is refused ([`ObservationError::Conflict`]). MSv4 updaters
+//! then write disjoint chunks at once; MSv2 updaters write one batch at a
+//! time, each under casacore's table lock.
 //!
 //! Within the process, a second update session on the same store is
 //! refused ([`ObservationError::Conflict`]); independent read-only
 //! observations may coexist with it and read what was published. Across
-//! processes MSv2 relies on casacore's table lock, taken for each updater's
-//! life; MSv4 has no lock protocol ([`UpdateGuarantees`]).
+//! processes MSv2 relies on casacore's table lock, taken for each batch an
+//! updater writes; MSv4 has no lock protocol ([`UpdateGuarantees`]).
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
+use std::ops::Range;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Mutex, OnceLock, PoisonError};
 
 use casa_observation::{
-    AccessRequest, Catalogue, Observation, ObservationError, ResolvedTarget, UpdateGuarantees,
-    UpdateTarget, Updater, WritableRole,
+    AccessRequest, Catalogue, Observation, ObservationError, PartitionId, ResolvedTarget,
+    UpdateGuarantees, UpdateTarget, Updater, WeightRequest, WeightRule, WritableRole,
 };
 
 use super::OpenOptions;
@@ -65,12 +73,49 @@ impl Drop for Intent {
     }
 }
 
-/// The session's one live updater, released when the updater drops.
-pub(super) struct Busy<'s>(&'s AtomicBool);
+/// What one updater may write: variable `variable` of partition
+/// `partition` at grid times `times`, widened to the store's whole write
+/// units.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct Unit {
+    pub(super) partition: PartitionId,
+    pub(super) variable: String,
+    pub(super) times: Range<usize>,
+}
 
-impl Drop for Busy<'_> {
+impl Unit {
+    /// Whether `other` writes some of the same native units. A unit of no
+    /// times writes nothing, so meets none.
+    fn meets(&self, other: &Self) -> bool {
+        !self.times.is_empty()
+            && !other.times.is_empty()
+            && self.partition == other.partition
+            && self.variable == other.variable
+            && self.times.start < other.times.end
+            && other.times.start < self.times.end
+    }
+}
+
+/// The units the session's live updaters hold, by updater.
+#[derive(Debug, Default)]
+struct Claims {
+    next: u64,
+    live: BTreeMap<u64, Vec<Unit>>,
+}
+
+/// A live updater's claim on its units, released when the updater drops.
+pub(super) struct Claim<'s> {
+    claims: &'s Mutex<Claims>,
+    id: u64,
+}
+
+impl Drop for Claim<'_> {
     fn drop(&mut self) {
-        self.0.store(false, Ordering::Release);
+        self.claims
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .live
+            .remove(&self.id);
     }
 }
 
@@ -85,7 +130,7 @@ enum Store {
 pub struct UpdateSession {
     store: Store,
     targets: Vec<ResolvedTarget>,
-    updating: AtomicBool,
+    claims: Mutex<Claims>,
     _intent: Intent,
 }
 
@@ -146,7 +191,7 @@ pub fn open_update(
     Ok(UpdateSession {
         store,
         targets,
-        updating: AtomicBool::new(false),
+        claims: Mutex::default(),
         _intent: intent,
     })
 }
@@ -187,10 +232,19 @@ impl UpdateSession {
     /// An updater for the traversal `request` binds, writing the targets
     /// numbered `targets` (positions in [`Self::targets`]) batch for batch.
     ///
+    /// Several may be live at once, each for its own times: a time split's
+    /// slices ([`casa_observation::TimeSplit`]), each on its own worker. An
+    /// updater claims the grid times of each variable and partition it
+    /// writes, widened on MSv4 to whole chunk rows, so slices cut at the
+    /// store's natural time blocks write at once there; MSv2 updaters write
+    /// one batch at a time.
+    ///
     /// # Errors
     ///
-    /// [`ObservationError::Conflict`] while another updater of this session
-    /// is live; [`ObservationError::InvalidRequest`] for an unknown target,
+    /// [`ObservationError::Conflict`] while a live updater of this session
+    /// claims some of the same times of a variable and partition (on MSv4,
+    /// the same chunk rows); [`ObservationError::InvalidRequest`] for an
+    /// unknown target,
     /// two targets writing one variable (whichever wrote last would win), or
     /// a request the observation cannot bind; a storage error when the
     /// store cannot be prepared for writing (MSv2: casacore's write lock,
@@ -219,17 +273,59 @@ impl UpdateSession {
                 )));
             }
         }
-        if self.updating.swap(true, Ordering::AcqRel) {
-            return Err(ObservationError::Conflict {
-                reason: "another updater of this session is live".to_string(),
-            });
+        // A weight write replaces stored weights: patches made from 1/σ²
+        // weights would write sigmas as weights unannounced. Refused here
+        // when the request would make them (an MSv4's fallback reads the
+        // stored weights), and batch for batch by the patch check, which
+        // reads each batch's weight rule.
+        if request.weights != WeightRequest::Stored
+            && bound
+                .iter()
+                .any(|target| target.target.role == WritableRole::Weights)
+            && self
+                .observation()
+                .estimate(request)?
+                .partitions
+                .iter()
+                .filter_map(|partition| partition.weights.as_ref())
+                .any(|source| source.rule != WeightRule::Stored)
+        {
+            return Err(request_error(
+                "a weight write is bound to a traversal of the stored weights \
+                 (WeightRequest::Stored), not of weights made from the sigmas",
+            ));
         }
-        let busy = Busy(&self.updating);
+        let claim = |units| self.claim(units);
         match &self.store {
-            Store::V2(update) => update.updater(request, &bound, busy),
+            Store::V2(update) => update.updater(request, &bound, claim),
             #[cfg(feature = "msv4")]
-            Store::V4(update) => update.updater(request, &bound, busy),
+            Store::V4(update) => update.updater(request, &bound, claim),
         }
+    }
+
+    /// Claim `units` for a new updater, unless a live one claims some of
+    /// them.
+    fn claim(&self, units: Vec<Unit>) -> Result<Claim<'_>, ObservationError> {
+        let mut claims = self.claims.lock().unwrap_or_else(PoisonError::into_inner);
+        for unit in &units {
+            if let Some(held) = claims.live.values().flatten().find(|held| held.meets(unit)) {
+                return Err(ObservationError::Conflict {
+                    reason: format!(
+                        "a live updater of this session writes {} of {:?} at grid times {:?}, \
+                         which this one's {:?} meet: concurrent updaters write disjoint times, \
+                         on MSv4 whole chunk rows (cut at the natural time blocks)",
+                        held.variable, held.partition, held.times, unit.times
+                    ),
+                });
+            }
+        }
+        let id = claims.next;
+        claims.next += 1;
+        claims.live.insert(id, units);
+        Ok(Claim {
+            claims: &self.claims,
+            id,
+        })
     }
 }
 
@@ -341,6 +437,7 @@ mod tests {
 
     use casa_observation::{
         BatchBuffers, CorrelationRequest, Grouping, PartitionId, PatchValues, ReadEvent, Roles,
+        TimeSelection,
     };
     use num_complex::Complex32;
 
@@ -366,6 +463,8 @@ mod tests {
             data_group: "base".to_string(),
             roles: Roles::ALL,
             channels: 0..8,
+            times: TimeSelection::All,
+            weights: WeightRequest::Stored,
             correlations: CorrelationRequest::ALL,
             grouping: Grouping::None,
             batch_bytes: usize::MAX,
@@ -431,7 +530,7 @@ mod tests {
         let Store::V4(update) = &session.store else {
             panic!("an MSv4 session");
         };
-        update.store().fail_after(completed, point);
+        update.fail_after(completed, point);
         let request = request(session.observation());
         let mut traversal = session.observation().bind_read(&request)?;
         let mut updater = session.updater(&request, &[0])?;

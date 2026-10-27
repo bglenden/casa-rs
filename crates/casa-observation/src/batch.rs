@@ -13,7 +13,7 @@ use num_complex::Complex32;
 use crate::ObservationError;
 use crate::catalogue::{Catalogue, DataGroupEntry, FieldId, OrderedBaseline, PartitionId, ScanId};
 use crate::grouping::GroupFragment;
-use crate::request::CorrelationAxis;
+use crate::request::{CorrelationAxis, WeightRule};
 
 /// One sample's coordinates, assembled on the stack.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -115,6 +115,10 @@ pub struct DataGroupView<'a> {
     pub flags: Option<ArrayView3<'a, bool>>,
     /// Weights.
     pub weights: Option<ArrayView3<'a, f32>>,
+    /// What the weights are: the stored weights, or weights made from the
+    /// stored sigmas ([`WeightRequest`](crate::WeightRequest)). An updater
+    /// writes weights only from stored ones.
+    pub weight_rule: WeightRule,
     /// UVW per sample, in the data group's effective frame
     /// ([`UvwFrame`](crate::UvwFrame)).
     pub uvw: Option<UvwView<'a>>,
@@ -133,6 +137,7 @@ impl DataGroupView<'_> {
             weights: self
                 .weights
                 .map(|weights| weights.slice_move(s![samples.clone(), channels, ..])),
+            weight_rule: self.weight_rule,
             uvw: self.uvw.map(|uvw| uvw.slice(samples)),
         }
     }

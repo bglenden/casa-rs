@@ -21,6 +21,7 @@ mod grouping;
 mod msv2;
 #[cfg(feature = "msv4")]
 mod msv4;
+mod namespace;
 mod update;
 
 use std::path::Path;
@@ -32,6 +33,10 @@ pub use msv2::{Msv2Cursor, Msv2Observation};
 pub use msv4::{
     Msv4Codec, Msv4Cursor, Msv4Observation, Msv4ProcessingSetWriter, Msv4StorageOptions,
     Msv4WriteCounters, Msv4Writer,
+};
+pub use namespace::{
+    NamespaceAntenna, NamespaceField, NamespaceRows, NamespaceWindow, PersistedNamespace,
+    persisted_namespace,
 };
 pub use update::UpdateSession;
 #[cfg(unix)]

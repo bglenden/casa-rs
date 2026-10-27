@@ -2,21 +2,28 @@
 //! Writing back to a MeasurementSet v2 through production's bounded
 //! selected-row mutation (`MeasurementSetWriteSession`).
 //!
-//! An updater plans its traversal's MAIN rows up front, every present cell
-//! of the requested partitions in delivery order, and takes casacore's
-//! write lock for its life. Each batch's samples are their grid cells'
-//! rows; a padded cell has no row and receives nothing. A cell the patch
-//! supplies whole (every channel and product, and for flags every element
-//! set or cleared) is written without reading it; any other is read and
-//! merged. Writes are in place, as casacore's are: a failure leaves the
-//! rows already written.
+//! The session holds casacore's write lock on MAIN while any of its
+//! updaters is live, so another process waits for a pass, not for each
+//! batch, and it reopens its handle each time it takes the lock, so what
+//! an updater reads and merges is never older than the lock it writes
+//! under. Each batch is written by a mutation session of its own under that
+//! lock; the session's updaters write one batch at a time whatever their
+//! number. A batch's samples are their grid cells' rows; a padded cell has
+//! no row and receives nothing. A cell the patch supplies whole (every
+//! channel and product, and for flags every element set or cleared) is
+//! written without reading it; any other is read and merged. Writes are in
+//! place, as casacore's are: a failure leaves the rows already written.
 //!
 //! A `CORRECTED_DATA` the session creates starts as `DATA`'s copy and a
 //! `MODEL_DATA` as CASA's initial model (1, 0 in the cross hands), as CASA
 //! initializes them, so rows and channels a pass does not reach read as
 //! uncorrected data and a unit point source.
 
-use std::sync::{Arc, Mutex, PoisonError};
+use std::ops::Range;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+
+use casa_tables::TableWriteLock;
 
 use casa_observation::{
     AccessRequest, ObservationError, PartitionEntry, PatchValues, ResolvedTarget, UpdateReport,
@@ -30,7 +37,7 @@ use num_complex::Complex32;
 use super::index::NO_ROW;
 use super::{Msv2Observation, OpenOptions};
 use crate::column_def::build_table_schema;
-use crate::observation_io::update::{Busy, request_error, storage};
+use crate::observation_io::update::{Claim, Unit, request_error, storage};
 use crate::schema::main_table::{VisibilityDataColumn, initial_model_visibility};
 use crate::{
     MeasurementSet, MeasurementSetColumnStorage, MeasurementSetColumnWriteMode,
@@ -43,7 +50,73 @@ use crate::{
 /// MeasurementSet handle its updaters write through.
 pub(in crate::observation_io) struct Msv2Update {
     observation: Msv2Observation,
-    writer: Mutex<MeasurementSet>,
+    path: PathBuf,
+    /// MAIN's rows, each of which one grid cell addresses.
+    rows: usize,
+    writer: Mutex<Writer>,
+}
+
+/// The handle the updaters write through, and casacore's write lock on
+/// MAIN while any of them is live.
+struct Writer {
+    ms: MeasurementSet,
+    /// Taken for the first live updater and released, publishing the
+    /// session's writes, when the last goes; taken again, with `ms`
+    /// reopened under it, after a failed write released it.
+    lock: Option<TableWriteLock>,
+    live: usize,
+}
+
+impl Writer {
+    /// Hold MAIN's write lock: take it, waiting as casacore does, when it
+    /// is not held, and reopen the handle under it.
+    fn hold(&mut self, path: &Path, rows: usize) -> Result<(), ObservationError> {
+        if self.lock.is_some() {
+            return Ok(());
+        }
+        let lock = TableWriteLock::acquire_to_reread(path, 0).map_err(storage)?;
+        self.reopen(path, rows)?;
+        self.lock = Some(lock);
+        Ok(())
+    }
+
+    /// Open the handle afresh, refusing a MAIN whose rows the session's
+    /// grids no longer address.
+    fn reopen(&mut self, path: &Path, rows: usize) -> Result<(), ObservationError> {
+        let ms = MeasurementSet::open(path).map_err(storage)?;
+        if ms.main_table().row_count() != rows {
+            return Err(request_error(format!(
+                "MAIN has {} rows and had {rows} when the session opened: another process \
+                 changed it, so the session's grids no longer address its rows",
+                ms.main_table().row_count()
+            )));
+        }
+        self.ms = ms;
+        Ok(())
+    }
+}
+
+/// A live updater's share of the session's lock on MAIN: the last to go
+/// releases it, publishing what the session wrote.
+struct Lease<'s> {
+    update: &'s Msv2Update,
+    ended: bool,
+}
+
+impl Lease<'_> {
+    /// Leave, releasing the lock if this was the last live updater.
+    fn end(mut self) -> Result<(), ObservationError> {
+        self.ended = true;
+        self.update.leave()
+    }
+}
+
+impl Drop for Lease<'_> {
+    fn drop(&mut self) {
+        if !self.ended {
+            let _ = self.update.leave();
+        }
+    }
 }
 
 /// A bound target: the role and the MAIN column it writes.
@@ -60,14 +133,19 @@ struct Position {
     time: usize,
 }
 
+/// Writes one traversal through production's selected-row mutation, a
+/// mutation session per batch under the update session's lock on MAIN.
 struct Msv2Updater<'s> {
     update: &'s Msv2Update,
-    _busy: Busy<'s>,
-    session: MeasurementSetWriteSession,
+    _claim: Claim<'s>,
+    lease: Lease<'s>,
     columns: Vec<Column>,
+    /// The bound targets, which plan each batch's columns.
+    targets: Vec<ResolvedTarget>,
     request: AccessRequest,
+    /// Each requested partition's selected grid times.
+    selections: Vec<Range<usize>>,
     position: Position,
-    batch_rows: usize,
     report: UpdateReport,
 }
 
@@ -81,10 +159,16 @@ impl Msv2Update {
         options: &OpenOptions,
     ) -> Result<Self, ObservationError> {
         let observation = Msv2Observation::open_with(path, options)?;
-        let writer = MeasurementSet::open(path).map_err(super::storage)?;
+        let ms = MeasurementSet::open(path).map_err(super::storage)?;
         Ok(Self {
             observation,
-            writer: Mutex::new(writer),
+            path: path.to_path_buf(),
+            rows: ms.main_table().row_count(),
+            writer: Mutex::new(Writer {
+                ms,
+                lock: None,
+                live: 0,
+            }),
         })
     }
 
@@ -92,75 +176,129 @@ impl Msv2Update {
         &self.observation
     }
 
-    /// Plan `request`'s rows and start production's mutation of `targets`.
+    fn writer(&self) -> MutexGuard<'_, Writer> {
+        self.writer.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Hold MAIN's lock, clear what CASA clears before `targets` are
+    /// written, and create and seed the columns the session creates;
+    /// returns the cells seeded.
+    fn prepare(
+        &self,
+        writer: &mut Writer,
+        request: &AccessRequest,
+        targets: &[ResolvedTarget],
+    ) -> Result<usize, ObservationError> {
+        let scratch_targets = targets
+            .iter()
+            .map(|target| scratch(&writer.ms, target).map(|column| column.is_some()))
+            .collect::<Result<Vec<_>, _>>()?;
+        if writer.lock.is_none() && scratch_targets.contains(&true) {
+            // Cleared before MAIN's lock is taken, from a handle opened
+            // now, so SOURCE's lock is waited for as casacore waits; under
+            // the lock, below, there is then nothing left to clear. While
+            // another updater is live the lock is held, and SOURCE's is
+            // tried once, as while any holder of MAIN's lock clears.
+            writer.reopen(&self.path, self.rows)?;
+            for target in targets {
+                clear(&mut writer.ms, target, None)?;
+            }
+        }
+        writer.hold(&self.path, self.rows)?;
+        let Writer { ms, lock, .. } = writer;
+        let mut seeded = 0;
+        for target in targets {
+            clear(ms, target, lock.as_mut())?;
+            add_column(ms, target)?;
+            if target.created
+                && target.variable == "MODEL_DATA"
+                && !persisted(ms.main_table(), "MODEL_DATA")
+            {
+                seeded += seed_model(ms, lock, &self.observation)?;
+            }
+        }
+        // Install the columns the session creates (CORRECTED_DATA cloned
+        // from DATA) now, with a session of no rows.
+        mutate(
+            ms,
+            lock,
+            &self.observation,
+            request,
+            targets,
+            &[],
+            |_, _| Ok(()),
+        )?;
+        Ok(seeded)
+    }
+
+    /// An updater has gone: the last releases MAIN's lock.
+    fn leave(&self) -> Result<(), ObservationError> {
+        let mut writer = self.writer();
+        writer.live -= 1;
+        match writer.lock.take() {
+            Some(lock) if writer.live == 0 => lock.release().map_err(storage),
+            held => {
+                writer.lock = held;
+                Ok(())
+            }
+        }
+    }
+
+    /// Claim `request`'s times of `targets`' columns, hold MAIN's lock,
+    /// create and seed the columns the session creates, and bind an updater
+    /// that writes each batch through production's selected-row mutation.
     ///
     /// What CASA clears before the targets' columns are written is cleared
-    /// first ([`prepare_column`]), before the mutation's lock is taken: a
-    /// mutation then refused leaves it cleared with nothing written, as
-    /// CASA's imager clears it when it selects the data.
+    /// first ([`clear`]), before any batch: a write then refused
+    /// leaves it cleared with nothing written, as CASA's imager clears it
+    /// when it selects the data.
     pub(in crate::observation_io) fn updater<'s>(
         &'s self,
         request: &AccessRequest,
         targets: &[&ResolvedTarget],
-        busy: Busy<'s>,
+        claim: impl FnOnce(Vec<Unit>) -> Result<Claim<'s>, ObservationError>,
     ) -> Result<Box<dyn Updater + 's>, ObservationError> {
         let estimate = self.observation.estimate(request)?;
-        let catalogue = self.observation.catalogue();
-        let mut rows = Vec::new();
-        for id in &request.partitions {
-            let grid = &self.observation.partitions[id.0 as usize].grid;
-            rows.extend(
-                grid.cells
-                    .iter()
-                    .filter(|row| **row != NO_ROW)
-                    .map(|row| *row as usize),
-            );
-        }
-        let entries: Vec<&PartitionEntry> = request
+        let selections: Vec<Range<usize>> = estimate
             .partitions
             .iter()
-            .map(|id| catalogue.partition(*id))
+            .map(|partition| partition.first_time..partition.first_time + partition.times)
             .collect();
-        let mut writer = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
-        let mut seeded = 0;
-        for target in targets {
-            prepare_column(&mut writer, target)?;
-            if target.created
-                && target.variable == "MODEL_DATA"
-                && !persisted(writer.main_table(), "MODEL_DATA")
-            {
-                seeded += seed_model(&mut writer, &self.observation)?;
+        let claim = claim(
+            request
+                .partitions
+                .iter()
+                .zip(&selections)
+                .flat_map(|(partition, times)| {
+                    targets.iter().map(|target| Unit {
+                        partition: *partition,
+                        variable: target.variable.clone(),
+                        times: times.clone(),
+                    })
+                })
+                .collect(),
+        )?;
+        let targets: Vec<ResolvedTarget> = targets.iter().map(|target| (*target).clone()).collect();
+        let mut writer = self.writer();
+        let seeded = match self.prepare(&mut writer, request, &targets) {
+            Ok(seeded) => seeded,
+            Err(error) => {
+                if writer.live == 0 {
+                    // Released, publishing what reached MAIN.
+                    drop(writer.lock.take());
+                }
+                return Err(error);
             }
-        }
-        let plans: Vec<MeasurementSetWriteColumnPlan> = targets
-            .iter()
-            .map(|target| column_plan(target, &entries, writer.main_table()))
-            .collect();
-        let bytes_per_row: usize = plans.iter().map(|plan| plan.bytes_per_row).sum();
-        let samples_per_batch = estimate
-            .partitions
-            .iter()
-            .map(|partition| partition.times_per_batch * partition.baselines)
-            .max()
-            .unwrap_or(1)
-            .max(1);
-        let plan = MeasurementSetWritePlan::selected_row_mutation(
-            rows,
-            plans,
-            MeasurementSetWriteResources {
-                available_bytes: samples_per_batch.saturating_mul(bytes_per_row.max(1)),
-                maximum_live_batches: 1,
-                tiled_column_buffer_bytes: casa_tables::STREAMING_TILED_COLUMN_BUFFER_BYTES,
-            },
-        )
-        .map_err(storage)?;
-        let batch_rows = plan.batch_rows().max(1);
-        let session = MeasurementSetWriteSession::start_selected_row_mutation(&mut writer, plan)
-            .map_err(storage)?;
+        };
+        writer.live += 1;
+        drop(writer);
         Ok(Box::new(Msv2Updater {
             update: self,
-            _busy: busy,
-            session,
+            _claim: claim,
+            lease: Lease {
+                update: self,
+                ended: false,
+            },
             columns: targets
                 .iter()
                 .map(|target| Column {
@@ -168,18 +306,76 @@ impl Msv2Update {
                     name: target.variable.clone(),
                 })
                 .collect(),
+            targets,
             request: request.clone(),
             position: Position {
                 partition: 0,
-                time: 0,
+                time: selections.first().map_or(0, |selection| selection.start),
             },
-            batch_rows,
+            selections,
             report: UpdateReport {
                 units_written: seeded,
                 ..UpdateReport::default()
             },
         }))
     }
+}
+
+/// One session of production's selected-row mutation of `targets`' columns
+/// over MAIN rows `rows`, which `write` writes in the session's batches
+/// ([`MeasurementSetWriteSession::next_mutation_rows`]), under `lock`,
+/// casacore's write lock on MAIN, held: it is handed back once every row
+/// is written, and released, publishing what was written, if the session
+/// fails. Columns the session creates and MAIN lacks are installed as it
+/// starts, so a session of no rows only installs them.
+fn mutate(
+    writer: &mut MeasurementSet,
+    lock: &mut Option<TableWriteLock>,
+    observation: &Msv2Observation,
+    request: &AccessRequest,
+    targets: &[ResolvedTarget],
+    rows: &[usize],
+    write: impl FnOnce(
+        &mut MeasurementSetWriteSession,
+        &mut MeasurementSet,
+    ) -> Result<(), ObservationError>,
+) -> Result<(), ObservationError> {
+    let catalogue = observation.catalogue();
+    let entries: Vec<&PartitionEntry> = request
+        .partitions
+        .iter()
+        .map(|id| catalogue.partition(*id))
+        .collect();
+    let plans: Vec<MeasurementSetWriteColumnPlan> = targets
+        .iter()
+        .map(|target| column_plan(target, &entries, writer.main_table()))
+        .collect();
+    if rows.is_empty()
+        && !plans
+            .iter()
+            .any(|plan| plan.mode == MeasurementSetColumnWriteMode::Create)
+    {
+        return Ok(());
+    }
+    let bytes_per_row: usize = plans.iter().map(|plan| plan.bytes_per_row).sum();
+    let plan = MeasurementSetWritePlan::selected_row_mutation(
+        rows.to_vec(),
+        plans,
+        MeasurementSetWriteResources {
+            available_bytes: rows.len().max(1).saturating_mul(bytes_per_row.max(1)),
+            maximum_live_batches: 1,
+            tiled_column_buffer_bytes: casa_tables::STREAMING_TILED_COLUMN_BUFFER_BYTES,
+        },
+    )
+    .map_err(storage)?;
+    let held = lock.take().expect("MAIN's write lock is held");
+    let mut session =
+        MeasurementSetWriteSession::start_selected_row_mutation_holding(writer, plan, held)
+            .map_err(storage)?;
+    write(&mut session, writer)?;
+    let (_, held) = session.finish_mutation_holding().map_err(storage)?;
+    *lock = Some(held);
+    Ok(())
 }
 
 /// Whether a data manager stores MAIN's `column`.
@@ -201,6 +397,7 @@ const SEED_BATCH_BYTES: usize = 64 << 20;
 /// own values over the seed. Every MAIN row lies in one partition's grid.
 fn seed_model(
     ms: &mut MeasurementSet,
+    lock: &mut Option<TableWriteLock>,
     observation: &Msv2Observation,
 ) -> Result<usize, ObservationError> {
     let catalogue = observation.catalogue();
@@ -248,8 +445,10 @@ fn seed_model(
     )
     .map_err(storage)?;
     let batch_rows = plan.batch_rows().max(1);
+    let held = lock.take().expect("MAIN's write lock is held");
     let mut session =
-        MeasurementSetWriteSession::start_selected_row_mutation(ms, plan).map_err(storage)?;
+        MeasurementSetWriteSession::start_selected_row_mutation_holding(ms, plan, held)
+            .map_err(storage)?;
     for (batch, indices) in rows.chunks(batch_rows).zip(row_seeds.chunks(batch_rows)) {
         session
             .write_mutation_batch(
@@ -266,23 +465,17 @@ fn seed_model(
             )
             .map_err(storage)?;
     }
-    session.finish_mutation().map_err(storage)?;
+    let (_, held) = session.finish_mutation_holding().map_err(storage)?;
+    *lock = Some(held);
     Ok(rows.len())
 }
 
-/// Clear what CASA clears before `target`'s column is written
-/// ([`crate::scratch_columns`]): every field's virtual model before a
-/// `MODEL_DATA` write, created or not, and the cached sort keywords before
-/// a column is added. A created column MAIN's schema lacks is then added
-/// with `DATA`'s keywords, as applycal adds `CORRECTED_DATA`.
-/// `CORRECTED_DATA`'s storage is installed by the updater's mutation,
-/// cloned from `DATA` values included, as CASA seeds it, so rows a pass
-/// skips read as uncorrected; `MODEL_DATA` is installed and seeded with
-/// CASA's initial model by [`seed_model`].
-fn prepare_column(
-    ms: &mut MeasurementSet,
+/// The scratch column `target` writes, if any, and whether the session
+/// adds it to MAIN's schema.
+fn scratch(
+    ms: &MeasurementSet,
     target: &ResolvedTarget,
-) -> Result<(), ObservationError> {
+) -> Result<Option<(VisibilityDataColumn, bool)>, ObservationError> {
     let name = target.variable.as_str();
     let column = match name {
         "MODEL_DATA" => VisibilityDataColumn::ModelData,
@@ -292,19 +485,48 @@ fn prepare_column(
                 "{name} is not a column the session creates"
             )));
         }
-        _ => return Ok(()),
+        _ => return Ok(None),
     };
     let adds = target.created
         && !ms
             .main_table()
             .schema()
             .is_some_and(|schema| schema.contains_column(name));
-    if adds || column == VisibilityDataColumn::ModelData {
-        crate::scratch_columns::prepare_write(ms, column, adds).map_err(storage)?;
-    }
-    if !adds {
+    Ok(Some((column, adds)))
+}
+
+/// Clear what CASA clears before `target`'s column is written
+/// ([`crate::scratch_columns`]): every field's virtual model before a
+/// `MODEL_DATA` write, created or not, and the cached sort keywords before
+/// a column is added; under `lock`, MAIN's write lock held, when given.
+fn clear(
+    ms: &mut MeasurementSet,
+    target: &ResolvedTarget,
+    lock: Option<&mut TableWriteLock>,
+) -> Result<(), ObservationError> {
+    let Some((column, adds)) = scratch(ms, target)? else {
         return Ok(());
+    };
+    if adds || column == VisibilityDataColumn::ModelData {
+        match lock {
+            Some(lock) => crate::scratch_columns::prepare_write_holding(ms, column, adds, lock),
+            None => crate::scratch_columns::prepare_write(ms, column, adds),
+        }
+        .map_err(storage)?;
     }
+    Ok(())
+}
+
+/// Add a created column MAIN's schema lacks, with `DATA`'s keywords, as
+/// applycal adds `CORRECTED_DATA`. `CORRECTED_DATA`'s storage is installed
+/// by the updater's mutation, cloned from `DATA` values included, as CASA
+/// seeds it, so rows a pass skips read as uncorrected; `MODEL_DATA` is
+/// installed and seeded with CASA's initial model by [`seed_model`].
+fn add_column(ms: &mut MeasurementSet, target: &ResolvedTarget) -> Result<(), ObservationError> {
+    let Some((column, true)) = scratch(ms, target)? else {
+        return Ok(());
+    };
+    let name = target.variable.as_str();
     let schema = build_table_schema(&[*column.optional_column().column_def()]).map_err(storage)?;
     let definition = schema
         .column(name)
@@ -397,41 +619,52 @@ impl Updater for Msv2Updater<'_> {
             .filter(|(_, row)| **row != NO_ROW)
             .map(|(sample, row)| (sample, *row as usize))
             .collect();
-        let mut writer = self
-            .update
-            .writer
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
+        let mut writer = self.update.writer();
+        writer.hold(&self.update.path, self.update.rows)?;
+        let Writer { ms, lock, .. } = &mut *writer;
         let mut columns = Vec::with_capacity(self.columns.len());
         for (column, value) in self.columns.iter().zip(values) {
-            let (cells, read) = column_cells(&writer, column, value, &present, &window)?;
+            let (cells, read) = column_cells(ms, column, value, &present, &window)?;
             self.report.units_read += read;
             columns.push(cells);
         }
-        for start in (0..present.len()).step_by(self.batch_rows) {
-            let end = (start + self.batch_rows).min(present.len());
-            let row_indices = present[start..end].iter().map(|(_, row)| *row).collect();
-            let batch_columns = self
-                .columns
-                .iter()
-                .zip(&mut columns)
-                .map(|(column, cells)| MeasurementSetMutationColumnBatch {
-                    name: column.name.clone(),
-                    values: MeasurementSetMutationColumnValues::Arrays(
-                        cells.drain(..end - start).collect(),
-                    ),
-                })
-                .collect();
-            self.session
-                .write_mutation_batch(
-                    &mut writer,
-                    MeasurementSetMutationBatch {
-                        row_indices,
-                        columns: batch_columns,
-                    },
-                )
-                .map_err(storage)?;
-        }
+        let rows: Vec<usize> = present.iter().map(|(_, row)| *row).collect();
+        mutate(
+            ms,
+            lock,
+            observation,
+            &self.request,
+            &self.targets,
+            &rows,
+            |session, writer| {
+                let mut written = 0;
+                while written < rows.len() {
+                    let end = written + session.next_mutation_rows().map_err(storage)?.len();
+                    let batch_columns = self
+                        .columns
+                        .iter()
+                        .zip(&mut columns)
+                        .map(|(column, cells)| MeasurementSetMutationColumnBatch {
+                            name: column.name.clone(),
+                            values: MeasurementSetMutationColumnValues::Arrays(
+                                cells.drain(..end - written).collect(),
+                            ),
+                        })
+                        .collect();
+                    session
+                        .write_mutation_batch(
+                            writer,
+                            MeasurementSetMutationBatch {
+                                row_indices: rows[written..end].to_vec(),
+                                columns: batch_columns,
+                            },
+                        )
+                        .map_err(storage)?;
+                    written = end;
+                }
+                Ok(())
+            },
+        )?;
         self.report.batches += 1;
         self.report.samples += present.len();
         self.report.unaddressed += cells.len() - present.len();
@@ -441,36 +674,59 @@ impl Updater for Msv2Updater<'_> {
     }
 
     fn finish(self: Box<Self>) -> Result<UpdateReport, ObservationError> {
+        let unwritten = self
+            .selections
+            .iter()
+            .enumerate()
+            .any(
+                |(partition, selection)| match partition.cmp(&self.position.partition) {
+                    std::cmp::Ordering::Less => false,
+                    std::cmp::Ordering::Equal => self.position.time != selection.end,
+                    std::cmp::Ordering::Greater => !selection.is_empty(),
+                },
+            );
+        if unwritten {
+            return Err(request_error(
+                "the traversal was not written batch for batch: selected times remain unwritten",
+            ));
+        }
         let report = self.report;
-        self.session.finish_mutation().map_err(|error| {
-            request_error(format!(
-                "the traversal was not written batch for batch: {error}"
-            ))
-        })?;
+        self.lease.end()?;
         Ok(report)
     }
 }
 
 impl Msv2Updater<'_> {
     /// `batch`'s first grid time, after checking it is the traversal's
-    /// next batch: the same partition from the next time, or the next
-    /// partition from its first.
+    /// next batch: the same partition from the next time, or, once its
+    /// selected times are all written, the next partition from its first
+    /// selected time, passing partitions whose selection holds no time
+    /// (they deliver no batch).
     fn place(&mut self, batch: &VisibilityBatch<'_>) -> Result<usize, ObservationError> {
         let partitions = &self.request.partitions;
         let observation = &self.update.observation;
+        let selections = &self.selections;
         let mut position = self.position;
-        let done = |position: Position| {
-            observation.partitions[partitions[position.partition].0 as usize]
-                .grid
-                .times()
-                == position.time
+        let done = |position: Position| selections[position.partition].end == position.time;
+        let passes = |partition: usize| {
+            partitions[partition] != batch.partition && selections[partition].is_empty()
         };
         if partitions.get(position.partition) != Some(&batch.partition)
             || (done(position) && position.partition + 1 < partitions.len())
         {
+            if !done(position) {
+                return Err(request_error(
+                    "the batch is not the traversal's next: an earlier partition's selected \
+                     times are not all written",
+                ));
+            }
+            let mut next = position.partition + 1;
+            while next + 1 < partitions.len() && passes(next) {
+                next += 1;
+            }
             position = Position {
-                partition: position.partition + 1,
-                time: 0,
+                partition: next,
+                time: selections.get(next).map_or(0, |selection| selection.start),
             };
         }
         if partitions.get(position.partition) != Some(&batch.partition)

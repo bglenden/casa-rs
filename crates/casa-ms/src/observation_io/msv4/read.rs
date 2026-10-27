@@ -9,9 +9,9 @@ use std::sync::Arc;
 
 use casa_observation::{
     AccessRequest, AntennaEntry, AntennaId, BoundCursor, Catalogue, Correlation, DataGroupEntry,
-    Estimate, FieldEntry, FieldId, Observation, ObservationEntry, ObservationError, ObservationId,
-    OrderedBaseline, PartitionEntry, PartitionId, ScanEntry, ScanId, TimeBaselineGrid, Traversal,
-    UvwFrame,
+    Estimate, FieldEntry, FieldId, GroupKey, Grouping, Observation, ObservationEntry,
+    ObservationError, ObservationId, OrderedBaseline, PartitionEntry, PartitionId, ScanEntry,
+    ScanId, TimeBaselineGrid, Traversal, UvwFrame,
 };
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::position::MPosition;
@@ -859,6 +859,28 @@ impl Observation for Msv4Observation {
         data_group: &str,
     ) -> Result<TimeBaselineGrid, ObservationError> {
         Msv4Observation::grid(self, id, data_group)
+    }
+
+    fn group_keys(
+        &self,
+        id: PartitionId,
+        data_group: &str,
+        grouping: Grouping,
+    ) -> Result<Option<Vec<GroupKey>>, ObservationError> {
+        let (dataset, entry) = self.dataset(id)?;
+        let (index, _) =
+            entry
+                .data_group(data_group)
+                .ok_or_else(|| ObservationError::InvalidRequest {
+                    reason: format!("{id:?} has no data group {data_group}"),
+                })?;
+        super::super::grouping::group_keys(
+            id,
+            grouping,
+            &dataset.times,
+            &dataset.groups[index].fields,
+            dataset.scans.as_deref(),
+        )
     }
 }
 

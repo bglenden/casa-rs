@@ -6,7 +6,7 @@
 
 use casa_observation::{
     AccessRequest, BatchBuffers, CorrelationRequest, Grouping, Observation, ObservationError,
-    PartitionId, ReadEvent, Roles, VisibilityBatch,
+    PartitionId, ReadEvent, Roles, TimeSelection, VisibilityBatch, WeightRequest,
 };
 
 use crate::observation_io::update::request_error;
@@ -56,6 +56,8 @@ pub(super) fn read(
             data_group: group.clone(),
             roles: if index == 0 { first } else { VISIBILITIES },
             channels: 0..channels,
+            times: TimeSelection::All,
+            weights: WeightRequest::Stored,
             correlations: CorrelationRequest::ALL,
             grouping: Grouping::None,
             batch_bytes: usize::MAX,

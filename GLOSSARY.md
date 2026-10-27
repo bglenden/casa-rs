@@ -172,7 +172,8 @@ validity rule excludes it; nothing is read from disk for it.
 _Avoid_: Missing row, absent slot, occupancy
 
 **Batch Shape**:
-What one batch covers: the partition set, the channel window, the roles read,
+What one batch covers: the partition set, the channel window, the time
+selection, the roles read,
 the correlation products delivered, and the number of whole times the byte
 budget admits. The budget counts the batch and the cursor's decode scratch
 for it. The estimate costs a batch shape before anything is read.
@@ -186,9 +187,52 @@ buffer when it is dropped. Each buffer has a byte envelope it never exceeds,
 so the pool holds at most its size times that envelope.
 _Avoid_: Buffer cache, free list, lending
 
+**Time Selection**:
+The grid times one traversal reads: every time, or those within one
+half-open range of epochs, stated in the partitions' own time origin and
+scale so that selecting a time rounds nothing. Group keys stay those of the
+whole grid; a group the selection cuts is delivered as its part, marked
+clipped, and closed within the traversal. Workers that split a partition by
+time plan a Time Split.
+_Avoid_: Time slice (informally fine), row range, time window
+
+**Time Split**:
+A request's times cut into consecutive slices that tile them, planned
+together so that the slices' traversals share one completion: a scientific
+group the cuts divide becomes ready once, after every slice's part of it
+and the work on each. Slices aligned to the store's natural time blocks
+decode no unit twice and, on MSv4, write back at once.
+_Avoid_: Partitioning (which divides a store, not a traversal), sharding
+
+**Weight Request**:
+What a traversal's weight role holds: the stored weights, or the weights
+CASA's solvers use, 1/σ² of the stored sigmas (0 where σ is not positive),
+read from the column CASA's rule picks. A store holding no sigmas (MSv4)
+takes the fallback the request names or refuses; the estimate records which
+rule and column each partition's weights came from.
+_Avoid_: Sigma weights (the sigmas themselves, or weights made from them?),
+weight mode
+
+**Persisted Namespace**:
+The `ANTENNA`, `FIELD` and `SPECTRAL_WINDOW` rows a calibration table solved
+on a store carries, and the row of each of the store's catalogue entities
+there, for the store opened with given options: an MSv2's own subtables, or
+those an MSv4's MSv2 conversion holds. Catalogue identities are never
+persisted.
+_Avoid_: Caltable IDs, native IDs
+
+**Calibration Binding**:
+A calibration table's rows for each entity of a store's catalogue: stated
+associations first (CASA's `spwmap`), then CASA's own index association
+where the caller states the table's namespace is the store's, then content
+(station and
+position, phase centre, channels), names never binding but an antenna whose
+name disagrees refused, and ambiguity refused.
+_Avoid_: Rebinding by name, antenna mapping
+
 **Traversal Order**:
 The order batches arrive. Within one cursor it is fixed: whole times of one
-channel window of one partition, in time order. Across the observation it is
+channel window of one partition's time selection, in time order. Across the observation it is
 the consumer's, expressed by which cursors it binds and runs, and when.
 _Avoid_: Iteration order, row order
 
@@ -201,8 +245,10 @@ _Avoid_: Layout, memory order
 **Update Session**:
 One owner of a store that reads it and writes declared targets back: it
 holds the process's write intent on the store, lends the observation for
-reading and one updater at a time for writing, and resolves each target's
-variable and the data groups sharing it before any payload is written.
+reading and updaters for writing (several at once, each claiming disjoint
+times), and resolves each target's variable and the data groups sharing it
+before any payload is written. An MSv2 session holds casacore's write lock
+on MAIN while any updater is live.
 _Avoid_: Writer (which creates a new store), read-write handle
 
 **Patch**:

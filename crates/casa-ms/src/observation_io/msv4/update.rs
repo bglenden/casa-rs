@@ -6,12 +6,14 @@
 //! Batches may come in any order; each moves the window, and a window left
 //! for another row is written then. Every chunk the updater writes replaces
 //! the stored object atomically: a failure leaves chunks already replaced
-//! replaced and the others as they were. The reported reads and writes are
-//! the store's own counts of chunk objects.
+//! replaced and the others as they were. Each updater replaces through a
+//! store of its own, so its reported reads and writes are that store's
+//! counts of chunk objects, and the directories it synchronizes when it
+//! finishes are those its own renames changed.
 
 use std::collections::HashMap;
 use std::ops::Range;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
@@ -27,13 +29,17 @@ use super::metadata::storage;
 use super::store::ReplacingStore;
 use super::window::Window;
 use crate::observation_io::OpenOptions;
-use crate::observation_io::update::{Busy, request_error};
+use crate::observation_io::update::{Claim, Unit, request_error};
 
-/// An MSv4 opened for update: the observation it reads and the store its
-/// updaters replace chunks through.
+/// An MSv4 opened for update: the observation it reads and the
+/// processing set its updaters replace chunks in, each through a
+/// [`ReplacingStore`] of its own.
 pub(in crate::observation_io) struct Msv4Update {
     observation: Msv4Observation,
-    store: Arc<ReplacingStore>,
+    root: PathBuf,
+    /// The failure the next updater's store injects (failure laws).
+    #[cfg(test)]
+    failure: std::sync::Mutex<Option<(usize, super::store::FailurePoint)>>,
 }
 
 /// One bound target's window in one partition.
@@ -48,12 +54,16 @@ enum Target {
 struct Partition {
     id: PartitionId,
     times: HashMap<u64, usize>,
+    /// The dataset times the traversal selects.
+    selected: Range<usize>,
     targets: Vec<Target>,
 }
 
 struct Msv4Updater<'s> {
     update: &'s Msv4Update,
-    _busy: Busy<'s>,
+    _claim: Claim<'s>,
+    /// This updater's store: its counts and the directories it changed.
+    store: Arc<ReplacingStore>,
     roles: Vec<WritableRole>,
     partitions: Vec<Partition>,
     /// The partition whose windows hold values.
@@ -62,8 +72,6 @@ struct Msv4Updater<'s> {
     channels: Range<usize>,
     options: CodecOptions,
     report: UpdateReport,
-    /// The store's counts when the updater started.
-    start: [usize; 3],
 }
 
 impl Msv4Update {
@@ -73,7 +81,9 @@ impl Msv4Update {
     ) -> Result<Self, ObservationError> {
         Ok(Self {
             observation: Msv4Observation::open_with(path, options)?,
-            store: Arc::new(ReplacingStore::new(path).map_err(storage)?),
+            root: path.to_path_buf(),
+            #[cfg(test)]
+            failure: std::sync::Mutex::new(None),
         })
     }
 
@@ -81,22 +91,34 @@ impl Msv4Update {
         &self.observation
     }
 
-    /// The store the updaters replace chunks through, for failure laws.
+    /// Fail the replacement of the next updater's store that follows
+    /// `replacements` completed ones, at `point` (failure laws).
     #[cfg(test)]
-    pub(in crate::observation_io) fn store(&self) -> &ReplacingStore {
-        &self.store
+    pub(in crate::observation_io) fn fail_after(
+        &self,
+        replacements: usize,
+        point: super::store::FailurePoint,
+    ) {
+        *self.failure.lock().expect("failure hook") = Some((replacements, point));
     }
 
-    /// Open the windows of `targets` in each partition `request` reads.
+    /// Open the windows of `targets` in each partition `request` reads,
+    /// and claim the chunk rows of times they may replace: the selected
+    /// times widened to whole chunk rows of each variable.
     pub(in crate::observation_io) fn updater<'s>(
         &'s self,
         request: &AccessRequest,
         targets: &[&ResolvedTarget],
-        busy: Busy<'s>,
+        claim: impl FnOnce(Vec<Unit>) -> Result<Claim<'s>, ObservationError>,
     ) -> Result<Box<dyn Updater + 's>, ObservationError> {
-        self.observation.estimate(request)?;
+        let estimate = self.observation.estimate(request)?;
+        let store = Arc::new(ReplacingStore::new(&self.root).map_err(storage)?);
+        #[cfg(test)]
+        if let Some((replacements, point)) = self.failure.lock().expect("failure hook").take() {
+            store.fail_after(replacements, point);
+        }
         let mut partitions = Vec::with_capacity(request.partitions.len());
-        for id in &request.partitions {
+        for (id, selection) in request.partitions.iter().zip(&estimate.partitions) {
             let (dataset, _) = self.observation.dataset(*id)?;
             let mut windows = Vec::with_capacity(targets.len());
             for target in targets {
@@ -115,17 +137,17 @@ impl Msv4Update {
                 let channels = request.channels.clone();
                 windows.push(match target.target.role {
                     WritableRole::Visibilities => Target::Visibilities(Window::open(
-                        &self.store,
+                        &store,
                         &path(&record.correlated_data),
                         channels,
                     )?),
                     WritableRole::Flags => {
-                        Target::Flags(Window::open(&self.store, &path(&record.flag), channels)?)
+                        Target::Flags(Window::open(&store, &path(&record.flag), channels)?)
                     }
                     // A weight patch may change every channel
                     // (`WeightChannels::All`).
                     WritableRole::Weights => Target::Weights(Window::open(
-                        &self.store,
+                        &store,
                         &path(&record.weight),
                         0..catalogue_channels(self, *id),
                     )?),
@@ -139,30 +161,47 @@ impl Msv4Update {
                     .enumerate()
                     .map(|(index, time)| (time.to_bits(), index))
                     .collect(),
+                selected: selection.first_time..selection.first_time + selection.times,
                 targets: windows,
             });
         }
+        let units = partitions
+            .iter()
+            .flat_map(|partition| {
+                partition
+                    .targets
+                    .iter()
+                    .zip(targets)
+                    .map(|(window, target)| Unit {
+                        partition: partition.id,
+                        variable: target.variable.clone(),
+                        times: window.chunk_rows(partition.selected.clone()),
+                    })
+            })
+            .collect();
+        let claim = claim(units)?;
         Ok(Box::new(Msv4Updater {
             update: self,
-            _busy: busy,
+            _claim: claim,
+            store,
             roles: targets.iter().map(|target| target.target.role).collect(),
             partitions,
             open: None,
             channels: request.channels.clone(),
             options: super::codec_options(),
             report: UpdateReport::default(),
-            start: self.counts(),
         }))
     }
+}
 
-    /// The store's chunk reads, replacements and erasures so far.
-    fn counts(&self) -> [usize; 3] {
-        let counters = &self.store.counters;
-        [
-            counters.chunk_reads.load(Ordering::Relaxed),
-            counters.replaced.load(Ordering::Relaxed),
-            counters.erased.load(Ordering::Relaxed),
-        ]
+impl Target {
+    /// The grid times `times` widened to whole chunk rows of the variable.
+    fn chunk_rows(&self, times: Range<usize>) -> Range<usize> {
+        match self {
+            Self::Visibilities(window) => window.chunk_rows(times),
+            Self::Flags(window) => window.chunk_rows(times),
+            Self::Weights(window) => window.chunk_rows(times),
+        }
     }
 }
 
@@ -227,6 +266,12 @@ impl Updater for Msv4Updater<'_> {
             .ok_or_else(|| request_error("the batch's partition is not the traversal's"))?;
         let entry = batch.catalogue.partition(batch.partition);
         let times = dataset_times(batch, entry, &self.partitions[index].times)?;
+        let selected = &self.partitions[index].selected;
+        if times.start < selected.start || times.end > selected.end {
+            return Err(request_error(
+                "the batch's times are outside the traversal's time selection",
+            ));
+        }
         let products = product_indices(batch, entry)?;
         for value in values {
             refuse_padding_changes(batch, value)?;
@@ -254,11 +299,12 @@ impl Updater for Msv4Updater<'_> {
 
     fn finish(mut self: Box<Self>) -> Result<UpdateReport, ObservationError> {
         self.flush()?;
-        self.update.store.sync().map_err(storage)?;
-        let [reads, replaced, erased] = self.update.counts();
+        self.store.sync().map_err(storage)?;
+        let counters = &self.store.counters;
         let mut report = self.report;
-        report.units_read = reads - self.start[0];
-        report.units_written = replaced - self.start[1] + erased - self.start[2];
+        report.units_read = counters.chunk_reads.load(Ordering::Relaxed);
+        report.units_written =
+            counters.replaced.load(Ordering::Relaxed) + counters.erased.load(Ordering::Relaxed);
         report.held_bytes = self.held_bytes();
         Ok(report)
     }

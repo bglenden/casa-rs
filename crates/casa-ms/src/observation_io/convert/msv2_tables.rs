@@ -14,7 +14,7 @@ use casa_types::measures::frequency::FrequencyRef;
 use casa_types::quanta::Unit;
 use num_complex::Complex32;
 
-use super::msv2_rows::Occupancy;
+use super::msv2_rows::Spans;
 use crate::observation_io::update::{request_error, storage};
 use crate::schema::{self, SubtableId};
 use crate::subtable_rows::{
@@ -48,6 +48,8 @@ pub(super) fn builder(
 pub(super) struct Layout {
     /// `DATA_DESC_ID` of each partition.
     pub(super) data_description: Vec<i32>,
+    /// `SPECTRAL_WINDOW` row of each partition.
+    pub(super) spectral_window: Vec<i32>,
     /// `STATE_ID` of each partition.
     pub(super) state: Vec<i32>,
     /// `SCAN_NUMBER` of each catalogue scan.
@@ -123,18 +125,18 @@ fn feed_receptors(catalogue: &Catalogue) -> Result<&[String], ObservationError> 
     Ok(first)
 }
 
-/// Fill `ms`'s subtables from `catalogue`, whose data span the
-/// `occupancy`'s times (MJD seconds); [`refuse_unwritable`] has accepted
-/// it.
+/// Fill `ms`'s subtables from `catalogue`, whose data span the times
+/// `spans` gives (MJD seconds); [`refuse_unwritable`] has accepted it.
+/// Antennas, fields and sessions keep their catalogue order.
 pub(super) fn populate(
     ms: &mut MeasurementSet,
     catalogue: &Catalogue,
-    occupancy: &Occupancy,
+    spans: &Spans,
 ) -> Result<Layout, ObservationError> {
-    let time_range = occupancy.time_range;
+    let time_range = spans.time_range;
     antennas(ms, catalogue, time_range)?;
     let named_sources = fields(ms, catalogue, time_range[0])?;
-    observations(ms, catalogue, &occupancy.observation_ranges)?;
+    observations(ms, catalogue, &spans.observation_ranges)?;
     let scan_number = scan_numbers(catalogue)?;
     let mut windows: Vec<&PartitionEntry> = Vec::new();
     let mut polarizations: Vec<&[Correlation]> = Vec::new();
@@ -143,6 +145,7 @@ pub(super) fn populate(
     let mut keys: Vec<(usize, usize, u32)> = Vec::new();
     let mut layout = Layout {
         data_description: Vec::new(),
+        spectral_window: Vec::new(),
         state: Vec::new(),
         scan_number,
     };
@@ -168,6 +171,7 @@ pub(super) fn populate(
             });
         keys.push(key(description));
         layout.data_description.push(description as i32);
+        layout.spectral_window.push(window as i32);
         layout.state.push(state as i32);
     }
     spectral_windows(ms, &windows)?;

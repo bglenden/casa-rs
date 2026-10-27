@@ -303,20 +303,20 @@ fn table_write_lock_admits_a_writer_after_a_holder_that_wrote_nothing() {
         .unwrap();
 }
 
-/// A writer that waited is refused when the holder wrote the table in the
-/// meantime: what it read before waiting is stale.
-#[test]
-fn table_write_lock_refuses_a_table_written_while_it_waited() {
-    let tmp = tempfile::TempDir::new().unwrap();
-    let opts = create_test_table(tmp.path());
+/// Take the write lock with `acquire` while another process holds it and
+/// publishes a new row before letting it go; the result, once that process
+/// has exited cleanly having seen the wait.
+fn acquire_through_a_published_write(
+    table: &Path,
+    signals: &Path,
+    acquire: fn(&Path) -> Result<TableWriteLock, TableError>,
+) -> Result<TableWriteLock, TableError> {
     let helper = helper_binary();
-    let table_dir = opts.path().to_str().unwrap();
-    let staged_file = tmp.path().join("row-staged.signal");
-    let publish_file = tmp.path().join("publish.signal");
-
+    let staged_file = signals.join("row-staged.signal");
+    let publish_file = signals.join("publish.signal");
     let mut writer = Command::new(&helper)
         .args([
-            table_dir,
+            table.to_str().unwrap(),
             "hold_write_with_row",
             "42",
             "published",
@@ -330,16 +330,27 @@ fn table_write_lock_refuses_a_table_written_while_it_waited() {
         "writer did not stage the new row while holding its lock"
     );
 
-    let table_path = opts.path().to_path_buf();
-    let waiter = thread::spawn(move || TableWriteLock::acquire(&table_path, 0));
-    let requested = wait_for_request_from_this_process(opts.path(), Duration::from_secs(8));
+    let table_path = table.to_path_buf();
+    let waiter = thread::spawn(move || acquire(&table_path));
+    let requested = wait_for_request_from_this_process(table, Duration::from_secs(8));
     fs::write(&publish_file, "publish").unwrap();
     let result = waiter.join().unwrap();
     let status = writer.wait().expect("staged writer wait failed");
 
     assert!(status.success(), "staged writer should exit cleanly");
     assert!(requested, "the waiting writer did not register");
-    match result {
+    result
+}
+
+/// A writer that waited is refused when the holder wrote the table in the
+/// meantime: what it read before waiting is stale.
+#[test]
+fn table_write_lock_refuses_a_table_written_while_it_waited() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let opts = create_test_table(tmp.path());
+    match acquire_through_a_published_write(opts.path(), tmp.path(), |table| {
+        TableWriteLock::acquire(table, 0)
+    }) {
         Err(TableError::LockFailed { message, .. }) => {
             assert!(message.contains("wrote the table while"), "{message}");
         }
@@ -347,6 +358,26 @@ fn table_write_lock_refuses_a_table_written_while_it_waited() {
     }
     // The refused writer released the lock.
     assert!(TableWriteLock::acquire(opts.path(), 1).is_ok());
+}
+
+/// A writer that rereads the table once it holds the lock takes it after a
+/// write published while it waited: nothing it holds is stale.
+#[test]
+fn a_writer_that_rereads_takes_a_table_written_while_it_waited() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let opts = create_test_table(tmp.path());
+    let lock = acquire_through_a_published_write(opts.path(), tmp.path(), |table| {
+        TableWriteLock::acquire_to_reread(table, 0)
+    })
+    .expect("the lock, after the other process's write");
+    assert_eq!(
+        Table::open(TableOptions::new(opts.path()))
+            .expect("reread")
+            .row_count(),
+        2,
+        "the row the other process published"
+    );
+    lock.release().expect("release");
 }
 
 /// Wait for `child` until `deadline`; kill it and return `None` after that.

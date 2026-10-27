@@ -13,12 +13,14 @@
 //!
 //! **Trial status.** This is the write-back trial (`docs/measurement-set/
 //! trial/README.md`, "Write-back"): one updater per traversal, written batch
-//! for batch in delivery order, boolean flags only.
+//! for batch in delivery order, boolean flags only; the slices of a
+//! [`TimeSplit`](crate::TimeSplit) each have their own updater, live at
+//! once.
 
 use ndarray::{ArrayView3, Axis};
 use num_complex::Complex32;
 
-use crate::{ObservationError, VisibilityBatch};
+use crate::{ObservationError, VisibilityBatch, WeightRule};
 
 /// A role a session writes, of one data group.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -101,8 +103,9 @@ pub struct UpdateGuarantees {
     /// never a mixture. Units already replaced stay replaced: there is no
     /// transaction across units.
     pub atomic_units: bool,
-    /// Another process is excluded while an updater writes (casacore's
-    /// table lock for MSv2). MSv4 has no cross-process lock protocol.
+    /// Another process is excluded while any of the session's updaters is
+    /// live (casacore's write lock on MAIN for MSv2). MSv4 has no
+    /// cross-process lock protocol.
     pub cross_process_lock: bool,
 }
 
@@ -261,6 +264,16 @@ pub fn check_values(
                 clear: Some(clear),
             } if set.iter().zip(clear).any(|(set, clear)| *set && *clear) => {
                 return refuse(format!("patch value {index} both sets and clears a flag"));
+            }
+            // Weights patched from weights made from the sigmas would write
+            // sigmas back as weights, unannounced.
+            PatchValues::Weights { .. } if batch.group.weight_rule != WeightRule::Stored => {
+                return refuse(format!(
+                    "patch value {index} writes weights for a batch whose weights were made \
+                     from the sigmas ({:?}); patch weights from a traversal of the stored \
+                     weights",
+                    batch.group.weight_rule
+                ));
             }
             PatchValues::Weights {
                 values,

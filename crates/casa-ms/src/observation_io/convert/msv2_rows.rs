@@ -35,6 +35,13 @@ pub(super) struct Occupancy {
     pub(super) rows: Vec<usize>,
     /// Each partition's grid interval, a padded row's `INTERVAL`.
     pub(super) intervals: Vec<f64>,
+    /// The times the grids span.
+    pub(super) spans: Spans,
+}
+
+/// The times an observation's grids span, which its subtables' times
+/// state.
+pub(super) struct Spans {
     /// The first and last time of any grid, MJD seconds.
     pub(super) time_range: [f64; 2],
     /// Each session's grids' span, by session: from the start of the
