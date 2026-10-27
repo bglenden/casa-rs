@@ -15,7 +15,7 @@
 //! This corresponds to C++ `LinearCoordinate`.
 
 use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
-use ndarray::Array2;
+use ndarray::{Array2, ShapeBuilder};
 
 use crate::coordinate::{Coordinate, CoordinateType};
 use crate::error::CoordinateError;
@@ -160,10 +160,13 @@ impl LinearCoordinate {
                     naxes * naxes
                 )));
             }
-            let pc = Array2::from_shape_vec((naxes, naxes), pc_flat).map_err(|err| {
+            // casacore's matrix is the transpose of the FITS PC matrix this
+            // coordinate holds (`LinearXform`: `pc[i*n+j] = pcIn(j,i)`), so
+            // its elements in row order are the PC's in column order.
+            let pc = Array2::from_shape_vec((naxes, naxes).f(), pc_flat).map_err(|err| {
                 CoordinateError::InvalidRecord(format!("invalid linear pc matrix: {err}"))
             })?;
-            coord = coord.with_pc_matrix(pc);
+            coord = coord.with_pc_matrix(pc.as_standard_layout().into_owned());
         }
 
         Ok(coord)
@@ -290,11 +293,12 @@ impl LinearCoordinate {
             "crpix",
             Value::Array(casa_types::ArrayValue::from_f64_vec(self.crpix.clone())),
         );
+        // casacore's matrix, the PC's transpose (see `from_record`).
         rec.upsert(
             "pc",
             Value::Array(ArrayValue::Float64(
                 ndarray::ArrayD::from_shape_vec(
-                    ndarray::IxDyn(&[n, n]),
+                    ndarray::IxDyn(&[n, n]).f(),
                     self.pc.iter().copied().collect(),
                 )
                 .expect("linear pc matrix shape should match axis count"),
@@ -516,7 +520,7 @@ mod tests {
     }
 
     #[test]
-    fn to_record_writes_pc_as_matrix() {
+    fn to_record_writes_casacores_matrix_the_pc_transposed() {
         let pc = Array2::from_shape_vec((2, 2), vec![1.0, 0.25, -0.5, 2.0]).unwrap();
         let coord = LinearCoordinate::new(
             2,
@@ -530,9 +534,15 @@ mod tests {
             panic!("linear record should contain a float64 pc array");
         };
         assert_eq!(pc_record.shape(), &[2, 2]);
+        // casacore's matrix(i, j) is PC(j, i) ...
         assert_eq!(
             pc_record.iter().copied().collect::<Vec<_>>(),
-            vec![1.0, 0.25, -0.5, 2.0]
+            vec![1.0, -0.5, 0.25, 2.0]
+        );
+        // ... stored column by column, as casacore stores arrays.
+        assert_eq!(
+            pc_record.as_slice_memory_order().unwrap(),
+            &[1.0, 0.25, -0.5, 2.0]
         );
     }
 
