@@ -1312,21 +1312,36 @@ fn solve_gain_keeps_the_collapse_of_a_window_it_could_not_solve() {
             .expect("move row 6");
         ms.save().expect("save");
     }
-    let mut request = phase_gain_request(dir.path().join("reached.gcal"));
-    request.min_baselines_per_antenna = 2;
-    let report = run_gain_solve(&ms_path, &request).expect("solve");
-    assert_eq!(report.spectral_window_ids, vec![0], "only the first solves");
-    let table = Table::open(TableOptions::new(
-        request.output_table.join("SPECTRAL_WINDOW"),
-    ))
-    .expect("SPECTRAL_WINDOW");
-    assert_eq!(
-        GainTableWindow::read(&table, 0),
-        GainTableWindow::solved(1.0005e9, 2.0e6, false)
-    );
-    assert_eq!(
-        GainTableWindow::read(&table, 1),
-        GainTableWindow::solved(1.1005e9, 2.0e6, true),
-        "reached, not solved"
-    );
+    // Whole, and with the second window's second channel alone selected,
+    // which pins its frequency and width to the selection too.
+    for (name, spw, frequency, width) in [
+        ("whole", None, 1.1005e9, 2.0e6),
+        ("second", Some("0,1:1"), 1.101e9, 1.0e6),
+    ] {
+        let mut request = phase_gain_request(dir.path().join(format!("{name}.gcal")));
+        request.min_baselines_per_antenna = 2;
+        if let Some(spw) = spw {
+            request.selection = request.selection.spw_selector(spw).expect("spw");
+        }
+        let report = run_gain_solve(&ms_path, &request).expect("solve");
+        assert_eq!(
+            report.spectral_window_ids,
+            vec![0],
+            "{name}: only the first solves"
+        );
+        let table = Table::open(TableOptions::new(
+            request.output_table.join("SPECTRAL_WINDOW"),
+        ))
+        .expect("SPECTRAL_WINDOW");
+        assert_eq!(
+            GainTableWindow::read(&table, 0),
+            GainTableWindow::solved(1.0005e9, 2.0e6, false),
+            "{name}"
+        );
+        assert_eq!(
+            GainTableWindow::read(&table, 1),
+            GainTableWindow::solved(frequency, width, true),
+            "{name}: reached, not solved"
+        );
+    }
 }

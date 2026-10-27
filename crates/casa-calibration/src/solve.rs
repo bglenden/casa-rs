@@ -299,8 +299,6 @@ pub(crate) fn solve_gain(
     write_gain_caltable(ms, request, &solved)
 }
 
-/// The solution rows of [`solve_gain`] and the resolved reference antenna,
-/// before the caltable is written.
 /// A gain solve's solutions, before they are written.
 pub(crate) struct SolvedGains {
     /// The solution rows, flagged ones included.
@@ -312,6 +310,8 @@ pub(crate) struct SolvedGains {
     pub(crate) attempted_spw_ids: BTreeSet<i32>,
 }
 
+/// The solutions of [`solve_gain`], the resolved reference antenna and the
+/// windows a solve reached, before the caltable is written.
 pub(crate) fn solve_gain_rows(
     ms: &MeasurementSet,
     request: &GainSolveRequest,

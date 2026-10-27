@@ -112,8 +112,13 @@ fn casa_rs_gaincal(ms: &Path, output: PathBuf, field: &str, spw: &str) {
 }
 
 /// Solve `ms` with `spw` both ways and compare every window row exactly;
-/// `solved` rows are unflagged. `None` when CASA is unavailable.
+/// `solved` rows are unflagged. `None` when CASA is unavailable; a CASA
+/// that runs and fails fails the law.
 fn compare(ms: &Path, field: &str, spw: &str, solved: usize) -> Option<()> {
+    if common::discover_casa_python().is_none() {
+        eprintln!("{}", common::casa_skip_reason());
+        return None;
+    }
     let root = ms.parent().expect("a working directory");
     let ours = root.join(format!(
         "casa-rs-{}.G",
@@ -136,10 +141,7 @@ fn compare(ms: &Path, field: &str, spw: &str, solved: usize) -> Option<()> {
         },
     ) {
         Ok(path) => path,
-        Err(reason) => {
-            eprintln!("{reason}");
-            return None;
-        }
+        Err(reason) => panic!("{spw}: {reason}"),
     };
     let (ours, theirs) = (window_rows(&ours), window_rows(&casa));
     assert_eq!(ours, theirs, "{spw}: window rows, casa-rs then CASA");
