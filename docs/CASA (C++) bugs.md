@@ -493,20 +493,22 @@ CASA's formula rather than the physical one.
 
 `observe` converts the reference epoch to TAI and adds its seconds to the
 start and stop offsets, then writes the result into TIME, whose MEASINFO says
-UTC. The data therefore start 37 s (TAI − UTC since 2017) after the requested
-epoch. The geometry is computed with the stored number read as UT1 (line
-1546), so CASA's data are self-consistent; only the schedule is shifted.
+UTC. The data therefore start TAI − UTC at the reference epoch after the
+requested epoch (37 s since 2017, 35 s in 2014). The geometry is computed with
+the stored number read as UT1 (line 1546), so CASA's data are
+self-consistent; only the schedule is shifted.
 
 casa-rs stores the requested UTC, and also reads the stored TIME as UT1 for
 the geometry, so its uvw agree with CASA's at equal stored TIME. A parity run
-requests a start 37 s later on the casa-rs side and compares rows at equal
-TIME (`tools/simulation/compare_sm_ms.py`).
+requests a start later by TAI − UTC at the reference epoch on the casa-rs
+side, taken from the measures data and never written in as a number, and
+compares rows at equal TIME (`tools/simulation/compare_sm_ms.py`).
 
 The same offset separates the calibration tables the two simulators write
 (`setgain` and `setleakage` with `table=`): CASA's TIME is TAI under the UTC
 label. `sm.setapply` of a CASA-simulated table to a casa-rs MeasurementSet,
-or the reverse, therefore takes its solutions 37 s away, several solutions
-of 10 s integrations. The `corrupt-setapply-*` scenarios agree with CASA
+or the reverse, therefore takes its solutions TAI − UTC away (37 s today),
+several solutions of 10 s integrations. The `corrupt-setapply-*` scenarios agree with CASA
 because their runs are shifted as above; tables solved from real data carry
 true UTC and are not affected.
 
