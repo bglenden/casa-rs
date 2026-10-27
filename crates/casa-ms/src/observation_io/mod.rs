@@ -15,6 +15,8 @@
 //! converter does, so both adapters deliver the same batches. The
 //! production readers and writers are unchanged.
 
+#[cfg(all(feature = "msv4", unix))]
+pub mod convert;
 mod grouping;
 mod msv2;
 #[cfg(feature = "msv4")]
@@ -28,7 +30,8 @@ use casa_observation::{Observation, ObservationError};
 pub use msv2::{Msv2Cursor, Msv2Observation};
 #[cfg(feature = "msv4")]
 pub use msv4::{
-    Msv4Codec, Msv4Cursor, Msv4Observation, Msv4StorageOptions, Msv4WriteCounters, Msv4Writer,
+    Msv4Codec, Msv4Cursor, Msv4Observation, Msv4ProcessingSetWriter, Msv4StorageOptions,
+    Msv4WriteCounters, Msv4Writer,
 };
 pub use update::UpdateSession;
 #[cfg(unix)]

@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use casa_ms::MeasurementSet;
-use casa_ms::observation_io::{Msv2Observation, Msv4Observation, Msv4Writer};
+use casa_ms::observation_io::{Msv2Observation, Msv4Observation, Msv4ProcessingSetWriter};
 use casa_observation::{
     AccessRequest, BatchBuffers, FieldId, Grouping, ObservationError, PartitionId, ReadEvent, Roles,
 };
@@ -193,14 +193,9 @@ fn the_msv2_time_reference_is_read_not_assumed() {
     assert_eq!(grid.time_scale, EpochRef::TAI);
     assert!(
         matches!(
-            Msv4Writer::create(
-                &root.path().join("tai.ps.zarr"),
-                v2.catalogue(),
-                PartitionId(0),
-                "base",
-                &grid,
-                &storage(),
-            ),
+            Msv4ProcessingSetWriter::create(&root.path().join("tai.ps.zarr"))
+                .expect("create")
+                .dataset(v2.catalogue(), PartitionId(0), &["base"], &grid, &storage()),
             Err(ObservationError::Unsupported { .. })
         ),
         "the writer does not label TAI seconds as unix/utc"
@@ -584,4 +579,70 @@ fn a_grouping_needs_the_scans_it_keys_by() {
         }
     }
     assert!(fragments > 0);
+}
+
+/// A group of the processing set that is not a visibility dataset, and a
+/// dataset of another schema version, are refused as unsupported, though
+/// opening reads every dataset's antennas before the datasets themselves.
+#[test]
+fn other_datasets_and_schema_versions_are_refused() {
+    let root = tempfile::tempdir().expect("root");
+    let store = fixture(root.path(), "ms_trial.ps.zarr");
+    let notes = store.join("notes");
+    std::fs::create_dir(&notes).expect("a group");
+    std::fs::write(
+        notes.join("zarr.json"),
+        r#"{"zarr_format": 3, "node_type": "group", "attributes": {"type": "notes"}}"#,
+    )
+    .expect("its metadata");
+    assert!(
+        matches!(
+            Msv4Observation::open(&store),
+            Err(ObservationError::Unsupported { what }) if what.contains("visibility")
+        ),
+        "a group that is not a visibility dataset"
+    );
+    std::fs::remove_dir_all(&notes).expect("no group");
+    edit_json(&dataset(&store).join("zarr.json"), |value| {
+        value["attributes"]["schema_version"] = "3.0.0".into();
+    });
+    assert!(
+        matches!(
+            Msv4Observation::open(&store),
+            Err(ObservationError::Unsupported { what }) if what.contains("schema version")
+        ),
+        "another schema version"
+    );
+}
+
+/// A copy of the dataset that is not a visibility dataset, and whose
+/// antennas disagree with the original's, is refused for what it is, not
+/// for the antennas, whether it opens before or after the original.
+#[test]
+fn a_group_is_refused_for_what_it_is_before_its_antennas() {
+    for copy in ["aa_spectrum", "zz_spectrum"] {
+        let root = tempfile::tempdir().expect("root");
+        let store = fixture(root.path(), "ms_trial.ps.zarr");
+        let original = dataset(&store);
+        copy_dir(&original, &store.join(copy));
+        edit_json(&store.join(copy).join("zarr.json"), |value| {
+            value["attributes"]["type"] = "spectrum".into();
+        });
+        let zarr = Arc::new(FilesystemStore::new(&store).expect("store"));
+        let positions =
+            Array::open(zarr, &format!("/{copy}/antenna_xds/ANTENNA_POSITION")).expect("open");
+        let subset = ArraySubset::new_with_shape(positions.shape().to_vec());
+        let mut values: Vec<f64> = positions.retrieve_array_subset(&subset).expect("read");
+        values[0] += 1.0;
+        positions
+            .store_array_subset(&subset, &values)
+            .expect("a moved antenna");
+        assert!(
+            matches!(
+                Msv4Observation::open(&store),
+                Err(ObservationError::Unsupported { what }) if what.contains("visibility")
+            ),
+            "{copy}"
+        );
+    }
 }
