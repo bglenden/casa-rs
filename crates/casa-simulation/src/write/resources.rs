@@ -12,14 +12,18 @@
 //!    a small budget reaches.
 //! 2. **The pipeline.** The batch being filled, the geometry of the
 //!    integrations it spans, each worker's scratch and, when the session
-//!    predicts, the predictor, its block of native rows and (on Metal) the
-//!    device copies of the model grids. A block is the whole batch when
+//!    predicts, the predictor, its block of native rows, the per-field
+//!    model grids of one segment with a set's preparation, and (on Metal)
+//!    the device copies of the model grids. A block is the whole batch when
 //!    that fits with the policy's streaming workers; otherwise blocks are
 //!    small, and as many workers as fit what is then free are admitted
 //!    (#737's rule: workers shrink first). With one worker that does not
 //!    fit, `close` is refused.
+//! 3. **More per-field grids.** As many more as the budget leaves free,
+//!    up to a set for every field, so fewer fields are prepared again
+//!    ([`super::grids`]). They never cost a worker.
 //!
-//! The model grids themselves were admitted by `predict`, and are held.
+//! The model grids `predict` prepared were admitted by it, and are held.
 //! A refusal is a typed [`Admission`] carried by the session error.
 
 use casa_imaging_runtime::pass::BackendChoice;
@@ -42,6 +46,9 @@ pub(super) const WRITER_PHASE: &str = "the simulator's MeasurementSet writer";
 
 /// The pipeline's phase, as an admission refusal names it.
 pub(super) const PIPELINE_PHASE: &str = "the simulator's geometry, prediction and noise";
+
+/// The phase of the per-field grids beyond the pipeline's.
+const FIELD_GRIDS_PHASE: &str = "the simulator's per-field model grids";
 
 /// Batches the writer holds at once: the one it writes and one queued.
 const WRITER_LIVE_BATCHES: usize = 2;
@@ -153,6 +160,8 @@ pub(super) struct MainAdmission {
     /// Rows of a prediction block: the write batch's, or fewer when the
     /// budget is small.
     pub(super) block_rows: usize,
+    /// Bytes the per-field model grids may hold ([`admit_field_grids`]).
+    pub(super) grid_bytes: u64,
     pub(super) reservation: Reservation,
 }
 
@@ -216,13 +225,44 @@ pub(super) fn admit_main_write(
     )
     .map_err(SimulatorError::admission)?;
     reservation.join(pipeline);
+    let grid_bytes = admit_field_grids(resources, prediction, &mut reservation)?;
     Ok(MainAdmission {
         plan,
         cores,
         policy_cores,
         block_rows,
+        grid_bytes,
         reservation,
     })
+}
+
+/// Admit, into `reservation`, as many of `prediction`'s per-field grids
+/// beyond the pipeline's ([`PredictionStage::extra_grid_bytes`]) as the
+/// budget leaves free, once the pipeline's workers are admitted: the bytes
+/// the grids may then hold, the pipeline's set and these.
+pub(super) fn admit_field_grids(
+    resources: &SessionResources,
+    prediction: Option<&PredictionStage<'_>>,
+    reservation: &mut Reservation,
+) -> SimulatorResult<u64> {
+    let Some(stage) = prediction else {
+        return Ok(0);
+    };
+    let (host, policy) = (resources.host(), resources.policy());
+    let extra = stage.extra_grid_bytes().min(free_memory(host, policy));
+    if extra > 0 {
+        let grids = admit(
+            host,
+            policy,
+            &Demand {
+                phase: FIELD_GRIDS_PHASE,
+                memory: extra,
+            },
+        )
+        .map_err(SimulatorError::admission)?;
+        reservation.join(grids);
+    }
+    Ok(stage.minimum_grid_bytes() + extra)
 }
 
 /// The MAIN write plan with `available_bytes` for the writer.
