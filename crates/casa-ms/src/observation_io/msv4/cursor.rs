@@ -61,7 +61,7 @@ impl<'o> Msv4Cursor<'o> {
         let arrays = &dataset.groups[resolved.data_group];
         let groups = GroupIndex::new(
             estimate.partition,
-            request.grouping,
+            request,
             observation.open.group_closure,
             &dataset.times,
             &arrays.fields,

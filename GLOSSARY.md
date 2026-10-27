@@ -200,9 +200,10 @@ _Avoid_: Time slice (informally fine), row range, time window
 **Field Selection**:
 The fields one traversal reads: every field, or the whole times phased to
 some fields in the requested data group. With the time selection it
-resolves to runs of consecutive grid times; the adapters decode none of
-the gaps, and a batch holds times of one run. Intents are selected by
-choosing partitions, since a partition's samples share theirs.
+resolves to runs of consecutive grid times, and a batch holds times of one
+run. Scientific groups are keyed over the selected fields' times, so a
+field selection cuts no group. Intents are selected by choosing partitions,
+since a partition's samples share theirs.
 _Avoid_: Row predicate, field filter
 
 **Time Split**:

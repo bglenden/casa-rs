@@ -15,7 +15,12 @@ use crate::catalogue::{FieldId, PartitionId, ScanId};
 /// Keyed as production `gaincal` keys solutions: by partition (spectral
 /// window, observation and intent), field unless the request combines
 /// fields, scan unless it combines scans, and the time bin counted from the
-/// first time of the (field, scan) run.
+/// first time of the (field, scan) run. Keys are taken over the times of
+/// the request's field selection ([`AccessRequest::fields`]), as `gaincal`
+/// keys the rows it selects, and over every grid time whatever the time
+/// selection, so the slices of a time split agree on them.
+///
+/// [`AccessRequest::fields`]: crate::AccessRequest::fields
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct GroupKey {
     /// The partition. Groups never span partitions; a consumer that
@@ -70,15 +75,19 @@ pub struct GroupFragment {
     ///
     /// Under a time selection ([`AccessRequest::times`]) the position and
     /// the completion describe the part of the group the selection holds.
+    /// A field selection ([`AccessRequest::fields`]) cuts no group: groups
+    /// hold only its fields' times, and a group spans the gaps between its
+    /// runs of times, closing at its last selected time.
     ///
     /// [`AccessRequest::times`]: crate::AccessRequest::times
+    /// [`AccessRequest::fields`]: crate::AccessRequest::fields
     pub position: FragmentPosition,
     /// Whether the request's time selection holds only part of the group:
     /// the rest of its samples lie outside the selected times, and a
     /// traversal of those times delivers them, under the same key. The
     /// slices of a [`TimeSplit`](crate::TimeSplit) share a completion that
-    /// joins such a group's parts; a group no selection cuts is whole in
-    /// its traversal.
+    /// joins such a group's parts; a group no time selection cuts is whole
+    /// in its traversal, whatever the field selection.
     pub clipped: bool,
 }
 

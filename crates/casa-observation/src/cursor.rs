@@ -11,6 +11,7 @@ use crate::creation::TimeBaselineGrid;
 use crate::grouping::{GroupKey, ReadEvent};
 use crate::pool::{BufferPool, FilledBatch};
 use crate::request::{AccessRequest, Estimate, Grouping, IoCounters, PartitionEstimate};
+use crate::selection::FieldSelection;
 
 /// An opened observation, whatever stores it.
 ///
@@ -61,13 +62,15 @@ pub trait Observation: Sync {
     fn grid(&self, id: PartitionId, data_group: &str)
     -> Result<TimeBaselineGrid, ObservationError>;
 
-    /// The scientific group of each of partition `id`'s grid times under
-    /// `grouping`, as data group `data_group` places them (its fields),
-    /// keyed as a traversal keys them (over the whole grid, whatever its
-    /// time selection), or `None` when `grouping` asks for no groups: from
-    /// the store's index, reading no payload. A
-    /// [`TimeSplit`](crate::TimeSplit) counts the groups its cuts divide
-    /// from these.
+    /// The scientific group of each of partition `id`'s grid times that
+    /// `fields` holds under `grouping`, as data group `data_group` places
+    /// them (its fields), keyed as a traversal keys them (over the grid's
+    /// field-selected times, whatever its time selection: bins count from
+    /// the first such time, as production `gaincal` bins the selected
+    /// rows); `None` for a time `fields` excludes, and `None` overall when
+    /// `grouping` asks for no groups. From the store's index, reading no
+    /// payload. A [`TimeSplit`](crate::TimeSplit) counts the groups its
+    /// cuts divide from these.
     ///
     /// # Errors
     ///
@@ -79,7 +82,8 @@ pub trait Observation: Sync {
         id: PartitionId,
         data_group: &str,
         grouping: Grouping,
-    ) -> Result<Option<Vec<GroupKey>>, ObservationError>;
+        fields: &FieldSelection,
+    ) -> Result<Option<Vec<Option<GroupKey>>>, ObservationError>;
 }
 
 /// A bound traversal of one partition of an [`Observation`].

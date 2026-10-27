@@ -65,7 +65,7 @@ impl<'o> Msv2Cursor<'o> {
         let grid = &partition.grid;
         let groups = GroupIndex::new(
             estimate.partition,
-            request.grouping,
+            request,
             observation.options.group_closure,
             &grid.times_s,
             &grid.field_per_time,

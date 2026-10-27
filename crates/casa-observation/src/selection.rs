@@ -4,8 +4,10 @@
 //! (`docs/measurement-set/contracts.md`, section 4).
 //!
 //! A selection takes whole times: a field is per time, so selecting fields
-//! leaves runs of consecutive grid times with gaps between them, and the
-//! adapters decode none of the gaps. A batch holds whole times of one run.
+//! leaves runs of consecutive grid times with gaps between them. A batch
+//! holds whole times of one run, so no batch reads a gap; on an MSv4 a run
+//! shorter than a chunk row still decodes that chunk row
+//! (`docs/measurement-set/contracts.md`, section 4).
 //!
 //! Intents are not selected here. A partition's samples share their intents
 //! (the catalogue partitions by them, as XRADIO's converter does), so a
@@ -157,21 +159,6 @@ impl TimeRuns {
             .map(|run| run.start.max(time))
     }
 
-    /// The times held within `range`.
-    #[must_use]
-    pub fn within(&self, range: Range<usize>) -> Self {
-        let mut within = Self::default();
-        for run in &self.runs[self.run_from(range.start)..] {
-            if run.start >= range.end {
-                break;
-            }
-            let part = run.start.max(range.start)..run.end.min(range.end);
-            within.count += part.len();
-            within.runs.push(part);
-        }
-        within
-    }
-
     /// The block a traversal delivers next from `time`: at most
     /// `per_block` times of one run, from the first time held at or after
     /// `time`; `None` past the last.
@@ -222,8 +209,8 @@ mod tests {
         assert!(TimeRuns::whole(3..3).is_empty());
     }
 
-    /// Membership, the next time held, intersections and blocks of whole
-    /// times that never cross a gap.
+    /// Membership, the next time held and blocks of whole times that never
+    /// cross a gap.
     #[test]
     fn blocks_stay_within_runs() {
         let runs = TimeRuns::selected(
@@ -238,8 +225,6 @@ mod tests {
             (runs.next_from(3), runs.next_from(6), runs.next_from(10)),
             (Some(4), Some(8), None)
         );
-        assert_eq!(runs.within(1..9).runs(), [1..3, 4..6, 8..9]);
-        assert_eq!(runs.within(1..9).len(), 5);
         assert_eq!(
             runs.blocks(2).collect::<Vec<_>>(),
             [0..2, 2..3, 4..6, 8..10]

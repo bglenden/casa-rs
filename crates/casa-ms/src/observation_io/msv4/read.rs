@@ -9,9 +9,9 @@ use std::sync::Arc;
 
 use casa_observation::{
     AccessRequest, AntennaEntry, AntennaId, BoundCursor, Catalogue, Correlation, DataGroupEntry,
-    Estimate, FieldEntry, FieldId, GroupKey, Grouping, Observation, ObservationEntry,
-    ObservationError, ObservationId, OrderedBaseline, PartitionEntry, PartitionId, ScanEntry,
-    ScanId, TimeBaselineGrid, Traversal, UvwFrame,
+    Estimate, FieldEntry, FieldId, FieldSelection, GroupKey, Grouping, Observation,
+    ObservationEntry, ObservationError, ObservationId, OrderedBaseline, PartitionEntry,
+    PartitionId, ScanEntry, ScanId, TimeBaselineGrid, Traversal, UvwFrame,
 };
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::position::MPosition;
@@ -866,7 +866,8 @@ impl Observation for Msv4Observation {
         id: PartitionId,
         data_group: &str,
         grouping: Grouping,
-    ) -> Result<Option<Vec<GroupKey>>, ObservationError> {
+        fields: &FieldSelection,
+    ) -> Result<Option<Vec<Option<GroupKey>>>, ObservationError> {
         let (dataset, entry) = self.dataset(id)?;
         let (index, _) =
             entry
@@ -880,6 +881,7 @@ impl Observation for Msv4Observation {
             &dataset.times,
             &dataset.groups[index].fields,
             dataset.scans.as_deref(),
+            fields,
         )
     }
 }

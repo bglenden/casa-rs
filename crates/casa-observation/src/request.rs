@@ -461,11 +461,13 @@ pub struct AccessRequest {
     /// request by time plan the slices together ([`TimeSplit`](crate::TimeSplit)).
     pub times: TimeSelection,
     /// The fields to deliver: the selected times phased to one of them,
-    /// whole times, so a traversal decodes nothing of the others. Scientific
-    /// groups keep their keys; a group the selection cuts (one that combines
-    /// fields) is delivered as the part it holds, marked
-    /// [`GroupFragment::clipped`]. Intents are selected by the partitions
-    /// requested: a partition's samples share theirs.
+    /// whole times, so a traversal decodes nothing of the others.
+    /// Scientific groups are keyed over these fields' times, as production
+    /// `gaincal` keys the rows it selects: a group that combines fields
+    /// holds the selected fields' times alone, its bins counted from the
+    /// first of them, so a field selection cuts no group. Intents are
+    /// selected by the partitions requested: a partition's samples share
+    /// theirs.
     pub fields: FieldSelection,
     /// The correlation products to deliver and whose flags they carry.
     pub correlations: CorrelationRequest,

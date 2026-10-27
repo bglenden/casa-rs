@@ -179,7 +179,9 @@ fn divided(
 ) -> Result<BTreeMap<GroupKey, BTreeSet<usize>>, ObservationError> {
     let mut divided = BTreeMap::new();
     for (index, id) in request.partitions.iter().enumerate() {
-        let Some(keys) = observation.group_keys(*id, &request.data_group, request.grouping)? else {
+        let Some(keys) =
+            observation.group_keys(*id, &request.data_group, request.grouping, &request.fields)?
+        else {
             continue;
         };
         let mut holders = BTreeMap::<GroupKey, BTreeSet<usize>>::new();
@@ -190,7 +192,7 @@ fn divided(
                     .ok_or_else(|| ObservationError::InvalidStore {
                         reason: format!("{id:?}'s group index does not cover its selected times"),
                     })?;
-                for key in held {
+                for key in held.iter().flatten() {
                     holders.entry(*key).or_default().insert(slice);
                 }
             }

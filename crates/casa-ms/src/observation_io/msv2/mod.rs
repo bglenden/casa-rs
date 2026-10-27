@@ -16,10 +16,10 @@ use std::path::Path;
 use std::sync::Arc;
 
 use casa_observation::{
-    AccessRequest, BoundCursor, Catalogue, DataGroupEntry, Estimate, GroupKey, Grouping,
-    NaturalBlocks, Observation, ObservationError, ObservationId, PartitionEntry, PartitionEstimate,
-    PartitionId, ResolvedRequest, Roles, TimeBaselineGrid, Traversal, WeightRequest, WeightRule,
-    WeightSource, times_per_batch,
+    AccessRequest, BoundCursor, Catalogue, DataGroupEntry, Estimate, FieldSelection, GroupKey,
+    Grouping, NaturalBlocks, Observation, ObservationError, ObservationId, PartitionEntry,
+    PartitionEstimate, PartitionId, ResolvedRequest, Roles, TimeBaselineGrid, Traversal,
+    WeightRequest, WeightRule, WeightSource, times_per_batch,
 };
 use casa_tables::{RequiredScalarColumnDestination, RequiredScalarColumnValuesMut};
 use casa_types::measures::{EpochRef, MjdHighPrec};
@@ -533,7 +533,8 @@ impl Observation for Msv2Observation {
         id: PartitionId,
         data_group: &str,
         grouping: Grouping,
-    ) -> Result<Option<Vec<GroupKey>>, ObservationError> {
+        fields: &FieldSelection,
+    ) -> Result<Option<Vec<Option<GroupKey>>>, ObservationError> {
         let (partition, entry) = self.partition(id)?;
         if entry.data_group(data_group).is_none() {
             return Err(ObservationError::InvalidRequest {
@@ -547,6 +548,7 @@ impl Observation for Msv2Observation {
             &grid.times_s,
             &grid.field_per_time,
             Some(&grid.scan_per_time),
+            fields,
         )
     }
 }

@@ -149,9 +149,14 @@ binding.
 
 As landed in step 2, `AccessRequest::fields` selects fields, and the
 adapters deliver the whole selected times in runs (trial README, "Field
-selection"). Intents need no request field: the adapters partition by
-intent, as XRADIO's converter does, so the imager selects intents by the
-partitions it requests.
+selection"). Group keys are taken over the selected fields' times, as
+production `gaincal` keys its selected rows. On MSv4 a chunk row holding
+several runs is decoded once per batch (#935). Intents need no request
+field: the adapters partition by intent, as XRADIO's converter does, so the
+imager selects intents by the partitions it requests. The catalogue keeps
+a partition's intents split and sorted, so step 4 matches an intent pattern
+intent by intent, where CASA matches the whole `OBS_MODE` string; selection
+by `STATE_ID` is not supported (contracts, section 4).
 
 ### 2.4 Compile without MAIN walks
 

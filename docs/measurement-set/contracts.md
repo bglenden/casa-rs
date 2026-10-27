@@ -615,22 +615,40 @@ one's selected times are unwritten. Several updaters of one session write
 the slices of a split at once, each claiming its times (section 7).
 
 **Field selection.** A request reads every field, or the times phased to
-some fields (`FieldSelection::Only`), in its data group: a field is per
+some fields (`FieldSelection::Only`), in its data group. A field is per
 time, so the selection takes whole times. With the time range, it resolves
 at binding to the partition's selected times as runs of consecutive grid
-times (`TimeRuns`, the estimate's `time_runs`), and the adapters decode
-nothing of the gaps between them: the MSv2 adapter reads the selected rows
-of its opening index, the MSv4 adapter the chunks the selected times touch.
-A batch holds whole times of one run, so its times are consecutive on the
-grid. Group keys stay those of the whole grid: a group keyed by field is
-held whole or not at all, and one that combines fields is delivered as its
-parts across the gaps, closed at its last selected time and marked
-`clipped`. Time splits and updaters take a field selection as they take a
-time range: slices tile the selected times, and an updater claims and
-writes its runs. Intents are not selected on the request: a partition's
-samples share their intents (the adapters partition by them, as XRADIO's
-converter does), so a consumer selects intents by the partitions it
-requests.
+times (`TimeRuns`, the estimate's `time_runs`). A batch holds whole times of
+one run, so its times are consecutive on the grid.
+
+What the adapters decode, as the estimate models it:
+- The MSv2 adapter reads only the selected rows of its opening index.
+- The MSv4 adapter reads the chunks each batch's times touch. A chunk row
+  also holds the gap times beside a run, and a chunk row that holds several
+  runs is decoded once for each batch that reads it. A selection whose runs
+  are shorter than a chunk row therefore decodes up to a chunk row per run
+  (#935 would hold a decoded chunk row across batches).
+
+Group keys are taken over the selected fields' times, as production
+`gaincal` keys the rows it selects. A group keyed by field is held whole or
+not at all. A group that combines fields holds the selected fields' times
+alone, with its bins counted from the first of them. So a field selection
+cuts no group, and `clipped` stays for time ranges. Time splits and
+updaters take a field selection as they take a time range: slices tile the
+selected times, and an updater claims and writes its runs.
+
+Intents are not selected on the request. A partition's samples share their
+intents (the adapters partition by `OBS_MODE`, as XRADIO's converter does),
+so a consumer selects intents by the partitions it requests. Two
+differences from CASA's selection follow:
+- The catalogue keeps a partition's intents split at commas, sorted and
+  deduplicated. CASA matches an intent pattern against the whole
+  `OBS_MODE` string, so a pattern that depends on an intent's place in
+  that string (`CALIBRATE_BANDPASS*` rather than `*BANDPASS*`) can select
+  otherwise when matched intent by intent.
+- Selection by `STATE_ID` (CASA's intent selection by number) has no
+  counterpart. States with one `OBS_MODE` share a partition, so a
+  consumer cannot select one of them.
 
 **Time splits.** Workers that split a request by time plan the slices
 together: `TimeSplit::plan` cuts the request at consecutive epoch ranges

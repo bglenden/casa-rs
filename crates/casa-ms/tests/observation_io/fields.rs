@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Field selection (#932, step 2): a request names the fields it reads, and
 //! both adapters deliver the whole times phased to them, decoding none of
-//! the others, in batches that never span a gap. Groups keep their keys; a
-//! group that combines fields is delivered in parts and marked clipped. A
-//! time split and an updater take the selection as they take a time range.
+//! the others, in batches that never span a gap. Groups are keyed over the
+//! selected times, as production `gaincal` keys the selected rows. A time
+//! split and an updater take the selection as they take a time range.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -217,19 +217,24 @@ fn a_field_selection_decodes_no_unselected_time() {
     assert_eq!(elements, 6 * fine_elements, "each a six-time chunk");
 }
 
-/// A group that combines fields, held in parts across a field selection's
-/// gaps, is delivered clipped, and a time split of the selection tiles it
-/// and names the groups it divides, as for a time range.
+/// A field selection keys groups over its fields' times, as production
+/// `gaincal` keys the selected rows: a group that combines fields holds
+/// only their times, so it is never clipped, and its bins count from the
+/// first selected time. A time split of the selection tiles it and names
+/// the groups it divides, as for a time range.
 #[test]
-fn a_field_selection_clips_groups_that_combine_fields_and_splits_tile_it() {
+fn a_field_selection_keys_groups_over_its_fields_and_splits_tile_it() {
     let root = tempfile::tempdir().expect("root");
     let (v2, v4) = mosaic(root.path(), 5);
     for path in [&v2, &v4] {
         let observation = open(path, &OpenOptions::default()).expect("open");
+        // Fields 1 and 2 are at 10, 20, 40, 50, 70, 80, 100 and 110 s. Bins
+        // of 65 s from the first, at 10 s, hold five times and three; from
+        // the grid's first time they would hold four and four.
         let grouped = AccessRequest {
-            fields: only(&[0, 2]),
+            fields: only(&[1, 2]),
             grouping: Grouping::TimeBins {
-                width_s: 60.0,
+                width_s: 65.0,
                 combine_fields: true,
                 combine_scans: true,
             },
@@ -237,13 +242,21 @@ fn a_field_selection_clips_groups_that_combine_fields_and_splits_tile_it() {
         };
         let mut traversal = observation.bind_read(&grouped).expect("bind");
         let mut buffers = BatchBuffers::default();
-        let mut clipped = 0;
+        let mut samples_per_bin = BTreeMap::<u64, usize>::new();
         while let Some(event) = traversal.next(&mut buffers).expect("read") {
             if let ReadEvent::Batch(batch) = event {
-                clipped += batch.fragments.iter().filter(|f| f.clipped).count();
+                for fragment in batch.fragments {
+                    assert!(!fragment.clipped, "{path:?}: held whole");
+                    *samples_per_bin.entry(fragment.key.bin).or_default() += fragment.samples.len();
+                }
             }
         }
-        assert!(clipped > 0, "{path:?}: the combined groups are cut");
+        let per_time = samples_per_bin.values().sum::<usize>() / 8;
+        let times_per_bin: Vec<usize> = samples_per_bin
+            .values()
+            .map(|samples| samples / per_time)
+            .collect();
+        assert_eq!(times_per_bin, [5, 3], "{path:?}");
         let grid = observation.grid(PartitionId(0), "base").expect("grid");
         let cuts: Vec<TimeRange> = [0, 5, 12]
             .windows(2)
@@ -257,7 +270,11 @@ fn a_field_selection_clips_groups_that_combine_fields_and_splits_tile_it() {
             .map(|slice| observation.estimate(slice).expect("slice").partitions[0].times)
             .sum();
         assert_eq!(held, estimate.partitions[0].times, "{path:?}");
-        assert!(!split.divided().is_empty(), "{path:?}: a bin spans the cut");
+        assert_eq!(
+            split.divided().len(),
+            1,
+            "{path:?}: the first bin spans the cut"
+        );
     }
 }
 

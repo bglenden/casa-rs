@@ -1317,32 +1317,44 @@ is per sample.
   some fields (`FieldSelection::Only`). With the time range it resolves at
   binding to runs of consecutive grid times (`TimeRuns`, the estimate's
   `time_runs`).
-- The adapters decode nothing of the gaps, and a batch holds whole times of
-  one run, so its times stay consecutive on the grid and an updater
-  addresses them as before.
+- A batch holds whole times of one run, so its times stay consecutive on
+  the grid and an updater addresses them as before.
+- The MSv2 adapter reads only the selected rows. The MSv4 adapter reads the
+  chunks each batch touches, so a chunk row holding several runs is decoded
+  once per batch, with its gap times (contracts, section 4; #935).
 - Intents need no request field: the adapters partition by them (as
   XRADIO's converter does), so a partition's samples share their intents
-  and a consumer selects intents by choosing partitions. CASA selects
-  intents by `OBS_MODE` pattern, so the state rows of one `OBS_MODE` are
-  selected together, as one partition.
+  and a consumer selects intents by choosing partitions. Two differences
+  from CASA:
+  - CASA matches an intent pattern against the whole `OBS_MODE` string;
+    the catalogue keeps a partition's intents split, sorted and
+    deduplicated, so a pattern tied to an intent's place in the string
+    can select otherwise when matched intent by intent.
+  - Selection by `STATE_ID` has no counterpart: the states of one
+    `OBS_MODE` share a partition.
 - UV distance stays with imaging, tested per sample as it packs (step 4).
 
-Group keys stay the whole grid's: a group keyed by field is held whole or
-not at all, and a group combining fields is delivered in parts across the
-gaps, closed at its last selected time and marked `clipped`. Time splits
-tile the selected runs, and updaters claim and write them.
+Group keys are taken over the selected fields' times, as production
+`gaincal` keys the rows it selects. A group keyed by field is held whole or
+not at all. A group combining fields holds the selected fields' times
+alone, with bins counted from the first of them, so a field selection cuts
+no group and nothing is marked `clipped`. Time splits tile the selected
+runs, and updaters claim and write them. An update session merges each
+updater's runs per variable and checks claims in time order, so a selection
+of many short runs claims cheaply.
 
 | Law | What it shows |
 | --- | --- |
 | `a_field_selection_delivers_whole_times_of_its_fields` | On both stores (a simulated three-field mosaic, one integration per field in turn, and its MSv4), each field selection, alone or with a time range, delivers exactly the whole traversal's samples at its fields' times; no batch holds an unselected field; the estimate counts the selected times and batches. A field the partition never visits selects nothing. |
 | `a_field_selection_decodes_no_unselected_time` | A one-field selection decodes a third of the units, as modelled: MSv2 rows, MSv4 one-time chunks. In six-time chunks a selected time decodes its whole chunk: as many units, six times the elements. |
-| `a_field_selection_clips_groups_that_combine_fields_and_splits_tile_it` | Time bins combining fields are delivered clipped under a field selection; a time split of the selection tiles it and names the bins it divides. |
+| `a_field_selection_keys_groups_over_its_fields_and_splits_tile_it` | Under a field selection, 65 s bins combining fields count from the first selected time (five times and three, where bins from the grid's first time would hold four and four) and none is clipped; a time split of the selection tiles it and names the one bin it divides. |
 | `a_field_selected_traversal_writes_back_its_times` | On both stores an updater bound to a field selection flags that field's times and no other. |
 
 Unit laws: `a_field_selection_leaves_runs_of_whole_times` and
-`blocks_stay_within_runs` (casa-observation), and
-`a_field_selection_holds_field_groups_whole_and_clips_combined_ones` (the
-shared group index).
+`blocks_stay_within_runs` (casa-observation),
+`a_field_selection_keys_and_closes_groups_within_its_fields` (the shared
+group index) and `claims_merge_runs_and_meet_only_held_times` (an update
+session's claims).
 
 ## Weights from sigmas: the solve weight role
 

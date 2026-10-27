@@ -22,8 +22,9 @@
 //! Within the process, a second update session on the same store is
 //! refused ([`ObservationError::Conflict`]); independent read-only
 //! observations may coexist with it and read what was published. Across
-//! processes MSv2 relies on casacore's table lock, taken for each batch an
-//! updater writes; MSv4 has no lock protocol ([`UpdateGuarantees`]).
+//! processes MSv2 relies on casacore's table lock, held from the session's
+//! first live updater to its last; MSv4 has no lock protocol
+//! ([`UpdateGuarantees`]).
 
 use std::collections::{BTreeMap, HashSet};
 use std::ops::Range;
@@ -83,24 +84,86 @@ pub(super) struct Unit {
     pub(super) times: Range<usize>,
 }
 
-impl Unit {
-    /// Whether `other` writes some of the same native units. A unit of no
-    /// times writes nothing, so meets none.
-    fn meets(&self, other: &Self) -> bool {
-        !self.times.is_empty()
-            && !other.times.is_empty()
-            && self.partition == other.partition
-            && self.variable == other.variable
-            && self.times.start < other.times.end
-            && other.times.start < self.times.end
-    }
-}
-
-/// The units the session's live updaters hold, by updater.
+/// The grid times the session's live updaters claim: for each partition
+/// and variable, disjoint ranges by their first time, each with the
+/// updater that holds it.
 #[derive(Debug, Default)]
 struct Claims {
     next: u64,
-    live: BTreeMap<u64, Vec<Unit>>,
+    held: BTreeMap<(PartitionId, String), BTreeMap<usize, (usize, u64)>>,
+}
+
+impl Claims {
+    /// The held range of `key` that meets `times`, if any. The held ranges
+    /// are disjoint, so only the last to start before `times` ends can.
+    fn meeting(&self, key: &(PartitionId, String), times: &Range<usize>) -> Option<Range<usize>> {
+        let (&start, &(end, _)) = self.held.get(key)?.range(..times.end).next_back()?;
+        (end > times.start).then_some(start..end)
+    }
+
+    /// Claim `units` for a new updater, by the id that releases them,
+    /// unless a live updater claims some of the same times. A unit of no
+    /// times claims nothing.
+    fn claim(&mut self, units: Vec<Unit>) -> Result<u64, ObservationError> {
+        let wanted = merged(units);
+        for (key, ranges) in &wanted {
+            for times in ranges {
+                if let Some(held) = self.meeting(key, times) {
+                    return Err(ObservationError::Conflict {
+                        reason: format!(
+                            "a live updater of this session writes {} of {:?} at grid times \
+                             {held:?}, which this one's {times:?} meet: concurrent updaters \
+                             write disjoint times, on MSv4 whole chunk rows (cut at the \
+                             natural time blocks)",
+                            key.1, key.0
+                        ),
+                    });
+                }
+            }
+        }
+        let id = self.next;
+        self.next += 1;
+        for (key, ranges) in wanted {
+            let held = self.held.entry(key).or_default();
+            for times in ranges {
+                held.insert(times.start, (times.end, id));
+            }
+        }
+        Ok(id)
+    }
+
+    /// Release updater `id`'s claims.
+    fn release(&mut self, id: u64) {
+        self.held.retain(|_, ranges| {
+            ranges.retain(|_, (_, holder)| *holder != id);
+            !ranges.is_empty()
+        });
+    }
+}
+
+/// `units` as each partition and variable's times, ascending, with ranges
+/// that overlap or touch merged and empty ones dropped: an updater of many
+/// short runs (a field selection), or of runs sharing an MSv4 chunk row,
+/// claims each time once.
+fn merged(units: Vec<Unit>) -> BTreeMap<(PartitionId, String), Vec<Range<usize>>> {
+    let mut merged = BTreeMap::<_, Vec<Range<usize>>>::new();
+    for unit in units.into_iter().filter(|unit| !unit.times.is_empty()) {
+        merged
+            .entry((unit.partition, unit.variable))
+            .or_default()
+            .push(unit.times);
+    }
+    for ranges in merged.values_mut() {
+        ranges.sort_by_key(|times| times.start);
+        ranges.dedup_by(|next, kept| {
+            let joins = next.start <= kept.end;
+            if joins {
+                kept.end = kept.end.max(next.end);
+            }
+            joins
+        });
+    }
+    merged
 }
 
 /// A live updater's claim on its units, released when the updater drops.
@@ -114,8 +177,7 @@ impl Drop for Claim<'_> {
         self.claims
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .live
-            .remove(&self.id);
+            .release(self.id);
     }
 }
 
@@ -303,25 +365,13 @@ impl UpdateSession {
         }
     }
 
-    /// Claim `units` for a new updater, unless a live one claims some of
-    /// them.
+    /// Claim `units` for a new updater ([`Claims::claim`]).
     fn claim(&self, units: Vec<Unit>) -> Result<Claim<'_>, ObservationError> {
-        let mut claims = self.claims.lock().unwrap_or_else(PoisonError::into_inner);
-        for unit in &units {
-            if let Some(held) = claims.live.values().flatten().find(|held| held.meets(unit)) {
-                return Err(ObservationError::Conflict {
-                    reason: format!(
-                        "a live updater of this session writes {} of {:?} at grid times {:?}, \
-                         which this one's {:?} meet: concurrent updaters write disjoint times, \
-                         on MSv4 whole chunk rows (cut at the natural time blocks)",
-                        held.variable, held.partition, held.times, unit.times
-                    ),
-                });
-            }
-        }
-        let id = claims.next;
-        claims.next += 1;
-        claims.live.insert(id, units);
+        let id = self
+            .claims
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .claim(units)?;
         Ok(Claim {
             claims: &self.claims,
             id,
@@ -429,6 +479,67 @@ pub(super) fn request_error(reason: impl Into<String>) -> ObservationError {
 
 pub(super) fn storage(error: impl std::error::Error + Send + Sync + 'static) -> ObservationError {
     ObservationError::Storage(Box::new(error))
+}
+
+#[cfg(test)]
+mod claim_tests {
+    use super::*;
+
+    fn unit(variable: &str, times: Range<usize>) -> Unit {
+        Unit {
+            partition: PartitionId(0),
+            variable: variable.to_string(),
+            times,
+        }
+    }
+
+    /// An updater's runs are claimed merged; a claim meets only times a
+    /// live updater holds, of the same partition and variable, and the
+    /// times are free again once that updater drops.
+    #[test]
+    fn claims_merge_runs_and_meet_only_held_times() {
+        let key = |variable: &str| (PartitionId(0), variable.to_string());
+        let runs = merged(vec![
+            unit("DATA", 4..6),
+            unit("DATA", 0..2),
+            unit("DATA", 2..3),
+            unit("DATA", 5..8),
+            unit("DATA", 9..9),
+            unit("FLAG", 1..2),
+        ]);
+        assert_eq!(runs[&key("DATA")], [0..3, 4..8]);
+        assert_eq!(runs[&key("FLAG")].as_slice(), std::slice::from_ref(&(1..2)));
+
+        let mut claims = Claims::default();
+        let first = claims
+            .claim(vec![unit("DATA", 0..3), unit("DATA", 6..8)])
+            .expect("first");
+        // Gaps and neighbours, another variable and no times are free.
+        let second = claims
+            .claim(vec![
+                unit("DATA", 3..6),
+                unit("DATA", 8..9),
+                unit("FLAG", 0..9),
+                unit("DATA", 1..1),
+            ])
+            .expect("second");
+        for taken in [0..1, 2..4, 5..7, 7..20] {
+            let refused = claims.claim(vec![unit("DATA", 20..21), unit("DATA", taken.clone())]);
+            assert!(
+                matches!(refused, Err(ObservationError::Conflict { .. })),
+                "{taken:?}"
+            );
+        }
+        assert_eq!(
+            claims.held[&key("DATA")].len(),
+            4,
+            "a refused claim holds nothing"
+        );
+        claims.release(first);
+        claims.claim(vec![unit("DATA", 0..3)]).expect("released");
+        claims.release(second);
+        assert!(claims.meeting(&key("FLAG"), &(0..9)).is_none());
+    }
 }
 
 #[cfg(all(test, feature = "msv4", unix))]
