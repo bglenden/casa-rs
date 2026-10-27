@@ -898,8 +898,9 @@ grids, batches) and create the destination from those alone.
     summary beside `WEIGHT_SPECTRUM`, subtables the catalogue does not
     carry (system calibration, weather, flag commands, history,
     Doppler, frequency offsets, sources, and any further table a keyword
-    names), the `POINTING` columns the destination does not hold (into an
-    MSv4 `INTERVAL`, `NAME`, `TARGET` and `TRACKING`, as one table loss), a `PROCESSOR` of more than one row or of one that is not a
+    names), the `POINTING` content the destination does not hold
+    (planned before writing: "Geometry inputs"), a `PROCESSOR` of more than
+    one row or of one that is not a
     correlator, and `STATE` rows that say more than an intent (a sub-scan,
     calibration or load, a reference or non-signal row);
   - from an MSv4: sub-datasets other than antennas, fields and pointing,
@@ -1374,45 +1375,65 @@ ways:
   field has no reference epoch.
 - **Pointing**, as a query, not catalogue content: `Observation::pointing`
   returns a partition's pointing series over a span of times within a byte
-  budget, and `PointingSeries::bracket` evaluates the samples around one
-  (antenna, time) there (GLOSSARY, "Pointing Bracket"). MSv2 reads
-  `POINTING` through today's selected-observation reader
-  (`PreparedSelectedPointingCatalog`), so its brackets are today's, bit for
-  bit. MSv4 reads `POINTING_BEAM[time_pointing, antenna_name,
-  local_sky_dir_label(, n_polynomial)]` (XRADIO's layout, `time` accepted for
-  `time_pointing`), in `fk5`, `icrs` or `altaz`. Directions stay in the
-  store's frame; converting them is the geometry owner's.
+  budget, each antenna's samples within it and its nearest either side, and
+  `PointingSeries::bracket` evaluates the samples around one (antenna, time)
+  there (GLOSSARY, "Pointing Bracket"). MSv2 reads `POINTING` through today's
+  imaging reader (`PreparedSelectedPointingCatalog`), so its brackets are
+  that reader's, bit for bit but for one tie (below). That reader's covering
+  rule is casa-rs's, not casacore's `pointingIndex` (#948). MSv4 reads
+  `POINTING_BEAM[time_pointing, antenna_name, local_sky_dir_label]`
+  (XRADIO's layout, `time` accepted for `time_pointing`, an `n_polynomial`
+  of one accepted and more refused, since XRADIO defines no origin for
+  them), in `fk5`, `icrs` or `altaz`. Directions stay in the store's frame;
+  converting them is the geometry owner's.
 - **Receptors per partition** (`PartitionEntry::receptors`), no longer per
-  antenna: an MSv2's `FEED` rows for the partition's window or for every
-  window, an MSv4 dataset's `antenna_xds`. An MSv2 destination writes one
-  `FEED` row per antenna where windows agree and one per window where they
-  differ; an MSv4 destination omits the receptor variables of a dataset
-  whose source has no `FEED` row for it (the simulator writes window 0's
-  only: #943).
+  antenna: an MSv2's `FEED` rows as casacore's `MSIter` and XRADIO's
+  converter select them (the window's own rows once any row names a window,
+  else the rows for every window), an MSv4 dataset's `antenna_xds`. Rows of
+  one antenna, feed and window that differ are refused (owner decision on
+  #946). An MSv2 destination writes one `FEED` row per antenna where every
+  antenna's windows agree, and otherwise a row per window for every antenna,
+  so that casacore reads each back. An MSv4 destination omits the receptor
+  variables of a dataset whose source has no `FEED` row for it, as XRADIO's
+  converter does for ALMA's WVR window, although XRADIO's schema marks
+  `polarization_type` and `receptor_label` required (the simulator writes
+  window 0's rows only: #943).
 
-The converter writes an MSv2's pointing into an MSv4 with each row's
-polynomial re-expressed about its own time (a Taylor shift), since MSv4
-polynomials are in the time since the sample; MSv4 states no interval, so
-`INTERVAL`, `NAME`, `TARGET` and `TRACKING` are reported as one table loss.
-Into an MSv2, an MSv4's samples become rows of `INTERVAL` 0 with `TARGET`
-repeating the direction. A converted store therefore has no covering
-sample, and imaging's law chooses between the samples either side; step 3b
-measures what that changes.
+What a conversion carries of the pointing is planned before anything is
+written (`convert/pointing_plan.rs`):
+- **Into an MSv4**, each partition's rows within its times (as XRADIO takes
+  rows within each dataset's times) and each antenna's nearest either side,
+  each as its direction at its own time. MSv4 states no interval or target
+  and keeps one polynomial term, so `INTERVAL`, `NAME`, `TARGET`,
+  `TRACKING`, further polynomial terms, rows at the antenna and time of an
+  earlier one, and rows beyond every partition's times and each antenna's
+  nearest are reported losses, counted by one scan of `POINTING`. Pointing
+  in several frames or a frame MSv4 does not name is lost whole, as a
+  reported loss, rather than refused part way through writing.
+- **Into an MSv2**, every row of the partitions' antennas, in (time,
+  antenna) order; an MSv4's samples become rows of `INTERVAL` 0 with
+  `TARGET` repeating the direction. Rows of antennas no partition names are
+  a counted loss.
+- A partition's pointing beyond the batch budget refuses the conversion.
 
-Field ephemerides are not carried yet; the converter still refuses fields
-that follow one (#942).
+A converted store therefore has no covering sample, and imaging's law
+chooses between the samples either side; step 3b measures what that
+changes. Field ephemerides are not carried yet; the converter still refuses
+fields that follow one (#942).
 
 | Law | What it shows |
 | --- | --- |
 | `field_directions_resolve_variable_frames_and_carry_reference_epochs` | A mosaic whose `PHASE_DIR` has a variable reference resolves each field's frame and keeps its angles; `FIELD.TIME` is each field's reference epoch; fields in two frames are refused; the MSv4 conversion's fields have no epoch. |
-| `pointing_brackets_hold_each_stores_samples_and_survive_conversion` | On the MSv2, every (antenna, time) bracket holds the rows the MeasurementSet definition names (the covering row by `INTERVAL`, the last before and the first after); the MSv4 conversion holds the same samples at the same instants with nothing covering; converting back writes the same rows with `INTERVAL` 0. |
-| `pointing_polynomials_are_evaluated_at_the_query_time_on_both_stores` | Rows with a rate term (`NUM_POLY` 1) evaluate at the query time on the MSv2 about `TIME_ORIGIN`, and on the MSv4 about the sample's time after the shift; the directions agree to rounding, and again after converting back. |
-| `receptors_are_each_partitions_own` | Two windows whose feeds have different receptor angles keep them through MSv2 → MSv4 → MSv2; a `FEED` row that changes an antenna's angles in time is refused. |
 | `brackets_are_the_selected_observation_reading` (casa-ms unit) | The MSv2 adapter's brackets equal today's imaging reader's (`direction_brackets`) bit for bit, for rows with a rate term, rows of no interval and overlapping rows. Of two rows equally near a time, the boundary takes the earlier and today's reader the lower row: the same wherever an antenna's rows are in time order. |
+| `pointing_brackets_hold_each_stores_samples_and_survive_conversion` | On the MSv2, every (antenna, time) bracket holds the rows today's reader names (the nearest row whose positive `INTERVAL` covers the time, the last before and the first after); the MSv4 conversion holds the same samples at the same instants with nothing covering; converting back writes the same rows with `INTERVAL` 0. |
+| `msv4_pointing_finds_each_antennas_own_nearest_samples` | With one antenna sampled a second after the others (NaN between on MSv4's grid) and one with no pointing, a request between samples gives each antenna its own nearest sample either side, as the MSv2 does, and the antenna without pointing none. |
+| `pointing_the_destination_cannot_hold_is_reported_before_writing` | `AZELGEO` directions keep their frame both ways; `GALACTIC` ones are lost whole into an MSv4 (no `pointing_xds`) and kept into an MSv2; a repeated row and rows beyond the observation are counted losses into an MSv4 and kept into an MSv2; two partitions sharing rows write them once. |
+| `pointing_polynomials_keep_each_rows_direction_at_its_time_in_msv4` | Rows with a rate term (`NUM_POLY` 1) evaluate at the query time on the MSv2; the MSv4 conversion reports the terms as a loss and holds each row's direction at its own time, which converting back keeps. |
+| `receptors_are_each_partitions_own` | Window rows where one antenna's angles differ and the others agree survive MSv2 → MSv4 → MSv2, written back as a row per window for every antenna; rows for every window serve both windows, and beside a window row are ignored, as casacore ignores them; a row that changes an antenna's angles 10 s later is refused. |
 
-Unit laws (casa-observation): `brackets_name_the_samples_around_a_time` and
+Unit laws: (casa-observation) `brackets_name_the_samples_around_a_time` and
 `samples_must_be_whole_and_in_time_order`; (casa-ms)
-`a_shifted_polynomial_keeps_its_values`.
+`feed_rows_are_per_window_once_any_antenna_differs`.
 
 ## Weights from sigmas: the solve weight role
 

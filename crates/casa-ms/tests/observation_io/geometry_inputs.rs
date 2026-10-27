@@ -146,7 +146,7 @@ fn pointing_rows(path: &Path) -> Vec<Row> {
         .collect()
 }
 
-/// The rows the MeasurementSet definition brackets `time_s` with for
+/// The rows today's casa-rs reader brackets `time_s` with for
 /// `antenna`: the row whose interval holds it (nearest first), the last at
 /// or before it and the first at or after it.
 fn expected(rows: &[Row], antenna: u32, time_s: f64) -> [Option<Row>; 3] {
@@ -184,11 +184,12 @@ fn series(observation: &dyn casa_observation::Observation) -> casa_observation::
 }
 
 /// Each store's pointing brackets a time with its own samples, evaluated
-/// there: an MSv2's are the `POINTING` rows the MeasurementSet definition
-/// names (the covering row by `INTERVAL`, the last before and the first
-/// after); its MSv4 conversion holds the same samples at the same instants,
-/// with no intervals, so nothing covers; and converting back writes the
-/// same rows, with `INTERVAL` 0.
+/// there: an MSv2's are the `POINTING` rows today's casa-rs reader names
+/// (the nearest row whose positive `INTERVAL` covers the time, the last
+/// before and the first after; casacore's `pointingIndex` differs, #948);
+/// its MSv4 conversion holds the same samples at the same instants, with no
+/// intervals, so nothing covers; and converting back writes the same rows,
+/// with `INTERVAL` 0.
 #[test]
 fn pointing_brackets_hold_each_stores_samples_and_survive_conversion() {
     let root = tempfile::tempdir().expect("root");

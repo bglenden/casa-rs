@@ -155,17 +155,19 @@ Field ephemerides take a PR of their own, which must merge before the
 cutover (#942); until then the converter refuses them, as it did.
 
 Two consequences:
-- **Pointing in MSv4.** `POINTING_BEAM` holds a polynomial per sample
-  (an optional `n_polynomial` axis) about the sample's own time, so an MSv2
-  row's polynomial converts exactly, re-expressed about its `TIME`. MSv4
-  states no interval per sample, so a converted store's brackets have no
-  covering sample, and imaging's law chooses between the samples either
-  side (nearest, or interpolation). For pointing sampled at the
-  integration, that can pick a different sample than the MSv2 did. Step 3b
-  measures it on the native AW workloads; the owner decides whether the
-  MSv4 route may differ there, or whether intervals should be recovered
-  (from the sample spacing, say). The converter reports `INTERVAL`,
-  `TARGET`, `NAME` and `TRACKING` as a table loss.
+- **Pointing in MSv4.** XRADIO keeps one polynomial term per sample and
+  defines no origin for more, so an MSv2 row with `NUM_POLY` > 0 converts as
+  its direction at its own time, the further terms a reported loss; the MSv2
+  adapter keeps today's evaluation. MSv4 states no interval per sample, so
+  a converted store's brackets have no covering sample, and imaging's law
+  chooses between the samples either side (nearest, or interpolation). For
+  pointing sampled at the integration, that can pick a different sample
+  than the MSv2 did. Step 3b measures it on the native AW workloads; the
+  owner decides whether the MSv4 route may differ there, or whether
+  intervals should be recovered (from the sample spacing, say). The
+  converter reports `INTERVAL`, `TARGET`, `NAME` and `TRACKING` as a table
+  loss. Today's covering rule is casa-rs's, not casacore's (#948); step 3b
+  settles which the batch route keeps.
 - **AW pointing epochs.** Today's epochs follow MAIN order, which interleaves
   windows; batches are partition-major. Refresh decisions carry state across
   consecutive epochs, so the order can change which epochs refresh. CASA's
