@@ -8,7 +8,7 @@ use std::ops::Range;
 
 use casa_observation::{
     FieldId, FragmentPosition, GroupFragment, GroupKey, Grouping, ObservationError, PartitionId,
-    ScanId,
+    ScanId, TimeRuns,
 };
 
 use super::GroupClosure as Closure;
@@ -18,14 +18,17 @@ use super::GroupClosure as Closure;
 /// group index. It holds a 32-byte key per time and an extent per group;
 /// the trial accepts it in exchange for proven closure at delivery.
 ///
-/// Keys are those of the whole grid, so traversals of different time
-/// selections agree on every time's group; each group's extent is the part
-/// of it the traversal's selection holds, so fragments are positioned and
-/// closed within the selection and marked `clipped` when it cuts the group.
+/// Keys are those of the whole grid, so traversals of different time and
+/// field selections agree on every time's group; each group's extent is the
+/// part of it the traversal's selection holds, so fragments are positioned
+/// and closed within the selection and marked `clipped` when it cuts the
+/// group (a time range, or a field selection that a group combining fields
+/// spans).
 #[derive(Debug)]
 pub(super) struct GroupIndex {
     keys: Vec<GroupKey>,
-    /// Each group's times within the selection.
+    /// Each group's first time within the selection and the time past its
+    /// last.
     extent: BTreeMap<GroupKey, Range<usize>>,
     /// The groups the selection cuts: empty for the whole grid.
     clipped: BTreeSet<GroupKey>,
@@ -122,30 +125,30 @@ impl GroupIndex {
         times: &[f64],
         fields: &[FieldId],
         scans: Option<&[ScanId]>,
-        selection: Range<usize>,
+        selection: &TimeRuns,
     ) -> Result<Option<Self>, ObservationError> {
         let Some(keys) = group_keys(partition, grouping, times, fields, scans)? else {
             return Ok(None);
         };
         let mut extent = BTreeMap::<GroupKey, Range<usize>>::new();
-        for (unit, key) in keys
-            .iter()
-            .enumerate()
-            .take(selection.end)
-            .skip(selection.start)
-        {
-            extent
-                .entry(*key)
-                .and_modify(|range| range.end = unit + 1)
-                .or_insert(unit..unit + 1);
+        for run in selection.runs() {
+            for (unit, key) in keys.iter().enumerate().take(run.end).skip(run.start) {
+                extent
+                    .entry(*key)
+                    .and_modify(|range| range.end = unit + 1)
+                    .or_insert(unit..unit + 1);
+            }
         }
         // The selection cuts a group it holds that has a time outside it.
-        let clipped = keys[..selection.start]
-            .iter()
-            .chain(&keys[selection.end..])
-            .filter(|key| extent.contains_key(key))
-            .copied()
-            .collect();
+        let mut clipped = BTreeSet::new();
+        let mut held = selection.runs().iter().peekable();
+        for (unit, key) in keys.iter().enumerate() {
+            while held.next_if(|run| run.end <= unit).is_some() {}
+            let selected = held.peek().is_some_and(|run| run.start <= unit);
+            if !selected && extent.contains_key(key) {
+                clipped.insert(*key);
+            }
+        }
         Ok(Some(Self {
             keys,
             extent,
@@ -217,7 +220,7 @@ mod tests {
             &times,
             &fields,
             Some(&scans),
-            0..7,
+            &TimeRuns::whole(0..7),
         )
         .expect("index")
         .expect("groups")
@@ -298,7 +301,7 @@ mod tests {
                 &times,
                 &fields,
                 Some(&scans),
-                selection,
+                &TimeRuns::whole(selection),
             )
             .expect("index")
             .expect("groups")
@@ -347,5 +350,60 @@ mod tests {
             ]
         );
         assert_eq!(fragments[2].samples, 4..5);
+    }
+
+    /// A field selection holds whole times in runs: a group keyed by field
+    /// is held whole or not at all, and one that combines fields is held in
+    /// parts across the gaps, closed at its last selected time and marked
+    /// clipped.
+    #[test]
+    fn a_field_selection_holds_field_groups_whole_and_clips_combined_ones() {
+        let times: Vec<f64> = (0..7).map(|t| f64::from(t) * 10.0).collect();
+        let fields = [0, 0, 1, 1, 0, 1, 1].map(FieldId);
+        let selection = TimeRuns::selected(
+            0..7,
+            &fields,
+            &casa_observation::FieldSelection::Only(vec![FieldId(0)]),
+        );
+        assert_eq!(selection.runs(), [0..2, 4..5]);
+        let fragments = |combine_fields| {
+            let mut index = GroupIndex::new(
+                PartitionId(0),
+                Grouping::TimeBins {
+                    width_s: f64::INFINITY,
+                    combine_fields,
+                    combine_scans: true,
+                },
+                Closure::AtDelivery,
+                &times,
+                &fields,
+                None,
+                &selection,
+            )
+            .expect("index")
+            .expect("groups");
+            let mut fragments = Vec::new();
+            for run in selection.runs() {
+                index.fragments(run.clone(), 1, &mut fragments);
+            }
+            fragments
+                .into_iter()
+                .map(|f| (f.key.field, f.position, f.clipped))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            fragments(false),
+            [
+                (Some(FieldId(0)), FragmentPosition::First, false),
+                (Some(FieldId(0)), FragmentPosition::Last, false),
+            ]
+        );
+        assert_eq!(
+            fragments(true),
+            [
+                (None, FragmentPosition::First, true),
+                (None, FragmentPosition::Last, true),
+            ]
+        );
     }
 }

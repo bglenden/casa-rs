@@ -578,6 +578,7 @@ pub struct AccessRequest {
     pub roles: Roles,                   // what is read at all
     pub channels: Range<usize>,         // native channel window
     pub times: TimeSelection,           // every grid time, or those in one epoch range
+    pub fields: FieldSelection,         // every field, or the times phased to some
     pub weights: WeightRequest,         // the stored weights, or 1/σ² of the sigmas
     pub correlations: CorrelationRequest, // products delivered and whose flags
     pub grouping: Grouping,             // scientific groups, as gaincal keys them
@@ -586,7 +587,8 @@ pub struct AccessRequest {
 ```
 
 The request is resolved against each partition once, at binding: the data
-group, the channel window, the time selection, and the correlation axis,
+group, the channel window, the time and field selections, and the
+correlation axis,
 which every batch of the traversal and every piece packed from one then
 shares without copying (all products borrow the catalogue's list).
 
@@ -612,12 +614,30 @@ writes batch for batch, and refuses a later partition while an earlier
 one's selected times are unwritten. Several updaters of one session write
 the slices of a split at once, each claiming its times (section 7).
 
+**Field selection.** A request reads every field, or the times phased to
+some fields (`FieldSelection::Only`), in its data group: a field is per
+time, so the selection takes whole times. With the time range, it resolves
+at binding to the partition's selected times as runs of consecutive grid
+times (`TimeRuns`, the estimate's `time_runs`), and the adapters decode
+nothing of the gaps between them: the MSv2 adapter reads the selected rows
+of its opening index, the MSv4 adapter the chunks the selected times touch.
+A batch holds whole times of one run, so its times are consecutive on the
+grid. Group keys stay those of the whole grid: a group keyed by field is
+held whole or not at all, and one that combines fields is delivered as its
+parts across the gaps, closed at its last selected time and marked
+`clipped`. Time splits and updaters take a field selection as they take a
+time range: slices tile the selected times, and an updater claims and
+writes its runs. Intents are not selected on the request: a partition's
+samples share their intents (the adapters partition by them, as XRADIO's
+converter does), so a consumer selects intents by the partitions it
+requests.
+
 **Time splits.** Workers that split a request by time plan the slices
 together: `TimeSplit::plan` cuts the request at consecutive epoch ranges
-that must tile its times in every partition (a gap, an overlap, or a time
-left outside every slice is refused), and counts, from the store's group
+that must tile its selected times in every partition (a gap, an overlap,
+or a time left outside every slice is refused), and counts, from the store's group
 index (`Observation::group_keys`, reading no payload), the scientific
-groups the cuts divide and how many slices hold part of each. Each slice's
+groups the cuts divide and which slices hold part of each. Each slice's
 traversal delivers its part of a divided group, positioned and closed
 within the slice and marked `clipped`; the split's `SplitCompletion`, shared
 by the slices (each through its own `SliceCompletion`), makes such a group

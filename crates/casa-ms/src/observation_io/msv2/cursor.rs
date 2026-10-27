@@ -70,14 +70,14 @@ impl<'o> Msv2Cursor<'o> {
             &grid.times_s,
             &grid.field_per_time,
             Some(&grid.scan_per_time),
-            resolved.times.clone(),
+            &resolved.times,
         )?;
         Ok(Self {
             observation,
             partition: estimate.partition,
             roles: request.roles,
             channels: request.channels.clone(),
-            next_time: resolved.times.start,
+            next_time: resolved.times.first().unwrap_or(0),
             resolved,
             groups,
             estimate,
@@ -540,7 +540,7 @@ impl VisibilityCursor for Msv2Cursor<'_> {
         if let Some(key) = self.groups.as_mut().and_then(GroupIndex::pop_end) {
             return Step::GroupEnd(key);
         }
-        if self.next_time == self.resolved.times.end {
+        if self.resolved.times.next_from(self.next_time).is_none() {
             Step::End
         } else {
             Step::Batch
@@ -548,13 +548,15 @@ impl VisibilityCursor for Msv2Cursor<'_> {
     }
 
     fn fill(&mut self, buffers: &mut BatchBuffers) -> Result<(), ObservationError> {
-        let times = self.resolved.times.end;
-        if self.next_time == times {
+        let Some(block) = self
+            .resolved
+            .times
+            .block_at(self.next_time, self.estimate.times_per_batch)
+        else {
             return Err(ObservationError::InvalidRequest {
                 reason: "fill after the end of the traversal".to_string(),
             });
-        }
-        let block = self.next_time..(self.next_time + self.estimate.times_per_batch).min(times);
+        };
         self.fill_batch(buffers, block.clone())?;
         self.counters.batches += 1;
         self.counters.decode_units += self.scratch.rows.len();

@@ -53,6 +53,7 @@ fn main() -> Result<(), Error> {
             roles: Roles::ALL,
             channels: 0..catalogue.partition(id).frequencies_hz.len(),
             times: TimeSelection::All,
+            fields: casa_observation::FieldSelection::All,
             weights: WeightRequest::Stored,
             correlations: CorrelationRequest::ALL,
             grouping: Grouping::None,

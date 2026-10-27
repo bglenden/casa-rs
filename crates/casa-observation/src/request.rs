@@ -12,6 +12,7 @@ use crate::ObservationError;
 use crate::catalogue::{FieldId, PartitionEntry, PartitionId, ScanId};
 use crate::creation::TimeBaselineGrid;
 use crate::grouping::GroupFragment;
+use crate::selection::{FieldSelection, TimeRuns};
 
 /// Which roles a traversal reads: the data group's payload and the
 /// samples' time auxiliaries and scan. A role left out is not read at all
@@ -459,6 +460,13 @@ pub struct AccessRequest {
     /// part it holds ([`GroupFragment::clipped`]). Workers that split a
     /// request by time plan the slices together ([`TimeSplit`](crate::TimeSplit)).
     pub times: TimeSelection,
+    /// The fields to deliver: the selected times phased to one of them,
+    /// whole times, so a traversal decodes nothing of the others. Scientific
+    /// groups keep their keys; a group the selection cuts (one that combines
+    /// fields) is delivered as the part it holds, marked
+    /// [`GroupFragment::clipped`]. Intents are selected by the partitions
+    /// requested: a partition's samples share theirs.
+    pub fields: FieldSelection,
     /// The correlation products to deliver and whose flags they carry.
     pub correlations: CorrelationRequest,
     /// Scientific groups. Whether a group's completion arrives on its last
@@ -481,8 +489,9 @@ pub struct ResolvedRequest {
     /// [`data_groups`](PartitionEntry::data_groups).
     pub data_group: usize,
     /// The grid times delivered, as indices into the partition's grid
-    /// times ([`TimeSelection::indices`]).
-    pub times: Range<usize>,
+    /// times: the time selection's ([`TimeSelection::indices`]) whose field
+    /// the field selection holds.
+    pub times: TimeRuns,
     /// The delivered correlation products, shared by every batch.
     pub correlations: CorrelationAxis,
     /// Whether a delivered flag is the OR over every product's: true only
@@ -493,23 +502,35 @@ pub struct ResolvedRequest {
 
 impl AccessRequest {
     /// Resolve this request's data group, channel window, times and
-    /// correlation axis against `entry`, whose grid times are `times_s`.
+    /// correlation axis against `entry`, whose grid times are `times_s`
+    /// and whose requested data group is phased to `fields[t]` at time `t`.
     ///
     /// # Errors
     ///
     /// When the partition lacks the data group or a requested product, the
     /// channel window is empty or outside the partition, no product is
     /// requested, or the time selection is refused
-    /// ([`TimeSelection::indices`]).
+    /// ([`TimeSelection::indices`]); [`ObservationError::InvalidStore`]
+    /// when `fields` has not one field per time.
     pub fn resolve(
         &self,
         entry: &PartitionEntry,
         times_s: &[f64],
+        fields: &[FieldId],
     ) -> Result<ResolvedRequest, ObservationError> {
         let invalid = |reason: String| ObservationError::InvalidRequest { reason };
         let (data_group, _) = entry
             .data_group(&self.data_group)
             .ok_or_else(|| invalid(format!("no data group {}", self.data_group)))?;
+        if fields.len() != times_s.len() {
+            return Err(ObservationError::InvalidStore {
+                reason: format!(
+                    "{} fields for {} grid times: a field per time",
+                    fields.len(),
+                    times_s.len()
+                ),
+            });
+        }
         if self.channels.is_empty() || self.channels.end > entry.frequencies_hz.len() {
             return Err(invalid(format!(
                 "channels {:?} outside the partition's {}",
@@ -545,7 +566,7 @@ impl AccessRequest {
         };
         Ok(ResolvedRequest {
             data_group,
-            times: self.times.indices(entry, times_s)?,
+            times: TimeRuns::selected(self.times.indices(entry, times_s)?, fields, &self.fields),
             flags_from_all: correlations.indices().is_some()
                 && self.correlations.flags_from == FlagsFrom::All,
             correlations,
@@ -571,11 +592,10 @@ pub struct PartitionEstimate {
     /// The partition.
     pub partition: PartitionId,
     /// Times the traversal delivers: the grid's, or those the request's
-    /// [`TimeSelection`] holds.
+    /// time and field selections hold.
     pub times: usize,
-    /// The first of them, as an index into the grid's times (0 without a
-    /// selection).
-    pub first_time: usize,
+    /// Which they are, as indices into the grid's times.
+    pub time_runs: TimeRuns,
     /// Which rule and variable supply the delivered weights, when the
     /// weights role is read.
     pub weights: Option<WeightSource>,

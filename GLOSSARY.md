@@ -193,8 +193,17 @@ half-open range of epochs, stated in the partitions' own time origin and
 scale so that selecting a time rounds nothing. Group keys stay those of the
 whole grid; a group the selection cuts is delivered as its part, marked
 clipped, and closed within the traversal. Workers that split a partition by
-time plan a Time Split.
+time plan a Time Split. A Field Selection narrows it to whole times of some
+fields.
 _Avoid_: Time slice (informally fine), row range, time window
+
+**Field Selection**:
+The fields one traversal reads: every field, or the whole times phased to
+some fields in the requested data group. With the time selection it
+resolves to runs of consecutive grid times; the adapters decode none of
+the gaps, and a batch holds times of one run. Intents are selected by
+choosing partitions, since a partition's samples share theirs.
+_Avoid_: Row predicate, field filter
 
 **Time Split**:
 A request's times cut into consecutive slices that tile them, planned

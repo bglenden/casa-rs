@@ -10,8 +10,8 @@ use std::collections::BTreeMap;
 use casa_ms::observation_io::{OpenOptions, open_update};
 use casa_observation::{
     AccessRequest, BatchBuffers, FragmentPosition, GroupKey, Grouping, Observation,
-    ObservationError, PartitionId, PatchValues, ReadEvent, TimeRange, TimeSelection, UpdateTarget,
-    WritableRole,
+    ObservationError, PartitionId, PatchValues, ReadEvent, TimeRange, TimeRuns, TimeSelection,
+    UpdateTarget, WritableRole,
 };
 use casa_types::measures::{EpochRef, MjdHighPrec};
 use ndarray::Array3;
@@ -69,8 +69,8 @@ fn time_slices_tile_a_partition_sample_for_sample() {
                 let estimate = observation.estimate(&slice).expect("estimate");
                 let partition = &estimate.partitions[0];
                 assert_eq!(
-                    (partition.first_time, partition.times),
-                    (pair[0], pair[1] - pair[0]),
+                    (&partition.time_runs, partition.times),
+                    (&TimeRuns::whole(pair[0]..pair[1]), pair[1] - pair[0]),
                     "{store} {pair:?}"
                 );
                 assert_eq!(

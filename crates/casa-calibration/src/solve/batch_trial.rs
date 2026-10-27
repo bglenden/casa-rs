@@ -77,6 +77,7 @@ fn access(observation: &dyn Observation, times: usize) -> AccessRequest {
         roles: Roles::ALL,
         channels: 0..8,
         times: TimeSelection::All,
+        fields: casa_observation::FieldSelection::All,
         weights: WeightRequest::Stored,
         correlations: CorrelationRequest::ALL,
         grouping: Grouping::TimeBins {

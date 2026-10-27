@@ -1307,6 +1307,43 @@ CPU per pass (8.5 s user against 8.2 s).
 
 **Not done:** slices of a partition read concurrently by one cursor.
 
+## Field selection: imaging's selections on the request
+
+Step 2 of the imaging port (#932, `docs/measurement-set/imaging-port.md`
+§2.3, option (a)): the imager selects fields, UV distances and intents per
+MAIN row today. On batches, field and intent are per time, and UV distance
+is per sample.
+- `AccessRequest::fields` reads every field, or the whole times phased to
+  some fields (`FieldSelection::Only`). With the time range it resolves at
+  binding to runs of consecutive grid times (`TimeRuns`, the estimate's
+  `time_runs`).
+- The adapters decode nothing of the gaps, and a batch holds whole times of
+  one run, so its times stay consecutive on the grid and an updater
+  addresses them as before.
+- Intents need no request field: the adapters partition by them (as
+  XRADIO's converter does), so a partition's samples share their intents
+  and a consumer selects intents by choosing partitions. CASA selects
+  intents by `OBS_MODE` pattern, so the state rows of one `OBS_MODE` are
+  selected together, as one partition.
+- UV distance stays with imaging, tested per sample as it packs (step 4).
+
+Group keys stay the whole grid's: a group keyed by field is held whole or
+not at all, and a group combining fields is delivered in parts across the
+gaps, closed at its last selected time and marked `clipped`. Time splits
+tile the selected runs, and updaters claim and write them.
+
+| Law | What it shows |
+| --- | --- |
+| `a_field_selection_delivers_whole_times_of_its_fields` | On both stores (a simulated three-field mosaic, one integration per field in turn, and its MSv4), each field selection, alone or with a time range, delivers exactly the whole traversal's samples at its fields' times; no batch holds an unselected field; the estimate counts the selected times and batches. A field the partition never visits selects nothing. |
+| `a_field_selection_decodes_no_unselected_time` | A one-field selection decodes a third of the units, as modelled: MSv2 rows, MSv4 one-time chunks. In six-time chunks a selected time decodes its whole chunk: as many units, six times the elements. |
+| `a_field_selection_clips_groups_that_combine_fields_and_splits_tile_it` | Time bins combining fields are delivered clipped under a field selection; a time split of the selection tiles it and names the bins it divides. |
+| `a_field_selected_traversal_writes_back_its_times` | On both stores an updater bound to a field selection flags that field's times and no other. |
+
+Unit laws: `a_field_selection_leaves_runs_of_whole_times` and
+`blocks_stay_within_runs` (casa-observation), and
+`a_field_selection_holds_field_groups_whole_and_clips_combined_ones` (the
+shared group index).
+
 ## Weights from sigmas: the solve weight role
 
 Step (4)'s second item (example B's finding): a solve weights by 1/σ² of

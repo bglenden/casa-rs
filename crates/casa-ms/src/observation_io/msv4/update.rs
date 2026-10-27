@@ -19,7 +19,7 @@ use std::sync::atomic::Ordering;
 
 use casa_observation::{
     AccessRequest, ObservationError, PartitionEntry, PartitionId, PatchValues, ResolvedTarget,
-    UpdateReport, Updater, VisibilityBatch, WeightChannels, WritableRole, check_values,
+    TimeRuns, UpdateReport, Updater, VisibilityBatch, WeightChannels, WritableRole, check_values,
 };
 use num_complex::Complex32;
 use zarrs::array::CodecOptions;
@@ -55,7 +55,7 @@ struct Partition {
     id: PartitionId,
     times: HashMap<u64, usize>,
     /// The dataset times the traversal selects.
-    selected: Range<usize>,
+    selected: TimeRuns,
     targets: Vec<Target>,
 }
 
@@ -161,7 +161,7 @@ impl Msv4Update {
                     .enumerate()
                     .map(|(index, time)| (time.to_bits(), index))
                     .collect(),
-                selected: selection.first_time..selection.first_time + selection.times,
+                selected: selection.time_runs.clone(),
                 targets: windows,
             });
         }
@@ -172,10 +172,12 @@ impl Msv4Update {
                     .targets
                     .iter()
                     .zip(targets)
-                    .map(|(window, target)| Unit {
-                        partition: partition.id,
-                        variable: target.variable.clone(),
-                        times: window.chunk_rows(partition.selected.clone()),
+                    .flat_map(|(window, target)| {
+                        partition.selected.runs().iter().map(|run| Unit {
+                            partition: partition.id,
+                            variable: target.variable.clone(),
+                            times: window.chunk_rows(run.clone()),
+                        })
                     })
             })
             .collect();
@@ -266,10 +268,9 @@ impl Updater for Msv4Updater<'_> {
             .ok_or_else(|| request_error("the batch's partition is not the traversal's"))?;
         let entry = batch.catalogue.partition(batch.partition);
         let times = dataset_times(batch, entry, &self.partitions[index].times)?;
-        let selected = &self.partitions[index].selected;
-        if times.start < selected.start || times.end > selected.end {
+        if !self.partitions[index].selected.holds(times.clone()) {
             return Err(request_error(
-                "the batch's times are outside the traversal's time selection",
+                "the batch's times are outside the traversal's time and field selection",
             ));
         }
         let products = product_indices(batch, entry)?;

@@ -57,6 +57,7 @@ pub(super) fn read(
             roles: if index == 0 { first } else { VISIBILITIES },
             channels: 0..channels,
             times: TimeSelection::All,
+            fields: casa_observation::FieldSelection::All,
             weights: WeightRequest::Stored,
             correlations: CorrelationRequest::ALL,
             grouping: Grouping::None,

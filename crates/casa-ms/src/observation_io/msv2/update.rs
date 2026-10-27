@@ -19,15 +19,15 @@
 //! initializes them, so rows and channels a pass does not reach read as
 //! uncorrected data and a unit point source.
 
-use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use casa_tables::TableWriteLock;
 
 use casa_observation::{
-    AccessRequest, ObservationError, PartitionEntry, PatchValues, ResolvedTarget, UpdateReport,
-    Updater, VisibilityBatch, WeightChannels, WritableRole, check_values, uniform_over_channels,
+    AccessRequest, ObservationError, PartitionEntry, PatchValues, ResolvedTarget, TimeRuns,
+    UpdateReport, Updater, VisibilityBatch, WeightChannels, WritableRole, check_values,
+    uniform_over_channels,
 };
 use casa_types::ArrayValue;
 use casa_types::measures::MjdHighPrec;
@@ -144,7 +144,7 @@ struct Msv2Updater<'s> {
     targets: Vec<ResolvedTarget>,
     request: AccessRequest,
     /// Each requested partition's selected grid times.
-    selections: Vec<Range<usize>>,
+    selections: Vec<TimeRuns>,
     position: Position,
     report: UpdateReport,
 }
@@ -259,21 +259,23 @@ impl Msv2Update {
         claim: impl FnOnce(Vec<Unit>) -> Result<Claim<'s>, ObservationError>,
     ) -> Result<Box<dyn Updater + 's>, ObservationError> {
         let estimate = self.observation.estimate(request)?;
-        let selections: Vec<Range<usize>> = estimate
+        let selections: Vec<TimeRuns> = estimate
             .partitions
-            .iter()
-            .map(|partition| partition.first_time..partition.first_time + partition.times)
+            .into_iter()
+            .map(|partition| partition.time_runs)
             .collect();
         let claim = claim(
             request
                 .partitions
                 .iter()
                 .zip(&selections)
-                .flat_map(|(partition, times)| {
-                    targets.iter().map(|target| Unit {
-                        partition: *partition,
-                        variable: target.variable.clone(),
-                        times: times.clone(),
+                .flat_map(|(partition, runs)| {
+                    runs.runs().iter().flat_map(|times| {
+                        targets.iter().map(|target| Unit {
+                            partition: *partition,
+                            variable: target.variable.clone(),
+                            times: times.clone(),
+                        })
                     })
                 })
                 .collect(),
@@ -310,7 +312,7 @@ impl Msv2Update {
             request: request.clone(),
             position: Position {
                 partition: 0,
-                time: selections.first().map_or(0, |selection| selection.start),
+                time: selections.first().and_then(TimeRuns::first).unwrap_or(0),
             },
             selections,
             report: UpdateReport {
@@ -681,7 +683,7 @@ impl Updater for Msv2Updater<'_> {
             .any(
                 |(partition, selection)| match partition.cmp(&self.position.partition) {
                     std::cmp::Ordering::Less => false,
-                    std::cmp::Ordering::Equal => self.position.time != selection.end,
+                    std::cmp::Ordering::Equal => selection.next_from(self.position.time).is_some(),
                     std::cmp::Ordering::Greater => !selection.is_empty(),
                 },
             );
@@ -707,7 +709,11 @@ impl Msv2Updater<'_> {
         let observation = &self.update.observation;
         let selections = &self.selections;
         let mut position = self.position;
-        let done = |position: Position| selections[position.partition].end == position.time;
+        let done = |position: Position| {
+            selections[position.partition]
+                .next_from(position.time)
+                .is_none()
+        };
         let passes = |partition: usize| {
             partitions[partition] != batch.partition && selections[partition].is_empty()
         };
@@ -726,7 +732,7 @@ impl Msv2Updater<'_> {
             }
             position = Position {
                 partition: next,
-                time: selections.get(next).map_or(0, |selection| selection.start),
+                time: selections.get(next).and_then(TimeRuns::first).unwrap_or(0),
             };
         }
         if partitions.get(position.partition) != Some(&batch.partition)
@@ -743,7 +749,10 @@ impl Msv2Updater<'_> {
             .times_s
             .binary_search_by(|known| known.total_cmp(&time))
             .map_err(|_| request_error("the batch's first time is not on the partition's grid"))?;
-        if first != position.time {
+        let selection = &selections[position.partition];
+        if selection.next_from(position.time) != Some(first)
+            || !selection.holds(first..first + batch.times())
+        {
             return Err(request_error(
                 "the batch is not the traversal's next: an updater is written batch for batch \
                  in delivery order",

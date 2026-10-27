@@ -147,6 +147,12 @@ mosaic imaged one field at a time. It also serves calibration's field and
 intent selections. It belongs to packet (a), catalogue/selection and read
 binding.
 
+As landed in step 2, `AccessRequest::fields` selects fields, and the
+adapters deliver the whole selected times in runs (trial README, "Field
+selection"). Intents need no request field: the adapters partition by
+intent, as XRADIO's converter does, so the imager selects intents by the
+partitions it requests.
+
 ### 2.4 Compile without MAIN walks
 
 The opening's index (the MSv2 adapter grids MAIN's key columns once, in row

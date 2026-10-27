@@ -40,6 +40,7 @@ pub fn request(
         },
         channels,
         times: TimeSelection::All,
+        fields: casa_observation::FieldSelection::All,
         weights: WeightRequest::Stored,
         correlations: CorrelationRequest::ALL,
         grouping: Grouping::None,

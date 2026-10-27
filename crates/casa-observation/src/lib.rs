@@ -104,6 +104,7 @@ mod cursor;
 mod grouping;
 mod pool;
 mod request;
+mod selection;
 mod split;
 mod update;
 
@@ -127,6 +128,7 @@ pub use request::{
     IoCounters, NaturalBlocks, PartitionEstimate, ResolvedRequest, Roles, SigmaFallback, TimeRange,
     TimeSelection, WeightRequest, WeightRule, WeightSource, inverse_sigma_squared, times_per_batch,
 };
+pub use selection::{FieldSelection, TimeRuns};
 pub use split::{SliceCompletion, SplitCompletion, TimeSplit};
 pub use update::{
     AliasScope, PatchValues, ResolvedTarget, UpdateGuarantees, UpdateReport, UpdateTarget, Updater,

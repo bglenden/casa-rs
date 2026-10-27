@@ -57,6 +57,7 @@ fn read_weighted(
         roles: Roles::ALL,
         channels: 0..channels,
         times: TimeSelection::All,
+        fields: casa_observation::FieldSelection::All,
         weights,
         correlations: CorrelationRequest::ALL,
         grouping: Grouping::None,
@@ -185,6 +186,7 @@ fn two_windows(root: &Path) -> PathBuf {
             roles: Roles::ALL,
             channels: 0..catalogue.partition(id).frequencies_hz.len(),
             times: TimeSelection::All,
+            fields: casa_observation::FieldSelection::All,
             weights: WeightRequest::Stored,
             correlations: CorrelationRequest::ALL,
             grouping: Grouping::None,
@@ -548,6 +550,7 @@ fn weights_varying_over_channels_are_refused() {
             .frequencies_hz
             .len(),
         times: TimeSelection::All,
+        fields: casa_observation::FieldSelection::All,
         weights: WeightRequest::Stored,
         correlations: CorrelationRequest::ALL,
         grouping: Grouping::None,
