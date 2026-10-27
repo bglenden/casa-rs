@@ -34,6 +34,17 @@ fn main() {
         let _ = logging_guard.flush();
         std::process::exit(1);
     }
+    // An informational invocation (a harness probing the protocol) images
+    // nothing, so there is no geometry to compare.
+    if args.iter().any(|argument| {
+        matches!(
+            argument.to_str(),
+            Some("--protocol-info" | "--json-schema" | "-h" | "--help")
+        )
+    }) {
+        let _ = logging_guard.flush();
+        return;
+    }
     let status = match geometry_law(&args) {
         Ok(true) => 0,
         Ok(false) => 1,
