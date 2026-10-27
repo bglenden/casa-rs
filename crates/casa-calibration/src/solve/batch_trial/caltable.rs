@@ -4,7 +4,7 @@
 //! namespace, close, reopen a store that numbers its entities otherwise,
 //! bind, and apply.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use casa_ms::ms::MeasurementSet;
@@ -29,7 +29,7 @@ use super::binding::{CalibrationBinding, StatedAssociations, write_gain_table};
 use super::feed::solve_sequential;
 use super::{access, fixture, gain_request};
 use crate::solve::kernel::SolutionRow;
-use crate::solve::{RefAntSelector, solve_gain};
+use crate::solve::{RefAntSelector, SolvedGains, solve_gain};
 use crate::{
     ApplyCalibrationTableSpec, ApplyInterpolationMode, ApplyMode, ApplyPlanRequest,
     CalibrationTableLookup, execute_apply_from_path,
@@ -224,15 +224,8 @@ fn a_batch_solve_persists_the_msv2s_own_namespace() {
     let observation = open(&path, &OpenOptions::default()).expect("open");
     let namespace = persisted_namespace(&path, &OpenOptions::default()).expect("namespace");
     let request = gain_request(root.path().join("batch.G"));
-    let (rows, _) = solve_sequential(&*observation, &request, &access(&*observation, 3), 0);
-    write_gain_table(
-        &namespace,
-        observation.catalogue(),
-        &request,
-        AntennaId(0),
-        &rows,
-    )
-    .expect("write");
+    let (solved, _) = solve_sequential(&*observation, &request, &access(&*observation, 3), 0);
+    write_gain_table(&namespace, observation.catalogue(), &request, &solved).expect("write");
     let ours = NamespaceRows::read(&request.output_table).expect("ours");
     let theirs = NamespaceRows::read(&production.output_table).expect("theirs");
     assert_eq!(ours.antennas, theirs.antennas);
@@ -262,7 +255,7 @@ fn a_batch_solve_persists_the_msv2s_own_namespace() {
         CalibrationTableLookup::open(table, ApplyInterpolationMode::Nearest).expect("lookup")
     };
     let (ours, theirs) = (open(&request.output_table), open(&production.output_table));
-    for row in &rows {
+    for row in &solved.rows {
         for antenna in 0..5 {
             let solution = |lookup: &CalibrationTableLookup| {
                 lookup
@@ -337,7 +330,7 @@ fn a_caltable_rebinds_to_a_store_numbered_otherwise() {
             "antenna 0 dropped"
         );
         let refant = at_station(&*observation, &refant_station);
-        let (rows, _) = solve_sequential(
+        let (solved, _) = solve_sequential(
             &*observation,
             &request,
             &access(&*observation, 3),
@@ -345,8 +338,7 @@ fn a_caltable_rebinds_to_a_store_numbered_otherwise() {
         );
         let namespace =
             persisted_namespace(&converted, &OpenOptions::default()).expect("namespace");
-        write_gain_table(&namespace, observation.catalogue(), &request, refant, &rows)
-            .expect("write");
+        write_gain_table(&namespace, observation.catalogue(), &request, &solved).expect("write");
     }
 
     keep_for_casa(&[
@@ -565,8 +557,11 @@ fn write_known_gains(path: &Path, table: &Path) -> f64 {
         &namespace,
         catalogue,
         &gain_request(table.to_path_buf()),
-        AntennaId(0),
-        &rows,
+        &SolvedGains {
+            rows,
+            refant_id: 0,
+            attempted_spw_ids: BTreeSet::new(),
+        },
     )
     .expect("write");
     time
@@ -1045,8 +1040,11 @@ fn the_writer_refuses_a_namespace_of_another_opening() {
         &namespace,
         observation.catalogue(),
         &request,
-        AntennaId(0),
-        &[],
+        &SolvedGains {
+            rows: Vec::new(),
+            refant_id: 0,
+            attempted_spw_ids: BTreeSet::new(),
+        },
     ) {
         Err(ObservationError::InvalidRequest { reason }) => {
             assert!(reason.contains("namespace describes"), "{reason}");

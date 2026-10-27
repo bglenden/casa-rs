@@ -42,7 +42,7 @@ use casa_observation::{AntennaId, BindingTolerance, Catalogue, ObservationError,
 
 use crate::solve::kernel::SolutionRow;
 use crate::solve::writer::write_gain_caltable_named;
-use crate::solve::{GainSolveReport, GainSolveRequest};
+use crate::solve::{GainSolveReport, GainSolveRequest, SolvedGains};
 
 /// Associations a caller states, which binding takes before anything it
 /// could infer: CASA's `spwmap` and its like for antennas, and CASA's own
@@ -453,11 +453,12 @@ fn overlaps(a: &NamespaceWindow, b: &NamespaceWindow) -> bool {
     a_low < b_high && b_low < a_high
 }
 
-/// Write `rows`, a solve in `catalogue`'s numbering, as a CASA gain table
+/// Write `solved`, a solve in `catalogue`'s numbering, as a CASA gain table
 /// through `namespace`, the namespace of the store `catalogue` describes:
 /// its subtables copied, each row's antennas, field, spectral window (the
-/// solve's partition) and session translated to their rows there, and the
-/// store's path recorded as the table's `MSName`. Catalogue identities are
+/// solve's partition) and session, the reference antenna and the windows
+/// the solve reached translated to their rows there, and the store's path
+/// recorded as the table's `MSName`. Catalogue identities are
 /// never written. A table written through an MSv4's namespace applies by
 /// CASA's own association only to that store's MSv2 conversion; to any
 /// other store it is bound.
@@ -471,8 +472,7 @@ pub(super) fn write_gain_table(
     namespace: &PersistedNamespace,
     catalogue: &Catalogue,
     request: &GainSolveRequest,
-    refant: AntennaId,
-    rows: &[SolutionRow],
+    solved: &SolvedGains,
 ) -> Result<GainSolveReport, ObservationError> {
     if !namespace.describes(catalogue) {
         return Err(refused(
@@ -482,7 +482,9 @@ pub(super) fn write_gain_table(
         ));
     }
     let antenna = |id: i32| namespace.antennas[id as usize] as i32;
-    let translated: Vec<SolutionRow> = rows
+    let window = |id: i32| namespace.spectral_window(PartitionId(id as u32)) as i32;
+    let rows: Vec<SolutionRow> = solved
+        .rows
         .iter()
         .map(|row| {
             let partition = catalogue.partition(PartitionId(row.spw_id as u32));
@@ -490,17 +492,25 @@ pub(super) fn write_gain_table(
                 antenna_id: antenna(row.antenna_id),
                 refant_id: antenna(row.refant_id),
                 field_id: namespace.fields[row.field_id as usize] as i32,
-                spw_id: namespace.spectral_window(PartitionId(row.spw_id as u32)) as i32,
+                spw_id: window(row.spw_id),
                 observation_id: namespace.observations[partition.observation.0 as usize] as i32,
                 ..row.clone()
             }
         })
         .collect();
+    let translated = SolvedGains {
+        rows,
+        refant_id: antenna(solved.refant_id),
+        attempted_spw_ids: solved
+            .attempted_spw_ids
+            .iter()
+            .map(|&id| window(id))
+            .collect(),
+    };
     write_gain_caltable_named(
         &namespace.subtables,
         name(&namespace.source),
         request,
-        antenna(refant.0 as i32),
         &translated,
     )
     .map_err(|error| ObservationError::Storage(Box::new(error)))

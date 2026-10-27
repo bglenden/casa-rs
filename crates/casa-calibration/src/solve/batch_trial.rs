@@ -265,7 +265,7 @@ fn production(ms: &MeasurementSet, root: &Path) -> Vec<SolutionRow> {
     let request = gain_request(root.join("production.G"));
     let report = solve_gain(ms, &request).expect("production gaincal");
     assert_eq!(report.solution_row_count, 10, "5 antennas x 2 intervals");
-    solve_gain_rows(ms, &request).expect("production rows").0
+    solve_gain_rows(ms, &request).expect("production rows").rows
 }
 
 /// The production refant (antenna 0 of the MeasurementSet) in `binding`'s
@@ -296,7 +296,7 @@ fn batch_fed_solves_equal_the_production_gaincal() {
         // agrees with itself only to rounding in its SNR and weights.
         let again = solve_gain_rows(&stores.ms, &request)
             .expect("production rows")
-            .0;
+            .rows;
         println!(
             "production against itself: {:?}",
             agreement(&expected, &again)
@@ -308,13 +308,13 @@ fn batch_fed_solves_equal_the_production_gaincal() {
         for (store, observation) in &stores.observations {
             let binding = stores.binding(&**observation);
             for times in [1, 3, 4, 7, 12] {
-                let (rows, trace) = solve_sequential(
+                let (solved, trace) = solve_sequential(
                     &**observation,
                     &request,
                     &access(&**observation, times),
                     refant(&binding),
                 );
-                let agreement = agreement(&expected, &renumbered(rows, &binding));
+                let agreement = agreement(&expected, &renumbered(solved.rows, &binding));
                 println!(
                     "{store} sequential {closure:?} {times} times/batch: {agreement:?}; {trace:?}"
                 );
@@ -390,8 +390,8 @@ fn sigma_weighted_batch_solves_equal_the_production_gaincal() {
             weights,
             ..access(&*observation, 3)
         };
-        let (rows, _) = solve_sequential(&*observation, &request, &access, refant(&binding));
-        agreement(&expected, &renumbered(rows, &binding))
+        let (solved, _) = solve_sequential(&*observation, &request, &access, refant(&binding));
+        agreement(&expected, &renumbered(solved.rows, &binding))
     };
     let sigmas = solve(WeightRequest::InverseSigmaSquared {
         fallback: SigmaFallback::Refuse,
@@ -425,13 +425,13 @@ fn concurrent_fragments_close_only_after_their_work_joins() {
         let stores = open(root.path(), closure);
         for (store, observation) in &stores.observations {
             let binding = stores.binding(&**observation);
-            let (rows, trace) = solve_concurrent(
+            let (solved, trace) = solve_concurrent(
                 &**observation,
                 &request,
                 &access(&**observation, 3),
                 refant(&binding),
             );
-            let agreement = agreement(&expected, &renumbered(rows, &binding));
+            let agreement = agreement(&expected, &renumbered(solved.rows, &binding));
             println!("{store} concurrent {closure:?} 3 times/batch: {agreement:?}; {trace:?}");
             assert!(agreement.flags_equal);
             assert!(

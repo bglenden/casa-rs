@@ -378,6 +378,11 @@ pub(crate) struct SolveAccumulator {
     pub(crate) channel_graphs: Vec<Vec<SolveGraph>>,
     /// The solution's TIME, set by [`Self::finalize_for_solve`].
     pub(crate) solution_time: f64,
+    /// Whether a sample entered the solve: CASA attempts a solution for
+    /// such an interval (`SDBList::Ok`, positive unflagged weight after the
+    /// model division), and sets its window's gain-table channel then,
+    /// whether or not the solve succeeds.
+    pub(crate) attempted: bool,
     baseline_centroids: HashMap<(i32, i32), WeightedTime>,
     receptor_accumulations: Vec<HashMap<SolveAccumulationKey, SolveEdgeAccumulation>>,
 }
@@ -468,6 +473,7 @@ impl SolveAccumulator {
             solution_channels: 1,
             channel_graphs: Vec::new(),
             solution_time: 0.0,
+            attempted: false,
             baseline_centroids: HashMap::new(),
             receptor_accumulations: Vec::new(),
         }
@@ -489,7 +495,7 @@ impl SolveAccumulator {
         let channels = if options.channelized {
             (0..channel_count).collect()
         } else {
-            selected_channels(row, channel_count)?
+            selected_channels(row.channel_selection.as_ref(), channel_count)?
         };
         self.observe_samples(
             &SolveSampleRow::of(row),
@@ -621,6 +627,7 @@ impl SolveAccumulator {
         if model_norm_sqr <= f32::EPSILON {
             return 0.0;
         }
+        self.attempted = true;
         let sample = samples.data[[corr_index, chan_index]] / model;
         if sample.norm() <= f32::EPSILON {
             return 0.0;
@@ -728,6 +735,7 @@ impl SolveAccumulator {
         self.scan_numbers.extend(other.scan_numbers);
         self.antenna_ids.extend(other.antenna_ids);
         self.solution_channels = self.solution_channels.max(other.solution_channels);
+        self.attempted |= other.attempted;
         for (baseline, centroid) in other.baseline_centroids {
             let mine = self.baseline_centroids.entry(baseline).or_default();
             mine.weighted_sum += centroid.weighted_sum;
@@ -919,11 +927,14 @@ fn median_with_even_mean(values: &mut [f32]) -> f32 {
     }
 }
 
-fn selected_channels(
-    row: &SelectedSolveRow,
+/// The channels of a window of `channel_count` channels that a solve
+/// uses: those `selection` names, else all. The gain table's
+/// `SPECTRAL_WINDOW` row collapses the same channels.
+pub(crate) fn selected_channels(
+    selection: Option<&ChannelSelection>,
     channel_count: usize,
 ) -> Result<Vec<usize>, GainSolveError> {
-    match &row.channel_selection {
+    match selection {
         Some(selection) => {
             selection
                 .indices(channel_count)

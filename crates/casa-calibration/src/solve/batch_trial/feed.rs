@@ -21,8 +21,9 @@ use casa_types::measures::MjdHighPrec;
 use ndarray::{ArrayView2, s};
 
 use crate::solve::grouping::{SolveAccumulator, SolveGroupOptions, SolveSampleRow, SolveSamples};
-use crate::solve::kernel::SolutionRow;
-use crate::solve::{GainSolveRequest, apply_flex_refant, nearest_first, solve_closed_group};
+use crate::solve::{
+    GainSolveRequest, SolvedGains, apply_flex_refant, nearest_first, solve_closed_group,
+};
 
 /// A fresh accumulator for group `key`.
 fn accumulator(key: GroupKey) -> SolveAccumulator {
@@ -148,17 +149,29 @@ fn antennas(catalogue: &Catalogue) -> BTreeSet<i32> {
     (0..catalogue.antennas.len() as i32).collect()
 }
 
-/// Solve one closed group into the rows.
+/// Nothing solved yet, against `refant`.
+fn unsolved(refant: i32) -> SolvedGains {
+    SolvedGains {
+        rows: Vec::new(),
+        refant_id: refant,
+        attempted_spw_ids: BTreeSet::new(),
+    }
+}
+
+/// Solve one closed group into `solved`, noting its window when the group
+/// reached a solve.
 fn finish(
     mut group: SolveAccumulator,
     available: &BTreeSet<i32>,
     request: &GainSolveRequest,
-    refant: i32,
-    rows: &mut Vec<SolutionRow>,
+    solved: &mut SolvedGains,
 ) {
+    if group.attempted {
+        solved.attempted_spw_ids.insert(group.spw_id);
+    }
     group.finalize_for_solve(request.solve_mode);
-    rows.extend(
-        solve_closed_group(group, available, request, refant)
+    solved.rows.extend(
+        solve_closed_group(group, available, request, solved.refant_id)
             .into_iter()
             .flatten(),
     );
@@ -172,13 +185,13 @@ pub(super) fn solve_sequential(
     request: &GainSolveRequest,
     access: &AccessRequest,
     refant: i32,
-) -> (Vec<SolutionRow>, SolveTrace) {
+) -> (SolvedGains, SolveTrace) {
     let catalogue = observation.catalogue();
     let available = antennas(catalogue);
     let mut traversal = observation.bind_read(access).expect("bind");
     let mut buffers = BatchBuffers::default();
     let mut live = BTreeMap::<GroupKey, SolveAccumulator>::new();
-    let mut rows = Vec::new();
+    let mut solved = unsolved(refant);
     let mut trace = SolveTrace::default();
     while let Some(event) = traversal.next(&mut buffers).expect("read") {
         let closed: Vec<GroupKey> = match event {
@@ -209,13 +222,13 @@ pub(super) fn solve_sequential(
         };
         for key in closed {
             let group = live.remove(&key).expect("live group");
-            finish(group, &available, request, refant, &mut rows);
+            finish(group, &available, request, &mut solved);
         }
     }
     trace.buffer_bytes = buffers.capacity_bytes();
     assert!(live.is_empty(), "every group closed");
-    apply_flex_refant(&mut rows, refant, &alternates(catalogue, refant));
-    (rows, trace)
+    apply_flex_refant(&mut solved.rows, refant, &alternates(catalogue, refant));
+    (solved, trace)
 }
 
 /// Batch buffers in the concurrent realization's pool.
@@ -234,12 +247,12 @@ pub(super) fn solve_concurrent(
     request: &GainSolveRequest,
     access: &AccessRequest,
     refant: i32,
-) -> (Vec<SolutionRow>, SolveTrace) {
+) -> (SolvedGains, SolveTrace) {
     let catalogue = observation.catalogue();
     let available = antennas(catalogue);
     let mut traversal = observation.bind_read(access).expect("bind");
     let mut trace = SolveTrace::default();
-    let mut rows = Vec::new();
+    let mut solved = unsolved(refant);
     let mut partial = BTreeMap::<GroupKey, SolveAccumulator>::new();
     let mut completion = GroupCompletion::default();
     let (done_tx, done_rx) = mpsc::channel::<(WorkToken, SolveAccumulator)>();
@@ -248,7 +261,7 @@ pub(super) fn solve_concurrent(
     let mut done_tx = Some(done_tx);
     let mut ready = |key: GroupKey, partial: &mut BTreeMap<GroupKey, SolveAccumulator>| {
         let group = partial.remove(&key).expect("group");
-        finish(group, &available, request, refant, &mut rows);
+        finish(group, &available, request, &mut solved);
     };
     // Join finished work, solving each group it makes ready.
     let join = |completion: &mut GroupCompletion,
@@ -339,11 +352,11 @@ pub(super) fn solve_concurrent(
     });
     assert_eq!(pool.free(), CONCURRENT_POOL, "every buffer came back");
     drop(ready);
-    rows.sort_by(|a, b| {
+    solved.rows.sort_by(|a, b| {
         (a.time_seconds, a.antenna_id)
             .partial_cmp(&(b.time_seconds, b.antenna_id))
             .expect("finite")
     });
-    apply_flex_refant(&mut rows, refant, &alternates(catalogue, refant));
-    (rows, trace)
+    apply_flex_refant(&mut solved.rows, refant, &alternates(catalogue, refant));
+    (solved, trace)
 }
