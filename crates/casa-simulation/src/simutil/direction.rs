@@ -3,7 +3,9 @@
 //! -022.59.59.600000'`, an epoch, a longitude in `qa.formxxx`'s `hms` and a
 //! latitude in its `dms`, both at precision 5.
 
+use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::quanta::Quantity;
+use casa_types::quanta::casacore::casacore_unit;
 
 use super::{SimutilError, qa};
 use crate::readantenna::parse::python_split;
@@ -100,6 +102,41 @@ fn latitude_fields(text: &str) -> Option<(String, String, String)> {
 /// (an unknown one falls back to J2000), so splitting is the whole test.
 pub fn is_direction(text: &str) -> bool {
     split_direction(text).is_ok()
+}
+
+/// `simutil.dir_s2m(direction)` of a direction string: the measure
+/// `me.direction` makes of its last two fields, read as degrees when they
+/// have no unit, in the frame its first field names (J2000 when it has two
+/// fields, or names none casa-types knows). The angles are as the measure
+/// holds them, the longitude in (−π, π] (`MVDirection::get`).
+pub fn direction_measure(direction: &str) -> Result<(DirectionRef, [f64; 2]), SimutilError> {
+    let fields: Vec<&str> = python_split(direction).collect();
+    if fields.len() < 2 {
+        return Err(SimutilError::Direction(direction.to_string()));
+    }
+    let refer = if fields.len() == 3 {
+        fields[0].parse().unwrap_or(DirectionRef::J2000)
+    } else {
+        DirectionRef::J2000
+    };
+    let radians = |text: &str| -> Result<f64, SimutilError> {
+        let value = qa::read(text)?;
+        let value = if value.unit().name().is_empty() {
+            Quantity::with_unit(value.value(), casacore_unit("deg")?)
+        } else {
+            value
+        };
+        qa::value_in(&qa::to_angle(&value)?, "rad")
+    };
+    let longitude = radians(fields[fields.len() - 2])?;
+    let latitude = radians(fields[fields.len() - 1])?;
+    let [x, y, z] = MDirection::from_angles(longitude, latitude, refer).cosines();
+    let longitude = if x != 0.0 || y != 0.0 {
+        y.atan2(x)
+    } else {
+        0.0
+    };
+    Ok((refer, [longitude, z.asin()]))
 }
 
 /// A direction as `simutil`'s methods take one (`direction`, which CASA's

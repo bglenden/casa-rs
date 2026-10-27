@@ -88,6 +88,16 @@
 //! ([`ShapeTransform::at_baseline`]) and leaves each channel a function of
 //! frequency alone ([`BaselineTransform::at_frequency`]).
 //!
+//! # Sampling at pixel directions
+//!
+//! [`SkyComponent::sample_pixels`] samples a component at an image's pixel
+//! directions as CASA's `SkyCompRep::sample` does when `ia.modify` adds a
+//! list to an image: the Stokes flux sampled by the spectral model, times
+//! the shape's scale at each direction
+//! ([`ComponentShape::pixel_scales`], on a [`PixelGrid`]). Placing a list on
+//! an image, its points on their nearest pixels and the rest on every
+//! pixel, is the image's business (`casa_simulation::simutil`).
+//!
 //! # Records
 //!
 //! [`ComponentList::to_record`] and [`SkyComponent::to_record`] form the
@@ -98,7 +108,6 @@
 //!
 //! # Deliberately not here
 //!
-//! - **Sampling components on an image.**
 //! - **The `cl` tool** itself: its argument conventions, its selection state
 //!   and when it writes its table belong to `casars.tools.componentlist`.
 //!   Reading records back (`fromrecord`) is not here either.
@@ -114,6 +123,7 @@ mod error;
 mod flux;
 mod list;
 mod record;
+mod sample;
 mod shape;
 mod spectrum;
 mod table;
@@ -124,6 +134,7 @@ pub use component_type::{Polarisation, ShapeType, SpectralType};
 pub use error::{ComponentError, ComponentListError};
 pub use flux::Flux;
 pub use list::ComponentList;
+pub use sample::PixelGrid;
 pub use shape::{ComponentShape, DirectionError, Ellipse, EllipseErrors, ShapeKind};
 pub use spectrum::{
     PowerLogPolynomial, SpectralIndex, SpectralKind, SpectralModel, TabularSpectrum,

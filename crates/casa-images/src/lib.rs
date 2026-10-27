@@ -64,6 +64,7 @@ pub mod beam;
 pub mod error;
 pub mod expr_file;
 pub mod expr_parser;
+pub mod fits_read;
 pub mod image;
 pub mod image_expr;
 mod image_expr_ops;
@@ -89,6 +90,7 @@ pub use analysis::{
 pub use beam::{GaussianBeam, ImageBeamSet};
 pub use casa_lattices::{ScratchSpace, TempStoragePlan, TempStoragePolicy};
 pub use error::ImageError;
+pub use fits_read::{FitsImage, read_fits_image};
 pub use image::{
     AnyPagedImage, Image, ImageInterface, ImagePixel, ImagePixelType, MutableImageInterface,
     PagedImage, image_pixel_type,

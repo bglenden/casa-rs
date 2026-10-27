@@ -2,20 +2,23 @@
 
 `simutil` is CASA's Python helper class (`casatasks.private.simutil`), not a
 tool, and is not in the object-surface bundle. casa-rs declares
-`readantenna` and (Phase 5a) the direction, pointing, receiver and baseline
-helpers `simobserve` uses. The signatures are compared with CASA 6.7.6's
-(`data/casa_simutil_signatures.json`). The expected values are CASA 6.7.6's:
-`readantenna`'s for the same files (probed 2026-10-21), and the rest from
-casa-simulation's CASA fixture (`tools/simulation/simutil_oracle.py`), which
-the Rust tests compare in full; here a sample checks the binding's
-arguments, results and state.
+`readantenna`, (Phase 5a) the direction, pointing, receiver and baseline
+helpers `simobserve` uses, and (Phase 5b) its sky-model helpers
+`modifymodel` and `flatimage`. The signatures are compared with CASA
+6.7.6's (`data/casa_simutil_signatures.json`). The expected values are CASA
+6.7.6's: `readantenna`'s for the same files (probed 2026-10-21), and the rest
+from casa-simulation's CASA fixtures (`tools/simulation/simutil_oracle.py`
+and `skymodel_oracle.py`), which the Rust tests compare in full; here a
+sample checks the binding's arguments, results and state.
 """
 
 from __future__ import annotations
 
+import gzip
 import inspect
 import json
 import logging
+import tarfile
 from pathlib import Path
 from typing import Any
 
@@ -23,7 +26,7 @@ import numpy as np
 import pytest
 
 from casars import simutil
-from casars.data import schema_bundle
+from casars.data import Image, schema_bundle
 
 from _casa_tools import casa_signatures, close, describe
 
@@ -358,3 +361,102 @@ def test_beams_are_casas() -> None:
             lengths = u.baselineLengths(path)
             assert isinstance(lengths, np.ndarray) and len(lengths) == case["baselines"]
             assert lengths.sum() == pytest.approx(case["sum_m"], rel=1e-9)
+
+
+# The sky-model fixture casa-simulation's Rust tests compare in full: CASA's
+# inputs, and what its modifymodel and flatimage made of them.
+SKYMODEL = Path(__file__).resolve().parents[3] / "casa-simulation" / "tests" / "data"
+
+
+@pytest.fixture(scope="module")
+def skymodel(tmp_path_factory: pytest.TempPathFactory) -> tuple[dict[str, Any], Path]:
+    with gzip.open(SKYMODEL / "skymodel_casa.json.gz", "rt", encoding="utf-8") as handle:
+        record = json.load(handle)
+    inputs = tmp_path_factory.mktemp("skymodel")
+    # The "data" filter is in Python from 3.10.12 and 3.11.4.
+    safe = {"filter": "data"} if hasattr(tarfile, "data_filter") else {}
+    with tarfile.open(SKYMODEL / "skymodel_inputs.tar.gz") as archive:
+        archive.extractall(inputs, **safe)
+    return record, inputs / "inputs"
+
+
+def skymodel_case(record: dict[str, Any], kind: str, name: str) -> dict[str, Any]:
+    return next(case for case in record[kind] if case["name"] == name)
+
+
+def same(found: Any, expected: Any, path: str = "") -> None:
+    """`found` is CASA's `expected`: lists and tuples item by item, floats to
+    1e-12."""
+    if isinstance(expected, list):
+        assert isinstance(found, (list, tuple)) and len(found) == len(expected), (path, found, expected)
+        for index, (item, wanted) in enumerate(zip(found, expected)):
+            same(item, wanted, f"{path}[{index}]")
+    else:
+        close(found, expected, rel=1e-12, path=path)
+
+
+def modify(record: dict[str, Any], inputs: Path, name: str, out: Path, **options: Any) -> Any:
+    case = skymodel_case(record, "modify", name)
+    params = case["params"]
+    return simutil.simutil().modifymodel(
+        str(inputs / case["input"]), str(out), params["inbright"], params["indirection"], params["incell"],
+        params["incenter"], params["inwidth"], -1, **options)
+
+
+def pixels(path: Path) -> np.ndarray:
+    image = Image.open(path)
+    return image.get_slice([0] * len(image.shape), list(image.shape)).flatten(order="F")
+
+
+def assert_casas_pixels(path: Path, expected: dict[str, Any]) -> None:
+    assert list(Image.open(path).shape) == expected["shape"]
+    wanted = np.array([np.nan if value is None else value for value in expected["pixels"]])
+    assert np.allclose(pixels(path), wanted, rtol=0.0, atol=1e-6 * np.nanmax(np.abs(wanted)))
+
+
+@pytest.mark.parametrize("name", ["dsf", "dsf_overrides", "dsf_incenter_mhz", "dfs_cube", "iquv_cube",
+                                  "galactic", "dsf_indirection_list", "fits_cube"])
+def test_modifymodel_returns_casas_tuple_and_image(skymodel: tuple[dict[str, Any], Path], tmp_path: Path,
+                                                   name: str) -> None:
+    record, inputs = skymodel
+    case = skymodel_case(record, "modify", name)
+    out = tmp_path / f"{name}.skymodel"
+    found = modify(record, inputs, name, out)
+    assert isinstance(found, tuple) and len(found) == 8
+    same(found, case["result"])
+    assert Image.open(out).units == "Jy/pixel"
+    assert_casas_pixels(out, case["image"])
+
+
+def test_modifymodel_refuses_as_casa_does(skymodel: tuple[dict[str, Any], Path], tmp_path: Path,
+                                          caplog: pytest.LogCaptureFixture) -> None:
+    record, inputs = skymodel
+    with caplog.at_level(logging.INFO, logger="casars.simutil"):
+        assert modify(record, inputs, "dsf_indirection_two", tmp_path / "two.skymodel") is False
+    assert "should be a single direction string" in caplog.text
+    for name in ("plain2d", "rotated", "linear2d"):
+        with pytest.raises(RuntimeError) as raised:
+            modify(record, inputs, name, tmp_path / f"{name}.skymodel")
+        assert str(raised.value) == skymodel_case(record, "modify", name)["error"]["message"]
+
+
+def test_flatimage_writes_casas_flat_image(skymodel: tuple[dict[str, Any], Path], tmp_path: Path) -> None:
+    record, inputs = skymodel
+    for name, complist in (("dfs_cube", None), ("dsf", "shapes.cl")):
+        out = tmp_path / f"{name}.skymodel"
+        modify(record, inputs, name, out)
+        u = simutil.simutil()
+        assert u.flatimage(str(out), complist=str(inputs / complist) if complist else "") is None
+        flat = next(case for case in record["flat"] if case["name"] == name and case["complist"] == complist)
+        assert_casas_pixels(Path(f"{out}.flat"), flat["image"])
+
+
+def test_modifymodel_makes_the_flat_image_when_asked(skymodel: tuple[dict[str, Any], Path],
+                                                     tmp_path: Path) -> None:
+    record, inputs = skymodel
+    out = tmp_path / "iquv.skymodel"
+    modify(record, inputs, "iquv_cube", out, flatimage=True)
+    flat = next(case for case in record["flat"] if case["name"] == "iquv_cube")
+    assert_casas_pixels(Path(f"{out}.flat"), flat["image"])
+    with pytest.raises(RuntimeError, match="not found in flatimage"):
+        simutil.simutil().flatimage(str(out), complist=str(tmp_path / "missing.cl"))

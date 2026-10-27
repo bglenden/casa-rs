@@ -19,10 +19,11 @@ use:
 - the direction helpers `direction_splitter`, `average_direction`,
   `median_direction`, `dir_m2s`, `wrapang`, `isquantity` and `isdirection`;
 - `noisetemp`, `bandname` and `polsettings`;
-- `itrf2loc`, `baselineLengths` and `approxBeam`.
+- `itrf2loc`, `baselineLengths` and `approxBeam`;
+- the sky-model helpers `modifymodel` and `flatimage`.
 
-The sky-model helpers come with `simobserve`. `casars.simutil` is the class's
-public import: CASA's `private` path would mislabel a supported entry point.
+`casars.simutil` is the class's public import: CASA's `private` path would
+mislabel a supported entry point.
 """
 
 # CASA's import is `from casatasks.private import simutil`.

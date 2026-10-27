@@ -91,6 +91,26 @@ pub enum ComponentError {
         /// Why.
         reason: String,
     },
+    /// A shape casa-rs does not sample on an image's pixels (a limb-darkened
+    /// disk).
+    #[error("sampling a {shape} on an image is not yet implemented in casa-rs: {reason}")]
+    ImageSample {
+        /// The shape.
+        shape: &'static str,
+        /// Why.
+        reason: String,
+    },
+    /// A reference direction that cannot be converted into the frame it is
+    /// sampled in without a measures frame.
+    #[error("cannot convert a component's direction from {from} to {to}: {reason}")]
+    Direction {
+        /// The component's frame.
+        from: String,
+        /// The frame it is sampled in.
+        to: String,
+        /// Why.
+        reason: String,
+    },
 }
 
 /// A failure reading or writing a CASA component-list table.

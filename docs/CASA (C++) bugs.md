@@ -92,7 +92,12 @@ Calibration behaviours casa-rs does not follow:
 `simutil` behaviours casa-rs does not follow:
 [the ALMA tiling's default beam](#calc_pointings2s-alma-tiling-reads-an-undefined-pbcoeff),
 [`noisetemp`'s receiver lookup](#noisetemp-reads-the-wrong-receiver-temperature-at-the-edges-of-its-tables),
-[directions without an epoch](#direction_splitter-cannot-split-a-direction-without-an-epoch).
+[directions without an epoch](#direction_splitter-cannot-split-a-direction-without-an-epoch),
+[`modifymodel`'s axis swaps](#modifymodel-swaps-axes-into-place-and-refuses-a-cyclic-order),
+[`modifymodel`'s Stokes labels](#modifymodel-labels-the-new-images-stokes-planes-by-their-count),
+[`incell` as two cells](#modifymodel-indexes-the-map-it-makes-of-two-cells),
+[the component-only model's unset width](#an-unset-compwidth-gives-the-component-only-model-a-meaningless-spectral-increment),
+[component spectra in another frame](#iamodify-converts-a-component-spectrum-through-the-images-default-measures-frame).
 
 ## AW-projection pairs the partner hand's visibility with the conjugate-baseline cell
 
@@ -1866,6 +1871,116 @@ direction", the message `isdirection` gives, so a `simobserve` that is given
 such a direction stops with a clear error rather than a traceback. A
 direction with more than three fields is split as CASA splits it (no epoch,
 fields 1 and 2).
+
+## `modifymodel` swaps axes into place and refuses a cyclic order
+
+- Date noted: 2026-10-27
+- Status: CASA bug; casa-rs does not follow it (#841 Phase 5b)
+- Affected code: `casatasks/src/private/simutil.py:2951–2971`
+  (`modifymodel`)
+
+`modifymodel` finds which of the model's axes is each of the four it
+writes (direction, direction, Stokes, spectral) and then moves them with
+`for ax in range(4): if axmap[ax] != ax: arr = arr.swapaxes(ax, axmap[ax])`,
+marking both axes done after each swap. That orders a model whose axes are
+a transposition of the four (the FITS order, spectral before Stokes), but
+not a cyclic one: a model with its spectral axis first (`[spectral, RA,
+Dec, Stokes]`) is left out of order, and the check before it raises
+"internal error: I'm confused about the shape if your model data cube"
+(CASA 6.7.6), with the new image already created and empty. casa-rs
+permutes the axes, so any order of the four is written as
+`[RA, Dec, Stokes, spectral]`; `tests/skymodel_casa.rs` checks the
+cyclic case pixel by pixel.
+
+## `modifymodel` labels the new image's Stokes planes by their count
+
+- Date noted: 2026-10-27
+- Status: CASA bug; casa-rs does not follow it (#841 Phase 5b)
+- Affected code: `casatasks/src/private/simutil.py:2838–2912`
+  (`modifymodel`)
+
+`modifymodel` returns the model's Stokes labels (`model_stokes`), but the
+image it writes takes its Stokes axis from `ia.fromshape`, whose default
+coordinate system labels the planes by their count: I, IQ, IQU or IQUV
+(`CoordinateUtil::addStokesAxis`). So:
+- a model labelled I and V comes out labelled I and Q, the V data then read
+  as Stokes Q;
+- three unlabelled planes come out IQU, though `modifymodel` warns
+  "setting IQV Stokes parameters from the 4th axis of you model" and
+  returns `"IQV"`.
+
+casa-rs keeps the model's labels and labels unlabelled planes as
+`modifymodel` reports them (IQV for three). Models of Stokes I alone, the
+usual case, are unaffected. A model labelled in a circular or linear basis
+(RR and LL, or XX and YY) also keeps its labels, so `flatimage` (which
+wants a Stokes I plane) and adding components (which wants I, Q, U or V)
+refuse it, where CASA relabels it I and Q and goes on; `simobserve`'s sky
+model is a brightness in Stokes parameters.
+
+## `modifymodel` indexes the map it makes of two cells
+
+- Date noted: 2026-10-27
+- Status: CASA bug; casa-rs does not follow it (#841 Phase 5b)
+- Affected code: `casatasks/src/private/simutil.py:2631–2632`, `2720`
+  (`modifymodel`)
+
+Given `incell` as a list of two cells, `modifymodel` converts them with
+`incell = map(qa.convert, incell, ['arcsec', 'arcsec'])` and later reads
+`incell[0]`. Under Python 3 `map` returns an iterator, and the index raises
+`TypeError: 'map' object is not subscriptable` (CASA 6.7.6). casa-rs takes
+the two cells, converted to arcsec and used as given (signs included), as
+the code did under Python 2. A single cell is unaffected: it becomes
+`[−cell, cell]`.
+
+## An unset `compwidth` gives the component-only model a meaningless spectral increment
+
+- Date noted: 2026-10-27
+- Status: CASA bug; casa-rs does not follow it (#841 Phase 5b)
+- Affected code: `casatasks/src/private/task_simobserve.py:506`
+
+With a component list and no sky image, `simobserve` observes a bandwidth
+of `compwidth`, or 2 GHz when `compwidth` is not a quantity, but sets the
+`.compskymodel` image's spectral increment with
+`modelcsys.setincrement(type="spectral", value=compwidth)` whatever it is.
+For `compwidth=""`, `coordsys.setincrement` puts a meaningless value there:
+in CASA 6.7.6 the model's right ascension in radians, read as hertz
+(4.976 Hz for RA 19h). casa-rs uses the 2 GHz `simobserve` observes with.
+The increment is the model's only spectral information beyond its
+reference frequency, since the model has one channel.
+
+## `ia.modify` converts a component spectrum through the image's default measures frame
+
+- Date noted: 2026-10-27
+- Status: CASA behaviour; casa-rs does not follow it (#841 Phase 5b)
+- Affected code: `casatools/src/code/imageanalysis/Images/ComponentListImage.cc`
+  (`_cacheCoordinateInfo`), `components/ComponentModels/SpectralModel.cc:100–116`
+  (`refFreqInFrame`)
+
+When `ia.modify` adds a component list to an image, each spectral model
+converts its reference frequency into the image's spectral frame
+(`refFreqInFrame`) through the measures frame of the image's spectral
+coordinate. An image made from a shape (`ia.fromshape`, as `modifymodel`
+and `simobserve` make theirs) has that frame at its defaults: the
+geocentre, an epoch of 0, and the J2000 pole, the same defaults as
+[the measures tool's](#the-measures-tool-converts-with-a-frame-at-mjd-0-and-the-geocentre).
+So a TOPO spectrum on an LSRK image, or LSRK spectra on a TOPO image, are
+shifted by a velocity no observation has, about 1e-4 of the frequency in
+CASA 6.7.6's oracle, which a spectral index turns into a flux difference of
+about 1e-4.
+
+casa-rs converts as CASA does when the image's conversion layer carries a
+real frame: an epoch and an observatory position (and the direction). The
+oracle's LSRD image, with an LSRK conversion layer at the VLA on
+2025-06-01, agrees with CASA to 1e-6 (a 1 Jy point at the reference
+frequency stays 1 Jy). With no conversion layer, or the placeholder (an
+epoch of 0 at the geocentre), casa-rs takes the frequencies as they are:
+a meaningful conversion would need the observation's epoch and position,
+which such a sky model does not carry.
+
+Components in the image's own frame, the usual case, are unaffected. The
+oracle's matched-frame cases (LSRK spectra on an LSRK cube, TOPO spectra
+on a TOPO cube) agree with CASA to 1e-6, where the same cube with spectra
+in the other frame and only the placeholder differs by 1.1e-4.
 
 ## A gain table's solved window records its frequency as its resolution and total bandwidth
 
