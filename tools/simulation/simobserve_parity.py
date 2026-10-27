@@ -5,13 +5,16 @@
 Run under CASA 6.7.6's Python:
 
     /Applications/CASA.app/Contents/MacOS/python3 tools/simulation/simobserve_parity.py \\
-        --out OUT --casars-bin TARGET/release/examples/simobserve_run \\
-        --casatestdata /Volumes/home/casatestdata --data-root ~/.casa/data \\
+        --out OUT --casars-bin TARGET/release/simobserve \\
+        --casatestdata /Volumes/home/casatestdata \\
         --atmosphere-model TARGET/release/examples/at_tool_quantities
 
 Each case of `CASES` runs CASA's `simobserve` in `OUT/casa` and casa-rs's
-(`crates/casa-simulation/examples/simobserve_run.rs`) in `OUT/casars`, on
-the same inputs, copied from casatestdata to `OUT/inputs`. The comparison
+task binary (`crates/casars-simulation`, through `--json-run`) in
+`OUT/casars`, on the same inputs, copied from casatestdata to `OUT/inputs`.
+Both find the antenna configurations in CASA's data directory
+(`~/.casa/data/alma/simmos`). A case CASA refuses must be refused by
+casa-rs with CASA's message, leaving the same files. The comparison
 checks:
 
 - **the files** each leaves in its project directory, without the graphics
@@ -53,6 +56,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 
 import numpy as np
 
@@ -264,7 +268,9 @@ def run_casa(t, case: dict, out: str) -> str:
     return os.path.join(work, case["name"])
 
 
-def run_casars(t, case: dict, out: str, binary: str, data_roots: list[str]) -> tuple[str, dict]:
+def run_casars(t, case: dict, out: str, binary: str) -> tuple[str, dict]:
+    """casa-rs's task binary on the case, through `--json-run`: its stem and
+    elapsed time, or the message it refused the case with."""
     work = os.path.join(out, "casars")
     os.makedirs(work, exist_ok=True)
     params = absolute(case["params"], out)
@@ -275,11 +281,19 @@ def run_casars(t, case: dict, out: str, binary: str, data_roots: list[str]) -> t
     shutil.rmtree(os.path.join(work, case["name"]), ignore_errors=True)
     request = os.path.join(work, case["name"] + ".json")
     with open(request, "w", encoding="utf-8") as handle:
-        json.dump(params, handle, indent=1)
-    command = [binary, request] + [arg for root in data_roots for arg in ("--data-root", root)]
-    with open(os.path.join(work, case["name"] + ".log"), "w", encoding="utf-8") as log:
+        json.dump({"kind": "run", "request": params}, handle, indent=1)
+    command = [binary, "--json-run", request, "--managed-output", "true"]
+    log_path = os.path.join(work, case["name"] + ".log")
+    with open(log_path, "w", encoding="utf-8") as log:
         result = subprocess.run(command, cwd=work, stdout=subprocess.PIPE, stderr=log, text=True, check=False)
-    outcome = json.loads(result.stdout.strip().splitlines()[-1]) if result.stdout.strip() else {"error": "no output"}
+    if result.returncode == 0:
+        report = json.loads(result.stdout)
+        outcome = {"stem": report["run"]["stem"], "elapsed_s": report["run"]["elapsed_ns"] / 1e9}
+    else:
+        prefix = "Error: task execution failed: "
+        with open(log_path, encoding="utf-8") as log:
+            errors = [line[len(prefix):].rstrip("\n") for line in log if line.startswith(prefix)]
+        outcome = {"error": errors[-1] if errors else f"exit status {result.returncode}"}
     return os.path.join(work, case["name"]), outcome
 
 
@@ -522,9 +536,8 @@ def copy_inputs(casatestdata: str, out: str) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--out", required=True)
-    parser.add_argument("--casars-bin", required=True, help="the simobserve_run example")
+    parser.add_argument("--casars-bin", required=True, help="casa-rs's simobserve task binary")
     parser.add_argument("--casatestdata", required=True, help="a casatestdata clone")
-    parser.add_argument("--data-root", action="append", default=[], help="CASA's data directory, holding alma/simmos")
     parser.add_argument("--atmosphere-model", help="casa-atmosphere's at_tool_quantities example, for tsys-atm")
     parser.add_argument("--only", nargs="*")
     parser.add_argument("--skip-casa", action="store_true", help="reuse OUT/casa")
@@ -538,18 +551,21 @@ def main() -> int:
             continue
         casa = os.path.join(out, "casa", case["name"])
         error_file = casa + ".error"
+        casa_s = None
         if not args.skip_casa:
             if os.path.exists(error_file):
                 os.remove(error_file)
+            started = time.perf_counter()
             try:
                 casa = run_casa(t, case, out)
+                casa_s = time.perf_counter() - started
                 if case.get("repredict"):
                     repredict(t, case, casa)
             except Exception as error:  # noqa: BLE001 - CASA's task raises what it refuses
                 with open(error_file, "w", encoding="utf-8") as handle:
                     handle.write(str(error))
         casa_error = open(error_file, encoding="utf-8").read() if os.path.exists(error_file) else None
-        casars, outcome = run_casars(t, case, out, os.path.abspath(args.casars_bin), args.data_root)
+        casars, outcome = run_casars(t, case, out, os.path.abspath(args.casars_bin))
         if casa_error is not None or "error" in outcome:
             report = {"name": case["name"], "differences": [], "refused": casa_error}
             if casa_error != outcome.get("error"):
@@ -558,9 +574,14 @@ def main() -> int:
                 report["differences"].append(f"files: CASA {products(casa)} against casa-rs {products(casars)}")
         else:
             report = compare_case(t, case, casa, casars, out, args)
+        # The task's own times: CASA's simobserve call, casa-rs's run report.
+        report["seconds"] = {"casa": casa_s, "casa-rs": outcome.get("elapsed_s")}
         reports.append(report)
         status = "OK" if not report["differences"] else f"{len(report['differences'])} differences"
-        print(f"{case['name']}: {status}")
+        timing = "".join(
+            f", {side} {seconds:.1f} s" for side, seconds in report["seconds"].items() if seconds is not None
+        )
+        print(f"{case['name']}: {status}{timing}")
         for line in report.get("ms", []):
             print("   ", line)
         for line in report["differences"]:

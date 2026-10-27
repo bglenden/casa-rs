@@ -109,6 +109,8 @@ pub struct SimobserveOutcome {
     /// The files written, in the order they were written; a file written
     /// twice is listed once.
     pub products: Vec<PathBuf>,
+    /// What the run did not do that it was asked to, such as graphics.
+    pub warnings: Vec<String>,
 }
 
 /// What `simobserve` refuses.
@@ -193,6 +195,7 @@ pub fn simobserve(request: &SimobserveRequest) -> Result<SimobserveOutcome, Simo
         directory: run.directory,
         stem: run.stem,
         products: run.products,
+        warnings: run.warnings,
     })
 }
 
@@ -212,6 +215,8 @@ struct Run<'a> {
     antennalist: String,
     /// The files written.
     products: Vec<PathBuf>,
+    /// The outcome's warnings.
+    warnings: Vec<String>,
 }
 
 impl<'a> Run<'a> {
@@ -252,7 +257,7 @@ impl<'a> Run<'a> {
             |name| name.to_string_lossy().into_owned(),
         );
         let stem = antennas::stem(&name, &antennalist)?;
-        let run = Self {
+        let mut run = Self {
             request,
             parameters,
             directory,
@@ -261,15 +266,18 @@ impl<'a> Run<'a> {
             uvmode,
             antennalist,
             products: Vec::new(),
+            warnings: Vec::new(),
         };
         run.check_overwrite()?;
         run.check_sky_inputs()?;
         if !matches!(parameters.graphics.as_str(), "none" | "") {
-            tracing::warn!(
+            let warning = format!(
                 "graphics='{}' is not yet implemented in casa-rs (#841 Phase 5e): no .png or \
                  .quick.psf is written",
                 parameters.graphics
             );
+            tracing::warn!("{warning}");
+            run.warnings.push(warning);
         }
         Ok(run)
     }

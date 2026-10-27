@@ -867,6 +867,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "casars-simulation"
+version = "0.27.0"
+dependencies = [
+ "casa-logging",
+ "casa-measures-data",
+ "casa-ms",
+ "casa-provider-contracts",
+ "casa-simulation",
+ "casa-task-runtime",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tracing",
+]
+
+[[package]]
 name = "cast"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

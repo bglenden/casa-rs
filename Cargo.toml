@@ -5,6 +5,7 @@ members = [
     "crates/casa-task-runtime",
     "crates/casars",
     "crates/casars-imager",
+    "crates/casars-simulation",
     "crates/casars-python",
     "crates/casars-frontend-services",
     "crates/casa-types",

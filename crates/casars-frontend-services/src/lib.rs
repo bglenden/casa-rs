@@ -1208,15 +1208,13 @@ pub fn parameter_provider_invocation(
     let provider_family = session.bundle().surface.provider_family().to_string();
     let invocation = project_provider_invocation(&session, |family, values, direct| match family {
         "imager" => casars_imager::imager_provider_invocation(values, direct.args),
-        "simobserve" => {
-            casa_ms::simulation_task::simobserve_provider_invocation(values, direct.args)
-        }
+        "simobserve" => casars_simulation::simobserve_provider_invocation(values, direct.args),
         _ => Ok(ProviderInvocationAdaptation::direct(direct)),
     })
     .map_err(|error| parameter_error("project provider invocation", error))?;
     let descriptor = match provider_family.as_str() {
         "imager" => Some(casars_imager::imager_protocol_descriptor()),
-        "simobserve" => Some(casa_ms::simulation_task::simobserve_protocol_descriptor()),
+        "simobserve" => Some(casars_simulation::simobserve_protocol_descriptor()),
         _ => None,
     };
     let (protocol_name, protocol_version) = descriptor.map_or((None, None), |descriptor| {
@@ -2693,23 +2691,26 @@ mod tests {
     }
 
     #[test]
-    fn parameter_provider_invocation_uses_simobserve_family_stdin() {
+    fn parameter_provider_invocation_carries_casas_simobserve_parameters() {
         let values = HashMap::from([(
-            "request_kind".to_string(),
+            "antennalist".to_string(),
             SurfaceParameterValue::String {
-                value: "family".to_string(),
+                value: "vla.a.cfg".to_string(),
             },
         )]);
         let invocation = parameter_provider_invocation("simobserve".to_string(), values)
-            .expect("family invocation");
-        assert_eq!(invocation.args, ["--json-run", "-"]);
+            .expect("simobserve invocation");
+        assert_eq!(
+            invocation.args,
+            ["--managed-output", "true", "--json-run", "-"]
+        );
         let request: serde_json::Value =
             serde_json::from_str(invocation.stdin.as_deref().expect("stdin JSON")).unwrap();
-        assert_eq!(request["kind"], "family");
-        assert_eq!(request["request"]["telescope"], "VLA");
-        assert_eq!(request["request"]["output_ms"], "simobserve-family.ms");
-        assert!(request["request"].get("model").is_none());
-        assert!(request["request"].get("out").is_none());
+        assert_eq!(request["kind"], "run");
+        assert_eq!(request["request"]["antennalist"], "vla.a.cfg");
+        assert_eq!(request["request"]["project"], "sim");
+        assert_eq!(request["request"]["thermalnoise"], "tsys-atm");
+        assert_eq!(request["request"]["mapsize"], serde_json::json!(["", ""]));
     }
 
     #[test]

@@ -1,0 +1,31 @@
+[package]
+name = "casars-simulation"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "CASA-compatible simulation tasks: simobserve"
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+casa-logging = { path = "../casa-logging" }
+casa-measures-data = { path = "../casa-measures-data" }
+casa-ms = { path = "../casa-ms" }
+casa-provider-contracts = { path = "../casa-provider-contracts" }
+casa-simulation = { path = "../casa-simulation" }
+casa-task-runtime = { path = "../casa-task-runtime" }
+schemars = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
+
+[[bin]]
+name = "simobserve"
+path = "src/main.rs"
