@@ -1,0 +1,1113 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Rust and Python APIs for CASA-compatible data and tasks">
+      
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
+    
+    
+      
+        <title>Imaging on the shared observation batches (M2 packet c) - casa-rs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.57a0d79d.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#imaging-on-the-shared-observation-batches-m2-packet-c" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="casa-rs" class="md-header__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            casa-rs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Imaging on the shared observation batches (M2 packet c)
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="casa-rs" class="md-nav__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    casa-rs
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Task Parameters
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Task Parameters
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../task-parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/task-parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Generated Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../rust-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rust API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Python
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/tasks-calibrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Calibrate Tasks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/versioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-today" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Today
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-target" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Target
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. Target">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#21-the-source" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.1 The source
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#22-geometry" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.2 Geometry
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#23-selection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.3 Selection
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#24-compile-without-main-walks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.4 Compile without MAIN walks
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#25-weights-weightcache-errors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.5 Weights, WeightCache, errors
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#26-write-back" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.6 Write-back
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#27-what-is-removed-at-cutover" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.7 What is removed at cutover
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-owner-decisions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Owner decisions
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-order-of-work" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Order of work
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-baseline-and-blocking-comparison" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Baseline and blocking comparison
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-risks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Risks
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="imaging-on-the-shared-observation-batches-m2-packet-c">Imaging on the shared observation batches (M2 packet c)<a class="headerlink" href="#imaging-on-the-shared-observation-batches-m2-packet-c" title="Permanent link">&para;</a></h1>
+<p>Status: accepted by the owner on 2026-10-27 (section 3); no code changes yet
+Truth class: accepted design
+Date: 2026-10-27
+Repository baseline: <code>84824df</code>
+Design inputs: <a href="../implementation-plan/">implementation plan</a> §4 (M2) and D4, <a href="../contracts/">contracts</a>, <a href="../trial/">trial README</a> example A</p>
+<p>The plan's M2 packet (c) moves imaging's source preparation and operator
+windows onto the shared batches, within the existing single
+pass/worker/resource architecture. This document has three parts:
+- how imaging reads a MeasurementSet today (section 1);
+- the design that replaces it, and the owner's decisions on it (sections 2
+  and 3);
+- the order of work, and the baseline and blocking comparison that gate the
+  cutover (sections 4 and 5).</p>
+<h2 id="1-today">1. Today<a class="headerlink" href="#1-today" title="Permanent link">&para;</a></h2>
+<p>Imaging reaches a MeasurementSet only through <code>casa-ms</code>'s selected-observation
+layer. That layer also computes imaging's geometry, which is why <code>casa-ms</code>
+depends on <code>casa-imaging-model</code>.</p>
+<ul>
+<li><strong>Compile</strong> (<code>casa-imaging-application/src/compile/mod.rs:94</code>) walks MAIN
+  three times:</li>
+<li>the selection survey, with the MFS spectral envelope
+     (<code>compile/selection.rs:157</code>);</li>
+<li>the cube density padding (<code>selected_observation/spectral_evaluation.rs:427</code>);</li>
+<li>the pointing query domain (<code>casa-ms/src/observation_owner.rs:374</code>).</li>
+</ul>
+<p>It then resolves a <code>SelectedObservationResolutionRequest</code> into an
+  <code>ObservationSnapshotInput</code> and its access.
+- <strong>Admission</strong> (<code>casa-imaging-runtime/src/source_access.rs:131</code>) plans a
+  content budget that binary-searches <code>rows_per_block</code>
+  (<code>selected_observation/content_plan/requirements.rs:87</code>).
+- <strong>Delivery</strong> goes through <code>MeasurementSetSource</code>, the only production
+  <code>BoundedSource</code> (<code>casa-imaging-application/src/imaging/source.rs:131</code>, trait
+  at <code>casa-imaging-runtime/src/pass/mod.rs:175</code>). One producer thread with two
+  block slots runs, per block:
+  1. consecutive selected MAIN rows of one <code>DATA_DESC_ID</code>
+     (<code>selected_observation/access.rs:522</code>);
+  2. the channel window with its frame conversion
+     (<code>access/channel_window.rs:14</code>);
+  3. typed channel-range fills into a buffer
+     (<code>selected_observation_buffer.rs:479</code>);
+  4. <strong>row geometry</strong>: phase and pointing laws, per-domain UVW rotation and
+     phase shift, parallactic angle, antenna class, output-frame frequency
+     conversion cached per (field, time)
+     (<code>access/geometry.rs:41</code>, <code>access.rs:887</code>);
+  5. a stride gather into <code>NativeBlock</code> <code>[row][channel][correlation]</code>
+     (<code>imaging/source.rs:296</code>).</p>
+<p>That is two copies: store to buffer, then buffer to block.
+- <strong>Consumers</strong> place samples (<code>pass/wave.rs:238</code>). The imaging weight of
+  every sample is cached across passes in <code>WeightCache</code>, positionally per
+  (selected row, native channel) (<code>pass/weights.rs:17</code>).
+- <strong><code>savemodel</code></strong> writes through <code>SelectedVisibilityWrite</code>, addressed by
+  <code>RowAddress { physical_row, data_description }</code>, one cell at a time in
+  batches of 10,000 rows (<code>observation_owner/visibility_write.rs:253</code>).</p>
+<p>MAIN-row concepts run through every layer:
+- <code>SelectedRows</code>, <code>SelectedObservationRunRow</code> and <code>SelectedNumericRow</code> (model);
+- the survey's row manifest and <code>first_cross_row</code> (compile);
+- one-DDID blocks and per-row predicates (casa-ms);
+- <code>RowAddress</code>, <code>BlockShape.rows</code>, and <code>WeightCache</code>'s row order (runtime);
+- non-finite errors that name a MAIN row (application).</p>
+<p>Example A of the trial (<code>tests/ms_trial_imaging.rs</code>) already drives the
+production operator and major cycle from batches through a <code>BoundedSource</code>
+over <code>&amp;dyn Observation</code>, on both stores. It skipped all of step 4: stored
+UVW, native frequencies, one partition, one domain, placeholder row headers
+and no write-back.</p>
+<h2 id="2-target">2. Target<a class="headerlink" href="#2-target" title="Permanent link">&para;</a></h2>
+<p>Imaging reads <code>&amp;dyn Observation</code> batches only. Its geometry compiles from the
+catalogue and the batch. <code>casa-ms</code> keeps the storage adapters and nothing
+imaging-specific, as D4 proposes. The same imaging run then works on MSv2 and
+on MSv4.</p>
+<h3 id="21-the-source">2.1 The source<a class="headerlink" href="#21-the-source" title="Permanent link">&para;</a></h3>
+<p><code>ObservationSource</code> replaces <code>MeasurementSetSource</code> as the production
+<code>BoundedSource</code>, in <code>casa-imaging-application</code>:</p>
+<ul>
+<li><strong><code>begin</code></strong> binds one traversal per wave. Its <code>AccessRequest</code> names:</li>
+<li>the selected partitions and time range;</li>
+<li>the wave's channel window (<code>restrict</code>): the native channels whose
+    samples reach the wave's planes, with both interpolation partners;</li>
+<li>the content (<code>Roles::FLAGS | WEIGHTS</code> for density passes, as
+    <code>FlagsAndWeights</code> asks today).</li>
+</ul>
+<p>A partition replaces a <code>DATA_DESC_ID</code>.
+- <strong><code>fill</code></strong> packs one batch's valid samples into <code>NativeBlock</code> in one copy,
+  as the trial's <code>pack</code> does. Padding cells (NaN weight) are dropped, and so
+  are the samples a selection predicate excludes (2.3). A block holds whole
+  times of one partition, already in baseline order, so
+  <code>order_rows_by_baseline</code> has nothing to do.
+- <strong><code>maximum_block</code></strong> comes from the estimate: the widest partition's batch
+  at the admitted batch size.</p>
+<p>The producer thread, two block slots, the worker team, the chunk planner and
+admission stay as they are. One copy (store to batch buffers) plus the pack
+replaces the two copies of today.</p>
+<h3 id="22-geometry">2.2 Geometry<a class="headerlink" href="#22-geometry" title="Permanent link">&para;</a></h3>
+<p>Row geometry moves from <code>casa-ms</code> into imaging (<code>casa-imaging-model</code>, compiled
+once, applied per batch), keyed by what a batch carries:</p>
+<table>
+<thead>
+<tr>
+<th>Today, per MAIN row</th>
+<th>On a batch</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>UVW rotation and phase shift per domain or facet</td>
+<td>per (time, baseline) from the batch's stored UVW, rotated per (partition, field, time)</td>
+</tr>
+<tr>
+<td>Parallactic angle</td>
+<td>per (antenna, time), from the catalogue's antenna positions and the batch's times</td>
+</tr>
+<tr>
+<td>Output-frame frequency conversion, cached per (field, time)</td>
+<td>per (partition, field, time), the same cache key without the DDID</td>
+</tr>
+<tr>
+<td>AW pointing pixel per (DDID, field, time)</td>
+<td>per (partition, field, time)</td>
+</tr>
+<tr>
+<td>Antenna class (mosaic or heterogeneous primary beams)</td>
+<td>per antenna, from the catalogue</td>
+</tr>
+</tbody>
+</table>
+<p>Measures come from the authoritative types in <code>casa-types</code> and the bulk
+conversion API that M1 trialled. The MS-specific helpers (<code>MsCalEngine</code>'s
+frame paths, <code>spectral_selection.rs</code>'s prepared frequency factors) fold into
+Measures as the plan requires, with no translation layer left behind.</p>
+<p><strong>Law:</strong> for every T1 and T1.5 workload, the batch geometry must equal today's
+per-row geometry to 1e-12 relative, sample for sample. Only summation order
+may differ.</p>
+<h3 id="23-selection">2.3 Selection<a class="headerlink" href="#23-selection" title="Permanent link">&para;</a></h3>
+<p>The imager's selection is resolved once (<code>RowSelection</code>,
+<code>casa-imaging-model/src/observation.rs:188</code>): fields, a UV-distance
+interval (in wavelengths per window) and scan intents. A compiled predicate
+applies it per MAIN row (<code>selected_observation/row_selection.rs:20</code>).
+Windows, channels, correlations and times already map onto <code>AccessRequest</code>.
+On a batch:
+- field and intent are per time;
+- UV distance is per (time, baseline), scaled by the partition's wavelength.</p>
+<p>There are two options:
+- <strong>(a)</strong> <code>AccessRequest</code> states field and intent selections, which the
+  adapters apply to whole times, and imaging tests the UV distance as it
+  packs;
+- <strong>(b)</strong> imaging tests all three as it packs.</p>
+<p>Option (a) skips the decoding of unselected times, which matters for a
+mosaic imaged one field at a time. It also serves calibration's field and
+intent selections. It belongs to packet (a), catalogue/selection and read
+binding.</p>
+<h3 id="24-compile-without-main-walks">2.4 Compile without MAIN walks<a class="headerlink" href="#24-compile-without-main-walks" title="Permanent link">&para;</a></h3>
+<p>The opening's index (the MSv2 adapter grids MAIN's key columns once, in row
+chunks) and the estimate answer what compile walks MAIN for today:
+- selected sample counts per partition;
+- the spectral envelope, from the partitions' frequencies and the fields'
+  times;
+- the cube density padding;
+- the first cross-correlation time, for native AW;
+- the pointing domain, from the catalogue's pointing and the selected times.</p>
+<p>Three walks become one index built at opening. The index's cost is the
+trial's measured opening time; the baseline (section 5) must show the sum
+does not regress.</p>
+<h3 id="25-weights-weightcache-errors">2.5 Weights, <code>WeightCache</code>, errors<a class="headerlink" href="#25-weights-weightcache-errors" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Weight slots.</strong> <code>WeightCache</code> keeps one slot per delivered sample, in
+  traversal order. Traversals are deterministic for a given request and
+  batch size, so passes still meet samples in one order. The slot count comes
+  from the estimate's valid samples after selection.</li>
+<li><strong>Errors.</strong> A non-finite value names its (partition, time, baseline,
+  channel, correlation) and the store, not a MAIN row.</li>
+<li><strong><code>RowContext</code></strong> keeps field, window (now partition) and original UVW. Its
+  <code>RowAddress</code> becomes a batch-slot address that the write-back resolves.</li>
+</ul>
+<h3 id="26-write-back">2.6 Write-back<a class="headerlink" href="#26-write-back" title="Permanent link">&para;</a></h3>
+<p><code>savemodel</code> and the continuum <code>CORRECTED_DATA</code> write through an
+<code>observation_io</code> update session. The prediction sink assembles each batch's
+model values and patches them with <code>PatchValues</code>:
+- the MSv2 session creates <code>MODEL_DATA</code> with CASA's initial model, as
+  <code>SelectedVisibilityWrite</code> does, and clears what CASA's <code>addScrCols</code> clears
+  (#912);
+- an MSv4 store, which cannot gain a group, writes an existing model group
+  or refuses at opening.</p>
+<p>The write stays a <code>Residency::All</code> pass, admitted as today. Its counting law
+(<code>a_visibility_write_stays_within_its_admission</code>) is kept, restated for
+batches.</p>
+<h3 id="27-what-is-removed-at-cutover">2.7 What is removed at cutover<a class="headerlink" href="#27-what-is-removed-at-cutover" title="Permanent link">&para;</a></h3>
+<p>The cutover PR deletes all of the following:
+- <code>MeasurementSetSource</code>;
+- the selected-observation access, buffer, content plan and walk modules;
+- <code>SelectedRows</code> and the row-based model types;
+- <code>SelectedVisibilityWrite</code> (once nothing else uses it);
+- the <code>casa-ms → casa-imaging-model</code> edge.</p>
+<p>The imaging dependency checker's grandfathered lists shrink accordingly.</p>
+<h2 id="3-owner-decisions">3. Owner decisions<a class="headerlink" href="#3-owner-decisions" title="Permanent link">&para;</a></h2>
+<p>All five were decided on 2026-10-27, each as proposed below: imaging takes
+<code>casa-observation</code> and <code>casa-ms</code> drops <code>casa-imaging-model</code>; geometry lives
+in <code>casa-imaging-model</code>; selection is option (a); the thresholds are as
+stated; and MSv4 imaging is part of the cutover's acceptance.</p>
+<ol>
+<li><strong>Dependency direction (an Ask First item).</strong></li>
+<li>Imaging gains <code>casa-observation</code> as a normal dependency:
+     <code>casa-imaging-model</code> (geometry over catalogue types) and
+     <code>casa-imaging-application</code> (the source).</li>
+<li><code>casa-ms</code> loses its normal dependency on <code>casa-imaging-model</code>.</li>
+<li>This is D4's proposed amendment. <code>dependency-policy.json</code> needs its
+     exact-set edits.</li>
+<li><strong>Where geometry lives.</strong> In <code>casa-imaging-model</code>, as D4 says (proposed
+   here), or in a new imaging crate. The proposal keeps one crate.</li>
+<li><strong>Selection (2.3).</strong> Option (a) puts field and intent selections in
+   <code>AccessRequest</code> (packet a) before this port; option (b) tests everything
+   in the source. The proposal is (a).</li>
+<li><strong>Blocking thresholds (section 5).</strong> The proposal:</li>
+<li>wall time at most +2% or two baseline standard deviations, whichever
+     is larger, per workload and worker count;</li>
+<li>peak RSS at most +5%;</li>
+<li>images and models equal to today's to a normalized RMS of 1e-6.</li>
+<li><strong>MSv4 imaging at cutover.</strong> It comes almost free through
+   <code>&amp;dyn Observation</code>. The proposal makes it part of the acceptance (T1 on
+   the trial's MSv4 conversions) rather than a later packet.</li>
+</ol>
+<h2 id="4-order-of-work">4. Order of work<a class="headerlink" href="#4-order-of-work" title="Permanent link">&para;</a></h2>
+<p>Each step is its own PR with its own laws. Only the last switches production.</p>
+<ol>
+<li><strong>Baseline (M0 for this packet).</strong> The comparison harness and the
+   recorded baseline of today's route (section 5). No code change to
+   imaging.</li>
+<li><strong>Selection on the request</strong> (packet a, if decision 3 is (a)): field and
+   intent selections, with laws on both stores.</li>
+<li><strong>Geometry over batches</strong> in imaging, beside today's. The equality law of
+   2.2 runs both on every T1 workload.</li>
+<li><strong><code>ObservationSource</code></strong> beside <code>MeasurementSetSource</code>, behind a run
+   option. T0, T1 and T1.5 run on both.</li>
+<li><strong>Write-back</strong> through update sessions. The model-column T1 tests and the
+   counting law run on both routes.</li>
+<li><strong>Cutover.</strong></li>
+<li>The option's default flips, and 2.7's routes are removed in the same PR.</li>
+<li>The blocking comparison must pass.</li>
+<li>It needs an independent review of the persistence and the hot loop.</li>
+</ol>
+<h2 id="5-baseline-and-blocking-comparison">5. Baseline and blocking comparison<a class="headerlink" href="#5-baseline-and-blocking-comparison" title="Permanent link">&para;</a></h2>
+<p><strong>Workloads</strong> come from <code>resources/imaging-architecture/representative-science-matrix.json</code>:
+- <code>standard-mfs-dirty-vla</code> (6.28 M samples), <code>standard-mfs-hogbom-vla</code> and
+  <code>standard-mfs-model-data-vla</code> (write-back);
+- <code>spectral-cube-dirty-vla</code> and <code>spectral-cube-clean-vla</code>;
+- <code>continuum-subtracted-cube-alma</code>;
+- <code>mosaic-alma</code>;
+- <code>w-multifield-cube-vla</code>;
+- <code>native-aw-evla</code> (pointing);
+- <code>multidomain-outlier-vla</code> (domains);
+- T1 (<code>cargo test -p casars-imager --test t1</code>) and the T1.5 refim cases.</p>
+<p><strong>Measured per run:</strong> from each <code>&lt;imagename&gt;.summary.json</code>, the per-phase
+seconds, <code>process_peak_rss_bytes</code> and <code>peak_reserved_bytes</code>; and the
+admitted block size (today's <code>rows_per_block</code>, then batch times). Each run
+also records the commit, FFTW link, backend, precision, worker counts and
+cache state, as <code>TESTING.md</code> "Imaging tiers and evidence" and
+<code>.agents/skills/casa-rs-imaging-performance</code> require.</p>
+<p><strong>Protocol:</strong>
+- A B B A on the Mac mini, with one worker beside four at every bar.
+- The baseline is today's route at the commit the cutover branches from; it
+  is re-run if <code>main</code> moves.
+- The noise band comes from the baseline's own repeats.</p>
+<p><strong>Harness:</strong> <code>tools/perf/imager/run_workload.py</code> already runs a workload
+against CASA (<code>scripts/bench-imager-vs-casa.sh</code>). It gains one mode that runs
+two casa-rs builds on the same inputs and writes one comparison receipt per
+workload: medians, the band, verdicts, and images compared by normalized
+RMS. Receipts go where <code>docs/agent-reference.md</code> puts evidence (small
+receipts under <code>casa-rs-evidence/imaging-port/</code>, a copy on the NAS),
+summarized on the PR. Inputs are not copied off the Mac mini.</p>
+<p><strong>Blocking:</strong>
+- A workload outside its thresholds (decision 4) blocks the cutover, whatever
+  correctness says.
+- A faster route is recorded, not a reason to change thresholds.</p>
+<h2 id="6-risks">6. Risks<a class="headerlink" href="#6-risks" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Opening index cost.</strong> Gridding MAIN's keys at opening replaces three
+  walks. On a large MS with a narrow selection it may cost more than today's
+  replay of the selected rows. The trial measured it on <code>pilot.ms</code> only; step
+  1 measures it on the T2 inputs.</li>
+<li><strong>Padding.</strong> A partition whose times have few baselines (subarrays) pads
+  many cells. Packing drops them, but the batch buffers are sized for the
+  padded grid. The estimate reports the padded bytes, so admission sees them.</li>
+<li><strong>One producer thread.</strong> Today's producer reads in row order. Batches allow
+  parallel cursors (the trial's work units), but the design keeps one
+  producer and leaves parallel production to a measured follow-up.</li>
+<li><strong>Geometry drift.</strong> Moving the measures paths can move UVW or frequencies
+  by rounding. The 1e-12 equality law and T1.5 against CASA bound it.
+  Reproducibility of the last bit is not a goal (AGENTS.md).</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.c21346df.min.js"></script>
+      
+    
+  </body>
+</html>
