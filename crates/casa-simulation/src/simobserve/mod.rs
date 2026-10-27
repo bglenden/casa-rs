@@ -50,6 +50,17 @@
 //! - **A total-power MeasurementSet.** Corrupting an existing
 //!   MeasurementSet, CASA takes it for total power when any UVW value is
 //!   zero (`uvw.all() == 0`); casa-rs when every one is, as was meant.
+//! - **A sky model the task writes.** A `skymodel` that is the
+//!   `<stem>.skymodel` the task writes is deleted by CASA before it is read;
+//!   casa-rs refuses it.
+//! - **A project path.** CASA names the files `<project>.<cfg>` inside the
+//!   directory `<project>`, which nests a path inside itself; casa-rs names
+//!   them by the directory's last component.
+//!
+//! A predicted model under the primary beam holds one grid per field
+//! (the session's [`Simulator::predict`]), so a mosaic of many pointings
+//! over a large model can need more memory than the session's budget,
+//! which refuses it before it starts.
 
 mod antennas;
 mod noise;

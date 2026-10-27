@@ -416,12 +416,12 @@ def noise_classes(noise: np.ndarray, auto: np.ndarray, expected: float) -> tuple
     for corr in range(noise.shape[1]):
         cross = noise[~auto, corr, :].ravel()
         autos = noise[auto, corr, :].ravel()
-        entry = {
-            "cross_re_var": check(f"correlation {corr} cross real", cross.real),
-            "cross_im_var": check(f"correlation {corr} cross imaginary", cross.imag),
-            "cross_re_im_corr": float(np.corrcoef(cross.real, cross.imag)[0, 1]),
-            "n_cross": int(cross.size),
-        }
+        entry = {"n_cross": int(cross.size)}
+        # A single dish's MeasurementSet has autocorrelations alone.
+        if cross.size:
+            entry["cross_re_var"] = check(f"correlation {corr} cross real", cross.real)
+            entry["cross_im_var"] = check(f"correlation {corr} cross imaginary", cross.imag)
+            entry["cross_re_im_corr"] = float(np.corrcoef(cross.real, cross.imag)[0, 1])
         if autos.size:
             entry["auto_re_var"] = check(f"correlation {corr} auto real", autos.real)
             entry["auto_im_max"] = float(np.abs(autos.imag).max())
@@ -853,7 +853,11 @@ def compare_tsys_noise(paths: dict, term: dict, direct_spws=None, model: str | N
         stats[side] = classes
         failures += [f"{side} normalized noise: {failure}" for failure in side_failures]
         cross = values[~auto[unflagged]].ravel()
-        normalized[side] = np.concatenate([cross.real, cross.imag])
+        if cross.size:
+            normalized[side] = np.concatenate([cross.real, cross.imag])
+        else:
+            # A single dish: its autocorrelations' real noise.
+            normalized[side] = values[auto[unflagged]].ravel().real
     if all(np.all(np.isfinite(values)) for values in normalized.values()):
         statistic, p_value = ks_two_sample(normalized["casa"], normalized["casa-rs"])
         stats["ks_cross"] = {"statistic": statistic, "p_value": p_value}
@@ -1293,7 +1297,7 @@ def describe_data(data: dict) -> str:
         )
     if kind == "noisy" and data.get("noise", "").startswith("tsys") and "casa" in data and "casa-rs" in data:
         normalized = lambda side: ", ".join(  # noqa: E731
-            f"{entry['cross_re_var']:.4f}/{entry['cross_im_var']:.4f}"
+            (f"{entry['cross_re_var']:.4f}/{entry['cross_im_var']:.4f}" if "cross_re_var" in entry else "-/-")
             + (f"/{entry['auto_re_var']:.4f}" if "auto_re_var" in entry else "")
             for key, entry in data[side].items()
             if key.startswith("corr")

@@ -145,10 +145,25 @@ pub(super) fn schedule(
             parameters.totaltime
         )));
     }
+    let steps = steps(
+        &times[..fields],
+        total_s,
+        offset_s,
+        calibrator.then_some(calibrator_s),
+    );
+    Ok(Schedule { reference, steps })
+}
+
+/// CASA's observing loop: from `offset_s` before the middle of `total_s`,
+/// each pointing for its time in turn, pass after pass, until the time is
+/// used; with a calibrator, its scan of `calibrator_s` before the first
+/// pass and after each. The pointings of a pass the time ends inside are
+/// observed, calibrator or not (CASA drops them with a calibrator).
+fn steps(times_s: &[f64], total_s: f64, offset_s: f64, calibrator_s: Option<f64>) -> Vec<Step> {
     let mut start_s = -total_s / 2.0 + offset_s;
     let first_s = start_s;
     let mut steps = Vec::new();
-    if calibrator {
+    if let Some(calibrator_s) = calibrator_s {
         steps.push(Step::Calibrator {
             start_s,
             stop_s: start_s + calibrator_s,
@@ -158,7 +173,7 @@ pub(super) fn schedule(
     let mut targets = Vec::new();
     let mut field = 0;
     while start_s - first_s < total_s {
-        let stop_s = start_s + times[field];
+        let stop_s = start_s + times_s[field];
         targets.push(Target {
             field,
             start_s,
@@ -166,8 +181,8 @@ pub(super) fn schedule(
         });
         field += 1;
         start_s = stop_s;
-        if field == fields {
-            if calibrator {
+        if field == times_s.len() {
+            if let Some(calibrator_s) = calibrator_s {
                 let stop_s = start_s + calibrator_s;
                 steps.push(Step::Targets(std::mem::take(&mut targets)));
                 steps.push(Step::Calibrator { start_s, stop_s });
@@ -179,7 +194,7 @@ pub(super) fn schedule(
     if !targets.is_empty() {
         steps.push(Step::Targets(targets));
     }
-    Ok(Schedule { reference, steps })
+    steps
 }
 
 /// `refdate` at 00:00 UTC: its date, `(\d*/\d+/\d+)`, with any time after
@@ -322,6 +337,45 @@ mod tests {
         assert_eq!(seconds("30min"), 1800.);
         assert_eq!(seconds("30deg"), 7200.);
         assert!(hour_angle("soon").is_err());
+    }
+
+    fn fields(step: &Step) -> Vec<usize> {
+        match step {
+            Step::Targets(targets) => targets.iter().map(|target| target.field).collect(),
+            Step::Calibrator { .. } => Vec::new(),
+        }
+    }
+
+    #[test]
+    fn passes_repeat_until_the_time_is_used() {
+        // 3 pointings of 10 s for 50 s, centred on the transit: one
+        // observemany of 1.67 passes, as CASA calls it.
+        let steps = steps(&[10., 10., 10.], 50., 0., None);
+        assert_eq!(steps.len(), 1);
+        assert_eq!(fields(&steps[0]), [0, 1, 2, 0, 1]);
+        let Step::Targets(targets) = &steps[0] else {
+            panic!("pointings")
+        };
+        assert_eq!(targets[0].start_s, -25.);
+        assert_eq!(targets[4].stop_s, 25.);
+    }
+
+    #[test]
+    fn a_calibrator_brackets_each_pass_and_the_last_pass_is_kept() {
+        // Two whole passes (totaltime "2"): calibrator, pass, calibrator,
+        // pass, calibrator, as CASA observes them.
+        let whole = steps(&[10., 10.], 2. * 30., 0., Some(10.));
+        let kinds: Vec<_> = whole.iter().map(fields).collect();
+        assert_eq!(kinds, [vec![], vec![0, 1], vec![], vec![0, 1], vec![]]);
+        // Time ending inside the second pass: CASA drops its pointing,
+        // casa-rs observes it.
+        let partial = steps(&[10., 10.], 45., 0., Some(10.));
+        let kinds: Vec<_> = partial.iter().map(fields).collect();
+        assert_eq!(kinds, [vec![], vec![0, 1], vec![], vec![0]]);
+        // Less time than a pass: CASA observes the calibrator alone.
+        let short = steps(&[10., 10., 10.], 15., 0., Some(10.));
+        let kinds: Vec<_> = short.iter().map(fields).collect();
+        assert_eq!(kinds, [vec![], vec![0]]);
     }
 
     #[test]
