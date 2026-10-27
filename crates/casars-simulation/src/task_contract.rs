@@ -226,9 +226,9 @@ mod tests {
     }
 
     #[test]
-    fn the_schema_bundle_carries_the_contract_5_surface() {
+    fn the_schema_bundle_carries_the_contract_6_surface() {
         let bundle = simobserve_task_schema_bundle();
         assert_eq!(bundle.protocol.protocol_name, SIMOBSERVE_TASK_PROTOCOL_NAME);
-        assert_eq!(bundle.parameter_surfaces[0].surface.contract_version(), 5);
+        assert_eq!(bundle.parameter_surfaces[0].surface.contract_version(), 6);
     }
 }
