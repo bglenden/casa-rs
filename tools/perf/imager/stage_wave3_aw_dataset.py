@@ -24,7 +24,8 @@ except ImportError as exc:  # pragma: no cover - local tooling requires numpy.
 TOOL_DIR = pathlib.Path(__file__).resolve().parent
 REPO_ROOT = TOOL_DIR.parents[2]
 DEFAULT_DATA_ROOT = pathlib.Path("/Volumes/GLENDENNING/casa-rs-imperformance")
-DEFAULT_BINARY = REPO_ROOT / "target" / "release" / "simobserve"
+# The native generator: casa-simulation's synthetic-ms developer binary.
+DEFAULT_BINARY = REPO_ROOT / "target" / "release" / "synthetic-ms"
 DATASET_ID = "wave3-vla-aw-widefield-medium"
 
 VLA_LAT_DEG = 34.07875
@@ -273,7 +274,7 @@ def widefield_components() -> list[dict[str, float | str]]:
 
 def run_native_simobserve(binary: pathlib.Path, paths: dict[str, pathlib.Path]) -> None:
     if not binary.exists():
-        raise StageError(f"simobserve binary does not exist: {binary}")
+        raise StageError(f"synthetic-ms binary does not exist: {binary}")
     completed = run_command(
         [str(binary), "--json-run", str(paths["request"])],
         cwd=REPO_ROOT,
@@ -282,7 +283,7 @@ def run_native_simobserve(binary: pathlib.Path, paths: dict[str, pathlib.Path]) 
     (paths["dataset_dir"] / "simobserve-stdout.json").write_text(completed.stdout, encoding="utf-8")
     (paths["dataset_dir"] / "simobserve-stderr.log").write_text(completed.stderr, encoding="utf-8")
     if completed.returncode != 0:
-        raise StageError(f"simobserve failed with exit {completed.returncode}; see {paths['dataset_dir']}")
+        raise StageError(f"synthetic-ms failed with exit {completed.returncode}; see {paths['dataset_dir']}")
 
 
 def collect_actual(paths: dict[str, pathlib.Path]) -> dict[str, Any]:

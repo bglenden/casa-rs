@@ -1,13 +1,15 @@
 # Synthetic MeasurementSet Families
 
 Truth class: implementation note
-Last reality check: 2026-07-04
-Verification: final 2026-07-04 wave gate: `just verify`; earlier wave gates: `just verify`; `just docs-check`; `PYTHONPATH=crates/casars-python/python pytest -q crates/casars-python/python/tests/test_simobserve.py`; `python3 tools/perf/imager/test_bench_simobserve.py`; `python3 -m unittest tools/perf/imager/test_stage_wave1_datasets.py`; targeted `swift test --package-path apps/casars-mac --filter WorkbenchStoreTests/testSimobserveFamilyRequestSavesReopensEditsCanonicalJSON --filter WorkbenchStoreTests/testProcessGenericTaskRunsSimobserveFamilyThroughSavedJsonRun --filter WorkbenchStoreTests/testProcessGenericTaskSurfacesSimobserveFamilyValidationFailure`; 2026-07-04 read-path gate: `just quick`; targeted 2026-07-04 read-path checks: `cargo fmt --all -- --check`; `cargo test -p casa-tables lazy_disk_open_reads_required_scalar_columns_owned_without_materializing_rows --lib -- --nocapture`; `cargo test -p casa-ms visibility_buffer::tests::select_visibility_rows_filters_fields_ddids_and_tracks_time --lib -- --nocapture`; `cargo test -p casars-imager read_columnar_prepared_source_uses_visibility_buffer_and_geometry_rows --lib -- --nocapture`; `cargo test -p casars-imager production_visibility_column_reads_are_source_stream_centralized --lib -- --nocapture`; `cargo clippy -p casa-tables --lib -- -D warnings`; `cargo clippy -p casa-ms --lib -- -D warnings`; `cargo clippy -p casars-imager --lib -- -D warnings`
+Last reality check: 2026-10-27
+Verification: 2026-10-27 `synthetic-ms` move: `cargo nextest run -p casa-simulation --test synthetic_ms_cli`; `just quick`; final 2026-07-04 wave gate: `just verify`; earlier wave gates: `just verify`; `just docs-check`; `PYTHONPATH=crates/casars-python/python pytest -q crates/casars-python/python/tests/test_simobserve.py`; `python3 tools/perf/imager/test_bench_simobserve.py`; `python3 -m unittest tools/perf/imager/test_stage_wave1_datasets.py`; targeted `swift test --package-path apps/casars-mac --filter WorkbenchStoreTests/testSimobserveFamilyRequestSavesReopensEditsCanonicalJSON --filter WorkbenchStoreTests/testProcessGenericTaskRunsSimobserveFamilyThroughSavedJsonRun --filter WorkbenchStoreTests/testProcessGenericTaskSurfacesSimobserveFamilyValidationFailure`; 2026-07-04 read-path gate: `just quick`; targeted 2026-07-04 read-path checks: `cargo fmt --all -- --check`; `cargo test -p casa-tables lazy_disk_open_reads_required_scalar_columns_owned_without_materializing_rows --lib -- --nocapture`; `cargo test -p casa-ms visibility_buffer::tests::select_visibility_rows_filters_fields_ddids_and_tracks_time --lib -- --nocapture`; `cargo test -p casars-imager read_columnar_prepared_source_uses_visibility_buffer_and_geometry_rows --lib -- --nocapture`; `cargo test -p casars-imager production_visibility_column_reads_are_source_stream_centralized --lib -- --nocapture`; `cargo clippy -p casa-tables --lib -- -D warnings`; `cargo clippy -p casa-ms --lib -- -D warnings`; `cargo clippy -p casars-imager --lib -- -D warnings`
 
-Native `simobserve` is the primary generator for synthetic MeasurementSets used
-to exercise single-field, mosaic, MFS, continuum, spectral cube, cubedata, and
-MT-MFS imaging diagnostics. CASA remains the oracle for selected small parity
-cases.
+casa-rs's synthetic MeasurementSet generator (`casa_ms::simulation`, run by
+casa-simulation's `synthetic-ms` developer binary, formerly `simobserve`'s
+`--json-run` requests) is the primary generator for synthetic MeasurementSets
+used to exercise single-field, mosaic, MFS, continuum, spectral cube,
+cubedata, and MT-MFS imaging diagnostics. CASA remains the oracle for selected
+small parity cases.
 
 ### Synthetic spectral frame (2026-09-22)
 
@@ -141,11 +143,17 @@ configuration uses the equivalent sparse TOML profile shown below:
 }
 ```
 
-Run persisted requests with:
+Run persisted requests with casa-simulation's `synthetic-ms` developer binary
+(`cargo build --release -p casa-simulation --bin synthetic-ms`; it is not a
+catalog task and is not installed with the suite):
 
 ```bash
-simobserve --json-run request.json
+synthetic-ms --json-run request.json
 ```
+
+It takes the `kind: "run"` and `kind: "family"` requests the `simobserve`
+binary took with `--json-run`, and prints the same result. `simobserve` itself
+becomes CASA's task in simulation Phase 5c (#841), and stops taking them.
 
 Family execution now expands the saved inputs into a concrete `kind: "run"`
 request, writes the MeasurementSet, and persists a sibling manifest named like
@@ -186,7 +194,8 @@ metadata.
 `image_channels` is persisted planning metadata for downstream imaging
 diagnostics and manifests; it does not change the MS channel count by itself.
 
-Python callers can use the same contract without a second schema:
+Until Phase 5c, Python callers can use the same contract through the
+`simobserve` catalog task, without a second schema:
 
 ```python
 from casars import parameters, tasks

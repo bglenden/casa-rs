@@ -33,7 +33,8 @@ from perf_harness.subprocesses import run_command
 
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
-DEFAULT_BINARY = REPO_ROOT / "target" / "release" / "simobserve"
+# The native generator: casa-simulation's synthetic-ms developer binary.
+DEFAULT_BINARY = REPO_ROOT / "target" / "release" / "synthetic-ms"
 DEFAULT_IMAGER_BINARY = REPO_ROOT / "target" / "release" / "casars-imager"
 DEFAULT_OUTPUT_DIR = perf_paths.artifact_path("simulation-breadth", "aca-simalma")
 CASA_SCENARIO_PROGRAM = (
@@ -777,7 +778,7 @@ def run_native_section(
             },
         }
     if not args.casars_binary.exists():
-        raise AcaSimalmaError(f"native simobserve binary does not exist: {args.casars_binary}")
+        raise AcaSimalmaError(f"native generator binary does not exist: {args.casars_binary}")
     results = {}
     for scenario in scenarios:
         results[scenario] = run_native_scenario(
