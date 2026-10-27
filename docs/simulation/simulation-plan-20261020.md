@@ -546,7 +546,13 @@ This is delivered as four PRs, in order.
   `alma/simmos` data-path resolver its antenna-list search uses (moved from
   5a). Owner decision, 2026-10-26: `overwrite` keeps CASA's default, True,
   with no confirmation, since the task writes only inside its project
-  directory.
+  directory. Owner decision, 2026-10-27: the task's binary lives in a new
+  app crate, `casars-simulation`, which will host `simanalyze` and
+  `simalma` too.
+  - *Deviation:* the noisy and leaked MeasurementSets are copies of the
+    observed one corrupted in place (`openfromms`, then `corrupt`), as CASA
+    makes them. Writing them in the observed one's pass (§4) needs the
+    session to write several outputs, and is deferred.
 - **5e:** graphics, rendered in Python from Rust plot documents, and
   `.quick.psf`.
 - **The acceptance data:** the ppdisk model is casatestdata's

@@ -279,6 +279,20 @@ the MeasurementSets the session writes, and the digests must equal casa-rs's.
 Its counting law (`--test session_memory`) runs alone in a process of its
 own, as the other counting laws do.
 
+The `simobserve` task runs end to end on a small array in `cargo nextest run
+-p casa-simulation --test simobserve`, which needs no CASA. Its agreement with
+CASA 6.7.6's task is `tools/simulation/simobserve_parity.py`, run under CASA's
+Python with the release `simobserve` binary, a casatestdata clone and
+casa-atmosphere's `at_tool_quantities` example. Its cases are the VLA
+protoplanetary-disk CASA Guide, CASA's ALMA regression on `alma.out20` and
+one case for each mode. For each case it compares:
+- the project's files;
+- the pointing files, byte for byte;
+- the images and the calibrator list;
+- every MeasurementSet, through `compare_sm_ms.py`.
+
+Each case's TAI − UTC shift comes from CASA's measures.
+
 Component lists (`casa-components`) carry the 2x2 matrix for their tables.
 `cargo test -p casa-components` reads the lists CASA 6.7.6's `cl` tool wrote
 (`tests/data/casa-6.7.6`, made by `tools/simulation/componentlist_oracle.py
