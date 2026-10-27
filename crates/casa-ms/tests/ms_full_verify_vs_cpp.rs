@@ -378,6 +378,61 @@ fn verify_external_ms_matches_cpp() {
     assert_eq!(rust_manifest, cpp_manifest);
 }
 
+/// casacore and casa-rs read `alma/multiobs.ms` alike, and read alike what
+/// casa-rs saves of it. Its SOURCE holds 0-dimensional cells, casacore's
+/// empty `IPosition`: string cells in StandardStMan buckets (`TRANSITION`)
+/// and numeric cells in its array file (`POSITION`, `REST_FREQUENCY`,
+/// `SYSVEL`), which casa-rs once read as one element (#923).
+///
+/// casa-rs, which has no 0-dimensional empty array, reads such a cell as
+/// `[0]` and saves it so: casacore then reads `[0]` where it read `[]`,
+/// either holding no elements. The C++ digest counts the two alike, so the
+/// manifests compare what each table holds.
+#[test]
+fn multiobs_reads_and_resaves_as_casacore_reads_it() {
+    if !casacore_oracle_available() {
+        eprintln!(
+            "skipping multiobs_reads_and_resaves_as_casacore_reads_it: C++ casacore not available"
+        );
+        return;
+    }
+    let Some(source) = casa_test_support::casatestdata_path("measurementset/alma/multiobs.ms")
+        .filter(|path| path.is_dir())
+    else {
+        eprintln!(
+            "skipping multiobs_reads_and_resaves_as_casacore_reads_it: alma/multiobs.ms not available"
+        );
+        return;
+    };
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let ms_path = directory.path().join("multiobs.ms");
+    copy_tree(&source, &ms_path);
+
+    let original = MeasurementSetOracle::digest_manifest(&ms_path).expect("C++ manifest");
+    assert_eq!(ms_digest::measurement_set_manifest(&ms_path), original);
+
+    let mut ms = MeasurementSet::open(&ms_path).expect("open multiobs.ms");
+    ms.save().expect("resave multiobs.ms");
+    drop(ms);
+    let resaved =
+        MeasurementSetOracle::digest_manifest(&ms_path).expect("C++ manifest of the resave");
+    assert_eq!(ms_digest::measurement_set_manifest(&ms_path), resaved);
+    assert_eq!(resaved, original);
+}
+
+fn copy_tree(from: &Path, to: &Path) {
+    std::fs::create_dir_all(to).expect("create directory");
+    for entry in std::fs::read_dir(from).expect("read directory") {
+        let entry = entry.expect("directory entry");
+        let target = to.join(entry.file_name());
+        if entry.file_type().expect("file type").is_dir() {
+            copy_tree(&entry.path(), &target);
+        } else {
+            std::fs::copy(entry.path(), target).expect("copy file");
+        }
+    }
+}
+
 #[test]
 #[ignore = "debug helper for inspecting one external MeasurementSet row"]
 fn debug_external_ms_row_vs_cpp() {

@@ -17,15 +17,16 @@ use crate::constants::{
     COL_OBSERVATION_ID, COL_PARAMERR, COL_SCAN_NUMBER, COL_SNR, COL_SPECTRAL_WINDOW_ID, COL_TIME,
     COL_TIME_EXTRA_PREC, COL_WEIGHT,
 };
-use crate::solve::kernel::SolutionRow;
+use crate::solve::SolvedGains;
+use crate::solve::grouping::selected_channels;
 use crate::writer::{CalibrationTableDescriptor, CalibrationTableWriter};
 
 pub(crate) fn write_gain_caltable(
     ms: &MeasurementSet,
     request: &GainSolveRequest,
-    refant_id: i32,
-    rows: &[SolutionRow],
+    solved: &SolvedGains,
 ) -> Result<GainSolveReport, GainSolveError> {
+    let rows = &solved.rows;
     let schema = TableSchema::new(vec![
         ColumnSchema::scalar(COL_TIME, casa_types::PrimitiveType::Float64),
         ColumnSchema::scalar(COL_FIELD_ID, casa_types::PrimitiveType::Int32),
@@ -144,7 +145,7 @@ pub(crate) fn write_gain_caltable(
         (SubtableId::Field, "FIELD"),
         (SubtableId::History, "HISTORY"),
     ])?;
-    write_gain_spectral_window_subtable(ms, writer.output_path(), rows)?;
+    write_gain_spectral_window_subtable(ms, writer.output_path(), request, solved)?;
     writer.save_main()?;
 
     let field_ids = rows.iter().map(|row| row.field_id).collect::<BTreeSet<_>>();
@@ -152,113 +153,186 @@ pub(crate) fn write_gain_caltable(
     Ok(GainSolveReport {
         output_table: request.output_table.clone(),
         gain_type: request.gain_type,
-        refant_antenna_id: refant_id,
+        refant_antenna_id: solved.refant_id,
         field_ids: field_ids.iter().copied().collect(),
         spectral_window_ids: spw_ids.iter().copied().collect(),
         solution_row_count: rows.len(),
     })
 }
 
+/// Write the table's `SPECTRAL_WINDOW` as CASA's `gaincal` writes a G or T
+/// table's: the MeasurementSet's rows, each collapsed to the one channel a
+/// solution holds ([`CollapsedWindow`]), the windows without solution rows
+/// flagged (`NewCalTable::flagAbsentSpws`).
 fn write_gain_spectral_window_subtable(
     ms: &MeasurementSet,
     output_root: &Path,
-    rows: &[SolutionRow],
+    request: &GainSolveRequest,
+    solved: &SolvedGains,
 ) -> Result<(), GainSolveError> {
     let destination = output_root.join("SPECTRAL_WINDOW");
+    let failed = |source| GainSolveError::CopySubtable {
+        subtable: "SPECTRAL_WINDOW".to_string(),
+        path: output_root.display().to_string(),
+        source: Box::new(source),
+    };
     ms.subtable(SubtableId::SpectralWindow)
         .expect("required subtable available")
         .save(TableOptions::new(&destination))
-        .map_err(|source| GainSolveError::CopySubtable {
-            subtable: "SPECTRAL_WINDOW".to_string(),
-            path: output_root.display().to_string(),
-            source: Box::new(source),
-        })?;
+        .map_err(failed)?;
+    let mut table = Table::open(TableOptions::new(&destination)).map_err(failed)?;
 
-    let solved_spw_ids = rows.iter().map(|row| row.spw_id).collect::<BTreeSet<_>>();
-    let mut table = Table::open(TableOptions::new(&destination)).map_err(|source| {
-        GainSolveError::CopySubtable {
-            subtable: "SPECTRAL_WINDOW".to_string(),
-            path: output_root.display().to_string(),
-            source: Box::new(source),
+    let with_rows = solved
+        .rows
+        .iter()
+        .map(|row| row.spw_id)
+        .collect::<BTreeSet<_>>();
+    if let Some(missing) = with_rows
+        .iter()
+        .chain(&solved.attempted_spw_ids)
+        .find(|spw_id| usize::try_from(**spw_id).map_or(true, |row| row >= table.row_count()))
+    {
+        return Err(GainSolveError::UnsupportedParameterShape {
+            path: format!("SPECTRAL_WINDOW rows, which lack the solved window {missing}"),
+            shape: vec![table.row_count()],
+        });
+    }
+    for row in 0..table.row_count() {
+        let spw_id = i32::try_from(row).ok();
+        let has_rows = spw_id.is_some_and(|spw_id| with_rows.contains(&spw_id));
+        let attempted =
+            has_rows || spw_id.is_some_and(|spw_id| solved.attempted_spw_ids.contains(&spw_id));
+        let frequencies = get_f64_array(&table, row, "CHAN_FREQ")?;
+        let widths = get_f64_array(&table, row, "CHAN_WIDTH")?;
+        if frequencies.len() != widths.len() {
+            return Err(GainSolveError::UnsupportedParameterShape {
+                path: format!("SPECTRAL_WINDOW row {row} CHAN_FREQ and CHAN_WIDTH"),
+                shape: vec![frequencies.len(), widths.len()],
+            });
         }
-    })?;
-
-    for spw_id in solved_spw_ids {
-        let row =
-            usize::try_from(spw_id).map_err(|_| GainSolveError::UnsupportedParameterShape {
-                path: "SPECTRAL_WINDOW row id".to_string(),
-                shape: vec![spw_id as usize],
-            })?;
-        let chan_freq = get_f64_array(&table, row, "CHAN_FREQ")?;
-        let chan_width = get_f64_array(&table, row, "CHAN_WIDTH")?;
-        let effective_bw = get_f64_array(&table, row, "EFFECTIVE_BW")?;
-        let resolution = get_f64_array(&table, row, "RESOLUTION")?;
-
-        if chan_freq.len() <= 1 {
-            continue;
+        let collapsed = if attempted {
+            let selection = request.selection.channel_selection_for_spw(row as i32);
+            let channels = selected_channels(selection.as_ref(), frequencies.len())?;
+            let window =
+                CollapsedWindow::solved(&frequencies, &widths, channels).ok_or_else(|| {
+                    GainSolveError::UnsupportedParameterShape {
+                        path: format!(
+                            "SPECTRAL_WINDOW row {row}, of which the solve selects no channel"
+                        ),
+                        shape: vec![frequencies.len()],
+                    }
+                })?;
+            Some(window)
+        } else {
+            CollapsedWindow::unsolved(
+                &frequencies,
+                &widths,
+                &get_f64_array(&table, row, "EFFECTIVE_BW")?,
+                &get_f64_array(&table, row, "RESOLUTION")?,
+            )
+        };
+        let mut cells = vec![("FLAG_ROW", Value::Scalar(ScalarValue::Bool(!has_rows)))];
+        if let Some(window) = collapsed {
+            cells.extend([
+                ("NUM_CHAN", Value::Scalar(ScalarValue::Int32(1))),
+                ("CHAN_FREQ", Value::Array(f64_array(&[window.frequency]))),
+                ("CHAN_WIDTH", Value::Array(f64_array(&[window.width]))),
+                (
+                    "EFFECTIVE_BW",
+                    Value::Array(f64_array(&[window.effective_bw])),
+                ),
+                ("RESOLUTION", Value::Array(f64_array(&[window.resolution]))),
+            ]);
+            if let Some(total) = window.total_bandwidth {
+                cells.push((
+                    "TOTAL_BANDWIDTH",
+                    Value::Scalar(ScalarValue::Float64(total)),
+                ));
+            }
         }
-
-        let center_index = chan_freq.len() / 2;
-        table
-            .cell_accessor_mut(row, "NUM_CHAN")
-            .and_then(|mut cell| cell.set(Value::Scalar(ScalarValue::Int32(1))))
-            .map_err(|source| GainSolveError::CopySubtable {
-                subtable: "SPECTRAL_WINDOW".to_string(),
-                path: output_root.display().to_string(),
-                source: Box::new(source),
-            })?;
-        table
-            .cell_accessor_mut(row, "CHAN_FREQ")
-            .and_then(|mut cell| cell.set(Value::Array(f64_array(&[chan_freq[center_index]]))))
-            .map_err(|source| GainSolveError::CopySubtable {
-                subtable: "SPECTRAL_WINDOW".to_string(),
-                path: output_root.display().to_string(),
-                source: Box::new(source),
-            })?;
-        table
-            .cell_accessor_mut(row, "CHAN_WIDTH")
-            .and_then(|mut cell| {
-                cell.set(Value::Array(f64_array(&[chan_width.iter().copied().sum()])))
-            })
-            .map_err(|source| GainSolveError::CopySubtable {
-                subtable: "SPECTRAL_WINDOW".to_string(),
-                path: output_root.display().to_string(),
-                source: Box::new(source),
-            })?;
-        table
-            .cell_accessor_mut(row, "EFFECTIVE_BW")
-            .and_then(|mut cell| {
-                cell.set(Value::Array(f64_array(&[effective_bw
-                    .iter()
-                    .copied()
-                    .sum()])))
-            })
-            .map_err(|source| GainSolveError::CopySubtable {
-                subtable: "SPECTRAL_WINDOW".to_string(),
-                path: output_root.display().to_string(),
-                source: Box::new(source),
-            })?;
-        table
-            .cell_accessor_mut(row, "RESOLUTION")
-            .and_then(|mut cell| {
-                cell.set(Value::Array(f64_array(&[resolution.iter().copied().sum()])))
-            })
-            .map_err(|source| GainSolveError::CopySubtable {
-                subtable: "SPECTRAL_WINDOW".to_string(),
-                path: output_root.display().to_string(),
-                source: Box::new(source),
-            })?;
+        for (column, value) in cells {
+            table
+                .cell_accessor_mut(row, column)
+                .and_then(|mut cell| cell.set(value))
+                .map_err(failed)?;
+        }
     }
 
     table
         .save(TableOptions::new(&destination))
-        .map_err(|source| GainSolveError::CopySubtable {
-            subtable: "SPECTRAL_WINDOW".to_string(),
-            path: output_root.display().to_string(),
-            source: Box::new(source),
-        })?;
+        .map_err(failed)?;
 
     Ok(())
+}
+
+/// The one channel of a window's row in a G or T gain table: what CASA's
+/// `gaincal` writes, measured with CASA 6.7.5 (#917).
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct CollapsedWindow {
+    frequency: f64,
+    width: f64,
+    effective_bw: f64,
+    resolution: f64,
+    /// `None` keeps the MeasurementSet's.
+    total_bandwidth: Option<f64>,
+}
+
+impl CollapsedWindow {
+    /// A window a solve reached, over `channels` of `frequencies` and
+    /// `widths` (as many of each): the arithmetic mean of their
+    /// frequencies, unweighted whatever their widths, and the sum of their
+    /// widths' magnitudes. CASA's solve averages and sums them before a G or
+    /// T solve (`ChannelAverageTVI`, over the channels in ascending order;
+    /// `VisibilityIteratorImpl2` holds widths positive), and
+    /// `SolvableVisCal::setCTFrequencies` writes the sum as `CHAN_WIDTH` and
+    /// `EFFECTIVE_BW` and the frequency as `RESOLUTION` and
+    /// `TOTAL_BANDWIDTH`. casa-rs writes those two as CASA does, though they
+    /// are meant to be widths: CASA appends to a table only if they match
+    /// its own (`docs/CASA (C++) bugs.md`). `None` when `channels` is empty
+    /// or names a channel the window lacks.
+    fn solved(frequencies: &[f64], widths: &[f64], mut channels: Vec<usize>) -> Option<Self> {
+        if channels.is_empty() || channels.iter().any(|channel| *channel >= widths.len()) {
+            return None;
+        }
+        channels.sort_unstable();
+        let frequency = channels
+            .iter()
+            .map(|channel| frequencies[*channel])
+            .sum::<f64>()
+            / channels.len() as f64;
+        let width = channels
+            .iter()
+            .map(|channel| widths[*channel].abs())
+            .sum::<f64>();
+        Some(Self {
+            frequency,
+            width,
+            effective_bw: width,
+            resolution: frequency,
+            total_bandwidth: Some(frequency),
+        })
+    }
+
+    /// A window no solve reached, as `SolvableVisCal::createMemCalTable2`
+    /// collapses every window of a table whose parameters do not depend on
+    /// frequency: the mean of all its frequencies and the sums of its
+    /// `CHAN_WIDTH`, `EFFECTIVE_BW` and `RESOLUTION`, signs kept, its
+    /// `TOTAL_BANDWIDTH` the MeasurementSet's. `None` for a window without
+    /// channels, left as it is.
+    fn unsolved(
+        frequencies: &[f64],
+        widths: &[f64],
+        effective_bw: &[f64],
+        resolution: &[f64],
+    ) -> Option<Self> {
+        (!frequencies.is_empty()).then(|| Self {
+            frequency: frequencies.iter().sum::<f64>() / frequencies.len() as f64,
+            width: widths.iter().sum(),
+            effective_bw: effective_bw.iter().sum(),
+            resolution: resolution.iter().sum(),
+            total_bandwidth: None,
+        })
+    }
 }
 
 fn get_f64_array(table: &Table, row: usize, column: &str) -> Result<Vec<f64>, GainSolveError> {
@@ -283,4 +357,81 @@ fn f64_array(values: &[f64]) -> ArrayValue {
         ArrayD::from_shape_vec(IxDyn(&[values.len()]).f(), values.to_vec())
             .expect("f64 vector should reshape to 1-D array"),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CollapsedWindow;
+
+    /// `alma/multiobs.ms` (casatestdata): window 1, four channels of
+    /// decreasing frequency, each −117.1875 MHz wide.
+    const LOWER: [f64; 4] = [
+        217_281_281_250.0,
+        217_164_093_750.0,
+        217_046_906_250.0,
+        216_929_718_750.0,
+    ];
+    const LOWER_WIDTH: f64 = -117_187_500.0;
+
+    /// What CASA 6.7.5's `gaincal` (G, `calmode='ap'`) wrote for that
+    /// window: solved, at the arithmetic mean of its selected channels
+    /// with their widths' summed magnitude, the mean again as resolution
+    /// and total bandwidth; without solutions (another window solved), at
+    /// the mean of all its channels with each column's signed sum.
+    #[test]
+    fn windows_collapse_as_casa_gaincal_wrote_them() {
+        let widths = [LOWER_WIDTH; 4];
+        let magnitudes = [-LOWER_WIDTH; 4];
+        for (channels, frequency, width) in [
+            (vec![0, 1, 2, 3], 217_105_500_000.0, 468_750_000.0),
+            (vec![1, 2], 217_105_500_000.0, 234_375_000.0),
+        ] {
+            assert_eq!(
+                CollapsedWindow::solved(&LOWER, &widths, channels.clone()),
+                Some(CollapsedWindow {
+                    frequency,
+                    width,
+                    effective_bw: width,
+                    resolution: frequency,
+                    total_bandwidth: Some(frequency),
+                }),
+                "{channels:?}"
+            );
+        }
+        assert_eq!(
+            CollapsedWindow::unsolved(&LOWER, &widths, &magnitudes, &magnitudes),
+            Some(CollapsedWindow {
+                frequency: 217_105_500_000.0,
+                width: -468_750_000.0,
+                effective_bw: 468_750_000.0,
+                resolution: 468_750_000.0,
+                total_bandwidth: None,
+            })
+        );
+    }
+
+    /// The mean is unweighted whatever the widths: CASA's frequency for
+    /// ngc5921 with its widths rewritten to grow threefold across the
+    /// window stayed the plain mean, 130 kHz from the width-weighted one.
+    /// It sums the channels in ascending order, whatever order the
+    /// selection names them in.
+    #[test]
+    fn the_mean_ignores_the_widths_and_the_selections_order() {
+        let frequencies = [1.0e9, 1.001e9, 1.003e9];
+        let widths = [1.0e6, 3.0e6, 1.0e6];
+        let window = CollapsedWindow::solved(&frequencies, &widths, vec![0, 1]).expect("solved");
+        assert_eq!((window.frequency, window.width), (1.0005e9, 4.0e6));
+        assert_eq!(
+            CollapsedWindow::solved(&frequencies, &widths, vec![2, 0, 1]),
+            CollapsedWindow::solved(&frequencies, &widths, vec![0, 1, 2])
+        );
+    }
+
+    /// No channels, or a channel the window lacks, collapse to nothing.
+    #[test]
+    fn a_selection_outside_the_window_is_refused() {
+        assert_eq!(CollapsedWindow::solved(&[1.0e9], &[1.0e6], vec![]), None);
+        assert_eq!(CollapsedWindow::solved(&[1.0e9], &[1.0e6], vec![1]), None);
+        assert_eq!(CollapsedWindow::unsolved(&[], &[], &[], &[]), None);
+    }
 }
