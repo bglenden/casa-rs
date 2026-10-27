@@ -2419,7 +2419,14 @@ flag change writes (Fable).</p>
    VLA importer. The simulator's <code>predict</code> writes 1 in every product, cross
    hands included, because that is what CASA's <code>Simulator::predict</code> does
    after the prediction (<code>vb.setModelVisCube(Complex(1.0,0.0))</code>); it
-   overwrites the model rather than initializing a new column.</li>
+   overwrites the model rather than initializing a new column. Every path
+   that adds <code>MODEL_DATA</code> or <code>CORRECTED_DATA</code> to an existing
+   MeasurementSet (this updater, imaging's writer, applycal) first clears
+   the cached sort keywords, as CASA's <code>addScrCols</code> does, and every path
+   that writes <code>MODEL_DATA</code> (this updater and imaging's writer), created
+   or not, first clears every field's virtual model, as CASA's imagers do,
+   since CASA would otherwise read it in the column's place. Both go
+   through <code>casa_ms::scratch_columns</code> (#912).</li>
 </ol>
 <p><strong>Not done:</strong> per-batch MSv2 row planning; <code>WEIGHT_SPECTRUM</code> and
 <code>FLAG_CATEGORY</code> (the fixture has neither); MSv4 structural writes; a

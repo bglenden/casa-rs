@@ -1620,6 +1620,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#a-gain-tables-solved-window-records-its-frequency-as-its-resolution-and-total-bandwidth" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A gain table's solved window records its frequency as its resolution and total bandwidth
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1722,6 +1733,8 @@ ATM behaviours casa-rs follows:
 <a href="#atm-omits-16o17o">(16)O(17)O</a>.
 ATM behaviours casa-rs does not follow:
 <a href="#refractiveindexprofiles-averaged-non-dispersive-wet-phase-reads-a-channel-as-a-water-column">the averaged non-dispersive wet phase</a>.
+Calibration behaviours casa-rs follows:
+<a href="#a-gain-tables-solved-window-records-its-frequency-as-its-resolution-and-total-bandwidth">a gain table's resolution and total bandwidth</a>.
 Calibration behaviours casa-rs does not follow:
 <a href="#viscalsolver2-fails-a-solve-whose-chi-square-is-exactly-zero">a solve that fits exactly</a>.</p>
 <h2 id="aw-projection-pairs-the-partner-hands-visibility-with-the-conjugate-baseline-cell">AW-projection pairs the partner hand's visibility with the conjugate-baseline cell<a class="headerlink" href="#aw-projection-pairs-the-partner-hands-visibility-with-the-conjugate-baseline-cell" title="Permanent link">&para;</a></h2>
@@ -3307,6 +3320,40 @@ on the casa-rs gain fixtures had to add noise to get a table at all. casa-rs's <
 chi-square that is small but not zero follows CASA's convergence rule
 unchanged, so noise-free data that converge only linearly can still reach
 CASA's 50-iteration limit and fail as CASA's would.</p>
+<h2 id="a-gain-tables-solved-window-records-its-frequency-as-its-resolution-and-total-bandwidth">A gain table's solved window records its frequency as its resolution and total bandwidth<a class="headerlink" href="#a-gain-tables-solved-window-records-its-frequency-as-its-resolution-and-total-bandwidth" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-10-27</li>
+<li>Status: CASA behaviour casa-rs follows, for CASA's append (#917)</li>
+<li>Affected code: <code>synthesis/MeasurementComponents/SolvableVisCal.cc</code>,
+  <code>SolvableVisCal::setCTFrequencies</code>, CASA 6.7.5.18</li>
+</ul>
+<p>A G or T table holds one channel per spectral window. For a window a solve
+reaches, <code>setCTFrequencies</code> writes that channel's frequency and width from
+<code>FreqMetaData</code>. It then takes <code>const Vector&lt;Double&gt;&amp; chres(chfr); //
+resolution same as freq</code> and <code>Double totbw=sum(chfr);</code>, so <code>RESOLUTION</code> and
+<code>TOTAL_BANDWIDTH</code> both hold the frequency. On ngc5921 (<code>gaincal</code>, <code>spw='0'</code>)
+the table's window reads <code>CHAN_FREQ</code> 1413421909.706 Hz, <code>CHAN_WIDTH</code>
+1538085.9 Hz, and <code>RESOLUTION</code> and <code>TOTAL_BANDWIDTH</code> 1413421909.706 Hz.</p>
+<p>The values are plainly meant to be widths:
+- the same function sets <code>EFFECTIVE_BW</code> to the width;
+- the older <code>setOrVerifyCTFrequencies</code> sets resolution, effective bandwidth
+  and total bandwidth to the width;
+- <code>NewCalTable::setSpwFreqs</code> sets <code>TOTAL_BANDWIDTH</code> to the summed width;
+- a window no solve reached keeps its summed resolution and the
+  MeasurementSet's total bandwidth (<code>createMemCalTable2</code>).</p>
+<p>Nothing in CASA's apply path reads either column, so the error does not
+change calibrated data. But CASA's <code>gaincal(append=True)</code> merges the new
+solutions' windows into the table's (<code>NewCalTable::mergeSpwMetaInfo</code>). It
+requires <code>NUM_CHAN</code>, <code>CHAN_FREQ</code>, <code>CHAN_WIDTH</code>, <code>RESOLUTION</code>,
+<code>EFFECTIVE_BW</code>, <code>REF_FREQUENCY</code> and <code>TOTAL_BANDWIDTH</code> to equal its own
+exactly for any window both hold.</p>
+<p>A casa-rs table that wrote the widths there was refused ("Error merging
+spw=0's meta info"). So casa-rs writes the frequency as CASA does: the
+interoperability contract outranks the correction.</p>
+<p>The law <code>casa_appends_to_a_casa_rs_gain_table</code> (casa-calibration
+<code>slow-tests</code>) appends CASA's solutions to a casa-rs table. With
+<code>gain_table_windows_match_casa_on_ngc5921</code> and its two-sideband companion,
+it asserts that every column of every window row equals CASA's exactly.</p>
 
 
 

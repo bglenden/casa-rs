@@ -1,0 +1,45 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="What CASA clears from a MeasurementSet before it writes a scratch column, so that the column casa-rs writes is the one CASA reads (CASA 6.7.5)."><title>casa_ms::scratch_columns - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-0c87338a.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="casa_ms" data-themes="" data-resource-suffix="" data-rustdoc-version="1.99.1 (58cf8f9c3 2026-10-13)" data-channel="1.99.1" data-search-js="search-cf4fc35e.js" data-stringdex-js="stringdex-b5109af9.js" data-settings-js="settings-170eb4bf.js" ><script src="../../static.files/storage-41dd4d93.js"></script><script defer src="../sidebar-items.js"></script><script defer src="../../static.files/main-417ebf0a.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-9f56287d.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc mod"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><rustdoc-topbar><h2><a href="#">Module scratch_columns</a></h2></rustdoc-topbar><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../../casa_ms/index.html">casa_ms</a><span class="version">0.27.0</span></h2></div><div class="sidebar-elems"><section id="rustdoc-toc"><h2 class="location"><a href="#">Module scratch_<wbr>columns</a></h2><h3><a href="#functions">Module Items</a></h3><ul class="block"><li><a href="#functions" title="Functions">Functions</a></li></ul></section><div id="rustdoc-modnav"><h2 class="in-crate"><a href="../index.html">In crate casa_<wbr>ms</a></h2></div></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><div class="width-limiter"><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><div class="rustdoc-breadcrumbs"><a href="../index.html">casa_ms</a></div><h1>Module <span>scratch_<wbr>columns</span>&nbsp;<button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../src/casa_ms/scratch_columns.rs.html#2-894">Source</a> </span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>What CASA clears from a MeasurementSet before it writes a scratch
+column, so that the column casa-rs writes is the one CASA reads (CASA
+6.7.5).</p>
+<ul>
+<li><strong>Cached sort keywords.</strong> CASA’s iterators may cache a pre-sorted
+reference table of MAIN and record it in MAIN’s keywords as
+<code>SORTED_TABLE</code>, with the columns it is sorted by as <code>SORT_COLUMNS</code>
+(<code>MSIter2</code>). A sorted table made before a column was added does not
+see it, so adding <code>MODEL_DATA</code> or <code>CORRECTED_DATA</code> removes both
+keywords (<code>VisSetUtil::addScrCols</code>; the table itself is left, as CASA
+leaves it). The MS definition’s own <code>SORTED_TABLES</code> is untouched.</li>
+<li><strong>The virtual model.</strong> CASA can hold a field’s model as a recipe
+instead of a column: <code>setjy</code> (<code>usescratch=False</code>) and <code>tclean</code>
+(<code>savemodel='virtual'</code>) write one, and CASA’s iterator prefers it to
+<code>MODEL_DATA</code> (<code>VisibilityIteratorImpl2::visibilityModel</code>). A task that
+writes <code>MODEL_DATA</code> makes the column “the exclusive origin for model
+visibilities”, whether or not it adds it: it clears every field’s
+virtual model first. <code>addScrCols</code> does so when it adds the column
+(<code>remOTFModel</code>, <code>VisModelData::clearModel</code> of
+<code>synthesis/TransformMachines/VisModelData.cc</code>), and the imagers do so
+whenever they write it (<code>SynthesisImagerVi2::selectData</code>,
+<code>Imager::setjy</code> and <code>ft</code>, <code>refim::VisModelData::clearModel</code> of
+<code>TransformMachines2</code>). The two <code>clearModel</code> bodies are the same.</li>
+</ul>
+<p>A field’s virtual model is a keyword <code>definedmodel_field_&lt;id&gt;</code> naming a
+model key, in SOURCE’s keywords when SOURCE has rows and MAIN’s
+otherwise. Under SOURCE the model key is a keyword holding the SOURCE
+row whose <code>SOURCE_MODEL</code> cell holds the model record; under MAIN it is a
+keyword holding the record itself. Clearing a field removes both
+keywords wherever they are and empties the <code>SOURCE_MODEL</code> cell, which
+is what CASA leaves (measured with <code>setjy</code> then <code>delmod</code> on CASA 6.7.5).
+A pointer under SOURCE naming a key held in MAIN is removed with the
+key, where CASA keeps the pointer; either way the field has no model.</p>
+<p><code>clearModel</code> also deletes the model images a gridder’s record names
+(<code>ft_&lt;k&gt;.container.diskimage</code>), wherever they lie, and every <code>FT_MODEL*</code>
+table in the MeasurementSet and its SOURCE, where <code>tclean</code> writes them.
+casa-rs deletes only the <code>FT_MODEL*</code> tables, so that a path in a record
+never deletes anything else. A multi-MS is cleared as one table, not
+part by part as CASA clears it.</p>
+</div></details><h2 id="functions" class="section-header">Functions<a href="#functions" class="anchor">§</a></h2><dl class="item-table"><dt><a class="fn" href="fn.prepare_write.html" title="fn casa_ms::scratch_columns::prepare_write">prepare_<wbr>write</a></dt><dd>Clear what CASA clears before it writes scratch column <code>column</code>
+(<code>MODEL_DATA</code> or <code>CORRECTED_DATA</code>) to <code>ms</code>, adding it when <code>adds</code>:
+for an added column the cached sort keywords, and for <code>MODEL_DATA</code>,
+added or not, every field’s virtual model, as the module states. Every
+path that adds either column to an existing MeasurementSet, or writes
+<code>MODEL_DATA</code>, calls it before it changes the column.</dd></dl></section></div></main></body></html>

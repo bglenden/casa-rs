@@ -910,28 +910,6 @@
   
 </li>
       
-        <li class="md-nav__item">
-  <a href="#8-provisional-capabilities" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        8. Provisional capabilities
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#9-worked-counterexamples-for-contract-review" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        9. Worked counterexamples for contract review
-      
-    </span>
-  </a>
-  
-</li>
-      
     </ul>
   
 </nav>
@@ -1787,7 +1765,11 @@ store holds a NaN weight), whole-unit writes that read nothing, MSv4 chunks
 replaced atomically through a temporary object with the changed directories
 synchronized at finish, and new <code>CORRECTED_DATA</code> and <code>MODEL_DATA</code>
 initialized as CASA initializes them (from <code>DATA</code>; 1, and 0 in the cross
-hands). A batch's own times and baselines address its samples in
+hands). What CASA clears is cleared first (<code>casa_ms::scratch_columns</code>,</p>
+<h1 id="912-so-that-casa-reads-the-column-written-the-cached-sort-keywords">912), so that CASA reads the column written: the cached sort keywords<a class="headerlink" href="#912-so-that-casa-reads-the-column-written-the-cached-sort-keywords" title="Permanent link">&para;</a></h1>
+<p>before a column is added, and every field's virtual model before any
+<code>MODEL_DATA</code> write, created or not.
+A batch's own times and baselines address its samples in
 both stores, so no update map is added to the read side. The rest of this
 subsection, and its acceptance obligations, stand for M1/M2.</p>
 <p>An <code>UpdateMapRef</code> refers to a session-owned inverse map from selected logical

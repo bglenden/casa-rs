@@ -378,699 +378,710 @@
 <a href=#378 id=378 data-nosnippet>378</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) channel_graphs: Vec&lt;Vec&lt;SolveGraph&gt;&gt;,
 <a href=#379 id=379 data-nosnippet>379</a>    <span class="doccomment">/// The solution's TIME, set by [`Self::finalize_for_solve`].
 <a href=#380 id=380 data-nosnippet>380</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) solution_time: f64,
-<a href=#381 id=381 data-nosnippet>381</a>    baseline_centroids: HashMap&lt;(i32, i32), WeightedTime&gt;,
-<a href=#382 id=382 data-nosnippet>382</a>    receptor_accumulations: Vec&lt;HashMap&lt;SolveAccumulationKey, SolveEdgeAccumulation&gt;&gt;,
-<a href=#383 id=383 data-nosnippet>383</a>}
-<a href=#384 id=384 data-nosnippet>384</a>
-<a href=#385 id=385 data-nosnippet>385</a><span class="attr">#[derive(Debug, Clone, Copy, Default)]
-<a href=#386 id=386 data-nosnippet>386</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>SolveEdgeStats {
-<a href=#387 id=387 data-nosnippet>387</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) weighted_sample_power: f64,
-<a href=#388 id=388 data-nosnippet>388</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) raw_weighted_sample_power: f64,
-<a href=#389 id=389 data-nosnippet>389</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) sample_count: usize,
-<a href=#390 id=390 data-nosnippet>390</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) collapsed_count: usize,
-<a href=#391 id=391 data-nosnippet>391</a>}
-<a href=#392 id=392 data-nosnippet>392</a>
-<a href=#393 id=393 data-nosnippet>393</a><span class="kw">impl </span>SolveEdgeStats {
-<a href=#394 id=394 data-nosnippet>394</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>add(<span class="kw-2">&amp;mut </span><span class="self">self</span>, other: <span class="self">Self</span>) {
-<a href=#395 id=395 data-nosnippet>395</a>        <span class="self">self</span>.weighted_sample_power += other.weighted_sample_power;
-<a href=#396 id=396 data-nosnippet>396</a>        <span class="self">self</span>.raw_weighted_sample_power += other.raw_weighted_sample_power;
-<a href=#397 id=397 data-nosnippet>397</a>        <span class="self">self</span>.sample_count += other.sample_count;
-<a href=#398 id=398 data-nosnippet>398</a>        <span class="self">self</span>.collapsed_count += other.collapsed_count;
-<a href=#399 id=399 data-nosnippet>399</a>    }
-<a href=#400 id=400 data-nosnippet>400</a>}
-<a href=#401 id=401 data-nosnippet>401</a>
-<a href=#402 id=402 data-nosnippet>402</a><span class="attr">#[derive(Debug, Clone, Copy, Default)]
-<a href=#403 id=403 data-nosnippet>403</a></span><span class="kw">struct </span>SolveEdgeAccumulation {
-<a href=#404 id=404 data-nosnippet>404</a>    weighted_sum: Complex32,
-<a href=#405 id=405 data-nosnippet>405</a>    weight: f32,
-<a href=#406 id=406 data-nosnippet>406</a>    weighted_sample_power: f64,
-<a href=#407 id=407 data-nosnippet>407</a>    sample_count: usize,
-<a href=#408 id=408 data-nosnippet>408</a>}
-<a href=#409 id=409 data-nosnippet>409</a>
-<a href=#410 id=410 data-nosnippet>410</a><span class="attr">#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-<a href=#411 id=411 data-nosnippet>411</a></span><span class="kw">struct </span>SolveAccumulationKey {
-<a href=#412 id=412 data-nosnippet>412</a>    baseline: (i32, i32),
-<a href=#413 id=413 data-nosnippet>413</a>    correlation_index: usize,
-<a href=#414 id=414 data-nosnippet>414</a>    channel_index: usize,
-<a href=#415 id=415 data-nosnippet>415</a>}
-<a href=#416 id=416 data-nosnippet>416</a>
-<a href=#417 id=417 data-nosnippet>417</a><span class="doccomment">/// A weighted mean of times.
-<a href=#418 id=418 data-nosnippet>418</a></span><span class="attr">#[derive(Debug, Clone, Copy, Default)]
-<a href=#419 id=419 data-nosnippet>419</a></span><span class="kw">struct </span>WeightedTime {
-<a href=#420 id=420 data-nosnippet>420</a>    weighted_sum: f64,
-<a href=#421 id=421 data-nosnippet>421</a>    weight: f64,
-<a href=#422 id=422 data-nosnippet>422</a>}
-<a href=#423 id=423 data-nosnippet>423</a>
-<a href=#424 id=424 data-nosnippet>424</a><span class="doccomment">/// One MAIN row's arrays for the solve, `[correlation, channel]`, checked
-<a href=#425 id=425 data-nosnippet>425</a>/// two-dimensional and of one shape.
-<a href=#426 id=426 data-nosnippet>426</a></span><span class="kw">struct </span>SolveRowInputs&lt;<span class="lifetime">'a</span>&gt; {
-<a href=#427 id=427 data-nosnippet>427</a>    data: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>ArrayD&lt;Complex32&gt;,
-<a href=#428 id=428 data-nosnippet>428</a>    flags: Cow&lt;<span class="lifetime">'a</span>, ArrayD&lt;bool&gt;&gt;,
-<a href=#429 id=429 data-nosnippet>429</a>    weights: ArrayD&lt;f32&gt;,
-<a href=#430 id=430 data-nosnippet>430</a>    model: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span><span class="lifetime">'a </span>ArrayD&lt;Complex32&gt;&gt;,
-<a href=#431 id=431 data-nosnippet>431</a>}
-<a href=#432 id=432 data-nosnippet>432</a>
-<a href=#433 id=433 data-nosnippet>433</a><span class="kw">impl </span>SolveRowInputs&lt;<span class="lifetime">'_</span>&gt; {
-<a href=#434 id=434 data-nosnippet>434</a>    <span class="doccomment">/// The arrays as [`SolveSamples`] views.
-<a href=#435 id=435 data-nosnippet>435</a>    </span><span class="kw">fn </span>samples(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; SolveSamples&lt;<span class="lifetime">'_</span>&gt; {
-<a href=#436 id=436 data-nosnippet>436</a>        SolveSamples {
-<a href=#437 id=437 data-nosnippet>437</a>            data: two_dimensional(<span class="self">self</span>.data),
-<a href=#438 id=438 data-nosnippet>438</a>            flags: two_dimensional(<span class="kw-2">&amp;</span><span class="self">self</span>.flags),
-<a href=#439 id=439 data-nosnippet>439</a>            weights: two_dimensional(<span class="kw-2">&amp;</span><span class="self">self</span>.weights),
-<a href=#440 id=440 data-nosnippet>440</a>            model: <span class="self">self</span>.model.map(two_dimensional),
-<a href=#441 id=441 data-nosnippet>441</a>        }
-<a href=#442 id=442 data-nosnippet>442</a>    }
-<a href=#443 id=443 data-nosnippet>443</a>}
-<a href=#444 id=444 data-nosnippet>444</a>
-<a href=#445 id=445 data-nosnippet>445</a><span class="doccomment">/// A MAIN cell checked two-dimensional, as a view.
-<a href=#446 id=446 data-nosnippet>446</a></span><span class="kw">fn </span>two_dimensional&lt;T&gt;(cell: <span class="kw-2">&amp;</span>ArrayD&lt;T&gt;) -&gt; ArrayView2&lt;<span class="lifetime">'_</span>, T&gt; {
-<a href=#447 id=447 data-nosnippet>447</a>    cell.view()
-<a href=#448 id=448 data-nosnippet>448</a>        .into_dimensionality::&lt;Ix2&gt;()
-<a href=#449 id=449 data-nosnippet>449</a>        .expect(<span class="string">"checked two-dimensional"</span>)
-<a href=#450 id=450 data-nosnippet>450</a>}
-<a href=#451 id=451 data-nosnippet>451</a>
-<a href=#452 id=452 data-nosnippet>452</a><span class="kw">impl </span>SolveAccumulator {
-<a href=#453 id=453 data-nosnippet>453</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>new(field_id: i32, spw_id: i32, observation_id: i32) -&gt; <span class="self">Self </span>{
-<a href=#454 id=454 data-nosnippet>454</a>        <span class="self">Self </span>{
-<a href=#455 id=455 data-nosnippet>455</a>            field_id,
-<a href=#456 id=456 data-nosnippet>456</a>            spw_id,
-<a href=#457 id=457 data-nosnippet>457</a>            observation_id,
-<a href=#458 id=458 data-nosnippet>458</a>            min_time: f64::INFINITY,
-<a href=#459 id=459 data-nosnippet>459</a>            max_time: f64::NEG_INFINITY,
-<a href=#460 id=460 data-nosnippet>460</a>            unique_time_sum: <span class="number">0.0</span>,
-<a href=#461 id=461 data-nosnippet>461</a>            unique_time_count: <span class="number">0</span>,
-<a href=#462 id=462 data-nosnippet>462</a>            total_interval: <span class="number">0.0</span>,
-<a href=#463 id=463 data-nosnippet>463</a>            sample_rows: <span class="number">0</span>,
-<a href=#464 id=464 data-nosnippet>464</a>            field_ids: BTreeSet::new(),
-<a href=#465 id=465 data-nosnippet>465</a>            scan_numbers: BTreeSet::new(),
-<a href=#466 id=466 data-nosnippet>466</a>            antenna_ids: BTreeSet::new(),
-<a href=#467 id=467 data-nosnippet>467</a>            unique_time_bits: BTreeSet::new(),
-<a href=#468 id=468 data-nosnippet>468</a>            solution_channels: <span class="number">1</span>,
-<a href=#469 id=469 data-nosnippet>469</a>            channel_graphs: Vec::new(),
-<a href=#470 id=470 data-nosnippet>470</a>            solution_time: <span class="number">0.0</span>,
-<a href=#471 id=471 data-nosnippet>471</a>            baseline_centroids: HashMap::new(),
-<a href=#472 id=472 data-nosnippet>472</a>            receptor_accumulations: Vec::new(),
-<a href=#473 id=473 data-nosnippet>473</a>        }
-<a href=#474 id=474 data-nosnippet>474</a>    }
-<a href=#475 id=475 data-nosnippet>475</a>
-<a href=#476 id=476 data-nosnippet>476</a>    <span class="doccomment">/// Add one MAIN row: its unflagged, positively weighted samples divided by
-<a href=#477 id=477 data-nosnippet>477</a>    /// the model, each weighted by its solve weight times |model|² as
-<a href=#478 id=478 data-nosnippet>478</a>    /// `VisEquation::divideCorrByModel` does, and its TIME_CENTROID.
-<a href=#479 id=479 data-nosnippet>479</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>observe(
-<a href=#480 id=480 data-nosnippet>480</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-<a href=#481 id=481 data-nosnippet>481</a>        ms: <span class="kw-2">&amp;</span>MeasurementSet,
-<a href=#482 id=482 data-nosnippet>482</a>        row: <span class="kw-2">&amp;</span>SelectedSolveRow,
-<a href=#483 id=483 data-nosnippet>483</a>        preapplied_row: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>EvaluatedApplyRow&gt;,
-<a href=#484 id=484 data-nosnippet>484</a>        options: <span class="kw-2">&amp;</span>SolveGroupOptions,
-<a href=#485 id=485 data-nosnippet>485</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), GainSolveError&gt; {
-<a href=#486 id=486 data-nosnippet>486</a>        <span class="kw">let </span>inputs = read_row_inputs(ms, row, preapplied_row, options.model_source)<span class="question-mark">?</span>;
-<a href=#487 id=487 data-nosnippet>487</a>        <span class="kw">let </span>correlation_types = correlation_types_for_ddid(ms, row.data_desc_id)<span class="question-mark">?</span>;
-<a href=#488 id=488 data-nosnippet>488</a>        <span class="kw">let </span>channel_count = inputs.data.shape()[<span class="number">1</span>];
-<a href=#489 id=489 data-nosnippet>489</a>        <span class="kw">let </span>channels = <span class="kw">if </span>options.channelized {
-<a href=#490 id=490 data-nosnippet>490</a>            (<span class="number">0</span>..channel_count).collect()
-<a href=#491 id=491 data-nosnippet>491</a>        } <span class="kw">else </span>{
-<a href=#492 id=492 data-nosnippet>492</a>            selected_channels(row, channel_count)<span class="question-mark">?
-<a href=#493 id=493 data-nosnippet>493</a>        </span>};
-<a href=#494 id=494 data-nosnippet>494</a>        <span class="self">self</span>.observe_samples(
-<a href=#495 id=495 data-nosnippet>495</a>            <span class="kw-2">&amp;</span>SolveSampleRow::of(row),
-<a href=#496 id=496 data-nosnippet>496</a>            <span class="kw-2">&amp;</span>inputs.samples(),
-<a href=#497 id=497 data-nosnippet>497</a>            <span class="kw-2">&amp;</span>correlation_types,
-<a href=#498 id=498 data-nosnippet>498</a>            <span class="kw-2">&amp;</span>channels,
-<a href=#499 id=499 data-nosnippet>499</a>            options,
-<a href=#500 id=500 data-nosnippet>500</a>        )
-<a href=#501 id=501 data-nosnippet>501</a>    }
-<a href=#502 id=502 data-nosnippet>502</a>
-<a href=#503 id=503 data-nosnippet>503</a>    <span class="doccomment">/// Accumulate one sample's `channels` (every channel for a channelized
-<a href=#504 id=504 data-nosnippet>504</a>    /// solve): the arithmetic of [`Self::observe`] on arrays from any source.
-<a href=#505 id=505 data-nosnippet>505</a>    /// The MSv2/MSv4 trial (`docs/measurement-set/trial/README.md`) feeds it
-<a href=#506 id=506 data-nosnippet>506</a>    /// from `casa_observation::VisibilityBatch` views without copying them.
-<a href=#507 id=507 data-nosnippet>507</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>observe_samples(
-<a href=#508 id=508 data-nosnippet>508</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-<a href=#509 id=509 data-nosnippet>509</a>        row: <span class="kw-2">&amp;</span>SolveSampleRow,
-<a href=#510 id=510 data-nosnippet>510</a>        samples: <span class="kw-2">&amp;</span>SolveSamples&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#511 id=511 data-nosnippet>511</a>        correlation_types: <span class="kw-2">&amp;</span>[i32],
-<a href=#512 id=512 data-nosnippet>512</a>        channels: <span class="kw-2">&amp;</span>[usize],
-<a href=#513 id=513 data-nosnippet>513</a>        options: <span class="kw-2">&amp;</span>SolveGroupOptions,
-<a href=#514 id=514 data-nosnippet>514</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), GainSolveError&gt; {
-<a href=#515 id=515 data-nosnippet>515</a>        <span class="kw">if </span>options.channelized {
-<a href=#516 id=516 data-nosnippet>516</a>            <span class="kw">let </span>channel_count = samples.data.shape()[<span class="number">1</span>];
-<a href=#517 id=517 data-nosnippet>517</a>            <span class="kw">if </span><span class="self">self</span>.sample_rows &gt; <span class="number">0 </span>&amp;&amp; <span class="self">self</span>.solution_channels != channel_count {
-<a href=#518 id=518 data-nosnippet>518</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(GainSolveError::UnsupportedParameterShape {
-<a href=#519 id=519 data-nosnippet>519</a>                    path: <span class="string">"&lt;measurement-set DATA&gt;"</span>.to_string(),
-<a href=#520 id=520 data-nosnippet>520</a>                    shape: samples.data.shape().to_vec(),
-<a href=#521 id=521 data-nosnippet>521</a>                });
-<a href=#522 id=522 data-nosnippet>522</a>            }
-<a href=#523 id=523 data-nosnippet>523</a>            <span class="self">self</span>.solution_channels = channel_count;
-<a href=#524 id=524 data-nosnippet>524</a>        }
-<a href=#525 id=525 data-nosnippet>525</a>
-<a href=#526 id=526 data-nosnippet>526</a>        <span class="kw">let </span>graph_count = <span class="kw">match </span>options.gain_type {
-<a href=#527 id=527 data-nosnippet>527</a>            GainType::G =&gt; <span class="number">2</span>,
-<a href=#528 id=528 data-nosnippet>528</a>            GainType::T =&gt; <span class="number">1</span>,
-<a href=#529 id=529 data-nosnippet>529</a>        };
-<a href=#530 id=530 data-nosnippet>530</a>        <span class="kw">if </span><span class="self">self</span>.receptor_accumulations.len() &lt; graph_count {
-<a href=#531 id=531 data-nosnippet>531</a>            <span class="self">self</span>.receptor_accumulations
-<a href=#532 id=532 data-nosnippet>532</a>                .resize_with(graph_count, HashMap::new);
-<a href=#533 id=533 data-nosnippet>533</a>        }
-<a href=#534 id=534 data-nosnippet>534</a>        <span class="self">self</span>.observe_metadata(row);
-<a href=#535 id=535 data-nosnippet>535</a>
-<a href=#536 id=536 data-nosnippet>536</a>        <span class="kw">let </span><span class="kw-2">mut </span>row_weight = <span class="number">0.0_f64</span>;
-<a href=#537 id=537 data-nosnippet>537</a>        <span class="kw">for </span>(corr_index, <span class="kw-2">&amp;</span>correlation_type) <span class="kw">in </span>correlation_types.iter().enumerate() {
-<a href=#538 id=538 data-nosnippet>538</a>            <span class="kw">let </span><span class="prelude-val">Some</span>(receptors) = correlation_receptors(correlation_type) <span class="kw">else </span>{
-<a href=#539 id=539 data-nosnippet>539</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(GainSolveError::UnsupportedCorrelationLayout {
-<a href=#540 id=540 data-nosnippet>540</a>                    data_desc_id: row.data_desc_id,
-<a href=#541 id=541 data-nosnippet>541</a>                    correlation_types: correlation_types
-<a href=#542 id=542 data-nosnippet>542</a>                        .iter()
-<a href=#543 id=543 data-nosnippet>543</a>                        .map(|code| stokes_name(<span class="kw-2">*</span>code).to_string())
-<a href=#544 id=544 data-nosnippet>544</a>                        .collect(),
-<a href=#545 id=545 data-nosnippet>545</a>                });
-<a href=#546 id=546 data-nosnippet>546</a>            };
-<a href=#547 id=547 data-nosnippet>547</a>            <span class="kw">if </span>receptors.<span class="number">0 </span>!= receptors.<span class="number">1 </span>{
-<a href=#548 id=548 data-nosnippet>548</a>                <span class="kw">continue</span>;
-<a href=#549 id=549 data-nosnippet>549</a>            }
-<a href=#550 id=550 data-nosnippet>550</a>            <span class="kw">let </span>graph_index = <span class="kw">match </span>options.gain_type {
-<a href=#551 id=551 data-nosnippet>551</a>                GainType::G =&gt; receptors.<span class="number">0</span>,
-<a href=#552 id=552 data-nosnippet>552</a>                GainType::T =&gt; <span class="number">0</span>,
-<a href=#553 id=553 data-nosnippet>553</a>            };
-<a href=#554 id=554 data-nosnippet>554</a>            <span class="kw">let </span><span class="kw-2">mut </span>channel_weights = Vec::with_capacity(channels.len());
-<a href=#555 id=555 data-nosnippet>555</a>            <span class="kw">for </span><span class="kw-2">&amp;</span>chan_index <span class="kw">in </span>channels {
-<a href=#556 id=556 data-nosnippet>556</a>                <span class="kw">let </span>weight = <span class="self">self</span>.accumulate_sample(
-<a href=#557 id=557 data-nosnippet>557</a>                    graph_index,
-<a href=#558 id=558 data-nosnippet>558</a>                    row,
-<a href=#559 id=559 data-nosnippet>559</a>                    samples,
-<a href=#560 id=560 data-nosnippet>560</a>                    options,
-<a href=#561 id=561 data-nosnippet>561</a>                    corr_index,
-<a href=#562 id=562 data-nosnippet>562</a>                    chan_index,
-<a href=#563 id=563 data-nosnippet>563</a>                );
-<a href=#564 id=564 data-nosnippet>564</a>                channel_weights.push(weight);
-<a href=#565 id=565 data-nosnippet>565</a>            }
-<a href=#566 id=566 data-nosnippet>566</a>            row_weight += <span class="kw">if </span>options.channelized {
-<a href=#567 id=567 data-nosnippet>567</a>                f64::from(median_with_even_mean(<span class="kw-2">&amp;mut </span>channel_weights))
-<a href=#568 id=568 data-nosnippet>568</a>            } <span class="kw">else </span>{
-<a href=#569 id=569 data-nosnippet>569</a>                channel_weights
-<a href=#570 id=570 data-nosnippet>570</a>                    .iter()
-<a href=#571 id=571 data-nosnippet>571</a>                    .map(|weight| f64::from(<span class="kw-2">*</span>weight))
-<a href=#572 id=572 data-nosnippet>572</a>                    .sum()
-<a href=#573 id=573 data-nosnippet>573</a>            };
-<a href=#574 id=574 data-nosnippet>574</a>        }
-<a href=#575 id=575 data-nosnippet>575</a>        <span class="kw">if </span>row_weight &gt; <span class="number">0.0 </span>{
-<a href=#576 id=576 data-nosnippet>576</a>            <span class="kw">let </span>centroid = <span class="self">self
-<a href=#577 id=577 data-nosnippet>577</a>                </span>.baseline_centroids
-<a href=#578 id=578 data-nosnippet>578</a>                .entry((row.antenna1, row.antenna2))
-<a href=#579 id=579 data-nosnippet>579</a>                .or_default();
-<a href=#580 id=580 data-nosnippet>580</a>            centroid.weighted_sum += row_weight * row.time_centroid_seconds;
-<a href=#581 id=581 data-nosnippet>581</a>            centroid.weight += row_weight;
-<a href=#582 id=582 data-nosnippet>582</a>        }
-<a href=#583 id=583 data-nosnippet>583</a>        <span class="prelude-val">Ok</span>(())
-<a href=#584 id=584 data-nosnippet>584</a>    }
-<a href=#585 id=585 data-nosnippet>585</a>
-<a href=#586 id=586 data-nosnippet>586</a>    <span class="kw">fn </span>observe_metadata(<span class="kw-2">&amp;mut </span><span class="self">self</span>, row: <span class="kw-2">&amp;</span>SolveSampleRow) {
-<a href=#587 id=587 data-nosnippet>587</a>        <span class="self">self</span>.min_time = <span class="self">self</span>.min_time.min(row.time_seconds);
-<a href=#588 id=588 data-nosnippet>588</a>        <span class="self">self</span>.max_time = <span class="self">self</span>.max_time.max(row.time_seconds);
-<a href=#589 id=589 data-nosnippet>589</a>        <span class="kw">if </span><span class="self">self</span>.unique_time_bits.insert(row.time_seconds.to_bits()) {
-<a href=#590 id=590 data-nosnippet>590</a>            <span class="self">self</span>.unique_time_sum += row.time_seconds;
-<a href=#591 id=591 data-nosnippet>591</a>            <span class="self">self</span>.unique_time_count += <span class="number">1</span>;
-<a href=#592 id=592 data-nosnippet>592</a>        }
-<a href=#593 id=593 data-nosnippet>593</a>        <span class="self">self</span>.total_interval += row.interval_seconds;
-<a href=#594 id=594 data-nosnippet>594</a>        <span class="self">self</span>.sample_rows += <span class="number">1</span>;
-<a href=#595 id=595 data-nosnippet>595</a>        <span class="self">self</span>.field_ids.insert(row.field_id);
-<a href=#596 id=596 data-nosnippet>596</a>        <span class="self">self</span>.scan_numbers.insert(row.scan_number);
-<a href=#597 id=597 data-nosnippet>597</a>        <span class="self">self</span>.antenna_ids.insert(row.antenna1);
-<a href=#598 id=598 data-nosnippet>598</a>        <span class="self">self</span>.antenna_ids.insert(row.antenna2);
-<a href=#599 id=599 data-nosnippet>599</a>    }
-<a href=#600 id=600 data-nosnippet>600</a>
-<a href=#601 id=601 data-nosnippet>601</a>    <span class="doccomment">/// Accumulate one sample if it can enter the solve; return its effective
-<a href=#602 id=602 data-nosnippet>602</a>    /// weight, zero when it is flagged or unusable.
-<a href=#603 id=603 data-nosnippet>603</a>    </span><span class="kw">fn </span>accumulate_sample(
-<a href=#604 id=604 data-nosnippet>604</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-<a href=#605 id=605 data-nosnippet>605</a>        graph_index: usize,
-<a href=#606 id=606 data-nosnippet>606</a>        row: <span class="kw-2">&amp;</span>SolveSampleRow,
-<a href=#607 id=607 data-nosnippet>607</a>        samples: <span class="kw-2">&amp;</span>SolveSamples&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#608 id=608 data-nosnippet>608</a>        options: <span class="kw-2">&amp;</span>SolveGroupOptions,
-<a href=#609 id=609 data-nosnippet>609</a>        corr_index: usize,
-<a href=#610 id=610 data-nosnippet>610</a>        chan_index: usize,
-<a href=#611 id=611 data-nosnippet>611</a>    ) -&gt; f32 {
-<a href=#612 id=612 data-nosnippet>612</a>        <span class="kw">let </span>weight = samples.weights[[corr_index, chan_index]];
-<a href=#613 id=613 data-nosnippet>613</a>        <span class="kw">if </span>weight &lt;= <span class="number">0.0 </span>|| solve_sample_flagged(<span class="kw-2">&amp;</span>samples.flags, options.gain_type, chan_index) {
-<a href=#614 id=614 data-nosnippet>614</a>            <span class="kw">return </span><span class="number">0.0</span>;
-<a href=#615 id=615 data-nosnippet>615</a>        }
-<a href=#616 id=616 data-nosnippet>616</a>        <span class="kw">let </span>model = <span class="kw">match </span>samples.model {
-<a href=#617 id=617 data-nosnippet>617</a>            <span class="prelude-val">Some</span>(model_data) =&gt; model_data[[corr_index, chan_index]],
-<a href=#618 id=618 data-nosnippet>618</a>            <span class="prelude-val">None </span>=&gt; Complex32::new(options.stokes_i, <span class="number">0.0</span>),
-<a href=#619 id=619 data-nosnippet>619</a>        };
-<a href=#620 id=620 data-nosnippet>620</a>        <span class="kw">let </span>model_norm_sqr = model.norm_sqr();
-<a href=#621 id=621 data-nosnippet>621</a>        <span class="kw">if </span>model_norm_sqr &lt;= f32::EPSILON {
-<a href=#622 id=622 data-nosnippet>622</a>            <span class="kw">return </span><span class="number">0.0</span>;
-<a href=#623 id=623 data-nosnippet>623</a>        }
-<a href=#624 id=624 data-nosnippet>624</a>        <span class="kw">let </span>sample = samples.data[[corr_index, chan_index]] / model;
-<a href=#625 id=625 data-nosnippet>625</a>        <span class="kw">if </span>sample.norm() &lt;= f32::EPSILON {
-<a href=#626 id=626 data-nosnippet>626</a>            <span class="kw">return </span><span class="number">0.0</span>;
-<a href=#627 id=627 data-nosnippet>627</a>        }
-<a href=#628 id=628 data-nosnippet>628</a>        <span class="kw">let </span>effective_weight = weight * model_norm_sqr;
-<a href=#629 id=629 data-nosnippet>629</a>        <span class="kw">let </span>accumulation = <span class="self">self</span>.receptor_accumulations[graph_index]
-<a href=#630 id=630 data-nosnippet>630</a>            .entry(SolveAccumulationKey {
-<a href=#631 id=631 data-nosnippet>631</a>                baseline: (row.antenna1, row.antenna2),
-<a href=#632 id=632 data-nosnippet>632</a>                correlation_index: corr_index,
-<a href=#633 id=633 data-nosnippet>633</a>                channel_index: <span class="kw">if </span>options.channelized { chan_index } <span class="kw">else </span>{ <span class="number">0 </span>},
-<a href=#634 id=634 data-nosnippet>634</a>            })
-<a href=#635 id=635 data-nosnippet>635</a>            .or_default();
-<a href=#636 id=636 data-nosnippet>636</a>        accumulation.weighted_sum += sample * Complex32::new(effective_weight, <span class="number">0.0</span>);
-<a href=#637 id=637 data-nosnippet>637</a>        accumulation.weight += effective_weight;
-<a href=#638 id=638 data-nosnippet>638</a>        accumulation.weighted_sample_power +=
-<a href=#639 id=639 data-nosnippet>639</a>            f64::from(effective_weight) * f64::from(sample.norm_sqr());
-<a href=#640 id=640 data-nosnippet>640</a>        accumulation.sample_count += <span class="number">1</span>;
-<a href=#641 id=641 data-nosnippet>641</a>        effective_weight
-<a href=#642 id=642 data-nosnippet>642</a>    }
-<a href=#643 id=643 data-nosnippet>643</a>
-<a href=#644 id=644 data-nosnippet>644</a>    <span class="doccomment">/// Collapse each baseline's samples per correlation and solution channel
-<a href=#645 id=645 data-nosnippet>645</a>    /// into the solve graphs, and set the solution TIME.
-<a href=#646 id=646 data-nosnippet>646</a>    ///
-<a href=#647 id=647 data-nosnippet>647</a>    /// A phase-only solve sees each collapsed sample at unit amplitude with
-<a href=#648 id=648 data-nosnippet>648</a>    /// its weight times its squared amplitude
-<a href=#649 id=649 data-nosnippet>649</a>    /// (`SolveDataBuffer::enforceAPonData`). TIME is
-<a href=#650 id=650 data-nosnippet>650</a>    /// `SDBList::aggregateTimeCentroid`: each baseline's TIME_CENTROID,
-<a href=#651 id=651 data-nosnippet>651</a>    /// averaged over its rows by row weight as time averaging does, weighted
-<a href=#652 id=652 data-nosnippet>652</a>    /// by the baseline's solve weight after that phase-only scaling.
-<a href=#653 id=653 data-nosnippet>653</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>finalize_for_solve(<span class="kw-2">&amp;mut </span><span class="self">self</span>, solve_mode: GainSolveMode) {
-<a href=#654 id=654 data-nosnippet>654</a>        <span class="self">self</span>.channel_graphs = <span class="macro">vec!</span>[
-<a href=#655 id=655 data-nosnippet>655</a>            <span class="macro">vec!</span>[SolveGraph::default(); <span class="self">self</span>.receptor_accumulations.len()];
-<a href=#656 id=656 data-nosnippet>656</a>            <span class="self">self</span>.solution_channels
-<a href=#657 id=657 data-nosnippet>657</a>        ];
-<a href=#658 id=658 data-nosnippet>658</a>        <span class="kw">let </span><span class="kw-2">mut </span>baseline_weights = HashMap::&lt;(i32, i32), f64&gt;::new();
-<a href=#659 id=659 data-nosnippet>659</a>        <span class="kw">for </span>(receptor, accumulations) <span class="kw">in </span><span class="self">self</span>.receptor_accumulations.iter().enumerate() {
-<a href=#660 id=660 data-nosnippet>660</a>            <span class="kw">for </span>(key, accumulation) <span class="kw">in </span>accumulations {
-<a href=#661 id=661 data-nosnippet>661</a>                <span class="kw">if </span>accumulation.weight &lt;= f32::EPSILON {
-<a href=#662 id=662 data-nosnippet>662</a>                    <span class="kw">continue</span>;
-<a href=#663 id=663 data-nosnippet>663</a>                }
-<a href=#664 id=664 data-nosnippet>664</a>                <span class="kw">let </span>averaged = accumulation.weighted_sum / Complex32::new(accumulation.weight, <span class="number">0.0</span>);
-<a href=#665 id=665 data-nosnippet>665</a>                <span class="kw">let </span>(sample, weight) = <span class="kw">match </span>solve_mode {
-<a href=#666 id=666 data-nosnippet>666</a>                    GainSolveMode::Phase =&gt; {
-<a href=#667 id=667 data-nosnippet>667</a>                        <span class="kw">let </span>amplitude = averaged.norm();
-<a href=#668 id=668 data-nosnippet>668</a>                        <span class="kw">if </span>amplitude &lt;= f32::EPSILON {
-<a href=#669 id=669 data-nosnippet>669</a>                            <span class="kw">continue</span>;
-<a href=#670 id=670 data-nosnippet>670</a>                        }
-<a href=#671 id=671 data-nosnippet>671</a>                        (
-<a href=#672 id=672 data-nosnippet>672</a>                            averaged / Complex32::new(amplitude, <span class="number">0.0</span>),
-<a href=#673 id=673 data-nosnippet>673</a>                            accumulation.weight * amplitude * amplitude,
-<a href=#674 id=674 data-nosnippet>674</a>                        )
-<a href=#675 id=675 data-nosnippet>675</a>                    }
-<a href=#676 id=676 data-nosnippet>676</a>                    GainSolveMode::AmplitudePhase =&gt; (averaged, accumulation.weight),
-<a href=#677 id=677 data-nosnippet>677</a>                };
-<a href=#678 id=678 data-nosnippet>678</a>                <span class="self">self</span>.channel_graphs[key.channel_index][receptor].accumulate(
-<a href=#679 id=679 data-nosnippet>679</a>                    key.baseline,
-<a href=#680 id=680 data-nosnippet>680</a>                    weight,
-<a href=#681 id=681 data-nosnippet>681</a>                    sample * Complex32::new(weight, <span class="number">0.0</span>),
-<a href=#682 id=682 data-nosnippet>682</a>                    SolveEdgeStats {
-<a href=#683 id=683 data-nosnippet>683</a>                        weighted_sample_power: f64::from(weight) * f64::from(sample.norm_sqr()),
-<a href=#684 id=684 data-nosnippet>684</a>                        raw_weighted_sample_power: accumulation.weighted_sample_power,
-<a href=#685 id=685 data-nosnippet>685</a>                        sample_count: accumulation.sample_count,
-<a href=#686 id=686 data-nosnippet>686</a>                        collapsed_count: <span class="number">1</span>,
-<a href=#687 id=687 data-nosnippet>687</a>                    },
-<a href=#688 id=688 data-nosnippet>688</a>                );
-<a href=#689 id=689 data-nosnippet>689</a>                <span class="kw-2">*</span>baseline_weights.entry(key.baseline).or_default() += f64::from(weight);
-<a href=#690 id=690 data-nosnippet>690</a>            }
-<a href=#691 id=691 data-nosnippet>691</a>        }
-<a href=#692 id=692 data-nosnippet>692</a>
-<a href=#693 id=693 data-nosnippet>693</a>        <span class="kw">let </span><span class="kw-2">mut </span>solution_time = WeightedTime::default();
-<a href=#694 id=694 data-nosnippet>694</a>        <span class="kw">for </span>(baseline, weight) <span class="kw">in </span>baseline_weights {
-<a href=#695 id=695 data-nosnippet>695</a>            <span class="kw">let </span><span class="prelude-val">Some</span>(centroid) = <span class="self">self</span>.baseline_centroids.get(<span class="kw-2">&amp;</span>baseline) <span class="kw">else </span>{
-<a href=#696 id=696 data-nosnippet>696</a>                <span class="kw">continue</span>;
-<a href=#697 id=697 data-nosnippet>697</a>            };
-<a href=#698 id=698 data-nosnippet>698</a>            <span class="kw">if </span>centroid.weight &gt; <span class="number">0.0 </span>{
-<a href=#699 id=699 data-nosnippet>699</a>                solution_time.weighted_sum += weight * centroid.weighted_sum / centroid.weight;
-<a href=#700 id=700 data-nosnippet>700</a>                solution_time.weight += weight;
-<a href=#701 id=701 data-nosnippet>701</a>            }
-<a href=#702 id=702 data-nosnippet>702</a>        }
-<a href=#703 id=703 data-nosnippet>703</a>        <span class="self">self</span>.solution_time = <span class="kw">if </span>solution_time.weight &gt; <span class="number">0.0 </span>{
-<a href=#704 id=704 data-nosnippet>704</a>            solution_time.weighted_sum / solution_time.weight
-<a href=#705 id=705 data-nosnippet>705</a>        } <span class="kw">else </span>{
-<a href=#706 id=706 data-nosnippet>706</a>            <span class="self">self</span>.aggregate_time()
-<a href=#707 id=707 data-nosnippet>707</a>        };
-<a href=#708 id=708 data-nosnippet>708</a>    }
-<a href=#709 id=709 data-nosnippet>709</a>
-<a href=#710 id=710 data-nosnippet>710</a>    <span class="doccomment">/// Add `other`'s accumulation, of the same group, to this one before
-<a href=#711 id=711 data-nosnippet>711</a>    /// [`Self::finalize_for_solve`], as if its samples had been observed
-<a href=#712 id=712 data-nosnippet>712</a>    /// here: the fragment work units of the MSv2/MSv4 trial accumulate apart
-<a href=#713 id=713 data-nosnippet>713</a>    /// and merge before the group closes. Sums change order, so results
-<a href=#714 id=714 data-nosnippet>714</a>    /// agree to rounding, not bitwise.
-<a href=#715 id=715 data-nosnippet>715</a>    </span><span class="attr">#[cfg(test)]
-<a href=#716 id=716 data-nosnippet>716</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>merge(<span class="kw-2">&amp;mut </span><span class="self">self</span>, other: <span class="self">Self</span>) {
-<a href=#717 id=717 data-nosnippet>717</a>        <span class="self">self</span>.min_time = <span class="self">self</span>.min_time.min(other.min_time);
-<a href=#718 id=718 data-nosnippet>718</a>        <span class="self">self</span>.max_time = <span class="self">self</span>.max_time.max(other.max_time);
-<a href=#719 id=719 data-nosnippet>719</a>        <span class="kw">for </span>bits <span class="kw">in </span>other.unique_time_bits {
-<a href=#720 id=720 data-nosnippet>720</a>            <span class="kw">if </span><span class="self">self</span>.unique_time_bits.insert(bits) {
-<a href=#721 id=721 data-nosnippet>721</a>                <span class="self">self</span>.unique_time_sum += f64::from_bits(bits);
-<a href=#722 id=722 data-nosnippet>722</a>                <span class="self">self</span>.unique_time_count += <span class="number">1</span>;
-<a href=#723 id=723 data-nosnippet>723</a>            }
-<a href=#724 id=724 data-nosnippet>724</a>        }
-<a href=#725 id=725 data-nosnippet>725</a>        <span class="self">self</span>.total_interval += other.total_interval;
-<a href=#726 id=726 data-nosnippet>726</a>        <span class="self">self</span>.sample_rows += other.sample_rows;
-<a href=#727 id=727 data-nosnippet>727</a>        <span class="self">self</span>.field_ids.extend(other.field_ids);
-<a href=#728 id=728 data-nosnippet>728</a>        <span class="self">self</span>.scan_numbers.extend(other.scan_numbers);
-<a href=#729 id=729 data-nosnippet>729</a>        <span class="self">self</span>.antenna_ids.extend(other.antenna_ids);
-<a href=#730 id=730 data-nosnippet>730</a>        <span class="self">self</span>.solution_channels = <span class="self">self</span>.solution_channels.max(other.solution_channels);
-<a href=#731 id=731 data-nosnippet>731</a>        <span class="kw">for </span>(baseline, centroid) <span class="kw">in </span>other.baseline_centroids {
-<a href=#732 id=732 data-nosnippet>732</a>            <span class="kw">let </span>mine = <span class="self">self</span>.baseline_centroids.entry(baseline).or_default();
-<a href=#733 id=733 data-nosnippet>733</a>            mine.weighted_sum += centroid.weighted_sum;
-<a href=#734 id=734 data-nosnippet>734</a>            mine.weight += centroid.weight;
-<a href=#735 id=735 data-nosnippet>735</a>        }
-<a href=#736 id=736 data-nosnippet>736</a>        <span class="kw">if </span><span class="self">self</span>.receptor_accumulations.len() &lt; other.receptor_accumulations.len() {
-<a href=#737 id=737 data-nosnippet>737</a>            <span class="self">self</span>.receptor_accumulations
-<a href=#738 id=738 data-nosnippet>738</a>                .resize_with(other.receptor_accumulations.len(), HashMap::new);
-<a href=#739 id=739 data-nosnippet>739</a>        }
-<a href=#740 id=740 data-nosnippet>740</a>        <span class="kw">for </span>(mine, theirs) <span class="kw">in </span><span class="self">self
-<a href=#741 id=741 data-nosnippet>741</a>            </span>.receptor_accumulations
-<a href=#742 id=742 data-nosnippet>742</a>            .iter_mut()
-<a href=#743 id=743 data-nosnippet>743</a>            .zip(other.receptor_accumulations)
-<a href=#744 id=744 data-nosnippet>744</a>        {
-<a href=#745 id=745 data-nosnippet>745</a>            <span class="kw">for </span>(key, accumulation) <span class="kw">in </span>theirs {
-<a href=#746 id=746 data-nosnippet>746</a>                <span class="kw">let </span>entry = mine.entry(key).or_default();
-<a href=#747 id=747 data-nosnippet>747</a>                entry.weighted_sum += accumulation.weighted_sum;
-<a href=#748 id=748 data-nosnippet>748</a>                entry.weight += accumulation.weight;
-<a href=#749 id=749 data-nosnippet>749</a>                entry.weighted_sample_power += accumulation.weighted_sample_power;
-<a href=#750 id=750 data-nosnippet>750</a>                entry.sample_count += accumulation.sample_count;
-<a href=#751 id=751 data-nosnippet>751</a>            }
-<a href=#752 id=752 data-nosnippet>752</a>        }
-<a href=#753 id=753 data-nosnippet>753</a>    }
-<a href=#754 id=754 data-nosnippet>754</a>
-<a href=#755 id=755 data-nosnippet>755</a>    <span class="doccomment">/// Entries the accumulation's sets and maps hold: its state grows with
-<a href=#756 id=756 data-nosnippet>756</a>    /// the group's distinct times, antennas, baselines and baseline
-<a href=#757 id=757 data-nosnippet>757</a>    /// correlations, not with its samples.
-<a href=#758 id=758 data-nosnippet>758</a>    </span><span class="attr">#[cfg(test)]
-<a href=#759 id=759 data-nosnippet>759</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>state_entries(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
-<a href=#760 id=760 data-nosnippet>760</a>        <span class="self">self</span>.unique_time_bits.len()
-<a href=#761 id=761 data-nosnippet>761</a>            + <span class="self">self</span>.scan_numbers.len()
-<a href=#762 id=762 data-nosnippet>762</a>            + <span class="self">self</span>.antenna_ids.len()
-<a href=#763 id=763 data-nosnippet>763</a>            + <span class="self">self</span>.baseline_centroids.len()
-<a href=#764 id=764 data-nosnippet>764</a>            + <span class="self">self
-<a href=#765 id=765 data-nosnippet>765</a>                </span>.receptor_accumulations
-<a href=#766 id=766 data-nosnippet>766</a>                .iter()
-<a href=#767 id=767 data-nosnippet>767</a>                .map(HashMap::len)
-<a href=#768 id=768 data-nosnippet>768</a>                .sum::&lt;usize&gt;()
-<a href=#769 id=769 data-nosnippet>769</a>    }
-<a href=#770 id=770 data-nosnippet>770</a>
-<a href=#771 id=771 data-nosnippet>771</a>    <span class="doccomment">/// The mean of the interval's distinct TIMEs (`SDBList::aggregateTime`,
-<a href=#772 id=772 data-nosnippet>772</a>    /// CASA's TIME when no sample carries weight).
-<a href=#773 id=773 data-nosnippet>773</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>aggregate_time(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; f64 {
-<a href=#774 id=774 data-nosnippet>774</a>        <span class="kw">if </span><span class="self">self</span>.unique_time_count &gt; <span class="number">0 </span>{
-<a href=#775 id=775 data-nosnippet>775</a>            <span class="self">self</span>.unique_time_sum / <span class="self">self</span>.unique_time_count <span class="kw">as </span>f64
-<a href=#776 id=776 data-nosnippet>776</a>        } <span class="kw">else </span>{
-<a href=#777 id=777 data-nosnippet>777</a>            (<span class="self">self</span>.min_time + <span class="self">self</span>.max_time) / <span class="number">2.0
-<a href=#778 id=778 data-nosnippet>778</a>        </span>}
-<a href=#779 id=779 data-nosnippet>779</a>    }
-<a href=#780 id=780 data-nosnippet>780</a>}
-<a href=#781 id=781 data-nosnippet>781</a>
-<a href=#782 id=782 data-nosnippet>782</a><span class="doccomment">/// Read one MAIN row's data, flags, model and solve weights, from the row or
-<a href=#783 id=783 data-nosnippet>783</a>/// from its pre-applied calibration.
-<a href=#784 id=784 data-nosnippet>784</a>///
-<a href=#785 id=785 data-nosnippet>785</a>/// The weights are CASA's (`CalSolvingVi2::calibrateCurrentVB`, which calls
-<a href=#786 id=786 data-nosnippet>786</a>/// `VisBufferImpl2::resetWeightsUsingSigma`): 1/σ² from SIGMA_SPECTRUM when
-<a href=#787 id=787 data-nosnippet>787</a>/// the MeasurementSet has WEIGHT_SPECTRUM and SIGMA_SPECTRUM, otherwise from
-<a href=#788 id=788 data-nosnippet>788</a>/// SIGMA broadcast over channels; σ ≤ 0 gives no weight. WEIGHT and
-<a href=#789 id=789 data-nosnippet>789</a>/// WEIGHT_SPECTRUM are not read. Pre-applied `calwt` tables then scale them.
-<a href=#790 id=790 data-nosnippet>790</a></span><span class="kw">fn </span>read_row_inputs&lt;<span class="lifetime">'a</span>&gt;(
-<a href=#791 id=791 data-nosnippet>791</a>    ms: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>MeasurementSet,
-<a href=#792 id=792 data-nosnippet>792</a>    row: <span class="kw-2">&amp;</span>SelectedSolveRow,
-<a href=#793 id=793 data-nosnippet>793</a>    preapplied_row: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span><span class="lifetime">'a </span>EvaluatedApplyRow&gt;,
-<a href=#794 id=794 data-nosnippet>794</a>    model_source: GainSolveModelSource,
-<a href=#795 id=795 data-nosnippet>795</a>) -&gt; <span class="prelude-ty">Result</span>&lt;SolveRowInputs&lt;<span class="lifetime">'a</span>&gt;, GainSolveError&gt; {
-<a href=#796 id=796 data-nosnippet>796</a>    <span class="kw">let </span>(data, flags) = <span class="kw">match </span>preapplied_row {
-<a href=#797 id=797 data-nosnippet>797</a>        <span class="prelude-val">Some</span>(preapplied) =&gt; (<span class="kw-2">&amp;</span>preapplied.corrected_data, <span class="kw-2">&amp;</span>preapplied.flags),
-<a href=#798 id=798 data-nosnippet>798</a>        <span class="prelude-val">None </span>=&gt; (
-<a href=#799 id=799 data-nosnippet>799</a>            main_cell(ms, row.row_index, <span class="string">"DATA"</span>)<span class="question-mark">?</span>,
-<a href=#800 id=800 data-nosnippet>800</a>            main_cell(ms, row.row_index, <span class="string">"FLAG"</span>)<span class="question-mark">?</span>,
-<a href=#801 id=801 data-nosnippet>801</a>        ),
-<a href=#802 id=802 data-nosnippet>802</a>    };
-<a href=#803 id=803 data-nosnippet>803</a>    <span class="kw">let </span>ArrayValue::Complex32(data) = data <span class="kw">else </span>{
-<a href=#804 id=804 data-nosnippet>804</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(unsupported_shape(<span class="string">"DATA"</span>, data));
-<a href=#805 id=805 data-nosnippet>805</a>    };
-<a href=#806 id=806 data-nosnippet>806</a>    <span class="kw">let </span>ArrayValue::Bool(flags) = flags <span class="kw">else </span>{
-<a href=#807 id=807 data-nosnippet>807</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(unsupported_shape(<span class="string">"FLAG"</span>, flags));
-<a href=#808 id=808 data-nosnippet>808</a>    };
-<a href=#809 id=809 data-nosnippet>809</a>    <span class="kw">if </span>data.ndim() != <span class="number">2 </span>|| data.shape() != flags.shape() {
-<a href=#810 id=810 data-nosnippet>810</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(GainSolveError::UnsupportedParameterShape {
-<a href=#811 id=811 data-nosnippet>811</a>            path: <span class="string">"&lt;measurement-set row&gt;"</span>.to_string(),
-<a href=#812 id=812 data-nosnippet>812</a>            shape: data.shape().to_vec(),
-<a href=#813 id=813 data-nosnippet>813</a>        });
-<a href=#814 id=814 data-nosnippet>814</a>    }
-<a href=#815 id=815 data-nosnippet>815</a>    <span class="kw">let </span>model = <span class="kw">match </span>model_source {
-<a href=#816 id=816 data-nosnippet>816</a>        GainSolveModelSource::ModelColumn =&gt; {
-<a href=#817 id=817 data-nosnippet>817</a>            <span class="kw">let </span>model = main_cell(ms, row.row_index, <span class="string">"MODEL_DATA"</span>)<span class="question-mark">?</span>;
-<a href=#818 id=818 data-nosnippet>818</a>            <span class="kw">match </span>model {
-<a href=#819 id=819 data-nosnippet>819</a>                ArrayValue::Complex32(model) <span class="kw">if </span>model.shape() == data.shape() =&gt; <span class="prelude-val">Some</span>(model),
-<a href=#820 id=820 data-nosnippet>820</a>                other =&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(unsupported_shape(<span class="string">"MODEL_DATA"</span>, other)),
-<a href=#821 id=821 data-nosnippet>821</a>            }
-<a href=#822 id=822 data-nosnippet>822</a>        }
-<a href=#823 id=823 data-nosnippet>823</a>        GainSolveModelSource::PointSource =&gt; <span class="prelude-val">None</span>,
-<a href=#824 id=824 data-nosnippet>824</a>    };
-<a href=#825 id=825 data-nosnippet>825</a>    <span class="kw">let </span><span class="kw-2">mut </span>weights = solve_weights(ms, row.row_index, data.shape())<span class="question-mark">?</span>;
-<a href=#826 id=826 data-nosnippet>826</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(factors) = preapplied_row.and_then(|row| row.weight_factors.as_ref()) {
-<a href=#827 id=827 data-nosnippet>827</a>        <span class="kw">if </span>factors.shape() != weights.shape() {
-<a href=#828 id=828 data-nosnippet>828</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(GainSolveError::UnsupportedParameterShape {
-<a href=#829 id=829 data-nosnippet>829</a>                path: <span class="string">"&lt;pre-applied weight factors&gt;"</span>.to_string(),
-<a href=#830 id=830 data-nosnippet>830</a>                shape: factors.shape().to_vec(),
-<a href=#831 id=831 data-nosnippet>831</a>            });
-<a href=#832 id=832 data-nosnippet>832</a>        }
-<a href=#833 id=833 data-nosnippet>833</a>        weights <span class="kw-2">*</span>= factors;
-<a href=#834 id=834 data-nosnippet>834</a>    }
-<a href=#835 id=835 data-nosnippet>835</a>    <span class="prelude-val">Ok</span>(SolveRowInputs {
-<a href=#836 id=836 data-nosnippet>836</a>        data,
-<a href=#837 id=837 data-nosnippet>837</a>        flags: solve_flags(row, flags),
-<a href=#838 id=838 data-nosnippet>838</a>        weights,
-<a href=#839 id=839 data-nosnippet>839</a>        model,
-<a href=#840 id=840 data-nosnippet>840</a>    })
-<a href=#841 id=841 data-nosnippet>841</a>}
-<a href=#842 id=842 data-nosnippet>842</a>
-<a href=#843 id=843 data-nosnippet>843</a><span class="kw">fn </span>solve_weights(
-<a href=#844 id=844 data-nosnippet>844</a>    ms: <span class="kw-2">&amp;</span>MeasurementSet,
-<a href=#845 id=845 data-nosnippet>845</a>    row_index: usize,
-<a href=#846 id=846 data-nosnippet>846</a>    shape: <span class="kw-2">&amp;</span>[usize],
-<a href=#847 id=847 data-nosnippet>847</a>) -&gt; <span class="prelude-ty">Result</span>&lt;ArrayD&lt;f32&gt;, GainSolveError&gt; {
-<a href=#848 id=848 data-nosnippet>848</a>    <span class="kw">let </span>has_column = |name| {
-<a href=#849 id=849 data-nosnippet>849</a>        ms.main_table()
-<a href=#850 id=850 data-nosnippet>850</a>            .schema()
-<a href=#851 id=851 data-nosnippet>851</a>            .is_some_and(|schema| schema.contains_column(name))
-<a href=#852 id=852 data-nosnippet>852</a>    };
-<a href=#853 id=853 data-nosnippet>853</a>    <span class="kw">let </span>inverse_square = |sigma: f32| {
-<a href=#854 id=854 data-nosnippet>854</a>        <span class="kw">if </span>sigma &gt; <span class="number">0.0 </span>{
-<a href=#855 id=855 data-nosnippet>855</a>            <span class="number">1.0 </span>/ (sigma * sigma)
-<a href=#856 id=856 data-nosnippet>856</a>        } <span class="kw">else </span>{
-<a href=#857 id=857 data-nosnippet>857</a>            <span class="number">0.0
-<a href=#858 id=858 data-nosnippet>858</a>        </span>}
-<a href=#859 id=859 data-nosnippet>859</a>    };
-<a href=#860 id=860 data-nosnippet>860</a>    <span class="kw">if </span>has_column(<span class="string">"WEIGHT_SPECTRUM"</span>) &amp;&amp; has_column(<span class="string">"SIGMA_SPECTRUM"</span>) {
-<a href=#861 id=861 data-nosnippet>861</a>        <span class="kw">let </span>sigma = main_cell(ms, row_index, <span class="string">"SIGMA_SPECTRUM"</span>)<span class="question-mark">?</span>;
-<a href=#862 id=862 data-nosnippet>862</a>        <span class="kw">return match </span>sigma {
-<a href=#863 id=863 data-nosnippet>863</a>            ArrayValue::Float32(sigma) <span class="kw">if </span>sigma.shape() == shape =&gt; <span class="prelude-val">Ok</span>(sigma.mapv(inverse_square)),
-<a href=#864 id=864 data-nosnippet>864</a>            other =&gt; <span class="prelude-val">Err</span>(unsupported_shape(<span class="string">"SIGMA_SPECTRUM"</span>, other)),
-<a href=#865 id=865 data-nosnippet>865</a>        };
-<a href=#866 id=866 data-nosnippet>866</a>    }
-<a href=#867 id=867 data-nosnippet>867</a>    <span class="kw">let </span>sigma = main_cell(ms, row_index, <span class="string">"SIGMA"</span>)<span class="question-mark">?</span>;
-<a href=#868 id=868 data-nosnippet>868</a>    <span class="kw">let </span>ArrayValue::Float32(sigma) = sigma <span class="kw">else </span>{
-<a href=#869 id=869 data-nosnippet>869</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(unsupported_shape(<span class="string">"SIGMA"</span>, sigma));
-<a href=#870 id=870 data-nosnippet>870</a>    };
-<a href=#871 id=871 data-nosnippet>871</a>    <span class="kw">if </span>sigma.ndim() != <span class="number">1 </span>|| sigma.shape()[<span class="number">0</span>] != shape[<span class="number">0</span>] {
-<a href=#872 id=872 data-nosnippet>872</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(GainSolveError::UnsupportedParameterShape {
-<a href=#873 id=873 data-nosnippet>873</a>            path: <span class="string">"&lt;measurement-set SIGMA&gt;"</span>.to_string(),
-<a href=#874 id=874 data-nosnippet>874</a>            shape: sigma.shape().to_vec(),
-<a href=#875 id=875 data-nosnippet>875</a>        });
-<a href=#876 id=876 data-nosnippet>876</a>    }
-<a href=#877 id=877 data-nosnippet>877</a>    <span class="prelude-val">Ok</span>(ArrayD::from_shape_fn(shape, |index| {
-<a href=#878 id=878 data-nosnippet>878</a>        inverse_square(sigma[[index[<span class="number">0</span>]]])
-<a href=#879 id=879 data-nosnippet>879</a>    }))
-<a href=#880 id=880 data-nosnippet>880</a>}
-<a href=#881 id=881 data-nosnippet>881</a>
-<a href=#882 id=882 data-nosnippet>882</a><span class="kw">fn </span>main_cell&lt;<span class="lifetime">'a</span>&gt;(
-<a href=#883 id=883 data-nosnippet>883</a>    ms: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>MeasurementSet,
-<a href=#884 id=884 data-nosnippet>884</a>    row_index: usize,
-<a href=#885 id=885 data-nosnippet>885</a>    column: <span class="kw-2">&amp;</span>str,
-<a href=#886 id=886 data-nosnippet>886</a>) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw-2">&amp;</span><span class="lifetime">'a </span>ArrayValue, GainSolveError&gt; {
-<a href=#887 id=887 data-nosnippet>887</a>    ms.main_table()
-<a href=#888 id=888 data-nosnippet>888</a>        .cell_accessor(row_index, column)
-<a href=#889 id=889 data-nosnippet>889</a>        .and_then(|cell| cell.array())
-<a href=#890 id=890 data-nosnippet>890</a>        .map_err(|source| GainSolveError::OpenMeasurementSet {
-<a href=#891 id=891 data-nosnippet>891</a>            path: ms
-<a href=#892 id=892 data-nosnippet>892</a>                .path()
-<a href=#893 id=893 data-nosnippet>893</a>                .map(|path| path.display().to_string())
-<a href=#894 id=894 data-nosnippet>894</a>                .unwrap_or_else(|| <span class="string">"&lt;in-memory&gt;"</span>.to_string()),
-<a href=#895 id=895 data-nosnippet>895</a>            source: MsError::from(source),
-<a href=#896 id=896 data-nosnippet>896</a>        })
-<a href=#897 id=897 data-nosnippet>897</a>}
-<a href=#898 id=898 data-nosnippet>898</a>
-<a href=#899 id=899 data-nosnippet>899</a><span class="kw">fn </span>unsupported_shape(column: <span class="kw-2">&amp;</span>str, value: <span class="kw-2">&amp;</span>ArrayValue) -&gt; GainSolveError {
-<a href=#900 id=900 data-nosnippet>900</a>    GainSolveError::UnsupportedParameterShape {
-<a href=#901 id=901 data-nosnippet>901</a>        path: <span class="macro">format!</span>(<span class="string">"&lt;measurement-set {column}&gt;"</span>),
-<a href=#902 id=902 data-nosnippet>902</a>        shape: value.shape().to_vec(),
-<a href=#903 id=903 data-nosnippet>903</a>    }
-<a href=#904 id=904 data-nosnippet>904</a>}
-<a href=#905 id=905 data-nosnippet>905</a>
-<a href=#906 id=906 data-nosnippet>906</a><span class="doccomment">/// The median, the mean of the middle two for an even count, as casacore's
-<a href=#907 id=907 data-nosnippet>907</a>/// `partialMedians(..., takeEvenMean=True)` that CASA uses for a row's
-<a href=#908 id=908 data-nosnippet>908</a>/// channel-independent weight.
-<a href=#909 id=909 data-nosnippet>909</a></span><span class="kw">fn </span>median_with_even_mean(values: <span class="kw-2">&amp;mut </span>[f32]) -&gt; f32 {
-<a href=#910 id=910 data-nosnippet>910</a>    <span class="kw">if </span>values.is_empty() {
-<a href=#911 id=911 data-nosnippet>911</a>        <span class="kw">return </span><span class="number">0.0</span>;
-<a href=#912 id=912 data-nosnippet>912</a>    }
-<a href=#913 id=913 data-nosnippet>913</a>    values.sort_by(f32::total_cmp);
-<a href=#914 id=914 data-nosnippet>914</a>    <span class="kw">let </span>middle = values.len() / <span class="number">2</span>;
-<a href=#915 id=915 data-nosnippet>915</a>    <span class="kw">if </span>values.len().is_multiple_of(<span class="number">2</span>) {
-<a href=#916 id=916 data-nosnippet>916</a>        (values[middle - <span class="number">1</span>] + values[middle]) / <span class="number">2.0
-<a href=#917 id=917 data-nosnippet>917</a>    </span>} <span class="kw">else </span>{
-<a href=#918 id=918 data-nosnippet>918</a>        values[middle]
-<a href=#919 id=919 data-nosnippet>919</a>    }
-<a href=#920 id=920 data-nosnippet>920</a>}
-<a href=#921 id=921 data-nosnippet>921</a>
-<a href=#922 id=922 data-nosnippet>922</a><span class="kw">fn </span>selected_channels(
-<a href=#923 id=923 data-nosnippet>923</a>    row: <span class="kw-2">&amp;</span>SelectedSolveRow,
-<a href=#924 id=924 data-nosnippet>924</a>    channel_count: usize,
-<a href=#925 id=925 data-nosnippet>925</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;usize&gt;, GainSolveError&gt; {
-<a href=#926 id=926 data-nosnippet>926</a>    <span class="kw">match </span><span class="kw-2">&amp;</span>row.channel_selection {
-<a href=#927 id=927 data-nosnippet>927</a>        <span class="prelude-val">Some</span>(selection) =&gt; {
-<a href=#928 id=928 data-nosnippet>928</a>            selection
-<a href=#929 id=929 data-nosnippet>929</a>                .indices(channel_count)
-<a href=#930 id=930 data-nosnippet>930</a>                .map_err(|source| GainSolveError::OpenMeasurementSet {
-<a href=#931 id=931 data-nosnippet>931</a>                    path: <span class="string">"&lt;measurement-set channel selection&gt;"</span>.to_string(),
-<a href=#932 id=932 data-nosnippet>932</a>                    source,
-<a href=#933 id=933 data-nosnippet>933</a>                })
-<a href=#934 id=934 data-nosnippet>934</a>        }
-<a href=#935 id=935 data-nosnippet>935</a>        <span class="prelude-val">None </span>=&gt; <span class="prelude-val">Ok</span>((<span class="number">0</span>..channel_count).collect()),
-<a href=#936 id=936 data-nosnippet>936</a>    }
-<a href=#937 id=937 data-nosnippet>937</a>}
-<a href=#938 id=938 data-nosnippet>938</a>
-<a href=#939 id=939 data-nosnippet>939</a><span class="doccomment">/// The sample flags a solve uses for `row`: its `FLAG` cell, or every sample
-<a href=#940 id=940 data-nosnippet>940</a>/// flagged when the row's `FLAG_ROW` is set, whatever `FLAG` holds. CASA's
-<a href=#941 id=941 data-nosnippet>941</a>/// solve does the same: `CalSolvingVi2::calibrateCurrentVB` calls
-<a href=#942 id=942 data-nosnippet>942</a>/// `VisEquation::collapse2`, whose `divideCorrByModel` flags the whole cube
-<a href=#943 id=943 data-nosnippet>943</a>/// of such a row and zeroes its weights before G, T or B accumulates it.
-<a href=#944 id=944 data-nosnippet>944</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>solve_flags&lt;<span class="lifetime">'a</span>&gt;(
-<a href=#945 id=945 data-nosnippet>945</a>    row: <span class="kw-2">&amp;</span>SelectedSolveRow,
-<a href=#946 id=946 data-nosnippet>946</a>    flags: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>ArrayD&lt;bool&gt;,
-<a href=#947 id=947 data-nosnippet>947</a>) -&gt; Cow&lt;<span class="lifetime">'a</span>, ArrayD&lt;bool&gt;&gt; {
-<a href=#948 id=948 data-nosnippet>948</a>    <span class="kw">if </span>row.flag_row {
-<a href=#949 id=949 data-nosnippet>949</a>        Cow::Owned(ArrayD::from_elem(flags.raw_dim(), <span class="bool-val">true</span>))
-<a href=#950 id=950 data-nosnippet>950</a>    } <span class="kw">else </span>{
-<a href=#951 id=951 data-nosnippet>951</a>        Cow::Borrowed(flags)
-<a href=#952 id=952 data-nosnippet>952</a>    }
-<a href=#953 id=953 data-nosnippet>953</a>}
-<a href=#954 id=954 data-nosnippet>954</a>
-<a href=#955 id=955 data-nosnippet>955</a><span class="doccomment">/// Correlation-independent flags, as `CalSolvingVi2::corrIndepFlags` makes
-<a href=#956 id=956 data-nosnippet>956</a>/// them: a channel any correlation flags is flagged for all.
-<a href=#957 id=957 data-nosnippet>957</a></span><span class="kw">fn </span>solve_sample_flagged(
-<a href=#958 id=958 data-nosnippet>958</a>    flags: <span class="kw-2">&amp;</span>ArrayView2&lt;<span class="lifetime">'_</span>, bool&gt;,
-<a href=#959 id=959 data-nosnippet>959</a>    gain_type: GainType,
-<a href=#960 id=960 data-nosnippet>960</a>    chan_index: usize,
-<a href=#961 id=961 data-nosnippet>961</a>) -&gt; bool {
-<a href=#962 id=962 data-nosnippet>962</a>    <span class="kw">match </span>gain_type {
-<a href=#963 id=963 data-nosnippet>963</a>        GainType::G | GainType::T =&gt; {
-<a href=#964 id=964 data-nosnippet>964</a>            (<span class="number">0</span>..flags.shape()[<span class="number">0</span>]).any(|corr_index| flags[[corr_index, chan_index]])
-<a href=#965 id=965 data-nosnippet>965</a>        }
-<a href=#966 id=966 data-nosnippet>966</a>    }
-<a href=#967 id=967 data-nosnippet>967</a>}
-<a href=#968 id=968 data-nosnippet>968</a>
-<a href=#969 id=969 data-nosnippet>969</a><span class="attr">#[cfg(test)]
-<a href=#970 id=970 data-nosnippet>970</a></span><span class="kw">mod </span>tests {
-<a href=#971 id=971 data-nosnippet>971</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
-<a href=#972 id=972 data-nosnippet>972</a>
-<a href=#973 id=973 data-nosnippet>973</a>    <span class="kw">fn </span>accumulator(receptors: usize) -&gt; SolveAccumulator {
-<a href=#974 id=974 data-nosnippet>974</a>        <span class="kw">let </span><span class="kw-2">mut </span>group = SolveAccumulator::new(<span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>);
-<a href=#975 id=975 data-nosnippet>975</a>        group
-<a href=#976 id=976 data-nosnippet>976</a>            .receptor_accumulations
-<a href=#977 id=977 data-nosnippet>977</a>            .resize_with(receptors, HashMap::new);
-<a href=#978 id=978 data-nosnippet>978</a>        group
-<a href=#979 id=979 data-nosnippet>979</a>    }
-<a href=#980 id=980 data-nosnippet>980</a>
-<a href=#981 id=981 data-nosnippet>981</a>    <span class="kw">fn </span>add(group: <span class="kw-2">&amp;mut </span>SolveAccumulator, correlation_index: usize, sample: Complex32) {
-<a href=#982 id=982 data-nosnippet>982</a>        <span class="kw">let </span>accumulation = group.receptor_accumulations[<span class="number">0</span>]
-<a href=#983 id=983 data-nosnippet>983</a>            .entry(SolveAccumulationKey {
-<a href=#984 id=984 data-nosnippet>984</a>                baseline: (<span class="number">0</span>, <span class="number">1</span>),
-<a href=#985 id=985 data-nosnippet>985</a>                correlation_index,
-<a href=#986 id=986 data-nosnippet>986</a>                channel_index: <span class="number">0</span>,
-<a href=#987 id=987 data-nosnippet>987</a>            })
-<a href=#988 id=988 data-nosnippet>988</a>            .or_default();
-<a href=#989 id=989 data-nosnippet>989</a>        accumulation.weighted_sum += sample;
-<a href=#990 id=990 data-nosnippet>990</a>        accumulation.weight += <span class="number">1.0</span>;
-<a href=#991 id=991 data-nosnippet>991</a>        accumulation.weighted_sample_power += f64::from(sample.norm_sqr());
-<a href=#992 id=992 data-nosnippet>992</a>        accumulation.sample_count += <span class="number">1</span>;
-<a href=#993 id=993 data-nosnippet>993</a>    }
-<a href=#994 id=994 data-nosnippet>994</a>
-<a href=#995 id=995 data-nosnippet>995</a>    <span class="attr">#[test]
-<a href=#996 id=996 data-nosnippet>996</a>    </span><span class="kw">fn </span>finalize_for_phase_solve_collapses_before_unit_amplitude_normalization() {
-<a href=#997 id=997 data-nosnippet>997</a>        <span class="kw">let </span><span class="kw-2">mut </span>group = accumulator(<span class="number">1</span>);
-<a href=#998 id=998 data-nosnippet>998</a>        add(<span class="kw-2">&amp;mut </span>group, <span class="number">0</span>, Complex32::new(<span class="number">2.0</span>, <span class="number">0.0</span>));
-<a href=#999 id=999 data-nosnippet>999</a>        add(<span class="kw-2">&amp;mut </span>group, <span class="number">0</span>, Complex32::new(<span class="number">0.0</span>, <span class="number">2.0</span>));
-<a href=#1000 id=1000 data-nosnippet>1000</a>
-<a href=#1001 id=1001 data-nosnippet>1001</a>        group.finalize_for_solve(GainSolveMode::Phase);
-<a href=#1002 id=1002 data-nosnippet>1002</a>
-<a href=#1003 id=1003 data-nosnippet>1003</a>        <span class="kw">let </span>graph = <span class="kw-2">&amp;</span>group.channel_graphs[<span class="number">0</span>][<span class="number">0</span>];
-<a href=#1004 id=1004 data-nosnippet>1004</a>        <span class="macro">assert!</span>((graph.weights[<span class="kw-2">&amp;</span>(<span class="number">0</span>, <span class="number">1</span>)] - <span class="number">4.0</span>).abs() &lt; <span class="number">1.0e-6</span>);
-<a href=#1005 id=1005 data-nosnippet>1005</a>        <span class="kw">let </span>edge = graph.edges[<span class="kw-2">&amp;</span>(<span class="number">0</span>, <span class="number">1</span>)];
-<a href=#1006 id=1006 data-nosnippet>1006</a>        <span class="kw">let </span>expected = <span class="number">4.0_f32 </span>/ <span class="number">2.0_f32</span>.sqrt();
-<a href=#1007 id=1007 data-nosnippet>1007</a>        <span class="macro">assert!</span>((edge.re - expected).abs() &lt; <span class="number">1.0e-6</span>);
-<a href=#1008 id=1008 data-nosnippet>1008</a>        <span class="macro">assert!</span>((edge.im - expected).abs() &lt; <span class="number">1.0e-6</span>);
-<a href=#1009 id=1009 data-nosnippet>1009</a>        <span class="macro">assert_eq!</span>(graph.stats[<span class="kw-2">&amp;</span>(<span class="number">0</span>, <span class="number">1</span>)].sample_count, <span class="number">2</span>);
-<a href=#1010 id=1010 data-nosnippet>1010</a>    }
+<a href=#381 id=381 data-nosnippet>381</a>    <span class="doccomment">/// Whether a sample entered the solve: CASA attempts a solution for
+<a href=#382 id=382 data-nosnippet>382</a>    /// such an interval (`SDBList::Ok`, positive unflagged weight after the
+<a href=#383 id=383 data-nosnippet>383</a>    /// model division), and sets its window's gain-table channel then,
+<a href=#384 id=384 data-nosnippet>384</a>    /// whether or not the solve succeeds.
+<a href=#385 id=385 data-nosnippet>385</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) attempted: bool,
+<a href=#386 id=386 data-nosnippet>386</a>    baseline_centroids: HashMap&lt;(i32, i32), WeightedTime&gt;,
+<a href=#387 id=387 data-nosnippet>387</a>    receptor_accumulations: Vec&lt;HashMap&lt;SolveAccumulationKey, SolveEdgeAccumulation&gt;&gt;,
+<a href=#388 id=388 data-nosnippet>388</a>}
+<a href=#389 id=389 data-nosnippet>389</a>
+<a href=#390 id=390 data-nosnippet>390</a><span class="attr">#[derive(Debug, Clone, Copy, Default)]
+<a href=#391 id=391 data-nosnippet>391</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>SolveEdgeStats {
+<a href=#392 id=392 data-nosnippet>392</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) weighted_sample_power: f64,
+<a href=#393 id=393 data-nosnippet>393</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) raw_weighted_sample_power: f64,
+<a href=#394 id=394 data-nosnippet>394</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) sample_count: usize,
+<a href=#395 id=395 data-nosnippet>395</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) collapsed_count: usize,
+<a href=#396 id=396 data-nosnippet>396</a>}
+<a href=#397 id=397 data-nosnippet>397</a>
+<a href=#398 id=398 data-nosnippet>398</a><span class="kw">impl </span>SolveEdgeStats {
+<a href=#399 id=399 data-nosnippet>399</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>add(<span class="kw-2">&amp;mut </span><span class="self">self</span>, other: <span class="self">Self</span>) {
+<a href=#400 id=400 data-nosnippet>400</a>        <span class="self">self</span>.weighted_sample_power += other.weighted_sample_power;
+<a href=#401 id=401 data-nosnippet>401</a>        <span class="self">self</span>.raw_weighted_sample_power += other.raw_weighted_sample_power;
+<a href=#402 id=402 data-nosnippet>402</a>        <span class="self">self</span>.sample_count += other.sample_count;
+<a href=#403 id=403 data-nosnippet>403</a>        <span class="self">self</span>.collapsed_count += other.collapsed_count;
+<a href=#404 id=404 data-nosnippet>404</a>    }
+<a href=#405 id=405 data-nosnippet>405</a>}
+<a href=#406 id=406 data-nosnippet>406</a>
+<a href=#407 id=407 data-nosnippet>407</a><span class="attr">#[derive(Debug, Clone, Copy, Default)]
+<a href=#408 id=408 data-nosnippet>408</a></span><span class="kw">struct </span>SolveEdgeAccumulation {
+<a href=#409 id=409 data-nosnippet>409</a>    weighted_sum: Complex32,
+<a href=#410 id=410 data-nosnippet>410</a>    weight: f32,
+<a href=#411 id=411 data-nosnippet>411</a>    weighted_sample_power: f64,
+<a href=#412 id=412 data-nosnippet>412</a>    sample_count: usize,
+<a href=#413 id=413 data-nosnippet>413</a>}
+<a href=#414 id=414 data-nosnippet>414</a>
+<a href=#415 id=415 data-nosnippet>415</a><span class="attr">#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+<a href=#416 id=416 data-nosnippet>416</a></span><span class="kw">struct </span>SolveAccumulationKey {
+<a href=#417 id=417 data-nosnippet>417</a>    baseline: (i32, i32),
+<a href=#418 id=418 data-nosnippet>418</a>    correlation_index: usize,
+<a href=#419 id=419 data-nosnippet>419</a>    channel_index: usize,
+<a href=#420 id=420 data-nosnippet>420</a>}
+<a href=#421 id=421 data-nosnippet>421</a>
+<a href=#422 id=422 data-nosnippet>422</a><span class="doccomment">/// A weighted mean of times.
+<a href=#423 id=423 data-nosnippet>423</a></span><span class="attr">#[derive(Debug, Clone, Copy, Default)]
+<a href=#424 id=424 data-nosnippet>424</a></span><span class="kw">struct </span>WeightedTime {
+<a href=#425 id=425 data-nosnippet>425</a>    weighted_sum: f64,
+<a href=#426 id=426 data-nosnippet>426</a>    weight: f64,
+<a href=#427 id=427 data-nosnippet>427</a>}
+<a href=#428 id=428 data-nosnippet>428</a>
+<a href=#429 id=429 data-nosnippet>429</a><span class="doccomment">/// One MAIN row's arrays for the solve, `[correlation, channel]`, checked
+<a href=#430 id=430 data-nosnippet>430</a>/// two-dimensional and of one shape.
+<a href=#431 id=431 data-nosnippet>431</a></span><span class="kw">struct </span>SolveRowInputs&lt;<span class="lifetime">'a</span>&gt; {
+<a href=#432 id=432 data-nosnippet>432</a>    data: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>ArrayD&lt;Complex32&gt;,
+<a href=#433 id=433 data-nosnippet>433</a>    flags: Cow&lt;<span class="lifetime">'a</span>, ArrayD&lt;bool&gt;&gt;,
+<a href=#434 id=434 data-nosnippet>434</a>    weights: ArrayD&lt;f32&gt;,
+<a href=#435 id=435 data-nosnippet>435</a>    model: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span><span class="lifetime">'a </span>ArrayD&lt;Complex32&gt;&gt;,
+<a href=#436 id=436 data-nosnippet>436</a>}
+<a href=#437 id=437 data-nosnippet>437</a>
+<a href=#438 id=438 data-nosnippet>438</a><span class="kw">impl </span>SolveRowInputs&lt;<span class="lifetime">'_</span>&gt; {
+<a href=#439 id=439 data-nosnippet>439</a>    <span class="doccomment">/// The arrays as [`SolveSamples`] views.
+<a href=#440 id=440 data-nosnippet>440</a>    </span><span class="kw">fn </span>samples(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; SolveSamples&lt;<span class="lifetime">'_</span>&gt; {
+<a href=#441 id=441 data-nosnippet>441</a>        SolveSamples {
+<a href=#442 id=442 data-nosnippet>442</a>            data: two_dimensional(<span class="self">self</span>.data),
+<a href=#443 id=443 data-nosnippet>443</a>            flags: two_dimensional(<span class="kw-2">&amp;</span><span class="self">self</span>.flags),
+<a href=#444 id=444 data-nosnippet>444</a>            weights: two_dimensional(<span class="kw-2">&amp;</span><span class="self">self</span>.weights),
+<a href=#445 id=445 data-nosnippet>445</a>            model: <span class="self">self</span>.model.map(two_dimensional),
+<a href=#446 id=446 data-nosnippet>446</a>        }
+<a href=#447 id=447 data-nosnippet>447</a>    }
+<a href=#448 id=448 data-nosnippet>448</a>}
+<a href=#449 id=449 data-nosnippet>449</a>
+<a href=#450 id=450 data-nosnippet>450</a><span class="doccomment">/// A MAIN cell checked two-dimensional, as a view.
+<a href=#451 id=451 data-nosnippet>451</a></span><span class="kw">fn </span>two_dimensional&lt;T&gt;(cell: <span class="kw-2">&amp;</span>ArrayD&lt;T&gt;) -&gt; ArrayView2&lt;<span class="lifetime">'_</span>, T&gt; {
+<a href=#452 id=452 data-nosnippet>452</a>    cell.view()
+<a href=#453 id=453 data-nosnippet>453</a>        .into_dimensionality::&lt;Ix2&gt;()
+<a href=#454 id=454 data-nosnippet>454</a>        .expect(<span class="string">"checked two-dimensional"</span>)
+<a href=#455 id=455 data-nosnippet>455</a>}
+<a href=#456 id=456 data-nosnippet>456</a>
+<a href=#457 id=457 data-nosnippet>457</a><span class="kw">impl </span>SolveAccumulator {
+<a href=#458 id=458 data-nosnippet>458</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>new(field_id: i32, spw_id: i32, observation_id: i32) -&gt; <span class="self">Self </span>{
+<a href=#459 id=459 data-nosnippet>459</a>        <span class="self">Self </span>{
+<a href=#460 id=460 data-nosnippet>460</a>            field_id,
+<a href=#461 id=461 data-nosnippet>461</a>            spw_id,
+<a href=#462 id=462 data-nosnippet>462</a>            observation_id,
+<a href=#463 id=463 data-nosnippet>463</a>            min_time: f64::INFINITY,
+<a href=#464 id=464 data-nosnippet>464</a>            max_time: f64::NEG_INFINITY,
+<a href=#465 id=465 data-nosnippet>465</a>            unique_time_sum: <span class="number">0.0</span>,
+<a href=#466 id=466 data-nosnippet>466</a>            unique_time_count: <span class="number">0</span>,
+<a href=#467 id=467 data-nosnippet>467</a>            total_interval: <span class="number">0.0</span>,
+<a href=#468 id=468 data-nosnippet>468</a>            sample_rows: <span class="number">0</span>,
+<a href=#469 id=469 data-nosnippet>469</a>            field_ids: BTreeSet::new(),
+<a href=#470 id=470 data-nosnippet>470</a>            scan_numbers: BTreeSet::new(),
+<a href=#471 id=471 data-nosnippet>471</a>            antenna_ids: BTreeSet::new(),
+<a href=#472 id=472 data-nosnippet>472</a>            unique_time_bits: BTreeSet::new(),
+<a href=#473 id=473 data-nosnippet>473</a>            solution_channels: <span class="number">1</span>,
+<a href=#474 id=474 data-nosnippet>474</a>            channel_graphs: Vec::new(),
+<a href=#475 id=475 data-nosnippet>475</a>            solution_time: <span class="number">0.0</span>,
+<a href=#476 id=476 data-nosnippet>476</a>            attempted: <span class="bool-val">false</span>,
+<a href=#477 id=477 data-nosnippet>477</a>            baseline_centroids: HashMap::new(),
+<a href=#478 id=478 data-nosnippet>478</a>            receptor_accumulations: Vec::new(),
+<a href=#479 id=479 data-nosnippet>479</a>        }
+<a href=#480 id=480 data-nosnippet>480</a>    }
+<a href=#481 id=481 data-nosnippet>481</a>
+<a href=#482 id=482 data-nosnippet>482</a>    <span class="doccomment">/// Add one MAIN row: its unflagged, positively weighted samples divided by
+<a href=#483 id=483 data-nosnippet>483</a>    /// the model, each weighted by its solve weight times |model|² as
+<a href=#484 id=484 data-nosnippet>484</a>    /// `VisEquation::divideCorrByModel` does, and its TIME_CENTROID.
+<a href=#485 id=485 data-nosnippet>485</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>observe(
+<a href=#486 id=486 data-nosnippet>486</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+<a href=#487 id=487 data-nosnippet>487</a>        ms: <span class="kw-2">&amp;</span>MeasurementSet,
+<a href=#488 id=488 data-nosnippet>488</a>        row: <span class="kw-2">&amp;</span>SelectedSolveRow,
+<a href=#489 id=489 data-nosnippet>489</a>        preapplied_row: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>EvaluatedApplyRow&gt;,
+<a href=#490 id=490 data-nosnippet>490</a>        options: <span class="kw-2">&amp;</span>SolveGroupOptions,
+<a href=#491 id=491 data-nosnippet>491</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), GainSolveError&gt; {
+<a href=#492 id=492 data-nosnippet>492</a>        <span class="kw">let </span>inputs = read_row_inputs(ms, row, preapplied_row, options.model_source)<span class="question-mark">?</span>;
+<a href=#493 id=493 data-nosnippet>493</a>        <span class="kw">let </span>correlation_types = correlation_types_for_ddid(ms, row.data_desc_id)<span class="question-mark">?</span>;
+<a href=#494 id=494 data-nosnippet>494</a>        <span class="kw">let </span>channel_count = inputs.data.shape()[<span class="number">1</span>];
+<a href=#495 id=495 data-nosnippet>495</a>        <span class="kw">let </span>channels = <span class="kw">if </span>options.channelized {
+<a href=#496 id=496 data-nosnippet>496</a>            (<span class="number">0</span>..channel_count).collect()
+<a href=#497 id=497 data-nosnippet>497</a>        } <span class="kw">else </span>{
+<a href=#498 id=498 data-nosnippet>498</a>            selected_channels(row.channel_selection.as_ref(), channel_count)<span class="question-mark">?
+<a href=#499 id=499 data-nosnippet>499</a>        </span>};
+<a href=#500 id=500 data-nosnippet>500</a>        <span class="self">self</span>.observe_samples(
+<a href=#501 id=501 data-nosnippet>501</a>            <span class="kw-2">&amp;</span>SolveSampleRow::of(row),
+<a href=#502 id=502 data-nosnippet>502</a>            <span class="kw-2">&amp;</span>inputs.samples(),
+<a href=#503 id=503 data-nosnippet>503</a>            <span class="kw-2">&amp;</span>correlation_types,
+<a href=#504 id=504 data-nosnippet>504</a>            <span class="kw-2">&amp;</span>channels,
+<a href=#505 id=505 data-nosnippet>505</a>            options,
+<a href=#506 id=506 data-nosnippet>506</a>        )
+<a href=#507 id=507 data-nosnippet>507</a>    }
+<a href=#508 id=508 data-nosnippet>508</a>
+<a href=#509 id=509 data-nosnippet>509</a>    <span class="doccomment">/// Accumulate one sample's `channels` (every channel for a channelized
+<a href=#510 id=510 data-nosnippet>510</a>    /// solve): the arithmetic of [`Self::observe`] on arrays from any source.
+<a href=#511 id=511 data-nosnippet>511</a>    /// The MSv2/MSv4 trial (`docs/measurement-set/trial/README.md`) feeds it
+<a href=#512 id=512 data-nosnippet>512</a>    /// from `casa_observation::VisibilityBatch` views without copying them.
+<a href=#513 id=513 data-nosnippet>513</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>observe_samples(
+<a href=#514 id=514 data-nosnippet>514</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+<a href=#515 id=515 data-nosnippet>515</a>        row: <span class="kw-2">&amp;</span>SolveSampleRow,
+<a href=#516 id=516 data-nosnippet>516</a>        samples: <span class="kw-2">&amp;</span>SolveSamples&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#517 id=517 data-nosnippet>517</a>        correlation_types: <span class="kw-2">&amp;</span>[i32],
+<a href=#518 id=518 data-nosnippet>518</a>        channels: <span class="kw-2">&amp;</span>[usize],
+<a href=#519 id=519 data-nosnippet>519</a>        options: <span class="kw-2">&amp;</span>SolveGroupOptions,
+<a href=#520 id=520 data-nosnippet>520</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), GainSolveError&gt; {
+<a href=#521 id=521 data-nosnippet>521</a>        <span class="kw">if </span>options.channelized {
+<a href=#522 id=522 data-nosnippet>522</a>            <span class="kw">let </span>channel_count = samples.data.shape()[<span class="number">1</span>];
+<a href=#523 id=523 data-nosnippet>523</a>            <span class="kw">if </span><span class="self">self</span>.sample_rows &gt; <span class="number">0 </span>&amp;&amp; <span class="self">self</span>.solution_channels != channel_count {
+<a href=#524 id=524 data-nosnippet>524</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(GainSolveError::UnsupportedParameterShape {
+<a href=#525 id=525 data-nosnippet>525</a>                    path: <span class="string">"&lt;measurement-set DATA&gt;"</span>.to_string(),
+<a href=#526 id=526 data-nosnippet>526</a>                    shape: samples.data.shape().to_vec(),
+<a href=#527 id=527 data-nosnippet>527</a>                });
+<a href=#528 id=528 data-nosnippet>528</a>            }
+<a href=#529 id=529 data-nosnippet>529</a>            <span class="self">self</span>.solution_channels = channel_count;
+<a href=#530 id=530 data-nosnippet>530</a>        }
+<a href=#531 id=531 data-nosnippet>531</a>
+<a href=#532 id=532 data-nosnippet>532</a>        <span class="kw">let </span>graph_count = <span class="kw">match </span>options.gain_type {
+<a href=#533 id=533 data-nosnippet>533</a>            GainType::G =&gt; <span class="number">2</span>,
+<a href=#534 id=534 data-nosnippet>534</a>            GainType::T =&gt; <span class="number">1</span>,
+<a href=#535 id=535 data-nosnippet>535</a>        };
+<a href=#536 id=536 data-nosnippet>536</a>        <span class="kw">if </span><span class="self">self</span>.receptor_accumulations.len() &lt; graph_count {
+<a href=#537 id=537 data-nosnippet>537</a>            <span class="self">self</span>.receptor_accumulations
+<a href=#538 id=538 data-nosnippet>538</a>                .resize_with(graph_count, HashMap::new);
+<a href=#539 id=539 data-nosnippet>539</a>        }
+<a href=#540 id=540 data-nosnippet>540</a>        <span class="self">self</span>.observe_metadata(row);
+<a href=#541 id=541 data-nosnippet>541</a>
+<a href=#542 id=542 data-nosnippet>542</a>        <span class="kw">let </span><span class="kw-2">mut </span>row_weight = <span class="number">0.0_f64</span>;
+<a href=#543 id=543 data-nosnippet>543</a>        <span class="kw">for </span>(corr_index, <span class="kw-2">&amp;</span>correlation_type) <span class="kw">in </span>correlation_types.iter().enumerate() {
+<a href=#544 id=544 data-nosnippet>544</a>            <span class="kw">let </span><span class="prelude-val">Some</span>(receptors) = correlation_receptors(correlation_type) <span class="kw">else </span>{
+<a href=#545 id=545 data-nosnippet>545</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(GainSolveError::UnsupportedCorrelationLayout {
+<a href=#546 id=546 data-nosnippet>546</a>                    data_desc_id: row.data_desc_id,
+<a href=#547 id=547 data-nosnippet>547</a>                    correlation_types: correlation_types
+<a href=#548 id=548 data-nosnippet>548</a>                        .iter()
+<a href=#549 id=549 data-nosnippet>549</a>                        .map(|code| stokes_name(<span class="kw-2">*</span>code).to_string())
+<a href=#550 id=550 data-nosnippet>550</a>                        .collect(),
+<a href=#551 id=551 data-nosnippet>551</a>                });
+<a href=#552 id=552 data-nosnippet>552</a>            };
+<a href=#553 id=553 data-nosnippet>553</a>            <span class="kw">if </span>receptors.<span class="number">0 </span>!= receptors.<span class="number">1 </span>{
+<a href=#554 id=554 data-nosnippet>554</a>                <span class="kw">continue</span>;
+<a href=#555 id=555 data-nosnippet>555</a>            }
+<a href=#556 id=556 data-nosnippet>556</a>            <span class="kw">let </span>graph_index = <span class="kw">match </span>options.gain_type {
+<a href=#557 id=557 data-nosnippet>557</a>                GainType::G =&gt; receptors.<span class="number">0</span>,
+<a href=#558 id=558 data-nosnippet>558</a>                GainType::T =&gt; <span class="number">0</span>,
+<a href=#559 id=559 data-nosnippet>559</a>            };
+<a href=#560 id=560 data-nosnippet>560</a>            <span class="kw">let </span><span class="kw-2">mut </span>channel_weights = Vec::with_capacity(channels.len());
+<a href=#561 id=561 data-nosnippet>561</a>            <span class="kw">for </span><span class="kw-2">&amp;</span>chan_index <span class="kw">in </span>channels {
+<a href=#562 id=562 data-nosnippet>562</a>                <span class="kw">let </span>weight = <span class="self">self</span>.accumulate_sample(
+<a href=#563 id=563 data-nosnippet>563</a>                    graph_index,
+<a href=#564 id=564 data-nosnippet>564</a>                    row,
+<a href=#565 id=565 data-nosnippet>565</a>                    samples,
+<a href=#566 id=566 data-nosnippet>566</a>                    options,
+<a href=#567 id=567 data-nosnippet>567</a>                    corr_index,
+<a href=#568 id=568 data-nosnippet>568</a>                    chan_index,
+<a href=#569 id=569 data-nosnippet>569</a>                );
+<a href=#570 id=570 data-nosnippet>570</a>                channel_weights.push(weight);
+<a href=#571 id=571 data-nosnippet>571</a>            }
+<a href=#572 id=572 data-nosnippet>572</a>            row_weight += <span class="kw">if </span>options.channelized {
+<a href=#573 id=573 data-nosnippet>573</a>                f64::from(median_with_even_mean(<span class="kw-2">&amp;mut </span>channel_weights))
+<a href=#574 id=574 data-nosnippet>574</a>            } <span class="kw">else </span>{
+<a href=#575 id=575 data-nosnippet>575</a>                channel_weights
+<a href=#576 id=576 data-nosnippet>576</a>                    .iter()
+<a href=#577 id=577 data-nosnippet>577</a>                    .map(|weight| f64::from(<span class="kw-2">*</span>weight))
+<a href=#578 id=578 data-nosnippet>578</a>                    .sum()
+<a href=#579 id=579 data-nosnippet>579</a>            };
+<a href=#580 id=580 data-nosnippet>580</a>        }
+<a href=#581 id=581 data-nosnippet>581</a>        <span class="kw">if </span>row_weight &gt; <span class="number">0.0 </span>{
+<a href=#582 id=582 data-nosnippet>582</a>            <span class="kw">let </span>centroid = <span class="self">self
+<a href=#583 id=583 data-nosnippet>583</a>                </span>.baseline_centroids
+<a href=#584 id=584 data-nosnippet>584</a>                .entry((row.antenna1, row.antenna2))
+<a href=#585 id=585 data-nosnippet>585</a>                .or_default();
+<a href=#586 id=586 data-nosnippet>586</a>            centroid.weighted_sum += row_weight * row.time_centroid_seconds;
+<a href=#587 id=587 data-nosnippet>587</a>            centroid.weight += row_weight;
+<a href=#588 id=588 data-nosnippet>588</a>        }
+<a href=#589 id=589 data-nosnippet>589</a>        <span class="prelude-val">Ok</span>(())
+<a href=#590 id=590 data-nosnippet>590</a>    }
+<a href=#591 id=591 data-nosnippet>591</a>
+<a href=#592 id=592 data-nosnippet>592</a>    <span class="kw">fn </span>observe_metadata(<span class="kw-2">&amp;mut </span><span class="self">self</span>, row: <span class="kw-2">&amp;</span>SolveSampleRow) {
+<a href=#593 id=593 data-nosnippet>593</a>        <span class="self">self</span>.min_time = <span class="self">self</span>.min_time.min(row.time_seconds);
+<a href=#594 id=594 data-nosnippet>594</a>        <span class="self">self</span>.max_time = <span class="self">self</span>.max_time.max(row.time_seconds);
+<a href=#595 id=595 data-nosnippet>595</a>        <span class="kw">if </span><span class="self">self</span>.unique_time_bits.insert(row.time_seconds.to_bits()) {
+<a href=#596 id=596 data-nosnippet>596</a>            <span class="self">self</span>.unique_time_sum += row.time_seconds;
+<a href=#597 id=597 data-nosnippet>597</a>            <span class="self">self</span>.unique_time_count += <span class="number">1</span>;
+<a href=#598 id=598 data-nosnippet>598</a>        }
+<a href=#599 id=599 data-nosnippet>599</a>        <span class="self">self</span>.total_interval += row.interval_seconds;
+<a href=#600 id=600 data-nosnippet>600</a>        <span class="self">self</span>.sample_rows += <span class="number">1</span>;
+<a href=#601 id=601 data-nosnippet>601</a>        <span class="self">self</span>.field_ids.insert(row.field_id);
+<a href=#602 id=602 data-nosnippet>602</a>        <span class="self">self</span>.scan_numbers.insert(row.scan_number);
+<a href=#603 id=603 data-nosnippet>603</a>        <span class="self">self</span>.antenna_ids.insert(row.antenna1);
+<a href=#604 id=604 data-nosnippet>604</a>        <span class="self">self</span>.antenna_ids.insert(row.antenna2);
+<a href=#605 id=605 data-nosnippet>605</a>    }
+<a href=#606 id=606 data-nosnippet>606</a>
+<a href=#607 id=607 data-nosnippet>607</a>    <span class="doccomment">/// Accumulate one sample if it can enter the solve; return its effective
+<a href=#608 id=608 data-nosnippet>608</a>    /// weight, zero when it is flagged or unusable.
+<a href=#609 id=609 data-nosnippet>609</a>    </span><span class="kw">fn </span>accumulate_sample(
+<a href=#610 id=610 data-nosnippet>610</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+<a href=#611 id=611 data-nosnippet>611</a>        graph_index: usize,
+<a href=#612 id=612 data-nosnippet>612</a>        row: <span class="kw-2">&amp;</span>SolveSampleRow,
+<a href=#613 id=613 data-nosnippet>613</a>        samples: <span class="kw-2">&amp;</span>SolveSamples&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#614 id=614 data-nosnippet>614</a>        options: <span class="kw-2">&amp;</span>SolveGroupOptions,
+<a href=#615 id=615 data-nosnippet>615</a>        corr_index: usize,
+<a href=#616 id=616 data-nosnippet>616</a>        chan_index: usize,
+<a href=#617 id=617 data-nosnippet>617</a>    ) -&gt; f32 {
+<a href=#618 id=618 data-nosnippet>618</a>        <span class="kw">let </span>weight = samples.weights[[corr_index, chan_index]];
+<a href=#619 id=619 data-nosnippet>619</a>        <span class="kw">if </span>weight &lt;= <span class="number">0.0 </span>|| solve_sample_flagged(<span class="kw-2">&amp;</span>samples.flags, options.gain_type, chan_index) {
+<a href=#620 id=620 data-nosnippet>620</a>            <span class="kw">return </span><span class="number">0.0</span>;
+<a href=#621 id=621 data-nosnippet>621</a>        }
+<a href=#622 id=622 data-nosnippet>622</a>        <span class="kw">let </span>model = <span class="kw">match </span>samples.model {
+<a href=#623 id=623 data-nosnippet>623</a>            <span class="prelude-val">Some</span>(model_data) =&gt; model_data[[corr_index, chan_index]],
+<a href=#624 id=624 data-nosnippet>624</a>            <span class="prelude-val">None </span>=&gt; Complex32::new(options.stokes_i, <span class="number">0.0</span>),
+<a href=#625 id=625 data-nosnippet>625</a>        };
+<a href=#626 id=626 data-nosnippet>626</a>        <span class="kw">let </span>model_norm_sqr = model.norm_sqr();
+<a href=#627 id=627 data-nosnippet>627</a>        <span class="kw">if </span>model_norm_sqr &lt;= f32::EPSILON {
+<a href=#628 id=628 data-nosnippet>628</a>            <span class="kw">return </span><span class="number">0.0</span>;
+<a href=#629 id=629 data-nosnippet>629</a>        }
+<a href=#630 id=630 data-nosnippet>630</a>        <span class="self">self</span>.attempted = <span class="bool-val">true</span>;
+<a href=#631 id=631 data-nosnippet>631</a>        <span class="kw">let </span>sample = samples.data[[corr_index, chan_index]] / model;
+<a href=#632 id=632 data-nosnippet>632</a>        <span class="kw">if </span>sample.norm() &lt;= f32::EPSILON {
+<a href=#633 id=633 data-nosnippet>633</a>            <span class="kw">return </span><span class="number">0.0</span>;
+<a href=#634 id=634 data-nosnippet>634</a>        }
+<a href=#635 id=635 data-nosnippet>635</a>        <span class="kw">let </span>effective_weight = weight * model_norm_sqr;
+<a href=#636 id=636 data-nosnippet>636</a>        <span class="kw">let </span>accumulation = <span class="self">self</span>.receptor_accumulations[graph_index]
+<a href=#637 id=637 data-nosnippet>637</a>            .entry(SolveAccumulationKey {
+<a href=#638 id=638 data-nosnippet>638</a>                baseline: (row.antenna1, row.antenna2),
+<a href=#639 id=639 data-nosnippet>639</a>                correlation_index: corr_index,
+<a href=#640 id=640 data-nosnippet>640</a>                channel_index: <span class="kw">if </span>options.channelized { chan_index } <span class="kw">else </span>{ <span class="number">0 </span>},
+<a href=#641 id=641 data-nosnippet>641</a>            })
+<a href=#642 id=642 data-nosnippet>642</a>            .or_default();
+<a href=#643 id=643 data-nosnippet>643</a>        accumulation.weighted_sum += sample * Complex32::new(effective_weight, <span class="number">0.0</span>);
+<a href=#644 id=644 data-nosnippet>644</a>        accumulation.weight += effective_weight;
+<a href=#645 id=645 data-nosnippet>645</a>        accumulation.weighted_sample_power +=
+<a href=#646 id=646 data-nosnippet>646</a>            f64::from(effective_weight) * f64::from(sample.norm_sqr());
+<a href=#647 id=647 data-nosnippet>647</a>        accumulation.sample_count += <span class="number">1</span>;
+<a href=#648 id=648 data-nosnippet>648</a>        effective_weight
+<a href=#649 id=649 data-nosnippet>649</a>    }
+<a href=#650 id=650 data-nosnippet>650</a>
+<a href=#651 id=651 data-nosnippet>651</a>    <span class="doccomment">/// Collapse each baseline's samples per correlation and solution channel
+<a href=#652 id=652 data-nosnippet>652</a>    /// into the solve graphs, and set the solution TIME.
+<a href=#653 id=653 data-nosnippet>653</a>    ///
+<a href=#654 id=654 data-nosnippet>654</a>    /// A phase-only solve sees each collapsed sample at unit amplitude with
+<a href=#655 id=655 data-nosnippet>655</a>    /// its weight times its squared amplitude
+<a href=#656 id=656 data-nosnippet>656</a>    /// (`SolveDataBuffer::enforceAPonData`). TIME is
+<a href=#657 id=657 data-nosnippet>657</a>    /// `SDBList::aggregateTimeCentroid`: each baseline's TIME_CENTROID,
+<a href=#658 id=658 data-nosnippet>658</a>    /// averaged over its rows by row weight as time averaging does, weighted
+<a href=#659 id=659 data-nosnippet>659</a>    /// by the baseline's solve weight after that phase-only scaling.
+<a href=#660 id=660 data-nosnippet>660</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>finalize_for_solve(<span class="kw-2">&amp;mut </span><span class="self">self</span>, solve_mode: GainSolveMode) {
+<a href=#661 id=661 data-nosnippet>661</a>        <span class="self">self</span>.channel_graphs = <span class="macro">vec!</span>[
+<a href=#662 id=662 data-nosnippet>662</a>            <span class="macro">vec!</span>[SolveGraph::default(); <span class="self">self</span>.receptor_accumulations.len()];
+<a href=#663 id=663 data-nosnippet>663</a>            <span class="self">self</span>.solution_channels
+<a href=#664 id=664 data-nosnippet>664</a>        ];
+<a href=#665 id=665 data-nosnippet>665</a>        <span class="kw">let </span><span class="kw-2">mut </span>baseline_weights = HashMap::&lt;(i32, i32), f64&gt;::new();
+<a href=#666 id=666 data-nosnippet>666</a>        <span class="kw">for </span>(receptor, accumulations) <span class="kw">in </span><span class="self">self</span>.receptor_accumulations.iter().enumerate() {
+<a href=#667 id=667 data-nosnippet>667</a>            <span class="kw">for </span>(key, accumulation) <span class="kw">in </span>accumulations {
+<a href=#668 id=668 data-nosnippet>668</a>                <span class="kw">if </span>accumulation.weight &lt;= f32::EPSILON {
+<a href=#669 id=669 data-nosnippet>669</a>                    <span class="kw">continue</span>;
+<a href=#670 id=670 data-nosnippet>670</a>                }
+<a href=#671 id=671 data-nosnippet>671</a>                <span class="kw">let </span>averaged = accumulation.weighted_sum / Complex32::new(accumulation.weight, <span class="number">0.0</span>);
+<a href=#672 id=672 data-nosnippet>672</a>                <span class="kw">let </span>(sample, weight) = <span class="kw">match </span>solve_mode {
+<a href=#673 id=673 data-nosnippet>673</a>                    GainSolveMode::Phase =&gt; {
+<a href=#674 id=674 data-nosnippet>674</a>                        <span class="kw">let </span>amplitude = averaged.norm();
+<a href=#675 id=675 data-nosnippet>675</a>                        <span class="kw">if </span>amplitude &lt;= f32::EPSILON {
+<a href=#676 id=676 data-nosnippet>676</a>                            <span class="kw">continue</span>;
+<a href=#677 id=677 data-nosnippet>677</a>                        }
+<a href=#678 id=678 data-nosnippet>678</a>                        (
+<a href=#679 id=679 data-nosnippet>679</a>                            averaged / Complex32::new(amplitude, <span class="number">0.0</span>),
+<a href=#680 id=680 data-nosnippet>680</a>                            accumulation.weight * amplitude * amplitude,
+<a href=#681 id=681 data-nosnippet>681</a>                        )
+<a href=#682 id=682 data-nosnippet>682</a>                    }
+<a href=#683 id=683 data-nosnippet>683</a>                    GainSolveMode::AmplitudePhase =&gt; (averaged, accumulation.weight),
+<a href=#684 id=684 data-nosnippet>684</a>                };
+<a href=#685 id=685 data-nosnippet>685</a>                <span class="self">self</span>.channel_graphs[key.channel_index][receptor].accumulate(
+<a href=#686 id=686 data-nosnippet>686</a>                    key.baseline,
+<a href=#687 id=687 data-nosnippet>687</a>                    weight,
+<a href=#688 id=688 data-nosnippet>688</a>                    sample * Complex32::new(weight, <span class="number">0.0</span>),
+<a href=#689 id=689 data-nosnippet>689</a>                    SolveEdgeStats {
+<a href=#690 id=690 data-nosnippet>690</a>                        weighted_sample_power: f64::from(weight) * f64::from(sample.norm_sqr()),
+<a href=#691 id=691 data-nosnippet>691</a>                        raw_weighted_sample_power: accumulation.weighted_sample_power,
+<a href=#692 id=692 data-nosnippet>692</a>                        sample_count: accumulation.sample_count,
+<a href=#693 id=693 data-nosnippet>693</a>                        collapsed_count: <span class="number">1</span>,
+<a href=#694 id=694 data-nosnippet>694</a>                    },
+<a href=#695 id=695 data-nosnippet>695</a>                );
+<a href=#696 id=696 data-nosnippet>696</a>                <span class="kw-2">*</span>baseline_weights.entry(key.baseline).or_default() += f64::from(weight);
+<a href=#697 id=697 data-nosnippet>697</a>            }
+<a href=#698 id=698 data-nosnippet>698</a>        }
+<a href=#699 id=699 data-nosnippet>699</a>
+<a href=#700 id=700 data-nosnippet>700</a>        <span class="kw">let </span><span class="kw-2">mut </span>solution_time = WeightedTime::default();
+<a href=#701 id=701 data-nosnippet>701</a>        <span class="kw">for </span>(baseline, weight) <span class="kw">in </span>baseline_weights {
+<a href=#702 id=702 data-nosnippet>702</a>            <span class="kw">let </span><span class="prelude-val">Some</span>(centroid) = <span class="self">self</span>.baseline_centroids.get(<span class="kw-2">&amp;</span>baseline) <span class="kw">else </span>{
+<a href=#703 id=703 data-nosnippet>703</a>                <span class="kw">continue</span>;
+<a href=#704 id=704 data-nosnippet>704</a>            };
+<a href=#705 id=705 data-nosnippet>705</a>            <span class="kw">if </span>centroid.weight &gt; <span class="number">0.0 </span>{
+<a href=#706 id=706 data-nosnippet>706</a>                solution_time.weighted_sum += weight * centroid.weighted_sum / centroid.weight;
+<a href=#707 id=707 data-nosnippet>707</a>                solution_time.weight += weight;
+<a href=#708 id=708 data-nosnippet>708</a>            }
+<a href=#709 id=709 data-nosnippet>709</a>        }
+<a href=#710 id=710 data-nosnippet>710</a>        <span class="self">self</span>.solution_time = <span class="kw">if </span>solution_time.weight &gt; <span class="number">0.0 </span>{
+<a href=#711 id=711 data-nosnippet>711</a>            solution_time.weighted_sum / solution_time.weight
+<a href=#712 id=712 data-nosnippet>712</a>        } <span class="kw">else </span>{
+<a href=#713 id=713 data-nosnippet>713</a>            <span class="self">self</span>.aggregate_time()
+<a href=#714 id=714 data-nosnippet>714</a>        };
+<a href=#715 id=715 data-nosnippet>715</a>    }
+<a href=#716 id=716 data-nosnippet>716</a>
+<a href=#717 id=717 data-nosnippet>717</a>    <span class="doccomment">/// Add `other`'s accumulation, of the same group, to this one before
+<a href=#718 id=718 data-nosnippet>718</a>    /// [`Self::finalize_for_solve`], as if its samples had been observed
+<a href=#719 id=719 data-nosnippet>719</a>    /// here: the fragment work units of the MSv2/MSv4 trial accumulate apart
+<a href=#720 id=720 data-nosnippet>720</a>    /// and merge before the group closes. Sums change order, so results
+<a href=#721 id=721 data-nosnippet>721</a>    /// agree to rounding, not bitwise.
+<a href=#722 id=722 data-nosnippet>722</a>    </span><span class="attr">#[cfg(test)]
+<a href=#723 id=723 data-nosnippet>723</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>merge(<span class="kw-2">&amp;mut </span><span class="self">self</span>, other: <span class="self">Self</span>) {
+<a href=#724 id=724 data-nosnippet>724</a>        <span class="self">self</span>.min_time = <span class="self">self</span>.min_time.min(other.min_time);
+<a href=#725 id=725 data-nosnippet>725</a>        <span class="self">self</span>.max_time = <span class="self">self</span>.max_time.max(other.max_time);
+<a href=#726 id=726 data-nosnippet>726</a>        <span class="kw">for </span>bits <span class="kw">in </span>other.unique_time_bits {
+<a href=#727 id=727 data-nosnippet>727</a>            <span class="kw">if </span><span class="self">self</span>.unique_time_bits.insert(bits) {
+<a href=#728 id=728 data-nosnippet>728</a>                <span class="self">self</span>.unique_time_sum += f64::from_bits(bits);
+<a href=#729 id=729 data-nosnippet>729</a>                <span class="self">self</span>.unique_time_count += <span class="number">1</span>;
+<a href=#730 id=730 data-nosnippet>730</a>            }
+<a href=#731 id=731 data-nosnippet>731</a>        }
+<a href=#732 id=732 data-nosnippet>732</a>        <span class="self">self</span>.total_interval += other.total_interval;
+<a href=#733 id=733 data-nosnippet>733</a>        <span class="self">self</span>.sample_rows += other.sample_rows;
+<a href=#734 id=734 data-nosnippet>734</a>        <span class="self">self</span>.field_ids.extend(other.field_ids);
+<a href=#735 id=735 data-nosnippet>735</a>        <span class="self">self</span>.scan_numbers.extend(other.scan_numbers);
+<a href=#736 id=736 data-nosnippet>736</a>        <span class="self">self</span>.antenna_ids.extend(other.antenna_ids);
+<a href=#737 id=737 data-nosnippet>737</a>        <span class="self">self</span>.solution_channels = <span class="self">self</span>.solution_channels.max(other.solution_channels);
+<a href=#738 id=738 data-nosnippet>738</a>        <span class="self">self</span>.attempted |= other.attempted;
+<a href=#739 id=739 data-nosnippet>739</a>        <span class="kw">for </span>(baseline, centroid) <span class="kw">in </span>other.baseline_centroids {
+<a href=#740 id=740 data-nosnippet>740</a>            <span class="kw">let </span>mine = <span class="self">self</span>.baseline_centroids.entry(baseline).or_default();
+<a href=#741 id=741 data-nosnippet>741</a>            mine.weighted_sum += centroid.weighted_sum;
+<a href=#742 id=742 data-nosnippet>742</a>            mine.weight += centroid.weight;
+<a href=#743 id=743 data-nosnippet>743</a>        }
+<a href=#744 id=744 data-nosnippet>744</a>        <span class="kw">if </span><span class="self">self</span>.receptor_accumulations.len() &lt; other.receptor_accumulations.len() {
+<a href=#745 id=745 data-nosnippet>745</a>            <span class="self">self</span>.receptor_accumulations
+<a href=#746 id=746 data-nosnippet>746</a>                .resize_with(other.receptor_accumulations.len(), HashMap::new);
+<a href=#747 id=747 data-nosnippet>747</a>        }
+<a href=#748 id=748 data-nosnippet>748</a>        <span class="kw">for </span>(mine, theirs) <span class="kw">in </span><span class="self">self
+<a href=#749 id=749 data-nosnippet>749</a>            </span>.receptor_accumulations
+<a href=#750 id=750 data-nosnippet>750</a>            .iter_mut()
+<a href=#751 id=751 data-nosnippet>751</a>            .zip(other.receptor_accumulations)
+<a href=#752 id=752 data-nosnippet>752</a>        {
+<a href=#753 id=753 data-nosnippet>753</a>            <span class="kw">for </span>(key, accumulation) <span class="kw">in </span>theirs {
+<a href=#754 id=754 data-nosnippet>754</a>                <span class="kw">let </span>entry = mine.entry(key).or_default();
+<a href=#755 id=755 data-nosnippet>755</a>                entry.weighted_sum += accumulation.weighted_sum;
+<a href=#756 id=756 data-nosnippet>756</a>                entry.weight += accumulation.weight;
+<a href=#757 id=757 data-nosnippet>757</a>                entry.weighted_sample_power += accumulation.weighted_sample_power;
+<a href=#758 id=758 data-nosnippet>758</a>                entry.sample_count += accumulation.sample_count;
+<a href=#759 id=759 data-nosnippet>759</a>            }
+<a href=#760 id=760 data-nosnippet>760</a>        }
+<a href=#761 id=761 data-nosnippet>761</a>    }
+<a href=#762 id=762 data-nosnippet>762</a>
+<a href=#763 id=763 data-nosnippet>763</a>    <span class="doccomment">/// Entries the accumulation's sets and maps hold: its state grows with
+<a href=#764 id=764 data-nosnippet>764</a>    /// the group's distinct times, antennas, baselines and baseline
+<a href=#765 id=765 data-nosnippet>765</a>    /// correlations, not with its samples.
+<a href=#766 id=766 data-nosnippet>766</a>    </span><span class="attr">#[cfg(test)]
+<a href=#767 id=767 data-nosnippet>767</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>state_entries(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
+<a href=#768 id=768 data-nosnippet>768</a>        <span class="self">self</span>.unique_time_bits.len()
+<a href=#769 id=769 data-nosnippet>769</a>            + <span class="self">self</span>.scan_numbers.len()
+<a href=#770 id=770 data-nosnippet>770</a>            + <span class="self">self</span>.antenna_ids.len()
+<a href=#771 id=771 data-nosnippet>771</a>            + <span class="self">self</span>.baseline_centroids.len()
+<a href=#772 id=772 data-nosnippet>772</a>            + <span class="self">self
+<a href=#773 id=773 data-nosnippet>773</a>                </span>.receptor_accumulations
+<a href=#774 id=774 data-nosnippet>774</a>                .iter()
+<a href=#775 id=775 data-nosnippet>775</a>                .map(HashMap::len)
+<a href=#776 id=776 data-nosnippet>776</a>                .sum::&lt;usize&gt;()
+<a href=#777 id=777 data-nosnippet>777</a>    }
+<a href=#778 id=778 data-nosnippet>778</a>
+<a href=#779 id=779 data-nosnippet>779</a>    <span class="doccomment">/// The mean of the interval's distinct TIMEs (`SDBList::aggregateTime`,
+<a href=#780 id=780 data-nosnippet>780</a>    /// CASA's TIME when no sample carries weight).
+<a href=#781 id=781 data-nosnippet>781</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>aggregate_time(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; f64 {
+<a href=#782 id=782 data-nosnippet>782</a>        <span class="kw">if </span><span class="self">self</span>.unique_time_count &gt; <span class="number">0 </span>{
+<a href=#783 id=783 data-nosnippet>783</a>            <span class="self">self</span>.unique_time_sum / <span class="self">self</span>.unique_time_count <span class="kw">as </span>f64
+<a href=#784 id=784 data-nosnippet>784</a>        } <span class="kw">else </span>{
+<a href=#785 id=785 data-nosnippet>785</a>            (<span class="self">self</span>.min_time + <span class="self">self</span>.max_time) / <span class="number">2.0
+<a href=#786 id=786 data-nosnippet>786</a>        </span>}
+<a href=#787 id=787 data-nosnippet>787</a>    }
+<a href=#788 id=788 data-nosnippet>788</a>}
+<a href=#789 id=789 data-nosnippet>789</a>
+<a href=#790 id=790 data-nosnippet>790</a><span class="doccomment">/// Read one MAIN row's data, flags, model and solve weights, from the row or
+<a href=#791 id=791 data-nosnippet>791</a>/// from its pre-applied calibration.
+<a href=#792 id=792 data-nosnippet>792</a>///
+<a href=#793 id=793 data-nosnippet>793</a>/// The weights are CASA's (`CalSolvingVi2::calibrateCurrentVB`, which calls
+<a href=#794 id=794 data-nosnippet>794</a>/// `VisBufferImpl2::resetWeightsUsingSigma`): 1/σ² from SIGMA_SPECTRUM when
+<a href=#795 id=795 data-nosnippet>795</a>/// the MeasurementSet has WEIGHT_SPECTRUM and SIGMA_SPECTRUM, otherwise from
+<a href=#796 id=796 data-nosnippet>796</a>/// SIGMA broadcast over channels; σ ≤ 0 gives no weight. WEIGHT and
+<a href=#797 id=797 data-nosnippet>797</a>/// WEIGHT_SPECTRUM are not read. Pre-applied `calwt` tables then scale them.
+<a href=#798 id=798 data-nosnippet>798</a></span><span class="kw">fn </span>read_row_inputs&lt;<span class="lifetime">'a</span>&gt;(
+<a href=#799 id=799 data-nosnippet>799</a>    ms: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>MeasurementSet,
+<a href=#800 id=800 data-nosnippet>800</a>    row: <span class="kw-2">&amp;</span>SelectedSolveRow,
+<a href=#801 id=801 data-nosnippet>801</a>    preapplied_row: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span><span class="lifetime">'a </span>EvaluatedApplyRow&gt;,
+<a href=#802 id=802 data-nosnippet>802</a>    model_source: GainSolveModelSource,
+<a href=#803 id=803 data-nosnippet>803</a>) -&gt; <span class="prelude-ty">Result</span>&lt;SolveRowInputs&lt;<span class="lifetime">'a</span>&gt;, GainSolveError&gt; {
+<a href=#804 id=804 data-nosnippet>804</a>    <span class="kw">let </span>(data, flags) = <span class="kw">match </span>preapplied_row {
+<a href=#805 id=805 data-nosnippet>805</a>        <span class="prelude-val">Some</span>(preapplied) =&gt; (<span class="kw-2">&amp;</span>preapplied.corrected_data, <span class="kw-2">&amp;</span>preapplied.flags),
+<a href=#806 id=806 data-nosnippet>806</a>        <span class="prelude-val">None </span>=&gt; (
+<a href=#807 id=807 data-nosnippet>807</a>            main_cell(ms, row.row_index, <span class="string">"DATA"</span>)<span class="question-mark">?</span>,
+<a href=#808 id=808 data-nosnippet>808</a>            main_cell(ms, row.row_index, <span class="string">"FLAG"</span>)<span class="question-mark">?</span>,
+<a href=#809 id=809 data-nosnippet>809</a>        ),
+<a href=#810 id=810 data-nosnippet>810</a>    };
+<a href=#811 id=811 data-nosnippet>811</a>    <span class="kw">let </span>ArrayValue::Complex32(data) = data <span class="kw">else </span>{
+<a href=#812 id=812 data-nosnippet>812</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(unsupported_shape(<span class="string">"DATA"</span>, data));
+<a href=#813 id=813 data-nosnippet>813</a>    };
+<a href=#814 id=814 data-nosnippet>814</a>    <span class="kw">let </span>ArrayValue::Bool(flags) = flags <span class="kw">else </span>{
+<a href=#815 id=815 data-nosnippet>815</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(unsupported_shape(<span class="string">"FLAG"</span>, flags));
+<a href=#816 id=816 data-nosnippet>816</a>    };
+<a href=#817 id=817 data-nosnippet>817</a>    <span class="kw">if </span>data.ndim() != <span class="number">2 </span>|| data.shape() != flags.shape() {
+<a href=#818 id=818 data-nosnippet>818</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(GainSolveError::UnsupportedParameterShape {
+<a href=#819 id=819 data-nosnippet>819</a>            path: <span class="string">"&lt;measurement-set row&gt;"</span>.to_string(),
+<a href=#820 id=820 data-nosnippet>820</a>            shape: data.shape().to_vec(),
+<a href=#821 id=821 data-nosnippet>821</a>        });
+<a href=#822 id=822 data-nosnippet>822</a>    }
+<a href=#823 id=823 data-nosnippet>823</a>    <span class="kw">let </span>model = <span class="kw">match </span>model_source {
+<a href=#824 id=824 data-nosnippet>824</a>        GainSolveModelSource::ModelColumn =&gt; {
+<a href=#825 id=825 data-nosnippet>825</a>            <span class="kw">let </span>model = main_cell(ms, row.row_index, <span class="string">"MODEL_DATA"</span>)<span class="question-mark">?</span>;
+<a href=#826 id=826 data-nosnippet>826</a>            <span class="kw">match </span>model {
+<a href=#827 id=827 data-nosnippet>827</a>                ArrayValue::Complex32(model) <span class="kw">if </span>model.shape() == data.shape() =&gt; <span class="prelude-val">Some</span>(model),
+<a href=#828 id=828 data-nosnippet>828</a>                other =&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(unsupported_shape(<span class="string">"MODEL_DATA"</span>, other)),
+<a href=#829 id=829 data-nosnippet>829</a>            }
+<a href=#830 id=830 data-nosnippet>830</a>        }
+<a href=#831 id=831 data-nosnippet>831</a>        GainSolveModelSource::PointSource =&gt; <span class="prelude-val">None</span>,
+<a href=#832 id=832 data-nosnippet>832</a>    };
+<a href=#833 id=833 data-nosnippet>833</a>    <span class="kw">let </span><span class="kw-2">mut </span>weights = solve_weights(ms, row.row_index, data.shape())<span class="question-mark">?</span>;
+<a href=#834 id=834 data-nosnippet>834</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(factors) = preapplied_row.and_then(|row| row.weight_factors.as_ref()) {
+<a href=#835 id=835 data-nosnippet>835</a>        <span class="kw">if </span>factors.shape() != weights.shape() {
+<a href=#836 id=836 data-nosnippet>836</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(GainSolveError::UnsupportedParameterShape {
+<a href=#837 id=837 data-nosnippet>837</a>                path: <span class="string">"&lt;pre-applied weight factors&gt;"</span>.to_string(),
+<a href=#838 id=838 data-nosnippet>838</a>                shape: factors.shape().to_vec(),
+<a href=#839 id=839 data-nosnippet>839</a>            });
+<a href=#840 id=840 data-nosnippet>840</a>        }
+<a href=#841 id=841 data-nosnippet>841</a>        weights <span class="kw-2">*</span>= factors;
+<a href=#842 id=842 data-nosnippet>842</a>    }
+<a href=#843 id=843 data-nosnippet>843</a>    <span class="prelude-val">Ok</span>(SolveRowInputs {
+<a href=#844 id=844 data-nosnippet>844</a>        data,
+<a href=#845 id=845 data-nosnippet>845</a>        flags: solve_flags(row, flags),
+<a href=#846 id=846 data-nosnippet>846</a>        weights,
+<a href=#847 id=847 data-nosnippet>847</a>        model,
+<a href=#848 id=848 data-nosnippet>848</a>    })
+<a href=#849 id=849 data-nosnippet>849</a>}
+<a href=#850 id=850 data-nosnippet>850</a>
+<a href=#851 id=851 data-nosnippet>851</a><span class="kw">fn </span>solve_weights(
+<a href=#852 id=852 data-nosnippet>852</a>    ms: <span class="kw-2">&amp;</span>MeasurementSet,
+<a href=#853 id=853 data-nosnippet>853</a>    row_index: usize,
+<a href=#854 id=854 data-nosnippet>854</a>    shape: <span class="kw-2">&amp;</span>[usize],
+<a href=#855 id=855 data-nosnippet>855</a>) -&gt; <span class="prelude-ty">Result</span>&lt;ArrayD&lt;f32&gt;, GainSolveError&gt; {
+<a href=#856 id=856 data-nosnippet>856</a>    <span class="kw">let </span>has_column = |name| {
+<a href=#857 id=857 data-nosnippet>857</a>        ms.main_table()
+<a href=#858 id=858 data-nosnippet>858</a>            .schema()
+<a href=#859 id=859 data-nosnippet>859</a>            .is_some_and(|schema| schema.contains_column(name))
+<a href=#860 id=860 data-nosnippet>860</a>    };
+<a href=#861 id=861 data-nosnippet>861</a>    <span class="kw">let </span>inverse_square = |sigma: f32| {
+<a href=#862 id=862 data-nosnippet>862</a>        <span class="kw">if </span>sigma &gt; <span class="number">0.0 </span>{
+<a href=#863 id=863 data-nosnippet>863</a>            <span class="number">1.0 </span>/ (sigma * sigma)
+<a href=#864 id=864 data-nosnippet>864</a>        } <span class="kw">else </span>{
+<a href=#865 id=865 data-nosnippet>865</a>            <span class="number">0.0
+<a href=#866 id=866 data-nosnippet>866</a>        </span>}
+<a href=#867 id=867 data-nosnippet>867</a>    };
+<a href=#868 id=868 data-nosnippet>868</a>    <span class="kw">if </span>has_column(<span class="string">"WEIGHT_SPECTRUM"</span>) &amp;&amp; has_column(<span class="string">"SIGMA_SPECTRUM"</span>) {
+<a href=#869 id=869 data-nosnippet>869</a>        <span class="kw">let </span>sigma = main_cell(ms, row_index, <span class="string">"SIGMA_SPECTRUM"</span>)<span class="question-mark">?</span>;
+<a href=#870 id=870 data-nosnippet>870</a>        <span class="kw">return match </span>sigma {
+<a href=#871 id=871 data-nosnippet>871</a>            ArrayValue::Float32(sigma) <span class="kw">if </span>sigma.shape() == shape =&gt; <span class="prelude-val">Ok</span>(sigma.mapv(inverse_square)),
+<a href=#872 id=872 data-nosnippet>872</a>            other =&gt; <span class="prelude-val">Err</span>(unsupported_shape(<span class="string">"SIGMA_SPECTRUM"</span>, other)),
+<a href=#873 id=873 data-nosnippet>873</a>        };
+<a href=#874 id=874 data-nosnippet>874</a>    }
+<a href=#875 id=875 data-nosnippet>875</a>    <span class="kw">let </span>sigma = main_cell(ms, row_index, <span class="string">"SIGMA"</span>)<span class="question-mark">?</span>;
+<a href=#876 id=876 data-nosnippet>876</a>    <span class="kw">let </span>ArrayValue::Float32(sigma) = sigma <span class="kw">else </span>{
+<a href=#877 id=877 data-nosnippet>877</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(unsupported_shape(<span class="string">"SIGMA"</span>, sigma));
+<a href=#878 id=878 data-nosnippet>878</a>    };
+<a href=#879 id=879 data-nosnippet>879</a>    <span class="kw">if </span>sigma.ndim() != <span class="number">1 </span>|| sigma.shape()[<span class="number">0</span>] != shape[<span class="number">0</span>] {
+<a href=#880 id=880 data-nosnippet>880</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(GainSolveError::UnsupportedParameterShape {
+<a href=#881 id=881 data-nosnippet>881</a>            path: <span class="string">"&lt;measurement-set SIGMA&gt;"</span>.to_string(),
+<a href=#882 id=882 data-nosnippet>882</a>            shape: sigma.shape().to_vec(),
+<a href=#883 id=883 data-nosnippet>883</a>        });
+<a href=#884 id=884 data-nosnippet>884</a>    }
+<a href=#885 id=885 data-nosnippet>885</a>    <span class="prelude-val">Ok</span>(ArrayD::from_shape_fn(shape, |index| {
+<a href=#886 id=886 data-nosnippet>886</a>        inverse_square(sigma[[index[<span class="number">0</span>]]])
+<a href=#887 id=887 data-nosnippet>887</a>    }))
+<a href=#888 id=888 data-nosnippet>888</a>}
+<a href=#889 id=889 data-nosnippet>889</a>
+<a href=#890 id=890 data-nosnippet>890</a><span class="kw">fn </span>main_cell&lt;<span class="lifetime">'a</span>&gt;(
+<a href=#891 id=891 data-nosnippet>891</a>    ms: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>MeasurementSet,
+<a href=#892 id=892 data-nosnippet>892</a>    row_index: usize,
+<a href=#893 id=893 data-nosnippet>893</a>    column: <span class="kw-2">&amp;</span>str,
+<a href=#894 id=894 data-nosnippet>894</a>) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw-2">&amp;</span><span class="lifetime">'a </span>ArrayValue, GainSolveError&gt; {
+<a href=#895 id=895 data-nosnippet>895</a>    ms.main_table()
+<a href=#896 id=896 data-nosnippet>896</a>        .cell_accessor(row_index, column)
+<a href=#897 id=897 data-nosnippet>897</a>        .and_then(|cell| cell.array())
+<a href=#898 id=898 data-nosnippet>898</a>        .map_err(|source| GainSolveError::OpenMeasurementSet {
+<a href=#899 id=899 data-nosnippet>899</a>            path: ms
+<a href=#900 id=900 data-nosnippet>900</a>                .path()
+<a href=#901 id=901 data-nosnippet>901</a>                .map(|path| path.display().to_string())
+<a href=#902 id=902 data-nosnippet>902</a>                .unwrap_or_else(|| <span class="string">"&lt;in-memory&gt;"</span>.to_string()),
+<a href=#903 id=903 data-nosnippet>903</a>            source: MsError::from(source),
+<a href=#904 id=904 data-nosnippet>904</a>        })
+<a href=#905 id=905 data-nosnippet>905</a>}
+<a href=#906 id=906 data-nosnippet>906</a>
+<a href=#907 id=907 data-nosnippet>907</a><span class="kw">fn </span>unsupported_shape(column: <span class="kw-2">&amp;</span>str, value: <span class="kw-2">&amp;</span>ArrayValue) -&gt; GainSolveError {
+<a href=#908 id=908 data-nosnippet>908</a>    GainSolveError::UnsupportedParameterShape {
+<a href=#909 id=909 data-nosnippet>909</a>        path: <span class="macro">format!</span>(<span class="string">"&lt;measurement-set {column}&gt;"</span>),
+<a href=#910 id=910 data-nosnippet>910</a>        shape: value.shape().to_vec(),
+<a href=#911 id=911 data-nosnippet>911</a>    }
+<a href=#912 id=912 data-nosnippet>912</a>}
+<a href=#913 id=913 data-nosnippet>913</a>
+<a href=#914 id=914 data-nosnippet>914</a><span class="doccomment">/// The median, the mean of the middle two for an even count, as casacore's
+<a href=#915 id=915 data-nosnippet>915</a>/// `partialMedians(..., takeEvenMean=True)` that CASA uses for a row's
+<a href=#916 id=916 data-nosnippet>916</a>/// channel-independent weight.
+<a href=#917 id=917 data-nosnippet>917</a></span><span class="kw">fn </span>median_with_even_mean(values: <span class="kw-2">&amp;mut </span>[f32]) -&gt; f32 {
+<a href=#918 id=918 data-nosnippet>918</a>    <span class="kw">if </span>values.is_empty() {
+<a href=#919 id=919 data-nosnippet>919</a>        <span class="kw">return </span><span class="number">0.0</span>;
+<a href=#920 id=920 data-nosnippet>920</a>    }
+<a href=#921 id=921 data-nosnippet>921</a>    values.sort_by(f32::total_cmp);
+<a href=#922 id=922 data-nosnippet>922</a>    <span class="kw">let </span>middle = values.len() / <span class="number">2</span>;
+<a href=#923 id=923 data-nosnippet>923</a>    <span class="kw">if </span>values.len().is_multiple_of(<span class="number">2</span>) {
+<a href=#924 id=924 data-nosnippet>924</a>        (values[middle - <span class="number">1</span>] + values[middle]) / <span class="number">2.0
+<a href=#925 id=925 data-nosnippet>925</a>    </span>} <span class="kw">else </span>{
+<a href=#926 id=926 data-nosnippet>926</a>        values[middle]
+<a href=#927 id=927 data-nosnippet>927</a>    }
+<a href=#928 id=928 data-nosnippet>928</a>}
+<a href=#929 id=929 data-nosnippet>929</a>
+<a href=#930 id=930 data-nosnippet>930</a><span class="doccomment">/// The channels of a window of `channel_count` channels that a solve
+<a href=#931 id=931 data-nosnippet>931</a>/// uses: those `selection` names, else all. The gain table's
+<a href=#932 id=932 data-nosnippet>932</a>/// `SPECTRAL_WINDOW` row collapses the same channels.
+<a href=#933 id=933 data-nosnippet>933</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>selected_channels(
+<a href=#934 id=934 data-nosnippet>934</a>    selection: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>ChannelSelection&gt;,
+<a href=#935 id=935 data-nosnippet>935</a>    channel_count: usize,
+<a href=#936 id=936 data-nosnippet>936</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;usize&gt;, GainSolveError&gt; {
+<a href=#937 id=937 data-nosnippet>937</a>    <span class="kw">match </span>selection {
+<a href=#938 id=938 data-nosnippet>938</a>        <span class="prelude-val">Some</span>(selection) =&gt; {
+<a href=#939 id=939 data-nosnippet>939</a>            selection
+<a href=#940 id=940 data-nosnippet>940</a>                .indices(channel_count)
+<a href=#941 id=941 data-nosnippet>941</a>                .map_err(|source| GainSolveError::OpenMeasurementSet {
+<a href=#942 id=942 data-nosnippet>942</a>                    path: <span class="string">"&lt;measurement-set channel selection&gt;"</span>.to_string(),
+<a href=#943 id=943 data-nosnippet>943</a>                    source,
+<a href=#944 id=944 data-nosnippet>944</a>                })
+<a href=#945 id=945 data-nosnippet>945</a>        }
+<a href=#946 id=946 data-nosnippet>946</a>        <span class="prelude-val">None </span>=&gt; <span class="prelude-val">Ok</span>((<span class="number">0</span>..channel_count).collect()),
+<a href=#947 id=947 data-nosnippet>947</a>    }
+<a href=#948 id=948 data-nosnippet>948</a>}
+<a href=#949 id=949 data-nosnippet>949</a>
+<a href=#950 id=950 data-nosnippet>950</a><span class="doccomment">/// The sample flags a solve uses for `row`: its `FLAG` cell, or every sample
+<a href=#951 id=951 data-nosnippet>951</a>/// flagged when the row's `FLAG_ROW` is set, whatever `FLAG` holds. CASA's
+<a href=#952 id=952 data-nosnippet>952</a>/// solve does the same: `CalSolvingVi2::calibrateCurrentVB` calls
+<a href=#953 id=953 data-nosnippet>953</a>/// `VisEquation::collapse2`, whose `divideCorrByModel` flags the whole cube
+<a href=#954 id=954 data-nosnippet>954</a>/// of such a row and zeroes its weights before G, T or B accumulates it.
+<a href=#955 id=955 data-nosnippet>955</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>solve_flags&lt;<span class="lifetime">'a</span>&gt;(
+<a href=#956 id=956 data-nosnippet>956</a>    row: <span class="kw-2">&amp;</span>SelectedSolveRow,
+<a href=#957 id=957 data-nosnippet>957</a>    flags: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>ArrayD&lt;bool&gt;,
+<a href=#958 id=958 data-nosnippet>958</a>) -&gt; Cow&lt;<span class="lifetime">'a</span>, ArrayD&lt;bool&gt;&gt; {
+<a href=#959 id=959 data-nosnippet>959</a>    <span class="kw">if </span>row.flag_row {
+<a href=#960 id=960 data-nosnippet>960</a>        Cow::Owned(ArrayD::from_elem(flags.raw_dim(), <span class="bool-val">true</span>))
+<a href=#961 id=961 data-nosnippet>961</a>    } <span class="kw">else </span>{
+<a href=#962 id=962 data-nosnippet>962</a>        Cow::Borrowed(flags)
+<a href=#963 id=963 data-nosnippet>963</a>    }
+<a href=#964 id=964 data-nosnippet>964</a>}
+<a href=#965 id=965 data-nosnippet>965</a>
+<a href=#966 id=966 data-nosnippet>966</a><span class="doccomment">/// Correlation-independent flags, as `CalSolvingVi2::corrIndepFlags` makes
+<a href=#967 id=967 data-nosnippet>967</a>/// them: a channel any correlation flags is flagged for all.
+<a href=#968 id=968 data-nosnippet>968</a></span><span class="kw">fn </span>solve_sample_flagged(
+<a href=#969 id=969 data-nosnippet>969</a>    flags: <span class="kw-2">&amp;</span>ArrayView2&lt;<span class="lifetime">'_</span>, bool&gt;,
+<a href=#970 id=970 data-nosnippet>970</a>    gain_type: GainType,
+<a href=#971 id=971 data-nosnippet>971</a>    chan_index: usize,
+<a href=#972 id=972 data-nosnippet>972</a>) -&gt; bool {
+<a href=#973 id=973 data-nosnippet>973</a>    <span class="kw">match </span>gain_type {
+<a href=#974 id=974 data-nosnippet>974</a>        GainType::G | GainType::T =&gt; {
+<a href=#975 id=975 data-nosnippet>975</a>            (<span class="number">0</span>..flags.shape()[<span class="number">0</span>]).any(|corr_index| flags[[corr_index, chan_index]])
+<a href=#976 id=976 data-nosnippet>976</a>        }
+<a href=#977 id=977 data-nosnippet>977</a>    }
+<a href=#978 id=978 data-nosnippet>978</a>}
+<a href=#979 id=979 data-nosnippet>979</a>
+<a href=#980 id=980 data-nosnippet>980</a><span class="attr">#[cfg(test)]
+<a href=#981 id=981 data-nosnippet>981</a></span><span class="kw">mod </span>tests {
+<a href=#982 id=982 data-nosnippet>982</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+<a href=#983 id=983 data-nosnippet>983</a>
+<a href=#984 id=984 data-nosnippet>984</a>    <span class="kw">fn </span>accumulator(receptors: usize) -&gt; SolveAccumulator {
+<a href=#985 id=985 data-nosnippet>985</a>        <span class="kw">let </span><span class="kw-2">mut </span>group = SolveAccumulator::new(<span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>);
+<a href=#986 id=986 data-nosnippet>986</a>        group
+<a href=#987 id=987 data-nosnippet>987</a>            .receptor_accumulations
+<a href=#988 id=988 data-nosnippet>988</a>            .resize_with(receptors, HashMap::new);
+<a href=#989 id=989 data-nosnippet>989</a>        group
+<a href=#990 id=990 data-nosnippet>990</a>    }
+<a href=#991 id=991 data-nosnippet>991</a>
+<a href=#992 id=992 data-nosnippet>992</a>    <span class="kw">fn </span>add(group: <span class="kw-2">&amp;mut </span>SolveAccumulator, correlation_index: usize, sample: Complex32) {
+<a href=#993 id=993 data-nosnippet>993</a>        <span class="kw">let </span>accumulation = group.receptor_accumulations[<span class="number">0</span>]
+<a href=#994 id=994 data-nosnippet>994</a>            .entry(SolveAccumulationKey {
+<a href=#995 id=995 data-nosnippet>995</a>                baseline: (<span class="number">0</span>, <span class="number">1</span>),
+<a href=#996 id=996 data-nosnippet>996</a>                correlation_index,
+<a href=#997 id=997 data-nosnippet>997</a>                channel_index: <span class="number">0</span>,
+<a href=#998 id=998 data-nosnippet>998</a>            })
+<a href=#999 id=999 data-nosnippet>999</a>            .or_default();
+<a href=#1000 id=1000 data-nosnippet>1000</a>        accumulation.weighted_sum += sample;
+<a href=#1001 id=1001 data-nosnippet>1001</a>        accumulation.weight += <span class="number">1.0</span>;
+<a href=#1002 id=1002 data-nosnippet>1002</a>        accumulation.weighted_sample_power += f64::from(sample.norm_sqr());
+<a href=#1003 id=1003 data-nosnippet>1003</a>        accumulation.sample_count += <span class="number">1</span>;
+<a href=#1004 id=1004 data-nosnippet>1004</a>    }
+<a href=#1005 id=1005 data-nosnippet>1005</a>
+<a href=#1006 id=1006 data-nosnippet>1006</a>    <span class="attr">#[test]
+<a href=#1007 id=1007 data-nosnippet>1007</a>    </span><span class="kw">fn </span>finalize_for_phase_solve_collapses_before_unit_amplitude_normalization() {
+<a href=#1008 id=1008 data-nosnippet>1008</a>        <span class="kw">let </span><span class="kw-2">mut </span>group = accumulator(<span class="number">1</span>);
+<a href=#1009 id=1009 data-nosnippet>1009</a>        add(<span class="kw-2">&amp;mut </span>group, <span class="number">0</span>, Complex32::new(<span class="number">2.0</span>, <span class="number">0.0</span>));
+<a href=#1010 id=1010 data-nosnippet>1010</a>        add(<span class="kw-2">&amp;mut </span>group, <span class="number">0</span>, Complex32::new(<span class="number">0.0</span>, <span class="number">2.0</span>));
 <a href=#1011 id=1011 data-nosnippet>1011</a>
-<a href=#1012 id=1012 data-nosnippet>1012</a>    <span class="attr">#[test]
-<a href=#1013 id=1013 data-nosnippet>1013</a>    </span><span class="kw">fn </span>finalize_for_phase_solve_keeps_correlations_separate_for_scalar_t() {
-<a href=#1014 id=1014 data-nosnippet>1014</a>        <span class="kw">let </span><span class="kw-2">mut </span>group = accumulator(<span class="number">1</span>);
-<a href=#1015 id=1015 data-nosnippet>1015</a>        add(<span class="kw-2">&amp;mut </span>group, <span class="number">0</span>, Complex32::new(<span class="number">2.0</span>, <span class="number">0.0</span>));
-<a href=#1016 id=1016 data-nosnippet>1016</a>        add(<span class="kw-2">&amp;mut </span>group, <span class="number">3</span>, Complex32::new(<span class="number">0.0</span>, <span class="number">2.0</span>));
-<a href=#1017 id=1017 data-nosnippet>1017</a>
-<a href=#1018 id=1018 data-nosnippet>1018</a>        group.finalize_for_solve(GainSolveMode::Phase);
-<a href=#1019 id=1019 data-nosnippet>1019</a>
-<a href=#1020 id=1020 data-nosnippet>1020</a>        <span class="kw">let </span>graph = <span class="kw-2">&amp;</span>group.channel_graphs[<span class="number">0</span>][<span class="number">0</span>];
-<a href=#1021 id=1021 data-nosnippet>1021</a>        <span class="macro">assert!</span>((graph.weights[<span class="kw-2">&amp;</span>(<span class="number">0</span>, <span class="number">1</span>)] - <span class="number">8.0</span>).abs() &lt; <span class="number">1.0e-6</span>);
-<a href=#1022 id=1022 data-nosnippet>1022</a>        <span class="kw">let </span>edge = graph.edges[<span class="kw-2">&amp;</span>(<span class="number">0</span>, <span class="number">1</span>)];
-<a href=#1023 id=1023 data-nosnippet>1023</a>        <span class="macro">assert!</span>((edge.re - <span class="number">4.0</span>).abs() &lt; <span class="number">1.0e-6</span>);
-<a href=#1024 id=1024 data-nosnippet>1024</a>        <span class="macro">assert!</span>((edge.im - <span class="number">4.0</span>).abs() &lt; <span class="number">1.0e-6</span>);
-<a href=#1025 id=1025 data-nosnippet>1025</a>        <span class="macro">assert_eq!</span>(graph.stats[<span class="kw-2">&amp;</span>(<span class="number">0</span>, <span class="number">1</span>)].sample_count, <span class="number">2</span>);
-<a href=#1026 id=1026 data-nosnippet>1026</a>    }
-<a href=#1027 id=1027 data-nosnippet>1027</a>
-<a href=#1028 id=1028 data-nosnippet>1028</a>    <span class="attr">#[test]
-<a href=#1029 id=1029 data-nosnippet>1029</a>    </span><span class="kw">fn </span>solution_time_weights_baseline_centroids_by_solve_weight() {
-<a href=#1030 id=1030 data-nosnippet>1030</a>        <span class="comment">// Baseline 0-1 (rows at 10 s and 12 s) carries three times the
-<a href=#1031 id=1031 data-nosnippet>1031</a>        // weight of 0-2 (one row at 20 s).
-<a href=#1032 id=1032 data-nosnippet>1032</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>group = accumulator(<span class="number">1</span>);
-<a href=#1033 id=1033 data-nosnippet>1033</a>        <span class="kw">for </span>(baseline, weight) <span class="kw">in </span>[((<span class="number">0</span>, <span class="number">1</span>), <span class="number">3.0_f32</span>), ((<span class="number">0</span>, <span class="number">2</span>), <span class="number">1.0</span>)] {
-<a href=#1034 id=1034 data-nosnippet>1034</a>            group.receptor_accumulations[<span class="number">0</span>].insert(
-<a href=#1035 id=1035 data-nosnippet>1035</a>                SolveAccumulationKey {
-<a href=#1036 id=1036 data-nosnippet>1036</a>                    baseline,
-<a href=#1037 id=1037 data-nosnippet>1037</a>                    correlation_index: <span class="number">0</span>,
-<a href=#1038 id=1038 data-nosnippet>1038</a>                    channel_index: <span class="number">0</span>,
-<a href=#1039 id=1039 data-nosnippet>1039</a>                },
-<a href=#1040 id=1040 data-nosnippet>1040</a>                SolveEdgeAccumulation {
-<a href=#1041 id=1041 data-nosnippet>1041</a>                    weighted_sum: Complex32::new(weight, <span class="number">0.0</span>),
-<a href=#1042 id=1042 data-nosnippet>1042</a>                    weight,
-<a href=#1043 id=1043 data-nosnippet>1043</a>                    weighted_sample_power: f64::from(weight),
-<a href=#1044 id=1044 data-nosnippet>1044</a>                    sample_count: <span class="number">1</span>,
-<a href=#1045 id=1045 data-nosnippet>1045</a>                },
-<a href=#1046 id=1046 data-nosnippet>1046</a>            );
-<a href=#1047 id=1047 data-nosnippet>1047</a>        }
-<a href=#1048 id=1048 data-nosnippet>1048</a>        group.baseline_centroids.insert(
-<a href=#1049 id=1049 data-nosnippet>1049</a>            (<span class="number">0</span>, <span class="number">1</span>),
-<a href=#1050 id=1050 data-nosnippet>1050</a>            WeightedTime {
-<a href=#1051 id=1051 data-nosnippet>1051</a>                weighted_sum: <span class="number">10.0 </span>+ <span class="number">12.0</span>,
-<a href=#1052 id=1052 data-nosnippet>1052</a>                weight: <span class="number">2.0</span>,
-<a href=#1053 id=1053 data-nosnippet>1053</a>            },
-<a href=#1054 id=1054 data-nosnippet>1054</a>        );
-<a href=#1055 id=1055 data-nosnippet>1055</a>        group.baseline_centroids.insert(
-<a href=#1056 id=1056 data-nosnippet>1056</a>            (<span class="number">0</span>, <span class="number">2</span>),
-<a href=#1057 id=1057 data-nosnippet>1057</a>            WeightedTime {
-<a href=#1058 id=1058 data-nosnippet>1058</a>                weighted_sum: <span class="number">20.0</span>,
-<a href=#1059 id=1059 data-nosnippet>1059</a>                weight: <span class="number">1.0</span>,
-<a href=#1060 id=1060 data-nosnippet>1060</a>            },
-<a href=#1061 id=1061 data-nosnippet>1061</a>        );
-<a href=#1062 id=1062 data-nosnippet>1062</a>
-<a href=#1063 id=1063 data-nosnippet>1063</a>        group.finalize_for_solve(GainSolveMode::AmplitudePhase);
-<a href=#1064 id=1064 data-nosnippet>1064</a>
-<a href=#1065 id=1065 data-nosnippet>1065</a>        <span class="macro">assert!</span>((group.solution_time - (<span class="number">3.0 </span>* <span class="number">11.0 </span>+ <span class="number">20.0</span>) / <span class="number">4.0</span>).abs() &lt; <span class="number">1.0e-12</span>);
-<a href=#1066 id=1066 data-nosnippet>1066</a>    }
-<a href=#1067 id=1067 data-nosnippet>1067</a>
-<a href=#1068 id=1068 data-nosnippet>1068</a>    <span class="attr">#[test]
-<a href=#1069 id=1069 data-nosnippet>1069</a>    </span><span class="kw">fn </span>median_with_even_mean_matches_casacore_partial_medians() {
-<a href=#1070 id=1070 data-nosnippet>1070</a>        <span class="macro">assert_eq!</span>(median_with_even_mean(<span class="kw-2">&amp;mut </span>[]), <span class="number">0.0</span>);
-<a href=#1071 id=1071 data-nosnippet>1071</a>        <span class="macro">assert_eq!</span>(median_with_even_mean(<span class="kw-2">&amp;mut </span>[<span class="number">3.0</span>, <span class="number">0.0</span>, <span class="number">1.0</span>]), <span class="number">1.0</span>);
-<a href=#1072 id=1072 data-nosnippet>1072</a>        <span class="macro">assert_eq!</span>(median_with_even_mean(<span class="kw-2">&amp;mut </span>[<span class="number">4.0</span>, <span class="number">0.0</span>, <span class="number">4.0</span>, <span class="number">4.0</span>]), <span class="number">4.0</span>);
-<a href=#1073 id=1073 data-nosnippet>1073</a>        <span class="macro">assert_eq!</span>(median_with_even_mean(<span class="kw-2">&amp;mut </span>[<span class="number">2.0</span>, <span class="number">0.0</span>]), <span class="number">1.0</span>);
-<a href=#1074 id=1074 data-nosnippet>1074</a>    }
-<a href=#1075 id=1075 data-nosnippet>1075</a>}
+<a href=#1012 id=1012 data-nosnippet>1012</a>        group.finalize_for_solve(GainSolveMode::Phase);
+<a href=#1013 id=1013 data-nosnippet>1013</a>
+<a href=#1014 id=1014 data-nosnippet>1014</a>        <span class="kw">let </span>graph = <span class="kw-2">&amp;</span>group.channel_graphs[<span class="number">0</span>][<span class="number">0</span>];
+<a href=#1015 id=1015 data-nosnippet>1015</a>        <span class="macro">assert!</span>((graph.weights[<span class="kw-2">&amp;</span>(<span class="number">0</span>, <span class="number">1</span>)] - <span class="number">4.0</span>).abs() &lt; <span class="number">1.0e-6</span>);
+<a href=#1016 id=1016 data-nosnippet>1016</a>        <span class="kw">let </span>edge = graph.edges[<span class="kw-2">&amp;</span>(<span class="number">0</span>, <span class="number">1</span>)];
+<a href=#1017 id=1017 data-nosnippet>1017</a>        <span class="kw">let </span>expected = <span class="number">4.0_f32 </span>/ <span class="number">2.0_f32</span>.sqrt();
+<a href=#1018 id=1018 data-nosnippet>1018</a>        <span class="macro">assert!</span>((edge.re - expected).abs() &lt; <span class="number">1.0e-6</span>);
+<a href=#1019 id=1019 data-nosnippet>1019</a>        <span class="macro">assert!</span>((edge.im - expected).abs() &lt; <span class="number">1.0e-6</span>);
+<a href=#1020 id=1020 data-nosnippet>1020</a>        <span class="macro">assert_eq!</span>(graph.stats[<span class="kw-2">&amp;</span>(<span class="number">0</span>, <span class="number">1</span>)].sample_count, <span class="number">2</span>);
+<a href=#1021 id=1021 data-nosnippet>1021</a>    }
+<a href=#1022 id=1022 data-nosnippet>1022</a>
+<a href=#1023 id=1023 data-nosnippet>1023</a>    <span class="attr">#[test]
+<a href=#1024 id=1024 data-nosnippet>1024</a>    </span><span class="kw">fn </span>finalize_for_phase_solve_keeps_correlations_separate_for_scalar_t() {
+<a href=#1025 id=1025 data-nosnippet>1025</a>        <span class="kw">let </span><span class="kw-2">mut </span>group = accumulator(<span class="number">1</span>);
+<a href=#1026 id=1026 data-nosnippet>1026</a>        add(<span class="kw-2">&amp;mut </span>group, <span class="number">0</span>, Complex32::new(<span class="number">2.0</span>, <span class="number">0.0</span>));
+<a href=#1027 id=1027 data-nosnippet>1027</a>        add(<span class="kw-2">&amp;mut </span>group, <span class="number">3</span>, Complex32::new(<span class="number">0.0</span>, <span class="number">2.0</span>));
+<a href=#1028 id=1028 data-nosnippet>1028</a>
+<a href=#1029 id=1029 data-nosnippet>1029</a>        group.finalize_for_solve(GainSolveMode::Phase);
+<a href=#1030 id=1030 data-nosnippet>1030</a>
+<a href=#1031 id=1031 data-nosnippet>1031</a>        <span class="kw">let </span>graph = <span class="kw-2">&amp;</span>group.channel_graphs[<span class="number">0</span>][<span class="number">0</span>];
+<a href=#1032 id=1032 data-nosnippet>1032</a>        <span class="macro">assert!</span>((graph.weights[<span class="kw-2">&amp;</span>(<span class="number">0</span>, <span class="number">1</span>)] - <span class="number">8.0</span>).abs() &lt; <span class="number">1.0e-6</span>);
+<a href=#1033 id=1033 data-nosnippet>1033</a>        <span class="kw">let </span>edge = graph.edges[<span class="kw-2">&amp;</span>(<span class="number">0</span>, <span class="number">1</span>)];
+<a href=#1034 id=1034 data-nosnippet>1034</a>        <span class="macro">assert!</span>((edge.re - <span class="number">4.0</span>).abs() &lt; <span class="number">1.0e-6</span>);
+<a href=#1035 id=1035 data-nosnippet>1035</a>        <span class="macro">assert!</span>((edge.im - <span class="number">4.0</span>).abs() &lt; <span class="number">1.0e-6</span>);
+<a href=#1036 id=1036 data-nosnippet>1036</a>        <span class="macro">assert_eq!</span>(graph.stats[<span class="kw-2">&amp;</span>(<span class="number">0</span>, <span class="number">1</span>)].sample_count, <span class="number">2</span>);
+<a href=#1037 id=1037 data-nosnippet>1037</a>    }
+<a href=#1038 id=1038 data-nosnippet>1038</a>
+<a href=#1039 id=1039 data-nosnippet>1039</a>    <span class="attr">#[test]
+<a href=#1040 id=1040 data-nosnippet>1040</a>    </span><span class="kw">fn </span>solution_time_weights_baseline_centroids_by_solve_weight() {
+<a href=#1041 id=1041 data-nosnippet>1041</a>        <span class="comment">// Baseline 0-1 (rows at 10 s and 12 s) carries three times the
+<a href=#1042 id=1042 data-nosnippet>1042</a>        // weight of 0-2 (one row at 20 s).
+<a href=#1043 id=1043 data-nosnippet>1043</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>group = accumulator(<span class="number">1</span>);
+<a href=#1044 id=1044 data-nosnippet>1044</a>        <span class="kw">for </span>(baseline, weight) <span class="kw">in </span>[((<span class="number">0</span>, <span class="number">1</span>), <span class="number">3.0_f32</span>), ((<span class="number">0</span>, <span class="number">2</span>), <span class="number">1.0</span>)] {
+<a href=#1045 id=1045 data-nosnippet>1045</a>            group.receptor_accumulations[<span class="number">0</span>].insert(
+<a href=#1046 id=1046 data-nosnippet>1046</a>                SolveAccumulationKey {
+<a href=#1047 id=1047 data-nosnippet>1047</a>                    baseline,
+<a href=#1048 id=1048 data-nosnippet>1048</a>                    correlation_index: <span class="number">0</span>,
+<a href=#1049 id=1049 data-nosnippet>1049</a>                    channel_index: <span class="number">0</span>,
+<a href=#1050 id=1050 data-nosnippet>1050</a>                },
+<a href=#1051 id=1051 data-nosnippet>1051</a>                SolveEdgeAccumulation {
+<a href=#1052 id=1052 data-nosnippet>1052</a>                    weighted_sum: Complex32::new(weight, <span class="number">0.0</span>),
+<a href=#1053 id=1053 data-nosnippet>1053</a>                    weight,
+<a href=#1054 id=1054 data-nosnippet>1054</a>                    weighted_sample_power: f64::from(weight),
+<a href=#1055 id=1055 data-nosnippet>1055</a>                    sample_count: <span class="number">1</span>,
+<a href=#1056 id=1056 data-nosnippet>1056</a>                },
+<a href=#1057 id=1057 data-nosnippet>1057</a>            );
+<a href=#1058 id=1058 data-nosnippet>1058</a>        }
+<a href=#1059 id=1059 data-nosnippet>1059</a>        group.baseline_centroids.insert(
+<a href=#1060 id=1060 data-nosnippet>1060</a>            (<span class="number">0</span>, <span class="number">1</span>),
+<a href=#1061 id=1061 data-nosnippet>1061</a>            WeightedTime {
+<a href=#1062 id=1062 data-nosnippet>1062</a>                weighted_sum: <span class="number">10.0 </span>+ <span class="number">12.0</span>,
+<a href=#1063 id=1063 data-nosnippet>1063</a>                weight: <span class="number">2.0</span>,
+<a href=#1064 id=1064 data-nosnippet>1064</a>            },
+<a href=#1065 id=1065 data-nosnippet>1065</a>        );
+<a href=#1066 id=1066 data-nosnippet>1066</a>        group.baseline_centroids.insert(
+<a href=#1067 id=1067 data-nosnippet>1067</a>            (<span class="number">0</span>, <span class="number">2</span>),
+<a href=#1068 id=1068 data-nosnippet>1068</a>            WeightedTime {
+<a href=#1069 id=1069 data-nosnippet>1069</a>                weighted_sum: <span class="number">20.0</span>,
+<a href=#1070 id=1070 data-nosnippet>1070</a>                weight: <span class="number">1.0</span>,
+<a href=#1071 id=1071 data-nosnippet>1071</a>            },
+<a href=#1072 id=1072 data-nosnippet>1072</a>        );
+<a href=#1073 id=1073 data-nosnippet>1073</a>
+<a href=#1074 id=1074 data-nosnippet>1074</a>        group.finalize_for_solve(GainSolveMode::AmplitudePhase);
+<a href=#1075 id=1075 data-nosnippet>1075</a>
+<a href=#1076 id=1076 data-nosnippet>1076</a>        <span class="macro">assert!</span>((group.solution_time - (<span class="number">3.0 </span>* <span class="number">11.0 </span>+ <span class="number">20.0</span>) / <span class="number">4.0</span>).abs() &lt; <span class="number">1.0e-12</span>);
+<a href=#1077 id=1077 data-nosnippet>1077</a>    }
+<a href=#1078 id=1078 data-nosnippet>1078</a>
+<a href=#1079 id=1079 data-nosnippet>1079</a>    <span class="attr">#[test]
+<a href=#1080 id=1080 data-nosnippet>1080</a>    </span><span class="kw">fn </span>median_with_even_mean_matches_casacore_partial_medians() {
+<a href=#1081 id=1081 data-nosnippet>1081</a>        <span class="macro">assert_eq!</span>(median_with_even_mean(<span class="kw-2">&amp;mut </span>[]), <span class="number">0.0</span>);
+<a href=#1082 id=1082 data-nosnippet>1082</a>        <span class="macro">assert_eq!</span>(median_with_even_mean(<span class="kw-2">&amp;mut </span>[<span class="number">3.0</span>, <span class="number">0.0</span>, <span class="number">1.0</span>]), <span class="number">1.0</span>);
+<a href=#1083 id=1083 data-nosnippet>1083</a>        <span class="macro">assert_eq!</span>(median_with_even_mean(<span class="kw-2">&amp;mut </span>[<span class="number">4.0</span>, <span class="number">0.0</span>, <span class="number">4.0</span>, <span class="number">4.0</span>]), <span class="number">4.0</span>);
+<a href=#1084 id=1084 data-nosnippet>1084</a>        <span class="macro">assert_eq!</span>(median_with_even_mean(<span class="kw-2">&amp;mut </span>[<span class="number">2.0</span>, <span class="number">0.0</span>]), <span class="number">1.0</span>);
+<a href=#1085 id=1085 data-nosnippet>1085</a>    }
+<a href=#1086 id=1086 data-nosnippet>1086</a>}
 </code></pre></div></section></main></body></html>
