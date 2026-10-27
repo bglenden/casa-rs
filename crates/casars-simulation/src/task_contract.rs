@@ -215,10 +215,9 @@ mod tests {
             adaptation.invocation.args,
             ["--managed-output", "true", "--json-run", "-"]
         );
-        let request: serde_json::Value = serde_json::from_str(
-            adaptation.invocation.stdin.as_deref().expect("stdin"),
-        )
-        .expect("JSON");
+        let request: serde_json::Value =
+            serde_json::from_str(adaptation.invocation.stdin.as_deref().expect("stdin"))
+                .expect("JSON");
         assert_eq!(request["kind"], "run");
         assert_eq!(request["request"]["project"], "p");
         assert_eq!(request["request"]["overwrite"], true);

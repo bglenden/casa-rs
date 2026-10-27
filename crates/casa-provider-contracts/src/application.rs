@@ -310,6 +310,7 @@ mod tests {
                 "imsubimage",
                 "msexplore",
                 "mstransform",
+                "simobserve",
             ])
         );
     }

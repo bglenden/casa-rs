@@ -70,10 +70,6 @@ path = "src/bin/flagdata.rs"
 name = "flagmanager"
 path = "src/bin/flagmanager.rs"
 
-[[bin]]
-name = "simobserve"
-path = "src/bin/simobserve.rs"
-
 # The synthetic MeasurementSet generator as a developer tool; not a catalog
 # task, and not installed with the suite.
 [[bin]]

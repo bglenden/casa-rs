@@ -357,8 +357,6 @@ fn is_explicit_absence(value: &ParameterValue) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeSet;
-
     use casa_provider_contracts::{
         ParameterValue, ProviderInvocationAdaptation, builtin_surface_bundle,
     };

@@ -10,9 +10,9 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 
 - Parameter catalog schema version: `1`
 - Parameter surface schema version: `1`
-- Concepts: 367
+- Concepts: 346
 - Surfaces: 27 (27 task, 0 session)
-- Surface bindings: 532
+- Surface bindings: 527
 
 | Surface | Kind | Contract | Provider family | Parameters | Summary |
 |---|---|---:|---|---:|---|
@@ -20,7 +20,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | [Calibrate](#surface-calibrate)<br><code>calibrate</code> | task | 4 | <code>calibration</code> | 49 | apply, inspect, and solve CASA-style calibration workflows |
 | [ImportVLA](#surface-importvla)<br><code>importvla</code> | task | 3 | <code>importvla</code> | 12 | scan or import old VLA export archives from disk |
 | [Imager](#surface-imager)<br><code>imager</code> | task | 25 | <code>imager</code> | 81 | Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet |
-| [SimObserve](#surface-simobserve)<br><code>simobserve</code> | task | 4 | <code>simobserve</code> | 43 | Generate a CASA-compatible synthetic VLA MeasurementSet |
+| [SimObserve](#surface-simobserve)<br><code>simobserve</code> | task | 5 | <code>simobserve</code> | 38 | Simulate an observation of a sky model: CASA's simobserve |
 | [Image Header](#surface-imhead)<br><code>imhead</code> | task | 3 | <code>image_analysis</code> | 4 | Inspect or update CASA image header metadata. |
 | [Image Statistics](#surface-imstat)<br><code>imstat</code> | task | 3 | <code>image_analysis</code> | 4 | Compute CASA image statistics over optional pixel, region, and channel selections. |
 | [Image Moments](#surface-immoments)<br><code>immoments</code> | task | 3 | <code>image_analysis</code> | 7 | Create CASA-style image moment maps |
@@ -309,56 +309,51 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## SimObserve (<code>simobserve</code>)
 
 - Kind: `task`
-- Contract version: `4`
+- Contract version: `5`
 - Category: Simulation
 - Provider family: `simobserve`
-- Summary: Generate a CASA-compatible synthetic VLA MeasurementSet
+- Summary: Simulate an observation of a sky model: CASA's simobserve
 
 | Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
 |---|---|---|---|---|---|
-| <code>request_kind</code> | <code>parameter.request_kind@r1</code> | <code>choice (2 values)</code> | <code>"run"</code>; optional | Request | Typed simobserve request variant |
-| <code>model</code> | <code>simobserve.model@r1</code> | <code>path (image)</code> | no default; required | Synthetic Observation | Input FITS model image |
-| <code>out</code> | <code>parameter.out@r1</code> | <code>path (measurement_set)</code> | no default; required | Synthetic Observation | Output MeasurementSet path |
-| <code>inbright</code> | <code>parameter.inbright@r1</code> | <code>string</code> | <code>"3e-5"</code>; optional | Synthetic Observation | Input brightness. |
-| <code>duration</code> | <code>parameter.duration@r1</code> | <code>float</code> | <code>3600.0</code>; optional | Synthetic Observation | On-source duration in seconds |
-| <code>integration</code> | <code>parameter.integration@r1</code> | <code>string</code> | <code>"2"</code>; optional | Synthetic Observation | Integration time. |
-| <code>start_frequency_hz</code> | <code>parameter.start_frequency_hz@r1</code> | <code>float</code> | <code>44000000000.0</code>; optional | Synthetic Observation | First channel center frequency |
-| <code>channel_width_hz</code> | <code>parameter.channel_width_hz@r1</code> | <code>float</code> | <code>128000000.0</code>; optional | Synthetic Observation | Channel width |
-| <code>channel_count</code> | <code>parameter.channel_count@r1</code> | <code>optional&lt;integer&gt; (states: none)</code> | <code>1</code>; optional | Synthetic Observation | Number of selected input channels |
-| <code>overwrite</code> | <code>output.overwrite@r1</code> | <code>bool</code> | <code>false</code>; optional | Synthetic Observation | Replace an existing output file |
-| <code>predict_model</code> | <code>parameter.predict_model@r1</code> | <code>bool</code> | <code>true</code>; optional | Synthetic Observation | Predict visibilities from the model image |
-| <code>polarizations</code> | <code>parameter.polarizations@r1</code> | <code>string</code> | <code>"2"</code>; optional | Synthetic Observation | Number of correlations to write: 1, 2, or 4 |
-| <code>polarization_basis</code> | <code>parameter.polarization_basis@r1</code> | <code>string</code> | <code>"circular"</code>; optional | Synthetic Observation | Receptor basis for polarization metadata |
-| <code>worker_policy</code> | <code>parameter.worker_policy@r1</code> | <code>choice (2 values)</code> | <code>"auto"</code>; optional | Workers | Native simulator worker selection policy |
-| <code>row_workers</code> | <code>parameter.row_workers@r1</code> | <code>optional&lt;integer&gt; (states: none)</code> | <code>"none"</code>; optional | Workers | Optional row worker count or auto upper bound |
-| <code>channel_workers</code> | <code>parameter.channel_workers@r1</code> | <code>optional&lt;integer&gt; (states: none)</code> | <code>"none"</code>; optional | Workers | Optional channel-prediction worker count or auto upper bound |
-| <code>corruption_seed</code> | <code>parameter.corruption_seed@r1</code> | <code>string</code> | <code>"1"</code>; optional | Synthetic Observation | Seed for deterministic corruption draws |
-| <code>noise_simplenoise_jy</code> | <code>parameter.noise_simplenoise_jy@r1</code> | <code>optional&lt;float&gt; (states: none)</code> | <code>"none"</code>; optional | Synthetic Observation | CASA setnoise(mode='simplenoise') sigma per complex visibility component |
-| <code>gain_mode</code> | <code>parameter.gain_mode@r1</code> | <code>string</code> | <code>"fbm"</code>; optional | Synthetic Observation | CASA setgain mode: fbm or random |
-| <code>gain_interval_seconds</code> | <code>parameter.gain_interval_seconds@r1</code> | <code>float</code> | <code>10.0</code>; optional | Synthetic Observation | CASA setgain interval in seconds |
-| <code>gain_amplitude</code> | <code>parameter.gain_amplitude@r1</code> | <code>string</code> | <code>"none"</code>; optional | Synthetic Observation | CASA setgain amplitude vector, scalar or real,imag |
-| <code>bandpass_mode</code> | <code>parameter.bandpass_mode@r1</code> | <code>string</code> | <code>"calculate"</code>; optional | Synthetic Observation | CASA setbandpass mode; casa-rs supports calculate |
-| <code>bandpass_interval_seconds</code> | <code>parameter.bandpass_interval_seconds@r1</code> | <code>float</code> | <code>3600.0</code>; optional | Synthetic Observation | CASA setbandpass interval in seconds |
-| <code>bandpass_amplitude</code> | <code>parameter.bandpass_amplitude@r1</code> | <code>string</code> | <code>"none"</code>; optional | Synthetic Observation | CASA setbandpass amplitude vector, scalar or amplitude,phase |
-| <code>leakage_amplitude</code> | <code>parameter.leakage_amplitude@r1</code> | <code>string</code> | <code>"none"</code>; optional | Synthetic Observation | CASA setleakage amplitude vector, scalar or real,imag |
-| <code>leakage_offset</code> | <code>parameter.leakage_offset@r1</code> | <code>string</code> | <code>"none"</code>; optional | Synthetic Observation | CASA setleakage offset vector, scalar or real,imag |
-| <code>pointing_offset_ra_arcsec</code> | <code>parameter.pointing_offset_ra_arcsec@r1</code> | <code>optional&lt;float&gt; (states: none)</code> | <code>"none"</code>; optional | Synthetic Observation | Global primary-beam pointing offset in right ascension arcseconds |
-| <code>pointing_offset_dec_arcsec</code> | <code>parameter.pointing_offset_dec_arcsec@r1</code> | <code>optional&lt;float&gt; (states: none)</code> | <code>"none"</code>; optional | Synthetic Observation | Global primary-beam pointing offset in declination arcseconds |
-| <code>source_model</code> | <code>parameter.source_model@r1</code> | <code>string</code> | <code>"{\"kind\":\"analytic_components\",\"components\":[{\"kind\":\"point\",\"l_rad\":0.0,\"m_rad\":0.0,\"spectrum\":{\"flux_jy\":1.0}}]}"</code>; optional | Family Parameters | Canonical SyntheticSkyModel JSON object. |
-| <code>telescope</code> | <code>parameter.telescope@r1</code> | <code>choice (3 values)</code> | <code>"VLA"</code>; optional | Family Parameters | Telescope family, for example VLA, ALMA, or ACA. |
-| <code>array_config</code> | <code>parameter.array_config@r1</code> | <code>choice (10 values)</code> | <code>"A"</code>; optional | Family Parameters | CASA .cfg path/name or explicit synthetic-* layout label. |
-| <code>band</code> | <code>parameter.band@r1</code> | <code>choice (12 values)</code> | <code>"Q"</code>; optional | Family Parameters | Receiver band label. |
-| <code>target_ms_size_gib</code> | <code>parameter.target_ms_size_gib@r1</code> | <code>float</code> | <code>0.01</code>; optional | Family Parameters | Target MeasurementSet size in GiB. |
-| <code>output_ms</code> | <code>parameter.output_ms@r1</code> | <code>path (measurement_set)</code> | <code>"simobserve-family.ms"</code>; optional | Family Parameters | Output MeasurementSet path persisted as request.output_ms. |
-| <code>ms_channels</code> | <code>parameter.ms_channels@r1</code> | <code>integer</code> | <code>4</code>; optional | Family Dimensions | Number of generated MeasurementSet channels. |
-| <code>image_channels</code> | <code>parameter.image_channels@r1</code> | <code>integer</code> | <code>1</code>; optional | Family Dimensions | Expected image-channel count recorded for diagnostics. |
-| <code>pointing_count</code> | <code>parameter.pointing_count@r1</code> | <code>integer</code> | <code>1</code>; optional | Family Dimensions | Number of pointings in the observing pattern. |
-| <code>time_sample_count</code> | <code>parameter.time_sample_count@r1</code> | <code>optional&lt;integer&gt; (states: none)</code> | <code>"none"</code>; optional | Family Dimensions | Optional exact generated time-sample count. |
-| <code>integration_seconds</code> | <code>parameter.integration_seconds@r1</code> | <code>optional&lt;float&gt; (states: none)</code> | <code>"none"</code>; optional | Family Dimensions | Optional integration time override. |
-| <code>start_time_mjd_seconds</code> | <code>parameter.start_time_mjd_seconds@r1</code> | <code>optional&lt;float&gt; (states: none)</code> | <code>"none"</code>; optional | Family Dimensions | Optional observation start time in MJD seconds UTC. |
-| <code>imaging_mode</code> | <code>parameter.imaging_mode@r1</code> | <code>choice (12 values)</code> | <code>"mfs"</code>; optional | Family Dimensions | Family imaging mode. |
-| <code>observation_mode</code> | <code>parameter.observation_mode@r1</code> | <code>choice (2 values)</code> | <code>"interferometric"</code>; optional | Family Dimensions | Native simulator row topology. |
-| <code>measure_actual_size</code> | <code>parameter.measure_actual_size@r1</code> | <code>bool</code> | <code>false</code>; optional | Family Workers | Measure generated MeasurementSet size by walking the output directory. |
+| <code>project</code> | <code>simulation.project@r1</code> | <code>string</code> | <code>"sim"</code>; optional | Project | Project: its directory and the first part of every file's name. |
+| <code>skymodel</code> | <code>parameter.skymodel@r2</code> | <code>path (image)</code> | <code>""</code>; optional | Sky model | Sky model image: a CASA image or FITS file. |
+| <code>inbright</code> | <code>parameter.inbright@r1</code> | <code>string</code> | <code>""</code>; optional | Sky model | Input brightness. |
+| <code>indirection</code> | <code>parameter.indirection@r1</code> | <code>string</code> | <code>""</code>; optional | Sky model | Input direction. |
+| <code>incell</code> | <code>parameter.incell@r1</code> | <code>string</code> | <code>""</code>; optional | Sky model | Input cell. |
+| <code>incenter</code> | <code>parameter.incenter@r1</code> | <code>string</code> | <code>""</code>; optional | Sky model | Input center. |
+| <code>inwidth</code> | <code>parameter.inwidth@r1</code> | <code>string</code> | <code>""</code>; optional | Sky model | Input width. |
+| <code>complist</code> | <code>parameter.complist@r1</code> | <code>path (product)</code> | <code>""</code>; optional | Components | Component list. |
+| <code>compwidth</code> | <code>parameter.compwidth@r1</code> | <code>string</code> | <code>"\"8GHz\""</code>; optional | Components | Component width. |
+| <code>comp_nchan</code> | <code>simulation.comp_nchan@r1</code> | <code>integer</code> | <code>1</code>; optional | Components | Channels of a component-only simulation. |
+| <code>setpointings</code> | <code>parameter.setpointings@r1</code> | <code>bool</code> | <code>true</code>; optional | Pointings | Generate pointings. |
+| <code>ptgfile</code> | <code>parameter.ptgfile@r2</code> | <code>path (any)</code> | <code>"$project.ptg.txt"</code>; optional | Pointings | Pointing file read when pointings are not laid out. |
+| <code>integration</code> | <code>parameter.integration@r1</code> | <code>string</code> | <code>"10s"</code>; optional | Pointings | Integration time. |
+| <code>direction</code> | <code>parameter.direction@r2</code> | <code>array&lt;string&gt;</code> | <code>[]</code>; optional | Pointings | Map centre, or the pointings themselves when several are given. |
+| <code>mapsize</code> | <code>parameter.mapsize@r2</code> | <code>array&lt;string&gt;</code> | <code>["",""]</code>; optional | Pointings | Map size along each axis; one value for both. |
+| <code>maptype</code> | <code>simulation.maptype@r1</code> | <code>choice (7 values)</code> | <code>"hexagonal"</code>; optional | Pointings | Map layout: hexagonal, square, or the ALMA Observing Tool's tiling. |
+| <code>pointingspacing</code> | <code>simulation.pointingspacing@r1</code> | <code>string</code> | <code>""</code>; optional | Pointings | Spacing of the map's pointings: an angle, `&lt;n&gt;PB`, or `nyquist`. |
+| <code>caldirection</code> | <code>simulation.caldirection@r1</code> | <code>string</code> | <code>""</code>; optional | Calibrator | Phase calibrator's direction; empty for none. |
+| <code>calflux</code> | <code>simulation.calflux@r1</code> | <code>string</code> | <code>"1Jy"</code>; optional | Calibrator | Phase calibrator's flux. |
+| <code>obsmode</code> | <code>simulation.obsmode@r1</code> | <code>choice (3 values)</code> | <code>"int"</code>; optional | Observation | Observe as an interferometer (`int`) or a single dish (`sd`); empty corrupts an existing MeasurementSet. |
+| <code>refdate</code> | <code>simulation.refdate@r1</code> | <code>string</code> | <code>"2014/01/01"</code>; optional | Observation | Date of the observation. |
+| <code>hourangle</code> | <code>parameter.hourangle@r1</code> | <code>string</code> | <code>"transit"</code>; optional | Observation | Hour angle. |
+| <code>totaltime</code> | <code>parameter.totaltime@r1</code> | <code>string</code> | <code>"7200s"</code>; optional | Observation | Total observing time. |
+| <code>antennalist</code> | <code>parameter.antennalist@r1</code> | <code>string</code> | <code>""</code>; optional | Observation | Antenna config list. |
+| <code>sdantlist</code> | <code>simulation.sdantlist@r1</code> | <code>string</code> | <code>"aca.tp.cfg"</code>; optional | Observation | Single dish's antenna configuration. |
+| <code>sdant</code> | <code>simulation.sdant@r1</code> | <code>integer</code> | <code>0</code>; optional | Observation | Antenna of the single-dish configuration that observes. |
+| <code>outframe</code> | <code>simulation.outframe@r1</code> | <code>string</code> | <code>"LSRK"</code>; optional | Observation | Frequency frame of the simulated spectral window. |
+| <code>thermalnoise</code> | <code>simulation.thermalnoise@r1</code> | <code>choice (3 values)</code> | <code>"tsys-atm"</code>; optional | Noise | Thermal noise: an ATM atmosphere, a given one, or none. |
+| <code>user_pwv</code> | <code>simulation.user_pwv@r1</code> | <code>float</code> | <code>0.5</code>; optional | Noise | Precipitable water vapour for `tsys-atm`, mm. |
+| <code>t_ground</code> | <code>simulation.t_ground@r1</code> | <code>float</code> | <code>270.0</code>; optional | Noise | Ground temperature, K. |
+| <code>t_sky</code> | <code>simulation.t_sky@r1</code> | <code>float</code> | <code>260.0</code>; optional | Noise | Atmosphere temperature for `tsys-manual`, K. |
+| <code>tau0</code> | <code>simulation.tau0@r1</code> | <code>float</code> | <code>0.1</code>; optional | Noise | Zenith opacity for `tsys-manual`. |
+| <code>seed</code> | <code>simulation.seed@r1</code> | <code>integer</code> | <code>11111</code>; optional | Noise | Random seed of the thermal noise. |
+| <code>leakage</code> | <code>simulation.leakage@r1</code> | <code>float</code> | <code>0.0</code>; optional | Noise | Polarization leakage amplitude; above 0, an interferometer is simulated in full Stokes. |
+| <code>correlator</code> | <code>parameter.correlator@r2</code> | <code>choice (5 values)</code> | <code>""</code>; optional | Noise | ALMA's correlator, for its efficiency in the thermal noise. |
+| <code>graphics</code> | <code>parameter.graphics@r2</code> | <code>choice (5 values)</code> | <code>"both"</code>; optional | Output | Graphics output. |
+| <code>verbose</code> | <code>parameter.verbose@r1</code> | <code>bool</code> | <code>false</code>; optional | Output | Verbose logging. |
+| <code>overwrite</code> | <code>output.overwrite@r1</code> | <code>bool</code> | <code>true</code>; optional | Output | Replace an existing output file |
 
 <a id="surface-imhead"></a>
 
