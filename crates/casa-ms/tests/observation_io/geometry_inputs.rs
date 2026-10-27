@@ -340,6 +340,17 @@ fn pointing_polynomials_are_evaluated_at_the_query_time_on_both_stores() {
     casa_ms::observation_io::convert::to_msv4(&v2, &v4, &conversion()).expect("to msv4");
     let from_v4 = series(open(&v4, &OpenOptions::default()).expect("msv4").as_ref());
     assert_eq!(from_v4.terms, 2);
+    let back = root.path().join("rates-back.ms");
+    casa_ms::observation_io::convert::to_msv2(&v4, &back, &conversion()).expect("to msv2");
+    let again = series(open(&back, &OpenOptions::default()).expect("back").as_ref());
+    assert_eq!(again.terms, 2);
+    for samples in again.antennas.values() {
+        assert_eq!(
+            samples.origins_s(),
+            samples.times_s(),
+            "TIME_ORIGIN at TIME"
+        );
+    }
     let unix = |mjd_s: f64| mjd_s - 40_587.0 * 86_400.0;
     let grid = msv2.grid(PartitionId(0), "base").expect("grid");
     for antenna in 0..3_u32 {
@@ -359,13 +370,16 @@ fn pointing_polynomials_are_evaluated_at_the_query_time_on_both_stores() {
                 [1e-6 * since + terms[[0, 0]], -2e-6 * since + terms[[1, 0]]]
             );
             let on_v4 = from_v4.bracket(AntennaId(antenna), unix(time)).expect("v4");
-            let after_shift = on_v4.before.expect("a sample before").direction_rad;
-            for axis in 0..2 {
-                assert!(
-                    (after_shift[axis] - before.direction_rad[axis]).abs() < 1e-14,
-                    "{after_shift:?} against {:?}",
-                    before.direction_rad
-                );
+            let on_back = again.bracket(AntennaId(antenna), time).expect("back");
+            for shifted in [on_v4.before, on_back.before] {
+                let shifted = shifted.expect("a sample before").direction_rad;
+                for axis in 0..2 {
+                    assert!(
+                        (shifted[axis] - before.direction_rad[axis]).abs() < 1e-14,
+                        "{shifted:?} against {:?}",
+                        before.direction_rad
+                    );
+                }
             }
         }
     }

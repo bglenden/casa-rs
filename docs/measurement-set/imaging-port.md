@@ -149,11 +149,23 @@ The batch already carries the rest: stored UVW and time centroids per
 carries the antenna positions, mounts, dish diameters, telescope names, and
 the partitions' frequencies and frames.
 
+As landed in step 3a (trial README, "Geometry inputs"): field reference
+epochs, per-row phase-centre frames, pointing and per-partition receptors.
+Field ephemerides take a PR of their own, which must merge before the
+cutover (#942); until then the converter refuses them, as it did.
+
 Two consequences:
-- **Pointing at full rate.** MSv4 has no polynomial terms. An MSv2 with
-  `NUM_POLY` > 0 keeps today's evaluation through the MSv2 adapter; its MSv4
-  conversion keeps the constant term, as XRADIO's does. That loss is stated
-  by the converter (`LossKind`), not silent.
+- **Pointing in MSv4.** `POINTING_BEAM` holds a polynomial per sample
+  (an optional `n_polynomial` axis) about the sample's own time, so an MSv2
+  row's polynomial converts exactly, re-expressed about its `TIME`. MSv4
+  states no interval per sample, so a converted store's brackets have no
+  covering sample, and imaging's law chooses between the samples either
+  side (nearest, or interpolation). For pointing sampled at the
+  integration, that can pick a different sample than the MSv2 did. Step 3b
+  measures it on the native AW workloads; the owner decides whether the
+  MSv4 route may differ there, or whether intervals should be recovered
+  (from the sample spacing, say). The converter reports `INTERVAL`,
+  `TARGET`, `NAME` and `TRACKING` as a table loss.
 - **AW pointing epochs.** Today's epochs follow MAIN order, which interleaves
   windows; batches are partition-major. Refresh decisions carry state across
   consecutive epochs, so the order can change which epochs refresh. CASA's
@@ -287,11 +299,11 @@ Each step is its own PR with its own laws. Only the last switches production.
 3. **Geometry over batches** in imaging, beside today's, in two parts
    (2.2.1):
    - **3a. Boundary inputs for geometry.** Field reference epochs, per-row
-     direction references, field ephemerides, pointing brackets and
-     per-partition receptor angles on
-     both adapters; the converter carries pointing and attached
-     ephemerides both ways. Laws: each input equals today's reading on
-     MSv2 and survives an MSv2 → MSv4 → MSv2 round trip.
+     direction references, pointing brackets and per-partition receptor
+     angles on both adapters; the converter carries pointing both ways.
+     Laws: each input equals today's reading on MSv2 and survives an
+     MSv2 → MSv4 → MSv2 round trip. Field ephemerides follow in their own
+     PR before the cutover (#942).
    - **3b. Geometry** in `casa-imaging-model`. The equality law of 2.2 runs
      both routes on every T1 workload.
 4. **`ObservationSource`** beside `MeasurementSetSource`, behind a run

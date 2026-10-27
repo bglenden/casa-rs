@@ -154,8 +154,24 @@ One store unit of an opened observation, described by its content: spectral
 window, correlation products, intents, observing session and feed pair. An
 MSv4 dataset is one; the MSv2 adapter divides MAIN rows the same way XRADIO's
 converter does, so the same observation opens as the same partition set from
-either store. A batch never spans two.
+either store. A batch never spans two. A partition states its antennas'
+receptors (types and angles), since feeds may differ by window.
 _Avoid_: Data description, SPW index, dataset path
+
+**Pointing Series**:
+One partition's antenna pointing over a span of times, read on request
+rather than held in the catalogue: per antenna, samples in time order, each
+a direction polynomial in time about its own origin, with the interval it
+holds for where the store states one (MSv2 `INTERVAL`; MSv4 states none).
+The store's frame is kept; converting it belongs to the geometry owner.
+_Avoid_: Pointing table, pointing catalog (today's per-row MSv2 reader)
+
+**Pointing Bracket**:
+The samples of a Pointing Series around one (antenna, time), each evaluated
+at that time: the sample whose interval covers it (nearest first), the last
+at or before it and the first at or after it. Imaging's pointing law chooses
+among them (covering, nearest, interpolation, hold or refusal).
+_Avoid_: Pointing lookup, nearest pointing
 
 **Sample**:
 One (time, baseline) point of a partition's time × baseline grid: an MSv4
