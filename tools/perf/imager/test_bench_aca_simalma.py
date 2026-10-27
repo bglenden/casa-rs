@@ -190,7 +190,7 @@ class AcaSimalmaHarnessTests(unittest.TestCase):
                 output_dir=output_dir,
                 testdata_root=root,
                 config_root=config_root,
-                casars_binary=Path("/missing/simobserve"),
+                casars_binary=Path("/missing/synthetic-ms"),
                 casars_imager_binary=Path("/missing/casars-imager"),
                 casa_python=sys.executable,
                 preflight_only=True,
