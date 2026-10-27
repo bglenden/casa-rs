@@ -65,6 +65,7 @@ pub mod epoch;
 pub mod error;
 pub mod frame;
 pub mod frequency;
+pub mod frequency_conversion;
 pub mod position;
 pub mod provider;
 pub mod radial_velocity;
@@ -81,6 +82,7 @@ pub use earth_magnetic::{EarthMagneticRef, IgrfSample, MEarthMagnetic, calculate
 pub use epoch::{EpochRef, MEpoch, MjdHighPrec};
 pub use error::MeasureError;
 pub use frame::{IauModel, MeasFrame};
+pub use frequency_conversion::PreparedFrequencyConversion;
 pub use position::{MPosition, PositionRef};
 pub use provider::{
     EopValues, MeasuresProvider, MeasuresProviderState, NamedSourceDirection, ObservatoryPosition,
