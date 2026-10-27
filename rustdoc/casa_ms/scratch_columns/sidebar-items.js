@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["prepare_write"]};
+window.SIDEBAR_ITEMS = {"fn":["prepare_write","prepare_write_holding"]};

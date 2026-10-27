@@ -32,7 +32,7 @@
 <a href=#32 id=32 data-nosnippet>32</a><span class="doccomment">/// A column's fixed `MEASINFO.Ref`, if it names one. A variable reference
 <a href=#33 id=33 data-nosnippet>33</a>/// (`VarRefCol`) is refused: the trial's views carry one reference per
 <a href=#34 id=34 data-nosnippet>34</a>/// batch.
-<a href=#35 id=35 data-nosnippet>35</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>measure_reference(
+<a href=#35 id=35 data-nosnippet>35</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>measure_reference(
 <a href=#36 id=36 data-nosnippet>36</a>    table: <span class="kw-2">&amp;</span>Table,
 <a href=#37 id=37 data-nosnippet>37</a>    column: <span class="kw-2">&amp;</span>str,
 <a href=#38 id=38 data-nosnippet>38</a>) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;String&gt;, ObservationError&gt; {
@@ -53,7 +53,7 @@
 <a href=#53 id=53 data-nosnippet>53</a><span class="doccomment">/// Require a column's `QuantumUnits`, when present, to be `expected` in
 <a href=#54 id=54 data-nosnippet>54</a>/// every position. An absent keyword is the MeasurementSet definition's
 <a href=#55 id=55 data-nosnippet>55</a>/// unit, which is `expected`.
-<a href=#56 id=56 data-nosnippet>56</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>require_units(
+<a href=#56 id=56 data-nosnippet>56</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>require_units(
 <a href=#57 id=57 data-nosnippet>57</a>    table: <span class="kw-2">&amp;</span>Table,
 <a href=#58 id=58 data-nosnippet>58</a>    column: <span class="kw-2">&amp;</span>str,
 <a href=#59 id=59 data-nosnippet>59</a>    expected: <span class="kw-2">&amp;</span>str,

@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["GroupClosure"],"fn":["open","open_update"],"struct":["Msv2Cursor","Msv2Observation","OpenOptions","PartitionScheme","UpdateSession"]};
+window.SIDEBAR_ITEMS = {"enum":["GroupClosure"],"fn":["open","open_update","persisted_namespace"],"struct":["Msv2Cursor","Msv2Observation","NamespaceAntenna","NamespaceField","NamespaceRows","NamespaceWindow","OpenOptions","PartitionScheme","PersistedNamespace","UpdateSession"]};
