@@ -106,7 +106,10 @@ fn solved_and_scaled_tables_are_refused_and_kept() {
     solve().expect("first gaincal");
     let before = snapshot(&table);
     let error = solve().err().expect("second gaincal refused");
-    assert!(error.to_string().contains("output already exists"), "{error}");
+    assert!(
+        error.to_string().contains("output already exists"),
+        "{error}"
+    );
     assert_eq!(snapshot(&table), before);
 
     let input = two_field_gain_table(&dir.path().join("input.gcal"));
@@ -169,7 +172,10 @@ fn a_refused_report_runs_nothing() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("refusing to overwrite"), "{stderr}");
     assert_eq!(snapshot(&ms), before);
-    assert_eq!(std::fs::read_to_string(&report).unwrap(), "an earlier report");
+    assert_eq!(
+        std::fs::read_to_string(&report).unwrap(),
+        "an earlier report"
+    );
     let mut versions = ms.clone().into_os_string();
     versions.push(".flagversions");
     assert!(!PathBuf::from(versions).exists());
@@ -210,7 +216,12 @@ fn applycal_changes_only_the_selected_rows() {
     let before = rows(&ms);
     // Row 0 is spw 0 and row 1 spw 1; select spw 0 only. Antenna 1 has no
     // solution, so calflag flags row 0.
-    applycal(&ms, &table, MsSelection::new().spw(&[0]), ApplyMode::CalFlag);
+    applycal(
+        &ms,
+        &table,
+        MsSelection::new().spw(&[0]),
+        ApplyMode::CalFlag,
+    );
     let after = rows(&ms);
     assert_ne!(after[0], before[0], "the selected row was not calibrated");
     assert_eq!(after[1], before[1], "an unselected row changed");
@@ -227,8 +238,18 @@ fn calonly_and_trial_change_no_flags() {
     applycal(&ms, &table, MsSelection::new().spw(&[0]), ApplyMode::Trial);
     assert_eq!(rows(&ms), before, "trial changed the MeasurementSet");
     // Antenna 1 has no solution, so calflag would flag row 0; calonly must not.
-    applycal(&ms, &table, MsSelection::new().spw(&[0]), ApplyMode::CalOnly);
+    applycal(
+        &ms,
+        &table,
+        MsSelection::new().spw(&[0]),
+        ApplyMode::CalOnly,
+    );
     assert_eq!(flags(rows(&ms)), flags(before.clone()));
-    applycal(&ms, &table, MsSelection::new().spw(&[0]), ApplyMode::CalFlag);
+    applycal(
+        &ms,
+        &table,
+        MsSelection::new().spw(&[0]),
+        ApplyMode::CalFlag,
+    );
     assert_ne!(flags(rows(&ms)), flags(before), "calflag flags row 0");
 }

@@ -122,7 +122,11 @@ fn each_image_task_refuses_its_existing_product_without_overwrite() {
     write_image(&path.join("low.image"), 0.5);
 
     let cases: [(&str, &[&str], &str); 8] = [
-        (env!("CARGO_BIN_EXE_imsubimage"), &["in.image", "out.sub"], "out.sub"),
+        (
+            env!("CARGO_BIN_EXE_imsubimage"),
+            &["in.image", "out.sub"],
+            "out.sub",
+        ),
         (
             env!("CARGO_BIN_EXE_immoments"),
             &["in.image", "--outfile", "out.mom0", "--moments", "0"],
@@ -130,30 +134,70 @@ fn each_image_task_refuses_its_existing_product_without_overwrite() {
         ),
         (
             env!("CARGO_BIN_EXE_immath"),
-            &["--imagename", "in.image", "--expr", "2*IM0", "--outfile", "out.math"],
+            &[
+                "--imagename",
+                "in.image",
+                "--expr",
+                "2*IM0",
+                "--outfile",
+                "out.math",
+            ],
             "out.math",
         ),
         (
             env!("CARGO_BIN_EXE_impbcor"),
-            &["--imagename", "in.image", "--pbimage", "in.image", "--outfile", "out.pbcor"],
+            &[
+                "--imagename",
+                "in.image",
+                "--pbimage",
+                "in.image",
+                "--outfile",
+                "out.pbcor",
+            ],
             "out.pbcor",
         ),
         (
             env!("CARGO_BIN_EXE_imregrid"),
-            &["--imagename", "in.image", "--template", "in.image", "--output", "out.regrid"],
+            &[
+                "--imagename",
+                "in.image",
+                "--template",
+                "in.image",
+                "--output",
+                "out.regrid",
+            ],
             "out.regrid",
         ),
         (
             env!("CARGO_BIN_EXE_feather"),
-            &["--imagename", "out.feather", "--highres", "in.image", "--lowres", "low.image"],
+            &[
+                "--imagename",
+                "out.feather",
+                "--highres",
+                "in.image",
+                "--lowres",
+                "low.image",
+            ],
             "out.feather",
         ),
         (
             env!("CARGO_BIN_EXE_impv"),
-            &["in.image", "--outfile", "out.pv", "--start", "0,0", "--end", "3,3"],
+            &[
+                "in.image",
+                "--outfile",
+                "out.pv",
+                "--start",
+                "0,0",
+                "--end",
+                "3,3",
+            ],
             "out.pv",
         ),
-        (env!("CARGO_BIN_EXE_exportfits"), &["in.image", "out.fits"], "out.fits"),
+        (
+            env!("CARGO_BIN_EXE_exportfits"),
+            &["in.image", "out.fits"],
+            "out.fits",
+        ),
     ];
     for (binary, args, product) in cases {
         assert_guards_its_product(binary, args, product, path);

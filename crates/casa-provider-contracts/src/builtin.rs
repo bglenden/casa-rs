@@ -76,8 +76,8 @@ mod tests {
 
     use crate::{
         CELL_CONCEPT_ID, IMSIZE_CONCEPT_ID, MigrationStep, OVERWRITE_CONCEPT_ID, ParameterRole,
-        ParameterType, ParameterValue, Predicate, ResourceKind, RunProductSource,
-        SemanticRevision, SurfaceKind, SurfaceProductContract, ValueAdapter,
+        ParameterType, ParameterValue, Predicate, ResourceKind, RunProductSource, SemanticRevision,
+        SurfaceKind, SurfaceProductContract, ValueAdapter,
     };
 
     use super::*;

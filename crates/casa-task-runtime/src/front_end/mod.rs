@@ -315,11 +315,9 @@ where
             ));
         }
         match action {
-            Action::Help => FrontEndOutput::print(help::render_help(
-                &self.program,
-                &self.surfaces,
-                bundle,
-            )),
+            Action::Help => {
+                FrontEndOutput::print(help::render_help(&self.program, &self.surfaces, bundle))
+            }
             Action::JsonSchema => pretty(&self.contract),
             Action::ProtocolInfo => pretty(&self.protocol),
             Action::JsonRun(source) => self.run_json(bundle, &source),
@@ -348,15 +346,15 @@ where
         }
     }
 
-    fn select_surface<'a>(
-        &self,
-        args: &'a [OsString],
-    ) -> (&SurfaceContractBundle, &'a [OsString]) {
-        let named = args.first().and_then(|word| word.to_str()).and_then(|word| {
-            self.surfaces
-                .iter()
-                .find(|bundle| bundle.surface.id() == word)
-        });
+    fn select_surface<'a>(&self, args: &'a [OsString]) -> (&SurfaceContractBundle, &'a [OsString]) {
+        let named = args
+            .first()
+            .and_then(|word| word.to_str())
+            .and_then(|word| {
+                self.surfaces
+                    .iter()
+                    .find(|bundle| bundle.surface.id() == word)
+            });
         match named {
             Some(bundle) => (bundle, &args[1..]),
             None => (&self.surfaces[0], args),
@@ -382,7 +380,11 @@ where
         FrontEndOutput::print(text)
     }
 
-    fn run_command_line(&self, bundle: &SurfaceContractBundle, args: &[OsString]) -> FrontEndOutput {
+    fn run_command_line(
+        &self,
+        bundle: &SurfaceContractBundle,
+        args: &[OsString],
+    ) -> FrontEndOutput {
         let line = match TaskCommandLine::parse(bundle, args) {
             Ok(line) => line,
             Err(error) => return FrontEndOutput::refused(error),
@@ -464,17 +466,15 @@ where
     }
 
     fn json_reply(&self, default: &SurfaceContractBundle, source: &str) -> TaskReply {
-        let refuse = |surface: &str, message: String, parameter: Option<String>| {
-            TaskReply::Failed {
+        let refuse =
+            |surface: &str, message: String, parameter: Option<String>| TaskReply::Failed {
                 surface: surface.to_string(),
                 kind: TaskFailureKind::Validation,
                 message,
                 parameter,
-            }
-        };
+            };
         let request = match read_task_request(source).and_then(|text| {
-            serde_json::from_str::<TaskRunRequest>(&text)
-                .map_err(crate::TaskCliError::ParseRequest)
+            serde_json::from_str::<TaskRunRequest>(&text).map_err(crate::TaskCliError::ParseRequest)
         }) {
             Ok(request) => request,
             Err(error) => return refuse(default.surface.id(), error.to_string(), None),

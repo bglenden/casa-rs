@@ -195,7 +195,9 @@ mod tests {
             exited(1),
             r#"{"status":"failed","surface":"split","kind":"execution","message":"disk full"}"#,
         );
-        assert!(matches!(failed, TaskOutcome::Failed { ref message, .. } if message == "disk full"));
+        assert!(
+            matches!(failed, TaskOutcome::Failed { ref message, .. } if message == "disk full")
+        );
     }
 
     #[test]

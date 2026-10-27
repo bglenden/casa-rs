@@ -65,13 +65,17 @@ type Calls = RefCell<Vec<String>>;
 
 /// A front end whose task fails for `fail.image`, refuses `refuse.image` and
 /// returns the image name otherwise.
-fn front_end(calls: &Calls) -> TaskFrontEnd<impl Fn(&TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> + '_> {
+fn front_end(
+    calls: &Calls,
+) -> TaskFrontEnd<impl Fn(&TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> + '_> {
     TaskFrontEnd::new("imexplore", contract(), &["imstat", "imhead"], move |run| {
         let image = run.plain_values()["imagename"][0]
             .as_str()
             .unwrap()
             .to_string();
-        calls.borrow_mut().push(format!("{}:{image}", run.surface()));
+        calls
+            .borrow_mut()
+            .push(format!("{}:{image}", run.surface()));
         match image.as_str() {
             "fail.image" => Err(TaskFailure::execution("the image is unreadable")),
             "refuse.image" => Err(TaskFailure::validation("no such image").at("imagename")),
@@ -125,7 +129,12 @@ fn a_command_line_records_last_and_promotes_it_only_after_success() {
 
     let refused = front_end.dispatch(&in_workspace(workspace.path(), &["refuse.image"]));
     assert_eq!(refused.code, 2);
-    assert!(last_files(workspace.path()).1.unwrap().contains("first.image"));
+    assert!(
+        last_files(workspace.path())
+            .1
+            .unwrap()
+            .contains("first.image")
+    );
 }
 
 #[test]
@@ -137,10 +146,8 @@ fn no_save_last_leaves_existing_last_files_untouched() {
     let before = last_files(workspace.path());
 
     for image in ["second.image", "fail.image"] {
-        let output = front_end.dispatch(&in_workspace(
-            workspace.path(),
-            &[image, "--no-save-last"],
-        ));
+        let output =
+            front_end.dispatch(&in_workspace(workspace.path(), &[image, "--no-save-last"]));
         assert_ne!(output.code, 2, "{output:?}");
         assert_eq!(last_files(workspace.path()), before, "{image}");
     }
@@ -179,7 +186,10 @@ fn json_run_writes_one_typed_reply_and_no_last() {
     assert_eq!(failed.code, 1);
     assert!(matches!(
         reply(&failed),
-        TaskReply::Failed { kind: TaskFailureKind::Execution, .. }
+        TaskReply::Failed {
+            kind: TaskFailureKind::Execution,
+            ..
+        }
     ));
     let refused = request(json!({"surface": "imstat", "values": {"imagename": ["refuse.image"]}}));
     assert_eq!(refused.code, 2);
@@ -189,12 +199,20 @@ fn json_run_writes_one_typed_reply_and_no_last() {
             if name == "imagename"
     ));
     assert_eq!(last_files(workspace.path()), before);
-    assert_eq!(classify_task_exit(TaskExit { code: Some(ok.code), signal: None }, &ok.stdout),
+    assert_eq!(
+        classify_task_exit(
+            TaskExit {
+                code: Some(ok.code),
+                signal: None
+            },
+            &ok.stdout
+        ),
         TaskOutcome::Succeeded {
             surface: "imhead".into(),
             value: json!({"image": "x.image"}),
             result: json!({"kind": "statistics"}),
-        });
+        }
+    );
 }
 
 #[test]
@@ -215,12 +233,17 @@ fn json_run_refuses_what_it_cannot_resolve_before_the_task_runs() {
             json!({"surface": "imstat", "values": {"imagename": null}}).to_string(),
             Some("imagename"),
         ),
-        (json!({"surface": "imstat", "values": {}}).to_string(), Some("imagename")),
+        (
+            json!({"surface": "imstat", "values": {}}).to_string(),
+            Some("imagename"),
+        ),
     ] {
         std::fs::write(&path, &request).unwrap();
         let output = front_end.dispatch(&args(&["--json-run", path.to_str().unwrap()]));
         assert_eq!(output.code, 2, "{request}: {output:?}");
-        let TaskReply::Failed { kind, parameter, .. } = serde_json::from_str(&output.stdout).unwrap()
+        let TaskReply::Failed {
+            kind, parameter, ..
+        } = serde_json::from_str(&output.stdout).unwrap()
         else {
             panic!("{request}: expected a refusal");
         };
@@ -271,14 +294,19 @@ fn rejected_arguments_never_reach_the_task_or_last() {
     for (line, message) in cases {
         let output = front_end.dispatch(&in_workspace(workspace.path(), line));
         assert_eq!(output.code, 2, "{line:?}: {output:?}");
-        assert!(output.stderr.join("\n").contains(message), "{line:?}: {output:?}");
+        assert!(
+            output.stderr.join("\n").contains(message),
+            "{line:?}: {output:?}"
+        );
     }
     assert!(calls.borrow().is_empty());
     assert_eq!(last_files(workspace.path()), (None, None));
 
     // A corrupt Last is reported, never replaced by Defaults or rewritten.
     let store = ManagedStateStore::for_workspace(workspace.path());
-    let last = store.profile_path("imstat", ManagedProfileKind::Last).unwrap();
+    let last = store
+        .profile_path("imstat", ManagedProfileKind::Last)
+        .unwrap();
     std::fs::create_dir_all(last.parent().unwrap()).unwrap();
     std::fs::write(&last, "not a profile").unwrap();
     let output = front_end.dispatch(&in_workspace(workspace.path(), &["--last", "x.image"]));
@@ -296,7 +324,12 @@ fn non_executing_views_run_nothing_and_write_no_last() {
 
     let show = front_end.dispatch(&in_workspace(
         workspace.path(),
-        &["--show", "x.image", "--save-params", saved.to_str().unwrap()],
+        &[
+            "--show",
+            "x.image",
+            "--save-params",
+            saved.to_str().unwrap(),
+        ],
     ));
     assert_eq!(show.code, 0, "{show:?}");
     assert!(show.stdout.contains("imagename"), "{}", show.stdout);
@@ -310,11 +343,23 @@ fn non_executing_views_run_nothing_and_write_no_last() {
     assert_eq!(other.code, 2);
 
     let template = front_end.dispatch(&args(&["imhead", "--template"]));
-    assert!(template.stdout.contains("surface = \"imhead\""), "{}", template.stdout);
+    assert!(
+        template.stdout.contains("surface = \"imhead\""),
+        "{}",
+        template.stdout
+    );
     let surface = front_end.dispatch(&args(&["--describe"]));
-    assert!(surface.stdout.starts_with("task imstat"), "{}", surface.stdout);
+    assert!(
+        surface.stdout.starts_with("task imstat"),
+        "{}",
+        surface.stdout
+    );
     let parameter = front_end.dispatch(&args(&["--describe", "imagename"]));
-    assert!(parameter.stdout.contains("CASA name: imagename"), "{}", parameter.stdout);
+    assert!(
+        parameter.stdout.contains("CASA name: imagename"),
+        "{}",
+        parameter.stdout
+    );
     let combined = front_end.dispatch(&args(&["--show", "--template"]));
     assert_eq!(combined.code, 2);
     let extra = front_end.dispatch(&args(&["--template", "x.image"]));
@@ -330,8 +375,16 @@ fn help_and_machine_actions_describe_the_hosted_surfaces() {
     let front_end = front_end(&calls);
     let help = front_end.dispatch(&args(&["imhead", "--help"]));
     assert_eq!(help.code, 0);
-    assert!(help.stdout.contains("SURFACE is one of imstat, imhead"), "{}", help.stdout);
-    assert!(help.stdout.contains("Parameters of imhead:"), "{}", help.stdout);
+    assert!(
+        help.stdout.contains("SURFACE is one of imstat, imhead"),
+        "{}",
+        help.stdout
+    );
+    assert!(
+        help.stdout.contains("Parameters of imhead:"),
+        "{}",
+        help.stdout
+    );
     assert!(help.stdout.contains("--last-successful"), "{}", help.stdout);
 
     let schema: serde_json::Value =
@@ -353,7 +406,11 @@ fn main_writes_only_to_the_streams_its_binary_passes() {
     let code = front_end.main(args(&["--template", "x.image"]), &mut stdout, &mut stderr);
     assert_eq!(code, std::process::ExitCode::from(2));
     assert!(stdout.is_empty());
-    assert!(String::from_utf8(stderr).unwrap().contains("--template takes no other arguments"));
+    assert!(
+        String::from_utf8(stderr)
+            .unwrap()
+            .contains("--template takes no other arguments")
+    );
 }
 
 #[test]

@@ -199,7 +199,10 @@ fn no_save_last_leaves_existing_last_files_untouched() {
 fn missing_or_corrupt_profiles_are_reported_and_never_replaced() {
     let workspace = tempfile::tempdir().unwrap();
     let path = workspace.path().to_str().unwrap();
-    let missing_last = casars(&["run", "imstat", "--last", "--workspace", path], workspace.path());
+    let missing_last = casars(
+        &["run", "imstat", "--last", "--workspace", path],
+        workspace.path(),
+    );
     assert_eq!(missing_last.status.code(), Some(1));
     assert!(
         stderr(&missing_last).contains("no managed Last profile"),
@@ -210,7 +213,10 @@ fn missing_or_corrupt_profiles_are_reported_and_never_replaced() {
     let state = workspace.path().join(".casa-rs/parameters/imstat");
     std::fs::create_dir_all(&state).unwrap();
     std::fs::write(state.join("last.toml"), "not a profile").unwrap();
-    let corrupt_last = casars(&["run", "imstat", "--last", "--workspace", path], workspace.path());
+    let corrupt_last = casars(
+        &["run", "imstat", "--last", "--workspace", path],
+        workspace.path(),
+    );
     assert_eq!(corrupt_last.status.code(), Some(1));
     assert_eq!(
         std::fs::read_to_string(state.join("last.toml")).unwrap(),
@@ -223,7 +229,14 @@ fn missing_or_corrupt_profiles_are_reported_and_never_replaced() {
     std::fs::write(&corrupt_file, "[casars\nsurface = ").unwrap();
     for profile in [&missing_file, &corrupt_file] {
         let output = casars(
-            &["run", "imstat", "--params", profile.to_str().unwrap(), "--workspace", path],
+            &[
+                "run",
+                "imstat",
+                "--params",
+                profile.to_str().unwrap(),
+                "--workspace",
+                path,
+            ],
             workspace.path(),
         );
         assert_eq!(output.status.code(), Some(1), "{profile:?}");

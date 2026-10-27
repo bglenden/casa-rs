@@ -1088,9 +1088,9 @@ fn check_channel_selections(
         let resolved = usize::try_from(spw)
             .map_err(|_| format!("SPW {spw} is negative"))
             .and_then(|row| {
-                let count = spectral_window
-                    .num_chan(row)
-                    .map_err(|source| format!("read SPECTRAL_WINDOW.NUM_CHAN row {spw}: {source}"))?;
+                let count = spectral_window.num_chan(row).map_err(|source| {
+                    format!("read SPECTRAL_WINDOW.NUM_CHAN row {spw}: {source}")
+                })?;
                 usize::try_from(count).map_err(|_| format!("SPW {spw} has a negative NUM_CHAN"))
             })
             .and_then(|channels| {

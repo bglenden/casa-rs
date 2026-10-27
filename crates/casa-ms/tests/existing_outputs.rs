@@ -169,7 +169,14 @@ fn refused_arguments_change_nothing() {
         ),
         (
             env!("CARGO_BIN_EXE_mstransform"),
-            vec!["--vis", ms_arg, "--outputvis", out.to_str().unwrap(), "--spw", "9"],
+            vec![
+                "--vis",
+                ms_arg,
+                "--outputvis",
+                out.to_str().unwrap(),
+                "--spw",
+                "9",
+            ],
         ),
     ] {
         let output = run(binary, &args);

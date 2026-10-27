@@ -453,8 +453,8 @@ mod tests {
         );
 
         // The parameter's own name reaches the same binding and value.
-        let named = parse_parameter_cli_overrides(&bundle, &["--threshold".into(), "1Jy".into()])
-            .unwrap();
+        let named =
+            parse_parameter_cli_overrides(&bundle, &["--threshold".into(), "1Jy".into()]).unwrap();
         let declared =
             parse_parameter_cli_overrides(&bundle, &["--threshold-jy".into(), "1Jy".into()])
                 .unwrap();

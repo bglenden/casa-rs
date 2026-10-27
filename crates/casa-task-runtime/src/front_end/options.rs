@@ -133,8 +133,8 @@ mod tests {
     #[test]
     fn source_options_are_mutually_exclusive() {
         let bundle = builtin_surface_bundle("imager").unwrap();
-        let error = TaskCommandLine::parse(&bundle, &["--defaults".into(), "--last".into()])
-            .unwrap_err();
+        let error =
+            TaskCommandLine::parse(&bundle, &["--defaults".into(), "--last".into()]).unwrap_err();
         assert!(error.contains("mutually exclusive"));
     }
 
@@ -169,8 +169,8 @@ mod tests {
     fn undeclared_flags_are_refused() {
         let bundle = builtin_surface_bundle("imstat").unwrap();
         for flag in ["--notebook", "--confirm-overwrite"] {
-            let error = TaskCommandLine::parse(&bundle, &["input.image".into(), flag.into()])
-                .unwrap_err();
+            let error =
+                TaskCommandLine::parse(&bundle, &["input.image".into(), flag.into()]).unwrap_err();
             assert!(error.contains(flag), "{error}");
         }
     }

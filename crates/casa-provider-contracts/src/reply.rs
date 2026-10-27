@@ -168,7 +168,11 @@ mod tests {
             parameter: None,
         };
         assert_eq!(failed.exit_code(), EXIT_EXECUTION_FAILED);
-        assert!(!serde_json::to_string(&failed).unwrap().contains("parameter"));
+        assert!(
+            !serde_json::to_string(&failed)
+                .unwrap()
+                .contains("parameter")
+        );
     }
 
     #[test]

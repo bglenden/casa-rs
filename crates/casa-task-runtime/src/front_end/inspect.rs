@@ -7,7 +7,9 @@ use casa_provider_contracts::{
     builtin_surface_catalog,
 };
 
-use crate::{ParameterSession, ParameterSessionError, ProfileError, parse_profile, resolve_profile};
+use crate::{
+    ParameterSession, ParameterSessionError, ProfileError, parse_profile, resolve_profile,
+};
 
 /// Every resolved value with its origin, in the surface's order, and the
 /// session's diagnostics.
@@ -112,7 +114,11 @@ pub fn describe(name: &str) -> Result<String, String> {
     Ok(text)
 }
 
-fn describe_concept(text: &mut String, concept: &ParameterConcept, aggregate: &SurfaceCatalogBundle) {
+fn describe_concept(
+    text: &mut String,
+    concept: &ParameterConcept,
+    aggregate: &SurfaceCatalogBundle,
+) {
     text.push_str(&format!(
         "{}@r{} ({})\nCASA name: {}\ntype: {:?}\nnormalization: {:?}\nrole: {:?}\npersistence: {:?}\n{}\nused by:",
         concept.id,
