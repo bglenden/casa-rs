@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["MOST_POINTINGS","PBCOEFF"],"enum":["MapType"],"fn":["calc_pointings","format_pointings","parse_pointings","read_pointings","triangle_points","triangular_tiling","write_pointings"],"struct":["PointingFile"]};

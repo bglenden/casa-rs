@@ -1463,6 +1463,36 @@ touches science, persistence or interop.</p>
 - CASA <code>simobserve</code> parity on the VLA ppdisk tutorial and on an ALMA
   configuration: the same output files, with the MS agreeing as in Phase 1.
 - Pointing lists identical to CASA's.</p>
+<p><strong>Split</strong> (2026-10-26; the full text is on #841). Each part is one PR.
+- <strong>5a:</strong> <code>simutil</code>'s directions, pointings (<code>calc_pointings2</code>, pointing
+  files), <code>noisetemp</code>, <code>bandname</code>, <code>polsettings</code> and baselines; <code>qa.formxxx</code>
+  and <code>qa.tos</code>.
+- <strong>5b:</strong> sky-model preparation: <code>modifymodel</code>, <code>flatimage</code>, components
+  sampled on an image, and the component-only model.
+- <strong>5d (done, #915):</strong> <code>synthetic-ms</code>, a developer binary hosting the old
+  family mode unchanged, with its callers moved to it. It lives in casa-ms,
+  beside the generator, because ADR-0016's dependency checker keeps
+  casa-simulation free of casa-logging, <code>eprintln!</code> and environment reads,
+  binaries included. Rebuilding the families on the new session stays in
+  Phase 7.
+- <strong>5c:</strong> the <code>simobserve</code> task at contract 5 on the session, with the
+  <code>alma/simmos</code> data-path resolver its antenna-list search uses (moved from
+  5a). The same checker rule means its task binary needs a host the checker
+  admits rather than casa-simulation. Owner decision, 2026-10-26:
+  <code>overwrite</code> keeps CASA's default, True, with no confirmation, since the
+  task writes only inside its project directory. Owner decision,
+  2026-10-27: the task's binary lives in a new app crate,
+  <code>casars-simulation</code>, which will host <code>simanalyze</code> and <code>simalma</code> too.
+  - <em>Deviation:</em> the noisy and leaked MeasurementSets are copies of the
+    observed one corrupted in place (<code>openfromms</code>, then <code>corrupt</code>), as CASA
+    makes them. Writing them in the observed one's pass (§4) needs the
+    session to write several outputs, and is deferred.
+- <strong>5e:</strong> graphics, rendered in Python from Rust plot documents, and
+  <code>.quick.psf</code>.
+- <strong>The acceptance data:</strong> the ppdisk model is casatestdata's
+  <code>regression/sim_components_and_skymodel/input50pc_672GHz.fits</code>, and the
+  ALMA case is CASA's regression on <code>alma.out20</code> with components. Pointing
+  strings are compared exactly, numbers to tolerances.</p>
 <h3 id="phase-6-simanalyze-and-simalma">Phase 6: <code>simanalyze</code> and <code>simalma</code><a class="headerlink" href="#phase-6-simanalyze-and-simalma" title="Permanent link">&para;</a></h3>
 <p><strong>Scope.</strong>
 - Both tasks, built on <code>imager</code>, <code>feather</code>, <code>imregrid</code>, <code>impbcor</code> and

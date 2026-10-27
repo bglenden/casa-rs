@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["SimobserveError"],"fn":["simobserve"],"struct":["SimobserveOutcome","SimobserveParameters","SimobserveRequest"]};

@@ -29,7 +29,7 @@
 <a href=#29 id=29 data-nosnippet>29</a>) -&gt; PyResult&lt;bool&gt; {
 <a href=#30 id=30 data-nosnippet>30</a>    <span class="kw">let </span>spec = PredictSpec {
 <a href=#31 id=31 data-nosnippet>31</a>        images: images.into_iter().map(PathBuf::from).collect(),
-<a href=#32 id=32 data-nosnippet>32</a>        component_list: (!component_list.is_empty()).then(|| PathBuf::from(component_list)),
+<a href=#32 id=32 data-nosnippet>32</a>        component_lists: <span class="macro">vec!</span>[PathBuf::from(component_list)],
 <a href=#33 id=33 data-nosnippet>33</a>        incremental,
 <a href=#34 id=34 data-nosnippet>34</a>    };
 <a href=#35 id=35 data-nosnippet>35</a>    py.detach(|| spec.check_images())

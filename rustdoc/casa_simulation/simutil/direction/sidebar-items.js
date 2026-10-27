@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["Directions"],"fn":["average_direction","direction_measure","format_direction","is_direction","median_direction","split_direction","wrap_angle"],"struct":["CentredDirections","SplitDirection"]};

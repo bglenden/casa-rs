@@ -730,9 +730,13 @@
   workers=None)</code> caps the memory <code>close</code> holds (bytes), names the device to
   predict on (<code>'auto'</code>, <code>'cpu'</code> or <code>'metal'</code>) and the threads to keep busy;
   <code>None</code> takes the machine's balanced share, and the MeasurementSet written
-  is the same whatever the controls. <code>casars.simutil</code> provides <code>readantenna</code>
-  of CASA's <code>simutil</code> helper class (<code>casatasks.private.simutil</code>), which is
-  not a tool; <code>from casars import simutil</code> is its public import.</li>
+  is the same whatever the controls. <code>casars.simutil</code> provides the parts of
+  CASA's <code>simutil</code> helper class (<code>casatasks.private.simutil</code>, not a tool)
+  that <code>sm</code> scripts and <code>simobserve</code> use: <code>readantenna</code>, the mosaic
+  pointings (<code>calc_pointings2</code>, pointing files), the direction helpers,
+  <code>noisetemp</code>, <code>bandname</code>, <code>polsettings</code>, the baseline helpers, and the
+  sky-model helpers <code>modifymodel</code> and <code>flatimage</code>. <code>from casars import
+  simutil</code> is its public import.</li>
 <li><code>casars.parameters</code> is the accepted common API for typed task profiles
   described by ADR-0006 and the current-only option in ADR-0012.</li>
 </ul>

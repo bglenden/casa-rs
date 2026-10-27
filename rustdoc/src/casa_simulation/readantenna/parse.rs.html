@@ -115,7 +115,7 @@
 <a href=#115 id=115 data-nosnippet>115</a>}
 <a href=#116 id=116 data-nosnippet>116</a>
 <a href=#117 id=117 data-nosnippet>117</a><span class="doccomment">/// Python's `str.split()` with no arguments.
-<a href=#118 id=118 data-nosnippet>118</a></span><span class="kw">fn </span>python_split(text: <span class="kw-2">&amp;</span>str) -&gt; <span class="kw">impl </span>Iterator&lt;Item = <span class="kw-2">&amp;</span>str&gt; {
+<a href=#118 id=118 data-nosnippet>118</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>python_split(text: <span class="kw-2">&amp;</span>str) -&gt; <span class="kw">impl </span>Iterator&lt;Item = <span class="kw-2">&amp;</span>str&gt; {
 <a href=#119 id=119 data-nosnippet>119</a>    text.split(is_python_space).filter(|part| !part.is_empty())
 <a href=#120 id=120 data-nosnippet>120</a>}
 <a href=#121 id=121 data-nosnippet>121</a>
@@ -141,7 +141,7 @@
 <a href=#141 id=141 data-nosnippet>141</a>/// ignored, underscores may separate digits, and `inf`, `infinity` and
 <a href=#142 id=142 data-nosnippet>142</a>/// `nan` (any case, optionally signed) are accepted. Unlike Python,
 <a href=#143 id=143 data-nosnippet>143</a>/// non-ASCII decimal digits are rejected.
-<a href=#144 id=144 data-nosnippet>144</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>python_float(text: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Option</span>&lt;f64&gt; {
+<a href=#144 id=144 data-nosnippet>144</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>python_float(text: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Option</span>&lt;f64&gt; {
 <a href=#145 id=145 data-nosnippet>145</a>    <span class="kw">let </span>text = without_digit_underscores(python_strip(text))<span class="question-mark">?</span>;
 <a href=#146 id=146 data-nosnippet>146</a>    text.parse().ok()
 <a href=#147 id=147 data-nosnippet>147</a>}

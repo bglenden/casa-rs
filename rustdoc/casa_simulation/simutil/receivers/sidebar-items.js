@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["band_name","noise_temperature","polarization_settings"],"struct":["ReceiverEfficiencies"]};

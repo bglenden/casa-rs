@@ -88,45 +88,56 @@
 <a href=#88 id=88 data-nosnippet>88</a>//! ([`ShapeTransform::at_baseline`]) and leaves each channel a function of
 <a href=#89 id=89 data-nosnippet>89</a>//! frequency alone ([`BaselineTransform::at_frequency`]).
 <a href=#90 id=90 data-nosnippet>90</a>//!
-<a href=#91 id=91 data-nosnippet>91</a>//! # Records
+<a href=#91 id=91 data-nosnippet>91</a>//! # Sampling at pixel directions
 <a href=#92 id=92 data-nosnippet>92</a>//!
-<a href=#93 id=93 data-nosnippet>93</a>//! [`ComponentList::to_record`] and [`SkyComponent::to_record`] form the
-<a href=#94 id=94 data-nosnippet>94</a>//! records CASA's `toRecord` does, which the `cl` tool's `torecord` and
-<a href=#95 id=95 data-nosnippet>95</a>//! `getcomponent` return; the flux, shape and spectrum each have their own
-<a href=#96 id=96 data-nosnippet>96</a>//! (`Flux::to_record`, `ComponentShape::to_record`,
-<a href=#97 id=97 data-nosnippet>97</a>//! `SpectralModel::to_record`).
-<a href=#98 id=98 data-nosnippet>98</a>//!
-<a href=#99 id=99 data-nosnippet>99</a>//! # Deliberately not here
+<a href=#93 id=93 data-nosnippet>93</a>//! [`SkyComponent::sample_pixels`] samples a component at an image's pixel
+<a href=#94 id=94 data-nosnippet>94</a>//! directions as CASA's `SkyCompRep::sample` does when `ia.modify` adds a
+<a href=#95 id=95 data-nosnippet>95</a>//! list to an image: the Stokes flux sampled by the spectral model, times
+<a href=#96 id=96 data-nosnippet>96</a>//! the shape's scale at each direction
+<a href=#97 id=97 data-nosnippet>97</a>//! ([`ComponentShape::pixel_scales`], on a [`PixelGrid`]). Placing a list on
+<a href=#98 id=98 data-nosnippet>98</a>//! an image, its points on their nearest pixels and the rest on every
+<a href=#99 id=99 data-nosnippet>99</a>//! pixel, is the image's business (`casa_simulation::simutil`).
 <a href=#100 id=100 data-nosnippet>100</a>//!
-<a href=#101 id=101 data-nosnippet>101</a>//! - **Sampling components on an image.**
-<a href=#102 id=102 data-nosnippet>102</a>//! - **The `cl` tool** itself: its argument conventions, its selection state
-<a href=#103 id=103 data-nosnippet>103</a>//!   and when it writes its table belong to `casars.tools.componentlist`.
-<a href=#104 id=104 data-nosnippet>104</a>//!   Reading records back (`fromrecord`) is not here either.
-<a href=#105 id=105 data-nosnippet>105</a>//! - **Display units:** CASA remembers the units each shape axis was given in;
-<a href=#106 id=106 data-nosnippet>106</a>//!   tables do not store them, and casa-rs keeps radians. Records give a
-<a href=#107 id=107 data-nosnippet>107</a>//!   shape's axes in the units CASA gives one read from a table.
-<a href=#108 id=108 data-nosnippet>108</a>//! - **Table keywords:** a list's table keywords (`cl.putkeyword`) are not
-<a href=#109 id=109 data-nosnippet>109</a>//!   read or written.
-<a href=#110 id=110 data-nosnippet>110</a>
-<a href=#111 id=111 data-nosnippet>111</a></span><span class="kw">mod </span>component;
-<a href=#112 id=112 data-nosnippet>112</a><span class="kw">mod </span>component_type;
-<a href=#113 id=113 data-nosnippet>113</a><span class="kw">mod </span>error;
-<a href=#114 id=114 data-nosnippet>114</a><span class="kw">mod </span>flux;
-<a href=#115 id=115 data-nosnippet>115</a><span class="kw">mod </span>list;
-<a href=#116 id=116 data-nosnippet>116</a><span class="kw">mod </span>record;
-<a href=#117 id=117 data-nosnippet>117</a><span class="kw">mod </span>shape;
-<a href=#118 id=118 data-nosnippet>118</a><span class="kw">mod </span>spectrum;
-<a href=#119 id=119 data-nosnippet>119</a><span class="kw">mod </span>table;
-<a href=#120 id=120 data-nosnippet>120</a><span class="kw">mod </span>visibility;
-<a href=#121 id=121 data-nosnippet>121</a>
-<a href=#122 id=122 data-nosnippet>122</a><span class="kw">pub use </span>component::{DEFAULT_LIMB_DARKENING_EXPONENT, SkyComponent};
-<a href=#123 id=123 data-nosnippet>123</a><span class="kw">pub use </span>component_type::{Polarisation, ShapeType, SpectralType};
-<a href=#124 id=124 data-nosnippet>124</a><span class="kw">pub use </span>error::{ComponentError, ComponentListError};
-<a href=#125 id=125 data-nosnippet>125</a><span class="kw">pub use </span>flux::Flux;
-<a href=#126 id=126 data-nosnippet>126</a><span class="kw">pub use </span>list::ComponentList;
-<a href=#127 id=127 data-nosnippet>127</a><span class="kw">pub use </span>shape::{ComponentShape, DirectionError, Ellipse, EllipseErrors, ShapeKind};
-<a href=#128 id=128 data-nosnippet>128</a><span class="kw">pub use </span>spectrum::{
-<a href=#129 id=129 data-nosnippet>129</a>    PowerLogPolynomial, SpectralIndex, SpectralKind, SpectralModel, TabularSpectrum,
-<a href=#130 id=130 data-nosnippet>130</a>};
-<a href=#131 id=131 data-nosnippet>131</a><span class="kw">pub use </span>visibility::{BaselineTransform, ShapeTransform, stokes_in};
+<a href=#101 id=101 data-nosnippet>101</a>//! # Records
+<a href=#102 id=102 data-nosnippet>102</a>//!
+<a href=#103 id=103 data-nosnippet>103</a>//! [`ComponentList::to_record`] and [`SkyComponent::to_record`] form the
+<a href=#104 id=104 data-nosnippet>104</a>//! records CASA's `toRecord` does, which the `cl` tool's `torecord` and
+<a href=#105 id=105 data-nosnippet>105</a>//! `getcomponent` return; the flux, shape and spectrum each have their own
+<a href=#106 id=106 data-nosnippet>106</a>//! (`Flux::to_record`, `ComponentShape::to_record`,
+<a href=#107 id=107 data-nosnippet>107</a>//! `SpectralModel::to_record`).
+<a href=#108 id=108 data-nosnippet>108</a>//!
+<a href=#109 id=109 data-nosnippet>109</a>//! # Deliberately not here
+<a href=#110 id=110 data-nosnippet>110</a>//!
+<a href=#111 id=111 data-nosnippet>111</a>//! - **The `cl` tool** itself: its argument conventions, its selection state
+<a href=#112 id=112 data-nosnippet>112</a>//!   and when it writes its table belong to `casars.tools.componentlist`.
+<a href=#113 id=113 data-nosnippet>113</a>//!   Reading records back (`fromrecord`) is not here either.
+<a href=#114 id=114 data-nosnippet>114</a>//! - **Display units:** CASA remembers the units each shape axis was given in;
+<a href=#115 id=115 data-nosnippet>115</a>//!   tables do not store them, and casa-rs keeps radians. Records give a
+<a href=#116 id=116 data-nosnippet>116</a>//!   shape's axes in the units CASA gives one read from a table.
+<a href=#117 id=117 data-nosnippet>117</a>//! - **Table keywords:** a list's table keywords (`cl.putkeyword`) are not
+<a href=#118 id=118 data-nosnippet>118</a>//!   read or written.
+<a href=#119 id=119 data-nosnippet>119</a>
+<a href=#120 id=120 data-nosnippet>120</a></span><span class="kw">mod </span>component;
+<a href=#121 id=121 data-nosnippet>121</a><span class="kw">mod </span>component_type;
+<a href=#122 id=122 data-nosnippet>122</a><span class="kw">mod </span>error;
+<a href=#123 id=123 data-nosnippet>123</a><span class="kw">mod </span>flux;
+<a href=#124 id=124 data-nosnippet>124</a><span class="kw">mod </span>list;
+<a href=#125 id=125 data-nosnippet>125</a><span class="kw">mod </span>record;
+<a href=#126 id=126 data-nosnippet>126</a><span class="kw">mod </span>sample;
+<a href=#127 id=127 data-nosnippet>127</a><span class="kw">mod </span>shape;
+<a href=#128 id=128 data-nosnippet>128</a><span class="kw">mod </span>spectrum;
+<a href=#129 id=129 data-nosnippet>129</a><span class="kw">mod </span>table;
+<a href=#130 id=130 data-nosnippet>130</a><span class="kw">mod </span>visibility;
+<a href=#131 id=131 data-nosnippet>131</a>
+<a href=#132 id=132 data-nosnippet>132</a><span class="kw">pub use </span>component::{DEFAULT_LIMB_DARKENING_EXPONENT, SkyComponent};
+<a href=#133 id=133 data-nosnippet>133</a><span class="kw">pub use </span>component_type::{Polarisation, ShapeType, SpectralType};
+<a href=#134 id=134 data-nosnippet>134</a><span class="kw">pub use </span>error::{ComponentError, ComponentListError};
+<a href=#135 id=135 data-nosnippet>135</a><span class="kw">pub use </span>flux::Flux;
+<a href=#136 id=136 data-nosnippet>136</a><span class="kw">pub use </span>list::ComponentList;
+<a href=#137 id=137 data-nosnippet>137</a><span class="kw">pub use </span>sample::PixelGrid;
+<a href=#138 id=138 data-nosnippet>138</a><span class="kw">pub use </span>shape::{ComponentShape, DirectionError, Ellipse, EllipseErrors, ShapeKind};
+<a href=#139 id=139 data-nosnippet>139</a><span class="kw">pub use </span>spectrum::{
+<a href=#140 id=140 data-nosnippet>140</a>    PowerLogPolynomial, SpectralIndex, SpectralKind, SpectralModel, TabularSpectrum,
+<a href=#141 id=141 data-nosnippet>141</a>};
+<a href=#142 id=142 data-nosnippet>142</a><span class="kw">pub use </span>visibility::{BaselineTransform, ShapeTransform, stokes_in};
 </code></pre></div></section></main></body></html>

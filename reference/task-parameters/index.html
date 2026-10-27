@@ -1297,9 +1297,9 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <ul>
 <li>Parameter catalog schema version: <code>1</code></li>
 <li>Parameter surface schema version: <code>1</code></li>
-<li>Concepts: 367</li>
+<li>Concepts: 346</li>
 <li>Surfaces: 27 (27 task, 0 session)</li>
-<li>Surface bindings: 532</li>
+<li>Surface bindings: 527</li>
 </ul>
 <table>
 <thead>
@@ -1348,10 +1348,10 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <tr>
 <td><a href="#surface-simobserve">SimObserve</a><br><code>simobserve</code></td>
 <td>task</td>
-<td style="text-align: right;">4</td>
+<td style="text-align: right;">5</td>
 <td><code>simobserve</code></td>
-<td style="text-align: right;">43</td>
-<td>Generate a CASA-compatible synthetic VLA MeasurementSet</td>
+<td style="text-align: right;">38</td>
+<td>Simulate an observation of a sky model: CASA's simobserve</td>
 </tr>
 <tr>
 <td><a href="#surface-imhead">Image Header</a><br><code>imhead</code></td>
@@ -3291,10 +3291,10 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <h2 id="simobserve-simobserve">SimObserve (<code>simobserve</code>)<a class="headerlink" href="#simobserve-simobserve" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Kind: <code>task</code></li>
-<li>Contract version: <code>4</code></li>
+<li>Contract version: <code>5</code></li>
 <li>Category: Simulation</li>
 <li>Provider family: <code>simobserve</code></li>
-<li>Summary: Generate a CASA-compatible synthetic VLA MeasurementSet</li>
+<li>Summary: Simulate an observation of a sky model: CASA's simobserve</li>
 </ul>
 <table>
 <thead>
@@ -3309,348 +3309,308 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 </thead>
 <tbody>
 <tr>
-<td><code>request_kind</code></td>
-<td><code>parameter.request_kind@r1</code></td>
-<td><code>choice (2 values)</code></td>
-<td><code>"run"</code>; optional</td>
-<td>Request</td>
-<td>Typed simobserve request variant</td>
+<td><code>project</code></td>
+<td><code>simulation.project@r1</code></td>
+<td><code>string</code></td>
+<td><code>"sim"</code>; optional</td>
+<td>Project</td>
+<td>Project: its directory and the first part of every file's name.</td>
 </tr>
 <tr>
-<td><code>model</code></td>
-<td><code>simobserve.model@r1</code></td>
+<td><code>skymodel</code></td>
+<td><code>parameter.skymodel@r2</code></td>
 <td><code>path (image)</code></td>
-<td>no default; required</td>
-<td>Synthetic Observation</td>
-<td>Input FITS model image</td>
-</tr>
-<tr>
-<td><code>out</code></td>
-<td><code>parameter.out@r1</code></td>
-<td><code>path (measurement_set)</code></td>
-<td>no default; required</td>
-<td>Synthetic Observation</td>
-<td>Output MeasurementSet path</td>
+<td><code>""</code>; optional</td>
+<td>Sky model</td>
+<td>Sky model image: a CASA image or FITS file.</td>
 </tr>
 <tr>
 <td><code>inbright</code></td>
 <td><code>parameter.inbright@r1</code></td>
 <td><code>string</code></td>
-<td><code>"3e-5"</code>; optional</td>
-<td>Synthetic Observation</td>
+<td><code>""</code>; optional</td>
+<td>Sky model</td>
 <td>Input brightness.</td>
 </tr>
 <tr>
-<td><code>duration</code></td>
-<td><code>parameter.duration@r1</code></td>
-<td><code>float</code></td>
-<td><code>3600.0</code>; optional</td>
-<td>Synthetic Observation</td>
-<td>On-source duration in seconds</td>
+<td><code>indirection</code></td>
+<td><code>parameter.indirection@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Sky model</td>
+<td>Input direction.</td>
+</tr>
+<tr>
+<td><code>incell</code></td>
+<td><code>parameter.incell@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Sky model</td>
+<td>Input cell.</td>
+</tr>
+<tr>
+<td><code>incenter</code></td>
+<td><code>parameter.incenter@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Sky model</td>
+<td>Input center.</td>
+</tr>
+<tr>
+<td><code>inwidth</code></td>
+<td><code>parameter.inwidth@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Sky model</td>
+<td>Input width.</td>
+</tr>
+<tr>
+<td><code>complist</code></td>
+<td><code>parameter.complist@r1</code></td>
+<td><code>path (product)</code></td>
+<td><code>""</code>; optional</td>
+<td>Components</td>
+<td>Component list.</td>
+</tr>
+<tr>
+<td><code>compwidth</code></td>
+<td><code>parameter.compwidth@r1</code></td>
+<td><code>string</code></td>
+<td><code>"\"8GHz\""</code>; optional</td>
+<td>Components</td>
+<td>Component width.</td>
+</tr>
+<tr>
+<td><code>comp_nchan</code></td>
+<td><code>simulation.comp_nchan@r1</code></td>
+<td><code>integer</code></td>
+<td><code>1</code>; optional</td>
+<td>Components</td>
+<td>Channels of a component-only simulation.</td>
+</tr>
+<tr>
+<td><code>setpointings</code></td>
+<td><code>parameter.setpointings@r1</code></td>
+<td><code>bool</code></td>
+<td><code>true</code>; optional</td>
+<td>Pointings</td>
+<td>Generate pointings.</td>
+</tr>
+<tr>
+<td><code>ptgfile</code></td>
+<td><code>parameter.ptgfile@r2</code></td>
+<td><code>path (any)</code></td>
+<td><code>"$project.ptg.txt"</code>; optional</td>
+<td>Pointings</td>
+<td>Pointing file read when pointings are not laid out.</td>
 </tr>
 <tr>
 <td><code>integration</code></td>
 <td><code>parameter.integration@r1</code></td>
 <td><code>string</code></td>
-<td><code>"2"</code>; optional</td>
-<td>Synthetic Observation</td>
+<td><code>"10s"</code>; optional</td>
+<td>Pointings</td>
 <td>Integration time.</td>
 </tr>
 <tr>
-<td><code>start_frequency_hz</code></td>
-<td><code>parameter.start_frequency_hz@r1</code></td>
-<td><code>float</code></td>
-<td><code>44000000000.0</code>; optional</td>
-<td>Synthetic Observation</td>
-<td>First channel center frequency</td>
+<td><code>direction</code></td>
+<td><code>parameter.direction@r2</code></td>
+<td><code>array&lt;string&gt;</code></td>
+<td><code>[]</code>; optional</td>
+<td>Pointings</td>
+<td>Map centre, or the pointings themselves when several are given.</td>
 </tr>
 <tr>
-<td><code>channel_width_hz</code></td>
-<td><code>parameter.channel_width_hz@r1</code></td>
-<td><code>float</code></td>
-<td><code>128000000.0</code>; optional</td>
-<td>Synthetic Observation</td>
-<td>Channel width</td>
+<td><code>mapsize</code></td>
+<td><code>parameter.mapsize@r2</code></td>
+<td><code>array&lt;string&gt;</code></td>
+<td><code>["",""]</code>; optional</td>
+<td>Pointings</td>
+<td>Map size along each axis; one value for both.</td>
 </tr>
 <tr>
-<td><code>channel_count</code></td>
-<td><code>parameter.channel_count@r1</code></td>
-<td><code>optional&lt;integer&gt; (states: none)</code></td>
-<td><code>1</code>; optional</td>
-<td>Synthetic Observation</td>
-<td>Number of selected input channels</td>
+<td><code>maptype</code></td>
+<td><code>simulation.maptype@r1</code></td>
+<td><code>choice (7 values)</code></td>
+<td><code>"hexagonal"</code>; optional</td>
+<td>Pointings</td>
+<td>Map layout: hexagonal, square, or the ALMA Observing Tool's tiling.</td>
+</tr>
+<tr>
+<td><code>pointingspacing</code></td>
+<td><code>simulation.pointingspacing@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Pointings</td>
+<td>Spacing of the map's pointings: an angle, <code>&amp;lt;n&amp;gt;PB</code>, or <code>nyquist</code>.</td>
+</tr>
+<tr>
+<td><code>caldirection</code></td>
+<td><code>simulation.caldirection@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Calibrator</td>
+<td>Phase calibrator's direction; empty for none.</td>
+</tr>
+<tr>
+<td><code>calflux</code></td>
+<td><code>simulation.calflux@r1</code></td>
+<td><code>string</code></td>
+<td><code>"1Jy"</code>; optional</td>
+<td>Calibrator</td>
+<td>Phase calibrator's flux.</td>
+</tr>
+<tr>
+<td><code>obsmode</code></td>
+<td><code>simulation.obsmode@r1</code></td>
+<td><code>choice (3 values)</code></td>
+<td><code>"int"</code>; optional</td>
+<td>Observation</td>
+<td>Observe as an interferometer (<code>int</code>) or a single dish (<code>sd</code>); empty corrupts an existing MeasurementSet.</td>
+</tr>
+<tr>
+<td><code>refdate</code></td>
+<td><code>simulation.refdate@r1</code></td>
+<td><code>string</code></td>
+<td><code>"2014/01/01"</code>; optional</td>
+<td>Observation</td>
+<td>Date of the observation.</td>
+</tr>
+<tr>
+<td><code>hourangle</code></td>
+<td><code>parameter.hourangle@r1</code></td>
+<td><code>string</code></td>
+<td><code>"transit"</code>; optional</td>
+<td>Observation</td>
+<td>Hour angle.</td>
+</tr>
+<tr>
+<td><code>totaltime</code></td>
+<td><code>parameter.totaltime@r1</code></td>
+<td><code>string</code></td>
+<td><code>"7200s"</code>; optional</td>
+<td>Observation</td>
+<td>Total observing time.</td>
+</tr>
+<tr>
+<td><code>antennalist</code></td>
+<td><code>parameter.antennalist@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Observation</td>
+<td>Antenna config list.</td>
+</tr>
+<tr>
+<td><code>sdantlist</code></td>
+<td><code>simulation.sdantlist@r1</code></td>
+<td><code>string</code></td>
+<td><code>"aca.tp.cfg"</code>; optional</td>
+<td>Observation</td>
+<td>Single dish's antenna configuration.</td>
+</tr>
+<tr>
+<td><code>sdant</code></td>
+<td><code>simulation.sdant@r1</code></td>
+<td><code>integer</code></td>
+<td><code>0</code>; optional</td>
+<td>Observation</td>
+<td>Antenna of the single-dish configuration that observes.</td>
+</tr>
+<tr>
+<td><code>outframe</code></td>
+<td><code>simulation.outframe@r1</code></td>
+<td><code>string</code></td>
+<td><code>"LSRK"</code>; optional</td>
+<td>Observation</td>
+<td>Frequency frame of the simulated spectral window.</td>
+</tr>
+<tr>
+<td><code>thermalnoise</code></td>
+<td><code>simulation.thermalnoise@r1</code></td>
+<td><code>choice (3 values)</code></td>
+<td><code>"tsys-atm"</code>; optional</td>
+<td>Noise</td>
+<td>Thermal noise: an ATM atmosphere, a given one, or none.</td>
+</tr>
+<tr>
+<td><code>user_pwv</code></td>
+<td><code>simulation.user_pwv@r1</code></td>
+<td><code>float</code></td>
+<td><code>0.5</code>; optional</td>
+<td>Noise</td>
+<td>Precipitable water vapour for <code>tsys-atm</code>, mm.</td>
+</tr>
+<tr>
+<td><code>t_ground</code></td>
+<td><code>simulation.t_ground@r1</code></td>
+<td><code>float</code></td>
+<td><code>270.0</code>; optional</td>
+<td>Noise</td>
+<td>Ground temperature, K.</td>
+</tr>
+<tr>
+<td><code>t_sky</code></td>
+<td><code>simulation.t_sky@r1</code></td>
+<td><code>float</code></td>
+<td><code>260.0</code>; optional</td>
+<td>Noise</td>
+<td>Atmosphere temperature for <code>tsys-manual</code>, K.</td>
+</tr>
+<tr>
+<td><code>tau0</code></td>
+<td><code>simulation.tau0@r1</code></td>
+<td><code>float</code></td>
+<td><code>0.1</code>; optional</td>
+<td>Noise</td>
+<td>Zenith opacity for <code>tsys-manual</code>.</td>
+</tr>
+<tr>
+<td><code>seed</code></td>
+<td><code>simulation.seed@r1</code></td>
+<td><code>integer</code></td>
+<td><code>11111</code>; optional</td>
+<td>Noise</td>
+<td>Random seed of the thermal noise.</td>
+</tr>
+<tr>
+<td><code>leakage</code></td>
+<td><code>simulation.leakage@r1</code></td>
+<td><code>float</code></td>
+<td><code>0.0</code>; optional</td>
+<td>Noise</td>
+<td>Polarization leakage amplitude; above 0, an interferometer is simulated in full Stokes.</td>
+</tr>
+<tr>
+<td><code>correlator</code></td>
+<td><code>parameter.correlator@r2</code></td>
+<td><code>choice (5 values)</code></td>
+<td><code>""</code>; optional</td>
+<td>Noise</td>
+<td>ALMA's correlator, for its efficiency in the thermal noise.</td>
+</tr>
+<tr>
+<td><code>graphics</code></td>
+<td><code>parameter.graphics@r2</code></td>
+<td><code>choice (5 values)</code></td>
+<td><code>"both"</code>; optional</td>
+<td>Output</td>
+<td>Graphics output.</td>
+</tr>
+<tr>
+<td><code>verbose</code></td>
+<td><code>parameter.verbose@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Output</td>
+<td>Verbose logging.</td>
 </tr>
 <tr>
 <td><code>overwrite</code></td>
 <td><code>output.overwrite@r1</code></td>
 <td><code>bool</code></td>
-<td><code>false</code>; optional</td>
-<td>Synthetic Observation</td>
-<td>Replace an existing output file</td>
-</tr>
-<tr>
-<td><code>predict_model</code></td>
-<td><code>parameter.predict_model@r1</code></td>
-<td><code>bool</code></td>
 <td><code>true</code>; optional</td>
-<td>Synthetic Observation</td>
-<td>Predict visibilities from the model image</td>
-</tr>
-<tr>
-<td><code>polarizations</code></td>
-<td><code>parameter.polarizations@r1</code></td>
-<td><code>string</code></td>
-<td><code>"2"</code>; optional</td>
-<td>Synthetic Observation</td>
-<td>Number of correlations to write: 1, 2, or 4</td>
-</tr>
-<tr>
-<td><code>polarization_basis</code></td>
-<td><code>parameter.polarization_basis@r1</code></td>
-<td><code>string</code></td>
-<td><code>"circular"</code>; optional</td>
-<td>Synthetic Observation</td>
-<td>Receptor basis for polarization metadata</td>
-</tr>
-<tr>
-<td><code>worker_policy</code></td>
-<td><code>parameter.worker_policy@r1</code></td>
-<td><code>choice (2 values)</code></td>
-<td><code>"auto"</code>; optional</td>
-<td>Workers</td>
-<td>Native simulator worker selection policy</td>
-</tr>
-<tr>
-<td><code>row_workers</code></td>
-<td><code>parameter.row_workers@r1</code></td>
-<td><code>optional&lt;integer&gt; (states: none)</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Workers</td>
-<td>Optional row worker count or auto upper bound</td>
-</tr>
-<tr>
-<td><code>channel_workers</code></td>
-<td><code>parameter.channel_workers@r1</code></td>
-<td><code>optional&lt;integer&gt; (states: none)</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Workers</td>
-<td>Optional channel-prediction worker count or auto upper bound</td>
-</tr>
-<tr>
-<td><code>corruption_seed</code></td>
-<td><code>parameter.corruption_seed@r1</code></td>
-<td><code>string</code></td>
-<td><code>"1"</code>; optional</td>
-<td>Synthetic Observation</td>
-<td>Seed for deterministic corruption draws</td>
-</tr>
-<tr>
-<td><code>noise_simplenoise_jy</code></td>
-<td><code>parameter.noise_simplenoise_jy@r1</code></td>
-<td><code>optional&lt;float&gt; (states: none)</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Synthetic Observation</td>
-<td>CASA setnoise(mode='simplenoise') sigma per complex visibility component</td>
-</tr>
-<tr>
-<td><code>gain_mode</code></td>
-<td><code>parameter.gain_mode@r1</code></td>
-<td><code>string</code></td>
-<td><code>"fbm"</code>; optional</td>
-<td>Synthetic Observation</td>
-<td>CASA setgain mode: fbm or random</td>
-</tr>
-<tr>
-<td><code>gain_interval_seconds</code></td>
-<td><code>parameter.gain_interval_seconds@r1</code></td>
-<td><code>float</code></td>
-<td><code>10.0</code>; optional</td>
-<td>Synthetic Observation</td>
-<td>CASA setgain interval in seconds</td>
-</tr>
-<tr>
-<td><code>gain_amplitude</code></td>
-<td><code>parameter.gain_amplitude@r1</code></td>
-<td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Synthetic Observation</td>
-<td>CASA setgain amplitude vector, scalar or real,imag</td>
-</tr>
-<tr>
-<td><code>bandpass_mode</code></td>
-<td><code>parameter.bandpass_mode@r1</code></td>
-<td><code>string</code></td>
-<td><code>"calculate"</code>; optional</td>
-<td>Synthetic Observation</td>
-<td>CASA setbandpass mode; casa-rs supports calculate</td>
-</tr>
-<tr>
-<td><code>bandpass_interval_seconds</code></td>
-<td><code>parameter.bandpass_interval_seconds@r1</code></td>
-<td><code>float</code></td>
-<td><code>3600.0</code>; optional</td>
-<td>Synthetic Observation</td>
-<td>CASA setbandpass interval in seconds</td>
-</tr>
-<tr>
-<td><code>bandpass_amplitude</code></td>
-<td><code>parameter.bandpass_amplitude@r1</code></td>
-<td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Synthetic Observation</td>
-<td>CASA setbandpass amplitude vector, scalar or amplitude,phase</td>
-</tr>
-<tr>
-<td><code>leakage_amplitude</code></td>
-<td><code>parameter.leakage_amplitude@r1</code></td>
-<td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Synthetic Observation</td>
-<td>CASA setleakage amplitude vector, scalar or real,imag</td>
-</tr>
-<tr>
-<td><code>leakage_offset</code></td>
-<td><code>parameter.leakage_offset@r1</code></td>
-<td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Synthetic Observation</td>
-<td>CASA setleakage offset vector, scalar or real,imag</td>
-</tr>
-<tr>
-<td><code>pointing_offset_ra_arcsec</code></td>
-<td><code>parameter.pointing_offset_ra_arcsec@r1</code></td>
-<td><code>optional&lt;float&gt; (states: none)</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Synthetic Observation</td>
-<td>Global primary-beam pointing offset in right ascension arcseconds</td>
-</tr>
-<tr>
-<td><code>pointing_offset_dec_arcsec</code></td>
-<td><code>parameter.pointing_offset_dec_arcsec@r1</code></td>
-<td><code>optional&lt;float&gt; (states: none)</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Synthetic Observation</td>
-<td>Global primary-beam pointing offset in declination arcseconds</td>
-</tr>
-<tr>
-<td><code>source_model</code></td>
-<td><code>parameter.source_model@r1</code></td>
-<td><code>string</code></td>
-<td><code>"{\"kind\":\"analytic_components\",\"components\":[{\"kind\":\"point\",\"l_rad\":0.0,\"m_rad\":0.0,\"spectrum\":{\"flux_jy\":1.0}}]}"</code>; optional</td>
-<td>Family Parameters</td>
-<td>Canonical SyntheticSkyModel JSON object.</td>
-</tr>
-<tr>
-<td><code>telescope</code></td>
-<td><code>parameter.telescope@r1</code></td>
-<td><code>choice (3 values)</code></td>
-<td><code>"VLA"</code>; optional</td>
-<td>Family Parameters</td>
-<td>Telescope family, for example VLA, ALMA, or ACA.</td>
-</tr>
-<tr>
-<td><code>array_config</code></td>
-<td><code>parameter.array_config@r1</code></td>
-<td><code>choice (10 values)</code></td>
-<td><code>"A"</code>; optional</td>
-<td>Family Parameters</td>
-<td>CASA .cfg path/name or explicit synthetic-* layout label.</td>
-</tr>
-<tr>
-<td><code>band</code></td>
-<td><code>parameter.band@r1</code></td>
-<td><code>choice (12 values)</code></td>
-<td><code>"Q"</code>; optional</td>
-<td>Family Parameters</td>
-<td>Receiver band label.</td>
-</tr>
-<tr>
-<td><code>target_ms_size_gib</code></td>
-<td><code>parameter.target_ms_size_gib@r1</code></td>
-<td><code>float</code></td>
-<td><code>0.01</code>; optional</td>
-<td>Family Parameters</td>
-<td>Target MeasurementSet size in GiB.</td>
-</tr>
-<tr>
-<td><code>output_ms</code></td>
-<td><code>parameter.output_ms@r1</code></td>
-<td><code>path (measurement_set)</code></td>
-<td><code>"simobserve-family.ms"</code>; optional</td>
-<td>Family Parameters</td>
-<td>Output MeasurementSet path persisted as request.output_ms.</td>
-</tr>
-<tr>
-<td><code>ms_channels</code></td>
-<td><code>parameter.ms_channels@r1</code></td>
-<td><code>integer</code></td>
-<td><code>4</code>; optional</td>
-<td>Family Dimensions</td>
-<td>Number of generated MeasurementSet channels.</td>
-</tr>
-<tr>
-<td><code>image_channels</code></td>
-<td><code>parameter.image_channels@r1</code></td>
-<td><code>integer</code></td>
-<td><code>1</code>; optional</td>
-<td>Family Dimensions</td>
-<td>Expected image-channel count recorded for diagnostics.</td>
-</tr>
-<tr>
-<td><code>pointing_count</code></td>
-<td><code>parameter.pointing_count@r1</code></td>
-<td><code>integer</code></td>
-<td><code>1</code>; optional</td>
-<td>Family Dimensions</td>
-<td>Number of pointings in the observing pattern.</td>
-</tr>
-<tr>
-<td><code>time_sample_count</code></td>
-<td><code>parameter.time_sample_count@r1</code></td>
-<td><code>optional&lt;integer&gt; (states: none)</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Family Dimensions</td>
-<td>Optional exact generated time-sample count.</td>
-</tr>
-<tr>
-<td><code>integration_seconds</code></td>
-<td><code>parameter.integration_seconds@r1</code></td>
-<td><code>optional&lt;float&gt; (states: none)</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Family Dimensions</td>
-<td>Optional integration time override.</td>
-</tr>
-<tr>
-<td><code>start_time_mjd_seconds</code></td>
-<td><code>parameter.start_time_mjd_seconds@r1</code></td>
-<td><code>optional&lt;float&gt; (states: none)</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Family Dimensions</td>
-<td>Optional observation start time in MJD seconds UTC.</td>
-</tr>
-<tr>
-<td><code>imaging_mode</code></td>
-<td><code>parameter.imaging_mode@r1</code></td>
-<td><code>choice (12 values)</code></td>
-<td><code>"mfs"</code>; optional</td>
-<td>Family Dimensions</td>
-<td>Family imaging mode.</td>
-</tr>
-<tr>
-<td><code>observation_mode</code></td>
-<td><code>parameter.observation_mode@r1</code></td>
-<td><code>choice (2 values)</code></td>
-<td><code>"interferometric"</code>; optional</td>
-<td>Family Dimensions</td>
-<td>Native simulator row topology.</td>
-</tr>
-<tr>
-<td><code>measure_actual_size</code></td>
-<td><code>parameter.measure_actual_size@r1</code></td>
-<td><code>bool</code></td>
-<td><code>false</code>; optional</td>
-<td>Family Workers</td>
-<td>Measure generated MeasurementSet size by walking the output directory.</td>
+<td>Output</td>
+<td>Replace an existing output file</td>
 </tr>
 </tbody>
 </table>

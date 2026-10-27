@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["ScratchSpace","TempStoragePolicy"],"mod":["analysis","beam","error","expr_file","expr_parser","image","image_expr","image_info","saved_region","subimage","temp_image"],"struct":["TempStoragePlan"]};
+window.SIDEBAR_ITEMS = {"enum":["ScratchSpace","TempStoragePolicy"],"mod":["analysis","beam","error","expr_file","expr_parser","fits_read","image","image_expr","image_info","saved_region","subimage","temp_image"],"struct":["TempStoragePlan"]};

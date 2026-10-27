@@ -32,7 +32,7 @@
 <a href=#32 id=32 data-nosnippet>32</a><span class="kw">use </span>std::collections::BTreeMap;
 <a href=#33 id=33 data-nosnippet>33</a><span class="kw">use </span>std::fmt;
 <a href=#34 id=34 data-nosnippet>34</a>
-<a href=#35 id=35 data-nosnippet>35</a><span class="kw">use </span>casa_types::quanta::{Dimension, Quantity, Unit, UnitDim, casacore_unit_name};
+<a href=#35 id=35 data-nosnippet>35</a><span class="kw">use </span>casa_types::quanta::{Dimension, Quantity, Unit, UnitDim};
 <a href=#36 id=36 data-nosnippet>36</a><span class="kw">use </span>num_complex::Complex64;
 <a href=#37 id=37 data-nosnippet>37</a><span class="kw">use </span>numpy::{PyReadonlyArrayDyn, PyUntypedArrayMethods};
 <a href=#38 id=38 data-nosnippet>38</a><span class="kw">use </span>pyo3::exceptions::{PyRuntimeError, PyTypeError};
@@ -564,11 +564,10 @@
 <a href=#564 id=564 data-nosnippet>564</a><span class="doccomment">/// casacore's `Unit(name)`: the name normalised as `Unit::check` normalises
 <a href=#565 id=565 data-nosnippet>565</a>/// it, failing with casacore's message for a name it cannot read.
 <a href=#566 id=566 data-nosnippet>566</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>casacore_unit(name: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;Unit, String&gt; {
-<a href=#567 id=567 data-nosnippet>567</a>    Unit::new(<span class="kw-2">&amp;</span>casacore_unit_name(name))
-<a href=#568 id=568 data-nosnippet>568</a>        .map_err(|<span class="kw">_</span>| <span class="macro">format!</span>(<span class="string">"Unit::check Illegal unit string '{name}'"</span>))
-<a href=#569 id=569 data-nosnippet>569</a>}
-<a href=#570 id=570 data-nosnippet>570</a>
-<a href=#571 id=571 data-nosnippet>571</a><span class="attr">#[cfg(test)]
-<a href=#572 id=572 data-nosnippet>572</a>#[path = <span class="string">"convert_tests.rs"</span>]
-<a href=#573 id=573 data-nosnippet>573</a></span><span class="kw">mod </span>tests;
+<a href=#567 id=567 data-nosnippet>567</a>    casa_types::quanta::casacore::casacore_unit(name).map_err(|error| error.<span class="number">0</span>)
+<a href=#568 id=568 data-nosnippet>568</a>}
+<a href=#569 id=569 data-nosnippet>569</a>
+<a href=#570 id=570 data-nosnippet>570</a><span class="attr">#[cfg(test)]
+<a href=#571 id=571 data-nosnippet>571</a>#[path = <span class="string">"convert_tests.rs"</span>]
+<a href=#572 id=572 data-nosnippet>572</a></span><span class="kw">mod </span>tests;
 </code></pre></div></section></main></body></html>
