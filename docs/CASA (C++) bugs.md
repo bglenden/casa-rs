@@ -1977,3 +1977,111 @@ Components in the image's own frame, the usual case, are unaffected. The
 oracle's matched-frame cases (LSRK spectra on an LSRK cube, TOPO spectra
 on a TOPO cube) agree with CASA to 1e-6, where the same cube with spectra
 in the other frame and only the placeholder differs by 1.1e-4.
+
+## simobserve's calibrator: the last pass, its scans and two component lists
+
+- Date noted: 2026-10-27
+- Status: CASA bugs; casa-rs does not follow them (#841 Phase 5c)
+- Affected code: `casatasks/src/private/task_simobserve.py` (CASA 6.7.6:
+  the observing loop, `sm.setdata(fieldid=range(0,nfld))`, and the
+  `complist+","+cal.cclist` joins); `Simulator::createSkyEquation`
+
+With a phase calibrator (`caldirection` and `calflux`), CASA 6.7.6's
+`simobserve` has three faults. Each was measured by
+`tools/simulation/simobserve_parity.py`'s CASA runs.
+
+**The last pass.** The observing loop calls `observemany` for the map's
+pointings only when a pass over them completes, and observes the
+calibrator after it. Pointings of a pass that `totaltime` ends inside are
+collected but never observed. With `totaltime='300s'` over a 105-pointing
+map at 10 s, CASA's MeasurementSet holds the calibrator's one scan and no
+pointing at all. casa-rs observes the pointings the time allows, as CASA
+does without a calibrator. With `totaltime` a whole number of passes,
+the two schedules are the same.
+
+**The calibrator's scans.** Before predicting, the task selects the map's
+fields, `setdata(fieldid=range(0,nfld))`. The calibrator's field is `nfld`,
+so its scans keep the zeros `observe` wrote; noise is then added to them.
+casa-rs predicts every scan, the calibrator's included.
+
+**Two component lists.** With a `complist` and a calibrator, the task
+predicts from `complist + "," + <stem>.cal.cclist`. `createSkyEquation`
+opens that string as one table, which does not exist ("ComponentList …
+not readable"), so `predict` returns `False`. The task does not check it:
+the MeasurementSet is left unpredicted, every visibility zero, for a model
+image with a list or for a list alone. casa-rs predicts both lists, as one
+list of their components (`PredictSpec::component_lists`).
+
+The parity cases `calibrator` and `calibrator_lists` compare casa-rs with
+CASA's own simulator doing what the task meant: CASA's MeasurementSet
+predicted again over every field, from the model image and the lists
+merged into one. DATA agrees to an NRMS of 5.3e-9 and 5.5e-9.
+
+## simobserve leaves `<stem>.noisier.T.cal`
+
+- Date noted: 2026-10-27
+- Status: CASA bug; casa-rs does not follow it (#841 Phase 5c)
+- Affected code: `casatasks/src/private/task_simobserve.py` (CASA 6.7.6,
+  `setnoise(..., table=noisymsroot)` and the clean-up)
+
+`tsys-atm` noise is set with `table=<noisy root>`, so CASA writes the `T`
+term's table beside the noisy MeasurementSet. The task's clean-up deletes
+`<stem>.noisy.T.cal` and `<stem>.noisy.sd.T.cal`, but not
+`<stem>.noisier.T.cal`, the one written when leakage comes first. The table
+is a by-product the task means to remove; casa-rs writes no Tsys table for
+any of the three.
+
+## simobserve's observing loop never ends for pointings of no length
+
+- Date noted: 2026-10-27
+- Status: CASA bug; casa-rs refuses the input (#841 Phase 5c)
+- Affected code: `casatasks/src/private/task_simobserve.py` (CASA 6.7.6,
+  the `while (sttime-scanstart) < totalsec` loop)
+
+The loop advances the time by each pointing's scan length. When the
+lengths of a pass sum to zero, as they do for `integration='0s'` or a
+pointing file of zero times, the time never advances and CASA loops
+forever, collecting pointings. casa-rs refuses such a schedule with a
+message.
+
+## `simutil.ismstp` takes any zero UVW value for total power
+
+- Date noted: 2026-10-27
+- Status: CASA bug; casa-rs does not follow it (#841 Phase 5c)
+- Affected code: `casatasks/src/private/simutil.py` (`ismstp`)
+
+When `simobserve` corrupts an existing MeasurementSet (`obsmode=''`), it
+asks `ismstp` whether the data are total power. For a MeasurementSet whose
+first antenna's name has no `TP` and which has more than one antenna, the
+test is `uvw.all() == 0.`. That is true when any UVW value is zero, not
+when all are. An interferometer's MeasurementSet with one zero coordinate
+is then corrupted as a single dish's, with the wrong file names and
+sensitivity constant. casa-rs tests whether every value is zero.
+
+## simobserve deletes a sky model that is the model it writes
+
+- Date noted: 2026-10-27
+- Status: CASA bug; casa-rs refuses the input (#841 Phase 5c)
+- Affected code: `casatasks/src/private/task_simobserve.py` (CASA 6.7.6,
+  the `newmodel` set-up)
+
+The task writes `<project>/<stem>.skymodel`, or `<stem>.newmodel` when
+`skymodel` is the bare name `<stem>.skymodel`. Given the full path
+`<project>/<stem>.skymodel`, as a rerun on an earlier run's model would
+give it, the output is the input: with `overwrite=True`, the default, CASA
+deletes it and then fails to read it. casa-rs refuses it, and the model is
+left in place.
+
+## simobserve nests a project path inside itself
+
+- Date noted: 2026-10-27
+- Status: CASA limitation; casa-rs departs (#841 Phase 5c)
+- Affected code: `casatasks/src/private/task_simobserve.py` (CASA 6.7.6,
+  `fileroot + "/" + project`)
+
+The task makes the directory `project` and names its files
+`fileroot + "/" + project + "." + <configuration>`, so a `project` given
+as a path, `a/b`, names its files `a/b/a/b.<cfg>…`, in a directory that does
+not exist. Only a plain name in the working directory works. casa-rs names
+the files by the directory's last component, `a/b/b.<cfg>…`. For a plain
+name the two are the same.
