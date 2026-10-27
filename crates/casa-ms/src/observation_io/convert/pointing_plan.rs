@@ -44,6 +44,9 @@ use crate::selected_pointing::catalog_peak_bytes;
 #[derive(Debug, Default)]
 pub(super) struct PointingPlan {
     reads: Vec<PointingRequest>,
+    /// An MSv2 destination: the most samples the reads gather, and their
+    /// coefficients.
+    gathered: (usize, usize),
 }
 
 impl PointingPlan {
@@ -56,6 +59,12 @@ impl PointingPlan {
     /// An MSv2 destination's reads, which gather every carried sample.
     pub(super) fn reads(&self) -> &[PointingRequest] {
         &self.reads
+    }
+
+    /// The most samples an MSv2 destination's reads gather, and their
+    /// coefficients.
+    pub(super) fn gathered(&self) -> (usize, usize) {
+        self.gathered
     }
 }
 
@@ -125,19 +134,25 @@ fn lost_whole(table: &str, reason: &str) -> (PointingPlan, Vec<Loss>) {
     (PointingPlan::default(), vec![loss])
 }
 
-/// Refuse gathering `samples` samples of `terms` terms into an MSv2 beyond
-/// `budget`: the rows the writer gathers and sorts. The destination table
-/// then holds its rows in memory until it is saved, as MSv2 creation holds
-/// every subtable (#950).
-fn check_gathered(samples: usize, terms: usize, budget: usize) -> Result<(), ObservationError> {
-    let bytes = samples.saturating_mul(gathered_bytes(terms));
-    if bytes > budget {
-        return Err(request_error(format!(
-            "the pointing gathered for the MSv2 holds about {bytes} bytes, beyond the batch \
+/// The budget left for each read once an MSv2 destination's writer holds
+/// `samples` gathered samples of `coefficients` coefficients, refused when
+/// none is left. The destination table then holds its rows in memory until
+/// it is saved, as MSv2 creation holds every subtable (#950).
+fn read_budget(
+    samples: usize,
+    coefficients: usize,
+    budget: usize,
+) -> Result<usize, ObservationError> {
+    let bytes = gathered_bytes(samples, coefficients);
+    budget
+        .checked_sub(bytes)
+        .filter(|left| *left > 0)
+        .ok_or_else(|| {
+            request_error(format!(
+                "the pointing gathered for the MSv2 holds about {bytes} bytes, beyond the batch \
              budget of {budget}"
-        )));
-    }
-    Ok(())
+            ))
+        })
 }
 
 /// An MSv4 source: each dataset's pointing whole, read once here to find
@@ -179,14 +194,23 @@ fn msv4(
             .sum::<usize>();
         reads.push(request);
     }
-    // An MSv4 holds a frame per dataset, an MSv2 one for its `POINTING`.
-    if destination == Destination::Msv2 {
-        if frames.len() > 1 {
-            return Ok(lost_whole("pointing_xds", "directions in several frames"));
-        }
-        check_gathered(samples, 1, budget)?;
+    if destination == Destination::Msv4 {
+        let gathered = (0, 0);
+        return Ok((PointingPlan { reads, gathered }, Vec::new()));
     }
-    Ok((PointingPlan { reads }, Vec::new()))
+    // An MSv4 holds a frame per dataset, an MSv2 one for its `POINTING`.
+    if frames.len() > 1 {
+        return Ok(lost_whole("pointing_xds", "directions in several frames"));
+    }
+    // Each read beside the gathered samples (one term each): read again
+    // within what they leave.
+    let left = read_budget(samples, 2 * samples, budget)?;
+    for read in &mut reads {
+        read.budget_bytes = left;
+        observation.pointing(read)?;
+    }
+    let gathered = (samples, 2 * samples);
+    Ok((PointingPlan { reads, gathered }, Vec::new()))
 }
 
 /// An MSv2 source: scan `POINTING` once, then plan its reads.
@@ -218,14 +242,22 @@ fn msv2(
         return Ok(lost_whole("POINTING", &reason));
     }
     let losses = losses(table, &scan, destination);
-    let reads = match destination {
-        Destination::Msv4 => partition_reads(&scan, partitions, budget)?,
+    let plan = match destination {
+        Destination::Msv4 => PointingPlan {
+            reads: partition_reads(&scan, partitions, budget)?,
+            gathered: (0, 0),
+        },
         Destination::Msv2 => {
-            check_gathered(scan.antenna_rows.values().sum(), scan.most_terms, budget)?;
-            antenna_reads(&scan, partitions, budget)?
+            let samples: usize = scan.antenna_rows.values().sum();
+            let coefficients = samples * 2 * scan.most_terms.max(1);
+            let left = read_budget(samples, coefficients, budget)?;
+            PointingPlan {
+                reads: antenna_reads(&scan, partitions, left)?,
+                gathered: (samples, coefficients),
+            }
         }
     };
-    Ok((PointingPlan { reads }, losses))
+    Ok((plan, losses))
 }
 
 /// What the reads of an MSv2's `POINTING` do not carry into `destination`.

@@ -27,7 +27,7 @@ use crate::subtable_rows::{b, f, f64_array, i, row_from_defs, s, subtable_mut};
 /// coefficients.
 #[derive(Clone, Copy, Debug)]
 struct Row {
-    /// Positive MJD seconds, whose bit patterns order as the times do.
+    /// The time's bit pattern, so that equal times compare equal.
     time_bits: u64,
     antenna: AntennaId,
     /// The row's place among its antenna's samples at its time.
@@ -38,9 +38,13 @@ struct Row {
     terms: usize,
 }
 
-/// The bytes the writer holds per gathered sample of `terms` terms.
-pub(super) fn gathered_bytes(terms: usize) -> usize {
-    size_of::<Row>() + 2 * terms * size_of::<f64>()
+/// The bytes the writer holds for `samples` gathered samples of
+/// `coefficients` coefficients in all: it reserves exactly that and
+/// removes repeats in place.
+pub(super) fn gathered_bytes(samples: usize, coefficients: usize) -> usize {
+    samples
+        .saturating_mul(size_of::<Row>())
+        .saturating_add(coefficients.saturating_mul(size_of::<f64>()))
 }
 
 /// Write `observation`'s pointing, as `plan` carries it, into `ms`'s
@@ -53,8 +57,9 @@ pub(super) fn write(
     plan: &PointingPlan,
 ) -> Result<(), ObservationError> {
     let catalogue = observation.catalogue();
-    let mut rows = Vec::new();
-    let mut coefficients = Vec::new();
+    let (samples, held) = plan.gathered();
+    let mut rows = Vec::with_capacity(samples);
+    let mut coefficients = Vec::with_capacity(held);
     let mut frame = None;
     for read in plan.reads() {
         let series = observation.pointing(read)?;
@@ -73,24 +78,29 @@ pub(super) fn write(
     let Some(frame) = frame else {
         return Ok(());
     };
-    rows.sort_by_key(|row| (row.time_bits, row.antenna, row.repeat));
-    let mut kept: Vec<Row> = Vec::with_capacity(rows.len());
-    for row in rows {
-        match kept.last() {
-            Some(known)
-                if (known.time_bits, known.antenna, known.repeat)
-                    == (row.time_bits, row.antenna, row.repeat) =>
-            {
-                if !same_sample(known, &row, &coefficients) {
-                    return Err(ObservationError::Unsupported {
-                        what: "partitions with different pointing at one antenna and time",
-                    });
-                }
+    rows.sort_by(|a, b| {
+        f64::from_bits(a.time_bits)
+            .total_cmp(&f64::from_bits(b.time_bits))
+            .then(a.antenna.cmp(&b.antenna))
+            .then(a.repeat.cmp(&b.repeat))
+    });
+    // Remove repeats in place: a sample two reads gathered is written once.
+    let key = |row: &Row| (row.time_bits, row.antenna, row.repeat);
+    let mut kept = 0;
+    for index in 0..rows.len() {
+        if kept > 0 && key(&rows[kept - 1]) == key(&rows[index]) {
+            if !same_sample(&rows[kept - 1], &rows[index], &coefficients) {
+                return Err(ObservationError::Unsupported {
+                    what: "partitions with different pointing at one antenna and time",
+                });
             }
-            _ => kept.push(row),
+            continue;
         }
+        rows[kept] = rows[index];
+        kept += 1;
     }
-    let terms = kept.iter().map(|row| row.terms).max().unwrap_or(1);
+    rows.truncate(kept);
+    let terms = rows.iter().map(|row| row.terms).max().unwrap_or(1);
     let table = subtable_mut(ms, SubtableId::Pointing).map_err(storage)?;
     if frame != DirectionRef::J2000 {
         for column in ["DIRECTION", "TARGET"] {
@@ -99,7 +109,7 @@ pub(super) fn write(
                 .map_err(storage)?;
         }
     }
-    for row in kept {
+    for row in rows {
         // `[2, terms]`, each axis's terms padded to the most any row has.
         let mut direction = Vec::with_capacity(2 * terms);
         for axis in 0..2 {

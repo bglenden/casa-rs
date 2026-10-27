@@ -32,7 +32,9 @@ pub(crate) const POINTING_FRAMES: [(&str, DirectionRef); 3] = [
 
 /// Pointing times read at first while searching outward for the antennas'
 /// nearest samples beyond the requested times (the casa-rs writer's chunk
-/// of times); each further read doubles, up to [`MOST_SEARCH_TIMES`].
+/// of times); each further read doubles, up to [`MOST_SEARCH_TIMES`]. Every
+/// antenna is searched in one read, so a chunk is decoded about once a side
+/// rather than once an antenna.
 const SEARCH_TIMES: u64 = 4096;
 
 /// The most pointing times one outward read covers.
@@ -123,7 +125,12 @@ impl Msv4Observation {
         // Read: the time coordinate, the span's values and the largest
         // outward block. Held, at most: a time, an origin and a direction for
         // each requested antenna at each time of the span and one each side.
-        let search = times.len().min(MOST_SEARCH_TIMES as usize);
+        // No search runs when the span holds every time.
+        let search = if first == 0 && last == times.len() {
+            0
+        } else {
+            times.len().min(MOST_SEARCH_TIMES as usize)
+        };
         let read = (times.len() + (last - first + search) * names.len() * 2) * size_of::<f64>();
         let held = request.antennas.len() * (last - first + 2) * 4 * size_of::<f64>();
         if read + held > request.budget_bytes {
@@ -197,8 +204,8 @@ impl Msv4Observation {
 
     /// Each of `columns`' nearest sample before time index `from` (the
     /// samples before it) or at or after it: reading every antenna's
-    /// directions outward, a block of times at a time (so each chunk is
-    /// decoded once), until each column holds one or the times end.
+    /// directions outward, a block of times at a time, until each column
+    /// holds one or the times end.
     #[expect(
         clippy::cast_possible_truncation,
         reason = "array extents are in-memory element counts"
