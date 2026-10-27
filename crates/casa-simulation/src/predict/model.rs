@@ -26,7 +26,7 @@ const MODEL_CACHE_BYTES: usize = 64 << 20;
 /// Opening reads the header; the pixels are read a plane at a time while
 /// the model is prepared, so preparing a cube holds one plane per worker
 /// rather than the cube. A model prepared again later, for each field
-/// under a primary beam, holds its planes instead ([`Self::held`]). The
+/// under a primary beam, is read once and holds its planes instead. The
 /// image is never written: CASA's `predict` rewrites the model's spectral
 /// units and frame in place, casa-rs reads them as they are.
 pub struct SkyModel {
