@@ -1,7 +1,7 @@
 # Imaging on the shared observation batches (M2 packet c)
 
-Status: draft for the owner's review; no code changes yet
-Truth class: design proposal
+Status: accepted by the owner on 2026-10-27 (section 3); no code changes yet
+Truth class: accepted design
 Date: 2026-10-27
 Repository baseline: `84824df`
 Design inputs: [implementation plan](implementation-plan.md) §4 (M2) and D4, [contracts](contracts.md), [trial README](trial/README.md) example A
@@ -10,8 +10,8 @@ The plan's M2 packet (c) moves imaging's source preparation and operator
 windows onto the shared batches, within the existing single
 pass/worker/resource architecture. This document has three parts:
 - how imaging reads a MeasurementSet today (section 1);
-- the design that replaces it, and the decisions it needs from the owner
-  (sections 2 and 3);
+- the design that replaces it, and the owner's decisions on it (sections 2
+  and 3);
 - the order of work, and the baseline and blocking comparison that gate the
   cutover (sections 4 and 5).
 
@@ -199,7 +199,12 @@ The cutover PR deletes all of the following:
 
 The imaging dependency checker's grandfathered lists shrink accordingly.
 
-## 3. Decisions for the owner
+## 3. Owner decisions
+
+All five were decided on 2026-10-27, each as proposed below: imaging takes
+`casa-observation` and `casa-ms` drops `casa-imaging-model`; geometry lives
+in `casa-imaging-model`; selection is option (a); the thresholds are as
+stated; and MSv4 imaging is part of the cutover's acceptance.
 
 1. **Dependency direction (an Ask First item).**
    - Imaging gains `casa-observation` as a normal dependency:
