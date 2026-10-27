@@ -46,9 +46,23 @@ fn main() {
     std::process::exit(status);
 }
 
-/// Run the law for the request `args` make; whether it holds.
+/// Run the law for the request `args` make (flags, or `--json-run` with a
+/// run envelope); whether it holds.
 fn geometry_law(args: &[OsString]) -> Result<bool, String> {
-    let (_, request) = casars_imager::resolve_cli_request(args)?;
+    let json_run = args
+        .iter()
+        .position(|argument| argument == "--json-run")
+        .and_then(|at| args.get(at + 1));
+    let (_, request) = match json_run {
+        Some(path) => {
+            let text = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
+            let envelope: casars_imager::ImagerTaskRequest =
+                serde_json::from_str(&text).map_err(|error| error.to_string())?;
+            let casars_imager::ImagerTaskRequest::Run(parameters) = envelope;
+            casars_imager::resolve_request(&parameters)?
+        }
+        None => casars_imager::resolve_cli_request(args)?,
+    };
     let context = RunContext {
         host: HostResources::detect().map_err(|error| error.to_string())?,
         policy: request.resource_policy(),
