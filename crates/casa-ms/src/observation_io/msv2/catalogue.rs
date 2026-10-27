@@ -10,15 +10,16 @@ use casa_observation::{
     UvwFrame, VisibilityUnits,
 };
 use casa_tables::Table;
-use casa_types::measures::EpochRef;
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::frequency::FrequencyRef;
 use casa_types::measures::position::MPosition;
+use casa_types::measures::{EpochRef, MEpoch};
 use casa_types::quanta::Quantity;
 use casa_types::{ArrayValue, ScalarValue, Value};
 
 use super::{invalid, storage};
 use crate::columns::direction_columns::DirectionColumn;
+use crate::derived::engine::resolve_direction_reference_selected;
 use crate::{MeasurementSet, SubtableId};
 
 /// A column's `MEASINFO` record, if it has one.
@@ -125,28 +126,51 @@ pub(super) struct Fields {
     pub(super) uvw_frame: UvwFrame,
 }
 
+/// Each `FIELD` row's `PHASE_DIR` frame: fixed for the column, or
+/// variable per row (`VarRefCol`, integer or string codes, as ALMA's
+/// `PhaseDir_Ref`).
+pub(crate) fn phase_frames(table: &Table) -> Result<Vec<DirectionRef>, ObservationError> {
+    require_units(table, "PHASE_DIR", "rad")?;
+    (0..table.row_count())
+        .map(|row| {
+            resolve_direction_reference_selected(table, "FIELD", "PHASE_DIR", row).map_err(storage)
+        })
+        .collect()
+}
+
 /// The fields, their ephemerides, and the UVW convention.
 pub(super) fn fields_and_uvw(ms: &MeasurementSet) -> Result<Fields, ObservationError> {
     let field = ms.field().map_err(storage)?;
     let field_table = ms
         .subtable(SubtableId::Field)
         .ok_or_else(|| invalid("no FIELD subtable"))?;
-    require_units(field_table, "PHASE_DIR", "rad")?;
-    let phase_frame = measure_reference(field_table, "PHASE_DIR")?
-        .map(|name| {
-            name.parse::<DirectionRef>()
-                .map_err(|_| invalid(format!("unknown PHASE_DIR reference {name}")))
-        })
-        .transpose()?
-        .unwrap_or(DirectionRef::J2000);
+    // The fields share one frame: a data group has one UVW frame, and MSv4
+    // one phase-centre frame. Without fields it is J2000, the definition's
+    // default.
+    let frames = phase_frames(field_table)?;
+    let phase_frame = frames.first().copied().unwrap_or(DirectionRef::J2000);
+    if frames.iter().any(|frame| *frame != phase_frame) {
+        return Err(ObservationError::Unsupported {
+            what: "MSv2 fields whose phase centres are in different frames",
+        });
+    }
+    require_units(field_table, "TIME", "s")?;
+    let epoch_scale = match measure_reference(field_table, "TIME")? {
+        Some(name) => name
+            .parse::<EpochRef>()
+            .map_err(|_| invalid(format!("unknown FIELD TIME reference {name}")))?,
+        None => EpochRef::UTC,
+    };
     let phase_dir = DirectionColumn::phase_dir(field_table);
     let fields = (0..field.row_count())
         .map(|row| {
             let (longitude, latitude) = phase_dir.get_direction(row).map_err(storage)?.as_angles();
             let source = field.source_id(row).map_err(storage)?;
+            let time_s = field.time(row).map_err(storage)?;
             Ok(FieldEntry {
                 name: field.name(row).map_err(storage)?,
-                phase_centre: MDirection::from_angles(longitude, latitude, phase_frame),
+                phase_centre: MDirection::from_angles(longitude, latitude, frames[row]),
+                reference_epoch: Some(MEpoch::from_mjd(time_s / 86_400.0, epoch_scale)),
                 source_name: source_name(ms, source)?,
             })
         })

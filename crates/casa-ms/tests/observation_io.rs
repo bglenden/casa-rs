@@ -10,6 +10,9 @@ mod convert;
 #[path = "observation_io/fields.rs"]
 mod fields;
 #[cfg(unix)]
+#[path = "observation_io/geometry_inputs.rs"]
+mod geometry_inputs;
+#[cfg(unix)]
 #[path = "observation_io/namespace.rs"]
 mod namespace;
 #[path = "observation_io/refusals.rs"]

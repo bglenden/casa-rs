@@ -507,6 +507,8 @@ impl Msv4Observation {
                     centres[2 * row + 1],
                     frame,
                 ),
+                // MSv4 phase centres are in celestial frames (fk5, icrs).
+                reference_epoch: None,
                 // XRADIO's placeholder for an absent source is none.
                 source_name: sources
                     .get(row)

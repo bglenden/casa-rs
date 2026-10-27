@@ -11,7 +11,7 @@ use casa_types::Correlation;
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::frequency::FrequencyRef;
 use casa_types::measures::position::MPosition;
-use casa_types::measures::{EpochRef, MjdHighPrec};
+use casa_types::measures::{EpochRef, MEpoch, MjdHighPrec};
 use casa_types::quanta::Quantity;
 
 use crate::ObservationError;
@@ -109,8 +109,15 @@ pub struct FieldEntry {
     /// Field name as stored. XRADIO appends the MSv2 field number
     /// (`trial_0`); the catalogue keeps what the store holds.
     pub name: String,
-    /// The phase-tracking centre.
+    /// The phase-tracking centre, in its stored frame. Fields of one
+    /// opening share the frame of their data groups' UVW
+    /// ([`DataGroupEntry::uvw_frame`]).
     pub phase_centre: MDirection,
+    /// The epoch at which [`Self::phase_centre`] is stated, which a frame
+    /// that moves with time (apparent, topocentric) needs to be converted:
+    /// MSv2 `FIELD.TIME`. `None` when the store states none, as MSv4, whose
+    /// phase centres are in celestial frames.
+    pub reference_epoch: Option<MEpoch>,
     /// The source observed, when the store names one.
     pub source_name: Option<String>,
 }
@@ -549,6 +556,7 @@ mod tests {
         FieldEntry {
             name: format!("f{longitude}"),
             phase_centre: MDirection::from_angles(longitude, 0.0, DirectionRef::J2000),
+            reference_epoch: None,
             source_name: None,
         }
     }

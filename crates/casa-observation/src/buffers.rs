@@ -782,6 +782,7 @@ pub(crate) mod tests {
                     0.0,
                     DirectionRef::J2000,
                 ),
+                reference_epoch: None,
                 source_name: None,
             }],
             scans: vec![ScanEntry {
