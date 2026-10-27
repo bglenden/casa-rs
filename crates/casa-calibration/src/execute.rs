@@ -4297,7 +4297,7 @@ fn ensure_corrected_data_column(
     }
 
     // CASA's `addScrCols` clears the cached sort keywords first.
-    casa_ms::scratch_columns::clear_before_adding(ms, VisibilityDataColumn::CorrectedData)
+    casa_ms::scratch_columns::prepare_write(ms, VisibilityDataColumn::CorrectedData, true)
         .map_err(|error| match error {
             MsError::Table(error) => error,
             other => TableError::Storage(other.to_string()),

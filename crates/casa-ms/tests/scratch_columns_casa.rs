@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 #![cfg(feature = "slow-tests")]
-//! CASA reads the `MODEL_DATA` casa-rs adds (#912). After CASA's `setjy`
-//! writes a virtual model, casa-rs's imaging writer adds `MODEL_DATA`, and
-//! CASA's `gaincal` then solves against that column, as it does after CASA's
-//! own `delmod` and `clearcal(addmodel=True)`, not against the virtual
-//! model, which it prefers whenever one is defined.
+//! CASA reads the `MODEL_DATA` casa-rs writes (#912). After CASA's `setjy`
+//! writes a virtual model, casa-rs's imaging writer writes `MODEL_DATA`,
+//! adding it or writing the one there, and CASA's `gaincal` then solves
+//! against that column, as it does after CASA's own `delmod` and
+//! `clearcal(addmodel=True)`, not against the virtual model, which it
+//! prefers whenever one is defined.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -13,26 +14,32 @@ use casa_ms::{SelectedVisibilityWrite, SelectedVisibilityWriteTargets};
 use flate2::read::GzDecoder;
 use tar::Archive;
 
-/// CASA's steps, by name: `setjy` a 5 Jy virtual model of field 0, copy
-/// the MeasurementSet, CASA's own `MODEL_DATA` creation, `gaincal`, and the
-/// largest relative difference of two tables' solutions.
+/// CASA's steps, by name: add `MODEL_DATA`, `setjy` a 5 Jy virtual model of
+/// field 0 and say whether its pointer is in SOURCE's keywords or MAIN's,
+/// copy the MeasurementSet, CASA's own `MODEL_DATA` creation, `gaincal`,
+/// and the largest relative difference of two tables' solutions.
 const STEPS: &str = r#"
-import shutil, sys
+import os, shutil, sys
 import numpy as np
 from casatasks import clearcal, delmod, gaincal, setjy
 from casatools import table
 step, args = sys.argv[1], sys.argv[2:]
-if step == "setjy":
+if step == "add_model":
+    clearcal(vis=args[0], addmodel=True)
+elif step == "setjy":
     setjy(vis=args[0], field="0", standard="manual", fluxdensity=[5, 0, 0, 0],
           usescratch=False)
+    tb = table()
+    where = []
+    for label, name in [("SOURCE", args[0] + "/SOURCE"), ("MAIN", args[0])]:
+        if os.path.isdir(name):
+            tb.open(name)
+            if "definedmodel_field_0" in tb.keywordnames():
+                where.append(label)
+            tb.close()
+    print(",".join(where))
 elif step == "copy":
     shutil.copytree(args[0], args[1])
-elif step == "copy_without_scratch":
-    shutil.copytree(args[0], args[1])
-    tb = table()
-    tb.open(args[1], nomodify=False)
-    tb.removecols([c for c in ["MODEL_DATA", "CORRECTED_DATA"] if c in tb.colnames()])
-    tb.close()
 elif step == "casa_model":
     delmod(vis=args[0], otf=True, scr=False)
     clearcal(vis=args[0], addmodel=True)
@@ -77,13 +84,24 @@ fn casa(python: &Path, step: &str, args: &[&Path]) -> String {
     stdout.lines().last().unwrap_or_default().to_string()
 }
 
-/// On `ms`: gains solved after casa-rs adds `MODEL_DATA` equal those after
-/// CASA's own creation, and differ from those against the stale virtual
-/// model by the model's 5 Jy.
-fn casa_solves_against_casa_rs_model_data(python: &Path, ms: &Path) {
+/// On `ms`, with `MODEL_DATA` there first when `existing` and the virtual
+/// model's pointer CASA writes in `pointer` (`"MAIN"` or `"SOURCE"`):
+/// gains solved after casa-rs writes `MODEL_DATA` equal those after CASA's
+/// own creation, and differ from those against the stale virtual model by
+/// the model's 5 Jy.
+fn casa_solves_against_casa_rs_model_data(python: &Path, ms: &Path, existing: bool, pointer: &str) {
     let root = ms.parent().expect("root");
     let path = |name: &str| root.join(name);
-    casa(python, "setjy", &[ms]);
+    if existing {
+        casa(python, "add_model", &[ms]);
+    }
+    let has_model = casa_ms::MeasurementSet::open(ms)
+        .expect("open")
+        .main_table()
+        .schema()
+        .is_some_and(|schema| schema.contains_column("MODEL_DATA"));
+    assert_eq!(has_model, existing, "{}", ms.display());
+    assert_eq!(casa(python, "setjy", &[ms]), pointer, "{}", ms.display());
     for copy in ["casa.ms", "stale.ms"] {
         casa(python, "copy", &[ms, &path(copy)]);
     }
@@ -119,27 +137,30 @@ fn casa_solves_against_casa_rs_model_data(python: &Path, ms: &Path) {
 }
 
 /// The trial fixture, an MS without SOURCE rows, whose virtual model CASA
-/// writes into MAIN's keywords.
+/// writes into MAIN's keywords: casa-rs adding `MODEL_DATA`, and writing
+/// the one CASA added.
 #[test]
-fn casa_reads_the_model_data_casa_rs_adds() {
+fn casa_reads_the_model_data_casa_rs_writes() {
     let Some(python) = casa_test_support::discover_casa_python() else {
         eprintln!("scratch-column parity skipped: no CASA Python");
         return;
     };
-    let root = tempfile::tempdir().expect("root");
-    let ms = unpack(
-        root.path(),
-        "tests/fixtures/ms_trial/ms_trial.ms.tgz",
-        "ms_trial.ms",
-    );
-    casa_solves_against_casa_rs_model_data(&python.program, &ms);
+    for existing in [false, true] {
+        let root = tempfile::tempdir().expect("root");
+        let ms = unpack(
+            root.path(),
+            "tests/fixtures/ms_trial/ms_trial.ms.tgz",
+            "ms_trial.ms",
+        );
+        casa_solves_against_casa_rs_model_data(&python.program, &ms, existing, "MAIN");
+    }
 }
 
-/// ngc5921, whose SOURCE has rows, so that CASA writes the model there
-/// (its row's `SOURCE_MODEL`); its scratch columns are removed first, so
-/// that casa-rs adds `MODEL_DATA`.
+/// ngc5921, which holds only `DATA` and whose SOURCE has rows, so that
+/// CASA writes the model there (its row's `SOURCE_MODEL`): casa-rs adding
+/// `MODEL_DATA`, and writing the one CASA added.
 #[test]
-fn casa_reads_the_model_data_casa_rs_adds_under_source() {
+fn casa_reads_the_model_data_casa_rs_writes_under_source() {
     let Some(python) = casa_test_support::discover_casa_python() else {
         eprintln!("scratch-column parity skipped: no CASA Python");
         return;
@@ -152,8 +173,10 @@ fn casa_reads_the_model_data_casa_rs_adds_under_source() {
         eprintln!("scratch-column parity skipped: no ngc5921.ms");
         return;
     };
-    let root = tempfile::tempdir().expect("root");
-    let ms = root.path().join("ngc5921.ms");
-    casa(&python.program, "copy_without_scratch", &[&source, &ms]);
-    casa_solves_against_casa_rs_model_data(&python.program, &ms);
+    for existing in [false, true] {
+        let root = tempfile::tempdir().expect("root");
+        let ms = root.path().join("ngc5921.ms");
+        casa(&python.program, "copy", &[&source, &ms]);
+        casa_solves_against_casa_rs_model_data(&python.program, &ms, existing, "SOURCE");
+    }
 }

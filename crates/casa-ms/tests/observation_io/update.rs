@@ -855,3 +855,37 @@ fn creating_a_group_clears_what_casa_clears() {
         }
     }
 }
+
+/// A session writing an existing `MODEL_DATA` clears the virtual model, as
+/// CASA does whenever it writes the column, and keeps the sort keywords,
+/// which only adding a column clears.
+#[test]
+fn writing_an_existing_model_clears_the_virtual_model() {
+    let root = tempfile::tempdir().expect("root");
+    let v2 = fixture(root.path(), "ms_trial.ms");
+    let write = |target: UpdateTarget| {
+        let session = open_update(&v2, &OpenOptions::default(), std::slice::from_ref(&target))
+            .expect("session");
+        let four = per_times(session.observation(), request(0..8, 0), 4);
+        pass(&session, &four, &[0], |batch| {
+            vec![Owned::Visibilities(
+                batch.group.values.expect("values").mapv(model),
+            )]
+        })
+        .expect("pass");
+    };
+    write(UpdateTarget {
+        create: true,
+        ..UpdateTarget::new("model", WritableRole::Visibilities)
+    });
+    as_casa_left_it(&v2);
+    write(UpdateTarget::new("model", WritableRole::Visibilities));
+    let ms = casa_ms::MeasurementSet::open(&v2).expect("reopen");
+    let keywords = ms.main_table().keywords();
+    for key in ["SORT_COLUMNS", "SORTED_TABLE"] {
+        assert!(keywords.get(key).is_some(), "{key}");
+    }
+    for key in ["definedmodel_field_0", "model_0"] {
+        assert!(keywords.get(key).is_none(), "{key}");
+    }
+}

@@ -83,17 +83,25 @@ impl SelectedVisibilityWrite {
     /// tclean creates it ([`initial_model_visibility`]: 1, and 0 in the
     /// cross hands), so rows the run does not predict hold that model.
     ///
+    /// A write of `MODEL_DATA`, created or not, first clears every field's
+    /// virtual model, and creating it the cached sort keywords, as CASA's
+    /// imager does ([`crate::scratch_columns::prepare_write`]).
+    ///
     /// The MeasurementSet is opened with retained read locks, and MAIN's is
     /// then upgraded to the write lock. Both wait, as casacore's do, for a
     /// conflicting lock another process holds. When another process holding
     /// a read lock waits to upgrade it too, the kernel refuses one of the
     /// two waits; if it is this one, the write fails with
     /// [`ObservationOwnerError::WriteLockUnavailable`] and releases its read
-    /// locks.
+    /// locks. A virtual model under SOURCE is cleared under SOURCE's write
+    /// lock, which is not waited for while MAIN's is held: when another
+    /// process holds SOURCE, the write fails with the lock refusal and
+    /// changes nothing.
     ///
     /// A destination that cannot be written in bounded memory fails with
     /// [`ObservationOwnerError::UnboundedWriteDestination`] before the lock
-    /// is taken.
+    /// is taken. A write that fails once the lock is taken releases it as
+    /// an abandoned write does, writing MAIN's metadata alone.
     pub fn begin(
         path: impl AsRef<Path>,
         targets: SelectedVisibilityWriteTargets,
@@ -101,8 +109,28 @@ impl SelectedVisibilityWrite {
         if !targets.model_data && !targets.corrected_data {
             return Err(ObservationOwnerError::EmptyWriteTargets);
         }
-        let mut measurement_set = MeasurementSet::open_retained_read(path.as_ref())?;
+        let measurement_set = MeasurementSet::open_retained_read(path.as_ref())?;
         require_bounded_destinations(measurement_set.main_table(), targets)?;
+        let mut write = Self {
+            measurement_set: Some(measurement_set),
+            targets,
+            pending_cell: None,
+            pending_rows: Vec::with_capacity(VISIBILITY_WRITE_BATCH_ROWS as usize),
+            completed: false,
+        };
+        write.prepare()?;
+        Ok(write)
+    }
+
+    /// Take MAIN's write lock, clear what CASA clears before the write and
+    /// create a missing `MODEL_DATA`. A failure leaves the lock to
+    /// [`Drop`].
+    fn prepare(&mut self) -> Result<(), ObservationOwnerError> {
+        let targets = self.targets;
+        let measurement_set = self
+            .measurement_set
+            .as_mut()
+            .expect("a write being begun holds its MeasurementSet");
         if !measurement_set.main_table_mut().lock(LockType::Write, 0)? {
             return Err(ObservationOwnerError::WriteLockUnavailable);
         }
@@ -112,61 +140,27 @@ impl SelectedVisibilityWrite {
             })?;
             schema.contains_column("MODEL_DATA")
         };
-        if targets.model_data && !has_model {
-            // Everything that could refuse the seeding is checked before the
-            // column exists: a refusal after it would leave MODEL_DATA
-            // holding DATA's clone, which a later write would not reseed.
-            let models = initial_models(&measurement_set)?;
-            let row_count = measurement_set.main_table().row_count();
-            let batch = VISIBILITY_WRITE_BATCH_ROWS as usize;
-            for start in (0..row_count).step_by(batch) {
-                let rows: Vec<usize> = (start..row_count.min(start + batch)).collect();
-                let descriptions = main_data_description_ids(&measurement_set, &rows)?;
-                if let Some((row, id)) = rows
-                    .iter()
-                    .zip(descriptions)
-                    .find(|(_, id)| *id >= models.len())
-                {
-                    return Err(MsError::InvalidInput(format!(
-                        "MAIN row {row} names DATA_DESC_ID {id}, which DATA_DESCRIPTION \
-                         does not hold"
-                    ))
-                    .into());
-                }
-            }
-            crate::scratch_columns::clear_before_adding(
-                &mut measurement_set,
+        let adds_model = targets.model_data && !has_model;
+        // Everything that could refuse the seeding is checked before
+        // anything changes: a refusal after the column exists would leave
+        // MODEL_DATA holding DATA's clone, which a later write would not
+        // reseed.
+        let models = if adds_model {
+            Some(seedable_models(measurement_set)?)
+        } else {
+            None
+        };
+        if targets.model_data {
+            crate::scratch_columns::prepare_write(
+                measurement_set,
                 VisibilityDataColumn::ModelData,
+                adds_model,
             )?;
-            measurement_set.main_table_mut().add_column(
-                ColumnSchema::array_variable("MODEL_DATA", PrimitiveType::Complex32, Some(2)),
-                None,
-            )?;
-            measurement_set
-                .main_table_mut()
-                .prepare_write()
-                .add_tiled_column_clone("DATA", "MODEL_DATA", "TiledModelData")?;
-            for start in (0..row_count).step_by(batch) {
-                let rows: Vec<usize> = (start..row_count.min(start + batch)).collect();
-                let descriptions = main_data_description_ids(&measurement_set, &rows)?;
-                for (&row, description) in rows.iter().zip(descriptions) {
-                    queue_visibility_cell(
-                        measurement_set.main_table_mut(),
-                        "MODEL_DATA",
-                        row,
-                        models[description].cell(),
-                    )?;
-                }
-                persist_visibility_rows(measurement_set.main_table_mut(), &["MODEL_DATA"], &rows)?;
-            }
         }
-        Ok(Self {
-            measurement_set: Some(measurement_set),
-            targets,
-            pending_cell: None,
-            pending_rows: Vec::with_capacity(VISIBILITY_WRITE_BATCH_ROWS as usize),
-            completed: false,
-        })
+        if let Some(models) = models {
+            create_model_data(measurement_set, &models)?;
+        }
+        Ok(())
     }
 
     /// Heap bytes a write of `targets` to the MeasurementSet at `path`
@@ -469,6 +463,64 @@ fn require_bounded_destinations(
                 reason: format!("{storage}, which DATA shares with other columns"),
             });
         }
+    }
+    Ok(())
+}
+
+/// Every data description's [`InitialModel`], once every MAIN row is
+/// found to name a description `DATA_DESCRIPTION` holds.
+fn seedable_models(
+    measurement_set: &MeasurementSet,
+) -> Result<Vec<InitialModel>, ObservationOwnerError> {
+    let models = initial_models(measurement_set)?;
+    let row_count = measurement_set.main_table().row_count();
+    let batch = VISIBILITY_WRITE_BATCH_ROWS as usize;
+    for start in (0..row_count).step_by(batch) {
+        let rows: Vec<usize> = (start..row_count.min(start + batch)).collect();
+        let descriptions = main_data_description_ids(measurement_set, &rows)?;
+        if let Some((row, id)) = rows
+            .iter()
+            .zip(descriptions)
+            .find(|(_, id)| *id >= models.len())
+        {
+            return Err(MsError::InvalidInput(format!(
+                "MAIN row {row} names DATA_DESC_ID {id}, which DATA_DESCRIPTION does not hold"
+            ))
+            .into());
+        }
+    }
+    Ok(models)
+}
+
+/// Add `MODEL_DATA` with `DATA`'s tiled storage and write each row's
+/// initial model, `models` by data description, a batch at a time.
+#[cfg(unix)]
+fn create_model_data(
+    measurement_set: &mut MeasurementSet,
+    models: &[InitialModel],
+) -> Result<(), ObservationOwnerError> {
+    measurement_set.main_table_mut().add_column(
+        ColumnSchema::array_variable("MODEL_DATA", PrimitiveType::Complex32, Some(2)),
+        None,
+    )?;
+    measurement_set
+        .main_table_mut()
+        .prepare_write()
+        .add_tiled_column_clone("DATA", "MODEL_DATA", "TiledModelData")?;
+    let row_count = measurement_set.main_table().row_count();
+    let batch = VISIBILITY_WRITE_BATCH_ROWS as usize;
+    for start in (0..row_count).step_by(batch) {
+        let rows: Vec<usize> = (start..row_count.min(start + batch)).collect();
+        let descriptions = main_data_description_ids(measurement_set, &rows)?;
+        for (&row, description) in rows.iter().zip(descriptions) {
+            queue_visibility_cell(
+                measurement_set.main_table_mut(),
+                "MODEL_DATA",
+                row,
+                models[description].cell(),
+            )?;
+        }
+        persist_visibility_rows(measurement_set.main_table_mut(), &["MODEL_DATA"], &rows)?;
     }
     Ok(())
 }

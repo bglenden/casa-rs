@@ -1,22 +1,27 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! What CASA clears from a MeasurementSet when it adds a scratch column to
-//! it (`VisSetUtil::addScrCols`, CASA 6.7.5), so that a column casa-rs adds
-//! is the one CASA reads.
+//! What CASA clears from a MeasurementSet before it writes a scratch
+//! column, so that the column casa-rs writes is the one CASA reads (CASA
+//! 6.7.5).
 //!
 //! - **Cached sort keywords.** CASA's iterators may cache a pre-sorted
 //!   reference table of MAIN and record it in MAIN's keywords as
 //!   `SORTED_TABLE`, with the columns it is sorted by as `SORT_COLUMNS`
 //!   (`MSIter2`). A sorted table made before a column was added does not
 //!   see it, so adding `MODEL_DATA` or `CORRECTED_DATA` removes both
-//!   keywords (the table itself is left, as CASA leaves it). The MS
-//!   definition's own `SORTED_TABLES` is untouched.
+//!   keywords (`VisSetUtil::addScrCols`; the table itself is left, as CASA
+//!   leaves it). The MS definition's own `SORTED_TABLES` is untouched.
 //! - **The virtual model.** CASA can hold a field's model as a recipe
 //!   instead of a column: `setjy` (`usescratch=False`) and `tclean`
 //!   (`savemodel='virtual'`) write one, and CASA's iterator prefers it to
-//!   `MODEL_DATA` (`VisibilityIteratorImpl2::visibilityModel`). Adding
-//!   `MODEL_DATA` makes the column "the exclusive origin for model
-//!   visibilities": it clears every field's virtual model as
-//!   `VisModelData::clearModel` does (`remOTFModel`).
+//!   `MODEL_DATA` (`VisibilityIteratorImpl2::visibilityModel`). A task that
+//!   writes `MODEL_DATA` makes the column "the exclusive origin for model
+//!   visibilities", whether or not it adds it: it clears every field's
+//!   virtual model first. `addScrCols` does so when it adds the column
+//!   (`remOTFModel`, `VisModelData::clearModel` of
+//!   `synthesis/TransformMachines/VisModelData.cc`), and the imagers do so
+//!   whenever they write it (`SynthesisImagerVi2::selectData`,
+//!   `Imager::setjy` and `ft`, `refim::VisModelData::clearModel` of
+//!   `TransformMachines2`). The two `clearModel` bodies are the same.
 //!
 //! A field's virtual model is a keyword `definedmodel_field_<id>` naming a
 //! model key, in SOURCE's keywords when SOURCE has rows and MAIN's
@@ -25,13 +30,23 @@
 //! keyword holding the record itself. Clearing a field removes both
 //! keywords wherever they are and empties the `SOURCE_MODEL` cell, which
 //! is what CASA leaves (measured with `setjy` then `delmod` on CASA 6.7.5).
+//! A pointer under SOURCE naming a key held in MAIN is removed with the
+//! key, where CASA keeps the pointer; either way the field has no model.
+//!
+//! `clearModel` also deletes the model images a gridder's record names
+//! (`ft_<k>.container.diskimage`), wherever they lie, and every `FT_MODEL*`
+//! table in the MeasurementSet and its SOURCE, where `tclean` writes them.
+//! casa-rs deletes only the `FT_MODEL*` tables, so that a path in a record
+//! never deletes anything else. A multi-MS is cleared as one table, not
+//! part by part as CASA clears it.
 
 use std::collections::BTreeSet;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
+use casa_tables::{Table, TableError, TableOptions, TableWriteLock};
 use casa_types::{RecordValue, ScalarValue, Value};
 
-use crate::ms::MeasurementSet;
+use crate::ms::{MeasurementSet, measurement_set_table_options};
 use crate::schema::SubtableId;
 use crate::schema::main_table::VisibilityDataColumn;
 use crate::{MsError, MsResult};
@@ -39,101 +54,152 @@ use crate::{MsError, MsResult};
 /// MAIN's keywords for a cached pre-sorted reference table (`MSIter2`).
 const SORT_KEYWORDS: [&str; 2] = ["SORT_COLUMNS", "SORTED_TABLE"];
 
-/// Clear what CASA clears before it adds scratch column `column`
-/// (`MODEL_DATA` or `CORRECTED_DATA`) to `ms`: the cached sort keywords,
-/// and for `MODEL_DATA` every field's virtual model, as the module states.
-/// Every path that adds either column to an existing MeasurementSet calls
-/// it first; a new MeasurementSet holds neither.
+/// Clear what CASA clears before it writes scratch column `column`
+/// (`MODEL_DATA` or `CORRECTED_DATA`) to `ms`, adding it when `adds`:
+/// for an added column the cached sort keywords, and for `MODEL_DATA`,
+/// added or not, every field's virtual model, as the module states. Every
+/// path that adds either column to an existing MeasurementSet, or writes
+/// `MODEL_DATA`, calls it before it changes the column.
 ///
-/// For a MeasurementSet on disk what changes is saved here: MAIN's keywords
-/// (its metadata alone) and SOURCE, since the callers' column installs
-/// write only the new column's metadata. Model images a cleared model names
-/// are deleted where they lie inside the MeasurementSet, with any
-/// `FT_MODEL*` table CASA leaves there.
+/// What is cleared is found first, and a table with nothing to clear is
+/// not changed. A MeasurementSet on disk then has SOURCE and MAIN changed
+/// and written in turn, each under casacore's write lock on it: SOURCE in
+/// full as [`MeasurementSet::save`] writes it, MAIN's metadata alone. A
+/// table opened with locking is written under its own lock, held already
+/// or taken and released here; one opened without, under a
+/// [`TableWriteLock`] taken and released here. A lock is waited for as
+/// casacore waits, except SOURCE's while the caller holds MAIN's write
+/// lock: one attempt is then made, as a save never waits for one table
+/// while it holds another. The `FT_MODEL*` model images are deleted last
+/// and, as CASA deletes them, at best: one that cannot be deleted is
+/// logged and left.
 ///
 /// # Errors
 ///
-/// When SOURCE's model cell cannot be emptied, MAIN's metadata or SOURCE
-/// cannot be saved, or a model image cannot be deleted.
-pub fn clear_before_adding(ms: &mut MeasurementSet, column: VisibilityDataColumn) -> MsResult<()> {
-    let keywords = ms.main_table_mut().keywords_mut();
-    let mut main_changed = false;
-    for keyword in SORT_KEYWORDS {
-        main_changed |= keywords.remove(keyword).is_some();
+/// [`MsError::InvalidInput`] for `DATA`, which is no scratch column. A
+/// [`TableError::LockFailed`] when SOURCE's lock is held elsewhere while
+/// the caller holds MAIN's write lock, and any error reading the fields
+/// or locking and writing SOURCE or MAIN. A table whose write fails is
+/// reloaded as it is on disk, holding whatever of the write reached it,
+/// as after an interrupted casacore write; when SOURCE's fails, MAIN is
+/// not changed.
+pub fn prepare_write(
+    ms: &mut MeasurementSet,
+    column: VisibilityDataColumn,
+    adds: bool,
+) -> MsResult<()> {
+    if column == VisibilityDataColumn::Data {
+        return Err(MsError::InvalidInput(
+            "DATA is not a scratch column".to_string(),
+        ));
+    }
+    let mut clearing = Clearing::default();
+    if column == VisibilityDataColumn::ModelData {
+        clearing.plan_virtual_model(ms)?;
+    }
+    if adds {
+        let keywords = ms.main_table().keywords();
+        clearing.main.extend(
+            SORT_KEYWORDS
+                .iter()
+                .filter(|name| keywords.get(name).is_some())
+                .map(|name| name.to_string()),
+        );
+    }
+    let holds_main = holds_write_lock(ms.main_table());
+    if let Some(source) = ms.subtable_mut(SubtableId::Source)
+        && !(clearing.source.is_empty() && clearing.source_cells.is_empty())
+    {
+        let attempts = if holds_main { 1 } else { 0 };
+        change_in_place(source, attempts, Write::Full, |source| {
+            for row in &clearing.source_cells {
+                source
+                    .cell_accessor_mut(*row, "SOURCE_MODEL")
+                    .and_then(|mut cell| cell.set(Value::Record(RecordValue::default())))?;
+            }
+            remove(source, &clearing.source);
+            Ok(())
+        })?;
+    }
+    if !clearing.main.is_empty() {
+        change_in_place(ms.main_table_mut(), 0, Write::Metadata, |main| {
+            remove(main, &clearing.main);
+            Ok(())
+        })?;
     }
     if column == VisibilityDataColumn::ModelData {
-        main_changed |= clear_virtual_model(ms)?;
-    }
-    if main_changed && let Some(path) = ms.path().map(Path::to_path_buf) {
-        ms.main_table()
-            .save_metadata_only(casa_tables::TableOptions::new(path))?;
+        delete_model_images(ms);
     }
     Ok(())
 }
 
-/// `VisModelData::clearModel`: for every field MAIN names, its model's
-/// keywords and record. Whether MAIN's keywords changed.
-fn clear_virtual_model(ms: &mut MeasurementSet) -> MsResult<bool> {
-    let fields = fields_with_models(ms)?;
-    let source_rows = ms
-        .subtable(SubtableId::Source)
-        .map_or(0, |source| source.row_count());
-    let mut images = Vec::new();
-    let mut source_changed = false;
-    let mut main_changed = false;
-    for field in fields {
-        let pointer = format!("definedmodel_field_{field}");
-        let in_source = source_rows > 0
-            && ms
-                .subtable(SubtableId::Source)
-                .is_some_and(|source| source.keywords().get(&pointer).is_some());
-        let model = if in_source {
-            ms.subtable(SubtableId::Source)
-                .and_then(|source| string(source.keywords(), &pointer))
-        } else {
-            string(ms.main_table().keywords(), &pointer)
-        };
-        if let Some(model) = &model {
-            let record = model_record(ms, model, source_rows)?;
-            if let Some(record) = &record {
-                images.extend(disk_images(record));
-            }
-            if let Some(source) = ms.subtable_mut(SubtableId::Source) {
-                let row = match source.keywords().get(model) {
-                    Some(Value::Scalar(ScalarValue::Int32(row))) if source_rows > 0 => {
-                        usize::try_from(*row).ok()
-                    }
-                    _ => None,
-                };
-                let has_model_column = source
-                    .schema()
-                    .is_some_and(|schema| schema.contains_column("SOURCE_MODEL"));
-                if let Some(row) = row.filter(|row| *row < source_rows && has_model_column) {
-                    source
-                        .cell_accessor_mut(row, "SOURCE_MODEL")
-                        .and_then(|mut cell| cell.set(Value::Record(RecordValue::default())))?;
-                    source_changed = true;
+/// The keywords to remove from MAIN and SOURCE and the SOURCE rows whose
+/// `SOURCE_MODEL` is emptied: each present, so that a table with nothing
+/// to clear is not changed.
+#[derive(Default)]
+struct Clearing {
+    main: Vec<String>,
+    source: Vec<String>,
+    source_cells: Vec<usize>,
+}
+
+impl Clearing {
+    /// `VisModelData::clearModel`: for every field MAIN names, its pointer
+    /// and model keys wherever they are, and the SOURCE row of a model
+    /// under SOURCE (`removeRecordByKey`).
+    fn plan_virtual_model(&mut self, ms: &MeasurementSet) -> MsResult<()> {
+        let fields = fields_with_models(ms)?;
+        let main = ms.main_table().keywords();
+        let source = ms.subtable(SubtableId::Source);
+        let source_rows = source.map_or(0, Table::row_count);
+        let source_keywords = source.map(Table::keywords);
+        let source_model = source
+            .and_then(Table::schema)
+            .is_some_and(|schema| schema.contains_column("SOURCE_MODEL"));
+        for field in fields {
+            let pointer = format!("definedmodel_field_{field}");
+            let in_source = source_rows > 0
+                && source_keywords.is_some_and(|keywords| keywords.get(&pointer).is_some());
+            let model = if in_source {
+                source_keywords.and_then(|keywords| string(keywords, &pointer))
+            } else {
+                string(main, &pointer)
+            };
+            if let Some(model) = model {
+                if let Some(Value::Scalar(ScalarValue::Int32(row))) =
+                    source_keywords.and_then(|keywords| keywords.get(&model))
+                    && let Ok(row) = usize::try_from(*row)
+                    && row < source_rows
+                    && source_model
+                {
+                    self.source_cells.push(row);
                 }
-                source_changed |= source.keywords_mut().remove(model).is_some();
+                present(&mut self.source, source_keywords, &model);
+                present(&mut self.main, Some(main), &model);
             }
-            main_changed |= ms.main_table_mut().keywords_mut().remove(model).is_some();
+            present(&mut self.source, source_keywords, &pointer);
+            present(&mut self.main, Some(main), &pointer);
         }
-        if let Some(source) = ms.subtable_mut(SubtableId::Source) {
-            source_changed |= source.keywords_mut().remove(&pointer).is_some();
-        }
-        main_changed |= ms
-            .main_table_mut()
-            .keywords_mut()
-            .remove(&pointer)
-            .is_some();
+        self.source_cells.sort_unstable();
+        self.source_cells.dedup();
+        Ok(())
     }
-    if let Some(root) = ms.path().map(Path::to_path_buf) {
-        if source_changed && let Some(source) = ms.subtable_mut(SubtableId::Source) {
-            source.flush()?;
-        }
-        delete_model_images(&root, &images)?;
+}
+
+/// Add `name` to `names` when `keywords` holds it and `names` does not.
+fn present(names: &mut Vec<String>, keywords: Option<&RecordValue>, name: &str) {
+    if keywords.is_some_and(|keywords| keywords.get(name).is_some())
+        && !names.iter().any(|held| held == name)
+    {
+        names.push(name.to_string());
     }
-    Ok(main_changed)
+}
+
+fn remove(table: &mut Table, names: &[String]) {
+    let keywords = table.keywords_mut();
+    for name in names {
+        keywords.remove(name);
+    }
 }
 
 /// MAIN rows read at a time while looking for the fields that have models.
@@ -184,78 +250,111 @@ fn string(keywords: &RecordValue, name: &str) -> Option<String> {
     }
 }
 
-/// `VisModelData::getModelRecord`: the record model key `model` names, in
-/// SOURCE's `SOURCE_MODEL` when SOURCE's keywords hold its row, else in
-/// MAIN's keywords.
-fn model_record(
-    ms: &MeasurementSet,
-    model: &str,
-    source_rows: usize,
-) -> MsResult<Option<RecordValue>> {
-    if let Some(source) = ms.subtable(SubtableId::Source)
-        && source_rows > 0
-        && let Some(Value::Scalar(ScalarValue::Int32(row))) = source.keywords().get(model)
+/// How a changed table is written.
+#[derive(Clone, Copy)]
+enum Write {
+    /// In full, with the storage managers [`MeasurementSet::save`] uses.
+    Full,
+    /// Its keywords and description alone, its storage left as it is.
+    Metadata,
+}
+
+/// Whether `table` was opened with locking and holds its write lock.
+fn holds_write_lock(table: &Table) -> bool {
+    #[cfg(unix)]
     {
-        return match usize::try_from(*row) {
-            Ok(row) if row < source_rows => Ok(Some(source.record_cell(row, "SOURCE_MODEL")?)),
-            _ => Ok(None),
-        };
+        table.has_lock(casa_tables::LockType::Write)
     }
-    Ok(match ms.main_table().keywords().get(model) {
-        Some(Value::Record(record)) => Some(record.clone()),
-        _ => None,
-    })
+    #[cfg(not(unix))]
+    {
+        let _ = table;
+        false
+    }
 }
 
-/// The model images a virtual model's gridder records name
-/// (`VisModelData::deleteDiskImage`: `ft_<k>.container.diskimage`).
-fn disk_images(record: &RecordValue) -> Vec<PathBuf> {
-    let count = match record.get("numft") {
-        Some(Value::Scalar(ScalarValue::Int32(count))) => *count,
-        _ => 0,
+/// Apply `change` to `table` and write it to its directory under
+/// casacore's write lock on it, taken in `attempts` (0 waits) unless the
+/// handle holds it. A table not on disk is changed in memory alone. When
+/// the change or the write fails, a lock taken here has the table reloaded
+/// as it is on disk and is released; a lock the caller holds is left to
+/// it.
+fn change_in_place(
+    table: &mut Table,
+    attempts: u32,
+    write: Write,
+    change: impl FnOnce(&mut Table) -> MsResult<()>,
+) -> MsResult<()> {
+    let Some(path) = table.path().map(Path::to_path_buf) else {
+        return change(table);
     };
-    (0..count)
-        .filter_map(|k| match record.get(&format!("ft_{k}")) {
-            Some(Value::Record(ft)) => match ft.get("container") {
-                Some(Value::Record(container)) => string(container, "diskimage"),
-                _ => None,
-            },
-            _ => None,
-        })
-        .map(PathBuf::from)
-        .collect()
+    let written = |table: &mut Table| -> MsResult<()> {
+        change(table)?;
+        match write {
+            Write::Full => table.save(measurement_set_table_options(&path))?,
+            Write::Metadata => table.save_metadata_only(TableOptions::new(&path))?,
+        }
+        Ok(())
+    };
+    #[cfg(unix)]
+    if table.lock_options().is_some() {
+        if holds_write_lock(table) {
+            // Published when the caller releases its lock.
+            return written(table);
+        }
+        if !table.lock(casa_tables::LockType::Write, attempts)? {
+            return Err(lock_refused(&path));
+        }
+        let result = written(table);
+        if result.is_err() {
+            let _ = table.resync();
+        }
+        let released = table.unlock_metadata_only();
+        return result.and(released.map_err(MsError::from));
+    }
+    let mut lock = TableWriteLock::acquire(&path, attempts)?;
+    lock.record_write();
+    let result = written(table);
+    if result.is_err() {
+        let _ = table.resync();
+    }
+    let released = lock.release();
+    result.and(released.map_err(MsError::from))
 }
 
-/// Delete `images`, and every `FT_MODEL*` table in the MeasurementSet's
-/// directory and its SOURCE's, as `clearModel` does; an image outside the
-/// MeasurementSet is left (CASA deletes it wherever it lies).
-fn delete_model_images(root: &Path, images: &[PathBuf]) -> MsResult<()> {
-    let mut doomed: Vec<PathBuf> = images
-        .iter()
-        .filter(|image| image.starts_with(root))
-        .cloned()
-        .collect();
-    for directory in [root.to_path_buf(), root.join("SOURCE")] {
-        let Ok(entries) = std::fs::read_dir(&directory) else {
+fn lock_refused(path: &Path) -> MsError {
+    TableError::LockFailed {
+        path: path.display().to_string(),
+        message: "another process holds the table's lock".to_string(),
+    }
+    .into()
+}
+
+/// Delete every `FT_MODEL*` table in the MeasurementSet's directory and in
+/// its SOURCE's, as `clearModel` does, at best: a table that cannot be
+/// deleted is logged and left.
+fn delete_model_images(ms: &MeasurementSet) {
+    let directories = [
+        ms.path(),
+        ms.subtable(SubtableId::Source).and_then(Table::path),
+    ];
+    for directory in directories.into_iter().flatten() {
+        let Ok(entries) = std::fs::read_dir(directory) else {
             continue;
         };
         for entry in entries.flatten() {
-            if entry.file_name().to_string_lossy().starts_with("FT_MODEL") {
-                doomed.push(entry.path());
+            let image = entry.path();
+            if entry.file_name().to_string_lossy().starts_with("FT_MODEL")
+                && image.join("table.dat").is_file()
+                && let Err(error) = std::fs::remove_dir_all(&image)
+            {
+                tracing::warn!(
+                    image = %image.display(),
+                    %error,
+                    "a cleared virtual model's image cannot be deleted"
+                );
             }
         }
     }
-    for table in doomed {
-        if table.join("table.dat").is_file() {
-            std::fs::remove_dir_all(&table).map_err(|source| {
-                MsError::InvalidInput(format!(
-                    "cannot delete the cleared model image {}: {source}",
-                    table.display()
-                ))
-            })?;
-        }
-    }
-    Ok(())
 }
 
 #[cfg(test)]
@@ -265,7 +364,7 @@ mod tests {
     use casa_tables::{ColumnSchema, Table, TableOptions, TableSchema};
     use casa_types::{ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 
-    use super::clear_before_adding;
+    use super::prepare_write;
     use crate::schema::SubtableId;
     use crate::schema::main_table::VisibilityDataColumn;
     use crate::{MeasurementSet, SelectedVisibilityWrite, SelectedVisibilityWriteTargets};
@@ -396,8 +495,7 @@ mod tests {
             let path = trial(root.path());
             as_casa_left_it(&path);
             let mut ms = MeasurementSet::open(&path).expect("open");
-            clear_before_adding(&mut ms, column).expect("clear");
-            ms.save().expect("save");
+            prepare_write(&mut ms, column, true).expect("clear");
             drop(ms);
             assert_eq!(main_keywords(&path), expected, "{column:?}");
             assert!(path.join("SORTED_TABLE/table.dat").is_file(), "{column:?}");
@@ -414,7 +512,7 @@ mod tests {
         ms.main_table_mut()
             .keywords_mut()
             .upsert("definedmodel_field_0", text("model_9"));
-        clear_before_adding(&mut ms, VisibilityDataColumn::ModelData).expect("clear");
+        prepare_write(&mut ms, VisibilityDataColumn::ModelData, true).expect("clear");
         assert!(
             ms.main_table()
                 .keywords()
@@ -422,20 +520,22 @@ mod tests {
                 .is_none()
         );
         let before = ms.main_table().keywords().clone();
-        clear_before_adding(&mut ms, VisibilityDataColumn::ModelData).expect("again");
+        prepare_write(&mut ms, VisibilityDataColumn::ModelData, true).expect("again");
         assert_eq!(*ms.main_table().keywords(), before);
     }
 
-    /// A model a gridder recorded names its model image: deleted with the
-    /// model when it lies inside the MeasurementSet, with any `FT_MODEL*`
-    /// table there, and left when it lies outside.
+    /// Clearing a model deletes the `FT_MODEL*` tables `tclean` leaves in
+    /// the MeasurementSet, and no image a model's record names: one named
+    /// inside the MeasurementSet, one outside it and one reached through
+    /// `..` all stay.
     #[test]
-    fn a_cleared_model_takes_its_images_inside_the_measurement_set() {
+    fn clearing_deletes_the_ft_model_tables_and_nothing_a_record_names() {
         let root = tempfile::tempdir().expect("root");
         let path = trial(root.path());
         let inside = path.join("model_image");
         let outside = root.path().join("outside_image");
-        for table in [&inside, &outside, &path.join("FT_MODEL_x")] {
+        let escaping = path.join("..").join("escaping_image");
+        for table in [&inside, &outside, &escaping, &path.join("FT_MODEL_x")] {
             table_at(table);
         }
         let ft = |image: &Path| {
@@ -453,49 +553,70 @@ mod tests {
         keywords.upsert(
             "model_0",
             Value::Record(RecordValue::new(vec![
-                RecordField::new("numft", Value::Scalar(ScalarValue::Int32(2))),
+                RecordField::new("numft", Value::Scalar(ScalarValue::Int32(3))),
                 RecordField::new("ft_0", ft(&inside)),
                 RecordField::new("ft_1", ft(&outside)),
+                RecordField::new("ft_2", ft(&escaping)),
             ])),
         );
-        clear_before_adding(&mut ms, VisibilityDataColumn::ModelData).expect("clear");
-        assert!(!inside.exists(), "the image inside");
+        prepare_write(&mut ms, VisibilityDataColumn::ModelData, false).expect("clear");
         assert!(!path.join("FT_MODEL_x").exists(), "the FT_MODEL table");
-        assert!(outside.join("table.dat").is_file(), "the image outside");
+        for image in [&inside, &outside, &escaping] {
+            assert!(image.join("table.dat").is_file(), "{}", image.display());
+        }
     }
 
-    /// With SOURCE rows, `setjy` writes the model under SOURCE: its
+    /// A fixture with SOURCE rows and `setjy`'s model under SOURCE: its
     /// keywords name the model key and the row whose `SOURCE_MODEL` holds
-    /// the record (CASA 6.7.5 on this fixture). Clearing removes both
-    /// keywords and empties the cell, keeping the column, as `delmod` leaves
-    /// it, and saves SOURCE itself.
-    #[test]
-    fn a_model_under_source_is_cleared_and_its_cell_emptied() {
-        let root = tempfile::tempdir().expect("root");
+    /// the record (CASA 6.7.5 on this fixture), beside MAIN's cached sort
+    /// keywords.
+    fn with_model_under_source(root: &Path) -> PathBuf {
         let path = unpack(
-            root.path(),
+            root,
             "tests/fixtures/mssel_test_small.ms.tgz",
             "mssel_test_small.ms",
         );
-        {
-            let mut ms = MeasurementSet::open(&path).expect("open");
-            let source = ms.subtable_mut(SubtableId::Source).expect("SOURCE");
-            source
-                .add_column(ColumnSchema::record("SOURCE_MODEL"), None)
-                .expect("SOURCE_MODEL");
-            source
-                .cell_accessor_mut(0, "SOURCE_MODEL")
-                .and_then(|mut cell| cell.set(Value::Record(model())))
-                .expect("model");
-            let keywords = source.keywords_mut();
-            keywords.upsert("definedmodel_field_0", text("model_0"));
-            keywords.upsert("model_0", Value::Scalar(ScalarValue::Int32(0)));
-            ms.save().expect("save");
-        }
+        table_at(&path.join("SORTED_TABLE"));
         let mut ms = MeasurementSet::open(&path).expect("open");
-        clear_before_adding(&mut ms, VisibilityDataColumn::ModelData).expect("clear");
-        drop(ms);
-        let ms = MeasurementSet::open(&path).expect("reopen");
+        let source = ms.subtable_mut(SubtableId::Source).expect("SOURCE");
+        source
+            .add_column(ColumnSchema::record("SOURCE_MODEL"), None)
+            .expect("SOURCE_MODEL");
+        source
+            .cell_accessor_mut(0, "SOURCE_MODEL")
+            .and_then(|mut cell| cell.set(Value::Record(model())))
+            .expect("model");
+        let keywords = source.keywords_mut();
+        keywords.upsert("definedmodel_field_0", text("model_0"));
+        keywords.upsert("model_0", Value::Scalar(ScalarValue::Int32(0)));
+        ms.main_table_mut().keywords_mut().upsert(
+            "SORTED_TABLE",
+            Value::TableRef("././SORTED_TABLE".to_string()),
+        );
+        ms.save().expect("save");
+        path
+    }
+
+    /// The storage managers of MAIN and SOURCE, by type and columns.
+    fn managers(path: &Path) -> [Vec<(String, Vec<String>)>; 2] {
+        let ms = MeasurementSet::open(path).expect("open");
+        let of = |table: &Table| {
+            table
+                .data_manager_info()
+                .iter()
+                .map(|manager| (manager.dm_type.clone(), manager.columns.clone()))
+                .collect()
+        };
+        [
+            of(ms.main_table()),
+            of(ms.subtable(SubtableId::Source).expect("SOURCE")),
+        ]
+    }
+
+    /// SOURCE as clearing leaves it: no model keywords and an emptied
+    /// `SOURCE_MODEL` cell, the column kept, as `delmod` leaves it.
+    fn assert_source_cleared(path: &Path) {
+        let ms = MeasurementSet::open(path).expect("reopen");
         let source = ms.subtable(SubtableId::Source).expect("SOURCE");
         for key in ["definedmodel_field_0", "model_0"] {
             assert!(source.keywords().get(key).is_none(), "{key}");
@@ -503,6 +624,75 @@ mod tests {
         assert_eq!(
             source.record_cell(0, "SOURCE_MODEL").expect("cell"),
             RecordValue::default()
+        );
+    }
+
+    /// Clearing a model under SOURCE removes both keywords and empties the
+    /// cell, and writes SOURCE as a MeasurementSet save writes it
+    /// (StandardStMan) and MAIN's metadata alone, its storage kept.
+    #[test]
+    fn a_model_under_source_is_cleared_and_its_cell_emptied() {
+        let root = tempfile::tempdir().expect("root");
+        let path = with_model_under_source(root.path());
+        let before = managers(&path);
+        let mut ms = MeasurementSet::open(&path).expect("open");
+        prepare_write(&mut ms, VisibilityDataColumn::ModelData, true).expect("clear");
+        drop(ms);
+        assert_source_cleared(&path);
+        assert_eq!(managers(&path), before);
+        assert!(
+            main_keywords(&path)
+                .iter()
+                .all(|name| name != "SORTED_TABLE")
+        );
+    }
+
+    /// Imaging's writer clears a model under SOURCE under SOURCE's own lock,
+    /// writing SOURCE as a save writes it, and keeps MAIN's storage
+    /// managers, adding `MODEL_DATA`'s.
+    #[test]
+    fn imaging_clears_a_model_under_source() {
+        let root = tempfile::tempdir().expect("root");
+        let path = with_model_under_source(root.path());
+        let [main_before, source_before] = managers(&path);
+        SelectedVisibilityWrite::begin(&path, SelectedVisibilityWriteTargets::new(true, false))
+            .expect("begin")
+            .complete()
+            .expect("complete");
+        assert_source_cleared(&path);
+        let [main, source] = managers(&path);
+        assert_eq!(source, source_before);
+        assert_eq!(main[..main_before.len()], main_before[..]);
+        assert!(
+            main_keywords(&path)
+                .iter()
+                .all(|name| name != "SORTED_TABLE")
+        );
+    }
+
+    /// A write refused once MAIN's lock is taken (here, SOURCE's lock held
+    /// by another handle) changes nothing: MAIN keeps its storage managers
+    /// and keywords, with no `MODEL_DATA`, and SOURCE its model.
+    #[test]
+    fn a_write_refused_under_the_lock_changes_nothing() {
+        let root = tempfile::tempdir().expect("root");
+        let path = with_model_under_source(root.path());
+        let managers_before = managers(&path);
+        let keywords_before = main_keywords(&path);
+        let held = casa_tables::TableWriteLock::acquire(path.join("SOURCE"), 1).expect("lock");
+        let refused =
+            SelectedVisibilityWrite::begin(&path, SelectedVisibilityWriteTargets::new(true, false));
+        assert!(refused.is_err(), "refused while SOURCE is held");
+        drop(refused);
+        held.release().expect("release");
+        assert_eq!(managers(&path), managers_before);
+        assert_eq!(main_keywords(&path), keywords_before);
+        let ms = MeasurementSet::open(&path).expect("reopen");
+        let source = ms.subtable(SubtableId::Source).expect("SOURCE");
+        assert!(source.keywords().get("definedmodel_field_0").is_some());
+        assert_eq!(
+            source.record_cell(0, "SOURCE_MODEL").expect("cell"),
+            model()
         );
     }
 
@@ -520,6 +710,36 @@ mod tests {
         assert_eq!(
             main_keywords(&path),
             ["KEEP", "MS_VERSION", "definedmodel_field_7", "model_7"]
+        );
+    }
+
+    /// A write to an existing `MODEL_DATA` clears the virtual model, as
+    /// CASA's imager does whenever it writes the column, and keeps the sort
+    /// keywords, which only adding a column clears.
+    #[test]
+    fn imaging_s_write_of_an_existing_model_data_clears_the_virtual_model() {
+        let root = tempfile::tempdir().expect("root");
+        let path = trial(root.path());
+        let targets = SelectedVisibilityWriteTargets::new(true, false);
+        SelectedVisibilityWrite::begin(&path, targets)
+            .expect("create")
+            .complete()
+            .expect("created");
+        as_casa_left_it(&path);
+        SelectedVisibilityWrite::begin(&path, targets)
+            .expect("begin")
+            .complete()
+            .expect("complete");
+        assert_eq!(
+            main_keywords(&path),
+            [
+                "KEEP",
+                "MS_VERSION",
+                "SORTED_TABLE",
+                "SORT_COLUMNS",
+                "definedmodel_field_7",
+                "model_7"
+            ]
         );
     }
 }
