@@ -789,3 +789,103 @@ fn a_partial_model_pass_creates_model_data_over_casas_initial_model() {
         }
     }
 }
+
+/// MAIN's keywords for a CASA-sorted MeasurementSet with a virtual model of
+/// field 0 (written as CASA writes them into an MS without SOURCE rows).
+fn as_casa_left_it(path: &std::path::Path) {
+    let text =
+        |value: &str| casa_types::Value::Scalar(casa_types::ScalarValue::String(value.to_string()));
+    let mut ms = casa_ms::MeasurementSet::open(path).expect("open");
+    let keywords = ms.main_table_mut().keywords_mut();
+    keywords.upsert(
+        "SORT_COLUMNS",
+        casa_types::Value::Array(casa_types::ArrayValue::String(
+            ndarray::ArrayD::from_shape_vec(vec![1], vec!["TIME".to_string()]).expect("shape"),
+        )),
+    );
+    keywords.upsert("SORTED_TABLE", text("SORTED_TABLE"));
+    keywords.upsert("definedmodel_field_0", text("model_0"));
+    keywords.upsert(
+        "model_0",
+        casa_types::Value::Record(casa_types::RecordValue::new(vec![
+            casa_types::RecordField::new(
+                "numcl",
+                casa_types::Value::Scalar(casa_types::ScalarValue::Int32(0)),
+            ),
+        ])),
+    );
+    ms.save().expect("save");
+}
+
+/// An update session that creates `MODEL_DATA` or `CORRECTED_DATA` clears
+/// what CASA's `addScrCols` clears (#912): the cached sort keywords, and
+/// for `MODEL_DATA` the virtual model, so that CASA reads the column the
+/// session wrote.
+#[test]
+fn creating_a_group_clears_what_casa_clears() {
+    for (group, variable, model_kept) in [
+        ("model", "MODEL_DATA", false),
+        ("corrected", "CORRECTED_DATA", true),
+    ] {
+        let root = tempfile::tempdir().expect("root");
+        let v2 = fixture(root.path(), "ms_trial.ms");
+        as_casa_left_it(&v2);
+        let created = UpdateTarget {
+            create: true,
+            ..UpdateTarget::new(group, WritableRole::Visibilities)
+        };
+        let session =
+            open_update(&v2, &OpenOptions::default(), std::slice::from_ref(&created)).expect(group);
+        assert_eq!(session.targets()[0].variable, variable);
+        let four = per_times(session.observation(), request(0..8, 0), 4);
+        pass(&session, &four, &[0], |batch| {
+            vec![Owned::Visibilities(
+                batch.group.values.expect("values").mapv(model),
+            )]
+        })
+        .expect(group);
+        drop(session);
+        let ms = casa_ms::MeasurementSet::open(&v2).expect("reopen");
+        let keywords = ms.main_table().keywords();
+        for key in ["SORT_COLUMNS", "SORTED_TABLE"] {
+            assert!(keywords.get(key).is_none(), "{group}: {key}");
+        }
+        for key in ["definedmodel_field_0", "model_0"] {
+            assert_eq!(keywords.get(key).is_some(), model_kept, "{group}: {key}");
+        }
+    }
+}
+
+/// A session writing an existing `MODEL_DATA` clears the virtual model, as
+/// CASA does whenever it writes the column, and keeps the sort keywords,
+/// which only adding a column clears.
+#[test]
+fn writing_an_existing_model_clears_the_virtual_model() {
+    let root = tempfile::tempdir().expect("root");
+    let v2 = fixture(root.path(), "ms_trial.ms");
+    let write = |target: UpdateTarget| {
+        let session = open_update(&v2, &OpenOptions::default(), std::slice::from_ref(&target))
+            .expect("session");
+        let four = per_times(session.observation(), request(0..8, 0), 4);
+        pass(&session, &four, &[0], |batch| {
+            vec![Owned::Visibilities(
+                batch.group.values.expect("values").mapv(model),
+            )]
+        })
+        .expect("pass");
+    };
+    write(UpdateTarget {
+        create: true,
+        ..UpdateTarget::new("model", WritableRole::Visibilities)
+    });
+    as_casa_left_it(&v2);
+    write(UpdateTarget::new("model", WritableRole::Visibilities));
+    let ms = casa_ms::MeasurementSet::open(&v2).expect("reopen");
+    let keywords = ms.main_table().keywords();
+    for key in ["SORT_COLUMNS", "SORTED_TABLE"] {
+        assert!(keywords.get(key).is_some(), "{key}");
+    }
+    for key in ["definedmodel_field_0", "model_0"] {
+        assert!(keywords.get(key).is_none(), "{key}");
+    }
+}

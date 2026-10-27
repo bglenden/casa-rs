@@ -93,6 +93,11 @@ impl Msv2Update {
     }
 
     /// Plan `request`'s rows and start production's mutation of `targets`.
+    ///
+    /// What CASA clears before the targets' columns are written is cleared
+    /// first ([`prepare_column`]), before the mutation's lock is taken: a
+    /// mutation then refused leaves it cleared with nothing written, as
+    /// CASA's imager clears it when it selects the data.
     pub(in crate::observation_io) fn updater<'s>(
         &'s self,
         request: &AccessRequest,
@@ -118,9 +123,12 @@ impl Msv2Update {
             .collect();
         let mut writer = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
         let mut seeded = 0;
-        for target in targets.iter().filter(|target| target.created) {
-            add_column(&mut writer, &target.variable)?;
-            if target.variable == "MODEL_DATA" && !persisted(writer.main_table(), "MODEL_DATA") {
+        for target in targets {
+            prepare_column(&mut writer, target)?;
+            if target.created
+                && target.variable == "MODEL_DATA"
+                && !persisted(writer.main_table(), "MODEL_DATA")
+            {
                 seeded += seed_model(&mut writer, &self.observation)?;
             }
         }
@@ -262,29 +270,41 @@ fn seed_model(
     Ok(rows.len())
 }
 
-/// Add visibility column `name` (`MODEL_DATA` or `CORRECTED_DATA`) to
-/// MAIN's schema with `DATA`'s keywords, as applycal adds `CORRECTED_DATA`,
-/// unless it is there. `CORRECTED_DATA`'s storage is then installed by the
-/// updater's mutation, cloned from `DATA` values included, as CASA seeds it,
-/// so rows a pass skips read as uncorrected; `MODEL_DATA` is installed and
-/// seeded with CASA's initial model by [`seed_model`].
-fn add_column(ms: &mut MeasurementSet, name: &str) -> Result<(), ObservationError> {
-    if ms
-        .main_table()
-        .schema()
-        .is_some_and(|schema| schema.contains_column(name))
-    {
-        return Ok(());
-    }
+/// Clear what CASA clears before `target`'s column is written
+/// ([`crate::scratch_columns`]): every field's virtual model before a
+/// `MODEL_DATA` write, created or not, and the cached sort keywords before
+/// a column is added. A created column MAIN's schema lacks is then added
+/// with `DATA`'s keywords, as applycal adds `CORRECTED_DATA`.
+/// `CORRECTED_DATA`'s storage is installed by the updater's mutation,
+/// cloned from `DATA` values included, as CASA seeds it, so rows a pass
+/// skips read as uncorrected; `MODEL_DATA` is installed and seeded with
+/// CASA's initial model by [`seed_model`].
+fn prepare_column(
+    ms: &mut MeasurementSet,
+    target: &ResolvedTarget,
+) -> Result<(), ObservationError> {
+    let name = target.variable.as_str();
     let column = match name {
         "MODEL_DATA" => VisibilityDataColumn::ModelData,
         "CORRECTED_DATA" => VisibilityDataColumn::CorrectedData,
-        _ => {
+        _ if target.created => {
             return Err(request_error(format!(
                 "{name} is not a column the session creates"
             )));
         }
+        _ => return Ok(()),
     };
+    let adds = target.created
+        && !ms
+            .main_table()
+            .schema()
+            .is_some_and(|schema| schema.contains_column(name));
+    if adds || column == VisibilityDataColumn::ModelData {
+        crate::scratch_columns::prepare_write(ms, column, adds).map_err(storage)?;
+    }
+    if !adds {
+        return Ok(());
+    }
     let schema = build_table_schema(&[*column.optional_column().column_def()]).map_err(storage)?;
     let definition = schema
         .column(name)
