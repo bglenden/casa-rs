@@ -25,7 +25,7 @@ coordinates, measures, and related workflows.
 | domain libraries (`casa-ms`, `casa-simulation-synthesis`, `casa-lattices`, `casa-coordinates`, `casa-images`, `casa-calibration`, `casa-vla`, `casa-components`) | Higher-level astronomy data models and algorithms built on table/image persistence; simulation synthesis owns only the serial model predictor and Airy voltage pattern used by MeasurementSet simulation; `casa-components` owns CASA component lists (sky components with their flux, shape and spectral model) and reads and writes their `ComponentList` tables as CASA does | foundation crates, `casa-tables`, selected peer domain crates where documented; `casa-components` depends only on `casa-tables` and `casa-types` |
 | boundary contracts (`casa-provider-contracts`) | The generic task-provider envelope, canonical parameter and application catalogs, task surface definitions, and protocol surfaces between providers, the task host, and Python | domain libraries and foundation crates; must not become a second source of truth |
 | parameter and task runtime (`casa-task-runtime`) | Format-neutral parameter resolution, sparse TOML profiles, migrations, task Last/Last Successful coordination, managed Last storage, and the common one-shot task CLI host | boundary contracts and `casa-types`; must not implement provider science behavior |
-| apps and runtimes (`casars`, `casars-imager`, `casars-simulation`, `casars-python`, `casars-frontend-services`) | The headless `casars` task host (`casars run`, `casars params`) and the `imexplore`/`casars-plotcal` providers, the imager application, the simulation tasks' host (`simobserve`; `simanalyze` and `simalma` to come), the Python package, and its UniFFI service layer | boundary contracts, domain libraries, foundation crates |
+| apps and runtimes (`casars`, `casars-imager`, `casars-simulation`, `casars-python`) | The headless `casars` task host (`casars run`, `casars params`) and the `imexplore`/`casars-plotcal` providers, the imager application, the simulation tasks' host (`simobserve`; `simanalyze` and `simalma` to come), and the Python package with its PyO3 extension `casars._core` | boundary contracts, domain libraries, foundation crates |
 | test support (`casa-test-support`) | Cross-language parity harnesses, fixtures, integration helpers, and performance guards | any workspace crates needed for testing only |
 
 ## Dependency direction
@@ -204,11 +204,14 @@ Additional constraints:
   classification, and the generated common help block. Providers retain typed
   science adapters and domain-specific human parsing; apps may not add
   alternate lifecycle maps, writers, CLI hosts, or launch fallbacks.
-- `casars-frontend-services` is the UniFFI service layer of the Python
-  package (ADR-0017). It projects the parameter runtime, task completion, the
-  application catalog and MeasurementSet plot documents for
+- `casars-python` binds Rust to Python through PyO3 alone, in the extension
+  `casars._core` (ADR-0017 item 4). Beside the `casars.data` objects and the
+  `casars.tools` classes, it projects the parameter runtime, task completion,
+  the application catalog and `casa-ms` plot documents for
   `casars.parameters`, `casars.tasks` and `casars.data`, and must not become a
   second implementation of persistence, task semantics, or provider contracts.
+  Plot documents are `casa_ms::plot_document` serde types, which depend on no
+  binding crate.
 - Native frontends select a versioned request and `ResourcePolicy`; they do not
   inspect hosts or devices, select imaging implementations, allocate work
   buffers, or define scientific products. Native model code depends on no
@@ -553,8 +556,7 @@ never makes a route available.
 - the headless `casars` task host (`casars run`, `casars params`) and the
   catalog's task providers, such as `msexplore`, `imexplore` (`imhead`,
   `imstat`), `calibrate`, `importvla`, `casars-imager` and `simobserve`
-- Python package `casars-python`, including the generated UniFFI module
-  `casars._frontend` built from `casars-frontend-services`
+- Python package `casars-python`, with its one native module `casars._core`
 - persisted CASA-compatible on-disk table, image, and related data formats
 - versioned provider contract bundles and protocol schemas
 - versioned sparse TOML task parameter profiles

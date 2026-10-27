@@ -12,7 +12,7 @@ from collections.abc import Iterator, Mapping, MutableMapping
 from dataclasses import dataclass
 from enum import Enum
 from importlib import import_module
-from os import PathLike, fspath
+from os import PathLike
 from pathlib import Path
 from typing import Any, ClassVar, TypeAlias
 
@@ -69,106 +69,34 @@ class ProviderInvocation:
     stdin: str | None
 
 
-def _frontend() -> Any:
-    return import_module("._frontend", __package__)
+def _native() -> Any:
+    """The native extension, loaded on first use so `import casars` stays light."""
 
-
-def _frontend_call(function: Any, *args: Any, **kwargs: Any) -> Any:
-    api = _frontend()
-    try:
-        return function(*args, **kwargs)
-    except api.FrontendServiceError as error:
-        raise ValueError(str(error)) from error
-
-
-def _contract_data(value: Any) -> Any:
-    """Project generated records into the documented dictionary view."""
-
-    if value is None or isinstance(value, (bool, int, float, str)):
-        return value
-    if isinstance(value, Enum):
-        return value.name.lower()
-    if isinstance(value, Mapping):
-        return {name: _contract_data(item) for name, item in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_contract_data(item) for item in value]
-    attributes = {
-        name: _contract_data(item)
-        for name, item in vars(value).items()
-        if not name.startswith("_")
-    }
-    qualified = type(value).__qualname__.split(".")
-    if len(qualified) > 1:
-        return {"kind": qualified[-1].lower(), **attributes}
-    return attributes
-
-
-def _encode_value(value: ParameterData) -> Any:
-    api = _frontend()
-    if isinstance(value, bool):
-        return api.SurfaceParameterValue.BOOL(value)
-    if isinstance(value, int):
-        return api.SurfaceParameterValue.INTEGER(value)
-    if isinstance(value, float):
-        return api.SurfaceParameterValue.FLOAT(value)
-    if isinstance(value, str):
-        return api.SurfaceParameterValue.STRING(value)
-    if isinstance(value, PathLike):
-        path = fspath(value)
-        if not isinstance(path, str):
-            raise TypeError("parameter paths must resolve to text, not bytes")
-        return api.SurfaceParameterValue.STRING(path)
-    if isinstance(value, (list, tuple)):
-        return api.SurfaceParameterValue.ARRAY([_encode_value(item) for item in value])
-    if isinstance(value, Mapping):
-        entries = []
-        for key, item in value.items():
-            if not isinstance(key, str):
-                raise TypeError("parameter table keys must be strings")
-            entries.append(api.SurfaceParameterEntry(name=key, value=_encode_value(item)))
-        return api.SurfaceParameterValue.TABLE(entries)
-    raise TypeError(f"unsupported parameter value {value!r}")
-
-
-def _decode_value(value: Any) -> ParameterData:
-    if value.is_BOOL() or value.is_INTEGER() or value.is_FLOAT() or value.is_STRING():
-        return value.value
-    if value.is_ARRAY():
-        return [_decode_value(item) for item in value.values]
-    if value.is_TABLE():
-        return {entry.name: _decode_value(entry.value) for entry in value.entries}
-    raise ValueError(f"unknown generated parameter value {value!r}")
-
-
-def _typed_values(values: Mapping[str, ParameterData]) -> dict[str, Any]:
-    return {name: _encode_value(value) for name, value in values.items()}
+    return import_module("._core", __package__)
 
 
 def catalog() -> dict[str, Any]:
     """Return the checked aggregate concept and surface catalog."""
 
-    return _contract_data(_frontend_call(_frontend().parameter_catalog))
+    return _native().parameter_catalog()
 
 
 def definition(surface: str) -> dict[str, Any]:
     """Return one task definition from the built-in catalog."""
 
-    bundle = _frontend_call(_frontend().parameter_surface_bundle, surface)
-    return _contract_data(bundle.surface)
+    return _native().parameter_surface_bundle(surface)["surface"]
 
 
 def contract_bundle(surface: str) -> dict[str, Any]:
     """Return a self-contained definition with exactly its referenced concepts."""
 
-    return _contract_data(
-        _frontend_call(_frontend().parameter_surface_bundle, surface)
-    )
+    return _native().parameter_surface_bundle(surface)
 
 
 def documented_template(surface: str) -> str:
     """Render a commented TOML reference without activating default values."""
 
-    return _frontend_call(_frontend().parameter_template_toml, surface)
+    return _native().parameter_template_toml(surface)
 
 
 class SurfaceParameters(MutableMapping[str, ParameterData]):
@@ -244,15 +172,13 @@ class SurfaceParameters(MutableMapping[str, ParameterData]):
         """Start from the most recently persisted valid intent."""
 
         root = Path.cwd() if workspace is None else Path(workspace)
-        snapshot = _frontend_call(
-            _frontend().parameter_last, surface, str(root), False
-        )
-        if snapshot is None or snapshot.profile_toml is None:
+        snapshot = _native().parameter_last(surface, str(root), False)
+        if snapshot is None or snapshot["profile_toml"] is None:
             raise FileNotFoundError(f"no Last parameter profile exists for {surface!r}")
         return cls(
             surface,
             base_source="last",
-            profile_toml=snapshot.profile_toml,
+            profile_toml=snapshot["profile_toml"],
             workspace=root,
         )
 
@@ -266,17 +192,15 @@ class SurfaceParameters(MutableMapping[str, ParameterData]):
         """Start from the most recently successful task invocation."""
 
         root = Path.cwd() if workspace is None else Path(workspace)
-        snapshot = _frontend_call(
-            _frontend().parameter_last, surface, str(root), True
-        )
-        if snapshot is None or snapshot.profile_toml is None:
+        snapshot = _native().parameter_last(surface, str(root), True)
+        if snapshot is None or snapshot["profile_toml"] is None:
             raise FileNotFoundError(
                 f"no Last Successful parameter profile exists for {surface!r}"
             )
         return cls(
             surface,
             base_source="last_successful",
-            profile_toml=snapshot.profile_toml,
+            profile_toml=snapshot["profile_toml"],
             workspace=root,
         )
 
@@ -300,18 +224,18 @@ class SurfaceParameters(MutableMapping[str, ParameterData]):
 
     @property
     def is_dirty(self) -> bool:
-        return bool(self._snapshot.dirty)
+        return bool(self._snapshot["dirty"])
 
     @property
     def states(self) -> dict[str, ParameterState]:
         result: dict[str, ParameterState] = {}
-        for name, state in self._snapshot.states.items():
+        for name, state in self._snapshot["states"].items():
             result[name] = ParameterState(
-                value=None if state.value is None else _decode_value(state.value),
-                origin=ParameterOrigin(state.origin),
-                active=bool(state.active),
-                required=bool(state.required),
-                explicit=bool(state.explicit),
+                value=state["value"],
+                origin=ParameterOrigin(state["origin"]),
+                active=state["active"],
+                required=state["required"],
+                explicit=state["explicit"],
             )
         return result
 
@@ -322,17 +246,17 @@ class SurfaceParameters(MutableMapping[str, ParameterData]):
     @property
     def diagnostics(self) -> tuple[ParameterDiagnostic, ...]:
         result = []
-        for diagnostic in self._snapshot.diagnostics:
-            location = diagnostic.location
+        for diagnostic in self._snapshot["diagnostics"]:
+            location = diagnostic["location"]
             result.append(
                 ParameterDiagnostic(
-                    level=diagnostic.level,
-                    code=diagnostic.code,
-                    message=diagnostic.message,
-                    parameter=diagnostic.parameter,
-                    line=None if location is None else int(location.line),
-                    column=None if location is None else int(location.column),
-                    suggestions=tuple(diagnostic.suggestions),
+                    level=diagnostic["level"],
+                    code=diagnostic["code"],
+                    message=diagnostic["message"],
+                    parameter=diagnostic["parameter"],
+                    line=None if location is None else location["line"],
+                    column=None if location is None else location["column"],
+                    suggestions=tuple(diagnostic["suggestions"]),
                 )
             )
         return tuple(result)
@@ -363,10 +287,10 @@ class SurfaceParameters(MutableMapping[str, ParameterData]):
         self.reset(name)
 
     def __iter__(self) -> Iterator[str]:
-        return iter(self._snapshot.states)
+        return iter(self._snapshot["states"])
 
     def __len__(self) -> int:
-        return len(self._snapshot.states)
+        return len(self._snapshot["states"])
 
     def set_many(self, values: Mapping[str, ParameterData]) -> None:
         """Apply several mutations atomically."""
@@ -385,7 +309,7 @@ class SurfaceParameters(MutableMapping[str, ParameterData]):
     def reset(self, name: str) -> None:
         """Discard base/context/explicit intent for one name and expose its default."""
 
-        if name not in self._snapshot.states:
+        if name not in self._snapshot["states"]:
             raise KeyError(name)
         old_overrides = self._overrides.copy()
         old_unset = self._unset.copy()
@@ -431,94 +355,71 @@ class SurfaceParameters(MutableMapping[str, ParameterData]):
             assert self._profile_path is not None
             self._profile_toml = self._profile_path.read_text(encoding="utf-8")
         elif self._base_source in {"last", "last_successful"}:
-            snapshot = _frontend_call(
-                _frontend().parameter_last,
+            snapshot = _native().parameter_last(
                 self.surface,
                 str(self._workspace),
                 self._base_source == "last_successful",
             )
-            if snapshot is None or snapshot.profile_toml is None:
+            if snapshot is None or snapshot["profile_toml"] is None:
                 raise FileNotFoundError(
                     f"managed parameter profile disappeared for {self.surface!r}"
                 )
-            self._profile_toml = snapshot.profile_toml
+            self._profile_toml = snapshot["profile_toml"]
         self.revert()
 
     def to_toml(self) -> str:
         """Render required values and semantic differences from current defaults."""
 
-        return _frontend_call(
-            _frontend().parameter_render_toml,
-            self.surface,
-            self._resolved_values(),
-        )
+        return _native().parameter_render_toml(self.surface, self._resolved_values())
 
     def save(self, path: StrPath) -> Path:
         """Atomically save this draft as sparse current-contract TOML."""
 
         target = Path(path)
-        _frontend_call(
-            _frontend().parameter_save,
-            self.surface,
-            self._resolved_values(),
-            str(target),
-        )
+        _native().parameter_save(self.surface, self._resolved_values(), str(target))
         return target
 
     def write_last(self, *, successful: bool = False) -> Path:
         """Explicitly update Last or Last Successful for this workspace."""
 
-        outcome = _frontend_call(
-            _frontend().parameter_write_managed,
+        outcome = _native().parameter_write_managed(
             self.surface,
             str(self._workspace),
             self._resolved_values(),
             successful,
         )
-        return Path(outcome.path)
+        return Path(outcome["path"])
 
     def provider_invocation(self) -> ProviderInvocation:
         """Project this task through the canonical provider-owned request seam."""
 
-        projected = _frontend_call(
-            _frontend().parameter_provider_invocation,
-            self.surface,
-            self._resolved_values(),
+        projected = _native().parameter_provider_invocation(
+            self.surface, self._resolved_values()
         )
         return ProviderInvocation(
-            protocol_name=projected.protocol_name,
-            protocol_version=projected.protocol_version,
-            args=tuple(projected.args),
-            stdin=projected.stdin,
+            protocol_name=projected["protocol_name"],
+            protocol_version=projected["protocol_version"],
+            args=tuple(projected["args"]),
+            stdin=projected["stdin"],
         )
 
-    def _resolved_values(self) -> dict[str, Any]:
-        values = {
-            name: state.value
-            for name, state in self.states.items()
-            if state.value is not None
+    def _resolved_values(self) -> dict[str, ParameterData]:
+        return {
+            name: state["value"]
+            for name, state in self._snapshot["states"].items()
+            if state["value"] is not None
         }
-        return _typed_values(values)
 
     def _refresh(self) -> None:
-        api = _frontend()
-        source = {
-            "defaults": api.SurfaceParameterBaseSource.DEFAULTS,
-            "file": api.SurfaceParameterBaseSource.FILE,
-            "last": api.SurfaceParameterBaseSource.LAST,
-            "last_successful": api.SurfaceParameterBaseSource.LAST_SUCCESSFUL,
-        }[self._base_source]
-        self._snapshot = _frontend_call(
-            api.parameter_resolve,
+        if self._base_source not in {"defaults", "file", "last", "last_successful"}:
+            raise KeyError(self._base_source)
+        self._snapshot = _native().parameter_resolve(
             self.surface,
-            source,
+            self._base_source,
             self._profile_toml,
             None if self._profile_path is None else str(self._profile_path),
-            api.SurfaceParameterPatch(values={}, unset=[]),
-            api.SurfaceParameterPatch(
-                values=_typed_values(self._overrides),
-                unset=sorted(self._unset),
-            ),
+            dict(self._overrides),
+            sorted(self._unset),
         )
 
     def __repr__(self) -> str:
@@ -564,7 +465,7 @@ def load(
     if path is None:
         profile_path = Path(surface_or_path)
         source = profile_path.read_text(encoding="utf-8")
-        surface = _frontend_call(_frontend().parameter_profile_surface, source)
+        surface = _native().parameter_profile_surface(source)
     else:
         surface = str(surface_or_path)
         profile_path = Path(path)

@@ -44,3 +44,60 @@ source "$editable_venv/bin/activate"
 python -m pip install -e "crates/casars-python[$extras]"
 pytest crates/casars-python/python/tests -q
 deactivate
+
+# The built wheel and sdist are tested too: an editable checkout can import
+# files a packaged install lacks. Their tests run from outside the source tree
+# and first prove that `casars` and `casars._core` come from the install.
+tests_dir="$repo_root/crates/casars-python/python/tests"
+test_installed() {
+  local venv="$1"
+  shift
+  (
+    cd "$tmp_root"
+    "$venv/bin/python" - "$venv" <<'PY'
+import pathlib
+import sys
+
+import casars
+import casars._core
+
+venv = pathlib.Path(sys.argv[1]).resolve()
+for module in (casars, casars._core):
+    path = pathlib.Path(module.__file__).resolve()
+    if venv not in path.parents:
+        raise SystemExit(f"{module.__name__} imported from {path}, not from {venv}")
+PY
+    "$venv/bin/pytest" -q -p no:cacheprovider "$@"
+  )
+}
+
+dist_dir="$tmp_root/dist"
+echo "==> Building the casars wheel and sdist"
+"$repo_root/scripts/build-python-dist.sh" "$dist_dir"
+shopt -s nullglob
+wheels=("$dist_dir"/*.whl)
+sdists=("$dist_dir"/*.tar.gz)
+shopt -u nullglob
+if [[ ${#wheels[@]} -ne 1 || ${#sdists[@]} -ne 1 ]]; then
+  echo "expected one wheel and one sdist in $dist_dir" >&2
+  exit 1
+fi
+
+wheel_venv="$tmp_root/wheel-venv"
+echo "==> Installing the built wheel and running Python tests"
+"$python_bin" -m venv "$wheel_venv"
+"$wheel_venv/bin/python" -m pip install "${wheels[0]}[$extras]"
+test_installed "$wheel_venv" "$tests_dir"
+
+# A development build is enough to prove that the sdist is complete and
+# builds; the shared target directory saves recompiling its dependencies.
+sdist_venv="$tmp_root/sdist-venv"
+echo "==> Installing from the sdist and running the binding tests"
+"$python_bin" -m venv "$sdist_venv"
+MATURIN_PEP517_ARGS="--profile dev" \
+  CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$repo_root/target}" \
+  "$sdist_venv/bin/python" -m pip install "${sdists[0]}[$extras]"
+test_installed "$sdist_venv" \
+  "$tests_dir/test_binding_snapshots.py" \
+  "$tests_dir/test_parameters.py" \
+  "$tests_dir/test_data.py"

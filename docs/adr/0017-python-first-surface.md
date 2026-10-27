@@ -7,6 +7,11 @@ Supersedes: 0005; 0007; the stateful-session provider and session-surface
 parts of 0003 and 0006
 Superseded by:
 
+Amended: 2026-10-27, on owner direction (#931): Python binds Rust through
+PyO3 only (item 4, Enforcement and Drift detection). This is the first stage
+of #931; item 1 and the rest of item 4 change when the `casars` launcher is
+retired.
+
 ## Context
 
 From May to October 2026 casa-rs carried several interactive surfaces beside
@@ -42,9 +47,10 @@ The last state of the interactive surfaces is preserved at the tag
 3. Plots are typed data. Rust builds plot documents and text point manifests
    (`msexplore`/`plotms --plot-format txt`); Python renders them with
    Matplotlib (`casars.data.plot_matplotlib`, `casars.imexplore`).
-4. `casars-frontend-services` is the UniFFI service layer of the Python
-   package only. It exports what `casars.parameters`, `casars.tasks` and
-   `casars.data` call, and nothing for other frontends.
+4. The Python package binds in-process Rust functionality through PyO3 in
+   `casars._core`. There is no UniFFI layer. *Staged transition (#931):* task
+   calls still run through the `casars` task host of item 1 until it is
+   retired, when this item gains its rules for task calls.
 5. New interactive surfaces, if ever wanted again, start from a new ADR
    rather than from the retired code.
 
@@ -84,8 +90,9 @@ This decision is enforced by:
   `casars run` executes a provider), the provider-contract and catalog tests
   (27 task surfaces, no session kinds), the Python package tests;
 - lint/import/dependency rules: none beyond the workspace manifests;
-- CI checks: `just quick`, `scripts/generate-frontend-bindings.sh --check` in
-  the `python_package` job, `just docs-check`;
+- CI checks: `just quick`, `scripts/test-python-package.sh` in the
+  `python_package` job (its binding snapshots pin what the binding returns to
+  Python, and it tests the built wheel and sdist), `just docs-check`;
 - review trigger: any pull request that adds a UI, rendering or session
   dependency or crate.
 
@@ -93,7 +100,6 @@ This decision is enforced by:
 
 Suspect drift if:
 - `Cargo.lock` gains `ratatui`, `crossterm`, `plotters`, `image`, `printpdf`
-  or a UniFFI foreign-language generator other than Python;
+  or `uniffi`;
 - a parameter surface or provider declares a non-task kind;
-- `casars-frontend-services` grows exports that the Python package does not
-  call.
+- a second native module appears beside `casars._core`.

@@ -59,7 +59,6 @@
     "crates/casa-test-support/tests/measures_interop.rs",
     "crates/casa-types/src/measures/direction.rs",
     "crates/casa-vla/src/importer.rs",
-    "crates/casa-vla/src/record.rs",
-    "crates/casars-frontend-services/src/lib.rs"
+    "crates/casa-vla/src/record.rs"
   ]
 }

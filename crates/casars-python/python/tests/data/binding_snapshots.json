@@ -1,0 +1,3712 @@
+{
+ "contract": {
+  "catalog": {
+   "dict(schema_version,catalog,surfaces)": {
+    "schema_version": {
+     "int": null
+    },
+    "catalog": {
+     "dict(schema_version,concepts)": {
+      "schema_version": {
+       "int": null
+      },
+      "concepts": {
+       "list": {
+        "dict(id,semantic_revision,casa_name,value_domain,unit_dimension,semantic_role,documentation,persistence_class)": {
+         "id": {
+          "str": null
+         },
+         "semantic_revision": {
+          "int": null
+         },
+         "casa_name": {
+          "str": null
+         },
+         "value_domain": {
+          "dict[array](kind,elements,min_items,max_items,allow_scalar)": {
+           "kind": {
+            "str": null
+           },
+           "elements": {
+            "list": {
+             "dict[path](kind,resource_kind)": {
+              "kind": {
+               "str": null
+              },
+              "resource_kind": {
+               "str": null
+              }
+             },
+             "dict[quantity](kind,dimension,canonical_unit,special_values)": {
+              "kind": {
+               "str": null
+              },
+              "dimension": {
+               "str": null
+              },
+              "canonical_unit": {
+               "str": null
+              },
+              "special_values": {
+               "list": {
+                "str": null
+               }
+              }
+             },
+             "dict[string](kind)": {
+              "kind": {
+               "str": null
+              }
+             }
+            }
+           },
+           "min_items": {
+            "int": null
+           },
+           "max_items": {
+            "int": null,
+            "null": null
+           },
+           "allow_scalar": {
+            "bool": null
+           }
+          },
+          "dict[bool](kind)": {
+           "kind": {
+            "str": null
+           }
+          },
+          "dict[choice](kind,values)": {
+           "kind": {
+            "str": null
+           },
+           "values": {
+            "list": {
+             "str": null
+            }
+           }
+          },
+          "dict[float](kind)": {
+           "kind": {
+            "str": null
+           }
+          },
+          "dict[integer](kind)": {
+           "kind": {
+            "str": null
+           }
+          },
+          "dict[optional](kind,values,states)": {
+           "kind": {
+            "str": null
+           },
+           "values": {
+            "list": {
+             "dict[array](kind,elements,min_items,max_items,allow_scalar)": {
+              "kind": {
+               "str": null
+              },
+              "elements": {
+               "list": {
+                "dict[integer](kind)": {
+                 "kind": {
+                  "str": null
+                 }
+                }
+               }
+              },
+              "min_items": {
+               "int": null
+              },
+              "max_items": {
+               "int": null
+              },
+              "allow_scalar": {
+               "bool": null
+              }
+             },
+             "dict[choice](kind,values)": {
+              "kind": {
+               "str": null
+              },
+              "values": {
+               "list": {
+                "str": null
+               }
+              }
+             },
+             "dict[float](kind)": {
+              "kind": {
+               "str": null
+              }
+             },
+             "dict[integer](kind)": {
+              "kind": {
+               "str": null
+              }
+             },
+             "dict[path](kind,resource_kind)": {
+              "kind": {
+               "str": null
+              },
+              "resource_kind": {
+               "str": null
+              }
+             },
+             "dict[string](kind)": {
+              "kind": {
+               "str": null
+              }
+             }
+            }
+           },
+           "states": {
+            "list": {
+             "str": null
+            }
+           }
+          },
+          "dict[path](kind,resource_kind)": {
+           "kind": {
+            "str": null
+           },
+           "resource_kind": {
+            "str": null
+           }
+          },
+          "dict[quantity](kind,dimension,canonical_unit,special_values)": {
+           "kind": {
+            "str": null
+           },
+           "dimension": {
+            "str": null
+           },
+           "canonical_unit": {
+            "str": null
+           },
+           "special_values": {
+            "list": {}
+           }
+          },
+          "dict[string](kind)": {
+           "kind": {
+            "str": null
+           }
+          }
+         },
+         "unit_dimension": {
+          "null": null,
+          "str": null
+         },
+         "semantic_role": {
+          "str": null
+         },
+         "documentation": {
+          "dict(summary,details,examples)": {
+           "summary": {
+            "str": null
+           },
+           "details": {
+            "null": null,
+            "str": null
+           },
+           "examples": {
+            "list": {
+             "str": null
+            }
+           }
+          }
+         },
+         "persistence_class": {
+          "str": null
+         }
+        }
+       }
+      }
+     }
+    },
+    "surfaces": {
+     "list": {
+      "dict[task](kind,id,contract_version,display_name,category,summary,execution,bindings)": {
+       "kind": {
+        "str": null
+       },
+       "id": {
+        "str": null
+       },
+       "contract_version": {
+        "int": null
+       },
+       "display_name": {
+        "str": null
+       },
+       "category": {
+        "str": null
+       },
+       "summary": {
+        "str": null
+       },
+       "execution": {
+        "dict(invocation_name,fixed_args)": {
+         "invocation_name": {
+          "str": null
+         },
+         "fixed_args": {
+          "list": {
+           "str": null
+          }
+         }
+        }
+       },
+       "bindings": {
+        "list": {
+         "dict(name,concept,order,refinements,context_role,surface_note,projections)": {
+          "name": {
+           "str": null
+          },
+          "concept": {
+           "dict(id,semantic_revision)": {
+            "id": {
+             "str": null
+            },
+            "semantic_revision": {
+             "int": null
+            }
+           }
+          },
+          "order": {
+           "int": null
+          },
+          "refinements": {
+           "list": {
+            "dict[allowed_values](kind,values)": {
+             "kind": {
+              "str": null
+             },
+             "values": {
+              "list": {
+               "str": null
+              }
+             }
+            },
+            "dict[length](kind,values)": {
+             "kind": {
+              "str": null
+             },
+             "values": {
+              "list": {}
+             }
+            },
+            "dict[square_pair](kind,values)": {
+             "kind": {
+              "str": null
+             },
+             "values": {
+              "list": {}
+             }
+            }
+           }
+          },
+          "context_role": {
+           "null": null,
+           "str": null
+          },
+          "surface_note": {
+           "null": null,
+           "str": null
+          },
+          "projections": {
+           "dict(cli,provider,python,presentation)": {
+            "cli": {
+             "dict(positional,flags,false_flags,metavar)": {
+              "positional": {
+               "int": null,
+               "null": null
+              },
+              "flags": {
+               "list": {
+                "str": null
+               }
+              },
+              "false_flags": {
+               "list": {
+                "str": null
+               }
+              },
+              "metavar": {
+               "null": null,
+               "str": null
+              }
+             }
+            },
+            "provider": {
+             "dict(field,adapter,emit_when)": {
+              "field": {
+               "str": null
+              },
+              "adapter": {
+               "str": null
+              },
+              "emit_when": {
+               "dict[any](kind,predicates)": {
+                "kind": {
+                 "str": null
+                },
+                "predicates": {
+                 "list": {
+                  "dict[equals](kind,parameter,value)": {
+                   "kind": {
+                    "str": null
+                   },
+                   "parameter": {
+                    "str": null
+                   },
+                   "value": {
+                    "dict[string](kind,value)": {
+                     "kind": {
+                      "str": null
+                     },
+                     "value": {
+                      "str": null
+                     }
+                    }
+                   }
+                  }
+                 }
+                }
+               },
+               "dict[equals](kind,parameter,value)": {
+                "kind": {
+                 "str": null
+                },
+                "parameter": {
+                 "str": null
+                },
+                "value": {
+                 "dict[string](kind,value)": {
+                  "kind": {
+                   "str": null
+                  },
+                  "value": {
+                   "str": null
+                  }
+                 }
+                }
+               },
+               "null": null
+              }
+             }
+            },
+            "python": {
+             "dict(name,type_hint)": {
+              "name": {
+               "str": null
+              },
+              "type_hint": {
+               "null": null
+              }
+             }
+            },
+            "presentation": {
+             "dict(label,group,advanced,hidden)": {
+              "label": {
+               "str": null
+              },
+              "group": {
+               "str": null
+              },
+              "advanced": {
+               "bool": null
+              },
+              "hidden": {
+               "bool": null
+              }
+             }
+            }
+           }
+          }
+         }
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "definition": {
+   "dict[task](kind,id,contract_version,display_name,category,summary,execution,bindings)": {
+    "kind": {
+     "str": null
+    },
+    "id": {
+     "str": null
+    },
+    "contract_version": {
+     "int": null
+    },
+    "display_name": {
+     "str": null
+    },
+    "category": {
+     "str": null
+    },
+    "summary": {
+     "str": null
+    },
+    "execution": {
+     "dict(invocation_name,fixed_args)": {
+      "invocation_name": {
+       "str": null
+      },
+      "fixed_args": {
+       "list": {
+        "str": null
+       }
+      }
+     }
+    },
+    "bindings": {
+     "list": {
+      "dict(name,concept,order,refinements,context_role,surface_note,projections)": {
+       "name": {
+        "str": null
+       },
+       "concept": {
+        "dict(id,semantic_revision)": {
+         "id": {
+          "str": null
+         },
+         "semantic_revision": {
+          "int": null
+         }
+        }
+       },
+       "order": {
+        "int": null
+       },
+       "refinements": {
+        "list": {
+         "dict[allowed_values](kind,values)": {
+          "kind": {
+           "str": null
+          },
+          "values": {
+           "list": {
+            "str": null
+           }
+          }
+         },
+         "dict[length](kind,values)": {
+          "kind": {
+           "str": null
+          },
+          "values": {
+           "list": {}
+          }
+         },
+         "dict[square_pair](kind,values)": {
+          "kind": {
+           "str": null
+          },
+          "values": {
+           "list": {}
+          }
+         }
+        }
+       },
+       "context_role": {
+        "null": null,
+        "str": null
+       },
+       "surface_note": {
+        "null": null,
+        "str": null
+       },
+       "projections": {
+        "dict(cli,provider,python,presentation)": {
+         "cli": {
+          "dict(positional,flags,false_flags,metavar)": {
+           "positional": {
+            "int": null,
+            "null": null
+           },
+           "flags": {
+            "list": {
+             "str": null
+            }
+           },
+           "false_flags": {
+            "list": {
+             "str": null
+            }
+           },
+           "metavar": {
+            "null": null,
+            "str": null
+           }
+          }
+         },
+         "provider": {
+          "dict(field,adapter,emit_when)": {
+           "field": {
+            "str": null
+           },
+           "adapter": {
+            "str": null
+           },
+           "emit_when": {
+            "dict[any](kind,predicates)": {
+             "kind": {
+              "str": null
+             },
+             "predicates": {
+              "list": {
+               "dict[equals](kind,parameter,value)": {
+                "kind": {
+                 "str": null
+                },
+                "parameter": {
+                 "str": null
+                },
+                "value": {
+                 "dict[string](kind,value)": {
+                  "kind": {
+                   "str": null
+                  },
+                  "value": {
+                   "str": null
+                  }
+                 }
+                }
+               }
+              }
+             }
+            },
+            "dict[equals](kind,parameter,value)": {
+             "kind": {
+              "str": null
+             },
+             "parameter": {
+              "str": null
+             },
+             "value": {
+              "dict[string](kind,value)": {
+               "kind": {
+                "str": null
+               },
+               "value": {
+                "str": null
+               }
+              }
+             }
+            },
+            "null": null
+           }
+          }
+         },
+         "python": {
+          "dict(name,type_hint)": {
+           "name": {
+            "str": null
+           },
+           "type_hint": {
+            "null": null
+           }
+          }
+         },
+         "presentation": {
+          "dict(label,group,advanced,hidden)": {
+           "label": {
+            "str": null
+           },
+           "group": {
+            "str": null
+           },
+           "advanced": {
+            "bool": null
+           },
+           "hidden": {
+            "bool": null
+           }
+          }
+         }
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "contract_bundle": {
+   "dict(schema_version,surface,catalog)": {
+    "schema_version": {
+     "int": null
+    },
+    "surface": {
+     "dict[task](kind,id,contract_version,display_name,category,summary,execution,bindings)": {
+      "kind": {
+       "str": null
+      },
+      "id": {
+       "str": null
+      },
+      "contract_version": {
+       "int": null
+      },
+      "display_name": {
+       "str": null
+      },
+      "category": {
+       "str": null
+      },
+      "summary": {
+       "str": null
+      },
+      "execution": {
+       "dict(invocation_name,fixed_args)": {
+        "invocation_name": {
+         "str": null
+        },
+        "fixed_args": {
+         "list": {
+          "str": null
+         }
+        }
+       }
+      },
+      "bindings": {
+       "list": {
+        "dict(name,concept,order,refinements,context_role,surface_note,projections)": {
+         "name": {
+          "str": null
+         },
+         "concept": {
+          "dict(id,semantic_revision)": {
+           "id": {
+            "str": null
+           },
+           "semantic_revision": {
+            "int": null
+           }
+          }
+         },
+         "order": {
+          "int": null
+         },
+         "refinements": {
+          "list": {
+           "dict[allowed_values](kind,values)": {
+            "kind": {
+             "str": null
+            },
+            "values": {
+             "list": {
+              "str": null
+             }
+            }
+           },
+           "dict[length](kind,values)": {
+            "kind": {
+             "str": null
+            },
+            "values": {
+             "list": {}
+            }
+           },
+           "dict[square_pair](kind,values)": {
+            "kind": {
+             "str": null
+            },
+            "values": {
+             "list": {}
+            }
+           }
+          }
+         },
+         "context_role": {
+          "null": null,
+          "str": null
+         },
+         "surface_note": {
+          "null": null,
+          "str": null
+         },
+         "projections": {
+          "dict(cli,provider,python,presentation)": {
+           "cli": {
+            "dict(positional,flags,false_flags,metavar)": {
+             "positional": {
+              "int": null,
+              "null": null
+             },
+             "flags": {
+              "list": {
+               "str": null
+              }
+             },
+             "false_flags": {
+              "list": {
+               "str": null
+              }
+             },
+             "metavar": {
+              "null": null,
+              "str": null
+             }
+            }
+           },
+           "provider": {
+            "dict(field,adapter,emit_when)": {
+             "field": {
+              "str": null
+             },
+             "adapter": {
+              "str": null
+             },
+             "emit_when": {
+              "dict[any](kind,predicates)": {
+               "kind": {
+                "str": null
+               },
+               "predicates": {
+                "list": {
+                 "dict[equals](kind,parameter,value)": {
+                  "kind": {
+                   "str": null
+                  },
+                  "parameter": {
+                   "str": null
+                  },
+                  "value": {
+                   "dict[string](kind,value)": {
+                    "kind": {
+                     "str": null
+                    },
+                    "value": {
+                     "str": null
+                    }
+                   }
+                  }
+                 }
+                }
+               }
+              },
+              "dict[equals](kind,parameter,value)": {
+               "kind": {
+                "str": null
+               },
+               "parameter": {
+                "str": null
+               },
+               "value": {
+                "dict[string](kind,value)": {
+                 "kind": {
+                  "str": null
+                 },
+                 "value": {
+                  "str": null
+                 }
+                }
+               }
+              },
+              "null": null
+             }
+            }
+           },
+           "python": {
+            "dict(name,type_hint)": {
+             "name": {
+              "str": null
+             },
+             "type_hint": {
+              "null": null
+             }
+            }
+           },
+           "presentation": {
+            "dict(label,group,advanced,hidden)": {
+             "label": {
+              "str": null
+             },
+             "group": {
+              "str": null
+             },
+             "advanced": {
+              "bool": null
+             },
+             "hidden": {
+              "bool": null
+             }
+            }
+           }
+          }
+         }
+        }
+       }
+      }
+     }
+    },
+    "catalog": {
+     "dict(schema_version,concepts)": {
+      "schema_version": {
+       "int": null
+      },
+      "concepts": {
+       "list": {
+        "dict(id,semantic_revision,casa_name,value_domain,unit_dimension,semantic_role,documentation,persistence_class)": {
+         "id": {
+          "str": null
+         },
+         "semantic_revision": {
+          "int": null
+         },
+         "casa_name": {
+          "str": null
+         },
+         "value_domain": {
+          "dict[array](kind,elements,min_items,max_items,allow_scalar)": {
+           "kind": {
+            "str": null
+           },
+           "elements": {
+            "list": {
+             "dict[path](kind,resource_kind)": {
+              "kind": {
+               "str": null
+              },
+              "resource_kind": {
+               "str": null
+              }
+             },
+             "dict[quantity](kind,dimension,canonical_unit,special_values)": {
+              "kind": {
+               "str": null
+              },
+              "dimension": {
+               "str": null
+              },
+              "canonical_unit": {
+               "str": null
+              },
+              "special_values": {
+               "list": {
+                "str": null
+               }
+              }
+             },
+             "dict[string](kind)": {
+              "kind": {
+               "str": null
+              }
+             }
+            }
+           },
+           "min_items": {
+            "int": null
+           },
+           "max_items": {
+            "int": null,
+            "null": null
+           },
+           "allow_scalar": {
+            "bool": null
+           }
+          },
+          "dict[bool](kind)": {
+           "kind": {
+            "str": null
+           }
+          },
+          "dict[choice](kind,values)": {
+           "kind": {
+            "str": null
+           },
+           "values": {
+            "list": {
+             "str": null
+            }
+           }
+          },
+          "dict[float](kind)": {
+           "kind": {
+            "str": null
+           }
+          },
+          "dict[integer](kind)": {
+           "kind": {
+            "str": null
+           }
+          },
+          "dict[optional](kind,values,states)": {
+           "kind": {
+            "str": null
+           },
+           "values": {
+            "list": {
+             "dict[array](kind,elements,min_items,max_items,allow_scalar)": {
+              "kind": {
+               "str": null
+              },
+              "elements": {
+               "list": {
+                "dict[integer](kind)": {
+                 "kind": {
+                  "str": null
+                 }
+                }
+               }
+              },
+              "min_items": {
+               "int": null
+              },
+              "max_items": {
+               "int": null
+              },
+              "allow_scalar": {
+               "bool": null
+              }
+             },
+             "dict[choice](kind,values)": {
+              "kind": {
+               "str": null
+              },
+              "values": {
+               "list": {
+                "str": null
+               }
+              }
+             },
+             "dict[float](kind)": {
+              "kind": {
+               "str": null
+              }
+             },
+             "dict[integer](kind)": {
+              "kind": {
+               "str": null
+              }
+             },
+             "dict[path](kind,resource_kind)": {
+              "kind": {
+               "str": null
+              },
+              "resource_kind": {
+               "str": null
+              }
+             },
+             "dict[string](kind)": {
+              "kind": {
+               "str": null
+              }
+             }
+            }
+           },
+           "states": {
+            "list": {
+             "str": null
+            }
+           }
+          },
+          "dict[path](kind,resource_kind)": {
+           "kind": {
+            "str": null
+           },
+           "resource_kind": {
+            "str": null
+           }
+          },
+          "dict[quantity](kind,dimension,canonical_unit,special_values)": {
+           "kind": {
+            "str": null
+           },
+           "dimension": {
+            "str": null
+           },
+           "canonical_unit": {
+            "str": null
+           },
+           "special_values": {
+            "list": {}
+           }
+          },
+          "dict[string](kind)": {
+           "kind": {
+            "str": null
+           }
+          }
+         },
+         "unit_dimension": {
+          "null": null,
+          "str": null
+         },
+         "semantic_role": {
+          "str": null
+         },
+         "documentation": {
+          "dict(summary,details,examples)": {
+           "summary": {
+            "str": null
+           },
+           "details": {
+            "null": null,
+            "str": null
+           },
+           "examples": {
+            "list": {
+             "str": null
+            }
+           }
+          }
+         },
+         "persistence_class": {
+          "str": null
+         }
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "vocabulary": {
+   "adapter": [
+    "identity",
+    "omit_none",
+    "string_list_csv"
+   ],
+   "context_role": [
+    "field_selection",
+    "input_dataset",
+    "mask_reference",
+    "output_product",
+    "presentation",
+    "region_reference",
+    "spectral_window_selection"
+   ],
+   "dimension": [
+    "angle",
+    "flux_density"
+   ],
+   "persistence_class": [
+    "profile"
+   ],
+   "resource_kind": [
+    "any",
+    "archive",
+    "calibration_table",
+    "directory",
+    "file",
+    "image",
+    "measurement_set",
+    "product"
+   ],
+   "semantic_role": [
+    "algorithm",
+    "geometry",
+    "input_data",
+    "output_data",
+    "output_policy",
+    "physical_quantity",
+    "presentation",
+    "selection"
+   ],
+   "unit_dimension": [
+    "angle",
+    "data_size",
+    "flux_density"
+   ]
+  }
+ },
+ "states": {
+  "values": {
+   "bool": null,
+   "float": null,
+   "int": null,
+   "list": {
+    "int": null,
+    "str": null
+   },
+   "null": null,
+   "str": null
+  },
+  "origins": [
+   "default"
+  ],
+  "diagnostics": {
+   "dict(level,code,message,parameter,line,column,suggestions)": {
+    "level": {
+     "str": null
+    },
+    "code": {
+     "str": null
+    },
+    "message": {
+     "str": null
+    },
+    "parameter": {
+     "str": null
+    },
+    "line": {
+     "null": null
+    },
+    "column": {
+     "null": null
+    },
+    "suggestions": {
+     "list": {}
+    }
+   }
+  },
+  "diagnostic_codes": [
+   "missing_required"
+  ]
+ },
+ "plots": {
+  "uv_coverage": {
+   "result": {
+    "title": "UV Coverage",
+    "summary": "UV Coverage. Rows=690 Points=690 Data column=data.",
+    "header_lines": [],
+    "show_legend": true,
+    "measurement_set": "<ms>",
+    "preset": "uv_coverage",
+    "selection_summary": "data column data",
+    "panels": [
+     {
+      "id": "msexplore-uv_coverage",
+      "title": "UV Coverage",
+      "axes": [
+       {
+        "id": "x",
+        "label": "U (m)",
+        "unit": "m",
+        "lower": -3966.3994515493023,
+        "upper": 4783.754157984691
+       },
+       {
+        "id": "y",
+        "label": "V (m)",
+        "unit": "m",
+        "lower": -3901.049336121374,
+        "upper": 3111.2479681497452
+       }
+      ],
+      "series": [
+       {
+        "label": "J1423-7829",
+        "color_group": "field-1",
+        "y_axis_id": "y",
+        "x": {
+         "count": 690,
+         "finite": 690,
+         "min": -3966.3994515493023,
+         "max": 4783.754157984691,
+         "sum": 1148957.7832544057
+        },
+        "y": {
+         "count": 690,
+         "finite": 690,
+         "min": -3901.049336121374,
+         "max": 3111.2479681497452,
+         "sum": -752212.4669533381
+        },
+        "provenance_count": 690,
+        "provenance_ends": [
+         {
+          "row": 345,
+          "corr": 0,
+          "chan_start": 0,
+          "chan_end": 64
+         },
+         {
+          "row": 1057,
+          "corr": 0,
+          "chan_start": 0,
+          "chan_end": 1
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  "antenna_layout": {
+   "result": {
+    "title": "Antenna Layout",
+    "summary": "Metadata-oriented MeasurementSet plot.",
+    "header_lines": [],
+    "show_legend": true,
+    "measurement_set": "<ms>",
+    "preset": "antenna_layout",
+    "selection_summary": "data column data",
+    "panels": [
+     {
+      "id": "msexplore-antenna_layout",
+      "title": "Antenna Layout",
+      "axes": [
+       {
+        "id": "x",
+        "label": "East Offset (m)",
+        "unit": "m",
+        "lower": -1315.551810253423,
+        "upper": 4044.906039318441
+       },
+       {
+        "id": "y",
+        "label": "North Offset (m)",
+        "unit": "m",
+        "lower": -3694.218670342364,
+        "upper": 4984.861004385301
+       }
+      ],
+      "series": [
+       {
+        "label": "Antennas",
+        "color_group": "antenna",
+        "y_axis_id": "y",
+        "x": {
+         "count": 13,
+         "finite": 13,
+         "min": -1117.016334343354,
+         "max": 3846.3705634083717,
+         "sum": 21953.786986190895
+        },
+        "y": {
+         "count": 13,
+         "finite": 13,
+         "min": -3372.7712749820803,
+         "max": 4663.413609025018,
+         "sum": -0.02250764743939726
+        },
+        "provenance_count": 0,
+        "provenance_ends": []
+       }
+      ]
+     }
+    ]
+   }
+  },
+  "scan_timeline": {
+   "result": {
+    "title": "Scan Timeline",
+    "summary": "Metadata-oriented MeasurementSet plot.",
+    "header_lines": [],
+    "show_legend": true,
+    "measurement_set": "<ms>",
+    "preset": "scan_timeline",
+    "selection_summary": "data column data",
+    "panels": [
+     {
+      "id": "msexplore-scan_timeline",
+      "title": "Scan Timeline",
+      "axes": [
+       {
+        "id": "time",
+        "label": "Time",
+        "unit": "MJD seconds",
+        "lower": 4917926158.848,
+        "upper": 4917926283.84
+       },
+       {
+        "id": "scan",
+        "label": "Scan",
+        "unit": "",
+        "lower": -0.5,
+        "upper": 1.5
+       }
+      ],
+      "series": [
+       {
+        "label": "Scan 1",
+        "color_group": "J1617-7717",
+        "y_axis_id": "scan",
+        "x": {
+         "count": 0,
+         "finite": 0,
+         "min": null,
+         "max": null,
+         "sum": null
+        },
+        "y": {
+         "count": 0,
+         "finite": 0,
+         "min": null,
+         "max": null,
+         "sum": null
+        },
+        "provenance_count": 0,
+        "provenance_ends": []
+       },
+       {
+        "label": "Scan 3",
+        "color_group": "J1423-7829",
+        "y_axis_id": "scan",
+        "x": {
+         "count": 0,
+         "finite": 0,
+         "min": null,
+         "max": null,
+         "sum": null
+        },
+        "y": {
+         "count": 0,
+         "finite": 0,
+         "min": null,
+         "max": null,
+         "sum": null
+        },
+        "provenance_count": 0,
+        "provenance_ends": []
+       }
+      ]
+     }
+    ]
+   }
+  },
+  "spectral_window_coverage": {
+   "result": {
+    "title": "Spectral Window Coverage",
+    "summary": "Metadata-oriented MeasurementSet plot.",
+    "header_lines": [],
+    "show_legend": true,
+    "measurement_set": "<ms>",
+    "preset": "spectral_window_coverage",
+    "selection_summary": "data column data",
+    "panels": [
+     {
+      "id": "msexplore-spectral_window_coverage",
+      "title": "Spectral Window Coverage",
+      "axes": [
+       {
+        "id": "frequency",
+        "label": "Frequency (GHz)",
+        "unit": "GHz",
+        "lower": 84.22592999989999,
+        "upper": 86.38592999989999
+       },
+       {
+        "id": "spw",
+        "label": "Spectral window",
+        "unit": "",
+        "lower": -0.5,
+        "upper": 1.5
+       }
+      ],
+      "series": [
+       {
+        "label": "SPW 1 ALMA_RB_03#BB_1#SW-01#FULL_RES",
+        "color_group": "spw-1",
+        "y_axis_id": "spw",
+        "x": {
+         "count": 0,
+         "finite": 0,
+         "min": null,
+         "max": null,
+         "sum": null
+        },
+        "y": {
+         "count": 0,
+         "finite": 0,
+         "min": null,
+         "max": null,
+         "sum": null
+        },
+        "provenance_count": 0,
+        "provenance_ends": []
+       },
+       {
+        "label": "SPW 2 ALMA_RB_03#BB_1#SW-01#CH_AVG",
+        "color_group": "spw-2",
+        "y_axis_id": "spw",
+        "x": {
+         "count": 0,
+         "finite": 0,
+         "min": null,
+         "max": null,
+         "sum": null
+        },
+        "y": {
+         "count": 0,
+         "finite": 0,
+         "min": null,
+         "max": null,
+         "sum": null
+        },
+        "provenance_count": 0,
+        "provenance_ends": []
+       }
+      ]
+     }
+    ]
+   }
+  },
+  "phase_vs_time": {
+   "result": {
+    "title": "Phase vs Time",
+    "summary": "Phase vs Time. Rows=25 Points=3124 Data column=data. Sampled rows=39/1058.",
+    "header_lines": [],
+    "show_legend": true,
+    "measurement_set": "<ms>",
+    "preset": "phase_vs_time",
+    "selection_summary": "data column data",
+    "panels": [
+     {
+      "id": "msexplore-phase_vs_time",
+      "title": "Phase vs Time",
+      "axes": [
+       {
+        "id": "x",
+        "label": "Time (MJD seconds)",
+        "unit": "MJD seconds",
+        "lower": 4917926256.0,
+        "upper": 4917926282.88
+       },
+       {
+        "id": "y",
+        "label": "Phase (deg)",
+        "unit": "deg",
+        "lower": -180.0,
+        "upper": 180.0
+       }
+      ],
+      "series": [
+       {
+        "label": "J1423-7829",
+        "color_group": "field-1",
+        "y_axis_id": "y",
+        "x": {
+         "count": 3124,
+         "finite": 3124,
+         "min": 4917926256.0,
+         "max": 4917926282.88,
+         "sum": 15363601664762.879
+        },
+        "y": {
+         "count": 3124,
+         "finite": 3124,
+         "min": -179.74722613163348,
+         "max": 180.0,
+         "sum": 28026.057531567414
+        },
+        "provenance_count": 3124,
+        "provenance_ends": [
+         {
+          "row": 361,
+          "corr": 0,
+          "chan_start": 0,
+          "chan_end": 1
+         },
+         {
+          "row": 1057,
+          "corr": 3,
+          "chan_start": 0,
+          "chan_end": 1
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  "amplitude_phase_vs_time_stacked": {
+   "result": {
+    "title": "Amplitude / Phase vs Time (Stacked)",
+    "summary": "Amplitude / Phase vs Time (Stacked). Plots=2 Data column=data",
+    "header_lines": [],
+    "show_legend": true,
+    "measurement_set": "<ms>",
+    "preset": "amplitude_phase_vs_time_stacked",
+    "selection_summary": "data column data",
+    "panels": [
+     {
+      "id": "plot-0",
+      "title": "Amplitude vs Time",
+      "axes": [
+       {
+        "id": "x",
+        "label": "Time (MJD seconds)",
+        "unit": "MJD seconds",
+        "lower": 4917926256.0,
+        "upper": 4917926282.88
+       },
+       {
+        "id": "y",
+        "label": "Amplitude",
+        "unit": "",
+        "lower": 0.0,
+        "upper": 0.049187962415319086
+       }
+      ],
+      "series": [
+       {
+        "label": "J1423-7829",
+        "color_group": "field-1",
+        "y_axis_id": "y",
+        "x": {
+         "count": 3124,
+         "finite": 3124,
+         "min": 4917926256.0,
+         "max": 4917926282.88,
+         "sum": 15363601664762.879
+        },
+        "y": {
+         "count": 3124,
+         "finite": 3124,
+         "min": 0.0,
+         "max": 0.049187962415319086,
+         "sum": 0.8952075047770135
+        },
+        "provenance_count": 3124,
+        "provenance_ends": [
+         {
+          "row": 361,
+          "corr": 0,
+          "chan_start": 0,
+          "chan_end": 1
+         },
+         {
+          "row": 1057,
+          "corr": 3,
+          "chan_start": 0,
+          "chan_end": 1
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "id": "plot-1",
+      "title": "Phase vs Time",
+      "axes": [
+       {
+        "id": "x",
+        "label": "Time (MJD seconds)",
+        "unit": "MJD seconds",
+        "lower": 4917926256.0,
+        "upper": 4917926282.88
+       },
+       {
+        "id": "y",
+        "label": "Phase (deg)",
+        "unit": "deg",
+        "lower": -180.0,
+        "upper": 180.0
+       }
+      ],
+      "series": [
+       {
+        "label": "J1423-7829",
+        "color_group": "field-1",
+        "y_axis_id": "y",
+        "x": {
+         "count": 3124,
+         "finite": 3124,
+         "min": 4917926256.0,
+         "max": 4917926282.88,
+         "sum": 15363601664762.879
+        },
+        "y": {
+         "count": 3124,
+         "finite": 3124,
+         "min": -179.74722613163348,
+         "max": 180.0,
+         "sum": 28026.057531567414
+        },
+        "provenance_count": 3124,
+        "provenance_ends": [
+         {
+          "row": 361,
+          "corr": 0,
+          "chan_start": 0,
+          "chan_end": 1
+         },
+         {
+          "row": 1057,
+          "corr": 3,
+          "chan_start": 0,
+          "chan_end": 1
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  "weight_vs_time": {
+   "result": {
+    "title": "Weight vs Time",
+    "summary": "Weight vs Time. Rows=690 Points=2760 Data column=data.",
+    "header_lines": [],
+    "show_legend": true,
+    "measurement_set": "<ms>",
+    "preset": "weight_vs_time",
+    "selection_summary": "data column data",
+    "panels": [
+     {
+      "id": "msexplore-weight_vs_time",
+      "title": "Weight vs Time",
+      "axes": [
+       {
+        "id": "x",
+        "label": "Time (MJD seconds)",
+        "unit": "MJD seconds",
+        "lower": 4917926256.0,
+        "upper": 4917926282.88
+       },
+       {
+        "id": "y",
+        "label": "Weight",
+        "unit": "",
+        "lower": 120000000.0,
+        "upper": 6960000000.0
+       }
+      ],
+      "series": [
+       {
+        "label": "J1423-7829",
+        "color_group": "field-1",
+        "y_axis_id": "y",
+        "x": {
+         "count": 2760,
+         "finite": 2760,
+         "min": 4917926256.0,
+         "max": 4917926282.88,
+         "sum": 13573476503654.398
+        },
+        "y": {
+         "count": 2760,
+         "finite": 2760,
+         "min": 120000000.0,
+         "max": 6960000000.0,
+         "sum": 9770400000000.0
+        },
+        "provenance_count": 2760,
+        "provenance_ends": [
+         {
+          "row": 345,
+          "corr": 0,
+          "chan_start": 0,
+          "chan_end": 64
+         },
+         {
+          "row": 1057,
+          "corr": 3,
+          "chan_start": 0,
+          "chan_end": 1
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  "sigma_vs_time": {
+   "result": {
+    "title": "Sigma vs Time",
+    "summary": "Sigma vs Time. Rows=690 Points=2760 Data column=data.",
+    "header_lines": [],
+    "show_legend": true,
+    "measurement_set": "<ms>",
+    "preset": "sigma_vs_time",
+    "selection_summary": "data column data",
+    "panels": [
+     {
+      "id": "msexplore-sigma_vs_time",
+      "title": "Sigma vs Time",
+      "axes": [
+       {
+        "id": "x",
+        "label": "Time (MJD seconds)",
+        "unit": "MJD seconds",
+        "lower": 4917926256.0,
+        "upper": 4917926282.88
+       },
+       {
+        "id": "y",
+        "label": "Sigma",
+        "unit": "",
+        "lower": 1.1986582649115007e-05,
+        "upper": 9.128709643846378e-05
+       }
+      ],
+      "series": [
+       {
+        "label": "J1423-7829",
+        "color_group": "field-1",
+        "y_axis_id": "y",
+        "x": {
+         "count": 2760,
+         "finite": 2760,
+         "min": 4917926256.0,
+         "max": 4917926282.88,
+         "sum": 13573476503654.398
+        },
+        "y": {
+         "count": 2760,
+         "finite": 2760,
+         "min": 1.1986582649115007e-05,
+         "max": 9.128709643846378e-05,
+         "sum": 0.14251767714085872
+        },
+        "provenance_count": 2760,
+        "provenance_ends": [
+         {
+          "row": 345,
+          "corr": 0,
+          "chan_start": 0,
+          "chan_end": 64
+         },
+         {
+          "row": 1057,
+          "corr": 3,
+          "chan_start": 0,
+          "chan_end": 1
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  "flag_vs_time": {
+   "result": {
+    "title": "Flag vs Time",
+    "summary": "Flag vs Time. Rows=39 Points=4944 Data column=data. Sampled rows=39/1058.",
+    "header_lines": [],
+    "show_legend": true,
+    "measurement_set": "<ms>",
+    "preset": "flag_vs_time",
+    "selection_summary": "data column data",
+    "panels": [
+     {
+      "id": "msexplore-flag_vs_time",
+      "title": "Flag vs Time",
+      "axes": [
+       {
+        "id": "x",
+        "label": "Time (MJD seconds)",
+        "unit": "MJD seconds",
+        "lower": 4917926159.808,
+        "upper": 4917926282.88
+       },
+       {
+        "id": "y",
+        "label": "Flag",
+        "unit": "",
+        "lower": 0.0,
+        "upper": 1.0
+       }
+      ],
+      "series": [
+       {
+        "label": "J1617-7717",
+        "color_group": "field-0",
+        "y_axis_id": "y",
+        "x": {
+         "count": 1560,
+         "finite": 1560,
+         "min": 4917926159.808,
+         "max": 4917926175.36,
+         "sum": 7671964818931.968
+        },
+        "y": {
+         "count": 1560,
+         "finite": 1560,
+         "min": 1.0,
+         "max": 1.0,
+         "sum": 1560.0
+        },
+        "provenance_count": 1560,
+        "provenance_ends": [
+         {
+          "row": 0,
+          "corr": 0,
+          "chan_start": 0,
+          "chan_end": 1
+         },
+         {
+          "row": 305,
+          "corr": 3,
+          "chan_start": 0,
+          "chan_end": 1
+         }
+        ]
+       },
+       {
+        "label": "J1423-7829",
+        "color_group": "field-1",
+        "y_axis_id": "y",
+        "x": {
+         "count": 3384,
+         "finite": 3384,
+         "min": 4917926254.08,
+         "max": 4917926282.88,
+         "sum": 16642262490823.68
+        },
+        "y": {
+         "count": 3384,
+         "finite": 3384,
+         "min": 0.0,
+         "max": 1.0,
+         "sum": 260.0
+        },
+        "provenance_count": 3384,
+        "provenance_ends": [
+         {
+          "row": 333,
+          "corr": 0,
+          "chan_start": 0,
+          "chan_end": 1
+         },
+         {
+          "row": 1057,
+          "corr": 3,
+          "chan_start": 0,
+          "chan_end": 1
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  "weight_spectrum_vs_time": {
+   "error": "ValueError",
+   "message": "reason='<ms>: msexplore requires WEIGHT_SPECTRUM data for selected row slot 13'"
+  },
+  "sigma_spectrum_vs_time": {
+   "error": "ValueError",
+   "message": "reason='<ms>: msexplore requires SIGMA_SPECTRUM data for selected row slot 13'"
+  },
+  "flag_row_vs_time": {
+   "result": {
+    "title": "Flag Row vs Time",
+    "summary": "Flag Row vs Time. Rows=1058 Points=1058 Data column=data.",
+    "header_lines": [],
+    "show_legend": true,
+    "measurement_set": "<ms>",
+    "preset": "flag_row_vs_time",
+    "selection_summary": "data column data",
+    "panels": [
+     {
+      "id": "msexplore-flagrow_vs_time",
+      "title": "Flag Row vs Time",
+      "axes": [
+       {
+        "id": "x",
+        "label": "Time (MJD seconds)",
+        "unit": "MJD seconds",
+        "lower": 4917926159.808,
+        "upper": 4917926282.88
+       },
+       {
+        "id": "y",
+        "label": "Flag Row",
+        "unit": "",
+        "lower": 0.0,
+        "upper": 1.0
+       }
+      ],
+      "series": [
+       {
+        "label": "J1617-7717",
+        "color_group": "field-0",
+        "y_axis_id": "y",
+        "x": {
+         "count": 322,
+         "finite": 322,
+         "min": 4917926159.808,
+         "max": 4917926175.36,
+         "sum": 1583572225869.312
+        },
+        "y": {
+         "count": 322,
+         "finite": 322,
+         "min": 1.0,
+         "max": 1.0,
+         "sum": 322.0
+        },
+        "provenance_count": 322,
+        "provenance_ends": [
+         {
+          "row": 0,
+          "corr": 0,
+          "chan_start": 0,
+          "chan_end": 64
+         },
+         {
+          "row": 321,
+          "corr": 0,
+          "chan_start": 0,
+          "chan_end": 1
+         }
+        ]
+       },
+       {
+        "label": "J1423-7829",
+        "color_group": "field-1",
+        "y_axis_id": "y",
+        "x": {
+         "count": 736,
+         "finite": 736,
+         "min": 4917926254.08,
+         "max": 4917926282.88,
+         "sum": 3619593733601.2793
+        },
+        "y": {
+         "count": 736,
+         "finite": 736,
+         "min": 0.0,
+         "max": 1.0,
+         "sum": 46.0
+        },
+        "provenance_count": 736,
+        "provenance_ends": [
+         {
+          "row": 322,
+          "corr": 0,
+          "chan_start": 0,
+          "chan_end": 64
+         },
+         {
+          "row": 1057,
+          "corr": 0,
+          "chan_start": 0,
+          "chan_end": 1
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  "elevation_vs_time": {
+   "result": {
+    "title": "Elevation vs Time",
+    "summary": "Elevation vs Time. Rows=15 Points=15 Data column=data.",
+    "header_lines": [],
+    "show_legend": true,
+    "measurement_set": "<ms>",
+    "preset": "elevation_vs_time",
+    "selection_summary": "data column data",
+    "panels": [
+     {
+      "id": "msexplore-elevation_vs_time",
+      "title": "Elevation vs Time",
+      "axes": [
+       {
+        "id": "x",
+        "label": "Time (MJD seconds)",
+        "unit": "MJD seconds",
+        "lower": 4917926256.0,
+        "upper": 4917926282.88
+       },
+       {
+        "id": "y",
+        "label": "Elevation (deg)",
+        "unit": "deg",
+        "lower": 16.003996396648606,
+        "upper": 16.021396749003472
+       }
+      ],
+      "series": [
+       {
+        "label": "J1423-7829",
+        "color_group": "field-1",
+        "y_axis_id": "y",
+        "x": {
+         "count": 15,
+         "finite": 15,
+         "min": 4917926256.0,
+         "max": 4917926282.88,
+         "sum": 73768894041.6
+        },
+        "y": {
+         "count": 15,
+         "finite": 15,
+         "min": 16.003996396648606,
+         "max": 16.021396749003472,
+         "sum": 240.19041870865271
+        },
+        "provenance_count": 15,
+        "provenance_ends": [
+         {
+          "row": 345,
+          "corr": 0,
+          "chan_start": 0,
+          "chan_end": 64
+         },
+         {
+          "row": 667,
+          "corr": 0,
+          "chan_start": 0,
+          "chan_end": 64
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  "azimuth_vs_time": {
+   "result": {
+    "title": "Azimuth vs Time",
+    "summary": "Azimuth vs Time. Rows=15 Points=15 Data column=data.",
+    "header_lines": [],
+    "show_legend": true,
+    "measurement_set": "<ms>",
+    "preset": "azimuth_vs_time",
+    "selection_summary": "data column data",
+    "panels": [
+     {
+      "id": "msexplore-azimuth_vs_time",
+      "title": "Azimuth vs Time",
+      "axes": [
+       {
+        "id": "x",
+        "label": "Time (MJD seconds)",
+        "unit": "MJD seconds",
+        "lower": 4917926256.0,
+        "upper": 4917926282.88
+       },
+       {
+        "id": "y",
+        "label": "Azimuth (deg)",
+        "unit": "deg",
+        "lower": 170.308960110734,
+        "upper": 170.32342492687576
+       }
+      ],
+      "series": [
+       {
+        "label": "J1423-7829",
+        "color_group": "field-1",
+        "y_axis_id": "y",
+        "x": {
+         "count": 15,
+         "finite": 15,
+         "min": 4917926256.0,
+         "max": 4917926282.88,
+         "sum": 73768894041.6
+        },
+        "y": {
+         "count": 15,
+         "finite": 15,
+         "min": 170.308960110734,
+         "max": 170.32342492687576,
+         "sum": 2554.742850343202
+        },
+        "provenance_count": 15,
+        "provenance_ends": [
+         {
+          "row": 345,
+          "corr": 0,
+          "chan_start": 0,
+          "chan_end": 64
+         },
+         {
+          "row": 667,
+          "corr": 0,
+          "chan_start": 0,
+          "chan_end": 64
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  "hour_angle_vs_time": {
+   "result": {
+    "title": "Hour Angle vs Time",
+    "summary": "Hour Angle vs Time. Rows=15 Points=15 Data column=data.",
+    "header_lines": [],
+    "show_legend": true,
+    "measurement_set": "<ms>",
+    "preset": "hour_angle_vs_time",
+    "selection_summary": "data column data",
+    "panels": [
+     {
+      "id": "msexplore-hour_angle_vs_time",
+      "title": "Hour Angle vs Time",
+      "axes": [
+       {
+        "id": "x",
+        "label": "Time (MJD seconds)",
+        "unit": "MJD seconds",
+        "lower": 4917926256.0,
+        "upper": 4917926282.88
+       },
+       {
+        "id": "y",
+        "label": "Hour Angle (hours)",
+        "unit": "hours",
+        "lower": 15.637162287290995,
+        "upper": 15.644649434271688
+       }
+      ],
+      "series": [
+       {
+        "label": "J1423-7829",
+        "color_group": "field-1",
+        "y_axis_id": "y",
+        "x": {
+         "count": 15,
+         "finite": 15,
+         "min": 4917926256.0,
+         "max": 4917926282.88,
+         "sum": 73768894041.6
+        },
+        "y": {
+         "count": 15,
+         "finite": 15,
+         "min": 15.637162287290995,
+         "max": 15.644649434271688,
+         "sum": 234.61358791041937
+        },
+        "provenance_count": 15,
+        "provenance_ends": [
+         {
+          "row": 345,
+          "corr": 0,
+          "chan_start": 0,
+          "chan_end": 64
+         },
+         {
+          "row": 667,
+          "corr": 0,
+          "chan_start": 0,
+          "chan_end": 64
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  "parallactic_angle_vs_time": {
+   "result": {
+    "title": "Parallactic Angle vs Time",
+    "summary": "Parallactic Angle vs Time. Rows=15 Points=15 Data column=data.",
+    "header_lines": [],
+    "show_legend": true,
+    "measurement_set": "<ms>",
+    "preset": "parallactic_angle_vs_time",
+    "selection_summary": "data column data",
+    "panels": [
+     {
+      "id": "msexplore-parallactic_angle_vs_time",
+      "title": "Parallactic Angle vs Time",
+      "axes": [
+       {
+        "id": "x",
+        "label": "Time (MJD seconds)",
+        "unit": "MJD seconds",
+        "lower": 4917926256.0,
+        "upper": 4917926282.88
+       },
+       {
+        "id": "y",
+        "label": "Parallactic Angle (deg)",
+        "unit": "deg",
+        "lower": -128.67893990646073,
+        "upper": -128.57285357462655
+       }
+      ],
+      "series": [
+       {
+        "label": "J1423-7829",
+        "color_group": "field-1",
+        "y_axis_id": "y",
+        "x": {
+         "count": 15,
+         "finite": 15,
+         "min": 4917926256.0,
+         "max": 4917926282.88,
+         "sum": 73768894041.6
+        },
+        "y": {
+         "count": 15,
+         "finite": 15,
+         "min": -128.67893990646073,
+         "max": -128.57285357462655,
+         "sum": -1929.388456553704
+        },
+        "provenance_count": 15,
+        "provenance_ends": [
+         {
+          "row": 345,
+          "corr": 0,
+          "chan_start": 0,
+          "chan_end": 64
+         },
+         {
+          "row": 667,
+          "corr": 0,
+          "chan_start": 0,
+          "chan_end": 64
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  "azimuth_vs_elevation": {
+   "result": {
+    "title": "Azimuth vs Elevation",
+    "summary": "Azimuth vs Elevation. Rows=15 Points=15 Data column=data.",
+    "header_lines": [],
+    "show_legend": true,
+    "measurement_set": "<ms>",
+    "preset": "azimuth_vs_elevation",
+    "selection_summary": "data column data",
+    "panels": [
+     {
+      "id": "msexplore-azimuth_vs_elevation",
+      "title": "Azimuth vs Elevation",
+      "axes": [
+       {
+        "id": "x",
+        "label": "Elevation (deg)",
+        "unit": "deg",
+        "lower": 16.003996396648606,
+        "upper": 16.021396749003472
+       },
+       {
+        "id": "y",
+        "label": "Azimuth (deg)",
+        "unit": "deg",
+        "lower": 170.308960110734,
+        "upper": 170.32342492687576
+       }
+      ],
+      "series": [
+       {
+        "label": "J1423-7829",
+        "color_group": "field-1",
+        "y_axis_id": "y",
+        "x": {
+         "count": 15,
+         "finite": 15,
+         "min": 16.003996396648606,
+         "max": 16.021396749003472,
+         "sum": 240.19041870865271
+        },
+        "y": {
+         "count": 15,
+         "finite": 15,
+         "min": 170.308960110734,
+         "max": 170.32342492687576,
+         "sum": 2554.742850343202
+        },
+        "provenance_count": 15,
+        "provenance_ends": [
+         {
+          "row": 345,
+          "corr": 0,
+          "chan_start": 0,
+          "chan_end": 64
+         },
+         {
+          "row": 667,
+          "corr": 0,
+          "chan_start": 0,
+          "chan_end": 64
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  "amplitude_vs_frequency": {
+   "result": {
+    "title": "Amplitude vs Frequency",
+    "summary": "Amplitude vs Frequency. Rows=25 Points=3124 Data column=data. Sampled rows=39/1058.",
+    "header_lines": [],
+    "show_legend": true,
+    "measurement_set": "<ms>",
+    "preset": "amplitude_vs_frequency",
+    "selection_summary": "data column data",
+    "panels": [
+     {
+      "id": "msexplore-amplitude_vs_frequency",
+      "title": "Amplitude vs Frequency",
+      "axes": [
+       {
+        "id": "x",
+        "label": "Frequency (Hz)",
+        "unit": "Hz",
+        "lower": 84321554999.9,
+        "upper": 86290304999.9
+       },
+       {
+        "id": "y",
+        "label": "Amplitude",
+        "unit": "",
+        "lower": 0.0,
+        "upper": 0.049187962415319086
+       }
+      ],
+      "series": [
+       {
+        "label": "J1423-7829",
+        "color_group": "field-1",
+        "y_axis_id": "y",
+        "x": {
+         "count": 3124,
+         "finite": 3124,
+         "min": 84321554999.9,
+         "max": 86290304999.9,
+         "sum": 266494912819687.62
+        },
+        "y": {
+         "count": 3124,
+         "finite": 3124,
+         "min": 0.0,
+         "max": 0.049187962415319086,
+         "sum": 0.8952075047770135
+        },
+        "provenance_count": 3124,
+        "provenance_ends": [
+         {
+          "row": 361,
+          "corr": 0,
+          "chan_start": 0,
+          "chan_end": 1
+         },
+         {
+          "row": 1057,
+          "corr": 3,
+          "chan_start": 0,
+          "chan_end": 1
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  "amplitude_vs_channel": {
+   "result": {
+    "title": "Amplitude vs Channel",
+    "summary": "Amplitude vs Channel. Rows=25 Points=3124 Data column=data. Sampled rows=39/1058.",
+    "header_lines": [],
+    "show_legend": true,
+    "measurement_set": "<ms>",
+    "preset": "amplitude_vs_channel",
+    "selection_summary": "data column data",
+    "panels": [
+     {
+      "id": "msexplore-amplitude_vs_channel",
+      "title": "Amplitude vs Channel",
+      "axes": [
+       {
+        "id": "x",
+        "label": "Channel",
+        "unit": "",
+        "lower": 0.0,
+        "upper": 63.0
+       },
+       {
+        "id": "y",
+        "label": "Amplitude",
+        "unit": "",
+        "lower": 0.0,
+        "upper": 0.049187962415319086
+       }
+      ],
+      "series": [
+       {
+        "label": "J1423-7829",
+        "color_group": "field-1",
+        "y_axis_id": "y",
+        "x": {
+         "count": 3124,
+         "finite": 3124,
+         "min": 0.0,
+         "max": 63.0,
+         "sum": 96768.0
+        },
+        "y": {
+         "count": 3124,
+         "finite": 3124,
+         "min": 0.0,
+         "max": 0.049187962415319086,
+         "sum": 0.8952075047770133
+        },
+        "provenance_count": 3124,
+        "provenance_ends": [
+         {
+          "row": 361,
+          "corr": 0,
+          "chan_start": 0,
+          "chan_end": 1
+         },
+         {
+          "row": 1057,
+          "corr": 3,
+          "chan_start": 0,
+          "chan_end": 1
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  "phase_vs_channel": {
+   "result": {
+    "title": "Phase vs Channel",
+    "summary": "Phase vs Channel. Rows=25 Points=3124 Data column=data. Sampled rows=39/1058.",
+    "header_lines": [],
+    "show_legend": true,
+    "measurement_set": "<ms>",
+    "preset": "phase_vs_channel",
+    "selection_summary": "data column data",
+    "panels": [
+     {
+      "id": "msexplore-phase_vs_channel",
+      "title": "Phase vs Channel",
+      "axes": [
+       {
+        "id": "x",
+        "label": "Channel",
+        "unit": "",
+        "lower": 0.0,
+        "upper": 63.0
+       },
+       {
+        "id": "y",
+        "label": "Phase (deg)",
+        "unit": "deg",
+        "lower": -180.0,
+        "upper": 180.0
+       }
+      ],
+      "series": [
+       {
+        "label": "J1423-7829",
+        "color_group": "field-1",
+        "y_axis_id": "y",
+        "x": {
+         "count": 3124,
+         "finite": 3124,
+         "min": 0.0,
+         "max": 63.0,
+         "sum": 96768.0
+        },
+        "y": {
+         "count": 3124,
+         "finite": 3124,
+         "min": -179.74722613163348,
+         "max": 180.0,
+         "sum": 28026.057531567414
+        },
+        "provenance_count": 3124,
+        "provenance_ends": [
+         {
+          "row": 361,
+          "corr": 0,
+          "chan_start": 0,
+          "chan_end": 1
+         },
+         {
+          "row": 1057,
+          "corr": 3,
+          "chan_start": 0,
+          "chan_end": 1
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  "phase_vs_frequency": {
+   "result": {
+    "title": "Phase vs Frequency",
+    "summary": "Phase vs Frequency. Rows=25 Points=3124 Data column=data. Sampled rows=39/1058.",
+    "header_lines": [],
+    "show_legend": true,
+    "measurement_set": "<ms>",
+    "preset": "phase_vs_frequency",
+    "selection_summary": "data column data",
+    "panels": [
+     {
+      "id": "msexplore-phase_vs_frequency",
+      "title": "Phase vs Frequency",
+      "axes": [
+       {
+        "id": "x",
+        "label": "Frequency (Hz)",
+        "unit": "Hz",
+        "lower": 84321554999.9,
+        "upper": 86290304999.9
+       },
+       {
+        "id": "y",
+        "label": "Phase (deg)",
+        "unit": "deg",
+        "lower": -180.0,
+        "upper": 180.0
+       }
+      ],
+      "series": [
+       {
+        "label": "J1423-7829",
+        "color_group": "field-1",
+        "y_axis_id": "y",
+        "x": {
+         "count": 3124,
+         "finite": 3124,
+         "min": 84321554999.9,
+         "max": 86290304999.9,
+         "sum": 266494912819687.62
+        },
+        "y": {
+         "count": 3124,
+         "finite": 3124,
+         "min": -179.74722613163348,
+         "max": 180.0,
+         "sum": 28026.05753156742
+        },
+        "provenance_count": 3124,
+        "provenance_ends": [
+         {
+          "row": 361,
+          "corr": 0,
+          "chan_start": 0,
+          "chan_end": 1
+         },
+         {
+          "row": 1057,
+          "corr": 3,
+          "chan_start": 0,
+          "chan_end": 1
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  "amplitude_vs_velocity": {
+   "result": {
+    "title": "Amplitude vs Velocity",
+    "summary": "Amplitude vs Velocity. Rows=25 Points=3124 Data column=data. Sampled rows=39/1058.",
+    "header_lines": [],
+    "show_legend": true,
+    "measurement_set": "<ms>",
+    "preset": "amplitude_vs_velocity",
+    "selection_summary": "data column data",
+    "panels": [
+     {
+      "id": "msexplore-amplitude_vs_velocity",
+      "title": "Amplitude vs Velocity",
+      "axes": [
+       {
+        "id": "x",
+        "label": "Velocity (km/s)",
+        "unit": "km/s",
+        "lower": -3459.410158755542,
+        "upper": 3459.4101587557416
+       },
+       {
+        "id": "y",
+        "label": "Amplitude",
+        "unit": "",
+        "lower": 0.0,
+        "upper": 0.049187962415319086
+       }
+      ],
+      "series": [
+       {
+        "label": "J1423-7829",
+        "color_group": "field-1",
+        "y_axis_id": "y",
+        "x": {
+         "count": 3124,
+         "finite": 3124,
+         "min": -3459.410158755542,
+         "max": 3459.4101587557416,
+         "sum": 3.3248215913772583e-07
+        },
+        "y": {
+         "count": 3124,
+         "finite": 3124,
+         "min": 0.0,
+         "max": 0.049187962415319086,
+         "sum": 0.8952075047770134
+        },
+        "provenance_count": 3124,
+        "provenance_ends": [
+         {
+          "row": 361,
+          "corr": 0,
+          "chan_start": 0,
+          "chan_end": 1
+         },
+         {
+          "row": 1057,
+          "corr": 3,
+          "chan_start": 0,
+          "chan_end": 1
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  "phase_vs_velocity": {
+   "result": {
+    "title": "Phase vs Velocity",
+    "summary": "Phase vs Velocity. Rows=25 Points=3124 Data column=data. Sampled rows=39/1058.",
+    "header_lines": [],
+    "show_legend": true,
+    "measurement_set": "<ms>",
+    "preset": "phase_vs_velocity",
+    "selection_summary": "data column data",
+    "panels": [
+     {
+      "id": "msexplore-phase_vs_velocity",
+      "title": "Phase vs Velocity",
+      "axes": [
+       {
+        "id": "x",
+        "label": "Velocity (km/s)",
+        "unit": "km/s",
+        "lower": -3459.410158755542,
+        "upper": 3459.4101587557416
+       },
+       {
+        "id": "y",
+        "label": "Phase (deg)",
+        "unit": "deg",
+        "lower": -180.0,
+        "upper": 180.0
+       }
+      ],
+      "series": [
+       {
+        "label": "J1423-7829",
+        "color_group": "field-1",
+        "y_axis_id": "y",
+        "x": {
+         "count": 3124,
+         "finite": 3124,
+         "min": -3459.410158755542,
+         "max": 3459.4101587557416,
+         "sum": 3.3248215913772583e-07
+        },
+        "y": {
+         "count": 3124,
+         "finite": 3124,
+         "min": -179.74722613163348,
+         "max": 180.0,
+         "sum": 28026.057531567414
+        },
+        "provenance_count": 3124,
+        "provenance_ends": [
+         {
+          "row": 361,
+          "corr": 0,
+          "chan_start": 0,
+          "chan_end": 1
+         },
+         {
+          "row": 1057,
+          "corr": 3,
+          "chan_start": 0,
+          "chan_end": 1
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  "amplitude_vs_uv_distance": {
+   "result": {
+    "title": "Amplitude vs UV Distance",
+    "summary": "Amplitude vs UV Distance. Rows=25 Points=3124 Data column=data. Sampled rows=39/1058.",
+    "header_lines": [],
+    "show_legend": true,
+    "measurement_set": "<ms>",
+    "preset": "amplitude_vs_uv_distance",
+    "selection_summary": "data column data",
+    "panels": [
+     {
+      "id": "msexplore-amplitude_vs_uv_distance",
+      "title": "Amplitude vs UV Distance",
+      "axes": [
+       {
+        "id": "x",
+        "label": "UV Distance (m)",
+        "unit": "m",
+        "lower": 213.14047196595703,
+        "upper": 6062.125992688295
+       },
+       {
+        "id": "y",
+        "label": "Amplitude",
+        "unit": "",
+        "lower": 0.0,
+        "upper": 0.049187962415319086
+       }
+      ],
+      "series": [
+       {
+        "label": "J1423-7829",
+        "color_group": "field-1",
+        "y_axis_id": "y",
+        "x": {
+         "count": 3124,
+         "finite": 3124,
+         "min": 213.14047196595703,
+         "max": 6062.125992688295,
+         "sum": 10352362.227120977
+        },
+        "y": {
+         "count": 3124,
+         "finite": 3124,
+         "min": 0.0,
+         "max": 0.049187962415319086,
+         "sum": 0.8952075047770134
+        },
+        "provenance_count": 3124,
+        "provenance_ends": [
+         {
+          "row": 361,
+          "corr": 0,
+          "chan_start": 0,
+          "chan_end": 1
+         },
+         {
+          "row": 1057,
+          "corr": 3,
+          "chan_start": 0,
+          "chan_end": 1
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  "amplitude_vs_time": {
+   "result": {
+    "title": "Amplitude vs Time",
+    "summary": "Amplitude vs Time. Rows=25 Points=3124 Data column=data. Sampled rows=39/1058.",
+    "header_lines": [],
+    "show_legend": true,
+    "measurement_set": "<ms>",
+    "preset": "amplitude_vs_time",
+    "selection_summary": "data column data",
+    "panels": [
+     {
+      "id": "msexplore-amplitude_vs_time",
+      "title": "Amplitude vs Time",
+      "axes": [
+       {
+        "id": "x",
+        "label": "Time (MJD seconds)",
+        "unit": "MJD seconds",
+        "lower": 4917926256.0,
+        "upper": 4917926282.88
+       },
+       {
+        "id": "y",
+        "label": "Amplitude",
+        "unit": "",
+        "lower": 0.0,
+        "upper": 0.049187962415319086
+       }
+      ],
+      "series": [
+       {
+        "label": "J1423-7829",
+        "color_group": "field-1",
+        "y_axis_id": "y",
+        "x": {
+         "count": 3124,
+         "finite": 3124,
+         "min": 4917926256.0,
+         "max": 4917926282.88,
+         "sum": 15363601664762.879
+        },
+        "y": {
+         "count": 3124,
+         "finite": 3124,
+         "min": 0.0,
+         "max": 0.049187962415319086,
+         "sum": 0.8952075047770135
+        },
+        "provenance_count": 3124,
+        "provenance_ends": [
+         {
+          "row": 361,
+          "corr": 0,
+          "chan_start": 0,
+          "chan_end": 1
+         },
+         {
+          "row": 1057,
+          "corr": 3,
+          "chan_start": 0,
+          "chan_end": 1
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  "real_vs_imaginary": {
+   "result": {
+    "title": "Real vs Imaginary",
+    "summary": "Real vs Imaginary. Rows=25 Points=3124 Data column=data. Sampled rows=39/1058.",
+    "header_lines": [],
+    "show_legend": true,
+    "measurement_set": "<ms>",
+    "preset": "real_vs_imaginary",
+    "selection_summary": "data column data",
+    "panels": [
+     {
+      "id": "msexplore-real_vs_imaginary",
+      "title": "Real vs Imaginary",
+      "axes": [
+       {
+        "id": "x",
+        "label": "Real",
+        "unit": "",
+        "lower": -0.019812460988759995,
+        "upper": 0.04744834825396538
+       },
+       {
+        "id": "y",
+        "label": "Imaginary",
+        "unit": "",
+        "lower": -0.019296063110232353,
+        "upper": 0.044741563498973846
+       }
+      ],
+      "series": [
+       {
+        "label": "J1423-7829",
+        "color_group": "field-1",
+        "y_axis_id": "y",
+        "x": {
+         "count": 3124,
+         "finite": 3124,
+         "min": -0.019812460988759995,
+         "max": 0.04744834825396538,
+         "sum": 0.1799229328119054
+        },
+        "y": {
+         "count": 3124,
+         "finite": 3124,
+         "min": -0.019296063110232353,
+         "max": 0.044741563498973846,
+         "sum": 0.15350011267673835
+        },
+        "provenance_count": 3124,
+        "provenance_ends": [
+         {
+          "row": 361,
+          "corr": 0,
+          "chan_start": 0,
+          "chan_end": 1
+         },
+         {
+          "row": 1057,
+          "corr": 3,
+          "chan_start": 0,
+          "chan_end": 1
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  "amplitude_vs_time+field1+avgtime+color_spw": {
+   "result": {
+    "title": "Amplitude vs Time",
+    "summary": "Amplitude vs Time. Rows=690 Points=5980 Data column=data",
+    "header_lines": [],
+    "show_legend": true,
+    "measurement_set": "<ms>",
+    "preset": "amplitude_vs_time",
+    "selection_summary": "data column data, field 1",
+    "panels": [
+     {
+      "id": "msexplore-amplitude_vs_time",
+      "title": "Amplitude vs Time",
+      "axes": [
+       {
+        "id": "x",
+        "label": "Time (MJD seconds)",
+        "unit": "MJD seconds",
+        "lower": 4672029955.968,
+        "upper": 5163822582.912001
+       },
+       {
+        "id": "y",
+        "label": "Amplitude",
+        "unit": "",
+        "lower": 2.663684384429972e-07,
+        "upper": 0.05188570021834825
+       }
+      ],
+      "series": [
+       {
+        "label": "ALMA_RB_03#BB_1#SW-01#FULL_RES",
+        "color_group": "spw-1",
+        "y_axis_id": "y",
+        "x": {
+         "count": 5888,
+         "finite": 5888,
+         "min": 4917926269.440001,
+         "max": 4917926269.440001,
+         "sum": 28956749874462.73
+        },
+        "y": {
+         "count": 5888,
+         "finite": 5888,
+         "min": 6.415002051975731e-07,
+         "max": 0.05188570021834825,
+         "sum": 1.4018691047862788
+        },
+        "provenance_count": 5888,
+        "provenance_ends": [
+         {
+          "row": 345,
+          "corr": 0,
+          "chan_start": 0,
+          "chan_end": 1
+         },
+         {
+          "row": 367,
+          "corr": 3,
+          "chan_start": 63,
+          "chan_end": 64
+         }
+        ]
+       },
+       {
+        "label": "ALMA_RB_03#BB_1#SW-01#CH_AVG",
+        "color_group": "spw-2",
+        "y_axis_id": "y",
+        "x": {
+         "count": 92,
+         "finite": 92,
+         "min": 4917926269.440001,
+         "max": 4917926269.440001,
+         "sum": 452449216788.48016
+        },
+        "y": {
+         "count": 92,
+         "finite": 92,
+         "min": 2.663684384429972e-07,
+         "max": 9.520745704957425e-05,
+         "sum": 0.0038716074097035077
+        },
+        "provenance_count": 92,
+        "provenance_ends": [
+         {
+          "row": 713,
+          "corr": 0,
+          "chan_start": 0,
+          "chan_end": 1
+         },
+         {
+          "row": 735,
+          "corr": 3,
+          "chan_start": 0,
+          "chan_end": 1
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  "amplitude_vs_time+spw2": {
+   "result": {
+    "title": "Amplitude vs Time",
+    "summary": "Amplitude vs Time. Rows=345 Points=1380 Data column=data.",
+    "header_lines": [],
+    "show_legend": true,
+    "measurement_set": "<ms>",
+    "preset": "amplitude_vs_time",
+    "selection_summary": "data column data, spw 2",
+    "panels": [
+     {
+      "id": "msexplore-amplitude_vs_time",
+      "title": "Amplitude vs Time",
+      "axes": [
+       {
+        "id": "x",
+        "label": "Time (MJD seconds)",
+        "unit": "MJD seconds",
+        "lower": 4917926256.0,
+        "upper": 4917926282.88
+       },
+       {
+        "id": "y",
+        "label": "Amplitude",
+        "unit": "",
+        "lower": 5.650529146805638e-07,
+        "upper": 0.00012962392561208894
+       }
+      ],
+      "series": [
+       {
+        "label": "J1423-7829",
+        "color_group": "field-1",
+        "y_axis_id": "y",
+        "x": {
+         "count": 1380,
+         "finite": 1380,
+         "min": 4917926256.0,
+         "max": 4917926282.88,
+         "sum": 6786738251827.199
+        },
+        "y": {
+         "count": 1380,
+         "finite": 1380,
+         "min": 5.650529146805638e-07,
+         "max": 0.00012962392561208894,
+         "sum": 0.06916281572941044
+        },
+        "provenance_count": 1380,
+        "provenance_ends": [
+         {
+          "row": 713,
+          "corr": 0,
+          "chan_start": 0,
+          "chan_end": 1
+         },
+         {
+          "row": 1057,
+          "corr": 3,
+          "chan_start": 0,
+          "chan_end": 1
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  "amplitude_vs_channel+avgchannel+scalar": {
+   "result": {
+    "title": "Amplitude vs Channel",
+    "summary": "Amplitude vs Channel. Rows=509 Points=33656 Data column=data. Sampled rows=781/1058.",
+    "header_lines": [],
+    "show_legend": true,
+    "measurement_set": "<ms>",
+    "preset": "amplitude_vs_channel",
+    "selection_summary": "data column data",
+    "panels": [
+     {
+      "id": "msexplore-amplitude_vs_channel",
+      "title": "Amplitude vs Channel",
+      "axes": [
+       {
+        "id": "x",
+        "label": "Channel",
+        "unit": "",
+        "lower": 0.0,
+        "upper": 31.0
+       },
+       {
+        "id": "y",
+        "label": "Amplitude",
+        "unit": "",
+        "lower": 1.2634967281101296e-06,
+        "upper": 0.03122760993504272
+       }
+      ],
+      "series": [
+       {
+        "label": "ALMA_RB_03#BB_1#SW-01#FULL_RES",
+        "color_group": "spw-1",
+        "y_axis_id": "y",
+        "x": {
+         "count": 32640,
+         "finite": 32640,
+         "min": 0.0,
+         "max": 31.0,
+         "sum": 505920.0
+        },
+        "y": {
+         "count": 32640,
+         "finite": 32640,
+         "min": 4.303314653952839e-06,
+         "max": 0.03122760993504272,
+         "sum": 8.909169045208506
+        },
+        "provenance_count": 0,
+        "provenance_ends": []
+       },
+       {
+        "label": "ALMA_RB_03#BB_1#SW-01#CH_AVG",
+        "color_group": "spw-2",
+        "y_axis_id": "y",
+        "x": {
+         "count": 1016,
+         "finite": 1016,
+         "min": 0.0,
+         "max": 0.0,
+         "sum": 0.0
+        },
+        "y": {
+         "count": 1016,
+         "finite": 1016,
+         "min": 1.2634967281101296e-06,
+         "max": 0.00012437326405742054,
+         "sum": 0.05090583007182669
+        },
+        "provenance_count": 1016,
+        "provenance_ends": [
+         {
+          "row": 714,
+          "corr": 0,
+          "chan_start": 0,
+          "chan_end": 1
+         },
+         {
+          "row": 1057,
+          "corr": 3,
+          "chan_start": 0,
+          "chan_end": 1
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  "amplitude_vs_time+iteraxis_spw": {
+   "result": {
+    "title": "Amplitude vs Time",
+    "summary": "Amplitude vs Time. Panels=2 Rows=254 Points=33019 Data column=data. Sampled rows=390/1058.",
+    "header_lines": [],
+    "show_legend": true,
+    "measurement_set": "<ms>",
+    "preset": "amplitude_vs_time",
+    "selection_summary": "data column data",
+    "panels": [
+     {
+      "id": "panel-0",
+      "title": "ALMA_RB_03#BB_1#SW-01#FULL_RES",
+      "axes": [
+       {
+        "id": "x",
+        "label": "Time (MJD seconds)",
+        "unit": "MJD seconds",
+        "lower": 4917926256.0,
+        "upper": 4917926282.88
+       },
+       {
+        "id": "y",
+        "label": "Amplitude",
+        "unit": "",
+        "lower": 0.0,
+        "upper": 0.053547392453737366
+       }
+      ],
+      "series": [
+       {
+        "label": "J1423-7829",
+        "color_group": "field-1",
+        "y_axis_id": "y",
+        "x": {
+         "count": 32511,
+         "finite": 32511,
+         "min": 4917926256.0,
+         "max": 4917926282.88,
+         "sum": 159886700942336.62
+        },
+        "y": {
+         "count": 32511,
+         "finite": 32511,
+         "min": 0.0,
+         "max": 0.053547392453737366,
+         "sum": 9.056447448922022
+        },
+        "provenance_count": 0,
+        "provenance_ends": []
+       }
+      ]
+     },
+     {
+      "id": "panel-1",
+      "title": "ALMA_RB_03#BB_1#SW-01#CH_AVG",
+      "axes": [
+       {
+        "id": "x",
+        "label": "Time (MJD seconds)",
+        "unit": "MJD seconds",
+        "lower": 4917926256.0,
+        "upper": 4917926282.88
+       },
+       {
+        "id": "y",
+        "label": "Amplitude",
+        "unit": "",
+        "lower": 1.2634967281101296e-06,
+        "upper": 0.00012962392561208894
+       }
+      ],
+      "series": [
+       {
+        "label": "J1423-7829",
+        "color_group": "field-1",
+        "y_axis_id": "y",
+        "x": {
+         "count": 508,
+         "finite": 508,
+         "min": 4917926256.0,
+         "max": 4917926282.88,
+         "sum": 2498306544890.88
+        },
+        "y": {
+         "count": 508,
+         "finite": 508,
+         "min": 1.2634967281101296e-06,
+         "max": 0.00012962392561208894,
+         "sum": 0.025517033608888386
+        },
+        "provenance_count": 508,
+        "provenance_ends": [
+         {
+          "row": 714,
+          "corr": 0,
+          "chan_start": 0,
+          "chan_end": 1
+         },
+         {
+          "row": 1057,
+          "corr": 3,
+          "chan_start": 0,
+          "chan_end": 1
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  "amplitude_vs_time+avgscan+avgantenna": {
+   "result": {
+    "title": "Amplitude vs Time",
+    "summary": "Amplitude vs Time. Rows=690 Points=3380 Data column=data Decimated points from 3380 to 50.",
+    "header_lines": [
+     "Downsampled plot from 3380 to at most 50 points using evenly spaced per-series decimation."
+    ],
+    "show_legend": true,
+    "measurement_set": "<ms>",
+    "preset": "amplitude_vs_time",
+    "selection_summary": "data column data",
+    "panels": [
+     {
+      "id": "msexplore-amplitude_vs_time",
+      "title": "Amplitude vs Time",
+      "axes": [
+       {
+        "id": "x",
+        "label": "Time (MJD seconds)",
+        "unit": "MJD seconds",
+        "lower": 4672029955.968,
+        "upper": 5163822582.912001
+       },
+       {
+        "id": "y",
+        "label": "Amplitude",
+        "unit": "",
+        "lower": 1.6728279948800907e-06,
+        "upper": 0.020476329304336936
+       }
+      ],
+      "series": [
+       {
+        "label": "J1423-7829",
+        "color_group": "field-1",
+        "y_axis_id": "y",
+        "x": {
+         "count": 50,
+         "finite": 50,
+         "min": 4917926269.440001,
+         "max": 4917926269.440001,
+         "sum": 245896313472.00006
+        },
+        "y": {
+         "count": 50,
+         "finite": 50,
+         "min": 1.6728279948800907e-06,
+         "max": 0.020476329304336936,
+         "sum": 0.031125046541468988
+        },
+        "provenance_count": 50,
+        "provenance_ends": [
+         {
+          "row": 345,
+          "corr": 0,
+          "chan_start": 0,
+          "chan_end": 1
+         },
+         {
+          "row": 733,
+          "corr": 3,
+          "chan_start": 0,
+          "chan_end": 1
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  "amplitude_vs_time+avgfield+avgbaseline+avgspw": {
+   "result": {
+    "title": "Amplitude vs Time",
+    "summary": "Amplitude vs Time. Rows=690 Points=256 Data column=data",
+    "header_lines": [],
+    "show_legend": true,
+    "measurement_set": "<ms>",
+    "preset": "amplitude_vs_time",
+    "selection_summary": "data column data",
+    "panels": [
+     {
+      "id": "msexplore-amplitude_vs_time",
+      "title": "Amplitude vs Time",
+      "axes": [
+       {
+        "id": "x",
+        "label": "Time (MJD seconds)",
+        "unit": "MJD seconds",
+        "lower": 4672029955.968,
+        "upper": 5163822582.912001
+       },
+       {
+        "id": "y",
+        "label": "Amplitude",
+        "unit": "",
+        "lower": 3.9856293960859467e-07,
+        "upper": 0.0010514984353385277
+       }
+      ],
+      "series": [
+       {
+        "label": "All data",
+        "color_group": "all",
+        "y_axis_id": "y",
+        "x": {
+         "count": 256,
+         "finite": 256,
+         "min": 4917926269.440001,
+         "max": 4917926269.440001,
+         "sum": 1258989124976.6404
+        },
+        "y": {
+         "count": 256,
+         "finite": 256,
+         "min": 3.9856293960859467e-07,
+         "max": 0.0010514984353385277,
+         "sum": 0.006482480602035271
+        },
+        "provenance_count": 256,
+        "provenance_ends": [
+         {
+          "row": 345,
+          "corr": 0,
+          "chan_start": 0,
+          "chan_end": 1
+         },
+         {
+          "row": 345,
+          "corr": 3,
+          "chan_start": 63,
+          "chan_end": 64
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  "flagrow-vs-time alias": {
+   "result": {
+    "title": "Flag Row vs Time",
+    "summary": "Flag Row vs Time. Rows=1058 Points=1058 Data column=data.",
+    "header_lines": [],
+    "show_legend": true,
+    "measurement_set": "<ms>",
+    "preset": "flag_row_vs_time",
+    "selection_summary": "data column data",
+    "panels": [
+     {
+      "id": "msexplore-flagrow_vs_time",
+      "title": "Flag Row vs Time",
+      "axes": [
+       {
+        "id": "x",
+        "label": "Time (MJD seconds)",
+        "unit": "MJD seconds",
+        "lower": 4917926159.808,
+        "upper": 4917926282.88
+       },
+       {
+        "id": "y",
+        "label": "Flag Row",
+        "unit": "",
+        "lower": 0.0,
+        "upper": 1.0
+       }
+      ],
+      "series": [
+       {
+        "label": "J1617-7717",
+        "color_group": "field-0",
+        "y_axis_id": "y",
+        "x": {
+         "count": 322,
+         "finite": 322,
+         "min": 4917926159.808,
+         "max": 4917926175.36,
+         "sum": 1583572225869.312
+        },
+        "y": {
+         "count": 322,
+         "finite": 322,
+         "min": 1.0,
+         "max": 1.0,
+         "sum": 322.0
+        },
+        "provenance_count": 322,
+        "provenance_ends": [
+         {
+          "row": 0,
+          "corr": 0,
+          "chan_start": 0,
+          "chan_end": 64
+         },
+         {
+          "row": 321,
+          "corr": 0,
+          "chan_start": 0,
+          "chan_end": 1
+         }
+        ]
+       },
+       {
+        "label": "J1423-7829",
+        "color_group": "field-1",
+        "y_axis_id": "y",
+        "x": {
+         "count": 736,
+         "finite": 736,
+         "min": 4917926254.08,
+         "max": 4917926282.88,
+         "sum": 3619593733601.2793
+        },
+        "y": {
+         "count": 736,
+         "finite": 736,
+         "min": 0.0,
+         "max": 1.0,
+         "sum": 46.0
+        },
+        "provenance_count": 736,
+        "provenance_ends": [
+         {
+          "row": 322,
+          "corr": 0,
+          "chan_start": 0,
+          "chan_end": 64
+         },
+         {
+          "row": 1057,
+          "corr": 0,
+          "chan_start": 0,
+          "chan_end": 1
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  "error: fully flagged spw": {
+   "error": "ValueError",
+   "message": "reason='<ms>: Amplitude vs Time produced no unflagged visibility points for the current selection'"
+  },
+  "error: avgscan without avgtime": {
+   "error": "ValueError",
+   "message": "reason='<ms>: msexplore avgscan requires avgtime to be set'"
+  },
+  "error: unmatched correlation": {
+   "error": "ValueError",
+   "message": "reason='<ms>: MS_VERSION: correlation selector \"RR\" did not match any DATA_DESCRIPTION rows'"
+  },
+  "error: color by an averaged axis": {
+   "error": "ValueError",
+   "message": "reason='<ms>: msexplore cannot color by field while averaging across fields'"
+  },
+  "error: missing data column": {
+   "error": "ValueError",
+   "message": "reason='<ms>: column \"CORRECTED_DATA\" does not exist in schema'"
+  },
+  "error: unknown data column": {
+   "error": "ValueError",
+   "message": "reason='<ms>: unsupported msexplore data column \"nope\"'"
+  }
+ },
+ "completion": {
+  "class": "TaskCompletionProjection",
+  "fields": {
+   "surface_id": "split",
+   "summary": "split completed",
+   "products": [
+    {
+     "class": "TaskCompletionProduct",
+     "fields": {
+      "id": "outputvis",
+      "role": {
+       "enum": "TaskProductRole",
+       "name": "PRIMARY",
+       "value": 0
+      },
+      "resource_kind": {
+       "enum": "TaskProductKind",
+       "name": "MEASUREMENT_SET",
+       "value": 0
+      },
+      "label": "out.ms",
+      "path": "<workspace>/out.ms",
+      "exists": true,
+      "preview_path": null,
+      "preview_exists": false,
+      "diagnostic": null
+     },
+     "str": "TaskCompletionProduct(id=outputvis, role=TaskProductRole.PRIMARY, resource_kind=TaskProductKind.MEASUREMENT_SET, label=out.ms, path=<workspace>/out.ms, exists=True, preview_path=None, preview_exists=False, diagnostic=None)",
+     "hashable": false
+    }
+   ],
+   "diagnostics": []
+  },
+  "str": "TaskCompletionProjection(surface_id=split, summary=split completed, products=[<TaskCompletionProduct object>], diagnostics=[])",
+  "hashable": false
+ },
+ "errors": {
+  "definition unknown surface": {
+   "error": "ValueError",
+   "message": "reason='load parameter surface: unknown configurable surface \"nope\"'"
+  },
+  "contract_bundle unknown surface": {
+   "error": "ValueError",
+   "message": "reason='load parameter surface: unknown configurable surface \"nope\"'"
+  },
+  "documented_template unknown surface": {
+   "error": "ValueError",
+   "message": "reason='load parameter surface: unknown configurable surface \"nope\"'"
+  },
+  "defaults unknown surface": {
+   "error": "ValueError",
+   "message": "reason='load parameter surface: unknown configurable surface \"nope\"'"
+  },
+  "last missing": {
+   "error": "FileNotFoundError",
+   "message": "no Last parameter profile exists for 'imstat'"
+  },
+  "last_successful missing": {
+   "error": "FileNotFoundError",
+   "message": "no Last Successful parameter profile exists for 'imstat'"
+  },
+  "last corrupt": {
+   "error": "ValueError",
+   "message": "reason='open parameter session: profile parse error: TOML parse error at line 1, column 5\\n  |\\n1 | not valid profile TOML\\n  |     ^\\nexpected `.`, `=`\\n'"
+  },
+  "load unparsable profile": {
+   "error": "ValueError",
+   "message": "reason='parse parameter profile: profile parse error: TOML parse error at line 1, column 8\\n  |\\n1 | not = [valid\\n  |        ^\\ninvalid array\\nexpected `]`\\n'"
+  },
+  "set wrong type": {
+   "error": "ValueError",
+   "message": "reason='resolve parameter session: invalid parameter type: value Integer(3) does not match Path { resource_kind: Some(Image) }'"
+  },
+  "set unknown parameter": {
+   "error": "ValueError",
+   "message": "reason='resolve parameter session: parameter contract error: unknown parameter \"nonexistent\"'"
+  },
+  "set bytes path": {
+   "error": "TypeError",
+   "message": "parameter paths must resolve to text, not bytes"
+  },
+  "set bytes": {
+   "error": "TypeError",
+   "message": "unsupported parameter value b'image'"
+  },
+  "set table with a non-string key": {
+   "error": "TypeError",
+   "message": "parameter table keys must be strings"
+  },
+  "set table value": {
+   "error": "ValueError",
+   "message": "reason='resolve parameter session: invalid parameter type: value Table({\"a\": Integer(1)}) does not match Path { resource_kind: Some(Image) }'"
+  },
+  "reset unknown parameter": {
+   "error": "KeyError",
+   "message": "'nonexistent'"
+  },
+  "plot missing measurement set": {
+   "error": "ValueError",
+   "message": "reason='missing.ms is not a MeasurementSet directory'"
+  },
+  "plot unknown preset": {
+   "error": "ValueError",
+   "message": "unknown MeasurementSet plot preset 'nope'; expected one of: uv_coverage, antenna_layout, scan_timeline, spectral_window_coverage, phase_vs_time, amplitude_phase_vs_time_stacked, weight_vs_time, sigma_vs_time, flag_vs_time, weight_spectrum_vs_time, sigma_spectrum_vs_time, flag_row_vs_time, elevation_vs_time, azimuth_vs_time, hour_angle_vs_time, parallactic_angle_vs_time, azimuth_vs_elevation, amplitude_vs_frequency, amplitude_vs_channel, phase_vs_channel, phase_vs_frequency, amplitude_vs_velocity, phase_vs_velocity, amplitude_vs_uv_distance, amplitude_vs_time, real_vs_imaginary"
+  },
+  "plot unknown preset with a quote": {
+   "error": "ValueError",
+   "message": "unknown MeasurementSet plot preset \"it's\"; expected one of: uv_coverage, antenna_layout, scan_timeline, spectral_window_coverage, phase_vs_time, amplitude_phase_vs_time_stacked, weight_vs_time, sigma_vs_time, flag_vs_time, weight_spectrum_vs_time, sigma_spectrum_vs_time, flag_row_vs_time, elevation_vs_time, azimuth_vs_time, hour_angle_vs_time, parallactic_angle_vs_time, azimuth_vs_elevation, amplitude_vs_frequency, amplitude_vs_channel, phase_vs_channel, phase_vs_frequency, amplitude_vs_velocity, phase_vs_velocity, amplitude_vs_uv_distance, amplitude_vs_time, real_vs_imaginary"
+  },
+  "malformed successful task result": {
+   "error": "TaskResultError",
+   "message": "imager produced a successful but invalid result: reason='unknown managed result for \"imager\": expected value at line 1 column 1'"
+  }
+ }
+}

@@ -57,6 +57,7 @@ pub mod observation_io;
 mod observation_owner;
 pub mod plot;
 mod plot_data;
+pub mod plot_document;
 mod plot_visibility;
 pub mod presentation;
 mod probes;
@@ -133,6 +134,10 @@ pub use plot::{
 pub use plot_data::{
     MS_PLOT_DATA_SCHEMA_VERSION, MsPlotData, MsPlotDataAxis, MsPlotDataPanel,
     MsPlotDataPointProvenance, MsPlotDataSeries, build_msexplore_plot_data_from_path,
+};
+pub use plot_document::{
+    MeasurementSetPlot, MeasurementSetPlotError, MeasurementSetPlotRequest,
+    PLOT_DOCUMENT_DEFAULT_MAX_POINTS, PlotDocument, build_measurement_set_plot,
 };
 pub use probes::{
     MeasurementSetContext, MeasurementSetNamedContext, MeasurementSetObservationContext,
