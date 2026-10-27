@@ -94,10 +94,11 @@ pub trait Observation: Sync {
     /// # Errors
     ///
     /// [`ObservationError::InvalidRequest`] for an unknown partition or
-    /// antenna, or pointing beyond the request's budget;
-    /// [`ObservationError::Unsupported`] for a direction the store
-    /// does not hold (an MSv4 target); [`ObservationError::InvalidStore`]
-    /// for malformed pointing, or samples in several frames.
+    /// antenna, times that are not a finite span, or pointing beyond the
+    /// request's budget; [`ObservationError::Unsupported`] for pointing the
+    /// boundary does not carry (an MSv4 target, samples in several frames,
+    /// a frame or polynomial the store's reader does not take);
+    /// [`ObservationError::InvalidStore`] for malformed pointing.
     fn pointing(&self, request: &PointingRequest) -> Result<PointingSeries, ObservationError>;
 }
 

@@ -6,12 +6,13 @@
 //! `FLAG_ROW` flags, `FLAG_CATEGORY` cells, `ARRAY_ID`s and `PROCESSOR_ID`s
 //! other than 0, a `PROCESSOR` of more than one row, `STATE` rows that say
 //! more than their intents, MAIN columns outside the
-//! boundary's roles and subtables the catalogue does not carry (pointing,
-//! system calibration, weather, flag commands, history, Doppler, frequency
+//! boundary's roles and subtables the catalogue does not carry (system
+//! calibration, weather, flag commands, history, Doppler, frequency
 //! offsets, sources, and any further subtable a keyword names); an MSv4's
 //! sub-datasets and main-dataset variables the writer does not write; and
 //! in either the data groups not selected; and, into an MSv4, antennas no
-//! partition's baselines name. Columns of the subtables the
+//! partition's baselines name. What pointing carries is decided by
+//! [`super::pointing_plan`]. Columns of the subtables the
 //! catalogue does carry (an antenna's offset, a field's delay direction, a
 //! spectral window's resolution) are not inventoried. Fields that follow
 //! an ephemeris, or whose direction is a polynomial in time, are refused:
@@ -227,44 +228,7 @@ fn msv2(
         ));
     }
     main_keys(main, losses)?;
-    pointing(&ms, destination, losses)?;
     subtables(&ms, losses)
-}
-
-/// `POINTING`'s columns a conversion does not carry, as a table loss (the
-/// table was lost whole before conversions carried pointing): it carries
-/// each row's antenna, time, direction and its polynomial in time, and into
-/// an MSv2 its interval; MSv4 states no interval and no target.
-fn pointing(
-    ms: &crate::MeasurementSet,
-    destination: Destination,
-    losses: &mut Vec<Loss>,
-) -> Result<(), ObservationError> {
-    let Some(table) = ms.subtable(SubtableId::Pointing) else {
-        return Ok(());
-    };
-    if table.row_count() == 0 {
-        return Ok(());
-    }
-    let mut carried = vec!["ANTENNA_ID", "TIME", "DIRECTION", "NUM_POLY", "TIME_ORIGIN"];
-    if destination == Destination::Msv2 {
-        carried.push("INTERVAL");
-    }
-    let lost: Vec<String> = table
-        .schema()
-        .map(|schema| {
-            schema
-                .columns()
-                .iter()
-                .map(|column| column.name().to_string())
-                .filter(|name| !carried.contains(&name.as_str()))
-                .collect()
-        })
-        .unwrap_or_default();
-    if !lost.is_empty() {
-        losses.push(Loss::Table(format!("POINTING {}", lost.join(", "))));
-    }
-    Ok(())
 }
 
 /// Refuse fields whose direction moves, among those `destination` writes:
@@ -496,12 +460,13 @@ fn msv4(source: &Path, losses: &mut Vec<Loss>) -> Result<(), ObservationError> {
 /// A `pointing_xds`'s variables a conversion does not carry, as table
 /// losses: it carries `POINTING_BEAM` and its coordinates.
 fn pointing_variables(path: &Path, losses: &mut Vec<Loss>) -> Result<(), ObservationError> {
-    const CARRIED: [&str; 5] = [
+    const CARRIED: [&str; 6] = [
         "POINTING_BEAM",
         "time_pointing",
         "time",
         "antenna_name",
         "local_sky_dir_label",
+        "n_polynomial",
     ];
     for child in std::fs::read_dir(path).map_err(storage)? {
         let name = child

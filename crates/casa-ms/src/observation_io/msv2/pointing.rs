@@ -9,7 +9,7 @@ use casa_observation::{ObservationError, PointingDirection, PointingRequest, Poi
 use casa_types::measures::direction::DirectionRef;
 
 use super::{Msv2Observation, storage};
-use crate::{PointingDirectionColumn, PointingReadPlan, SelectedPointingQueryDomain};
+use crate::{MsError, PointingDirectionColumn, PointingReadPlan, SelectedPointingQueryDomain};
 
 /// Rows of `POINTING` scanned per block while reading.
 const SCAN_ROWS: usize = 1024;
@@ -61,8 +61,13 @@ impl Msv2Observation {
                 PointingTimeSampling::VisibilityTime,
                 plan,
             )
-            .map_err(|error| ObservationError::InvalidRequest {
-                reason: format!("POINTING of {:?}: {error}", request.partition),
+            .map_err(|error| match error {
+                MsError::OverBudget { .. } => ObservationError::InvalidRequest {
+                    reason: format!("POINTING of {:?}: {error}", request.partition),
+                },
+                error => ObservationError::InvalidStore {
+                    reason: format!("POINTING: {error}"),
+                },
             })?
             .series()
     }

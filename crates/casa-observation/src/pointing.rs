@@ -57,8 +57,8 @@ pub struct PointingSeries {
     /// The frame of every direction. A store whose samples are in several
     /// frames is refused: MSv4 states one per `pointing_xds`.
     pub frame: DirectionRef,
-    /// Polynomial terms per axis: 1 for a direction per sample (MSv2
-    /// `NUM_POLY` + 1, MSv4 `n_polynomial`).
+    /// The most polynomial terms per axis any antenna's samples have: 1
+    /// for a direction per sample (MSv2 `NUM_POLY` + 1; MSv4 holds one).
     pub terms: usize,
     /// Each antenna's samples.
     pub antennas: BTreeMap<AntennaId, AntennaPointing>,
@@ -70,6 +70,7 @@ pub struct AntennaPointing {
     times_s: Vec<f64>,
     intervals_s: Option<Vec<f64>>,
     origins_s: Vec<f64>,
+    terms: usize,
     coefficients: Vec<f64>,
     /// Half the longest interval: the furthest a covering sample can be.
     reach_s: f64,
@@ -87,8 +88,9 @@ impl AntennaPointing {
     ///
     /// # Errors
     ///
-    /// [`ObservationError::InvalidStore`] when the lengths disagree, the
-    /// times are not finite and ascending, or an interval is not finite.
+    /// [`ObservationError::InvalidStore`] when there are no terms, the
+    /// lengths disagree, the times are not finite and ascending, or an
+    /// interval is not finite.
     pub fn new(
         times_s: Vec<f64>,
         intervals_s: Option<Vec<f64>>,
@@ -100,6 +102,9 @@ impl AntennaPointing {
         let invalid = |reason: &str| ObservationError::InvalidStore {
             reason: format!("pointing samples: {reason}"),
         };
+        if terms == 0 {
+            return Err(invalid("no polynomial terms"));
+        }
         if origins_s.len() != samples
             || coefficients.len() != samples * 2 * terms
             || intervals_s
@@ -128,6 +133,7 @@ impl AntennaPointing {
             times_s,
             intervals_s,
             origins_s,
+            terms,
             coefficients,
             reach_s,
         })
@@ -151,10 +157,31 @@ impl AntennaPointing {
         &self.origins_s
     }
 
+    /// Polynomial terms per axis of every sample.
+    #[must_use]
+    pub fn terms(&self) -> usize {
+        self.terms
+    }
+
     /// `[sample][axis][term]` coefficients.
     #[must_use]
     pub fn coefficients(&self) -> &[f64] {
         &self.coefficients
+    }
+
+    /// The direction of sample `sample` at `time_s`, in radians: its
+    /// polynomial in the time since its origin, by Horner's rule from the
+    /// highest term.
+    #[must_use]
+    pub fn direction_at(&self, sample: usize, time_s: f64) -> [f64; 2] {
+        let offset = time_s - self.origins_s[sample];
+        let start = sample * 2 * self.terms;
+        [0, 1].map(|axis| {
+            self.coefficients[start + axis * self.terms..start + (axis + 1) * self.terms]
+                .iter()
+                .rev()
+                .fold(0.0, |value, term| value * offset + term)
+        })
     }
 }
 
@@ -234,7 +261,7 @@ impl PointingSeries {
         });
         let candidate = |sample: Option<usize>| {
             sample
-                .map(|sample| self.evaluate(antenna, series, sample, time_s))
+                .map(|sample| Self::evaluate(antenna, series, sample, time_s))
                 .transpose()
         };
         Ok(PointingBracket {
@@ -244,25 +271,14 @@ impl PointingSeries {
         })
     }
 
-    /// Sample `sample` of `series` at `time_s`: its polynomial in the time
-    /// since its origin, by Horner's rule from the highest term.
+    /// Sample `sample` of `series` at `time_s`.
     fn evaluate(
-        &self,
         antenna: AntennaId,
         series: &AntennaPointing,
         sample: usize,
         time_s: f64,
     ) -> Result<PointingCandidate, ObservationError> {
-        let offset = time_s - series.origins_s[sample];
-        let start = sample * 2 * self.terms;
-        let direction_rad = [0, 1].map(|axis| {
-            let terms =
-                &series.coefficients[start + axis * self.terms..start + (axis + 1) * self.terms];
-            terms
-                .iter()
-                .rev()
-                .fold(0.0, |value, term| value * offset + term)
-        });
+        let direction_rad = series.direction_at(sample, time_s);
         if !direction_rad.iter().all(|angle| angle.is_finite()) {
             return Err(ObservationError::InvalidStore {
                 reason: format!(

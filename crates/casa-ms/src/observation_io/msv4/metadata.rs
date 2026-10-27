@@ -11,6 +11,7 @@ use casa_types::measures::{EpochRef, MjdHighPrec};
 use serde_json::{Map, Value};
 use zarrs::array::{Array, ArrayMetadata, ArraySubset};
 use zarrs::filesystem::FilesystemStore;
+use zarrs::storage::{ReadableStorageTraits, StoreKey};
 
 /// The schema version this profile reads and writes.
 pub(crate) const SCHEMA_VERSION: &str = "4.0.1";
@@ -207,6 +208,17 @@ pub(crate) fn visibility_units(attributes: &Map<String, Value>) -> VisibilityUni
         Some(other) => VisibilityUnits::Declared(other.to_string()),
         None => VisibilityUnits::Undeclared,
     }
+}
+
+/// Whether the store has node (group or array) `path`: a node absent is
+/// `false`, a store that cannot say an error.
+pub(crate) fn has_node(store: &Arc<FilesystemStore>, path: &str) -> Result<bool, ObservationError> {
+    let key =
+        StoreKey::new(format!("{}/zarr.json", path.trim_start_matches('/'))).map_err(storage)?;
+    store
+        .size_key(&key)
+        .map(|size| size.is_some())
+        .map_err(storage)
 }
 
 /// Open array `path`.

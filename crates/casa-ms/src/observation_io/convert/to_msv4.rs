@@ -7,11 +7,9 @@ use std::path::Path;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use casa_observation::{
-    AntennaId, Catalogue, Observation, ObservationError, PartitionId, PointingDirection,
-    PointingRequest, Roles,
-};
+use casa_observation::{AntennaId, Catalogue, Observation, ObservationError, PartitionId, Roles};
 
+use super::pointing_plan::{self, PointingPlan};
 use super::{ConversionOptions, ConversionReport, lockstep, losses};
 use crate::observation_io::msv4::STATION_NAMED;
 use crate::observation_io::update::storage;
@@ -71,6 +69,13 @@ pub fn to_msv4(
     let catalogue = observation.catalogue();
     let groups = losses::selected_groups(catalogue, options.data_groups.as_deref())?;
     let mut found = losses::inventory(source, catalogue, &groups, losses::Destination::Msv4)?;
+    let (pointing, lost) = pointing_plan::plan(
+        source,
+        observation.as_ref(),
+        losses::Destination::Msv4,
+        options.batch_bytes,
+    )?;
+    found.extend(lost);
     found.extend(losses::unused_antennas(catalogue));
     found.sort();
     losses::refuse_unaccepted(&found, &options.accept)?;
@@ -87,9 +92,12 @@ pub fn to_msv4(
                         break;
                     };
                     let result = partition(
+                        &Destination {
+                            set: &set,
+                            named: &named,
+                            pointing: &pointing,
+                        },
                         observation.as_ref(),
-                        &set,
-                        &named,
                         *id,
                         &groups,
                         &datasets[id.0 as usize],
@@ -235,17 +243,30 @@ fn xradio_names(catalogue: &Catalogue, windows: &[u32], sources: &[i32]) -> Cata
     named
 }
 
-/// Convert partition `id` into dataset `name` of `set`: one traversal per
-/// selected group in lockstep, each batch of the same whole times.
+/// What every partition is written into: the processing set, the
+/// catalogue its datasets are declared with, and the pointing carried.
+struct Destination<'a> {
+    set: &'a Msv4ProcessingSetWriter,
+    named: &'a Catalogue,
+    pointing: &'a PointingPlan,
+}
+
+/// Convert partition `id` into dataset `name` of the destination: its
+/// pointing, then one traversal per selected group in lockstep, each batch
+/// of the same whole times.
 fn partition(
+    destination: &Destination<'_>,
     observation: &dyn Observation,
-    set: &Msv4ProcessingSetWriter,
-    named: &Catalogue,
     id: PartitionId,
     groups: &[String],
     name: &str,
     options: &ConversionOptions,
 ) -> Result<Converted, ObservationError> {
+    let Destination {
+        set,
+        named,
+        pointing,
+    } = *destination;
     let grid = observation.grid(id, &groups[0])?;
     let entry = observation.catalogue().partition(id);
     let extents = [
@@ -270,8 +291,8 @@ fn partition(
     };
     let names: Vec<&str> = groups.iter().map(String::as_str).collect();
     let mut writer = set.dataset(named, id, &names, &grid, &storage)?;
-    // The pointing of the antennas the partition's baselines name, over its
-    // times.
+    // The pointing of the antennas the partition's baselines name, as
+    // planned; dropped before the batches are read.
     let antennas: Vec<AntennaId> = grid
         .baselines
         .iter()
@@ -279,18 +300,9 @@ fn partition(
         .collect::<std::collections::BTreeSet<_>>()
         .into_iter()
         .collect();
-    let span = match (grid.times_s.first(), grid.times_s.last()) {
-        (Some(first), Some(last)) => *first..=*last,
-        _ => 0.0..=0.0,
-    };
-    let pointing = observation.pointing(&PointingRequest {
-        partition: id,
-        direction: PointingDirection::Beam,
-        antennas,
-        times: span,
-        budget_bytes: usize::MAX,
-    })?;
-    writer.write_pointing(named, &pointing)?;
+    if let Some(request) = pointing.request(id, antennas) {
+        writer.write_pointing(named, &observation.pointing(&request)?)?;
+    }
     let budget = (options.batch_bytes, Some(writer.chunk_times()));
     let read = lockstep::read(observation, id, groups, Roles::ALL, budget, |batches| {
         writer.write_groups(batches)

@@ -964,9 +964,11 @@ fn array_heap_bytes(value: &ArrayValue) -> Option<usize> {
 
 fn ensure_budget(required: usize, available: usize) -> MsResult<()> {
     if required > available {
-        return Err(MsError::InvalidInput(format!(
-            "POINTING catalog requires {required} bytes but the planner supplied {available} bytes"
-        )));
+        return Err(MsError::OverBudget {
+            what: "POINTING catalog",
+            required,
+            available,
+        });
     }
     Ok(())
 }

@@ -17,6 +17,7 @@ use casa_types::measures::direction::DirectionRef;
 use ndarray::Axis;
 
 use super::msv2_rows::{MainRows, Occupancy, Spans, acquired};
+use super::pointing_plan::{self, PointingPlan};
 use super::{
     ConversionOptions, ConversionReport, Loss, PaddingRows, lockstep, losses, msv2_pointing,
     msv2_tables,
@@ -93,6 +94,13 @@ pub fn to_msv2(
         .map(|group| column(group))
         .collect::<Result<Vec<_>, _>>()?;
     let mut found = losses::inventory(source, catalogue, &groups, losses::Destination::Msv2)?;
+    let (pointing, lost) = pointing_plan::plan(
+        source,
+        observation.as_ref(),
+        losses::Destination::Msv2,
+        options.batch_bytes,
+    )?;
+    found.extend(lost);
     found.push(Loss::SigmaDerived);
     found.sort();
     losses::refuse_unaccepted(&found, &options.accept)?;
@@ -116,6 +124,7 @@ pub fn to_msv2(
         &groups,
         &columns,
         &occupancy,
+        &pointing,
         options,
     )
     .and_then(|report| target.commit().map(|()| report).map_err(storage));
@@ -339,6 +348,7 @@ fn create(
     groups: &[String],
     columns: &[(OptionalMainColumn, Option<String>)],
     occupancy: &Occupancy,
+    pointing: &PointingPlan,
     options: &ConversionOptions,
 ) -> Result<ConversionReport, ObservationError> {
     let catalogue = observation.catalogue();
@@ -355,7 +365,7 @@ fn create(
         }
     }
     let layout = msv2_tables::populate(&mut ms, catalogue, &occupancy.spans)?;
-    msv2_pointing::write(&mut ms, observation)?;
+    msv2_pointing::write(&mut ms, observation, pointing)?;
     let names = optional.iter().map(|column| column.name()).collect();
     let mut main = MainRows::start(
         staging,

@@ -1,21 +1,23 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! An MSv2 destination's `POINTING`: every partition's pointing samples
-//! through the boundary ([`Observation::pointing`]), one row per antenna and
-//! time. An MSv4 source states no interval, so its rows have `INTERVAL` 0
-//! (a row covering no time beyond its own); it holds no target, so `TARGET`
+//! through the boundary ([`Observation::pointing`]) over the span the plan
+//! sets ([`PointingPlan`]), one row per sample, in (time, antenna) order as
+//! casacore's `MSPointingColumns::pointingIndex` expects it. An MSv4 source
+//! states no interval, so its rows have `INTERVAL` 0 (which casacore reads
+//! as covering half the gap to the antenna's neighbouring rows, and
+//! casa-rs's reader as covering nothing); it holds no target, so `TARGET`
 //! repeats the direction, as MSv2 writers without a separate target write
 //! it.
 
 use std::collections::BTreeMap;
 
-use casa_observation::{
-    AntennaId, Observation, ObservationError, PointingDirection, PointingRequest,
-};
+use casa_observation::{AntennaId, Observation, ObservationError};
 use casa_tables::table_measures::{MeasureType, TableMeasDesc};
 use casa_types::measures::direction::DirectionRef;
 use casa_types::measures::{EpochView, MjdHighPrec};
 use ndarray::ArrayView1;
 
+use super::pointing_plan::PointingPlan;
 use crate::MeasurementSet;
 use crate::observation_io::update::storage;
 use crate::schema::{self, SubtableId};
@@ -30,15 +32,19 @@ struct Row {
     coefficients: Vec<f64>,
 }
 
-/// Write `observation`'s pointing into `ms`'s `POINTING`. Partitions that
-/// hold the same antenna and time (an MSv4's datasets each hold their
-/// antennas' pointing) write it once; different samples there are refused.
+/// Write `observation`'s pointing, as `plan` carries it, into `ms`'s
+/// `POINTING`. Partitions that hold the same sample (an MSv2's partitions
+/// share its `POINTING`) write it once: a sample is the k-th at its antenna
+/// and time; different samples there are refused.
 pub(super) fn write(
     ms: &mut MeasurementSet,
     observation: &dyn Observation,
+    plan: &PointingPlan,
 ) -> Result<(), ObservationError> {
     let catalogue = observation.catalogue();
-    let mut rows = BTreeMap::<(AntennaId, u64), Row>::new();
+    // Keyed by (time, antenna, k): MJD seconds are positive, so their bit
+    // patterns order as the times do.
+    let mut rows = BTreeMap::<(u64, AntennaId, usize), Row>::new();
     let mut frame = None;
     let mut terms = 1;
     for id in catalogue.partition_ids() {
@@ -47,9 +53,6 @@ pub(super) fn write(
             continue;
         };
         let grid = observation.grid(id, &group.name)?;
-        let (Some(first), Some(last)) = (grid.times_s.first(), grid.times_s.last()) else {
-            continue;
-        };
         let antennas: Vec<AntennaId> = grid
             .baselines
             .iter()
@@ -57,13 +60,10 @@ pub(super) fn write(
             .collect::<std::collections::BTreeSet<_>>()
             .into_iter()
             .collect();
-        let series = observation.pointing(&PointingRequest {
-            partition: id,
-            direction: PointingDirection::Beam,
-            antennas,
-            times: *first..=*last,
-            budget_bytes: usize::MAX,
-        })?;
+        let Some(request) = plan.request(id, antennas) else {
+            continue;
+        };
+        let series = observation.pointing(&request)?;
         if series.antennas.is_empty() {
             continue;
         }
@@ -84,8 +84,14 @@ pub(super) fn write(
         for (antenna, samples) in &series.antennas {
             let times = mjd(samples.times_s());
             let origins = mjd(samples.origins_s());
-            let width = 2 * series.terms;
+            let width = 2 * samples.terms();
+            let mut repeat = 0;
             for (sample, time) in times.iter().enumerate() {
+                repeat = if sample > 0 && times[sample - 1].to_bits() == time.to_bits() {
+                    repeat + 1
+                } else {
+                    0
+                };
                 let row = Row {
                     interval_s: samples
                         .intervals_s()
@@ -94,7 +100,7 @@ pub(super) fn write(
                     coefficients: samples.coefficients()[sample * width..(sample + 1) * width]
                         .to_vec(),
                 };
-                match rows.get(&(*antenna, time.to_bits())) {
+                match rows.get(&(time.to_bits(), *antenna, repeat)) {
                     Some(known) if *known != row => {
                         return Err(ObservationError::Unsupported {
                             what: "partitions with different pointing at one antenna and time",
@@ -102,7 +108,7 @@ pub(super) fn write(
                     }
                     Some(_) => {}
                     None => {
-                        rows.insert((*antenna, time.to_bits()), row);
+                        rows.insert((time.to_bits(), *antenna, repeat), row);
                     }
                 }
             }
@@ -119,7 +125,7 @@ pub(super) fn write(
                 .map_err(storage)?;
         }
     }
-    for ((antenna, time), row) in rows {
+    for ((time, antenna, _), row) in rows {
         // `[2, terms]`, each axis's terms padded to the most any partition has.
         let own = row.coefficients.len() / 2;
         let mut direction = Vec::with_capacity(2 * terms);

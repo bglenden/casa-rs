@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! A dataset's `pointing_xds`, as XRADIO's converter writes it from MSv2
 //! `POINTING`: `POINTING_BEAM[time_pointing, antenna_name,
-//! local_sky_dir_label (, n_polynomial)]`, NaN where an antenna has no
-//! sample at a time. MSv4 states no interval per sample, and its polynomial
-//! terms are in the time since the sample, so an MSv2 row's polynomial is
-//! re-expressed about its own time.
+//! local_sky_dir_label]`, NaN where an antenna has no sample at a time. Each
+//! sample's direction is its polynomial evaluated at its own time: XRADIO
+//! keeps one term (`n_polynomial` of one) and defines no origin for more, so
+//! the converter reports further terms as a loss. MSv4 states no interval
+//! per sample.
 
 use std::sync::Arc;
 
@@ -20,12 +21,14 @@ use crate::observation_io::Msv4Codec;
 use crate::observation_io::msv4::metadata::{UNIX_EPOCH_MJD, time_attributes};
 use crate::observation_io::msv4::pointing::POINTING_FRAMES;
 
-/// Pointing times per chunk of `POINTING_BEAM`.
-const CHUNK_TIMES: u64 = 4096;
+/// Pointing times per chunk of `POINTING_BEAM`, and per write.
+const CHUNK_TIMES: usize = 4096;
 
 /// The series' samples of `antennas` (each with its catalogue id), with
 /// times in `scale` from `origin`, as `path`; nothing when no antenna has a
-/// sample.
+/// sample. Of several samples of one antenna at one time the first is kept
+/// (the converter reports the others as a loss). Written a chunk of times at
+/// a time, so the values held are one chunk's.
 pub(super) fn write_pointing(
     store: &Arc<FilesystemStore>,
     path: &str,
@@ -55,28 +58,6 @@ pub(super) fn write_pointing(
         .collect();
     times.sort_by(f64::total_cmp);
     times.dedup_by(|next, kept| next.to_bits() == kept.to_bits());
-    let terms = series.terms;
-    let width = 2 * terms;
-    let mut values = vec![f64::NAN; times.len() * columns.len() * width];
-    for (column, (_, samples)) in columns.iter().enumerate() {
-        for (sample, time) in samples.times_s().iter().enumerate() {
-            let row = times.partition_point(|known| known < time);
-            let start = (row * columns.len() + column) * width;
-            if !values[start].is_nan() {
-                return Err(ObservationError::Unsupported {
-                    what: "pointing samples of one antenna at one time",
-                });
-            }
-            let coefficients = &samples.coefficients()[sample * width..(sample + 1) * width];
-            values[start..start + width].copy_from_slice(coefficients);
-            for axis in 0..2 {
-                shift(
-                    &mut values[start + axis * terms..start + (axis + 1) * terms],
-                    time - samples.origins_s()[sample],
-                );
-            }
-        }
-    }
     create_group(store, path, json!({"type": "pointing"}))?;
     let view = EpochView::new(scale, origin, ArrayView1::from(&times[..]));
     let unix = MjdHighPrec::new(UNIX_EPOCH_MJD, 0.0);
@@ -111,14 +92,8 @@ pub(super) fn write_pointing(
         &["local_sky_dir_label"],
         &["az", "alt"].map(String::from),
     )?;
-    let mut shape = vec![times.len() as u64, names.len() as u64, 2];
-    let mut dimensions = vec!["time_pointing", "antenna_name", "local_sky_dir_label"];
-    if terms > 1 {
-        shape.push(terms as u64);
-        dimensions.push("n_polynomial");
-    }
-    let mut chunks = shape.clone();
-    chunks[0] = shape[0].clamp(1, CHUNK_TIMES);
+    let shape = [times.len() as u64, names.len() as u64, 2];
+    let chunks = [times.len().clamp(1, CHUNK_TIMES) as u64, shape[1], 2];
     let array = create_array(
         store,
         &format!("{path}/POINTING_BEAM"),
@@ -128,50 +103,40 @@ pub(super) fn write_pointing(
             data_type: json!("float64"),
             codecs: codecs(Msv4Codec::Zstd, 8),
             fill: json!("NaN"),
-            dimensions: &dimensions,
+            dimensions: &["time_pointing", "antenna_name", "local_sky_dir_label"],
             attributes: json!({"type": "sky_coord", "units": "rad", "frame": frame}),
         },
     )?;
-    array
-        .store_array_subset(&ArraySubset::new_with_shape(shape), &values)
-        .map_err(storage)
-}
-
-/// Re-express `coefficients` (increasing powers of the time since an
-/// origin) about a point `delta` later: Taylor's shift by repeated
-/// synthetic division. One term is unchanged.
-fn shift(coefficients: &mut [f64], delta: f64) {
-    let terms = coefficients.len();
-    if terms < 2 || delta == 0.0 {
-        return;
-    }
-    for start in 0..terms - 1 {
-        for term in (start..terms - 1).rev() {
-            coefficients[term] += delta * coefficients[term + 1];
+    // Each antenna's next sample, as the chunks advance through the times.
+    let mut next = vec![0_usize; columns.len()];
+    let mut values = Vec::with_capacity(CHUNK_TIMES * columns.len() * 2);
+    for (block, block_times) in times.chunks(CHUNK_TIMES).enumerate() {
+        values.clear();
+        values.resize(block_times.len() * columns.len() * 2, f64::NAN);
+        for (column, (_, samples)) in columns.iter().enumerate() {
+            let own = samples.times_s();
+            for (row, time) in block_times.iter().enumerate() {
+                if next[column] < own.len() && own[next[column]].to_bits() == time.to_bits() {
+                    let start = (row * columns.len() + column) * 2;
+                    values[start..start + 2]
+                        .copy_from_slice(&samples.direction_at(next[column], *time));
+                    // Later samples at the same time are not held.
+                    while next[column] < own.len() && own[next[column]].to_bits() == time.to_bits()
+                    {
+                        next[column] += 1;
+                    }
+                }
+            }
         }
+        let first = (block * CHUNK_TIMES) as u64;
+        let subset = ArraySubset::new_with_ranges(&[
+            first..first + block_times.len() as u64,
+            0..shape[1],
+            0..2,
+        ]);
+        array
+            .store_array_subset(&subset, &values)
+            .map_err(storage)?;
     }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::shift;
-
-    /// A polynomial shifted to a later origin takes the same values.
-    #[test]
-    fn a_shifted_polynomial_keeps_its_values() {
-        let original = [0.5, -2.0, 3.0, 0.25];
-        let delta = 1.5;
-        let mut shifted = original;
-        shift(&mut shifted, delta);
-        let at = |coefficients: &[f64], x: f64| {
-            coefficients
-                .iter()
-                .rev()
-                .fold(0.0, |value, term| value * x + term)
-        };
-        for x in [-1.0, 0.0, 0.75, 2.0] {
-            let expected = at(&original, x + delta);
-            assert!((at(&shifted, x) - expected).abs() <= 1e-12 * expected.abs().max(1.0));
-        }
-    }
+    Ok(())
 }

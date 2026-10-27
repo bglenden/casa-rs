@@ -310,7 +310,12 @@ pub(super) fn read_antennas(ms: &MeasurementSet) -> Result<Vec<AntennaEntry>, Ob
 
 /// Every `FEED` row's receptors, by (antenna, feed, spectral window), the
 /// window -1 standing for every window.
-pub(super) struct Feeds(BTreeMap<(i32, i32, i32), Vec<Receptors>>);
+pub(super) struct Feeds {
+    rows: BTreeMap<(i32, i32, i32), Vec<Receptors>>,
+    /// Some row names a window: casacore's `MSIter` then reads only each
+    /// window's own rows, and XRADIO's converter likewise.
+    window_dependent: bool,
+}
 
 /// The `FEED` rows.
 pub(super) fn read_feeds(ms: &MeasurementSet) -> Result<Feeds, ObservationError> {
@@ -337,30 +342,40 @@ pub(super) fn read_feeds(ms: &MeasurementSet) -> Result<Feeds, ObservationError>
             .or_default()
             .push(Receptors { types, angles });
     }
-    Ok(Feeds(rows))
+    let window_dependent = rows.keys().any(|(_, _, window)| *window != -1);
+    Ok(Feeds {
+        rows,
+        window_dependent,
+    })
 }
 
 impl Feeds {
     /// Antenna `antenna`'s receptors through feed `feed` in spectral window
-    /// `window`: its rows for the window and for every window, which must
-    /// agree. `FEED` may state receptors per time; a partition's are one
-    /// set, as XRADIO's converter requires. `None` without a row.
+    /// `window`, as casacore's `MSIter::setFeedInfo` and XRADIO's converter
+    /// select them: the window's own rows when any row names a window, else
+    /// the rows for every window (-1). A partition's receptors are one set
+    /// (MSv4 holds no time dependence), so rows of one antenna, feed and
+    /// window that differ, `FEED` stating receptors per time, are refused;
+    /// casacore warns and takes the last, XRADIO's converter refuses. `None`
+    /// without a row.
     pub(super) fn receptors(
         &self,
         antenna: i32,
         feed: i32,
         window: i32,
     ) -> Result<Option<Receptors>, ObservationError> {
-        let mut rows = [window, -1]
-            .into_iter()
-            .filter_map(|window| self.0.get(&(antenna, feed, window)))
-            .flatten();
-        let Some(first) = rows.next() else {
+        let window = if self.window_dependent { window } else { -1 };
+        let Some((first, others)) = self
+            .rows
+            .get(&(antenna, feed, window))
+            .and_then(|rows| rows.split_first())
+        else {
             return Ok(None);
         };
-        if rows.any(|other| other != first) {
+        if others.iter().any(|other| other != first) {
             return Err(ObservationError::Unsupported {
-                what: "MSv2 FEED receptors of one antenna, feed and window that differ in time",
+                what: "MSv2 FEED rows of one antenna, feed and window that differ (receptors \
+                       that vary in time)",
             });
         }
         Ok(Some(first.clone()))

@@ -21,9 +21,9 @@ use zarrs::group::Group;
 
 use super::cursor::Msv4Cursor;
 use super::metadata::{
-    DataGroupRecord, SCHEMA_VERSION, data_groups, direction_frame, frequency_frame, invalid,
-    numbers, open_array, require_layout, require_units, storage, strings, text, time_reference,
-    visibility_units,
+    DataGroupRecord, SCHEMA_VERSION, data_groups, direction_frame, frequency_frame, has_node,
+    invalid, numbers, open_array, require_layout, require_units, storage, strings, text,
+    time_reference, visibility_units,
 };
 use crate::observation_io::OpenOptions;
 use crate::observation_io::msv2::{metres, radians};
@@ -831,7 +831,11 @@ fn read_antennas(
     let stations = strings(store, &format!("{path}/station_name"))?;
     let mounts = strings(store, &format!("{path}/mount"))?;
     // XRADIO writes no receptor variables for a window FEED states none for.
-    let types = strings(store, &format!("{path}/polarization_type")).unwrap_or_default();
+    let types = if has_node(store, &format!("{path}/polarization_type"))? {
+        strings(store, &format!("{path}/polarization_type"))?
+    } else {
+        Vec::new()
+    };
     let (positions, attributes) = numbers::<f64>(store, &format!("{path}/ANTENNA_POSITION"))?;
     require_units(&attributes, "m", "ANTENNA_POSITION")?;
     if text(&attributes, "frame", "ANTENNA_POSITION")? != "ITRS" {

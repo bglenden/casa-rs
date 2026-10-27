@@ -5,7 +5,7 @@
 
 use std::path::Path;
 
-use casa_ms::observation_io::convert::LossKind;
+use casa_ms::observation_io::convert::{Loss, LossKind};
 use casa_ms::observation_io::{OpenOptions, open};
 use casa_ms::{MeasurementSet, SubtableId};
 use casa_observation::{
@@ -304,13 +304,227 @@ fn rate_terms(path: &Path) {
     ms.save().expect("save");
 }
 
-/// A pointing polynomial in time is evaluated at the query time on both
-/// stores: an MSv2 row's about its `TIME_ORIGIN`, as the MeasurementSet
-/// defines it; the MSv4 conversion re-expresses it about its sample's own
-/// time, as MSv4 states it, and the reverse conversion writes it with
-/// `TIME_ORIGIN` at the sample. The directions agree to rounding.
+/// One partition's pointing for antennas 0 to 2 over `times`.
+fn series_over(
+    observation: &dyn casa_observation::Observation,
+    times: std::ops::RangeInclusive<f64>,
+) -> casa_observation::PointingSeries {
+    observation
+        .pointing(&PointingRequest {
+            partition: PartitionId(0),
+            direction: PointingDirection::Beam,
+            antennas: (0..3).map(AntennaId).collect(),
+            times,
+            budget_bytes: 1 << 20,
+        })
+        .expect("pointing")
+}
+
+/// An MSv4's pointing grid is the union of its antennas' sample times, NaN
+/// where an antenna has none. Each antenna's nearest sample either side of
+/// the requested times is its own, past however many of the others' times;
+/// an antenna the pointing does not name has none. The MSv2 it came from
+/// says the same.
 #[test]
-fn pointing_polynomials_are_evaluated_at_the_query_time_on_both_stores() {
+fn msv4_pointing_finds_each_antennas_own_nearest_samples() {
+    let root = tempfile::tempdir().expect("root");
+    let (v2, _) = mosaic(root.path(), 4);
+    // Antenna 1 sampled 1 s after the others; antenna 2 not at all.
+    {
+        let mut ms = MeasurementSet::open(&v2).expect("ms");
+        let mut gone = Vec::new();
+        {
+            let mut pointing = ms.pointing_mut().expect("POINTING");
+            for row in 0..pointing.row_count() {
+                match pointing.as_ref().i32(row, "ANTENNA_ID").expect("antenna") {
+                    1 => {
+                        for column in ["TIME", "TIME_ORIGIN"] {
+                            let time = pointing.as_ref().f64(row, column).expect("time");
+                            pointing.set_f64(row, column, time + 1.0).expect("later");
+                        }
+                    }
+                    2 => gone.push(row),
+                    _ => {}
+                }
+            }
+        }
+        ms.subtable_mut(SubtableId::Pointing)
+            .expect("POINTING")
+            .remove_rows(&gone)
+            .expect("remove");
+        ms.save().expect("save");
+    }
+    let v4 = root.path().join("staggered.ps.zarr");
+    casa_ms::observation_io::convert::to_msv4(&v2, &v4, &conversion()).expect("to msv4");
+    let msv2 = open(&v2, &OpenOptions::default()).expect("msv2");
+    let msv4 = open(&v4, &OpenOptions::default()).expect("msv4");
+    let unix = |mjd_s: f64| mjd_s - 40_587.0 * 86_400.0;
+    let grid = msv2.grid(PartitionId(0), "base").expect("grid");
+    for time in &grid.times_s {
+        // No antenna has a sample within these times.
+        let (start, end) = (time + 0.2, time + 0.4);
+        let on_v2 = series_over(msv2.as_ref(), start..=end);
+        let on_v4 = series_over(msv4.as_ref(), unix(start)..=unix(end));
+        assert!(!on_v4.antennas.contains_key(&AntennaId(2)));
+        assert!(!on_v2.antennas.contains_key(&AntennaId(2)));
+        for antenna in [AntennaId(0), AntennaId(1)] {
+            let samples = &on_v4.antennas[&antenna];
+            assert!(!samples.times_s().is_empty() && samples.times_s().len() <= 2);
+            let query = time + 0.3;
+            let v2 = on_v2.bracket(antenna, query).expect("v2");
+            let v4 = on_v4.bracket(antenna, unix(query)).expect("v4");
+            for (v4, v2) in [(v4.before, v2.before), (v4.after, v2.after)] {
+                assert_eq!(
+                    v4.map(|c| (c.time_s, c.direction_rad)),
+                    v2.map(|c| (unix(c.time_s), c.direction_rad)),
+                    "{antenna:?} at {query}"
+                );
+            }
+            if antenna == AntennaId(1) {
+                assert!(v4.after.is_some(), "antenna 1's next sample, a second on");
+            }
+        }
+    }
+}
+
+/// The frame of the MSv2 at `path`'s `POINTING` directions.
+fn pointing_frame(path: &Path) -> String {
+    let ms = MeasurementSet::open(path).expect("ms");
+    let table = ms.subtable(SubtableId::Pointing).expect("POINTING");
+    match TableMeasDesc::reconstruct(table, "DIRECTION").map(|desc| desc.ref_desc().clone()) {
+        Some(casa_tables::table_measures::MeasRefDesc::Fixed { refer }) => refer,
+        other => panic!("DIRECTION's reference is {other:?}"),
+    }
+}
+
+/// Edit the MSv2 at `path`'s `POINTING`: label its directions `frame`, and
+/// add a copy of row 0 `later_s` later for each of `copies`.
+fn edit_pointing(path: &Path, frame: Option<&str>, copies: &[f64]) {
+    let mut ms = MeasurementSet::open(path).expect("ms");
+    let table = ms.subtable_mut(SubtableId::Pointing).expect("POINTING");
+    if let Some(frame) = frame {
+        for column in ["DIRECTION", "TARGET"] {
+            TableMeasDesc::new_fixed(column, MeasureType::Direction, frame)
+                .write(table)
+                .expect("frame");
+        }
+    }
+    for later_s in copies {
+        let mut copy = table.row_accessor().row(0).expect("row").clone();
+        for column in ["TIME", "TIME_ORIGIN"] {
+            let time = match copy.get(column) {
+                Some(Value::Scalar(ScalarValue::Float64(time))) => *time,
+                other => panic!("{column} is {other:?}"),
+            };
+            copy.upsert(column, Value::Scalar(ScalarValue::Float64(time + later_s)));
+        }
+        table.add_row(copy).expect("add");
+    }
+    ms.save().expect("save");
+}
+
+/// What the destination cannot hold of the pointing is found before
+/// anything is written. Directions in a frame MSv4 names keep it both ways;
+/// in one it does not name, the MSv4 conversion loses the pointing whole
+/// (an MSv2 destination keeps it). A row at the antenna and time of another
+/// is a loss into an MSv4, which holds one sample there, and kept into an
+/// MSv2; rows beyond the partition's times and each antenna's nearest
+/// either side are a counted loss. Partitions sharing an MSv2's rows write
+/// them once.
+#[test]
+fn pointing_the_destination_cannot_hold_is_reported_before_writing() {
+    let root = tempfile::tempdir().expect("root");
+    let variant = |name: &str| {
+        let dir = root.path().join(name);
+        std::fs::create_dir(&dir).expect("dir");
+        mosaic(&dir, 4).0
+    };
+    let losses = |path: &Path, to_v4: bool| {
+        let out = path.with_extension(if to_v4 { "ps.zarr" } else { "copy.ms" });
+        let report = if to_v4 {
+            casa_ms::observation_io::convert::to_msv4(path, &out, &conversion())
+        } else {
+            casa_ms::observation_io::convert::to_msv2(path, &out, &conversion())
+        }
+        .expect("convert");
+        let pointing: Vec<String> = report
+            .losses
+            .iter()
+            .filter_map(|loss| match loss {
+                Loss::Table(table) if table.starts_with("POINTING") => Some(table.clone()),
+                _ => None,
+            })
+            .collect();
+        (out, pointing)
+    };
+    let columns = "POINTING INTERVAL, NAME, TARGET, TRACKING".to_string();
+
+    let v2 = variant("azel");
+    edit_pointing(&v2, Some("AZELGEO"), &[]);
+    let (v4, lost) = losses(&v2, true);
+    assert_eq!(lost, std::slice::from_ref(&columns));
+    let (back, _) = losses(&v4, false);
+    assert_eq!(pointing_frame(&back), "AZELGEO");
+    assert_eq!(pointing_rows(&back).len(), pointing_rows(&v2).len());
+
+    let v2 = variant("galactic");
+    edit_pointing(&v2, Some("GALACTIC"), &[]);
+    let (v4, lost) = losses(&v2, true);
+    assert_eq!(
+        lost,
+        ["POINTING (directions in GALACTIC, which MSv4 does not name)"]
+    );
+    let dataset = std::fs::read_dir(&v4)
+        .expect("datasets")
+        .map(|entry| entry.expect("entry").path())
+        .find(|path| path.join("zarr.json").is_file())
+        .expect("a dataset");
+    assert!(
+        !dataset.join("pointing_xds").exists(),
+        "no pointing written"
+    );
+    let (copy, lost) = losses(&v2, false);
+    assert_eq!(lost, ["POINTING NAME, TARGET, TRACKING"]);
+    assert_eq!(pointing_frame(&copy), "GALACTIC");
+    assert_eq!(pointing_rows(&copy).len(), pointing_rows(&v2).len());
+
+    // Row 0 again at its time, and twice far before the observation: the
+    // nearer of those is antenna 0's nearest sample before it.
+    let v2 = variant("extra");
+    edit_pointing(&v2, None, &[0.0, -1.0e5, -2.0e5]);
+    let (_, lost) = losses(&v2, true);
+    assert_eq!(
+        lost,
+        [
+            columns,
+            "POINTING rows at the antenna and time of an earlier one (1)".to_string(),
+            "POINTING rows beyond every partition's times and each antenna's nearest either \
+             side (1)"
+                .to_string(),
+        ]
+    );
+    let (copy, _) = losses(&v2, false);
+    assert_eq!(pointing_rows(&copy).len(), pointing_rows(&v2).len());
+
+    let dir = root.path().join("two");
+    std::fs::create_dir(&dir).expect("dir");
+    let v2 = two_windows(&dir);
+    let (v4, _) = losses(&v2, true);
+    let (back, _) = losses(&v4, false);
+    assert_eq!(
+        pointing_rows(&back).len(),
+        pointing_rows(&v2).len(),
+        "written once"
+    );
+}
+
+/// A pointing polynomial in time is evaluated at the query time on the
+/// MSv2, about its `TIME_ORIGIN`. MSv4 holds one term (XRADIO defines no
+/// origin for more), so the conversion keeps each row's direction at its own
+/// time and reports the terms as a loss; converting back writes rows of
+/// `NUM_POLY` 0 at those directions.
+#[test]
+fn pointing_polynomials_keep_each_rows_direction_at_its_time_in_msv4() {
     let root = tempfile::tempdir().expect("root");
     let source = root.path().join("source");
     std::fs::create_dir(&source).expect("dir");
@@ -333,53 +547,50 @@ fn pointing_polynomials_are_evaluated_at_the_query_time_on_both_stores() {
             })
             .collect::<Vec<_>>()
     };
+    // Row `antenna, time`'s direction at `at`.
+    let direction = |antenna: u32, time: f64, at: f64| {
+        let (_, _, origin, terms) = rows
+            .iter()
+            .find(|(id, row_time, _, _)| {
+                *id == i32::try_from(antenna).expect("id") && *row_time == time
+            })
+            .expect("its row");
+        let since = at - origin;
+        [1e-6 * since + terms[[0, 0]], -2e-6 * since + terms[[1, 0]]]
+    };
     let msv2 = open(&v2, &OpenOptions::default()).expect("msv2");
     let from_v2 = series(msv2.as_ref());
     assert_eq!(from_v2.terms, 2);
     let v4 = root.path().join("rates.ps.zarr");
-    casa_ms::observation_io::convert::to_msv4(&v2, &v4, &conversion()).expect("to msv4");
+    let report =
+        casa_ms::observation_io::convert::to_msv4(&v2, &v4, &conversion()).expect("to msv4");
+    assert!(report.losses.contains(&Loss::Table(
+        "POINTING polynomial terms (each row's direction at its own time is kept)".to_string()
+    )));
     let from_v4 = series(open(&v4, &OpenOptions::default()).expect("msv4").as_ref());
-    assert_eq!(from_v4.terms, 2);
+    assert_eq!(from_v4.terms, 1);
     let back = root.path().join("rates-back.ms");
     casa_ms::observation_io::convert::to_msv2(&v4, &back, &conversion()).expect("to msv2");
     let again = series(open(&back, &OpenOptions::default()).expect("back").as_ref());
-    assert_eq!(again.terms, 2);
-    for samples in again.antennas.values() {
-        assert_eq!(
-            samples.origins_s(),
-            samples.times_s(),
-            "TIME_ORIGIN at TIME"
-        );
-    }
+    assert_eq!(again.terms, 1);
     let unix = |mjd_s: f64| mjd_s - 40_587.0 * 86_400.0;
     let grid = msv2.grid(PartitionId(0), "base").expect("grid");
     for antenna in 0..3_u32 {
         for time in grid.times_s.iter().map(|time| time + 2.5) {
-            let bracket = from_v2.bracket(AntennaId(antenna), time).expect("v2");
-            let before = bracket.before.expect("a sample before");
-            let (_, row_time, origin, terms) = rows
-                .iter()
-                .find(|(id, row_time, _, _)| {
-                    *id == i32::try_from(antenna).expect("id") && *row_time == before.time_s
-                })
-                .expect("its row");
-            assert_eq!(*row_time, before.time_s);
-            let since = time - origin;
+            let before = from_v2
+                .bracket(AntennaId(antenna), time)
+                .expect("v2")
+                .before
+                .expect("a sample before");
             assert_eq!(
                 before.direction_rad,
-                [1e-6 * since + terms[[0, 0]], -2e-6 * since + terms[[1, 0]]]
+                direction(antenna, before.time_s, time)
             );
+            let at_its_time = direction(antenna, before.time_s, before.time_s);
             let on_v4 = from_v4.bracket(AntennaId(antenna), unix(time)).expect("v4");
             let on_back = again.bracket(AntennaId(antenna), time).expect("back");
-            for shifted in [on_v4.before, on_back.before] {
-                let shifted = shifted.expect("a sample before").direction_rad;
-                for axis in 0..2 {
-                    assert!(
-                        (shifted[axis] - before.direction_rad[axis]).abs() < 1e-14,
-                        "{shifted:?} against {:?}",
-                        before.direction_rad
-                    );
-                }
+            for kept in [on_v4.before, on_back.before] {
+                assert_eq!(kept.expect("a sample before").direction_rad, at_its_time);
             }
         }
     }
@@ -399,10 +610,9 @@ fn conversion() -> casa_ms::observation_io::convert::ConversionOptions {
     }
 }
 
-/// A two-window simulation (the simulator states each antenna's receptors
-/// for window 0 only) given window 1 receptors of its own: the window-0
-/// rows copied with receptor angles `angle`.
-fn two_windows(root: &Path, angle: f64) -> std::path::PathBuf {
+/// A two-window simulation of three antennas. The simulator writes each
+/// antenna's `FEED` row for window 0 only (#943).
+fn two_windows(root: &Path) -> std::path::PathBuf {
     let mut request = casa_ms::SyntheticObservationRequest::vla_ppdisk(
         root.join("unused.fits"),
         root.join("two.ms"),
@@ -438,24 +648,45 @@ fn two_windows(root: &Path, angle: f64) -> std::path::PathBuf {
         })
         .collect();
     casa_ms::generate_synthetic_observation_ms(&request).expect("simulate");
-    let mut ms = MeasurementSet::open(&request.output_ms).expect("ms");
+    request.output_ms
+}
+
+/// Edit the MSv2's `FEED`: give every row window `every` when set, then
+/// add a copy of each row `(row, window, angle, later_s)` names, in window
+/// `window` with receptor angles `angle`, `later_s` after it.
+fn edit_feed(path: &Path, every: Option<i32>, copies: &[(usize, i32, f64, f64)]) {
+    let mut ms = MeasurementSet::open(path).expect("ms");
+    if let Some(window) = every {
+        let mut feed = ms.feed_mut().expect("FEED");
+        for row in 0..feed.row_count() {
+            feed.set_i32(row, "SPECTRAL_WINDOW_ID", window)
+                .expect("window");
+        }
+    }
     let feed = ms.subtable_mut(SubtableId::Feed).expect("FEED");
-    for row in 0..feed.row_count() {
-        let mut copy = feed.row_accessor().row(row).expect("row").clone();
-        copy.upsert("SPECTRAL_WINDOW_ID", Value::Scalar(ScalarValue::Int32(1)));
+    for (row, window, angle, later_s) in copies {
+        let mut copy = feed.row_accessor().row(*row).expect("row").clone();
+        let time = match copy.get("TIME") {
+            Some(Value::Scalar(ScalarValue::Float64(time))) => *time,
+            other => panic!("TIME is {other:?}"),
+        };
+        copy.upsert(
+            "SPECTRAL_WINDOW_ID",
+            Value::Scalar(ScalarValue::Int32(*window)),
+        );
+        copy.upsert("TIME", Value::Scalar(ScalarValue::Float64(time + later_s)));
         copy.upsert(
             "RECEPTOR_ANGLE",
             Value::Array(casa_types::ArrayValue::Float64(
-                ndarray::arr1(&[angle, angle]).into_dyn(),
+                ndarray::arr1(&[*angle, *angle]).into_dyn(),
             )),
         );
         feed.add_row(copy).expect("add");
     }
     ms.save().expect("save");
-    request.output_ms
 }
 
-/// The receptor angles each partition states, by antenna.
+/// Each partition's receptor angles, by antenna.
 fn angles(observation: &dyn casa_observation::Observation) -> Vec<Vec<f64>> {
     observation
         .catalogue()
@@ -471,44 +702,78 @@ fn angles(observation: &dyn casa_observation::Observation) -> Vec<Vec<f64>> {
         .collect()
 }
 
-/// Each partition states its antennas' receptors in its own window: the
-/// MSv2's `FEED` rows for the window (or every window), the MSv4's
-/// `antenna_xds`; a conversion carries them both ways, writing per-window
-/// `FEED` rows where windows differ. Rows of one antenna, feed and window
-/// that differ in time are refused, as XRADIO's converter refuses them.
+/// The (antenna, window) of every `FEED` row of the MSv2 at `path`, sorted.
+fn feed_rows(path: &Path) -> Vec<(i32, i32)> {
+    let ms = MeasurementSet::open(path).expect("ms");
+    let feed = ms.feed().expect("FEED");
+    let mut rows: Vec<(i32, i32)> = (0..feed.row_count())
+        .map(|row| {
+            (
+                feed.i32(row, "ANTENNA_ID").expect("antenna"),
+                feed.i32(row, "SPECTRAL_WINDOW_ID").expect("window"),
+            )
+        })
+        .collect();
+    rows.sort_unstable();
+    rows
+}
+
+/// Each partition states its antennas' receptors in its own window, read
+/// as casacore's `MSIter` and XRADIO's converter read `FEED`: a window's
+/// own rows once any row names a window, else the rows for every window
+/// (-1). A conversion carries them both ways; where one antenna's windows
+/// differ, the MSv2 written has a row per window for every antenna, since a
+/// row for every window would then be ignored. Rows of one antenna, feed
+/// and window that differ in time are refused.
 #[test]
 fn receptors_are_each_partitions_own() {
     let root = tempfile::tempdir().expect("root");
-    let v2 = two_windows(root.path(), 0.25);
+    let variant = |name: &str| {
+        let dir = root.path().join(name);
+        std::fs::create_dir(&dir).expect("dir");
+        two_windows(&dir)
+    };
+    // Window 1 rows: antenna 0's angle differs from window 0's, the
+    // others' agree.
+    let v2 = variant("mixed");
+    edit_feed(
+        &v2,
+        None,
+        &[(0, 1, 0.25, 0.0), (1, 1, 0.0, 0.0), (2, 1, 0.0, 0.0)],
+    );
     let msv2 = open(&v2, &OpenOptions::default()).expect("msv2");
-    assert_eq!(angles(msv2.as_ref()), [vec![0.0; 6], vec![0.25; 6]]);
+    let mixed = [vec![0.0; 6], vec![0.25, 0.25, 0.0, 0.0, 0.0, 0.0]];
+    assert_eq!(angles(msv2.as_ref()), mixed);
     let v4 = root.path().join("two.ps.zarr");
     casa_ms::observation_io::convert::to_msv4(&v2, &v4, &conversion()).expect("to msv4");
     let msv4 = open(&v4, &OpenOptions::default()).expect("msv4");
-    assert_eq!(angles(msv4.as_ref()), angles(msv2.as_ref()));
+    assert_eq!(angles(msv4.as_ref()), mixed);
     let back = root.path().join("back.ms");
     casa_ms::observation_io::convert::to_msv2(&v4, &back, &conversion()).expect("to msv2");
     let again = open(&back, &OpenOptions::default()).expect("back");
-    assert_eq!(angles(again.as_ref()), angles(msv2.as_ref()));
+    assert_eq!(angles(again.as_ref()), mixed);
+    assert_eq!(
+        feed_rows(&back),
+        [(0, 0), (0, 1), (1, 0), (1, 1), (2, 0), (2, 1)],
+        "a row per window for every antenna, none for every window"
+    );
 
-    let varying = root.path().join("varying");
-    std::fs::create_dir(&varying).expect("dir");
-    let v2 = two_windows(&varying, 0.25);
-    {
-        let mut ms = MeasurementSet::open(&v2).expect("ms");
-        let feed = ms.subtable_mut(SubtableId::Feed).expect("FEED");
-        let mut later = feed.row_accessor().row(0).expect("row").clone();
-        later.upsert(
-            "RECEPTOR_ANGLE",
-            Value::Array(casa_types::ArrayValue::Float64(
-                ndarray::arr1(&[0.5, 0.5]).into_dyn(),
-            )),
-        );
-        feed.add_row(later).expect("add");
-        ms.save().expect("save");
-    }
+    // Rows for every window serve both; with a window-1 row beside them,
+    // casacore ignores them, so window 0 has no receptors.
+    let v2 = variant("every");
+    edit_feed(&v2, Some(-1), &[]);
+    let every = open(&v2, &OpenOptions::default()).expect("every");
+    assert_eq!(angles(every.as_ref()), [vec![0.0; 6], vec![0.0; 6]]);
+    let v2 = variant("override");
+    edit_feed(&v2, Some(-1), &[(0, 1, 0.25, 0.0)]);
+    let overridden = open(&v2, &OpenOptions::default()).expect("override");
+    assert_eq!(angles(overridden.as_ref()), [vec![], vec![0.25, 0.25]]);
+
+    // Antenna 0's window-0 receptors change 10 s later.
+    let v2 = variant("varying");
+    edit_feed(&v2, None, &[(0, 0, 0.5, 10.0)]);
     assert!(matches!(
         open(&v2, &OpenOptions::default()),
-        Err(ObservationError::Unsupported { what }) if what.contains("differ in time")
+        Err(ObservationError::Unsupported { what }) if what.contains("vary in time")
     ));
 }
