@@ -349,7 +349,7 @@ fn the_block_predictor_holds_at_most_its_bytes() {
                     .map(|index| PredictionDomain {
                         operator: &operators[index],
                         resampler: &resampler,
-                        model: &models[index],
+                        model: (&models[index]).into(),
                     })
                     .collect::<Vec<_>>();
                 predictor_holds_at_most_its_bytes(&domains, backend, workers, NATIVES);

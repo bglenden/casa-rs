@@ -20,7 +20,6 @@ use std::path::Path;
 
 use casa_aipsio::internal::{AipsIoBufferWriter, AipsIoSliceReader, detect_aipsio_byte_order};
 use casa_aipsio::{AipsIo, ByteOrder};
-use ndarray::ShapeBuilder;
 
 use casa_types::{ArrayValue, ScalarValue, Value};
 
@@ -35,12 +34,13 @@ use super::cell_elements::{cell_bools, encode_fixed_cell};
 use super::data_type::CasacoreDataType;
 use super::scalar_sources::SCALAR_BLOCK_CELLS;
 use super::stman_aipsio::{ColumnRawData, extract_row_value};
-use super::stman_array_file::{StManArrayFileReader, StManArrayFileWriter};
+use super::stman_array_file::{StManArrayFileReader, StManArrayFileWriter, stored_shape};
 use super::table_control::ColumnDescContents;
 use super::{ColumnSources, RequiredScalarColumnData, StorageError};
 
 mod column_writer;
 mod index;
+mod string_arrays;
 mod string_buckets;
 
 use string_buckets::StringBuckets;
@@ -673,83 +673,8 @@ fn read_ssm_string_array_value(
     if length == 0 {
         return Ok(None);
     }
-
     let block = read_ssm_string_bytes(file, header, bucket_nr, offset, length)?;
-    let (shape, mut pos, filled_flag) = if let Some(shape) = fixed_shape {
-        (
-            shape.iter().map(|&dim| dim as usize).collect::<Vec<_>>(),
-            0usize,
-            true,
-        )
-    } else {
-        if block.len() < 8 {
-            return Err(StorageError::FormatMismatch(
-                "SSM string array block too short for shape header".to_string(),
-            ));
-        }
-        let ndim = u32::from_be_bytes([block[0], block[1], block[2], block[3]]) as usize;
-        let shape_bytes = 4 + ndim * 4 + 4;
-        if block.len() < shape_bytes {
-            return Err(StorageError::FormatMismatch(
-                "SSM string array block too short for declared shape".to_string(),
-            ));
-        }
-
-        let mut shape = Vec::with_capacity(ndim);
-        let mut pos = 4usize;
-        for _ in 0..ndim {
-            let dim =
-                i32::from_be_bytes([block[pos], block[pos + 1], block[pos + 2], block[pos + 3]]);
-            if dim < 0 {
-                return Err(StorageError::FormatMismatch(
-                    "SSM string array shape contains negative extent".to_string(),
-                ));
-            }
-            shape.push(dim as usize);
-            pos += 4;
-        }
-        let filled_flag =
-            i32::from_be_bytes([block[pos], block[pos + 1], block[pos + 2], block[pos + 3]]) != 0;
-        (shape, pos + 4, filled_flag)
-    };
-
-    let nrelem = shape.iter().try_fold(1usize, |acc, &dim| {
-        acc.checked_mul(dim).ok_or_else(|| {
-            StorageError::FormatMismatch(format!(
-                "SSM string array shape product overflow for shape {:?}",
-                shape
-            ))
-        })
-    })?;
-    let mut values = Vec::with_capacity(nrelem);
-    if filled_flag {
-        for _ in 0..nrelem {
-            if pos + 4 > block.len() {
-                return Err(StorageError::FormatMismatch(
-                    "SSM string array: block too short for element length prefix".to_string(),
-                ));
-            }
-            let slen =
-                u32::from_be_bytes([block[pos], block[pos + 1], block[pos + 2], block[pos + 3]])
-                    as usize;
-            pos += 4;
-            if pos + slen > block.len() {
-                return Err(StorageError::FormatMismatch(
-                    "SSM string array: block too short for element payload".to_string(),
-                ));
-            }
-            let s = String::from_utf8(block[pos..pos + slen].to_vec())
-                .map_err(|e| StorageError::FormatMismatch(format!("invalid UTF-8: {e}")))?;
-            pos += slen;
-            values.push(s);
-        }
-    } else {
-        values.resize(nrelem, String::new());
-    }
-
-    let arr = ndarray::ArrayD::from_shape_vec(ndarray::IxDyn(&shape).f(), values)
-        .map_err(|e| StorageError::FormatMismatch(format!("array shape: {e}")))?;
-    Ok(Some(Value::Array(casa_types::ArrayValue::String(arr))))
+    string_arrays::decode(&block, fixed_shape).map(Some)
 }
 
 // ---------------------------------------------------------------------------
@@ -2851,7 +2776,7 @@ fn write_cell_to_bucket(
                 // arrays prefix ndim, shape, and a filled flag.
                 let (shape, strings) = match value {
                     Some(Value::Array(ArrayValue::String(arr))) => (
-                        arr.shape().to_vec(),
+                        stored_shape(arr.shape()),
                         arr.t().iter().cloned().collect::<Vec<_>>(),
                     ),
                     // An unwritten cell of a variable-shape column stays

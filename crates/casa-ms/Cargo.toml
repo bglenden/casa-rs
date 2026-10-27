@@ -142,6 +142,11 @@ path = "tests/msexplore_casa_parity.rs"
 required-features = ["slow-tests"]
 
 [[test]]
+name = "scratch_columns_casa"
+path = "tests/scratch_columns_casa.rs"
+required-features = ["slow-tests"]
+
+[[test]]
 name = "msexplore_cli"
 path = "tests/msexplore_cli.rs"
 
