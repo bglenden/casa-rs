@@ -3,7 +3,8 @@
 //! The image tasks' guard on existing products (#931): CASA's `overwrite` is
 //! the consent. A task binary run a second time without `--overwrite` fails
 //! and leaves the first product byte for byte as it was; with `--overwrite`
-//! it replaces it.
+//! from an input with other pixels, the product holds what a fresh run from
+//! that input writes.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -76,6 +77,18 @@ fn snapshot(path: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
     files
 }
 
+/// A product's pixels, from a CASA image or a FITS file.
+fn pixels(path: &Path) -> ArrayD<f32> {
+    if path
+        .extension()
+        .is_some_and(|extension| extension == "fits")
+    {
+        casa_images::read_fits_image(path).unwrap().pixels
+    } else {
+        PagedImage::<f32>::open(path).unwrap().get().unwrap()
+    }
+}
+
 fn run(binary: &str, args: &[&str], workspace: &Path) -> Output {
     Command::new(binary)
         .args(args)
@@ -84,34 +97,63 @@ fn run(binary: &str, args: &[&str], workspace: &Path) -> Output {
         .expect("run task binary")
 }
 
-/// Run `binary` with `args` (which write `product`) twice, then once more with
-/// `--overwrite`.
-fn assert_guards_its_product(binary: &str, args: &[&str], product: &str, workspace: &Path) {
-    let first = run(binary, args, workspace);
+fn assert_ran(binary: &str, args: &[&str], output: &Output) {
     assert!(
-        first.status.success(),
+        output.status.success(),
         "{binary} {args:?}: {}",
-        String::from_utf8_lossy(&first.stderr)
+        String::from_utf8_lossy(&output.stderr)
     );
-    let product = workspace.join(product);
-    let before = snapshot(&product);
-    assert!(!before.is_empty(), "{binary} wrote no {product:?}");
+}
+
+/// `args` with the first `from` replaced by `to`.
+fn substituted<'a>(args: &[&'a str], from: &str, to: &'a str) -> Vec<&'a str> {
+    let mut args = args.to_vec();
+    let at = args.iter().position(|arg| *arg == from).unwrap();
+    args[at] = to;
+    args
+}
+
+/// Run `binary` with `args`, which write `product` from `input`, twice; then
+/// with `--overwrite` from `replacement`, an input with other pixels. The
+/// second run must change nothing, and the third must leave the pixels a
+/// fresh run from `replacement` writes.
+fn assert_guards_its_product(
+    binary: &str,
+    args: &[&str],
+    product: &str,
+    (input, replacement): (&str, &str),
+    workspace: &Path,
+) {
+    assert_ran(binary, args, &run(binary, args, workspace));
+    let path = workspace.join(product);
+    let before = snapshot(&path);
+    assert!(!before.is_empty(), "{binary} wrote no {product}");
+    let first_pixels = pixels(&path);
 
     let second = run(binary, args, workspace);
-    assert!(!second.status.success(), "{binary} replaced {product:?}");
+    assert!(!second.status.success(), "{binary} replaced {product}");
     let stderr = String::from_utf8_lossy(&second.stderr);
     assert!(stderr.contains("already exists"), "{binary}: {stderr}");
-    assert_eq!(snapshot(&product), before, "{binary} changed {product:?}");
+    assert_eq!(snapshot(&path), before, "{binary} changed {product}");
 
-    let mut replacing = args.to_vec();
+    let from_replacement = substituted(args, input, replacement);
+    let mut replacing = from_replacement.clone();
     replacing.push("--overwrite");
-    let third = run(binary, &replacing, workspace);
-    assert!(
-        third.status.success(),
-        "{binary} --overwrite: {}",
-        String::from_utf8_lossy(&third.stderr)
+    assert_ran(binary, &replacing, &run(binary, &replacing, workspace));
+    let fresh = format!("fresh-{product}");
+    let reference = substituted(&from_replacement, product, &fresh);
+    assert_ran(binary, &reference, &run(binary, &reference, workspace));
+
+    let replaced = pixels(&path);
+    assert_ne!(
+        replaced, first_pixels,
+        "{binary} --overwrite kept {product}"
     );
-    assert!(product.exists());
+    assert_eq!(
+        replaced,
+        pixels(&workspace.join(&fresh)),
+        "{binary} --overwrite did not write what a fresh run writes"
+    );
 }
 
 #[test]
@@ -119,6 +161,7 @@ fn each_image_task_refuses_its_existing_product_without_overwrite() {
     let workspace = tempfile::tempdir().unwrap();
     let path = workspace.path();
     write_image(&path.join("in.image"), 1.0);
+    write_image(&path.join("other.image"), 3.0);
     write_image(&path.join("low.image"), 0.5);
 
     let cases: [(&str, &[&str], &str); 8] = [
@@ -200,13 +243,18 @@ fn each_image_task_refuses_its_existing_product_without_overwrite() {
         ),
     ];
     for (binary, args, product) in cases {
-        assert_guards_its_product(binary, args, product, path);
+        assert_guards_its_product(binary, args, product, ("in.image", "other.image"), path);
     }
-    // importfits reads the FITS file exportfits wrote.
+    // importfits reads the FITS files exportfits writes: out.fits now holds
+    // other.image's pixels, and in.fits holds in.image's.
+    let exportfits = env!("CARGO_BIN_EXE_exportfits");
+    let setup = ["in.image", "in.fits"];
+    assert_ran(exportfits, &setup, &run(exportfits, &setup, path));
     assert_guards_its_product(
         env!("CARGO_BIN_EXE_importfits"),
         &["out.fits", "back.image"],
         "back.image",
+        ("out.fits", "in.fits"),
         path,
     );
 }
