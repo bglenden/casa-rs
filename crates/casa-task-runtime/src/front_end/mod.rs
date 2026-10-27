@@ -35,6 +35,7 @@ mod help;
 mod inspect;
 mod options;
 mod outcome;
+mod values;
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;

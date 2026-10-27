@@ -34,7 +34,10 @@ pub use front_end::{
     TaskOutcome, TaskSuccess, classify_task_exit, describe, display_value, format_profile_error,
     format_session_error, render_session, task_command_line_help, validate_profile_text,
 };
-pub use invocation::{ProviderInvocationError, project_provider_invocation};
+pub use invocation::{
+    FRONT_END_FAMILIES, ProviderInvocationError, project_front_end_invocation,
+    project_provider_invocation, runs_on_front_end,
+};
 pub use normalize::{NormalizationError, normalize_value, semantic_eq, validate_value};
 pub use profile::{
     PROFILE_FORMAT_VERSION, ParameterProfile, ProfileError, ProfileHeader, ResolvedProfile,

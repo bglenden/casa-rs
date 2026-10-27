@@ -260,16 +260,18 @@ function.
 ## The shared task front end and typed replies
 
 `casa-task-runtime::TaskFrontEnd` is the one entry every task binary's `main`
-is to call; the binaries move onto it by family (#931, PRs 2b–2d), and until
-then use `TaskCliHost`. The front end is generic over the binary's execution
-callback and owns the surface's declared flags, the base sources,
-`--workspace`, `--unset`, `--save-params`, `--no-save-last`, the
+is to call. The image binaries and `imexplore` run on it; the MeasurementSet
+and calibration families, the imager and simobserve move next (#931, PRs 2c
+and 2d) and use `TaskCliHost` until then. The front end is generic over the
+binary's execution callback and owns the surface's declared flags, the base
+sources, `--workspace`, `--unset`, `--save-params`, `--no-save-last`, the
 non-executing `--show`, `--template` (also `--profile-template`), `--describe`
 and `--validate`, and the machine actions. A spelling the surface declares is
 always its parameter, so imregrid's `--template` names its template image and
 `--profile-template` gives its profile. A family binary's first word names the
-surface it runs, such as `mstransform split`; the first hosted surface runs
-otherwise.
+surface it runs, such as `imexplore imstat`; the first hosted surface runs
+otherwise. The callback reads the resolved values into the binary's typed
+request through `TaskInvocation`'s typed reads.
 
 The binary's `main` owns the process. It reads the logging configuration from
 the environment (`CasaLoggingConfig::from_env`) and passes it, with its
@@ -300,7 +302,9 @@ binary runs on the front end.
 Last has one owner on each path: a command line run of a binary records Last
 before the callback and Last Successful only after success, unless
 `--no-save-last`; `--json-run` reads and writes neither. `casars run` owns Last
-for the runs it launches, and Python task calls save none.
+for the runs it launches, and Python task calls save none. `casars run` starts
+a front-end binary with `--json-run -` and the values the user set, reads its
+reply, and prints the return value or the task's own error.
 
 ## Shared Versioned Component Schemas
 

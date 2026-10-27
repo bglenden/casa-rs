@@ -73,6 +73,7 @@ pub mod image_info;
 pub mod regrid;
 pub mod saved_region;
 pub mod subimage;
+mod task_front_end;
 pub mod temp_image;
 
 #[cfg(test)]
@@ -84,10 +85,10 @@ pub use analysis::{
     ImageAnalysisTaskRequest, ImageAnalysisTaskResult, ImageHeaderSummary, ImageMathSummary,
     ImageRegridSummary, ImageStatisticsSummary, ImageSubimageSummary, ImheadRequest, ImmathRequest,
     ImmomentsRequest, ImpbcorRequest, ImportFitsRequest, ImpvRequest, ImregridRequest,
-    ImstatRequest, ImsubimageRequest, MomentMapSummary, PbcorSummary, PvImageSummary,
-    dispatch_image_analysis_task_cli, export_fits, feather, image_analysis_protocol_descriptor,
-    image_analysis_task_schema_bundle, imhead, imhead_put, immath, immoments, impbcor, import_fits,
-    impv, imregrid, imstat, imsubimage, parse_image_channel_selection, run_image_analysis_task,
+    ImstatRequest, ImsubimageRequest, MomentMapSummary, PbcorSummary, PvImageSummary, export_fits,
+    feather, image_analysis_protocol_descriptor, image_analysis_task_schema_bundle, imhead,
+    imhead_put, immath, immoments, impbcor, import_fits, impv, imregrid, imstat, imsubimage,
+    parse_image_channel_selection, run_image_analysis_task,
 };
 pub use beam::{GaussianBeam, ImageBeamSet};
 pub use casa_lattices::{ScratchSpace, TempStoragePlan, TempStoragePolicy};
@@ -106,4 +107,5 @@ pub use image_info::{ImageInfo, ImageType};
 pub use regrid::{RegridMethod, RegridTemplate, Regridded, regrid};
 pub use saved_region::{PolygonRegion, RegionStatistics};
 pub use subimage::{SubImage, SubImageMut};
+pub use task_front_end::{image_task_bool_text, image_task_front_end, image_task_success};
 pub use temp_image::TempImage;

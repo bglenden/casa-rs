@@ -1,83 +1,30 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! `feather` - CASA-style Fourier-domain image combination.
+//! `feather` - CASA-style feathering of single-dish and interferometer
+//! images, on the shared task front end.
 
-use std::env;
-use std::path::PathBuf;
-use std::process;
+use std::process::ExitCode;
 
 use casa_images::{
-    FeatherRequest, ImageAnalysisTaskResult, dispatch_image_analysis_task_cli, feather,
+    FeatherRequest, ImageAnalysisTaskResult, feather, image_task_front_end, image_task_success,
 };
+use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 
-fn main() {
-    if let Err(error) = run() {
-        eprintln!("Error: {error}");
-        process::exit(1);
-    }
+fn main() -> ExitCode {
+    image_task_front_end("feather", &["feather"], run).main(
+        std::env::args_os().skip(1),
+        casa_task_runtime::CasaLoggingConfig::from_env(),
+        &mut std::io::stdout(),
+        std::io::stderr(),
+    )
 }
 
-fn run() -> Result<(), String> {
-    let args = env::args().skip(1).collect::<Vec<_>>();
-    if let Some(output) = dispatch_image_analysis_task_cli(&args, &usage())? {
-        println!("{output}");
-        return Ok(());
-    }
-    let request = parse_request(&args)?;
-    let result = feather(&request).map_err(|error| error.to_string())?;
-    print_json(&ImageAnalysisTaskResult::Feather(result))
-}
-
-fn parse_request(args: &[String]) -> Result<FeatherRequest, String> {
-    let mut imagename = None;
-    let mut highres = None;
-    let mut lowres = None;
-    let mut sdfactor = 1.0_f32;
-    let mut overwrite = false;
-    let mut idx = 0;
-    while idx < args.len() {
-        match args[idx].as_str() {
-            "--imagename" | "--output" => {
-                idx += 1;
-                imagename = Some(PathBuf::from(args.get(idx).ok_or_else(usage)?));
-            }
-            "--highres" => {
-                idx += 1;
-                highres = Some(PathBuf::from(args.get(idx).ok_or_else(usage)?));
-            }
-            "--lowres" => {
-                idx += 1;
-                lowres = Some(PathBuf::from(args.get(idx).ok_or_else(usage)?));
-            }
-            "--sdfactor" => {
-                idx += 1;
-                sdfactor = args
-                    .get(idx)
-                    .ok_or_else(usage)?
-                    .parse()
-                    .map_err(|error| format!("parse --sdfactor: {error}"))?;
-            }
-            "--overwrite" => overwrite = true,
-            other => return Err(format!("unknown argument {other:?}\n{}", usage())),
-        }
-        idx += 1;
-    }
-    Ok(FeatherRequest {
-        imagename: imagename.ok_or_else(usage)?,
-        highres: highres.ok_or_else(usage)?,
-        lowres: lowres.ok_or_else(usage)?,
-        sdfactor,
-        overwrite,
-    })
-}
-
-fn usage() -> String {
-    "usage: feather --imagename <output> --highres <image> --lowres <image> [--sdfactor N] [--overwrite] | feather --json-run <SOURCE>".to_string()
-}
-
-fn print_json<T: serde::Serialize>(value: &T) -> Result<(), String> {
-    println!(
-        "{}",
-        serde_json::to_string_pretty(value).map_err(|error| error.to_string())?
-    );
-    Ok(())
+fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
+    let request = FeatherRequest {
+        imagename: task.path("imagename")?,
+        highres: task.path("highres")?,
+        lowres: task.path("lowres")?,
+        sdfactor: task.number("sdfactor")? as f32,
+        overwrite: task.flag("overwrite")?,
+    };
+    image_task_success(feather(&request).map(ImageAnalysisTaskResult::Feather))
 }
