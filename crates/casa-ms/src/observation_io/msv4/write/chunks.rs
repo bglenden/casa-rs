@@ -12,10 +12,11 @@ use std::ops::Range;
 use num_complex::Complex32;
 
 /// One write's elements of every payload variable, times outermost: a
-/// batch's, from its views, or the held times'.
-#[derive(Clone, Copy)]
+/// batch's, from its views, or the held times'. `values` holds one slice
+/// per data group the dataset declares, in declaration order.
+#[derive(Clone)]
 pub(super) struct Columns<'a> {
-    pub(super) values: &'a [Complex32],
+    pub(super) values: Vec<&'a [Complex32]>,
     pub(super) flags: &'a [bool],
     pub(super) weights: &'a [f32],
     pub(super) uvw: &'a [f64],
@@ -23,34 +24,40 @@ pub(super) struct Columns<'a> {
     pub(super) exposure: &'a [f64],
 }
 
-/// The elements one time holds in each variable: `cube` in the
-/// visibilities, flags and weights, three per baseline in the UVW, one per
-/// baseline in the centroids and exposures.
+/// The elements one time holds in each variable: `cube` in each group's
+/// visibilities and in the flags and weights, three per baseline in the
+/// UVW, one per baseline in the centroids and exposures.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct PerTime {
     pub(super) baselines: usize,
     pub(super) cube: usize,
+    /// Visibility variables: one per data group.
+    pub(super) groups: usize,
 }
 
 impl PerTime {
     /// Elements of every variable at one time.
     pub(super) fn elements(self) -> usize {
-        3 * self.cube + 5 * self.baselines
+        (self.groups + 2) * self.cube + 5 * self.baselines
     }
 
     /// Bytes of every variable at one time.
     pub(super) fn bytes(self) -> usize {
-        let cube = size_of::<Complex32>() + size_of::<bool>() + size_of::<f32>();
+        let cube = self.groups * size_of::<Complex32>() + size_of::<bool>() + size_of::<f32>();
         self.cube * cube + self.baselines * 5 * size_of::<f64>()
     }
 }
 
 impl<'a> Columns<'a> {
     /// The elements of `times`, counted from the first time these hold.
-    pub(super) fn times(self, times: &Range<usize>, per: PerTime) -> Self {
+    pub(super) fn times(&self, times: &Range<usize>, per: PerTime) -> Self {
         let span = |n: usize| times.start * n..times.end * n;
         Self {
-            values: &self.values[span(per.cube)],
+            values: self
+                .values
+                .iter()
+                .map(|values| &values[span(per.cube)])
+                .collect(),
             flags: &self.flags[span(per.cube)],
             weights: &self.weights[span(per.cube)],
             uvw: &self.uvw[span(3 * per.baselines)],
@@ -66,7 +73,7 @@ impl<'a> Columns<'a> {
 #[derive(Default)]
 pub(super) struct Held {
     times: Range<usize>,
-    values: Vec<Complex32>,
+    values: Vec<Vec<Complex32>>,
     flags: Vec<bool>,
     weights: Vec<f32>,
     uvw: Vec<f64>,
@@ -85,13 +92,15 @@ impl Held {
     pub(super) fn hold(
         &mut self,
         times: Range<usize>,
-        columns: Columns<'_>,
+        columns: &Columns<'_>,
         per: PerTime,
         chunk: usize,
     ) {
         if self.times.is_empty() {
-            if self.values.capacity() == 0 {
-                self.values.reserve_exact(chunk * per.cube);
+            if self.flags.capacity() == 0 {
+                self.values = (0..per.groups)
+                    .map(|_| Vec::with_capacity(chunk * per.cube))
+                    .collect();
                 self.flags.reserve_exact(chunk * per.cube);
                 self.weights.reserve_exact(chunk * per.cube);
                 self.uvw.reserve_exact(chunk * 3 * per.baselines);
@@ -103,7 +112,9 @@ impl Held {
             debug_assert_eq!(self.times.end, times.start, "held times are contiguous");
             self.times.end = times.end;
         }
-        self.values.extend_from_slice(columns.values);
+        for (held, values) in self.values.iter_mut().zip(&columns.values) {
+            held.extend_from_slice(values);
+        }
         self.flags.extend_from_slice(columns.flags);
         self.weights.extend_from_slice(columns.weights);
         self.uvw.extend_from_slice(columns.uvw);
@@ -114,7 +125,7 @@ impl Held {
     /// The held elements.
     pub(super) fn columns(&self) -> Columns<'_> {
         Columns {
-            values: &self.values,
+            values: self.values.iter().map(Vec::as_slice).collect(),
             flags: &self.flags,
             weights: &self.weights,
             uvw: &self.uvw,
@@ -126,7 +137,7 @@ impl Held {
     /// Hold nothing, keeping the storage for the next chunk.
     pub(super) fn clear(&mut self) {
         self.times = 0..0;
-        self.values.clear();
+        self.values.iter_mut().for_each(Vec::clear);
         self.flags.clear();
         self.weights.clear();
         self.uvw.clear();

@@ -2,7 +2,8 @@
 //! Opening an MSv4 processing set: each `VisibilityXds` dataset is a
 //! partition, with its catalogue checked against the profile once.
 
-use std::collections::BTreeMap;
+use std::cmp::Reverse;
+use std::collections::{BTreeMap, BinaryHeap, HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -73,7 +74,10 @@ pub(super) struct Dataset {
 /// Each visibility dataset is one partition, described by its content
 /// (spectral window, correlations, the intents of its `scan_name`, its
 /// `observation_info`). Antennas are the union of the datasets'
-/// `antenna_xds` entries, one per name, station and position.
+/// `antenna_xds` entries, one per name and station (one with two positions
+/// is refused), in an order that keeps every dataset's: a dataset lists
+/// only its baselines' antennas, in its MSv2's `ANTENNA` order when either
+/// converter wrote it, so the order the datasets determine is that MSv2's.
 /// Fields come from each data group's own `field_and_source` dataset and
 /// are distinct unless name, phase centre and source all agree: two groups
 /// with different phase centres keep their own fields and UVW frames, and a
@@ -125,11 +129,13 @@ impl Msv4Observation {
         let mut observation = Self {
             catalogue: Arc::new(Catalogue::default()),
             datasets: Vec::new(),
-            options: CodecOptions::default().with_concurrent_target(1),
+            options: super::codec_options(),
             open: options.clone(),
         };
-        for name in names {
-            observation.add_dataset(&store, path.as_ref(), &format!("/{name}"))?;
+        let (antennas, per_dataset) = dataset_antennas(&store, &names)?;
+        observation.catalogue_mut().antennas = antennas;
+        for (name, antennas) in names.iter().zip(&per_dataset) {
+            observation.add_dataset(&store, path.as_ref(), &format!("/{name}"), antennas)?;
         }
         if observation.datasets.is_empty() {
             return Err(invalid("the processing set has no visibility datasets"));
@@ -143,30 +149,33 @@ impl Msv4Observation {
         &self.catalogue
     }
 
+    /// The name of partition `id`'s dataset in the processing set.
+    ///
+    /// # Panics
+    ///
+    /// If `id` is not a partition of the observation.
+    #[must_use]
+    pub fn dataset_name(&self, id: PartitionId) -> &str {
+        self.datasets[id.0 as usize].path.trim_start_matches('/')
+    }
+
     /// The catalogue while the store is being opened, before any batch or
     /// cursor shares it.
     fn catalogue_mut(&mut self) -> &mut Catalogue {
         Arc::get_mut(&mut self.catalogue).expect("the catalogue is shared only after opening")
     }
 
+    /// Add the dataset at `path`, whose `antenna_xds` names `antennas`
+    /// (each with its catalogue id).
     fn add_dataset(
         &mut self,
         store: &Arc<FilesystemStore>,
         root: &Path,
         path: &str,
+        antennas: &[(String, AntennaId)],
     ) -> Result<(), ObservationError> {
-        let group = Group::open(store.clone(), path).map_err(storage)?;
+        let group = visibility_group(store, path)?;
         let attributes = group.attributes();
-        if text(attributes, "type", path)? != "visibility" {
-            return Err(ObservationError::Unsupported {
-                what: "an MSv4 dataset other than a visibility dataset",
-            });
-        }
-        if text(attributes, "schema_version", path)? != SCHEMA_VERSION {
-            return Err(ObservationError::Unsupported {
-                what: "an MSv4 schema version other than 4.0.1",
-            });
-        }
         if exists(root, &format!("{path}/polarization_mixed")) {
             // The partition's correlations are one list for every baseline;
             // a per-baseline basis under `PP`, `PQ`, `QP`, `QQ` would be
@@ -176,7 +185,7 @@ impl Msv4Observation {
                        (polarization_mixed)",
             });
         }
-        let baselines = self.baselines(store, path)?;
+        let baselines = baselines(store, path, antennas)?;
         let observation = self.observation_info(store, path, attributes)?;
         let (times, time_attributes) = numbers::<f64>(store, &format!("{path}/time"))?;
         let (time_scale, time_origin) = time_reference(&time_attributes, "time")?;
@@ -369,42 +378,6 @@ impl Msv4Observation {
         }
     }
 
-    /// The dataset's baselines, resolved through its `antenna_xds`.
-    fn baselines(
-        &mut self,
-        store: &Arc<FilesystemStore>,
-        path: &str,
-    ) -> Result<Vec<OrderedBaseline>, ObservationError> {
-        let antennas = read_antennas(store, &format!("{path}/antenna_xds"))?;
-        let names: Vec<String> = antennas
-            .iter()
-            .map(|antenna| antenna.name.clone())
-            .collect();
-        let ids = antennas
-            .into_iter()
-            .map(|antenna| self.antenna(antenna))
-            .collect::<Result<Vec<_>, _>>()?;
-        let baseline_antenna = |which: &str| -> Result<Vec<AntennaId>, ObservationError> {
-            strings(store, &format!("{path}/baseline_antenna{which}_name"))?
-                .iter()
-                .map(|name| {
-                    names
-                        .iter()
-                        .position(|known| known == name)
-                        .map(|index| ids[index])
-                        .ok_or_else(|| {
-                            invalid(format!("baseline antenna {name} is not in antenna_xds"))
-                        })
-                })
-                .collect()
-        };
-        Ok(baseline_antenna("1")?
-            .into_iter()
-            .zip(baseline_antenna("2")?)
-            .map(|(antenna1, antenna2)| OrderedBaseline { antenna1, antenna2 })
-            .collect())
-    }
-
     /// The partition's spectral window and correlations; its data groups
     /// are added by the caller.
     fn partition(
@@ -508,28 +481,6 @@ impl Msv4Observation {
         Ok((Some(ids), intents))
     }
 
-    /// The catalogue antenna `antenna` describes, added if new. One name
-    /// and station with two positions is refused, not merged.
-    fn antenna(&mut self, antenna: AntennaEntry) -> Result<AntennaId, ObservationError> {
-        let antennas = &mut self.catalogue_mut().antennas;
-        let index = match antennas
-            .iter()
-            .position(|known| known.name == antenna.name && known.station == antenna.station)
-        {
-            Some(index) if antennas[index].position.values() == antenna.position.values() => index,
-            Some(_) => {
-                return Err(ObservationError::Unsupported {
-                    what: "one MSv4 antenna name with two positions",
-                });
-            }
-            None => {
-                antennas.push(antenna);
-                antennas.len() - 1
-            }
-        };
-        Ok(AntennaId(u32::try_from(index).expect("few antennas")))
-    }
-
     /// The catalogue field of each of `per_time`'s names, read from the
     /// `field_and_source` dataset at `path`, and the phase centres' frame.
     fn fields(
@@ -556,7 +507,11 @@ impl Msv4Observation {
                     centres[2 * row + 1],
                     frame,
                 ),
-                source_name: sources.get(row).cloned(),
+                // XRADIO's placeholder for an absent source is none.
+                source_name: sources
+                    .get(row)
+                    .filter(|name| !super::is_unknown_source(name))
+                    .cloned(),
             };
             let fields = &mut self.catalogue_mut().fields;
             let index = fields
@@ -643,6 +598,195 @@ fn open_group(
             stored_label: Some(effective),
         },
     })
+}
+
+/// The group at `path`, refused unless it is a visibility dataset of the
+/// profile's schema version.
+fn visibility_group(
+    store: &Arc<FilesystemStore>,
+    path: &str,
+) -> Result<Group<FilesystemStore>, ObservationError> {
+    let group = Group::open(store.clone(), path).map_err(storage)?;
+    if text(group.attributes(), "type", path)? != "visibility" {
+        return Err(ObservationError::Unsupported {
+            what: "an MSv4 dataset other than a visibility dataset",
+        });
+    }
+    if text(group.attributes(), "schema_version", path)? != SCHEMA_VERSION {
+        return Err(ObservationError::Unsupported {
+            what: "an MSv4 schema version other than 4.0.1",
+        });
+    }
+    Ok(group)
+}
+
+/// Each dataset's catalogue antennas (with their names), resolved from its
+/// `antenna_xds`.
+type DatasetAntennas = Vec<Vec<(String, AntennaId)>>;
+
+/// The catalogue's antennas and each of the datasets `names`' antennas,
+/// reading each `antenna_xds` once. An antenna is one name and station
+/// (one with two positions is refused, not merged); the catalogue orders
+/// them so as to keep every dataset's order ([`merge_orders`]), so a store
+/// either converter wrote from an MSv2 numbers its antennas as the MSv2
+/// does wherever the datasets determine it, and no baseline's antennas
+/// change places.
+fn dataset_antennas(
+    store: &Arc<FilesystemStore>,
+    names: &[String],
+) -> Result<(Vec<AntennaEntry>, DatasetAntennas), ObservationError> {
+    let mut known: HashMap<(String, String), usize> = HashMap::new();
+    let mut first: Vec<AntennaEntry> = Vec::new();
+    let mut lists: Vec<Vec<(String, usize)>> = Vec::with_capacity(names.len());
+    // A dataset's group is opened once, by `add_dataset` (an XRADIO
+    // dataset's metadata is consolidated there, so a second open costs
+    // about what its antennas do). An error here is reported as opening
+    // would have: the first of the groups so far that is no visibility
+    // dataset of the profile's schema is refused as such instead.
+    let refused = |error: ObservationError, upto: usize| {
+        names[..=upto]
+            .iter()
+            .find_map(|name| visibility_group(store, &format!("/{name}")).err())
+            .unwrap_or(error)
+    };
+    for (index, name) in names.iter().enumerate() {
+        let path = format!("/{name}");
+        let read = read_antennas(store, &format!("{path}/antenna_xds"))
+            .map_err(|error| refused(error, index))?;
+        let mut list = Vec::new();
+        for antenna in read {
+            let label = antenna.name.clone();
+            let next = first.len();
+            let rank = *known
+                .entry((antenna.name.clone(), antenna.station.clone()))
+                .or_insert(next);
+            if rank == next {
+                first.push(antenna);
+            } else if first[rank].position.values() != antenna.position.values() {
+                return Err(refused(
+                    ObservationError::Unsupported {
+                        what: "one MSv4 antenna name with two positions",
+                    },
+                    index,
+                ));
+            }
+            list.push((label, rank));
+        }
+        lists.push(list);
+    }
+    let ranks = lists
+        .iter()
+        .map(|list| list.iter().map(|(_, rank)| *rank).collect())
+        .collect();
+    let order = merge_orders(ranks, |rank| *rank);
+    let mut id = vec![AntennaId(0); first.len()];
+    for (index, rank) in order.iter().enumerate() {
+        id[*rank] = AntennaId(u32::try_from(index).expect("few antennas"));
+    }
+    let mut entries: Vec<Option<AntennaEntry>> = first.into_iter().map(Some).collect();
+    let antennas = order
+        .iter()
+        .map(|rank| entries[*rank].take().expect("each antenna once"))
+        .collect();
+    let per_dataset = lists
+        .into_iter()
+        .map(|list| {
+            list.into_iter()
+                .map(|(label, rank)| (label, id[rank]))
+                .collect()
+        })
+        .collect();
+    Ok((antennas, per_dataset))
+}
+
+/// The baselines of the dataset at `path`, resolved by name through its
+/// `antennas`.
+fn baselines(
+    store: &Arc<FilesystemStore>,
+    path: &str,
+    antennas: &[(String, AntennaId)],
+) -> Result<Vec<OrderedBaseline>, ObservationError> {
+    // By name, the first of a name kept: a scan per baseline would cost
+    // baselines × antennas comparisons.
+    let mut ids: HashMap<&str, AntennaId> = HashMap::with_capacity(antennas.len());
+    for (name, id) in antennas {
+        ids.entry(name.as_str()).or_insert(*id);
+    }
+    let baseline_antenna = |which: &str| -> Result<Vec<AntennaId>, ObservationError> {
+        strings(store, &format!("{path}/baseline_antenna{which}_name"))?
+            .iter()
+            .map(|name| {
+                ids.get(name.as_str()).copied().ok_or_else(|| {
+                    invalid(format!("baseline antenna {name} is not in antenna_xds"))
+                })
+            })
+            .collect()
+    };
+    Ok(baseline_antenna("1")?
+        .into_iter()
+        .zip(baseline_antenna("2")?)
+        .map(|(antenna1, antenna2)| OrderedBaseline { antenna1, antenna2 })
+        .collect())
+}
+
+/// The items of `lists`, each once (by `key`), in an order that keeps each
+/// list's: a topological order of the lists' successions, the item first
+/// seen first among those free to come next. Lists that disagree (neither
+/// converter writes them) are reconciled the same way: when none is free,
+/// the earliest seen item left goes next, which need not lie on the cycle
+/// and may break more of the lists' order than the cycle requires.
+fn merge_orders<T, K: Eq + std::hash::Hash>(lists: Vec<Vec<T>>, key: impl Fn(&T) -> K) -> Vec<T> {
+    let mut index: HashMap<K, usize> = HashMap::new();
+    let mut items: Vec<Option<T>> = Vec::new();
+    let mut ranks: Vec<Vec<usize>> = Vec::with_capacity(lists.len());
+    for list in lists {
+        let mut ranked = Vec::with_capacity(list.len());
+        for item in list {
+            let next = items.len();
+            let rank = *index.entry(key(&item)).or_insert(next);
+            if rank == next {
+                items.push(Some(item));
+            }
+            ranked.push(rank);
+        }
+        ranks.push(ranked);
+    }
+    let mut successors: Vec<HashSet<usize>> = vec![HashSet::new(); items.len()];
+    let mut predecessors = vec![0_usize; items.len()];
+    for ranked in &ranks {
+        for pair in ranked.windows(2) {
+            if pair[0] != pair[1] && successors[pair[0]].insert(pair[1]) {
+                predecessors[pair[1]] += 1;
+            }
+        }
+    }
+    let mut free: BinaryHeap<Reverse<usize>> = (0..items.len())
+        .filter(|item| predecessors[*item] == 0)
+        .map(Reverse)
+        .collect();
+    let mut merged = Vec::with_capacity(items.len());
+    while merged.len() < items.len() {
+        let Reverse(item) = free.pop().unwrap_or_else(|| {
+            // A cycle: the lists disagree; the earliest seen item left goes
+            // next.
+            let item = (0..items.len())
+                .find(|item| items[*item].is_some() && predecessors[*item] > 0)
+                .expect("an item is left");
+            Reverse(item)
+        });
+        let Some(value) = items[item].take() else {
+            continue;
+        };
+        predecessors[item] = 0;
+        for next in std::mem::take(&mut successors[item]) {
+            predecessors[next] = predecessors[next].saturating_sub(1);
+            if predecessors[next] == 0 && items[next].is_some() {
+                free.push(Reverse(next));
+            }
+        }
+        merged.push(value);
+    }
+    merged
 }
 
 /// The antennas of the `antenna_xds` at `path`.
@@ -800,5 +944,36 @@ impl Msv4Observation {
                 .interval_s
                 .ok_or_else(|| lacks("time.integration_time"))?,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::merge_orders;
+
+    fn merged(lists: &[&[&str]]) -> Vec<String> {
+        let lists = lists
+            .iter()
+            .map(|list| list.iter().map(ToString::to_string).collect())
+            .collect();
+        merge_orders(lists, Clone::clone)
+    }
+
+    #[test]
+    fn merged_antennas_keep_every_datasets_order() {
+        // The first dataset lacks a middle antenna the second places.
+        assert_eq!(
+            merged(&[&["W08", "W16", "W32"], &["W08", "W16", "W24", "W32"]]),
+            ["W08", "W16", "W24", "W32"]
+        );
+        // Disjoint datasets keep the order they are seen in.
+        assert_eq!(merged(&[&["A", "B"], &["C", "D"]]), ["A", "B", "C", "D"]);
+        // Chains across datasets: B < C only through the third.
+        assert_eq!(
+            merged(&[&["A", "C"], &["B", "D"], &["A", "B", "C"]]),
+            ["A", "B", "C", "D"]
+        );
+        // Disagreeing lists still give each item once.
+        assert_eq!(merged(&[&["A", "B"], &["B", "A"]]), ["A", "B"]);
     }
 }

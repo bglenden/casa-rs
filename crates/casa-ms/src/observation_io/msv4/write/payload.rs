@@ -1,13 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! The writer's payload: each batch checked against the declaration before
 //! any byte is written, encoded from its views where they are already in
-//! the stored layout and in whole chunks (`chunks`), and the dataset
-//! published from a staging directory of its own.
+//! the stored layout and in whole chunks (`chunks`).
 
-use std::io;
 use std::ops::Range;
-use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use casa_observation::{ObservationError, ScanId, Shared, VisibilityBatch};
 use casa_types::measures::{EpochView, MjdHighPrec, UvwView};
@@ -40,7 +36,8 @@ struct Placement {
 /// A batch the declaration admits: the views a write encodes, each proven
 /// present, and where its times go.
 struct Checked<'b> {
-    values: ArrayView3<'b, Complex32>,
+    /// Each declared group's visibilities, in declaration order.
+    values: Vec<ArrayView3<'b, Complex32>>,
     flags: ArrayView3<'b, bool>,
     weights: ArrayView3<'b, f32>,
     uvw: UvwView<'b>,
@@ -66,33 +63,49 @@ fn mismatch(what: &str) -> ObservationError {
 }
 
 impl Msv4Writer {
-    /// Write `batch`: whole times of the declared grid, every channel,
-    /// every product, every role.
+    /// Write `batch` to a dataset of one data group: [`Self::write_groups`]
+    /// with that batch alone.
     ///
-    /// Before any byte is written the batch is checked against the
-    /// declaration: its partition, baseline table, channel frequencies and
-    /// frame, correlation products, visibility units and UVW frame must be
-    /// the declared ones (not merely the same counts); each time's instant,
-    /// field, scan and interval must be the grid's. The batch's grid is the
-    /// dataset's, so its visibilities and flags are encoded straight from
+    /// # Errors
+    ///
+    /// As [`Self::write_groups`].
+    pub fn write_batch(&mut self, batch: &VisibilityBatch<'_>) -> Result<(), ObservationError> {
+        self.write_groups(&[*batch])
+    }
+
+    /// Write one batch per declared data group, in declaration order, all
+    /// of the same times: whole times of the declared grid, every channel
+    /// and every product. The first group's batch carries every role; a
+    /// further group's needs only its visibilities.
+    ///
+    /// Before any byte is written each batch is checked against the
+    /// declaration: its group, partition, baseline table, channel
+    /// frequencies and frame, correlation products, visibility units and
+    /// UVW frame must be the declared ones (not merely the same counts);
+    /// each time's instant, field, scan and interval must be the grid's,
+    /// and every batch's times the first's. The batches' grid is the
+    /// dataset's, so their visibilities and flags are encoded straight from
     /// their views; a weight shared by every channel is written for each
     /// channel (counted as packed).
     ///
-    /// The chunks the batch covers whole are stored at once. Its times in a
-    /// chunk it covers only partly are held (copied) until the chunk's
-    /// other times arrive, and the chunk is then stored whole, so batches in
-    /// time order encode every chunk once whatever their size; at most one
-    /// chunk of times is held ([`Self::buffer_bytes`]). Held times that the
-    /// next batch does not continue are stored as they are, and that chunk
-    /// is decoded and re-encoded when its other times come
+    /// The chunks the batches cover whole are stored at once. Their times
+    /// in a chunk they cover only partly are held (copied) until the
+    /// chunk's other times arrive, and the chunk is then stored whole, so
+    /// batches in time order encode every chunk once whatever their size;
+    /// at most one chunk of times is held ([`Self::buffer_bytes`]). Held
+    /// times that the next batches do not continue are stored as they are,
+    /// and that chunk is decoded and re-encoded when its other times come
     /// ([`Msv4WriteCounters::partial_chunks`]).
     ///
     /// # Errors
     ///
-    /// When a check fails, a time is written twice, or the batch is a
-    /// channel window: nothing of the batch is then written or held. A
-    /// storage error leaves the dataset incomplete; drop the writer.
-    pub fn write_batch(&mut self, batch: &VisibilityBatch<'_>) -> Result<(), ObservationError> {
+    /// When a check fails, a time is written twice, or a batch is a channel
+    /// window: nothing of the batches is then written or held. A storage
+    /// error leaves the dataset incomplete; drop the writer.
+    pub fn write_groups(
+        &mut self,
+        batches: &[VisibilityBatch<'_>],
+    ) -> Result<(), ObservationError> {
         let Checked {
             values,
             flags,
@@ -102,8 +115,11 @@ impl Msv4Writer {
             exposure,
             samples_per_time,
             placement,
-        } = self.check(batch)?;
-        let values = contiguous(values, "visibilities")?;
+        } = self.check(batches)?;
+        let values = values
+            .into_iter()
+            .map(|values| contiguous(values, "visibilities"))
+            .collect::<Result<Vec<_>, _>>()?;
         let flags = contiguous(flags, "flags")?;
         self.gather_times(centroid, exposure, samples_per_time);
         if !weights.is_standard_layout() {
@@ -133,16 +149,17 @@ impl Msv4Writer {
                 Step::Hold(held) => {
                     self.counters.held_elements += held.len() * per.elements();
                     let part = columns.times(&in_batch(&held), per);
-                    self.held.hold(held, part, per, self.chunk_times.min(total));
+                    self.held
+                        .hold(held, &part, per, self.chunk_times.min(total));
                 }
                 Step::Store(run) => {
                     store(
                         payload,
                         &run,
-                        columns.times(&in_batch(&run), per),
+                        &columns.times(&in_batch(&run), per),
                         &self.options,
                     )?;
-                    self.counters.region_writes += 6;
+                    self.counters.region_writes += 5 + per.groups;
                 }
                 Step::Release => release(
                     &mut self.held,
@@ -165,6 +182,7 @@ impl Msv4Writer {
         PerTime {
             baselines,
             cube: baselines * channels * correlations,
+            groups: self.target.groups.len(),
         }
     }
 
@@ -180,8 +198,36 @@ impl Msv4Writer {
 
     /// Everything the write needs of `batch`, checked against the
     /// declaration before any byte is written.
-    fn check<'b>(&self, batch: &VisibilityBatch<'b>) -> Result<Checked<'b>, ObservationError> {
-        self.check_context(batch)?;
+    fn check<'b>(&self, batches: &[VisibilityBatch<'b>]) -> Result<Checked<'b>, ObservationError> {
+        if batches.len() != self.target.groups.len() {
+            return Err(request_error(format!(
+                "the dataset declares {} data groups and {} batches were given",
+                self.target.groups.len(),
+                batches.len()
+            )));
+        }
+        let batch = &batches[0];
+        for (index, each) in batches.iter().enumerate() {
+            self.check_context(each, index)?;
+        }
+        let unix = MjdHighPrec::new(UNIX_EPOCH_MJD, 0.0);
+        let mut values = Vec::with_capacity(batches.len());
+        for other in batches {
+            if other.times() != batch.times()
+                || (0..batch.times()).any(|t| {
+                    other.time.seconds_since(t, unix).to_bits()
+                        != batch.time.seconds_since(t, unix).to_bits()
+                })
+            {
+                return Err(mismatch("times of a further group's batch"));
+            }
+            values.push(
+                other
+                    .group
+                    .values
+                    .ok_or_else(|| request_error("a written batch carries its visibilities"))?,
+            );
+        }
         let timing = &batch.timing;
         let (Some(centroid), Some(exposure), Some(_), Some(scan)) = (
             timing.centroid,
@@ -194,10 +240,9 @@ impl Msv4Writer {
             ));
         };
         let group = &batch.group;
-        let (Some(values), Some(flags), Some(weights), Some(uvw)) =
-            (group.values, group.flags, group.weights, group.uvw)
+        let (Some(flags), Some(weights), Some(uvw)) = (group.flags, group.weights, group.uvw)
         else {
-            return Err(request_error("a written batch carries every role"));
+            return Err(request_error("the first group's batch carries every role"));
         };
         Ok(Checked {
             values,
@@ -211,10 +256,19 @@ impl Msv4Writer {
         })
     }
 
-    /// The batch's context against the declaration's, before any sample.
-    fn check_context(&self, batch: &VisibilityBatch<'_>) -> Result<(), ObservationError> {
+    /// The context of `batch`, of declared group `group`, against the
+    /// declaration's, before any sample.
+    fn check_context(
+        &self,
+        batch: &VisibilityBatch<'_>,
+        group: usize,
+    ) -> Result<(), ObservationError> {
         let target = &self.target;
         let entry = &target.entry;
+        let declared = &target.groups[group];
+        if batch.group.entry.name != declared.name {
+            return Err(mismatch("data group"));
+        }
         if batch.partition != target.partition {
             return Err(mismatch("partition"));
         }
@@ -240,12 +294,12 @@ impl Msv4Writer {
             return Err(mismatch("correlation products"));
         }
         let group = &batch.group;
-        if group.entry.units != target.group.units {
+        if group.entry.units != declared.units {
             return Err(mismatch("visibility units"));
         }
         if group
             .uvw
-            .is_some_and(|uvw| uvw.reference() != target.group.uvw_frame.effective)
+            .is_some_and(|uvw| uvw.reference() != declared.uvw_frame.effective)
         {
             return Err(mismatch("UVW frame"));
         }
@@ -334,20 +388,17 @@ impl Msv4Writer {
         }
     }
 
-    /// Check every time was written, store any times still held, and
-    /// publish the processing set by
-    /// renaming this writer's staging directory to the destination, which
-    /// must still not exist: the rename refuses to replace it (Linux
-    /// `renameat2(RENAME_NOREPLACE)`, macOS `renamex_np(RENAME_EXCL)`). A
-    /// writer dropped or failing removes its staging directory; a crash
-    /// leaves it under a name no later writer reuses.
+    /// Check every time was written and store any times still held; the
+    /// dataset is then complete, and its processing set may be published
+    /// ([`Msv4ProcessingSetWriter::finish`](super::Msv4ProcessingSetWriter::finish)).
+    /// Returns what the writer did.
     ///
     /// # Errors
     ///
-    /// When a time was not written, or the destination appeared meanwhile
-    /// (another writer published first): the staging directory is then
-    /// removed and nothing is replaced.
-    pub fn finish(mut self) -> Result<PathBuf, ObservationError> {
+    /// When a time was not written, or the held times cannot be stored:
+    /// the dataset stays incomplete and its processing set cannot be
+    /// published.
+    pub fn finish(mut self) -> Result<Msv4WriteCounters, ObservationError> {
         if let Some(time) = self.written.iter().position(|done| !done) {
             return Err(invalid(format!("time {time} was never written")));
         }
@@ -361,63 +412,8 @@ impl Msv4Writer {
                 self.written.len(),
             )?;
         }
-        drop(self.payload.take());
-        let staging = self.staging.take().expect("staging until finish");
-        match rename_noreplace(&staging, &self.destination) {
-            Ok(()) => Ok(std::mem::take(&mut self.destination)),
-            Err(error) => {
-                let _ = std::fs::remove_dir_all(&staging);
-                if error.kind() == io::ErrorKind::AlreadyExists {
-                    Err(request_error(format!(
-                        "{} appeared while the dataset was written; not replaced",
-                        self.destination.display()
-                    )))
-                } else {
-                    Err(storage(error))
-                }
-            }
-        }
-    }
-}
-
-impl Drop for Msv4Writer {
-    fn drop(&mut self) {
-        if let Some(staging) = self.staging.take() {
-            drop(self.payload.take());
-            let _ = std::fs::remove_dir_all(staging);
-        }
-    }
-}
-
-/// A new staging directory beside `destination`, created exclusively under
-/// a name unique to this process and call: two live writers, or a retry
-/// after a crash, never share one, and an existing directory is never
-/// adopted.
-pub(super) fn create_staging(destination: &Path) -> Result<PathBuf, ObservationError> {
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    let name = destination
-        .file_name()
-        .ok_or_else(|| request_error(format!("{} has no file name", destination.display())))?
-        .to_string_lossy()
-        .into_owned();
-    let parent = destination
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."));
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_nanos());
-    loop {
-        let candidate = parent.join(format!(
-            ".{name}.staging-{}-{nanos}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-        match std::fs::create_dir(&candidate) {
-            Ok(()) => return Ok(candidate),
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
-            Err(error) => return Err(storage(error)),
-        }
+        self.registry.finished(&self.dataset);
+        Ok(self.counters)
     }
 }
 
@@ -426,11 +422,13 @@ pub(super) fn create_staging(destination: &Path) -> Result<PathBuf, ObservationE
 fn store(
     payload: &Payload,
     times: &Range<usize>,
-    columns: Columns<'_>,
+    columns: &Columns<'_>,
     options: &CodecOptions,
 ) -> Result<(), ObservationError> {
     let times = times.start as u64..times.end as u64;
-    store_times(&payload.values, &times, columns.values, options)?;
+    for (array, values) in payload.values.iter().zip(&columns.values) {
+        store_times(array, &times, values, options)?;
+    }
     store_times(&payload.flags, &times, columns.flags, options)?;
     store_times(&payload.weights, &times, columns.weights, options)?;
     store_times(&payload.uvw, &times, columns.uvw, options)?;
@@ -464,75 +462,12 @@ fn release(
     total: usize,
 ) -> Result<(), ObservationError> {
     let times = held.times();
-    store(payload, &times, held.columns(), options)?;
-    counters.region_writes += 6;
+    store(payload, &times, &held.columns(), options)?;
+    let variables = 5 + payload.values.len();
+    counters.region_writes += variables;
     if times != chunks::chunk_of(times.start, chunk, total) {
-        counters.partial_chunks += 6;
+        counters.partial_chunks += variables;
     }
     held.clear();
     Ok(())
-}
-
-/// Rename `from` to `to`, failing with `AlreadyExists` rather than replace
-/// anything at `to`: `renameat2(RENAME_NOREPLACE)`, or the checked rename
-/// where the filesystem does not offer it.
-#[cfg(all(target_os = "linux", target_env = "gnu"))]
-fn rename_noreplace(from: &Path, to: &Path) -> io::Result<()> {
-    let (c_from, c_to) = (c_path(from)?, c_path(to)?);
-    // SAFETY: both paths are NUL-terminated C strings that outlive the
-    // call; renameat2 reads them only.
-    let result = unsafe {
-        libc::renameat2(
-            libc::AT_FDCWD,
-            c_from.as_ptr(),
-            libc::AT_FDCWD,
-            c_to.as_ptr(),
-            libc::RENAME_NOREPLACE,
-        )
-    };
-    if result == 0 {
-        return Ok(());
-    }
-    let error = io::Error::last_os_error();
-    if matches!(error.raw_os_error(), Some(libc::EINVAL | libc::ENOSYS)) {
-        checked_rename(from, to)
-    } else {
-        Err(error)
-    }
-}
-
-/// [`rename_noreplace`] through `renamex_np(RENAME_EXCL)`.
-#[cfg(target_os = "macos")]
-fn rename_noreplace(from: &Path, to: &Path) -> io::Result<()> {
-    let (c_from, c_to) = (c_path(from)?, c_path(to)?);
-    // SAFETY: as for renameat2: NUL-terminated paths, read only.
-    let result = unsafe { libc::renamex_np(c_from.as_ptr(), c_to.as_ptr(), libc::RENAME_EXCL) };
-    if result == 0 {
-        Ok(())
-    } else {
-        Err(io::Error::last_os_error())
-    }
-}
-
-/// [`rename_noreplace`] where no exclusive rename is available.
-#[cfg(not(any(target_os = "macos", all(target_os = "linux", target_env = "gnu"))))]
-fn rename_noreplace(from: &Path, to: &Path) -> io::Result<()> {
-    checked_rename(from, to)
-}
-
-/// A check and a rename: a narrow race this trial accepts where the
-/// platform or filesystem offers no exclusive rename.
-#[cfg(not(target_os = "macos"))]
-fn checked_rename(from: &Path, to: &Path) -> io::Result<()> {
-    if to.exists() {
-        return Err(io::Error::from(io::ErrorKind::AlreadyExists));
-    }
-    std::fs::rename(from, to)
-}
-
-/// `path` as a C string.
-#[cfg(any(target_os = "macos", all(target_os = "linux", target_env = "gnu")))]
-fn c_path(path: &Path) -> io::Result<std::ffi::CString> {
-    use std::os::unix::ffi::OsStrExt;
-    Ok(std::ffi::CString::new(path.as_os_str().as_bytes())?)
 }

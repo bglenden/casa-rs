@@ -4,7 +4,9 @@
 
 use std::path::{Path, PathBuf};
 
-use casa_ms::observation_io::{Msv4Codec, Msv4Observation, Msv4StorageOptions, Msv4Writer};
+use casa_ms::observation_io::{
+    Msv4Codec, Msv4Observation, Msv4ProcessingSetWriter, Msv4StorageOptions, Msv4Writer,
+};
 use casa_observation::{
     BatchArrays, BatchBuffers, BatchHeader, Catalogue, Correlation, FieldId, Observation,
     ObservationError, PartitionId, ReadEvent, Sharing, TimeBaselineGrid, VisibilityBatch,
@@ -43,9 +45,28 @@ pub(crate) fn storage() -> Msv4StorageOptions {
     }
 }
 
-pub(crate) fn create(out: &Path, observation: &dyn Observation, rename: bool) -> Msv4Writer {
+/// A processing set at `out` with one dataset, `observation`'s first
+/// partition, and that dataset's writer.
+pub(crate) fn create(
+    out: &Path,
+    observation: &dyn Observation,
+    rename: bool,
+) -> (Msv4ProcessingSetWriter, Msv4Writer) {
     let (catalogue, grid) = declaration(observation, rename);
-    Msv4Writer::create(out, &catalogue, PartitionId(0), "base", &grid, &storage()).expect("create")
+    let set = Msv4ProcessingSetWriter::create(out).expect("create");
+    let writer = set
+        .dataset(&catalogue, PartitionId(0), &["base"], &grid, &storage())
+        .expect("declare");
+    (set, writer)
+}
+
+/// Finish the one dataset and publish its processing set.
+pub(crate) fn publish(
+    set: Msv4ProcessingSetWriter,
+    writer: Msv4Writer,
+) -> Result<PathBuf, ObservationError> {
+    writer.finish()?;
+    set.finish()
 }
 
 /// Write every batch of `observation` at `times` whole times per batch.
@@ -80,7 +101,7 @@ fn rust_written_msv4_reads_back_equal_to_the_msv2() {
     for (label, times) in [("v2", 4), ("v2", 12), ("v4", 4), ("v4", 12)] {
         let out = root.path().join(format!("{label}-{times}.ps.zarr"));
         let observation: &dyn Observation = if label == "v2" { &v2 } else { &v4 };
-        let mut writer = create(&out, observation, label == "v2");
+        let (set, mut writer) = create(&out, observation, label == "v2");
         write_all(&mut writer, observation, times);
         let counters = writer.counters();
         assert_eq!(writer.chunk_times(), 5);
@@ -104,7 +125,7 @@ fn rust_written_msv4_reads_back_equal_to_the_msv2() {
              stored at once"
         );
         assert_eq!(counters.elements, 12 * per_time, "{label}");
-        let written = writer.finish().expect("finish");
+        let written = publish(set, writer).expect("finish");
         let reopened = Msv4Observation::open(&written).expect("reopen");
         let read = samples(
             &mut reopened
@@ -159,9 +180,9 @@ fn a_padded_partition_is_declared_and_written() {
     )
     .expect("v2");
     let out = root.path().join("padded.ps.zarr");
-    let mut writer = create(&out, &sparse, true);
+    let (set, mut writer) = create(&out, &sparse, true);
     write_all(&mut writer, &sparse, 4);
-    let reopened = Msv4Observation::open(writer.finish().expect("finish")).expect("reopen");
+    let reopened = Msv4Observation::open(publish(set, writer).expect("finish")).expect("reopen");
     let read = samples(
         &mut reopened
             .bind_read(&request(0..8, usize::MAX))
@@ -211,7 +232,7 @@ fn batches_out_of_time_order_are_written_and_counted() {
     }
     assert_eq!(owned.len(), 3);
     let out = root.path().join("reversed.ps.zarr");
-    let mut writer = create(&out, &v4, false);
+    let (set, mut writer) = create(&out, &v4, false);
     for copy in owned.iter().rev() {
         writer
             .write_batch(&copy.batch().expect("batch"))
@@ -223,7 +244,7 @@ fn batches_out_of_time_order_are_written_and_counted() {
         "8..10 stored before 5..8 arrives, 4..5 before 0..4, then 5..8 when 0..4 \
          does not continue it; finish stores 0..4 partly too"
     );
-    let reopened = Msv4Observation::open(writer.finish().expect("finish")).expect("reopen");
+    let reopened = Msv4Observation::open(publish(set, writer).expect("finish")).expect("reopen");
     let read = samples(
         &mut reopened
             .bind_read(&request(0..8, usize::MAX))
@@ -262,7 +283,7 @@ fn the_writer_publishes_only_complete_datasets() {
     let root = tempfile::tempdir().expect("root");
     let (_, v4) = open_both(root.path());
     let out = root.path().join("partial.ps.zarr");
-    let mut writer = create(&out, &v4, false);
+    let (set, mut writer) = create(&out, &v4, false);
     assert_eq!(staging(&out).len(), 1, "one staging directory, of its own");
     let four = per_times(&v4, request(0..8, 0), 4);
     let mut traversal = v4.bind_read(&four).expect("bind");
@@ -277,7 +298,7 @@ fn the_writer_publishes_only_complete_datasets() {
     );
     assert!(!out.exists(), "nothing is published before finish");
     assert!(
-        writer.finish().is_err(),
+        publish(set, writer).is_err(),
         "eight of twelve times are missing"
     );
     assert!(!out.exists(), "an incomplete dataset is never published");
@@ -286,7 +307,7 @@ fn the_writer_publishes_only_complete_datasets() {
         "a failed finish removes its staging"
     );
     let window = root.path().join("window.ps.zarr");
-    let mut writer = create(&window, &v4, false);
+    let (set, mut writer) = create(&window, &v4, false);
     let mut traversal = v4
         .bind_read(&per_times(&v4, request(2..4, 0), 4))
         .expect("bind");
@@ -297,7 +318,7 @@ fn the_writer_publishes_only_complete_datasets() {
         writer.write_batch(&batch),
         Err(ObservationError::Unsupported { .. })
     ));
-    drop(writer);
+    drop((writer, set));
     assert!(
         staging(&window).is_empty(),
         "a dropped writer removes its staging"
@@ -354,7 +375,7 @@ fn the_writer_refuses_batches_that_disagree_with_the_declaration() {
             let out = root
                 .path()
                 .join(format!("{store}-{}.ps.zarr", label.replace(' ', "-")));
-            let mut writer = create(&out, observation, store == "v2");
+            let (_set, mut writer) = create(&out, observation, store == "v2");
             let mut traversal = observation
                 .bind_read(&per_times(observation, request(0..8, 0), 4))
                 .expect("bind");
@@ -393,17 +414,15 @@ fn the_writer_refuses_batches_that_disagree_with_the_declaration() {
     ] {
         let (mut catalogue, grid) = declaration(&v4, false);
         edit(&mut catalogue);
-        let mut writer = Msv4Writer::create(
+        let set = Msv4ProcessingSetWriter::create(
             &root
                 .path()
                 .join(format!("declared-{}.ps.zarr", label.replace(' ', "-"))),
-            &catalogue,
-            PartitionId(0),
-            "base",
-            &grid,
-            &storage(),
         )
         .expect("create");
+        let mut writer = set
+            .dataset(&catalogue, PartitionId(0), &["base"], &grid, &storage())
+            .expect("declare");
         let mut traversal = v4
             .bind_read(&per_times(&v4, request(0..8, 0), 4))
             .expect("bind");
@@ -422,15 +441,10 @@ fn the_writer_refuses_batches_that_disagree_with_the_declaration() {
     let (catalogue, mut grid) = declaration(&v4, false);
     grid.field_per_time[0] = FieldId(7);
     assert!(
-        Msv4Writer::create(
-            &root.path().join("unknown-field.ps.zarr"),
-            &catalogue,
-            PartitionId(0),
-            "base",
-            &grid,
-            &storage(),
-        )
-        .is_err(),
+        Msv4ProcessingSetWriter::create(&root.path().join("unknown-field.ps.zarr"))
+            .expect("create")
+            .dataset(&catalogue, PartitionId(0), &["base"], &grid, &storage())
+            .is_err(),
         "a grid naming a field the catalogue lacks"
     );
 }
@@ -458,12 +472,12 @@ fn writers_stage_apart_and_never_replace_a_published_dataset() {
         std::fs::create_dir(directory).expect("stale");
         std::fs::write(directory.join("zarr.json"), "{\"stale\": true}").expect("stale file");
     }
-    let mut first = create(&out, &v2, true);
-    let mut second = create(&out, &v4, false);
+    let (first_set, mut first) = create(&out, &v2, true);
+    let (second_set, mut second) = create(&out, &v4, false);
     write_all(&mut first, &v2, 4);
     write_all(&mut second, &v4, 12);
-    first.finish().expect("the first finish publishes");
-    let refused = second.finish();
+    publish(first_set, first).expect("the first finish publishes");
+    let refused = publish(second_set, second);
     assert!(refused.is_err(), "the second finish does not replace it");
     let published = Msv4Observation::open(&out).expect("published");
     assert_eq!(

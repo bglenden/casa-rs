@@ -589,9 +589,9 @@ fn padding_the_writer_stores_stays_padding() {
     drop(ms);
     let sparse = casa_ms::observation_io::Msv2Observation::open(&path).expect("padded");
     let out = root.path().join("padded.ps.zarr");
-    let mut writer = super::writer::create(&out, &sparse, true);
+    let (set, mut writer) = super::writer::create(&out, &sparse, true);
     super::writer::write_all(&mut writer, &sparse, 4);
-    writer.finish().expect("finish");
+    super::writer::publish(set, writer).expect("finish");
     let targets = [
         UpdateTarget::new("base", WritableRole::Flags),
         UpdateTarget::new("base", WritableRole::Weights),
