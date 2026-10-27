@@ -402,6 +402,54 @@ fn help_and_machine_actions_describe_the_hosted_surfaces() {
     assert!(calls.borrow().is_empty());
 }
 
+#[test]
+fn typed_reads_follow_the_surface_and_name_the_parameter_at_fault() {
+    let mut session =
+        crate::ParameterSession::defaults(builtin_surface_bundle("immath").unwrap()).unwrap();
+    for (name, value) in [
+        (
+            "imagename",
+            casa_provider_contracts::ParameterValue::Array(vec![
+                casa_provider_contracts::ParameterValue::String("a.image".into()),
+                casa_provider_contracts::ParameterValue::String("b.image".into()),
+            ]),
+        ),
+        (
+            "expr",
+            casa_provider_contracts::ParameterValue::String("IM0+IM1".into()),
+        ),
+        (
+            "outfile",
+            casa_provider_contracts::ParameterValue::String("sum.image".into()),
+        ),
+    ] {
+        session.set(name, value).unwrap();
+    }
+    let task = TaskInvocation {
+        session: &session,
+        workspace: Path::new("."),
+    };
+    assert_eq!(task.paths("imagename").unwrap().len(), 2);
+    let many = task.path("imagename").unwrap_err();
+    assert_eq!(many.parameter.as_deref(), Some("imagename"));
+    assert_eq!(task.path("outfile").unwrap(), Path::new("sum.image"));
+    assert_eq!(task.required_text("expr").unwrap(), "IM0+IM1");
+    assert!(!task.flag("overwrite").unwrap());
+    let wrong = task.integer("overwrite").unwrap_err();
+    assert_eq!(wrong.kind, TaskFailureKind::Validation);
+    assert!(task.value("no_such_parameter").is_none());
+
+    // An adapter's explicit absence ("none") reads as no value.
+    let imstat =
+        crate::ParameterSession::defaults(builtin_surface_bundle("imstat").unwrap()).unwrap();
+    let task = TaskInvocation {
+        session: &imstat,
+        workspace: Path::new("."),
+    };
+    assert_eq!(task.text("box").unwrap(), None);
+    assert!(task.required_text("box").is_err());
+}
+
 /// A stderr a test hands `main` and reads back.
 #[derive(Clone, Default)]
 struct SharedBuffer(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
