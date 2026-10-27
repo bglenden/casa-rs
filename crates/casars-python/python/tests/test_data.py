@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
-from enum import Enum
 from pathlib import Path
 import subprocess
-from types import SimpleNamespace
+import sys
+import tarfile
+import threading
+import time
 
 import numpy as np
 
@@ -69,87 +71,44 @@ def test_data_schema_bundle_reports_object_surface() -> None:
     assert "null" in json.dumps(mask_result)
 
 
-def test_measurement_set_plot_uses_typed_generated_boundary(
-    monkeypatch,
-) -> None:
-    captured = []
+def test_measurement_set_plot_releases_the_gil(tmp_path: Path) -> None:
+    with tarfile.open(
+        REPO_ROOT / "crates/casa-ms/tests/fixtures/mssel_test_small.ms.tgz", "r:gz"
+    ) as archive:
+        extract = {"filter": "data"} if sys.version_info >= (3, 12) else {}
+        archive.extractall(tmp_path, **extract)
+    measurement_set = tmp_path / "mssel_test_small.ms"
+    data.measurement_set_plot(measurement_set, preset="uv_coverage")
 
-    class Preset(Enum):
-        AMPLITUDE_VS_TIME = 0
+    ticks: list[float] = []
+    done = threading.Event()
 
-    class FrontendServiceError(Exception):
-        pass
+    def tick() -> None:
+        while not done.is_set():
+            ticks.append(time.perf_counter())
 
-    def request(**values):
-        captured.append(values)
-        return SimpleNamespace(**values)
+    switch_interval = sys.getswitchinterval()
+    sys.setswitchinterval(1e-4)
+    try:
+        ticker = threading.Thread(target=tick)
+        ticker.start()
+        windows = []
+        for _ in range(5):
+            started = time.perf_counter()
+            data.measurement_set_plot(measurement_set, preset="uv_coverage")
+            windows.append((started, time.perf_counter()))
+        done.set()
+        ticker.join()
+    finally:
+        sys.setswitchinterval(switch_interval)
 
-    axis = SimpleNamespace(
-        id="x",
-        label="Time (s)",
-        unit="s",
-        lower=1.0,
-        upper=2.0,
-    )
-    y_axis = SimpleNamespace(
-        id="y",
-        label="Amplitude (Jy)",
-        unit="Jy",
-        lower=3.0,
-        upper=4.0,
-    )
-    provenance = SimpleNamespace(row=5, corr=0, chan_start=0, chan_end=1)
-    layer = SimpleNamespace(
-        title="field 0",
-        color_group="field-0",
-        y_axis_id="y",
-        x_values=[1.0, 2.0],
-        y_values=[3.0, 4.0],
-        provenance=[provenance],
-    )
-    panel = SimpleNamespace(
-        id="main",
-        title="Amplitude vs time",
-        axes=[axis, y_axis],
-        layers=[layer],
-    )
-    result = SimpleNamespace(
-        title="Amplitude vs time",
-        summary="2 selected visibility samples",
-        dataset_path="tutorial.ms",
-        preset=Preset.AMPLITUDE_VS_TIME,
-        selection_summary="field=0",
-        document=SimpleNamespace(
-            id="plot",
-            title="Amplitude vs time",
-            header_lines=[],
-            show_legend=True,
-            axes=[],
-            layers=[],
-            panels=[panel],
-        ),
-    )
-    api = SimpleNamespace(
-        MeasurementSetPlotPreset=Preset,
-        MeasurementSetPlotRequest=request,
-        FrontendServiceError=FrontendServiceError,
-        build_measurement_set_plot=lambda request: result,
-    )
-    monkeypatch.setattr(data, "_frontend", lambda: api)
-
-    plot = data.measurement_set_plot(
-        "tutorial.ms",
-        preset="amplitude_vs_time",
-        selection={"field": "0", "spw": "1"},
-    )
-
-    assert captured[0]["dataset_path"] == "tutorial.ms"
-    assert captured[0]["preset"] is Preset.AMPLITUDE_VS_TIME
-    assert captured[0]["field"] == "0"
-    assert captured[0]["spectral_window"] == "1"
-    assert np.array_equal(plot.panels[0].series[0].x, np.array([1.0, 2.0]))
-    assert np.array_equal(plot.panels[0].series[0].y, np.array([3.0, 4.0]))
-    assert plot.panels[0].series[0].provenance[0]["row"] == 5
+    # Holding the GIL for the whole call, the ticker could run only at its
+    # edges; released, it ticks through the middle of the call.
+    inside = [
+        sum(1 for moment in ticks if start + (end - start) / 4 < moment < end - (end - start) / 4)
+        for start, end in windows
+    ]
+    assert sum(inside) > 0, inside
 
 
 REPO_ROOT = Path(__file__).resolve().parents[4]

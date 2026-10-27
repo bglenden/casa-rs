@@ -14,7 +14,6 @@ import numpy as np
 import numpy.typing as npt
 
 from . import _core
-from .parameters import _frontend
 
 StrPath: TypeAlias = str | PathLike[str]
 ArrayLike: TypeAlias = npt.NDArray[Any]
@@ -66,7 +65,7 @@ class PlotPanelData:
 
 @dataclass(frozen=True)
 class MeasurementSetPlotData:
-    """Renderer-neutral MeasurementSet data returned through generated UniFFI."""
+    """Renderer-neutral MeasurementSet plot data built by Rust."""
 
     title: str
     summary: str
@@ -102,67 +101,25 @@ def measurement_set_plot(
     builds a typed plot document; render it with :func:`plot_matplotlib`.
     """
 
-    api = _frontend()
-    preset_name = preset.strip().upper().replace("-", "_")
-    if preset_name == "FLAGROW_VS_TIME":
-        preset_name = "FLAG_ROW_VS_TIME"
-    try:
-        resolved_preset = api.MeasurementSetPlotPreset[preset_name]
-    except KeyError as error:
-        allowed = ", ".join(member.name.lower() for member in api.MeasurementSetPlotPreset)
-        raise ValueError(f"unknown MeasurementSet plot preset {preset!r}; expected one of: {allowed}") from error
-
-    selectors = dict(selection or {})
-    allowed_selectors = {
-        "field",
-        "spw",
-        "timerange",
-        "uvrange",
-        "antenna",
-        "scan",
-        "correlation",
-        "array",
-        "observation",
-        "intent",
-        "feed",
-        "msselect",
-    }
-    unexpected = sorted(set(selectors) - allowed_selectors)
-    if unexpected:
-        raise ValueError(f"unknown MeasurementSet selectors: {', '.join(unexpected)}")
-
-    request = api.MeasurementSetPlotRequest(
-        dataset_path=os.fspath(measurement_set),
-        preset=resolved_preset,
-        field=selectors.get("field"),
-        spectral_window=selectors.get("spw"),
-        timerange=selectors.get("timerange"),
-        uvrange=selectors.get("uvrange"),
-        antenna=selectors.get("antenna"),
-        scan=selectors.get("scan"),
-        correlation=selectors.get("correlation"),
-        array=selectors.get("array"),
-        observation=selectors.get("observation"),
-        intent=selectors.get("intent"),
-        feed=selectors.get("feed"),
-        msselect=selectors.get("msselect"),
-        data_column=data_column,
-        color_by=color_by,
-        avgchannel=avgchannel,
-        avgtime=avgtime,
-        avgscan=avgscan,
-        avgfield=avgfield,
-        avgbaseline=avgbaseline,
-        avgantenna=avgantenna,
-        avgspw=avgspw,
-        scalar=scalar,
-        iteraxis=iteraxis,
-        max_plot_points=max_plot_points,
+    result = _core.build_measurement_set_plot(
+        measurement_set,
+        preset,
+        selection,
+        {
+            "data_column": data_column,
+            "color_by": color_by,
+            "avgchannel": avgchannel,
+            "avgtime": avgtime,
+            "avgscan": avgscan,
+            "avgfield": avgfield,
+            "avgbaseline": avgbaseline,
+            "avgantenna": avgantenna,
+            "avgspw": avgspw,
+            "scalar": scalar,
+            "iteraxis": iteraxis,
+            "max_plot_points": max_plot_points,
+        },
     )
-    try:
-        result = api.build_measurement_set_plot(request)
-    except api.FrontendServiceError as error:
-        raise ValueError(str(error)) from error
     return _measurement_set_plot_data(result)
 
 
@@ -202,61 +159,34 @@ def plot_matplotlib(
     return figure, resolved_axes[0] if len(resolved_axes) == 1 else resolved_axes
 
 
-def _measurement_set_plot_data(result: Any) -> MeasurementSetPlotData:
-    document = result.document
-    if document.panels:
-        panels = tuple(
-            _plot_panel(panel.id, panel.title, panel.axes, panel.layers)
-            for panel in document.panels
-        )
-    else:
-        panels = (
-            _plot_panel(document.id, document.title, document.axes, document.layers),
-        )
+def _measurement_set_plot_data(result: dict[str, Any]) -> MeasurementSetPlotData:
     return MeasurementSetPlotData(
-        title=result.title,
-        summary=result.summary,
-        header_lines=tuple(document.header_lines),
-        show_legend=document.show_legend,
-        panels=panels,
-        measurement_set=result.dataset_path,
-        preset=result.preset.name.lower(),
-        selection_summary=result.selection_summary,
+        title=result["title"],
+        summary=result["summary"],
+        header_lines=tuple(result["header_lines"]),
+        show_legend=result["show_legend"],
+        panels=tuple(_plot_panel(panel) for panel in result["panels"]),
+        measurement_set=result["measurement_set"],
+        preset=result["preset"],
+        selection_summary=result["selection_summary"],
     )
 
 
-def _plot_panel(id: str, title: str, axes: Any, layers: Any) -> PlotPanelData:
+def _plot_panel(panel: dict[str, Any]) -> PlotPanelData:
     return PlotPanelData(
-        id=id,
-        title=title,
-        axes=tuple(
-            PlotAxisData(
-                id=axis.id,
-                label=axis.label,
-                unit=axis.unit,
-                lower=axis.lower,
-                upper=axis.upper,
-            )
-            for axis in axes
-        ),
+        id=panel["id"],
+        title=panel["title"],
+        axes=tuple(PlotAxisData(**axis) for axis in panel["axes"]),
         series=tuple(
             PlotSeriesData(
-                label=layer.title,
-                color_group=layer.color_group,
-                y_axis_id=layer.y_axis_id,
-                x=np.asarray(layer.x_values, dtype=np.float64),
-                y=np.asarray(layer.y_values, dtype=np.float64),
-                provenance=tuple(
-                    {
-                        "row": point.row,
-                        "corr": point.corr,
-                        "chan_start": point.chan_start,
-                        "chan_end": point.chan_end,
-                    }
-                    for point in layer.provenance
-                ),
+                label=layer["title"],
+                color_group=layer["color_group"],
+                y_axis_id=layer["y_axis_id"],
+                x=layer["x"],
+                y=layer["y"],
+                provenance=tuple(layer["provenance"]),
             )
-            for layer in layers
+            for layer in panel["layers"]
         ),
     )
 

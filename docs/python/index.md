@@ -64,12 +64,11 @@ CASA-named keyword wrapper and typing stub per task. Their signatures
 deliberately use an unset sentinel instead of copying catalog defaults into
 Python.
 
-Generated UniFFI (`casars._frontend`, from `casars-frontend-services`) owns
-task, parameter, and result transport. PyO3 carries the in-process objects:
-the `casars.data.Image` and `casars.data.Table` NumPy object layer, the CASA
-tool classes of `casars.tools` and the `casars.simutil` class. The wheel still
-ships one native `_core` library rather than two competing application
-bindings.
+Python binds Rust through PyO3 alone, in one native module, `casars._core`.
+It carries task parameters, task results and MeasurementSet plot documents as
+well as the in-process objects: the `casars.data.Image` and
+`casars.data.Table` NumPy object layer, the CASA tool classes of
+`casars.tools` and the `casars.simutil` class.
 
 ## Plotting and image inspection
 

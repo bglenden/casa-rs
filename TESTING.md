@@ -251,8 +251,8 @@ existing no-cache I/O path and does not require this Linux-specific setup.
 - Heavy parity suites: `scripts/test-slow.sh`
 - Release/tag-only CI-like coverage: `scripts/run-coverage.sh --ci-like`
 - GitHub Actions reproduction: `scripts/ci-local.sh pr` for pull-request jobs or `scripts/ci-local.sh tag` for version-tag jobs
-- GitHub PR CI: lint/test, editable Python package (including the generated
-  UniFFI binding check), performance-tool tests, and strict docs (rustdoc
+- GitHub PR CI: lint/test, Python package (editable checkout, built wheel and
+  sdist), performance-tool tests, and strict docs (rustdoc
   built twice, public and with `--document-private-items`, with broken and
   private intra-doc links denied in both, then MkDocs). The required checks
   are `lint_test`, `python_package` and `docs`
@@ -373,12 +373,15 @@ only documentation, planning, or workflow-policy changes. Do not rerun a gate
 solely because review started; if executable changes intervened, rerun only the
 affected gate.
 
-- Python package and its UniFFI service layer:
-  `scripts/generate-frontend-bindings.sh --check`,
-  `cargo test -p casars-frontend-services`,
-  `scripts/test-frontend-services-python.sh`, and
-  `scripts/test-python-package.sh`. The `casars` task host's end-to-end
-  behaviour is covered by `cargo test -p casars --test casars_cli`.
+- Python package and its PyO3 binding: `cargo test -p casars-python` and
+  `scripts/test-python-package.sh`, which runs the Python tests against an
+  editable checkout and then installs the built wheel and sdist into fresh
+  environments and checks them away from the source tree.
+  `python/tests/test_binding_snapshots.py` pins what the binding returns to
+  Python (the parameter catalog's dictionary shapes, plot data, task
+  completions and errors); regenerate its fixture only for an intended
+  change. The `casars` task host's end-to-end behaviour is covered by
+  `cargo test -p casars --test casars_cli`.
   `scripts/test-python-package.sh` runs the `casars.tools` tests against the
   bundled measures snapshot unless `CASA_RS_MEASURESPATH` names a runtime;
   run directly, those tests skip when no runtime is installed.

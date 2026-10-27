@@ -9,7 +9,7 @@ from os import PathLike
 from pathlib import Path
 from typing import TypeAlias
 
-from .parameters import _frontend
+from .parameters import _native
 
 StrPath: TypeAlias = str | PathLike[str]
 
@@ -96,14 +96,13 @@ def _resolve_task_binary(
 
 @lru_cache(maxsize=1)
 def _application_launches() -> dict[str, ApplicationLaunch]:
-    catalog = _frontend().application_catalog()
     return {
-        application.id: ApplicationLaunch(
-            executable=application.executable,
-            cargo_package=application.cargo_package,
-            override_env=application.override_env,
+        application["id"]: ApplicationLaunch(
+            executable=application["executable"],
+            cargo_package=application["cargo_package"],
+            override_env=application["override_env"],
         )
-        for application in catalog.applications
+        for application in _native().application_catalog()
     }
 
 
