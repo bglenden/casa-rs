@@ -1494,15 +1494,139 @@ touches science, persistence or interop.</p>
   ALMA case is CASA's regression on <code>alma.out20</code> with components. Pointing
   strings are compared exactly, numbers to tolerances.</p>
 <h3 id="phase-6-simanalyze-and-simalma">Phase 6: <code>simanalyze</code> and <code>simalma</code><a class="headerlink" href="#phase-6-simanalyze-and-simalma" title="Permanent link">&para;</a></h3>
-<p><strong>Scope.</strong>
-- Both tasks, built on <code>imager</code>, <code>feather</code>, <code>imregrid</code>, <code>impbcor</code> and
-  <code>immath</code>.
-- The analysis step: the convolved model, the difference and the fidelity.</p>
-<p><strong>Dependencies, planned separately.</strong> Both tasks need:
-- a <code>concat</code> task;
-- single-dish imaging (<code>tsdimaging</code>).</p>
-<p><strong>Acceptance.</strong> Parity with CASA products for an ALMA case combining 12 m,
-7 m and total power.</p>
+<p><strong>Scope</strong> (planned 2026-10-27; the split is on #841).
+- <strong>Both tasks,</strong> ported to Rust (ADR-0018) from CASA 6.7.6's installed
+  <code>task_simanalyze.py</code> and <code>task_simalma.py</code>. The port includes the <code>simutil</code>
+  and <code>sdbeamutil</code> parts they use: <code>imtclean</code>, <code>convimage</code>, <code>statim</code>,
+  <code>cellsize</code>, <code>ismstp</code>, <code>primaryBeamArcsec</code> and <code>TheoreticalBeam</code>.
+- <strong><code>simanalyze</code>:</strong>
+  - finds the project's MeasurementSets and sky model;
+  - grids total power with <code>tsdimaging</code>;
+  - concatenates several interferometric MeasurementSets and images them
+    through the imager, with <code>tclean</code>'s arguments as <code>imtclean</code> builds them;
+  - feathers;
+  - analyses: the convolved model, the difference, the fidelity and the
+    statistics.
+- <strong><code>simalma</code>:</strong> it runs <code>simobserve</code>, <code>simanalyze</code>, <code>concat</code> and <code>feather</code>. Its
+  own logic chooses the configurations and allocates the time. It also lays out
+  the total-power pointings, scales the total power, and makes the
+  primary-beam-weighted feather.
+- <strong>The Python surfaces</strong> mimic CASA's exactly from the start (#931).</p>
+<p><strong>What casa-rs lacks</strong> (research of 2026-10-27):
+- single-dish gridding of any kind;
+- <code>concat</code>;
+- in the imager: <code>startmodel</code>, <code>uvtaper</code>, non-square <code>imsize</code> and CASA's
+  optimum image size;
+- in <code>imregrid</code>: <code>cubic</code> interpolation and a record template
+  (<code>template='get'</code>);
+- an <code>ia.convolve2d</code> equivalent, and a public regrid that takes a coordinate
+  system and a shape;
+- <code>convimage</code>, <code>statim</code>, <code>cellsize</code> and <code>imtclean</code>;
+- CASA comparisons of <code>feather</code>, <code>imregrid</code> and <code>impbcor</code>.</p>
+<p><strong>Owner decisions (2026-10-27).</strong>
+- <strong>The single-dish gridder goes in a new library crate,</strong>
+  <code>casa-imaging-singledish</code> (#938). It holds the kernels and the image-plane
+  gridder, and <code>simobserve</code>'s total-power predictor, which is the gridder's
+  adjoint, moves there too. ADR-0016 gains a note: single-dish image-plane
+  gridding is its own operator family, outside the four interferometric kernel
+  sets.
+- <strong><code>tsdimaging</code> and <code>concat</code> read and write through <code>casa-observation</code></strong>
+  (#937, #938, #939), not through today's <code>casa-ms</code> paths. They wait for the
+  MeasurementSet programme to provide pointing windows, autocorrelation reads
+  and creation of one MeasurementSet from several.</p>
+<p><strong>Decided in planning.</strong> Each part records these in <code>docs/CASA (C++) bugs.md</code>
+when it implements them.
+- <strong>Total-power intensity scaling:</strong> each task keeps its own formula, which
+  differ by 8.7%. A part departs from one only if it measures that formula to
+  be physically wrong.
+- <strong><code>simalma</code>'s <code>TypeError</code></strong> for configuration names without "cycleN"
+  (<code>task_simalma.py:523</code>) is fixed.
+- <strong>The user's <code>modelimage</code></strong> is not changed in place; CASA's master branch has
+  removed those lines.
+- <strong>No <code>.tclean.last</code></strong> is written (#931: no Last profiles from Python).
+- <strong>Products do not depend on <code>graphics</code>.</strong> In CASA, <code>simalma</code>'s combine figure
+  deletes <code>simanalyze</code>'s flat images.
+- <strong>Sky-model discovery</strong> takes candidates in sorted order, not in <code>glob</code>
+  order.
+- <strong>Acceptance avoids <code>simanalyze</code>'s feather of total power with interferometer
+  data,</strong> which is not primary-beam weighted. CASA skips its own test of that
+  path because <code>feather</code> fails. The <code>simanalyze</code> part decides it by the
+  better-physics rule; <code>simalma</code>'s weighted feather is the candidate.</p>
+<p><strong>Parts,</strong> one PR each:</p>
+<table>
+<thead>
+<tr>
+<th>Part</th>
+<th>Content</th>
+<th>Waits for</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>6a</td>
+<td>Image-analysis gaps in <code>casa-images</code>: <code>imregrid</code> with <code>cubic</code> and a record template; a public regrid by coordinate system and shape; <code>convolve2d</code> with Jy/pixel to Jy/beam and no wrap-around at the edges; the channel-mean moment; robust statistics; <code>feather</code> at its defaults against CASA</td>
+<td>none; surface changes go with #931's image PRs</td>
+</tr>
+<tr>
+<td>6b</td>
+<td>Imager: <code>startmodel</code>, <code>uvtaper</code>, non-square <code>imsize</code>, CASA's optimum size; T0, T1 and T1.5</td>
+<td>none; the names follow #931 4e; #932's source path is not touched</td>
+</tr>
+<tr>
+<td>6c</td>
+<td><code>casa-imaging-singledish</code> core: kernels, gridder over in-memory samples, <code>sdbeamutil</code>, the predictor moved in (#938 part 1)</td>
+<td>none</td>
+</tr>
+<tr>
+<td>6d</td>
+<td><code>tsdimaging</code> on <code>casa-observation</code> (#938 part 2)</td>
+<td>6c, #937, #931 2a and 3</td>
+</tr>
+<tr>
+<td>6e</td>
+<td><code>concat</code> core on <code>casa-observation</code> (#939)</td>
+<td>#937, #931 2a and 3</td>
+</tr>
+<tr>
+<td>6f</td>
+<td><code>simanalyze</code>'s analysis: <code>convimage</code>, <code>statim</code>, <code>cellsize</code>, a public <code>ismstp</code>, flat images of cubes, difference, fidelity and statistics</td>
+<td>6a</td>
+</tr>
+<tr>
+<td>6g</td>
+<td><code>simanalyze</code>: discovery, imaging, total power, concat, feather; its host and Python surface</td>
+<td>6b, 6d, 6e, 6f, #931 3</td>
+</tr>
+<tr>
+<td>6h</td>
+<td><code>simalma</code></td>
+<td>6g</td>
+</tr>
+<tr>
+<td>6i</td>
+<td>Graphics for both, on 5e's plot document</td>
+<td>5e, which waits for #931 1</td>
+</tr>
+</tbody>
+</table>
+<p>6a, 6b, 6c and 6f can start now.</p>
+<p><strong>Acceptance.</strong>
+- <strong><code>regression/sim_multi_arrays_and_TP</code>.</strong> It runs <code>simobserve</code> for 12 m, 7 m
+  and total power, then <code>simanalyze</code> twice.
+  - The oracle is CASA 6.7.6-14's products, regenerated by a committed recipe.
+    The references in the test data are from an older CASA: 6.7.6-14 differs
+    from them by 4–7% NRMS in DATA.
+  - Compared by NRMS: the MeasurementSets (DATA within 1e-6, as in Phase 5),
+    the total-power image, and the images and difference images.
+- <strong><code>regression/simalma_12m_ACA_combination</code>.</strong> CASA's test checks only that 14
+  PNGs and 5 MeasurementSets exist. Acceptance instead compares every product
+  with CASA 6.7.6-14's:
+  - the MeasurementSets, the concatenation included;
+  - the total-power image, each configuration's image and the concatenation's;
+  - the feathered image, the differences and the fidelities.</p>
+<p>The PNGs come after 6i.
+- <strong>Timing rows</strong> for both cases, against CASA. The multi-array case takes about
+  30 s in CASA 6.7.6-14 on the Mac mini.</p>
 <h3 id="phase-7-retire-the-old-code">Phase 7: retire the old code<a class="headerlink" href="#phase-7-retire-the-old-code" title="Permanent link">&para;</a></h3>
 <p><strong>Scope.</strong>
 - Delete <code>simulation.rs</code>, <code>simulation_task.rs</code> and <code>casa-simulation-synthesis</code>,
