@@ -64,8 +64,7 @@ fn predicted(
     observe_fields(&mut sm);
     match sm.predict(&PredictSpec {
         images: vec![model.to_path_buf()],
-        component_list: None,
-        incremental: false,
+        ..PredictSpec::default()
     }) {
         Ok(()) => Some(sm),
         Err(error) => {
