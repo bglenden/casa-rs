@@ -20,10 +20,7 @@ mod storage;
 /// The logging configuration a task binary's `main` reads and hands
 /// [`TaskFrontEnd::main`].
 pub use casa_logging::{CasaLoggingConfig, CasaLoggingError};
-pub use cli::{
-    TaskCliAction, TaskCliError, TaskCliHost, parse_parameter_cli_overrides, parse_task_cli_action,
-    read_task_request, task_cli_machine_help,
-};
+pub use cli::{TaskCliError, parse_parameter_cli_overrides, read_task_request};
 pub use completion::{
     RunProductReference, TaskCompletion, TaskCompletionError, TaskOutputValue,
     decode_task_completion,
@@ -35,10 +32,7 @@ pub use front_end::{
     format_profile_error, format_session_error, render_session, task_command_line_help,
     validate_profile_text,
 };
-pub use invocation::{
-    FRONT_END_FAMILIES, ProviderInvocationError, project_front_end_invocation,
-    project_provider_invocation, runs_on_front_end,
-};
+pub use invocation::{ProviderInvocationError, project_provider_invocation};
 pub use normalize::{NormalizationError, normalize_value, semantic_eq, validate_value};
 pub use profile::{
     PROFILE_FORMAT_VERSION, ParameterProfile, ProfileError, ProfileHeader, ResolvedProfile,

@@ -16,16 +16,16 @@ casa-provider-contracts = { path = "../casa-provider-contracts" }
 casa-task-runtime = { path = "../casa-task-runtime" }
 casa-imaging-application = { path = "../casa-imaging-application" }
 libc = "0.2"
-casa-logging = { path = "../casa-logging" }
 casa-ms = { path = "../casa-ms" }
 schemars = "0.8"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tracing.workspace = true
 
 [dev-dependencies]
 # The geometry-law example reads MSv4 conversions.
 casa-ms = { path = "../casa-ms", features = ["msv4"] }
+casa-logging = { path = "../casa-logging" }
+tracing.workspace = true
 casa-coordinates = { path = "../casa-coordinates" }
 casa-images = { path = "../casa-images" }
 casa-numerics = { path = "../casa-numerics" }

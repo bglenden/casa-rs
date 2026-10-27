@@ -28,7 +28,7 @@ designed to paste cleanly into Markdown:
 format = 1
 surface = "imager"
 kind = "task"
-contract = 26
+contract = 27
 
 [parameters]
 vis = "data/target.ms"
@@ -193,17 +193,15 @@ launcher is retired (#931).
 Direct provider binaries continue to expose their idiomatic execution
 transports (`--protocol-info`, `--json-schema`, `--json-run`); source selection
 and profile lifecycle are owned by `casars run` and `casars params`, and by a
-front-end binary's own command line. The
-image binaries, `imexplore` and the MeasurementSet binaries (`msexplore`,
-`mstransform`, `flagdata`, `flagmanager`, `importvla`) run on the shared task
+task binary's own command line. Every task binary runs on the shared task
 front end in `casa-task-runtime`, which gives each binary those same sources
 and controls,
 `--show`, `--template` (`--profile-template` on imregrid, whose `--template`
 is its template image), `--describe` and `--validate`, and a typed
-`--json-run` reply. A run started from a front-end binary's command line
-enters its `--workspace` first, so its relative paths resolve there as they
-do under `casars run`; the other binaries move onto it next
+`--json-run` reply
 ([provider contracts](provider-contracts.md#the-shared-task-front-end-and-typed-replies)).
+A run started from a task binary's command line enters its `--workspace`
+first, so its relative paths resolve there as they do under `casars run`.
 
 ## Python contract
 

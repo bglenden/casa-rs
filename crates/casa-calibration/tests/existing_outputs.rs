@@ -159,14 +159,18 @@ fn a_refused_report_runs_nothing() {
     let before = snapshot(&ms);
 
     let output = Command::new(env!("CARGO_BIN_EXE_calibrate"))
-        .arg("apply")
+        .arg("applycal")
+        .arg("--ms")
         .arg(&ms)
+        .arg("--gaintables")
         .arg(&table)
         .arg("-o")
         .arg(&report)
+        .arg("--no-save-last")
         .output()
         .unwrap();
-    assert!(!output.status.success());
+    // Refused before the task runs: a validation failure.
+    assert_eq!(output.status.code(), Some(2));
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("refusing to overwrite"), "{stderr}");
     assert_eq!(snapshot(&ms), before);
@@ -189,7 +193,7 @@ fn overwrite_reaches_the_report_but_not_the_caltable() {
     let report = dir.path().join("report.txt");
     let solve = |table: &Path| {
         Command::new(env!("CARGO_BIN_EXE_calibrate"))
-            .arg("solve-gain")
+            .arg("gaincal")
             .arg("--ms")
             .arg(&ms)
             .arg("--out")
@@ -197,7 +201,7 @@ fn overwrite_reaches_the_report_but_not_the_caltable() {
             .args(["--refant", "0", "--minsnr", "0", "--minblperant", "0"])
             .arg("-o")
             .arg(&report)
-            .arg("--overwrite")
+            .args(["--overwrite", "--no-save-last"])
             .output()
             .unwrap()
     };

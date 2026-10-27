@@ -8,11 +8,20 @@ use std::{collections::BTreeMap, error::Error, fs, path::Path};
 
 use casa_imaging_application::{AwCfSource, AwProjection, Gridder, ProductNormalization};
 use casa_provider_contracts::{ParameterValue, builtin_surface_bundle};
+use casa_provider_contracts::{ProviderInvocation, TaskRunRequest};
 use casa_task_runtime::{
     OpenSessionRequest, ParameterRuntime, ResolutionPatch, project_provider_invocation,
 };
 use casa_test_support::{CasaTestDataTier, casatestdata_path_for_tier};
-use casars_imager::{ImagerTaskRequest, ImagerTaskResult, imager_provider_invocation};
+use casars_imager::ImagingParameters;
+
+/// The parameters an invocation sends the imager on its `--json-run`.
+fn sent_parameters(invocation: &ProviderInvocation) -> Result<ImagingParameters, Box<dyn Error>> {
+    let request: TaskRunRequest =
+        serde_json::from_str(invocation.stdin.as_deref().ok_or("missing task request")?)?;
+    assert_eq!(request.surface, "imager");
+    Ok(ImagingParameters(request.values))
+}
 
 const DATASET: &str = "measurementset/vla/ref_vlass_wtsp_creation.ms";
 const FIXTURE_SPW_SELECTOR: &str = "0:0~15";
@@ -88,15 +97,7 @@ fn t61_vlass_controls_reach_the_request_and_the_real_snapshot() -> Result<(), Bo
         unset: Default::default(),
     };
     let session = ParameterRuntime::default().open_session(open)?;
-    let invocation = project_provider_invocation(&session, |_family, values, direct| {
-        imager_provider_invocation(values, direct.args)
-    })?;
-    let ImagerTaskRequest::Run(parameters) = serde_json::from_str(
-        invocation
-            .stdin
-            .as_deref()
-            .ok_or("missing provider request")?,
-    )?;
+    let parameters = sent_parameters(&project_provider_invocation(&session)?)?;
     let (_, request) = casars_imager::resolve_request(&parameters)?;
     request.validate()?;
     assert_eq!(request.imsize, 12_150);
@@ -162,17 +163,9 @@ fn t61_vlass_controls_reach_the_request_and_the_real_snapshot() -> Result<(), Bo
         unset: Default::default(),
     };
     let supported_session = ParameterRuntime::default().open_session(supported_open)?;
-    let supported_invocation =
-        project_provider_invocation(&supported_session, |_family, values, direct| {
-            imager_provider_invocation(values, direct.args)
-        })?;
-    let supported_request: ImagerTaskRequest = serde_json::from_str(
-        supported_invocation
-            .stdin
-            .as_deref()
-            .ok_or("missing supported provider request")?,
-    )?;
-    let ImagerTaskResult::Run(result) = supported_request.execute()?;
+    let supported = sent_parameters(&project_provider_invocation(&supported_session)?)?;
+    let (parameters, request) = casars_imager::resolve_request(&supported)?;
+    let result = casars_imager::run(parameters, &request)?;
     assert_eq!(result.request.0["imsize"], serde_json::json!([1024, 1024]));
     assert_eq!(result.request.0["spw"], FIXTURE_SPW_SELECTOR);
     assert!(result.run.gridded_samples > 0);

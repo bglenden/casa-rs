@@ -290,19 +290,21 @@ def run_casars(t, case: dict, out: str, binary: str) -> tuple[str, dict]:
     shutil.rmtree(os.path.join(work, case["name"]), ignore_errors=True)
     request = os.path.join(work, case["name"] + ".json")
     with open(request, "w", encoding="utf-8") as handle:
-        json.dump({"kind": "run", "request": params}, handle, indent=1)
-    command = [binary, "--json-run", request, "--managed-output", "true"]
+        json.dump({"surface": "simobserve", "values": params}, handle, indent=1)
+    command = [binary, "--json-run", request]
     log_path = os.path.join(work, case["name"] + ".log")
     with open(log_path, "w", encoding="utf-8") as log:
         result = subprocess.run(command, cwd=work, stdout=subprocess.PIPE, stderr=log, text=True, check=False)
-    if result.returncode == 0:
-        report = json.loads(result.stdout)
+    # The binary's stdout is one typed reply (#931).
+    try:
+        reply = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        reply = {}
+    if reply.get("status") == "succeeded":
+        report = reply["result"]
         outcome = {"stem": report["run"]["stem"], "elapsed_s": report["run"]["elapsed_ns"] / 1e9}
     else:
-        prefix = "Error: task execution failed: "
-        with open(log_path, encoding="utf-8") as log:
-            errors = [line[len(prefix):].rstrip("\n") for line in log if line.startswith(prefix)]
-        outcome = {"error": errors[-1] if errors else f"exit status {result.returncode}"}
+        outcome = {"error": reply.get("message") or f"exit status {result.returncode}"}
     return os.path.join(work, case["name"]), outcome
 
 

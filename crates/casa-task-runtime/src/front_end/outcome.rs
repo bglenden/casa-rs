@@ -32,9 +32,10 @@ impl From<ExitStatus> for TaskExit {
 
 /// How one task call ended, as its caller sees it.
 ///
-/// The variants stay distinct: a refusal and an execution failure come from
-/// the task's own reply, while a launch failure, a signal and a malformed
-/// reply mean the task could not report at all. A signal is reported as the
+/// The variants stay distinct: a refusal, an execution failure and an
+/// interrupt the task caught come from the task's own reply, while a launch
+/// failure, a signal and a malformed reply mean the task could not report at
+/// all. A signal is reported as the
 /// signal, whatever sent it; it is not assumed to be the out-of-memory killer.
 #[derive(Debug, Clone, PartialEq)]
 pub enum TaskOutcome {
@@ -64,6 +65,13 @@ pub enum TaskOutcome {
         message: String,
         /// The parameter at fault, when the task names one.
         parameter: Option<String>,
+    },
+    /// The task caught an interrupt and stopped, publishing nothing.
+    Interrupted {
+        /// Surface that was asked to run.
+        surface: String,
+        /// The task's account of where it stopped.
+        message: String,
     },
     /// The task process could not be started.
     LaunchFailed {
@@ -153,6 +161,12 @@ pub fn classify_task_exit(exit: TaskExit, stdout: &str) -> TaskOutcome {
             message,
             parameter,
         },
+        TaskReply::Failed {
+            surface,
+            kind: TaskFailureKind::Interrupted,
+            message,
+            ..
+        } => TaskOutcome::Interrupted { surface, message },
     }
 }
 
@@ -197,6 +211,13 @@ mod tests {
         );
         assert!(
             matches!(failed, TaskOutcome::Failed { ref message, .. } if message == "disk full")
+        );
+        let interrupted = classify_task_exit(
+            exited(130),
+            r#"{"status":"failed","surface":"imager","kind":"interrupted","message":"interrupted"}"#,
+        );
+        assert!(
+            matches!(interrupted, TaskOutcome::Interrupted { ref surface, .. } if surface == "imager")
         );
     }
 

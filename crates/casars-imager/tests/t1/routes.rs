@@ -82,8 +82,8 @@ fn command_line_and_json_runs_resolve_one_request_and_write_the_same_products() 
         ],
     );
     let request = json!({
-        "kind": "run",
-        "request": {
+        "surface": "imager",
+        "values": {
             "vis": measurement_set,
             "imagename": "json",
             "imsize": geometry.image_size,

@@ -2,7 +2,7 @@
 format = 1
 surface = "imager"
 kind = "task"
-contract = 26
+contract = 27
 
 [parameters]
 vis = ["representative-cube.ms"]

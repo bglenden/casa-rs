@@ -2,7 +2,6 @@
 //! The imager's task contract over the shared provider envelope: the
 //! catalog-named parameters of one run in, its report and products out.
 
-use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -10,10 +9,10 @@ use casa_imaging_application::{
     CleanStop, ImagingOutcome, ImagingRequest, NativeMinorCycleOutcome, NativeMinorCycleStopReason,
 };
 use casa_provider_contracts::{
-    NoAdditionalProviderSchemas, ParameterValue, ProviderCliMachineActions, ProviderCliProjection,
-    ProviderInvocation, ProviderInvocationAdaptation, ProviderProjectionMetadata,
-    ProviderProtocolDescriptor, ProviderSurfaceKind, TaskOperationDescriptor, TaskProviderContract,
-    TaskProviderSchemas, TaskSemanticContract, builtin_surface_bundle, merged_components,
+    NoAdditionalProviderSchemas, ProviderCliMachineActions, ProviderCliProjection,
+    ProviderProjectionMetadata, ProviderProtocolDescriptor, ProviderSurfaceKind,
+    TaskOperationDescriptor, TaskProviderContract, TaskProviderSchemas, TaskSemanticContract,
+    builtin_surface_bundle, merged_components,
 };
 use schemars::{JsonSchema, schema_for};
 use serde::{Deserialize, Serialize};
@@ -74,76 +73,20 @@ pub fn imager_task_schema_bundle() -> TaskProviderContract {
     }
 }
 
-/// Project one resolved parameter set into the imager's invocation: the
-/// parameters, as JSON on stdin, run with `--json-run -`.
-pub fn imager_provider_invocation(
-    values: &BTreeMap<String, ParameterValue>,
-    direct_args: Vec<String>,
-) -> Result<ProviderInvocationAdaptation, String> {
-    let mut args = managed_output_args(direct_args)?;
-    args.extend(["--json-run".to_string(), "-".to_string()]);
-    let request = ImagerTaskRequest::Run(ImagingParameters(
-        values
-            .iter()
-            .map(|(name, value)| (name.clone(), value.to_plain_json()))
-            .collect(),
-    ));
-    let mut stdin = serde_json::to_string(&request)
-        .map_err(|error| format!("serialize the imager request: {error}"))?;
-    stdin.push('\n');
-    Ok(ProviderInvocationAdaptation {
-        invocation: ProviderInvocation {
-            args,
-            stdin: Some(stdin),
-        },
-        consumed_parameters: values.keys().cloned().collect(),
-    })
-}
-
-/// The `--managed-output <bool>` pair of the direct arguments; the task's
-/// own parameters travel on stdin.
-fn managed_output_args(args: Vec<String>) -> Result<Vec<String>, String> {
-    let mut managed = Vec::new();
-    let mut args = args.into_iter();
-    while let Some(argument) = args.next() {
-        if argument != "--managed-output" {
-            continue;
-        }
-        let value = args
-            .next()
-            .ok_or_else(|| "--managed-output requires its projected boolean value".to_string())?;
-        if !matches!(value.as_str(), "true" | "false") {
-            return Err(format!(
-                "--managed-output expects true or false, found {value:?}"
-            ));
-        }
-        managed.extend([argument, value]);
-    }
-    Ok(managed)
-}
-
 /// Catalog-named imager parameters as plain JSON: sparse in a request,
 /// every active parameter once resolved (the run's request echo).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(transparent)]
 pub struct ImagingParameters(pub serde_json::Map<String, serde_json::Value>);
 
-/// The imager's request envelope.
+/// The imager's domain request: the catalog-named parameters of one run.
+/// The binary takes a front-end `TaskRunRequest` of the same parameters.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", content = "request", rename_all = "snake_case")]
 pub enum ImagerTaskRequest {
     /// Image one MeasurementSet; the parameters are resolved over the
     /// catalog's defaults exactly as the command line's are.
     Run(ImagingParameters),
-}
-
-impl ImagerTaskRequest {
-    /// Resolve and run the request.
-    pub fn execute(&self) -> Result<ImagerTaskResult, String> {
-        let Self::Run(parameters) = self;
-        let (parameters, request) = crate::resolve_request(parameters)?;
-        crate::run(parameters, &request).map(ImagerTaskResult::Run)
-    }
 }
 
 /// The imager's result envelope.
@@ -550,39 +493,6 @@ mod tests {
         assert_eq!(bundle.protocol.surface_kind, ProviderSurfaceKind::Task);
         assert_eq!(bundle.semantic.operations[0].request_kind, "run");
         assert_eq!(bundle.parameter_surfaces.len(), 1);
-    }
-
-    #[test]
-    fn the_invocation_carries_every_resolved_parameter_on_stdin() {
-        let values = BTreeMap::from([
-            (
-                "vis".to_string(),
-                ParameterValue::Array(vec![ParameterValue::String("in.ms".to_string())]),
-            ),
-            ("niter".to_string(), ParameterValue::Integer(100)),
-            ("gain".to_string(), ParameterValue::Float(0.1)),
-        ]);
-        let adaptation = imager_provider_invocation(
-            &values,
-            vec!["--managed-output".to_string(), "true".to_string()],
-        )
-        .expect("invocation");
-        assert_eq!(
-            adaptation.invocation.args,
-            ["--managed-output", "true", "--json-run", "-"]
-        );
-        let request: ImagerTaskRequest =
-            serde_json::from_str(adaptation.invocation.stdin.as_deref().expect("stdin"))
-                .expect("request");
-        let ImagerTaskRequest::Run(parameters) = request;
-        assert_eq!(
-            serde_json::Value::Object(parameters.0),
-            serde_json::json!({ "vis": ["in.ms"], "niter": 100, "gain": 0.1 })
-        );
-        assert_eq!(
-            adaptation.consumed_parameters,
-            values.keys().cloned().collect()
-        );
     }
 
     #[test]

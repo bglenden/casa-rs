@@ -2,7 +2,6 @@
   "limit": 1500,
   "files": [
     "crates/casa-aipsio/src/aipsio.rs",
-    "crates/casa-calibration/src/cli.rs",
     "crates/casa-calibration/src/execute.rs",
     "crates/casa-calibration/src/plan.rs",
     "crates/casa-calibration/tests/casa_calibration_parity.rs",

@@ -39,10 +39,7 @@ fn run(
     for (name, value) in parameters {
         session.set(*name, value.clone()).expect("set parameter");
     }
-    let invocation = project_provider_invocation(&session, |_family, _values, _direct| {
-        panic!("msexplore runs on the task front end")
-    })
-    .expect("provider invocation");
+    let invocation = project_provider_invocation(&session).expect("provider invocation");
     assert_eq!(invocation.args, ["--json-run", "-"]);
 
     let mut child = Command::new(env!("CARGO_BIN_EXE_msexplore"))

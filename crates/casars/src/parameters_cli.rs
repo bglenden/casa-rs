@@ -6,15 +6,12 @@ use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use casa_provider_contracts::{
-    ProviderInvocation, ProviderInvocationAdaptation, builtin_surface_bundle,
-};
+use casa_provider_contracts::{ProviderInvocation, builtin_surface_bundle};
 use casa_task_runtime::{
     OpenSessionRequest, ParameterRuntime, ParameterSession, TaskCommandLine, TaskExit,
     TaskLastCoordinator, TaskOutcome, classify_task_exit, describe, format_profile_error,
     format_session_error, project_provider_invocation, render_documented_template, render_session,
-    runs_on_front_end, task_command_line_help, validate_profile_text,
-    write_parameter_profile_atomic,
+    task_command_line_help, validate_profile_text, write_parameter_profile_atomic,
 };
 
 use crate::execution::{ExecutionExit, ExecutionPlan, run_process_blocking};
@@ -85,8 +82,8 @@ fn run_params(args: &[OsString]) -> Result<ParameterCliDispatch, String> {
     Ok(ParameterCliDispatch::Print(text))
 }
 
-/// `casars run` owns Last for the runs it launches: the provider binary is
-/// started with projected flags or a JSON request and writes none (#931).
+/// `casars run` owns Last for the runs it launches: the task binary is
+/// started with one `--json-run` request and writes none (#931).
 fn run_task(args: &[OsString]) -> Result<(), String> {
     let surface_id = required_utf8(args.first(), "task name")?;
     let app = resolve_app(&surface_id)?;
@@ -116,27 +113,22 @@ fn run_task(args: &[OsString]) -> Result<(), String> {
         eprintln!("Warning: could not save Last for {surface_id}: {warning}");
     }
 
-    let front_end = runs_on_front_end(session.bundle());
+    let managed = session
+        .bundle()
+        .surface
+        .execution()
+        .managed_output
+        .is_some();
     let execution = app.resolve_command().and_then(|command| {
         let plan = ExecutionPlan {
             command,
             arguments: invocation.args.iter().map(OsString::from).collect(),
             stdin: invocation.stdin,
             working_directory: line.workspace.clone(),
-            capture_stdout: front_end,
         };
         run_process_blocking(&plan).map_err(|error| format!("run {surface_id}: {error}"))
     });
-    let outcome = match execution {
-        Ok(exit) if front_end => front_end_outcome(&surface_id, &exit),
-        Ok(exit) if exit.success() => Ok(()),
-        Ok(exit) => Err(format!(
-            "{surface_id} exited with code {}",
-            exit.code()
-                .map_or_else(|| "unknown".to_owned(), |code| code.to_string())
-        )),
-        Err(error) => Err(error),
-    };
+    let outcome = execution.and_then(|exit| task_outcome(&surface_id, managed, &exit));
     last.after_completion(&attempt_id, outcome.is_ok());
     for warning in last.take_warnings() {
         eprintln!("Warning: could not save Last Successful for {surface_id}: {warning}");
@@ -144,11 +136,16 @@ fn run_task(args: &[OsString]) -> Result<(), String> {
     outcome
 }
 
-/// Read a front-end binary's typed reply: print CASA's return value, or
-/// report the task's own failure, or why there was no reply.
-fn front_end_outcome(surface_id: &str, exit: &ExecutionExit) -> Result<(), String> {
-    let stdout = exit.stdout.as_deref().unwrap_or_default();
-    match classify_task_exit(TaskExit::from(exit.status), stdout) {
+/// Read a task binary's typed reply: print CASA's return value, or the
+/// provider's result where the surface declares a result decoder (which
+/// reads it from this stdout), or report the task's own failure, or why
+/// there was no reply.
+fn task_outcome(surface_id: &str, managed: bool, exit: &ExecutionExit) -> Result<(), String> {
+    match classify_task_exit(TaskExit::from(exit.status), &exit.stdout) {
+        TaskOutcome::Succeeded { result, .. } if managed => {
+            println!("{result:#}");
+            Ok(())
+        }
         TaskOutcome::Succeeded { value, .. } => {
             if !value.is_null() {
                 println!("{value:#}");
@@ -156,6 +153,9 @@ fn front_end_outcome(surface_id: &str, exit: &ExecutionExit) -> Result<(), Strin
             Ok(())
         }
         TaskOutcome::Refused { message, .. } | TaskOutcome::Failed { message, .. } => Err(message),
+        TaskOutcome::Interrupted { message, .. } => {
+            Err(format!("{surface_id} was interrupted: {message}"))
+        }
         TaskOutcome::Signalled { signal } => {
             Err(format!("{surface_id} was killed by signal {signal}"))
         }
@@ -188,12 +188,7 @@ fn open_session(request: OpenSessionRequest) -> Result<ParameterSession, String>
 pub(crate) fn project_task_invocation(
     session: &ParameterSession,
 ) -> Result<ProviderInvocation, String> {
-    project_provider_invocation(session, |family, values, direct| match family {
-        "imager" => casars_imager::imager_provider_invocation(values, direct.args),
-        "simobserve" => casars_simulation::simobserve_provider_invocation(values, direct.args),
-        _ => Ok(ProviderInvocationAdaptation::direct(direct)),
-    })
-    .map_err(|error| error.to_string())
+    project_provider_invocation(session).map_err(|error| error.to_string())
 }
 
 fn save_explicit(path: &Path, contents: &str) -> Result<(), String> {
@@ -273,19 +268,13 @@ mod tests {
             ParameterValue::Array(vec![ParameterValue::String("0.2arcsec".into()); 2])
         );
         let invocation = project_task_invocation(&session).unwrap();
-        assert_eq!(
-            invocation.args,
-            ["--managed-output", "true", "--json-run", "-"]
-        );
+        assert_eq!(invocation.args, ["--json-run", "-"]);
         let request: serde_json::Value =
             serde_json::from_str(invocation.stdin.as_deref().unwrap()).unwrap();
-        assert_eq!(request["kind"], "run");
+        assert_eq!(request["surface"], "imager");
+        assert_eq!(request["values"]["imsize"], serde_json::json!([1024, 1024]));
         assert_eq!(
-            request["request"]["imsize"],
-            serde_json::json!([1024, 1024])
-        );
-        assert_eq!(
-            request["request"]["cell"],
+            request["values"]["cell"],
             serde_json::json!(["0.2arcsec", "0.2arcsec"])
         );
     }
@@ -306,7 +295,21 @@ mod tests {
         let invocation = project_task_invocation(&session).unwrap();
         let request: serde_json::Value =
             serde_json::from_str(invocation.stdin.as_deref().unwrap()).unwrap();
-        assert_eq!(request, expected["request"]);
+        // The profile's own values, each as the shared baseline resolves it;
+        // the binary resolves the rest over the same defaults.
+        assert_eq!(request["surface"], expected["request"]["surface"]);
+        let values = request["values"].as_object().unwrap();
+        let profiled = session
+            .states()
+            .iter()
+            .filter(|(_, state)| state.explicit)
+            .map(|(name, _)| name)
+            .collect::<Vec<_>>();
+        assert_eq!(values.keys().collect::<Vec<_>>(), profiled);
+        assert!(values.contains_key("cfcache") && !values.contains_key("backend"));
+        for (name, value) in values {
+            assert_eq!(value, &expected["request"]["values"][name], "{name}");
+        }
     }
 
     #[test]
@@ -317,18 +320,17 @@ mod tests {
         );
         let invocation = project_task_invocation(&session).unwrap();
 
-        assert_eq!(
-            invocation.args,
-            ["--managed-output", "true", "--json-run", "-"]
-        );
+        assert_eq!(invocation.args, ["--json-run", "-"]);
         let request: serde_json::Value =
             serde_json::from_str(invocation.stdin.as_deref().unwrap()).unwrap();
-        assert_eq!(request["kind"], "run");
-        assert_eq!(request["request"]["project"], "psim2");
-        assert_eq!(request["request"]["antennalist"], "alma.out20.cfg");
-        // CASA's defaults travel with the request.
-        assert_eq!(request["request"]["ptgfile"], "$project.ptg.txt");
-        assert_eq!(request["request"]["overwrite"], true);
+        assert_eq!(
+            request,
+            serde_json::json!({
+                "surface": "simobserve",
+                "values": {"project": "psim2", "antennalist": "alma.out20.cfg"},
+            }),
+            "the values set, and none of CASA's defaults"
+        );
     }
 
     #[test]
