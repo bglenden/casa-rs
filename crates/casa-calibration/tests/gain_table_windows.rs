@@ -202,8 +202,7 @@ fn casa(script: &str, vis: &Path, caltable: &Path) -> Option<Result<String, Stri
 
 /// Flag, with CASA's table tool, every sample of data description 1
 /// except baseline 0-1's, so that no antenna of its window has four
-/// baselines. (casa-rs cannot yet rewrite this MeasurementSet: its SOURCE
-/// holds string arrays casa-tables misreads, #923.)
+/// baselines.
 const FLAG_ALL_BUT_ONE_BASELINE: &str = r#"
 import os
 from casatools import table
