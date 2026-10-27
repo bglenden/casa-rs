@@ -17,8 +17,9 @@ from ..parameters import (
     ProviderInvocation,
     SurfaceParameters,
     TaskParameters,
-    _frontend,
+    _native,
 )
+from ._completion import completion_projection
 
 StrPath: TypeAlias = str | PathLike[str]
 TaskBaseSource: TypeAlias = Literal["defaults", "last", "last_successful"]
@@ -170,23 +171,23 @@ def run(
 
     result = None
     if process.returncode == 0:
-        api = _frontend()
         values = [
-            api.TaskParameterValue(name=name, value=_display_value(state.value))
+            (name, _display_value(state.value))
             for name, state in sorted(resolved.states.items())
             if state.value is not None
         ]
         try:
-            result = api.task_completion(
+            record = _native().task_completion(
                 task,
                 process.stdout,
                 str(resolved_workspace),
                 values,
             )
-        except api.FrontendServiceError as error:
+        except ValueError as error:
             raise TaskResultError(
                 f"{task} produced a successful but invalid result: {error}"
             ) from error
+        result = completion_projection(record)
 
     completion = TaskCompletion(
         task=task,

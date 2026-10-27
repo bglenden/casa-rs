@@ -48,9 +48,8 @@ When sources disagree: code/tests/CI > ADRs > ARCHITECTURE/TESTING > issues.
   in parallel; without it `scripts/test-workspace.sh` runs them serially.
 - `just quick` is the normal gate; `just verify` is for milestones and
   releases; `just --list` shows everything else.
-- Python package tests: `scripts/test-python-package.sh`; regenerate the
-  UniFFI module with `scripts/generate-frontend-bindings.sh` after changing
-  `casars-frontend-services`.
+- Python package tests: `scripts/test-python-package.sh`. Python binds Rust
+  through PyO3 only, in `casars._core` (`crates/casars-python/src`).
 - `scripts/check-imaging-dependencies.py` (in `just arch-check`) enforces the
   imaging crate layering and source rules of ADR-0016; its grandfathered-file
   lists only shrink.

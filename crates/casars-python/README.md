@@ -30,13 +30,10 @@ have generated CASA-named wrappers and concrete typing stubs under the single
 profile-aware wrappers support Defaults, Last, Last Successful, a named TOML
 file, or an existing typed draft.
 
-Generated UniFFI (`casars._frontend`, from `casars-frontend-services`) is the
-primary Python application binding. The wheel contains one native `_core`
-library that exports both the generated frontend symbols and the deliberately
-retained PyO3 object layer. PyO3 remains only for `Image` and `Table`, where
-high-volume NumPy array transfer is the required exception; tasks, parameters,
-task results, and MeasurementSet plot documents all use the generated Rust
-boundary. See the profile guide for source
+Python binds Rust through PyO3 alone. The wheel contains one native module,
+`casars._core`, which carries the parameter runtime, task results and
+MeasurementSet plot documents as well as the `Image` and `Table` NumPy object
+layer and the `casars.tools` classes. See the profile guide for source
 precedence, versioning, and managed Last paths.
 
 Documentation:

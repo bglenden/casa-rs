@@ -62,7 +62,6 @@
   "casa-simulation": "application",
   "casa-atmosphere": "science",
   "casars": "frontend",
-  "casars-frontend-services": "frontend",
   "casars-imager": "frontend",
   "casars-python": "frontend"
  },
@@ -165,7 +164,6 @@
     "crates/casa-simulation/src",
     "crates/casa-provider-contracts/src",
     "crates/casars/src",
-    "crates/casars-frontend-services/src",
     "crates/casars-imager/src",
     "crates/casars-python/src"
    ],
@@ -184,7 +182,6 @@
     "crates/casa-imaging-deconvolution/src",
     "crates/casa-provider-contracts/src",
     "crates/casars/src",
-    "crates/casars-frontend-services/src",
     "crates/casars-imager/src",
     "crates/casars-python/src"
    ],

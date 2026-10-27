@@ -147,7 +147,7 @@ package. This is a native implementation, not a wrapper around casacore C++.
 | Calibration, simulation, import | `casa-calibration`, `casa-simulation-synthesis`, `casa-vla` |
 | Imaging | `casa-imaging-model`, `casa-imaging-operator`, `casa-imaging-deconvolution`, `casa-imaging-products`, `casa-imaging-runtime`, `casa-imaging-metal`, `casa-imaging-application` |
 | Task contracts and execution | `casa-provider-contracts`, `casa-task-runtime`, `casars`, `casars-imager` |
-| Python | `crates/casars-python/` and its UniFFI service layer `casars-frontend-services` |
+| Python | `crates/casars-python/`, with its PyO3 extension `casars._core` |
 | Comparison and test support | `casa-test-support`, `tools/perf/`, `tools/science/` |
 
 The [application catalog](crates/casa-provider-contracts/resources/application-catalog.json)

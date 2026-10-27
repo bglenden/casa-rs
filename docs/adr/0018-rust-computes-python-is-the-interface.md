@@ -60,7 +60,7 @@ This decision does not fix the binding mechanism for each surface. Today:
 - tasks run through the headless task host (`casars run`);
 - stateful tools are expected to be in-process objects in the `casars._core`
   extension, like `casars.data.Image` and `casars.data.Table`;
-- ADR-0017 item 4 limits the UniFFI layer to what the Python package calls.
+- ADR-0017 item 4 makes PyO3 in `casars._core` the only binding.
 
 ## Consequences
 

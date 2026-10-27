@@ -448,7 +448,7 @@ treating textual references as proof of production ownership.
 | Observation metadata/plots | `casa-ms/src/derived/`, `selected_observation/access/geometry.rs`, `ephemeris.rs`, `selected_pointing.rs`, `subtables/pointing.rs`, plot/listobs/msexplore paths | Catalogue/window access, native metadata, moving fields/pointing; remove MAIN/DDI assumptions at domain boundary. |
 | Simulation | `casa-simulation/src/write/`, including `subtables.rs` and the admitted pipeline | Common creation batches, multi-SPW/mosaic metadata, prediction/write boundedness, CASA-paired outputs. |
 | Import | `casa-vla` importer | Preserve supported variable shapes, column metadata and FLAG_CATEGORY; use common creation when output format is selected. |
-| Task/Python surfaces | `casars`, `casars-frontend-services`, `casars-python` | Format detection and native dispatch, generated bindings/parameters where affected; low-level generic table tools stay explicit table tools. |
+| Task/Python surfaces | `casars`, `casars-python` | Format detection and native dispatch, generated bindings/parameters where affected; low-level generic table tools stay explicit table tools. |
 
 For each packet, name its currently reachable production entrypoint, destination,
 old code to remove, operations/formats required, tests and benchmark rows. Existing
@@ -482,8 +482,7 @@ blocks migration even when the memory curve improves.
 
 **Gate:** per-packet acceptance and deletion review; milestone review audits the
 remaining observation bypasses and creation routes. Frontend signature/parameter
-changes include generated catalogues, UniFFI regeneration where relevant, and
-Python package tests. No computational work moves into Python.
+changes include generated catalogues and Python package tests. No computational work moves into Python.
 
 ## 7. Deferred extension — MSv3 profiles
 
