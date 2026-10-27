@@ -88,7 +88,6 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--append", action="store_true", help="add to runs.jsonl instead of replacing it")
     parser.add_argument("--rest-s", type=float, default=60.0, help="rest before each timed run")
-    parser.add_argument("--casa-time-shift-s", type=float, default=37.0, help="as observe_scenarios")
     parser.add_argument("--max-load", type=float, default=3.0, help="one-minute load to start below")
     parser.add_argument("--busy-deadline-s", type=float, default=3600.0, help="give up waiting after")
     parser.add_argument("--only", nargs="*", help="run only these cases")
@@ -442,11 +441,19 @@ class Harness:
                 "--mjd-days", repr(times["referencetime"]),
                 "--itrf", *(repr(value) for value in antennas[0]["position_m"]),
             )
+        # CASA's TIME is TAI under the UTC label: TAI - UTC at the reference
+        # epoch, by CASA's measures, as the oracle records it or the helper
+        # gives it.
+        tai_minus_utc_s = entry.get("casa_tai_minus_utc_s")
+        if tai_minus_utc_s is None:
+            tai_minus_utc_s = self.casa(
+                "tai-minus-utc", "--mjd-days", repr(times["referencetime"])
+            )["tai_minus_utc_s"]
         start = (
             times["referencetime"] * 86400.0
             + offset["offset_s"]
             + observe["starttime"]
-            + self.args.casa_time_shift_s
+            + tai_minus_utc_s
         )
         duration = observes[-1]["stoptime"] - observe["starttime"]
         request = {
