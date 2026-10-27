@@ -772,12 +772,11 @@ normalizer, validator, migration engine, and sparse renderer.</p>
 CASA-named keyword wrapper and typing stub per task. Their signatures
 deliberately use an unset sentinel instead of copying catalog defaults into
 Python.</p>
-<p>Generated UniFFI (<code>casars._frontend</code>, from <code>casars-frontend-services</code>) owns
-task, parameter, and result transport. PyO3 carries the in-process objects:
-the <code>casars.data.Image</code> and <code>casars.data.Table</code> NumPy object layer, the CASA
-tool classes of <code>casars.tools</code> and the <code>casars.simutil</code> class. The wheel still
-ships one native <code>_core</code> library rather than two competing application
-bindings.</p>
+<p>Python binds Rust through PyO3 alone, in one native module, <code>casars._core</code>.
+It carries task parameters, task results and MeasurementSet plot documents as
+well as the in-process objects: the <code>casars.data.Image</code> and
+<code>casars.data.Table</code> NumPy object layer, the CASA tool classes of
+<code>casars.tools</code> and the <code>casars.simutil</code> class.</p>
 <h2 id="plotting-and-image-inspection">Plotting and image inspection<a class="headerlink" href="#plotting-and-image-inspection" title="Permanent link">&para;</a></h2>
 <p>casa-rs does not rasterise plots. Numeric MeasurementSet plot documents are
 available as <code>casars.data.measurement_set_plot(...)</code> and are drawn with

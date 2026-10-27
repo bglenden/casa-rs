@@ -739,7 +739,7 @@ parallelism, memory budgets and casacore-compatible I/O.</p>
 - tasks run through the headless task host (<code>casars run</code>);
 - stateful tools are expected to be in-process objects in the <code>casars._core</code>
   extension, like <code>casars.data.Image</code> and <code>casars.data.Table</code>;
-- ADR-0017 item 4 limits the UniFFI layer to what the Python package calls.</p>
+- ADR-0017 item 4 makes PyO3 in <code>casars._core</code> the only binding.</p>
 <h2 id="consequences">Consequences<a class="headerlink" href="#consequences" title="Permanent link">&para;</a></h2>
 <p>Positive:
 - Each behaviour has one implementation, in the language that sets its speed.

@@ -690,6 +690,10 @@ Truth class: normative
 Supersedes: 0005; 0007; the stateful-session provider and session-surface
 parts of 0003 and 0006
 Superseded by:</p>
+<p>Amended: 2026-10-27, on owner direction (#931): Python binds Rust through
+PyO3 only (item 4, Enforcement and Drift detection). This is the first stage
+of #931; item 1 and the rest of item 4 change when the <code>casars</code> launcher is
+retired.</p>
 <h2 id="context">Context<a class="headerlink" href="#context" title="Permanent link">&para;</a></h2>
 <p>From May to October 2026 casa-rs carried several interactive surfaces beside
 its Python package and command-line tasks: a ratatui terminal launcher with
@@ -721,9 +725,10 @@ project-owned GUIs.</p>
 <li>Plots are typed data. Rust builds plot documents and text point manifests
    (<code>msexplore</code>/<code>plotms --plot-format txt</code>); Python renders them with
    Matplotlib (<code>casars.data.plot_matplotlib</code>, <code>casars.imexplore</code>).</li>
-<li><code>casars-frontend-services</code> is the UniFFI service layer of the Python
-   package only. It exports what <code>casars.parameters</code>, <code>casars.tasks</code> and
-   <code>casars.data</code> call, and nothing for other frontends.</li>
+<li>The Python package binds in-process Rust functionality through PyO3 in
+   <code>casars._core</code>. There is no UniFFI layer. <em>Staged transition (#931):</em> task
+   calls still run through the <code>casars</code> task host of item 1 until it is
+   retired, when this item gains its rules for task calls.</li>
 <li>New interactive surfaces, if ever wanted again, start from a new ADR
    rather than from the retired code.</li>
 </ol>
@@ -758,17 +763,17 @@ project-owned GUIs.</p>
   <code>casars run</code> executes a provider), the provider-contract and catalog tests
   (27 task surfaces, no session kinds), the Python package tests;
 - lint/import/dependency rules: none beyond the workspace manifests;
-- CI checks: <code>just quick</code>, <code>scripts/generate-frontend-bindings.sh --check</code> in
-  the <code>python_package</code> job, <code>just docs-check</code>;
+- CI checks: <code>just quick</code>, <code>scripts/test-python-package.sh</code> in the
+  <code>python_package</code> job (its binding snapshots pin what the binding returns to
+  Python, and it tests the built wheel and sdist), <code>just docs-check</code>;
 - review trigger: any pull request that adds a UI, rendering or session
   dependency or crate.</p>
 <h2 id="drift-detection">Drift detection<a class="headerlink" href="#drift-detection" title="Permanent link">&para;</a></h2>
 <p>Suspect drift if:
 - <code>Cargo.lock</code> gains <code>ratatui</code>, <code>crossterm</code>, <code>plotters</code>, <code>image</code>, <code>printpdf</code>
-  or a UniFFI foreign-language generator other than Python;
+  or <code>uniffi</code>;
 - a parameter surface or provider declares a non-task kind;
-- <code>casars-frontend-services</code> grows exports that the Python package does not
-  call.</p>
+- a second native module appears beside <code>casars._core</code>.</p>
 
 
 
