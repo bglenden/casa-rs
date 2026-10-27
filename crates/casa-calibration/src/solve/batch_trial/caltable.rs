@@ -990,6 +990,27 @@ fn collapsed_windows_bind_either_way_and_overlaps_are_refused() {
         );
         assert_eq!(result.is_ok(), binds, "{frequency}: {result:?}");
     }
+    // A window of decreasing frequency (negative widths): CASA's solved row
+    // holds the widths' summed magnitude, its unsolved rows their signed
+    // sum (CASA 6.7.5 on alma/multiobs.ms); both bind.
+    let mut lower = namespace(&[], &[("w", 1.0e9)]);
+    lower.rows.spectral_windows[0].frequencies_hz = vec![1.001e9, 1.0e9];
+    lower.rows.spectral_windows[0].widths_hz = vec![-1.0e6; 2];
+    for width in [2.0e6, -2.0e6] {
+        let table = rows(vec![NamespaceWindow {
+            widths_hz: vec![width],
+            ..collapsed(1.0005e9)
+        }]);
+        let binding = CalibrationBinding::bind(
+            &table,
+            &lower,
+            &lower.catalogue,
+            &BindingTolerance::EXACT,
+            &StatedAssociations::default(),
+        )
+        .expect("lower sideband");
+        assert_eq!(binding.spectral_windows, vec![Some(0)], "{width}");
+    }
 }
 
 /// A solve's catalogue must be the opening's the namespace describes: the

@@ -132,10 +132,11 @@ compares the table's rows with the store's namespace rows, in this order:
    row alike.
 3. **Content** otherwise: an antenna by station and position, a field by
    phase centre, a window by frame and channels, or the one channel a gain
-   table collapses them to, of the summed width at the channels' arithmetic
-   mean frequency (CASA's `gaincal`, whose `ChannelAverageTVI` averages
-   frequencies unweighted before a G or T solve, whatever the widths) or the
-   centre channel's (casa-rs's writer, #917). Names never bind, since converters rewrite them, but an antenna
+   table collapses them to, of the summed width (in magnitude: CASA's solve
+   holds widths positive) at the channels' arithmetic mean frequency (CASA's
+   `gaincal`, whose `ChannelAverageTVI` averages frequencies unweighted
+   before a G or T solve, whatever the widths) or the centre channel's
+   (casa-rs's writer, #917). Names never bind, since converters rewrite them, but an antenna
    whose name disagrees beyond a converter's `_STATION` suffixes is refused:
    another antenna on the same pad does not take its gains. An entity the
    other side lacks binds to nothing, so an antenna subset applies as CASA
