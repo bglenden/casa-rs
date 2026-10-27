@@ -108,7 +108,7 @@ sessions being their rows and each partition naming its data description's
 window, so a table written through it has the rows CASA's `gaincal` copies
 and CASA applies it to that MeasurementSet by its own association. (casa-rs's
 writer collapses a solved window at the centre channel where CASA's
-collapses at the mean frequency, #917.) An MSv4 has no such rows; its
+collapses at the channels' arithmetic mean, #917.) An MSv4 has no such rows; its
 namespace is the subtables its MSv2 conversion holds, in catalogue order, so
 a table written through it applies by CASA's association only to that
 conversion, and is bound to any other store. The writer translates a solve's
@@ -119,28 +119,33 @@ Binding a table to a store (`CalibrationBinding`, owned by calibration)
 compares the table's rows with the store's namespace rows, in this order:
 
 1. **Stated associations**, as CASA's `spwmap` states them: a partition's
-   window (several may share one row) and an antenna (one to one).
+   window (several may share one row, including the row an unstated window
+   binds to below, as `spwmap` leaves a window unlisted there on its own
+   row) and an antenna (one to one).
 2. **CASA's own association**, where the caller states that the table was
    written through this store's namespace, as CASA assumes of a table applied
    to the MeasurementSet it was solved on: each row binds to its own index,
    even where two rows hold the same content, once the rows are checked
-   consistent (as many of each kind; a window may hold a solve over part of
-   its channels). Names, row counts and a gain table's collapsed channels do
+   consistent (as many of each kind, antenna names agreeing as below; a
+   window may hold a solve over part of its channels). Names, row counts and a gain table's collapsed channels do
    not establish it: two windows of different channels can collapse to one
    row alike.
 3. **Content** otherwise: an antenna by station and position, a field by
    phase centre, a window by frame and channels, or the one channel a gain
-   table collapses them to, of the summed width at the channels'
-   width-weighted mean frequency (CASA's `gaincal`) or the centre channel's
-   (casa-rs's writer, #917). Names never bind, since converters rewrite them, but an antenna
+   table collapses them to, of the summed width at the channels' arithmetic
+   mean frequency (CASA's `gaincal`, whose `ChannelAverageTVI` averages
+   frequencies unweighted before a G or T solve, whatever the widths) or the
+   centre channel's (casa-rs's writer, #917). Names never bind, since converters rewrite them, but an antenna
    whose name disagrees beyond a converter's `_STATION` suffixes is refused:
    another antenna on the same pad does not take its gains. An entity the
    other side lacks binds to nothing, so an antenna subset applies as CASA
    applies a table missing an antenna (`calflag` flags its samples); a field
    the table lacks likewise has no solutions until a `gainfield` policy is
-   built. A window that a table window in its frame, bound to no other
-   window, overlaps in frequency is refused (a solve over part of its
-   channels), not left unbound. The applier must have opened the store as
+   built. A window that a table window bound to no other window overlaps
+   in frequency is refused (a solve over part of its channels), not left
+   unbound, in any frame: a table solved in one frame and applied to the
+   store regridded to another solves none of its windows, so it must be
+   stated rather than flag every sample. The applier must have opened the store as
    the namespace's opening did, or binding is refused. Two candidates, or two entities
    claiming one row, are refused: equal grids or positions alone do not
    prove two rows are one entity. Directions compare within a stated

@@ -146,7 +146,7 @@ impl CalibrationBinding {
             Rules {
                 content: |a: &NamespaceAntenna, b: &NamespaceAntenna| same_antenna(a, b, tolerance),
                 consistent: |a: &NamespaceAntenna, b: &NamespaceAntenna| {
-                    same_antenna(a, b, tolerance)
+                    same_antenna(a, b, tolerance) && names_agree(a, b)
                 },
                 agree: names_agree,
             },
@@ -184,18 +184,19 @@ impl CalibrationBinding {
             &stated_windows,
             stated.same_namespace,
         )?;
-        // A window no table window solves, though one in its frame and
-        // bound to no other window overlaps it, has solutions the binding
-        // cannot place: refused, not left unbound.
+        // A window no table window solves, though one bound to no other
+        // window overlaps it, has solutions the binding cannot place:
+        // refused, not left unbound. Frames are not compared here: a table
+        // solved in one frame and applied to the store regridded to another
+        // (`cvel`) solves none of its windows, and must be stated, not
+        // flagged whole.
         let used: BTreeSet<u32> = window_rows.iter().flatten().copied().collect();
         for &row in &target.spectral_windows {
             let window = &target.rows.spectral_windows[row as usize];
             if window_rows[row as usize].is_none()
                 && let Some(other) = (0..table.spectral_windows.len()).find(|other| {
-                    let solved = &table.spectral_windows[*other];
                     !used.contains(&(*other as u32))
-                        && solved.frame == window.frame
-                        && overlaps(solved, window)
+                        && overlaps(&table.spectral_windows[*other], window)
                 })
             {
                 return Err(refused(format!(
@@ -253,8 +254,9 @@ fn refused(reason: String) -> ObservationError {
 /// one (`same_namespace`), each row's own index, the rows checked
 /// consistent; otherwise the one table row whose content matches, a row
 /// stated one to one being no other's, provided the rules' `agree` lets it
-/// stand. No two target rows bind to one table row unless both are stated
-/// and the kind lets statements share a row.
+/// stand. Two target rows never bind to one table row by inference; where
+/// the kind lets statements share a row, a stated row may share with any
+/// other, as CASA's `spwmap` maps an unlisted window to its own row.
 fn associate<T>(
     kind: Kind,
     table: &[T],
@@ -332,7 +334,10 @@ fn associate<T>(
         let Some(row) = row.map(|row| row as u32) else {
             continue;
         };
-        if let Some(other) = claimed.get(&row).or(first.get(&row)) {
+        let stated_by = (!kind.statements_share)
+            .then(|| claimed.get(&row))
+            .flatten();
+        if let Some(other) = stated_by.or(first.get(&row)) {
             return Err(refused(format!(
                 "{what} rows {other} and {target_row} of the store both bind to table row \
                  {row}, which does not keep them apart; state the association"
@@ -385,10 +390,11 @@ fn same_hz(a: f64, b: f64) -> bool {
 
 /// Whether table window `solved` holds solutions for target window
 /// `window`: the same frame, and the same channels, or the one channel a
-/// gain table collapses them to, of their summed width at their mean
-/// frequency (CASA's `gaincal`, `SolvableVisCal`) or at the centre
-/// channel's (casa-rs's gain table writer, which differs from CASA there,
-/// #917).
+/// gain table collapses them to, of their summed width at their arithmetic
+/// mean frequency (CASA's `gaincal`: its `ChannelAverageTVI` averages the
+/// frequencies plainly and sums the widths before a G or T solve) or at
+/// the centre channel's (casa-rs's gain table writer, which differs from
+/// CASA there, #917).
 fn solves(solved: &NamespaceWindow, window: &NamespaceWindow) -> bool {
     let same =
         |a: &[f64], b: &[f64]| a.len() == b.len() && a.iter().zip(b).all(|(a, b)| same_hz(*a, *b));
@@ -405,28 +411,24 @@ fn solves(solved: &NamespaceWindow, window: &NamespaceWindow) -> bool {
         return false;
     }
     let frequency = solved.frequencies_hz[0];
-    // CASA's mean weighs each channel by its width (`FreqMetaData`).
-    let weights: f64 = window.widths_hz.iter().map(|width| width.abs()).sum();
-    let mean = window
-        .frequencies_hz
-        .iter()
-        .zip(&window.widths_hz)
-        .map(|(f, w)| f * w.abs())
-        .sum::<f64>()
-        / weights;
+    // `PlainChannelAverageKernel`: unweighted, whatever the widths.
+    let mean = window.frequencies_hz.iter().sum::<f64>() / channels as f64;
     same_hz(solved.widths_hz[0], window.widths_hz.iter().sum())
         && (same_hz(frequency, mean) || same_hz(frequency, window.frequencies_hz[channels / 2]))
 }
 
 /// Whether `solved`, one channel, lies within `window`'s band in its frame:
-/// a solve over part of the window's channels.
+/// a solve over part of the window's channels. An edge the collapse
+/// reaches is compared as [`same_hz`] compares, since its mean and summed
+/// width put it an ulp either side.
 fn within(solved: &NamespaceWindow, window: &NamespaceWindow) -> bool {
+    let at_most = |a: f64, b: f64| a <= b || same_hz(a, b);
     let (low, high) = band(window);
     let (solved_low, solved_high) = band(solved);
     solved.frame == window.frame
         && solved.frequencies_hz.len() == 1
-        && low <= solved_low
-        && solved_high <= high
+        && at_most(low, solved_low)
+        && at_most(solved_high, high)
 }
 
 /// A window's band: each channel spans its frequency plus or minus half its

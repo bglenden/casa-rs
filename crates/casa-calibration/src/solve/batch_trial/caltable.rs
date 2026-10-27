@@ -875,19 +875,33 @@ fn antennas_of_one_content_need_their_own_namespace_or_a_statement() {
 
 /// Windows bind by frame and channels, renamed or reordered; a window the
 /// table lacks binds to nothing; and several may be stated to take one
-/// row, as CASA's `spwmap` maps them.
+/// row, as CASA's `spwmap` maps them, including the row a window unlisted
+/// there binds to by content or, in a stated same namespace, by index.
 #[test]
 fn windows_bind_by_content_and_statements_may_share_a_row() {
     let table = namespace(&[], &[("a", 1.0e9), ("b", 2.0e9)]);
     let target = namespace(&[], &[("B", 2.0e9), ("c", 3.0e9), ("A", 1.0e9)]);
     let binding = bound(&table, &target, &StatedAssociations::default()).expect("bind");
     assert_eq!(binding.spectral_windows, vec![Some(1), None, Some(0)]);
-    let stated = StatedAssociations {
+    for statements in [
+        vec![(PartitionId(1), 0), (PartitionId(2), 0)],
+        vec![(PartitionId(1), 0)],
+    ] {
+        let stated = StatedAssociations {
+            spectral_windows: statements,
+            ..StatedAssociations::default()
+        };
+        let mapped = bound(&table, &target, &stated).expect("stated");
+        assert_eq!(mapped.spectral_windows, vec![Some(1), Some(0), Some(0)]);
+    }
+    let own = namespace(&[], &[("a", 1.0e9), ("b", 2.0e9), ("c", 3.0e9)]);
+    let partial = StatedAssociations {
+        same_namespace: true,
         spectral_windows: vec![(PartitionId(1), 0), (PartitionId(2), 0)],
         ..StatedAssociations::default()
     };
-    let mapped = bound(&table, &target, &stated).expect("stated");
-    assert_eq!(mapped.spectral_windows, vec![Some(1), Some(0), Some(0)]);
+    let mapped = bound(&own, &own, &partial).expect("partial spwmap");
+    assert_eq!(mapped.spectral_windows, vec![Some(0); 3]);
 }
 
 /// An antenna on a table antenna's pad whose name disagrees, beyond the
@@ -915,10 +929,12 @@ fn an_antenna_on_another_antennas_pad_is_refused() {
 }
 
 /// A gain table's window is one channel: CASA's `gaincal` writes it at the
-/// channels' mean frequency, casa-rs's writer at the centre channel's, both
-/// of the summed width, and either binds to the window it collapses. A table
-/// window that overlaps a store's window but collapses it neither way (a
-/// solve over some of its channels) is refused, never left unbound.
+/// channels' arithmetic mean frequency, unweighted even where widths
+/// differ, casa-rs's writer at the centre channel's, both of the summed
+/// width, and either binds to the window it collapses. A table window that
+/// overlaps a store's window but collapses it neither way (a solve over
+/// some of its channels, or a width-weighted mean) is refused, never left
+/// unbound.
 #[test]
 fn collapsed_windows_bind_either_way_and_overlaps_are_refused() {
     let target = namespace(&[], &[("w", 1.0e9)]);
@@ -955,6 +971,25 @@ fn collapsed_windows_bind_either_way_and_overlaps_are_refused() {
     }
     let elsewhere = bind(vec![collapsed(5.0e9)]).expect("no overlap");
     assert_eq!(elsewhere.spectral_windows, vec![None]);
+    // Widths 1 and 3 MHz: the plain mean 1.0005 GHz is CASA's (measured
+    // with CASA 6.7.5 on ngc5921, widths rewritten to differ); the
+    // width-weighted 1.00075 GHz is not a collapse.
+    let mut unequal = namespace(&[], &[("w", 1.0e9)]);
+    unequal.rows.spectral_windows[0].widths_hz = vec![1.0e6, 3.0e6];
+    for (frequency, binds) in [(1.0005e9, true), (1.00075e9, false)] {
+        let table = rows(vec![NamespaceWindow {
+            widths_hz: vec![4.0e6],
+            ..collapsed(frequency)
+        }]);
+        let result = CalibrationBinding::bind(
+            &table,
+            &unequal,
+            &unequal.catalogue,
+            &BindingTolerance::EXACT,
+            &StatedAssociations::default(),
+        );
+        assert_eq!(result.is_ok(), binds, "{frequency}: {result:?}");
+    }
 }
 
 /// A solve's catalogue must be the opening's the namespace describes: the
@@ -1060,16 +1095,64 @@ fn a_stated_same_namespace_is_checked() {
     for target in [
         namespace(&[("ea01", "N01", 1.0)], &[]),
         namespace(&[("ea02", "N02", 2.0), ("ea01", "N01", 1.0)], &[]),
+        // Another antenna on ea01's pad.
+        namespace(&[("ea05", "N01", 1.0), ("ea02", "N02", 2.0)], &[]),
     ] {
         assert!(bound(&table, &target, &stated).is_err());
     }
 }
 
-/// Overlap refuses only what it should: a narrow window inside a wide one
-/// the table solves (and has bound to the wide window) binds to nothing,
-/// and a table window in another frame is not compared.
+/// In its own namespace a window binds to a table window that collapses
+/// part of its channels (`spw='0:2~3'`), its band an ulp beyond the
+/// window's edge, as a mean and a summed width can put it; by content that
+/// table window only overlaps, and is refused.
 #[test]
-fn overlaps_spare_windows_bound_elsewhere_and_other_frames() {
+fn a_partial_solve_binds_in_its_own_namespace_to_an_ulp() {
+    let mut target = namespace(&[], &[("w", 1.0e9)]);
+    let target_window = NamespaceWindow {
+        frequencies_hz: vec![1.0e9, 1.001e9, 1.002e9, 1.003e9],
+        widths_hz: vec![1.0e6; 4],
+        ..target.rows.spectral_windows[0].clone()
+    };
+    target.rows.spectral_windows = vec![target_window.clone()];
+    let upper = NamespaceWindow {
+        frequencies_hz: vec![1.0025e9_f64.next_up()],
+        widths_hz: vec![2.0e6],
+        ..target_window
+    };
+    let edge = upper.frequencies_hz[0] + upper.widths_hz[0] / 2.0;
+    assert!(edge > 1.0035e9, "an ulp beyond the edge: {edge}");
+    let table = NamespaceRows {
+        antennas: Vec::new(),
+        fields: Vec::new(),
+        spectral_windows: vec![upper],
+    };
+    let bind = |same_namespace| {
+        CalibrationBinding::bind(
+            &table,
+            &target,
+            &target.catalogue,
+            &BindingTolerance::EXACT,
+            &StatedAssociations {
+                same_namespace,
+                ..StatedAssociations::default()
+            },
+        )
+    };
+    assert_eq!(
+        bind(true).expect("own namespace").spectral_windows,
+        vec![Some(0)]
+    );
+    assert!(bind(false).is_err(), "overlaps only");
+}
+
+/// Overlap refuses only what it should: a narrow window inside a wide one
+/// the table solves (and has bound to the wide window) binds to nothing;
+/// but an unused table window overlapping it is refused in any frame, since
+/// a table solved in another frame (applied to a `cvel` regridding) solves
+/// none of the store's windows and would otherwise flag them all.
+#[test]
+fn overlaps_spare_windows_bound_elsewhere_but_not_other_frames() {
     let window = |frequencies: Vec<f64>, width: f64, frame| NamespaceWindow {
         name: "w".to_string(),
         frame,
@@ -1100,13 +1183,13 @@ fn overlaps_spare_windows_bound_elsewhere_and_other_frames() {
             .spectral_windows,
         vec![Some(0), None]
     );
-    let elsewhere = window(vec![1.105e9], 0.02e9, FrequencyRef::LSRK);
-    assert_eq!(
-        bind(&rows(vec![wide, elsewhere]))
-            .expect("bind")
-            .spectral_windows,
-        vec![Some(0), None]
-    );
+    let regridded = window(vec![1.105e9], 0.02e9, FrequencyRef::LSRK);
+    match bind(&rows(vec![wide, regridded])) {
+        Err(ObservationError::InvalidRequest { reason }) => {
+            assert!(reason.contains("state the association"), "{reason}");
+        }
+        other => panic!("refused, not {other:?}"),
+    }
 }
 
 /// A field the table lacks, here the target's phase centre moved, binds to

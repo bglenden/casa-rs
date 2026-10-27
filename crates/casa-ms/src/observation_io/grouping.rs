@@ -15,8 +15,8 @@ use super::GroupClosure as Closure;
 
 /// The group of every time and where each group starts and ends, computed
 /// once at binding from the grid's times, fields and scans: the traversal's
-/// group index. Its size is two words per time; the trial accepts it in
-/// exchange for proven closure at delivery.
+/// group index. It holds a 32-byte key per time and an extent per group;
+/// the trial accepts it in exchange for proven closure at delivery.
 ///
 /// Keys are those of the whole grid, so traversals of different time
 /// selections agree on every time's group; each group's extent is the part
