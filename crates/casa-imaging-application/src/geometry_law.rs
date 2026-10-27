@@ -98,6 +98,89 @@ pub fn compare_geometry(
     request: &ImagingRequest,
     context: &RunContext,
 ) -> Result<GeometryComparison, ApplicationError> {
+    let Prepared {
+        problem,
+        path,
+        measures,
+        today,
+    } = prepare(request, context)?;
+    let observation = Msv2Observation::open_with(&path, &OpenOptions::default())?;
+    let batches = batch_rows(
+        &problem,
+        &observation,
+        |partition| Some(observation.spectral_window_id(partition)),
+        measures,
+        &today,
+    )?;
+    Ok(compare(&today, &batches))
+}
+
+/// Compare the batch geometry of `request`'s rows in its MeasurementSet
+/// with their batch geometry in `converted`, the same observation in
+/// another store (an MSv4 conversion): what the store alone changes. A
+/// converted window is matched to the MeasurementSet's by its first
+/// channel frequency.
+///
+/// # Errors
+///
+/// When either store cannot be opened or read.
+pub fn compare_stores(
+    request: &ImagingRequest,
+    context: &RunContext,
+    converted: &Path,
+) -> Result<GeometryComparison, ApplicationError> {
+    let Prepared {
+        problem,
+        path,
+        measures,
+        today,
+    } = prepare(request, context)?;
+    let observation = Msv2Observation::open_with(&path, &OpenOptions::default())?;
+    let windows = observation
+        .catalogue()
+        .partition_ids()
+        .into_iter()
+        .map(|partition| {
+            let entry = observation.catalogue().partition(partition);
+            (
+                entry.frequencies_hz.first().map(|hz| hz.to_bits()),
+                observation.spectral_window_id(partition),
+            )
+        })
+        .collect::<HashMap<_, _>>();
+    let reference = batch_rows(
+        &problem,
+        &observation,
+        |partition| Some(observation.spectral_window_id(partition)),
+        Arc::clone(&measures),
+        &today,
+    )?;
+    let other = casa_ms::observation_io::open(converted, &OpenOptions::default())?;
+    let catalogue = Arc::clone(other.catalogue());
+    let rows = batch_rows(
+        &problem,
+        other.as_ref(),
+        |partition| {
+            let first = catalogue.partition(partition).frequencies_hz.first();
+            windows.get(&first.map(|hz| hz.to_bits())).copied()
+        },
+        measures,
+        &today,
+    )?;
+    Ok(compare(&reference, &rows))
+}
+
+/// What both comparisons start from: the compiled problem of a request,
+/// its MeasurementSet, the run's Measures provider and today's route's
+/// rows.
+struct Prepared {
+    problem: CompiledProblem,
+    path: std::path::PathBuf,
+    measures: Arc<dyn MeasuresProvider>,
+    today: HashMap<Key, Row>,
+}
+
+fn prepare(request: &ImagingRequest, context: &RunContext) -> Result<Prepared, ApplicationError> {
     let resolved = std::cell::Cell::new(None);
     let (problem, input, _native, _resident) = compile_run(request, context, &resolved)?;
     let measures = input.observation.measures_provider();
@@ -110,18 +193,27 @@ pub fn compare_geometry(
         &context.policy,
     )?;
     let today = today_rows(&problem, access)?;
-    let batches = batch_rows(&problem, &path, measures, &today)?;
+    Ok(Prepared {
+        problem,
+        path,
+        measures,
+        today,
+    })
+}
+
+/// `actual`'s rows against `expected`'s.
+fn compare(expected: &HashMap<Key, Row>, actual: &HashMap<Key, Row>) -> GeometryComparison {
     let mut comparison = GeometryComparison {
-        rows: today.len(),
+        rows: expected.len(),
         ..GeometryComparison::default()
     };
-    for (key, expected) in &today {
-        match batches.get(key) {
-            Some(actual) => compare_row(expected, actual, &mut comparison),
+    for (key, want) in expected {
+        match actual.get(key) {
+            Some(got) => compare_row(want, got, &mut comparison),
             None => comparison.unmatched += 1,
         }
     }
-    Ok(comparison)
+    comparison
 }
 
 /// Today's route's rows of `problem`, by key.
@@ -181,15 +273,15 @@ fn today_rows(
     Ok(rows)
 }
 
-/// The batch geometry of the rows of `today` in the MeasurementSet at
-/// `path`, by key.
+/// The batch geometry of the rows of `today` in `observation`, by key;
+/// `window` gives a partition's spectral window number, `None` skipping it.
 fn batch_rows(
     problem: &CompiledProblem,
-    path: &Path,
+    observation: &dyn Observation,
+    window: impl Fn(PartitionId) -> Option<u32>,
     measures: Arc<dyn MeasuresProvider>,
     today: &HashMap<Key, Row>,
 ) -> Result<HashMap<Key, Row>, ApplicationError> {
-    let observation = Msv2Observation::open_with(path, &OpenOptions::default())?;
     let catalogue = Arc::clone(observation.catalogue());
     let plan = GeometryPlan::compile(problem, &catalogue, measures)?;
     let mut traversal = GeometryTraversal::default();
@@ -201,7 +293,9 @@ fn batch_rows(
             if law.time_sampling() == casa_imaging_model::PointingTimeSampling::VisibilityTimeCentroid
     );
     for partition in catalogue.partition_ids() {
-        let spectral_window = observation.spectral_window_id(partition);
+        let Some(spectral_window) = window(partition) else {
+            continue;
+        };
         let entry = catalogue.partition(partition);
         let request = AccessRequest {
             partitions: vec![partition],

@@ -11,7 +11,7 @@
 
 use std::ffi::OsString;
 
-use casa_imaging_application::geometry_law::compare_geometry;
+use casa_imaging_application::geometry_law::{compare_geometry, compare_stores};
 use casa_imaging_application::{Cancel, HostResources, RunContext};
 use serde_json::json;
 
@@ -102,5 +102,31 @@ fn geometry_law(args: &[OsString]) -> Result<bool, String> {
     let text = serde_json::to_string_pretty(&receipt).map_err(|error| error.to_string())?;
     std::fs::write(&path, text).map_err(|error| error.to_string())?;
     eprintln!("geometry law: {receipt}");
+    // What the store alone changes: the same rows' batch geometry in an
+    // MSv4 conversion of the MeasurementSet, when one is named.
+    if let Some(converted) = std::env::var_os("CASA_RS_GEOMETRY_LAW_MSV4") {
+        let stores = compare_stores(&request, &context, std::path::Path::new(&converted))
+            .map_err(|error| error.to_string())?;
+        let receipt = json!({
+            "measure": "batch geometry of an MSv2 against its MSv4 conversion",
+            "converted": std::path::Path::new(&converted).display().to_string(),
+            "rows": stores.rows,
+            "unmatched": stores.unmatched,
+            "largest": stores.largest(),
+            "differences": stores
+                .differences
+                .iter()
+                .map(|(quantity, (difference, row))| {
+                    (quantity.to_string(), json!({"relative": difference, "physical_row": row}))
+                })
+                .collect::<serde_json::Map<_, _>>(),
+            "compared": stores.compared,
+        });
+        let mut path = request.imagename.clone().into_os_string();
+        path.push(".geometry-stores.json");
+        let text = serde_json::to_string_pretty(&receipt).map_err(|error| error.to_string())?;
+        std::fs::write(&path, text).map_err(|error| error.to_string())?;
+        eprintln!("geometry stores: {receipt}");
+    }
     Ok(holds)
 }
