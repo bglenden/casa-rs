@@ -2085,18 +2085,20 @@ CASA's formula rather than the physical one.</p>
 </ul>
 <p><code>observe</code> converts the reference epoch to TAI and adds its seconds to the
 start and stop offsets, then writes the result into TIME, whose MEASINFO says
-UTC. The data therefore start 37 s (TAI − UTC since 2017) after the requested
-epoch. The geometry is computed with the stored number read as UT1 (line
-1546), so CASA's data are self-consistent; only the schedule is shifted.</p>
+UTC. The data therefore start TAI − UTC at the reference epoch after the
+requested epoch (37 s since 2017, 35 s in 2014). The geometry is computed with
+the stored number read as UT1 (line 1546), so CASA's data are
+self-consistent; only the schedule is shifted.</p>
 <p>casa-rs stores the requested UTC, and also reads the stored TIME as UT1 for
 the geometry, so its uvw agree with CASA's at equal stored TIME. A parity run
-requests a start 37 s later on the casa-rs side and compares rows at equal
-TIME (<code>tools/simulation/compare_sm_ms.py</code>).</p>
+requests a start later by TAI − UTC at the reference epoch on the casa-rs
+side, taken from the measures data and never written in as a number, and
+compares rows at equal TIME (<code>tools/simulation/compare_sm_ms.py</code>).</p>
 <p>The same offset separates the calibration tables the two simulators write
 (<code>setgain</code> and <code>setleakage</code> with <code>table=</code>): CASA's TIME is TAI under the UTC
 label. <code>sm.setapply</code> of a CASA-simulated table to a casa-rs MeasurementSet,
-or the reverse, therefore takes its solutions 37 s away, several solutions
-of 10 s integrations. The <code>corrupt-setapply-*</code> scenarios agree with CASA
+or the reverse, therefore takes its solutions TAI − UTC away (37 s today),
+several solutions of 10 s integrations. The <code>corrupt-setapply-*</code> scenarios agree with CASA
 because their runs are shifted as above; tables solved from real data carry
 true UTC and are not affected.</p>
 <h2 id="the-simulator-charges-shadowing-to-the-antenna-in-front">The simulator charges shadowing to the antenna in front<a class="headerlink" href="#the-simulator-charges-shadowing-to-the-antenna-in-front" title="Permanent link">&para;</a></h2>
