@@ -4,11 +4,52 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use casa_provider_contracts::{
     ManagedOutputArgument, NarrowingConstraint, ParameterValue, Predicate, ProviderInvocation,
-    ProviderInvocationAdaptation, ValueAdapter,
+    ProviderInvocationAdaptation, SurfaceContractBundle, TaskRunRequest, ValueAdapter,
 };
 use thiserror::Error;
 
 use crate::{ParameterSession, semantic_eq};
+
+/// The provider families whose binaries run on the shared task front end
+/// (#931). They take one `--json-run -` request; the list grows as the
+/// MeasurementSet and calibration families move (PRs 2c and 2d) and goes
+/// once every binary has.
+pub const FRONT_END_FAMILIES: &[&str] = &["image_analysis"];
+
+/// Whether `bundle`'s binary runs on the shared task front end.
+pub fn runs_on_front_end(bundle: &SurfaceContractBundle) -> bool {
+    FRONT_END_FAMILIES.contains(&bundle.surface.provider_family())
+}
+
+/// The invocation of a front-end binary: the surface's fixed arguments, then
+/// `--json-run -` with a [`TaskRunRequest`] holding the values the caller
+/// set, from the base profile and the overrides. The binary resolves them
+/// against the same contract; defaults are not repeated.
+pub fn project_front_end_invocation(
+    session: &ParameterSession,
+) -> Result<ProviderInvocation, ProviderInvocationError> {
+    let values = session
+        .states()
+        .iter()
+        .filter(|(_, state)| state.explicit && state.active)
+        .filter_map(|(name, state)| Some((name.clone(), state.value.as_ref()?.to_plain_json())))
+        .collect();
+    let request = TaskRunRequest {
+        surface: session.bundle().surface.id().to_string(),
+        values,
+    };
+    let stdin =
+        serde_json::to_string(&request).map_err(|error| ProviderInvocationError::Parameter {
+            parameter: "<request>".to_string(),
+            reason: error.to_string(),
+        })?;
+    let mut args = session.bundle().surface.execution().fixed_args.clone();
+    args.extend(["--json-run".to_string(), "-".to_string()]);
+    Ok(ProviderInvocation {
+        args,
+        stdin: Some(stdin),
+    })
+}
 
 /// Failure to project a resolved parameter session into a provider process.
 #[derive(Debug, Error)]
@@ -44,6 +85,9 @@ where
         ProviderInvocation,
     ) -> Result<ProviderInvocationAdaptation, String>,
 {
+    if runs_on_front_end(session.bundle()) {
+        return project_front_end_invocation(session);
+    }
     let mut args = session.bundle().surface.execution().fixed_args.clone();
     let (direct_args, unprojected_parameters) = project_direct_cli_args(session)?;
     args.extend(direct_args);
@@ -365,6 +409,15 @@ mod tests {
 
     use super::*;
 
+    /// The feather surface, as a family whose binary still parses its own
+    /// command line, so it is projected to flags rather than `--json-run`.
+    fn direct_feather_bundle() -> casa_provider_contracts::SurfaceContractBundle {
+        let mut bundle = builtin_surface_bundle("feather").unwrap();
+        let casa_provider_contracts::SurfaceDefinition::Task(definition) = &mut bundle.surface;
+        definition.provider_family = "direct_cli_fixture".to_string();
+        bundle
+    }
+
     /// The feather surface, its three images set.
     fn feather_session(bundle: casa_provider_contracts::SurfaceContractBundle) -> ParameterSession {
         let mut session = ParameterSession::defaults(bundle).unwrap();
@@ -381,10 +434,36 @@ mod tests {
     }
 
     #[test]
-    fn a_surface_without_an_adapter_is_a_direct_cli_invocation() {
+    fn a_front_end_surface_is_one_json_run_of_the_values_set() {
         let session = feather_session(builtin_surface_bundle("feather").unwrap());
+        let invocation = project_provider_invocation(&session, |_family, _values, _direct| {
+            panic!("a front-end surface takes no family adapter")
+        })
+        .unwrap();
+        assert_eq!(invocation.args, ["--json-run", "-"]);
+        let request: TaskRunRequest =
+            serde_json::from_str(invocation.stdin.as_deref().unwrap()).unwrap();
+        assert_eq!(request.surface, "feather");
+        // The values set, and no defaults such as sdfactor or overwrite.
+        assert_eq!(
+            request.values.keys().collect::<Vec<_>>(),
+            ["highres", "imagename", "lowres"]
+        );
+
+        let mut imstat =
+            ParameterSession::defaults(builtin_surface_bundle("imstat").unwrap()).unwrap();
+        imstat
+            .set("imagename", ParameterValue::String("in.image".into()))
+            .unwrap();
+        let invocation = project_front_end_invocation(&imstat).unwrap();
+        assert_eq!(invocation.args, ["imstat", "--json-run", "-"]);
+    }
+
+    #[test]
+    fn a_surface_without_an_adapter_is_a_direct_cli_invocation() {
+        let session = feather_session(direct_feather_bundle());
         let invocation = project_provider_invocation(&session, |family, _values, direct| {
-            assert_eq!(family, "image_analysis");
+            assert_eq!(family, "direct_cli_fixture");
             Ok(ProviderInvocationAdaptation::direct(direct))
         })
         .unwrap();
@@ -483,7 +562,7 @@ mod tests {
     #[test]
     fn provider_adapter_must_consume_every_active_parameter_without_cli_spelling() {
         // A fixture: feather with `sdfactor` given no command-line spelling.
-        let mut bundle = builtin_surface_bundle("feather").unwrap();
+        let mut bundle = direct_feather_bundle();
         let casa_provider_contracts::SurfaceDefinition::Task(definition) = &mut bundle.surface;
         let sdfactor = definition
             .bindings

@@ -10,13 +10,14 @@ use casa_provider_contracts::{
     ProviderInvocation, ProviderInvocationAdaptation, builtin_surface_bundle,
 };
 use casa_task_runtime::{
-    OpenSessionRequest, ParameterRuntime, ParameterSession, TaskCommandLine, TaskLastCoordinator,
-    describe, format_profile_error, format_session_error, project_provider_invocation,
-    render_documented_template, render_session, task_command_line_help, validate_profile_text,
+    OpenSessionRequest, ParameterRuntime, ParameterSession, TaskCommandLine, TaskExit,
+    TaskLastCoordinator, TaskOutcome, classify_task_exit, describe, format_profile_error,
+    format_session_error, project_provider_invocation, render_documented_template, render_session,
+    runs_on_front_end, task_command_line_help, validate_profile_text,
     write_parameter_profile_atomic,
 };
 
-use crate::execution::{ExecutionPlan, run_process_blocking};
+use crate::execution::{ExecutionExit, ExecutionPlan, run_process_blocking};
 use crate::registry::resolve_app;
 
 /// What a `params` or `run` command produced.
@@ -115,34 +116,51 @@ fn run_task(args: &[OsString]) -> Result<(), String> {
         eprintln!("Warning: could not save Last for {surface_id}: {warning}");
     }
 
+    let front_end = runs_on_front_end(session.bundle());
     let execution = app.resolve_command().and_then(|command| {
         let plan = ExecutionPlan {
             command,
             arguments: invocation.args.iter().map(OsString::from).collect(),
             stdin: invocation.stdin,
             working_directory: line.workspace.clone(),
+            capture_stdout: front_end,
         };
         run_process_blocking(&plan).map_err(|error| format!("run {surface_id}: {error}"))
     });
-    let exit = match execution {
-        Ok(exit) => exit,
-        Err(error) => {
-            last.after_completion(&attempt_id, false);
-            return Err(error);
-        }
+    let outcome = match execution {
+        Ok(exit) if front_end => front_end_outcome(&surface_id, &exit),
+        Ok(exit) if exit.success() => Ok(()),
+        Ok(exit) => Err(format!(
+            "{surface_id} exited with code {}",
+            exit.code()
+                .map_or_else(|| "unknown".to_owned(), |code| code.to_string())
+        )),
+        Err(error) => Err(error),
     };
-    last.after_completion(&attempt_id, exit.success);
+    last.after_completion(&attempt_id, outcome.is_ok());
     for warning in last.take_warnings() {
         eprintln!("Warning: could not save Last Successful for {surface_id}: {warning}");
     }
-    if exit.success {
-        Ok(())
-    } else {
-        Err(format!(
-            "{surface_id} exited with code {}",
-            exit.code
-                .map_or_else(|| "unknown".to_owned(), |code| code.to_string())
-        ))
+    outcome
+}
+
+/// Read a front-end binary's typed reply: print CASA's return value, or
+/// report the task's own failure, or why there was no reply.
+fn front_end_outcome(surface_id: &str, exit: &ExecutionExit) -> Result<(), String> {
+    let stdout = exit.stdout.as_deref().unwrap_or_default();
+    match classify_task_exit(TaskExit::from(exit.status), stdout) {
+        TaskOutcome::Succeeded { value, .. } => {
+            if !value.is_null() {
+                println!("{value:#}");
+            }
+            Ok(())
+        }
+        TaskOutcome::Refused { message, .. } | TaskOutcome::Failed { message, .. } => Err(message),
+        TaskOutcome::Signalled { signal } => {
+            Err(format!("{surface_id} was killed by signal {signal}"))
+        }
+        TaskOutcome::LaunchFailed { message } => Err(format!("run {surface_id}: {message}")),
+        TaskOutcome::MalformedReply { reason, .. } => Err(format!("{surface_id}: {reason}")),
     }
 }
 

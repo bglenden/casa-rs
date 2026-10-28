@@ -302,11 +302,25 @@ fn validated_cli_value(
     if text.trim().is_empty() {
         return Err(format!("parameter {:?} has no typed value", binding.name));
     }
-    let parsed =
-        parse_parameter_text(text, &concept.value_domain).map_err(|error| error.to_string())?;
-    let normalized = normalize_value(&parsed, concept).map_err(|error| error.to_string())?;
-    validate_value(&normalized, concept, &binding.refinements)
-        .map_err(|error| error.to_string())?;
+    let parsed = parse_parameter_text(text, &concept.value_domain)
+        .map_err(|error| format!("parameter {:?}: {error}", binding.name))?;
+    checked_value(bundle, binding, &parsed)
+}
+
+/// `value` normalized and validated through `binding`'s concept and
+/// refinements; a refusal names the parameter.
+pub(crate) fn checked_value(
+    bundle: &SurfaceContractBundle,
+    binding: &SurfaceParameterBinding,
+    value: &ParameterValue,
+) -> Result<ParameterValue, String> {
+    let named = |error: crate::NormalizationError| format!("parameter {:?}: {error}", binding.name);
+    let concept = bundle
+        .catalog
+        .concept(&binding.concept)
+        .ok_or_else(|| format!("missing parameter concept for {:?}", binding.name))?;
+    let normalized = normalize_value(value, concept).map_err(named)?;
+    validate_value(&normalized, concept, &binding.refinements).map_err(named)?;
     Ok(normalized)
 }
 
@@ -600,5 +614,12 @@ mod tests {
                 .contains("no typed value")
         );
         assert!(ensure_parameter_binding(&bundle, "not_a_parameter").is_err());
+        // A value the concept refuses names its parameter.
+        let imager = casa_provider_contracts::builtin_surface_bundle("imager").unwrap();
+        let imsize = ensure_parameter_binding(&imager, "imsize").unwrap();
+        let refused = validated_cli_value(&imager, imsize, "abc").unwrap_err();
+        assert!(refused.starts_with("parameter \"imsize\": "), "{refused}");
+        let refused = checked_value(&imager, imsize, &ParameterValue::Bool(true)).unwrap_err();
+        assert!(refused.starts_with("parameter \"imsize\": "), "{refused}");
     }
 }
