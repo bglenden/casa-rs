@@ -1423,85 +1423,57 @@ fn write_array_record_field(io: &mut AipsIo, av: &ArrayValue) -> Result<(), Stor
         }
         let nelem = av.len() as u32;
         io.put_u32(nelem)?;
-        match av {
-            ArrayValue::String(a) => {
-                for s in a.as_slice_memory_order().unwrap_or(&[]) {
-                    io.put_string(s)?;
-                }
-            }
-            _ => {
-                write_array_elements(io, av)?;
-            }
-        }
+        write_array_elements(io, av)?;
     }
 
     io.putend()?;
     Ok(())
 }
 
-/// Write array elements in memory (Fortran) order for non-string arrays.
+/// Write an array's elements in casacore's order, the first axis fastest,
+/// whatever the array's memory layout: an array held in C layout, or a
+/// strided view, is written as the logical array it is, and an array in
+/// Fortran layout is read straight from memory, as before. The reader
+/// ([`read_array_record_field`]) rebuilds Fortran-layout arrays.
 fn write_array_elements(io: &mut AipsIo, av: &ArrayValue) -> Result<(), StorageError> {
     match av {
-        ArrayValue::Bool(a) => {
-            for &v in a.as_slice_memory_order().unwrap_or(&[]) {
-                io.put_bool(v)?;
+        ArrayValue::Bool(a) => put_each(io, a, AipsIo::put_bool),
+        ArrayValue::UInt8(a) => put_each(io, a, AipsIo::put_u8),
+        ArrayValue::Int16(a) => put_each(io, a, AipsIo::put_i16),
+        ArrayValue::UInt16(a) => put_each(io, a, AipsIo::put_u16),
+        ArrayValue::Int32(a) => put_each(io, a, AipsIo::put_i32),
+        ArrayValue::UInt32(a) => put_each(io, a, AipsIo::put_u32),
+        ArrayValue::Float32(a) => put_each(io, a, AipsIo::put_f32),
+        ArrayValue::Float64(a) => put_each(io, a, AipsIo::put_f64),
+        ArrayValue::Int64(a) => put_each(io, a, AipsIo::put_i64),
+        ArrayValue::Complex32(a) => put_each(io, a, AipsIo::put_complex32),
+        ArrayValue::Complex64(a) => put_each(io, a, AipsIo::put_complex64),
+        ArrayValue::String(a) => {
+            for s in casacore_order(a) {
+                io.put_string(s)?;
             }
-        }
-        ArrayValue::UInt8(a) => {
-            for &v in a.as_slice_memory_order().unwrap_or(&[]) {
-                io.put_u8(v)?;
-            }
-        }
-        ArrayValue::Int16(a) => {
-            for &v in a.as_slice_memory_order().unwrap_or(&[]) {
-                io.put_i16(v)?;
-            }
-        }
-        ArrayValue::UInt16(a) => {
-            for &v in a.as_slice_memory_order().unwrap_or(&[]) {
-                io.put_u16(v)?;
-            }
-        }
-        ArrayValue::Int32(a) => {
-            for &v in a.as_slice_memory_order().unwrap_or(&[]) {
-                io.put_i32(v)?;
-            }
-        }
-        ArrayValue::UInt32(a) => {
-            for &v in a.as_slice_memory_order().unwrap_or(&[]) {
-                io.put_u32(v)?;
-            }
-        }
-        ArrayValue::Float32(a) => {
-            for &v in a.as_slice_memory_order().unwrap_or(&[]) {
-                io.put_f32(v)?;
-            }
-        }
-        ArrayValue::Float64(a) => {
-            for &v in a.as_slice_memory_order().unwrap_or(&[]) {
-                io.put_f64(v)?;
-            }
-        }
-        ArrayValue::Int64(a) => {
-            for &v in a.as_slice_memory_order().unwrap_or(&[]) {
-                io.put_i64(v)?;
-            }
-        }
-        ArrayValue::Complex32(a) => {
-            for &v in a.as_slice_memory_order().unwrap_or(&[]) {
-                io.put_complex32(v)?;
-            }
-        }
-        ArrayValue::Complex64(a) => {
-            for &v in a.as_slice_memory_order().unwrap_or(&[]) {
-                io.put_complex64(v)?;
-            }
-        }
-        ArrayValue::String(_) => {
-            unreachable!("string arrays handled separately")
+            Ok(())
         }
     }
+}
+
+/// `put` each of `array`'s elements in casacore's order.
+fn put_each<T: Copy>(
+    io: &mut AipsIo,
+    array: &ArrayD<T>,
+    put: fn(&mut AipsIo, T) -> casa_aipsio::AipsIoObjectResult<()>,
+) -> Result<(), StorageError> {
+    for &value in casacore_order(array) {
+        put(io, value)?;
+    }
     Ok(())
+}
+
+/// `array`'s elements in casacore's (Fortran) order, the first axis
+/// fastest: its reversed axes in logical order, which is a contiguous walk
+/// of memory for an array in Fortran layout.
+fn casacore_order<T>(array: &ArrayD<T>) -> impl Iterator<Item = &T> {
+    array.t().into_iter()
 }
 
 fn value_to_casacore_data_type(value: &Value) -> Result<CasacoreDataType, StorageError> {
