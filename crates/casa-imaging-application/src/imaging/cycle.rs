@@ -1214,7 +1214,7 @@ fn write_pass(problem: &CompiledProblem, initial: ModeSet) -> (ModeSet, bool) {
 /// The output-frame frequency envelope of a plane range of a channel-local
 /// basis: from the low edge of its first channel to the high edge of its
 /// last.
-fn plane_bounds(problem: &CompiledProblem) -> Option<PlaneBounds> {
+pub(crate) fn plane_bounds(problem: &CompiledProblem) -> Option<PlaneBounds> {
     if !matches!(
         problem.reconstruction().basis(),
         casa_imaging_model::ReconstructionBasis::ChannelLocal { .. }

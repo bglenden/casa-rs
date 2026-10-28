@@ -143,7 +143,7 @@ pub(crate) enum NativeSource {
 /// ([`imaging::admit_batches`]). A run that writes visibilities back is
 /// refused: the batch route writes through update sessions in step 5 of
 /// #932.
-fn batch_route(
+pub(crate) fn batch_route(
     problem: &CompiledProblem,
     observation: &SelectedObservationResolutionRequest,
     writes: bool,

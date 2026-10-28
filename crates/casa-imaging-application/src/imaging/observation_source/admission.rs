@@ -89,7 +89,8 @@ fn estimate(
 /// what the source holds for them beside the passes' blocks.
 ///
 /// As the selected-observation route does for its rows, the batches hold
-/// at least one time of each partition, and grow beyond that by at most
+/// at least one time of each partition and at most all its selected times,
+/// and grow beyond one time by at most
 /// the bootstrap budget ([`bootstrap_source_budget`]) or the source's share
 /// of a quarter of what `policy` leaves free on `host`, shared with the
 /// passes' per-row storage in proportion to their bytes per sample. A row
@@ -169,9 +170,11 @@ pub(crate) fn admit_batches(
         .available_bytes()
         .min(usize::try_from(share).unwrap_or(usize::MAX));
     let target = (minimum_rows * source_per_row + growth) / source_per_row.max(1);
+    // As today's blocks hold at most the selected rows, a batch holds at
+    // most its partition's selected times.
     let times_per_batch = costs
         .iter()
-        .map(|cost| (target / cost.baselines).max(1))
+        .map(|cost| (target / cost.baselines).clamp(1, cost.times.max(1)))
         .collect::<Vec<_>>();
     let rows = costs
         .iter()

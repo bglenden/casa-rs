@@ -14,10 +14,10 @@ mod source;
 mod trace;
 mod visibility_write;
 
-pub(crate) use cycle::{ImagingInputs, SourceInput, run};
+pub(crate) use cycle::{ImagingInputs, SourceInput, plane_bounds, run};
 pub(crate) use measurement::{metal_kernel_set, row_samples, standard_kernel_set};
 pub(crate) use observation_source::{
-    BatchRoute, PartitionSelection, SelectedPartition, admit_batches,
+    BatchRoute, ObservationSource, PartitionSelection, SelectedPartition, admit_batches,
 };
 pub(crate) use visibility_write::VisibilityWriteTarget;
 

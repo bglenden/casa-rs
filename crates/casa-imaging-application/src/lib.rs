@@ -17,6 +17,8 @@ mod native;
 mod request;
 #[doc(hidden)]
 pub mod route_law;
+#[doc(hidden)]
+pub mod source_law;
 
 pub use casa_imaging_deconvolution::CleanStop;
 pub use casa_imaging_model::{

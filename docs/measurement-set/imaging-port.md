@@ -161,9 +161,10 @@ no imager parameter names. It sees only `&dyn Observation`.
   gapped selection's fine grid can depend on the window delivered, on
   either route (#964).
 - **Batches and admission.** Each partition's times per batch are sized as
-  today's rows per block: at least one time of each partition, and growth
-  up to the bootstrap budget or the source's share of a quarter of free
-  memory. The charge holds the largest batch with its decode scratch, its
+  today's rows per block: at least one time of each partition and at most
+  all its selected times (as today's blocks hold at most the selected
+  rows), and growth up to the bootstrap budget or the source's share of a
+  quarter of free memory. The charge holds the largest batch with its decode scratch, its
   geometry over the widest native span a batch delivers, the parallactic
   cache at every selected (time, field), one pointing query's budget when
   geometry reads pointing, the survey's batch and conversions, and the
@@ -171,9 +172,15 @@ no imager parameter names. It sees only `&dyn Observation`.
   from MAIN's row count (`Msv2Observation::opening_bytes`: a cell and a
   time a row, and a chunk of key columns); once open the charge becomes
   the index (`Msv2Observation::index_bytes`), raised by its grids' padding
-  cells. Counting law:
-  `the_observation_batch_route_stays_within_its_admission`, which adds a
-  101-channel window imaged whole and gapped (`0:0~1;100`).
+  cells. Counting laws: the whole run's
+  (`the_observation_batch_route_stays_within_its_admission`, which adds a
+  101-channel window imaged whole and gapped, `0:0~1;100`), whose slack
+  hides the source's charge, and the source's own
+  (`tests/batch_source_memory.rs`, through `source_law`), which reads the
+  source alone on an opened, admitted route and fails when the batches'
+  charge is dropped. Neither route charges the tiles the table layer
+  stages while a tiled column is read (up to 8 a column, #965); the
+  source's law allows exactly those.
 - **Refused** until a later step: writing a model or corrected column
   (step 5); a field with `EPHEMERIS_ID` (#942); an ephemeris-table phase
   centre (batch geometry follows a body Measures names, and a table
