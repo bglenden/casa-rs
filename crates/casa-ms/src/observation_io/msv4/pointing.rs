@@ -134,12 +134,10 @@ impl Msv4Observation {
         let read = (times.len() + (last - first + search) * names.len() * 2) * size_of::<f64>();
         let held = request.antennas.len() * (last - first + 2) * 4 * size_of::<f64>();
         if read + held > request.budget_bytes {
-            return Err(ObservationError::InvalidRequest {
-                reason: format!(
-                    "{path} needs {} bytes over the request, beyond its budget of {}",
-                    read + held,
-                    request.budget_bytes
-                ),
+            return Err(ObservationError::OverBudget {
+                what: "an MSv4 pointing query",
+                required: read + held,
+                budget: request.budget_bytes,
             });
         }
         let span = self.beam_values(&beam, first as u64..last as u64, 0..shape[1])?;

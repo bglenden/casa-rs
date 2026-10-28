@@ -121,8 +121,29 @@ fn the_msv2_adapter_holds_at_most_its_bounds() {
     an_opening_beyond_its_budget_is_refused_before_its_grids(&root.path().join("jittered"));
 }
 
+/// A grant that refuses a total beyond `budget`, recording the largest
+/// total it granted and the total it last refused.
+fn budget_grant<'a>(
+    budget: usize,
+    granted: &'a mut usize,
+    refused: &'a mut Option<usize>,
+) -> impl FnMut(usize) -> Result<(), ObservationError> + 'a {
+    move |total| {
+        if total > budget {
+            *refused = Some(total);
+            return Err(ObservationError::OverBudget {
+                what: "the opening",
+                required: total,
+                budget,
+            });
+        }
+        *granted = (*granted).max(total);
+        Ok(())
+    }
+}
+
 /// Opening a track holds at most [`Msv2Observation::opening_bytes`], and
-/// opens under that as its budget; a pointing query under
+/// opens with that granted; a pointing query under
 /// [`Msv2Observation::pointing_bytes`] is answered and holds at most it.
 fn opening_and_pointing_hold_at_most_their_bounds(root: &Path) {
     std::fs::create_dir(root).expect("a fixture directory");
@@ -137,11 +158,14 @@ fn opening_and_pointing_hold_at_most_their_bounds(root: &Path) {
         opening <= bound as u64,
         "opening held {opening} bytes, beyond {bound}"
     );
-    let budgeted = OpenOptions {
-        opening_budget_bytes: Some(bound),
-        ..OpenOptions::default()
-    };
-    Msv2Observation::open_with(&path, &budgeted).expect("opening within its bound");
+    let (mut granted, mut refused) = (0, None);
+    Msv2Observation::open_granted(
+        &path,
+        &OpenOptions::default(),
+        &mut budget_grant(bound, &mut granted, &mut refused),
+    )
+    .expect("opening within its bound");
+    eprintln!("opening asked for {granted} bytes");
 
     let budget = opened.pointing_bytes().expect("pointing bytes");
     let id = opened.catalogue().partition_ids()[0];
@@ -167,10 +191,11 @@ fn opening_and_pointing_hold_at_most_their_bounds(root: &Path) {
     assert!(series.held_bytes() <= budget);
 }
 
-/// A track whose every row has a time of its own fills a time of its grid
-/// with one baseline of 351: its grid is refused before it is allocated
-/// when it exceeds the opening's budget, and its first pass holds at most
-/// that budget, but for the catalogue and the key beyond it.
+/// A track whose times differ by baseline group (every 50 rows) fills each
+/// time of its grid with 50 baselines of 351: the first pass fits the
+/// opening's budget and its grids, seven times its rows' cells, do not, so
+/// they are refused before they are allocated, and opening holds at most
+/// that budget but for the catalogue it read first.
 fn an_opening_beyond_its_budget_is_refused_before_its_grids(root: &Path) {
     std::fs::create_dir(root).expect("a fixture directory");
     let path = pointed_track(root, 120);
@@ -190,31 +215,41 @@ fn an_opening_beyond_its_budget_is_refused_before_its_grids(root: &Path) {
             .set_cell(
                 row,
                 "TIME",
-                Value::Scalar(ScalarValue::Float64(time + row as f64 * 1.0e-6)),
+                Value::Scalar(ScalarValue::Float64(time + (row / 50) as f64 * 1.0e-6)),
             )
             .expect("TIME");
     }
     ms.save().expect("save");
     drop(ms);
-    let grids = rows * 351 * size_of::<u32>();
+    let grids = rows.div_ceil(50) * 351 * size_of::<u32>();
     let budget = Msv2Observation::opening_bytes(rows);
-    let options = OpenOptions {
-        opening_budget_bytes: Some(budget),
-        ..OpenOptions::default()
+    let open = |granted: &mut usize, refused: &mut Option<usize>| {
+        Msv2Observation::open_granted(
+            &path,
+            &OpenOptions::default(),
+            &mut budget_grant(budget, granted, refused),
+        )
     };
-    drop(Msv2Observation::open_with(&path, &options));
-    let (refused, held) = peak_of(|| Msv2Observation::open_with(&path, &options));
-    eprintln!("a jittered opening: peak {held} bytes, budget {budget}, grids {grids}");
-    assert!(
-        matches!(refused, Err(ObservationError::OverBudget { .. })),
-        "{:?}",
-        refused.err()
+    drop(open(&mut 0, &mut None));
+    let (mut granted, mut refused) = (0, None);
+    let (opened, held) = peak_of(|| open(&mut granted, &mut refused));
+    eprintln!(
+        "a jittered opening: peak {held} bytes, budget {budget}, granted {granted}, refused \
+         {refused:?}, grids {grids}"
     );
-    // The budget bounds the index; the catalogue's subtables, read before
-    // it, and the B-tree node the key beyond the budget opens are not in it.
-    let beyond = 64 << 10;
     assert!(
-        held <= (budget + beyond) as u64 && held < grids as u64 / 8,
-        "the refused opening held {held} bytes, beyond its budget of {budget} (grids {grids})"
+        matches!(opened, Err(ObservationError::OverBudget { .. })),
+        "{:?}",
+        opened.err()
+    );
+    // The first pass was granted; the total refused holds the grids.
+    let refused = refused.expect("a refused total");
+    assert!(granted <= budget && refused > budget && refused >= grids);
+    // The catalogue's subtables, read before the index, are not in the
+    // budget.
+    let catalogue = 64 << 10;
+    assert!(
+        held <= (budget + catalogue) as u64,
+        "the refused opening held {held} bytes, beyond its budget of {budget}"
     );
 }

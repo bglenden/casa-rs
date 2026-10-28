@@ -129,12 +129,15 @@ no imager parameter names. It sees only `&dyn Observation`.
   hold: two rows of one time and baseline in a partition, two fields or
   two scans at one time of a partition, and a partition's rows with
   several `PROCESSOR_ID`s (XRADIO's rule). Today's route images such
-  MeasurementSets; the batch route does not, until the adapter does. It
-  also refuses, as an admission, an index beyond its budget
-  (`OpenOptions::opening_budget_bytes`): the batch route lets opening hold
-  its admitted pre-charge and what the policy leaves free, and the
-  adapter checks each key of its first pass, and the grids before it
-  allocates them. Times that differ by baseline (baseline-dependent
+  MeasurementSets; the batch route does not, until the adapter does.
+  Opening asks a grant for what its index will hold before allocating it
+  (`Msv2Observation::open_granted`): its chunk of key columns, each
+  partition's distinct times, baselines and processors as the first pass
+  finds them (at most one row's keys beyond what was granted), then the
+  scans and the grids. The batch route admits each increase into the
+  opening's reservation, so an index beyond what the policy leaves free
+  is refused, as an admission, before it is allocated, also when runs
+  share a process. Times that differ by baseline (baseline-dependent
   averaging, jittered `TIME`) make a cell per time and baseline, which
   this refuses before allocating.
 - **Delivery.** Each wave binds one request per partition in turn, and a
@@ -152,16 +155,16 @@ no imager parameter names. It sees only `&dyn Observation`.
   when geometry reads them). An antenna's pointing is a property of the
   antenna and the time, so partitions asking for the same antennas over
   the same span in the same time system (origin and scale) share an
-  answer. The source keeps every answer that fits the pointing charge,
-  across partitions and passes, and a new answer takes the place of those
-  least recently read: a store whose query reads a whole table (the MSv2
-  adapter scans `POINTING`) reads it once a distinct query. The charge is
-  the most any query of the observation can hold
+  answer (the contract of `Observation::pointing`). The source keeps the
+  answers across partitions and passes, so a store whose query reads a
+  whole table (the MSv2 adapter scans `POINTING`) reads it once a distinct
+  query. The charge is the most any query of the observation can hold
   (`Msv2Observation::pointing_bytes`: every `POINTING` row as a
   candidate, a scan block of at most every row, and the series), the
-  bound today's route charges; a new query may hold what the answers kept
-  leave of it, and is asked again with all of it, the answers dropped, if
-  the store refuses that.
+  bound today's route charges. A new query may hold what the answers kept
+  leave of it; when the store refuses that (`OverBudget`), the answers go
+  and it is asked again with all of it, under which no query is refused
+  for its size and `POINTING` is read in one block of up to 65,536 rows.
 - **Restricted waves.** A partition's channel window is bound before its
   batches are read, from the range of output-frame conversion factors its
   selected (field, time)s span. It holds every channel today's per-block
@@ -184,12 +187,14 @@ no imager parameter names. It sees only `&dyn Observation`.
   conversions, and the passes' blocks. Opening is admitted before the
   MeasurementSet opens, from MAIN's row count
   (`Msv2Observation::opening_bytes`: a cell and eight bytes of time tables
-  a row, and a chunk of key columns), within the opening budget above;
-  once open the charge becomes the index (`Msv2Observation::index_bytes`).
+  a row, and a chunk of key columns), and raised by what it asks for
+  beyond; once open the charge becomes the index
+  (`Msv2Observation::index_bytes`).
   Counting laws:
-  - the whole run's (`the_observation_batch_route_stays_within_its_admission`,
-    with a 101-channel window imaged whole and gapped, `0:0~1;100`), whose
-    slack hides the source's charge;
+  - the whole run's
+    (`the_observation_batch_route_stays_within_its_admission`, with a
+    101-channel window imaged whole and gapped, `0:0~1;100`), whose slack
+    hides the source's charge;
   - the source's own (`tests/batch_source_memory.rs`, through
     `source_law`), which reads the source alone on an opened, admitted
     route and fails when the batches' charge is dropped;
@@ -197,7 +202,8 @@ no imager parameter names. It sees only `&dyn Observation`.
     (`batch_geometry_memory`), a traversal's batch envelope (the adapters'
     laws), and the opening and pointing bounds (`casa-ms`
     `msv2_opening_memory`, which also refuses a jittered-time opening
-    before its grids).
+    before its grids); the pointing answers kept by unit tests of the
+    source's cache.
 
   Neither route charges the tiles the table layer stages while a tiled
   column is read (up to 8 a column, #965); the source's law allows
@@ -212,12 +218,13 @@ no imager parameter names. It sees only `&dyn Observation`.
 - **Evidence.** The route law (`casa_imaging_application::route_law`)
   images every T1 run on both routes and compares every product: all 200
   are bit-identical, the image runs with `usepointing` (AW over two
-  windows, the mosaic gridder) among them. On T1.5 (the refim and kernels harnesses, the AW pair
-  with `usepointing`, and CAS-7841 under the mosaic gridder with
-  `usepointing`), 53 runs and 442 products agree to a normalized RMS of
-  1.3e-10 at most, again after each review's fixes. Receipts: NAS
-  `casa-rs/issue-932/step4/`, `step4/review-fixes/` and
-  `step4/review-fixes-2/` (the last at the head).
+  windows, the mosaic gridder) among them. On T1.5 (the refim and kernels
+  harnesses, the AW pair with `usepointing`, and CAS-7841 under the mosaic
+  gridder with `usepointing`), 53 runs and 442 products agree to a
+  normalized RMS of 1.3e-10 at most, again after each review's fixes.
+  Receipts: NAS `casa-rs/issue-932/step4/`, `step4/review-fixes/`,
+  `step4/review-fixes-2/` and `step4/review-fixes-3/` (the last at the
+  head).
 
 ### 2.2 Geometry
 

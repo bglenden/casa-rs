@@ -124,13 +124,34 @@ impl Msv2Observation {
         path: impl AsRef<Path>,
         options: &OpenOptions,
     ) -> Result<Self, ObservationError> {
+        Self::open_granted(path, options, &mut |_| Ok(()))
+    }
+
+    /// [`Self::open_with`], asking `grant` for the bytes the opening's index
+    /// will hold before it allocates them: its chunk of MAIN's key columns,
+    /// each partition's distinct times, baselines and processors as the
+    /// first pass finds them (at most one row's beyond what was granted),
+    /// then the scans and the grids. The totals asked for only grow, a few
+    /// at a time; a caller that admits memory admits each increase. An
+    /// error from `grant` refuses the opening with nothing more allocated.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::open`], and whatever `grant` returns.
+    #[cfg(unix)]
+    pub fn open_granted(
+        path: impl AsRef<Path>,
+        options: &OpenOptions,
+        grant: &mut dyn FnMut(usize) -> Result<(), ObservationError>,
+    ) -> Result<Self, ObservationError> {
         let ms = MeasurementSet::open_retained_read(path).map_err(storage)?;
-        Self::from_measurement_set(ms, options)
+        Self::from_measurement_set(ms, options, grant)
     }
 
     fn from_measurement_set(
         ms: MeasurementSet,
         options: &OpenOptions,
+        grant: &mut dyn FnMut(usize) -> Result<(), ObservationError>,
     ) -> Result<Self, ObservationError> {
         let antennas = catalogue::read_antennas(&ms)?;
         let feeds = catalogue::read_feeds(&ms)?;
@@ -158,10 +179,9 @@ impl Msv2Observation {
         let index = Index::build(
             main,
             options.partition_scheme,
-            &modes,
-            &ephemerides,
+            (&modes, &ephemerides),
             ROWS_PER_CHUNK,
-            options.opening_budget_bytes,
+            grant,
         )?;
         let groups = data_groups(main, spectral_weights, uvw_frame);
         let mut partitions = Vec::new();
@@ -302,10 +322,8 @@ impl Msv2Observation {
     /// when its grids are full and its times hold a few rows each: a cell
     /// and eight bytes of time tables per row, and one chunk of key
     /// columns. Padding cells, which only opening finds, and times of one
-    /// or two rows hold more; [`OpenOptions::opening_budget_bytes`] bounds
-    /// what opening may hold beyond, before it is allocated.
-    ///
-    /// [`OpenOptions::opening_budget_bytes`]: super::OpenOptions::opening_budget_bytes
+    /// or two rows hold more, which [`Self::open_granted`] asks for before
+    /// it allocates them.
     #[must_use]
     pub const fn opening_bytes(main_rows: usize) -> usize {
         let chunk = if main_rows < index::ROWS_PER_CHUNK {

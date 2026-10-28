@@ -206,45 +206,55 @@ pub(crate) fn batch_route(
 /// The MeasurementSet `observation` names, opened, with the charge of its
 /// index while it is open ([`Msv2Observation::index_bytes`]). What opening
 /// usually holds is admitted before it opens, from MAIN's row count
-/// ([`Msv2Observation::opening_bytes`]), and opening may hold at most that
-/// and what the policy leaves free besides
-/// ([`OpenOptions::opening_budget_bytes`]): more is refused, as an
-/// admission, before it is allocated. The charge is then trimmed to the
-/// index, or raised to it.
+/// ([`Msv2Observation::opening_bytes`]), and each increase it asks for
+/// beyond ([`Msv2Observation::open_granted`]) is admitted before it is
+/// allocated: one that does not fit refuses the opening, as an admission.
+/// The charge is then trimmed to the index, or raised to it.
 fn open_observation(
     observation: &SelectedObservationResolutionRequest,
     runtime: &ApplicationRuntime,
 ) -> Result<Admitted<Msv2Observation>, NativeError> {
     let main_rows = usize::try_from(observation.selection().rows().source_row_count())
         .map_err(|_| NativeError::Other("MAIN holds more rows than this host addresses".into()))?;
+    let (host, policy) = (&runtime.host, &runtime.resource_policy);
     let mut reservation = admit(
-        &runtime.host,
-        &runtime.resource_policy,
+        host,
+        policy,
         &Demand {
             phase: "observation opening",
             memory: Msv2Observation::opening_bytes(main_rows) as u64,
         },
     )?;
-    let options = OpenOptions {
-        opening_budget_bytes: usize::try_from(
-            reservation.memory() + free_memory(&runtime.host, &runtime.resource_policy),
-        )
-        .ok(),
-        ..OpenOptions::default()
-    };
-    let opened =
-        Msv2Observation::open_with(observation.locator(), &options).map_err(
-            |error| match error {
-                ObservationError::OverBudget {
-                    required, budget, ..
-                } => NativeError::Admission(Admission {
+    let mut refusal = None;
+    let opened = Msv2Observation::open_granted(
+        observation.locator(),
+        &OpenOptions::default(),
+        &mut |total| {
+            let total = total as u64;
+            if total > reservation.memory() {
+                let demand = Demand {
                     phase: "observation opening",
-                    required: required as u64,
-                    available: budget as u64,
-                }),
-                error => NativeError::Other(Box::new(error)),
-            },
-        )?;
+                    memory: total - reservation.memory(),
+                };
+                match admit(host, policy, &demand) {
+                    Ok(more) => reservation.join(more),
+                    Err(admission) => {
+                        refusal = Some(admission);
+                        return Err(ObservationError::OverBudget {
+                            what: "the MSv2 opening index",
+                            required: total as usize,
+                            budget: reservation.memory() as usize,
+                        });
+                    }
+                }
+            }
+            Ok(())
+        },
+    );
+    let opened = opened.map_err(|error| match refusal.take() {
+        Some(admission) => NativeError::Admission(admission),
+        None => NativeError::Other(Box::new(error)),
+    })?;
     let index = opened.index_bytes() as u64;
     if index <= reservation.memory() {
         reservation.retain(index);

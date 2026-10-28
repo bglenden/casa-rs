@@ -262,14 +262,18 @@ impl<'a> ObservationSource<'a> {
             return Ok(());
         }
         let Some(span) = self.surveyed(false)?[index].span else {
+            self.pointing.release();
             return Ok(());
         };
         let route = self.route;
         self.pointing.hold(
-            route,
-            self.packer.problem,
-            &route.selection.partitions[index],
-            span,
+            route.observation.as_ref(),
+            route.pointing_budget,
+            (
+                pointing_direction(self.packer.problem),
+                route.selection.partitions[index].id,
+                span,
+            ),
         )
     }
 

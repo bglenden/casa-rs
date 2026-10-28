@@ -45,8 +45,8 @@ pub struct PointingRequest {
     /// `time_scale`): the store delivers the samples within the span, and
     /// each antenna's nearest one before and after it.
     pub times: RangeInclusive<f64>,
-    /// The most bytes the samples may hold; more is refused
-    /// ([`ObservationError::InvalidRequest`]).
+    /// The most bytes the query may hold while it reads and once it
+    /// answers; more is refused ([`ObservationError::OverBudget`]).
     pub budget_bytes: usize,
 }
 
