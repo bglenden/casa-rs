@@ -94,11 +94,20 @@ pub fn task_front_end()
     .expect("the imager contract carries its surface")
 }
 
-/// Run one resolved imager request. SIGINT cancels it: the run stops at its
-/// next safe point, publishes nothing, and replies that it was interrupted.
-fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
-    let (parameters, request) =
-        request_from(task.plain_values()).map_err(TaskFailure::validation)?;
+/// The resolved parameters of `task`, an imager run, and the request they
+/// make; a request they cannot make is refused.
+pub fn task_request(
+    task: &TaskInvocation<'_>,
+) -> Result<(ImagingParameters, ImagingRequest), TaskFailure> {
+    request_from(task.plain_values()).map_err(TaskFailure::validation)
+}
+
+/// Run `task`, one resolved imager request, as the `casars-imager` binary
+/// does: the execution callback of [`task_front_end`]. SIGINT cancels it:
+/// the run stops at its next safe point, publishes nothing, and replies that
+/// it was interrupted.
+pub fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
+    let (parameters, request) = task_request(task)?;
     interrupt::install().map_err(|error| {
         TaskFailure::execution(format!("install the interrupt handler: {error}"))
     })?;

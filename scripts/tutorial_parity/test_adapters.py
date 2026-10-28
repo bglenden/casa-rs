@@ -73,6 +73,13 @@ class CliPlanningTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "one-operation section"):
             build_operation_argv(operation, self.resources)
 
+    def test_the_imager_command_line_drops_overwrite(self) -> None:
+        operation = Operation("imager", {"vis": "in.ms", "imagename": "img", "write_pb": True, "overwrite": True}, ("img.image",))
+        self.assertEqual(
+            build_operation_argv(operation, self.resources),
+            ["/bin/casars-imager", "--ms", "in.ms", "--imagename", "img", "--write-pb"],
+        )
+
     def test_python_projection_uses_generated_imager_contract(self) -> None:
         self.assertEqual(
             python_parameters("imager", {"cell_arcsec": 0.1, "threshold_jy": 0.015, "field": 3, "phasecenter_field": 3, "overwrite": True}),
