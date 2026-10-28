@@ -11,6 +11,7 @@ nav:
   - Task Parameters:
       - Guide: task-parameters.md
       - Generated Reference: reference/task-parameters.md
+      - CASA Compatibility: reference/casa-compatibility.md
   - Rust API: rust-api.md
   - Python:
       - Overview: python/index.md
