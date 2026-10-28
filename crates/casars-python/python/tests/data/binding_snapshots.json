@@ -3724,7 +3724,7 @@
   },
   "malformed successful task result": {
    "error": "TaskResultError",
-   "message": "imager produced a successful but invalid result: reason='unknown managed result for \"imager\": expected value at line 1 column 1'"
+   "message": "imager produced a successful but invalid result: reason='unknown managed result for \"imager\": invalid type: string \"runner stdout\", expected struct ImagerOutputWire at line 1 column 15'"
   }
  }
 }

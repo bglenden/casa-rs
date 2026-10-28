@@ -1,5 +1,7 @@
 casa-aipsio	crates/casa-aipsio/Cargo.toml
+casa-atmosphere	crates/casa-atmosphere/Cargo.toml
 casa-calibration	crates/casa-calibration/Cargo.toml
+casa-components	crates/casa-components/Cargo.toml
 casa-coordinates	crates/casa-coordinates/Cargo.toml
 casa-fft	crates/casa-fft/Cargo.toml
 casa-images	crates/casa-images/Cargo.toml
@@ -10,13 +12,16 @@ casa-imaging-model	crates/casa-imaging-model/Cargo.toml
 casa-imaging-operator	crates/casa-imaging-operator/Cargo.toml
 casa-imaging-products	crates/casa-imaging-products/Cargo.toml
 casa-imaging-runtime	crates/casa-imaging-runtime/Cargo.toml
+casa-imaging-singledish	crates/casa-imaging-singledish/Cargo.toml
 casa-lattices	crates/casa-lattices/Cargo.toml
 casa-logging	crates/casa-logging/Cargo.toml
 casa-measures-data	crates/casa-measures-data/Cargo.toml
 casa-measures-tools	crates/casa-measures-tools/Cargo.toml
 casa-ms	crates/casa-ms/Cargo.toml
 casa-numerics	crates/casa-numerics/Cargo.toml
+casa-observation	crates/casa-observation/Cargo.toml
 casa-provider-contracts	crates/casa-provider-contracts/Cargo.toml
+casa-simulation	crates/casa-simulation/Cargo.toml
 casa-simulation-synthesis	crates/casa-simulation-synthesis/Cargo.toml
 casa-tables	crates/casa-tables/Cargo.toml
 casa-task-runtime	crates/casa-task-runtime/Cargo.toml
@@ -24,7 +29,7 @@ casa-test-support	crates/casa-test-support/Cargo.toml
 casa-types	crates/casa-types/Cargo.toml
 casa-values	crates/casa-values/Cargo.toml
 casa-vla	crates/casa-vla/Cargo.toml
-casars	crates/casars/Cargo.toml
-casars-frontend-services	crates/casars-frontend-services/Cargo.toml
 casars-imager	crates/casars-imager/Cargo.toml
+casars-imexplore	crates/casars-imexplore/Cargo.toml
 casars-python	crates/casars-python/Cargo.toml
+casars-simulation	crates/casars-simulation/Cargo.toml

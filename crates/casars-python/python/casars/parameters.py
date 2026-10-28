@@ -286,11 +286,15 @@ class SurfaceParameters(MutableMapping[str, ParameterData]):
     def __delitem__(self, name: str) -> None:
         self.reset(name)
 
+    # Iterating holds the values set explicitly, by the base profile or an
+    # assignment, so that a loaded profile runs as
+    # `tasks.gaincal(**parameters.load(path))` with only its own values;
+    # indexing still reads any parameter's resolved value, default included.
     def __iter__(self) -> Iterator[str]:
-        return iter(self._snapshot["states"])
+        return iter(self._explicit_values())
 
     def __len__(self) -> int:
-        return len(self._snapshot["states"])
+        return len(self._explicit_values())
 
     def set_many(self, values: Mapping[str, ParameterData]) -> None:
         """Apply several mutations atomically."""
@@ -391,10 +395,14 @@ class SurfaceParameters(MutableMapping[str, ParameterData]):
         return Path(outcome["path"])
 
     def provider_invocation(self) -> ProviderInvocation:
-        """Project this task through the canonical provider-owned request seam."""
+        """Project this task through the canonical provider-owned request seam.
+
+        The request carries the values set explicitly, never the defaults,
+        so the task tells a value the caller chose from one it fills in.
+        """
 
         projected = _native().parameter_provider_invocation(
-            self.surface, self._resolved_values()
+            self.surface, self._explicit_values()
         )
         return ProviderInvocation(
             protocol_name=projected["protocol_name"],
@@ -408,6 +416,13 @@ class SurfaceParameters(MutableMapping[str, ParameterData]):
             name: state["value"]
             for name, state in self._snapshot["states"].items()
             if state["value"] is not None
+        }
+
+    def _explicit_values(self) -> dict[str, ParameterData]:
+        return {
+            name: state["value"]
+            for name, state in self._snapshot["states"].items()
+            if state["explicit"] and state["value"] is not None
         }
 
     def _refresh(self) -> None:
@@ -435,13 +450,14 @@ class TaskParameters(SurfaceParameters):
     expected_kind = "task"
 
     def run(self, **options: Any) -> Any:
-        """Run this draft through the canonical catalog-driven task runner."""
+        """Run this draft: :func:`casars.tasks.run` with it as the base.
 
-        if {"parameters", "profile"} & options.keys():
-            raise TypeError("TaskParameters.run supplies its own parameters draft")
+        ``options`` are CASA-named values to set on top, and ``workspace``.
+        """
+
         from .tasks import run
 
-        return run(self.surface, parameters=self, **options)
+        return run(self.surface, self, **options)
 
 
 def defaults(surface: str, *, workspace: StrPath | None = None) -> SurfaceParameters:

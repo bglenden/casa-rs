@@ -1,7 +1,7 @@
 # Calibration Tasks User Guide
 
-This guide shows how to run the casa-rs calibration tasks from the `casars`
-command line and from Python.
+This guide shows how to run the casa-rs calibration tasks from the
+`calibrate` command line and from Python.
 
 ## The calibration surfaces
 
@@ -14,12 +14,11 @@ application catalog exposes it as these task surfaces:
 - `gaincal`, `bandpass`, `applycal`, `fluxscale`, `gencal`: CASA-named
   surfaces that run `calibrate` with a fixed mode
 
-Every surface is a one-shot task. Run it with `casars run`, which resolves a
-parameter profile (Defaults, Last, Last Successful, or a TOML file), applies
-overrides, saves Last state, and launches the provider. The `calibrate`
-binary takes the same flags and sources itself, with the surface as its first
-word (`calibrate bandpass --ms ...`; `calibrate` alone is the general
-surface), and keeps its own Last. See
+Every surface is a one-shot task. Run it as `calibrate <surface>`
+(`calibrate bandpass --ms ...`; `calibrate` alone is the general surface),
+which resolves a parameter profile (Defaults, Last, Last Successful, or a
+TOML file), applies overrides, saves Last state in the workspace, and runs
+the task. See
 [Task Parameter Profiles](task-parameters.md) for sources and managed Last
 files, and the [generated parameter reference](reference/task-parameters.md)
 for every parameter and its CLI flag.
@@ -50,7 +49,7 @@ cd "$workdir"
 1. Solve a phase-only gain on field `0`:
 
    ```bash
-   casars run gaincal --ms ngc5921.ms --out ngc5921.G0 \
+   calibrate gaincal --ms ngc5921.ms --out ngc5921.G0 \
      --refant VA15 --gain-type g --mode-gain p --solint inf \
      --field 0 --spw 0
    ```
@@ -58,19 +57,19 @@ cd "$workdir"
 2. Solve the bandpass on field `0`, applying the gain table on the fly:
 
    ```bash
-   casars run bandpass --ms ngc5921.ms --out ngc5921.B0 \
+   calibrate bandpass --ms ngc5921.ms --out ngc5921.B0 \
      --refant VA15 --gaintables ngc5921.G0 --field 0
    ```
 
 3. Apply both tables to field `0`:
 
    ```bash
-   casars run applycal --ms ngc5921.ms \
+   calibrate applycal --ms ngc5921.ms \
      --gaintables ngc5921.G0,ngc5921.B0 --field 0
    ```
 
 4. Inspect the solutions and the corrected data with `calibrate --mode stats`
-   or `--mode summary`, `plotcal`, and `plotms`.
+   or `--mode summary`, and `plotms`.
 
 The apply chain is the ordered `--gaintables` list. Per-table policy is given
 by the aligned `--gainfield`, `--interp`, `--spwmap`, and `--calwt` lists, or by
@@ -82,7 +81,7 @@ apply plan without changing the MeasurementSet.
 declares CASA's `minsnr`, which its solver does not apply yet, so a value
 other than the default is refused.
 
-Use `casars params template gaincal` to see every parameter with its default,
+Use `calibrate gaincal --template` to see every parameter with its default,
 and `--save-params FILE` to keep a run's resolved profile for reuse with
 `--params FILE`.
 
@@ -90,8 +89,18 @@ and `--save-params FILE` to keep a run's resolved profile for reuse with
 
 The same surfaces are generated CASA-named functions under `casars.tasks`
 (`casars.tasks.gaincal(...)`, `casars.tasks.applycal(...)`, and so on), and
-`casars.tasks.run("gaincal", ...)` accepts the same parameters. CASA's
-parameters are the consent; there are no separate confirmations.
+`casars.tasks.run("gaincal", ...)` accepts the same parameters. Each call
+starts the `calibrate` executable in the current directory (or in
+`tasks.run`'s `workspace`), passes its log to `sys.stderr`, and saves no
+Last. CASA's parameters are the consent; there are no separate
+confirmations.
+
+```python
+from casars import tasks
+
+tasks.gaincal(vis="ngc5921.ms", out_table="ngc5921.G0", refant="VA15",
+              gain_type="g", solve_mode="p", solint="inf", field="0", spw="0")
+```
 
 `overwrite=True` replaces only the `-o` report today. A run that would write
 a calibration table or MeasurementSet that already exists is refused whatever

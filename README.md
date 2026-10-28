@@ -1,7 +1,7 @@
 # casa-rs
 
 Truth class: current descriptive
-Last reality check: 2026-10-20
+Last reality check: 2026-10-28
 Verification: just docs-check
 
 ![casa-rs observatory assistant header](branding/headers/casa-rs-header.png)
@@ -109,24 +109,30 @@ object API. See the [data API](docs/python/data.md) for the exact scope.
 ```python
 from casars import tasks
 
-result = tasks.imstat(imagename="target.image", workspace=".")
-print(result)
+result = tasks.imstat(imagename="target.image")
+print(result.status)
 ```
 
-Named wrappers and `tasks.run(task_name, ...)` use the shared Rust task and
-parameter contracts through `casars run`. They do not call CASA. Parameters
-can also be loaded, edited, validated, and saved as sparse TOML profiles:
+Named wrappers take CASA's parameters and run in the current directory;
+`tasks.run(task_name, parameters=None, /, *, workspace=None, **values)` runs
+any catalog task from a draft, in a chosen workspace. Each call resolves its
+parameters through the shared Rust contracts and starts the task's own
+executable, whose log reaches `sys.stderr` as it runs. They do not call CASA.
+A task that does not succeed raises `casars.tasks.TaskExecutionError`.
+Parameters can also be loaded, edited, validated, and saved as sparse TOML
+profiles:
 
 ```python
 from casars import parameters, tasks
 
 p = parameters.load("profiles/target-imaging.toml", workspace="project")
 p.update(niter=20000, threshold="1mJy")
-result = tasks.run("imager", parameters=p, workspace="project")
+result = tasks.run("imager", p)
 ```
 
-`casars run` saves Last and Last Successful parameters in the workspace; Python
-task calls save neither. CASA's own parameters are the consent to change data:
+A task's command line (each task executable, such as `calibrate gaincal
+...`) saves Last and Last Successful parameters in the workspace; Python task
+calls save neither. CASA's own parameters are the consent to change data:
 `overwrite=True` replaces a product, and a task that changes data in place
 does so, as in CASA.
 See [task parameters](docs/task-parameters.md) and the
@@ -136,8 +142,10 @@ supported options.
 ## Rust Libraries and Source Layout
 
 `casa-*` crates contain reusable domain libraries and shared contracts;
-`casars-*` crates contain the task host, the imager application and the Python
-package. This is a native implementation, not a wrapper around casacore C++.
+`casars-*` crates contain the imager application, the `imexplore` and
+`simobserve` task executables, and the Python package; the other task
+executables are binaries of their domain crates. This is a native
+implementation, not a wrapper around casacore C++.
 
 | Area | Crates or source |
 |---|---|
@@ -147,13 +155,13 @@ package. This is a native implementation, not a wrapper around casacore C++.
 | Numerics and Fourier transforms | `casa-numerics`, `casa-fft` |
 | Calibration, simulation, import | `casa-calibration`, `casa-simulation-synthesis`, `casa-vla` |
 | Imaging | `casa-imaging-model`, `casa-imaging-operator`, `casa-imaging-deconvolution`, `casa-imaging-products`, `casa-imaging-runtime`, `casa-imaging-metal`, `casa-imaging-application` |
-| Task contracts and execution | `casa-provider-contracts`, `casa-task-runtime`, `casars`, `casars-imager` |
+| Task contracts and execution | `casa-provider-contracts`, `casa-task-runtime`, `casars-imager`, `casars-imexplore`, `casars-simulation` |
 | Python | `crates/casars-python/`, with its PyO3 extension `casars._core` |
 | Comparison and test support | `casa-test-support`, `tools/perf/`, `tools/science/` |
 
 The [application catalog](crates/casa-provider-contracts/resources/application-catalog.json)
 and [parameter surfaces](crates/casa-provider-contracts/resources/parameter-surfaces.json)
-are shared by task launch and Python. The
+are shared by the task executables and Python. The
 [architecture document](ARCHITECTURE.md) describes ownership and dependency
 rules in detail.
 
@@ -256,8 +264,12 @@ bash install-casa-rs.sh --version "$version" --python python3.12
 This installs the catalog's binaries and a Python environment together under
 `~/.local/opt/casa-rs/<version>/`. Stable installs normally update the `stable`
 and `current` links; release candidates update `rc` without taking over
-`current` unless `--activate` is supplied. The installer also creates
-channel-specific `casars` and `calibrate` launchers in `~/.local/bin`.
+`current` unless `--activate` is supplied. The installer also links each of
+the suite's task executables into `~/.local/bin` as `<command>-<channel>`
+and, for the active suite, `<command>` (`calibrate`, `msexplore`,
+`casars-imager`, and so on). `split`, `feather`, `immath` and `impv` stay off
+`PATH`, since they are system commands or generic words (`split` runs as
+`mstransform split`); Python still starts them from the suite.
 
 Add that directory to your shell's `PATH`, then activate the suite's Python:
 
@@ -267,9 +279,12 @@ source "$HOME/.local/opt/casa-rs/current/python/bin/activate"
 python -c "import casars; print(casars.__version__)"
 ```
 
-To select another installed suite explicitly, set `CASARS_SUITE_ROOT` to
-its versioned root. Python tasks need the matching suite executables; a wheel
-alone provides the data bindings but is not a complete task installation.
+The suite's Python finds the task executables in its own suite. To select
+another installed suite explicitly, set `CASARS_SUITE_ROOT` to its versioned
+root. A wheel installed outside a suite (from PyPI, say) provides the
+in-process data bindings and tools, but its task calls need
+`CASARS_SUITE_ROOT` or a task's own `CASARS_<APP>_BIN` override; see
+[Install](docs/install.md).
 
 ### Build from source
 
@@ -302,21 +317,26 @@ To build and install the Python/command-line suite from the checkout:
 CARGO_INCREMENTAL=0 just install-local-suite
 ```
 
-For an editable Python development environment:
+For an editable Python development environment, build the task executables
+you need and install the package editable:
 
 ```bash
-CARGO_INCREMENTAL=0 cargo build --workspace --bins
+CARGO_INCREMENTAL=0 cargo build -p casa-calibration --bin calibrate
 python3 -m venv .venv
 source .venv/bin/activate
 CARGO_INCREMENTAL=0 python -m pip install -e 'crates/casars-python[test,plot]'
-export CASARS_LAUNCH_MODE=development_workspace
-export CASARS_DEVELOPMENT_WORKSPACE="$PWD"
 ```
 
-Development mode resolves executables from the selected checkout's
-`target/debug/`, so it needs the debug build shown above even if release
-binaries already exist. Installed-suite mode resolves executables from the
-selected suite. Neither searches `PATH` or silently switches modes.
+`cargo build -p <package> --bin <executable>` builds one task executable
+(`CARGO_INCREMENTAL=0 cargo build --workspace --bins` builds them all); the
+[application catalog](crates/casa-provider-contracts/resources/application-catalog.json)
+names each task's package and executable. Unless `CASARS_SUITE_ROOT` is
+set, a package built from a checkout runs the newest `debug` or `release`
+build of each executable in that checkout's `target/` (or
+`$CARGO_TARGET_DIR`), and a missing build is reported with the `cargo build`
+command that makes it. To run another file, set the task's override, such as
+`CASARS_CALIBRATE_BIN` or `CASARS_IMAGER_BIN`. Nothing searches `PATH` or
+runs `cargo`.
 
 Before building for performance measurements or release, use the pinned
 SIMD-enabled FFTW recipe rather than assuming the system package has the

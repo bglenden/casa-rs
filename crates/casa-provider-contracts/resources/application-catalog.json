@@ -93,7 +93,7 @@
       "kind": "task",
       "launch": {
         "executable": "imexplore",
-        "cargo_package": "casars",
+        "cargo_package": "casars-imexplore",
         "override_env": "CASARS_IMEXPLORE_BIN"
       },
       "shell_kind": "workflow",
@@ -110,7 +110,7 @@
       "kind": "task",
       "launch": {
         "executable": "imexplore",
-        "cargo_package": "casars",
+        "cargo_package": "casars-imexplore",
         "override_env": "CASARS_IMEXPLORE_BIN"
       },
       "shell_kind": "workflow",
@@ -294,24 +294,6 @@
       "include_in_suite": true
     },
     {
-      "id": "plotcal",
-      "kind": "task",
-      "launch": {
-        "executable": "casars-plotcal",
-        "cargo_package": "casars",
-        "override_env": "CASARS_PLOTCAL_BIN"
-      },
-      "shell_kind": "workflow",
-      "interaction": "one_shot",
-      "dataset_kinds": [
-        "calibration_table",
-        "measurement_set"
-      ],
-      "show_in_tui": true,
-      "show_in_swift": true,
-      "include_in_suite": true
-    },
-    {
       "id": "flagdata",
       "kind": "task",
       "launch": {
@@ -351,7 +333,7 @@
       "launch": {
         "executable": "impbcor",
         "cargo_package": "casa-images",
-        "override_env": "CASA_RS_IMPBCOR_BIN"
+        "override_env": "CASARS_IMPBCOR_BIN"
       },
       "shell_kind": "workflow",
       "interaction": "one_shot",
@@ -463,21 +445,6 @@
       ],
       "show_in_tui": true,
       "show_in_swift": true,
-      "include_in_suite": true
-    },
-    {
-      "id": "casars",
-      "kind": "launcher",
-      "launch": {
-        "executable": "casars",
-        "cargo_package": "casars",
-        "override_env": "CASARS_BIN"
-      },
-      "shell_kind": "launcher",
-      "interaction": "launcher",
-      "dataset_kinds": [],
-      "show_in_tui": false,
-      "show_in_swift": false,
       "include_in_suite": true
     }
   ]

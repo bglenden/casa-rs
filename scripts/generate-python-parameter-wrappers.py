@@ -287,8 +287,8 @@ def render_task_module(
         "from os import PathLike",
         "from typing import Literal, TypeAlias",
         "",
-        "from ..parameters import ParameterData, TaskParameters",
-        "from ._runner import TaskCompletion, run as _run",
+        "from ..parameters import ParameterData",
+        "from ._runner import TaskCompletion, _run",
         "",
         "StrPath: TypeAlias = str | PathLike[str]",
     ]
@@ -309,23 +309,10 @@ def render_task_module(
         names = [str(binding["name"]) for binding in bindings]
         lines.append(f"def {surface_id}(")
         lines.append("    *,")
+        # CASA's parameters only: the task runs in the current directory,
+        # and a profile is passed as values (`gaincal(**parameters.load(p))`).
         lines.extend(parameters_block(bindings, concepts, stub=stub))
-        lines.extend(
-            [
-                "    parameters: TaskParameters | None = None," if not stub else "    parameters: TaskParameters | None = ...," ,
-                "    profile: StrPath | None = None," if not stub else "    profile: StrPath | None = ... ,",
-                '    base_source: Literal["defaults", "last", "last_successful"] = "defaults",' if not stub else '    base_source: Literal["defaults", "last", "last_successful"] = ... ,',
-                "    workspace: StrPath | None = None," if not stub else "    workspace: StrPath | None = ... ,",
-                "    save_last: bool = True," if not stub else "    save_last: bool = ... ,",
-                "    binary: StrPath | None = None," if not stub else "    binary: StrPath | None = ... ,",
-                "    check: bool = True," if not stub else "    check: bool = ... ,",
-                "    timeout: float | None = None," if not stub else "    timeout: float | None = ... ,",
-                "    env: Mapping[str, str] | None = None," if not stub else "    env: Mapping[str, str] | None = ... ,",
-                "    confirm_overwrite: bool = False," if not stub else "    confirm_overwrite: bool = ... ,",
-                "    confirm_mutation: bool = False," if not stub else "    confirm_mutation: bool = ... ,",
-                ") -> TaskCompletion:",
-            ]
-        )
+        lines.append(") -> TaskCompletion:")
         if stub:
             lines.extend(["    ...", ""])
             continue
@@ -334,22 +321,7 @@ def render_task_module(
         lines.extend(
             [
                 f'    """{summary}"""',
-                f"    overrides = _explicit(locals(), {tuple_text})",
-                "    return _run(",
-                f'        "{surface_id}",',
-                "        parameters=parameters,",
-                "        profile=profile,",
-                "        base_source=base_source,",
-                "        overrides=overrides,",
-                "        workspace=workspace,",
-                "        save_last=save_last,",
-                "        binary=binary,",
-                "        check=check,",
-                "        timeout=timeout,",
-                "        env=env,",
-                "        confirm_overwrite=confirm_overwrite,",
-                "        confirm_mutation=confirm_mutation,",
-                "    )",
+                f'    return _run("{surface_id}", _explicit(locals(), {tuple_text}))',
                 "",
             ]
         )
@@ -385,8 +357,7 @@ def render_task_init(surfaces: list[dict[str, Any]]) -> str:
     names = [str(surface["id"]) for surface in surfaces if surface["kind"] == "task"]
     imports = "\n".join(f"    {name}," for name in names)
     exports = [
-        "CasarsBinaryNotFoundError",
-        "TaskBaseSource",
+        "TaskBinaryNotFoundError",
         "TaskCompletion",
         "TaskExecutionError",
         "TaskInvocationError",
@@ -404,8 +375,7 @@ def render_task_init(surfaces: list[dict[str, Any]]) -> str:
             imports,
             ")",
             "from ._runner import (",
-            "    CasarsBinaryNotFoundError,",
-            "    TaskBaseSource,",
+            "    TaskBinaryNotFoundError,",
             "    TaskCompletion,",
             "    TaskExecutionError,",
             "    TaskInvocationError,",

@@ -32,7 +32,7 @@ fn defaults(surface_id: &str) -> SnapshotView {
 fn the_catalog_view_projects_every_task_surface() {
     let catalog = CatalogEnvelopeView::new(builtin_surface_catalog().expect("catalog"));
     let json = serde_json::to_value(&catalog).expect("serialize");
-    assert_eq!(json["surfaces"].as_array().expect("surfaces").len(), 27);
+    assert_eq!(json["surfaces"].as_array().expect("surfaces").len(), 26);
     let imstat = BundleView::from(&parameter_bundle("imstat").expect("imstat bundle"));
     let imstat = serde_json::to_value(&imstat).expect("serialize");
     assert_eq!(imstat["surface"]["kind"], "task");
@@ -195,11 +195,14 @@ fn one_profile_resolves_alike_through_the_runtime_and_the_binding() {
         direct.states()["imsize"].value
     );
     assert_eq!(snapshot.diagnostics.len(), direct.diagnostics().len());
+    // Python projects the values set explicitly, as its `provider_invocation`
+    // does: the profile's, never the defaults (#974).
     let invocation = provider_invocation(
         "imager",
         snapshot
             .states
             .iter()
+            .filter(|(_, state)| state.explicit)
             .filter_map(|(name, state)| state.value.clone().map(|value| (name.clone(), value)))
             .collect(),
     )

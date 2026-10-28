@@ -2,11 +2,11 @@
 
 //! msexplore and plotms task completions from the real provider.
 //!
-//! A request goes as `casars run` and the Python tasks send it: the runner's
-//! projection of a typed parameter session, one `--json-run` request on
-//! stdin, whose typed reply goes through the completion decoder (#835, #931).
-//! The runner injects no output format, so the user's `format` decides the
-//! summary in `output` and on the binary's own command line (#836).
+//! A request goes as the Python tasks send it: the projection of a typed
+//! parameter session, one `--json-run` request on stdin, whose typed reply
+//! goes through the completion decoder (#835, #931). Nothing injects an
+//! output format, so the user's `format` decides the summary in `output` and
+//! on the binary's own command line (#836).
 
 mod common;
 
