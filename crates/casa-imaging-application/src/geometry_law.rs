@@ -203,7 +203,7 @@ struct Today {
     keys: HashMap<Key, u64>,
     /// Rows delivered a second time.
     repeated: usize,
-    /// Rows whose key an earlier row has.
+    /// Rows whose key another, earlier row has.
     shared: usize,
 }
 
@@ -279,7 +279,8 @@ fn today_rows(
             let antennas = [row.metadata.antenna1, row.metadata.antenna2].map(|id| id as u32);
             let time_s = row.coordinates.time.mjd_days() * 86_400.0;
             let identity = key(row.data_description_id as u32, antennas, time_s);
-            if today.keys.insert(identity, row.physical_row).is_some() {
+            let earlier = today.keys.insert(identity, row.physical_row);
+            if earlier.is_some_and(|earlier| earlier != row.physical_row) {
                 today.shared += 1;
             }
             let repeated = today.rows.insert(

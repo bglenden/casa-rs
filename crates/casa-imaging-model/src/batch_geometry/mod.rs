@@ -31,8 +31,9 @@
 //! a direction, and the caller must not image it through batch geometry
 //! until #942 lands. A moving phase centre follows a body or source
 //! Measures names; one that follows the fields' ephemerides (`TRACKFIELD`)
-//! or an ephemeris table, and a rest-frame output, which needs the
-//! velocity only an ephemeris gives, are refused at compile.
+//! or an ephemeris table is refused at compile. A conversion into or out
+//! of the rest frame needs the source velocity only an ephemeris gives,
+//! so a batch that needs one is refused.
 
 mod frames;
 mod pointing;
@@ -90,8 +91,9 @@ pub enum BatchGeometryError {
     /// pointing law.
     #[error("the batch carries no {0}")]
     MissingInput(&'static str),
-    /// A rest-frame output frequency: it needs a source velocity, which
-    /// only an ephemeris gives and batch geometry does not yet take.
+    /// A conversion into or out of the rest frame: it needs a source
+    /// velocity, which only an ephemeris gives and batch geometry does not
+    /// yet take.
     #[error("rest-frame frequencies need a source velocity")]
     RestFrameWithoutVelocity,
     /// An antenna the instrument model gives no aperture class.
@@ -248,8 +250,7 @@ impl GeometryPlan {
     ///
     /// [`BatchGeometryError`] for a catalogue without what geometry needs,
     /// a centre law or domain it does not take (among them a moving centre
-    /// Measures does not name, and a rest-frame output), or a failed
-    /// conversion. What it refuses here it never meets in [`Self::apply`].
+    /// Measures does not name or has no model of), or a failed conversion.
     pub fn compile(
         problem: &CompiledProblem,
         catalogue: &Arc<Catalogue>,
@@ -286,13 +287,12 @@ impl GeometryPlan {
             .ok_or(BatchGeometryError::NoImageDomain)?
             .model_phase_centre();
         if let PhaseCentreLaw::Ephemeris(name) = centres.phase_tracking() {
-            frames
-                .check_named(name)
-                .map_err(|_| BatchGeometryError::UnsupportedEphemeris(name.clone()))?;
-        }
-        let output_frame = problem.geometry().spectral().output_frame().frequency_ref();
-        if output_frame == FrequencyRef::REST {
-            return Err(BatchGeometryError::RestFrameWithoutVelocity);
+            frames.check_named(name).map_err(|error| match error {
+                MeasureError::UnknownSourceName { .. } => {
+                    BatchGeometryError::UnsupportedEphemeris(name.clone())
+                }
+                error => BatchGeometryError::Measures(error),
+            })?;
         }
         let (charts, mosaic) = projection::charts(problem)?;
         let responses = match problem.science().instrument_model() {
@@ -312,7 +312,7 @@ impl GeometryPlan {
             pointing: centres.pointing().clone(),
             charts,
             mosaic,
-            output_frame,
+            output_frame: problem.geometry().spectral().output_frame().frequency_ref(),
             parallactic: problem.requires_parallactic_angles(),
             responses,
             aw: AwPointingGrouping::new(problem)?,
@@ -332,9 +332,15 @@ impl GeometryPlan {
         matches!(self.pointing, PointingCentreLaw::Observation(_))
     }
 
-    /// The bytes the plan has come to hold beyond its compiled state: the
-    /// parallactic angles of every (time, field) a batch has asked for,
-    /// one per antenna, kept for the observation's other partitions.
+    /// At most the bytes the plan has come to hold beyond its compiled
+    /// state: the parallactic angles of every (time, time scale, field) a
+    /// batch with rows has asked for, one per antenna, kept for the
+    /// observation's other partitions, and the table that finds them. Once
+    /// a traversal has read every batch it holds, for each distinct (time,
+    /// field) with rows, 8 bytes an antenna and at most about 80 bytes of
+    /// table: the size step 4's admission charges. The table's share is bounded from the standard
+    /// table's layout; a counting law (`batch_geometry_memory`) holds the
+    /// bound to what is allocated.
     #[must_use]
     pub fn cached_bytes(&self) -> usize {
         self.frames.parallactic_bytes()
@@ -347,8 +353,9 @@ impl GeometryPlan {
     /// # Errors
     ///
     /// [`BatchGeometryError`] for a batch of another observation or without
-    /// what geometry reads, a failed conversion, or a pointing law that
-    /// gives no direction.
+    /// what geometry reads, frequencies to convert into or out of the rest
+    /// frame, a failed conversion, or a pointing law that gives no
+    /// direction.
     ///
     /// # Panics
     ///
@@ -644,6 +651,9 @@ impl GeometryPlan {
             return Ok(PreparedFrequencyConversion::new(
                 source, source, None, None,
             )?);
+        }
+        if source == FrequencyRef::REST || self.output_frame == FrequencyRef::REST {
+            return Err(BatchGeometryError::RestFrameWithoutVelocity);
         }
         let frame = self
             .frames

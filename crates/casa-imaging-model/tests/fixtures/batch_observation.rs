@@ -11,19 +11,20 @@ use std::sync::Arc;
 
 use casa_imaging_model::{
     AxisOrder, CentreLaws, CompiledProblem, DeclaredInnerProducts, DirectionCoordinateSpec,
-    DirectionFrame, DopplerConvention, FacetLayout, FiniteValuePolicy, FrequencyFrame,
+    DirectionFrame, DopplerConvention, Epoch, FacetLayout, FiniteValuePolicy, FrequencyFrame,
     GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape, InstrumentResponse,
-    MeasurementEquationContract, ModelColumnWrite, ModelInnerProduct, NumericPrecision,
-    NumericalStage, NumericsContract, ObservationTransactionRequirements, PhaseCentreLaw,
-    PointingCentreLaw, PolarizationContract, PolarizationCoordinate, PrimaryBeamValidityPolicy,
-    ProblemInput, ProblemSpecification, ProductBlankingPolicy, ProductKind, ProductNormalization,
-    ProductRequirements, ProductSupportComparison, ProductValidityPolicies, Projection,
-    PsfPhaseCentreLaw, ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract,
-    ReconstructionControls, ReductionPolicy, RestFrequency, RestoringBeamPolicy,
-    ScientificContract, SkyDirection, SpectralContract, SpectralCoordinateSpec, SpectralCoupling,
-    SpectralFrameAnchor, SpectralSamplingLaw, SpectralWcs, StageErrorBudget,
-    TaylorSupportReference, TaylorValidityPolicy, UvwCoordinateLaw, VisibilityInnerProduct,
-    WeightDensityScope, WeightingContract, WeightingScheme, compile,
+    ItrfPosition, MeasurementEquationContract, ModelColumnWrite, ModelInnerProduct,
+    NumericPrecision, NumericalStage, NumericsContract, ObservationTransactionRequirements,
+    PhaseCentreLaw, PointingCentreLaw, PolarizationContract, PolarizationCoordinate,
+    PrimaryBeamValidityPolicy, ProblemInput, ProblemSpecification, ProductBlankingPolicy,
+    ProductKind, ProductNormalization, ProductRequirements, ProductSupportComparison,
+    ProductValidityPolicies, Projection, PsfPhaseCentreLaw, ReconstructionAlgorithm,
+    ReconstructionBasis, ReconstructionContract, ReconstructionControls, ReductionPolicy,
+    RestFrequency, RestoringBeamPolicy, ScientificContract, SkyDirection, SpectralContract,
+    SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor, SpectralSamplingLaw,
+    SpectralWcs, StageErrorBudget, TaylorSupportReference, TaylorValidityPolicy, TimeScale,
+    UvwCoordinateLaw, VisibilityInnerProduct, WeightDensityScope, WeightingContract,
+    WeightingScheme, compile,
 };
 use casa_observation::{
     AntennaEntry, AntennaId, BatchBuffers, BatchHeader, Catalogue, CorrelationAxis, DataGroupEntry,
@@ -78,8 +79,14 @@ pub fn measures() -> Arc<dyn MeasuresProvider> {
 }
 
 /// Three VLA-like antennas, one field at `field`, and `partitions`
-/// partitions of the same content, each of their three baselines.
+/// partitions of the same content, each of their three baselines in one
+/// topocentric window.
 pub fn catalogue(field: MDirection, partitions: usize) -> Arc<Catalogue> {
+    catalogue_in(field, partitions, FrequencyRef::TOPO)
+}
+
+/// [`catalogue`] with its window in `frame`.
+pub fn catalogue_in(field: MDirection, partitions: usize, frame: FrequencyRef) -> Arc<Catalogue> {
     let antenna = |name: &str, offset_m: [f64; 3]| AntennaEntry {
         name: name.to_string(),
         station: name.to_string(),
@@ -98,7 +105,7 @@ pub fn catalogue(field: MDirection, partitions: usize) -> Arc<Catalogue> {
     let partition = PartitionEntry {
         spectral_window: "spw".to_string(),
         frequencies_hz: vec![1.4e9],
-        frequency_frame: FrequencyRef::TOPO,
+        frequency_frame: frame,
         channel_widths_hz: vec![1.0e6],
         correlations: vec![Correlation::XX],
         intents: Vec::new(),
@@ -196,16 +203,39 @@ pub fn problem_in(
     psf: PsfPhaseCentreLaw,
     polarization: Vec<PolarizationCoordinate>,
 ) -> CompiledProblem {
+    let frames = [FrequencyFrame::Topocentric; 2];
     compile(ProblemInput::new(
         specification(polarization),
-        geometry(phase, facets, psf),
+        geometry(phase, facets, psf, frames),
         super::common::observation_snapshot(0),
         super::model_lifecycle_fixture::model_lifecycle(),
     ))
     .expect("a compiled problem")
 }
 
-fn geometry(phase: PhaseCentreLaw, facets: FacetLayout, psf: PsfPhaseCentreLaw) -> GeometryInput {
+/// The Stokes I problem of the field's phase centre, its frequencies taken
+/// from `source` to `output`.
+pub fn problem_framed(source: FrequencyFrame, output: FrequencyFrame) -> CompiledProblem {
+    compile(ProblemInput::new(
+        specification(vec![PolarizationCoordinate::StokesI]),
+        geometry(
+            PhaseCentreLaw::Observation,
+            FacetLayout::Single,
+            PsfPhaseCentreLaw::ImageDomainReference,
+            [source, output],
+        ),
+        super::common::observation_snapshot(0),
+        super::model_lifecycle_fixture::model_lifecycle(),
+    ))
+    .expect("a compiled problem")
+}
+
+fn geometry(
+    phase: PhaseCentreLaw,
+    facets: FacetLayout,
+    psf: PsfPhaseCentreLaw,
+    [source, output]: [FrequencyFrame; 2],
+) -> GeometryInput {
     let direction = DirectionCoordinateSpec::new(
         Projection::Sin,
         SkyDirection::new(DirectionFrame::J2000, REFERENCE[0], REFERENCE[1]),
@@ -233,9 +263,21 @@ fn geometry(phase: PhaseCentreLaw, facets: FacetLayout, psf: PsfPhaseCentreLaw) 
         CentreLaws::new(phase, PointingCentreLaw::PhaseTrackingCentre),
         UvwCoordinateLaw::PhaseTrackingCentre,
         SpectralCoordinateSpec::new(
-            FrequencyFrame::Topocentric,
-            FrequencyFrame::Topocentric,
-            SpectralFrameAnchor::NotApplicable,
+            source,
+            output,
+            if source == output {
+                SpectralFrameAnchor::NotApplicable
+            } else {
+                SpectralFrameAnchor::Conversion {
+                    epoch: Epoch::new(MJD_DAYS, TimeScale::Utc),
+                    direction: SkyDirection::new(DirectionFrame::J2000, REFERENCE[0], REFERENCE[1]),
+                    observatory_position: ItrfPosition::new(
+                        -1_601_185.4,
+                        -5_041_977.5,
+                        3_554_875.9,
+                    ),
+                }
+            },
             SpectralWcs::Linear {
                 channels: 1,
                 reference_pixel: 0.0,

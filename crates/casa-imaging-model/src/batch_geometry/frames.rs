@@ -135,8 +135,9 @@ impl Frames {
         Ok([longitude, latitude])
     }
 
-    /// Whether Measures names `name` ([`MDirection::check_source_name`]),
-    /// which [`Self::named`] then resolves at any time.
+    /// Whether Measures names `name` and has a model of it
+    /// ([`MDirection::check_source_name`]); [`Self::named`] can still fail
+    /// at an epoch that model does not span.
     pub(super) fn check_named(&self, name: &str) -> Result<(), MeasureError> {
         let frame = MeasFrame::new()
             .with_position(self.observatory.clone())

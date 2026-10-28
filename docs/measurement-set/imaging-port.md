@@ -136,9 +136,9 @@ by MAIN row number; a row matched twice, a row not matched and a NaN on
 either side fail it. The T1 fixture checks it after every T1 run and two T1
 laws add `usepointing` (AW over two windows, the mosaic gridder). On all 27
 T1 runs (1.05 M rows) and 55 T1.5 runs on the Mac mini (5.59 M rows: 18
-refim and 34 kernels cases, the four native-AW variants needing the EVLA
-surface from `~/.casa/data`; the two `mawproject` cases with `usepointing`;
-CAS-7841), every quantity of the two routes on the same MeasurementSet is
+refim and 34 kernels cases; the two `mawproject` cases with `usepointing`;
+CAS-7841; the four native-AW variants, which need the EVLA surface from
+`~/.casa/data`, did not run), every quantity of the two routes on the same MeasurementSet is
 bit-identical, inside the law's 1e-12 bound: projections, pointing,
 parallactic angles, AW pointing pixels, aperture classes and output-frame
 frequencies. An MSv4 conversion of the
@@ -152,11 +152,15 @@ both stores) and the samples the selection excludes.
 
 A moving phase centre follows a body or source Measures names. The two
 others today's route takes, a field's own ephemeris (`TRACKFIELD`) and an
-external ephemeris table, are refused when the plan compiles, and so is a
-rest-frame output, which needs the radial velocity only an ephemeris gives.
-`TRACKFIELD` comes with the field ephemerides of #942; the external table is
-a request input, which `GeometryPlan` must take before step 4 images through
-it.
+external ephemeris table, are refused when the plan compiles. A batch whose
+frequencies convert into or out of the rest frame is refused too: that
+needs the radial velocity only an ephemeris gives. `TRACKFIELD` comes with
+the field ephemerides of #942; the external table is a request input, which
+`GeometryPlan` must take before step 4 images through it. The compiled law
+(`PhaseCentreLaw::Ephemeris`) names a body and a table alike, a table being
+a directory of that name, so it must also say which it is by then: a table
+directory named like a body (`Mars`) would otherwise be followed as the
+body.
 
 ### 2.2.1 What geometry needs from the boundary
 

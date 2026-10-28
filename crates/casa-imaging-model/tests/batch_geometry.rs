@@ -5,13 +5,15 @@
 use std::sync::Arc;
 
 use casa_imaging_model::{
-    BatchGeometry, BatchGeometryError, CompiledProblem, DirectionFrame, FacetLayout, GeometryPlan,
-    GeometryTraversal, GridFtProjection, PhaseCentreLaw, PsfPhaseCentreLaw, SkyDirection,
+    BatchGeometry, BatchGeometryError, CompiledProblem, DirectionFrame, FacetLayout,
+    FrequencyFrame, GeometryPlan, GeometryTraversal, GridFtProjection, PhaseCentreLaw,
+    PsfPhaseCentreLaw, SkyDirection,
 };
 use casa_observation::{BatchBuffers, Catalogue};
-use casa_types::measures::MeasFrame;
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::epoch::{EpochRef, MEpoch};
+use casa_types::measures::frequency::FrequencyRef;
+use casa_types::measures::{MeasFrame, MeasureError};
 
 #[path = "fixtures/batch_observation.rs"]
 mod batch_observation;
@@ -19,7 +21,10 @@ mod common;
 #[path = "fixtures/model_lifecycle.rs"]
 mod model_lifecycle_fixture;
 
-use batch_observation::{MJD_DAYS, REFERENCE, UVW_M, catalogue, fill, j2000, measures, problem};
+use batch_observation::{
+    MJD_DAYS, REFERENCE, UVW_M, catalogue, catalogue_in, fill, j2000, measures, problem,
+    problem_framed,
+};
 
 /// The geometry of every sample of one time of `catalogue`'s first
 /// partition under `problem`.
@@ -198,6 +203,74 @@ fn a_moving_centre_measures_does_not_name_is_refused_at_compile() {
         assert!(
             matches!(&refused, Err(BatchGeometryError::UnsupportedEphemeris(refused)) if refused == name),
             "{name}: {refused:?}"
+        );
+    }
+    // A body Measures names but has no model of fails as Measures does.
+    let pluto = problem(
+        PhaseCentreLaw::Ephemeris("PLUTO".to_string()),
+        FacetLayout::Single,
+        PsfPhaseCentreLaw::ImageDomainReference,
+    );
+    let refused = GeometryPlan::compile(&pluto, &catalogue(j2000(0.9, -0.45), 1), measures());
+    assert!(
+        matches!(
+            refused,
+            Err(BatchGeometryError::Measures(
+                MeasureError::NotYetImplemented { .. }
+            ))
+        ),
+        "{refused:?}"
+    );
+}
+
+/// Rest-frame frequencies stay as they are; converting into or out of the
+/// rest frame needs a source velocity, so such a batch is refused.
+#[test]
+fn only_rest_frequencies_stay_in_the_rest_frame() {
+    let field = j2000(0.9, -0.45);
+    let geometry_of = |window: FrequencyRef, source: FrequencyFrame, output: FrequencyFrame| {
+        let catalogue = catalogue_in(field.clone(), 1, window);
+        let problem = problem_framed(source, output);
+        let plan =
+            GeometryPlan::compile(&problem, &catalogue, measures()).expect("a geometry plan");
+        let mut buffers = BatchBuffers::default();
+        fill(&mut buffers, &catalogue, 0, 1);
+        let batch = buffers.batch().expect("a batch");
+        let mut geometry = BatchGeometry::default();
+        plan.apply(
+            &batch,
+            &[true; 3],
+            None,
+            &mut GeometryTraversal::default(),
+            &mut geometry,
+        )
+        .map(|()| geometry.frequencies_hz(0).to_vec())
+    };
+    assert_eq!(
+        geometry_of(
+            FrequencyRef::REST,
+            FrequencyFrame::Rest,
+            FrequencyFrame::Rest
+        )
+        .expect("rest to rest"),
+        [1.4e9]
+    );
+    for (window, source, output) in [
+        (
+            FrequencyRef::REST,
+            FrequencyFrame::Rest,
+            FrequencyFrame::Lsrk,
+        ),
+        (
+            FrequencyRef::TOPO,
+            FrequencyFrame::Topocentric,
+            FrequencyFrame::Rest,
+        ),
+    ] {
+        let refused = geometry_of(window, source, output);
+        assert!(
+            matches!(refused, Err(BatchGeometryError::RestFrameWithoutVelocity)),
+            "{window:?} to {output:?}: {refused:?}"
         );
     }
 }
