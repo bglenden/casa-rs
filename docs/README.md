@@ -24,6 +24,8 @@ and the Python package is only its interface; see
     contract
 - [`reference/task-parameters.md`](reference/task-parameters.md)
   - generated catalog of every task parameter surface
+- [`reference/casa-compatibility.md`](reference/casa-compatibility.md)
+  - generated comparison of each casa-rs task with its CASA 6.7.6.14 task
 - [`provider-contracts.md`](provider-contracts.md)
   - canonical provider schema model for task and object surfaces
 

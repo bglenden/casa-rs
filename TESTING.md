@@ -254,6 +254,14 @@ existing no-cache I/O path and does not require this Linux-specific setup.
   `--hide-checkout` moves the checkout aside while the installed suite is
   checked, so nothing it runs can reach the checkout; CI's `suite_install`
   job passes it
+- CASA task inventory: `python3 scripts/check-casa-inventory.py`, a step of
+  `just arch-check`, needs no CASA. It checks the CASA 6.7.6.14 fixtures in
+  `resources/casa-compat/casa-6.7.6.14/` and that
+  `docs/reference/casa-compatibility.md` is current; `--write` regenerates
+  the report after a surface changes. CASA compatibility acceptance also
+  needs `scripts/test-casa-inventory.sh`, which compares the fixtures with an
+  installed CASA 6.7.6.14 (`CASA_RS_CASA_PYTHON` or `/Applications/CASA.app`)
+  and fails, rather than skips, without it
 - Heavy parity suites: `scripts/test-slow.sh`
 - Release/tag-only CI-like coverage: `scripts/run-coverage.sh --ci-like`
 - GitHub Actions reproduction: `scripts/ci-local.sh pr` for pull-request jobs or `scripts/ci-local.sh tag` for version-tag jobs

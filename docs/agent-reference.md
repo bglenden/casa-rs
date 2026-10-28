@@ -11,7 +11,15 @@ task; root `AGENTS.md` remains the short always-loaded contract.
 
 - Local CASA task runs use the CASA 6.7.6 release's Python,
   `/Applications/CASA.app/Contents/MacOS/python3`, which has `casatasks` and
-  `casatools`. Scripts take `CASA_RS_CASA_PYTHON` to use another one.
+  `casatools`. Scripts take `CASA_RS_CASA_PYTHON` to use another one. On the
+  Mac mini the release (6.7.6.14) is
+  `/Volumes/Extra Storage (not encrypted)/DeveloperTools/CASA.app`, so set
+  `CASA_RS_CASA_PYTHON` to its `Contents/MacOS/python3` there.
+- The CASA task inventory (`resources/casa-compat/casa-6.7.6.14/`) is pinned
+  to CASA 6.7.6.14. `scripts/test-casa-inventory.sh` compares it with the
+  installed CASA and fails when CASA is missing or another version;
+  `--write` re-records it and regenerates
+  `docs/reference/casa-compatibility.md`.
 - Before implementing CASA/casacore behavior, inspect the corresponding
   upstream source path. Use targeted instrumentation on both implementations
   for parity investigations.
