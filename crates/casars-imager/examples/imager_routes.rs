@@ -4,94 +4,76 @@
 //! observation-batch route into `<imagename>.batches*`, compares every
 //! product by normalized RMS and writes the comparison, with both routes'
 //! wall times, to `<imagename>.routes.json`. A drop-in imager binary for
-//! evidence harnesses (T1.5, the baseline workloads); it exits 1 when the
-//! law fails. A run that writes a column back is imaged on today's route
-//! alone: the batch route writes nothing yet (step 5).
+//! evidence harnesses (T1.5, the baseline workloads): it takes what
+//! `casars-imager` takes, on the same task front end (#931), and a run whose
+//! law fails is an execution failure (exit 1). A run that writes a column
+//! back is imaged on today's route alone: the batch route writes nothing yet
+//! (step 5).
 //!
 //! ```text
 //! cargo build --release -p casars-imager --example imager_routes
 //! ```
 
-use std::ffi::OsString;
 use std::path::Path;
+use std::process::ExitCode;
 use std::time::Instant;
 
-use casa_imaging_application::route_law;
+use casa_imaging_application::{ImagingRequest, route_law};
+use casa_task_runtime::{TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess};
+use casars_imager::{ImagerRunTaskResult, ImagingParameters};
 use serde_json::json;
 
 #[global_allocator]
 static ALLOCATOR: casa_imaging_application::ReturningAllocator =
     casa_imaging_application::ReturningAllocator;
 
-fn main() {
-    let (logging_guard, args) =
-        match casa_logging::init_global_from_env_and_args(std::env::args_os().skip(1)) {
-            Ok((guard, args)) => (guard, args),
-            Err(error) => {
-                eprintln!("Error: failed to initialize logging: {error}");
-                std::process::exit(1);
-            }
-        };
-    let args: Vec<OsString> = args.into_iter().collect();
-    // An informational invocation (a harness probing the protocol) images
-    // nothing: answer it as the imager does.
-    if args.iter().any(|argument| {
-        matches!(
-            argument.to_str(),
-            Some("--protocol-info" | "--json-schema" | "-h" | "--help")
-        )
-    }) {
-        let status = match casars_imager::run_with_cli_args(args) {
-            Ok(()) => 0,
-            Err(error) => {
-                eprintln!("Error: {error}");
-                1
-            }
-        };
-        let _ = logging_guard.flush();
-        std::process::exit(status);
-    }
-    let status = match routes(&args) {
-        Ok(true) => 0,
-        Ok(false) => 1,
-        Err(error) => {
-            eprintln!("Error: {error}");
-            1
-        }
-    };
-    let _ = logging_guard.flush();
-    std::process::exit(status);
+fn main() -> ExitCode {
+    TaskFrontEnd::new(
+        "casars-imager",
+        casars_imager::imager_task_schema_bundle(),
+        &["imager"],
+        run,
+    )
+    .expect("the imager contract carries its surface")
+    .main(
+        std::env::args_os().skip(1),
+        casa_task_runtime::CasaLoggingConfig::from_env(),
+        std::env::set_current_dir,
+        &mut std::io::stdout(),
+        std::io::stderr(),
+    )
 }
 
-/// Image the request `args` make (flags, or `--json-run` with a run
-/// envelope) on both routes and compare them; whether the law holds.
-fn routes(args: &[OsString]) -> Result<bool, String> {
-    let json_run = args
-        .iter()
-        .position(|argument| argument == "--json-run")
-        .and_then(|at| args.get(at + 1));
-    let (parameters, request) = match json_run {
-        Some(path) => {
-            let text = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
-            let envelope: casars_imager::ImagerTaskRequest =
-                serde_json::from_str(&text).map_err(|error| error.to_string())?;
-            let casars_imager::ImagerTaskRequest::Run(parameters) = envelope;
-            casars_imager::resolve_request(&parameters)?
-        }
-        None => casars_imager::resolve_cli_request(args)?,
-    };
-    let started = Instant::now();
-    let today = casars_imager::run(parameters.clone(), &request)?;
-    let today_s = started.elapsed().as_secs_f64();
-    println!(
-        "{}",
-        serde_json::to_string(&today).map_err(|error| error.to_string())?
-    );
-    if !route_law::applies_to(&request) {
-        eprintln!("route law: not run, the request writes visibilities back");
-        return Ok(true);
+/// Image on both routes and hold them to the law; the reply carries today's
+/// run, whose record the command line prints.
+fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
+    let (parameters, request) = casars_imager::task_request(task)?;
+    let (today, holds) = routes(parameters, &request).map_err(TaskFailure::execution)?;
+    if !holds {
+        return Err(TaskFailure::execution(format!(
+            "route law: the routes' products differ; see {}.routes.json",
+            request.imagename.display()
+        )));
     }
-    let batches = route_law::on_batches(&request);
+    let text = serde_json::to_string(&today)
+        .map_err(|error| TaskFailure::execution(format!("serialize the run: {error}")))?;
+    Ok(TaskSuccess::new(&(), &today)?.with_text(text + "\n"))
+}
+
+/// Image `request`, resolved as `parameters`, on both routes and compare
+/// them: today's run, and whether the law holds.
+fn routes(
+    parameters: ImagingParameters,
+    request: &ImagingRequest,
+) -> Result<(ImagerRunTaskResult, bool), String> {
+    let started = Instant::now();
+    let today = casars_imager::run(parameters.clone(), request)?;
+    let today_s = started.elapsed().as_secs_f64();
+    if !route_law::applies_to(request) {
+        eprintln!("route law: not run, the request writes visibilities back");
+        return Ok((today, true));
+    }
+    let batches = route_law::on_batches(request);
     let mut batch_parameters = parameters;
     batch_parameters.0.insert(
         "imagename".to_string(),
@@ -129,7 +111,7 @@ fn routes(args: &[OsString]) -> Result<bool, String> {
     let text = serde_json::to_string_pretty(&receipt).map_err(|error| error.to_string())?;
     std::fs::write(&path, text).map_err(|error| error.to_string())?;
     eprintln!("route law: {receipt}");
-    Ok(holds)
+    Ok((today, holds))
 }
 
 /// `value` as JSON: a number, or for an infinite or NaN one (a failed law),
