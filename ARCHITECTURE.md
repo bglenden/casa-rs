@@ -26,7 +26,7 @@ coordinates, measures, and related workflows.
 | domain libraries (`casa-ms`, `casa-simulation-synthesis`, `casa-lattices`, `casa-coordinates`, `casa-images`, `casa-calibration`, `casa-vla`, `casa-components`) | Higher-level astronomy data models and algorithms built on table/image persistence; simulation synthesis owns only the serial model predictor and Airy voltage pattern used by MeasurementSet simulation; `casa-components` owns CASA component lists (sky components with their flux, shape and spectral model) and reads and writes their `ComponentList` tables as CASA does | foundation crates, `casa-tables`, selected peer domain crates where documented; `casa-components` depends only on `casa-tables` and `casa-types` |
 | boundary contracts (`casa-provider-contracts`) | The generic task-provider envelope, canonical parameter and application catalogs, task surface definitions, the one resolver of a task's executable (`resolve_task_executable`), and protocol surfaces between providers and Python | domain libraries and foundation crates; must not become a second source of truth |
 | parameter and task runtime (`casa-task-runtime`) | Format-neutral parameter resolution, sparse TOML profiles, migrations, task Last/Last Successful coordination, managed Last storage, the shared task front end with its typed replies (#931), on which every task binary runs, and the one `--json-run` invocation a run is projected to | boundary contracts, `casa-types` and `casa-logging` (the front end installs a run's logging from the configuration and stderr the binary's `main` passes); must not implement provider science behavior |
-| apps and runtimes (`casars-imager`, `casars-imexplore`, `casars-simulation`, `casars-python`) | The task executables that are not binaries of a domain crate (as `calibrate`, `msexplore` and the image tasks are), each on the shared task front end: the imager application (`casars-imager`), the image-inspection family `imexplore` (`imhead`, `imstat`) and the simulation tasks' host (`simobserve`; `simanalyze` and `simalma` to come); and the Python package with its PyO3 extension `casars._core`, which starts each task's executable directly | boundary contracts, domain libraries, foundation crates |
+| apps and runtimes (`casars-imager`, `casars-imexplore`, `casars-simulation`, `casars-python`) | The task executables that are not binaries of a domain crate (as `calibrate`, `msexplore` and `immoments` are), each on the shared task front end: the imager application (`casars-imager`), the image-inspection family `imexplore` (`imhead`, `imstat`) and the simulation tasks' host (`simobserve`; `simanalyze` and `simalma` to come); and the Python package with its PyO3 extension `casars._core`, which starts each task's executable directly | boundary contracts, domain libraries, foundation crates |
 | test support (`casa-test-support`) | Cross-language parity harnesses, fixtures, integration helpers, and performance guards | any workspace crates needed for testing only |
 
 ## Dependency direction
@@ -592,8 +592,8 @@ never makes a route available.
 
 - published Rust library crates, especially `casa-types`, `casa-tables`, `casa-ms`, `casa-lattices`, `casa-coordinates`, and `casa-images`
 - the task executables that serve the catalog's 26 tasks, each run directly
-  and each on the shared task front end, such as `msexplore`, `imexplore` (`imhead`, `imstat`),
-  `calibrate`, `importvla`, `casars-imager` and `simobserve`
+  on the shared task front end, such as `msexplore`, `imexplore` (`imhead`,
+  `imstat`), `calibrate`, `importvla`, `casars-imager` and `simobserve`
 - Python package `casars-python`, with its one native module `casars._core`
 - persisted CASA-compatible on-disk table, image, and related data formats
 - versioned provider contract bundles and protocol schemas

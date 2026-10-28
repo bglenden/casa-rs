@@ -155,15 +155,17 @@ metadata errors, and semantic/flattened schema drift.
 `casa-provider-contracts` also owns the single `ApplicationCatalog`. Every
 parameter surface has exactly one task-application entry that references the
 surface by stable ID, and every application is a task: the catalog's 26
-entries are its 26 task surfaces. Display name, category, and protocol family are projected from the
-referenced surface rather than copied into another inventory. Each application
-adds only executable/package identity, its explicit override variable,
-interaction and presentation metadata, and packaging visibility. (ADR-0017
-keeps the older presentation fields, such as `shell_kind` and `interaction`,
-until the CASA-shaped Python work reshapes them.) Several surfaces may share one executable, a family whose first word names the surface:
-`imhead` and `imstat` run `imexplore`; `plotms` runs `msexplore`; `split`
-runs `mstransform`; and `gaincal`, `bandpass`, `applycal`, `fluxscale`, and
-`gencal` run `calibrate`, whose own `calibrate` surface is its default.
+entries are its 26 task surfaces. Display name, category, and protocol
+family are projected from the referenced surface rather than copied into
+another inventory. Each application adds only executable/package identity,
+its explicit override variable, interaction and presentation metadata, and
+packaging visibility. (ADR-0017 keeps the older presentation fields, such as
+`shell_kind` and `interaction`, until the CASA-shaped Python work reshapes
+them.) Several surfaces may share one executable, a family whose first word
+names the surface: `imhead` and `imstat` run `imexplore`; `plotms` runs
+`msexplore`; `split` runs `mstransform`; and `gaincal`, `bandpass`,
+`applycal`, `fluxscale`, and `gencal` run `calibrate`, whose own `calibrate`
+surface is its default.
 
 `casa_provider_contracts::resolve_task_executable` is the one search for the
 file a task runs; Python reaches it through `casars._core`. The first step
@@ -290,8 +292,10 @@ and `--validate`, and the machine actions. A spelling the surface declares is
 always its parameter, so imregrid's `--template` names its template image and
 `--profile-template` gives its profile. A family binary's first word names the
 surface it runs, such as `imexplore imstat`, `mstransform split` or
-`calibrate gaincal`; the first hosted surface runs otherwise, and a
-surface's `fixed_args` are that word. The callback reads the resolved values
+`calibrate gaincal`; the first hosted surface runs otherwise. A
+`--json-run` request names its surface itself; the `fixed_args` that imhead,
+imstat and the calibration surfaces carry repeat it as the first word, while
+split and plotms carry none. The callback reads the resolved values
 into the binary's typed request through `TaskInvocation`'s typed reads, and
 `TaskInvocation::is_set` tells a value the run sets from a default. What a
 command line prints is the callback's text (msexplore's summary in the

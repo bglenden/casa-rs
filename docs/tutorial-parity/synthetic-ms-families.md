@@ -216,7 +216,7 @@ profile.update(
     output_ms="out/aca-mosaic.ms",
 )
 profile.save("out/aca-mosaic.toml")
-result = tasks.run("simobserve", parameters=profile)
+result = tasks.run("simobserve", profile)
 ```
 
 ## Spectral Diagnostics

@@ -268,8 +268,8 @@ and `current` links; release candidates update `rc` without taking over
 the suite's task executables into `~/.local/bin` as `<command>-<channel>`
 and, for the active suite, `<command>` (`calibrate`, `msexplore`,
 `casars-imager`, and so on). `split`, `feather`, `immath` and `impv` stay off
-`PATH`, since they are system commands or generic words (`mstransform split`
-runs `split`); Python still starts them from the suite.
+`PATH`, since they are system commands or generic words (`split` runs as
+`mstransform split`); Python still starts them from the suite.
 
 Add that directory to your shell's `PATH`, then activate the suite's Python:
 

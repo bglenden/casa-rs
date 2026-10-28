@@ -15,20 +15,31 @@ The public surface is split into three concerns:
 `casars.imexplore` adds NumPy/Matplotlib helpers for reading and drawing image
 planes.
 
-The generated task wrappers render a current-contract TOML draft through the Rust
-runtime and delegate execution, safety controls, and Last persistence to
-`casars run`. Every task draft also exposes the exact versioned Rust provider
-invocation; completions retain that projection, and requests the catalog
-refuses raise `ValueError` before process launch. Python does not own provider
-schemas, parameter defaults, capability interpretation, task-result decoding,
-or a second provider subprocess engine.
+A task call resolves its parameters through the Rust runtime, finds the
+task's executable through the Rust resolver, and starts it directly with
+`--json-run -`: the values the call set go to its stdin, its log lines reach
+`sys.stderr` as they arrive, and its typed reply on stdout says how it ended.
+A Python task call saves no Last. Every task draft also exposes the exact
+versioned Rust provider invocation; completions retain that projection,
+requests the catalog refuses raise `ValueError` before anything starts, and a
+task that does not succeed raises `casars.tasks.TaskExecutionError`. Python
+does not own provider schemas, parameter defaults, capability interpretation,
+or task-result decoding.
+
+The executable comes from the task's `CASARS_<APP>_BIN` override, a suite
+root (`CASARS_SUITE_ROOT`, or the installed suite this package belongs to),
+or, for a package built from a checkout, that checkout's `debug` or `release`
+build. A wheel installed outside a suite, such as one from PyPI, needs
+`CASARS_SUITE_ROOT` or the override to run tasks; the in-process
+`casars.data`, `casars.tools` and `casars.simutil` need no executables.
 
 ADR-0006 defines the implemented `casars.parameters` API and sparse TOML
-profile contract shared with the `casars` command line. All 27 catalog tasks
-have generated CASA-named wrappers and concrete typing stubs under the single
-`casars.tasks` namespace; the generated implementation stays private. These
-profile-aware wrappers support Defaults, Last, Last Successful, a named TOML
-file, or an existing typed draft.
+profile contract shared with the task executables' command lines. All 26
+catalog tasks have generated CASA-named wrappers and concrete typing stubs
+under the single `casars.tasks` namespace; the generated implementation stays
+private. The wrappers take CASA's parameters; a draft runs with
+`TaskParameters.run(...)` or `casars.tasks.run(task, draft)`, and a saved
+profile as `tasks.gaincal(**casars.parameters.load(path))`.
 
 Python binds Rust through PyO3 alone. The wheel contains one native module,
 `casars._core`, which carries the parameter runtime, task results and
