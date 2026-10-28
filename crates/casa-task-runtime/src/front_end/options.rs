@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! The base source, overrides and lifecycle controls of one task command line,
-//! shared by the task front end and `casars run`.
+//! which the task front end reads.
 
 use std::ffi::OsString;
 use std::path::PathBuf;

@@ -1,15 +1,16 @@
 # Documentation Index
 
 Truth class: current descriptive
-Last reality check: 2026-10-20
+Last reality check: 2026-10-28
 Verification: just docs-check
 
 This directory holds stable project documentation.
 
 ## User Surfaces
 
-casa-rs is used from the Python package `casars` and the headless `casars`
-task host (`casars run`, `casars params`); see
+casa-rs is used from the Python package `casars` and from the task
+executables of the application catalog (such as `calibrate gaincal ...`),
+which Python also starts for its task calls; see
 [ADR-0017](adr/0017-python-first-surface.md). All computation is in Rust,
 and the Python package is only its interface; see
 [ADR-0018](adr/0018-rust-computes-python-is-the-interface.md).

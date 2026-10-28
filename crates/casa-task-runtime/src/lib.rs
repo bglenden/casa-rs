@@ -2,8 +2,9 @@
 //! Shared typed parameters, sparse TOML profiles, and managed Last state.
 //!
 //! This crate owns parameter *lifecycle* rather than provider semantics.  The
-//! latter live in [`casa_provider_contracts`], allowing the `casars` CLI,
-//! Python, and providers to resolve the same self-contained surface bundle.
+//! latter live in [`casa_provider_contracts`], allowing each task's command
+//! line, Python, and providers to resolve the same self-contained surface
+//! bundle.
 
 mod cli;
 mod completion;

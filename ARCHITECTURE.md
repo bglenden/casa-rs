@@ -24,9 +24,9 @@ coordinates, measures, and related workflows.
 | imaging application composition (`casa-imaging-application`) | Sole production composition seam across MeasurementSet authority, reconstruction, products, resources, execution, typed installed-implementation availability, and CASA product publication | Native imaging owners, `casa-ms` and the observation boundary (`casa-observation`); unavailable requests invoke no execution implementation |
 | simulation (`casa-simulation`) | CASA's `sm` tool: the session the setters and `observe` describe, the deferred plan of `predict` and `corrupt` steps, model preparation through the measurement operator, thermal noise and antenna-based corruption (gains and leakage), and one streamed MeasurementSet write at `close`, admitted against the imaging runtime's resource policy and predicting through its block predictor on the CPU or Metal; `simutil` and the `simobserve` task (`casa_simulation::simobserve`), which take CASA's data directories and measures as request fields | An application in the ADR-0016 layering (the dependency policy lists its exact set): the imaging model, operator and runtime (Metal only through the runtime), `casa-imaging-singledish` (the total-power kernels), `casa-ms`, `casa-tables`, `casa-images`, `casa-components` (component lists for `predict`), `casa-fft` (the gains' fractional-Brownian-motion screens), `casa-calibration` (the calibration tables of simulated gains and leakage) and `casa-numerics`, plus the definitional crates |
 | domain libraries (`casa-ms`, `casa-simulation-synthesis`, `casa-lattices`, `casa-coordinates`, `casa-images`, `casa-calibration`, `casa-vla`, `casa-components`) | Higher-level astronomy data models and algorithms built on table/image persistence; simulation synthesis owns only the serial model predictor and Airy voltage pattern used by MeasurementSet simulation; `casa-components` owns CASA component lists (sky components with their flux, shape and spectral model) and reads and writes their `ComponentList` tables as CASA does | foundation crates, `casa-tables`, selected peer domain crates where documented; `casa-components` depends only on `casa-tables` and `casa-types` |
-| boundary contracts (`casa-provider-contracts`) | The generic task-provider envelope, canonical parameter and application catalogs, task surface definitions, and protocol surfaces between providers, the task host, and Python | domain libraries and foundation crates; must not become a second source of truth |
+| boundary contracts (`casa-provider-contracts`) | The generic task-provider envelope, canonical parameter and application catalogs, task surface definitions, the one resolver of a task's executable (`resolve_task_executable`), and protocol surfaces between providers and Python | domain libraries and foundation crates; must not become a second source of truth |
 | parameter and task runtime (`casa-task-runtime`) | Format-neutral parameter resolution, sparse TOML profiles, migrations, task Last/Last Successful coordination, managed Last storage, the shared task front end with its typed replies (#931), on which every task binary runs, and the one `--json-run` invocation a run is projected to | boundary contracts, `casa-types` and `casa-logging` (the front end installs a run's logging from the configuration and stderr the binary's `main` passes); must not implement provider science behavior |
-| apps and runtimes (`casars`, `casars-imager`, `casars-simulation`, `casars-python`) | The headless `casars` task host (`casars run`, `casars params`) and the `imexplore`/`casars-plotcal` providers, the imager application, the simulation tasks' host (`simobserve`; `simanalyze` and `simalma` to come), and the Python package with its PyO3 extension `casars._core` | boundary contracts, domain libraries, foundation crates |
+| apps and runtimes (`casars-imager`, `casars-imexplore`, `casars-simulation`, `casars-python`) | The task executables that are not binaries of a domain crate (as `calibrate`, `msexplore` and `immoments` are), each on the shared task front end: the imager application (`casars-imager`), the image-inspection family `imexplore` (`imhead`, `imstat`) and the simulation tasks' host (`simobserve`; `simanalyze` and `simalma` to come); and the Python package with its PyO3 extension `casars._core`, which starts each task's executable directly | boundary contracts, domain libraries, foundation crates |
 | test support (`casa-test-support`) | Cross-language parity harnesses, fixtures, integration helpers, and performance guards | any workspace crates needed for testing only |
 
 ## Dependency direction
@@ -127,7 +127,7 @@ terminal; there is no alternate
 implementation, retry path, or stage-level delegation. Its input is one
 `ImagingRequest`, deserialized from the imager parameters the provider
 catalog resolves and validated once. Every route (command line,
-`--json-run`, `casars run` and Python) reaches it through the same
+`--json-run` and Python) reaches it through the same
 catalog resolution, so the catalog is the only source of defaults and refuses
 a parameter its gridder does not read. `casars-imager` is a thin frontend over
 this interface: it resolves its parameters through the catalog and presents
@@ -188,10 +188,15 @@ Additional constraints:
 - Versioned provider bundles are boundary contracts; CLI parser projections
   are derived views, not separate truth sources.
 - `casa-provider-contracts::ApplicationCatalog` is the sole application
-  inventory and launch-metadata owner. The `casars` task host, Python,
-  packaging, and generators project it directly. Installed-suite
-  and development-workspace launch modes resolve exact paths and never fall
-  back to each other, PATH discovery, or repository probing.
+  inventory and launch-metadata owner; every entry is a task. Python,
+  packaging, and generators project it directly. One resolver,
+  `casa_provider_contracts::resolve_task_executable`, finds a task's
+  executable: the task's catalog override (`CASARS_<APP>_BIN`), else a suite
+  root's `bin/` (`CASARS_SUITE_ROOT`, or the installed suite the Python
+  package belongs to), else the newest `debug` or `release` build in the
+  development checkout the package was built from. The first step that
+  applies decides; one that lacks the file is an error naming the fix, never
+  a fall-through to a later step, `PATH` or `cargo run`.
 - Parameter concepts live in the checked aggregate `ParameterCatalog` in
   `casa-provider-contracts`. Each provider bundle embeds the exact referenced
   concepts so the boundary remains self-contained. Task
@@ -211,9 +216,12 @@ Additional constraints:
 - `casars-python` binds Rust to Python through PyO3 alone, in the extension
   `casars._core` (ADR-0017 item 4). Beside the `casars.data` objects and the
   `casars.tools` classes, it projects the parameter runtime, task completion,
-  the application catalog and `casa-ms` plot documents for
-  `casars.parameters`, `casars.tasks` and `casars.data`, and must not become a
-  second implementation of persistence, task semantics, or provider contracts.
+  the application catalog, the task-executable resolver and `casa-ms` plot
+  documents for `casars.parameters`, `casars.tasks` and `casars.data`, and
+  must not become a second implementation of persistence, task semantics, or
+  provider contracts. A task call starts the task's own executable as a child
+  process (ADR-0017 item 4); no crate spawns task executables on Python's
+  behalf.
   Plot documents are `casa_ms::plot_document` serde types, which depend on no
   binding crate.
 - Native frontends select a versioned request and `ResourcePolicy`; they do not
@@ -369,14 +377,25 @@ shell/Python scripts, integration tests, or subprocess orchestration rather
 than a shared background service model.
 
 ADR-0006 adds one synchronous parameter lifecycle shared by every task
-consumer (`casars run` and Python). `casa-task-runtime` is the sole lifecycle
-owner: a task resolves sparse user intent, records its attempted state, and
-applies the completion transition around one provider invocation. Each path
-has one owner of Last: `casars run` for the runs it launches, the task front
-end for a binary's own command line, and none for Python task calls or
-`--json-run` (#931). Parameter
+consumer (a task executable's command line and Python). `casa-task-runtime`
+is the sole lifecycle owner: a task resolves sparse user intent, records its
+attempted state, and applies the completion transition around one provider
+invocation. Last has one owner, the task front end, which records Last and
+Last Successful for a command-line run of the executable; `--json-run`, the
+path Python's task calls take, reads and writes no Last, so a Python call
+writes none (#931). Parameter
 resolution and Last persistence do not introduce a provider daemon or
 repo-wide async runtime.
+
+A Python task call is one child process. Python resolves the parameters
+through the parameter runtime, starts the executable the resolver names with
+its surface's fixed arguments and `--json-run -`, writes the CASA-named
+values the call set to its stdin, passes its log lines to `sys.stderr` as
+they arrive, and classifies the typed reply on its stdout. The task runs in
+the current directory, or in the workspace `casars.tasks.run` is given. An
+interrupt (`KeyboardInterrupt`) is forwarded to the task as SIGINT; the task
+has ten seconds to stop before it is killed, and the interrupt is then
+re-raised.
 
 ### Imaging execution
 
@@ -572,8 +591,8 @@ never makes a route available.
 ## Public interfaces
 
 - published Rust library crates, especially `casa-types`, `casa-tables`, `casa-ms`, `casa-lattices`, `casa-coordinates`, and `casa-images`
-- the headless `casars` task host (`casars run`, `casars params`) and the
-  catalog's task providers, such as `msexplore`, `imexplore` (`imhead`,
+- the task executables that serve the catalog's 26 tasks, each run directly
+  on the shared task front end, such as `msexplore`, `imexplore` (`imhead`,
   `imstat`), `calibrate`, `importvla`, `casars-imager` and `simobserve`
 - Python package `casars-python`, with its one native module `casars._core`
 - persisted CASA-compatible on-disk table, image, and related data formats

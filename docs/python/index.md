@@ -4,8 +4,8 @@
 
 - `casars.data` provides in-process access to persistent CASA-style images and
   tables.
-- `casars.tasks` provides higher-level task wrappers backed by the versioned
-  provider binaries.
+- `casars.tasks` provides higher-level task wrappers, each of which starts
+  its task's own executable.
 - `casars.tools` provides CASA's tools as classes under CASA's names, with
   CASA's methods, parameter order and defaults, so a CASA script changes only
   its imports (ADR-0019): `simulator` (CASA's `sm`), `measures` (`me`) and
@@ -27,8 +27,17 @@
 
 The generic `casars.tasks.run()` entry point accepts every catalog task. Every
 task is also exposed exactly once as `casars.tasks.<task>` through a generated
-CASA-named function. These functions share the Rust-owned parameter and result
-contracts and run through the canonical `casars run` task host.
+CASA-named function that takes CASA's parameters. These functions share the
+Rust-owned parameter and result contracts. A call resolves its parameters in
+Rust, starts the task's executable as a child process with `--json-run -`,
+passes the task's log lines to `sys.stderr` as they arrive, and returns a
+`TaskCompletion`; a task that does not succeed raises
+`casars.tasks.TaskExecutionError`. The executable is the task's
+`CASARS_<APP>_BIN` override when it is set, else the one in a suite's `bin/`
+(`CASARS_SUITE_ROOT`, or the suite the package was installed into), else, for
+a package built from a checkout, that checkout's build
+([Compatibility](versioning.md#task-runner-compatibility)). The in-process
+`casars.data`, `casars.tools` and `casars.simutil` need no executables.
 
 `casars.data` is stateful and file-backed. It is intended for interoperability
 with the Python ecosystem through NumPy-native reads and writes. For images,
@@ -38,7 +47,7 @@ object contract.
 
 ## Parameter profiles
 
-The accepted profile API is shared with the `casars` command line:
+The accepted profile API is shared with the task executables' command lines:
 
 ```python
 from casars import parameters, tasks
@@ -46,12 +55,11 @@ from casars import parameters, tasks
 p = parameters.load("profiles/target-imaging.toml", workspace="project")
 p.update(niter=20000, threshold="1mJy")
 
-result = tasks.run(
-    "imager",
-    parameters=p,
-    workspace="project",
-)
+result = tasks.run("imager", p)   # runs in the draft's workspace, project/
 ```
+
+A loaded profile also runs through a CASA-named wrapper, in the current
+directory: `tasks.imager(**parameters.load("profiles/target-imaging.toml"))`.
 
 The call saves no Last profile. `parameters.last(...)` reads the Last that a
 command-line run saved.
@@ -61,7 +69,7 @@ the other common source types. The resulting `TaskParameters` supports mapping
 updates, reset, reload, sparse TOML save, and run. Rust remains the sole parser,
 normalizer, validator, migration engine, and sparse renderer.
 
-`casars.tasks` is generated from the 27 task definitions and supplies one
+`casars.tasks` is generated from the 26 task definitions and supplies one
 CASA-named keyword wrapper and typing stub per task. Their signatures
 deliberately use an unset sentinel instead of copying catalog defaults into
 Python.

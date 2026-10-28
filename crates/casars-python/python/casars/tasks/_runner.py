@@ -1,4 +1,11 @@
-"""Catalog-driven generic task execution through the canonical ``casars`` CLI."""
+"""Run a catalog task by starting its executable directly (ADR-0017).
+
+Python resolves the task's parameters through the Rust parameter runtime,
+finds the task's executable through the Rust resolver, and starts it with
+``--json-run -``: the CASA-named values set are written to its stdin, its
+log lines are passed to ``sys.stderr`` as they arrive, and its typed reply on
+stdout says how it ended. A Python task call neither loads nor saves Last.
+"""
 
 from __future__ import annotations
 
@@ -7,11 +14,12 @@ from dataclasses import dataclass
 import os
 from os import PathLike
 from pathlib import Path
+import signal
 import subprocess
-from tempfile import TemporaryDirectory
-from typing import Literal, TypeAlias
+import sys
+import threading
+from typing import Any, TypeAlias
 
-from .._task_runtime import _resolve_task_binary
 from ..parameters import (
     ParameterData,
     ProviderInvocation,
@@ -22,34 +30,47 @@ from ..parameters import (
 from ._completion import completion_projection
 
 StrPath: TypeAlias = str | PathLike[str]
-TaskBaseSource: TypeAlias = Literal["defaults", "last", "last_successful"]
 
-class CasarsBinaryNotFoundError(FileNotFoundError):
-    """Raised when the canonical ``casars`` executable cannot be resolved."""
+# How long a task has to stop after Python forwards it an interrupt.
+_INTERRUPT_GRACE_SECONDS = 10.0
+
+
+class TaskBinaryNotFoundError(FileNotFoundError):
+    """Raised when a task's executable cannot be found.
+
+    The message names the step of the search that applied and what it
+    lacked: the task's ``CASARS_<APP>_BIN`` override, the suite at
+    ``CASARS_SUITE_ROOT`` or the installed suite, or a development
+    checkout's build.
+    """
 
 
 class TaskInvocationError(RuntimeError):
-    """Raised when the canonical runner could not start."""
+    """Raised when a task's executable was found but could not be started."""
 
 
 class TaskResultError(RuntimeError):
-    """Raised when Rust rejects a successful provider result contract."""
+    """Raised when Rust rejects a successful task's result."""
 
 
 class TaskExecutionError(RuntimeError):
-    """Raised for a non-zero task completion when ``check=True``."""
+    """Raised when a task does not succeed; ``completion`` says how it ended."""
 
     def __init__(self, completion: TaskCompletion) -> None:
         self.completion = completion
-        detail = completion.stderr.strip() or completion.stdout.strip() or "no output"
-        super().__init__(
-            f"{completion.task} exited with status {completion.returncode}: {detail}"
-        )
+        super().__init__(completion.describe())
 
 
 @dataclass(frozen=True, slots=True)
 class TaskCompletion:
-    """Completed generic task invocation, including exact captured output."""
+    """One finished task process: how it ended and what it wrote.
+
+    ``status`` is the task's outcome: ``succeeded``, ``refused`` (its
+    parameters, before it changed anything), ``failed``, ``interrupted``,
+    ``signalled``, or ``malformed_reply``. ``stdout`` is the task's reply and
+    ``stderr`` its log, which was also written to ``sys.stderr`` as the task
+    ran.
+    """
 
     task: str
     command: tuple[str, ...]
@@ -57,15 +78,18 @@ class TaskCompletion:
     returncode: int
     stdout: str
     stderr: str
-    parameters_toml: str
     provider_invocation: ProviderInvocation
+    status: str
+    message: str | None
+    parameter: str | None
+    value: Any
     result: object | None
 
     @property
     def successful(self) -> bool:
-        """Whether the ``casars`` process and provider completed successfully."""
+        """Whether the task succeeded."""
 
-        return self.returncode == 0
+        return self.status == "succeeded"
 
     @property
     def products(self) -> tuple[object, ...]:
@@ -75,132 +99,209 @@ class TaskCompletion:
             return ()
         return tuple(self.result.products)  # type: ignore[attr-defined]
 
-    def check_returncode(self) -> TaskCompletion:
-        """Raise :class:`TaskExecutionError` for a failed completion."""
+    def describe(self) -> str:
+        """One line saying how the task ended."""
 
-        if not self.successful:
-            raise TaskExecutionError(self)
-        return self
+        at = f" (parameter {self.parameter!r})" if self.parameter else ""
+        if self.status == "succeeded":
+            return f"{self.task} succeeded"
+        if self.status == "refused":
+            return f"{self.task} refused its parameters{at}: {self.message}"
+        if self.status == "failed":
+            return f"{self.task} failed{at}: {self.message}"
+        if self.status == "interrupted":
+            return f"{self.task} was interrupted: {self.message}"
+        detail = self.stderr.strip().splitlines()[-1:] or ["no log output"]
+        if self.status == "signalled":
+            return f"{self.task} was ended by signal {-self.returncode}: {detail[0]}"
+        return f"{self.task} gave no valid reply ({self.message}): {detail[0]}"
 
 
 def run(
     task: str,
     parameters: SurfaceParameters | None = None,
+    /,
     *,
-    profile: StrPath | None = None,
-    base_source: TaskBaseSource = "defaults",
-    overrides: Mapping[str, ParameterData] | None = None,
     workspace: StrPath | None = None,
-    save_last: bool = True,
-    confirm_overwrite: bool = False,
-    confirm_mutation: bool = False,
-    binary: StrPath | None = None,
-    check: bool = True,
-    timeout: float | None = None,
-    env: Mapping[str, str] | None = None,
-    **casa_overrides: ParameterData,
+    **values: ParameterData,
 ) -> TaskCompletion:
-    """Run any catalog task through ``casars run``.
+    """Run any catalog task, with CASA-named ``values``.
 
-    ``parameters``, ``profile``, and ``base_source`` select one base draft.
-    CASA-named values may be supplied through ``overrides`` or keyword
-    arguments.  All values are normalized and rendered to a temporary
-    current-contract TOML profile by the Rust runtime; Python never projects
-    values into provider flags.
+    ``parameters`` is a draft to start from, such as a loaded profile; the
+    contract's defaults otherwise. The task runs in ``workspace``: the
+    draft's, or the current directory. Values are normalized and checked by
+    Rust before the task starts, so a value the contract refuses raises
+    ``ValueError`` and starts nothing.
 
-    A Python task call saves no Last or Last Successful profile: those record
-    command-line runs, and the call asks ``casars run`` for none. An existing
-    Last can still be the base source, and :meth:`TaskParameters.write_last`
-    still writes one explicitly. CASA's own parameters, such as
-    ``overwrite``, are the consent to replace or change data (#931).
-    ``save_last``, ``confirm_overwrite`` and ``confirm_mutation`` are
-    accepted and ignored until the task binaries are started directly.
-    Captured stdout and stderr are retained on the returned completion and on
-    :class:`TaskExecutionError`.
+    The call loads and saves no Last profile: those record command-line runs.
+    :meth:`TaskParameters.last` and :meth:`TaskParameters.write_last` stay
+    explicit. CASA's own parameters, such as ``overwrite``, are the consent
+    to replace or change data. A task that does not succeed raises
+    :class:`TaskExecutionError`; an interrupt (Ctrl-C) is passed to the task,
+    which is given time to stop, and then raised here.
     """
 
     resolved_workspace = _resolve_workspace(workspace, parameters)
-    resolved = _resolve_parameters(
-        task,
-        parameters=parameters,
-        profile=profile,
-        base_source=base_source,
-        workspace=resolved_workspace,
-    )
-    merged_overrides = _merge_overrides(overrides, casa_overrides)
-    if merged_overrides:
-        resolved.set_many(merged_overrides)
-    provider_invocation = resolved.provider_invocation()
-
-    executable = _resolve_casars_binary(binary)
-    with TemporaryDirectory(prefix=f"casars-{task}-parameters-") as temporary:
-        profile_path = Path(temporary) / f"{task}.toml"
-        resolved.save(profile_path)
-        parameters_toml = profile_path.read_text(encoding="utf-8")
-        command = [
-            executable,
-            "run",
-            task,
-            "--params",
-            str(profile_path),
-            "--workspace",
-            str(resolved_workspace),
-            "--no-save-last",
-        ]
-
-        process_env = None
-        if env is not None:
-            process_env = os.environ.copy()
-            process_env.update(env)
-        try:
-            process = subprocess.run(
-                command,
-                cwd=resolved_workspace,
-                capture_output=True,
-                check=False,
-                text=True,
-                timeout=timeout,
-                env=process_env,
+    if parameters is not None:
+        if parameters.surface != task:
+            raise ValueError(
+                f"parameters target {parameters.surface!r}, not requested task {task!r}"
             )
-        except OSError as error:
-            raise TaskInvocationError(
-                f"failed to start the canonical casars runner {executable!r}: {error}"
-            ) from error
+        resolved = parameters.copy()
+    else:
+        resolved = TaskParameters.defaults(task, workspace=resolved_workspace)
+    if values:
+        resolved.set_many(values)
+    return _execute(task, resolved, resolved_workspace)
 
-    result = None
-    if process.returncode == 0:
-        values = [
-            (name, _display_value(state.value))
-            for name, state in sorted(resolved.states.items())
-            if state.value is not None
-        ]
-        try:
-            record = _native().task_completion(
-                task,
-                process.stdout,
-                str(resolved_workspace),
-                values,
-            )
-        except ValueError as error:
-            raise TaskResultError(
-                f"{task} produced a successful but invalid result: {error}"
-            ) from error
-        result = completion_projection(record)
 
+def _run(task: str, values: Mapping[str, ParameterData]) -> TaskCompletion:
+    """Run ``task`` in the current directory: the CASA-named wrappers' call."""
+
+    return run(task, **values)
+
+
+def _execute(task: str, resolved: SurfaceParameters, workspace: Path) -> TaskCompletion:
+    invocation = resolved.provider_invocation()
+    executable = _task_executable(task)
+    command = (executable, *invocation.args)
+    try:
+        # The task runs in its own session, so a terminal's Ctrl-C reaches
+        # Python alone, which passes it on once, in a terminal as in a
+        # notebook: a second interrupt ends the imager at once.
+        process = subprocess.Popen(
+            command,
+            cwd=workspace,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            start_new_session=True,
+        )
+    except OSError as error:
+        raise TaskInvocationError(f"cannot start {task} ({executable}): {error}") from error
+    stdout, stderr = _communicate(process, invocation.stdin or "")
+
+    values = [
+        (name, _display_value(state.value))
+        for name, state in sorted(resolved.states.items())
+        if state.value is not None
+    ]
+    try:
+        outcome = _native().task_outcome(
+            task, process.returncode, stdout, str(workspace), values
+        )
+    except ValueError as error:
+        raise TaskResultError(
+            f"{task} produced a successful but invalid result: {error}"
+        ) from error
     completion = TaskCompletion(
         task=task,
-        command=tuple(command),
-        workspace=resolved_workspace,
+        command=command,
+        workspace=workspace,
         returncode=process.returncode,
-        stdout=process.stdout,
-        stderr=process.stderr,
-        parameters_toml=parameters_toml,
-        provider_invocation=provider_invocation,
-        result=result,
+        stdout=stdout,
+        stderr=stderr,
+        provider_invocation=invocation,
+        status=outcome["status"],
+        message=outcome.get("message", outcome.get("reason")),
+        parameter=outcome.get("parameter"),
+        value=outcome.get("value"),
+        result=(
+            completion_projection(outcome["completion"])
+            if "completion" in outcome
+            else None
+        ),
     )
-    if check:
-        completion.check_returncode()
+    if not completion.successful:
+        raise TaskExecutionError(completion)
     return completion
+
+
+def _communicate(process: subprocess.Popen[str], request: str) -> tuple[str, str]:
+    """Send ``request``, pass the log on as it arrives, and collect the reply.
+
+    Each pipe has its own thread, so none fills while another is waited on,
+    and the log keeps draining while an interrupted task shuts down. The main
+    thread only waits for the task; anything that stops the wait, an
+    interrupt above all, is passed to the task first.
+    """
+
+    reply: list[str] = []
+    log: list[str] = []
+
+    def send() -> None:
+        try:
+            assert process.stdin is not None
+            process.stdin.write(request)
+            process.stdin.close()
+        except (BrokenPipeError, OSError):
+            pass
+
+    def collect() -> None:
+        assert process.stdout is not None
+        reply.append(process.stdout.read())
+
+    def relay() -> None:
+        assert process.stderr is not None
+        for line in process.stderr:
+            log.append(line)
+            terminal = sys.stderr
+            if terminal is None:
+                continue
+            # A terminal that fails to write must not stop the drain.
+            try:
+                terminal.write(line)
+                terminal.flush()
+            except Exception:
+                pass
+
+    threads = [threading.Thread(target=target) for target in (send, collect, relay)]
+    for thread in threads:
+        thread.daemon = True
+        thread.start()
+    try:
+        process.wait()
+    except BaseException:
+        _stop(process)
+        raise
+    finally:
+        for thread in threads:
+            thread.join(timeout=_INTERRUPT_GRACE_SECONDS)
+    return "".join(reply), "".join(log)
+
+
+def _stop(process: subprocess.Popen[str]) -> None:
+    """Interrupt a running task as Ctrl-C would, and kill it if it stays.
+
+    The task has the grace period to stop, its log still draining; a second
+    interrupt in that time kills it at once.
+    """
+
+    if process.poll() is not None:
+        return
+    try:
+        process.send_signal(signal.SIGINT)
+        process.wait(timeout=_INTERRUPT_GRACE_SECONDS)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait()
+    except BaseException:
+        process.kill()
+        process.wait()
+        raise
+
+
+def _task_executable(task: str) -> str:
+    """The executable that runs ``task``, found by the Rust resolver."""
+
+    try:
+        path = _native().task_executable(task, dict(os.environ), sys.prefix)
+    except FileNotFoundError as error:
+        raise TaskBinaryNotFoundError(str(error)) from None
+    return os.fspath(path)
 
 
 def _resolve_workspace(
@@ -217,67 +318,6 @@ def _resolve_workspace(
             f"task workspace does not exist or is not a directory: {root}"
         )
     return root
-
-
-def _resolve_parameters(
-    task: str,
-    *,
-    parameters: SurfaceParameters | None,
-    profile: StrPath | None,
-    base_source: str,
-    workspace: Path,
-) -> SurfaceParameters:
-    source = base_source.lower().replace("-", "_")
-    if source not in {"defaults", "last", "last_successful"}:
-        raise ValueError("base_source must be 'defaults', 'last', or 'last_successful'")
-    if parameters is not None and profile is not None:
-        raise ValueError("pass parameters or profile, not both")
-    if (parameters is not None or profile is not None) and source != "defaults":
-        raise ValueError(
-            "parameters/profile and a non-default base_source are mutually exclusive"
-        )
-
-    if parameters is not None:
-        if parameters.surface != task:
-            raise ValueError(
-                f"parameters target {parameters.surface!r}, not requested task {task!r}"
-            )
-        return parameters.copy()
-    if profile is not None:
-        return TaskParameters.load(task, profile, workspace=workspace)
-    if source == "last":
-        return TaskParameters.last(task, workspace=workspace)
-    if source == "last_successful":
-        return TaskParameters.last_successful(task, workspace=workspace)
-    return TaskParameters.defaults(task, workspace=workspace)
-
-
-def _merge_overrides(
-    overrides: Mapping[str, ParameterData] | None,
-    keyword_overrides: Mapping[str, ParameterData],
-) -> dict[str, ParameterData]:
-    merged: dict[str, ParameterData] = {}
-    if overrides is not None:
-        for name, value in overrides.items():
-            if not isinstance(name, str):
-                raise TypeError("CASA parameter override names must be strings")
-            merged[name] = value
-    duplicate = merged.keys() & keyword_overrides.keys()
-    if duplicate:
-        names = ", ".join(sorted(duplicate))
-        raise ValueError(f"duplicate CASA parameter overrides: {names}")
-    merged.update(keyword_overrides)
-    return merged
-
-
-def _resolve_casars_binary(binary: StrPath | None) -> str:
-    return _resolve_task_binary(
-        application_id="casars",
-        binary=binary,
-        configured_binary=None,
-        missing_error_cls=CasarsBinaryNotFoundError,
-        description="casars task runner",
-    )
 
 
 def _display_value(value: ParameterData) -> str:
@@ -297,11 +337,10 @@ def _display_value(value: ParameterData) -> str:
 
 
 __all__ = [
-    "CasarsBinaryNotFoundError",
+    "TaskBinaryNotFoundError",
     "TaskCompletion",
     "TaskExecutionError",
     "TaskInvocationError",
     "TaskResultError",
-    "TaskBaseSource",
     "run",
 ]

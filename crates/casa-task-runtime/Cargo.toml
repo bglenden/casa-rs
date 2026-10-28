@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "Shared parameter resolution, sparse TOML profiles, and managed Last state for casars surfaces"
+description = "Shared parameter resolution, sparse TOML profiles, managed Last state and the task front end for casa-rs tasks"
 repository.workspace = true
 publish = false
 

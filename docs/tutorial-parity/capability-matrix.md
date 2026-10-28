@@ -1,7 +1,7 @@
 # CASA Tutorial Capability Matrix
 
 Truth class: current descriptive
-Last reality check: 2026-07-09
+Last reality check: 2026-10-28
 Verification: just docs-check
 
 Work issue: #137
@@ -53,7 +53,7 @@ enforced by `scripts/check-no-casa-runtime.py` in `scripts/arch-check.sh`).
 |---|---|---|---|---|---|---|---|
 | `listobs` | partial | `casa-ms` | `msexplore` / future Python MS surface | selector grammar and TAQL extraction, reusable selector seam | CASA `listobs` on tutorial MS | timing for summary plus selected-row resolution | #75, #117, #121 |
 | `plotms` | partial | `casa-ms` | `msexplore`/`plotms` text point manifests, `casars.data` plot documents drawn by Matplotlib | long-tail axes, corrected-data diagnostics, polarization/P-band plots | CASA `plotms` or exported plot data where available | tutorial plot timings | #73, #117, #121 |
-| `plotcal` | partial | `casa-calibration` | `calibrate` diagnostic plots | CASA task-name compatibility is not a target; VLA pages need gain/bandpass/fluxscale diagnostic plot presets and export parity | CASA `plotcal` plots or exported caltable plot data where available | calibration plot timing on VLA tutorial caltables | #122, #128 |
+| `plotcal` | external (retired) | none | none; casa-rs does not provide `plotcal`, and its `casars-plotcal` provider is retired | CASA 6 has no `plotcal` (it plots calibration tables with `plotms`), so it is not an implementation target; casa-rs inspects calibration tables with `calibrate --mode stats` and `--mode summary` | none | none | #931 |
 | `tclean` MFS | partial/available | `casa-imaging`, `casars-imager` | `casars-imager`; every surface takes the imager catalog parameters (protocol v12), including automask, `savemodel=modelcolumn`, supported MFS/Hogbom/multiscale `outlierfile` controls, and the `parallel`, `backend` and `gridprecision` execution controls | broader tutorial parameter mapping; mosaic MT-MFS beyond one MS, `nterms <= 2`, no W term, user masks, and natural/uniform/Briggs weighting; wider outlier variants such as mask images and cubes | CASA `tclean` image products plus MODEL_DATA comparisons; first-slice mosaic MT-MFS compares Taylor-term image/residual/PSF/model/sumwt/PB/pbcor/alpha products | existing GLENDENNING medium/large workload manifests, performance ledger, imager parity scripts, and tutorial timings | #117, #127, #167, #175, #196, #219, #220, #262, #343, #352 |
 | `tclean` cube / spectral | partial | `casa-imaging`, `casars-imager` | `casars-imager`; every surface takes the imager catalog parameters (protocol v12), including automask and `parallel`; memory is admitted from the host, and a cube that does not fit runs in waves | cube seam coverage, spectral transform integration, and full-scale mosaic cube gridding for Antennae Band 7 line products | CASA `tclean` cube outputs plus read-ahead/serial-vs-parallel product equivalence | GLENDENNING medium/large cube/cubedata/mosaic workloads with source-read, overlap, bandwidth, and wall-time telemetry | #56, #74, #76, #119, #123, #161, #167, #343 |
 | legacy `clean` | external/compatibility reference | `casa-imaging`, `casars-imager` if comparison needed | no CASA alias planned | VLA imaging page references legacy output for comparison; implement equivalent capability through idiomatic imaging APIs, not a `clean` task clone | CASA legacy `clean` products only as regression inputs/comparison artifacts | compare legacy tutorial timing only if a breadth issue requires it | #128 |

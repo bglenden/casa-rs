@@ -9,13 +9,14 @@ The calibration tasks are generated, CASA-named wrappers in `casars.tasks`:
   surfaces.
 
 Each takes the surface's parameters as keyword arguments and returns a
-`TaskCompletion`. The call runs through `casars run`, which starts the
-`calibrate` binary with the surface as its first word (`calibrate gaincal`)
-and sends one `TaskRunRequest` on `--json-run -`: the values the call set,
-resolved inside the binary against the same contract as its own command line
-(#931). Python projects no flags and builds no Rust request. A refused value
-names its parameter; a failed run raises `TaskExecutionError` when
-`check=True`.
+`TaskCompletion`. The call starts the `calibrate` executable directly, with
+the surface as its first word (`calibrate gaincal`), and sends one
+`TaskRunRequest` on `--json-run -`: the values the call set, resolved inside
+the executable against the same contract as its own command line (#931). Its
+log lines reach `sys.stderr` as they arrive. Python projects no flags and
+builds no Rust request. A refused value names its parameter, and a run that
+does not succeed raises `TaskExecutionError`, whose `.completion` has its
+`status`, `message` and `parameter`.
 
 `gaintables` and `summary_paths` are lists of calibration-table paths: a list,
 or one comma-separated string. The per-table controls (`gainfield`, `interp`,
