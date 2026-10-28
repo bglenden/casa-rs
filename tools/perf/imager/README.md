@@ -10,6 +10,11 @@ imager.
     delegates ordinary paired workloads to `scripts/bench-imager-vs-casa.sh`,
     executes checked-in recipe-backed CASA oracles directly, and writes a
     normalized machine-readable result JSON
+- `tools/perf/imager/run_alternating_comparison.py`
+  - runs a baseline and a candidate workload in counterbalanced A B B A
+    order, optionally from two casa-rs checkouts, and writes one comparison
+    receipt with wall-time, peak-RSS and product verdicts (see
+    [Two-build comparison](#two-build-comparison))
 - `tools/perf/imager/stage_vlass_fragment.py`
   - verifies the frozen VLASS archive SHA-256 and gzip stream, extracts only the
     expected MS and recipe, hashes the extracted tree, and atomically promotes
@@ -588,6 +593,101 @@ scripts/bench-imager-vs-casa.sh /path/to.ms
 The manifest runner intentionally resolves data only from an explicit manifest
 path or from the manifest's `dataset.root_env` plus `dataset.relative_path`.
 It does not add personal workstation data fallbacks.
+
+## Two-build comparison
+
+`run_alternating_comparison.py` runs two workloads, or one workload twice,
+in counterbalanced order: alternating A B / B A warmup blocks, then A B B A /
+B A A B measured blocks (`--warmup-pairs 2`, `--measured-pairs 3` by
+default), each run a one-repeat `run_workload.py` call. It writes one receipt
+per invocation, `<output-root>/<comparison-id>.json`, beside the per-run
+results under `<output-root>/<comparison-id>/runs/`.
+
+**Two builds.** `--baseline-repo` and `--candidate-repo` name the casa-rs
+checkouts the roles run; both default to this one. A role's runs execute that
+checkout's own `run_workload.py` from that checkout, whose bench script builds
+and runs that checkout's `target/release/casars-imager`. Two checkouts
+therefore need their own `target/`: the harness refuses to start when
+`CARGO_TARGET_DIR` is set or both `target` paths resolve to one directory.
+A release build tree is tens of GB; remove the baseline worktree's `target/`
+afterwards. Build both with the same FFTW (`PKG_CONFIG_PATH`,
+`docs/agent-reference.md`).
+
+**Gates.** `--gate slowdown` (the default) is the original check: the median
+paired relative wall delta must be at most `--slowdown-tolerance` (default 0).
+`--gate blocking` applies decision 4 of
+[the imaging port](../../../docs/measurement-set/imaging-port.md):
+
+- *wall time*: the median paired relative delta must be at most
+  `max(--wall-tolerance, --noise-sigmas × σ)`, defaults 0.02 and 2, where σ is
+  the baseline's own spread, the standard deviation of its measured walls over
+  their median (the slowdown gate is this check with no σ term);
+- *peak RSS*: the candidate's median must be at most `1 + --rss-tolerance`
+  (default 0.05) times the baseline's. A run's peak is the `wait4` high-water
+  mark of its `casars-imager` process, which `run_workload.py` records as
+  `results.backend_plan_logs.summary.peak_rss_bytes`;
+- *products*: the first measured run of each role keeps its products; every
+  other completed run's are deleted once its evidence is read. The
+  candidate's products are compared with the baseline's by
+  `perf_harness.image_compare` in full mode, over every product the
+  baseline's `<imagename>.summary.json` lists and with an exact product
+  inventory. Each product's NRMS, RMS(candidate − baseline) / RMS(baseline),
+  must be at most `--product-nrms` (default 1e-6).
+
+The comparison passes only when every verdict passes. A verdict without its
+evidence (a failed run, a run without a peak RSS, a comparator that did not
+run) is inconclusive, and the command exits non-zero.
+
+**Receipt.** Beside the schedule, runs, paired deltas and overall `verdict`,
+the receipt records `configuration.gate`, `.thresholds`, the repo paths and
+`run_environment` (the `CASA_RS_BENCH_*`, `CASA_RS_IMPERF_*`, FFTW and Cargo
+variables); `roles` (each checkout's path, commit, branch and dirty flag);
+`verdicts.{wall_time,peak_rss,products}`, with σ and the allowance; and
+`product_comparison`. Each run records its `peak_rss_bytes`; its
+`run_summary` (backend, precision, workers, and each phase's seconds,
+`process_peak_rss_bytes` and `peak_reserved_bytes`); its `casars_imager`
+SHA-256 and FFTW `n1fv_` codelet count; and whether its products were kept.
+`measured_summaries` summarizes these per role.
+
+**CASA and workers.** `run_workload.py` still compares every run with CASA.
+To keep CASA from running every time, run the workload once with
+`run_workload.py`, then set `CASA_RS_BENCH_REUSE_CASA_PREFIX` to that run's
+CASA prefix (`products/<run-id>/casa/casa`). `CASA_RS_CASA_PYTHON` is needed
+either way: the product comparator runs under CASA's Python. Options after
+`--` go to every `run_workload.py` call; `--set-imaging parallel=false` runs
+one worker and `parallel=true` the balanced policy (the performance cores,
+four on the Mac mini). Check `measured_summaries.<role>.workers`.
+
+An A/A run of one build against itself records the baseline's noise band:
+
+```sh
+export CASA_RS_IMPERF_DATA_ROOT=/path/to/staged/casa-rs-imperformance
+export CASA_RS_CASA_PYTHON=/Applications/CASA.app/Contents/MacOS/python3
+export CASA_RS_BENCH_REUSE_CASA_PREFIX=/path/to/products/<run-id>/casa/casa
+for parallel in false true; do
+  tools/perf/imager/run_alternating_comparison.py \
+    issue607-standard-mfs-dirty-representative \
+    issue607-standard-mfs-dirty-representative \
+    --gate blocking \
+    --output-root ~/SoftwareProjects/casa-rs-evidence/imaging-port \
+    -- --set-imaging parallel=$parallel
+done
+```
+
+A baseline-versus-candidate run takes the baseline from a worktree at the
+commit the cutover branches from and the candidate from this checkout:
+
+```sh
+git worktree add ../casa-rs-port-baseline <baseline-commit>
+unset CARGO_TARGET_DIR
+tools/perf/imager/run_alternating_comparison.py \
+  issue607-standard-mfs-dirty-representative \
+  issue607-standard-mfs-dirty-representative \
+  --gate blocking \
+  --baseline-repo ../casa-rs-port-baseline --candidate-repo . \
+  --output-root ~/SoftwareProjects/casa-rs-evidence/imaging-port \
+  -- --set-imaging parallel=true
+```
 
 ## Environment variables
 

@@ -250,6 +250,11 @@ LEGACY_RUN_STATUSES = frozenset(
     }
 )
 
+ALTERNATING_GATES = frozenset({"slowdown", "blocking"})
+ALTERNATING_GATE_VERDICT_STATUSES = frozenset(
+    {"pass", "fail", "inconclusive", "not_evaluated"}
+)
+
 RUN_RESULT_KIND_STATUSES = {
     "workload_run": frozenset(RUN_STATUSES),
     "image_comparison": frozenset({"completed", "failed_comparison", "unavailable"}),
@@ -3111,6 +3116,9 @@ def _validate_alternating_comparison(value: Any, *, source: str) -> None:
         "adjacent_pair_deltas",
         "adjacent_pair_delta_summary",
         "verdict",
+        "verdicts",
+        "roles",
+        "product_comparison",
         "report_path",
         "error",
     }
@@ -3136,6 +3144,22 @@ def _validate_alternating_comparison(value: Any, *, source: str) -> None:
         if key in details:
             _validate_alternating_delta_summary(details[key], source=f"{source}: {key}")
     _validate_alternating_verdict(details["verdict"], source=f"{source}: verdict")
+    if "verdicts" in details:
+        _validate_alternating_gate_verdicts(
+            details["verdicts"], source=f"{source}: verdicts"
+        )
+    if "roles" in details:
+        _validate_alternating_roles(details["roles"], source=f"{source}: roles")
+    if details.get("product_comparison") is not None:
+        comparison = _require_dict(
+            details["product_comparison"], f"{source}: product_comparison"
+        )
+        _optional_string(
+            comparison.get("status"), f"{source}: product_comparison.status"
+        )
+        _require_dict(
+            comparison.get("products"), f"{source}: product_comparison.products"
+        )
     if "report_path" in details:
         _nonempty_string(details, "report_path", source)
     if "comparison_id" in details:
@@ -3159,11 +3183,21 @@ def _validate_alternating_configuration(value: Any, *, source: str) -> None:
         "baseline_imaging_overrides",
         "candidate_imaging_overrides",
         "run_workload_repeats",
+        "gate",
+        "thresholds",
+        "baseline_repo",
+        "candidate_repo",
+        "run_environment",
     }
     _allowed_fields(configuration, fields, source)
     required = fields - {
         "baseline_imaging_overrides",
         "candidate_imaging_overrides",
+        "gate",
+        "thresholds",
+        "baseline_repo",
+        "candidate_repo",
+        "run_environment",
     }
     missing = sorted(required - set(configuration))
     if missing:
@@ -3190,6 +3224,55 @@ def _validate_alternating_configuration(value: Any, *, source: str) -> None:
     ):
         if key in configuration:
             _string_list_allow_empty(configuration[key], f"{source}: {key}")
+    if "gate" in configuration and configuration["gate"] not in ALTERNATING_GATES:
+        raise ContractError(f"{source}: gate is invalid")
+    for key in ("baseline_repo", "candidate_repo"):
+        if key in configuration:
+            _nonempty_string(configuration, key, source)
+    if "thresholds" in configuration:
+        thresholds = _require_dict(configuration["thresholds"], f"{source}: thresholds")
+        for key, threshold in thresholds.items():
+            number = finite_number(
+                threshold, field=f"{source}: thresholds.{key}", optional=False
+            )
+            if number < 0.0:
+                raise ContractError(f"{source}: thresholds.{key} must be >= 0")
+    if "run_environment" in configuration:
+        environment = _require_dict(
+            configuration["run_environment"], f"{source}: run_environment"
+        )
+        if not all(
+            isinstance(name, str) and isinstance(value, str)
+            for name, value in environment.items()
+        ):
+            raise ContractError(f"{source}: run_environment must map names to strings")
+
+
+def _validate_alternating_gate_verdicts(value: Any, *, source: str) -> None:
+    verdicts = _require_dict(value, source)
+    if set(verdicts) != {"wall_time", "peak_rss", "products"}:
+        raise ContractError(
+            f"{source}: fields must be exactly wall_time, peak_rss and products"
+        )
+    for name, verdict_value in verdicts.items():
+        verdict = _require_dict(verdict_value, f"{source}: {name}")
+        if verdict.get("status") not in ALTERNATING_GATE_VERDICT_STATUSES:
+            raise ContractError(f"{source}: {name}.status is invalid")
+        _nonempty_string(verdict, "reason", f"{source}: {name}")
+
+
+def _validate_alternating_roles(value: Any, *, source: str) -> None:
+    roles = _require_dict(value, source)
+    if set(roles) != {"baseline", "candidate"}:
+        raise ContractError(f"{source}: fields must be exactly baseline and candidate")
+    for role, role_value in roles.items():
+        label = f"{source}: {role}"
+        record = _require_dict(role_value, label)
+        _nonempty_string(record, "repo", label)
+        _optional_string(record.get("commit"), f"{label}: commit")
+        dirty = record.get("dirty")
+        if dirty is not None and not isinstance(dirty, bool):
+            raise ContractError(f"{label}: dirty must be boolean or null")
 
 
 def _validate_alternating_order(value: Any, *, source: str) -> None:
@@ -3250,7 +3333,15 @@ def _validate_alternating_runs(value: Any, *, source: str) -> None:
         "stage_timings_ms",
         "backend_identity",
     }
-    allowed = required | {"error"}
+    allowed = required | {
+        "error",
+        "repo",
+        "peak_rss_bytes",
+        "repository_revision",
+        "run_summary",
+        "casars_imager",
+        "products",
+    }
     for index, run_value in enumerate(value):
         label = f"{source}[{index}]"
         run = _require_dict(run_value, label)
@@ -3289,6 +3380,17 @@ def _validate_alternating_runs(value: Any, *, source: str) -> None:
             _require_dict(backend_identity, f"{label}: backend_identity")
         if "error" in run:
             _nonempty_string(run, "error", label)
+        if "repo" in run:
+            _nonempty_string(run, "repo", label)
+        _optional_string(run.get("repository_revision"), f"{label}: repository_revision")
+        peak_rss = run.get("peak_rss_bytes")
+        if peak_rss is not None and (
+            isinstance(peak_rss, bool) or not isinstance(peak_rss, int) or peak_rss < 1
+        ):
+            raise ContractError(f"{label}: peak_rss_bytes must be a positive integer")
+        for key in ("run_summary", "casars_imager", "products"):
+            if run.get(key) is not None:
+                _require_dict(run[key], f"{label}: {key}")
 
 
 def _validate_alternating_deltas(value: Any, *, source: str, paired: bool) -> None:

@@ -2177,3 +2177,22 @@ The law `casa_appends_to_a_casa_rs_gain_table` (casa-calibration
 `slow-tests`) appends CASA's solutions to a casa-rs table. With
 `gain_table_windows_match_casa_on_ngc5921` and its two-sideband companion,
 it asserts that every column of every window row equals CASA's exactly.
+
+## `imregrid` refuses a one-channel template in another spectral frame
+
+- Date noted: 2026-10-27
+- Status: CASA behaviour casa-rs does not follow (#841 Phase 6a)
+- Affected code: CASA 6.7.6's `imregrid` (casacore `ImageRegrid` through
+  `ImageRegridder`)
+
+casacore does not regrid an axis whose input and template both have one
+pixel. CASA 6.7.6 keeps the input's coordinate for it in the output: a
+template one channel 3 MHz away, or with its one Stokes plane labelled Q,
+gives the input's channel and Stokes I (`tools/images/image_analysis_oracle.py`,
+cases `imregrid_one_channel_moved` and `imregrid_one_stokes_plane_relabelled`).
+The same template with that one channel in another frame (LSRK to TOPO)
+stops instead, with "Failed to set conversion layer state".
+
+casa-rs treats that channel as it treats the others: it is not regridded,
+and the output keeps the input's (`casa_images::regrid`). Converting the
+frame of an axis that is never regridded serves no purpose.

@@ -306,6 +306,14 @@ casa-components --test casa_oracle -- --ignored --nocapture` (CASA from
 `CASA_RS_CASA_PYTHON` or `/Applications/CASA.app`) has CASA read the lists
 casa-rs writes, rewrite them in place, and casa-rs read the rewrite back.
 
+Image analysis (`casa-images`: `regrid`, `convolve2d`, robust statistics,
+`impbcor`, `immath` and `feather`) is compared with CASA 6.7.6 in `cargo test
+-p casa-images --test image_analysis_casa`. CASA builds the small images that
+`tests/data/image_analysis_cases.json` describes and records its results in
+`tests/data/image_analysis_casa.json`. Regenerate that file with
+`tools/images/image_analysis_oracle.py`, run with CASA's Python, whenever the
+cases change.
+
 Large spectral-cube storage changes additionally run the sparse logical-capacity
 test and the explicit release throughput guard:
 

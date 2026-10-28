@@ -15,13 +15,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::managed_output::CalibrationTaskResult;
 use crate::{
-    ApplyCalibrationTableSpec, ApplyMode, ApplyPlanRequest, BandpassSolveCombine,
-    BandpassSolveRequest, BandpassType, CalibrationDataset, CalibrationSolveRequest,
-    CalibrationSolveResult, CalibrationStatsAxis, CalibrationStatsRequest, FluxScaleRequest,
-    GainSolveCombine, GainSolveInterval, GainSolveMode, GainSolveModelSource, GainSolveRequest,
-    GainType, GencalRequest, RefAntSelector, calibration_stats, execute_apply_from_path,
-    export_corrected_data, fluxscale, gencal, plan_apply_from_path, solve_calibration,
-    summarize_tables,
+    ApplyCalibrationTableSpec, ApplyExecutionOptions, ApplyMode, ApplyPlanRequest,
+    BandpassSolveCombine, BandpassSolveRequest, BandpassType, CalibrationDataset,
+    CalibrationSolveRequest, CalibrationSolveResult, CalibrationStatsAxis, CalibrationStatsRequest,
+    FluxScaleRequest, GainSolveCombine, GainSolveInterval, GainSolveMode, GainSolveModelSource,
+    GainSolveRequest, GainType, GencalRequest, RefAntSelector, calibration_stats,
+    execute_apply_from_path_with_options, export_corrected_data, fluxscale, gencal,
+    plan_apply_from_path, solve_calibration, summarize_tables,
 };
 
 /// Stable protocol name advertised by `calibrate --protocol-info`.
@@ -49,6 +49,7 @@ pub fn calibration_task_schema_bundle() -> TaskProviderContract {
             request_schema: request_schema.clone(),
             result_schema: result_schema.clone(),
             operations: calibration_task_operations(),
+            front_end: None,
         },
         components: merged_components([&request_schema, &result_schema]),
         annotations: serde_json::json!({}),
@@ -188,6 +189,14 @@ pub struct ExecuteApplyTaskRequest {
     /// Whether to apply parallactic-angle correction.
     #[serde(default)]
     pub parang: bool,
+    /// Whether to save the flags to the next `applycal_N` flag version before
+    /// a `calflag` run writes, as CASA does (default true).
+    #[serde(default = "default_flagbackup")]
+    pub flagbackup: bool,
+}
+
+fn default_flagbackup() -> bool {
+    true
 }
 
 /// Request for exporting corrected visibilities into an imaging-ready MS.
@@ -345,13 +354,16 @@ impl CalibrationTaskRequest {
             )
             .map(CalibrationTaskResult::PlanApply)
             .map_err(|error| error.to_string()),
-            Self::ExecuteApply(request) => execute_apply_from_path(
+            Self::ExecuteApply(request) => execute_apply_from_path_with_options(
                 &request.measurement_set,
                 &ApplyPlanRequest {
                     selection: request.selection.clone(),
                     apply_mode: request.apply_mode,
                     parang: request.parang,
                     calibration_tables: request.calibration_tables.clone(),
+                },
+                ApplyExecutionOptions {
+                    flag_backup: request.flagbackup,
                 },
             )
             .map(CalibrationTaskResult::Apply)

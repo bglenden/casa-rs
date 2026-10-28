@@ -193,6 +193,21 @@ impl DirectionCoordinate {
         self
     }
 
+    /// Sets the reference pixel, as the coordsys tool's
+    /// `setreferencepixel(type='direction')` does, keeping the reference
+    /// value. Returns `self` for chaining.
+    pub fn with_reference_pixel(mut self, crpix: [f64; 2]) -> Self {
+        self.crpix = crpix;
+        self
+    }
+
+    /// Sets the increments, rad per pixel, as the coordsys tool's
+    /// `setincrement(type='direction')` does. Returns `self` for chaining.
+    pub fn with_increment(mut self, cdelt: [f64; 2]) -> Self {
+        self.cdelt = cdelt;
+        self
+    }
+
     /// Sets the native longitude of the celestial pole (phi_p) in radians
     /// and recomputes the native pole. Returns `self` for chaining.
     pub fn with_longpole(mut self, longpole: f64) -> Self {

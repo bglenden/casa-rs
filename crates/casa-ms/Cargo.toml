@@ -171,6 +171,10 @@ name = "flagging"
 path = "tests/flagging.rs"
 
 [[test]]
+name = "existing_outputs"
+path = "tests/existing_outputs.rs"
+
+[[test]]
 name = "spectral_frame_parity"
 path = "tests/spectral_frame_parity.rs"
 required-features = ["cpp-interop-tests"]

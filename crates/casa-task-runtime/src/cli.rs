@@ -230,11 +230,23 @@ pub fn parse_parameter_cli_overrides(
     Ok(patch)
 }
 
+/// Whether `flag` is one of `bundle`'s own parameter spellings, which win
+/// over the front end's flags of the same spelling (imregrid's `--template`).
+pub(crate) fn surface_declares_flag(bundle: &SurfaceContractBundle, flag: &str) -> bool {
+    cli_flag_binding(bundle, flag).is_some()
+}
+
+/// The binding a flag names, and whether it is a false flag.
+///
+/// The surface's declared flags win. Every parameter is also reachable by its
+/// own name, `--vis` or `--gaintable` (#931), and a binding that declares no
+/// spelling by its dashed name.
 fn cli_flag_binding<'a>(
     bundle: &'a SurfaceContractBundle,
     flag: &str,
 ) -> Option<(&'a SurfaceParameterBinding, bool)> {
-    bundle.surface.bindings().iter().find_map(|binding| {
+    let bindings = bundle.surface.bindings();
+    let declared = bindings.iter().find_map(|binding| {
         let projection = binding.projections.cli.as_ref()?;
         if projection.flags.iter().any(|candidate| candidate == flag) {
             Some((binding, false))
@@ -244,15 +256,23 @@ fn cli_flag_binding<'a>(
             .any(|candidate| candidate == flag)
         {
             Some((binding, true))
-        } else if projection.flags.is_empty()
-            && projection.false_flags.is_empty()
-            && projection.positional.is_none()
-            && flag == format!("--{}", binding.name.replace('_', "-"))
-        {
-            Some((binding, false))
         } else {
             None
         }
+    });
+    declared.or_else(|| {
+        let name = flag.strip_prefix("--")?;
+        bindings
+            .iter()
+            .find(|binding| {
+                binding.name == name
+                    || (binding.projections.cli.as_ref().is_some_and(|projection| {
+                        projection.flags.is_empty()
+                            && projection.false_flags.is_empty()
+                            && projection.positional.is_none()
+                    }) && binding.name.replace('_', "-") == name)
+            })
+            .map(|binding| (binding, false))
     })
 }
 
@@ -356,6 +376,7 @@ mod tests {
                     request_kind: "run".into(),
                     result_kind: Some("run".into()),
                 }],
+                front_end: None,
             },
             components: casa_provider_contracts::merged_components([
                 &request_schema,
@@ -437,9 +458,45 @@ mod tests {
             ParameterValue::String("f64".into())
         );
 
-        let alias = parse_parameter_cli_overrides(&bundle, &["--threshold".into(), "1Jy".into()])
-            .unwrap_err();
-        assert!(alias.contains("unknown imager parameter flag --threshold"));
+        // The parameter's own name reaches the same binding and value.
+        let named =
+            parse_parameter_cli_overrides(&bundle, &["--threshold".into(), "1Jy".into()]).unwrap();
+        let declared =
+            parse_parameter_cli_overrides(&bundle, &["--threshold-jy".into(), "1Jy".into()])
+                .unwrap();
+        assert_eq!(named, declared);
+        let unknown =
+            parse_parameter_cli_overrides(&bundle, &["--thresh".into(), "1Jy".into()]).unwrap_err();
+        assert!(unknown.contains("unknown imager parameter flag --thresh"));
+    }
+
+    #[test]
+    fn every_parameter_is_reachable_by_its_own_name() {
+        let catalog = casa_provider_contracts::builtin_surface_catalog().unwrap();
+        for surface in &catalog.surfaces {
+            let bundle = casa_provider_contracts::builtin_surface_bundle(surface.id()).unwrap();
+            for binding in bundle.surface.bindings() {
+                let flag = format!("--{}", binding.name);
+                let (found, _) = cli_flag_binding(&bundle, &flag)
+                    .unwrap_or_else(|| panic!("{}: {flag} names nothing", surface.id()));
+                assert_eq!(found.name, binding.name, "{}: {flag}", surface.id());
+            }
+        }
+
+        let bundle = casa_provider_contracts::builtin_surface_bundle("applycal").unwrap();
+        let patch = parse_parameter_cli_overrides(
+            &bundle,
+            &["--vis".into(), "target.ms".into(), "--no-flagbackup".into()],
+        )
+        .unwrap();
+        assert_eq!(
+            patch.values["vis"],
+            ParameterValue::Array(vec![ParameterValue::String("target.ms".into())])
+        );
+        let declared =
+            parse_parameter_cli_overrides(&bundle, &["--ms".into(), "target.ms".into()]).unwrap();
+        assert_eq!(declared.values["vis"], patch.values["vis"]);
+        assert_eq!(patch.values["flagbackup"], ParameterValue::Bool(false));
     }
 
     #[test]
