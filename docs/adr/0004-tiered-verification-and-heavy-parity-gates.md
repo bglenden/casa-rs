@@ -6,6 +6,10 @@ Truth class: normative
 Supersedes:
 Superseded by:
 
+Amended: 2026-10-28, on owner direction (#931, #975): pull-request and `main`
+CI also run the suite-install gate, as an informational check that does not
+block merge.
+
 ## Context
 
 The repo has a broad workspace test surface, editable and wheel-based Python
@@ -25,10 +29,10 @@ The repo uses tiered verification:
 - Python-facing scripts resolve Python `>=3.10` through a repo-level resolver instead of assuming the shell's `python3`
 - `scripts/test-release-cpp-interop.sh` is the blocking release gate for Rust/C++ interop suites and remains outside the default `cargo test --workspace` path
 - `scripts/test-release-perf.sh` is informational release evidence by default; perf thresholds only become blocking when `CASA_RS_ENFORCE_PERF=1`
-- `scripts/test-install-suite.sh` is a release-oriented heavy gate kept outside `just verify` and run by the default local release path
+- `scripts/test-install-suite.sh` is a heavy gate kept outside `just verify`; it runs in the default local release path and, with `--hide-checkout`, in every CI run as the informational `suite_install` job, whose failure does not block merge
 - `scripts/run-coverage.sh --ci-like` is a release/tag-oriented heavy gate kept outside `just verify` and the default local release path; it runs in version-tag CI and by `scripts/release.sh --full`
-- GitHub pull requests run the lighter CI subset, while version-tag pushes run the release-oriented CI gates
-- `scripts/ci-local.sh` mirrors that split with explicit `pr` and `tag` reproduction commands instead of folding smoke or coverage work back into the default PR path
+- GitHub pull requests run the lighter CI subset and the informational suite-install gate, while version-tag pushes also run the release-oriented smoke and coverage gates
+- `scripts/ci-local.sh` mirrors that split with explicit `pr` and `tag` reproduction commands; `pr` runs the suite-install gate, as pull-request CI does, and smoke and coverage stay out of the default PR path
 - `scripts/test-slow.sh` is the explicit opt-in gate for heavy CASA parity suites
 - `scripts/run-coverage.sh --ci-like` remains the canonical coverage command because it matches GitHub Actions behavior more closely than ad hoc local runs
 
@@ -62,7 +66,7 @@ Neutral / tradeoffs:
 This decision is enforced by:
 - tests: default and slow suites stay separated by command surface
 - lint/import/dependency rules: `justfile` and release/CI scripts define the named gate boundaries
-- CI checks: GitHub pull requests run the lighter subset; version tags additionally run `scripts/test-smoke.sh`, `scripts/test-install-suite.sh`, and `scripts/run-coverage.sh --ci-like`
+- CI checks: GitHub pull requests run the lighter subset, whose `lint_test`, `python_package` and `docs` jobs are required for merge, and the informational `suite_install` job (`scripts/test-install-suite.sh --hide-checkout`), which is not; version tags additionally run `scripts/test-smoke.sh` and `scripts/run-coverage.sh --ci-like`
 - review trigger: stop for review when moving heavy interop/parity work into the default loop or weakening named gates
 - none / guidance only:
 
@@ -71,7 +75,7 @@ This decision is enforced by:
 Suspect drift if:
 - C++ interop or slow parity suites re-enter the default `cargo test --workspace` path
 - wheel-install or demo smoke checks re-enter `just verify` without an explicit decision
-- release-only install or coverage gates re-enter `just verify` without an explicit decision
+- the install or coverage gates re-enter `just verify` without an explicit decision
 - Python package checks start depending on ambient shell `python3` resolution again
 - contributors start using ad hoc one-off command bundles instead of the named repo gates
 - coverage expectations diverge from the CI-like coverage script
