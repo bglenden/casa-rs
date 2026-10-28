@@ -20,11 +20,11 @@ use std::path::Path;
 use std::sync::Arc;
 
 use casa_observation::{
-    AccessRequest, AntennaId, BoundCursor, Catalogue, DataGroupEntry, Estimate, FieldSelection,
-    GroupKey, Grouping, NaturalBlocks, Observation, ObservationError, ObservationId,
-    OrderedBaseline, PartitionEntry, PartitionEstimate, PartitionId, PointingRequest,
-    PointingSeries, Receptors, ResolvedRequest, Roles, TimeBaselineGrid, Traversal, WeightRequest,
-    WeightRule, WeightSource, times_per_batch,
+    AccessRequest, AntennaId, BoundCursor, Catalogue, DataGroupEntry, Estimate, FieldId,
+    FieldSelection, GroupKey, Grouping, NaturalBlocks, Observation, ObservationError,
+    ObservationId, OrderedBaseline, PartitionEntry, PartitionEstimate, PartitionId,
+    PointingRequest, PointingSeries, Receptors, ResolvedRequest, Roles, ScanId, TimeBaselineGrid,
+    Traversal, WeightRequest, WeightRule, WeightSource, times_per_batch,
 };
 use casa_tables::{RequiredScalarColumnDestination, RequiredScalarColumnValuesMut};
 use casa_types::measures::{EpochRef, MjdHighPrec};
@@ -259,6 +259,32 @@ impl Msv2Observation {
     #[must_use]
     pub fn data_description_id(&self, id: PartitionId) -> u32 {
         self.partitions[id.0 as usize].data_description_id
+    }
+
+    /// The intents a `STATE::OBS_MODE` lists, as the catalogue gives a
+    /// partition's ([`PartitionEntry::intents`]): split at commas, trimmed,
+    /// sorted and deduplicated.
+    #[must_use]
+    pub fn mode_intents(mode: &str) -> Vec<String> {
+        catalogue::intents(mode)
+    }
+
+    /// Bytes the opening's index holds while the observation is open: each
+    /// partition's grid, a MAIN row number per cell with its time and
+    /// baseline tables.
+    #[must_use]
+    pub fn index_bytes(&self) -> usize {
+        self.partitions
+            .iter()
+            .map(|partition| {
+                let grid = &partition.grid;
+                grid.cells.capacity() * size_of::<u32>()
+                    + grid.times_s.capacity() * size_of::<f64>()
+                    + grid.field_per_time.capacity() * size_of::<FieldId>()
+                    + grid.scan_per_time.capacity() * size_of::<ScanId>()
+                    + grid.baselines.capacity() * size_of::<OrderedBaseline>()
+            })
+            .sum()
     }
 
     /// The MAIN row partition `id` holds at `time_s` (MAIN `TIME`, seconds

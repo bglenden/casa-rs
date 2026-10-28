@@ -40,16 +40,26 @@ use super::images::{pass_images, prepare_model};
 use super::measurement::{
     DomainOperator, KernelAdmission, domain_operator, native_spacing_hz, selected_correlations,
 };
+use super::observation_source::{BatchRoute, ObservationSource};
 use super::setup::{self, RefreshDemand, SetupDemand, WorkerChoice};
 use super::source::{MeasurementSetSource, PlaneBounds};
 use super::visibility_write::{VisibilityWriteTarget, VisibilityWriter};
 use super::{ImagingError, trace};
 use crate::{AwCatalogDeployment, NativeMinorCycleOutcome, NativeMinorCycleStopReason};
 
+/// What a run's passes read the visibilities from
+/// ([`crate::SourceRoute`]).
+pub(crate) enum SourceInput<'a> {
+    /// The selected MAIN rows, through their admitted access.
+    SelectedRows(ResolvedSelectedObservationAccess),
+    /// The observation's batches.
+    ObservationBatches(&'a BatchRoute),
+}
+
 /// What one native imaging run needs besides the compiled problem.
 pub(crate) struct ImagingInputs<'a> {
     pub(crate) problem: &'a CompiledProblem,
-    pub(crate) access: ResolvedSelectedObservationAccess,
+    pub(crate) source: SourceInput<'a>,
     pub(crate) masks: ImageDomainReconstructionMaskPlans,
     pub(crate) image_response: Option<MinorCycleImageResponse>,
     pub(crate) visibility_write: Option<VisibilityWriteTarget>,
@@ -89,6 +99,13 @@ pub(crate) struct ImagingOutcome {
     pub(crate) retained: Reservation,
 }
 
+/// A run's source before its operators are built: the opened selection,
+/// or the batch route.
+enum PendingSource<'a> {
+    SelectedRows(casa_ms::BoundSelectedObservation),
+    ObservationBatches(&'a BatchRoute),
+}
+
 /// Fixed parts of one run shared by every pass.
 struct Run<'a> {
     problem: &'a CompiledProblem,
@@ -98,7 +115,7 @@ struct Run<'a> {
     charts: Vec<Chart>,
     /// The image domains' images from their charts.
     stitch: ChartStitch,
-    source: MeasurementSetSource<'a>,
+    source: Box<dyn BoundedSource + 'a>,
     weighting: WeightingGeneration,
     /// The charge of the weighting's density grid, held with it.
     _weights: Reservation,
@@ -482,12 +499,20 @@ impl<'a> Run<'a> {
         let problem = inputs.problem;
         let backend = inputs.backend;
         let correlations = selected_correlations(problem)?;
-        let selected = inputs
-            .access
-            .into_deferred()
-            .open(problem)
-            .map_err(|error| ImagingError::Observation(Box::new(error)))?;
-        let dish_classes = selected.antenna_response_classes();
+        let (pending, dish_classes) = match inputs.source {
+            SourceInput::SelectedRows(access) => {
+                let selected = access
+                    .into_deferred()
+                    .open(problem)
+                    .map_err(|error| ImagingError::Observation(Box::new(error)))?;
+                let classes = selected.antenna_response_classes();
+                (PendingSource::SelectedRows(selected), classes)
+            }
+            SourceInput::ObservationBatches(route) => (
+                PendingSource::ObservationBatches(route),
+                route.dish_classes(),
+            ),
+        };
         let (host, policy) = (inputs.host, inputs.policy);
         // The passes' workers hold the kernels: at most the policy's.
         let ceiling = policy.cores(&host);
@@ -522,16 +547,27 @@ impl<'a> Run<'a> {
         }
         let cancel = inputs.cancel;
         let channel_local = matches!(domains[0].operator.basis(), Basis::ChannelLocal { .. });
-        let mut source = MeasurementSetSource::new(
-            problem,
-            selected,
-            domains[0].operator.basis().planes(),
-            plane_bounds(problem),
-            domains
-                .iter()
-                .any(|domain| domain.operator.cf().pointing_ramp()),
-            dish_classes,
-        );
+        let planes = domains[0].operator.basis().planes();
+        let pointing_ramp = domains
+            .iter()
+            .any(|domain| domain.operator.cf().pointing_ramp());
+        let mut source: Box<dyn BoundedSource + 'a> = match pending {
+            PendingSource::SelectedRows(selected) => Box::new(MeasurementSetSource::new(
+                problem,
+                selected,
+                planes,
+                plane_bounds(problem),
+                pointing_ramp,
+                dish_classes,
+            )),
+            PendingSource::ObservationBatches(route) => Box::new(ObservationSource::new(
+                problem,
+                route,
+                planes,
+                plane_bounds(problem),
+                pointing_ramp,
+            )),
+        };
         let stitch = ChartStitch::new(problem, charts.clone());
         let visibility_write_bytes = inputs
             .visibility_write
@@ -600,7 +636,7 @@ impl<'a> Run<'a> {
         let (weighting, weights) = setup::weighting(
             problem,
             &domains[0],
-            &mut source,
+            source.as_mut(),
             streaming,
             &cancel,
             (&host, &policy),
@@ -953,7 +989,7 @@ impl<'a> Run<'a> {
             let work = run_row_work_pass(
                 &domains,
                 &self.weighting,
-                &mut self.source,
+                self.source.as_mut(),
                 team,
                 &self.cancel,
             )?;
@@ -1048,7 +1084,7 @@ impl<'a> Run<'a> {
         });
         Ok(run_major_cycle(
             &pass,
-            &mut self.source,
+            self.source.as_mut(),
             team,
             &self.cancel,
             &mut |chart, images| {

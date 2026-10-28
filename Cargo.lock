@@ -316,6 +316,7 @@ dependencies = [
  "casa-ms",
  "casa-observation",
  "casa-provider-contracts",
+ "casa-tables",
  "casa-task-runtime",
  "casa-test-support",
  "casa-types",

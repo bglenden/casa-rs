@@ -1,6 +1,6 @@
 # Imaging on the shared observation batches (M2 packet c)
 
-Status: accepted by the owner on 2026-10-27 (section 3); no code changes yet
+Status: accepted by the owner on 2026-10-27 (section 3); steps 1–3 landed, step 4 in progress (#932)
 Truth class: accepted design
 Date: 2026-10-27
 Repository baseline: `84824df`
@@ -102,6 +102,50 @@ on MSv4.
 The producer thread, two block slots, the worker team, the chunk planner and
 admission stay as they are. One copy (store to batch buffers) plus the pack
 replaces the two copies of today.
+
+*As landed in step 4* (#932): `ObservationSource`
+(`casa-imaging-application/src/imaging/observation_source/`) is the batch
+route, chosen per run by `ImagingRequest::source_route`, a run option that
+no imager parameter names. It sees only `&dyn Observation`.
+- **Selection.** Compile still resolves the request against the
+  MeasurementSet and walks MAIN (2.4 is not done). `compile::partitions`
+  maps that selection to the partitions of the same MeasurementSet's MSv2
+  adapter: a partition is read when its data description is selected and,
+  under an intent selection, its intents are a selected state's. Its
+  intents are its `OBS_MODE` split at commas, so two modes listing the same
+  intents select alike, where CASA matches the whole string (2.3). Fields
+  go in the request. The UV distance is tested per sample, on stored UVW
+  and in wavelengths of the window's `REF_FREQUENCY`, by the rule today's
+  route now shares (`UvSelection::holds`). This module is the batch route's
+  only store-specific code; it goes when compile resolves the selection
+  against the catalogue.
+- **Delivery.** Each wave binds one request per partition in turn, and a
+  batch holds whole times. Padding (every flag set and every weight not
+  finite) and the samples the UV selection excludes are dropped. Samples
+  the store flags, `FLAG_ROW` included, are kept and given geometry, and a
+  sample whose every routed cell is flagged carries the row flag. A
+  non-finite input fails as today, naming the spectral window, time,
+  baseline, channel and correlation.
+- **Restricted waves.** A partition's channel window is bound before its
+  batches are read, from the range of output-frame conversion factors its
+  selected (field, time)s span (one payload-free traversal at the first
+  restricted wave). It holds every channel today's per-block windows hold;
+  the extra channels reach no plane of the wave.
+- **Batches and admission.** Each partition's times per batch are sized as
+  today's rows per block: at least one time of each partition, and growth
+  up to the bootstrap budget or the source's share of a quarter of free
+  memory. The charge holds the largest batch with its decode scratch, its
+  geometry, the parallactic cache at every selected (time, field), a
+  batch's pointing when geometry reads it (64 MiB), the channel-window
+  survey, the MSv2 opening index and the passes' blocks. Counting law:
+  `the_observation_batch_route_stays_within_its_admission`.
+- **Refused** until a later step: writing a model or corrected column
+  (step 5); a field with `EPHEMERIS_ID` (#942); an ephemeris-table phase
+  centre (batch geometry follows a body Measures names, and a table
+  directory named like a body would be followed as the body); `FLOAT_DATA`;
+  several MeasurementSets; and a `WEIGHT_SPECTRUM` that only some selected
+  rows define (the MSv2 adapter takes the column from its first cell,
+  today's route from every selected row).
 
 ### 2.2 Geometry
 
