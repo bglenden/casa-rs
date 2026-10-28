@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["CasarsError"],"fn":["run_with_cli_args"]};

@@ -823,17 +823,19 @@
 
 
 <h1 id="install">Install<a class="headerlink" href="#install" title="Permanent link">&para;</a></h1>
-<p><code>casa-rs</code> currently supports an installer-driven suite install on macOS
-<code>arm64</code>.</p>
+<p><code>casa-rs</code> supports an installer-driven suite install on macOS <code>arm64</code> and
+Linux <code>x86_64</code>.</p>
 <p>The installer published with each release:</p>
 <ol>
 <li>downloads the matching suite bundle</li>
 <li>installs it into a versioned suite root</li>
 <li>creates a suite-local Python environment from the bundled wheel</li>
-<li>updates stable/rc channel links plus optional generic launcher links</li>
+<li>updates the stable/rc channel links, and links the suite's task
+   executables into <code>~/.local/bin</code></li>
 </ol>
-<p>That keeps the <code>casars</code> task host, the standalone executables, and the Python package
-behaving as one installed suite.</p>
+<p>That keeps the task executables and the Python package behaving as one
+installed suite: the suite's Python starts the executables in its own
+suite's <code>bin/</code>.</p>
 <h2 id="macos-prerequisites">macOS prerequisites<a class="headerlink" href="#macos-prerequisites" title="Permanent link">&para;</a></h2>
 <p>Install the Apple command-line tools and a supported Python:</p>
 <div class="codehilite"><pre><span></span><code>xcode-select<span class="w"> </span>--install
@@ -853,11 +855,18 @@ curl<span class="w"> </span>-fsSL<span class="w"> </span><span class="s2">"https
 <li><code>~/.local/opt/casa-rs/&lt;version&gt;</code></li>
 <li><code>~/.local/opt/casa-rs/stable</code></li>
 <li><code>~/.local/opt/casa-rs/current</code></li>
-<li><code>~/.local/bin/casars</code></li>
-<li><code>~/.local/bin/calibrate</code></li>
-<li><code>~/.local/bin/casars-stable</code></li>
-<li><code>~/.local/bin/calibrate-stable</code></li>
+<li>for each task executable in the suite's <code>bin/</code>, such as <code>calibrate</code>,
+  <code>msexplore</code>, <code>imexplore</code>, <code>mstransform</code> and <code>casars-imager</code>:
+  <code>~/.local/bin/&lt;command&gt;</code> and <code>~/.local/bin/&lt;command&gt;-stable</code></li>
 </ul>
+<p><code>feather</code>, <code>immath</code> and <code>impv</code> are not linked into <code>~/.local/bin</code>, and there
+is no <code>split</code> command: they are CASA names that are also system commands
+(<code>split</code> is a coreutil) or generic words. Run split as <code>mstransform split</code>;
+Python starts all of them from the suite's <code>bin/</code>. A link in <code>~/.local/bin</code>
+that points into the install root but no longer resolves, such as one to a
+command a newer suite does not have, is removed. A file of your own, or a
+link elsewhere, already at one of these names is left in place, and the
+installer says so.</p>
 <h2 id="install-a-release-candidate-side-by-side">Install a release candidate side by side<a class="headerlink" href="#install-a-release-candidate-side-by-side" title="Permanent link">&para;</a></h2>
 <p>Release candidates use the same installer, but by default they update only the
 <code>rc</code> channel links and do not take over <code>current</code>:</p>
@@ -870,14 +879,14 @@ curl<span class="w"> </span>-fsSL<span class="w"> </span><span class="s2">"https
 <ul>
 <li><code>~/.local/opt/casa-rs/&lt;version&gt;</code></li>
 <li><code>~/.local/opt/casa-rs/rc</code></li>
-<li><code>~/.local/bin/casars-rc</code></li>
-<li><code>~/.local/bin/calibrate-rc</code></li>
+<li><code>~/.local/bin/&lt;command&gt;-rc</code> for each command, such as
+  <code>~/.local/bin/calibrate-rc</code></li>
 </ul>
 <p>If you want the RC install to become the default suite immediately, add
 <code>--activate</code>.</p>
 <h2 id="put-the-suite-on-path">Put the suite on PATH<a class="headerlink" href="#put-the-suite-on-path" title="Permanent link">&para;</a></h2>
-<p>The installer creates launchers in <code>~/.local/bin</code>. Add that directory to your
-shell startup file such as <code>~/.zshrc</code>:</p>
+<p>The installer links the suite's commands into <code>~/.local/bin</code>. Add that
+directory to your shell startup file such as <code>~/.zshrc</code>:</p>
 <div class="codehilite"><pre><span></span><code><span class="nb">export</span><span class="w"> </span><span class="nv">PATH</span><span class="o">=</span><span class="s2">"</span><span class="nv">$HOME</span><span class="s2">/.local/bin:</span><span class="nv">$PATH</span><span class="s2">"</span>
 </code></pre></div>
 
@@ -891,14 +900,20 @@ shell startup file such as <code>~/.zshrc</code>:</p>
 python<span class="w"> </span>-c<span class="w"> </span><span class="s2">"import casars; print(casars.__version__)"</span>
 </code></pre></div>
 
-<p>In the standard suite layout, <code>casars.tasks.calibrate</code> will automatically find
-the sibling <code>calibrate</code> binary. To target a different installed suite
-explicitly, set:</p>
+<p>The suite's Python starts each task's executable from its own suite: in an
+install at <code>~/.local/opt/casa-rs/&lt;version&gt;</code>, <code>casars.tasks.gaincal(...)</code>
+runs <code>~/.local/opt/casa-rs/&lt;version&gt;/bin/calibrate</code>. To target a different
+installed suite explicitly, set:</p>
 <div class="codehilite"><pre><span></span><code><span class="nb">export</span><span class="w"> </span><span class="nv">CASARS_SUITE_ROOT</span><span class="o">=</span><span class="s2">"</span><span class="nv">$HOME</span><span class="s2">/.local/opt/casa-rs/&lt;version&gt;"</span>
 </code></pre></div>
 
-<p>The Python binary lookup and protocol-compatibility rules are documented in
-<a href="../python/versioning/">Python Compatibility</a>.</p>
+<p>To run one task from another file, set its override variable, such as
+<code>CASARS_CALIBRATE_BIN</code> or <code>CASARS_IMAGER_BIN</code>. A wheel installed outside a
+suite, such as one from PyPI, needs <code>CASARS_SUITE_ROOT</code> (or the task's
+override) to run tasks; its in-process tools (<code>casars.data.Image</code>,
+<code>casars.data.Table</code>, <code>casars.tools</code>) need no executables.</p>
+<p>The Python executable lookup and protocol-compatibility rules are documented
+in <a href="../python/versioning/">Python Compatibility</a>.</p>
 <h2 id="stable-and-rc-installs">Stable and RC installs<a class="headerlink" href="#stable-and-rc-installs" title="Permanent link">&para;</a></h2>
 <p>Stable releases and release candidates can live on the same machine at the same
 time:</p>
@@ -908,12 +923,13 @@ time:</p>
 ~/.local/opt/casa-rs/rc -&gt; ~/.local/opt/casa-rs/0.16.0-rc1
 </code></pre></div>
 
-<p>The installer also maintains channel-specific commands:</p>
+<p>The installer also maintains channel-specific commands, one per command and
+channel, such as:</p>
 <ul>
-<li><code>~/.local/bin/casars-stable</code></li>
 <li><code>~/.local/bin/calibrate-stable</code></li>
-<li><code>~/.local/bin/casars-rc</code></li>
 <li><code>~/.local/bin/calibrate-rc</code></li>
+<li><code>~/.local/bin/casars-imager-stable</code></li>
+<li><code>~/.local/bin/casars-imager-rc</code></li>
 </ul>
 <p>Switch the default suite by repointing <code>~/.local/opt/casa-rs/current</code>,
 re-running the installer with <code>--activate</code>, or keep multiple installs in place
@@ -927,6 +943,12 @@ Rust and build locally:</p>
 cargo<span class="w"> </span>build<span class="w"> </span>--release<span class="w"> </span>--workspace<span class="w"> </span>--bins
 </code></pre></div>
 
+<p>A Python package installed from the checkout (<code>pip install -e
+crates/casars-python</code>) runs the newest <code>debug</code> or <code>release</code> build of each
+task executable in that checkout's <code>target/</code> (or <code>$CARGO_TARGET_DIR</code>), unless
+<code>CASARS_SUITE_ROOT</code> or the task's override is set. A task whose executable
+is not built names the <code>cargo build -p &lt;package&gt; --bin &lt;executable&gt;</code> that
+builds it.</p>
 <p>To package a local release-style bundle, run:</p>
 <div class="codehilite"><pre><span></span><code>scripts/build-python-dist.sh<span class="w"> </span>dist/python
 scripts/package-suite-bundle.sh<span class="w"> </span><span class="se">\</span>

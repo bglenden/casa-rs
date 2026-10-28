@@ -778,12 +778,13 @@
 
 <h1 id="documentation-index">Documentation Index<a class="headerlink" href="#documentation-index" title="Permanent link">&para;</a></h1>
 <p>Truth class: current descriptive
-Last reality check: 2026-10-20
+Last reality check: 2026-10-28
 Verification: just docs-check</p>
 <p>This directory holds stable project documentation.</p>
 <h2 id="user-surfaces">User Surfaces<a class="headerlink" href="#user-surfaces" title="Permanent link">&para;</a></h2>
-<p>casa-rs is used from the Python package <code>casars</code> and the headless <code>casars</code>
-task host (<code>casars run</code>, <code>casars params</code>); see
+<p>casa-rs is used from the Python package <code>casars</code> and from the task
+executables of the application catalog (such as <code>calibrate gaincal ...</code>),
+which Python also starts for its task calls; see
 <a href="adr/0017-python-first-surface/">ADR-0017</a>. All computation is in Rust,
 and the Python package is only its interface; see
 <a href="adr/0018-rust-computes-python-is-the-interface/">ADR-0018</a>.</p>

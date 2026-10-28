@@ -635,13 +635,14 @@
   surfaces.</li>
 </ul>
 <p>Each takes the surface's parameters as keyword arguments and returns a
-<code>TaskCompletion</code>. The call runs through <code>casars run</code>, which starts the
-<code>calibrate</code> binary with the surface as its first word (<code>calibrate gaincal</code>)
-and sends one <code>TaskRunRequest</code> on <code>--json-run -</code>: the values the call set,
-resolved inside the binary against the same contract as its own command line
-(#931). Python projects no flags and builds no Rust request. A refused value
-names its parameter; a failed run raises <code>TaskExecutionError</code> when
-<code>check=True</code>.</p>
+<code>TaskCompletion</code>. The call starts the <code>calibrate</code> executable directly, with
+the surface as its first word (<code>calibrate gaincal</code>), and sends one
+<code>TaskRunRequest</code> on <code>--json-run -</code>: the values the call set, resolved inside
+the executable against the same contract as its own command line (#931). Its
+log lines reach <code>sys.stderr</code> as they arrive. Python projects no flags and
+builds no Rust request. A refused value names its parameter, and a run that
+does not succeed raises <code>TaskExecutionError</code>, whose <code>.completion</code> has its
+<code>status</code>, <code>message</code> and <code>parameter</code>.</p>
 <p><code>gaintables</code> and <code>summary_paths</code> are lists of calibration-table paths: a list,
 or one comma-separated string. The per-table controls (<code>gainfield</code>, <code>interp</code>,
 <code>spwmap</code>, <code>calwt</code>) are <code>;</code>-separated strings aligned to <code>gaintables</code>, one

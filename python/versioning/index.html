@@ -740,22 +740,33 @@ resolution. An explicit source profile
 is never overwritten without an explicit save.</p>
 <h2 id="task-runner-compatibility">Task-runner compatibility<a class="headerlink" href="#task-runner-compatibility" title="Permanent link">&para;</a></h2>
 <p>Python has one task transport: every generated <code>casars.tasks.&lt;task&gt;</code> callable
-delegates to <code>casars run</code>, which resolves the provider through the canonical
-application catalog and <code>casa-task-runtime</code>. An explicit <code>binary=</code> argument
-selects the exact <code>casars</code> runner file. Otherwise <code>CASARS_LAUNCH_MODE</code> selects
-exactly one policy:</p>
-<ul>
-<li><code>installed_suite</code> (the default) uses the catalog entry's override variable,
-  or the single path <code>&lt;CASARS_SUITE_ROOT&gt;/bin/&lt;executable&gt;</code>. Without an explicit
-  suite root, <code>~/.local/opt/casa-rs/current</code> is the root.</li>
-<li><code>development_workspace</code> uses the single path
-  <code>&lt;CASARS_DEVELOPMENT_WORKSPACE&gt;/target/debug/&lt;executable&gt;</code>.</li>
-</ul>
-<p>A missing runner is an error in the selected mode. Python does not inspect the
-current directory, package ancestors, neighboring build profiles, or <code>PATH</code>,
-and it never switches launch modes automatically. The runner validates the
-provider contract and invocation before execution; Python does not maintain a
-second protocol descriptor, provider schema, or compatibility handshake.</p>
+and <code>casars.tasks.run</code> start the task's own executable, named by the
+canonical application catalog, with its surface's fixed arguments and
+<code>--json-run -</code>. One Rust resolver
+(<code>casa_provider_contracts::resolve_task_executable</code>, through <code>casars._core</code>)
+finds that executable. The first step that applies decides:</p>
+<ol>
+<li>the task's catalog override variable, <code>CASARS_&lt;APP&gt;_BIN</code> (for example
+   <code>CASARS_IMAGER_BIN</code> or <code>CASARS_CALIBRATE_BIN</code>), names the file;</li>
+<li>a suite root holds it at <code>&lt;root&gt;/bin/&lt;executable&gt;</code>: <code>CASARS_SUITE_ROOT</code>,
+   or else the installed suite the Python package belongs to (the
+   installer's environment is <code>&lt;suite&gt;/python</code>, beside <code>&lt;suite&gt;/bin</code> and
+   <code>bundle-manifest.json</code>);</li>
+<li>a development checkout: the newest <code>debug</code> or <code>release</code> build of the
+   executable under the workspace the package was built from, in
+   <code>$CARGO_TARGET_DIR</code> or <code>target/</code>.</li>
+</ol>
+<p>A step that applies but lacks the file raises <code>TaskBinaryNotFoundError</code>
+naming what it lacked; it never falls through to a later step, so an
+installed suite never runs a checkout's build. A missing development build is
+reported with the <code>cargo build -p &lt;package&gt; --bin &lt;executable&gt;</code> that makes
+it. Python does not search the current directory or <code>PATH</code>, and nothing runs
+through <code>cargo</code>. A wheel installed outside a suite, such as one from PyPI,
+runs tasks only with <code>CASARS_SUITE_ROOT</code> or the task's override set; its
+in-process <code>casars.data</code>, <code>casars.tools</code> and <code>casars.simutil</code> need no
+executables. The executable validates the provider contract and request
+before execution; Python does not maintain a second protocol descriptor,
+provider schema, or compatibility handshake.</p>
 <p>Release tags also build and publish Python package artifacts separately from the
 Rust binaries:</p>
 <ul>
@@ -766,8 +777,8 @@ Rust binaries:</p>
 <p>That means Python package compatibility has two layers:</p>
 <ol>
 <li>package-version compatibility with the published wheel or sdist</li>
-<li>runtime contract compatibility with the resolved <code>casars</code> suite and its
-   catalog-owned providers</li>
+<li>runtime contract compatibility with the resolved suite and its
+   catalog-owned task executables</li>
 </ol>
 <p>The <code>casars.data</code> surface has its own narrower stability boundary in v1:</p>
 <ul>
@@ -798,25 +809,37 @@ simutil</code>). It is not a CASA tool and is not in the bundle.</p>
 <p>The installer-managed suite install layout behind steps 4-6 is:</p>
 <div class="codehilite"><pre><span></span><code>~/.local/opt/casa-rs/&lt;version&gt;/
   bin/
-    casars
     calibrate
+    casars-imager
+    imexplore
+    mstransform
+    ...                 (every task executable of the catalog)
   python/
     ...
   wheels/
     ...
+  bundle-manifest.json
 ~/.local/opt/casa-rs/stable -&gt; ~/.local/opt/casa-rs/&lt;stable-version&gt;
 ~/.local/opt/casa-rs/rc -&gt; ~/.local/opt/casa-rs/&lt;rc-version&gt;
 ~/.local/opt/casa-rs/current -&gt; ~/.local/opt/casa-rs/&lt;version&gt;
 ~/.local/bin/
-  casars -&gt; ~/.local/opt/casa-rs/current/bin/casars
   calibrate -&gt; ~/.local/opt/casa-rs/current/bin/calibrate
-  casars-stable -&gt; ~/.local/opt/casa-rs/stable/bin/casars
   calibrate-stable -&gt; ~/.local/opt/casa-rs/stable/bin/calibrate
-  casars-rc -&gt; ~/.local/opt/casa-rs/rc/bin/casars
   calibrate-rc -&gt; ~/.local/opt/casa-rs/rc/bin/calibrate
+  ...                   (the same links for each executable in bin/,
+                         except feather, immath and impv)
 </code></pre></div>
 
-<p>That lets Python, <code>casars</code>, and standalone executables behave as one installed suite while keeping <code>~/.local/bin</code> as the only <code>PATH</code> entry users generally need.</p>
+<p>Each executable in the suite's <code>bin/</code> gets <code>&lt;command&gt;-&lt;channel&gt;</code> and, for
+the active suite, <code>&lt;command&gt;</code> in <code>~/.local/bin</code>, except the CASA names that
+are system commands or generic words: <code>feather</code>, <code>immath</code> and <code>impv</code> stay
+off <code>PATH</code>, as <code>split</code> would (it is a coreutil; <code>mstransform split</code> runs
+CASA's split). Python still starts them from the suite's <code>bin/</code>. A dangling
+link into the install root, such as one to a command a newer suite no longer
+has, is removed. A file of the user's, or a link elsewhere, at one of these
+names is left in place, with a warning. That lets Python and the task executables behave as one
+installed suite while keeping <code>~/.local/bin</code> as the only <code>PATH</code> entry users
+generally need.</p>
 
 
 

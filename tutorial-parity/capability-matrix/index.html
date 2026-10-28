@@ -663,7 +663,7 @@
 
 <h1 id="casa-tutorial-capability-matrix">CASA Tutorial Capability Matrix<a class="headerlink" href="#casa-tutorial-capability-matrix" title="Permanent link">&para;</a></h1>
 <p>Truth class: current descriptive
-Last reality check: 2026-07-09
+Last reality check: 2026-10-28
 Verification: just docs-check</p>
 <p>Work issue: #137
 Child issue: #116</p>
@@ -742,13 +742,13 @@ enforced by <code>scripts/check-no-casa-runtime.py</code> in <code>scripts/arch-
 </tr>
 <tr>
 <td><code>plotcal</code></td>
-<td>partial</td>
-<td><code>casa-calibration</code></td>
-<td><code>calibrate</code> diagnostic plots</td>
-<td>CASA task-name compatibility is not a target; VLA pages need gain/bandpass/fluxscale diagnostic plot presets and export parity</td>
-<td>CASA <code>plotcal</code> plots or exported caltable plot data where available</td>
-<td>calibration plot timing on VLA tutorial caltables</td>
-<td>#122, #128</td>
+<td>external (retired)</td>
+<td>none</td>
+<td>none; casa-rs does not provide <code>plotcal</code>, and its <code>casars-plotcal</code> provider is retired</td>
+<td>CASA 6 has no <code>plotcal</code> (it plots calibration tables with <code>plotms</code>), so it is not an implementation target; casa-rs inspects calibration tables with <code>calibrate --mode stats</code> and <code>--mode summary</code></td>
+<td>none</td>
+<td>none</td>
+<td>#931</td>
 </tr>
 <tr>
 <td><code>tclean</code> MFS</td>

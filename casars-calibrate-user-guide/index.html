@@ -662,8 +662,8 @@
 
 
 <h1 id="calibration-tasks-user-guide">Calibration Tasks User Guide<a class="headerlink" href="#calibration-tasks-user-guide" title="Permanent link">&para;</a></h1>
-<p>This guide shows how to run the casa-rs calibration tasks from the <code>casars</code>
-command line and from Python.</p>
+<p>This guide shows how to run the casa-rs calibration tasks from the
+<code>calibrate</code> command line and from Python.</p>
 <h2 id="the-calibration-surfaces">The calibration surfaces<a class="headerlink" href="#the-calibration-surfaces" title="Permanent link">&para;</a></h2>
 <p>All calibration work runs through one provider executable, <code>calibrate</code>. The
 application catalog exposes it as these task surfaces:</p>
@@ -674,12 +674,11 @@ application catalog exposes it as these task surfaces:</p>
 <li><code>gaincal</code>, <code>bandpass</code>, <code>applycal</code>, <code>fluxscale</code>, <code>gencal</code>: CASA-named
   surfaces that run <code>calibrate</code> with a fixed mode</li>
 </ul>
-<p>Every surface is a one-shot task. Run it with <code>casars run</code>, which resolves a
-parameter profile (Defaults, Last, Last Successful, or a TOML file), applies
-overrides, saves Last state, and launches the provider. The <code>calibrate</code>
-binary takes the same flags and sources itself, with the surface as its first
-word (<code>calibrate bandpass --ms ...</code>; <code>calibrate</code> alone is the general
-surface), and keeps its own Last. See
+<p>Every surface is a one-shot task. Run it as <code>calibrate &lt;surface&gt;</code>
+(<code>calibrate bandpass --ms ...</code>; <code>calibrate</code> alone is the general surface),
+which resolves a parameter profile (Defaults, Last, Last Successful, or a
+TOML file), applies overrides, saves Last state in the workspace, and runs
+the task. See
 <a href="../task-parameters/">Task Parameter Profiles</a> for sources and managed Last
 files, and the <a href="../reference/task-parameters/">generated parameter reference</a>
 for every parameter and its CLI flag.</p>
@@ -706,24 +705,24 @@ cp<span class="w"> </span>-R<span class="w"> </span><span class="s2">"</span><sp
 <li>Solve a phase-only gain on field <code>0</code>:</li>
 </ol>
 <p><code>bash
-   casars run gaincal --ms ngc5921.ms --out ngc5921.G0 \
+   calibrate gaincal --ms ngc5921.ms --out ngc5921.G0 \
      --refant VA15 --gain-type g --mode-gain p --solint inf \
      --field 0 --spw 0</code></p>
 <ol>
 <li>Solve the bandpass on field <code>0</code>, applying the gain table on the fly:</li>
 </ol>
 <p><code>bash
-   casars run bandpass --ms ngc5921.ms --out ngc5921.B0 \
+   calibrate bandpass --ms ngc5921.ms --out ngc5921.B0 \
      --refant VA15 --gaintables ngc5921.G0 --field 0</code></p>
 <ol>
 <li>Apply both tables to field <code>0</code>:</li>
 </ol>
 <p><code>bash
-   casars run applycal --ms ngc5921.ms \
+   calibrate applycal --ms ngc5921.ms \
      --gaintables ngc5921.G0,ngc5921.B0 --field 0</code></p>
 <ol>
 <li>Inspect the solutions and the corrected data with <code>calibrate --mode stats</code>
-   or <code>--mode summary</code>, <code>plotcal</code>, and <code>plotms</code>.</li>
+   or <code>--mode summary</code>, and <code>plotms</code>.</li>
 </ol>
 <p>The apply chain is the ordered <code>--gaintables</code> list. Per-table policy is given
 by the aligned <code>--gainfield</code>, <code>--interp</code>, <code>--spwmap</code>, and <code>--calwt</code> lists, or by
@@ -733,14 +732,23 @@ apply plan without changing the MeasurementSet.</p>
 <code>degamp</code> and <code>degphase</code> for a <code>bpoly</code> solution (default 3). <code>bandpass</code>
 declares CASA's <code>minsnr</code>, which its solver does not apply yet, so a value
 other than the default is refused.</p>
-<p>Use <code>casars params template gaincal</code> to see every parameter with its default,
+<p>Use <code>calibrate gaincal --template</code> to see every parameter with its default,
 and <code>--save-params FILE</code> to keep a run's resolved profile for reuse with
 <code>--params FILE</code>.</p>
 <h2 id="python">Python<a class="headerlink" href="#python" title="Permanent link">&para;</a></h2>
 <p>The same surfaces are generated CASA-named functions under <code>casars.tasks</code>
 (<code>casars.tasks.gaincal(...)</code>, <code>casars.tasks.applycal(...)</code>, and so on), and
-<code>casars.tasks.run("gaincal", ...)</code> accepts the same parameters. CASA's
-parameters are the consent; there are no separate confirmations.</p>
+<code>casars.tasks.run("gaincal", ...)</code> accepts the same parameters. Each call
+starts the <code>calibrate</code> executable in the current directory (or in
+<code>tasks.run</code>'s <code>workspace</code>), passes its log to <code>sys.stderr</code>, and saves no
+Last. CASA's parameters are the consent; there are no separate
+confirmations.</p>
+<div class="codehilite"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">casars</span><span class="w"> </span><span class="kn">import</span> <span class="n">tasks</span>
+
+<span class="n">tasks</span><span class="o">.</span><span class="n">gaincal</span><span class="p">(</span><span class="n">vis</span><span class="o">=</span><span class="s2">"ngc5921.ms"</span><span class="p">,</span> <span class="n">out_table</span><span class="o">=</span><span class="s2">"ngc5921.G0"</span><span class="p">,</span> <span class="n">refant</span><span class="o">=</span><span class="s2">"VA15"</span><span class="p">,</span>
+              <span class="n">gain_type</span><span class="o">=</span><span class="s2">"g"</span><span class="p">,</span> <span class="n">solve_mode</span><span class="o">=</span><span class="s2">"p"</span><span class="p">,</span> <span class="n">solint</span><span class="o">=</span><span class="s2">"inf"</span><span class="p">,</span> <span class="n">field</span><span class="o">=</span><span class="s2">"0"</span><span class="p">,</span> <span class="n">spw</span><span class="o">=</span><span class="s2">"0"</span><span class="p">)</span>
+</code></pre></div>
+
 <p><code>overwrite=True</code> replaces only the <code>-o</code> report today. A run that would write
 a calibration table or MeasurementSet that already exists is refused whatever
 <code>overwrite</code> says: gaincal, bandpass and gencal caltables, the fluxscale

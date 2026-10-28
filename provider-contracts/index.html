@@ -809,12 +809,12 @@
 <p>This document defines the contract model between functionality providers and
 their consumers:</p>
 <ul>
-<li>the headless <code>casars</code> task host (<code>casars run</code>, <code>casars params</code>)</li>
 <li>the Python package <code>casars</code></li>
-<li>standalone task binaries</li>
+<li>the task executables of the application catalog, run directly from the
+  command line</li>
 </ul>
-<p>ADR-0017 makes these the product surfaces; casa-rs has no terminal UI, native
-GUI, or interactive browser sessions.</p>
+<p>ADR-0017 makes these the product surfaces; casa-rs has no separate launcher,
+terminal UI, native GUI, or interactive browser sessions.</p>
 <p>The goal is to keep one source of truth for each provider surface while still
 allowing different transports.</p>
 <h2 id="core-rule">Core Rule<a class="headerlink" href="#core-rule" title="Permanent link">&para;</a></h2>
@@ -941,22 +941,39 @@ metadata errors, and semantic/flattened schema drift.</p>
 <h2 id="application-catalog-and-launching">Application Catalog and Launching<a class="headerlink" href="#application-catalog-and-launching" title="Permanent link">&para;</a></h2>
 <p><code>casa-provider-contracts</code> also owns the single <code>ApplicationCatalog</code>. Every
 parameter surface has exactly one task-application entry that references the
-surface by stable ID; the <code>casars</code> task host is the one application without a
-surface. Display name, category, and protocol family are projected from the
-referenced surface rather than copied into another inventory. Each application
-adds only executable/package identity, its explicit override variable,
-interaction and presentation metadata, and packaging visibility. (ADR-0017
-keeps the older presentation fields, such as <code>shell_kind</code> and <code>interaction</code>,
-until the CASA-shaped Python work reshapes them.) Several surfaces may share one executable: <code>imhead</code> and
-<code>imstat</code> run <code>imexplore</code>, and <code>gaincal</code>, <code>bandpass</code>, <code>applycal</code>, <code>fluxscale</code>,
-and <code>gencal</code> run <code>calibrate</code> with a fixed mode.</p>
-<p>The supported launch modes are <code>installed_suite</code> and
-<code>development_workspace</code>. A process selects one mode at composition/startup.
-Installed resolution uses only the installed-suite configuration; development
-resolution uses only the declared workspace and Cargo package. A missing
-executable is an error in that mode and never triggers a search of the current
-directory, neighboring targets, or another mode. The CLI, Python, packaging
-scripts, and suite inventory all project from this catalog.</p>
+surface by stable ID, and every application is a task: the catalog's 26
+entries are its 26 task surfaces. Display name, category, and protocol
+family are projected from the referenced surface rather than copied into
+another inventory. Each application adds only executable/package identity,
+its explicit override variable, interaction and presentation metadata, and
+packaging visibility. (ADR-0017 keeps the older presentation fields, such as
+<code>shell_kind</code> and <code>interaction</code>, until the CASA-shaped Python work reshapes
+them.) Several surfaces may share one executable, a family whose first word
+names the surface: <code>imhead</code> and <code>imstat</code> run <code>imexplore</code>; <code>plotms</code> runs
+<code>msexplore</code>; <code>split</code> runs <code>mstransform</code>; and <code>gaincal</code>, <code>bandpass</code>,
+<code>applycal</code>, <code>fluxscale</code>, and <code>gencal</code> run <code>calibrate</code>, whose own <code>calibrate</code>
+surface is its default.</p>
+<p><code>casa_provider_contracts::resolve_task_executable</code> is the one search for the
+file a task runs; Python reaches it through <code>casars._core</code>. The first step
+that applies decides:</p>
+<ol>
+<li>the task's override variable (<code>override_env</code>, <code>CASARS_&lt;APP&gt;_BIN</code>, such as
+   <code>CASARS_IMAGER_BIN</code> or <code>CASARS_CALIBRATE_BIN</code>);</li>
+<li>a suite root, <code>CASARS_SUITE_ROOT</code> or else the installed suite the Python
+   package belongs to (the installer's environment is <code>&lt;suite&gt;/python</code>,
+   beside <code>&lt;suite&gt;/bin</code> and <code>bundle-manifest.json</code>), whose <code>bin/</code> holds the
+   executable;</li>
+<li>a development checkout: the newest <code>debug</code> or <code>release</code> build of the
+   executable under the workspace the package was built from, in
+   <code>$CARGO_TARGET_DIR</code> or <code>target/</code>.</li>
+</ol>
+<p>A step that applies but lacks the file is an error naming what it lacked, and
+never falls through to a later step, so an installed suite never runs a
+checkout's build. A missing development build is reported with the
+<code>cargo build -p &lt;package&gt; --bin &lt;executable&gt;</code> that makes it. Nothing is run
+through <code>cargo</code>, <code>PATH</code> is not searched, and the caller's own path
+(<code>current_exe</code>) is not consulted. Python, packaging scripts, and the suite
+inventory all project from this catalog.</p>
 <h2 id="parameter-catalog-and-surface-definitions">Parameter Catalog and Surface Definitions<a class="headerlink" href="#parameter-catalog-and-surface-definitions" title="Permanent link">&para;</a></h2>
 <p>ADR-0006 defines the common parameter model. ADR-0012 defines the optional
 current-only profile contract used by imager.</p>
@@ -1031,7 +1048,7 @@ calls (#931): the image binaries and <code>imexplore</code>; the MeasurementSet 
 (<code>msexplore</code> with <code>plotms</code>, <code>mstransform</code> with <code>split</code>, <code>flagdata</code>,
 <code>flagmanager</code> and <code>importvla</code>); <code>calibrate</code>, which hosts <code>calibrate</code>,
 <code>applycal</code>, <code>gaincal</code>, <code>bandpass</code>, <code>fluxscale</code> and <code>gencal</code>;
-<code>casars-plotcal</code>; <code>casars-imager</code>; and <code>simobserve</code>. A
+<code>casars-imager</code>; and <code>simobserve</code>. A
 surface's choices take their canonical names (<code>--preset amplitude_vs_time</code>),
 and every flag it declares, short ones such as msexplore's <code>-o</code> included,
 reaches its parameter. The front end is generic over the
@@ -1042,8 +1059,10 @@ and <code>--validate</code>, and the machine actions. A spelling the surface dec
 always its parameter, so imregrid's <code>--template</code> names its template image and
 <code>--profile-template</code> gives its profile. A family binary's first word names the
 surface it runs, such as <code>imexplore imstat</code>, <code>mstransform split</code> or
-<code>calibrate gaincal</code>; the first hosted surface runs otherwise, and a
-surface's <code>fixed_args</code> are that word. The callback reads the resolved values
+<code>calibrate gaincal</code>; the first hosted surface runs otherwise. A
+<code>--json-run</code> request names its surface itself; the <code>fixed_args</code> that imhead,
+imstat and the calibration surfaces carry repeat it as the first word, while
+split and plotms carry none. The callback reads the resolved values
 into the binary's typed request through <code>TaskInvocation</code>'s typed reads, and
 <code>TaskInvocation::is_set</code> tells a value the run sets from a default. What a
 command line prints is the callback's text (msexplore's summary in the
@@ -1059,7 +1078,8 @@ writes to the stderr it was handed and to a log table only when one is named.
 An action that runs nothing installs no logging, so a bad <code>CASA_RS_LOG_*</code>
 setting refuses only a run.</p>
 <p>A command-line run enters its workspace (<code>--workspace</code>, the current directory
-otherwise) before the task starts, as <code>casars run</code> starts the binary there.
+otherwise) before the task starts, as a Python task call starts the
+executable in its workspace.
 Every relative path the run names then resolves in the workspace: inputs,
 products, and paths inside a parameter's text, such as <code>imstat</code>'s region file
 or the image in <code>immoments</code>' mask expression. The files the controls name
@@ -1074,10 +1094,9 @@ surface's contract inside the binary. It writes one <code>TaskReply</code> to st
   what CASA's task returns (<code>null</code> for <code>None</code>), kept ahead of the provider's
   full <code>result</code>, from which products are projected;</li>
 <li><code>{"status": "failed", "surface", "kind", "message", "parameter"?}</code>, where
-  <code>kind</code> is <code>validation</code> (refused before anything changed; Python
-  <code>ValueError</code>), <code>execution</code> (Python <code>RuntimeError</code>), or <code>interrupted</code>: the
-  task caught an interrupt, stopped at its next safe point and published
-  nothing, as <code>casars-imager</code> does on SIGINT.</li>
+  <code>kind</code> is <code>validation</code> (refused before anything changed), <code>execution</code>, or
+  <code>interrupted</code>: the task caught an interrupt, stopped at its next safe point
+  and published nothing, as <code>casars-imager</code> does on SIGINT.</li>
 </ul>
 <p>The exit status agrees with the reply: 0 for success, 2 for a validation
 failure, 1 for an execution failure and 130 for an interrupted run.
@@ -1092,12 +1111,16 @@ completion decoder projects products and the summary. Nothing is injected
 into the binary's arguments to ask for it.</p>
 <p>Last has one owner on each path: a command line run of a binary records Last
 before the callback and Last Successful only after success, unless
-<code>--no-save-last</code>; <code>--json-run</code> reads and writes neither. <code>casars run</code> owns Last
-for the runs it launches, and Python task calls save none. Every run
-<code>casars run</code> launches is one invocation shape: the surface's <code>fixed_args</code>,
-then <code>--json-run -</code> with the values the user set. It reads the reply and
-prints the provider result where the surface declares a decoder, the return
-value otherwise, or the task's own error.</p>
+<code>--no-save-last</code>; <code>--json-run</code> reads and writes neither, so Python task calls
+save none. Every Python task call is one invocation shape: the executable the
+resolver names, the surface's <code>fixed_args</code>, then <code>--json-run -</code> with the
+values the call set on stdin. Python passes the task's log lines to
+<code>sys.stderr</code> as they arrive and classifies the reply through <code>casars._core</code>.
+A success returns a <code>TaskCompletion</code> carrying the reply's <code>value</code> and the
+products the decoder projects; anything else raises <code>TaskExecutionError</code>,
+whose completion's <code>status</code> is <code>refused</code> (a <code>validation</code> reply), <code>failed</code>,
+<code>interrupted</code>, <code>signalled</code> or <code>malformed_reply</code>. A value the contract refuses
+when Python resolves the call raises <code>ValueError</code> before anything starts.</p>
 <h2 id="shared-versioned-component-schemas">Shared Versioned Component Schemas<a class="headerlink" href="#shared-versioned-component-schemas" title="Permanent link">&para;</a></h2>
 <p>Protocol-independent basic types have versioned shared schemas, reused across
 task and object surfaces rather than redefined per provider. Component
@@ -1143,15 +1166,18 @@ example, Python maps image planes directly to NumPy arrays in-process.</p>
 <p>CLI parsing is a projection from the semantic contract plus CLI annotation
 metadata such as flag names and positional rules.</p>
 <p>CLI flags are not the source of truth.</p>
-<p><code>casars run</code> and <code>casars params</code> also project the common Defaults, Last, Last
-Successful, explicit profile, reset, save, and no-save source operations.
-Invocation starts from Defaults unless a source is explicit.</p>
+<p>Each task executable's command line, through the shared task front end, also
+projects the common Defaults, Last, Last Successful, explicit profile, reset
+(<code>--unset</code>), save (<code>--save-params</code>), and no-save (<code>--no-save-last</code>) source
+operations, and the non-executing <code>--show</code>, <code>--template</code>, <code>--describe</code> and
+<code>--validate</code>. Invocation starts from Defaults unless a source is explicit.</p>
 <h3 id="python">Python<a class="headerlink" href="#python" title="Permanent link">&para;</a></h3>
 <p>Python stays ergonomic and typed, but its wrappers and docs are checked against
 the canonical schema bundle so signatures and enums cannot drift.</p>
-<p>For task surfaces, generated Python callables invoke the canonical <code>casars run</code>
-transport; Python does not host a second provider protocol engine. For object
-surfaces, Python binds directly in-process.</p>
+<p>For task surfaces, generated Python callables start the task's executable
+with the canonical <code>--json-run -</code> transport; Python does not host a second
+provider protocol engine. For object surfaces, Python binds directly
+in-process.</p>
 <p><code>casars.parameters</code> exposes the common typed task profile, while generated
 task-specific wrappers delegate through the same runtime. Python must not keep
 a second default or migration implementation.</p>
@@ -1167,10 +1193,9 @@ a second default or migration implementation.</p>
 <li><code>casars.tools.measures</code>: object surface</li>
 <li><code>casars.tools.quanta</code>: object surface</li>
 </ul>
-<p>All 27 catalog surfaces have task definitions; the
+<p>All 26 catalog surfaces have task definitions; the
 <a href="../reference/task-parameters/">generated parameter reference</a> lists them. The
-<code>casars</code> task host and the five object surfaces are not parameter-profile
-surfaces.</p>
+five object surfaces are not parameter-profile surfaces.</p>
 <h2 id="implementation-guidance">Implementation Guidance<a class="headerlink" href="#implementation-guidance" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Define typed Rust structs and enums that serialize exactly to the canonical
@@ -1185,7 +1210,7 @@ surfaces.</p>
   projections cannot drift from the canonical schema bundle.</li>
 </ul>
 <p>This preserves one source of truth while supporting direct Rust APIs, the
-Python package, the <code>casars</code> task host, and standalone binaries.</p>
+Python package, and the task executables.</p>
 
 
 

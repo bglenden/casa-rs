@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"constant":["SURFACE_ID"],"fn":["main","parse_plotcal_preset","plotcal_protocol_descriptor","plotcal_surface","plotcal_task_schema_bundle","run"],"struct":["PlotcalTaskRequest","PlotcalTaskResult"]};

@@ -589,17 +589,6 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#plotcal-plotcal" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        PlotCal (plotcal)
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
   <a href="#flag-data-flagdata" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1160,17 +1149,6 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#plotcal-plotcal" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        PlotCal (plotcal)
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
   <a href="#flag-data-flagdata" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1298,8 +1276,8 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <li>Parameter catalog schema version: <code>1</code></li>
 <li>Parameter surface schema version: <code>1</code></li>
 <li>Concepts: 349</li>
-<li>Surfaces: 27 (27 task, 0 session)</li>
-<li>Surface bindings: 535</li>
+<li>Surfaces: 26 (26 task, 0 session)</li>
+<li>Surface bindings: 520</li>
 </ul>
 <table>
 <thead>
@@ -1448,14 +1426,6 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>msexplore</code></td>
 <td style="text-align: right;">66</td>
 <td>Plot MeasurementSet visibility data with CASA plotms-style selections and axes.</td>
-</tr>
-<tr>
-<td><a href="#surface-plotcal">PlotCal</a><br><code>plotcal</code></td>
-<td>task</td>
-<td style="text-align: right;">4</td>
-<td><code>plotcal</code></td>
-<td style="text-align: right;">15</td>
-<td>Plot calibration tables and corrected-data diagnostics.</td>
 </tr>
 <tr>
 <td><a href="#surface-flagdata">Flag Data</a><br><code>flagdata</code></td>
@@ -5559,149 +5529,6 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>"none"</code>; optional</td>
 <td>Flag Editing</td>
 <td>Write the staged flag-edit preview JSON to PATH</td>
-</tr>
-</tbody>
-</table>
-<p><a id="surface-plotcal"></a></p>
-<h2 id="plotcal-plotcal">PlotCal (<code>plotcal</code>)<a class="headerlink" href="#plotcal-plotcal" title="Permanent link">&para;</a></h2>
-<ul>
-<li>Kind: <code>task</code></li>
-<li>Contract version: <code>4</code></li>
-<li>Category: Plotting</li>
-<li>Provider family: <code>plotcal</code></li>
-<li>Summary: Plot calibration tables and corrected-data diagnostics.</li>
-</ul>
-<table>
-<thead>
-<tr>
-<th>Parameter</th>
-<th>Concept ID / revision</th>
-<th>Type / unit</th>
-<th>Default / required</th>
-<th>Group</th>
-<th>Summary</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>caltable</code></td>
-<td><code>parameter.caltable@r1</code></td>
-<td><code>path (calibration_table)</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Input</td>
-<td>Input calibration table.</td>
-</tr>
-<tr>
-<td><code>vis</code></td>
-<td><code>data.input.vis@r1</code></td>
-<td><code>array&lt;path (measurement_set)&gt;</code></td>
-<td><code>[]</code>; optional</td>
-<td>Input</td>
-<td>Input MeasurementSet path or paths.</td>
-</tr>
-<tr>
-<td><code>preset</code></td>
-<td><code>parameter.preset@r1</code></td>
-<td><code>choice (8 values; surface-narrowed)</code></td>
-<td><code>"gain_phase_vs_time"</code>; optional</td>
-<td>Plot</td>
-<td>Use a named common plot preset</td>
-</tr>
-<tr>
-<td><code>field</code></td>
-<td><code>ms.selection.field@r1</code></td>
-<td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Selection</td>
-<td>CASA field selector.</td>
-</tr>
-<tr>
-<td><code>spw</code></td>
-<td><code>ms.selection.spw@r1</code></td>
-<td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Selection</td>
-<td>Comma-separated SPECTRAL_WINDOW_ID integers</td>
-</tr>
-<tr>
-<td><code>timerange</code></td>
-<td><code>ms.selection.timerange@r1</code></td>
-<td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Selection</td>
-<td>Inclusive TIME range in MJD seconds</td>
-</tr>
-<tr>
-<td><code>uvrange</code></td>
-<td><code>ms.selection.uvrange@r1</code></td>
-<td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Selection</td>
-<td>UV range selector.</td>
-</tr>
-<tr>
-<td><code>antenna</code></td>
-<td><code>ms.selection.antenna@r1</code></td>
-<td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Selection</td>
-<td>Comma-separated antenna ids matched against ANTENNA1/ANTENNA2</td>
-</tr>
-<tr>
-<td><code>scan</code></td>
-<td><code>ms.selection.scan@r1</code></td>
-<td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Selection</td>
-<td>Comma-separated scan numbers</td>
-</tr>
-<tr>
-<td><code>correlation</code></td>
-<td><code>ms.selection.correlation@r1</code></td>
-<td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Selection</td>
-<td>Correlation selector.</td>
-</tr>
-<tr>
-<td><code>observation</code></td>
-<td><code>ms.selection.observation@r1</code></td>
-<td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Selection</td>
-<td>Comma-separated OBSERVATION_ID integers</td>
-</tr>
-<tr>
-<td><code>array</code></td>
-<td><code>ms.selection.array@r1</code></td>
-<td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Selection</td>
-<td>Comma-separated ARRAY_ID integers</td>
-</tr>
-<tr>
-<td><code>intent</code></td>
-<td><code>ms.selection.intent@r1</code></td>
-<td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Selection</td>
-<td>Intent selector.</td>
-</tr>
-<tr>
-<td><code>feed</code></td>
-<td><code>ms.selection.feed@r1</code></td>
-<td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Selection</td>
-<td>Feed selector.</td>
-</tr>
-<tr>
-<td><code>msselect</code></td>
-<td><code>ms.selection.msselect@r1</code></td>
-<td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Selection</td>
-<td>Raw TaQL WHERE expression to AND with the structured selectors</td>
 </tr>
 </tbody>
 </table>

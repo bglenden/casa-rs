@@ -736,7 +736,9 @@ parallelism, memory budgets and casacore-compatible I/O.</p>
    - The existing <code>casars._core</code> <code>Image</code> and <code>Table</code> bindings do not release
      it yet; #839 tracks that fix. New bindings release it from the start.</p>
 <p>This decision does not fix the binding mechanism for each surface. Today:
-- tasks run through the headless task host (<code>casars run</code>);
+- a task call starts the task's own executable as a child process, which
+  runs the task on the shared task front end; Python resolves its
+  parameters and reads its reply through <code>casars._core</code> (ADR-0017 item 4);
 - stateful tools are expected to be in-process objects in the <code>casars._core</code>
   extension, like <code>casars.data.Image</code> and <code>casars.data.Table</code>;
 - ADR-0017 item 4 makes PyO3 in <code>casars._core</code> the only binding.</p>
