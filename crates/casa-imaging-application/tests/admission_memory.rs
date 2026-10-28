@@ -1000,6 +1000,81 @@ fn a_seeded_cube_runs_in_waves_within_its_admission() {
     assert!(breaches.is_empty(), "{breaches:#?}");
 }
 
+/// #970 review: a mosaic's start model, in flat-noise units, is made
+/// physical with the weights of an initial pass without it and seeds a
+/// refresh of that pass's residual. The two passes, the seeding and its
+/// conversion beside the refresh, stay within their admission: cleaning
+/// on, with no minor cycle while `MODEL_DATA` is written, and as a cube
+/// just above what it needs, in waves.
+#[test]
+fn a_seeded_mosaic_stays_within_its_admission() {
+    if !alone("a_seeded_mosaic_stays_within_its_admission") {
+        return;
+    }
+    let root = tempfile::tempdir().expect("test root");
+    let alma = observation_as(root.path(), CUBE_CHANNELS, "ALMA");
+    warm(&alma, root.path());
+    let mosaic = json!({ "gridder": "mosaic", "deconvolver": "hogbom" });
+    let mut breaches = Vec::new();
+    drop(check(
+        &mut breaches,
+        "the mosaic whose model seeds the others",
+        &request(&alma, &root.path().join("start"), 256, mosaic.clone()),
+        2,
+        AMPLE,
+    ));
+    let start_model = root.path().join("start.model");
+    for (label, controls) in [
+        ("seeded mosaic", json!({ "startmodel": start_model })),
+        (
+            "seeded mosaic savemodel",
+            json!({ "startmodel": start_model, "niter": 0, "savemodel": "modelcolumn" }),
+        ),
+    ] {
+        let mut controls = controls;
+        controls
+            .as_object_mut()
+            .expect("controls")
+            .extend(mosaic.as_object().expect("mosaic").clone());
+        drop(check(
+            &mut breaches,
+            label,
+            &request(
+                &alma,
+                &root.path().join(label.replace(' ', "-")),
+                256,
+                controls,
+            ),
+            2,
+            AMPLE,
+        ));
+    }
+    let cube_controls = json!({ "gridder": "mosaic", "deconvolver": "hogbom", "channel_count": 8 });
+    drop(check(
+        &mut breaches,
+        "the mosaic cube whose model seeds the next",
+        &cube(
+            &alma,
+            &root.path().join("cube-start"),
+            cube_controls.clone(),
+        ),
+        2,
+        AMPLE,
+    ));
+    let mut seeded = cube_controls;
+    seeded["startmodel"] = json!(root.path().join("cube-start.model"));
+    let waves = just_above(
+        &mut breaches,
+        "seeded mosaic cube",
+        &cube(&alma, &root.path().join("seeded-cube"), seeded),
+    );
+    assert!(
+        waves.is_some_and(|planes| planes < 8),
+        "the seeded mosaic cube runs in waves just above what it needs: {waves:?}"
+    );
+    assert!(breaches.is_empty(), "{breaches:#?}");
+}
+
 /// The shapes IF-10's closeout rows added stay within their admission
 /// (#722): a 2048² image in 2×2 facets, whose pass also holds the stitched
 /// full-size residual and PSF, and an eight-channel mosaic cube, whose paged

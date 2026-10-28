@@ -123,6 +123,25 @@ impl StartModel {
             + output_plane * (8 + 1 + position)) as u64
     }
 
+    /// The image's pixels along x and y.
+    pub(crate) fn image_size(&self) -> [usize; 2] {
+        [self.template.shape[0], self.template.shape[1]]
+    }
+
+    /// The image's polarizations.
+    pub(crate) fn polarizations(&self) -> usize {
+        self.template.shape[2]
+    }
+
+    /// Bytes making the samples physical holds besides
+    /// [`Self::seeding_bytes`]: the physical samples, and one plane's
+    /// sensitivity read in `f64`.
+    pub(crate) fn conversion_bytes(&self) -> u64 {
+        let output: usize = self.template.shape.iter().product();
+        let output_plane = self.template.shape[0] * self.template.shape[1];
+        (output * 4 + output_plane * 8) as u64
+    }
+
     /// The main domain's model samples in the model's canonical order
     /// (spectral plane, polarization, y, x, x fastest): the regridded
     /// image's Fortran order.

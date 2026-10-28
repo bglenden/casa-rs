@@ -77,4 +77,8 @@ pub(crate) enum ImagingError {
     /// The start model could not be read or regridded.
     #[error("startmodel: {0}")]
     StartModel(#[source] casa_images::ImageError),
+    /// A start model in flat-noise units could not be made physical with
+    /// the initial pass's weights.
+    #[error("startmodel units: {0}")]
+    StartModelUnits(#[source] casa_imaging_products::ProductsError),
 }

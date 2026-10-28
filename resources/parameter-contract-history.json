@@ -109,7 +109,7 @@
     {
       "id": "image.geometry.cell",
       "semantic_revision": 2,
-      "fingerprint": "d3caaa38ee463aec082c3292265e46131971d99f3a7f252d8eec926f7ca5893c"
+      "fingerprint": "6383bb7cf0d01a5988a124ed1fe12ee84173143bde07acd64ce4740665e6b218"
     },
     {
       "id": "image.geometry.imsize",
@@ -119,7 +119,7 @@
     {
       "id": "image.geometry.imsize",
       "semantic_revision": 2,
-      "fingerprint": "18f6a3d71555c1ef40a41e1eb28b9f25b356f794bd7ba0fc6c21f0e5c974ce63"
+      "fingerprint": "61bef11f2a62e6f44f75068c79c0f41efa60dbb28f7f72d2ccc5f1f62bfcba85"
     },
     {
       "id": "image.input.imagename",

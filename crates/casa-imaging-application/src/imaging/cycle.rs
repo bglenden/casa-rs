@@ -46,6 +46,8 @@ use super::source::{MeasurementSetSource, PlaneBounds};
 use super::visibility_write::{VisibilityWriteTarget, VisibilityWriter};
 use super::{ImagingError, trace};
 use crate::compile::StartModel;
+
+mod seeding;
 use crate::{AwCatalogDeployment, NativeMinorCycleOutcome, NativeMinorCycleStopReason};
 
 /// What a run's passes read the visibilities from
@@ -134,6 +136,10 @@ struct Run<'a> {
     /// The start model the initial generation is seeded from; with one,
     /// the initial pass grids the residual of its prediction.
     start_model: Option<StartModel>,
+    /// The flat-noise response the start model is made physical with,
+    /// after an initial pass without it has formed the weights
+    /// ([`seeding`]); `None` when it is physical already.
+    reseed: Option<MinorCycleImageResponse>,
     native_spacing_hz: f64,
     backend: BackendChoice,
     /// Whether each Metal backend logs its timing.
@@ -236,12 +242,26 @@ pub(crate) fn run(
     // What a refresh pass holds beside its wave (#763 review): every cycle
     // before it keeps its record, up to the last refresh `nmajor` allows,
     // and the minor cycle's terms, which its solve holds too (#778 review).
-    let refresh = cleaning.then(|| RefreshDemand {
-        masks: 2 * layout.mask_bytes(),
-        cached: layout.refresh_bytes(&setup),
-        results: layout.result_bytes(&setup, iterations),
-        records: layout.record_bytes() * controls.maximum_major_cycles().unwrap_or(1).max(1) as u64,
-    });
+    let refresh = if cleaning {
+        Some(RefreshDemand {
+            masks: 2 * layout.mask_bytes(),
+            cached: layout.refresh_bytes(&setup),
+            results: layout.result_bytes(&setup, iterations),
+            records: layout.record_bytes()
+                * controls.maximum_major_cycles().unwrap_or(1).max(1) as u64,
+        })
+    } else {
+        // A run that reseeds refreshes its initial pass with no minor cycle
+        // before it (`seeding`).
+        seeding::reseed_response(inputs.start_model.as_ref(), inputs.image_response).map(|_| {
+            RefreshDemand {
+                masks: 0,
+                cached: 0,
+                results: 0,
+                records: 0,
+            }
+        })
+    };
     // Operators, the workers, the source, the imaging weights and the paged
     // cube state. The choice of workers is recorded as it is made, so a
     // setup that then fails still reports it.
@@ -584,6 +604,7 @@ impl<'a> Run<'a> {
             .map_err(|error| ImagingError::Pass(PassError::VisibilityWrite(error)))?
             .unwrap_or(0);
         let initial = initial_modes(weight_image);
+        let reseed = seeding::reseed_response(inputs.start_model.as_ref(), inputs.image_response);
         let demand = SetupDemand {
             problem,
             domains: &domains,
@@ -599,10 +620,13 @@ impl<'a> Run<'a> {
                 ModelLifecycle::new(problem, ModelStoragePlan::resident(usize::MAX)?)
                     .resident_bytes()
             },
-            start_model: inputs.start_model.as_ref().map(StartModel::seeding_bytes),
+            start_model: inputs.start_model.as_ref().map(|start| {
+                start.seeding_bytes() + reseed.map_or(0, |_| start.conversion_bytes())
+            }),
+            reseeds: reseed.is_some(),
             write: inputs.visibility_write.as_ref().map(|_| {
-                let (modes, with_model) =
-                    write_pass(problem, initial, inputs.start_model.is_some());
+                let seeded = (inputs.start_model.is_some(), reseed.is_some());
+                let (modes, with_model) = write_pass(problem, initial, seeded);
                 (modes, with_model, visibility_write_bytes)
             }),
             spill_directory: inputs.spill_directory,
@@ -689,6 +713,7 @@ impl<'a> Run<'a> {
             cube,
             lifecycle,
             start_model: inputs.start_model,
+            reseed,
             native_spacing_hz: native_spacing_hz(problem),
             backend,
             metal_stage_timing: inputs.diagnostics.metal_stage_timing,
@@ -714,9 +739,10 @@ impl<'a> Run<'a> {
         let (modes, with_model) = write_pass(
             self.problem,
             self.initial_modes(),
-            self.start_model.is_some(),
+            (self.start_model.is_some(), self.reseed.is_some()),
         );
-        // Without a minor cycle the initial pass writes, and seeds beside it.
+        // Without a minor cycle the first major cycle writes, and seeds
+        // beside it.
         let seeding = if writes_initially(self.problem) {
             self.seeding_bytes()
         } else {
@@ -732,54 +758,6 @@ impl<'a> Run<'a> {
             return Err(ImagingError::Pass(PassError::VisibilityWriteWaves));
         }
         Ok(())
-    }
-
-    /// The initial major cycle: data and PSF, from the start model when there
-    /// is one (its residual) and from an empty model otherwise; it writes
-    /// visibilities when it is also final.
-    fn initial(&mut self, last: bool) -> Result<Major, ImagingError> {
-        self.measure_row_work()?;
-        // The model, and a start model's seeding beside it, are admitted
-        // with the pass before either is allocated, so the pass plans its
-        // waves and chunks in what seeding leaves (#970 review).
-        let seeding = self.seeding_bytes();
-        let Admitted {
-            value: plan,
-            reservation: mut pass,
-        } = self.admit_pass(
-            self.initial_modes(),
-            self.start_model.is_some(),
-            self.lifecycle.resident_bytes() + self.write_bytes(last) + seeding,
-            self.writes(last),
-        )?;
-        let generation = match &self.start_model {
-            Some(start) => {
-                // Released once the generation holds the samples.
-                let _seeding = pass.split(seeding);
-                self.seed(start)?
-            }
-            None => self.lifecycle.initial_empty()?,
-        };
-        let model = self.lifecycle.prepare_final_model(generation, [])?;
-        let cycle = MajorCycle::initial(self.problem, model, self.normal_storage(plan.residency)?)?;
-        let major = self.reconcile(cycle, true, last, plan)?;
-        self.retain(&major, pass)?;
-        Ok(major)
-    }
-
-    /// The initial generation from `start`, read and regridded within the
-    /// initial pass's admission ([`Self::seeding_bytes`]).
-    fn seed(&self, start: &StartModel) -> Result<ModelGeneration, ImagingError> {
-        let samples = start.main_samples().map_err(ImagingError::StartModel)?;
-        Ok(self.lifecycle.initial_from_start_model(&samples)?)
-    }
-
-    /// What seeding the model from the start model holds besides the model
-    /// ([`StartModel::seeding_bytes`]); 0 without one.
-    fn seeding_bytes(&self) -> u64 {
-        self.start_model
-            .as_ref()
-            .map_or(0, StartModel::seeding_bytes)
     }
 
     /// The major cycle after a minor cycle: the residual of the model updated
@@ -811,7 +789,7 @@ impl<'a> Run<'a> {
             model,
             self.normal_storage(plan.residency)?,
         )?;
-        let major = self.reconcile(cycle, false, last, plan)?;
+        let major = self.reconcile(cycle, false, true, last, plan)?;
         pass.join(results);
         self.retain(&major, pass)?;
         Ok(major)
@@ -865,12 +843,14 @@ impl<'a> Run<'a> {
         Ok(())
     }
 
-    /// Run `cycle`'s pass and finish it. The initial pass grids the data;
+    /// Run `cycle`'s pass and finish it. The initial pass grids the data,
+    /// predicting the cycle's model when `with_model` (a start model's);
     /// every refresh grids the residual of the cycle's model.
     fn reconcile(
         &mut self,
         mut cycle: MajorCycle,
         initial: bool,
+        with_model: bool,
         last: bool,
         plan: PassPlan,
     ) -> Result<Major, ImagingError> {
@@ -898,7 +878,7 @@ impl<'a> Run<'a> {
         let (model, state) = cycle.parts();
         let summary = self.pass(
             modes,
-            (!initial || self.start_model.is_some()).then_some(model),
+            with_model.then_some(model),
             plan,
             state,
             initial,
@@ -1255,18 +1235,24 @@ const fn initial_modes(weight_image: bool) -> ModeSet {
 
 /// The modes of the pass that writes visibilities, and whether it has a
 /// model: the initial pass, of modes `initial`, without cleaning, with the
-/// model when it was `seeded` from a start model, and a residual refresh
-/// otherwise.
-fn write_pass(problem: &CompiledProblem, initial: ModeSet, seeded: bool) -> (ModeSet, bool) {
-    if writes_initially(problem) {
+/// model when it was `seeded` from a start model; a residual refresh after
+/// cleaning, or after the initial pass of a run that `reseeds`
+/// ([`seeding`]).
+fn write_pass(
+    problem: &CompiledProblem,
+    initial: ModeSet,
+    (seeded, reseeds): (bool, bool),
+) -> (ModeSet, bool) {
+    if writes_initially(problem) && !reseeds {
         (initial, seeded)
     } else {
         (ModeSet::DATA, true)
     }
 }
 
-/// Whether the initial pass is the one that writes visibilities: a run
-/// without cleaning ([`write_pass`]).
+/// Whether the first major cycle writes visibilities: a run without
+/// cleaning, whose write is beside a start model's seeding
+/// ([`write_pass`]).
 fn writes_initially(problem: &CompiledProblem) -> bool {
     problem.reconstruction().controls().max_minor_iterations() == 0
 }

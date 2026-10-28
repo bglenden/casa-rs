@@ -304,7 +304,7 @@
             "auto"
           ]
         },
-        "min_items": 1,
+        "min_items": 2,
         "max_items": 2,
         "allow_scalar": true
       },
@@ -342,7 +342,7 @@
           "element": {
             "kind": "integer"
           },
-          "min_items": 1,
+          "min_items": 2,
           "max_items": 2,
           "allow_scalar": true
         },
