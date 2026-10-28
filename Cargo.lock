@@ -368,7 +368,10 @@ dependencies = [
 name = "casa-imaging-model"
 version = "0.27.0"
 dependencies = [
+ "casa-coordinates",
+ "casa-observation",
  "casa-types",
+ "ndarray",
  "num-complex",
  "thiserror",
 ]
@@ -619,6 +622,7 @@ dependencies = [
 name = "casa-task-runtime"
 version = "0.27.0"
 dependencies = [
+ "casa-logging",
  "casa-provider-contracts",
  "casa-types",
  "fs2",
@@ -628,6 +632,7 @@ dependencies = [
  "tempfile",
  "thiserror",
  "toml",
+ "tracing",
 ]
 
 [[package]]

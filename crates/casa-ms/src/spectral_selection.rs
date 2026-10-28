@@ -9,11 +9,12 @@
 
 use std::str::FromStr;
 
+use casa_types::measures::PreparedFrequencyConversion;
 use casa_types::measures::direction::MDirection;
 use casa_types::measures::doppler::DopplerRef;
 use casa_types::measures::doppler::MDoppler;
 use casa_types::measures::frame::MeasFrame;
-use casa_types::measures::frequency::{FrequencyRef, MFrequency};
+use casa_types::measures::frequency::FrequencyRef;
 use casa_types::quanta::{Quantity, Unit};
 
 use crate::derived::engine::MsCalEngine;
@@ -1800,76 +1801,23 @@ pub(crate) fn convert_frequency_to_frame_with_frames(
     source_frame: Option<&MeasFrame>,
     target_frame: Option<&MeasFrame>,
 ) -> MsResult<f64> {
-    PreparedFrequencyFrameConversion::new(
-        source_freq_ref,
-        target_freq_ref,
-        source_frame,
-        target_frame,
-    )
-    .map(|conversion| conversion.convert_hz(frequency_hz))
+    prepare_frequency_conversion(source_freq_ref, target_freq_ref, source_frame, target_frame)
+        .map(|conversion| conversion.convert_hz(frequency_hz))
 }
 
-const MAX_DIRECT_FREQUENCY_HOPS: usize = FrequencyRef::ALL.len() - 1;
-
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct PreparedFrequencyFrameConversion {
-    hop_factors: [f64; MAX_DIRECT_FREQUENCY_HOPS],
-    hop_count: usize,
-}
-
-impl PreparedFrequencyFrameConversion {
-    pub(crate) fn new(
-        source_freq_ref: FrequencyRef,
-        target_freq_ref: FrequencyRef,
-        source_frame: Option<&MeasFrame>,
-        target_frame: Option<&MeasFrame>,
-    ) -> MsResult<Self> {
-        if source_freq_ref == target_freq_ref {
-            return Ok(Self {
-                hop_factors: [1.0; MAX_DIRECT_FREQUENCY_HOPS],
-                hop_count: 0,
-            });
-        }
-        let source_frame = source_frame.ok_or_else(|| {
-        MsError::VersionError(format!(
-            "source frame required for cross-frame frequency conversion from {source_freq_ref} to {target_freq_ref}"
-        ))
-    })?;
-        let target_frame = target_frame.ok_or_else(|| {
-        MsError::VersionError(format!(
-            "target frame required for cross-frame frequency conversion from {source_freq_ref} to {target_freq_ref}"
-        ))
-    })?;
-        let mut hop_factors = [1.0; MAX_DIRECT_FREQUENCY_HOPS];
-        let mut current_ref = source_freq_ref;
-        let path = direct_frequency_hop_path(source_freq_ref, target_freq_ref)?;
-        for (hop_index, next_ref) in path.iter().copied().enumerate() {
-            let hop_frame = if direct_frequency_hop_uses_target_frame(current_ref, next_ref) {
-                target_frame
-            } else {
-                source_frame
-            };
-            hop_factors[hop_index] = MFrequency::new(1.0, current_ref)
-                .convert_to(next_ref, hop_frame)
-                .map(|frequency| frequency.hz())
-                .map_err(|error| {
-                    MsError::VersionError(format!(
-                        "prepare frequency conversion from {current_ref} to {next_ref}: {error}"
-                    ))
-                })?;
-            current_ref = next_ref;
-        }
-        Ok(Self {
-            hop_factors,
-            hop_count: path.len(),
+/// [`PreparedFrequencyConversion::new`], its error as the MS's.
+pub(crate) fn prepare_frequency_conversion(
+    source_freq_ref: FrequencyRef,
+    target_freq_ref: FrequencyRef,
+    source_frame: Option<&MeasFrame>,
+    target_frame: Option<&MeasFrame>,
+) -> MsResult<PreparedFrequencyConversion> {
+    PreparedFrequencyConversion::new(source_freq_ref, target_freq_ref, source_frame, target_frame)
+        .map_err(|error| {
+            MsError::VersionError(format!(
+                "prepare frequency conversion from {source_freq_ref} to {target_freq_ref}: {error}"
+            ))
         })
-    }
-
-    pub(crate) fn convert_hz(self, frequency_hz: f64) -> f64 {
-        self.hop_factors[..self.hop_count]
-            .iter()
-            .fold(frequency_hz, |converted, factor| converted * factor)
-    }
 }
 
 /// Convert one scalar frequency into a doppler velocity in m/s using the given
@@ -1950,79 +1898,6 @@ fn convert_channel_widths_to_frame_with_frames(
             Ok((upper_hz - lower_hz).abs())
         })
         .collect()
-}
-
-const DIRECT_FREQUENCY_HOP_EDGES: &[(FrequencyRef, FrequencyRef)] = &[
-    (FrequencyRef::REST, FrequencyRef::LSRK),
-    (FrequencyRef::LSRK, FrequencyRef::BARY),
-    (FrequencyRef::LSRD, FrequencyRef::BARY),
-    (FrequencyRef::LSRD, FrequencyRef::GALACTO),
-    (FrequencyRef::BARY, FrequencyRef::LGROUP),
-    (FrequencyRef::BARY, FrequencyRef::CMB),
-    (FrequencyRef::BARY, FrequencyRef::GEO),
-    (FrequencyRef::GEO, FrequencyRef::TOPO),
-];
-
-fn direct_frequency_hop_path(
-    source_freq_ref: FrequencyRef,
-    target_freq_ref: FrequencyRef,
-) -> MsResult<Vec<FrequencyRef>> {
-    use std::collections::{HashMap, HashSet, VecDeque};
-
-    if source_freq_ref == target_freq_ref {
-        return Ok(Vec::new());
-    }
-
-    let mut queue = VecDeque::from([source_freq_ref]);
-    let mut visited = HashSet::from([source_freq_ref]);
-    let mut parent = HashMap::<FrequencyRef, FrequencyRef>::new();
-
-    while let Some(current) = queue.pop_front() {
-        for &(left, right) in DIRECT_FREQUENCY_HOP_EDGES {
-            let next = if left == current {
-                right
-            } else if right == current {
-                left
-            } else {
-                continue;
-            };
-            if !visited.insert(next) {
-                continue;
-            }
-            parent.insert(next, current);
-            if next == target_freq_ref {
-                let mut path = Vec::new();
-                let mut cursor = target_freq_ref;
-                while cursor != source_freq_ref {
-                    path.push(cursor);
-                    cursor = *parent
-                        .get(&cursor)
-                        .expect("BFS parent must exist for visited node");
-                }
-                path.reverse();
-                return Ok(path);
-            }
-            queue.push_back(next);
-        }
-    }
-
-    Err(MsError::VersionError(format!(
-        "no direct-hop route found from {source_freq_ref} to {target_freq_ref}"
-    )))
-}
-
-fn direct_frequency_hop_uses_target_frame(from: FrequencyRef, to: FrequencyRef) -> bool {
-    matches!(
-        (from, to),
-        (FrequencyRef::LSRK, FrequencyRef::REST)
-            | (FrequencyRef::BARY, FrequencyRef::LSRK)
-            | (FrequencyRef::BARY, FrequencyRef::LSRD)
-            | (FrequencyRef::LSRD, FrequencyRef::GALACTO)
-            | (FrequencyRef::BARY, FrequencyRef::LGROUP)
-            | (FrequencyRef::BARY, FrequencyRef::CMB)
-            | (FrequencyRef::BARY, FrequencyRef::GEO)
-            | (FrequencyRef::GEO, FrequencyRef::TOPO)
-    )
 }
 
 fn nearest_channel_index(channel_frequencies_hz: &[f64], frequency_hz: f64) -> Option<usize> {
@@ -2610,6 +2485,7 @@ fn cube_source_channel_support(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use casa_types::measures::frequency::MFrequency;
 
     fn test_engine() -> MsCalEngine {
         let observatory = casa_types::measures::position::MPosition::new_itrf(
@@ -3500,7 +3376,7 @@ mod tests {
         assert!(
             missing_source
                 .to_string()
-                .contains("source frame required for cross-frame frequency conversion")
+                .contains("missing frame data: source frame")
         );
 
         let missing_target = convert_frequency_to_frame_with_frames(
@@ -3514,7 +3390,7 @@ mod tests {
         assert!(
             missing_target
                 .to_string()
-                .contains("target frame required for cross-frame frequency conversion")
+                .contains("missing frame data: target frame")
         );
 
         assert_eq!(

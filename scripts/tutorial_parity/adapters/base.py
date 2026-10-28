@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
@@ -41,7 +43,24 @@ class SurfaceAdapter(Protocol):
         ...
 
 
+def reset_outputs(plan: AdapterPlan) -> None:
+    """Remove the plan's declared outputs inside its directory (the pack), so
+    a rerun starts as a fresh pack does: split, like CASA's, refuses an
+    existing output (#931). They are the section's own products; anything
+    outside the pack, such as a worker's result file, is left to its writer."""
+
+    root = plan.cwd.resolve()
+    for output in plan.outputs:
+        if not output.resolve().is_relative_to(root) or output.resolve() == root:
+            continue
+        if output.is_dir() and not output.is_symlink():
+            shutil.rmtree(output)
+        elif output.exists() or output.is_symlink():
+            output.unlink()
+
+
 def execute_plan(plan: AdapterPlan) -> dict[str, Any]:
+    reset_outputs(plan)
     for output in plan.outputs:
         output.parent.mkdir(parents=True, exist_ok=True)
     result = run_command(
@@ -51,13 +70,32 @@ def execute_plan(plan: AdapterPlan) -> dict[str, Any]:
         timeout_seconds=plan.timeout_seconds,
     )
     capture_stdout = plan.metadata.get("capture_stdout")
-    if result.return_code == 0 and isinstance(capture_stdout, str):
+    captured = result.stdout
+    reason = None if result.return_code == 0 else f"command exited {result.return_code}"
+    if plan.metadata.get("capture_reply_value"):
+        captured, reply_reason = reply_value(result.stdout)
+        reason = reason or reply_reason
+    if reason is None and isinstance(capture_stdout, str):
         capture_path = Path(capture_stdout)
         capture_path.parent.mkdir(parents=True, exist_ok=True)
-        capture_path.write_text(result.stdout, encoding="utf-8")
+        capture_path.write_text(captured, encoding="utf-8")
     return {
-        "status": "completed" if result.return_code == 0 else "failed",
+        "status": "completed" if reason is None else "failed",
         "operations": [result.as_dict()],
         "artifacts": [str(path) for path in plan.outputs if path.exists()],
-        "reason": None if result.return_code == 0 else f"command exited {result.return_code}",
+        "reason": reason,
     }
+
+
+def reply_value(stdout: str) -> tuple[str, str | None]:
+    """The return value in a task binary's `--json-run` reply, as JSON text,
+    or why the reply holds none (#931)."""
+
+    try:
+        reply = json.loads(stdout)
+    except json.JSONDecodeError as error:
+        return "", f"the task's reply is not JSON: {error}"
+    if not isinstance(reply, dict) or reply.get("status") != "succeeded":
+        message = reply.get("message") if isinstance(reply, dict) else None
+        return "", f"the task failed: {message or reply!r}"
+    return json.dumps(reply.get("value"), indent=2) + "\n", None

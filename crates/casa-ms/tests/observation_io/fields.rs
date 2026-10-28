@@ -27,7 +27,7 @@ use super::{per_times, request, samples};
 /// A simulated mosaic of three fields observed in turn, one integration
 /// each, over twelve times, and its MSv4 conversion in `chunk`-time
 /// chunks.
-fn mosaic(root: &Path, chunk: u64) -> (PathBuf, PathBuf) {
+pub(crate) fn mosaic(root: &Path, chunk: u64) -> (PathBuf, PathBuf) {
     let mut request = SyntheticObservationRequest::vla_ppdisk(
         root.join("unused.fits"),
         root.join("mosaic.ms"),

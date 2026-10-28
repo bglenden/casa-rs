@@ -11,6 +11,7 @@ mod components;
 mod parameters;
 mod projection;
 mod provider;
+mod reply;
 mod semantic;
 
 pub use components::{ProviderComponentSchemas, merged_components};
@@ -21,6 +22,10 @@ pub use projection::{
 pub use provider::{
     NoAdditionalProviderSchemas, ProviderContractEnvelope, ProviderContractValidationError,
     ProviderProtocolDescriptor, TaskProviderContract, TaskProviderSchemas,
+};
+pub use reply::{
+    EXIT_EXECUTION_FAILED, EXIT_SUCCEEDED, EXIT_VALIDATION_FAILED, TaskFailureKind,
+    TaskFrontEndSchemas, TaskReply, TaskRunRequest,
 };
 pub use semantic::{
     ObjectConstructorDescriptor, ObjectMethodDescriptor, ObjectPropertyDescriptor,

@@ -11,13 +11,13 @@ use casa_coordinates::{
     SpectralCoordinate, StokesCoordinate, StokesType,
 };
 use casa_images::PagedImage;
+use casa_imaging_model::GridFtProjection;
 use casa_imaging_runtime::{HostResources, ResourcePolicy};
 use casa_ms::MeasurementSet;
 use casa_ms::columns::data_columns::DataColumn;
 use casa_ms::columns::flag_columns::FlagRowColumn;
 use casa_ms::columns::main_ids::{antenna1, antenna2, field_id};
 use casa_ms::columns::uvw_column::UvwColumn;
-use casa_ms::derived::GridFtProjection;
 use casa_simulation::predict::{
     FtMachine, ModelPredictor, PredictOptions, PredictRow, PredictionWorkspace, PrimaryBeam,
     SkyModel,

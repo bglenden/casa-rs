@@ -93,6 +93,7 @@ fn plotcal_task_schema_bundle(bundle: &SurfaceContractBundle) -> TaskProviderCon
                 request_kind: "run".to_string(),
                 result_kind: Some("run".to_string()),
             }],
+            front_end: None,
         },
         components: merged_components([&request_schema, &result_schema]),
         annotations: json!({ "backend": "casa-rs" }),

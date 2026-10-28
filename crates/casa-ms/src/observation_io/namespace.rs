@@ -23,11 +23,11 @@ use std::sync::Arc;
 
 use casa_observation::{Catalogue, ObservationError, PartitionId};
 use casa_tables::{Table, TableOptions};
-use casa_types::measures::direction::{DirectionRef, MDirection};
+use casa_types::measures::direction::MDirection;
 use casa_types::measures::frequency::FrequencyRef;
 use casa_types::{ArrayValue, ScalarValue};
 
-use super::msv2::catalogue::{measure_reference, require_units};
+use super::msv2::catalogue::{measure_reference, phase_frames, require_units};
 use super::update::storage;
 use super::{Msv2Observation, OpenOptions};
 use crate::columns::direction_columns::DirectionColumn;
@@ -309,21 +309,14 @@ fn antennas(table: &Table) -> Result<Vec<NamespaceAntenna>, ObservationError> {
 }
 
 fn fields(table: &Table) -> Result<Vec<NamespaceField>, ObservationError> {
-    require_units(table, "PHASE_DIR", "rad")?;
-    let frame = measure_reference(table, "PHASE_DIR")?
-        .map(|name| {
-            name.parse::<DirectionRef>()
-                .map_err(|_| invalid(format!("unknown PHASE_DIR reference {name}")))
-        })
-        .transpose()?
-        .unwrap_or(DirectionRef::J2000);
+    let frames = phase_frames(table)?;
     let phase_dir = DirectionColumn::phase_dir(table);
     (0..table.row_count())
         .map(|row| {
             let (longitude, latitude) = phase_dir.get_direction(row).map_err(storage)?.as_angles();
             Ok(NamespaceField {
                 name: string(table, row, "NAME")?,
-                phase_centre: MDirection::from_angles(longitude, latitude, frame),
+                phase_centre: MDirection::from_angles(longitude, latitude, frames[row]),
             })
         })
         .collect()

@@ -1,21 +1,23 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Headless parameter/profile commands layered over the shared task runtime.
+//! `casars params` and `casars run`, over the task front end's command-line
+//! parsing and views in `casa-task-runtime`.
 
 use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use casa_provider_contracts::{
-    ParameterConcept, ParameterValue, ProviderInvocation, ProviderInvocationAdaptation,
-    SurfaceContractBundle, builtin_surface_bundle, builtin_surface_catalog,
+    ProviderInvocation, ProviderInvocationAdaptation, builtin_surface_bundle,
 };
 use casa_task_runtime::{
-    BaseSource, OpenSessionRequest, ParameterRuntime, ParameterSession, ResolutionPatch,
-    TaskLastCoordinator, parse_parameter_cli_overrides, project_provider_invocation,
-    render_documented_template, resolve_profile, write_parameter_profile_atomic,
+    OpenSessionRequest, ParameterRuntime, ParameterSession, TaskCommandLine, TaskExit,
+    TaskLastCoordinator, TaskOutcome, classify_task_exit, describe, format_profile_error,
+    format_session_error, project_provider_invocation, render_documented_template, render_session,
+    runs_on_front_end, task_command_line_help, validate_profile_text,
+    write_parameter_profile_atomic,
 };
 
-use crate::execution::{ExecutionPlan, run_process_blocking};
+use crate::execution::{ExecutionExit, ExecutionPlan, run_process_blocking};
 use crate::registry::resolve_app;
 
 /// What a `params` or `run` command produced.
@@ -38,91 +40,62 @@ fn run_params(args: &[OsString]) -> Result<ParameterCliDispatch, String> {
     let Some(command) = args.first().and_then(|value| value.to_str()) else {
         return Ok(ParameterCliDispatch::Print(params_help()));
     };
-    match command {
+    let text = match command {
         "validate" => {
             let path = required_path(args.get(1), "profile file")?;
             reject_trailing(args, 2, "params validate")?;
             let source = fs::read_to_string(&path)
                 .map_err(|error| format!("read parameter profile {}: {error}", path.display()))?;
-            let profile =
-                casa_task_runtime::parse_profile(&source).map_err(format_profile_error)?;
-            let bundle = builtin_surface_bundle(&profile.header.surface)?;
-            let resolved = resolve_profile(&profile, &bundle).map_err(format_profile_error)?;
-            let mut text = format!(
-                "valid {} {} profile (contract {}, {} explicit override{})\n",
-                profile.header.kind,
-                profile.header.surface,
-                profile.header.contract,
-                resolved.explicit_overrides.len(),
-                if resolved.explicit_overrides.len() == 1 {
-                    ""
-                } else {
-                    "s"
-                }
-            );
-            for diagnostic in resolved.diagnostics {
-                text.push_str(&format!("warning: {}\n", diagnostic.message));
-            }
-            Ok(ParameterCliDispatch::Print(text))
+            validate_profile_text(&source, None)?
         }
         "template" => {
             let surface = required_utf8(args.get(1), "surface")?;
             reject_trailing(args, 2, "params template")?;
-            let bundle = builtin_surface_bundle(&surface)?;
-            Ok(ParameterCliDispatch::Print(
-                render_documented_template(&bundle).map_err(format_profile_error)?,
-            ))
+            render_documented_template(&builtin_surface_bundle(&surface)?)
+                .map_err(format_profile_error)?
         }
         "describe" => {
             let name = required_utf8(args.get(1), "parameter or surface name")?;
             reject_trailing(args, 2, "params describe")?;
-            Ok(ParameterCliDispatch::Print(describe(&name)?))
+            describe(&name)?
         }
         "show" => {
-            let surface = required_utf8(args.get(1), "surface")?;
-            let bundle = builtin_surface_bundle(&surface)?;
-            let options = parse_surface_options(&bundle, &args[2..], false)?;
-            let session = ParameterRuntime::default()
-                .open_session(open_session_request(bundle, &options))
-                .map_err(|error| error.to_string())?;
-            Ok(ParameterCliDispatch::Print(show_session(&session)))
+            let bundle = builtin_surface_bundle(&required_utf8(args.get(1), "surface")?)?;
+            let line = TaskCommandLine::parse(&bundle, &args[2..])?;
+            render_session(&open_session(line.open_session_request(bundle))?)
         }
         "save" => {
-            let surface = required_utf8(args.get(1), "surface")?;
+            let bundle = builtin_surface_bundle(&required_utf8(args.get(1), "surface")?)?;
             let destination = required_path(args.get(2), "destination profile")?;
-            let bundle = builtin_surface_bundle(&surface)?;
-            let options = parse_surface_options(&bundle, &args[3..], false)?;
-            let session = ParameterRuntime::default()
-                .open_session(open_session_request(bundle, &options))
-                .map_err(|error| error.to_string())?;
+            let line = TaskCommandLine::parse(&bundle, &args[3..])?;
+            let session = open_session(line.open_session_request(bundle))?;
             save_explicit(
                 &destination,
                 &session.render_sparse().map_err(format_session_error)?,
             )?;
-            Ok(ParameterCliDispatch::Print(format!(
-                "saved {}\n",
-                destination.display()
-            )))
+            format!("saved {}\n", destination.display())
         }
-        "-h" | "--help" | "help" => Ok(ParameterCliDispatch::Print(params_help())),
-        other => Err(format!(
-            "unknown params command {other:?}; expected validate, show, save, template, or describe"
-        )),
-    }
+        "-h" | "--help" | "help" => params_help(),
+        other => {
+            return Err(format!(
+                "unknown params command {other:?}; expected validate, show, save, template, or describe"
+            ));
+        }
+    };
+    Ok(ParameterCliDispatch::Print(text))
 }
 
+/// `casars run` owns Last for the runs it launches: the provider binary is
+/// started with projected flags or a JSON request and writes none (#931).
 fn run_task(args: &[OsString]) -> Result<(), String> {
     let surface_id = required_utf8(args.first(), "task name")?;
     let app = resolve_app(&surface_id)?;
     let bundle = builtin_surface_bundle(&surface_id)?;
-    let options = parse_surface_options(&bundle, &args[1..], true)?;
-    let session = ParameterRuntime::default()
-        .open_session(open_session_request(bundle, &options))
-        .map_err(|error| error.to_string())?;
-    enforce_runtime_confirmations(&session, &options)?;
+    let line = TaskCommandLine::parse(&bundle, &without_retired_confirmations(&args[1..]))?;
+    let session = open_session(line.open_session_request(bundle))?;
     let invocation = project_task_invocation(&session)?;
 
-    if let Some(path) = &options.save_params {
+    if let Some(path) = &line.save_params {
         save_explicit(
             path,
             &session.render_sparse().map_err(format_session_error)?,
@@ -133,9 +106,9 @@ fn run_task(args: &[OsString]) -> Result<(), String> {
     let attempt_id = format!("cli:{surface_id}");
     last.before_execution(
         &attempt_id,
-        &options.workspace,
+        &line.workspace,
         &surface_id,
-        !options.no_save_last,
+        !line.no_save_last,
         &session,
     )
     .map_err(format_session_error)?;
@@ -143,148 +116,73 @@ fn run_task(args: &[OsString]) -> Result<(), String> {
         eprintln!("Warning: could not save Last for {surface_id}: {warning}");
     }
 
+    let front_end = runs_on_front_end(session.bundle());
     let execution = app.resolve_command().and_then(|command| {
         let plan = ExecutionPlan {
             command,
             arguments: invocation.args.iter().map(OsString::from).collect(),
             stdin: invocation.stdin,
-            working_directory: options.workspace.clone(),
+            working_directory: line.workspace.clone(),
+            capture_stdout: front_end,
         };
         run_process_blocking(&plan).map_err(|error| format!("run {surface_id}: {error}"))
     });
-    let exit = match execution {
-        Ok(exit) => exit,
-        Err(error) => {
-            last.after_completion(&attempt_id, false);
-            return Err(error);
-        }
+    let outcome = match execution {
+        Ok(exit) if front_end => front_end_outcome(&surface_id, &exit),
+        Ok(exit) if exit.success() => Ok(()),
+        Ok(exit) => Err(format!(
+            "{surface_id} exited with code {}",
+            exit.code()
+                .map_or_else(|| "unknown".to_owned(), |code| code.to_string())
+        )),
+        Err(error) => Err(error),
     };
-    last.after_completion(&attempt_id, exit.success);
+    last.after_completion(&attempt_id, outcome.is_ok());
     for warning in last.take_warnings() {
         eprintln!("Warning: could not save Last Successful for {surface_id}: {warning}");
     }
-    if exit.success {
-        Ok(())
-    } else {
-        Err(format!(
-            "{surface_id} exited with code {}",
-            exit.code
-                .map_or_else(|| "unknown".to_owned(), |code| code.to_string())
-        ))
-    }
+    outcome
 }
 
-#[derive(Debug, Clone)]
-enum SourceChoice {
-    Defaults,
-    Last,
-    LastSuccessful,
-    File(PathBuf),
-}
-
-#[derive(Debug, Clone)]
-struct SurfaceOptions {
-    source: SourceChoice,
-    workspace: PathBuf,
-    context: ResolutionPatch,
-    overrides: ResolutionPatch,
-    save_params: Option<PathBuf>,
-    no_save_last: bool,
-    confirm_overwrite: bool,
-    confirm_mutation: bool,
-}
-
-fn parse_surface_options(
-    bundle: &SurfaceContractBundle,
-    args: &[OsString],
-    allow_runtime_controls: bool,
-) -> Result<SurfaceOptions, String> {
-    let mut source = None;
-    let mut workspace = None;
-    let context = ResolutionPatch::default();
-    let mut save_params = None;
-    let mut no_save_last = false;
-    let mut confirm_overwrite = false;
-    let mut confirm_mutation = false;
-    let mut parameter_args = Vec::new();
-    let mut index = 0usize;
-    while index < args.len() {
-        let raw = args[index]
-            .to_str()
-            .ok_or_else(|| "parameter arguments must be valid UTF-8".to_string())?;
-        if raw == "--defaults" {
-            set_source(&mut source, SourceChoice::Defaults)?;
-        } else if raw == "--last" {
-            set_source(&mut source, SourceChoice::Last)?;
-        } else if raw == "--last-successful" {
-            set_source(&mut source, SourceChoice::LastSuccessful)?;
-        } else if raw == "--params" {
-            index += 1;
-            set_source(
-                &mut source,
-                SourceChoice::File(required_path(args.get(index), "--params file")?),
-            )?;
-        } else if raw == "--workspace" {
-            index += 1;
-            workspace = Some(required_path(args.get(index), "--workspace directory")?);
-        } else if raw == "--save-params" {
-            index += 1;
-            save_params = Some(required_path(args.get(index), "--save-params file")?);
-        } else if raw == "--no-save-last" {
-            no_save_last = true;
-        } else if raw == "--confirm-overwrite" && allow_runtime_controls {
-            confirm_overwrite = true;
-        } else if raw == "--confirm-mutation" && allow_runtime_controls {
-            confirm_mutation = true;
-        } else {
-            parameter_args.push(args[index].clone());
+/// Read a front-end binary's typed reply: print CASA's return value, or
+/// report the task's own failure, or why there was no reply.
+fn front_end_outcome(surface_id: &str, exit: &ExecutionExit) -> Result<(), String> {
+    let stdout = exit.stdout.as_deref().unwrap_or_default();
+    match classify_task_exit(TaskExit::from(exit.status), stdout) {
+        TaskOutcome::Succeeded { value, .. } => {
+            if !value.is_null() {
+                println!("{value:#}");
+            }
+            Ok(())
         }
-        index += 1;
+        TaskOutcome::Refused { message, .. } | TaskOutcome::Failed { message, .. } => Err(message),
+        TaskOutcome::Signalled { signal } => {
+            Err(format!("{surface_id} was killed by signal {signal}"))
+        }
+        TaskOutcome::LaunchFailed { message } => Err(format!("run {surface_id}: {message}")),
+        TaskOutcome::MalformedReply { reason, .. } => Err(format!("{surface_id}: {reason}")),
     }
-    let overrides = parse_parameter_cli_overrides(bundle, &parameter_args)?;
-    let workspace =
-        workspace.unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-    Ok(SurfaceOptions {
-        source: source.unwrap_or(SourceChoice::Defaults),
-        workspace,
-        context,
-        overrides,
-        save_params,
-        no_save_last,
-        confirm_overwrite,
-        confirm_mutation,
-    })
 }
 
-fn set_source(target: &mut Option<SourceChoice>, source: SourceChoice) -> Result<(), String> {
-    if target.is_some() {
-        return Err(
-            "base sources are mutually exclusive: choose exactly one of Defaults, Last, Last Successful, or --params"
-                .to_string(),
-        );
-    }
-    *target = Some(source);
-    Ok(())
+/// `--confirm-overwrite` and `--confirm-mutation` are retired (#931): CASA's
+/// own parameters, such as `overwrite`, are the consent. `casars run` accepts
+/// them, and they change nothing, until the launcher goes.
+fn without_retired_confirmations(args: &[OsString]) -> Vec<OsString> {
+    args.iter()
+        .filter(|arg| {
+            !matches!(
+                arg.to_str(),
+                Some("--confirm-overwrite" | "--confirm-mutation")
+            )
+        })
+        .cloned()
+        .collect()
 }
 
-fn open_session_request(
-    bundle: SurfaceContractBundle,
-    options: &SurfaceOptions,
-) -> OpenSessionRequest {
-    OpenSessionRequest {
-        bundle,
-        workspace: options.workspace.clone(),
-        source: match &options.source {
-            SourceChoice::Defaults => BaseSource::Defaults,
-            SourceChoice::Last => BaseSource::Last,
-            SourceChoice::LastSuccessful => BaseSource::LastSuccessful,
-            SourceChoice::File(path) => BaseSource::File(path.clone()),
-        },
-        profile_text: None,
-        context_patch: options.context.clone(),
-        override_patch: options.overrides.clone(),
-        managed_save: !options.no_save_last,
-    }
+fn open_session(request: OpenSessionRequest) -> Result<ParameterSession, String> {
+    ParameterRuntime::default()
+        .open_session(request)
+        .map_err(|error| error.to_string())
 }
 
 pub(crate) fn project_task_invocation(
@@ -296,155 +194,6 @@ pub(crate) fn project_task_invocation(
         _ => Ok(ProviderInvocationAdaptation::direct(direct)),
     })
     .map_err(|error| error.to_string())
-}
-
-fn enforce_runtime_confirmations(
-    session: &ParameterSession,
-    options: &SurfaceOptions,
-) -> Result<(), String> {
-    let requirements = session
-        .required_run_safety()
-        .map_err(|error| format!("evaluate resolved run safety: {error}"))?;
-    if requirements.requires_overwrite_confirmation() && !options.confirm_overwrite {
-        return Err(
-            "resolved profile requests overwrite; pass the runtime control --confirm-overwrite to authorize it"
-                .to_string(),
-        );
-    }
-    if requirements.requires_input_mutation_confirmation() && !options.confirm_mutation {
-        return Err(
-            "resolved profile requests a mutation; pass the runtime control --confirm-mutation to authorize it"
-                .to_string(),
-        );
-    }
-    Ok(())
-}
-
-fn show_session(session: &ParameterSession) -> String {
-    let mut bindings = session
-        .bundle()
-        .surface
-        .bindings()
-        .iter()
-        .collect::<Vec<_>>();
-    bindings.sort_by_key(|binding| binding.order);
-    let mut text = format!(
-        "{} {} (contract {}, source {:?})\n",
-        session.bundle().surface.kind(),
-        session.bundle().surface.id(),
-        session.bundle().surface.contract_version(),
-        session.base_source()
-    );
-    for binding in bindings {
-        let state = &session.states()[&binding.name];
-        let value = state
-            .value
-            .as_ref()
-            .map(display_value)
-            .unwrap_or_else(|| "<required>".to_string());
-        text.push_str(&format!(
-            "{:<24} = {:<28} # {:?}{}{}\n",
-            binding.name,
-            value,
-            state.origin,
-            if state.required { ", required" } else { "" },
-            if state.active { "" } else { ", inactive" }
-        ));
-    }
-    for diagnostic in session.diagnostics() {
-        text.push_str(&format!("warning: {}\n", diagnostic.message));
-    }
-    text
-}
-
-fn display_value(value: &ParameterValue) -> String {
-    match value {
-        ParameterValue::Bool(value) => value.to_string(),
-        ParameterValue::Integer(value) => value.to_string(),
-        ParameterValue::Float(value) => value.to_string(),
-        ParameterValue::String(value) => format!("{value:?}"),
-        ParameterValue::Array(values) => format!(
-            "[{}]",
-            values
-                .iter()
-                .map(display_value)
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
-        ParameterValue::Table(values) => format!(
-            "{{{}}}",
-            values
-                .iter()
-                .map(|(name, value)| format!("{name}={}", display_value(value)))
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
-    }
-}
-
-fn describe(name: &str) -> Result<String, String> {
-    let aggregate = builtin_surface_catalog()?;
-    if let Some(surface) = aggregate.surface(name) {
-        let mut text = format!(
-            "{} {} — {}\nprovider family: {}\ncontract: {}\nparameters: {}\n\n",
-            surface.kind(),
-            surface.id(),
-            surface.summary(),
-            surface.provider_family(),
-            surface.contract_version(),
-            surface.bindings().len()
-        );
-        for binding in surface.bindings() {
-            text.push_str(&format!(
-                "  {:<24} {}@r{}\n",
-                binding.name, binding.concept.id, binding.concept.semantic_revision.0
-            ));
-        }
-        return Ok(text);
-    }
-    let concepts = aggregate
-        .catalog
-        .concepts
-        .iter()
-        .filter(|concept| concept.id.as_str() == name || concept.casa_name == name)
-        .collect::<Vec<_>>();
-    if concepts.is_empty() {
-        return Err(format!("unknown parameter concept or surface {name:?}"));
-    }
-    let mut text = String::new();
-    for concept in concepts {
-        describe_concept(&mut text, concept, aggregate);
-    }
-    Ok(text)
-}
-
-fn describe_concept(
-    text: &mut String,
-    concept: &ParameterConcept,
-    aggregate: &casa_provider_contracts::SurfaceCatalogBundle,
-) {
-    text.push_str(&format!(
-        "{}@r{} ({})\nCASA name: {}\ntype: {:?}\nnormalization: {:?}\nrole: {:?}\npersistence: {:?}\n{}\nused by:",
-        concept.id,
-        concept.semantic_revision.0,
-        concept.documentation.summary,
-        concept.casa_name,
-        concept.value_domain,
-        concept.normalization,
-        concept.semantic_role,
-        concept.persistence_class,
-        concept.documentation.details.as_deref().unwrap_or("")
-    ));
-    for surface in &aggregate.surfaces {
-        if surface
-            .bindings()
-            .iter()
-            .any(|binding| binding.concept == concept.reference())
-        {
-            text.push_str(&format!(" {}", surface.id()));
-        }
-    }
-    text.push_str("\n\n");
 }
 
 fn save_explicit(path: &Path, contents: &str) -> Result<(), String> {
@@ -474,34 +223,6 @@ fn reject_trailing(args: &[OsString], used: usize, command: &str) -> Result<(), 
     }
 }
 
-fn format_profile_error(error: casa_task_runtime::ProfileError) -> String {
-    match error {
-        casa_task_runtime::ProfileError::Diagnostics(diagnostics) => diagnostics
-            .into_iter()
-            .map(|diagnostic| {
-                let location = diagnostic.location.map_or_else(String::new, |location| {
-                    format!("{}:{}: ", location.line, location.column)
-                });
-                let suggestions = if diagnostic.suggestions.is_empty() {
-                    String::new()
-                } else {
-                    format!("; did you mean {}?", diagnostic.suggestions.join(" or "))
-                };
-                format!("{location}{}{suggestions}", diagnostic.message)
-            })
-            .collect::<Vec<_>>()
-            .join("\n"),
-        other => other.to_string(),
-    }
-}
-
-fn format_session_error(error: casa_task_runtime::ParameterSessionError) -> String {
-    match error {
-        casa_task_runtime::ParameterSessionError::Profile(error) => format_profile_error(error),
-        other => other.to_string(),
-    }
-}
-
 fn params_help() -> String {
     format!(
         "casars parameter profiles\n\n\
@@ -511,53 +232,38 @@ Usage:\n\
   casars params save TASK FILE [SOURCE] [OVERRIDES]\n\
   casars params template TASK\n\
   casars params describe NAME\n\
-  casars run TASK [SOURCE] [OVERRIDES] [RUNTIME CONTROLS]\n\n{}",
-        source_and_control_help()
+  casars run TASK [SOURCE] [OVERRIDES] [CONTROLS]\n\n{}",
+        task_command_line_help()
     )
-}
-
-/// The SOURCE, OVERRIDES and RUNTIME CONTROLS help shared by `casars --help`
-/// and `casars params --help`.
-pub(crate) fn source_and_control_help() -> &'static str {
-    "SOURCE is exactly one of --defaults (the default), --last, --last-successful, or --params FILE.\n\
-OVERRIDES use generated CLI spellings such as --ms, --imsize, --cell-arcsec, or --unset NAME.\n\
-RUNTIME CONTROLS: --workspace DIR (where Last and Last Successful live), --save-params FILE,\n\
-  --no-save-last; casars run also takes --confirm-overwrite and --confirm-mutation.\n"
 }
 
 #[cfg(test)]
 mod tests {
+    use casa_provider_contracts::{ParameterValue, SurfaceContractBundle};
+
     use super::*;
 
-    #[test]
-    fn source_options_are_mutually_exclusive() {
-        let bundle = builtin_surface_bundle("imager").unwrap();
-        let error = parse_surface_options(&bundle, &["--defaults".into(), "--last".into()], true)
-            .unwrap_err();
-        assert!(error.contains("mutually exclusive"));
+    fn session(bundle: SurfaceContractBundle, args: &[&str]) -> ParameterSession {
+        let args = args.iter().map(OsString::from).collect::<Vec<_>>();
+        let line = TaskCommandLine::parse(&bundle, &without_retired_confirmations(&args)).unwrap();
+        open_session(line.open_session_request(bundle)).unwrap()
     }
 
     #[test]
     fn casa_named_imsize_and_cell_overrides_are_typed() {
-        let bundle = builtin_surface_bundle("imager").unwrap();
-        let options = parse_surface_options(
-            &bundle,
+        let session = session(
+            builtin_surface_bundle("imager").unwrap(),
             &[
-                "--ms".into(),
-                "input.ms".into(),
-                "--imagename".into(),
-                "out".into(),
-                "--imsize".into(),
-                "1024".into(),
-                "--cell-arcsec".into(),
-                "0.2arcsec".into(),
+                "--ms",
+                "input.ms",
+                "--imagename",
+                "out",
+                "--imsize",
+                "1024",
+                "--cell-arcsec",
+                "0.2arcsec",
             ],
-            true,
-        )
-        .unwrap();
-        let session = ParameterRuntime::default()
-            .open_session(open_session_request(bundle, &options))
-            .unwrap();
+        );
         assert_eq!(
             session.values()["imsize"],
             ParameterValue::Array(vec![ParameterValue::Integer(1024); 2])
@@ -593,17 +299,10 @@ mod tests {
             "/../../resources/test-profiles/imager-cross-surface.expected.json"
         )))
         .unwrap();
-        let bundle = builtin_surface_bundle("imager").unwrap();
-        let options = parse_surface_options(
-            &bundle,
-            &["--params".into(), fixture.into_os_string()],
-            true,
-        )
-        .unwrap();
-        let session = ParameterRuntime::default()
-            .open_session(open_session_request(bundle, &options))
-            .unwrap();
-
+        let session = session(
+            builtin_surface_bundle("imager").unwrap(),
+            &["--params", fixture.to_str().unwrap()],
+        );
         let invocation = project_task_invocation(&session).unwrap();
         let request: serde_json::Value =
             serde_json::from_str(invocation.stdin.as_deref().unwrap()).unwrap();
@@ -611,67 +310,11 @@ mod tests {
     }
 
     #[test]
-    fn runtime_controls_are_separated_from_parameter_overrides() {
-        let bundle = builtin_surface_bundle("imstat").unwrap();
-        let options = parse_surface_options(
-            &bundle,
-            &[
-                "input.image".into(),
-                "--save-params".into(),
-                "saved.toml".into(),
-                "--no-save-last".into(),
-                "--workspace".into(),
-                "work".into(),
-            ],
-            true,
-        )
-        .unwrap();
-        assert_eq!(options.save_params, Some(PathBuf::from("saved.toml")));
-        assert!(options.no_save_last);
-        assert_eq!(options.workspace, PathBuf::from("work"));
-        let session = ParameterRuntime::default()
-            .open_session(open_session_request(bundle, &options))
-            .unwrap();
-        assert_eq!(
-            session.values()["imagename"],
-            ParameterValue::Array(vec![ParameterValue::String("input.image".into())])
-        );
-    }
-
-    #[test]
-    fn notebook_controls_are_no_longer_accepted() {
-        let bundle = builtin_surface_bundle("imstat").unwrap();
-        assert!(
-            parse_surface_options(
-                &bundle,
-                &[
-                    "input.image".into(),
-                    "--notebook".into(),
-                    "Analysis.md".into()
-                ],
-                true,
-            )
-            .is_err()
-        );
-    }
-
-    #[test]
     fn cli_projection_carries_the_simobserve_request_over_stdin() {
-        let bundle = builtin_surface_bundle("simobserve").unwrap();
-        let options = parse_surface_options(
-            &bundle,
-            &[
-                "--project".into(),
-                "psim2".into(),
-                "--antennalist".into(),
-                "alma.out20.cfg".into(),
-            ],
-            true,
-        )
-        .unwrap();
-        let session = ParameterRuntime::default()
-            .open_session(open_session_request(bundle, &options))
-            .unwrap();
+        let session = session(
+            builtin_surface_bundle("simobserve").unwrap(),
+            &["--project", "psim2", "--antennalist", "alma.out20.cfg"],
+        );
         let invocation = project_task_invocation(&session).unwrap();
 
         assert_eq!(
@@ -686,46 +329,27 @@ mod tests {
         // CASA's defaults travel with the request.
         assert_eq!(request["request"]["ptgfile"], "$project.ptg.txt");
         assert_eq!(request["request"]["overwrite"], true);
-        // Overwriting the project's own files needs no confirmation.
-        enforce_runtime_confirmations(&session, &options).unwrap();
     }
 
     #[test]
-    fn loaded_overwrite_cannot_bypass_runtime_confirmation() {
+    fn retired_confirmation_flags_are_accepted_and_change_nothing() {
         let bundle = builtin_surface_bundle("importfits").unwrap();
-        let mut options = parse_surface_options(
-            &bundle,
-            &["input.fits".into(), "out".into(), "--overwrite".into()],
-            true,
-        )
-        .unwrap();
-        let session = ParameterRuntime::default()
-            .open_session(open_session_request(bundle, &options))
-            .unwrap();
-        assert!(enforce_runtime_confirmations(&session, &options).is_err());
-        options.confirm_overwrite = true;
-        enforce_runtime_confirmations(&session, &options).unwrap();
-    }
-
-    #[test]
-    fn catalog_input_mutation_rules_gate_mutating_tasks() {
-        let surface = "applycal";
-        let bundle = builtin_surface_bundle(surface).unwrap();
-        let mut options = parse_surface_options(&bundle, &[], true).unwrap();
-        let session = ParameterRuntime::default()
-            .open_session(open_session_request(bundle, &options))
-            .unwrap();
-        let error = enforce_runtime_confirmations(&session, &options).unwrap_err();
-        assert!(error.contains("--confirm-mutation"), "{surface}: {error}");
-        options.confirm_mutation = true;
-        enforce_runtime_confirmations(&session, &options).unwrap();
-    }
-
-    #[test]
-    fn describe_uses_shared_concept_catalog() {
-        let text = describe("width").unwrap();
-        assert!(text.contains("ms.transform.width@r1"));
-        assert!(text.contains("mstransform"));
-        assert!(text.contains("split"));
+        let plain = session(bundle.clone(), &["input.fits", "out", "--overwrite"]);
+        let confirmed = session(
+            bundle,
+            &[
+                "input.fits",
+                "out",
+                "--overwrite",
+                "--confirm-overwrite",
+                "--confirm-mutation",
+            ],
+        );
+        assert_eq!(plain.values(), confirmed.values());
+        assert_eq!(plain.values()["overwrite"], ParameterValue::Bool(true));
+        assert_eq!(
+            project_task_invocation(&plain).unwrap().args,
+            project_task_invocation(&confirmed).unwrap().args
+        );
     }
 }

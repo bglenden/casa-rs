@@ -23,8 +23,11 @@
 
 mod lockstep;
 mod losses;
+mod msv2_pointing;
 mod msv2_rows;
 mod msv2_tables;
+mod pointing_plan;
+mod pointing_scan;
 mod to_msv2;
 mod to_msv4;
 

@@ -84,6 +84,12 @@ impl SelectedObservationResolutionRequest {
         self
     }
 
+    /// Return the Measures provider every resolution evaluates with.
+    #[must_use]
+    pub fn measures_provider(&self) -> Arc<dyn MeasuresProvider> {
+        Arc::clone(&self.measures_provider)
+    }
+
     /// Return the storage-owner locator used for each fresh resolution.
     #[must_use]
     pub fn locator(&self) -> &str {

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -24,6 +25,14 @@ Path(os.environ["FAKE_CASARS_LOG"]).write_text(json.dumps({
     "cwd": os.getcwd(),
     "profile": profile_path.read_text(encoding="utf-8"),
 }), encoding="utf-8")
+# Like `casars run`, record Last unless the caller asks for none.
+if "--no-save-last" not in arguments:
+    for name in ("FAKE_CASARS_LAST", "FAKE_CASARS_LAST_SUCCESSFUL"):
+        if name in os.environ:
+            Path(os.environ[name]).write_text("written by casars run\\n", encoding="utf-8")
+if "FAKE_CASARS_SLEEP" in os.environ:
+    import time
+    time.sleep(float(os.environ["FAKE_CASARS_SLEEP"]))
 print(os.environ.get("FAKE_CASARS_STDOUT", "runner stdout"))
 print("runner stderr", file=sys.stderr)
 raise SystemExit(int(os.environ.get("FAKE_CASARS_EXIT", "0")))
@@ -34,7 +43,7 @@ raise SystemExit(int(os.environ.get("FAKE_CASARS_EXIT", "0")))
     return path
 
 
-def test_run_uses_canonical_profile_and_forwards_runtime_controls(
+def test_run_uses_canonical_profile_and_asks_for_no_last(
     tmp_path: Path,
 ) -> None:
     binary = _fake_casars(tmp_path / "casars")
@@ -56,13 +65,8 @@ def test_run_uses_canonical_profile_and_forwards_runtime_controls(
 
     recorded = json.loads(log.read_text(encoding="utf-8"))
     assert recorded["argv"][:3] == ["run", "flagmanager", "--params"]
-    assert recorded["argv"][4:] == [
-        "--workspace",
-        str(tmp_path),
-        "--no-save-last",
-        "--confirm-overwrite",
-        "--confirm-mutation",
-    ]
+    # The retired confirmations and `save_last` are accepted and ignored.
+    assert recorded["argv"][4:] == ["--workspace", str(tmp_path), "--no-save-last"]
     assert recorded["cwd"] == str(tmp_path)
     assert 'vis = ["base.ms"]' in recorded["profile"]
     assert 'comment = "from generic runner"' in recorded["profile"]
@@ -154,6 +158,48 @@ def test_run_preserves_failure_output_with_and_without_check(tmp_path: Path) -> 
         )
     assert failure.value.completion.returncode == 7
     assert failure.value.completion.stderr == "runner stderr\n"
+
+
+@pytest.mark.parametrize("outcome", ["success", "failure", "interruption"])
+@pytest.mark.parametrize("save_last", [True, False])
+def test_a_python_task_call_leaves_existing_last_files_untouched(
+    tmp_path: Path, outcome: str, save_last: bool
+) -> None:
+    binary = _fake_casars(tmp_path / "casars")
+    saved = TaskParameters.defaults("flagmanager", workspace=tmp_path)
+    saved["vis"] = "saved.ms"
+    last = saved.write_last()
+    last_successful = saved.write_last(successful=True)
+    before = (last.read_bytes(), last_successful.read_bytes())
+    environment = {
+        "FAKE_CASARS_LOG": str(tmp_path / "invocation.json"),
+        "FAKE_CASARS_LAST": str(last),
+        "FAKE_CASARS_LAST_SUCCESSFUL": str(last_successful),
+        "FAKE_CASARS_EXIT": "1" if outcome == "failure" else "0",
+    }
+    if outcome == "interruption":
+        environment["FAKE_CASARS_SLEEP"] = "30"
+
+    def call() -> tasks.TaskCompletion:
+        return tasks.run(
+            "flagmanager",
+            workspace=tmp_path,
+            binary=binary,
+            env=environment,
+            check=False,
+            timeout=2 if outcome == "interruption" else None,
+            save_last=save_last,
+            vis="other.ms",
+        )
+
+    if outcome == "interruption":
+        with pytest.raises(subprocess.TimeoutExpired):
+            call()
+    else:
+        assert call().successful is (outcome == "success")
+    assert (last.read_bytes(), last_successful.read_bytes()) == before
+    # Reading Last stays an explicit choice.
+    assert TaskParameters.last("flagmanager", workspace=tmp_path)["vis"] == ["saved.ms"]
 
 
 def test_run_rejects_mismatched_parameters_and_ambiguous_sources(tmp_path: Path) -> None:

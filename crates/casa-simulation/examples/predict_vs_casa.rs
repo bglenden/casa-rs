@@ -21,13 +21,13 @@
 use std::process::ExitCode;
 use std::time::Instant;
 
+use casa_imaging_model::GridFtProjection;
 use casa_imaging_operator::{GridPrecision, PaddingFactor};
 use casa_ms::MeasurementSet;
 use casa_ms::columns::data_columns::DataColumn;
 use casa_ms::columns::flag_columns::{FlagColumn, FlagRowColumn};
 use casa_ms::columns::main_ids::{antenna1, antenna2};
 use casa_ms::columns::uvw_column::UvwColumn;
-use casa_ms::derived::GridFtProjection;
 use casa_simulation::predict::{
     FtMachine, ModelPredictor, PredictOptions, PredictRow, PredictionWorkspace, PrimaryBeam,
     SkyModel,
