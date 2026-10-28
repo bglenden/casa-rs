@@ -27,6 +27,7 @@ members = [
     "crates/casa-imaging-products",
     "crates/casa-imaging-application",
     "crates/casa-imaging-runtime",
+    "crates/casa-imaging-singledish",
     "crates/casa-imaging-metal",
     "crates/casa-simulation-synthesis",
     "crates/casa-simulation",

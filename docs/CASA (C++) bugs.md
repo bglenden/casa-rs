@@ -2196,3 +2196,95 @@ stops instead, with "Failed to set conversion layer state".
 casa-rs treats that channel as it treats the others: it is not regridded,
 and the output keeps the input's (`casa_images::regrid`). Converting the
 frame of an axis that is never regridded serves no purpose.
+
+## `tsdimaging`'s theoretical beam models the kernels, not the gridder's
+
+- Date noted: 2026-10-28
+- Status: CASA behaviour casa-rs does not follow (#938 part 1, #841 Phase 6c)
+- Affected code: `casatasks/src/private/sdbeamutil.py`
+  (`TheoreticalBeam.get_kernel` and the kernel functions it calls)
+
+`tsdimaging` gives its image the beam `sdbeamutil.TheoreticalBeam`
+computes: the antenna's Gaussian beam convolved with a cut through the
+gridding kernel and with a box as wide as the sampling, then fitted with a
+Gaussian. The kernel it convolves with is not the gridder's (`SDGrid::init`)
+but a model of it, and the models disagree with the gridder:
+- **`GAUSS`.** The gridder takes `gwidth` as a half width at half maximum;
+  `sdbeamutil` passes it to a Gaussian that takes a full width. It also cuts
+  the kernel at 1.5 `gwidth` where the gridder cuts at `truncate`
+  (default 3 `gwidth`).
+- **`GJINC`.** `sdbeamutil` ignores `truncate` ("NOT SUPPORTED YET") and
+  always cuts at the jinc's first null.
+- **`SF`.** The gridder's kernel is `(1 − ν²) grdsf(ν)`; `sdbeamutil` uses
+  SciPy's prolate spheroid `pro_ang1(0, 0, c)` with `c = 5.356π/2`, chosen
+  to resemble it.
+- **`PB`.** The gridder takes the telescope's power pattern (for ALMA, the
+  10.7 m Airy pattern of `VPSkyJones`); `sdbeamutil` takes an Airy disk
+  scaled to the Gaussian beam's width, for the antenna's own diameter.
+- **`BOX`.** `sdbeamutil` makes the box one pixel wide whatever
+  `convsupport` is; the gridder's box reaches `2s + 1` pixels.
+
+The reported beam is then not the image's. Against CASA 6.7.6 on the
+oracle's setups (`tools/singledish/tsdimaging_oracle.py`), the gridder's own
+kernels give beams wider by 0.60% to 3.3% for `GAUSS`, and 0.31% narrower
+for `GJINC` with a `truncate`. They differ by at most 6.0e-4 for `SF`, `PB`
+and `GJINC` at its defaults. The gridder reads its table at the radius
+truncated to a hundredth of a pixel, which widens the kernel slightly. That
+accounts for all of `GJINC`'s difference at its defaults (read at the
+rounded radius, it agrees with CASA to 1e-6) and for about 40% of `SF`'s.
+The rest of `SF`'s is SciPy's spheroid against `grdsf`.
+
+casa-rs cuts through the gridder's own table (`casa_imaging_singledish::
+theoretical_beam_arcsec`), so the beam describes the image the gridder
+makes. `BOX` at its default support, which both describe alike, agrees with
+CASA to 2e-8.
+
+## `getPointingSamplingRaster` measures the row spacing in raw longitude
+
+- Date noted: 2026-10-28
+- Status: CASA bug; casa-rs does not follow it (#938 part 1, #841 Phase 6c)
+- Affected code: `casatools/src/code/synthesis/Utilities/SingleDishBeamUtil.cc`
+  (`getPointingSamplingRaster`)
+
+CASA estimates a raster's sampling from its pointings. Along the scan it
+scales each longitude step by the cosine of the map's central latitude, so
+the step is an angle on the sky. Across the scan it projects the steps
+between rows' median positions on the perpendicular without that factor. A
+map scanned in latitude, whose rows step in longitude, then has its row
+spacing overestimated by `1/cos δ`, 15% at δ = −30°. The beam `tsdimaging`
+reports widens with it.
+
+casa-rs scales the rows' longitude steps as it scales the along-scan ones
+(`casa_imaging_singledish::raster_sampling`). A map scanned in longitude, as
+`simobserve` scans one, is unaffected: CASA and casa-rs agree on the
+oracle's maps to 1e-15.
+
+## `tsdimaging` sets no beam when only the along-scan interval is invalid
+
+- Date noted: 2026-10-28
+- Status: CASA bug; casa-rs does not follow it (#938 part 1, #841 Phase 6c)
+- Affected code: `casatasks/src/private/task_tsdimaging.py` (`set_beam_size`)
+
+When the sampling along the scan is below 2.2 mas or not finite,
+`set_beam_size` logs "Using the value of orthogonal direction" and takes the
+interval across the scan, but it also marks the sampling invalid. That
+mark is then never cleared, so no beam is set, whatever the other interval
+is. When only the interval across the scan is invalid (a map with no row
+gaps), it uses the along-scan one and sets the beam.
+
+casa-rs does what the log says: either valid interval alone gives the beam
+(`casa_imaging_singledish::beam_sampling`), and only two invalid intervals
+give none.
+
+## `SDGrid` grids nothing with an `SF` kernel of no support
+
+- Date noted: 2026-10-28
+- Status: CASA behaviour casa-rs refuses (#938 part 1, #841 Phase 6c)
+- Affected code: `casatools/src/code/synthesis/TransformMachines2/SDGrid.cc`
+  (`SDGrid::init`)
+
+`SDGrid::init` tabulates the `SF` kernel over `convsupport` pixels, so
+`convsupport=0` gives a kernel of zeros. Every pixel's weight is then zero,
+the image is empty, and `tsdimaging` only warns that no weight is positive.
+casa-rs refuses that kernel, asking for a support of at least 1 or CASA's
+default of 3 (`casa_imaging_singledish::GridFunction::from_casa`).

@@ -1,0 +1,24 @@
+[package]
+name = "casa-imaging-singledish"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Single-dish image-plane gridding: CASA's SDGrid kernels, gridder and degridder, and the theoretical beam"
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+casa-imaging-operator = { path = "../casa-imaging-operator" }
+casa-imaging-runtime = { path = "../casa-imaging-runtime" }
+casa-numerics = { path = "../casa-numerics" }
+libm = "0.2"
+ndarray.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+base64 = "0.22"
+flate2 = "1"
+serde_json = { version = "1", features = ["float_roundtrip"] }

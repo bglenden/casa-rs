@@ -10,6 +10,9 @@ Superseded by:
 Amended: 2026-10-25, on owner direction: every imaging crate may depend on the
 definitional crates (decision 10).
 
+Amended: 2026-10-28, on owner direction of 2026-10-27 (#938): single-dish
+image-plane gridding is its own operator family (decision 13).
+
 ## Context
 
 Programme #486 delivered cube, MFS, Clark, multi-worker and Metal imaging as
@@ -104,6 +107,16 @@ normative design; this ADR records the decisions that supersede earlier ADRs.
     IF-0 to IF-11 under issue #648 are the work record; review gates R1 to R4
     in plan section 9.3 are the only review checkpoints; the anti-slop rules in
     plan section 10 are review criteria for every ticket.
+13. **Single-dish gridding.** Single-dish (total-power) imaging, CASA's
+    `SDGrid`, places each spectrum at its pointing's pixel and spreads it
+    with a radial kernel: no FFT, no uv coordinates and no gridding
+    correction. It is its own operator family, outside decision 1's
+    measurement operator and its four kernel sets. `casa-imaging-singledish`
+    joins decision 10's crates in the execution layer. It owns the
+    single-dish kernels, the image-plane gridder and the degridder that the
+    simulator's total-power prediction uses, its adjoint. It admits its grids
+    through the runtime and grids on its worker team. (Amended 2026-10-28, on
+    owner direction of 2026-10-27, #938.)
 
 ## Consequences
 
