@@ -21,7 +21,9 @@ pub(super) const fn bytes(block: BlockShape) -> u64 {
 /// consumed.
 ///
 /// The producer stops at the next block boundary after `cancel` is set or
-/// `consume` fails; both threads are joined before this returns.
+/// `consume` fails; both threads are joined before this returns. A source
+/// that fails fails the stream, though its producer stops, and closes the
+/// queue of free blocks, before the consumer reads the failure.
 ///
 /// With `timing` it logs one event under
 /// [`casa_imaging_metal::METAL_STAGE_TIMING`] when the stream ends: the
@@ -108,9 +110,10 @@ pub(super) fn stream_blocks(
             }
             consuming += consumed.elapsed();
             blocks += 1;
-            if free_sender.send(block).is_err() {
-                break;
-            }
+            // A producer that has stopped, at the source's end or after
+            // sending its failure, takes no more free blocks; what it sent
+            // before it stopped is still read.
+            let _ = free_sender.send(block);
         }
         drop(free_sender);
         let filling = producer.join().map_err(|_| PassError::ProducerPanicked)?;

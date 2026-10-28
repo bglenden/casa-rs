@@ -487,6 +487,16 @@ updaters write back, and the MeasurementSet is opened and indexed once.
   seeds a missing `MODEL_DATA`) to the end of the pass.
   `SelectedVisibilityWrite` takes it, and creates the column, when the
   writer begins.
+- **Reads beside writes.** The source's producer reads the next batches
+  while the sink writes the last, on one MeasurementSet in one process,
+  where file locks do not keep them apart. Each save rewrites `table.dat`,
+  so the MSv2 observation reads what it needs from it (each data group's
+  tile shape) once, when it opens, and an estimate reads no file the saves
+  rewrite. The multi-partition write test found the read that did: about
+  one run in fifteen tore it. That test also found that the pass runtime
+  dropped a source's failure when its producer stopped first. The stream
+  now reads everything the producer sent (`pass_laws`
+  `a_source_failing_midway_fails_the_pass`).
 - **Admission.** The write stays a `Residency::All` pass. Its charge (today
   `SelectedVisibilityWrite::retained_bytes`) is, on the batch route, the
   largest of each term over the partitions (`BatchRoute::write_bytes`),

@@ -92,6 +92,11 @@ pub struct Msv2Observation {
     spectral_weights: bool,
     /// Whether MAIN has `SIGMA_SPECTRUM`.
     spectral_sigmas: bool,
+    /// Each data group's visibility column and its tile shape, read when
+    /// the observation opened: an estimate does not read `table.dat` again,
+    /// which an update session over the same MeasurementSet rewrites as it
+    /// saves each batch.
+    tile_shapes: Vec<(String, Option<Vec<usize>>)>,
     options: OpenOptions,
 }
 
@@ -184,6 +189,14 @@ impl Msv2Observation {
             grant,
         )?;
         let groups = data_groups(main, spectral_weights, uvw_frame);
+        let tile_shapes = groups
+            .iter()
+            .map(|group| {
+                main.array_column_tile_shape(&group.visibilities)
+                    .map(|shape| (group.visibilities.clone(), shape))
+                    .map_err(table_error)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         let mut partitions = Vec::new();
         let mut entries = Vec::new();
         for (key, grid) in index.partitions {
@@ -254,6 +267,7 @@ impl Msv2Observation {
             main_states: index.states,
             spectral_weights,
             spectral_sigmas,
+            tile_shapes,
             options: options.clone(),
             ms,
         })
@@ -520,10 +534,10 @@ impl Msv2Observation {
         )?;
         let group = &entry.data_groups[resolved.data_group];
         let tile = self
-            .ms
-            .main_table()
-            .array_column_tile_shape(&group.visibilities)
-            .map_err(table_error)?;
+            .tile_shapes
+            .iter()
+            .find(|(column, _)| *column == group.visibilities)
+            .and_then(|(_, shape)| shape.clone());
         let estimate = PartitionEstimate {
             partition: id,
             times,
