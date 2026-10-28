@@ -62,6 +62,13 @@ pub struct PointingSeries {
     pub terms: usize,
     /// Each antenna's samples.
     pub antennas: BTreeMap<AntennaId, AntennaPointing>,
+    /// Whether the store holds any pointing sample at all, whatever the
+    /// request asked for (#937): false for a store without a pointing
+    /// table or with an empty one, which CASA's single-dish gridder images
+    /// at the FIELD phase centre instead (`havePointings = nPointings > 0`);
+    /// true otherwise, when an acquisition without a usable sample is not
+    /// gridded.
+    pub store_has_pointing: bool,
 }
 
 /// One antenna's pointing samples.
@@ -219,6 +226,7 @@ impl PointingSeries {
             frame,
             terms: 1,
             antennas: BTreeMap::new(),
+            store_has_pointing: false,
         }
     }
 

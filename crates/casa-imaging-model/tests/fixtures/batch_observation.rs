@@ -97,6 +97,7 @@ pub fn catalogue_in(field: MDirection, partitions: usize, frame: FrequencyRef) -
         ),
         mount: "ALT-AZ".to_string(),
         dish_diameter: Quantity::new(25.0, "m").expect("metres"),
+        flagged: None,
     };
     let baseline = |a, b| OrderedBaseline {
         antenna1: AntennaId(a),
@@ -129,6 +130,9 @@ pub fn catalogue_in(field: MDirection, partitions: usize, frame: FrequencyRef) -
             },
         }],
         receptors: std::collections::BTreeMap::new(),
+        window: casa_observation::WindowId(0),
+        states: Vec::new(),
+        processor: None,
     };
     Arc::new(Catalogue {
         antennas: vec![
@@ -141,6 +145,11 @@ pub fn catalogue_in(field: MDirection, partitions: usize, frame: FrequencyRef) -
             phase_centre: field,
             reference_epoch: None,
             source_name: None,
+            source: None,
+            code: None,
+            delay_centre: None,
+            reference_centre: None,
+            flagged: None,
         }],
         scans: vec![ScanEntry {
             name: "1".to_string(),
@@ -149,6 +158,7 @@ pub fn catalogue_in(field: MDirection, partitions: usize, frame: FrequencyRef) -
         }],
         observations: vec![ObservationEntry::default()],
         partitions: vec![partition; partitions],
+        ..Catalogue::default()
     })
 }
 

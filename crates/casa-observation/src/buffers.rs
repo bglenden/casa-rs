@@ -770,6 +770,7 @@ pub(crate) mod tests {
             position: casa_types::measures::position::MPosition::new_itrf(0.0, 0.0, 0.0),
             mount: "ALT-AZ".to_string(),
             dish_diameter: casa_types::quanta::Quantity::new(25.0, "m").expect("quantity"),
+            flagged: None,
         };
         Arc::new(Catalogue {
             antennas: vec![antenna("A"), antenna("B"), antenna("C")],
@@ -782,6 +783,11 @@ pub(crate) mod tests {
                 ),
                 reference_epoch: None,
                 source_name: None,
+                source: None,
+                code: None,
+                delay_centre: None,
+                reference_centre: None,
+                flagged: None,
             }],
             scans: vec![ScanEntry {
                 name: "1".to_string(),
@@ -816,7 +822,11 @@ pub(crate) mod tests {
                     },
                 }],
                 receptors: std::collections::BTreeMap::new(),
+                window: crate::WindowId(0),
+                states: Vec::new(),
+                processor: None,
             }],
+            ..Catalogue::default()
         })
     }
 

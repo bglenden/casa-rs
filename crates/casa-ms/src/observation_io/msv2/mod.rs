@@ -6,6 +6,7 @@
 pub(super) mod catalogue;
 mod cursor;
 mod index;
+mod metadata;
 mod pointing;
 pub(super) mod update;
 
@@ -23,8 +24,9 @@ use casa_observation::{
     AccessRequest, AntennaId, BoundCursor, Catalogue, DataGroupEntry, Estimate, FieldId,
     FieldSelection, GroupKey, Grouping, NaturalBlocks, Observation, ObservationError,
     ObservationId, OrderedBaseline, PartitionEntry, PartitionEstimate, PartitionId,
-    PointingRequest, PointingSeries, Receptors, ResolvedRequest, Roles, ScanId, TimeBaselineGrid,
-    Traversal, WeightRequest, WeightRule, WeightSource, times_per_batch,
+    PointingRequest, PointingSeries, ProcessorId, Receptors, ResolvedRequest, Roles, ScanId,
+    StateId, TimeBaselineGrid, Traversal, WeightRequest, WeightRule, WeightSource, WindowId,
+    times_per_batch,
 };
 use casa_tables::{RequiredScalarColumnDestination, RequiredScalarColumnValuesMut};
 use casa_types::measures::{EpochRef, MjdHighPrec};
@@ -162,11 +164,15 @@ impl Msv2Observation {
                  used, as casacore's MSIter uses it"
             );
         }
+        let windows = metadata::read_windows(&ms)?;
+        let sources = metadata::read_sources(&ms, windows.len())?;
+        let states = metadata::read_states(&ms)?;
+        let processors = metadata::read_processors(&ms)?;
         let catalogue::Fields {
             entries: fields,
             ephemerides,
             uvw_frame,
-        } = catalogue::fields_and_uvw(&ms)?;
+        } = catalogue::fields_and_uvw(&ms, &sources.ids)?;
         let observations = catalogue::read_observations(&ms)?;
         let main = ms.main_table();
         let time_scale = catalogue::time_scale(main)?;
@@ -217,6 +223,20 @@ impl Msv2Observation {
                 setup.spectral_window_id as i32,
             )?;
             let feeds = [feed(key.feeds[0])?, feed(key.feeds[1])?];
+            // A state or processor a row names that its table does not hold
+            // (CASA's simulator writes PROCESSOR_ID 0 without a row) has no
+            // entry.
+            let known = |id: i32, rows: usize| usize::try_from(id).ok().filter(|id| *id < rows);
+            let partition_states = grid
+                .states
+                .iter()
+                .filter_map(|state| known(*state, states.len()))
+                .map(|state| StateId(state as u32))
+                .collect();
+            let processor = grid
+                .processor
+                .and_then(|processor| known(processor, processors.len()))
+                .map(|processor| ProcessorId(processor as u32));
             entries.push(PartitionEntry {
                 spectral_window: setup.spectral_window.clone(),
                 frequencies_hz: setup.frequencies_hz.clone(),
@@ -233,6 +253,9 @@ impl Msv2Observation {
                 time_origin: MjdHighPrec::new(0.0, 0.0),
                 data_groups: groups.clone(),
                 receptors,
+                window: WindowId(setup.spectral_window_id),
+                states: partition_states,
+                processor,
             });
             partitions.push(Partition {
                 grid,
@@ -248,6 +271,10 @@ impl Msv2Observation {
                 scans: index.scans,
                 observations,
                 partitions: entries,
+                windows,
+                sources: sources.entries,
+                states,
+                processors,
             }),
             partitions,
             state_modes: modes,

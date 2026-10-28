@@ -832,6 +832,9 @@ mod tests {
             time_origin,
             data_groups: Vec::new(),
             receptors: std::collections::BTreeMap::new(),
+            window: crate::WindowId(0),
+            states: Vec::new(),
+            processor: None,
         }
     }
 

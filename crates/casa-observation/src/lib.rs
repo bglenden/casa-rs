@@ -115,8 +115,10 @@ pub use casa_types::Correlation;
 pub use casa_types::measures::{EpochView, FrequencyView, MUvw, UvwView};
 pub use catalogue::{
     AntennaEntry, AntennaId, Binding, BindingTolerance, Catalogue, DataGroupEntry, FieldEntry,
-    FieldId, ObservationEntry, ObservationId, OrderedBaseline, PartitionEntry, PartitionId,
-    Receptors, ScanEntry, ScanId, UvwFrame, VisibilityUnits, alt_az_mount,
+    FieldId, IntentError, ObservationEntry, ObservationId, OrderedBaseline, PartitionEntry,
+    PartitionId, ProcessorEntry, ProcessorId, Receptors, ScanEntry, ScanId, SourceEntry, SourceId,
+    SourceRecord, SourceWindow, StateEntry, StateId, UvwFrame, Velocity, VisibilityUnits,
+    WindowEntry, WindowId, alt_az_mount,
 };
 pub use creation::TimeBaselineGrid;
 pub use cursor::{BoundCursor, Observation, OwnedEvent, Step, Traversal, VisibilityCursor};
