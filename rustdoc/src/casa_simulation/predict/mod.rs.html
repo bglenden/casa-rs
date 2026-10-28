@@ -365,165 +365,166 @@
 <a href=#365 id=365 data-nosnippet>365</a>                <span class="kw">return </span><span class="prelude-val">Ok</span>(());
 <a href=#366 id=366 data-nosnippet>366</a>            };
 <a href=#367 id=367 data-nosnippet>367</a>            <span class="kw">let </span>images = <span class="macro">vec!</span>[model.read_plane(plane)<span class="question-mark">?</span>];
-<a href=#368 id=368 data-nosnippet>368</a>            <span class="kw">let </span>factor = beam.map(|(pattern, centre)| pattern.power_plane(model, plane, centre));
-<a href=#369 id=369 data-nosnippet>369</a>            <span class="self">self</span>.operator
-<a href=#370 id=370 data-nosnippet>370</a>                .fill_model_plane(<span class="kw-2">&amp;</span>ModelPlane { images }, factor.as_ref(), target)<span class="question-mark">?</span>;
-<a href=#371 id=371 data-nosnippet>371</a>            <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, PredictError&gt;(())
-<a href=#372 id=372 data-nosnippet>372</a>        };
-<a href=#373 id=373 data-nosnippet>373</a>        <span class="kw">match </span>team {
-<a href=#374 id=374 data-nosnippet>374</a>            <span class="prelude-val">Some</span>(team) =&gt; team.for_each_mut(<span class="kw-2">&amp;mut </span>jobs, prepare)<span class="question-mark">?</span>,
-<a href=#375 id=375 data-nosnippet>375</a>            <span class="prelude-val">None </span>=&gt; jobs
-<a href=#376 id=376 data-nosnippet>376</a>                .iter_mut()
-<a href=#377 id=377 data-nosnippet>377</a>                .enumerate()
-<a href=#378 id=378 data-nosnippet>378</a>                .try_for_each(|(plane, target)| prepare(plane, target))<span class="question-mark">?</span>,
-<a href=#379 id=379 data-nosnippet>379</a>        }
-<a href=#380 id=380 data-nosnippet>380</a>        drop(jobs);
-<a href=#381 id=381 data-nosnippet>381</a>        <span class="macro">debug_assert_eq!</span>(grids.bytes(), <span class="self">self</span>.grid_bytes());
-<a href=#382 id=382 data-nosnippet>382</a>        <span class="prelude-val">Ok</span>(grids)
-<a href=#383 id=383 data-nosnippet>383</a>    }
-<a href=#384 id=384 data-nosnippet>384</a>}
-<a href=#385 id=385 data-nosnippet>385</a>
-<a href=#386 id=386 data-nosnippet>386</a><span class="doccomment">/// How [`ModelPredictor`] grids, as `sm.setoptions` and `sm.setvp` choose.
-<a href=#387 id=387 data-nosnippet>387</a></span><span class="attr">#[derive(Clone, Copy, Debug, PartialEq)]
-<a href=#388 id=388 data-nosnippet>388</a></span><span class="kw">pub struct </span>PredictOptions {
-<a href=#389 id=389 data-nosnippet>389</a>    <span class="doccomment">/// The FTMachine, with `GridFT`'s padding (`setoptions(ftmachine=…,
-<a href=#390 id=390 data-nosnippet>390</a>    /// padding=…, wprojplanes=…)`).
-<a href=#391 id=391 data-nosnippet>391</a>    </span><span class="kw">pub </span>ft_machine: FtMachine,
-<a href=#392 id=392 data-nosnippet>392</a>    <span class="doccomment">/// The primary beam, when `setvp(dovp=True)`.
-<a href=#393 id=393 data-nosnippet>393</a>    </span><span class="kw">pub </span>primary_beam: <span class="prelude-ty">Option</span>&lt;PrimaryBeam&gt;,
-<a href=#394 id=394 data-nosnippet>394</a>    <span class="doccomment">/// Grid arithmetic. CASA's simulator FTMachines run in `Float`.
-<a href=#395 id=395 data-nosnippet>395</a>    </span><span class="kw">pub </span>precision: GridPrecision,
-<a href=#396 id=396 data-nosnippet>396</a>}
-<a href=#397 id=397 data-nosnippet>397</a>
-<a href=#398 id=398 data-nosnippet>398</a><span class="kw">impl </span>Default <span class="kw">for </span>PredictOptions {
-<a href=#399 id=399 data-nosnippet>399</a>    <span class="kw">fn </span>default() -&gt; <span class="self">Self </span>{
-<a href=#400 id=400 data-nosnippet>400</a>        <span class="self">Self </span>{
-<a href=#401 id=401 data-nosnippet>401</a>            ft_machine: FtMachine::Grid(PaddingFactor::SIMULATOR),
-<a href=#402 id=402 data-nosnippet>402</a>            primary_beam: <span class="prelude-val">None</span>,
-<a href=#403 id=403 data-nosnippet>403</a>            precision: GridPrecision::F32,
-<a href=#404 id=404 data-nosnippet>404</a>        }
-<a href=#405 id=405 data-nosnippet>405</a>    }
-<a href=#406 id=406 data-nosnippet>406</a>}
-<a href=#407 id=407 data-nosnippet>407</a>
-<a href=#408 id=408 data-nosnippet>408</a><span class="doccomment">/// One MeasurementSet row to predict.
-<a href=#409 id=409 data-nosnippet>409</a></span><span class="attr">#[derive(Clone, Copy, Debug)]
-<a href=#410 id=410 data-nosnippet>410</a></span><span class="kw">pub struct </span>PredictRow&lt;<span class="lifetime">'a</span>&gt; {
-<a href=#411 id=411 data-nosnippet>411</a>    <span class="doccomment">/// Baseline coordinates in metres towards the model's tangent point, in
-<a href=#412 id=412 data-nosnippet>412</a>    /// GridFT's convention: the row's `UVW` rotated by
-<a href=#413 id=413 data-nosnippet>413</a>    /// [`casa_imaging_model::GridFtProjection`].
-<a href=#414 id=414 data-nosnippet>414</a>    </span><span class="kw">pub </span>uvw_m: [f64; <span class="number">3</span>],
-<a href=#415 id=415 data-nosnippet>415</a>    <span class="doccomment">/// GridFT's phase shift in metres (`−dphase`), from the same rotation.
-<a href=#416 id=416 data-nosnippet>416</a>    </span><span class="kw">pub </span>phase_shift_m: f64,
-<a href=#417 id=417 data-nosnippet>417</a>    <span class="doccomment">/// Channel frequencies in Hz.
-<a href=#418 id=418 data-nosnippet>418</a>    </span><span class="kw">pub </span>frequencies_hz: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[f64],
-<a href=#419 id=419 data-nosnippet>419</a>    <span class="doccomment">/// Sample flags, `[channel][correlation]`.
-<a href=#420 id=420 data-nosnippet>420</a>    </span><span class="kw">pub </span>flags: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[bool],
-<a href=#421 id=421 data-nosnippet>421</a>    <span class="doccomment">/// The row flag.
-<a href=#422 id=422 data-nosnippet>422</a>    </span><span class="kw">pub </span>row_flag: bool,
-<a href=#423 id=423 data-nosnippet>423</a>    <span class="doccomment">/// Antenna pair; an autocorrelation predicts the model's zero spacing
-<a href=#424 id=424 data-nosnippet>424</a>    /// through `GridFT`, and zero through `WProjectFT`.
-<a href=#425 id=425 data-nosnippet>425</a>    </span><span class="kw">pub </span>antennas: [u32; <span class="number">2</span>],
-<a href=#426 id=426 data-nosnippet>426</a>}
-<a href=#427 id=427 data-nosnippet>427</a>
-<a href=#428 id=428 data-nosnippet>428</a><span class="doccomment">/// Reusable per-thread buffers for [`ModelPredictor::predict_row`].
-<a href=#429 id=429 data-nosnippet>429</a></span><span class="attr">#[derive(Debug, Default)]
-<a href=#430 id=430 data-nosnippet>430</a></span><span class="kw">pub struct </span>PredictionWorkspace {
-<a href=#431 id=431 data-nosnippet>431</a>    scratch: PredictionScratch,
-<a href=#432 id=432 data-nosnippet>432</a>    backend: CpuBackend,
-<a href=#433 id=433 data-nosnippet>433</a>    values: Vec&lt;Complex32&gt;,
-<a href=#434 id=434 data-nosnippet>434</a>    weights: Vec&lt;f32&gt;,
-<a href=#435 id=435 data-nosnippet>435</a>}
-<a href=#436 id=436 data-nosnippet>436</a>
-<a href=#437 id=437 data-nosnippet>437</a><span class="doccomment">/// A model prepared for prediction on one correlation set, predicting a row
-<a href=#438 id=438 data-nosnippet>438</a>/// at a time on the CPU: the reference the session's block prediction is
-<a href=#439 id=439 data-nosnippet>439</a>/// tested against.
-<a href=#440 id=440 data-nosnippet>440</a></span><span class="kw">pub struct </span>ModelPredictor {
-<a href=#441 id=441 data-nosnippet>441</a>    model: ModelOperator,
-<a href=#442 id=442 data-nosnippet>442</a>    grids: PreparedModelGrids,
-<a href=#443 id=443 data-nosnippet>443</a>}
-<a href=#444 id=444 data-nosnippet>444</a>
-<a href=#445 id=445 data-nosnippet>445</a><span class="kw">impl </span>ModelPredictor {
-<a href=#446 id=446 data-nosnippet>446</a>    <span class="doccomment">/// Prepare `model` for rows with `correlations`, its primary beam (when
-<a href=#447 id=447 data-nosnippet>447</a>    /// requested) centred on `pointing_rad`.
-<a href=#448 id=448 data-nosnippet>448</a>    ///
-<a href=#449 id=449 data-nosnippet>449</a>    /// # Errors
-<a href=#450 id=450 data-nosnippet>450</a>    ///
-<a href=#451 id=451 data-nosnippet>451</a>    /// A geometry the grid cannot hold, correlations the Stokes I model
-<a href=#452 id=452 data-nosnippet>452</a>    /// cannot feed, a pointing outside the model's coordinate system, or a
-<a href=#453 id=453 data-nosnippet>453</a>    /// plane that cannot be read.
-<a href=#454 id=454 data-nosnippet>454</a>    </span><span class="kw">pub fn </span>new(
-<a href=#455 id=455 data-nosnippet>455</a>        model: <span class="kw-2">&amp;</span>SkyModel,
-<a href=#456 id=456 data-nosnippet>456</a>        correlations: <span class="kw-2">&amp;</span>[Correlation],
-<a href=#457 id=457 data-nosnippet>457</a>        pointing_rad: [f64; <span class="number">2</span>],
-<a href=#458 id=458 data-nosnippet>458</a>        options: <span class="kw-2">&amp;</span>PredictOptions,
-<a href=#459 id=459 data-nosnippet>459</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, PredictError&gt; {
-<a href=#460 id=460 data-nosnippet>460</a>        <span class="kw">let </span>layout = ModelLayout::new(model, correlations, options.ft_machine, <span class="prelude-val">None</span>)<span class="question-mark">?</span>;
-<a href=#461 id=461 data-nosnippet>461</a>        <span class="kw">let </span>kernels = layout.kernels()<span class="question-mark">?</span>;
-<a href=#462 id=462 data-nosnippet>462</a>        <span class="kw">let </span>operator = ModelOperator::new(layout, kernels, options.precision);
-<a href=#463 id=463 data-nosnippet>463</a>        <span class="kw">let </span>pattern = options.primary_beam.map(PrimaryBeam::pattern);
-<a href=#464 id=464 data-nosnippet>464</a>        <span class="kw">let </span>beam = <span class="kw">match </span><span class="kw-2">&amp;</span>pattern {
-<a href=#465 id=465 data-nosnippet>465</a>            <span class="prelude-val">Some</span>(pattern) =&gt; <span class="prelude-val">Some</span>((pattern, model.pixel_of(pointing_rad)<span class="question-mark">?</span>)),
-<a href=#466 id=466 data-nosnippet>466</a>            <span class="prelude-val">None </span>=&gt; <span class="prelude-val">None</span>,
-<a href=#467 id=467 data-nosnippet>467</a>        };
-<a href=#468 id=468 data-nosnippet>468</a>        <span class="kw">let </span>grids = operator.prepare(model, beam, <span class="prelude-val">None</span>)<span class="question-mark">?</span>;
-<a href=#469 id=469 data-nosnippet>469</a>        <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
-<a href=#470 id=470 data-nosnippet>470</a>            model: operator,
-<a href=#471 id=471 data-nosnippet>471</a>            grids,
-<a href=#472 id=472 data-nosnippet>472</a>        })
-<a href=#473 id=473 data-nosnippet>473</a>    }
-<a href=#474 id=474 data-nosnippet>474</a>
-<a href=#475 id=475 data-nosnippet>475</a>    <span class="doccomment">/// Correlations per sample.
-<a href=#476 id=476 data-nosnippet>476</a>    </span><span class="attr">#[must_use]
-<a href=#477 id=477 data-nosnippet>477</a>    </span><span class="kw">pub fn </span>correlations(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
-<a href=#478 id=478 data-nosnippet>478</a>        <span class="self">self</span>.model.operator.polarization().correlations().len()
-<a href=#479 id=479 data-nosnippet>479</a>    }
-<a href=#480 id=480 data-nosnippet>480</a>
-<a href=#481 id=481 data-nosnippet>481</a>    <span class="doccomment">/// The model visibility of every sample of `row`, written to `out` as
-<a href=#482 id=482 data-nosnippet>482</a>    /// `[channel][correlation]`. Flagged samples and flagged rows predict
-<a href=#483 id=483 data-nosnippet>483</a>    /// zero; an autocorrelation predicts the model's zero spacing through
-<a href=#484 id=484 data-nosnippet>484</a>    /// `GridFT` and zero through `WProjectFT`.
-<a href=#485 id=485 data-nosnippet>485</a>    ///
-<a href=#486 id=486 data-nosnippet>486</a>    /// # Errors
-<a href=#487 id=487 data-nosnippet>487</a>    ///
-<a href=#488 id=488 data-nosnippet>488</a>    /// A row inconsistent with the predictor, or an `out` of the wrong
-<a href=#489 id=489 data-nosnippet>489</a>    /// length.
-<a href=#490 id=490 data-nosnippet>490</a>    </span><span class="kw">pub fn </span>predict_row(
-<a href=#491 id=491 data-nosnippet>491</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#492 id=492 data-nosnippet>492</a>        workspace: <span class="kw-2">&amp;mut </span>PredictionWorkspace,
-<a href=#493 id=493 data-nosnippet>493</a>        row: <span class="kw-2">&amp;</span>PredictRow&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#494 id=494 data-nosnippet>494</a>        out: <span class="kw-2">&amp;mut </span>[Complex32],
-<a href=#495 id=495 data-nosnippet>495</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), PredictError&gt; {
-<a href=#496 id=496 data-nosnippet>496</a>        <span class="kw">let </span>cells = row.frequencies_hz.len() * <span class="self">self</span>.correlations();
-<a href=#497 id=497 data-nosnippet>497</a>        workspace.values.resize(cells, Complex32::new(<span class="number">0.0</span>, <span class="number">0.0</span>));
-<a href=#498 id=498 data-nosnippet>498</a>        workspace.weights.resize(cells, <span class="number">1.0</span>);
-<a href=#499 id=499 data-nosnippet>499</a>        <span class="kw">let </span>native = NativeRow {
-<a href=#500 id=500 data-nosnippet>500</a>            uvw_m: row.uvw_m,
-<a href=#501 id=501 data-nosnippet>501</a>            phase_shift_m: row.phase_shift_m,
-<a href=#502 id=502 data-nosnippet>502</a>            pointing_offset_rad: [<span class="number">0.0</span>; <span class="number">2</span>],
-<a href=#503 id=503 data-nosnippet>503</a>            frequencies_hz: row.frequencies_hz,
-<a href=#504 id=504 data-nosnippet>504</a>            values: <span class="kw-2">&amp;</span>workspace.values,
-<a href=#505 id=505 data-nosnippet>505</a>            weights: <span class="kw-2">&amp;</span>workspace.weights,
-<a href=#506 id=506 data-nosnippet>506</a>            flags: row.flags,
-<a href=#507 id=507 data-nosnippet>507</a>            row_flag: row.row_flag,
-<a href=#508 id=508 data-nosnippet>508</a>            context: RowContext {
-<a href=#509 id=509 data-nosnippet>509</a>                original_uvw_m: <span class="prelude-val">None</span>,
-<a href=#510 id=510 data-nosnippet>510</a>                time_s: <span class="number">0.0</span>,
-<a href=#511 id=511 data-nosnippet>511</a>                antennas: row.antennas,
-<a href=#512 id=512 data-nosnippet>512</a>                antenna_types: [<span class="number">0</span>, <span class="number">0</span>],
-<a href=#513 id=513 data-nosnippet>513</a>                parallactic_angle_rad: [<span class="number">0.0</span>, <span class="number">0.0</span>],
-<a href=#514 id=514 data-nosnippet>514</a>                field: <span class="number">0</span>,
-<a href=#515 id=515 data-nosnippet>515</a>                spectral_window: <span class="number">0</span>,
-<a href=#516 id=516 data-nosnippet>516</a>            },
-<a href=#517 id=517 data-nosnippet>517</a>        };
-<a href=#518 id=518 data-nosnippet>518</a>        <span class="self">self</span>.model.resampler.predict_row(
-<a href=#519 id=519 data-nosnippet>519</a>            <span class="kw-2">&amp;</span><span class="self">self</span>.model.operator,
-<a href=#520 id=520 data-nosnippet>520</a>            <span class="kw-2">&amp;mut </span>workspace.backend,
-<a href=#521 id=521 data-nosnippet>521</a>            <span class="kw-2">&amp;</span><span class="self">self</span>.grids,
-<a href=#522 id=522 data-nosnippet>522</a>            <span class="kw-2">&amp;</span>native,
-<a href=#523 id=523 data-nosnippet>523</a>            <span class="kw-2">&amp;mut </span>workspace.scratch,
-<a href=#524 id=524 data-nosnippet>524</a>            out,
-<a href=#525 id=525 data-nosnippet>525</a>        )<span class="question-mark">?</span>;
-<a href=#526 id=526 data-nosnippet>526</a>        <span class="prelude-val">Ok</span>(())
-<a href=#527 id=527 data-nosnippet>527</a>    }
-<a href=#528 id=528 data-nosnippet>528</a>}
+<a href=#368 id=368 data-nosnippet>368</a>            <span class="kw">let </span>factor =
+<a href=#369 id=369 data-nosnippet>369</a>                beam.map(|(pattern, centre)| beam::power_plane(pattern, model, plane, centre));
+<a href=#370 id=370 data-nosnippet>370</a>            <span class="self">self</span>.operator
+<a href=#371 id=371 data-nosnippet>371</a>                .fill_model_plane(<span class="kw-2">&amp;</span>ModelPlane { images }, factor.as_ref(), target)<span class="question-mark">?</span>;
+<a href=#372 id=372 data-nosnippet>372</a>            <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, PredictError&gt;(())
+<a href=#373 id=373 data-nosnippet>373</a>        };
+<a href=#374 id=374 data-nosnippet>374</a>        <span class="kw">match </span>team {
+<a href=#375 id=375 data-nosnippet>375</a>            <span class="prelude-val">Some</span>(team) =&gt; team.for_each_mut(<span class="kw-2">&amp;mut </span>jobs, prepare)<span class="question-mark">?</span>,
+<a href=#376 id=376 data-nosnippet>376</a>            <span class="prelude-val">None </span>=&gt; jobs
+<a href=#377 id=377 data-nosnippet>377</a>                .iter_mut()
+<a href=#378 id=378 data-nosnippet>378</a>                .enumerate()
+<a href=#379 id=379 data-nosnippet>379</a>                .try_for_each(|(plane, target)| prepare(plane, target))<span class="question-mark">?</span>,
+<a href=#380 id=380 data-nosnippet>380</a>        }
+<a href=#381 id=381 data-nosnippet>381</a>        drop(jobs);
+<a href=#382 id=382 data-nosnippet>382</a>        <span class="macro">debug_assert_eq!</span>(grids.bytes(), <span class="self">self</span>.grid_bytes());
+<a href=#383 id=383 data-nosnippet>383</a>        <span class="prelude-val">Ok</span>(grids)
+<a href=#384 id=384 data-nosnippet>384</a>    }
+<a href=#385 id=385 data-nosnippet>385</a>}
+<a href=#386 id=386 data-nosnippet>386</a>
+<a href=#387 id=387 data-nosnippet>387</a><span class="doccomment">/// How [`ModelPredictor`] grids, as `sm.setoptions` and `sm.setvp` choose.
+<a href=#388 id=388 data-nosnippet>388</a></span><span class="attr">#[derive(Clone, Copy, Debug, PartialEq)]
+<a href=#389 id=389 data-nosnippet>389</a></span><span class="kw">pub struct </span>PredictOptions {
+<a href=#390 id=390 data-nosnippet>390</a>    <span class="doccomment">/// The FTMachine, with `GridFT`'s padding (`setoptions(ftmachine=…,
+<a href=#391 id=391 data-nosnippet>391</a>    /// padding=…, wprojplanes=…)`).
+<a href=#392 id=392 data-nosnippet>392</a>    </span><span class="kw">pub </span>ft_machine: FtMachine,
+<a href=#393 id=393 data-nosnippet>393</a>    <span class="doccomment">/// The primary beam, when `setvp(dovp=True)`.
+<a href=#394 id=394 data-nosnippet>394</a>    </span><span class="kw">pub </span>primary_beam: <span class="prelude-ty">Option</span>&lt;PrimaryBeam&gt;,
+<a href=#395 id=395 data-nosnippet>395</a>    <span class="doccomment">/// Grid arithmetic. CASA's simulator FTMachines run in `Float`.
+<a href=#396 id=396 data-nosnippet>396</a>    </span><span class="kw">pub </span>precision: GridPrecision,
+<a href=#397 id=397 data-nosnippet>397</a>}
+<a href=#398 id=398 data-nosnippet>398</a>
+<a href=#399 id=399 data-nosnippet>399</a><span class="kw">impl </span>Default <span class="kw">for </span>PredictOptions {
+<a href=#400 id=400 data-nosnippet>400</a>    <span class="kw">fn </span>default() -&gt; <span class="self">Self </span>{
+<a href=#401 id=401 data-nosnippet>401</a>        <span class="self">Self </span>{
+<a href=#402 id=402 data-nosnippet>402</a>            ft_machine: FtMachine::Grid(PaddingFactor::SIMULATOR),
+<a href=#403 id=403 data-nosnippet>403</a>            primary_beam: <span class="prelude-val">None</span>,
+<a href=#404 id=404 data-nosnippet>404</a>            precision: GridPrecision::F32,
+<a href=#405 id=405 data-nosnippet>405</a>        }
+<a href=#406 id=406 data-nosnippet>406</a>    }
+<a href=#407 id=407 data-nosnippet>407</a>}
+<a href=#408 id=408 data-nosnippet>408</a>
+<a href=#409 id=409 data-nosnippet>409</a><span class="doccomment">/// One MeasurementSet row to predict.
+<a href=#410 id=410 data-nosnippet>410</a></span><span class="attr">#[derive(Clone, Copy, Debug)]
+<a href=#411 id=411 data-nosnippet>411</a></span><span class="kw">pub struct </span>PredictRow&lt;<span class="lifetime">'a</span>&gt; {
+<a href=#412 id=412 data-nosnippet>412</a>    <span class="doccomment">/// Baseline coordinates in metres towards the model's tangent point, in
+<a href=#413 id=413 data-nosnippet>413</a>    /// GridFT's convention: the row's `UVW` rotated by
+<a href=#414 id=414 data-nosnippet>414</a>    /// [`casa_imaging_model::GridFtProjection`].
+<a href=#415 id=415 data-nosnippet>415</a>    </span><span class="kw">pub </span>uvw_m: [f64; <span class="number">3</span>],
+<a href=#416 id=416 data-nosnippet>416</a>    <span class="doccomment">/// GridFT's phase shift in metres (`−dphase`), from the same rotation.
+<a href=#417 id=417 data-nosnippet>417</a>    </span><span class="kw">pub </span>phase_shift_m: f64,
+<a href=#418 id=418 data-nosnippet>418</a>    <span class="doccomment">/// Channel frequencies in Hz.
+<a href=#419 id=419 data-nosnippet>419</a>    </span><span class="kw">pub </span>frequencies_hz: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[f64],
+<a href=#420 id=420 data-nosnippet>420</a>    <span class="doccomment">/// Sample flags, `[channel][correlation]`.
+<a href=#421 id=421 data-nosnippet>421</a>    </span><span class="kw">pub </span>flags: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[bool],
+<a href=#422 id=422 data-nosnippet>422</a>    <span class="doccomment">/// The row flag.
+<a href=#423 id=423 data-nosnippet>423</a>    </span><span class="kw">pub </span>row_flag: bool,
+<a href=#424 id=424 data-nosnippet>424</a>    <span class="doccomment">/// Antenna pair; an autocorrelation predicts the model's zero spacing
+<a href=#425 id=425 data-nosnippet>425</a>    /// through `GridFT`, and zero through `WProjectFT`.
+<a href=#426 id=426 data-nosnippet>426</a>    </span><span class="kw">pub </span>antennas: [u32; <span class="number">2</span>],
+<a href=#427 id=427 data-nosnippet>427</a>}
+<a href=#428 id=428 data-nosnippet>428</a>
+<a href=#429 id=429 data-nosnippet>429</a><span class="doccomment">/// Reusable per-thread buffers for [`ModelPredictor::predict_row`].
+<a href=#430 id=430 data-nosnippet>430</a></span><span class="attr">#[derive(Debug, Default)]
+<a href=#431 id=431 data-nosnippet>431</a></span><span class="kw">pub struct </span>PredictionWorkspace {
+<a href=#432 id=432 data-nosnippet>432</a>    scratch: PredictionScratch,
+<a href=#433 id=433 data-nosnippet>433</a>    backend: CpuBackend,
+<a href=#434 id=434 data-nosnippet>434</a>    values: Vec&lt;Complex32&gt;,
+<a href=#435 id=435 data-nosnippet>435</a>    weights: Vec&lt;f32&gt;,
+<a href=#436 id=436 data-nosnippet>436</a>}
+<a href=#437 id=437 data-nosnippet>437</a>
+<a href=#438 id=438 data-nosnippet>438</a><span class="doccomment">/// A model prepared for prediction on one correlation set, predicting a row
+<a href=#439 id=439 data-nosnippet>439</a>/// at a time on the CPU: the reference the session's block prediction is
+<a href=#440 id=440 data-nosnippet>440</a>/// tested against.
+<a href=#441 id=441 data-nosnippet>441</a></span><span class="kw">pub struct </span>ModelPredictor {
+<a href=#442 id=442 data-nosnippet>442</a>    model: ModelOperator,
+<a href=#443 id=443 data-nosnippet>443</a>    grids: PreparedModelGrids,
+<a href=#444 id=444 data-nosnippet>444</a>}
+<a href=#445 id=445 data-nosnippet>445</a>
+<a href=#446 id=446 data-nosnippet>446</a><span class="kw">impl </span>ModelPredictor {
+<a href=#447 id=447 data-nosnippet>447</a>    <span class="doccomment">/// Prepare `model` for rows with `correlations`, its primary beam (when
+<a href=#448 id=448 data-nosnippet>448</a>    /// requested) centred on `pointing_rad`.
+<a href=#449 id=449 data-nosnippet>449</a>    ///
+<a href=#450 id=450 data-nosnippet>450</a>    /// # Errors
+<a href=#451 id=451 data-nosnippet>451</a>    ///
+<a href=#452 id=452 data-nosnippet>452</a>    /// A geometry the grid cannot hold, correlations the Stokes I model
+<a href=#453 id=453 data-nosnippet>453</a>    /// cannot feed, a pointing outside the model's coordinate system, or a
+<a href=#454 id=454 data-nosnippet>454</a>    /// plane that cannot be read.
+<a href=#455 id=455 data-nosnippet>455</a>    </span><span class="kw">pub fn </span>new(
+<a href=#456 id=456 data-nosnippet>456</a>        model: <span class="kw-2">&amp;</span>SkyModel,
+<a href=#457 id=457 data-nosnippet>457</a>        correlations: <span class="kw-2">&amp;</span>[Correlation],
+<a href=#458 id=458 data-nosnippet>458</a>        pointing_rad: [f64; <span class="number">2</span>],
+<a href=#459 id=459 data-nosnippet>459</a>        options: <span class="kw-2">&amp;</span>PredictOptions,
+<a href=#460 id=460 data-nosnippet>460</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, PredictError&gt; {
+<a href=#461 id=461 data-nosnippet>461</a>        <span class="kw">let </span>layout = ModelLayout::new(model, correlations, options.ft_machine, <span class="prelude-val">None</span>)<span class="question-mark">?</span>;
+<a href=#462 id=462 data-nosnippet>462</a>        <span class="kw">let </span>kernels = layout.kernels()<span class="question-mark">?</span>;
+<a href=#463 id=463 data-nosnippet>463</a>        <span class="kw">let </span>operator = ModelOperator::new(layout, kernels, options.precision);
+<a href=#464 id=464 data-nosnippet>464</a>        <span class="kw">let </span>pattern = options.primary_beam.map(PrimaryBeam::pattern);
+<a href=#465 id=465 data-nosnippet>465</a>        <span class="kw">let </span>beam = <span class="kw">match </span><span class="kw-2">&amp;</span>pattern {
+<a href=#466 id=466 data-nosnippet>466</a>            <span class="prelude-val">Some</span>(pattern) =&gt; <span class="prelude-val">Some</span>((pattern, model.pixel_of(pointing_rad)<span class="question-mark">?</span>)),
+<a href=#467 id=467 data-nosnippet>467</a>            <span class="prelude-val">None </span>=&gt; <span class="prelude-val">None</span>,
+<a href=#468 id=468 data-nosnippet>468</a>        };
+<a href=#469 id=469 data-nosnippet>469</a>        <span class="kw">let </span>grids = operator.prepare(model, beam, <span class="prelude-val">None</span>)<span class="question-mark">?</span>;
+<a href=#470 id=470 data-nosnippet>470</a>        <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
+<a href=#471 id=471 data-nosnippet>471</a>            model: operator,
+<a href=#472 id=472 data-nosnippet>472</a>            grids,
+<a href=#473 id=473 data-nosnippet>473</a>        })
+<a href=#474 id=474 data-nosnippet>474</a>    }
+<a href=#475 id=475 data-nosnippet>475</a>
+<a href=#476 id=476 data-nosnippet>476</a>    <span class="doccomment">/// Correlations per sample.
+<a href=#477 id=477 data-nosnippet>477</a>    </span><span class="attr">#[must_use]
+<a href=#478 id=478 data-nosnippet>478</a>    </span><span class="kw">pub fn </span>correlations(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
+<a href=#479 id=479 data-nosnippet>479</a>        <span class="self">self</span>.model.operator.polarization().correlations().len()
+<a href=#480 id=480 data-nosnippet>480</a>    }
+<a href=#481 id=481 data-nosnippet>481</a>
+<a href=#482 id=482 data-nosnippet>482</a>    <span class="doccomment">/// The model visibility of every sample of `row`, written to `out` as
+<a href=#483 id=483 data-nosnippet>483</a>    /// `[channel][correlation]`. Flagged samples and flagged rows predict
+<a href=#484 id=484 data-nosnippet>484</a>    /// zero; an autocorrelation predicts the model's zero spacing through
+<a href=#485 id=485 data-nosnippet>485</a>    /// `GridFT` and zero through `WProjectFT`.
+<a href=#486 id=486 data-nosnippet>486</a>    ///
+<a href=#487 id=487 data-nosnippet>487</a>    /// # Errors
+<a href=#488 id=488 data-nosnippet>488</a>    ///
+<a href=#489 id=489 data-nosnippet>489</a>    /// A row inconsistent with the predictor, or an `out` of the wrong
+<a href=#490 id=490 data-nosnippet>490</a>    /// length.
+<a href=#491 id=491 data-nosnippet>491</a>    </span><span class="kw">pub fn </span>predict_row(
+<a href=#492 id=492 data-nosnippet>492</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#493 id=493 data-nosnippet>493</a>        workspace: <span class="kw-2">&amp;mut </span>PredictionWorkspace,
+<a href=#494 id=494 data-nosnippet>494</a>        row: <span class="kw-2">&amp;</span>PredictRow&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#495 id=495 data-nosnippet>495</a>        out: <span class="kw-2">&amp;mut </span>[Complex32],
+<a href=#496 id=496 data-nosnippet>496</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), PredictError&gt; {
+<a href=#497 id=497 data-nosnippet>497</a>        <span class="kw">let </span>cells = row.frequencies_hz.len() * <span class="self">self</span>.correlations();
+<a href=#498 id=498 data-nosnippet>498</a>        workspace.values.resize(cells, Complex32::new(<span class="number">0.0</span>, <span class="number">0.0</span>));
+<a href=#499 id=499 data-nosnippet>499</a>        workspace.weights.resize(cells, <span class="number">1.0</span>);
+<a href=#500 id=500 data-nosnippet>500</a>        <span class="kw">let </span>native = NativeRow {
+<a href=#501 id=501 data-nosnippet>501</a>            uvw_m: row.uvw_m,
+<a href=#502 id=502 data-nosnippet>502</a>            phase_shift_m: row.phase_shift_m,
+<a href=#503 id=503 data-nosnippet>503</a>            pointing_offset_rad: [<span class="number">0.0</span>; <span class="number">2</span>],
+<a href=#504 id=504 data-nosnippet>504</a>            frequencies_hz: row.frequencies_hz,
+<a href=#505 id=505 data-nosnippet>505</a>            values: <span class="kw-2">&amp;</span>workspace.values,
+<a href=#506 id=506 data-nosnippet>506</a>            weights: <span class="kw-2">&amp;</span>workspace.weights,
+<a href=#507 id=507 data-nosnippet>507</a>            flags: row.flags,
+<a href=#508 id=508 data-nosnippet>508</a>            row_flag: row.row_flag,
+<a href=#509 id=509 data-nosnippet>509</a>            context: RowContext {
+<a href=#510 id=510 data-nosnippet>510</a>                original_uvw_m: <span class="prelude-val">None</span>,
+<a href=#511 id=511 data-nosnippet>511</a>                time_s: <span class="number">0.0</span>,
+<a href=#512 id=512 data-nosnippet>512</a>                antennas: row.antennas,
+<a href=#513 id=513 data-nosnippet>513</a>                antenna_types: [<span class="number">0</span>, <span class="number">0</span>],
+<a href=#514 id=514 data-nosnippet>514</a>                parallactic_angle_rad: [<span class="number">0.0</span>, <span class="number">0.0</span>],
+<a href=#515 id=515 data-nosnippet>515</a>                field: <span class="number">0</span>,
+<a href=#516 id=516 data-nosnippet>516</a>                spectral_window: <span class="number">0</span>,
+<a href=#517 id=517 data-nosnippet>517</a>            },
+<a href=#518 id=518 data-nosnippet>518</a>        };
+<a href=#519 id=519 data-nosnippet>519</a>        <span class="self">self</span>.model.resampler.predict_row(
+<a href=#520 id=520 data-nosnippet>520</a>            <span class="kw-2">&amp;</span><span class="self">self</span>.model.operator,
+<a href=#521 id=521 data-nosnippet>521</a>            <span class="kw-2">&amp;mut </span>workspace.backend,
+<a href=#522 id=522 data-nosnippet>522</a>            <span class="kw-2">&amp;</span><span class="self">self</span>.grids,
+<a href=#523 id=523 data-nosnippet>523</a>            <span class="kw-2">&amp;</span>native,
+<a href=#524 id=524 data-nosnippet>524</a>            <span class="kw-2">&amp;mut </span>workspace.scratch,
+<a href=#525 id=525 data-nosnippet>525</a>            out,
+<a href=#526 id=526 data-nosnippet>526</a>        )<span class="question-mark">?</span>;
+<a href=#527 id=527 data-nosnippet>527</a>        <span class="prelude-val">Ok</span>(())
+<a href=#528 id=528 data-nosnippet>528</a>    }
+<a href=#529 id=529 data-nosnippet>529</a>}
 </code></pre></div></section></main></body></html>

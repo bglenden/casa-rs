@@ -1819,6 +1819,50 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#tsdimagings-theoretical-beam-models-the-kernels-not-the-gridders" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        tsdimaging's theoretical beam models the kernels, not the gridder's
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#getpointingsamplingraster-measures-the-row-spacing-in-raw-longitude" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        getPointingSamplingRaster measures the row spacing in raw longitude
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tsdimaging-writes-the-weight-masks-threshold-to-six-decimal-places" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        tsdimaging writes the weight mask's threshold to six decimal places
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sdgrid-grids-nothing-with-an-sf-kernel-of-no-support" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SDGrid grids nothing with an SF kernel of no support
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#simanalyze-writes-the-fidelitys-floor-to-six-decimal-places" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3913,6 +3957,96 @@ stops instead, with "Failed to set conversion layer state".</p>
 <p>casa-rs treats that channel as it treats the others: it is not regridded,
 and the output keeps the input's (<code>casa_images::regrid</code>). Converting the
 frame of an axis that is never regridded serves no purpose.</p>
+<h2 id="tsdimagings-theoretical-beam-models-the-kernels-not-the-gridders"><code>tsdimaging</code>'s theoretical beam models the kernels, not the gridder's<a class="headerlink" href="#tsdimagings-theoretical-beam-models-the-kernels-not-the-gridders" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-10-28</li>
+<li>Status: CASA behaviour casa-rs does not follow (#938 part 1, #841 Phase 6c)</li>
+<li>Affected code: <code>casatasks/src/private/sdbeamutil.py</code>
+  (<code>TheoreticalBeam.get_kernel</code> and the kernel functions it calls)</li>
+</ul>
+<p><code>tsdimaging</code> gives its image the beam <code>sdbeamutil.TheoreticalBeam</code>
+computes: the antenna's Gaussian beam convolved with a cut through the
+gridding kernel and with a box as wide as the sampling, then fitted with a
+Gaussian. The kernel it convolves with is not the gridder's (<code>SDGrid::init</code>)
+but a model of it, and the models disagree with the gridder:
+- <strong><code>GAUSS</code>.</strong> The gridder takes <code>gwidth</code> as a half width at half maximum;
+  <code>sdbeamutil</code> passes it to a Gaussian that takes a full width. It also cuts
+  the kernel at 1.5 <code>gwidth</code> where the gridder cuts at <code>truncate</code>
+  (default 3 <code>gwidth</code>).
+- <strong><code>GJINC</code>.</strong> <code>sdbeamutil</code> ignores <code>truncate</code> ("NOT SUPPORTED YET") and
+  always cuts at the jinc's first null.
+- <strong><code>SF</code>.</strong> The gridder's kernel is <code>(1 − ν²) grdsf(ν)</code>; <code>sdbeamutil</code> uses
+  SciPy's prolate spheroid <code>pro_ang1(0, 0, c)</code> with <code>c = 5.356π/2</code>, chosen
+  to resemble it.
+- <strong><code>PB</code>.</strong> The gridder takes the telescope's power pattern (for ALMA, the
+  10.7 m Airy pattern of <code>VPSkyJones</code>); <code>sdbeamutil</code> takes an Airy disk
+  scaled to the Gaussian beam's width, for the antenna's own diameter.
+- <strong><code>BOX</code>.</strong> <code>sdbeamutil</code> makes the box one pixel wide whatever
+  <code>convsupport</code> is; the gridder's box reaches <code>2s + 1</code> pixels.</p>
+<p>The reported beam is then not the image's. Against CASA 6.7.6 on the
+oracle's setups (<code>tools/singledish/tsdimaging_oracle.py</code>), the gridder's own
+kernels give beams wider by 0.60% to 3.3% for <code>GAUSS</code>, and 0.31% narrower
+for <code>GJINC</code> with a <code>truncate</code>. They differ by at most 6.0e-4 for <code>SF</code>, <code>PB</code>
+and <code>GJINC</code> at its defaults. The gridder reads its table at the radius
+truncated to a hundredth of a pixel, which widens the kernel slightly. That
+accounts for all of <code>GJINC</code>'s difference at its defaults (read at the
+rounded radius, it agrees with CASA to 1e-6) and for about 40% of <code>SF</code>'s.
+The rest of <code>SF</code>'s is SciPy's spheroid against <code>grdsf</code>.</p>
+<p>casa-rs cuts through the gridder's own table (<code>casa_imaging_singledish::
+theoretical_beam_arcsec</code>), so the beam describes the image the gridder
+makes. <code>BOX</code> at its default support, which both describe alike, agrees with
+CASA to 2e-8.</p>
+<p>The cost falls downstream. <code>simanalyze</code> and <code>simalma</code> grid total power with
+<code>SF</code> of support 6 and scale its flux by this beam's area. A beam 6e-4 wider
+is an area about 1.2e-3 larger, so their scaled total-power and feathered
+products differ from CASA's by about that factor, at the edge of the 1e-3
+acceptance. Phases 6g and 6h measure it.</p>
+<h2 id="getpointingsamplingraster-measures-the-row-spacing-in-raw-longitude"><code>getPointingSamplingRaster</code> measures the row spacing in raw longitude<a class="headerlink" href="#getpointingsamplingraster-measures-the-row-spacing-in-raw-longitude" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-10-28</li>
+<li>Status: CASA bug; casa-rs does not follow it (#938 part 1, #841 Phase 6c)</li>
+<li>Affected code: <code>casatools/src/code/synthesis/Utilities/SingleDishBeamUtil.cc</code>
+  (<code>getPointingSamplingRaster</code>)</li>
+</ul>
+<p>CASA estimates a raster's sampling from its pointings. Along the scan it
+scales each longitude step by the cosine of the map's central latitude, so
+the step is an angle on the sky. Across the scan it projects the steps
+between rows' median positions on the perpendicular without that factor. A
+map scanned in latitude, whose rows step in longitude, then has its row
+spacing overestimated by <code>1/cos δ</code>, 15% at δ = −30°. The beam <code>tsdimaging</code>
+reports widens with it.</p>
+<p>casa-rs scales the rows' longitude steps as it scales the along-scan ones
+(<code>casa_imaging_singledish::raster_sampling</code>). A map scanned in longitude, as
+<code>simobserve</code> scans one, is unaffected: CASA and casa-rs agree on the
+oracle's maps to 1e-15.</p>
+<h2 id="tsdimaging-writes-the-weight-masks-threshold-to-six-decimal-places"><code>tsdimaging</code> writes the weight mask's threshold to six decimal places<a class="headerlink" href="#tsdimaging-writes-the-weight-masks-threshold-to-six-decimal-places" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-10-28</li>
+<li>Status: CASA bug; casa-rs does not follow it (#938 part 1, #841 Phase 6c)</li>
+<li>Affected code: <code>casatasks/src/private/task_tsdimaging.py</code> (CASA 6.7.6,
+  <code>do_weight_mask</code>: <code>ia.calcmask("'%s'&gt;%f" % (weightimage, weight_threshold))</code>)</li>
+</ul>
+<p><code>minweight</code> masks the pixels whose weight is at most <code>minweight</code> times the
+median positive weight. The threshold goes into the mask expression through
+<code>%f</code>, which keeps six decimal places. A threshold under 5e-7 is written 0,
+so every pixel with a positive weight stays unmasked, and one of 1.4e-6 is
+written 0.000001, masking less than asked. Weights have no fixed scale, so
+a MeasurementSet whose weights are all small loses its <code>minweight</code> mask
+entirely. casa-rs compares with
+the threshold itself (<code>casa_imaging_singledish::weight_mask_threshold</code>;
+<code>tools/singledish/tsdimaging_oracle.py</code>, case <code>sf_small_weights</code>).</p>
+<h2 id="sdgrid-grids-nothing-with-an-sf-kernel-of-no-support"><code>SDGrid</code> grids nothing with an <code>SF</code> kernel of no support<a class="headerlink" href="#sdgrid-grids-nothing-with-an-sf-kernel-of-no-support" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-10-28</li>
+<li>Status: CASA behaviour casa-rs refuses (#938 part 1, #841 Phase 6c)</li>
+<li>Affected code: <code>casatools/src/code/synthesis/TransformMachines2/SDGrid.cc</code>
+  (<code>SDGrid::init</code>)</li>
+</ul>
+<p><code>SDGrid::init</code> tabulates the <code>SF</code> kernel over <code>convsupport</code> pixels, so
+<code>convsupport=0</code> gives a kernel of zeros. Every pixel's weight is then zero,
+the image is empty, and <code>tsdimaging</code> only warns that no weight is positive.
+casa-rs refuses that kernel, asking for a support of at least 1 or CASA's
+default of 3 (<code>casa_imaging_singledish::GridFunction::from_casa</code>).</p>
 <h2 id="simanalyze-writes-the-fidelitys-floor-to-six-decimal-places"><code>simanalyze</code> writes the fidelity's floor to six decimal places<a class="headerlink" href="#simanalyze-writes-the-fidelitys-floor-to-six-decimal-places" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-10-27</li>

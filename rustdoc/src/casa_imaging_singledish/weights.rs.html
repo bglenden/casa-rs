@@ -1,0 +1,155 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `crates/casa-imaging-singledish/src/weights.rs`."><title>weights.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-0c87338a.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="casa_imaging_singledish" data-themes="" data-resource-suffix="" data-rustdoc-version="1.99.1 (58cf8f9c3 2026-10-13)" data-channel="1.99.1" data-search-js="search-cf4fc35e.js" data-stringdex-js="stringdex-b5109af9.js" data-settings-js="settings-170eb4bf.js" ><script src="../../static.files/storage-41dd4d93.js"></script><script defer src="../../static.files/src-script-813739b1.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-417ebf0a.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-9f56287d.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><h1><div class="sub-heading">casa_imaging_singledish/</div>weights.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-3"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// SPDX-License-Identifier: LGPL-3.0-or-later
+<a href=#2 id=2 data-nosnippet>2</a></span><span class="doccomment">//! The weights the gridder gives each spectrum (`SDGrid::pickWeights`), and
+<a href=#3 id=3 data-nosnippet>3</a>//! the weight below which `tsdimaging` masks its image
+<a href=#4 id=4 data-nosnippet>4</a>//! (`do_weight_mask`).
+<a href=#5 id=5 data-nosnippet>5</a>
+<a href=#6 id=6 data-nosnippet>6</a></span><span class="kw">use </span>ndarray::{Array2, ArrayView2, ArrayView3};
+<a href=#7 id=7 data-nosnippet>7</a>
+<a href=#8 id=8 data-nosnippet>8</a><span class="kw">use </span><span class="kw">crate</span>::SingleDishError;
+<a href=#9 id=9 data-nosnippet>9</a>
+<a href=#10 id=10 data-nosnippet>10</a><span class="doccomment">/// `SDGrid::pickWeights` from `WEIGHT`, `[spectrum][correlation]`: each
+<a href=#11 id=11 data-nosnippet>11</a>/// spectrum's weight, the same in each of its `channels` channels
+<a href=#12 id=12 data-nosnippet>12</a>/// (`[spectrum][channel]`). One correlation's weight is taken as it is; two
+<a href=#13 id=13 data-nosnippet>13</a>/// correlations' `w₀` and `w₁` combine as the weight of their mean,
+<a href=#14 id=14 data-nosnippet>14</a>/// `4 w₀ w₁ / (w₀ + w₁)`, and as 0 when their sum is zero (CAS-9957).
+<a href=#15 id=15 data-nosnippet>15</a>///
+<a href=#16 id=16 data-nosnippet>16</a>/// # Errors
+<a href=#17 id=17 data-nosnippet>17</a>///
+<a href=#18 id=18 data-nosnippet>18</a>/// Weights of more than two correlations: CASA refuses to image full-Stokes
+<a href=#19 id=19 data-nosnippet>19</a>/// data.
+<a href=#20 id=20 data-nosnippet>20</a></span><span class="kw">pub fn </span>weights_from_rows(
+<a href=#21 id=21 data-nosnippet>21</a>    weight: ArrayView2&lt;<span class="lifetime">'_</span>, f32&gt;,
+<a href=#22 id=22 data-nosnippet>22</a>    channels: usize,
+<a href=#23 id=23 data-nosnippet>23</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Array2&lt;f32&gt;, SingleDishError&gt; {
+<a href=#24 id=24 data-nosnippet>24</a>    <span class="kw">let </span>(spectra, correlations) = weight.dim();
+<a href=#25 id=25 data-nosnippet>25</a>    check_correlations(correlations)<span class="question-mark">?</span>;
+<a href=#26 id=26 data-nosnippet>26</a>    <span class="kw">let </span>combine = |spectrum: usize| <span class="kw">match </span>correlations {
+<a href=#27 id=27 data-nosnippet>27</a>        <span class="number">1 </span>=&gt; weight[[spectrum, <span class="number">0</span>]],
+<a href=#28 id=28 data-nosnippet>28</a>        <span class="kw">_ </span>=&gt; combined(weight[[spectrum, <span class="number">0</span>]], weight[[spectrum, <span class="number">1</span>]]),
+<a href=#29 id=29 data-nosnippet>29</a>    };
+<a href=#30 id=30 data-nosnippet>30</a>    <span class="kw">let </span><span class="kw-2">mut </span>weights = Array2::zeros((spectra, channels));
+<a href=#31 id=31 data-nosnippet>31</a>    <span class="kw">for </span>(spectrum, <span class="kw-2">mut </span>row) <span class="kw">in </span>weights.rows_mut().into_iter().enumerate() {
+<a href=#32 id=32 data-nosnippet>32</a>        row.fill(combine(spectrum));
+<a href=#33 id=33 data-nosnippet>33</a>    }
+<a href=#34 id=34 data-nosnippet>34</a>    <span class="prelude-val">Ok</span>(weights)
+<a href=#35 id=35 data-nosnippet>35</a>}
+<a href=#36 id=36 data-nosnippet>36</a>
+<a href=#37 id=37 data-nosnippet>37</a><span class="doccomment">/// `SDGrid::pickWeights` from `WEIGHT_SPECTRUM`,
+<a href=#38 id=38 data-nosnippet>38</a>/// `[spectrum][channel][correlation]`: [`weights_from_rows`] for each
+<a href=#39 id=39 data-nosnippet>39</a>/// channel.
+<a href=#40 id=40 data-nosnippet>40</a>///
+<a href=#41 id=41 data-nosnippet>41</a>/// # Errors
+<a href=#42 id=42 data-nosnippet>42</a>///
+<a href=#43 id=43 data-nosnippet>43</a>/// Weights of more than two correlations.
+<a href=#44 id=44 data-nosnippet>44</a></span><span class="kw">pub fn </span>weights_from_spectra(weight: ArrayView3&lt;<span class="lifetime">'_</span>, f32&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;Array2&lt;f32&gt;, SingleDishError&gt; {
+<a href=#45 id=45 data-nosnippet>45</a>    <span class="kw">let </span>(spectra, channels, correlations) = weight.dim();
+<a href=#46 id=46 data-nosnippet>46</a>    check_correlations(correlations)<span class="question-mark">?</span>;
+<a href=#47 id=47 data-nosnippet>47</a>    <span class="prelude-val">Ok</span>(Array2::from_shape_fn(
+<a href=#48 id=48 data-nosnippet>48</a>        (spectra, channels),
+<a href=#49 id=49 data-nosnippet>49</a>        |(spectrum, channel)| <span class="kw">match </span>correlations {
+<a href=#50 id=50 data-nosnippet>50</a>            <span class="number">1 </span>=&gt; weight[[spectrum, channel, <span class="number">0</span>]],
+<a href=#51 id=51 data-nosnippet>51</a>            <span class="kw">_ </span>=&gt; combined(
+<a href=#52 id=52 data-nosnippet>52</a>                weight[[spectrum, channel, <span class="number">0</span>]],
+<a href=#53 id=53 data-nosnippet>53</a>                weight[[spectrum, channel, <span class="number">1</span>]],
+<a href=#54 id=54 data-nosnippet>54</a>            ),
+<a href=#55 id=55 data-nosnippet>55</a>        },
+<a href=#56 id=56 data-nosnippet>56</a>    ))
+<a href=#57 id=57 data-nosnippet>57</a>}
+<a href=#58 id=58 data-nosnippet>58</a>
+<a href=#59 id=59 data-nosnippet>59</a><span class="kw">fn </span>check_correlations(correlations: usize) -&gt; <span class="prelude-ty">Result</span>&lt;(), SingleDishError&gt; {
+<a href=#60 id=60 data-nosnippet>60</a>    <span class="kw">if </span>correlations == <span class="number">1 </span>|| correlations == <span class="number">2 </span>{
+<a href=#61 id=61 data-nosnippet>61</a>        <span class="prelude-val">Ok</span>(())
+<a href=#62 id=62 data-nosnippet>62</a>    } <span class="kw">else </span>{
+<a href=#63 id=63 data-nosnippet>63</a>        <span class="prelude-val">Err</span>(SingleDishError::Correlations(<span class="macro">format!</span>(
+<a href=#64 id=64 data-nosnippet>64</a>            <span class="string">"imaging single-dish data of {correlations} correlations is not supported; CASA \
+<a href=#65 id=65 data-nosnippet>65</a>             images one or two (full-Stokes data, four correlations, are refused)"
+<a href=#66 id=66 data-nosnippet>66</a>        </span>)))
+<a href=#67 id=67 data-nosnippet>67</a>    }
+<a href=#68 id=68 data-nosnippet>68</a>}
+<a href=#69 id=69 data-nosnippet>69</a>
+<a href=#70 id=70 data-nosnippet>70</a><span class="doccomment">/// Two correlations' weights combined (`toStokesWeight`).
+<a href=#71 id=71 data-nosnippet>71</a></span><span class="kw">fn </span>combined(w0: f32, w1: f32) -&gt; f32 {
+<a href=#72 id=72 data-nosnippet>72</a>    <span class="kw">let </span>denominator = w0 + w1;
+<a href=#73 id=73 data-nosnippet>73</a>    <span class="kw">if </span>denominator.abs() &lt; f32::MIN_POSITIVE {
+<a href=#74 id=74 data-nosnippet>74</a>        <span class="number">0.0
+<a href=#75 id=75 data-nosnippet>75</a>    </span>} <span class="kw">else </span>{
+<a href=#76 id=76 data-nosnippet>76</a>        <span class="number">4.0 </span>* (w0 * w1) / denominator
+<a href=#77 id=77 data-nosnippet>77</a>    }
+<a href=#78 id=78 data-nosnippet>78</a>}
+<a href=#79 id=79 data-nosnippet>79</a>
+<a href=#80 id=80 data-nosnippet>80</a><span class="doccomment">/// `do_weight_mask`: the weight a pixel must exceed to stay unmasked,
+<a href=#81 id=81 data-nosnippet>81</a>/// `minweight` times the median of the positive weights through every
+<a href=#82 id=82 data-nosnippet>82</a>/// plane (`ia.statistics` of the weight image where it is positive), or
+<a href=#83 id=83 data-nosnippet>83</a>/// `None` when no weight is positive (CASA then sets no mask). The median
+<a href=#84 id=84 data-nosnippet>84</a>/// of an even count is the mean of the middle two.
+<a href=#85 id=85 data-nosnippet>85</a>///
+<a href=#86 id=86 data-nosnippet>86</a>/// One departure (`docs/CASA (C++) bugs.md`): CASA writes the threshold into
+<a href=#87 id=87 data-nosnippet>87</a>/// its mask expression with `%f`, six decimal places, so a threshold under
+<a href=#88 id=88 data-nosnippet>88</a>/// 5e-7 masks nothing. This is the threshold itself.
+<a href=#89 id=89 data-nosnippet>89</a></span><span class="attr">#[must_use]
+<a href=#90 id=90 data-nosnippet>90</a></span><span class="kw">pub fn </span>weight_mask_threshold(weights: <span class="kw-2">&amp;</span>[f32], minweight: f64) -&gt; <span class="prelude-ty">Option</span>&lt;f64&gt; {
+<a href=#91 id=91 data-nosnippet>91</a>    <span class="kw">let </span><span class="kw-2">mut </span>positive: Vec&lt;f32&gt; = weights.iter().copied().filter(|<span class="kw-2">&amp;</span>w| w &gt; <span class="number">0.0</span>).collect();
+<a href=#92 id=92 data-nosnippet>92</a>    <span class="kw">if </span>positive.is_empty() {
+<a href=#93 id=93 data-nosnippet>93</a>        <span class="kw">return </span><span class="prelude-val">None</span>;
+<a href=#94 id=94 data-nosnippet>94</a>    }
+<a href=#95 id=95 data-nosnippet>95</a>    <span class="kw">let </span>even = positive.len().is_multiple_of(<span class="number">2</span>);
+<a href=#96 id=96 data-nosnippet>96</a>    <span class="kw">let </span>middle = positive.len() / <span class="number">2</span>;
+<a href=#97 id=97 data-nosnippet>97</a>    <span class="kw">let </span>(below, <span class="kw-2">&amp;mut </span>upper, <span class="kw">_</span>) = positive.select_nth_unstable_by(middle, f32::total_cmp);
+<a href=#98 id=98 data-nosnippet>98</a>    <span class="kw">let </span>median = <span class="kw">if </span>even {
+<a href=#99 id=99 data-nosnippet>99</a>        <span class="comment">// An even count: the lower middle is the largest below.
+<a href=#100 id=100 data-nosnippet>100</a>        </span><span class="kw">let </span>lower = below.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+<a href=#101 id=101 data-nosnippet>101</a>        (f64::from(lower) + f64::from(upper)) / <span class="number">2.0
+<a href=#102 id=102 data-nosnippet>102</a>    </span>} <span class="kw">else </span>{
+<a href=#103 id=103 data-nosnippet>103</a>        f64::from(upper)
+<a href=#104 id=104 data-nosnippet>104</a>    };
+<a href=#105 id=105 data-nosnippet>105</a>    <span class="prelude-val">Some</span>(median * minweight)
+<a href=#106 id=106 data-nosnippet>106</a>}
+<a href=#107 id=107 data-nosnippet>107</a>
+<a href=#108 id=108 data-nosnippet>108</a><span class="attr">#[cfg(test)]
+<a href=#109 id=109 data-nosnippet>109</a></span><span class="kw">mod </span>tests {
+<a href=#110 id=110 data-nosnippet>110</a>    <span class="kw">use </span>ndarray::{Array3, array};
+<a href=#111 id=111 data-nosnippet>111</a>
+<a href=#112 id=112 data-nosnippet>112</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+<a href=#113 id=113 data-nosnippet>113</a>
+<a href=#114 id=114 data-nosnippet>114</a>    <span class="attr">#[test]
+<a href=#115 id=115 data-nosnippet>115</a>    </span><span class="kw">fn </span>two_correlations_combine_as_the_weight_of_their_mean() {
+<a href=#116 id=116 data-nosnippet>116</a>        <span class="kw">let </span>rows = weights_from_rows(<span class="macro">array!</span>[[<span class="number">2.0_f32</span>, <span class="number">2.0</span>], [<span class="number">1.0</span>, <span class="number">3.0</span>], [<span class="number">0.0</span>, <span class="number">0.0</span>]].view(), <span class="number">3</span>)
+<a href=#117 id=117 data-nosnippet>117</a>            .expect(<span class="string">"weights"</span>);
+<a href=#118 id=118 data-nosnippet>118</a>        <span class="macro">assert_eq!</span>(rows.row(<span class="number">0</span>).to_vec(), <span class="macro">vec!</span>[<span class="number">4.0</span>; <span class="number">3</span>]);
+<a href=#119 id=119 data-nosnippet>119</a>        <span class="macro">assert_eq!</span>(rows.row(<span class="number">1</span>).to_vec(), <span class="macro">vec!</span>[<span class="number">3.0</span>; <span class="number">3</span>]);
+<a href=#120 id=120 data-nosnippet>120</a>        <span class="macro">assert_eq!</span>(rows.row(<span class="number">2</span>).to_vec(), <span class="macro">vec!</span>[<span class="number">0.0</span>; <span class="number">3</span>]);
+<a href=#121 id=121 data-nosnippet>121</a>        <span class="kw">let </span>one = weights_from_rows(<span class="macro">array!</span>[[<span class="number">5.0_f32</span>]].view(), <span class="number">2</span>).expect(<span class="string">"weights"</span>);
+<a href=#122 id=122 data-nosnippet>122</a>        <span class="macro">assert_eq!</span>(one.row(<span class="number">0</span>).to_vec(), <span class="macro">vec!</span>[<span class="number">5.0</span>; <span class="number">2</span>]);
+<a href=#123 id=123 data-nosnippet>123</a>    }
+<a href=#124 id=124 data-nosnippet>124</a>
+<a href=#125 id=125 data-nosnippet>125</a>    <span class="attr">#[test]
+<a href=#126 id=126 data-nosnippet>126</a>    </span><span class="kw">fn </span>spectra_combine_channel_by_channel() {
+<a href=#127 id=127 data-nosnippet>127</a>        <span class="kw">let </span><span class="kw-2">mut </span>spectrum = Array3::zeros((<span class="number">1</span>, <span class="number">2</span>, <span class="number">2</span>));
+<a href=#128 id=128 data-nosnippet>128</a>        spectrum[[<span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>]] = <span class="number">1.0_f32</span>;
+<a href=#129 id=129 data-nosnippet>129</a>        spectrum[[<span class="number">0</span>, <span class="number">0</span>, <span class="number">1</span>]] = <span class="number">1.0</span>;
+<a href=#130 id=130 data-nosnippet>130</a>        spectrum[[<span class="number">0</span>, <span class="number">1</span>, <span class="number">0</span>]] = <span class="number">2.0</span>;
+<a href=#131 id=131 data-nosnippet>131</a>        spectrum[[<span class="number">0</span>, <span class="number">1</span>, <span class="number">1</span>]] = <span class="number">6.0</span>;
+<a href=#132 id=132 data-nosnippet>132</a>        <span class="kw">let </span>weights = weights_from_spectra(spectrum.view()).expect(<span class="string">"weights"</span>);
+<a href=#133 id=133 data-nosnippet>133</a>        <span class="macro">assert_eq!</span>(weights.row(<span class="number">0</span>).to_vec(), <span class="macro">vec!</span>[<span class="number">2.0</span>, <span class="number">6.0</span>]);
+<a href=#134 id=134 data-nosnippet>134</a>    }
+<a href=#135 id=135 data-nosnippet>135</a>
+<a href=#136 id=136 data-nosnippet>136</a>    <span class="attr">#[test]
+<a href=#137 id=137 data-nosnippet>137</a>    </span><span class="kw">fn </span>four_correlations_are_refused() {
+<a href=#138 id=138 data-nosnippet>138</a>        <span class="macro">assert!</span>(weights_from_rows(Array2::&lt;f32&gt;::ones((<span class="number">1</span>, <span class="number">4</span>)).view(), <span class="number">1</span>).is_err());
+<a href=#139 id=139 data-nosnippet>139</a>        <span class="macro">assert!</span>(weights_from_spectra(Array3::&lt;f32&gt;::ones((<span class="number">1</span>, <span class="number">1</span>, <span class="number">4</span>)).view()).is_err());
+<a href=#140 id=140 data-nosnippet>140</a>    }
+<a href=#141 id=141 data-nosnippet>141</a>
+<a href=#142 id=142 data-nosnippet>142</a>    <span class="attr">#[test]
+<a href=#143 id=143 data-nosnippet>143</a>    </span><span class="kw">fn </span>the_mask_threshold_is_minweight_times_the_median_positive_weight() {
+<a href=#144 id=144 data-nosnippet>144</a>        <span class="macro">assert_eq!</span>(
+<a href=#145 id=145 data-nosnippet>145</a>            weight_mask_threshold(<span class="kw-2">&amp;</span>[<span class="number">0.0</span>, <span class="number">3.0</span>, <span class="number">1.0</span>, <span class="number">2.0</span>, -<span class="number">1.0</span>], <span class="number">0.5</span>),
+<a href=#146 id=146 data-nosnippet>146</a>            <span class="prelude-val">Some</span>(<span class="number">1.0</span>)
+<a href=#147 id=147 data-nosnippet>147</a>        );
+<a href=#148 id=148 data-nosnippet>148</a>        <span class="macro">assert_eq!</span>(
+<a href=#149 id=149 data-nosnippet>149</a>            weight_mask_threshold(<span class="kw-2">&amp;</span>[<span class="number">4.0</span>, <span class="number">1.0</span>, <span class="number">0.0</span>, <span class="number">3.0</span>, <span class="number">2.0</span>], <span class="number">0.5</span>),
+<a href=#150 id=150 data-nosnippet>150</a>            <span class="prelude-val">Some</span>(<span class="number">1.25</span>)
+<a href=#151 id=151 data-nosnippet>151</a>        );
+<a href=#152 id=152 data-nosnippet>152</a>        <span class="macro">assert_eq!</span>(weight_mask_threshold(<span class="kw-2">&amp;</span>[<span class="number">0.0</span>, <span class="number">0.0</span>], <span class="number">0.5</span>), <span class="prelude-val">None</span>);
+<a href=#153 id=153 data-nosnippet>153</a>    }
+<a href=#154 id=154 data-nosnippet>154</a>}
+</code></pre></div></section></main></body></html>
