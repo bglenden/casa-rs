@@ -5,14 +5,15 @@
 //! The inventory is of whole tables and columns: an MSv2's `SIGMA`,
 //! `FLAG_ROW` flags, `FLAG_CATEGORY` cells, `ARRAY_ID`s and `PROCESSOR_ID`s
 //! other than 0, a `PROCESSOR` of more than one row, `STATE` rows that say
-//! more than their intents, MAIN columns outside the
-//! boundary's roles and subtables the catalogue does not carry (system
-//! calibration, weather, flag commands, history, Doppler, frequency
-//! offsets, sources, and any further subtable a keyword names); an MSv4's
-//! sub-datasets and main-dataset variables the writer does not write; and
-//! in either the data groups not selected; and, into an MSv4, antennas no
-//! partition's baselines name. What pointing carries is decided by
-//! [`super::pointing_plan`]. Columns of the subtables the
+//! more than their intents, `FEED` receptors that vary in time (of which
+//! the catalogue keeps the last row, as casacore's `MSIter` does), MAIN
+//! columns outside the boundary's roles and subtables the catalogue does
+//! not carry (system calibration, weather, flag commands, history, Doppler,
+//! frequency offsets, sources, and any further subtable a keyword names);
+//! an MSv4's sub-datasets and main-dataset variables the writer does not
+//! write; and in either the data groups not selected; and, into an MSv4,
+//! antennas no partition's baselines name. What pointing carries is
+//! decided by [`super::pointing_plan`]. Columns of the subtables the
 //! catalogue does carry (an antenna's offset, a field's delay direction, a
 //! spectral window's resolution) are not inventoried. Fields that follow
 //! an ephemeris, or whose direction is a polynomial in time, are refused:
@@ -228,6 +229,13 @@ fn msv2(
         ));
     }
     main_keys(main, losses)?;
+    if crate::observation_io::msv2::catalogue::read_feeds(&ms)?.vary_in_time() {
+        losses.push(Loss::Column(
+            "FEED receptors that vary in time (the last row of each antenna, feed and window \
+             is kept)"
+                .to_string(),
+        ));
+    }
     subtables(&ms, losses)
 }
 

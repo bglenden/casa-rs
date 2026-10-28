@@ -178,7 +178,7 @@ T1 at cutover) needs them on both stores.
 | Per-row direction references | `PHASE_DIR` with a variable reference column (`PhaseDir_Ref`, common in ALMA data), integer or string codes | Refused at opening | The MSv2 adapter resolves each field's frame. Fields in different frames are refused, since a data group has one UVW frame and MSv4 one phase-centre frame. |
 | Field ephemerides | A field with `EPHEMERIS_ID` takes its direction from the attached table, offset by `PHASE_DIR`; the radial velocity feeds the frequency conversion | Refused by the converter; the catalogue ignores `EPHEMERIS_ID` | `FieldEntry` gains the ephemeris as MSv4's `field_and_source_ephemeris` holds it: geocentric samples (time, direction, distance, radial velocity) and the phase centre's offset from them. The MSv2 adapter reads the attached table. Imaging interpolates as today. |
 | Antenna pointing | `PreparedSelectedPointingCatalog` finds, per (antenna, time), the covering, preceding and following POINTING rows, each evaluated at that time (polynomials included); the imaging law (covering, nearest, slerp, hold, reject) chooses | Not carried; the converter drops POINTING | A boundary query, `Observation::pointing`, returns those brackets per (antenna, time) for a partition. Each store answers natively: MSv2 evaluates its polynomial rows, MSv4 its `POINTING_BEAM` samples. The imaging law is unchanged. Nothing large enters the catalogue. |
-| Receptor angles | Native AW compile keys `FEED` `RECEPTOR_ANGLE` by time and window | One vector per antenna | Per partition, as MSv4's per-partition `antenna_xds` holds them. The MSv2 adapter takes the partition's window rows and refuses a `FEED` that varies in time for an antenna and window, as XRADIO's converter does. |
+| Receptor angles | Native AW compile keys `FEED` `RECEPTOR_ANGLE` by time and window | One vector per antenna | Per partition, as MSv4's per-partition `antenna_xds` holds them. The MSv2 adapter takes the partition's window rows and, where `FEED` varies in time for an antenna and window, the last of them, as casacore's `MSIter` does (owner decision, 2026-10-28; XRADIO's converter refuses them). |
 | Window identity | Per-row `DATA_DESC_ID` and spectral window number key frequency conversions and per-(field, window) rules | A window name per partition | Geometry keys by partition. Window numbers for task selection belong to step 4. |
 
 The batch already carries the rest: stored UVW and time centroids per
@@ -199,9 +199,9 @@ Two consequences:
   a converted store's brackets have no covering sample, and imaging's law
   chooses between the samples either side (nearest, or interpolation). For
   pointing sampled at the integration, that can pick a different sample
-  than the MSv2 did. Step 3b measures it on the native AW workloads; the
-  owner decides whether the MSv4 route may differ there, or whether
-  intervals should be recovered (from the sample spacing, say). The
+  than the MSv2 did. Step 3b measured it, and the owner decided
+  (2026-10-28, #946) that the MSv4 route's choice stands, with no
+  intervals recovered. The
   converter reports `INTERVAL`, `TARGET`, `NAME` and `TRACKING` as a table
   loss. Today's covering rule is casa-rs's, not casacore's (#948); step 3b
   settles which the batch route keeps.

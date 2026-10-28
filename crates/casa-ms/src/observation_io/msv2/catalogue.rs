@@ -309,8 +309,8 @@ pub(super) fn read_antennas(ms: &MeasurementSet) -> Result<Vec<AntennaEntry>, Ob
 }
 
 /// Every `FEED` row's receptors, by (antenna, feed, spectral window), the
-/// window -1 standing for every window.
-pub(super) struct Feeds {
+/// window -1 standing for every window, in table order.
+pub(crate) struct Feeds {
     rows: BTreeMap<(i32, i32, i32), Vec<Receptors>>,
     /// Some row names a window: casacore's `MSIter` then reads only each
     /// window's own rows, and XRADIO's converter likewise.
@@ -318,7 +318,7 @@ pub(super) struct Feeds {
 }
 
 /// The `FEED` rows.
-pub(super) fn read_feeds(ms: &MeasurementSet) -> Result<Feeds, ObservationError> {
+pub(crate) fn read_feeds(ms: &MeasurementSet) -> Result<Feeds, ObservationError> {
     let feed = ms.feed().map_err(storage)?;
     if let Some(feed_table) = ms.subtable(SubtableId::Feed) {
         require_units(feed_table, "RECEPTOR_ANGLE", "rad")?;
@@ -354,31 +354,26 @@ impl Feeds {
     /// `window`, as casacore's `MSIter::setFeedInfo` and XRADIO's converter
     /// select them: the window's own rows when any row names a window, else
     /// the rows for every window (-1). A partition's receptors are one set
-    /// (MSv4 holds no time dependence), so rows of one antenna, feed and
-    /// window that differ, `FEED` stating receptors per time, are refused;
-    /// casacore warns and takes the last, XRADIO's converter refuses. `None`
-    /// without a row.
-    pub(super) fn receptors(
-        &self,
-        antenna: i32,
-        feed: i32,
-        window: i32,
-    ) -> Result<Option<Receptors>, ObservationError> {
+    /// (MSv4 holds no time dependence), so where rows of one antenna, feed
+    /// and window differ, `FEED` stating receptors per time, the last row
+    /// in table order is taken, as casacore's `MSIter` takes it (with a
+    /// warning); XRADIO's converter refuses such rows, and a conversion
+    /// reports them as a loss ([`Self::vary_in_time`]). `None` without a
+    /// row.
+    pub(super) fn receptors(&self, antenna: i32, feed: i32, window: i32) -> Option<&Receptors> {
         let window = if self.window_dependent { window } else { -1 };
-        let Some((first, others)) = self
-            .rows
+        self.rows
             .get(&(antenna, feed, window))
-            .and_then(|rows| rows.split_first())
-        else {
-            return Ok(None);
-        };
-        if others.iter().any(|other| other != first) {
-            return Err(ObservationError::Unsupported {
-                what: "MSv2 FEED rows of one antenna, feed and window that differ (receptors \
-                       that vary in time)",
-            });
-        }
-        Ok(Some(first.clone()))
+            .and_then(|rows| rows.last())
+    }
+
+    /// Whether rows of one antenna, feed and window differ: `FEED` states
+    /// receptors that vary in time, of which [`Self::receptors`] keeps the
+    /// last.
+    pub(crate) fn vary_in_time(&self) -> bool {
+        self.rows
+            .values()
+            .any(|rows| rows.iter().any(|row| row != &rows[0]))
     }
 }
 

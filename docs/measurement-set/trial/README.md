@@ -899,7 +899,8 @@ grids, batches) and create the destination from those alone.
     carry (system calibration, weather, flag commands, history,
     Doppler, frequency offsets, sources, and any further table a keyword
     names), the `POINTING` content the destination does not hold
-    (planned before writing: "Geometry inputs"), a `PROCESSOR` of more than
+    (planned before writing: "Geometry inputs"), `FEED` receptors that
+    vary in time (the last row is kept), a `PROCESSOR` of more than
     one row or of one that is not a
     correlator, and `STATE` rows that say more than an intent (a sub-scan,
     calibration or load, a reference or non-signal row);
@@ -1389,9 +1390,11 @@ ways:
 - **Receptors per partition** (`PartitionEntry::receptors`), no longer per
   antenna: an MSv2's `FEED` rows as casacore's `MSIter` and XRADIO's
   converter select them (the window's own rows once any row names a window,
-  else the rows for every window), an MSv4 dataset's `antenna_xds`. Rows of
-  one antenna, feed and window that differ are refused (owner decision on
-  #946). An MSv2 destination writes one `FEED` row per antenna where every
+  else the rows for every window), an MSv4 dataset's `antenna_xds`. Of rows
+  of one antenna, feed and window that differ, the last in table order is
+  read, as casacore's `MSIter` reads it, and a conversion reports them as a
+  `FEED` column loss (owner decision on #946, 2026-10-28). An MSv2
+  destination writes one `FEED` row per antenna where every
   antenna states the same receptors in every window it appears in, and
   otherwise a row per window it states receptors in, so that casacore reads
   each back; a window stating none (ALMA's WVR window) then has no row, as
@@ -1460,7 +1463,7 @@ fields that follow one (#942).
 | `msv4_pointing_finds_each_antennas_own_nearest_samples` | With one antenna sampled a second after the others (NaN between on MSv4's grid) and one with no pointing, a request between samples gives each antenna its own nearest sample either side, as the MSv2 does, and the antenna without pointing none. |
 | `pointing_the_destination_cannot_hold_is_reported_before_writing` | `AZELGEO` directions keep their frame both ways; `GALACTIC` ones are lost whole into an MSv4 (no `pointing_xds`) and kept into an MSv2; a repeated row and rows beyond the observation are counted losses into an MSv4 and kept into an MSv2; two partitions sharing rows write them once. |
 | `pointing_polynomials_keep_each_rows_direction_at_its_time_in_msv4` | Rows with a rate term (`NUM_POLY` 1) evaluate at the query time on the MSv2; the MSv4 conversion reports the terms as a loss and holds each row's direction at its own time, which converting back keeps. |
-| `receptors_are_each_partitions_own` | Window rows where one antenna's angles differ and the others agree survive MSv2 → MSv4 → MSv2, written back as a row per window for every antenna; rows for every window serve both windows, and beside a window row are ignored, as casacore ignores them; a row that changes an antenna's angles 10 s later is refused. |
+| `receptors_are_each_partitions_own` | Window rows where one antenna's angles differ and the others agree survive MSv2 → MSv4 → MSv2, written back as a row per window for every antenna; rows for every window serve both windows, and beside a window row are ignored, as casacore ignores them; of a row and one that changes an antenna's angles 10 s later, the later is read, and a conversion carries it and reports the change as a loss. |
 
 Unit laws: (casa-observation) `brackets_name_the_samples_around_a_time` and
 `samples_must_be_whole_and_in_time_order`; (casa-ms)
@@ -1685,8 +1688,7 @@ formats other than `unix`,
 `unix`/`utc`; MSv2 measure columns with a variable reference other than
 `FIELD` `PHASE_DIR`, phase centres in different frames, and `TIME`
 and `TIME_CENTROID` in different scales; `POINTING` directions in several
-frames, and an MSv4 pointing target; `FEED` rows of one antenna, feed and
-window that differ in time, and an antenna whose two feeds in one
+frames, and an MSv4 pointing target; an antenna whose two feeds in one
 partition differ; MSv2 UVW labelled with a celestial
 frame other than the phase centres'; MSv4 groups whose UVW frame is not
 their phase centres'; frames other than fk5/icrs for directions and UVW

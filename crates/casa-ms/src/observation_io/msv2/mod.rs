@@ -127,6 +127,12 @@ impl Msv2Observation {
     ) -> Result<Self, ObservationError> {
         let antennas = catalogue::read_antennas(&ms)?;
         let feeds = catalogue::read_feeds(&ms)?;
+        if feeds.vary_in_time() {
+            tracing::warn!(
+                "FEED states receptors that vary in time; the last row of each antenna, feed \
+                 and window is used, as casacore's MSIter uses it"
+            );
+        }
         let catalogue::Fields {
             entries: fields,
             ephemerides,
@@ -567,12 +573,12 @@ fn partition_receptors(
     for baseline in baselines {
         for (antenna, feed) in [(baseline.antenna1, pair[0]), (baseline.antenna2, pair[1])] {
             let id = i32::try_from(antenna.0).map_err(|_| invalid("an antenna beyond i32"))?;
-            let Some(own) = feeds.receptors(id, feed, window)? else {
+            let Some(own) = feeds.receptors(id, feed, window) else {
                 continue;
             };
             if receptors
                 .insert(antenna, own.clone())
-                .is_some_and(|known| known != own)
+                .is_some_and(|known| &known != own)
             {
                 return Err(ObservationError::Unsupported {
                     what: "an MSv2 antenna with different receptors through its two feeds",

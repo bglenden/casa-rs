@@ -737,8 +737,9 @@ fn feed_rows(path: &Path) -> Vec<(i32, i32)> {
 /// own rows once any row names a window, else the rows for every window
 /// (-1). A conversion carries them both ways; where one antenna's windows
 /// differ, the MSv2 written has a row per window for every antenna, since a
-/// row for every window would then be ignored. Rows of one antenna, feed
-/// and window that differ in time are refused.
+/// row for every window would then be ignored. Of rows of one antenna,
+/// feed and window that differ in time, the last is taken, as casacore's
+/// `MSIter` takes it, and a conversion reports the others as lost.
 #[test]
 fn receptors_are_each_partitions_own() {
     let root = tempfile::tempdir().expect("root");
@@ -783,11 +784,25 @@ fn receptors_are_each_partitions_own() {
     let overridden = open(&v2, &OpenOptions::default()).expect("override");
     assert_eq!(angles(overridden.as_ref()), [vec![], vec![0.25, 0.25]]);
 
-    // Antenna 0's window-0 receptors change 10 s later.
+    // Antenna 0's window-0 receptors change 10 s later: the later row is
+    // the one read, and a conversion carries it and reports the change.
     let v2 = variant("varying");
     edit_feed(&v2, None, &[(0, 0, 0.5, 10.0)]);
-    assert!(matches!(
-        open(&v2, &OpenOptions::default()),
-        Err(ObservationError::Unsupported { what }) if what.contains("vary in time")
-    ));
+    let varying = open(&v2, &OpenOptions::default()).expect("varying");
+    let last = [vec![0.5, 0.5, 0.0, 0.0, 0.0, 0.0], vec![]];
+    assert_eq!(angles(varying.as_ref()), last);
+    let v4 = root.path().join("varying.ps.zarr");
+    let mut accepting = conversion();
+    accepting.accept.push(LossKind::Columns);
+    let report = casa_ms::observation_io::convert::to_msv4(&v2, &v4, &accepting).expect("to msv4");
+    assert!(
+        report.losses.iter().any(|loss| matches!(
+            loss,
+            Loss::Column(column) if column.starts_with("FEED receptors that vary in time")
+        )),
+        "{:?}",
+        report.losses
+    );
+    let converted = open(&v4, &OpenOptions::default()).expect("msv4");
+    assert_eq!(angles(converted.as_ref()), last);
 }
