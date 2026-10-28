@@ -24,6 +24,8 @@ serde_json = "1"
 tracing.workspace = true
 
 [dev-dependencies]
+# The geometry-law example reads MSv4 conversions.
+casa-ms = { path = "../casa-ms", features = ["msv4"] }
 casa-coordinates = { path = "../casa-coordinates" }
 casa-images = { path = "../casa-images" }
 casa-numerics = { path = "../casa-numerics" }

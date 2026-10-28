@@ -92,9 +92,10 @@ fn an_msv2_converts_to_the_msv4_xradio_makes_of_it() {
         [
             Loss::Sigma,
             Loss::Table("HISTORY".to_string()),
-            Loss::Table("POINTING".to_string())
+            Loss::Table("POINTING INTERVAL, NAME, TARGET, TRACKING".to_string())
         ],
-        "MSv4 holds no sigma; the writer writes no history or pointing"
+        "MSv4 holds no sigma; the writer writes no history, and of POINTING the \
+         beam directions alone"
     );
     assert_eq!((report.partitions, report.samples), (1, 120));
     let converted = read(&out, PartitionId(0), "base");
@@ -386,8 +387,19 @@ fn an_msv4_converts_to_an_msv2_of_every_acquisition() {
         format!("{:?}", theirs.antennas),
         "antennas"
     );
+    // An MSv2 states each field's reference epoch (`FIELD.TIME`); an MSv4,
+    // whose phase centres are celestial, states none.
+    let without_epochs = |fields: &[casa_observation::FieldEntry]| {
+        fields
+            .iter()
+            .map(|field| casa_observation::FieldEntry {
+                reference_epoch: None,
+                ..field.clone()
+            })
+            .collect::<Vec<_>>()
+    };
     assert_eq!(
-        format!("{:?}", ours.fields),
+        format!("{:?}", without_epochs(&ours.fields)),
         format!("{:?}", theirs.fields),
         "fields"
     );

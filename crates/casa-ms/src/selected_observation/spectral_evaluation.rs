@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 use casa_imaging_model::FrequencyFrame;
 
 use casa_types::measures::{
+    PreparedFrequencyConversion,
     direction::MDirection,
     frequency::{FrequencyRef, MFrequencyConverter},
 };
@@ -13,7 +14,7 @@ use casa_types::measures::{
 use crate::{
     MeasurementSet, MsError, MsResult, MsSelectionIoBudget,
     derived::engine::{MsCalEngine, raw_field_phase_direction},
-    spectral_selection::PreparedFrequencyFrameConversion,
+    spectral_selection::prepare_frequency_conversion,
 };
 
 use super::{BoundObservationSourceError, SelectedObservationRowSelection};
@@ -497,7 +498,7 @@ impl MeasurementSet {
                         row.time_mjd_seconds(),
                         direction.clone(),
                     )?;
-                    let conversion = PreparedFrequencyFrameConversion::new(
+                    let conversion = prepare_frequency_conversion(
                         output_frequency_reference,
                         window.source_frequency_reference,
                         Some(&frame),
@@ -605,11 +606,11 @@ pub(super) fn prepare_row_frequency_conversion(
     time_mjd_seconds: f64,
     source_frame: FrequencyFrame,
     output_frame: FrequencyFrame,
-) -> Result<PreparedFrequencyFrameConversion, BoundObservationSourceError> {
-    let source_ref = frequency_ref(source_frame);
-    let output_ref = frequency_ref(output_frame);
+) -> Result<PreparedFrequencyConversion, BoundObservationSourceError> {
+    let source_ref = source_frame.frequency_ref();
+    let output_ref = output_frame.frequency_ref();
     if source_ref == output_ref {
-        return PreparedFrequencyFrameConversion::new(source_ref, output_ref, None, None)
+        return prepare_frequency_conversion(source_ref, output_ref, None, None)
             .map_err(BoundObservationSourceError::from);
     }
     let field_id = usize::try_from(field_id)
@@ -630,22 +631,13 @@ pub(super) fn prepare_row_frequency_conversion(
     } else {
         &native_frame
     };
-    PreparedFrequencyFrameConversion::new(
+    prepare_frequency_conversion(
         source_ref,
         output_ref,
         Some(&native_frame),
         Some(target_frame),
     )
     .map_err(BoundObservationSourceError::from)
-}
-
-const fn frequency_ref(frame: FrequencyFrame) -> FrequencyRef {
-    match frame {
-        FrequencyFrame::Rest => FrequencyRef::REST,
-        FrequencyFrame::Topocentric => FrequencyRef::TOPO,
-        FrequencyFrame::Barycentric => FrequencyRef::BARY,
-        FrequencyFrame::Lsrk => FrequencyRef::LSRK,
-    }
 }
 
 #[cfg(test)]

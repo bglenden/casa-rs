@@ -9,6 +9,7 @@ use crate::buffers::BatchBuffers;
 use crate::catalogue::{Catalogue, PartitionId};
 use crate::creation::TimeBaselineGrid;
 use crate::grouping::{GroupKey, ReadEvent};
+use crate::pointing::{PointingRequest, PointingSeries};
 use crate::pool::{BufferPool, FilledBatch};
 use crate::request::{AccessRequest, Estimate, Grouping, IoCounters, PartitionEstimate};
 use crate::selection::FieldSelection;
@@ -84,6 +85,22 @@ pub trait Observation: Sync {
         grouping: Grouping,
         fields: &FieldSelection,
     ) -> Result<Option<Vec<Option<GroupKey>>>, ObservationError>;
+
+    /// Partition `request.partition`'s pointing samples for
+    /// `request.antennas` over `request.times`, reading no visibility
+    /// payload ([`PointingSeries::bracket`] answers queries). A store
+    /// without pointing gives no samples.
+    ///
+    /// # Errors
+    ///
+    /// [`ObservationError::InvalidRequest`] for an unknown partition or
+    /// antenna, times that are not a finite span, or pointing beyond the
+    /// request's budget; [`ObservationError::Unsupported`] for pointing the
+    /// boundary does not carry (an MSv4 target, samples in several frames,
+    /// an MSv4 frame or polynomial its reader does not take);
+    /// [`ObservationError::InvalidStore`] for malformed pointing, including
+    /// an MSv2 row of more polynomial terms than its reader takes.
+    fn pointing(&self, request: &PointingRequest) -> Result<PointingSeries, ObservationError>;
 }
 
 /// A bound traversal of one partition of an [`Observation`].

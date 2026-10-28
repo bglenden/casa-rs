@@ -8,28 +8,23 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     mem::size_of,
-    sync::Arc,
 };
 
 use crate::{
     MsError, MsReadPlan, MsSelectionIoBudget, PointingDirectionBracket, PointingDirectionQuery,
     SelectedObservationBuffer, SelectedStoredRow,
 };
-use casa_coordinates::{
-    Coordinate, DirectionCoordinate, Projection as CoordinateProjection, ProjectionType,
-};
 use casa_imaging_model::{
-    CompiledProblem, DirectionFrame, MissingPointingPolicy, PhaseCentreLaw, PointingCentreLaw,
-    PointingExtrapolation, PointingInterpolation, PointingTimeSampling,
-    Projection as ModelProjection, SelectedImageDomainProjection, SelectedImageDomainProjections,
+    AwPointingEpochs, AwPointingError, AwPointingGrouping, CompiledProblem, DirectionFrame,
+    PhaseCentreLaw, PointingCentreLaw, PointingLawError, PointingSample, PointingSamples,
+    PointingTimeSampling, SelectedImageDomainProjection, SelectedImageDomainProjections,
     SelectedPhaseCentreProjection, SelectedPointingDirections, SkyDirection,
 };
 use casa_types::measures::direction::{DirectionRef, MDirection};
-use ndarray::arr2;
 
 use super::{
-    AwPointingChartPixels, AwPointingEpochInput, AwPointingEpochKey, AwPointingEpochPlan,
-    BoundObservationSource, BoundObservationSourceError,
+    AwPointingEpochInput, AwPointingEpochKey, AwPointingEpochPlan, BoundObservationSource,
+    BoundObservationSourceError,
 };
 
 #[derive(Clone)]
@@ -95,7 +90,7 @@ pub(super) fn evaluate_row_geometry(
         let anchor_j2000 = source.geometry_engine.direction_angles_j2000(
             stored.time_mjd_seconds(),
             [anchor.longitude_rad(), anchor.latitude_rad()],
-            direction_ref(anchor.frame()),
+            anchor.frame().direction_ref(),
         )?;
         Some([
             phase_direction.longitude_rad() - anchor_j2000[0],
@@ -222,7 +217,7 @@ fn evaluate_phase_centre_projection(
             request.target_direction.longitude_rad(),
             request.target_direction.latitude_rad(),
         ],
-        direction_ref(request.target_direction.frame()),
+        request.target_direction.frame().direction_ref(),
     )?;
     if let Some([longitude, latitude]) = request.moving_direction_shift {
         target_angles[0] += longitude;
@@ -272,15 +267,6 @@ fn evaluate_phase_centre_projection(
     };
     SelectedPhaseCentreProjection::new(transformed_uvw_m, phase_shift_m)
         .ok_or(BoundObservationSourceError::InvalidRowGeometry)
-}
-
-const fn direction_ref(frame: DirectionFrame) -> DirectionRef {
-    match frame {
-        DirectionFrame::Icrs => DirectionRef::ICRS,
-        DirectionFrame::J2000 => DirectionRef::J2000,
-        DirectionFrame::B1950 => DirectionRef::B1950,
-        DirectionFrame::Galactic => DirectionRef::GALACTIC,
-    }
 }
 
 pub(super) fn evaluate_observation_pointings(
@@ -346,11 +332,8 @@ pub(super) fn build_aw_pointing_epoch_plan(
     problem: &CompiledProblem,
     source: &BoundObservationSource,
 ) -> Result<AwPointingEpochPlan, BoundObservationSourceError> {
-    let contract = problem
-        .science()
-        .measurement_equation()
-        .aw_projection()
-        .filter(|contract| contract.use_pointing())
+    let grouping = AwPointingGrouping::new(problem)
+        .map_err(aw_pointing_error)?
         .ok_or(BoundObservationSourceError::UnsupportedCentreLaw)?;
     let law = match problem.geometry().centres().pointing() {
         PointingCentreLaw::Observation(law) => *law,
@@ -404,34 +387,8 @@ pub(super) fn build_aw_pointing_epoch_plan(
         epoch.antennas.insert(row.antenna2());
     }
 
-    let charts = problem
-        .geometry()
-        .domains()
-        .iter()
-        .flat_map(|domain| domain.facets().iter().map(|facet| facet.direction()))
-        .map(aw_direction_coordinate)
-        .collect::<Result<Vec<_>, _>>()?;
-    let [grouping_arcsec, refresh_arcsec] = contract.pointing_offset_sigdev_arcsec();
-    let grouping_arcsec = if grouping_arcsec > 0.0 {
-        grouping_arcsec
-    } else {
-        1.0e-3
-    };
     let mut chart_pixels_by_epoch = BTreeMap::new();
-    let mut cached_field = None;
-    let mut cached_row_count = 0_usize;
-    let mut cached_antenna_pixels = BTreeMap::<i32, [f64; 2]>::new();
-    let mut cached_grouped = AwPointingChartPixels::from([]);
-    let primary_increment = problem
-        .geometry()
-        .domains()
-        .first()
-        .ok_or(BoundObservationSourceError::InvalidRowGeometry)?
-        .direction()
-        .increment_rad();
-    let primary_increment_norm = primary_increment[0].hypot(primary_increment[1]);
-    let refresh_threshold_rad = refresh_arcsec.to_radians() / 3600.0;
-
+    let mut groups = AwPointingEpochs::default();
     for epoch in epochs {
         let time = f64::from_bits(epoch.key.time_bits);
         let fallback = pointing_epoch_phase_direction(source, problem, epoch.key.field_id, time)?;
@@ -453,72 +410,13 @@ pub(super) fn build_aw_pointing_epoch_plan(
                     .map(|direction| (antenna, direction))
             })
             .collect::<Result<BTreeMap<_, _>, _>>()?;
-        let pixels_by_chart = charts
-            .iter()
-            .map(|coordinate| {
-                directions
-                    .iter()
-                    .map(|(&antenna, direction)| {
-                        coordinate
-                            .to_pixel(&[direction.longitude_rad(), direction.latitude_rad()])
-                            .map_err(|_| BoundObservationSourceError::InvalidRowGeometry)
-                            .and_then(|pixel| {
-                                pixel
-                                    .get(0..2)
-                                    .filter(|pixel| pixel.iter().all(|value| value.is_finite()))
-                                    .map(|pixel| (antenna, [pixel[0], pixel[1]]))
-                                    .ok_or(BoundObservationSourceError::InvalidRowGeometry)
-                            })
-                    })
-                    .collect::<Result<BTreeMap<_, _>, _>>()
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let current_primary = pixels_by_chart
-            .first()
-            .ok_or(BoundObservationSourceError::InvalidRowGeometry)?;
-        let same_antennas = cached_antenna_pixels.len() == current_primary.len()
-            && cached_antenna_pixels.keys().eq(current_primary.keys());
-        let refresh = if cached_field != Some(epoch.key.field_id)
-            || cached_row_count != epoch.row_count
-            || !same_antennas
-        {
-            true
-        } else {
-            let residual = cached_antenna_pixels.iter().zip(current_primary).fold(
-                [0.0, 0.0],
-                |[sum_x, sum_y], ((_, cached), (_, current))| {
-                    [
-                        sum_x + cached[0] - current[0],
-                        sum_y + cached[1] - current[1],
-                    ]
-                },
-            );
-            residual[0].hypot(residual[1]) / current_primary.len().max(1) as f64
-                * primary_increment_norm
-                >= refresh_threshold_rad
-        };
-        if refresh {
-            let grouped =
-                pixels_by_chart
-                    .iter()
-                    .zip(
-                        problem.geometry().domains().iter().flat_map(|domain| {
-                            domain.facets().iter().map(|facet| facet.direction())
-                        }),
-                    )
-                    .map(|(pixels, direction)| {
-                        casa_aw_grouped_pixels(pixels, grouping_arcsec, direction.increment_rad())
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
-            cached_grouped = Arc::from(grouped);
-        }
-        cached_field = Some(epoch.key.field_id);
-        cached_row_count = epoch.row_count;
-        cached_antenna_pixels = current_primary.clone();
-        if chart_pixels_by_epoch
-            .insert(epoch.key, Arc::clone(&cached_grouped))
-            .is_some()
-        {
+        let field = u32::try_from(epoch.key.field_id)
+            .map_err(|_| BoundObservationSourceError::InvalidRowGeometry)?;
+        let grouped = grouping
+            .pixels(&directions)
+            .and_then(|pixels| groups.next(&grouping, field, epoch.row_count, &pixels))
+            .map_err(aw_pointing_error)?;
+        if chart_pixels_by_epoch.insert(epoch.key, grouped).is_some() {
             return Err(BoundObservationSourceError::InvalidRowGeometry);
         }
     }
@@ -543,68 +441,11 @@ pub(super) fn build_aw_pointing_epoch_plan(
     })
 }
 
-fn aw_direction_coordinate(
-    spec: casa_imaging_model::DirectionCoordinateSpec,
-) -> Result<DirectionCoordinate, BoundObservationSourceError> {
-    if spec.projection() != ModelProjection::Sin {
-        return Err(BoundObservationSourceError::InvalidRowGeometry);
+fn aw_pointing_error(error: AwPointingError) -> BoundObservationSourceError {
+    match error {
+        AwPointingError::Overflow => BoundObservationSourceError::MeasurementOverflow,
+        _ => BoundObservationSourceError::InvalidRowGeometry,
     }
-    let reference = spec.reference_direction();
-    let pc = spec.pc();
-    Ok(DirectionCoordinate::new(
-        direction_ref(reference.frame()),
-        CoordinateProjection::new(ProjectionType::SIN),
-        [reference.longitude_rad(), reference.latitude_rad()],
-        spec.increment_rad(),
-        spec.reference_pixel(),
-    )
-    .with_pc_matrix(arr2(&pc))
-    .with_longpole(spec.pole_deg()[0].to_radians())
-    .with_latpole(spec.pole_deg()[1].to_radians()))
-}
-
-fn casa_aw_grouped_pixels(
-    pixels: &BTreeMap<i32, [f64; 2]>,
-    grouping_arcsec: f64,
-    increment_rad: [f64; 2],
-) -> Result<BTreeMap<i32, [f64; 2]>, BoundObservationSourceError> {
-    let bin_width =
-        grouping_arcsec.to_radians() / 3600.0 / increment_rad[0].hypot(increment_rad[1]);
-    if !(bin_width.is_finite() && bin_width > 0.0) || pixels.is_empty() {
-        return Err(BoundObservationSourceError::InvalidRowGeometry);
-    }
-    let min_x = pixels
-        .values()
-        .map(|pixel| pixel[0])
-        .fold(f64::INFINITY, f64::min);
-    let min_y = pixels
-        .values()
-        .map(|pixel| pixel[1])
-        .fold(f64::INFINITY, f64::min);
-    let mut bins = BTreeMap::<i32, (i64, i64)>::new();
-    let mut sums = BTreeMap::<(i64, i64), (f32, f32, usize)>::new();
-    for (&antenna, &pixel) in pixels {
-        let bin = (
-            ((pixel[0] - min_x) / bin_width).floor() as i64,
-            ((pixel[1] - min_y) / bin_width).floor() as i64,
-        );
-        bins.insert(antenna, bin);
-        let sum = sums.entry(bin).or_insert((0.0, 0.0, 0));
-        sum.0 = (f64::from(sum.0) + pixel[0]) as f32;
-        sum.1 = (f64::from(sum.1) + pixel[1]) as f32;
-        sum.2 = sum
-            .2
-            .checked_add(1)
-            .ok_or(BoundObservationSourceError::MeasurementOverflow)?;
-    }
-    let means = sums
-        .into_iter()
-        .map(|(bin, (x, y, count))| (bin, [(x / count as f32) as f64, (y / count as f32) as f64]))
-        .collect::<BTreeMap<_, _>>();
-    Ok(bins
-        .into_iter()
-        .map(|(antenna, bin)| (antenna, means[&bin]))
-        .collect())
 }
 
 fn pointing_epoch_phase_direction(
@@ -675,101 +516,34 @@ fn resolve_pointing_direction(
     law: casa_imaging_model::ObservationPointingLaw,
     fallback: SkyDirection,
 ) -> Result<SkyDirection, BoundObservationSourceError> {
-    if let Some(covering) = bracket.covering() {
-        return Ok(j2000_direction(covering.direction_j2000_rad()));
-    }
-    let direction = match (bracket.before(), bracket.after()) {
-        (Some(before), Some(after)) if before.row_index() == after.row_index() => {
-            before.direction_j2000_rad()
-        }
-        (Some(before), Some(after)) => match law.interpolation() {
-            PointingInterpolation::Nearest => {
-                let before_distance = query.time_mjd_seconds() - before.row_time_mjd_seconds();
-                let after_distance = after.row_time_mjd_seconds() - query.time_mjd_seconds();
-                if before_distance <= after_distance {
-                    before.direction_j2000_rad()
-                } else {
-                    after.direction_j2000_rad()
+    let sample = |candidate: Option<crate::selected_pointing::PointingDirectionCandidate>| {
+        candidate.map(|candidate| PointingSample {
+            sample: candidate.row_index(),
+            time_s: candidate.row_time_mjd_seconds(),
+            direction_rad: candidate.direction_j2000_rad(),
+        })
+    };
+    let samples = PointingSamples {
+        covering: sample(bracket.covering()),
+        before: sample(bracket.before()),
+        after: sample(bracket.after()),
+    };
+    law.resolve(samples, query.time_mjd_seconds(), fallback)
+        .map_err(|error| match error {
+            PointingLawError::OutsideCoverage => {
+                BoundObservationSourceError::PointingOutsideCoverage {
+                    antenna_id: query.antenna_id(),
+                    time_mjd_seconds: query.time_mjd_seconds(),
                 }
             }
-            PointingInterpolation::GreatCircleShortestArc => interpolate_direction(
-                before.direction_j2000_rad(),
-                after.direction_j2000_rad(),
-                (query.time_mjd_seconds() - before.row_time_mjd_seconds())
-                    / (after.row_time_mjd_seconds() - before.row_time_mjd_seconds()),
-            )?,
-        },
-        (Some(endpoint), None) | (None, Some(endpoint))
-            if matches!(law.extrapolation(), PointingExtrapolation::HoldNearest) =>
-        {
-            endpoint.direction_j2000_rad()
-        }
-        (Some(_), None) | (None, Some(_)) => {
-            return Err(BoundObservationSourceError::PointingOutsideCoverage {
+            PointingLawError::Missing => BoundObservationSourceError::MissingPointingDirection {
                 antenna_id: query.antenna_id(),
                 time_mjd_seconds: query.time_mjd_seconds(),
-            });
-        }
-        (None, None) if matches!(law.missing(), MissingPointingPolicy::UsePhaseTrackingCentre) => {
-            return Ok(fallback);
-        }
-        (None, None) => {
-            return Err(BoundObservationSourceError::MissingPointingDirection {
-                antenna_id: query.antenna_id(),
-                time_mjd_seconds: query.time_mjd_seconds(),
-            });
-        }
-    };
-    Ok(j2000_direction(direction))
-}
-
-fn j2000_direction(direction_rad: [f64; 2]) -> SkyDirection {
-    SkyDirection::new(DirectionFrame::J2000, direction_rad[0], direction_rad[1])
-}
-
-fn interpolate_direction(
-    before: [f64; 2],
-    after: [f64; 2],
-    fraction: f64,
-) -> Result<[f64; 2], BoundObservationSourceError> {
-    if !(fraction.is_finite() && (0.0..=1.0).contains(&fraction)) {
-        return Err(BoundObservationSourceError::InvalidPointingInterpolation);
-    }
-    let left = unit_direction(before);
-    let right = unit_direction(after);
-    let cosine = left
-        .iter()
-        .zip(right)
-        .map(|(left, right)| left * right)
-        .sum::<f64>()
-        .clamp(-1.0, 1.0);
-    let angle = cosine.acos();
-    let vector = if angle.abs() < 1.0e-15 {
-        left
-    } else {
-        let denominator = angle.sin();
-        let before_weight = ((1.0 - fraction) * angle).sin() / denominator;
-        let after_weight = (fraction * angle).sin() / denominator;
-        [
-            before_weight * left[0] + after_weight * right[0],
-            before_weight * left[1] + after_weight * right[1],
-            before_weight * left[2] + after_weight * right[2],
-        ]
-    };
-    let norm = vector.iter().map(|value| value * value).sum::<f64>().sqrt();
-    if !(norm.is_finite() && norm > 0.0) {
-        return Err(BoundObservationSourceError::InvalidPointingInterpolation);
-    }
-    let [x, y, z] = vector.map(|value| value / norm);
-    Ok([y.atan2(x).rem_euclid(std::f64::consts::TAU), z.asin()])
-}
-
-fn unit_direction(direction: [f64; 2]) -> [f64; 3] {
-    [
-        direction[1].cos() * direction[0].cos(),
-        direction[1].cos() * direction[0].sin(),
-        direction[1].sin(),
-    ]
+            },
+            PointingLawError::InvalidInterpolation => {
+                BoundObservationSourceError::InvalidPointingInterpolation
+            }
+        })
 }
 
 fn require_fixed_j2000(
@@ -790,7 +564,13 @@ mod aw_pointing_tests {
     use crate::{
         MeasurementSet, PointingDirectionColumn as StoredPointingDirectionColumn, PointingReadPlan,
     };
-    use casa_imaging_model::PointingDirectionColumn;
+    use casa_coordinates::{
+        Coordinate, DirectionCoordinate, Projection as CoordinateProjection, ProjectionType,
+    };
+    use casa_imaging_model::{
+        MissingPointingPolicy, PointingDirectionColumn, PointingExtrapolation,
+        PointingInterpolation,
+    };
 
     #[test]
     #[ignore = "requires local MeasurementSet and native source-group pointing trace"]
@@ -901,7 +681,7 @@ mod aw_pointing_tests {
             pixels.len()
         );
         assert!(maximum_error < 1.0e-5, "native POINTING projection differs");
-        let grouped = casa_aw_grouped_pixels(&pixels, 600.0, [-cell, cell]).unwrap();
+        let grouped = casa_imaging_model::aw_grouped_pixels(&pixels, 600.0, [-cell, cell]).unwrap();
         let baseline = records
             .iter()
             .find(|r| r[0] == "selected_baseline")
@@ -918,51 +698,5 @@ mod aw_pointing_tests {
             native_midpoint,
             "native grouped POINTING midpoint differs"
         );
-    }
-
-    #[test]
-    fn casa_default_pointing_group_collapses_compact_array_to_f32_mean() {
-        let pixels = BTreeMap::from([
-            (0, [256.125_000_01, 255.875_000_01]),
-            (1, [257.250_000_02, 256.500_000_02]),
-            (2, [255.750_000_03, 257.125_000_03]),
-        ]);
-
-        let grouped = casa_aw_grouped_pixels(
-            &pixels,
-            600.0,
-            [0.6_f64.to_radians() / 3600.0, 0.6_f64.to_radians() / 3600.0],
-        )
-        .expect("CASA default pointing grouping");
-        let casa_mean = |values: [f64; 3]| {
-            let sum = values
-                .into_iter()
-                .fold(0.0_f32, |sum, value| (f64::from(sum) + value) as f32);
-            f64::from(sum / 3.0)
-        };
-        let expected_x = casa_mean([256.125_000_01, 257.250_000_02, 255.750_000_03]);
-        let expected_y = casa_mean([255.875_000_01, 256.500_000_02, 257.125_000_03]);
-
-        assert_eq!(grouped.len(), pixels.len());
-        assert!(
-            grouped
-                .values()
-                .all(|pixel| *pixel == [expected_x, expected_y])
-        );
-    }
-
-    #[test]
-    fn casa_pointing_group_keeps_separated_bins_independent() {
-        let pixels = BTreeMap::from([(0, [10.0, 20.0]), (1, [10.2, 20.2]), (2, [30.0, 40.0])]);
-
-        let grouped = casa_aw_grouped_pixels(&pixels, 1.0, [1.0_f64.to_radians() / 3600.0, 0.0])
-            .expect("separated CASA pointing groups");
-
-        assert_eq!(
-            grouped[&0],
-            [10.100_000_381_469_727, 20.100_000_381_469_727]
-        );
-        assert_eq!(grouped[&1], grouped[&0]);
-        assert_eq!(grouped[&2], [30.0, 40.0]);
     }
 }

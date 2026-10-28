@@ -158,6 +158,35 @@ impl MPosition {
         }))
     }
 
+    /// The position CASA gives the observatory `name`: casacore's own
+    /// `MeasTable::Observatory` position for `EVLA`, which some geodetic
+    /// tables predate, else the provider's observatory table's; `None`
+    /// when neither knows the name.
+    pub fn casa_observatory(name: &str, provider: &dyn MeasuresProvider) -> Option<Self> {
+        if name.trim().eq_ignore_ascii_case("EVLA") {
+            return Some(Self::new_itrf(
+                -1_601_156.673_287_362,
+                -5_041_988.986_065_895,
+                3_554_879.236_820_509_7,
+            ));
+        }
+        Self::from_observatory_name(name, provider).ok().flatten()
+    }
+
+    /// The position CASA's imager measures an array's geometry from: the
+    /// observatory `telescope` names ([`Self::casa_observatory`]), else
+    /// `first_antenna`'s position, else the geocentre.
+    pub fn casa_array_reference(
+        telescope: Option<&str>,
+        first_antenna: Option<&Self>,
+        provider: &dyn MeasuresProvider,
+    ) -> Self {
+        telescope
+            .and_then(|name| Self::casa_observatory(name, provider))
+            .or_else(|| first_antenna.cloned())
+            .unwrap_or_else(|| Self::new_itrf(0.0, 0.0, 0.0))
+    }
+
     /// Returns the raw coordinate triplet.
     pub fn values(&self) -> [f64; 3] {
         self.values

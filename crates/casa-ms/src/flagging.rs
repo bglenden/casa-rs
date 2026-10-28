@@ -321,6 +321,9 @@ pub fn flagdata(
             path: ms_path.clone(),
             reason: source.to_string(),
         })?;
+    if let Some(selections) = &channel_selections {
+        check_channel_selections(ms, selections)?;
+    }
 
     if request.mode == FlagDataMode::Summary {
         let report = report_after(
@@ -342,7 +345,7 @@ pub fn flagdata(
     }
 
     let backup_version = if request.flagbackup && !selected_rows.is_empty() {
-        Some(save_next_flagdata_backup(ms)?)
+        Some(save_next_flag_backup(ms, "flagdata")?)
     } else {
         None
     };
@@ -1065,6 +1068,43 @@ fn extend_autoflag_grouped(
             }
         }
     }
+}
+
+/// Resolve every requested window's channels before anything is written, so
+/// a refused selection leaves no flag backup behind; CASA's `flagdata`
+/// rejects the selection before it backs up (#931).
+fn check_channel_selections(
+    ms: &MeasurementSet,
+    selections: &BTreeMap<i32, ChannelSelection>,
+) -> Result<(), FlaggingError> {
+    let path = display_ms_path(ms);
+    let spectral_window = ms
+        .spectral_window()
+        .map_err(|source| FlaggingError::MutateFlags {
+            path: path.clone(),
+            reason: format!("open SPECTRAL_WINDOW: {source}"),
+        })?;
+    for (&spw, selection) in selections {
+        let resolved = usize::try_from(spw)
+            .map_err(|_| format!("SPW {spw} is negative"))
+            .and_then(|row| {
+                let count = spectral_window.num_chan(row).map_err(|source| {
+                    format!("read SPECTRAL_WINDOW.NUM_CHAN row {spw}: {source}")
+                })?;
+                usize::try_from(count).map_err(|_| format!("SPW {spw} has a negative NUM_CHAN"))
+            })
+            .and_then(|channels| {
+                selection
+                    .indices(channels)
+                    .map(|_| ())
+                    .map_err(|source| format!("resolve SPW {spw} channels: {source}"))
+            });
+        resolved.map_err(|reason| FlaggingError::MutateFlags {
+            path: path.clone(),
+            reason,
+        })?;
+    }
+    Ok(())
 }
 
 fn mutate_selected_samples<F>(
@@ -2939,13 +2979,21 @@ pub fn rename_flag_version(
     rename_flag_version_entry(path, oldname, versionname, comment)
 }
 
-fn save_next_flagdata_backup(ms: &MeasurementSet) -> Result<String, FlaggingError> {
+/// Save the MAIN flags to the next free `<task>_N` flag version and return its
+/// name.
+///
+/// This is CASA's `flaghelper.backupFlags(prename=task)`: `N` is the smallest
+/// positive integer whose name is not yet taken, and the backup replaces
+/// nothing. `flagdata` and `applycal` call it before they change flags, so
+/// `flagmanager(mode="restore")` can undo the run.
+pub fn save_next_flag_backup(ms: &MeasurementSet, task: &str) -> Result<String, FlaggingError> {
     let versions = list_flag_versions(ms)?;
     let mut index = 1;
     loop {
-        let candidate = format!("flagdata_{index}");
+        let candidate = format!("{task}_{index}");
         if !versions.iter().any(|entry| entry.name == candidate) {
-            save_flag_version(ms, &candidate, "flagdata auto-backup", FlagMerge::Replace)?;
+            let comment = format!("{task} auto-backup");
+            save_flag_version(ms, &candidate, &comment, FlagMerge::Replace)?;
             return Ok(candidate);
         }
         index += 1;

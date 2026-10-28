@@ -33,10 +33,11 @@ use casa_ms::derived::engine::MsCalEngine;
 use casa_ms::ms::MeasurementSet;
 use casa_ms::schema::main_table::VisibilityDataColumn;
 use casa_ms::{
-    MeasurementSetColumnStorage, MeasurementSetColumnWriteMode, MeasurementSetMutationBatch,
-    MeasurementSetMutationColumnBatch, MeasurementSetMutationColumnValues,
-    MeasurementSetWriteColumnPlan, MeasurementSetWritePlan, MeasurementSetWriteResources,
-    MeasurementSetWriteSession, MsError, MsResult,
+    FlaggingError, MeasurementSetColumnStorage, MeasurementSetColumnWriteMode,
+    MeasurementSetMutationBatch, MeasurementSetMutationColumnBatch,
+    MeasurementSetMutationColumnValues, MeasurementSetWriteColumnPlan, MeasurementSetWritePlan,
+    MeasurementSetWriteResources, MeasurementSetWriteSession, MsError, MsResult,
+    save_next_flag_backup,
 };
 use casa_tables::{ColumnSchema, Table, TableError, TableOptions};
 use casa_types::{ArrayValue, Complex32, ScalarValue, Value};
@@ -338,8 +339,25 @@ pub struct ApplyExecutionReport {
     pub flagged_row_count: usize,
     /// Number of individual correlation-channel samples flagged by calibration.
     pub flagged_sample_count: usize,
+    /// The `applycal_N` flag version holding the flags as they were before
+    /// this run, when [`ApplyExecutionOptions::flag_backup`] saved one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flag_backup_version: Option<String>,
     /// Timing breakdown for the apply workflow, in nanoseconds.
     pub timings: ApplyExecutionTimings,
+}
+
+/// Task-level choices for one apply run that are not part of its plan.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ApplyExecutionOptions {
+    /// Save the MAIN flags to the next free `applycal_N` flag version before
+    /// anything is written, as CASA's `applycal(flagbackup=True)` does.
+    ///
+    /// Only [`ApplyMode::CalFlag`] changes flags, so the other modes never
+    /// back up, as in CASA. The backup is taken once the plan has validated,
+    /// so a rejected request leaves no version behind; CASA takes it before
+    /// it reads the calibration tables.
+    pub flag_backup: bool,
 }
 
 /// Timing breakdown for one apply execution.
@@ -399,6 +417,16 @@ pub enum ApplyExecutionError {
         /// Underlying MS error.
         #[source]
         source: MsError,
+    },
+
+    /// Saving the flag backup failed; nothing was written to the MeasurementSet.
+    #[error("failed to back up the flags of {path}: {source}")]
+    FlagBackup {
+        /// MeasurementSet path.
+        path: String,
+        /// Underlying flag-version error.
+        #[source]
+        source: Box<FlaggingError>,
     },
 
     /// Opening an auxiliary calibration subtable failed.
@@ -602,9 +630,22 @@ pub(crate) fn evaluate_apply_rows(
 }
 
 /// Plan and execute calibration application against an on-disk MeasurementSet.
+///
+/// This is the mechanism alone and saves no flag backup; the `applycal` task
+/// calls [`execute_apply_from_path_with_options`].
 pub fn execute_apply_from_path(
     path: impl AsRef<Path>,
     request: &ApplyPlanRequest,
+) -> Result<ApplyExecutionReport, ApplyExecutionError> {
+    execute_apply_from_path_with_options(path, request, ApplyExecutionOptions::default())
+}
+
+/// Plan and execute calibration application against an on-disk MeasurementSet
+/// with the task-level `options`.
+pub fn execute_apply_from_path_with_options(
+    path: impl AsRef<Path>,
+    request: &ApplyPlanRequest,
+    options: ApplyExecutionOptions,
 ) -> Result<ApplyExecutionReport, ApplyExecutionError> {
     let path = path.as_ref().to_path_buf();
     let total_started_at = Instant::now();
@@ -629,6 +670,7 @@ pub fn execute_apply_from_path(
                 updated_row_count: 0,
                 flagged_row_count: 0,
                 flagged_sample_count: 0,
+                flag_backup_version: None,
                 timings: ApplyExecutionTimings {
                     planning_ns,
                     planning_selection_ns: plan_timings.selection_ns,
@@ -643,8 +685,10 @@ pub fn execute_apply_from_path(
             });
         }
 
+        let flag_backup_version = save_apply_flag_backup(&ms, &plan, options)?;
         let (mut report, trace_summary) =
             execute_apply_plan(&mut ms, plan, Some(&mut perf_tracer))?;
+        report.flag_backup_version = flag_backup_version;
         report.timings.planning_ns = planning_ns;
         report.timings.planning_selection_ns = plan_timings.selection_ns;
         report.timings.planning_selected_rows_ns = plan_timings.selected_rows_ns;
@@ -689,6 +733,22 @@ pub fn execute_apply_from_path(
     Ok(report)
 }
 
+fn save_apply_flag_backup(
+    ms: &MeasurementSet,
+    plan: &ApplyPlan,
+    options: ApplyExecutionOptions,
+) -> Result<Option<String>, ApplyExecutionError> {
+    if !options.flag_backup || plan.apply_mode != ApplyMode::CalFlag {
+        return Ok(None);
+    }
+    save_next_flag_backup(ms, "applycal")
+        .map(Some)
+        .map_err(|source| ApplyExecutionError::FlagBackup {
+            path: display_ms_path(ms),
+            source: Box::new(source),
+        })
+}
+
 /// Plan and execute calibration application against an already-open MeasurementSet.
 pub fn execute_apply(
     ms: &mut MeasurementSet,
@@ -707,6 +767,7 @@ pub fn execute_apply(
             updated_row_count: 0,
             flagged_row_count: 0,
             flagged_sample_count: 0,
+            flag_backup_version: None,
             timings: ApplyExecutionTimings {
                 planning_ns,
                 planning_selection_ns: plan_timings.selection_ns,
@@ -1165,6 +1226,7 @@ fn execute_apply_plan(
             updated_row_count,
             flagged_row_count,
             flagged_sample_count,
+            flag_backup_version: None,
             timings: ApplyExecutionTimings {
                 planning_ns: 0,
                 open_measurement_set_ns: 0,
@@ -4772,6 +4834,7 @@ mod tests {
             updated_row_count: 1,
             flagged_row_count: 0,
             flagged_sample_count: 2,
+            flag_backup_version: None,
             timings: ApplyExecutionTimings {
                 planning_ns: 31,
                 planning_selection_ns: 32,

@@ -176,7 +176,11 @@ pub(super) fn primary_beam_centres(
     domains
         .iter()
         .map(|domain| {
-            let frame = direction_ref(domain.direction.reference_direction().frame());
+            let frame = domain
+                .direction
+                .reference_direction()
+                .frame()
+                .direction_ref();
             let coordinate = domain.coordinates.coordinate(
                 domain
                     .coordinates
@@ -408,7 +412,7 @@ pub(super) fn image_coordinates(
     let reference_pixel = image_reference_pixel(image_size);
     let mut coordinates = CoordinateSystem::new();
     coordinates.add_coordinate(DirectionCoordinate::new(
-        direction_ref(reference.frame()),
+        reference.frame().direction_ref(),
         CoordinateProjection::new(ProjectionType::SIN),
         [reference.longitude_rad(), reference.latitude_rad()],
         direction.increment_rad(),
@@ -431,15 +435,6 @@ pub(super) fn image_coordinates(
 /// CASA's direction reference pixel: half the image extent.
 fn image_reference_pixel(image_size: usize) -> f64 {
     image_size as f64 / 2.0
-}
-
-pub(super) const fn direction_ref(frame: DirectionFrame) -> DirectionRef {
-    match frame {
-        DirectionFrame::J2000 => DirectionRef::J2000,
-        DirectionFrame::Icrs => DirectionRef::ICRS,
-        DirectionFrame::B1950 => DirectionRef::B1950,
-        DirectionFrame::Galactic => DirectionRef::GALACTIC,
-    }
 }
 
 const fn stokes_type(coordinate: PolarizationCoordinate) -> StokesType {

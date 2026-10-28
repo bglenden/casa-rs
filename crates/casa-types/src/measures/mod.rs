@@ -25,6 +25,8 @@
 //!   and UT1−UTC offset.
 //! - [`MjdHighPrec`] — high-precision Modified Julian Date (day + fraction),
 //!   equivalent to C++ `MVEpoch`.
+//! - [`UvwMachine`] — the rotation of UVW coordinates between two J2000
+//!   phase centres, equivalent to C++ `casa::UVWMachine`.
 //!
 //! ## Record serialization
 //!
@@ -63,12 +65,16 @@ pub mod epoch;
 pub mod error;
 pub mod frame;
 pub mod frequency;
+pub mod frequency_conversion;
 pub mod position;
 pub mod provider;
 pub mod radial_velocity;
 pub mod record;
 pub mod uvw;
+pub mod uvw_machine;
 pub mod views;
+
+mod position_angle;
 
 // Re-exports for convenience.
 pub use baseline::UvwFrame;
@@ -76,6 +82,7 @@ pub use earth_magnetic::{EarthMagneticRef, IgrfSample, MEarthMagnetic, calculate
 pub use epoch::{EpochRef, MEpoch, MjdHighPrec};
 pub use error::MeasureError;
 pub use frame::{IauModel, MeasFrame};
+pub use frequency_conversion::PreparedFrequencyConversion;
 pub use position::{MPosition, PositionRef};
 pub use provider::{
     EopValues, MeasuresProvider, MeasuresProviderState, NamedSourceDirection, ObservatoryPosition,
@@ -87,4 +94,5 @@ pub use record::{
     radial_velocity_to_record,
 };
 pub use uvw::MUvw;
+pub use uvw_machine::UvwMachine;
 pub use views::{EpochView, FrequencyView, UvwView};
