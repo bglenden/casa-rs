@@ -28,6 +28,40 @@ pub(crate) fn scan_rows(budget: usize) -> usize {
 }
 
 impl Msv2Observation {
+    /// The most bytes a pointing query of this observation holds while it
+    /// is read and once it is answered, whatever its antennas and times:
+    /// every `POINTING` row taken as a candidate at [`POLYNOMIAL_TERMS`]
+    /// terms (the production source's bound), with one scan block, and the
+    /// series it gives. A [`PointingRequest`] with this budget is never
+    /// refused for its size. Zero without a `POINTING` table.
+    ///
+    /// # Errors
+    ///
+    /// When `POINTING` cannot be read.
+    pub fn pointing_bytes(&self) -> Result<usize, ObservationError> {
+        let mut domain = SelectedPointingQueryDomain::builder();
+        for antenna in 0..self.catalogue.antennas.len() {
+            let id = i32::try_from(antenna).map_err(|_| ObservationError::InvalidStore {
+                reason: format!("antenna {antenna} beyond the MSv2 identifier range"),
+            })?;
+            domain.observe_row(id, id, 0.0, 0.0).map_err(storage)?;
+        }
+        let Some(domain) = domain.finish().map_err(storage)? else {
+            return Ok(0);
+        };
+        let (catalog, scan_bytes_per_row) = self
+            .ms
+            .selected_pointing_catalog_requirements(&domain, POLYNOMIAL_TERMS)
+            .map_err(storage)?;
+        let scan = SCAN_ROWS.saturating_mul(scan_bytes_per_row);
+        // The series holds a time, an interval, an origin and two
+        // coefficients a term for each retained row, at most the catalog.
+        Ok(catalog
+            .construction_peak_bytes()
+            .saturating_add(scan)
+            .saturating_add(catalog.retained_bytes()))
+    }
+
     /// [`casa_observation::Observation::pointing`]: an MSv2's times are its
     /// `TIME` values (its partitions' time origin is MJD 0), so the
     /// request's times are `POINTING`'s.

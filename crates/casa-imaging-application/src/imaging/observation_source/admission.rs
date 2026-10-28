@@ -11,26 +11,20 @@ use casa_imaging_runtime::{
     Admitted, Demand, HostResources, ResourcePolicy, admit, bootstrap_source_budget, free_memory,
     row_layout,
 };
-use casa_observation::{
-    AccessRequest, CorrelationRequest, Deliver, FlagsFrom, Grouping, Observation, Roles,
-    TimeSelection, WeightRequest,
-};
+use casa_observation::{AccessRequest, Observation, PartitionEstimate};
 
 use super::pack::PackScratch;
+use super::requests;
 use super::selection::PartitionSelection;
 use crate::imaging::ImagingError;
-
-/// The bytes one batch's pointing query may hold
-/// ([`PointingRequest::budget_bytes`](casa_observation::PointingRequest::budget_bytes)):
-/// a batch's antennas over its times. A query beyond it is refused, not
-/// held. Admission charges it twice when the geometry reads pointing: the
-/// store's catalogue of the query and the series it gives can be live
-/// together.
-pub(super) const POINTING_BUDGET: usize = 64 << 20;
 
 /// An upper bound of the bytes the survey's conversion table holds per
 /// (time, field) it converts at: its key, its factor and the table's share.
 const SURVEY_ENTRY_BYTES: usize = 64;
+
+/// The bytes a survey batch holds beyond one time, when one time holds
+/// less: the survey reads no payload, so its batches stay small.
+const SURVEY_BATCH_BYTES: usize = 1 << 18;
 
 /// How the batch route's traversals divide each partition: whole times
 /// per batch, and the most samples one batch holds.
@@ -38,7 +32,7 @@ const SURVEY_ENTRY_BYTES: usize = 64;
 pub(crate) struct Batching {
     times_per_batch: Vec<usize>,
     rows: usize,
-    buffer_bytes: usize,
+    survey_bytes: usize,
 }
 
 impl Batching {
@@ -53,11 +47,11 @@ impl Batching {
         self.rows
     }
 
-    /// The most bytes one batch and its decode scratch hold: what the
-    /// channel-window survey's batches, which read no payload, may hold in
-    /// the same buffers.
-    pub(super) fn buffer_bytes(&self) -> usize {
-        self.buffer_bytes
+    /// The most bytes one batch of the payload-free survey and its decode
+    /// scratch hold, in buffers of the survey's own: at least one time of
+    /// every partition.
+    pub(super) fn survey_bytes(&self) -> usize {
+        self.survey_bytes
     }
 }
 
@@ -66,9 +60,29 @@ impl Batching {
 struct PartitionCost {
     /// Bytes one time holds in a batch and the cursor's scratch.
     held_per_time: usize,
+    /// Bytes one time of its survey holds.
+    survey_per_time: usize,
     baselines: usize,
+    /// Native channels a batch delivers: its selected channels' span.
+    channels: usize,
     /// Times the traversal delivers.
     times: usize,
+}
+
+/// `observation`'s estimate of `request`'s one partition.
+fn estimate(
+    observation: &dyn Observation,
+    request: &AccessRequest,
+) -> Result<PartitionEstimate, ImagingError> {
+    observation
+        .estimate(request)
+        .map_err(|error| ImagingError::Observation(Box::new(error)))?
+        .partitions
+        .into_iter()
+        .next()
+        .ok_or(ImagingError::Unsupported {
+            reason: "an estimate without its partition",
+        })
 }
 
 /// The batches of `selection` for `problem`, and the admitted charge of
@@ -81,11 +95,11 @@ struct PartitionCost {
 /// passes' per-row storage in proportion to their bytes per sample. A row
 /// of [`row_layout`] produces at most `row` samples. The charge holds the
 /// largest batch's buffers, its geometry, the plan's parallactic cache at
-/// every selected (time, field), a batch's pointing when the geometry
-/// reads it, the channel-window survey's conversions (its batches share
-/// the source's buffers), the store's index (`index_bytes`, which only the caller
-/// knows) and the passes' blocks; the run keeps it while the source is
-/// open.
+/// every selected (time, field), one pointing query of `pointing_budget`
+/// bytes when the geometry reads pointing (the source holds one partition's
+/// at a time, and drops it before it reads the next), the survey's buffers
+/// and conversions, and the passes' blocks; the run keeps it while the
+/// source is open. What opening the store holds is the caller's to charge.
 ///
 /// # Errors
 ///
@@ -98,7 +112,7 @@ pub(crate) fn admit_batches(
         &GeometryPlan,
     ),
     row: RowSamples,
-    index_bytes: usize,
+    pointing_budget: usize,
     (host, policy): (&HostResources, &ResourcePolicy),
 ) -> Result<Admitted<Batching>, ImagingError> {
     let costs = selection
@@ -108,41 +122,27 @@ pub(crate) fn admit_batches(
             let entry = observation.catalogue().partition(partition.id);
             let first = partition.channels[0] as usize;
             let last = *partition.channels.last().expect("a selected channel") as usize;
-            let request = AccessRequest {
-                partitions: vec![partition.id],
-                data_group: selection.data_group.clone(),
-                roles: Roles {
-                    time_centroid: plan.reads_time_centroids(),
-                    ..Roles::PAYLOAD
-                },
-                weights: WeightRequest::Stored,
-                channels: first..last + 1,
-                times: TimeSelection::All,
-                fields: selection.fields.clone(),
-                correlations: CorrelationRequest {
-                    deliver: if partition.correlations == entry.correlations {
-                        Deliver::All
-                    } else {
-                        Deliver::These(partition.correlations.clone())
-                    },
-                    flags_from: FlagsFrom::Delivered,
-                },
-                grouping: Grouping::None,
-                batch_bytes: usize::MAX,
-            };
-            let estimate = observation
-                .estimate(&request)
-                .map_err(|error| ImagingError::Observation(Box::new(error)))?;
-            let estimate = estimate
-                .partitions
-                .first()
-                .ok_or(ImagingError::Unsupported {
-                    reason: "an estimate without its partition",
-                })?;
+            let payload = estimate(
+                observation,
+                &requests::payload(
+                    (selection, plan),
+                    entry,
+                    partition,
+                    first..last + 1,
+                    true,
+                    usize::MAX,
+                ),
+            )?;
+            let survey = estimate(
+                observation,
+                &requests::survey((selection, plan), entry, partition, usize::MAX),
+            )?;
             Ok(PartitionCost {
-                held_per_time: estimate.held_bytes_per_time(),
-                baselines: estimate.baselines.max(1),
-                times: estimate.times,
+                held_per_time: payload.held_bytes_per_time(),
+                survey_per_time: survey.held_bytes_per_time(),
+                baselines: payload.baselines.max(1),
+                channels: last + 1 - first,
+                times: payload.times,
             })
         })
         .collect::<Result<Vec<_>, ImagingError>>()?;
@@ -180,30 +180,39 @@ pub(crate) fn admit_batches(
         .max()
         .unwrap_or(0);
     let longest = times_per_batch.iter().copied().max().unwrap_or(0);
+    let widest = costs.iter().map(|cost| cost.channels).max().unwrap_or(0);
     let buffers = costs
         .iter()
         .zip(&times_per_batch)
         .map(|(cost, times)| times * cost.held_per_time)
         .max()
         .unwrap_or(0);
+    let survey_bytes = costs
+        .iter()
+        .map(|cost| cost.survey_per_time)
+        .max()
+        .unwrap_or(0)
+        .max(SURVEY_BATCH_BYTES);
     let keys = costs.iter().map(|cost| cost.times).sum::<usize>();
+    let pointing = if plan.reads_pointing() {
+        pointing_budget
+    } else {
+        0
+    };
     let source = buffers
-        + plan.geometry_bytes(rows, longest, layout.channels())
+        + plan.geometry_bytes(rows, longest, widest)
         + rows
         + plan.cache_bound(keys)
-        + if plan.reads_pointing() {
-            2 * POINTING_BUDGET
-        } else {
-            0
-        }
-        + index_bytes
+        + pointing
+        + survey_bytes
         + keys * SURVEY_ENTRY_BYTES
         + PackScratch::bound(layout);
     tracing::info!(
         rows_per_block = rows,
         source_bytes = source,
         pass_bytes = passes(rows),
-        index_bytes,
+        pointing_bytes = pointing,
+        survey_bytes,
         "observation-batch source plan"
     );
     let reservation = admit(
@@ -218,7 +227,7 @@ pub(crate) fn admit_batches(
         value: Batching {
             times_per_batch,
             rows,
-            buffer_bytes: buffers,
+            survey_bytes,
         },
         reservation,
     })

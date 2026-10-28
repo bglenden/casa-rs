@@ -20,31 +20,30 @@
 
 mod admission;
 mod pack;
+mod pointing;
+mod requests;
 mod selection;
+mod survey;
 mod window;
 
 use std::ops::Range;
 
 use casa_imaging_model::{
     BatchGeometry, CompiledProblem, DirectionCoordinateSpec, GeometryPlan, GeometryTraversal,
-    PointingCentreLaw, PointingDirectionColumn,
 };
 use casa_imaging_operator::PlaneRange;
 use casa_imaging_runtime::pass::{
     BlockShape, BoundedSource, NativeBlock, SampleContent, SourceError,
 };
 use casa_imaging_runtime::row_layout;
-use casa_observation::{
-    AccessRequest, AntennaId, BatchBuffers, CorrelationRequest, Deliver, FlagsFrom, Grouping,
-    Observation, PointingDirection, PointingRequest, ReadEvent, Roles, TimeSelection, Traversal,
-    VisibilityBatch, WeightRequest,
-};
-use casa_types::measures::MjdHighPrec;
+use casa_observation::{AccessRequest, BatchBuffers, Observation, ReadEvent, Traversal};
 
 pub(crate) use admission::{Batching, admit_batches};
 use pack::{Layout, PackScratch, Packer, select_samples};
+use pointing::PointingCache;
 pub(crate) use selection::{PartitionSelection, SelectedPartition};
-use window::{FactorRange, wave_window};
+use survey::{PartitionSurvey, survey};
+use window::wave_window;
 
 use super::source::PlaneBounds;
 
@@ -56,6 +55,9 @@ pub(crate) struct BatchRoute {
     pub(crate) selection: PartitionSelection,
     pub(crate) plan: GeometryPlan,
     pub(crate) batching: Batching,
+    /// The budget of a pointing query, under which the store never refuses
+    /// one for its size; zero when geometry reads no pointing.
+    pub(crate) pointing_budget: usize,
 }
 
 impl BatchRoute {
@@ -102,9 +104,10 @@ pub(crate) struct ObservationSource<'a> {
     packer: Packer<'a>,
     planes: u32,
     bounds: Option<PlaneBounds>,
-    /// Each partition's conversion factor range, surveyed at the first
-    /// restricted wave.
-    factors: Option<Vec<FactorRange>>,
+    /// Each partition surveyed: at the first traversal when geometry reads
+    /// pointing, with the conversion factors at the first restricted wave.
+    surveys: Option<Vec<PartitionSurvey>>,
+    pointing: PointingCache,
     maximum: BlockShape,
     state: State<'a>,
     buffers: BatchBuffers,
@@ -146,7 +149,8 @@ impl<'a> ObservationSource<'a> {
             },
             planes,
             bounds,
-            factors: None,
+            surveys: None,
+            pointing: PointingCache::default(),
             maximum: BlockShape {
                 rows: route.batching.rows(),
                 ..layout
@@ -166,7 +170,8 @@ impl<'a> ObservationSource<'a> {
         restrict: bool,
     ) -> Result<Vec<Option<Range<usize>>>, SourceError> {
         let problem = self.packer.problem;
-        let selection = &self.route.selection;
+        let route: &'a BatchRoute = self.route;
+        let selection = &route.selection;
         let bounds = (restrict
             && problem.visibility_transform().is_none()
             && planes != PlaneRange::new(0, self.planes))
@@ -182,16 +187,14 @@ impl<'a> ObservationSource<'a> {
         if !(bounds[0].is_finite() && bounds[1].is_finite() && bounds[0] != bounds[1]) {
             return Err("a wave's frequency bounds are empty or not finite".into());
         }
-        if self.factors.is_none() {
-            self.factors = Some(survey_factors(self.route, &mut self.buffers)?);
-        }
-        let factors = self.factors.as_ref().expect("factors surveyed");
-        let catalogue = self.route.observation.catalogue();
+        let surveys = self.surveyed(true)?;
+        let catalogue = route.observation.catalogue();
         Ok(selection
             .partitions
             .iter()
-            .zip(factors)
-            .map(|(partition, factors)| {
+            .zip(surveys)
+            .map(|(partition, survey)| {
+                let factors = survey.factors.expect("factors surveyed");
                 let entry = catalogue.partition(partition.id);
                 let native = partition
                     .channels
@@ -199,10 +202,22 @@ impl<'a> ObservationSource<'a> {
                     .map(|channel| entry.frequencies_hz[*channel as usize])
                     .collect::<Vec<_>>();
                 (!factors.is_empty())
-                    .then(|| wave_window(&native, *factors, bounds))
+                    .then(|| wave_window(&native, factors, bounds))
                     .flatten()
             })
             .collect())
+    }
+
+    /// The partitions surveyed, with their conversion factors when
+    /// `factors`: surveyed again only when factors are first needed.
+    fn surveyed(&mut self, factors: bool) -> Result<&[PartitionSurvey], SourceError> {
+        let current = self.surveys.as_ref().is_some_and(|surveys| {
+            !factors || surveys.iter().all(|survey| survey.factors.is_some())
+        });
+        if !current {
+            self.surveys = Some(survey(self.route, factors)?);
+        }
+        Ok(self.surveys.as_deref().expect("partitions surveyed"))
     }
 
     /// Bind partition `index`'s traversal of the wave's channels `window`,
@@ -217,11 +232,11 @@ impl<'a> ObservationSource<'a> {
         let partition = &route.selection.partitions[index];
         let entry = route.observation.catalogue().partition(partition.id);
         let layout = Layout::new(partition, entry, window)?;
-        let probe = request(
-            route,
+        let probe = requests::payload(
+            (&route.selection, &route.plan),
+            entry,
             partition,
             layout.native_channels(),
-            layout.correlations(),
             values,
             usize::MAX,
         );
@@ -236,6 +251,24 @@ impl<'a> ObservationSource<'a> {
             ..probe
         };
         Ok((route.observation.bind_read(&request)?, layout))
+    }
+
+    /// Hold partition `index`'s pointing over its selected times, when
+    /// geometry reads pointing.
+    fn hold_pointing(&mut self, index: usize) -> Result<(), SourceError> {
+        if !self.route.plan.reads_pointing() {
+            return Ok(());
+        }
+        let Some(span) = self.surveyed(false)?[index].span else {
+            return Ok(());
+        };
+        let route = self.route;
+        self.pointing.hold(
+            route,
+            self.packer.problem,
+            &route.selection.partitions[index],
+            span,
+        )
     }
 
     /// Read on until a batch packs a row into `out`; `Ok(false)` once every
@@ -256,6 +289,7 @@ impl<'a> ObservationSource<'a> {
                 let (traversal, layout) = self.bind(index, window, stream.values)?;
                 stream.next = index + 1;
                 stream.current = Some((index, traversal, layout));
+                self.hold_pointing(index)?;
             }
             let (index, traversal, layout) = stream.current.as_mut().expect("a bound partition");
             let route: &'a BatchRoute = self.route;
@@ -271,19 +305,10 @@ impl<'a> ObservationSource<'a> {
             if !self.keep.iter().any(|keep| *keep) {
                 continue;
             }
-            let pointing = route
-                .plan
-                .reads_pointing()
-                .then(|| {
-                    route
-                        .observation
-                        .pointing(&pointing_request(self.packer.problem, &batch))
-                })
-                .transpose()?;
             route.plan.apply(
                 &batch,
                 &self.keep,
-                pointing.as_ref(),
+                self.pointing.series(),
                 &mut stream.geometry,
                 &mut self.geometry,
             )?;
@@ -297,148 +322,6 @@ impl<'a> ObservationSource<'a> {
             )?;
             return Ok(true);
         }
-    }
-}
-
-/// The output-frame conversion factors each of `route`'s partitions'
-/// selected (field, time)s span, from one traversal of each that reads no
-/// payload, in `buffers` and within the batches' admitted bytes. Partitions
-/// observed at the same times towards the same field in the same frame
-/// share each conversion.
-fn survey_factors(
-    route: &BatchRoute,
-    buffers: &mut BatchBuffers,
-) -> Result<Vec<FactorRange>, SourceError> {
-    let catalogue = route.observation.catalogue();
-    let mut conversions = std::collections::HashMap::new();
-    let origin = MjdHighPrec::new(0.0, 0.0);
-    route
-        .selection
-        .partitions
-        .iter()
-        .map(|partition| {
-            let entry = catalogue.partition(partition.id);
-            let first = partition.channels[0] as usize;
-            let survey = AccessRequest {
-                roles: Roles {
-                    values: false,
-                    flags: false,
-                    weights: false,
-                    uvw: false,
-                    ..Roles::PAYLOAD
-                },
-                channels: first..first + 1,
-                batch_bytes: route.batching.buffer_bytes(),
-                ..request(route, partition, first..first + 1, &[], false, 0)
-            };
-            let mut traversal = route.observation.bind_read(&survey)?;
-            let mut range = FactorRange::EMPTY;
-            while let Some(event) = traversal.next(buffers)? {
-                let ReadEvent::Batch(batch) = event else {
-                    continue;
-                };
-                let scale = batch.time.reference();
-                for time in 0..batch.times() {
-                    let time_mjd_s = batch.time.seconds_since(time, origin);
-                    let field = batch.field[time];
-                    let key = (entry.frequency_frame, field, scale, time_mjd_s.to_bits());
-                    let factor = match conversions.get(&key) {
-                        Some(factor) => *factor,
-                        None => {
-                            let factor = route.plan.frequency_factor(
-                                entry.frequency_frame,
-                                field,
-                                time_mjd_s,
-                                scale,
-                            )?;
-                            if !(factor.is_finite() && factor > 0.0) {
-                                return Err(SourceError::from(
-                                    "an output-frame conversion factor is not positive",
-                                ));
-                            }
-                            conversions.insert(key, factor);
-                            factor
-                        }
-                    };
-                    range = range.with(factor);
-                }
-            }
-            Ok(range)
-        })
-        .collect()
-}
-
-/// The request reading `route`'s `partition`'s native channels `channels`,
-/// the routed products `correlations` and, with `values`, the
-/// visibilities, at most `batch_bytes` a batch.
-fn request(
-    route: &BatchRoute,
-    partition: &SelectedPartition,
-    channels: Range<usize>,
-    correlations: &[casa_observation::Correlation],
-    values: bool,
-    batch_bytes: usize,
-) -> AccessRequest {
-    let entry = route.observation.catalogue().partition(partition.id);
-    let deliver = if correlations.is_empty() || correlations == entry.correlations.as_slice() {
-        Deliver::All
-    } else {
-        Deliver::These(correlations.to_vec())
-    };
-    AccessRequest {
-        partitions: vec![partition.id],
-        data_group: route.selection.data_group.clone(),
-        roles: Roles {
-            values,
-            time_centroid: route.plan.reads_time_centroids(),
-            ..Roles::PAYLOAD
-        },
-        weights: WeightRequest::Stored,
-        channels,
-        times: TimeSelection::All,
-        fields: route.selection.fields.clone(),
-        correlations: CorrelationRequest {
-            deliver,
-            flags_from: FlagsFrom::Delivered,
-        },
-        grouping: Grouping::None,
-        batch_bytes,
-    }
-}
-
-/// The pointing query for `batch`'s antennas over its times and time
-/// centroids, in the direction the pointing law reads, within the
-/// admitted budget ([`admission::POINTING_BUDGET`]).
-fn pointing_request(problem: &CompiledProblem, batch: &VisibilityBatch<'_>) -> PointingRequest {
-    let mut antennas: Vec<AntennaId> = batch
-        .baselines
-        .iter()
-        .flat_map(|baseline| [baseline.antenna1, baseline.antenna2])
-        .collect();
-    antennas.sort_unstable();
-    antennas.dedup();
-    let times = batch.time.offsets_s();
-    let mut span = times[0]..=times[times.len() - 1];
-    if let Some(centroid) = batch.timing.centroid {
-        let offsets = centroid.offsets_s();
-        let low = offsets.iter().copied().fold(*span.start(), f64::min);
-        let high = offsets.iter().copied().fold(*span.end(), f64::max);
-        span = low..=high;
-    }
-    let direction = match problem.geometry().centres().pointing() {
-        PointingCentreLaw::Observation(law)
-            if law.direction_column() == PointingDirectionColumn::Target =>
-        {
-            PointingDirection::Target
-        }
-        _ => PointingDirection::Beam,
-    };
-    PointingRequest {
-        partition: batch.partition,
-        direction,
-        antennas,
-        times: span,
-        budget_bytes: admission::POINTING_BUDGET,
     }
 }
 

@@ -34,6 +34,11 @@ pub(super) const NO_ROW: u32 = u32::MAX;
 /// about 15 MiB of columns and row numbers.
 pub(super) const ROWS_PER_CHUNK: usize = 1 << 18;
 
+/// Bytes a chunk of key columns ([`KeyColumns`]) holds per row: a row
+/// number, a time and ten integer keys.
+pub(super) const CHUNK_ROW_BYTES: usize =
+    size_of::<usize>() + size_of::<f64>() + 10 * size_of::<i32>();
+
 /// One chunk of MAIN's key columns, refilled for every chunk.
 #[derive(Default)]
 struct KeyColumns {

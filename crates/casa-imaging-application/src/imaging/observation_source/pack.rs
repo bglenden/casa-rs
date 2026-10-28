@@ -88,11 +88,6 @@ impl Layout {
                 .expect("a layout holds a channel") as usize
                 + 1
     }
-
-    /// The routed products, as a request delivers them.
-    pub(super) fn correlations(&self) -> &[Correlation] {
-        &self.correlations
-    }
 }
 
 /// Which samples of `batch` the selection images, into `keep`: those that

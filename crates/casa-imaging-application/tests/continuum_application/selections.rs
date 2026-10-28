@@ -10,7 +10,8 @@ use super::*;
 /// 0 to 3 sit at 0.01, 0.02, 0.04 and 0.08 m, so every 100 m baseline is
 /// 10,000, 5,000, 2,500 and 1,250 λ long; the target intent holds the rows
 /// of data descriptions 0 and 1 (DATA_DESC_ID is the row number modulo
-/// 4), the phase calibrator those of 2 and 3.
+/// 4), the phase calibrator those of 2 and 3; state 0 selects them by
+/// number as by intent.
 #[test]
 fn selections_that_empty_data_descriptions_image_the_remaining_rows() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
@@ -113,6 +114,7 @@ fn selections_that_empty_data_descriptions_image_the_remaining_rows() {
     for (name, selection) in [
         ("lambda", json!({ "uvrange": ">4000lambda" })),
         ("intent", json!({ "intent": "OBSERVE_TARGET*" })),
+        ("intent by state", json!({ "intent": "0" })),
     ] {
         let (image_name, outcome) =
             image(name, selection).unwrap_or_else(|error| panic!("{name}: {error}"));
@@ -149,6 +151,28 @@ fn selections_that_empty_data_descriptions_image_the_remaining_rows() {
         ),
         "{error}"
     );
+
+    // The MSv2 adapter partitions rows by their state's intents, so a
+    // selection of one of two states listing the same intents is refused
+    // on the batch route: their rows share partitions.
+    let mut ms = MeasurementSet::open(&path).unwrap();
+    ms.subtable_mut(SubtableId::State)
+        .unwrap()
+        .add_row(required_row(
+            schema::state::REQUIRED_COLUMNS,
+            &[("OBS_MODE", string("OBSERVE_TARGET#ON_SOURCE"))],
+        ))
+        .unwrap();
+    ms.save().unwrap();
+    drop(ms);
+    let error = image_on(
+        "shared-intents",
+        &json!({ "intent": "0" }),
+        SourceRoute::ObservationBatches,
+    )
+    .err()
+    .expect("a state sharing its intents with an unselected one");
+    assert!(error.to_string().contains("same intents"), "{error}");
 }
 
 /// The observation-batch route (#932, step 4) refuses what it does not

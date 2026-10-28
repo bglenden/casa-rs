@@ -51,7 +51,8 @@ fn read_product(base: &Path, suffix: &str) -> (Vec<usize>, ArrayD<f32>) {
 }
 
 /// A dirty cube imaged in waves equals the cube imaged in one resident
-/// pass, both when its waves read restricted channel windows and under
+/// pass, both when its waves read restricted channel windows, of all the
+/// channels or of a selection with a gap (`0:1~10;20~30`), and under
 /// continuum subtraction, whose interior waves reach none of the fit-only
 /// channels (0 and 31) and so read whole rows for the fit. (Residual waves
 /// with a model are pinned by the runtime's pass laws.)
@@ -60,18 +61,17 @@ fn dirty_cubes_in_waves_equal_the_resident_cube() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = thirty_two_channel_multi_row_measurement_set(root.path());
-    for (label, continuum) in [("windowed", false), ("continuum", true)] {
+    for (label, overrides) in [
+        ("windowed", json!({ "imsize": 128 })),
+        ("gapped", json!({ "imsize": 128, "spw": "0:1~10;20~30" })),
+        (
+            "continuum",
+            json!({ "imsize": 128, "fitspw": "0:0;31", "fitorder": 1 }),
+        ),
+    ] {
         let cube = |name: &str, memory: u64, route: SourceRoute| {
             let image_name = root.path().join(format!("{label}-{name}"));
-            let mut imaging = line_cube(
-                &measurement_set,
-                &image_name,
-                if continuum {
-                    json!({ "imsize": 128, "fitspw": "0:0;31", "fitorder": 1 })
-                } else {
-                    json!({ "imsize": 128 })
-                },
-            );
+            let mut imaging = line_cube(&measurement_set, &image_name, overrides.clone());
             imaging.source_route = route;
             let outcome =
                 casa_imaging_application::execute(&imaging, context_with(memory_policy(memory)))

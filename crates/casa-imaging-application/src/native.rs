@@ -165,28 +165,79 @@ fn batch_route(
             "the observation-batch route does not follow an ephemeris table yet (#932)".into(),
         ));
     }
-    let opened = Msv2Observation::open_with(observation.locator(), &OpenOptions::default())
-        .map_err(|error| NativeError::Other(Box::new(error)))?;
+    let Admitted {
+        value: opened,
+        reservation: mut opening,
+    } = open_observation(observation, runtime)?;
     let selection = resolve_partitions(problem, &opened)
         .map_err(|error| NativeError::Other(Box::new(error)))?;
     let plan = GeometryPlan::compile(problem, opened.catalogue(), observation.measures_provider())
         .map_err(|error| NativeError::Other(Box::new(error)))?;
+    let pointing_budget = if plan.reads_pointing() {
+        opened
+            .pointing_bytes()
+            .map_err(|error| NativeError::Other(Box::new(error)))?
+    } else {
+        0
+    };
     let Admitted {
         value: batching,
         reservation,
     } = imaging::admit_batches(
         (problem, &opened, &selection, &plan),
         imaging::row_samples(problem)?,
-        opened.index_bytes(),
+        pointing_budget,
         (&runtime.host, &runtime.resource_policy),
     )?;
+    opening.join(reservation);
     Ok(Admitted {
         value: imaging::BatchRoute {
             observation: Box::new(opened),
             selection,
             plan,
             batching,
+            pointing_budget,
         },
+        reservation: opening,
+    })
+}
+
+/// The MeasurementSet `observation` names, opened, with the charge of its
+/// index while it is open ([`Msv2Observation::index_bytes`]). What opening
+/// holds is admitted before it opens, from MAIN's row count
+/// ([`Msv2Observation::opening_bytes`]); the charge is then trimmed to the
+/// index, or raised by its grids' padding.
+fn open_observation(
+    observation: &SelectedObservationResolutionRequest,
+    runtime: &ApplicationRuntime,
+) -> Result<Admitted<Msv2Observation>, NativeError> {
+    let main_rows = usize::try_from(observation.selection().rows().source_row_count())
+        .map_err(|_| NativeError::Other("MAIN holds more rows than this host addresses".into()))?;
+    let mut reservation = admit(
+        &runtime.host,
+        &runtime.resource_policy,
+        &Demand {
+            phase: "observation opening",
+            memory: Msv2Observation::opening_bytes(main_rows) as u64,
+        },
+    )?;
+    let opened = Msv2Observation::open_with(observation.locator(), &OpenOptions::default())
+        .map_err(|error| NativeError::Other(Box::new(error)))?;
+    let index = opened.index_bytes() as u64;
+    if index <= reservation.memory() {
+        reservation.retain(index);
+    } else {
+        reservation.join(admit(
+            &runtime.host,
+            &runtime.resource_policy,
+            &Demand {
+                phase: "observation index",
+                memory: index - reservation.memory(),
+            },
+        )?);
+    }
+    Ok(Admitted {
+        value: opened,
         reservation,
     })
 }

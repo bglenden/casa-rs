@@ -269,6 +269,21 @@ impl Msv2Observation {
         catalogue::intents(mode)
     }
 
+    /// At most the bytes opening a MeasurementSet of `main_rows` MAIN rows
+    /// holds besides its grids' padding: one cell per row, each row's time
+    /// while the first pass gathers its partition's times, and one chunk of
+    /// key columns. A grid's padding cells, which only opening finds, add
+    /// four bytes each ([`Self::index_bytes`] once open).
+    #[must_use]
+    pub const fn opening_bytes(main_rows: usize) -> usize {
+        let chunk = if main_rows < index::ROWS_PER_CHUNK {
+            main_rows
+        } else {
+            index::ROWS_PER_CHUNK
+        };
+        main_rows * (size_of::<u32>() + size_of::<f64>()) + chunk * index::CHUNK_ROW_BYTES
+    }
+
     /// Bytes the opening's index holds while the observation is open: each
     /// partition's grid, a MAIN row number per cell with its time and
     /// baseline tables.

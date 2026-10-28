@@ -75,16 +75,11 @@ pub(crate) fn resolve_partitions(
         IdSelection::All => FieldSelection::All,
         IdSelection::Only(ids) => FieldSelection::Only(ids.iter().copied().map(FieldId).collect()),
     };
+    let measurement_set = observation.measurement_set();
     let intents = match rows.intents() {
         IntentSelection::All => None,
-        IntentSelection::Only(intents) => Some(
-            intents
-                .iter()
-                .map(|intent| Msv2Observation::mode_intents(intent.observation_mode()))
-                .collect::<Vec<_>>(),
-        ),
+        IntentSelection::Only(intents) => Some(selected_intents(measurement_set, intents)?),
     };
-    let measurement_set = observation.measurement_set();
     let windows = measurement_set.spectral_window()?;
     let field_table = measurement_set.field()?;
     let mut data_group = None;
@@ -132,7 +127,8 @@ pub(crate) fn resolve_partitions(
             ))?;
         if group.weights != weights {
             return Err(PartitionSelectionError::Unsupported(
-                "WEIGHT_SPECTRUM defined in only some selected rows",
+                "a WEIGHT_SPECTRUM that MAIN's first row and the selected rows disagree on \
+                 (the MSv2 adapter decides from the first, today's route from every selected row)",
             ));
         }
         match &data_group {
@@ -211,4 +207,54 @@ pub(crate) fn resolve_partitions(
         fields,
         uv: rows.uv_distances().clone(),
     })
+}
+
+/// The intent sets of the states `selected` names, each as the catalogue
+/// gives a partition's ([`Msv2Observation::mode_intents`]).
+///
+/// The MSv2 adapter partitions rows by `OBS_MODE`, not by `STATE_ID`, so a
+/// partition holds the rows of every state whose mode lists its intents,
+/// and rows without a state (`STATE_ID` -1) have none. A selection is
+/// refused unless the partitions it reads hold its states' rows alone:
+/// every state listing a selected state's intents is selected, and no
+/// selected state lists none.
+fn selected_intents(
+    measurement_set: &casa_ms::MeasurementSet,
+    selected: &[casa_imaging_model::ResolvedIntent],
+) -> Result<Vec<Vec<String>>, PartitionSelectionError> {
+    let states = measurement_set.state()?;
+    let modes = (0..states.row_count())
+        .map(|row| {
+            states
+                .string(row, "OBS_MODE")
+                .map(|mode| Msv2Observation::mode_intents(&mode))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let chosen = selected
+        .iter()
+        .map(|intent| intent.state_id() as usize)
+        .collect::<std::collections::BTreeSet<_>>();
+    selected
+        .iter()
+        .map(|intent| {
+            let set = Msv2Observation::mode_intents(intent.observation_mode());
+            if set.is_empty() {
+                return Err(PartitionSelectionError::Unsupported(
+                    "an intent selection of a state without intents (rows without a state \
+                     share its partitions)",
+                ));
+            }
+            if modes
+                .iter()
+                .enumerate()
+                .any(|(state, intents)| !chosen.contains(&state) && *intents == set)
+            {
+                return Err(PartitionSelectionError::Unsupported(
+                    "an intent selection that takes some of the states listing the same \
+                     intents (their rows share partitions)",
+                ));
+            }
+            Ok(set)
+        })
+        .collect()
 }

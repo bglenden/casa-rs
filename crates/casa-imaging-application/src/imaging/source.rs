@@ -205,6 +205,23 @@ impl<'a> MeasurementSetSource<'a> {
         out.reset(self.domains, &channel_indices, &correlation_indices);
         let channels = channel_indices.len();
         let correlations = correlation_indices.len();
+        // Every row of a block has one data description, so the continuum
+        // transform's view of its channels is formed once a block.
+        let continuum = self.problem.visibility_transform().map(|_| {
+            (
+                first
+                    .channels
+                    .iter()
+                    .map(|channel| channel.frequency_centre_hz)
+                    .collect::<Vec<_>>(),
+                first
+                    .correlations
+                    .iter()
+                    .map(|product| product.correlation_type().contributes_to_stokes_i())
+                    .collect::<Vec<_>>(),
+                matches!(first.visibility, SelectedNumericVisibility::Float32(_)),
+            )
+        });
         // Every policy rejects a non-finite input in an unflagged sample;
         // `RejectAll` also one in a flagged sample.
         let reject_flagged = matches!(
@@ -276,29 +293,16 @@ impl<'a> MeasurementSetSource<'a> {
                     if nonfinite_uvw && (reject_flagged || imaged) {
                         return Err(nonfinite_input("uvw", numeric.row.physical_row, None));
                     }
-                    let Some(rule) = rule else {
+                    let (Some(rule), Some((frequencies_hz, parallel, real))) =
+                        (rule, continuum.as_ref())
+                    else {
                         return Ok(());
                     };
-                    let channels = numeric
-                        .channels
-                        .iter()
-                        .map(|channel| channel.channel_index)
-                        .collect::<Vec<_>>();
-                    let frequencies_hz = numeric
-                        .channels
-                        .iter()
-                        .map(|channel| channel.frequency_centre_hz)
-                        .collect::<Vec<_>>();
-                    let parallel = numeric
-                        .correlations
-                        .iter()
-                        .map(|product| product.correlation_type().contributes_to_stokes_i())
-                        .collect::<Vec<_>>();
                     let row = ContinuumRow {
-                        channels: &channels,
-                        frequencies_hz: &frequencies_hz,
-                        parallel: &parallel,
-                        real: matches!(numeric.visibility, SelectedNumericVisibility::Float32(_)),
+                        channels: &channel_indices,
+                        frequencies_hz,
+                        parallel,
+                        real: *real,
                         row_flag: numeric.row.row_flag,
                     };
                     if unread {

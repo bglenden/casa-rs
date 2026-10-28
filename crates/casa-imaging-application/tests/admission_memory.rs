@@ -664,9 +664,11 @@ fn just_above(breaches: &mut Vec<String>, label: &str, request: &ImagingRequest)
 
 /// The observation-batch route (#932, step 4) holds no more than it is
 /// admitted: its batches, their geometry, the parallactic cache, the
-/// opening's index and the channel-window survey of a cube's restricted
-/// waves. Continuum runs under natural and uniform weighting, at one worker
-/// and at four, and a cube resident and in waves.
+/// opening and its index, and the channel-window survey of a cube's
+/// restricted waves. Continuum runs under natural and uniform weighting,
+/// at one worker and at four, a cube resident and in waves, and a window
+/// of 101 channels whole and sparsely selected (`0:0~1;100`), whose
+/// batches span every channel between the selected ones.
 #[test]
 fn the_observation_batch_route_stays_within_its_admission() {
     if !alone("the_observation_batch_route_stays_within_its_admission") {
@@ -724,6 +726,43 @@ fn the_observation_batch_route_stays_within_its_admission() {
     assert!(
         waves.is_some_and(|planes| (planes as usize) < CUBE_CHANNELS),
         "the cube runs in waves just above what it needs: {waves:?}"
+    );
+    let wide_root = root.path().join("wide");
+    std::fs::create_dir(&wide_root).expect("the wide window's root");
+    let wide = observation(&wide_root, 101);
+    warm(&wide, &wide_root);
+    check(
+        &mut breaches,
+        "batches continuum of 101 channels",
+        &batches(request(
+            &wide,
+            &wide_root.join("batches-continuum"),
+            256,
+            json!({ "deconvolver": "hogbom" }),
+        )),
+        4,
+        AMPLE,
+    );
+    check(
+        &mut breaches,
+        "batches sparse linear cube",
+        &batches(request(
+            &wide,
+            &wide_root.join("batches-sparse"),
+            256,
+            json!({
+                "specmode": "cube",
+                "outframe": "TOPO",
+                "spw": "0:0~1;100",
+                "channel_count": 10,
+                "start": "44.64GHz",
+                "width": "1.28GHz",
+                "interpolation": "linear",
+                "niter": 0,
+            }),
+        )),
+        2,
+        2 << 30,
     );
     assert!(breaches.is_empty(), "{breaches:#?}");
 }
