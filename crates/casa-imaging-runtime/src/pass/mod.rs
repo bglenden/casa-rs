@@ -305,13 +305,13 @@ impl MajorCyclePass<'_> {
         native_residuals(self.domains, self.model.is_some())
     }
 
-    /// Whether the pass sums `sumwt`: when it forms the PSF, on the initial
-    /// pass, with a start model or without. A residual pass's sums are not
-    /// read, since CASA keeps the PSF gridding's `.sumwt` through the data
-    /// passes (`FTMachine::finalizeToSkyNew`), so its images carry zero
-    /// sums.
+    /// Whether the pass sums `sumwt`: without a model, or when it forms the
+    /// PSF, as the initial pass from a start model does. A residual pass's
+    /// sums are not read, since CASA keeps the PSF gridding's `.sumwt`
+    /// through the data passes (`FTMachine::finalizeToSkyNew`), so its
+    /// images carry zero sums.
     fn sums_weights(&self) -> bool {
-        self.modes.psf
+        self.model.is_none() || self.modes.psf
     }
 
     /// `acc`, summing `sumwt` only when the pass does.
