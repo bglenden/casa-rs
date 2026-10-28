@@ -15,6 +15,10 @@ pub mod geometry_law;
 mod imaging;
 mod native;
 mod request;
+#[doc(hidden)]
+pub mod route_law;
+#[doc(hidden)]
+pub mod source_law;
 
 pub use casa_imaging_deconvolution::CleanStop;
 pub use casa_imaging_model::{
@@ -29,7 +33,7 @@ pub use casa_imaging_runtime::{
 pub use compile::{OutlierProblem, PrepareError};
 pub use request::{
     AwCfSource, AwProjection, BackendRequest, DataColumn, Deconvolver, Gridder, ImagingRequest,
-    InvalidRequest, NativeAwCachePolicy, SpecMode, UseMask, Weighting,
+    InvalidRequest, NativeAwCachePolicy, SourceRoute, SpecMode, UseMask, Weighting,
 };
 
 use std::{error::Error, fmt, io, path::PathBuf, sync::Arc};
@@ -412,6 +416,7 @@ fn compile_run(
     let input = NativeInput {
         observation: prepared.observation,
         initial_access: access,
+        source_route: request.source_route,
         write_model_column: prepared.write_model_column,
         write_corrected_data: prepared.write_corrected_data,
         masks: prepared.masks,
