@@ -84,6 +84,12 @@ impl SelectedObservationResolutionRequest {
         self
     }
 
+    /// Return the moving-source reference data bound to this resolution.
+    #[must_use]
+    pub fn ephemeris(&self) -> Option<&SelectedObservationEphemeris> {
+        self.ephemeris.as_ref()
+    }
+
     /// Return the Measures provider every resolution evaluates with.
     #[must_use]
     pub fn measures_provider(&self) -> Arc<dyn MeasuresProvider> {

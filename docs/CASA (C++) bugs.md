@@ -2196,3 +2196,167 @@ stops instead, with "Failed to set conversion layer state".
 casa-rs treats that channel as it treats the others: it is not regridded,
 and the output keeps the input's (`casa_images::regrid`). Converting the
 frame of an axis that is never regridded serves no purpose.
+
+## `tsdimaging`'s theoretical beam models the kernels, not the gridder's
+
+- Date noted: 2026-10-28
+- Status: CASA behaviour casa-rs does not follow (#938 part 1, #841 Phase 6c)
+- Affected code: `casatasks/src/private/sdbeamutil.py`
+  (`TheoreticalBeam.get_kernel` and the kernel functions it calls)
+
+`tsdimaging` gives its image the beam `sdbeamutil.TheoreticalBeam`
+computes: the antenna's Gaussian beam convolved with a cut through the
+gridding kernel and with a box as wide as the sampling, then fitted with a
+Gaussian. The kernel it convolves with is not the gridder's (`SDGrid::init`)
+but a model of it, and the models disagree with the gridder:
+- **`GAUSS`.** The gridder takes `gwidth` as a half width at half maximum;
+  `sdbeamutil` passes it to a Gaussian that takes a full width. It also cuts
+  the kernel at 1.5 `gwidth` where the gridder cuts at `truncate`
+  (default 3 `gwidth`).
+- **`GJINC`.** `sdbeamutil` ignores `truncate` ("NOT SUPPORTED YET") and
+  always cuts at the jinc's first null.
+- **`SF`.** The gridder's kernel is `(1 − ν²) grdsf(ν)`; `sdbeamutil` uses
+  SciPy's prolate spheroid `pro_ang1(0, 0, c)` with `c = 5.356π/2`, chosen
+  to resemble it.
+- **`PB`.** The gridder takes the telescope's power pattern (for ALMA, the
+  10.7 m Airy pattern of `VPSkyJones`); `sdbeamutil` takes an Airy disk
+  scaled to the Gaussian beam's width, for the antenna's own diameter.
+- **`BOX`.** `sdbeamutil` makes the box one pixel wide whatever
+  `convsupport` is; the gridder's box reaches `2s + 1` pixels.
+
+The reported beam is then not the image's. Against CASA 6.7.6 on the
+oracle's setups (`tools/singledish/tsdimaging_oracle.py`), the gridder's own
+kernels give beams wider by 0.60% to 3.3% for `GAUSS`, and 0.31% narrower
+for `GJINC` with a `truncate`. They differ by at most 6.0e-4 for `SF`, `PB`
+and `GJINC` at its defaults. The gridder reads its table at the radius
+truncated to a hundredth of a pixel, which widens the kernel slightly. That
+accounts for all of `GJINC`'s difference at its defaults (read at the
+rounded radius, it agrees with CASA to 1e-6) and for about 40% of `SF`'s.
+The rest of `SF`'s is SciPy's spheroid against `grdsf`.
+
+casa-rs cuts through the gridder's own table (`casa_imaging_singledish::
+theoretical_beam_arcsec`), so the beam describes the image the gridder
+makes. `BOX` at its default support, which both describe alike, agrees with
+CASA to 2e-8.
+
+The cost falls downstream. `simanalyze` and `simalma` grid total power with
+`SF` of support 6 and scale its flux by this beam's area. A beam 6e-4 wider
+is an area about 1.2e-3 larger, so their scaled total-power and feathered
+products differ from CASA's by about that factor, at the edge of the 1e-3
+acceptance. Phases 6g and 6h measure it.
+
+## `getPointingSamplingRaster` measures the row spacing in raw longitude
+
+- Date noted: 2026-10-28
+- Status: CASA bug; casa-rs does not follow it (#938 part 1, #841 Phase 6c)
+- Affected code: `casatools/src/code/synthesis/Utilities/SingleDishBeamUtil.cc`
+  (`getPointingSamplingRaster`)
+
+CASA estimates a raster's sampling from its pointings. Along the scan it
+scales each longitude step by the cosine of the map's central latitude, so
+the step is an angle on the sky. Across the scan it projects the steps
+between rows' median positions on the perpendicular without that factor. A
+map scanned in latitude, whose rows step in longitude, then has its row
+spacing overestimated by `1/cos δ`, 15% at δ = −30°. The beam `tsdimaging`
+reports widens with it.
+
+casa-rs scales the rows' longitude steps as it scales the along-scan ones
+(`casa_imaging_singledish::raster_sampling`). A map scanned in longitude, as
+`simobserve` scans one, is unaffected: CASA and casa-rs agree on the
+oracle's maps to 1e-15.
+
+## `tsdimaging` writes the weight mask's threshold to six decimal places
+
+- Date noted: 2026-10-28
+- Status: CASA bug; casa-rs does not follow it (#938 part 1, #841 Phase 6c)
+- Affected code: `casatasks/src/private/task_tsdimaging.py` (CASA 6.7.6,
+  `do_weight_mask`: `ia.calcmask("'%s'>%f" % (weightimage, weight_threshold))`)
+
+`minweight` masks the pixels whose weight is at most `minweight` times the
+median positive weight. The threshold goes into the mask expression through
+`%f`, which keeps six decimal places. A threshold under 5e-7 is written 0,
+so every pixel with a positive weight stays unmasked, and one of 1.4e-6 is
+written 0.000001, masking less than asked. Weights have no fixed scale, so
+a MeasurementSet whose weights are all small loses its `minweight` mask
+entirely. casa-rs compares with
+the threshold itself (`casa_imaging_singledish::weight_mask_threshold`;
+`tools/singledish/tsdimaging_oracle.py`, case `sf_small_weights`).
+
+## `SDGrid` grids nothing with an `SF` kernel of no support
+
+- Date noted: 2026-10-28
+- Status: CASA behaviour casa-rs refuses (#938 part 1, #841 Phase 6c)
+- Affected code: `casatools/src/code/synthesis/TransformMachines2/SDGrid.cc`
+  (`SDGrid::init`)
+
+`SDGrid::init` tabulates the `SF` kernel over `convsupport` pixels, so
+`convsupport=0` gives a kernel of zeros. Every pixel's weight is then zero,
+the image is empty, and `tsdimaging` only warns that no weight is positive.
+casa-rs refuses that kernel, asking for a support of at least 1 or CASA's
+default of 3 (`casa_imaging_singledish::GridFunction::from_casa`).
+
+## `simanalyze` writes the fidelity's floor to six decimal places
+
+- Date noted: 2026-10-27
+- Status: CASA bug; casa-rs does not follow it (#841 Phase 6f)
+- Affected code: `casatasks/src/private/task_simanalyze.py` (CASA 6.7.6,
+  `"max(abs('%s'), %f)" % (difference, maxdiff/pl.sqrt(2.0))`)
+
+The fidelity image divides the convolved model by the difference, floored at
+the difference's median absolute deviation over √2. The floor goes into the
+image expression through `%f`, which keeps six decimal places. A floor of
+5.19e-7 Jy/beam is written 0.000001, nearly twice its value, and one under
+5e-7 is written 0, so a pixel where the difference is zero divides by zero.
+Simulations of faint sources have differences that small
+(`tools/simulation/simanalyze_analysis_oracle.py`, case `faint`). casa-rs
+uses the floor itself (`casa_simulation::simutil::analysis::fidelity`).
+
+## `simanalyze`'s fidelity image is labelled Jy/beam
+
+- Date noted: 2026-10-27
+- Status: CASA artefact; casa-rs departs (#841 Phase 6f)
+- Affected code: `casatasks/src/private/task_simanalyze.py` (CASA 6.7.6,
+  `ia.imagecalc(fidelityim, "abs('%s') / '%s'" % (convolved, absdiff))`)
+
+The fidelity is the ratio of two images in Jy/beam. CASA's image expression
+copies its unit from the first image it names, so the fidelity is labelled
+Jy/beam. casa-rs writes it without a unit.
+
+## `statim` scales a Jy/beam image without a beam by the pixel area
+
+- Date noted: 2026-10-28
+- Status: CASA bug; casa-rs does not follow it (#841 Phase 6f)
+- Affected code: `casatasks/src/private/simutil.py` (CASA 6.7.6, `statim`:
+  `toJyarcsec=1.` when `ia.restoringbeam()` is empty, then
+  `toJypix=toJyarcsec*pixarea`)
+
+`statim` multiplies an image's minimum, maximum and corner rms by a
+flux-per-pixel factor. For Jy/pixel, and for Jy/beam with a restoring beam,
+the factor is 1, so the statistics stay in the image's unit. For Jy/beam
+without a beam it treats the image as Jy per square arcsecond, and the factor
+becomes the pixel area in square arcseconds: 0.04 for 0.2″ pixels. It still
+reports the unit as Jy/beam, so the numbers are in no unit at all. Without a
+beam, Jy/beam cannot be converted to anything. casa-rs reports the image's
+own values in its own unit (`casa_simulation::simutil::analysis::statim`;
+`tools/simulation/simanalyze_analysis_oracle.py`, image `beamless.flat`).
+`simanalyze`'s reported statistics of its image do not meet this case: it
+reads the image's beam first, and fails without one.
+
+## Image expressions containing "pa" are labelled as position angles
+
+- Date noted: 2026-10-27
+- Status: CASA bug; casa-rs does not follow it (#841 Phase 6f)
+- Affected code: casatools
+  `imageanalysis/ImageAnalysis/ImageExprCalculator.tcc`
+  (`_expr.contains(casacore::Regex("pa\\(*"))`)
+
+`ImageExprCalculator` looks for the `pa()` function with the regular
+expression `pa\(*`, which matches "pa" followed by any number of
+parentheses, so any "pa" at all. An expression whose image paths contain
+"pa" (a project named `pancake`, or a path through `scratchpad`) has its
+output's unit set to deg and its Stokes axis replaced by `Pangle`.
+`simanalyze`'s difference, absolute difference, fidelity and absolute model
+are all image expressions over `<project>/<project>.<configuration>`, so a
+project whose path contains "pa" gets a fidelity labelled deg, and
+difference and fidelity images whose Stokes plane is a position angle. casa-rs
+computes those images directly and keeps the Stokes axis.

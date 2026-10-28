@@ -91,11 +91,18 @@ pub trait Observation: Sync {
     /// payload ([`PointingSeries::bracket`] answers queries). A store
     /// without pointing gives no samples.
     ///
+    /// An antenna's pointing is a property of the antenna and the time: the
+    /// partition names the time system `request.times` are in and the
+    /// antennas a store may answer for, so two partitions of one time
+    /// system give the same samples for the same antennas and times, and a
+    /// caller may keep one answer for both.
+    ///
     /// # Errors
     ///
-    /// [`ObservationError::InvalidRequest`] for an unknown partition or
-    /// antenna, times that are not a finite span, or pointing beyond the
-    /// request's budget; [`ObservationError::Unsupported`] for pointing the
+    /// [`ObservationError::OverBudget`] for pointing beyond the request's
+    /// budget; [`ObservationError::InvalidRequest`] for an unknown
+    /// partition or antenna, or times that are not a finite span;
+    /// [`ObservationError::Unsupported`] for pointing the
     /// boundary does not carry (an MSv4 target, samples in several frames,
     /// an MSv4 frame or polynomial its reader does not take);
     /// [`ObservationError::InvalidStore`] for malformed pointing, including

@@ -194,6 +194,13 @@ impl SelectedObservationEphemeris {
         })
     }
 
+    /// Whether the moving target is an external ephemeris table, rather
+    /// than a body or source Measures names or the fields' own ephemerides.
+    #[must_use]
+    pub fn is_table(&self) -> bool {
+        matches!(self.kind, EphemerisKind::External { .. })
+    }
+
     /// Bind the MS FIELD-attached ephemerides that define stored UVW phase centres.
     pub fn with_attached_fields(
         mut self,

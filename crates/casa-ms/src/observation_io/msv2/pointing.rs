@@ -28,6 +28,49 @@ pub(crate) fn scan_rows(budget: usize) -> usize {
 }
 
 impl Msv2Observation {
+    /// The most bytes a pointing query of this observation holds while it
+    /// is read and once it is answered, whatever its antennas and times:
+    /// every `POINTING` row taken as a candidate at four polynomial terms
+    /// (the production source's bound), with one scan block of at most
+    /// every row, and the series it gives. A [`PointingRequest`] with this
+    /// budget is never refused for its size, and reads `POINTING` in blocks
+    /// as large as a query may scan. Zero without a `POINTING` table.
+    ///
+    /// # Errors
+    ///
+    /// When `POINTING` cannot be read.
+    pub fn pointing_bytes(&self) -> Result<usize, ObservationError> {
+        Ok(self.pointing_bound()?.0)
+    }
+
+    /// [`Self::pointing_bytes`], and the rows of the scan block it holds:
+    /// `POINTING`'s, up to [`SCAN_ROWS`].
+    fn pointing_bound(&self) -> Result<(usize, usize), ObservationError> {
+        let mut domain = SelectedPointingQueryDomain::builder();
+        for antenna in 0..self.catalogue.antennas.len() {
+            let id = i32::try_from(antenna).map_err(|_| ObservationError::InvalidStore {
+                reason: format!("antenna {antenna} beyond the MSv2 identifier range"),
+            })?;
+            domain.observe_row(id, id, 0.0, 0.0).map_err(storage)?;
+        }
+        let Some(domain) = domain.finish().map_err(storage)? else {
+            return Ok((0, 1));
+        };
+        let (catalog, scan_bytes_per_row) = self
+            .ms
+            .selected_pointing_catalog_requirements(&domain, POLYNOMIAL_TERMS)
+            .map_err(storage)?;
+        // A scan block holds at most the table's rows.
+        let rows = SCAN_ROWS.min(catalog.source_rows_scanned()).max(1);
+        // The series holds a time, an interval, an origin and two
+        // coefficients a term for each retained row, at most the catalog.
+        let bytes = catalog
+            .construction_peak_bytes()
+            .saturating_add(rows.saturating_mul(scan_bytes_per_row))
+            .saturating_add(catalog.retained_bytes());
+        Ok((bytes, rows))
+    }
+
     /// [`casa_observation::Observation::pointing`]: an MSv2's times are its
     /// `TIME` values (its partitions' time origin is MJD 0), so the
     /// request's times are `POINTING`'s.
@@ -61,12 +104,16 @@ impl Msv2Observation {
             PointingDirection::Beam => PointingDirectionColumn::Direction,
             PointingDirection::Target => PointingDirectionColumn::Target,
         };
-        let plan = PointingReadPlan::new(
-            scan_rows(request.budget_bytes),
-            POLYNOMIAL_TERMS,
-            request.budget_bytes.max(1),
-        )
-        .map_err(storage)?;
+        // A budget holding the whole bound holds its scan block, every row
+        // up to `SCAN_ROWS`; a smaller one, a sixteenth of itself.
+        let (bound, rows) = self.pointing_bound()?;
+        let scan = if request.budget_bytes >= bound {
+            rows
+        } else {
+            scan_rows(request.budget_bytes)
+        };
+        let plan = PointingReadPlan::new(scan, POLYNOMIAL_TERMS, request.budget_bytes.max(1))
+            .map_err(storage)?;
         self.ms
             .prepare_selected_pointing_catalog(
                 column,
@@ -75,8 +122,14 @@ impl Msv2Observation {
                 plan,
             )
             .map_err(|error| match error {
-                MsError::OverBudget { .. } => ObservationError::InvalidRequest {
-                    reason: format!("POINTING of {:?}: {error}", request.partition),
+                MsError::OverBudget {
+                    required,
+                    available,
+                    ..
+                } => ObservationError::OverBudget {
+                    what: "an MSv2 pointing query",
+                    required,
+                    budget: available,
                 },
                 error => ObservationError::InvalidStore {
                     reason: format!("POINTING: {error}"),

@@ -57,6 +57,7 @@
   "casa-imaging-deconvolution": "reconstruction",
   "casa-imaging-products": "product",
   "casa-imaging-runtime": "execution",
+  "casa-imaging-singledish": "execution",
   "casa-imaging-metal": "backend",
   "casa-simulation-synthesis": "science",
   "casa-simulation": "application",
@@ -107,6 +108,11 @@
    "casa-ms",
    "casa-tables"
   ],
+  "casa-imaging-singledish": [
+   "casa-imaging-operator",
+   "casa-imaging-runtime",
+   "casa-numerics"
+  ],
   "casa-imaging-application": [
    "casa-images",
    "casa-imaging-deconvolution",
@@ -131,6 +137,8 @@
    "casa-imaging-model",
    "casa-imaging-operator",
    "casa-imaging-runtime",
+   "casa-imaging-singledish",
+   "casa-lattices",
    "casa-ms",
    "casa-numerics",
    "casa-tables"
@@ -163,6 +171,7 @@
     "crates/casa-imaging-operator/src",
     "crates/casa-imaging-deconvolution/src",
     "crates/casa-imaging-products/src",
+    "crates/casa-imaging-singledish/src",
     "crates/casa-imaging-application/src",
     "crates/casa-simulation/src",
     "crates/casa-provider-contracts/src",
@@ -203,6 +212,7 @@
     "crates/casa-imaging-deconvolution/src",
     "crates/casa-imaging-products/src",
     "crates/casa-imaging-runtime/src",
+    "crates/casa-imaging-singledish/src",
     "crates/casa-imaging-metal/src",
     "crates/casa-imaging-application/src",
     "crates/casa-simulation/src",
@@ -244,6 +254,7 @@
     "crates/casa-imaging-deconvolution/src",
     "crates/casa-imaging-products/src",
     "crates/casa-imaging-runtime/src",
+    "crates/casa-imaging-singledish/src",
     "crates/casa-imaging-metal/src",
     "crates/casa-imaging-application/src",
     "crates/casa-simulation/src",
@@ -281,6 +292,7 @@
     "crates/casa-imaging-deconvolution/src",
     "crates/casa-imaging-products/src",
     "crates/casa-imaging-runtime/src",
+    "crates/casa-imaging-singledish/src",
     "crates/casa-imaging-metal/src",
     "crates/casa-imaging-application/src",
     "crates/casa-simulation/src"

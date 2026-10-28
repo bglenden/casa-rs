@@ -162,6 +162,17 @@ pub enum ObservationError {
         /// Why.
         reason: String,
     },
+    /// Holding what was asked would take more memory than its budget, so
+    /// it was refused before that memory was allocated.
+    #[error("{what} needs {required} bytes, beyond the {budget} it may hold")]
+    OverBudget {
+        /// What was refused.
+        what: &'static str,
+        /// The bytes it needs, as far as it was found before the refusal.
+        required: usize,
+        /// The bytes it may hold.
+        budget: usize,
+    },
     /// A filled array disagrees with the batch's header.
     #[error("{array} holds {actual} elements; the batch header needs {expected}")]
     Shape {

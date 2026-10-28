@@ -5,7 +5,7 @@ use std::mem::size_of;
 use crate::SelectedObservationRow;
 use casa_imaging_model::{
     DataDescriptionSelection, IdSelection, IntentSelection, ObservationSource, RowSelection,
-    SelectionBound, UvDistanceUnit, UvSelection,
+    UvSelection,
 };
 use thiserror::Error;
 
@@ -137,16 +137,11 @@ impl CompiledRowPredicate {
 }
 
 fn needs_reference_wavelengths(selection: &RowSelection) -> bool {
-    matches!(selection.uv_distances(), UvSelection::Ranges(ranges) if ranges.iter().any(|range| range.unit() == UvDistanceUnit::Wavelengths))
+    selection.uv_distances().needs_wavelengths()
 }
 
 fn id_matches(selection: &IdSelection, value: i32) -> bool {
-    match selection {
-        IdSelection::All => true,
-        IdSelection::Only(ids) => u32::try_from(value)
-            .ok()
-            .is_some_and(|value| ids.binary_search(&value).is_ok()),
-    }
+    selection.holds(i64::from(value))
 }
 
 fn uv_matches(
@@ -155,48 +150,11 @@ fn uv_matches(
     data_description_id: u32,
     wavelengths_by_ddid: &[(u32, f64)],
 ) -> bool {
-    match selection {
-        UvSelection::All => true,
-        UvSelection::Ranges(ranges) => {
-            let distance_m = uvw_m[0].hypot(uvw_m[1]);
-            distance_m.is_finite()
-                && ranges.iter().any(|range| {
-                    let value = match range.unit() {
-                        UvDistanceUnit::Meters => distance_m,
-                        UvDistanceUnit::Wavelengths => {
-                            let Some((_, wavelength_m)) = wavelengths_by_ddid
-                                .iter()
-                                .find(|(ddid, _)| *ddid == data_description_id)
-                            else {
-                                return false;
-                            };
-                            distance_m / wavelength_m
-                        }
-                    };
-                    lower_matches(range.lower(), value) && upper_matches(range.upper(), value)
-                })
-        }
-    }
-}
-
-fn lower_matches(bound: Option<SelectionBound>, value: f64) -> bool {
-    bound.is_none_or(|bound| {
-        if bound.is_inclusive() {
-            value >= bound.value()
-        } else {
-            value > bound.value()
-        }
-    })
-}
-
-fn upper_matches(bound: Option<SelectionBound>, value: f64) -> bool {
-    bound.is_none_or(|bound| {
-        if bound.is_inclusive() {
-            value <= bound.value()
-        } else {
-            value < bound.value()
-        }
-    })
+    let wavelength_m = wavelengths_by_ddid
+        .iter()
+        .find(|(ddid, _)| *ddid == data_description_id)
+        .map(|(_, wavelength_m)| *wavelength_m);
+    selection.holds(uvw_m, wavelength_m)
 }
 
 fn intent_matches(selection: &IntentSelection, state_id: i32) -> bool {

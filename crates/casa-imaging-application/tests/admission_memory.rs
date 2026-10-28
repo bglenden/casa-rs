@@ -32,7 +32,7 @@ use std::time::Instant;
 
 use casa_imaging_application::{
     Admission, ApplicationDispatchError, HostResources, ImagingOutcome, ImagingRequest,
-    ResourcePolicy, RunContext,
+    ResourcePolicy, RunContext, SourceRoute,
 };
 use casa_ms::{
     SyntheticAnalyticComponent, SyntheticAnalyticSpectrum, SyntheticObservationRequest,
@@ -610,35 +610,8 @@ fn cubes_stay_within_their_admission_resident_and_in_waves() {
     assert_eq!(resident_waves, None, "every plane fits {AMPLE} bytes");
     // The outcome keeps its state charged until it drops.
     drop(resident);
-    // Raise the ceiling from 1 MiB by what each refusal reports missing,
-    // and a third more, until the cube runs: just above what it needs, so in
-    // waves. A refused attempt keeps the law as a completed one does. Each
-    // solved plane's terms are admitted as it finishes, and such a refusal
-    // misses only the plane's terms, so the ceiling grows by an eighth at
-    // least.
     let waved = cube(&measurement_set, &root.path().join("waved"), json!({}));
-    let mut memory = 1 << 20;
-    let mut refusals = 0;
-    let waves = loop {
-        let label = format!("cube at {memory} bytes");
-        eprintln!("{label}");
-        let measured = measure(&waved, 4, memory);
-        breaches.extend(admission_breach(&label, &measured));
-        match &measured.outcome {
-            Ok(outcome) => break outcome.planes_per_wave,
-            Err(ApplicationDispatchError::Admission(Admission {
-                required,
-                available,
-                ..
-            })) => {
-                let gap = required - available;
-                memory += (gap + gap.div_ceil(3)).max(memory / 8);
-                refusals += 1;
-                assert!(refusals < 48, "the ceiling converges");
-            }
-            Err(error) => panic!("only admission refuses a small ceiling: {error}"),
-        }
-    };
+    let waves = just_above(&mut breaches, "cube", &waved);
     assert!(
         waves.is_some_and(|planes| (planes as usize) < CUBE_CHANNELS),
         "the cube runs in waves just above what it needs: {waves:?}"
@@ -653,6 +626,143 @@ fn cubes_stay_within_their_admission_resident_and_in_waves() {
         ),
         4,
         AMPLE,
+    );
+    assert!(breaches.is_empty(), "{breaches:#?}");
+}
+
+/// Run `request` on four workers just above what it needs, recording
+/// breaches under `label`: the ceiling rises from 1 MiB by what each
+/// refusal reports missing, and a third more, until the run completes, so
+/// a cube runs in waves. A refused attempt keeps the law as a completed
+/// one does. Each solved plane's terms are admitted as it finishes, and
+/// such a refusal misses only the plane's terms, so the ceiling grows by
+/// an eighth at least. The completed run's planes per wave.
+fn just_above(breaches: &mut Vec<String>, label: &str, request: &ImagingRequest) -> Option<u32> {
+    let mut memory = 1 << 20;
+    let mut refusals = 0;
+    loop {
+        let label = format!("{label} at {memory} bytes");
+        eprintln!("{label}");
+        let measured = measure(request, 4, memory);
+        breaches.extend(admission_breach(&label, &measured));
+        match &measured.outcome {
+            Ok(outcome) => return outcome.planes_per_wave,
+            Err(ApplicationDispatchError::Admission(Admission {
+                required,
+                available,
+                ..
+            })) => {
+                let gap = required - available;
+                memory += (gap + gap.div_ceil(3)).max(memory / 8);
+                refusals += 1;
+                assert!(refusals < 48, "the ceiling converges");
+            }
+            Err(error) => panic!("only admission refuses a small ceiling: {error}"),
+        }
+    }
+}
+
+/// The observation-batch route (#932, step 4) holds no more than it is
+/// admitted: its batches, their geometry, the parallactic cache, the
+/// opening and its index, and the channel-window survey of a cube's
+/// restricted waves. Continuum runs under natural and uniform weighting,
+/// at one worker and at four, a cube resident and in waves, and a window
+/// of 101 channels whole and sparsely selected (`0:0~1;100`), whose
+/// batches span every channel between the selected ones.
+#[test]
+fn the_observation_batch_route_stays_within_its_admission() {
+    if !alone("the_observation_batch_route_stays_within_its_admission") {
+        return;
+    }
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = observation(root.path(), CUBE_CHANNELS);
+    warm(&measurement_set, root.path());
+    let batches = |mut request: ImagingRequest| {
+        request.source_route = SourceRoute::ObservationBatches;
+        request
+    };
+    let mut breaches = Vec::new();
+    for (label, controls) in [
+        ("hogbom", json!({ "deconvolver": "hogbom" })),
+        (
+            "clark uniform",
+            json!({ "deconvolver": "clark", "weighting": "uniform" }),
+        ),
+    ] {
+        for (imsize, workers) in [(256, 1), (1024, 4)] {
+            let image = root.path().join(format!(
+                "batches-{}-{imsize}-{workers}",
+                label.replace(' ', "-")
+            ));
+            check(
+                &mut breaches,
+                &format!("batches {label} {imsize} px {workers} workers"),
+                &batches(request(&measurement_set, &image, imsize, controls.clone())),
+                workers,
+                AMPLE,
+            );
+        }
+    }
+    check(
+        &mut breaches,
+        "batches cube resident",
+        &batches(cube(
+            &measurement_set,
+            &root.path().join("batches-resident"),
+            json!({}),
+        )),
+        4,
+        AMPLE,
+    );
+    let waves = just_above(
+        &mut breaches,
+        "batches cube",
+        &batches(cube(
+            &measurement_set,
+            &root.path().join("batches-waved"),
+            json!({}),
+        )),
+    );
+    assert!(
+        waves.is_some_and(|planes| (planes as usize) < CUBE_CHANNELS),
+        "the cube runs in waves just above what it needs: {waves:?}"
+    );
+    let wide_root = root.path().join("wide");
+    std::fs::create_dir(&wide_root).expect("the wide window's root");
+    let wide = observation(&wide_root, 101);
+    warm(&wide, &wide_root);
+    check(
+        &mut breaches,
+        "batches continuum of 101 channels",
+        &batches(request(
+            &wide,
+            &wide_root.join("batches-continuum"),
+            256,
+            json!({ "deconvolver": "hogbom" }),
+        )),
+        4,
+        AMPLE,
+    );
+    check(
+        &mut breaches,
+        "batches sparse linear cube",
+        &batches(request(
+            &wide,
+            &wide_root.join("batches-sparse"),
+            256,
+            json!({
+                "specmode": "cube",
+                "outframe": "TOPO",
+                "spw": "0:0~1;100",
+                "channel_count": 10,
+                "start": "44.64GHz",
+                "width": "1.28GHz",
+                "interpolation": "linear",
+                "niter": 0,
+            }),
+        )),
+        2,
+        2 << 30,
     );
     assert!(breaches.is_empty(), "{breaches:#?}");
 }
