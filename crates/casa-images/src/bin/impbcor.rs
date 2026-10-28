@@ -1,125 +1,40 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! `impbcor` - CASA-style primary-beam correction.
+//! `impbcor` - CASA-style primary-beam correction, on the shared task front
+//! end.
 
-use std::env;
 use std::path::PathBuf;
-use std::process;
+use std::process::ExitCode;
 
 use casa_images::{
-    ImageAnalysisTaskResult, ImpbcorRequest, dispatch_image_analysis_task_cli, impbcor,
+    ImageAnalysisTaskResult, ImpbcorRequest, image_task_bool_text, image_task_front_end,
+    image_task_success, impbcor,
 };
+use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 
-fn main() {
-    match run() {
-        Ok(()) => {}
-        Err(error) => {
-            eprintln!("Error: {error}");
-            process::exit(1);
-        }
-    }
+fn main() -> ExitCode {
+    image_task_front_end("impbcor", &["impbcor"], run).main(
+        std::env::args_os().skip(1),
+        casa_task_runtime::CasaLoggingConfig::from_env(),
+        std::env::set_current_dir,
+        &mut std::io::stdout(),
+        std::io::stderr(),
+    )
 }
 
-fn run() -> Result<(), String> {
-    let args = env::args().skip(1).collect::<Vec<_>>();
-    if let Some(output) = dispatch_image_analysis_task_cli(&args, &usage())? {
-        println!("{output}");
-        return Ok(());
-    }
-    let request = parse_request(&args)?;
-    let result = impbcor(&request).map_err(|error| error.to_string())?;
-    print_json(&ImageAnalysisTaskResult::Impbcor(result))
-}
-
-fn parse_request(args: &[String]) -> Result<ImpbcorRequest, String> {
-    let mut imagename = None;
-    let mut pbimage = None;
-    let mut outfile = None;
-    let mut mode = "divide".to_string();
-    let mut cutoff = -1.0;
-    let mut box_selection = None;
-    let mut region = None;
-    let mut chans = None;
-    let mut stokes = None;
-    let mut mask = None;
-    let mut stretch = false;
-    let mut overwrite = false;
-    let mut idx = 0;
-    while idx < args.len() {
-        match args[idx].as_str() {
-            "--imagename" | "--input" => {
-                idx += 1;
-                imagename = Some(PathBuf::from(args.get(idx).ok_or_else(usage)?));
-            }
-            "--pbimage" => {
-                idx += 1;
-                pbimage = Some(PathBuf::from(args.get(idx).ok_or_else(usage)?));
-            }
-            "--outfile" => {
-                idx += 1;
-                outfile = Some(PathBuf::from(args.get(idx).ok_or_else(usage)?));
-            }
-            "--mode" => {
-                idx += 1;
-                mode = args.get(idx).ok_or_else(usage)?.clone();
-            }
-            "--cutoff" => {
-                idx += 1;
-                cutoff = args
-                    .get(idx)
-                    .ok_or_else(usage)?
-                    .parse()
-                    .map_err(|error| format!("parse --cutoff: {error}"))?;
-            }
-            "--box" => {
-                idx += 1;
-                box_selection = Some(args.get(idx).ok_or_else(usage)?.clone());
-            }
-            "--region" => {
-                idx += 1;
-                region = Some(PathBuf::from(args.get(idx).ok_or_else(usage)?));
-            }
-            "--chans" => {
-                idx += 1;
-                chans = Some(args.get(idx).ok_or_else(usage)?.clone());
-            }
-            "--stokes" => {
-                idx += 1;
-                stokes = Some(args.get(idx).ok_or_else(usage)?.clone());
-            }
-            "--mask" => {
-                idx += 1;
-                mask = Some(args.get(idx).ok_or_else(usage)?.clone());
-            }
-            "--stretch" => stretch = true,
-            "--overwrite" => overwrite = true,
-            other => return Err(format!("unknown argument {other:?}\n{}", usage())),
-        }
-        idx += 1;
-    }
-    Ok(ImpbcorRequest {
-        imagename: imagename.ok_or_else(usage)?,
-        pbimage: pbimage.ok_or_else(usage)?,
-        outfile: outfile.ok_or_else(usage)?,
-        mode,
-        cutoff,
-        box_selection,
-        region,
-        chans,
-        stokes,
-        mask,
-        stretch,
-        overwrite,
-    })
-}
-
-fn print_json<T: serde::Serialize>(value: &T) -> Result<(), String> {
-    println!(
-        "{}",
-        serde_json::to_string_pretty(value).map_err(|error| error.to_string())?
-    );
-    Ok(())
-}
-
-fn usage() -> String {
-    "usage: impbcor --imagename <image> --pbimage <pb> --outfile <path> [--cutoff 0.2] [--mode divide|multiply] [--box x0,y0,x1,y1] [--region path|CRTF] [--chans selector] [--stokes selector] [--mask expression] [--stretch] [--overwrite] | impbcor --json-run <SOURCE>".to_string()
+fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
+    let request = ImpbcorRequest {
+        imagename: task.path("imagename")?,
+        pbimage: task.path("pbimage")?,
+        outfile: task.path("outfile")?,
+        mode: task.required_text("mode")?,
+        cutoff: task.number("cutoff")?,
+        box_selection: task.text("box")?,
+        region: task.text("region")?.map(PathBuf::from),
+        chans: task.text("chans")?,
+        stokes: task.text("stokes")?,
+        mask: task.text("mask")?,
+        stretch: image_task_bool_text(task, "stretch")?,
+        overwrite: task.flag("overwrite")?,
+    };
+    image_task_success(impbcor(&request).map(ImageAnalysisTaskResult::Impbcor))
 }

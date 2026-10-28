@@ -5,13 +5,15 @@
 //! The inventory is of whole tables and columns: an MSv2's `SIGMA`,
 //! `FLAG_ROW` flags, `FLAG_CATEGORY` cells, `ARRAY_ID`s and `PROCESSOR_ID`s
 //! other than 0, a `PROCESSOR` of more than one row, `STATE` rows that say
-//! more than their intents, MAIN columns outside the
-//! boundary's roles and subtables the catalogue does not carry (pointing,
-//! system calibration, weather, flag commands, history, Doppler, frequency
-//! offsets, sources, and any further subtable a keyword names); an MSv4's
-//! sub-datasets and main-dataset variables the writer does not write; and
-//! in either the data groups not selected; and, into an MSv4, antennas no
-//! partition's baselines name. Columns of the subtables the
+//! more than their intents, `FEED` receptors that vary in time (of which
+//! the catalogue keeps the last row, as casacore's `MSIter` does), MAIN
+//! columns outside the boundary's roles and subtables the catalogue does
+//! not carry (system calibration, weather, flag commands, history, Doppler,
+//! frequency offsets, sources, and any further subtable a keyword names);
+//! an MSv4's sub-datasets and main-dataset variables the writer does not
+//! write; and in either the data groups not selected; and, into an MSv4,
+//! antennas no partition's baselines name. What pointing carries is
+//! decided by [`super::pointing_plan`]. Columns of the subtables the
 //! catalogue does carry (an antenna's offset, a field's delay direction, a
 //! spectral window's resolution) are not inventoried. Fields that follow
 //! an ephemeris, or whose direction is a polynomial in time, are refused:
@@ -178,7 +180,6 @@ const CARRIED_COLUMNS: &[&str] = &[
 
 /// Subtables whose content the catalogue does not carry.
 const UNCARRIED_SUBTABLES: &[SubtableId] = &[
-    SubtableId::Pointing,
     SubtableId::SysCal,
     SubtableId::Weather,
     SubtableId::FlagCmd,
@@ -228,6 +229,16 @@ fn msv2(
         ));
     }
     main_keys(main, losses)?;
+    if crate::observation_io::msv2::catalogue::read_feeds(&ms)?
+        .varying()
+        .is_some()
+    {
+        losses.push(Loss::Column(
+            "FEED receptors' time dependence (the last row of each antenna, feed and window \
+             is kept)"
+                .to_string(),
+        ));
+    }
     subtables(&ms, losses)
 }
 
@@ -357,6 +368,7 @@ fn subtables(ms: &crate::MeasurementSet, losses: &mut Vec<Loss>) -> Result<(), O
     let standard: Vec<&str> = SubtableId::ALL_REQUIRED
         .iter()
         .chain(UNCARRIED_SUBTABLES)
+        .chain(&[SubtableId::Pointing])
         .map(SubtableId::name)
         .collect();
     for field in main.keywords().fields() {
@@ -442,13 +454,39 @@ fn msv4(source: &Path, losses: &mut Vec<Loss>) -> Result<(), ObservationError> {
                     || metadata.contains("\"node_type\":\"group\"")
             });
             if is_group {
-                if name != "antenna_xds" && !name.starts_with("field_and_source_") {
+                if name == "pointing_xds" {
+                    pointing_variables(&child, losses)?;
+                } else if name != "antenna_xds" && !name.starts_with("field_and_source_") {
                     losses.push(Loss::Table(name));
                 }
             } else if !CARRIED_VARIABLES.contains(&name.as_str()) && !name.starts_with("VISIBILITY")
             {
                 losses.push(Loss::Column(name));
             }
+        }
+    }
+    Ok(())
+}
+
+/// A `pointing_xds`'s variables a conversion does not carry, as table
+/// losses: it carries `POINTING_BEAM` and its coordinates.
+fn pointing_variables(path: &Path, losses: &mut Vec<Loss>) -> Result<(), ObservationError> {
+    const CARRIED: [&str; 6] = [
+        "POINTING_BEAM",
+        "time_pointing",
+        "time",
+        "antenna_name",
+        "local_sky_dir_label",
+        "n_polynomial",
+    ];
+    for child in std::fs::read_dir(path).map_err(storage)? {
+        let name = child
+            .map_err(storage)?
+            .file_name()
+            .to_string_lossy()
+            .into_owned();
+        if name != "zarr.json" && !CARRIED.contains(&name.as_str()) {
+            losses.push(Loss::Table(format!("pointing_xds {name}")));
         }
     }
     Ok(())

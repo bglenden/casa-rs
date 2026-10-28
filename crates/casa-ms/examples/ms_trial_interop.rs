@@ -266,9 +266,13 @@ fn dump(store: &Path, out: &Path) -> Result<(), Error> {
         "channel_width_hz": partition.channel_widths_hz,
         "intents": partition.intents,
         "observation": {"telescope": observation_info.telescope, "project": observation_info.project, "observers": observation_info.observers},
-        "antennas": catalogue.antennas.iter().map(|a| json!({
+        "antennas": catalogue.antennas.iter().enumerate().map(|(id, a)| json!({
             "name": a.name, "station": a.station, "position_m": a.position.values(), "mount": a.mount,
-            "dish_diameter_m": a.dish_diameter.value(), "receptors": a.receptors,
+            "dish_diameter_m": a.dish_diameter.value(),
+            "receptors": partition
+                .receptors
+                .get(&casa_observation::AntennaId(id as u32))
+                .map(|own| own.types.clone()),
         })).collect::<Vec<_>>(),
         "estimate": estimate,
         "counters": format!("{:?}", traversal.counters()),

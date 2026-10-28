@@ -10,6 +10,8 @@
 
 pub mod availability;
 mod compile;
+#[doc(hidden)]
+pub mod geometry_law;
 mod imaging;
 mod native;
 mod request;

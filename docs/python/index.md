@@ -50,9 +50,11 @@ result = tasks.run(
     "imager",
     parameters=p,
     workspace="project",
-    save_last=True,
 )
 ```
+
+The call saves no Last profile. `parameters.last(...)` reads the Last that a
+command-line run saved.
 
 `parameters.defaults(surface, ...)` and `parameters.last(surface, ...)` create
 the other common source types. The resulting `TaskParameters` supports mapping

@@ -28,7 +28,7 @@ designed to paste cleanly into Markdown:
 format = 1
 surface = "imager"
 kind = "task"
-contract = 25
+contract = 26
 
 [parameters]
 vis = "data/target.ms"
@@ -82,8 +82,7 @@ CASA-readable** and cannot also be supplied as `cfcache`.
 `native_cf_policy` defaults to `"reuse-only"`: an incomplete or invalid cache
 fails without generation. `"generate-missing"` creates absent cells and retains
 valid completed cells; corruption remains an error. `"regenerate"` explicitly
-replaces all requested cells and carries the provider's overwrite safety
-classification. Neither source falls back to the other. These parameters are
+replaces all requested cells. Neither source falls back to the other. These parameters are
 available through the same CLI flags, task JSON, sparse profiles, and generated
 Python wrapper. Profiles store the requested paths/action/bounds, not compiled
 plans, generated cells, cache inventory, or publication state. This exposes the
@@ -124,10 +123,17 @@ By default, managed state lives under the workspace:
 <workspace>/.casa-rs/parameters/<surface-id>/last-successful.toml
 ```
 
-Last attempted is saved after resolution and validation, immediately before
-execution. Last successful changes only after a successful result. Cancellation
-or failure leaves Last successful unchanged. `--no-save-last` (or
-`save_last=False` in Python) skips both writes for one run.
+Last records command-line runs. Last attempted is saved after resolution and
+validation, immediately before execution. Last successful changes only after a
+successful result. Cancellation or failure leaves Last successful unchanged.
+`--no-save-last` skips both writes for one run.
+
+A Python task call saves neither file; reading an existing Last
+(`parameters.last(...)`) and writing one explicitly
+(`TaskParameters.write_last()`) remain available. A provider binary's
+`--json-run` reads and writes no Last either. Each run therefore has exactly
+one owner of Last: `casars run` for the runs it launches, the task front end
+for a binary's own command line.
 
 `casa-task-runtime::ParameterRuntime` owns source resolution and managed Last
 persistence; the CLI and Python projections call that boundary rather than
@@ -150,8 +156,6 @@ casars run <task>
   [--workspace DIR]
   [--save-params FILE]
   [--no-save-last]
-  [--confirm-overwrite]
-  [--confirm-mutation]
 ```
 
 The parameter utilities are:
@@ -166,13 +170,29 @@ casars params describe <parameter-or-surface>
 
 `template` writes a documented example with defaults and units in comments;
 commented defaults are not active overrides. Overrides use the generated CLI
-flag spellings listed in the generated parameter reference. `--confirm-overwrite`
-and `--confirm-mutation` are runtime safety confirmations for tasks whose
-safety rules require them; they are never saved in a profile.
+flag spellings listed in the generated parameter reference, or the parameter's
+own name, such as `--vis` or `--threshold`.
+
+There are no run-time confirmations. CASA's own parameters are the consent:
+`overwrite=true` replaces a product, and a task that changes data in place
+does so, as in CASA. Where CASA guards a change, casa-rs does too, for example
+`applycal` and `flagdata` saving the flags to a new flag version first
+(`flagbackup`, default on). `casars run` still accepts the retired
+`--confirm-overwrite` and `--confirm-mutation` and ignores them until the
+launcher is retired (#931).
 
 Direct provider binaries continue to expose their idiomatic execution
 transports (`--protocol-info`, `--json-schema`, `--json-run`); source selection
-and profile lifecycle are owned by `casars run` and `casars params`.
+and profile lifecycle are owned by `casars run` and `casars params`, and by a
+front-end binary's own command line. The
+image binaries and `imexplore` run on the shared task front end in
+`casa-task-runtime`, which gives each binary those same sources and controls,
+`--show`, `--template` (`--profile-template` on imregrid, whose `--template`
+is its template image), `--describe` and `--validate`, and a typed
+`--json-run` reply. A run started from a front-end binary's command line
+enters its `--workspace` first, so its relative paths resolve there as they
+do under `casars run`; the other binaries move onto it next
+([provider contracts](provider-contracts.md#the-shared-task-front-end-and-typed-replies)).
 
 ## Python contract
 
@@ -194,7 +214,6 @@ result = tasks.run(
     "imager",
     parameters=p,
     workspace="project",
-    save_last=True,
 )
 ```
 
@@ -215,7 +234,7 @@ second provider-specific task API.
 ## What profiles intentionally exclude
 
 - `casars.data.Image` and `casars.data.Table` object-handle lifecycle
-- progress files, executable overrides, confirmations, and telemetry
+- progress files, executable overrides, Last controls, and telemetry
 - saved region and mask mutations, which are dataset artifacts
 - an exact resolved historical replay record
 

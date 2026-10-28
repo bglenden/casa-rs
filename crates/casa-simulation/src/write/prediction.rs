@@ -33,13 +33,13 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
+use casa_imaging_model::GridFtProjection;
 use casa_imaging_operator::{RowContext, RowSpectrum};
 use casa_imaging_runtime::pass::{
     BackendChoice, BlockPredictor, BlockShape, DeviceNoise, DomainModel, DomainProjection,
     MetalNoiseRow, MetalNoiseTerm, NativeBlock, NativeRowHeader, PredictionDomain, RowAddress,
     WorkerTeam,
 };
-use casa_ms::derived::GridFtProjection;
 use casa_numerics::cell_noise::metal_draws_exactly;
 use casa_types::Complex32;
 

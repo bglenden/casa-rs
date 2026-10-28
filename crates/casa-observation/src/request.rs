@@ -831,6 +831,7 @@ mod tests {
             time_scale,
             time_origin,
             data_groups: Vec::new(),
+            receptors: std::collections::BTreeMap::new(),
         }
     }
 

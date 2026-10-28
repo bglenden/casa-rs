@@ -4,7 +4,7 @@
     {
       "kind": "task",
       "id": "msexplore",
-      "contract_version": 6,
+      "contract_version": 7,
       "display_name": "MSExplore",
       "category": "MeasurementSet",
       "summary": "explore and export common MeasurementSet plotms-style plots",
@@ -55,30 +55,6 @@
           ]
         }
       },
-      "safety_rules": [
-        {
-          "class": "overwrite",
-          "when": {
-            "kind": "equals",
-            "parameter": "overwrite",
-            "value": {
-              "kind": "bool",
-              "value": true
-            }
-          }
-        },
-        {
-          "class": "input_mutation",
-          "when": {
-            "kind": "equals",
-            "parameter": "flag_apply",
-            "value": {
-              "kind": "bool",
-              "value": true
-            }
-          }
-        }
-      ],
       "bindings": [
         {
           "name": "vis",
@@ -3525,13 +3501,19 @@
           "to_contract": 6,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 6,
+          "to_contract": 7,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "calibrate",
-      "contract_version": 4,
+      "contract_version": 5,
       "display_name": "Calibrate",
       "category": "Calibration",
       "summary": "apply, inspect, and solve CASA-style calibration workflows",
@@ -3585,36 +3567,6 @@
           ]
         }
       },
-      "safety_rules": [
-        {
-          "class": "product_write",
-          "when": {
-            "kind": "always"
-          }
-        },
-        {
-          "class": "overwrite",
-          "when": {
-            "kind": "equals",
-            "parameter": "overwrite",
-            "value": {
-              "kind": "bool",
-              "value": true
-            }
-          }
-        },
-        {
-          "class": "input_mutation",
-          "when": {
-            "kind": "equals",
-            "parameter": "mode",
-            "value": {
-              "kind": "string",
-              "value": "apply"
-            }
-          }
-        }
-      ],
       "bindings": [
         {
           "name": "mode",
@@ -7150,6 +7102,66 @@
           },
           "aliases": [],
           "reviewed_homonym": null
+        },
+        {
+          "name": "flagbackup",
+          "concept": {
+            "id": "parameter.flagbackup",
+            "semantic_revision": 1
+          },
+          "order": 51,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": true
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": "Apply mode only: saves the flags to the next applycal_N flag version before a calflag run; calonly and trial change no flags and save none.",
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--flagbackup"
+              ],
+              "false_flags": [
+                "--no-flagbackup"
+              ],
+              "metavar": null
+            },
+            "provider": {
+              "field": "flagbackup",
+              "adapter": "identity",
+              "emit_when": {
+                "kind": "equals",
+                "parameter": "mode",
+                "value": {
+                  "kind": "string",
+                  "value": "apply"
+                }
+              }
+            },
+            "python": {
+              "name": "flagbackup",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Create Flag Backup",
+              "group": "Apply",
+              "advanced": false,
+              "hidden": false
+            }
+          },
+          "aliases": [],
+          "reviewed_homonym": null
         }
       ],
       "migrations": [
@@ -7170,13 +7182,19 @@
           "to_contract": 4,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 4,
+          "to_contract": 5,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "importvla",
-      "contract_version": 3,
+      "contract_version": 4,
       "display_name": "ImportVLA",
       "category": "Import",
       "summary": "scan or import old VLA export archives from disk",
@@ -7203,14 +7221,6 @@
           ]
         }
       },
-      "safety_rules": [
-        {
-          "class": "product_write",
-          "when": {
-            "kind": "always"
-          }
-        }
-      ],
       "bindings": [
         {
           "name": "archivefiles",
@@ -7842,13 +7852,19 @@
           "to_contract": 3,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 3,
+          "to_contract": 4,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "imager",
-      "contract_version": 25,
+      "contract_version": 26,
       "display_name": "Imager",
       "category": "Imaging",
       "summary": "Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet",
@@ -7885,70 +7901,6 @@
           ]
         }
       },
-      "safety_rules": [
-        {
-          "class": "product_write",
-          "when": {
-            "kind": "always"
-          }
-        },
-        {
-          "class": "input_mutation",
-          "when": {
-            "kind": "any",
-            "predicates": [
-              {
-                "kind": "equals",
-                "parameter": "savemodel",
-                "value": {
-                  "kind": "string",
-                  "value": "modelcolumn"
-                }
-              },
-              {
-                "kind": "equals",
-                "parameter": "save_continuum_residual",
-                "value": {
-                  "kind": "bool",
-                  "value": true
-                }
-              }
-            ]
-          }
-        },
-        {
-          "class": "overwrite",
-          "when": {
-            "kind": "all",
-            "predicates": [
-              {
-                "kind": "equals",
-                "parameter": "gridder",
-                "value": {
-                  "kind": "string",
-                  "value": "awproject"
-                }
-              },
-              {
-                "kind": "equals",
-                "parameter": "aw_cf_source",
-                "value": {
-                  "kind": "string",
-                  "value": "native-evla"
-                }
-              },
-              {
-                "kind": "equals",
-                "parameter": "native_cf_policy",
-                "value": {
-                  "kind": "string",
-                  "value": "regenerate"
-                }
-              }
-            ]
-          }
-        }
-      ],
       "bindings": [
         {
           "name": "vis",
@@ -12163,7 +12115,7 @@
     {
       "kind": "task",
       "id": "simobserve",
-      "contract_version": 5,
+      "contract_version": 6,
       "display_name": "SimObserve",
       "category": "Simulation",
       "summary": "Simulate an observation of a sky model: CASA's simobserve",
@@ -12200,14 +12152,6 @@
           ]
         }
       },
-      "safety_rules": [
-        {
-          "class": "product_write",
-          "when": {
-            "kind": "always"
-          }
-        }
-      ],
       "bindings": [
         {
           "name": "project",
@@ -14134,7 +14078,7 @@
     {
       "kind": "task",
       "id": "imhead",
-      "contract_version": 3,
+      "contract_version": 4,
       "display_name": "Image Header",
       "category": "Images",
       "summary": "Inspect or update CASA image header metadata.",
@@ -14149,19 +14093,6 @@
           "kind": "no_products"
         }
       },
-      "safety_rules": [
-        {
-          "class": "input_mutation",
-          "when": {
-            "kind": "equals",
-            "parameter": "mode",
-            "value": {
-              "kind": "string",
-              "value": "put"
-            }
-          }
-        }
-      ],
       "bindings": [
         {
           "name": "imagename",
@@ -14371,6 +14302,12 @@
         {
           "from_contract": 2,
           "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
+        },
+        {
+          "from_contract": 3,
+          "to_contract": 4,
           "steps": [],
           "changed_defaults": []
         }
@@ -14608,7 +14545,7 @@
     {
       "kind": "task",
       "id": "immoments",
-      "contract_version": 3,
+      "contract_version": 4,
       "display_name": "Image Moments",
       "category": "Images",
       "summary": "Create CASA-style image moment maps",
@@ -14635,25 +14572,6 @@
           ]
         }
       },
-      "safety_rules": [
-        {
-          "class": "product_write",
-          "when": {
-            "kind": "always"
-          }
-        },
-        {
-          "class": "overwrite",
-          "when": {
-            "kind": "equals",
-            "parameter": "overwrite",
-            "value": {
-              "kind": "bool",
-              "value": true
-            }
-          }
-        }
-      ],
       "bindings": [
         {
           "name": "imagename",
@@ -15008,13 +14926,19 @@
           "to_contract": 3,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 3,
+          "to_contract": 4,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "exportfits",
-      "contract_version": 3,
+      "contract_version": 4,
       "display_name": "Export FITS",
       "category": "Images",
       "summary": "Export CASA images to FITS",
@@ -15041,25 +14965,6 @@
           ]
         }
       },
-      "safety_rules": [
-        {
-          "class": "product_write",
-          "when": {
-            "kind": "always"
-          }
-        },
-        {
-          "class": "overwrite",
-          "when": {
-            "kind": "equals",
-            "parameter": "overwrite",
-            "value": {
-              "kind": "bool",
-              "value": true
-            }
-          }
-        }
-      ],
       "bindings": [
         {
           "name": "imagename",
@@ -15265,13 +15170,19 @@
           "to_contract": 3,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 3,
+          "to_contract": 4,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "mstransform",
-      "contract_version": 3,
+      "contract_version": 4,
       "display_name": "MSTransform",
       "category": "MeasurementSet",
       "summary": "Materialize a selected MeasurementSet into a new output MS.",
@@ -15298,14 +15209,6 @@
           ]
         }
       },
-      "safety_rules": [
-        {
-          "class": "product_write",
-          "when": {
-            "kind": "always"
-          }
-        }
-      ],
       "bindings": [
         {
           "name": "vis",
@@ -15875,13 +15778,19 @@
           "to_contract": 3,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 3,
+          "to_contract": 4,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "split",
-      "contract_version": 3,
+      "contract_version": 4,
       "display_name": "Split",
       "category": "MeasurementSet",
       "summary": "Create a selected MeasurementSet subset, equivalent to CASA split.",
@@ -15908,14 +15817,6 @@
           ]
         }
       },
-      "safety_rules": [
-        {
-          "class": "product_write",
-          "when": {
-            "kind": "always"
-          }
-        }
-      ],
       "bindings": [
         {
           "name": "vis",
@@ -16482,13 +16383,19 @@
           "to_contract": 3,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 3,
+          "to_contract": 4,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "applycal",
-      "contract_version": 3,
+      "contract_version": 4,
       "display_name": "Applycal",
       "category": "Calibration",
       "summary": "Apply one or more calibration tables to a MeasurementSet.",
@@ -16533,25 +16440,6 @@
           ]
         }
       },
-      "safety_rules": [
-        {
-          "class": "overwrite",
-          "when": {
-            "kind": "equals",
-            "parameter": "overwrite",
-            "value": {
-              "kind": "bool",
-              "value": true
-            }
-          }
-        },
-        {
-          "class": "input_mutation",
-          "when": {
-            "kind": "always"
-          }
-        }
-      ],
       "bindings": [
         {
           "name": "vis",
@@ -17644,6 +17532,58 @@
           },
           "aliases": [],
           "reviewed_homonym": null
+        },
+        {
+          "name": "flagbackup",
+          "concept": {
+            "id": "parameter.flagbackup",
+            "semantic_revision": 1
+          },
+          "order": 21,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": true
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": "Saves the flags to the next applycal_N flag version before a calflag run; calonly and trial change no flags and save none.",
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--flagbackup"
+              ],
+              "false_flags": [
+                "--no-flagbackup"
+              ],
+              "metavar": null
+            },
+            "provider": {
+              "field": "flagbackup",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "flagbackup",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Create Flag Backup",
+              "group": "Safety",
+              "advanced": false,
+              "hidden": false
+            }
+          },
+          "aliases": [],
+          "reviewed_homonym": null
         }
       ],
       "migrations": [
@@ -17658,13 +17598,19 @@
           "to_contract": 3,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 3,
+          "to_contract": 4,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "gaincal",
-      "contract_version": 3,
+      "contract_version": 4,
       "display_name": "Gaincal",
       "category": "Calibration",
       "summary": "Solve antenna gain calibration for a MeasurementSet.",
@@ -17709,25 +17655,6 @@
           ]
         }
       },
-      "safety_rules": [
-        {
-          "class": "product_write",
-          "when": {
-            "kind": "always"
-          }
-        },
-        {
-          "class": "overwrite",
-          "when": {
-            "kind": "equals",
-            "parameter": "overwrite",
-            "value": {
-              "kind": "bool",
-              "value": true
-            }
-          }
-        }
-      ],
       "bindings": [
         {
           "name": "vis",
@@ -19176,13 +19103,19 @@
           "to_contract": 3,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 3,
+          "to_contract": 4,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "bandpass",
-      "contract_version": 3,
+      "contract_version": 4,
       "display_name": "Bandpass",
       "category": "Calibration",
       "summary": "Solve bandpass calibration for a MeasurementSet.",
@@ -19227,25 +19160,6 @@
           ]
         }
       },
-      "safety_rules": [
-        {
-          "class": "product_write",
-          "when": {
-            "kind": "always"
-          }
-        },
-        {
-          "class": "overwrite",
-          "when": {
-            "kind": "equals",
-            "parameter": "overwrite",
-            "value": {
-              "kind": "bool",
-              "value": true
-            }
-          }
-        }
-      ],
       "bindings": [
         {
           "name": "vis",
@@ -20544,13 +20458,19 @@
           "to_contract": 3,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 3,
+          "to_contract": 4,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "fluxscale",
-      "contract_version": 3,
+      "contract_version": 4,
       "display_name": "Fluxscale",
       "category": "Calibration",
       "summary": "Scale gain solutions using reference calibrator fields.",
@@ -20595,25 +20515,6 @@
           ]
         }
       },
-      "safety_rules": [
-        {
-          "class": "product_write",
-          "when": {
-            "kind": "always"
-          }
-        },
-        {
-          "class": "overwrite",
-          "when": {
-            "kind": "equals",
-            "parameter": "overwrite",
-            "value": {
-              "kind": "bool",
-              "value": true
-            }
-          }
-        }
-      ],
       "bindings": [
         {
           "name": "output",
@@ -21119,13 +21020,19 @@
           "to_contract": 3,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 3,
+          "to_contract": 4,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "gencal",
-      "contract_version": 3,
+      "contract_version": 4,
       "display_name": "Gencal",
       "category": "Calibration",
       "summary": "Generate a calibration table such as antpos, gceff, or opac.",
@@ -21170,25 +21077,6 @@
           ]
         }
       },
-      "safety_rules": [
-        {
-          "class": "product_write",
-          "when": {
-            "kind": "always"
-          }
-        },
-        {
-          "class": "overwrite",
-          "when": {
-            "kind": "equals",
-            "parameter": "overwrite",
-            "value": {
-              "kind": "bool",
-              "value": true
-            }
-          }
-        }
-      ],
       "bindings": [
         {
           "name": "vis",
@@ -21698,13 +21586,19 @@
           "to_contract": 3,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 3,
+          "to_contract": 4,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "plotms",
-      "contract_version": 6,
+      "contract_version": 7,
       "display_name": "PlotMS",
       "category": "Plotting",
       "summary": "Plot MeasurementSet visibility data with CASA plotms-style selections and axes.",
@@ -21755,30 +21649,6 @@
           ]
         }
       },
-      "safety_rules": [
-        {
-          "class": "overwrite",
-          "when": {
-            "kind": "equals",
-            "parameter": "overwrite",
-            "value": {
-              "kind": "bool",
-              "value": true
-            }
-          }
-        },
-        {
-          "class": "input_mutation",
-          "when": {
-            "kind": "equals",
-            "parameter": "flag_apply",
-            "value": {
-              "kind": "bool",
-              "value": true
-            }
-          }
-        }
-      ],
       "bindings": [
         {
           "name": "vis",
@@ -25222,6 +25092,12 @@
           "to_contract": 6,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 6,
+          "to_contract": 7,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
@@ -26037,7 +25913,7 @@
     {
       "kind": "task",
       "id": "flagdata",
-      "contract_version": 3,
+      "contract_version": 4,
       "display_name": "Flag Data",
       "category": "Flagging",
       "summary": "Run native CASA-style MeasurementSet flagging.",
@@ -26050,22 +25926,6 @@
           "kind": "no_products"
         }
       },
-      "safety_rules": [
-        {
-          "class": "input_mutation",
-          "when": {
-            "kind": "not",
-            "predicate": {
-              "kind": "equals",
-              "parameter": "mode",
-              "value": {
-                "kind": "string",
-                "value": "summary"
-              }
-            }
-          }
-        }
-      ],
       "bindings": [
         {
           "name": "vis",
@@ -26991,13 +26851,19 @@
           "to_contract": 3,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 3,
+          "to_contract": 4,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "flagmanager",
-      "contract_version": 3,
+      "contract_version": 4,
       "display_name": "Flag Manager",
       "category": "Flagging",
       "summary": "Manage MeasurementSet flag-version snapshots.",
@@ -27010,22 +26876,6 @@
           "kind": "no_products"
         }
       },
-      "safety_rules": [
-        {
-          "class": "input_mutation",
-          "when": {
-            "kind": "not",
-            "predicate": {
-              "kind": "equals",
-              "parameter": "mode",
-              "value": {
-                "kind": "string",
-                "value": "list"
-              }
-            }
-          }
-        }
-      ],
       "bindings": [
         {
           "name": "vis",
@@ -27346,13 +27196,19 @@
           "to_contract": 3,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 3,
+          "to_contract": 4,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "impbcor",
-      "contract_version": 3,
+      "contract_version": 4,
       "display_name": "Primary Beam Correction",
       "category": "Images",
       "summary": "Apply primary-beam correction to a CASA image",
@@ -27379,25 +27235,6 @@
           ]
         }
       },
-      "safety_rules": [
-        {
-          "class": "product_write",
-          "when": {
-            "kind": "always"
-          }
-        },
-        {
-          "class": "overwrite",
-          "when": {
-            "kind": "equals",
-            "parameter": "overwrite",
-            "value": {
-              "kind": "bool",
-              "value": true
-            }
-          }
-        }
-      ],
       "bindings": [
         {
           "name": "imagename",
@@ -28003,13 +27840,19 @@
           "to_contract": 3,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 3,
+          "to_contract": 4,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "impv",
-      "contract_version": 3,
+      "contract_version": 4,
       "display_name": "Position Velocity",
       "category": "Images",
       "summary": "Extract a CASA-style position-velocity image",
@@ -28036,25 +27879,6 @@
           ]
         }
       },
-      "safety_rules": [
-        {
-          "class": "product_write",
-          "when": {
-            "kind": "always"
-          }
-        },
-        {
-          "class": "overwrite",
-          "when": {
-            "kind": "equals",
-            "parameter": "overwrite",
-            "value": {
-              "kind": "bool",
-              "value": true
-            }
-          }
-        }
-      ],
       "bindings": [
         {
           "name": "imagename",
@@ -28404,13 +28228,19 @@
           "to_contract": 3,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 3,
+          "to_contract": 4,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "imsubimage",
-      "contract_version": 3,
+      "contract_version": 4,
       "display_name": "Subimage",
       "category": "Images",
       "summary": "Extract a CASA-style image section",
@@ -28437,25 +28267,6 @@
           ]
         }
       },
-      "safety_rules": [
-        {
-          "class": "product_write",
-          "when": {
-            "kind": "always"
-          }
-        },
-        {
-          "class": "overwrite",
-          "when": {
-            "kind": "equals",
-            "parameter": "overwrite",
-            "value": {
-              "kind": "bool",
-              "value": true
-            }
-          }
-        }
-      ],
       "bindings": [
         {
           "name": "imagename",
@@ -28708,13 +28519,19 @@
           "to_contract": 3,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 3,
+          "to_contract": 4,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "immath",
-      "contract_version": 3,
+      "contract_version": 4,
       "display_name": "Image Math",
       "category": "Images",
       "summary": "Evaluate tutorial image arithmetic expressions",
@@ -28741,25 +28558,6 @@
           ]
         }
       },
-      "safety_rules": [
-        {
-          "class": "product_write",
-          "when": {
-            "kind": "always"
-          }
-        },
-        {
-          "class": "overwrite",
-          "when": {
-            "kind": "equals",
-            "parameter": "overwrite",
-            "value": {
-              "kind": "bool",
-              "value": true
-            }
-          }
-        }
-      ],
       "bindings": [
         {
           "name": "imagename",
@@ -28963,13 +28761,19 @@
           "to_contract": 3,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 3,
+          "to_contract": 4,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "imregrid",
-      "contract_version": 3,
+      "contract_version": 4,
       "display_name": "Image Regrid",
       "category": "Images",
       "summary": "Regrid a CASA image onto a template image",
@@ -28996,25 +28800,6 @@
           ]
         }
       },
-      "safety_rules": [
-        {
-          "class": "product_write",
-          "when": {
-            "kind": "always"
-          }
-        },
-        {
-          "class": "overwrite",
-          "when": {
-            "kind": "equals",
-            "parameter": "overwrite",
-            "value": {
-              "kind": "bool",
-              "value": true
-            }
-          }
-        }
-      ],
       "bindings": [
         {
           "name": "imagename",
@@ -29280,13 +29065,19 @@
           "to_contract": 3,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 3,
+          "to_contract": 4,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "feather",
-      "contract_version": 3,
+      "contract_version": 4,
       "display_name": "Feather",
       "category": "Images",
       "summary": "Combine high-resolution and low-resolution images in the Fourier domain",
@@ -29299,25 +29090,6 @@
           "kind": "no_products"
         }
       },
-      "safety_rules": [
-        {
-          "class": "product_write",
-          "when": {
-            "kind": "always"
-          }
-        },
-        {
-          "class": "overwrite",
-          "when": {
-            "kind": "equals",
-            "parameter": "overwrite",
-            "value": {
-              "kind": "bool",
-              "value": true
-            }
-          }
-        }
-      ],
       "bindings": [
         {
           "name": "imagename",
@@ -29571,13 +29343,19 @@
           "to_contract": 3,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 3,
+          "to_contract": 4,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "importfits",
-      "contract_version": 3,
+      "contract_version": 4,
       "display_name": "Import FITS",
       "category": "Images",
       "summary": "Import a FITS primary image into a CASA image",
@@ -29604,25 +29382,6 @@
           ]
         }
       },
-      "safety_rules": [
-        {
-          "class": "product_write",
-          "when": {
-            "kind": "always"
-          }
-        },
-        {
-          "class": "overwrite",
-          "when": {
-            "kind": "equals",
-            "parameter": "overwrite",
-            "value": {
-              "kind": "bool",
-              "value": true
-            }
-          }
-        }
-      ],
       "bindings": [
         {
           "name": "fitsimage",
@@ -29773,6 +29532,12 @@
         {
           "from_contract": 2,
           "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
+        },
+        {
+          "from_contract": 3,
+          "to_contract": 4,
           "steps": [],
           "changed_defaults": []
         }

@@ -66,9 +66,9 @@ fn usage() -> String {
     format!(
         "casars - run casa-rs tasks through the shared parameter runtime\n\n\
 Usage:\n\
-  casars run TASK [SOURCE] [OVERRIDES] [RUNTIME CONTROLS]\n\
+  casars run TASK [SOURCE] [OVERRIDES] [CONTROLS]\n\
   casars params validate|show|save|template|describe ...\n\
   casars --help\n\n{}",
-        parameters_cli::source_and_control_help()
+        casa_task_runtime::task_command_line_help()
     )
 }

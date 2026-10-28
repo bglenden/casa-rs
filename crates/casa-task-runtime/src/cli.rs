@@ -230,11 +230,23 @@ pub fn parse_parameter_cli_overrides(
     Ok(patch)
 }
 
+/// Whether `flag` is one of `bundle`'s own parameter spellings, which win
+/// over the front end's flags of the same spelling (imregrid's `--template`).
+pub(crate) fn surface_declares_flag(bundle: &SurfaceContractBundle, flag: &str) -> bool {
+    cli_flag_binding(bundle, flag).is_some()
+}
+
+/// The binding a flag names, and whether it is a false flag.
+///
+/// The surface's declared flags win. Every parameter is also reachable by its
+/// own name, `--vis` or `--gaintable` (#931), and a binding that declares no
+/// spelling by its dashed name.
 fn cli_flag_binding<'a>(
     bundle: &'a SurfaceContractBundle,
     flag: &str,
 ) -> Option<(&'a SurfaceParameterBinding, bool)> {
-    bundle.surface.bindings().iter().find_map(|binding| {
+    let bindings = bundle.surface.bindings();
+    let declared = bindings.iter().find_map(|binding| {
         let projection = binding.projections.cli.as_ref()?;
         if projection.flags.iter().any(|candidate| candidate == flag) {
             Some((binding, false))
@@ -244,15 +256,23 @@ fn cli_flag_binding<'a>(
             .any(|candidate| candidate == flag)
         {
             Some((binding, true))
-        } else if projection.flags.is_empty()
-            && projection.false_flags.is_empty()
-            && projection.positional.is_none()
-            && flag == format!("--{}", binding.name.replace('_', "-"))
-        {
-            Some((binding, false))
         } else {
             None
         }
+    });
+    declared.or_else(|| {
+        let name = flag.strip_prefix("--")?;
+        bindings
+            .iter()
+            .find(|binding| {
+                binding.name == name
+                    || (binding.projections.cli.as_ref().is_some_and(|projection| {
+                        projection.flags.is_empty()
+                            && projection.false_flags.is_empty()
+                            && projection.positional.is_none()
+                    }) && binding.name.replace('_', "-") == name)
+            })
+            .map(|binding| (binding, false))
     })
 }
 
@@ -282,11 +302,25 @@ fn validated_cli_value(
     if text.trim().is_empty() {
         return Err(format!("parameter {:?} has no typed value", binding.name));
     }
-    let parsed =
-        parse_parameter_text(text, &concept.value_domain).map_err(|error| error.to_string())?;
-    let normalized = normalize_value(&parsed, concept).map_err(|error| error.to_string())?;
-    validate_value(&normalized, concept, &binding.refinements)
-        .map_err(|error| error.to_string())?;
+    let parsed = parse_parameter_text(text, &concept.value_domain)
+        .map_err(|error| format!("parameter {:?}: {error}", binding.name))?;
+    checked_value(bundle, binding, &parsed)
+}
+
+/// `value` normalized and validated through `binding`'s concept and
+/// refinements; a refusal names the parameter.
+pub(crate) fn checked_value(
+    bundle: &SurfaceContractBundle,
+    binding: &SurfaceParameterBinding,
+    value: &ParameterValue,
+) -> Result<ParameterValue, String> {
+    let named = |error: crate::NormalizationError| format!("parameter {:?}: {error}", binding.name);
+    let concept = bundle
+        .catalog
+        .concept(&binding.concept)
+        .ok_or_else(|| format!("missing parameter concept for {:?}", binding.name))?;
+    let normalized = normalize_value(value, concept).map_err(named)?;
+    validate_value(&normalized, concept, &binding.refinements).map_err(named)?;
     Ok(normalized)
 }
 
@@ -356,6 +390,7 @@ mod tests {
                     request_kind: "run".into(),
                     result_kind: Some("run".into()),
                 }],
+                front_end: None,
             },
             components: casa_provider_contracts::merged_components([
                 &request_schema,
@@ -437,9 +472,45 @@ mod tests {
             ParameterValue::String("f64".into())
         );
 
-        let alias = parse_parameter_cli_overrides(&bundle, &["--threshold".into(), "1Jy".into()])
-            .unwrap_err();
-        assert!(alias.contains("unknown imager parameter flag --threshold"));
+        // The parameter's own name reaches the same binding and value.
+        let named =
+            parse_parameter_cli_overrides(&bundle, &["--threshold".into(), "1Jy".into()]).unwrap();
+        let declared =
+            parse_parameter_cli_overrides(&bundle, &["--threshold-jy".into(), "1Jy".into()])
+                .unwrap();
+        assert_eq!(named, declared);
+        let unknown =
+            parse_parameter_cli_overrides(&bundle, &["--thresh".into(), "1Jy".into()]).unwrap_err();
+        assert!(unknown.contains("unknown imager parameter flag --thresh"));
+    }
+
+    #[test]
+    fn every_parameter_is_reachable_by_its_own_name() {
+        let catalog = casa_provider_contracts::builtin_surface_catalog().unwrap();
+        for surface in &catalog.surfaces {
+            let bundle = casa_provider_contracts::builtin_surface_bundle(surface.id()).unwrap();
+            for binding in bundle.surface.bindings() {
+                let flag = format!("--{}", binding.name);
+                let (found, _) = cli_flag_binding(&bundle, &flag)
+                    .unwrap_or_else(|| panic!("{}: {flag} names nothing", surface.id()));
+                assert_eq!(found.name, binding.name, "{}: {flag}", surface.id());
+            }
+        }
+
+        let bundle = casa_provider_contracts::builtin_surface_bundle("applycal").unwrap();
+        let patch = parse_parameter_cli_overrides(
+            &bundle,
+            &["--vis".into(), "target.ms".into(), "--no-flagbackup".into()],
+        )
+        .unwrap();
+        assert_eq!(
+            patch.values["vis"],
+            ParameterValue::Array(vec![ParameterValue::String("target.ms".into())])
+        );
+        let declared =
+            parse_parameter_cli_overrides(&bundle, &["--ms".into(), "target.ms".into()]).unwrap();
+        assert_eq!(declared.values["vis"], patch.values["vis"]);
+        assert_eq!(patch.values["flagbackup"], ParameterValue::Bool(false));
     }
 
     #[test]
@@ -543,5 +614,12 @@ mod tests {
                 .contains("no typed value")
         );
         assert!(ensure_parameter_binding(&bundle, "not_a_parameter").is_err());
+        // A value the concept refuses names its parameter.
+        let imager = casa_provider_contracts::builtin_surface_bundle("imager").unwrap();
+        let imsize = ensure_parameter_binding(&imager, "imsize").unwrap();
+        let refused = validated_cli_value(&imager, imsize, "abc").unwrap_err();
+        assert!(refused.starts_with("parameter \"imsize\": "), "{refused}");
+        let refused = checked_value(&imager, imsize, &ParameterValue::Bool(true)).unwrap_err();
+        assert!(refused.starts_with("parameter \"imsize\": "), "{refused}");
     }
 }

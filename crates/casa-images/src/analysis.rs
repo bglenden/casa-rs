@@ -132,6 +132,7 @@ pub fn image_analysis_task_schema_bundle() -> TaskProviderContract {
                     result_kind: Some("importfits".to_string()),
                 },
             ],
+            front_end: None,
         },
         components: merged_components([&request_schema, &result_schema]),
         annotations: serde_json::json!({}),
@@ -763,32 +764,6 @@ pub fn run_image_analysis_task(
             import_fits(&request.fitsimage, &request.imagename, request.overwrite)?,
         )),
     }
-}
-
-/// Dispatch shared help and the machine-readable shell for every image-analysis task binary.
-pub fn dispatch_image_analysis_task_cli(
-    args: &[String],
-    human_help: &str,
-) -> Result<Option<String>, String> {
-    if args.iter().any(|arg| arg == "--help" || arg == "-h") {
-        return Ok(Some(format!(
-            "{}\n\n{}",
-            human_help.trim_end(),
-            casa_task_runtime::task_cli_machine_help("ImageAnalysisTaskRequest")
-        )));
-    }
-    let args = args
-        .iter()
-        .map(std::ffi::OsString::from)
-        .collect::<Vec<_>>();
-    casa_task_runtime::TaskCliHost::new(
-        image_analysis_task_schema_bundle(),
-        |request: ImageAnalysisTaskRequest| {
-            run_image_analysis_task(request).map_err(|error| error.to_string())
-        },
-    )
-    .dispatch(&args)
-    .map_err(|error| error.to_string())
 }
 
 /// Return a CASA `imhead(..., mode="summary")`-style metadata summary.

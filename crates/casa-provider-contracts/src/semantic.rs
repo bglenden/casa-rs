@@ -35,6 +35,11 @@ pub struct TaskSemanticContract {
     pub result_schema: RootSchema,
     /// Stable task operations carried by the envelope schemas.
     pub operations: Vec<TaskOperationDescriptor>,
+    /// The shared front end's `--json-run` request and typed reply schemas.
+    /// The front end sets them; they are absent while the provider's binary
+    /// still parses its own arguments (#931).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub front_end: Option<crate::TaskFrontEndSchemas>,
 }
 
 /// One constructor exposed by an object surface.
