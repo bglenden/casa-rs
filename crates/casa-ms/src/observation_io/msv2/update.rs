@@ -183,29 +183,20 @@ impl Msv2Update {
         &self.observation
     }
 
-    /// Refuse, before anything is cleared or written, a target whose column
-    /// cannot be written in place in bounded memory, as today's route
-    /// refuses it ([`crate::scratch_columns::unbounded_destination`]): the
-    /// column must be in a tiled manager, and a column the session creates
-    /// clones `DATA`'s, which must be one and hold `DATA` alone. A column
-    /// in any other manager is saved by rewriting every row of its storage
-    /// group, once a batch.
-    pub(in crate::observation_io) fn require_bounded(
+    /// Refuse, when the session opens and before anything is cleared or
+    /// written, what its updaters could not carry out within their bound: a
+    /// target whose column cannot be written in place in bounded memory
+    /// ([`refuse_unbounded`]), or a `MODEL_DATA` to create whose rows the
+    /// session's grids do not all place ([`require_placed`]).
+    pub(in crate::observation_io) fn preflight(
         &self,
         targets: &[ResolvedTarget],
     ) -> Result<(), ObservationError> {
         let writer = self.writer();
         let main = writer.ms.main_table();
-        for target in targets {
-            let created = creates(main, target);
-            if let Some(reason) =
-                crate::scratch_columns::unbounded_destination(main, &target.variable, created)
-            {
-                return Err(request_error(format!(
-                    "{} cannot be written in place: {reason}",
-                    target.variable
-                )));
-            }
+        refuse_unbounded(main, targets)?;
+        if seeds_model(main, targets) {
+            require_placed(&writer.ms, &self.observation)?;
         }
         Ok(())
     }
@@ -240,14 +231,11 @@ impl Msv2Update {
         }
         writer.hold(&self.path, self.rows)?;
         let Writer { ms, lock, .. } = writer;
-        let seeding = targets
-            .iter()
-            .any(|target| target.variable == "MODEL_DATA" && creates(ms.main_table(), target));
-        if seeding {
-            // Refused before MODEL_DATA is installed as DATA's copy, which
-            // it would stay.
-            require_placed(ms, &self.observation)?;
-        }
+        // Again under MAIN's lock: another writer may have added a column
+        // since the session opened. Its rows are those it opened with
+        // (`hold`), which its grids place (`preflight`).
+        refuse_unbounded(ms.main_table(), targets)?;
+        let seeding = seeds_model(ms.main_table(), targets);
         for target in targets {
             clear(ms, target, lock.as_mut())?;
             add_column(ms, target)?;
@@ -484,6 +472,37 @@ fn creates(main: &casa_tables::Table, target: &ResolvedTarget) -> bool {
     target.created && !persisted(main, &target.variable)
 }
 
+/// Whether the session creates, and so seeds, `MODEL_DATA`.
+fn seeds_model(main: &casa_tables::Table, targets: &[ResolvedTarget]) -> bool {
+    targets
+        .iter()
+        .any(|target| target.variable == "MODEL_DATA" && creates(main, target))
+}
+
+/// Refuse a target whose column cannot be written in place in bounded
+/// memory, as today's route refuses it
+/// ([`crate::scratch_columns::unbounded_destination`]): the column must be
+/// in a tiled manager, and a column the session creates clones `DATA`'s,
+/// which must be one and hold `DATA` alone. A column in any other manager
+/// is saved by rewriting every row of its storage group, once a batch.
+fn refuse_unbounded(
+    main: &casa_tables::Table,
+    targets: &[ResolvedTarget],
+) -> Result<(), ObservationError> {
+    for target in targets {
+        let created = creates(main, target);
+        if let Some(reason) =
+            crate::scratch_columns::unbounded_destination(main, &target.variable, created)
+        {
+            return Err(request_error(format!(
+                "{} cannot be written in place: {reason}",
+                target.variable
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// Whether a data manager stores MAIN's `column`.
 fn persisted(main: &casa_tables::Table, column: &str) -> bool {
     main.data_manager_info()
@@ -514,8 +533,9 @@ fn seed_row_bytes(cell_bytes: usize) -> usize {
     2 * (cell_bytes + size_of::<ArrayValue>()) + 3 * size_of::<usize>()
 }
 
-/// Refuse a MAIN whose rows the session's grids no longer all place: a
-/// `MODEL_DATA` the session creates is seeded in every row its grids place.
+/// Refuse a MAIN whose rows the session's grids do not all place: a
+/// `MODEL_DATA` the session creates is seeded in every row its grids place,
+/// and a row outside them would keep the `DATA` it was cloned from.
 fn require_placed(
     ms: &MeasurementSet,
     observation: &Msv2Observation,
@@ -535,8 +555,8 @@ fn require_placed(
     let main_rows = ms.main_table().row_count();
     if placed != main_rows {
         return Err(request_error(format!(
-            "MAIN has {main_rows} rows and the session's grids place {placed}: it changed since \
-             the session opened, so MODEL_DATA cannot be seeded in every row"
+            "MAIN has {main_rows} rows and the session's grids place {placed}, so MODEL_DATA \
+             cannot be seeded in every row"
         )));
     }
     Ok(())
@@ -551,8 +571,8 @@ fn require_placed(
 /// own values over the seed. Each partition's rows are seeded in batches
 /// of at most `budget` bytes ([`seed_row_bytes`]), one mutation session a
 /// batch, so the seeding holds no list of MAIN's rows. Every MAIN row lies
-/// in one partition's grid ([`require_placed`], checked before the
-/// install).
+/// in one partition's grid ([`require_placed`], checked when the session
+/// opens).
 fn seed_model(
     ms: &mut MeasurementSet,
     lock: &mut Option<TableWriteLock>,

@@ -458,16 +458,26 @@ fn msv4_padding_stays_flagged() {
 }
 
 /// A patch whose shape is not its batch's is refused before any check that
-/// reads it against the batch: an MSv4 flag clear one sample short, where
-/// the padding check would index it, is an `InvalidRequest`.
+/// reads it against the batch: with each batch's last sample padded, an
+/// MSv4 flag clear one sample short, which the padding check would index at
+/// that sample, is an `InvalidRequest`.
 #[test]
 fn a_misshapen_patch_is_refused_before_its_padding_is_checked() {
     let root = tempfile::tempdir().expect("root");
     let path = fixture(root.path(), "ms_trial.ps.zarr");
-    let target = [UpdateTarget::new("base", WritableRole::Flags)];
-    let session = open_update(&path, &OpenOptions::default(), &target).expect("session");
+    let targets = [
+        UpdateTarget::new("base", WritableRole::Weights),
+        UpdateTarget::new("base", WritableRole::Flags),
+    ];
+    let session = open_update(&path, &OpenOptions::default(), &targets).expect("session");
     let four = per_times(session.observation(), request(0..8, 0), 4);
-    let refused = pass(&session, &four, &[0], |batch| {
+    pass(&session, &four, &[0], |batch| {
+        let mut weights = batch.group.weights.expect("weights").to_owned();
+        weights.slice_mut(ndarray::s![-1, .., ..]).fill(f32::NAN);
+        vec![Owned::Weights(weights, WeightChannels::Delivered)]
+    })
+    .expect("pad the last sample of each batch");
+    let refused = pass(&session, &four, &[1], |batch| {
         let [samples, channels, products] = batch.shape();
         vec![Owned::Flags {
             set: None,
@@ -541,6 +551,35 @@ fn an_unbounded_destination_is_refused_before_anything_changes() {
             "{label}: MAIN changed"
         );
     }
+}
+
+/// The destination rule is applied again when the first updater takes
+/// MAIN's lock: a `MODEL_DATA` the session was to create, which another
+/// writer adds in `StandardStMan` after the session opened, is refused
+/// rather than written by rewriting its storage group.
+#[test]
+fn a_destination_another_writer_makes_unbounded_is_refused_under_the_lock() {
+    let root = tempfile::tempdir().expect("root");
+    let path = many_rows(root.path(), "late-model", 1, 10.0);
+    let target = UpdateTarget {
+        create: true,
+        ..UpdateTarget::new("model", WritableRole::Visibilities)
+    };
+    let session = open_update(
+        &path,
+        &OpenOptions::default(),
+        std::slice::from_ref(&target),
+    )
+    .expect("a tiled DATA, and no MODEL_DATA yet");
+    relayout(&path, &["MODEL_DATA"], DataManagerKind::StandardStMan);
+    let refused = pass(&session, &request(0..1, 1 << 20), &[0], |batch| {
+        vec![Owned::Visibilities(Array3::zeros(batch.shape()))]
+    });
+    assert!(
+        matches!(refused, Err(ObservationError::InvalidRequest { ref reason })
+            if reason.starts_with("MODEL_DATA") && reason.contains("in place")),
+        "{refused:?}"
+    );
 }
 
 /// One update session per store in a process, and one live updater per

@@ -461,7 +461,9 @@ updaters write back, and the MeasurementSet is opened and indexed once.
   `TiledShapeStMan` and `TiledColumnStMan`, or a column to create whose
   clone of `DATA`'s manager would be one (`scratch_columns`). A column in
   another manager is saved by rewriting every row of its storage group,
-  once a batch.
+  once a batch. The first updater applies the rule again under MAIN's lock,
+  as today's writer checks when it begins, so a column another writer adds
+  meanwhile is refused too.
 - **Order.** An updater takes its traversal's batches in any order and any
   of them; the times it is not given keep what they hold. MSv4 updaters
   already did. The MSv2 updater's delivery-order check and its refusal, at
