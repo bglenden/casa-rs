@@ -13,7 +13,7 @@ use casa_tables::table_measures::{MeasRefDesc, TableMeasDesc};
 use casa_tables::{RequiredScalarColumnDestination, RequiredScalarColumnValuesMut, Table};
 use casa_types::measures::direction::DirectionRef;
 
-use super::losses::Destination;
+use super::losses::Store;
 use crate::derived::engine::resolve_direction_reference_selected;
 use crate::observation_io::msv2::POLYNOMIAL_TERMS;
 use crate::observation_io::update::storage;
@@ -51,9 +51,9 @@ impl Candidate {
     /// interval meets them or its time is within them, as
     /// `PreparedSelectedPointingCatalog` retains rows. Into an MSv2 a read
     /// spans every row.
-    fn within(&self, times: &RangeInclusive<f64>, destination: Destination) -> bool {
+    fn within(&self, times: &RangeInclusive<f64>, destination: Store) -> bool {
         let half = 0.5 * self.interval;
-        destination == Destination::Msv2
+        destination == Store::Msv2
             || times.contains(&self.time)
             || (half > 0.0
                 && self.time + half >= *times.start()
@@ -97,7 +97,7 @@ impl Scan {
         &mut self,
         candidate: Candidate,
         partitions: &[Partition],
-        destination: Destination,
+        destination: Store,
         frame: &impl Fn(usize) -> Result<DirectionRef, ObservationError>,
     ) -> Result<(), ObservationError> {
         let mut read = false;
@@ -177,7 +177,7 @@ impl Scan {
     fn finish(
         &mut self,
         partitions: &[Partition],
-        destination: Destination,
+        destination: Store,
         frame: &impl Fn(usize) -> Result<DirectionRef, ObservationError>,
     ) -> Result<(), ObservationError> {
         let nearest: Vec<(usize, Candidate)> = std::mem::take(&mut self.nearest)
@@ -224,7 +224,7 @@ impl Scan {
 pub(super) fn scan(
     table: &Table,
     partitions: &[Partition],
-    destination: Destination,
+    destination: Store,
 ) -> Result<Scan, ObservationError> {
     let fixed = match TableMeasDesc::reconstruct(table, "DIRECTION") {
         Some(description) => matches!(description.ref_desc(), MeasRefDesc::Fixed { .. }),

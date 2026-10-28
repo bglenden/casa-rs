@@ -147,6 +147,8 @@ pub(super) struct MainRows {
     /// Each partition's grid interval.
     intervals: Vec<f64>,
     padding: PaddingRows,
+    /// The factor every acquisition's weights are multiplied by.
+    weight_scale: f32,
     data_columns: Vec<&'static str>,
     scalars: Scalars,
     planned: usize,
@@ -158,15 +160,16 @@ pub(super) struct MainRows {
 impl MainRows {
     /// Plan and start MAIN's writers at `staging` for the `occupancy` of
     /// `catalogue`'s partitions, with `data_columns` (`DATA`,
-    /// `CORRECTED_DATA`, `MODEL_DATA`), the subtables' `layout` and the
-    /// `padding` policy the occupancy was counted under.
+    /// `CORRECTED_DATA`, `MODEL_DATA`), the subtables' `layout`, the
+    /// `padding` policy the occupancy was counted under and the scale of
+    /// the weights.
     pub(super) fn start(
         staging: &Path,
         catalogue: &Catalogue,
         data_columns: Vec<&'static str>,
         occupancy: &Occupancy,
         layout: Layout,
-        padding: PaddingRows,
+        (padding, weight_scale): (PaddingRows, f32),
     ) -> Result<Self, ObservationError> {
         let planned = occupancy.rows.iter().sum();
         let plan = plan(catalogue, &data_columns, &occupancy.rows, planned)?;
@@ -197,6 +200,7 @@ impl MainRows {
             layout,
             intervals: occupancy.intervals.clone(),
             padding,
+            weight_scale,
             data_columns,
             scalars,
             planned,
@@ -281,7 +285,9 @@ impl MainRows {
     }
 
     /// One sample's visibility, flag, weight and sigma cells; padding's
-    /// flagged throughout with NaN weights, padding's one mark.
+    /// flagged throughout with NaN weights, padding's one mark. An
+    /// acquisition's weights are scaled, and its sigmas derived from the
+    /// scaled weights, so `SIGMA` is `1/√(W·w)`.
     fn push_cells(
         &mut self,
         sample: usize,
@@ -294,6 +300,7 @@ impl MainRows {
         // A sample's `[channel, correlation]` cells, correlation fastest,
         // are an MSv2 cell of shape `[correlation, channel]` as casacore
         // stores it.
+        let scale = self.weight_scale;
         let scratch = &mut self.scratch;
         for (column, values) in self.data_columns.iter().zip(values) {
             let cell = contiguous(values.index_axis(Axis(0), sample), &mut scratch.values);
@@ -316,7 +323,9 @@ impl MainRows {
             .map_err(storage)?;
         scratch.weights.clear();
         if acquisition {
-            scratch.weights.extend(weights.row(0).iter().copied());
+            scratch
+                .weights
+                .extend(weights.row(0).iter().map(|weight| weight * scale));
         } else {
             scratch.weights.resize(shape[0], f32::NAN);
         }

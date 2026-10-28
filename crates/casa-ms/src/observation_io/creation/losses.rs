@@ -32,7 +32,7 @@ use crate::schema::SubtableId;
 
 /// The data groups to convert: `requested`, each present in every
 /// partition, or every group of the source with `base` first.
-pub(super) fn selected_groups(
+pub(crate) fn selected_groups(
     catalogue: &Catalogue,
     requested: Option<&[String]>,
 ) -> Result<Vec<String>, ObservationError> {
@@ -80,7 +80,7 @@ pub(super) fn selected_groups(
 
 /// The store a conversion creates, which decides what it must refuse.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Destination {
+pub(crate) enum Store {
     /// An MSv2, which writes every catalogue field.
     Msv2,
     /// An MSv4, which writes the fields its datasets name.
@@ -89,11 +89,11 @@ pub(super) enum Destination {
 
 /// Everything `source` holds that converting `groups` into `destination`
 /// would not carry.
-pub(super) fn inventory(
+pub(crate) fn inventory(
     source: &Path,
     catalogue: &Catalogue,
     groups: &[String],
-    destination: Destination,
+    destination: Store,
 ) -> Result<Vec<Loss>, ObservationError> {
     let mut losses = Vec::new();
     for entry in &catalogue.partitions {
@@ -117,7 +117,8 @@ pub(super) fn inventory(
 /// The antennas of `catalogue` that no partition's baselines name, as a
 /// loss when there are any: an MSv4 dataset holds only its baselines'
 /// antennas.
-pub(super) fn unused_antennas(catalogue: &Catalogue) -> Option<Loss> {
+#[cfg(feature = "msv4")]
+pub(crate) fn unused_antennas(catalogue: &Catalogue) -> Option<Loss> {
     let mut named = vec![false; catalogue.antennas.len()];
     for baseline in catalogue
         .partitions
@@ -135,7 +136,7 @@ pub(super) fn unused_antennas(catalogue: &Catalogue) -> Option<Loss> {
 }
 
 /// Refuse the first of `losses` whose kind is not in `accept`.
-pub(super) fn refuse_unaccepted(
+pub(crate) fn refuse_unaccepted(
     losses: &[Loss],
     accept: &[LossKind],
 ) -> Result<(), ObservationError> {
@@ -195,7 +196,7 @@ const ROW_CHUNK: usize = 1 << 18;
 fn msv2(
     source: &Path,
     catalogue: &Catalogue,
-    destination: Destination,
+    destination: Store,
     losses: &mut Vec<Loss>,
 ) -> Result<(), ObservationError> {
     let ms = crate::MeasurementSet::open_retained_read(source).map_err(storage)?;
@@ -252,10 +253,10 @@ fn msv2(
 fn refuse_moving_fields(
     ms: &crate::MeasurementSet,
     catalogue: &Catalogue,
-    destination: Destination,
+    destination: Store,
 ) -> Result<(), ObservationError> {
     let fields = ms.field().map_err(storage)?;
-    let mut named = vec![destination == Destination::Msv2; fields.row_count()];
+    let mut named = vec![destination == Store::Msv2; fields.row_count()];
     for field in catalogue.partitions.iter().flat_map(|entry| &entry.fields) {
         if let Some(named) = named.get_mut(field.0 as usize) {
             *named = true;

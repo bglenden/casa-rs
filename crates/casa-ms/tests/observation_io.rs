@@ -7,6 +7,9 @@
 #[path = "observation_io/convert.rs"]
 mod convert;
 #[cfg(unix)]
+#[path = "observation_io/creation.rs"]
+mod creation;
+#[cfg(unix)]
 #[path = "observation_io/fields.rs"]
 mod fields;
 #[cfg(unix)]

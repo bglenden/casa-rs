@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Either store converted to a new MeasurementSet v2: subtables from the
-//! catalogue, and one MAIN row per grid cell (or per acquisition, padding
-//! omitted), partition after partition, each partition's rows in time and
-//! baseline order.
+//! A new MeasurementSet v2 planned from observations, then written:
+//! subtables from the catalogue, and one MAIN row per grid cell (or per
+//! acquisition, padding omitted), partition after partition, each
+//! partition's rows in time and baseline order.
 
 use std::fs;
 use std::path::Path;
@@ -19,8 +19,8 @@ use ndarray::Axis;
 use super::msv2_rows::{MainRows, Occupancy, Spans, acquired};
 use super::pointing_plan::{self, PointingPlan};
 use super::{
-    ConversionOptions, ConversionReport, Loss, PaddingRows, lockstep, losses, msv2_pointing,
-    msv2_tables,
+    CreationInput, CreationOptions, CreationReport, Destination, Loss, PaddingRows, lockstep,
+    losses, msv2_pointing, msv2_tables,
 };
 use crate::observation_io::update::{request_error, storage};
 use crate::observation_io::{OpenOptions, open};
@@ -43,10 +43,11 @@ const WEIGHTS: Roles = Roles {
 /// Seconds per day, for MSv2 `TIME` (MJD seconds).
 const SECONDS_PER_DAY: f64 = 86_400.0;
 
-/// Convert the store at `source` (MSv2 or MSv4) into a new MeasurementSet
-/// v2 at `destination`.
+/// A new MeasurementSet v2 planned from observations, checked before
+/// anything is written ([`CreationPlan::new`]) and then written
+/// ([`CreationPlan::write`]).
 ///
-/// The selected data groups ([`ConversionOptions::data_groups`]) become
+/// The selected data groups ([`CreationOptions::data_groups`]) become
 /// `DATA` (`base`), `CORRECTED_DATA` (`corrected`) and `MODEL_DATA`
 /// (`model`), sharing the first group's flags, weights and UVW. Partitions
 /// sharing a spectral window, polarization or intents share their
@@ -54,91 +55,206 @@ const SECONDS_PER_DAY: f64 = 86_400.0;
 /// whose every `FLAG` is set, with NaN data, weights and `UVW`, the grid's
 /// interval, no exposure and `FLAG_ROW` false (its flags already exclude
 /// it), as D23 decided. With [`PaddingRows::Omitted`], padding becomes no
-/// row, which reproduces an original sparse MSv2. `SIGMA` is derived
-/// from the weights ([`Loss::SigmaDerived`]), so the caller must accept
-/// [`LossKind::Sigma`](super::LossKind::Sigma). Names are the source's: an
+/// row, which reproduces an original sparse MSv2. `WEIGHT` is the input's
+/// times its [`CreationInput::weight_scale`], and `SIGMA` is derived from
+/// it ([`Loss::SigmaDerived`]), so the caller must accept
+/// [`LossKind::Sigma`](super::LossKind::Sigma). Names are the input's: an
 /// MSv4 converted from an MSv2 holds XRADIO's suffixed names
 /// (`NAME_FIELDID`, `NAME_STATION`, ...), so a round trip renames.
 ///
-/// An MSv2's row count is fixed before its rows are written. With padding
-/// omitted it is the acquisitions, which only the weights record, so a
-/// first pass reads them to count; otherwise it is the grids' cells. The
-/// MSv2 is written by one thread and created in a staging directory renamed
-/// into place when complete.
-///
-/// # Errors
-///
-/// Before anything is written: a loss not accepted
-/// ([`ObservationError::InvalidRequest`]); fields that follow an ephemeris
-/// or whose direction is a polynomial in time;
-/// a data group without an MSv2 column, or selected twice; times in another
-/// scale than UTC; feeds other than 0; a window without channels; fields in
-/// another frame than J2000; a scan without a casacore number; feeds whose
-/// receptors differ; a correlation product the feeds cannot name (a Stokes
-/// product, or a receptor they lack); one column's groups in different
-/// units; an existing destination; a source with nothing to write. Weights that vary
-/// over channels (an MSv2 `WEIGHT` holds one per correlation), refused by
-/// the counting pass when there is one and otherwise when reached. Then any
-/// error reading the source or writing the destination; the destination is
-/// then not created.
-pub fn to_msv2(
-    source: &Path,
-    destination: &Path,
-    options: &ConversionOptions,
-) -> Result<ConversionReport, ObservationError> {
-    let observation = open(source, &OpenOptions::default())?;
-    let catalogue = observation.catalogue();
-    let groups = losses::selected_groups(catalogue, options.data_groups.as_deref())?;
-    let columns = groups
-        .iter()
-        .map(|group| column(group))
-        .collect::<Result<Vec<_>, _>>()?;
-    let mut found = losses::inventory(source, catalogue, &groups, losses::Destination::Msv2)?;
-    let (pointing, lost) = pointing_plan::plan(
-        source,
-        observation.as_ref(),
-        losses::Destination::Msv2,
-        options.batch_bytes,
-    )?;
-    found.extend(lost);
-    found.push(Loss::SigmaDerived);
-    found.sort();
-    losses::refuse_unaccepted(&found, &options.accept)?;
-    refuse_unwritable(catalogue)?;
-    let columns = columns
-        .into_iter()
-        .zip(&groups)
-        .map(|(column, group)| Ok((column, group_unit(catalogue, group)?)))
-        .collect::<Result<Vec<_>, ObservationError>>()?;
-    let target = MeasurementSetCreateTarget::prepare(destination, false).map_err(storage)?;
-    let occupancy = occupancy(observation.as_ref(), &groups[0], options)?;
-    if occupancy.rows.iter().sum::<usize>() == 0 {
-        return Err(request_error(
-            "the source holds nothing to write as an MSv2 row",
-        ));
-    }
-    let staging = target.staging_path().to_path_buf();
-    let created = create(
-        &staging,
-        observation.as_ref(),
-        &groups,
-        &columns,
-        &occupancy,
-        &pointing,
-        options,
-    )
-    .and_then(|report| target.commit().map(|()| report).map_err(storage));
-    match created {
-        Ok(report) => Ok(ConversionReport {
-            losses: found,
-            ..report
-        }),
-        Err(error) => {
-            // The staging directory is the only output; nothing is
-            // published.
-            let _ = fs::remove_dir_all(&staging);
-            Err(error)
+/// A MeasurementSet's row count is fixed before its rows are written. With
+/// padding omitted it is the acquisitions, which only the weights record,
+/// so the plan reads them to count; otherwise it is the grids' cells.
+pub struct CreationPlan {
+    observation: Box<dyn Observation>,
+    weight_scale: f32,
+    groups: Vec<String>,
+    /// Each group's column, and the units it declares.
+    columns: Vec<(OptionalMainColumn, Option<String>)>,
+    losses: Vec<Loss>,
+    pointing: PointingPlan,
+    occupancy: Occupancy,
+    options: CreationOptions,
+}
+
+impl CreationPlan {
+    /// Open `inputs` and plan the MeasurementSet created from them, reading
+    /// what the plan must know before writing: each input's losses, its
+    /// pointing and, with padding omitted, its acquisitions.
+    ///
+    /// # Errors
+    ///
+    /// Nothing is written by a plan. A weight scale that is not finite and
+    /// positive, or no input ([`ObservationError::InvalidRequest`]); more
+    /// than one input, for now ([`ObservationError::Unsupported`]); a loss
+    /// not accepted ([`ObservationError::InvalidRequest`]); fields that
+    /// follow an ephemeris or whose direction is a polynomial in time; a
+    /// data group without an MSv2 column, or selected twice; times in
+    /// another scale than UTC; feeds other than 0; a window without
+    /// channels; fields in another frame than J2000; a scan without a
+    /// casacore number; feeds whose receptors differ; a correlation product
+    /// the feeds cannot name (a Stokes product, or a receptor they lack);
+    /// one column's groups in different units; an input with nothing to
+    /// write. Weights that vary over channels (an MSv2 `WEIGHT` holds one
+    /// per correlation), refused here when padding is omitted and otherwise
+    /// when writing reaches them. Any error opening or reading an input.
+    pub fn new(
+        inputs: &[CreationInput],
+        options: &CreationOptions,
+    ) -> Result<Self, ObservationError> {
+        let input = match inputs {
+            [] => return Err(request_error("a MeasurementSet is created from an input")),
+            [input] => input,
+            _ => {
+                return Err(ObservationError::Unsupported {
+                    what: "creating a MeasurementSet from several observations",
+                });
+            }
+        };
+        let weight_scale = weight_scale(input)?;
+        let source = input.path.as_path();
+        let observation = open(source, &OpenOptions::default())?;
+        let catalogue = observation.catalogue();
+        let groups = losses::selected_groups(catalogue, options.data_groups.as_deref())?;
+        let columns = groups
+            .iter()
+            .map(|group| column(group))
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut found = losses::inventory(source, catalogue, &groups, losses::Store::Msv2)?;
+        let (pointing, lost) = pointing_plan::plan(
+            source,
+            observation.as_ref(),
+            losses::Store::Msv2,
+            options.batch_bytes,
+        )?;
+        found.extend(lost);
+        found.push(Loss::SigmaDerived);
+        found.sort();
+        losses::refuse_unaccepted(&found, &options.accept)?;
+        refuse_unwritable(catalogue)?;
+        let columns = columns
+            .into_iter()
+            .zip(&groups)
+            .map(|(column, group)| Ok((column, group_unit(catalogue, group)?)))
+            .collect::<Result<Vec<_>, ObservationError>>()?;
+        let occupancy = occupancy(observation.as_ref(), &groups[0], options)?;
+        if occupancy.rows.iter().sum::<usize>() == 0 {
+            return Err(request_error(
+                "the source holds nothing to write as an MSv2 row",
+            ));
         }
+        Ok(Self {
+            observation,
+            weight_scale,
+            groups,
+            columns,
+            losses: found,
+            pointing,
+            occupancy,
+            options: options.clone(),
+        })
+    }
+
+    /// Every loss the MeasurementSet takes, all accepted, found before
+    /// anything is written.
+    #[must_use]
+    pub fn losses(&self) -> &[Loss] {
+        &self.losses
+    }
+
+    /// Write the planned MeasurementSet at `destination`, by one thread, in
+    /// a staging directory renamed into place when complete.
+    ///
+    /// # Errors
+    ///
+    /// An existing `destination` ([`Destination::New`]), before anything is
+    /// written. Weights that vary over channels, when padding was not
+    /// omitted. Then any error reading an input or writing the
+    /// MeasurementSet, which then is not created.
+    pub fn write(
+        self,
+        destination: &Path,
+        mode: Destination,
+    ) -> Result<CreationReport, ObservationError> {
+        let Destination::New = mode;
+        let target = MeasurementSetCreateTarget::prepare(destination, false).map_err(storage)?;
+        let staging = target.staging_path().to_path_buf();
+        let created = self
+            .create(&staging)
+            .and_then(|report| target.commit().map(|()| report).map_err(storage));
+        match created {
+            Ok(report) => Ok(CreationReport {
+                losses: self.losses,
+                ..report
+            }),
+            Err(error) => {
+                // The staging directory is the only output; nothing is
+                // published.
+                let _ = fs::remove_dir_all(&staging);
+                Err(error)
+            }
+        }
+    }
+
+    /// Create the MeasurementSet at `staging`: its subtables, then MAIN's
+    /// rows from a lockstep read of every partition.
+    fn create(&self, staging: &Path) -> Result<CreationReport, ObservationError> {
+        let observation = self.observation.as_ref();
+        let catalogue = observation.catalogue();
+        let optional: Vec<OptionalMainColumn> =
+            self.columns.iter().map(|(column, _)| *column).collect();
+        let builder = msv2_tables::builder(catalogue, &optional);
+        let mut ms = MeasurementSet::create(staging, builder).map_err(storage)?;
+        // The MAIN writers write into the directory before the save.
+        fs::create_dir_all(staging).map_err(storage)?;
+        for (column, unit) in &self.columns {
+            if let Some(unit) = unit {
+                TableQuantumDesc::with_unit(column.name(), unit)
+                    .write(ms.main_table_mut())
+                    .map_err(storage)?;
+            }
+        }
+        let layout = msv2_tables::populate(&mut ms, catalogue, &self.occupancy.spans)?;
+        msv2_pointing::write(&mut ms, observation, &self.pointing)?;
+        let names = optional.iter().map(|column| column.name()).collect();
+        let mut main = MainRows::start(
+            staging,
+            catalogue,
+            names,
+            &self.occupancy,
+            layout,
+            (self.options.padding, self.weight_scale),
+        )?;
+        let mut report = CreationReport::default();
+        for id in catalogue.partition_ids() {
+            let read = lockstep::read(
+                observation,
+                id,
+                &self.groups,
+                Roles::ALL,
+                (self.options.batch_bytes, None),
+                |batches| main.push(batches),
+            )?;
+            report.partitions += 1;
+            report.batches += read.batches;
+            report.samples += read.samples;
+        }
+        report.rows = main.finish(&mut ms)?;
+        Ok(report)
+    }
+}
+
+/// `input`'s weight scale, which must be finite and positive.
+fn weight_scale(input: &CreationInput) -> Result<f32, ObservationError> {
+    let scale = input.weight_scale as f32;
+    if scale.is_finite() && scale > 0.0 {
+        Ok(scale)
+    } else {
+        Err(request_error(format!(
+            "the weight scale of {} is {}; it must be finite and positive",
+            input.path.display(),
+            input.weight_scale
+        )))
     }
 }
 
@@ -192,7 +308,8 @@ fn refuse_unwritable(catalogue: &Catalogue) -> Result<(), ObservationError> {
 
 /// The times the grids of `group` span: the whole observation's, and each
 /// session's edge to edge, as fillers write `TIME_RANGE`.
-pub(super) fn spans(observation: &dyn Observation, group: &str) -> Result<Spans, ObservationError> {
+#[cfg(feature = "msv4")]
+fn spans(observation: &dyn Observation, group: &str) -> Result<Spans, ObservationError> {
     let catalogue = observation.catalogue();
     let mut spanned = Spanning::new(catalogue.observations.len());
     for id in catalogue.partition_ids() {
@@ -267,7 +384,7 @@ impl Spanning {
 fn occupancy(
     observation: &dyn Observation,
     group: &str,
-    options: &ConversionOptions,
+    options: &CreationOptions,
 ) -> Result<Occupancy, ObservationError> {
     let catalogue = observation.catalogue();
     let groups = [group.to_string()];
@@ -317,7 +434,8 @@ fn occupancy(
 ///
 /// # Errors
 ///
-/// As [`to_msv2`] for what an MSv2's subtables cannot say.
+/// As [`CreationPlan::new`] for what an MSv2's subtables cannot say.
+#[cfg(feature = "msv4")]
 pub(crate) fn catalogue_subtables(
     observation: &dyn Observation,
 ) -> Result<(MeasurementSet, Vec<i32>), ObservationError> {
@@ -338,59 +456,6 @@ pub(crate) fn catalogue_subtables(
         MeasurementSet::create_memory(msv2_tables::builder(catalogue, &[])).map_err(storage)?;
     let layout = msv2_tables::populate(&mut ms, catalogue, &spans)?;
     Ok((ms, layout.spectral_window))
-}
-
-/// Create the MSv2 at `staging`: its subtables, then MAIN's rows from a
-/// lockstep read of every partition.
-fn create(
-    staging: &Path,
-    observation: &dyn Observation,
-    groups: &[String],
-    columns: &[(OptionalMainColumn, Option<String>)],
-    occupancy: &Occupancy,
-    pointing: &PointingPlan,
-    options: &ConversionOptions,
-) -> Result<ConversionReport, ObservationError> {
-    let catalogue = observation.catalogue();
-    let optional: Vec<OptionalMainColumn> = columns.iter().map(|(column, _)| *column).collect();
-    let builder = msv2_tables::builder(catalogue, &optional);
-    let mut ms = MeasurementSet::create(staging, builder).map_err(storage)?;
-    // The MAIN writers write into the directory before the save.
-    fs::create_dir_all(staging).map_err(storage)?;
-    for (column, unit) in columns {
-        if let Some(unit) = unit {
-            TableQuantumDesc::with_unit(column.name(), unit)
-                .write(ms.main_table_mut())
-                .map_err(storage)?;
-        }
-    }
-    let layout = msv2_tables::populate(&mut ms, catalogue, &occupancy.spans)?;
-    msv2_pointing::write(&mut ms, observation, pointing)?;
-    let names = optional.iter().map(|column| column.name()).collect();
-    let mut main = MainRows::start(
-        staging,
-        catalogue,
-        names,
-        occupancy,
-        layout,
-        options.padding,
-    )?;
-    let mut report = ConversionReport::default();
-    for id in catalogue.partition_ids() {
-        let read = lockstep::read(
-            observation,
-            id,
-            groups,
-            Roles::ALL,
-            (options.batch_bytes, None),
-            |batches| main.push(batches),
-        )?;
-        report.partitions += 1;
-        report.batches += read.batches;
-        report.samples += read.samples;
-    }
-    report.rows = main.finish(&mut ms)?;
-    Ok(report)
 }
 
 /// The `QuantumUnits` `group`'s column declares: its units, which every

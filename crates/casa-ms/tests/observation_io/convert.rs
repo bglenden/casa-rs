@@ -280,7 +280,7 @@ fn acquisitions(path: &Path, id: PartitionId, group: &str) -> BTreeMap<Key, Samp
 }
 
 /// MAIN's row count and `SIGMA`, `WEIGHT` of the MSv2 at `path`.
-fn rows_and_sigmas(path: &Path) -> (usize, Vec<(f32, f32)>) {
+pub(crate) fn rows_and_sigmas(path: &Path) -> (usize, Vec<(f32, f32)>) {
     let ms = casa_ms::MeasurementSet::open(path).expect("ms");
     let main = ms.main_table();
     let column = |name: &str| {

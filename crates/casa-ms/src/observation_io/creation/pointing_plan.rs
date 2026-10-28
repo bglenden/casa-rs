@@ -30,11 +30,10 @@ use casa_observation::{
 use casa_tables::Table;
 
 use super::Loss;
-use super::losses::Destination;
+use super::losses::Store;
 use super::msv2_pointing::gathered_bytes;
 use super::pointing_scan::{self, Partition, Scan};
 use crate::observation_io::msv2::{POLYNOMIAL_TERMS, scan_rows};
-use crate::observation_io::msv4::POINTING_FRAMES;
 use crate::observation_io::update::{request_error, storage};
 use crate::schema::SubtableId;
 use crate::selected_pointing::catalog_peak_bytes;
@@ -42,7 +41,7 @@ use crate::selected_pointing::catalog_peak_bytes;
 /// What a conversion carries of the source's pointing: the reads that
 /// carry it, each in the time system of its partition.
 #[derive(Debug, Default)]
-pub(super) struct PointingPlan {
+pub(crate) struct PointingPlan {
     reads: Vec<PointingRequest>,
     /// An MSv2 destination: the most samples the reads gather, and their
     /// coefficients.
@@ -52,7 +51,8 @@ pub(super) struct PointingPlan {
 impl PointingPlan {
     /// An MSv4 destination's read for `partition`'s dataset, if its
     /// pointing is carried.
-    pub(super) fn read_for(&self, partition: PartitionId) -> Option<&PointingRequest> {
+    #[cfg(feature = "msv4")]
+    pub(crate) fn read_for(&self, partition: PartitionId) -> Option<&PointingRequest> {
         self.reads.iter().find(|read| read.partition == partition)
     }
 
@@ -77,10 +77,10 @@ impl PointingPlan {
 /// [`ObservationError::InvalidRequest`] when a read, or an MSv2
 /// destination's gathered rows, would hold more than `budget`; any error
 /// reading the source.
-pub(super) fn plan(
+pub(crate) fn plan(
     source: &Path,
     observation: &dyn Observation,
-    destination: Destination,
+    destination: Store,
     budget: usize,
 ) -> Result<(PointingPlan, Vec<Loss>), ObservationError> {
     let partitions = partitions(observation)?;
@@ -160,7 +160,7 @@ fn read_budget(
 fn msv4(
     observation: &dyn Observation,
     partitions: &[Partition],
-    destination: Destination,
+    destination: Store,
     budget: usize,
 ) -> Result<(PointingPlan, Vec<Loss>), ObservationError> {
     let mut reads = Vec::new();
@@ -194,7 +194,7 @@ fn msv4(
             .sum::<usize>();
         reads.push(request);
     }
-    if destination == Destination::Msv4 {
+    if destination == Store::Msv4 {
         let gathered = (0, 0);
         return Ok((PointingPlan { reads, gathered }, Vec::new()));
     }
@@ -217,7 +217,7 @@ fn msv4(
 fn msv2(
     table: &Table,
     partitions: &[Partition],
-    destination: Destination,
+    destination: Store,
     budget: usize,
 ) -> Result<(PointingPlan, Vec<Loss>), ObservationError> {
     let scan = pointing_scan::scan(table, partitions, destination)?;
@@ -230,24 +230,24 @@ fn msv2(
     let mut frames: Vec<_> = scan.frames.iter().flatten().copied().collect();
     frames.sort_by_key(|frame| frame.as_str());
     frames.dedup();
-    if destination == Destination::Msv2 && frames.len() > 1 {
+    if destination == Store::Msv2 && frames.len() > 1 {
         return Ok(lost_whole("POINTING", "directions in several frames"));
     }
     if let Some(frame) = frames
         .iter()
-        .find(|frame| !POINTING_FRAMES.iter().any(|(_, known)| known == *frame))
-        .filter(|_| destination == Destination::Msv4)
+        .find(|frame| !msv4_names(**frame))
+        .filter(|_| destination == Store::Msv4)
     {
         let reason = format!("directions in {}, which MSv4 does not name", frame.as_str());
         return Ok(lost_whole("POINTING", &reason));
     }
     let losses = losses(table, &scan, destination);
     let plan = match destination {
-        Destination::Msv4 => PointingPlan {
+        Store::Msv4 => PointingPlan {
             reads: partition_reads(&scan, partitions, budget)?,
             gathered: (0, 0),
         },
-        Destination::Msv2 => {
+        Store::Msv2 => {
             let samples: usize = scan.antenna_rows.values().sum();
             let coefficients = samples * 2 * scan.most_terms.max(1);
             let left = read_budget(samples, coefficients, budget)?;
@@ -260,15 +260,30 @@ fn msv2(
     Ok((plan, losses))
 }
 
+/// Whether MSv4 names pointing directions in `frame`, which only an MSv4
+/// destination asks.
+#[cfg(feature = "msv4")]
+fn msv4_names(frame: casa_types::measures::direction::DirectionRef) -> bool {
+    crate::observation_io::msv4::POINTING_FRAMES
+        .iter()
+        .any(|(_, known)| *known == frame)
+}
+
+/// Without the `msv4` feature nothing is written as MSv4, so nothing asks.
+#[cfg(not(feature = "msv4"))]
+fn msv4_names(_frame: casa_types::measures::direction::DirectionRef) -> bool {
+    true
+}
+
 /// What the reads of an MSv2's `POINTING` do not carry into `destination`.
-fn losses(table: &Table, scan: &Scan, destination: Destination) -> Vec<Loss> {
+fn losses(table: &Table, scan: &Scan, destination: Store) -> Vec<Loss> {
     let mut losses = lost_columns(table, destination);
-    if destination == Destination::Msv4 && scan.most_terms > 1 {
+    if destination == Store::Msv4 && scan.most_terms > 1 {
         losses.push(Loss::Table(
             "POINTING polynomial terms (each row's direction at its own time is kept)".to_string(),
         ));
     }
-    if destination == Destination::Msv4 && scan.repeated > 0 {
+    if destination == Store::Msv4 && scan.repeated > 0 {
         losses.push(Loss::Table(format!(
             "POINTING rows at the antenna and time of an earlier one ({})",
             scan.repeated
@@ -276,12 +291,12 @@ fn losses(table: &Table, scan: &Scan, destination: Destination) -> Vec<Loss> {
     }
     if scan.outside > 0 {
         losses.push(Loss::Table(match destination {
-            Destination::Msv4 => format!(
+            Store::Msv4 => format!(
                 "POINTING rows beyond every partition's times and each antenna's nearest either \
                  side ({})",
                 scan.outside
             ),
-            Destination::Msv2 => format!(
+            Store::Msv2 => format!(
                 "POINTING rows of antennas no partition names ({})",
                 scan.outside
             ),
@@ -383,9 +398,9 @@ fn antenna_reads(
 /// both hold each row's antenna, time and direction (its polynomial in
 /// time and the origin of it), and an MSv2 its interval; MSv4 states no
 /// interval and no target.
-fn lost_columns(table: &Table, destination: Destination) -> Vec<Loss> {
+fn lost_columns(table: &Table, destination: Store) -> Vec<Loss> {
     let mut carried = vec!["ANTENNA_ID", "TIME", "DIRECTION", "NUM_POLY", "TIME_ORIGIN"];
-    if destination == Destination::Msv2 {
+    if destination == Store::Msv2 {
         carried.push("INTERVAL");
     }
     let lost: Vec<String> = table

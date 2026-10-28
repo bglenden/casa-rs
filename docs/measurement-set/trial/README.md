@@ -923,7 +923,7 @@ grids, batches) and create the destination from those alone.
 - **Lockstep groups.** A partition's selected groups are read by one
   traversal each, sized to the same whole times per batch (the first with
   every role, the others their visibilities only), so a destination writes
-  every variable of a time range together (`convert/lockstep.rs`).
+  every variable of a time range together (`creation/lockstep.rs`).
   Batches align to the destination's chunk or, for an MSv2, to the
   source's natural time block.
 
@@ -981,7 +981,7 @@ Partitions are converted `workers` at a time.
   polarizations whose products name receptors by their place in the
   feeds (which must agree), and
   spectral windows, polarizations, data descriptions and states shared by
-  partitions of equal content (`convert/msv2_tables.rs`). A data
+  partitions of equal content (`creation/msv2_tables.rs`). A data
   description is shared only by partitions whose state or observation
   differs, since an MSv2 keys partitions by data description, state and
   observation and would read two alike back as one.
@@ -1406,7 +1406,7 @@ ways:
   window 0's rows only: #943).
 
 What a conversion carries of the pointing is planned before anything is
-written (`convert/pointing_plan.rs`):
+written (`creation/pointing_plan.rs`):
 - **Into an MSv4**, each partition's rows within its times (as XRADIO takes
   rows within each dataset's times) and each antenna's nearest either side,
   each as its direction at its own time. MSv4 states no interval or target

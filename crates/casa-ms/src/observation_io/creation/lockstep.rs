@@ -26,11 +26,11 @@ const VISIBILITIES: Roles = Roles {
 
 /// What a lockstep read delivered.
 #[derive(Clone, Copy, Debug, Default)]
-pub(super) struct Read {
+pub(crate) struct Read {
     /// Batches of each group.
-    pub(super) batches: usize,
+    pub(crate) batches: usize,
     /// Samples of each group.
-    pub(super) samples: usize,
+    pub(crate) samples: usize,
 }
 
 /// Read partition `id` of `observation`, every channel and product of
@@ -39,7 +39,7 @@ pub(super) struct Read {
 /// them for all groups together, and a multiple of `chunk` times where
 /// that fits: the destination's chunk, or with `None` the source's natural
 /// time block, so that no unit is decoded twice.
-pub(super) fn read(
+pub(crate) fn read(
     observation: &dyn Observation,
     id: PartitionId,
     groups: &[String],

@@ -990,7 +990,7 @@ fn elapsed_nanos(started: Instant) -> u64 {
 /// sum of every budget check [`MeasurementSet::prepare_selected_pointing_catalog`]
 /// makes, so a budget of at least this is never refused. `None` on
 /// overflow.
-#[cfg(feature = "msv4")]
+#[cfg(unix)]
 pub(crate) fn catalog_peak_bytes(
     rows: usize,
     antennas: usize,
@@ -1036,7 +1036,7 @@ mod tests {
     /// A catalog of `R` retained rows for `A` antennas (each with its nearest
     /// rows either side) prepared with exactly `catalog_peak_bytes(R, A, S,
     /// terms)` is never refused, whatever the scan block `S`.
-    #[cfg(feature = "msv4")]
+    #[cfg(unix)]
     #[test]
     fn catalog_peak_bytes_bounds_every_budget_check() {
         use casa_types::{RecordField, RecordValue, Value};
