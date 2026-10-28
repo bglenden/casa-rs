@@ -225,6 +225,9 @@ impl Msv2Update {
             // another updater is live the lock is held, and SOURCE's is
             // tried once, as while any holder of MAIN's lock clears.
             writer.reopen(&self.path, self.rows)?;
+            // A column another writer has made unbounded since the session
+            // opened is refused before the clear, as under the lock below.
+            refuse_unbounded(writer.ms.main_table(), targets)?;
             for target in targets {
                 clear(&mut writer.ms, target, None)?;
             }
@@ -341,7 +344,10 @@ impl Msv2Update {
     /// What CASA clears before the targets' columns are written is cleared
     /// first ([`clear`]), before any batch: a write then refused
     /// leaves it cleared with nothing written, as CASA's imager clears it
-    /// when it selects the data.
+    /// when it selects the data. The destination rule ([`refuse_unbounded`])
+    /// is applied again on the handle the clear opens and under the lock,
+    /// so a column another writer has changed since the session opened is
+    /// refused.
     pub(in crate::observation_io) fn updater<'s>(
         &'s self,
         request: &AccessRequest,
