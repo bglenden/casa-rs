@@ -874,7 +874,9 @@ fn a_refused_run_holds_no_more_than_it_was_admitted() {
 }
 
 /// A cleaned run that writes its model to `MODEL_DATA`: its last pass
-/// predicts every selected sample and hands each block to the writer.
+/// predicts every selected sample and hands each block to the writer, on
+/// either route. The batch route runs first, so its first run creates and
+/// seeds `MODEL_DATA` (#932, step 5).
 #[test]
 fn a_visibility_write_stays_within_its_admission() {
     if !alone("a_visibility_write_stays_within_its_admission") {
@@ -884,19 +886,23 @@ fn a_visibility_write_stays_within_its_admission() {
     let measurement_set = observation(root.path(), 4);
     warm(&measurement_set, root.path());
     let mut breaches = Vec::new();
-    for (imsize, workers) in [(256, 1), (1024, 4)] {
-        check(
-            &mut breaches,
-            &format!("savemodel {imsize} px {workers} workers"),
-            &request(
+    for route in [SourceRoute::ObservationBatches, SourceRoute::SelectedRows] {
+        for (imsize, workers) in [(256, 1), (1024, 4)] {
+            let mut savemodel = request(
                 &measurement_set,
-                &root.path().join(format!("savemodel-{imsize}")),
+                &root.path().join(format!("savemodel-{route:?}-{imsize}")),
                 imsize,
                 json!({ "deconvolver": "hogbom", "savemodel": "modelcolumn" }),
-            ),
-            workers,
-            AMPLE,
-        );
+            );
+            savemodel.source_route = route;
+            check(
+                &mut breaches,
+                &format!("savemodel {route:?} {imsize} px {workers} workers"),
+                &savemodel,
+                workers,
+                AMPLE,
+            );
+        }
     }
     assert!(breaches.is_empty(), "{breaches:#?}");
 }

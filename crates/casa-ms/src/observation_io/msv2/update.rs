@@ -83,17 +83,23 @@ impl Writer {
     /// Open the handle afresh, refusing a MAIN whose rows the session's
     /// grids no longer address.
     fn reopen(&mut self, path: &Path, rows: usize) -> Result<(), ObservationError> {
-        let ms = MeasurementSet::open(path).map_err(storage)?;
-        if ms.main_table().row_count() != rows {
-            return Err(request_error(format!(
-                "MAIN has {} rows and had {rows} when the session opened: another process \
-                 changed it, so the session's grids no longer address its rows",
-                ms.main_table().row_count()
-            )));
-        }
-        self.ms = ms;
+        self.ms = open_addressed(path, rows)?;
         Ok(())
     }
+}
+
+/// The MeasurementSet at `path`, refused when MAIN no longer has the `rows`
+/// the session's grids address.
+fn open_addressed(path: &Path, rows: usize) -> Result<MeasurementSet, ObservationError> {
+    let ms = MeasurementSet::open(path).map_err(storage)?;
+    if ms.main_table().row_count() != rows {
+        return Err(request_error(format!(
+            "MAIN has {} rows and had {rows} when the session opened: another process \
+             changed it, so the session's grids no longer address its rows",
+            ms.main_table().row_count()
+        )));
+    }
+    Ok(ms)
 }
 
 /// A live updater's share of the session's lock on MAIN: the last to go
@@ -160,12 +166,11 @@ impl Msv2Update {
     ) -> Result<Self, ObservationError> {
         let path = observation.path()?.to_path_buf();
         let rows = observation.main_rows();
-        let mut writer = Writer {
-            ms: MeasurementSet::open(&path).map_err(super::storage)?,
+        let writer = Writer {
+            ms: open_addressed(&path, rows)?,
             lock: None,
             live: 0,
         };
-        writer.reopen(&path, rows)?;
         Ok(Self {
             observation,
             path,

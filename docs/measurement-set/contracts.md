@@ -649,8 +649,8 @@ opening index; the MSv4 adapter reads only the chunks the selection
 touches. Updaters address samples by the batch's own times, so a sliced
 traversal writes back, passing partitions whose selection holds no time; an
 updater bound to a slice refuses a batch of times outside it; an updater
-writes batch for batch, and refuses a later partition while an earlier
-one's selected times are unwritten. Several updaters of one session write
+takes its traversal's batches in any order and any of them, the times it
+is not given keeping what they hold. Several updaters of one session write
 the slices of a split at once, each claiming its times (section 7).
 
 **Field selection.** A request reads every field, or the times phased to
@@ -976,7 +976,12 @@ claiming disjoint times, for the slices of a split) writing visibilities,
 flag set/clear changes and weights for the batches the session delivered,
 the broadcast-weight rule below (Pro R1), data-group aliases accepted
 explicitly (a group the session creates included), one binding per
-variable, row flags and padding preserved (a padded MSv2 cell has no row;
+variable, writes against a delivered batch or its owned address
+(`BatchAddress`, which outlives the batch's buffers; a flag cleared or a
+weight written needs the batch, whose weights mark MSv4 padding), a
+visibility patch's mask of the elements it writes (a sample it leaves
+wholly is neither read nor written), batches in any order and any of them,
+row flags and padding preserved (a padded MSv2 cell has no row;
 an MSv4 updater refuses to clear a flag or write a finite weight where the
 store holds a NaN weight), whole-unit writes that read nothing, MSv4 chunks
 replaced atomically through a temporary object with the changed directories

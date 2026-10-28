@@ -1,6 +1,6 @@
 # Imaging on the shared observation batches (M2 packet c)
 
-Status: accepted by the owner on 2026-10-27 (section 3); steps 1–3 landed, step 4 in progress (#932)
+Status: accepted by the owner on 2026-10-27 (section 3); steps 1–4 landed, step 5 in progress (#932)
 Truth class: accepted design
 Date: 2026-10-27
 Repository baseline: `84824df`
@@ -208,13 +208,12 @@ no imager parameter names. It sees only `&dyn Observation`.
   Neither route charges the tiles the table layer stages while a tiled
   column is read (up to 8 a column, #965); the source's law allows
   exactly those.
-- **Refused** until a later step: writing a model or corrected column
-  (step 5); a field with `EPHEMERIS_ID` (#942); an ephemeris-table phase
-  centre (batch geometry follows a body Measures names, and a table
-  directory named like a body would be followed as the body); `FLOAT_DATA`;
-  several MeasurementSets; and a `WEIGHT_SPECTRUM` that only some selected
-  rows define (the MSv2 adapter takes the column from its first cell,
-  today's route from every selected row).
+- **Refused** until a later step: a field with `EPHEMERIS_ID` (#942); an
+  ephemeris-table phase centre (batch geometry follows a body Measures
+  names, and a table directory named like a body would be followed as the
+  body); `FLOAT_DATA`; several MeasurementSets; and a `WEIGHT_SPECTRUM`
+  that only some selected rows define (the MSv2 adapter takes the column
+  from its first cell, today's route from every selected row).
 - **Evidence.** The route law (`casa_imaging_application::route_law`)
   images every T1 run on both routes and compares every product: all 200
   are bit-identical, the image runs with `usepointing` (AW over two
@@ -415,23 +414,87 @@ does not regress.
   from the estimate's valid samples after selection.
 - **Errors.** A non-finite value names its (partition, time, baseline,
   channel, correlation) and the store, not a MAIN row.
-- **`RowContext`** keeps field, window (now partition) and original UVW. Its
-  `RowAddress` becomes a batch-slot address that the write-back resolves.
+- **`RowContext`** keeps field, window (now partition) and original UVW.
+  `RowAddress` stays the MAIN row of today's route: batch-route rows are
+  unaddressed, and the write-back resolves each block's rows from the
+  provenance its source queues (2.6), since a block is one batch.
 
 ### 2.6 Write-back
 
 `savemodel` and the continuum `CORRECTED_DATA` write through an
-`observation_io` update session. The prediction sink assembles each batch's
-model values and patches them with `PatchValues`:
-- the MSv2 session creates `MODEL_DATA` with CASA's initial model, as
-  `SelectedVisibilityWrite` does, and clears what CASA's `addScrCols` clears
-  (#912);
-- an MSv4 store, which cannot gain a group, writes an existing model group
-  or refuses at opening.
+`observation_io` update session (step 5). A run that writes opens the MSv2
+adapter as every batch run does (the opening grant, §2.1), resolves its
+selection against it, then hands it to the session
+(`UpdateSession::over_msv2`): every pass reads the batches the session's
+updaters write back, and the MeasurementSet is opened and indexed once.
 
-The write stays a `Residency::All` pass, admitted as today. Its counting law
-(`a_visibility_write_stays_within_its_admission`) is kept, restated for
-batches.
+- **Targets.** `model` (`MODEL_DATA`) is created when MAIN lacks it,
+  seeded with CASA's initial model, after clearing what CASA's
+  `addScrCols` clears (#912), as `SelectedVisibilityWrite` does.
+  `corrected` (`CORRECTED_DATA`) is never created: the continuum transform
+  writes an existing column, and today's route also refuses a missing one.
+  An MSv4 store cannot gain a group, so it writes an existing model group
+  or is refused at opening; production reaches MSv4 only after §2.4.
+- **Addresses.** The passes hand each block to their sink on the consumer
+  thread, after the producer has refilled the batch's buffers, so the sink
+  cannot hold the batch. A delivered batch gives an owned `BatchAddress`
+  (`VisibilityBatch::address`): its catalogue, partition, times, channels,
+  products and weight rule, without its payload. An updater writes against
+  an address (`Updater::write_at`) as it writes against the batch, except
+  for a change whose check reads the payload: an MSv4 store knows its
+  padding only from the batch's weights, so a flag cleared or a weight
+  written by address is refused on every store.
+- **Masks.** `PatchValues::Visibilities` carries `written`, a `[sample,
+  channel, product]` mask: an element it leaves keeps its stored value, and
+  a sample it leaves wholly is neither read nor written. Imaging leaves
+  padding, samples outside the UV selection, the channels of a batch's span
+  the selection leaves out (a gapped `spw`), the fit-only channels of a
+  continuum transform and the products not routed: the cells today's route
+  writes, flagged samples included.
+- **Order.** An updater takes its traversal's batches in any order and any
+  of them; the times it is not given keep what they hold. MSv4 updaters
+  already did. The MSv2 updater's delivery-order check and its refusal, at
+  finish, of unwritten times are gone: they guarded a write planned up
+  front, which neither store makes. A batch with no imaged sample yields no
+  block, and nothing is written for it.
+- **Provenance.** A batch route block is one batch. While the writing
+  traversal runs, the source queues, in delivery order, each partition it
+  binds (its request) and, for each block it fills, the batch's address and
+  the batch sample of each row. The runtime hands a writing pass's sink
+  every block once, in source order (`VisibilitySink`), so the sink takes
+  the queue's head. It checks the head against the block (one row per
+  recorded sample, each on its sample's baseline) and fails the pass on a
+  mismatch. At most the stream's blocks are queued
+  (`casa_imaging_runtime::pass::STREAM_SLOTS`).
+- **One updater a partition.** The batch route binds one request per
+  partition. The sink binds a partition's updater when its request reaches
+  the queue's head, before it finishes the last partition's. Updaters
+  overlap, so the MSv2 session holds MAIN's write lock for the whole pass,
+  as `SelectedVisibilityWrite` does.
+- **Admission.** The write stays a `Residency::All` pass. Its charge (today
+  `SelectedVisibilityWrite::retained_bytes`) is, on the batch route, the
+  most any partition's write holds (`BatchRoute::write_bytes`):
+  - what its updater holds writing its largest batch
+    (`UpdateSession::write_bytes`): on MSv2 each present row's cell of each
+    target, as built or merged and as moved into the table, its tiles, and
+    the seeding of a created `MODEL_DATA` in batches of at most the
+    traversal's batch bytes; on MSv4 one partition's windows and the chunks
+    they replace;
+  - the patch the sink assembles (each column's values and the mask over
+    the batch's samples, channels and products);
+  - the provenance of the blocks in flight.
+
+  `casa-ms`'s `msv2_update_memory` holds the updater's bound (created and
+  seeded, masked and merged, two targets). The whole run's law
+  (`a_visibility_write_stays_within_its_admission`) runs on both routes.
+
+The MSv2 counting law found two defects in the trial updater, both fixed in
+this step. It read the cells it merges through the table's row cache, which
+loads every row of MAIN (ADR-0008); merges now read past it, in one call per
+batch. It seeded a created `MODEL_DATA` from two lists of every MAIN row;
+seeding now goes a partition's rows at a time. The selected-row mutation
+also moves its batch's cells into the table rather than cloning them, which
+saves a copy of each cell on every MSv2 mutation writer.
 
 ### 2.7 What is removed at cutover
 

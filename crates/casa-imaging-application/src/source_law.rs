@@ -4,14 +4,17 @@
 //! run's counting law (`tests/admission_memory.rs`) cannot see the source's
 //! charge beside the rest of the run's, so this reads the source alone,
 //! through the traversals a run makes, on a route opened and admitted as a
-//! run admits it. Evidence for the port only: the cutover makes the batch
-//! route the run's, and its law moves with it.
+//! run admits it. A request that writes visibilities back also drives its
+//! write (step 5): the source and the sink of a writing pass hold at most
+//! the route's charge and the write's. Evidence for the port only: the
+//! cutover makes the batch route the run's, and its law moves with it.
 
 use casa_imaging_model::{CompiledProblem, ReconstructionBasis};
 use casa_imaging_operator::PlaneRange;
 use casa_imaging_runtime::pass::{BoundedSource, NativeBlock, SampleContent, source_block_bytes};
+use num_complex::Complex32;
 
-use crate::imaging::{self, ObservationSource};
+use crate::imaging::{self, ObservationSource, VisibilityWriteTarget, VisibilityWriter};
 use crate::{ApplicationDispatchError, ImagingRequest, RunContext, SourceRoute};
 
 /// What [`drive_batch_source`] admitted and read.
@@ -54,8 +57,12 @@ pub fn drive_batch_source(
     let resolved = std::cell::Cell::new(None);
     let (problem, input, native, _resident) = crate::compile_run(&request, context, &resolved)?;
     drop(input.initial_access);
-    let admitted =
-        crate::native::batch_route(&problem, &input.observation, false, &native.runtime)?;
+    let admitted = crate::native::batch_route(
+        &problem,
+        &input.observation,
+        (false, false),
+        &native.runtime,
+    )?;
     let planes = planes(&problem);
     let source = || {
         ObservationSource::new(
@@ -75,6 +82,84 @@ pub fn drive_batch_source(
     Ok(SourceDrive {
         charged: admitted.reservation.memory().saturating_sub(passes),
         block,
+        blocks,
+    })
+}
+
+/// Compile `request`, which writes visibilities back, on the
+/// observation-batch route, admit the route as a run does, read its source
+/// once, then call `mark` and drive a writing pass: a sink begun for the
+/// next traversal, every block of a fresh source's traversal of every
+/// plane handed to it with a zero prediction for each sample, and the
+/// write completed. What a caller counts from `mark` on is the source's and
+/// the write's: the updaters, the patches and the provenance; `charged`
+/// adds the write's charge (the batch route's `write_bytes`) to the
+/// route's. The predictions handed to the sink are allocated before
+/// `mark`: the passes hold them.
+///
+/// # Errors
+///
+/// As [`drive_batch_source`], and when the write fails.
+pub fn drive_batch_write(
+    request: &ImagingRequest,
+    context: &RunContext,
+    mark: &mut dyn FnMut(),
+) -> Result<SourceDrive, ApplicationDispatchError> {
+    let mut request = request.clone();
+    request.source_route = SourceRoute::ObservationBatches;
+    let resolved = std::cell::Cell::new(None);
+    let (problem, input, native, _resident) = crate::compile_run(&request, context, &resolved)?;
+    drop(input.initial_access);
+    let admitted = crate::native::batch_route(
+        &problem,
+        &input.observation,
+        (input.write_model_column, input.write_corrected_data),
+        &native.runtime,
+    )?;
+    let failed = |error: casa_imaging_runtime::pass::SourceError| {
+        ApplicationDispatchError::Native(error.to_string().into())
+    };
+    let planes = planes(&problem);
+    let source = || {
+        ObservationSource::new(
+            &problem,
+            &admitted.value,
+            planes,
+            imaging::plane_bounds(&problem),
+            false,
+        )
+    };
+    read(source(), planes, planes)?;
+    let target = VisibilityWriteTarget::Batches(&admitted.value);
+    let write = target.retained_bytes().map_err(failed)?;
+    let mut source = source();
+    let maximum = source.maximum_block();
+    let mut block = NativeBlock::with_capacity(maximum);
+    let predictions =
+        vec![Complex32::default(); maximum.rows * maximum.channels() * maximum.correlations];
+    mark();
+    let mut writer =
+        VisibilityWriter::begin(&target, problem.visibility_transform()).map_err(failed)?;
+    source
+        .begin(
+            PlaneRange::new(0, planes),
+            false,
+            SampleContent::Visibilities,
+        )
+        .map_err(failed)?;
+    let mut blocks = 0;
+    while source.fill(&mut block).map_err(failed)? {
+        let cells = block.len() * block.channels() * block.correlations();
+        writer
+            .write(&block, &predictions[..cells])
+            .map_err(failed)?;
+        blocks += 1;
+    }
+    writer.complete().map_err(failed)?;
+    let passes = source_block_bytes(maximum);
+    Ok(SourceDrive {
+        charged: admitted.reservation.memory().saturating_sub(passes) + write,
+        block: block.capacity_bytes(),
         blocks,
     })
 }

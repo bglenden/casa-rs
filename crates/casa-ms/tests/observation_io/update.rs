@@ -152,6 +152,7 @@ fn a_model_pass_reads_one_group_and_writes_another() {
     let base = UpdateTarget::new("base", WritableRole::Visibilities);
     let session = open_update(&v4, &OpenOptions::default(), &[base]).expect("v4");
     let four = per_times(session.observation(), request(0..8, 0), 4);
+    let bound = session.write_bytes(&four, &[0]).expect("bound");
     let report = pass(&session, &four, &[0], |batch| {
         vec![Owned::Visibilities(
             batch.group.values.expect("values").mapv(model),
@@ -163,6 +164,13 @@ fn a_model_pass_reads_one_group_and_writes_another() {
         (report.units_written, report.units_read),
         (6, 0),
         "six chunks of [5, 10, 4, 4] written whole from the held windows"
+    );
+    // The session's bound holds the windows and a chunk decoded and
+    // encoded beside them.
+    assert_eq!(
+        bound,
+        report.held_bytes + 2 * 5 * 10 * 4 * 4 * size_of::<Complex32>(),
+        "the windows and a chunk replaced"
     );
     assert_eq!(
         report.held_bytes,

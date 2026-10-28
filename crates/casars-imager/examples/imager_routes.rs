@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! `casars-imager` with imaging port step 4's route law (#932): images as
-//! the imager does, then images the same request again on the
-//! observation-batch route into `<imagename>.batches*`, compares every
+//! `casars-imager` with the imaging port's route law (#932, steps 4 and
+//! 5): images as the imager does, then images the same request again on
+//! the observation-batch route into `<imagename>.batches*`, compares every
 //! product by normalized RMS and writes the comparison, with both routes'
-//! wall times, to `<imagename>.routes.json`. A drop-in imager binary for
-//! evidence harnesses (T1.5, the baseline workloads); it exits 1 when the
-//! law fails. A run that writes a column back is imaged on today's route
-//! alone: the batch route writes nothing yet (step 5).
+//! wall times, to `<imagename>.routes.json`. A run that writes columns
+//! back writes them, on the batch route, to a copy of the MeasurementSet
+//! taken before either route writes (`<vis>.batches`), and each column is
+//! compared too. A drop-in imager binary for evidence harnesses (T1.5, the
+//! baseline workloads); it exits 1 when the law fails.
 //!
 //! ```text
 //! cargo build --release -p casars-imager --example imager_routes
@@ -80,6 +81,10 @@ fn routes(args: &[OsString]) -> Result<bool, String> {
         }
         None => casars_imager::resolve_cli_request(args)?,
     };
+    let written = route_law::written_columns(&request);
+    if !written.is_empty() {
+        route_law::copy_for_batches(&request.vis).map_err(|error| error.to_string())?;
+    }
     let started = Instant::now();
     let today = casars_imager::run(parameters.clone(), &request)?;
     let today_s = started.elapsed().as_secs_f64();
@@ -87,16 +92,15 @@ fn routes(args: &[OsString]) -> Result<bool, String> {
         "{}",
         serde_json::to_string(&today).map_err(|error| error.to_string())?
     );
-    if !route_law::applies_to(&request) {
-        eprintln!("route law: not run, the request writes visibilities back");
-        return Ok(true);
-    }
     let batches = route_law::on_batches(&request);
     let mut batch_parameters = parameters;
     batch_parameters.0.insert(
         "imagename".to_string(),
         json!(batches.imagename.display().to_string()),
     );
+    batch_parameters
+        .0
+        .insert("vis".to_string(), json!(batches.vis.display().to_string()));
     let started = Instant::now();
     let other = casars_imager::run(batch_parameters, &batches)?;
     let batches_s = started.elapsed().as_secs_f64();
@@ -116,12 +120,19 @@ fn routes(args: &[OsString]) -> Result<bool, String> {
         holds &= nrms <= route_law::TOLERANCE;
         products.insert(suffix.to_string(), number(nrms));
     }
+    let mut columns = serde_json::Map::new();
+    for column in written {
+        let nrms = route_law::column_nrms(&request.vis, &batches.vis, column)?;
+        holds &= nrms <= route_law::TOLERANCE;
+        columns.insert(column.to_string(), number(nrms));
+    }
     let receipt = json!({
-        "law": "imaging port step 4: the observation-batch route's products equal the \
-                selected rows' to a normalized RMS of 1e-6",
+        "law": "imaging port steps 4 and 5: the observation-batch route's products and \
+                written columns equal the selected rows' to a normalized RMS of 1e-6",
         "holds": holds,
         "tolerance": route_law::TOLERANCE,
         "products": products,
+        "columns": columns,
         "wall_seconds": { "selected_rows": today_s, "observation_batches": batches_s },
     });
     let mut path = request.imagename.clone().into_os_string();

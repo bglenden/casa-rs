@@ -7,7 +7,7 @@ use std::sync::mpsc;
 use super::{BlockShape, BoundedSource, Cancel, NativeBlock, PassError, SourceError};
 
 /// Blocks resident at once: one being consumed and one being filled.
-const SLOTS: usize = 2;
+pub const SLOTS: usize = 2;
 
 /// Bytes the stream's blocks hold for a source whose largest block is
 /// `block`.

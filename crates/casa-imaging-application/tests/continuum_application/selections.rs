@@ -188,9 +188,8 @@ fn selections_that_empty_data_descriptions_image_the_remaining_rows() {
 }
 
 /// The observation-batch route (#932, step 4) refuses what it does not
-/// read yet, before anything is imaged: a run that writes the model column
-/// (step 5), and a field that follows an ephemeris (#942), whose
-/// `PHASE_DIR` batch geometry would read as a direction.
+/// read yet, before anything is imaged: a field that follows an ephemeris
+/// (#942), whose `PHASE_DIR` batch geometry would read as a direction.
 #[test]
 fn the_observation_batch_route_refuses_what_it_does_not_read_yet() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
@@ -201,9 +200,6 @@ fn the_observation_batch_route_refuses_what_it_does_not_read_yet() {
         imaging.source_route = SourceRoute::ObservationBatches;
         imaging
     };
-    let writes = on_batches("writes", json!({ "niter": 10, "savemodel": "modelcolumn" }));
-    let error = execute(&writes).err().expect("a model column write");
-    assert!(error.to_string().contains("step 5"), "{error}");
     execute(&on_batches("reads", json!({ "niter": 0 }))).expect("the batch route images the field");
     let mut ms = MeasurementSet::open(&path).unwrap();
     ms.subtable_mut(SubtableId::Field)

@@ -25,6 +25,7 @@ mod requests;
 mod selection;
 mod survey;
 mod window;
+mod write;
 
 use std::ops::Range;
 
@@ -45,6 +46,8 @@ pub(crate) use pointing::pointing_direction;
 pub(crate) use selection::{PartitionSelection, SelectedPartition};
 use survey::{PartitionSurvey, survey};
 use window::wave_window;
+use write::Delivered;
+pub(crate) use write::{BatchWriter, WriteBack};
 
 use super::source::PlaneBounds;
 
@@ -52,7 +55,7 @@ use super::source::PlaneBounds;
 /// selection resolved to its partitions, the compiled geometry and the
 /// admitted batches.
 pub(crate) struct BatchRoute {
-    pub(crate) observation: Box<dyn Observation>,
+    pub(crate) store: RouteStore,
     pub(crate) selection: PartitionSelection,
     pub(crate) plan: GeometryPlan,
     pub(crate) batching: Batching,
@@ -62,17 +65,91 @@ pub(crate) struct BatchRoute {
     pub(crate) pointing_budget: usize,
 }
 
+/// What the batch route reads from: an observation, or the update session
+/// of a run that writes visibilities back.
+pub(crate) enum RouteStore {
+    Read(Box<dyn Observation>),
+    Write(Box<WriteBack>),
+}
+
 impl BatchRoute {
     /// The aperture classes in dish order
     /// ([`GeometryPlan::aperture_classes`]).
     pub(crate) fn dish_classes(&self) -> Vec<casa_imaging_model::AntennaResponseClass> {
         self.plan.aperture_classes()
     }
+
+    /// The observation the route reads.
+    pub(crate) fn observation(&self) -> &dyn Observation {
+        match &self.store {
+            RouteStore::Read(observation) => observation.as_ref(),
+            RouteStore::Write(write_back) => write_back.observation(),
+        }
+    }
+
+    /// The write-back of a run that writes visibilities.
+    pub(crate) fn write_back(&self) -> Option<&WriteBack> {
+        match &self.store {
+            RouteStore::Read(_) => None,
+            RouteStore::Write(write_back) => Some(write_back),
+        }
+    }
+
+    /// The request reading selected partition `index`'s selected channels
+    /// `window` (ordinals of its selected channels), with the visibilities
+    /// when `values`, its batches holding the admitted times; and the
+    /// layout of its blocks.
+    fn request(
+        &self,
+        index: usize,
+        window: Range<usize>,
+        values: bool,
+    ) -> Result<(AccessRequest, Layout), SourceError> {
+        let partition = &self.selection.partitions[index];
+        let entry = self.observation().catalogue().partition(partition.id);
+        let layout = Layout::new(partition, entry, window)?;
+        let probe = requests::payload(
+            (&self.selection, &self.plan),
+            entry,
+            partition,
+            layout.native_channels(),
+            values,
+            usize::MAX,
+        );
+        let estimate = self.observation().estimate(&probe)?;
+        let held = estimate
+            .partitions
+            .first()
+            .ok_or("an estimate without its partition")?
+            .held_bytes_per_time();
+        let request = AccessRequest {
+            batch_bytes: held.saturating_mul(self.batching.times_per_batch(index)),
+            ..probe
+        };
+        Ok((request, layout))
+    }
+
+    /// The most bytes the write-back of a writing pass holds beside the
+    /// passes', over every partition's traversal of its selected channels
+    /// ([`WriteBack::write_bytes`]); zero when the run writes nothing.
+    pub(crate) fn write_bytes(&self) -> Result<u64, SourceError> {
+        let Some(write_back) = self.write_back() else {
+            return Ok(0);
+        };
+        (0..self.selection.partitions.len()).try_fold(0, |most: u64, index| {
+            let channels = self.selection.partitions[index].channels.len();
+            let (request, _) = self.request(index, 0..channels, true)?;
+            Ok(most.max(write_back.write_bytes(&request)?))
+        })
+    }
 }
 
 /// The traversal of one wave.
 struct Stream<'a> {
     values: bool,
+    /// Whether the traversal's blocks are written back: each partition it
+    /// binds and each block it fills is queued for the sink.
+    writing: bool,
     /// Each partition's selected channels the wave reads, as ordinals of
     /// its selected channels; `None` when none reaches the wave.
     windows: Vec<Option<Range<usize>>>,
@@ -190,7 +267,7 @@ impl<'a> ObservationSource<'a> {
             return Err("a wave's frequency bounds are empty or not finite".into());
         }
         let surveys = self.surveyed(true)?;
-        let catalogue = route.observation.catalogue();
+        let catalogue = route.observation().catalogue();
         Ok(selection
             .partitions
             .iter()
@@ -223,36 +300,21 @@ impl<'a> ObservationSource<'a> {
     }
 
     /// Bind partition `index`'s traversal of the wave's channels `window`,
-    /// its batches holding the admitted times.
+    /// its batches holding the admitted times; a writing traversal queues
+    /// the request for its sink.
     fn bind(
         &self,
         index: usize,
         window: Range<usize>,
-        values: bool,
+        (values, writing): (bool, bool),
     ) -> Result<(Traversal<'a>, Layout), SourceError> {
         let route: &'a BatchRoute = self.route;
-        let partition = &route.selection.partitions[index];
-        let entry = route.observation.catalogue().partition(partition.id);
-        let layout = Layout::new(partition, entry, window)?;
-        let probe = requests::payload(
-            (&route.selection, &route.plan),
-            entry,
-            partition,
-            layout.native_channels(),
-            values,
-            usize::MAX,
-        );
-        let estimate = route.observation.estimate(&probe)?;
-        let held = estimate
-            .partitions
-            .first()
-            .ok_or("an estimate without its partition")?
-            .held_bytes_per_time();
-        let request = AccessRequest {
-            batch_bytes: held.saturating_mul(route.batching.times_per_batch(index)),
-            ..probe
-        };
-        Ok((route.observation.bind_read(&request)?, layout))
+        let (request, layout) = route.request(index, window, values)?;
+        let traversal = route.observation().bind_read(&request)?;
+        if writing && let Some(write_back) = route.write_back() {
+            write_back.deliver(Delivered::Partition(request));
+        }
+        Ok((traversal, layout))
     }
 
     /// Hold partition `index`'s pointing over its selected times, when
@@ -267,7 +329,7 @@ impl<'a> ObservationSource<'a> {
         };
         let route = self.route;
         self.pointing.hold(
-            route.observation.as_ref(),
+            route.observation(),
             route.pointing_budget,
             (
                 pointing_direction(self.packer.problem),
@@ -292,7 +354,8 @@ impl<'a> ObservationSource<'a> {
                     return Ok(false);
                 };
                 let window = stream.windows[index].clone().expect("a window");
-                let (traversal, layout) = self.bind(index, window, stream.values)?;
+                let (traversal, layout) =
+                    self.bind(index, window, (stream.values, stream.writing))?;
                 stream.next = index + 1;
                 stream.current = Some((index, traversal, layout));
                 self.hold_pointing(index)?;
@@ -326,6 +389,19 @@ impl<'a> ObservationSource<'a> {
                 &mut self.scratch,
                 out,
             )?;
+            if stream.writing
+                && let Some(write_back) = route.write_back()
+            {
+                // The block's rows are the kept samples, in order.
+                let samples = (0..batch.samples())
+                    .filter(|sample| self.keep[*sample])
+                    .map(|sample| u32::try_from(sample).expect("a batch's samples fit u32"))
+                    .collect();
+                write_back.deliver(Delivered::Block {
+                    address: batch.address(),
+                    samples,
+                });
+            }
             return Ok(true);
         }
     }
@@ -343,8 +419,14 @@ impl BoundedSource for ObservationSource<'_> {
         }
         self.state = State::Failed;
         let windows = self.windows(planes, restrict)?;
+        let values = content == SampleContent::Visibilities;
+        let writing = match self.route.write_back() {
+            Some(write_back) if values => write_back.writing()?,
+            _ => false,
+        };
         self.state = State::Streaming(Box::new(Stream {
-            values: content == SampleContent::Visibilities,
+            values,
+            writing,
             windows,
             next: 0,
             current: None,

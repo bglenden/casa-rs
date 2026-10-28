@@ -1,8 +1,42 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! MODEL_DATA and CORRECTED_DATA writes from the final major-cycle pass.
+//! MODEL_DATA and CORRECTED_DATA writes from the final major-cycle pass,
+//! on both routes (#932, step 5).
+
+use casa_imaging_application::{ImagingOutcome, route_law};
 
 use super::*;
+
+/// Run `imaging`, which writes visibilities back, on today's route, and
+/// again on the observation-batch route over a copy of its MeasurementSet
+/// taken before either wrote: both count the same cells written, and each
+/// column written agrees to the route law's normalized RMS over every cell,
+/// those neither writes included. Today's run's outcome.
+fn execute_on_both_routes(imaging: &ImagingRequest) -> ImagingOutcome {
+    route_law::copy_for_batches(&imaging.vis).expect("copy the MeasurementSet");
+    let today = execute(imaging).expect("today's route");
+    let batches = route_law::on_batches(imaging);
+    let other = execute(&batches).expect("the observation-batch route");
+    let cells = |outcome: &ImagingOutcome| {
+        outcome
+            .visibility_products
+            .as_ref()
+            .map(|products| products.sample_count())
+    };
+    assert_eq!(
+        cells(&other),
+        cells(&today),
+        "the routes write different cells"
+    );
+    for column in route_law::written_columns(imaging) {
+        let nrms = route_law::column_nrms(&imaging.vis, &batches.vis, column).expect(column);
+        assert!(
+            nrms <= route_law::TOLERANCE,
+            "{column}: the observation-batch route departs from today's by NRMS {nrms:.3e}"
+        );
+    }
+    today
+}
 
 /// Channel 1 of the line fixture as a one-channel cube, after a
 /// zeroth-order continuum fit to channels 0 and 3, with `overrides`.
@@ -41,7 +75,7 @@ fn application_commits_exact_final_prediction_to_model_data() {
         json!({ "savemodel": "modelcolumn" }),
     );
 
-    let result = execute(&imaging).expect("native save-model application execution");
+    let result = execute_on_both_routes(&imaging);
     let visibility = result
         .visibility_products
         .expect("final visibility completion");
@@ -66,7 +100,7 @@ fn application_commits_exact_final_prediction_to_model_data() {
         &root.path().join("savemodel-overwrite"),
         json!({ "savemodel": "modelcolumn" }),
     );
-    let overwrite_result = execute(&overwrite).expect("native in-place MODEL_DATA overwrite");
+    let overwrite_result = execute_on_both_routes(&overwrite);
     assert_eq!(
         overwrite_result
             .visibility_products
@@ -88,7 +122,7 @@ fn continuum_fit_only_channels_are_read_but_not_persisted_as_line_model_data() {
         json!({ "savemodel": "modelcolumn" }),
     );
 
-    let result = execute(&imaging).expect("line-only MODEL_DATA write");
+    let result = execute_on_both_routes(&imaging);
     assert_eq!(
         result
             .visibility_products
@@ -152,7 +186,7 @@ fn continuum_residual_persistence_overwrites_only_output_roles_in_the_terminal_p
         json!({ "savemodel": "modelcolumn", "save_continuum_residual": true }),
     );
 
-    let result = execute(&imaging).expect("persist continuum residual");
+    let result = execute_on_both_routes(&imaging);
     assert_eq!(result.major_cycle_count, 2);
     assert!(
         result.visibility_products.is_some(),
@@ -237,7 +271,7 @@ fn dirty_continuum_residual_persistence_is_independent_of_model_writeback() {
     );
     assert!(!imaging.savemodel);
 
-    let result = execute(&imaging).expect("dirty residual-only persistence");
+    let result = execute_on_both_routes(&imaging);
     assert_eq!(result.major_cycle_count, 1);
     assert!(
         result.visibility_products.is_some(),
@@ -278,7 +312,7 @@ fn application_replaces_every_selected_model_cell_when_flags_and_correlations_di
         json!({ "channel_count": 2, "savemodel": "modelcolumn" }),
     );
 
-    let result = execute(&imaging).expect("partially flagged MODEL_DATA write");
+    let result = execute_on_both_routes(&imaging);
     let visibility = result
         .visibility_products
         .expect("terminal visibility completion");
