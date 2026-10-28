@@ -215,8 +215,9 @@ no imager parameter names. It sees only `&dyn Observation`.
   windows, the mosaic gridder) among them. On T1.5 (the refim and kernels harnesses, the AW pair
   with `usepointing`, and CAS-7841 under the mosaic gridder with
   `usepointing`), 53 runs and 442 products agree to a normalized RMS of
-  1.3e-10 at most, at the head after the review's fixes. Receipts: NAS
-  `casa-rs/issue-932/step4/` and `step4/review-fixes/`.
+  1.3e-10 at most, again after each review's fixes. Receipts: NAS
+  `casa-rs/issue-932/step4/`, `step4/review-fixes/` and
+  `step4/review-fixes-2/` (the last at the head).
 
 ### 2.2 Geometry
 
