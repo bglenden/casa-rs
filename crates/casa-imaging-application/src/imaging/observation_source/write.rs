@@ -14,8 +14,11 @@
 //! order ([`casa_imaging_runtime::pass::VisibilitySink`]), so the sink
 //! takes the queue's head and checks it against the block. It binds a
 //! partition's updater before it finishes the last one's, so an MSv2
-//! session holds MAIN's write lock for the whole pass, as today's route
-//! does.
+//! session holds MAIN's write lock from the first partition's updater (when
+//! the first block reaches the sink, after creating and seeding a
+//! `MODEL_DATA` it lacks) to the end of the pass. Today's route takes the
+//! lock and creates the column when its writer begins, before the first
+//! block is read.
 //!
 //! Each write leaves what today's route leaves: padding, samples the UV
 //! selection excludes, the channels of a batch's span the selection leaves
@@ -32,6 +35,7 @@ use casa_observation::{
     AccessRequest, BatchAddress, Correlation, Deliver, Observation, ObservationError, PatchValues,
     UpdateTarget, Updater, WritableRole,
 };
+use casa_types::measures::MjdHighPrec;
 use ndarray::ArrayView3;
 use num_complex::Complex32;
 
@@ -42,12 +46,19 @@ use crate::imaging::visibility_write::writes_channel;
 pub(super) enum Delivered {
     /// A partition bound: the request the sink binds its updater to.
     Partition(AccessRequest),
-    /// A block filled: its batch's address, and the batch sample of each
-    /// of its rows.
-    Block {
-        address: BatchAddress,
-        samples: Vec<u32>,
-    },
+    /// A block filled.
+    Block(Provenance),
+}
+
+/// Where a block's rows come from.
+#[derive(Debug)]
+pub(super) struct Provenance {
+    /// Its batch's address.
+    pub(super) address: BatchAddress,
+    /// The batch sample of each of its rows.
+    pub(super) samples: Vec<u32>,
+    /// The spectral window its rows carry.
+    pub(super) spectral_window: u32,
 }
 
 /// The provenance queue, and whether a sink waits for it.
@@ -138,12 +149,9 @@ impl WriteBack {
         self.queue().entries.push_back(entry);
     }
 
-    /// The most bytes one partition's write holds beyond the passes': what
-    /// its updater holds writing its largest batch
-    /// ([`UpdateSession::write_bytes`]), the patch the sink assembles for
-    /// it (each column's values and the mask over the batch's samples,
-    /// channels and products), and the provenance of the blocks in flight.
-    pub(super) fn write_bytes(&self, request: &AccessRequest) -> Result<u64, SourceError> {
+    /// What one partition's write holds beyond the passes', for its
+    /// traversal `request` ([`WriteCharge`]).
+    pub(super) fn write_bytes(&self, request: &AccessRequest) -> Result<WriteCharge, SourceError> {
         let targets = self.targets();
         let updater = self.session.write_bytes(request, &targets)?;
         let estimate = self.observation().estimate(request)?;
@@ -169,7 +177,43 @@ impl WriteBack {
                 + size_of::<Delivered>()
                 + partition.times_per_batch * size_of::<f64>()
                 + products * size_of::<Correlation>());
-        Ok((updater + patch + provenance) as u64)
+        Ok(WriteCharge {
+            updater: updater as u64,
+            patch: patch as u64,
+            provenance: provenance as u64,
+        })
+    }
+}
+
+/// What one partition's write holds beyond the passes'.
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct WriteCharge {
+    /// Its updater, writing its largest batch
+    /// ([`UpdateSession::write_bytes`]).
+    pub(super) updater: u64,
+    /// The patch the sink assembles for its largest batch: each column's
+    /// values and the mask over the batch's samples, channels and
+    /// products. The sink's buffers keep the largest partition's
+    /// capacity.
+    pub(super) patch: u64,
+    /// The provenance of the blocks in flight and the one being written.
+    pub(super) provenance: u64,
+}
+
+impl WriteCharge {
+    /// Each term's most over `self` and `other`: the sink's buffers keep
+    /// one partition's capacity while another's updater writes.
+    pub(super) fn most(self, other: Self) -> Self {
+        Self {
+            updater: self.updater.max(other.updater),
+            patch: self.patch.max(other.patch),
+            provenance: self.provenance.max(other.provenance),
+        }
+    }
+
+    /// The bytes charged.
+    pub(super) fn bytes(self) -> u64 {
+        self.updater + self.patch + self.provenance
     }
 }
 
@@ -227,8 +271,11 @@ impl<'a> BatchWriter<'a> {
         block: &NativeBlock,
         predictions: &[Complex32],
     ) -> Result<(), SourceError> {
-        let (address, samples) = self.next_block()?;
-        check(block, &address, &samples)?;
+        let provenance = self.next_block()?;
+        check(block, &provenance)?;
+        let Provenance {
+            address, samples, ..
+        } = provenance;
         let [batch_samples, channels, products] = address.shape();
         let first = address.channels().start;
         let entry = address.catalogue().partition(address.partition());
@@ -304,22 +351,28 @@ impl<'a> BatchWriter<'a> {
 
     /// The next block's provenance, binding the updater of each partition
     /// queued before it.
-    fn next_block(&mut self) -> Result<(BatchAddress, Vec<u32>), SourceError> {
+    fn next_block(&mut self) -> Result<Provenance, SourceError> {
         loop {
             let next = self.write_back.queue().entries.pop_front();
             match next.ok_or("a block without its batch's provenance")? {
-                Delivered::Partition(request) => {
-                    let updater = self
-                        .write_back
-                        .session
-                        .updater(&request, &self.write_back.targets())?;
-                    if let Some(last) = self.updater.replace(updater) {
-                        last.finish()?;
-                    }
-                }
-                Delivered::Block { address, samples } => return Ok((address, samples)),
+                Delivered::Partition(request) => self.bind(&request)?,
+                Delivered::Block(provenance) => return Ok(provenance),
             }
         }
+    }
+
+    /// Bind the updater of the partition `request` reads, then finish the
+    /// last partition's: the two overlap, so an MSv2 session keeps MAIN's
+    /// lock.
+    fn bind(&mut self, request: &AccessRequest) -> Result<(), SourceError> {
+        let updater = self
+            .write_back
+            .session
+            .updater(request, &self.write_back.targets())?;
+        if let Some(last) = self.updater.replace(updater) {
+            last.finish()?;
+        }
+        Ok(())
     }
 
     /// Finish the last partition's update; returns the cells written.
@@ -331,13 +384,7 @@ impl<'a> BatchWriter<'a> {
             let Delivered::Partition(request) = entry else {
                 return Err("a block's provenance was left unwritten".into());
             };
-            let updater = self
-                .write_back
-                .session
-                .updater(&request, &self.write_back.targets())?;
-            if let Some(last) = self.updater.replace(updater) {
-                last.finish()?;
-            }
+            self.bind(&request)?;
         }
         if let Some(last) = self.updater.take() {
             last.finish()?;
@@ -354,26 +401,44 @@ impl Drop for BatchWriter<'_> {
     }
 }
 
-/// `buffer` as `len` elements of `fill`, or empty when not `used`.
+/// `buffer` as `len` elements of `fill`, or empty when not `used`; grown to
+/// exactly `len` when it holds less, so its capacity is the largest batch's.
 fn reset<T: Copy>(buffer: &mut Vec<T>, len: usize, used: bool, fill: T) {
     buffer.clear();
     if used {
+        buffer.reserve_exact(len);
         buffer.resize(len, fill);
     }
 }
 
 /// Refuse a block whose provenance is not its own: as many rows as the
-/// samples recorded, each on its sample's baseline.
-fn check(block: &NativeBlock, address: &BatchAddress, samples: &[u32]) -> Result<(), SourceError> {
+/// samples recorded, each in the recorded spectral window, at its sample's
+/// time and on its baseline. The times are the batch's own (the source
+/// takes a row's from the same epochs), so a block of another batch of the
+/// partition, which shares its baselines, is refused too, as is a block of
+/// another window's partition at the same times.
+fn check(block: &NativeBlock, provenance: &Provenance) -> Result<(), SourceError> {
+    let Provenance {
+        address,
+        samples,
+        spectral_window,
+    } = provenance;
     let baselines = &address.catalogue().partition(address.partition()).baselines;
+    let time = address.time();
+    let mjd_zero = MjdHighPrec::new(0.0, 0.0);
     let matches = samples.len() == block.len()
         && samples.iter().enumerate().all(|(row, sample)| {
             let sample = *sample as usize;
-            sample < address.samples()
-                && block.header(row).context.antennas == {
-                    let baseline = baselines[sample % baselines.len()];
-                    [baseline.antenna1.0, baseline.antenna2.0]
-                }
+            let context = &block.header(row).context;
+            sample < address.samples() && {
+                let baseline = baselines[sample % baselines.len()];
+                context.spectral_window == *spectral_window
+                    && context.antennas == [baseline.antenna1.0, baseline.antenna2.0]
+                    && context.time_s.to_bits()
+                        == time
+                            .seconds_since(sample / baselines.len(), mjd_zero)
+                            .to_bits()
+            }
         });
     if matches {
         Ok(())

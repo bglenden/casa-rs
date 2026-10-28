@@ -46,8 +46,8 @@ pub(crate) use pointing::pointing_direction;
 pub(crate) use selection::{PartitionSelection, SelectedPartition};
 use survey::{PartitionSurvey, survey};
 use window::wave_window;
-use write::Delivered;
 pub(crate) use write::{BatchWriter, WriteBack};
+use write::{Delivered, Provenance, WriteCharge};
 
 use super::source::PlaneBounds;
 
@@ -131,16 +131,23 @@ impl BatchRoute {
 
     /// The most bytes the write-back of a writing pass holds beside the
     /// passes', over every partition's traversal of its selected channels
-    /// ([`WriteBack::write_bytes`]); zero when the run writes nothing.
+    /// ([`WriteBack::write_bytes`]): the largest updater's, the largest
+    /// patch's and the largest provenance's, since the sink's buffers keep
+    /// one partition's capacity while another's updater writes; zero when
+    /// the run writes nothing.
     pub(crate) fn write_bytes(&self) -> Result<u64, SourceError> {
         let Some(write_back) = self.write_back() else {
             return Ok(0);
         };
-        (0..self.selection.partitions.len()).try_fold(0, |most: u64, index| {
-            let channels = self.selection.partitions[index].channels.len();
-            let (request, _) = self.request(index, 0..channels, true)?;
-            Ok(most.max(write_back.write_bytes(&request)?))
-        })
+        let charge = (0..self.selection.partitions.len()).try_fold(
+            WriteCharge::default(),
+            |most, index| {
+                let channels = self.selection.partitions[index].channels.len();
+                let (request, _) = self.request(index, 0..channels, true)?;
+                Ok::<_, SourceError>(most.most(write_back.write_bytes(&request)?))
+            },
+        )?;
+        Ok(charge.bytes())
     }
 }
 
@@ -393,14 +400,17 @@ impl<'a> ObservationSource<'a> {
                 && let Some(write_back) = route.write_back()
             {
                 // The block's rows are the kept samples, in order.
-                let samples = (0..batch.samples())
-                    .filter(|sample| self.keep[*sample])
-                    .map(|sample| u32::try_from(sample).expect("a batch's samples fit u32"))
-                    .collect();
-                write_back.deliver(Delivered::Block {
+                let mut samples = Vec::with_capacity(batch.samples());
+                samples.extend(
+                    (0..batch.samples())
+                        .filter(|sample| self.keep[*sample])
+                        .map(|sample| u32::try_from(sample).expect("a batch's samples fit u32")),
+                );
+                write_back.deliver(Delivered::Block(Provenance {
                     address: batch.address(),
                     samples,
-                });
+                    spectral_window: partition.spectral_window,
+                }));
             }
             return Ok(true);
         }

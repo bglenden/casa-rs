@@ -88,37 +88,68 @@ fn copy_directory(from: &Path, to: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// MAIN rows [`column_nrms`] reads at a time, so a column is never held
+/// whole.
+const COMPARED_ROWS: usize = 1024;
+
 /// The normalized RMS difference of `column` of the MeasurementSet at
 /// `other` from the one at `reference`, over every MAIN cell, as
 /// [`image_nrms`] compares pixels: `rms(other − reference) /
 /// rms(reference)`, a cell only one holds or a non-finite value counting
-/// as infinite.
+/// as infinite. The cells are read 1,024 rows at a time.
 ///
 /// # Errors
 ///
 /// When either column cannot be read, or the MeasurementSets' rows or
 /// cell shapes differ.
 pub fn column_nrms(reference: &Path, other: &Path, column: &str) -> Result<f64, String> {
-    let read = |path: &Path| {
-        let ms =
-            MeasurementSet::open(path).map_err(|error| format!("{}: {error}", path.display()))?;
-        let main = ms.main_table();
-        let rows: Vec<usize> = (0..main.row_count()).collect();
-        main.column_accessor(column)
-            .and_then(|cells| cells.array_cells_owned_uncached(&rows))
-            .map_err(|error| format!("{} {column}: {error}", path.display()))
+    let open = |path: &Path| {
+        MeasurementSet::open(path).map_err(|error| format!("{}: {error}", path.display()))
     };
-    let (reference, other) = (read(reference)?, read(other)?);
-    if reference.len() != other.len() {
-        return Err(format!("{} rows against {}", reference.len(), other.len()));
+    let (reference, other) = ((reference, open(reference)?), (other, open(other)?));
+    let (rows, other_rows) = (reference.1.row_count(), other.1.row_count());
+    if rows != other_rows {
+        return Err(format!("{rows} rows against {other_rows}"));
     }
-    let (mut error, mut scale) = (0.0_f64, 0.0_f64);
-    for (row, (a, b)) in reference.iter().zip(&other).enumerate() {
+    let mut sums = (0.0_f64, 0.0_f64);
+    let mut chunk = Vec::with_capacity(COMPARED_ROWS.min(rows));
+    for start in (0..rows).step_by(COMPARED_ROWS) {
+        chunk.clear();
+        chunk.extend(start..rows.min(start + COMPARED_ROWS));
+        let read = |(path, ms): &(&Path, MeasurementSet)| {
+            ms.main_table()
+                .column_accessor(column)
+                .and_then(|cells| cells.array_cells_owned_uncached(&chunk))
+                .map_err(|error| format!("{} {column}: {error}", path.display()))
+        };
+        if !accumulate(start, &read(&reference)?, &read(&other)?, &mut sums)? {
+            return Ok(f64::INFINITY);
+        }
+    }
+    let (error, scale) = sums;
+    Ok(if scale == 0.0 {
+        if error == 0.0 { 0.0 } else { f64::INFINITY }
+    } else {
+        (error / scale).sqrt()
+    })
+}
+
+/// Add the squared differences of the cells of rows `first..` in
+/// `reference` and `other`, and the squared reference values, to `sums`:
+/// false when a cell only one holds or a non-finite value makes the
+/// difference infinite.
+fn accumulate(
+    first: usize,
+    reference: &[Option<ArrayValue>],
+    other: &[Option<ArrayValue>],
+    sums: &mut (f64, f64),
+) -> Result<bool, String> {
+    for (row, (a, b)) in (first..).zip(reference.iter().zip(other)) {
         let (Some(ArrayValue::Complex32(a)), Some(ArrayValue::Complex32(b))) = (a, b) else {
             if a.is_none() && b.is_none() {
                 continue;
             }
-            return Ok(f64::INFINITY);
+            return Ok(false);
         };
         if a.shape() != b.shape() {
             return Err(format!(
@@ -129,17 +160,13 @@ pub fn column_nrms(reference: &Path, other: &Path, column: &str) -> Result<f64, 
         }
         for (a, b) in a.iter().zip(b) {
             if !(a.re.is_finite() && a.im.is_finite() && b.re.is_finite() && b.im.is_finite()) {
-                return Ok(f64::INFINITY);
+                return Ok(false);
             }
-            error += f64::from((a - b).norm_sqr());
-            scale += f64::from(a.norm_sqr());
+            sums.0 += f64::from((a - b).norm_sqr());
+            sums.1 += f64::from(a.norm_sqr());
         }
     }
-    Ok(if scale == 0.0 {
-        if error == 0.0 { 0.0 } else { f64::INFINITY }
-    } else {
-        (error / scale).sqrt()
-    })
+    Ok(true)
 }
 
 /// The product prefix [`on_batches`] gives `imagename`.

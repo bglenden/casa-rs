@@ -280,6 +280,12 @@ impl UpdateSession {
             .iter()
             .map(|target| resolve(catalogue, target, creatable, &creating))
             .collect::<Result<Vec<_>, _>>()?;
+        match &store {
+            Store::V2(update) => update.require_bounded(&targets)?,
+            // An MSv4 chunk is replaced whole, however the store lays it out.
+            #[cfg(feature = "msv4")]
+            Store::V4(_) => {}
+        }
         Ok(UpdateSession {
             store,
             targets,

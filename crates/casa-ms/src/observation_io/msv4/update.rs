@@ -298,10 +298,13 @@ impl Updater for Msv4Updater<'_> {
         batch: &VisibilityBatch<'_>,
         values: &[PatchValues<'_>],
     ) -> Result<(), ObservationError> {
+        let address = batch.address();
+        // Shapes first: the padding check indexes the values by the batch.
+        check_values(&address, &self.roles, values)?;
         for value in values {
             refuse_padding_changes(batch, value)?;
         }
-        self.write_address(&batch.address(), values)
+        self.write_checked(&address, values)
     }
 
     fn write_at(
@@ -310,7 +313,8 @@ impl Updater for Msv4Updater<'_> {
         values: &[PatchValues<'_>],
     ) -> Result<(), ObservationError> {
         refuse_payload_checks(values)?;
-        self.write_address(address, values)
+        check_values(address, &self.roles, values)?;
+        self.write_checked(address, values)
     }
 
     fn finish(mut self: Box<Self>) -> Result<UpdateReport, ObservationError> {
@@ -327,14 +331,14 @@ impl Updater for Msv4Updater<'_> {
 }
 
 impl Msv4Updater<'_> {
-    /// Assign `values` for the samples of the batch at `address` into the
-    /// windows of its partition, moving them there first.
-    fn write_address(
+    /// Assign `values`, checked against the bound targets and the batch's
+    /// shape ([`check_values`]), for the samples of the batch at `address`
+    /// into the windows of its partition, moving them there first.
+    fn write_checked(
         &mut self,
         address: &BatchAddress,
         values: &[PatchValues<'_>],
     ) -> Result<(), ObservationError> {
-        check_values(address, &self.roles, values)?;
         if !Arc::ptr_eq(address.catalogue(), self.update.observation.catalogue()) {
             return Err(request_error(
                 "the batch was not delivered by this session's observation",

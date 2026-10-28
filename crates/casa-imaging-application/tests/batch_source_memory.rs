@@ -172,8 +172,9 @@ fn measure(request: &ImagingRequest, planes_per_wave: u32, memory: u64) -> (Sour
 /// 101 channels whole and gapped (`0:0~1;100`, whose batches span every
 /// channel between), a mosaic that reads pointing, and the writing passes
 /// of a continuum and a gapped cube that save the model (the first
-/// creating and seeding `MODEL_DATA`): each holds at most its charge and
-/// its block, and the drives fill blocks.
+/// creating and seeding `MODEL_DATA`), the continuum's again under a policy
+/// that splits its times into several batches: each holds at most its
+/// charge and its block, and the drives fill blocks.
 #[test]
 fn the_batch_source_holds_at_most_its_charge() {
     let root = tempfile::tempdir().expect("test root");
@@ -208,33 +209,50 @@ fn the_batch_source_holds_at_most_its_charge() {
         ("savemodel".to_string(), json!("modelcolumn")),
         ("niter".to_string(), json!(10)),
     ]);
-    let cases: [(&str, &Path, Value, u32); 8] = [
-        ("continuum", &narrow, json!({}), 1),
-        ("cube resident", &narrow, cube.clone(), 16),
-        ("cube in waves", &narrow, cube, 3),
-        ("continuum of 101 channels", &wide, json!({}), 1),
-        ("gapped linear cube in waves", &wide, gapped, 3),
+    let save = json!({ "savemodel": "modelcolumn", "niter": 10 });
+    let ample = 4 << 30;
+    let cases: [(&str, &Path, Value, u32, u64); 9] = [
+        ("continuum", &narrow, json!({}), 1, ample),
+        ("cube resident", &narrow, cube.clone(), 16, ample),
+        ("cube in waves", &narrow, cube, 3, ample),
+        ("continuum of 101 channels", &wide, json!({}), 1, ample),
+        ("gapped linear cube in waves", &wide, gapped, 3, ample),
         (
             "mosaic with pointing",
             &alma,
             json!({ "gridder": "mosaic", "usepointing": true }),
             1,
+            ample,
         ),
         (
             "continuum saving the model",
             &narrow,
-            json!({ "savemodel": "modelcolumn", "niter": 10 }),
+            save.clone(),
             1,
+            ample,
         ),
-        ("gapped cube saving the model", &wide, gapped_write, 10),
+        (
+            "gapped cube saving the model",
+            &wide,
+            gapped_write,
+            10,
+            ample,
+        ),
+        (
+            "continuum saving the model in batches",
+            &narrow,
+            save,
+            1,
+            128 << 20,
+        ),
     ];
     let mut breaches = Vec::new();
-    for (label, measurement_set, controls, planes_per_wave) in cases {
+    for (label, measurement_set, controls, planes_per_wave, memory) in cases {
         let image = root.path().join(label.replace(' ', "-"));
         let (drive, peak) = measure(
             &request(measurement_set, &image, 256, controls),
             planes_per_wave,
-            4 << 30,
+            memory,
         );
         let held = peak - drive.block as i64 - tile_staging(measurement_set);
         eprintln!(
@@ -243,6 +261,10 @@ fn the_batch_source_holds_at_most_its_charge() {
             drive.charged, drive.blocks, drive.block
         );
         assert!(drive.blocks > 0, "{label}: the drive filled no block");
+        assert!(
+            memory == ample || drive.blocks > 1,
+            "{label}: the drive filled one block"
+        );
         if held > drive.charged as i64 {
             breaches.push(format!(
                 "{label}: the source held {held} bytes, {} more than its charge",

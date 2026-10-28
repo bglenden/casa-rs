@@ -7,9 +7,11 @@ use casa_observation::{
     AccessRequest, AliasScope, BatchBuffers, ObservationError, PatchValues, ReadEvent,
     UpdateReport, UpdateTarget, VisibilityBatch, WeightChannels, WritableRole,
 };
+use casa_tables::DataManagerKind;
 use ndarray::Array3;
 use num_complex::Complex32;
 
+use super::layouts::{many_rows, relayout};
 use super::{Key, Sample, fixture, per_times, request, samples};
 
 /// One target's values for one batch, owned.
@@ -453,6 +455,92 @@ fn msv4_padding_stays_flagged() {
         matches!(blind, Err(ObservationError::InvalidRequest { ref reason }) if reason.contains("weights")),
         "{blind:?}"
     );
+}
+
+/// A patch whose shape is not its batch's is refused before any check that
+/// reads it against the batch: an MSv4 flag clear one sample short, where
+/// the padding check would index it, is an `InvalidRequest`.
+#[test]
+fn a_misshapen_patch_is_refused_before_its_padding_is_checked() {
+    let root = tempfile::tempdir().expect("root");
+    let path = fixture(root.path(), "ms_trial.ps.zarr");
+    let target = [UpdateTarget::new("base", WritableRole::Flags)];
+    let session = open_update(&path, &OpenOptions::default(), &target).expect("session");
+    let four = per_times(session.observation(), request(0..8, 0), 4);
+    let refused = pass(&session, &four, &[0], |batch| {
+        let [samples, channels, products] = batch.shape();
+        vec![Owned::Flags {
+            set: None,
+            clear: Some(Array3::from_elem((samples - 1, channels, products), true)),
+        }]
+    });
+    assert!(
+        matches!(refused, Err(ObservationError::InvalidRequest { ref reason }) if reason.contains("shape")),
+        "{refused:?}"
+    );
+}
+
+/// An MSv2 column the session cannot write in place in bounded memory is
+/// refused when the session opens, before anything is cleared or written,
+/// as today's route refuses it: an existing `MODEL_DATA` or
+/// `CORRECTED_DATA` in `StandardStMan` or `StManAipsIO`, and a `MODEL_DATA`
+/// to create when `DATA` is in `StandardStMan`. MAIN's description is
+/// unchanged after each refusal.
+#[test]
+fn an_unbounded_destination_is_refused_before_anything_changes() {
+    let root = tempfile::tempdir().expect("root");
+    let model = UpdateTarget {
+        create: true,
+        ..UpdateTarget::new("model", WritableRole::Visibilities)
+    };
+    let corrected = UpdateTarget::new("corrected", WritableRole::Visibilities);
+    for (label, destinations, manager, target, refused) in [
+        (
+            "standard-model",
+            &["MODEL_DATA"][..],
+            DataManagerKind::StandardStMan,
+            &model,
+            "MODEL_DATA",
+        ),
+        (
+            "aipsio-model",
+            &["MODEL_DATA"][..],
+            DataManagerKind::StManAipsIO,
+            &model,
+            "MODEL_DATA",
+        ),
+        (
+            "standard-corrected",
+            &["CORRECTED_DATA"][..],
+            DataManagerKind::StandardStMan,
+            &corrected,
+            "CORRECTED_DATA",
+        ),
+        // No MODEL_DATA, and DATA in StandardStMan: its clone would be too.
+        (
+            "standard-data",
+            &[][..],
+            DataManagerKind::StandardStMan,
+            &model,
+            "MODEL_DATA",
+        ),
+    ] {
+        let path = many_rows(root.path(), label, 1, 10.0);
+        relayout(&path, destinations, manager);
+        let description = std::fs::read(path.join("table.dat")).expect("MAIN's description");
+        let opened = open_update(&path, &OpenOptions::default(), std::slice::from_ref(target));
+        assert!(
+            matches!(opened, Err(ObservationError::InvalidRequest { ref reason })
+                if reason.starts_with(refused) && reason.contains("in place")),
+            "{label}: {:?}",
+            opened.map(|_| ())
+        );
+        assert_eq!(
+            std::fs::read(path.join("table.dat")).expect("MAIN's description"),
+            description,
+            "{label}: MAIN changed"
+        );
+    }
 }
 
 /// One update session per store in a process, and one live updater per

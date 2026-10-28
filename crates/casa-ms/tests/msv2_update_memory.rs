@@ -6,8 +6,11 @@
 //! two.
 //!
 //! This binary's global allocator counts the live heap; each law compares
-//! with the bound the most the heap rises, after the updater is bound,
-//! above the least it has held since (the values it is given live before).
+//! with the bound the most the heap rises, from just before the updater is
+//! bound, above the least it has held since (the values it is given live
+//! before). Seeding a created `MODEL_DATA`, while the updater is bound, is
+//! held to its own term too: the session's bound is the larger of it and
+//! the write's.
 //! Taking casacore's write lock drops the read caches of the session's
 //! observation, which would otherwise hide what the updater allocates in
 //! their place. One test runs the laws one after another: the allocator
@@ -197,17 +200,29 @@ fn patches(session: &UpdateSession, request: &AccessRequest, masked: bool) -> Ve
     patches
 }
 
+/// How far the heap rose while an updater was bound and wrote.
+struct Rise {
+    /// While it was bound: preparing the columns, creating and seeding a
+    /// `MODEL_DATA` MAIN lacks.
+    binding: u64,
+    /// While it was bound and wrote every batch.
+    writing: u64,
+    /// The session's bound ([`UpdateSession::write_bytes`]).
+    bound: u64,
+}
+
 /// Bind an updater of `targets` over `request` and write `patches` to each
-/// target: the most the heap rose meanwhile, beside the session's bound.
+/// target: how far the heap rose, beside the session's bound.
 fn measure(
     session: &UpdateSession,
     request: &AccessRequest,
     targets: &[usize],
     patches: &[Patch],
-) -> (u64, u64) {
+) -> Rise {
     let bound = session.write_bytes(request, targets).expect("bound") as u64;
     mark();
     let mut updater = session.updater(request, targets).expect("updater");
+    let binding = RISE.load(Ordering::Relaxed);
     for patch in patches {
         let values: Vec<PatchValues<'_>> = targets
             .iter()
@@ -219,7 +234,25 @@ fn measure(
         updater.write_at(&patch.address, &values).expect("write");
     }
     updater.finish().expect("finish");
-    (RISE.load(Ordering::Relaxed), bound)
+    Rise {
+        binding,
+        writing: RISE.load(Ordering::Relaxed),
+        bound,
+    }
+}
+
+/// What seeding a created `MODEL_DATA` may hold, stated apart from the
+/// session's bound, whose larger write term would hide it: a batch of at
+/// most the traversal's batch bytes, two of DATA's tiles (the clone's) and
+/// the staging every write holds.
+fn seeding_bound(path: &Path, request: &AccessRequest) -> u64 {
+    let ms = casa_ms::MeasurementSet::open(path).expect("open");
+    let tile = ms
+        .main_table()
+        .array_column_tile_bytes("DATA")
+        .expect("DATA's tiles")
+        .expect("DATA is tiled");
+    (request.batch_bytes.min(64 << 20) + 2 * tile + (1 << 20)) as u64
 }
 
 /// The laws, one after another.
@@ -236,13 +269,27 @@ fn an_msv2_updater_holds_at_most_its_bound() {
         ..UpdateTarget::new("corrected", WritableRole::Visibilities)
     };
     let mut breaches = Vec::new();
-    let mut check = |label: &str, (peak, bound): (u64, u64)| {
-        eprintln!("{label}: rose {peak} bytes, bound {bound}");
-        if peak > bound {
+    let mut check = |label: &str, rise: Rise, seeding: Option<u64>| {
+        eprintln!(
+            "{label}: rose {} bytes binding, {} in all, bound {}",
+            rise.binding, rise.writing, rise.bound
+        );
+        if rise.writing > rise.bound {
             breaches.push(format!(
-                "{label}: {peak} bytes held, {} beyond the bound",
-                peak - bound
+                "{label}: {} bytes held, {} beyond the bound",
+                rise.writing,
+                rise.writing - rise.bound
             ));
+        }
+        if let Some(seeding) = seeding {
+            eprintln!("{label}: seeding bound {seeding}");
+            if rise.binding > seeding {
+                breaches.push(format!(
+                    "{label}: seeding held {} bytes, {} beyond its term",
+                    rise.binding,
+                    rise.binding - seeding
+                ));
+            }
         }
     };
     {
@@ -252,9 +299,11 @@ fn an_msv2_updater_holds_at_most_its_bound() {
             .expect("session");
         let whole = request(&session, 0..CHANNELS, 4);
         let patches = patches(&session, &whole, false);
+        let seeding = seeding_bound(&path, &whole);
         check(
             "created and whole",
             measure(&session, &whole, &[0], &patches),
+            Some(seeding),
         );
     }
     {
@@ -267,6 +316,7 @@ fn an_msv2_updater_holds_at_most_its_bound() {
         check(
             "existing and masked",
             measure(&session, &whole, &[0], &patches),
+            None,
         );
     }
     {
@@ -279,6 +329,7 @@ fn an_msv2_updater_holds_at_most_its_bound() {
         check(
             "two targets, a window",
             measure(&session, &window, &[0, 1], &patches),
+            None,
         );
     }
     assert!(breaches.is_empty(), "{breaches:#?}");

@@ -991,6 +991,13 @@ hands). What CASA clears is cleared first (`casa_ms::scratch_columns`,
 #912), so that CASA reads the column written: the cached sort keywords
 before a column is added, and every field's virtual model before any
 `MODEL_DATA` write, created or not.
+A session over an MSv2 refuses, when it opens and before anything is cleared
+or written, a target its updaters cannot write in place within
+`UpdateSession::write_bytes`: a column of any role outside `TiledShapeStMan`
+and `TiledColumnStMan`, whose save rewrites every row of its storage group,
+or a column it creates whose clone of `DATA`'s manager would be one or which
+`DATA` shares (`casa_ms::scratch_columns::unbounded_destination`, the rule
+the selected-row visibility writer applies too).
 A batch's own times and baselines address its samples in
 both stores, so no update map is added to the read side. The rest of this
 subsection, and its acceptance obligations, stand for M1/M2.

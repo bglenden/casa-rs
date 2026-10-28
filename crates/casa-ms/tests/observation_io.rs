@@ -12,6 +12,8 @@ mod fields;
 #[cfg(unix)]
 #[path = "observation_io/geometry_inputs.rs"]
 mod geometry_inputs;
+#[path = "common/layouts.rs"]
+mod layouts;
 #[cfg(unix)]
 #[path = "observation_io/namespace.rs"]
 mod namespace;

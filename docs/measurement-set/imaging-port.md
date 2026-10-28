@@ -450,7 +450,18 @@ updaters write back, and the MeasurementSet is opened and indexed once.
   padding, samples outside the UV selection, the channels of a batch's span
   the selection leaves out (a gapped `spw`), the fit-only channels of a
   continuum transform and the products not routed: the cells today's route
-  writes, flagged samples included.
+  writes, flagged samples included. One difference: the source knows
+  padding by its values (every flag set and every weight not finite, as
+  both adapters pad), so a real row that is wholly flagged with no finite
+  weight is left as padding is. Today's route writes its prediction; the
+  row contributes nothing to any image either way.
+- **Destinations.** A session opening an MSv2 refuses, before anything is
+  cleared or written, a target column that cannot be written in place in
+  bounded memory, as today's route refuses it: an existing column outside
+  `TiledShapeStMan` and `TiledColumnStMan`, or a column to create whose
+  clone of `DATA`'s manager would be one (`scratch_columns`). A column in
+  another manager is saved by rewriting every row of its storage group,
+  once a batch.
 - **Order.** An updater takes its traversal's batches in any order and any
   of them; the times it is not given keep what they hold. MSv4 updaters
   already did. The MSv2 updater's delivery-order check and its refusal, at
@@ -469,11 +480,16 @@ updaters write back, and the MeasurementSet is opened and indexed once.
 - **One updater a partition.** The batch route binds one request per
   partition. The sink binds a partition's updater when its request reaches
   the queue's head, before it finishes the last partition's. Updaters
-  overlap, so the MSv2 session holds MAIN's write lock for the whole pass,
-  as `SelectedVisibilityWrite` does.
+  overlap, so the MSv2 session holds MAIN's write lock from the first
+  updater (bound when the first block reaches the sink, which creates and
+  seeds a missing `MODEL_DATA`) to the end of the pass.
+  `SelectedVisibilityWrite` takes it, and creates the column, when the
+  writer begins.
 - **Admission.** The write stays a `Residency::All` pass. Its charge (today
   `SelectedVisibilityWrite::retained_bytes`) is, on the batch route, the
-  most any partition's write holds (`BatchRoute::write_bytes`):
+  largest of each term over the partitions (`BatchRoute::write_bytes`),
+  since the sink's buffers keep one partition's capacity while another's
+  updater writes:
   - what its updater holds writing its largest batch
     (`UpdateSession::write_bytes`): on MSv2 each present row's cell of each
     target, as built or merged and as moved into the table, its tiles, and
@@ -487,6 +503,14 @@ updaters write back, and the MeasurementSet is opened and indexed once.
   `casa-ms`'s `msv2_update_memory` holds the updater's bound (created and
   seeded, masked and merged, two targets). The whole run's law
   (`a_visibility_write_stays_within_its_admission`) runs on both routes.
+  The source's law (`batch_source_memory`) drives writing passes too, one
+  of them over several batches of a partition.
+- **Evidence.** The route law images a writing run's batch route on a copy
+  of its MeasurementSet taken before either route writes
+  (`route_law::copy_for_batches`, `<vis>.batches`), then compares each
+  column written over every cell, 1,024 rows at a time. The copy needs
+  the MeasurementSet's size again on disk; `imager_routes` removes it when
+  the law holds.
 
 The MSv2 counting law found two defects in the trial updater, both fixed in
 this step. It read the cells it merges through the table's row cache, which
@@ -561,7 +585,9 @@ Each step is its own PR with its own laws. Only the last switches production.
    or the source refuses a field with `EPHEMERIS_ID` until they do: batch
    geometry would read its `PHASE_DIR` offset as a direction.
 5. **Write-back** through update sessions. The model-column T1 tests and the
-   counting law run on both routes.
+   counting law run on both routes. Its timing, on the write-back workload
+   `standard-mfs-model-data-vla` among the rest, is step 6's blocking
+   comparison (section 5).
 6. **Cutover.**
    - The option's default flips, and 2.7's routes are removed in the same PR.
    - The blocking comparison must pass.

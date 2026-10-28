@@ -6,8 +6,10 @@
 //! wall times, to `<imagename>.routes.json`. A run that writes columns
 //! back writes them, on the batch route, to a copy of the MeasurementSet
 //! taken before either route writes (`<vis>.batches`), and each column is
-//! compared too. A drop-in imager binary for evidence harnesses (T1.5, the
-//! baseline workloads); it exits 1 when the law fails.
+//! compared too. The copy needs the MeasurementSet's size again on disk; it
+//! is removed when the law holds and kept, for diagnosis, when it fails. A
+//! drop-in imager binary for evidence harnesses (T1.5, the baseline
+//! workloads); it exits 1 when the law fails.
 //!
 //! ```text
 //! cargo build --release -p casars-imager --example imager_routes
@@ -82,9 +84,10 @@ fn routes(args: &[OsString]) -> Result<bool, String> {
         None => casars_imager::resolve_cli_request(args)?,
     };
     let written = route_law::written_columns(&request);
-    if !written.is_empty() {
-        route_law::copy_for_batches(&request.vis).map_err(|error| error.to_string())?;
-    }
+    let copy = (!written.is_empty())
+        .then(|| route_law::copy_for_batches(&request.vis))
+        .transpose()
+        .map_err(|error| error.to_string())?;
     let started = Instant::now();
     let today = casars_imager::run(parameters.clone(), &request)?;
     let today_s = started.elapsed().as_secs_f64();
@@ -140,6 +143,9 @@ fn routes(args: &[OsString]) -> Result<bool, String> {
     let text = serde_json::to_string_pretty(&receipt).map_err(|error| error.to_string())?;
     std::fs::write(&path, text).map_err(|error| error.to_string())?;
     eprintln!("route law: {receipt}");
+    if let Some(copy) = copy.filter(|_| holds) {
+        std::fs::remove_dir_all(&copy).map_err(|error| format!("{}: {error}", copy.display()))?;
+    }
     Ok(holds)
 }
 
