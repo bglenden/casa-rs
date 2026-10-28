@@ -25,7 +25,7 @@ enum Owned {
 impl Owned {
     fn view(&self) -> PatchValues<'_> {
         match self {
-            Self::Visibilities(values) => PatchValues::Visibilities(values.view()),
+            Self::Visibilities(values) => PatchValues::visibilities(values.view()),
             Self::Flags { set, clear } => PatchValues::Flags {
                 set: set.as_ref().map(|mask| mask.view()),
                 clear: clear.as_ref().map(|mask| mask.view()),
@@ -544,43 +544,154 @@ fn an_msv2_session_holds_mains_lock_while_an_updater_is_live() {
     assert!(free(), "the last updater has gone");
 }
 
-/// The MSv2 updater takes its traversal's batches in delivery order and
-/// finishes only once every selected time is written.
-#[test]
-fn an_msv2_updater_takes_its_batches_in_order() {
-    let root = tempfile::tempdir().expect("root");
-    let path = fixture(root.path(), "ms_trial.ms");
-    let session = open_update(
-        &path,
-        &OpenOptions::default(),
-        &[UpdateTarget::new("base", WritableRole::Visibilities)],
-    )
-    .expect("session");
-    let four = per_times(session.observation(), request(0..8, 0), 4);
-    let mut traversal = session.observation().bind_read(&four).expect("bind");
-    let mut updater = session.updater(&four, &[0]).expect("updater");
+/// The visibilities, `[sample, channel, product]`, of every batch
+/// `request` delivers from the store at `path` opened afresh, in delivery
+/// order.
+fn batch_values(path: &std::path::Path, request: &AccessRequest) -> Vec<Array3<Complex32>> {
+    let observation = casa_ms::observation_io::open(path, &OpenOptions::default()).expect("open");
+    let mut traversal = observation.bind_read(request).expect("bind");
     let mut buffers = BatchBuffers::default();
-    let mut delivered = 0;
-    while let Some(ReadEvent::Batch(batch)) = traversal.next(&mut buffers).expect("read") {
-        delivered += 1;
-        if delivered == 1 {
-            continue;
+    let mut batches = Vec::new();
+    while let Some(event) = traversal.next(&mut buffers).expect("read") {
+        if let ReadEvent::Batch(batch) = event {
+            batches.push(batch.group.values.expect("values").to_owned());
         }
-        let values = batch.group.values.expect("values").to_owned();
-        let refused = updater.write(&batch, &[PatchValues::Visibilities(values.view())]);
+    }
+    batches
+}
+
+/// An updater takes its traversal's batches in any order and any of them,
+/// written against their addresses once their buffers hold later batches:
+/// the fixture's three batches of four times, written in reverse with the
+/// middle one left out, each under a mask of every other sample's first two
+/// channels. The elements a mask writes hold the patch; every other
+/// element, the batch left out included, keeps what it held; and MSv2
+/// neither reads nor writes the row of a sample its mask leaves wholly. On
+/// both stores.
+#[test]
+fn an_updater_writes_any_of_its_batches_by_address() {
+    let root = tempfile::tempdir().expect("root");
+    for name in ["ms_trial.ms", "ms_trial.ps.zarr"] {
+        let path = fixture(root.path(), name);
+        let session = open_update(
+            &path,
+            &OpenOptions::default(),
+            &[UpdateTarget::new("base", WritableRole::Visibilities)],
+        )
+        .expect("session");
+        let four = per_times(session.observation(), request(0..8, 0), 4);
+        let before = batch_values(&path, &four);
+        let mut traversal = session.observation().bind_read(&four).expect("bind");
+        let mut buffers = BatchBuffers::default();
+        let written = |s: usize, c: usize| s.is_multiple_of(2) && c < 2;
+        let mut delivered = Vec::new();
+        while let Some(event) = traversal.next(&mut buffers).expect("read") {
+            let ReadEvent::Batch(batch) = event else {
+                continue;
+            };
+            let values = batch.group.values.expect("values").mapv(model);
+            let mask = Array3::from_shape_fn(batch.shape(), |(s, c, _)| written(s, c));
+            delivered.push((batch.address(), values, mask));
+        }
+        drop(traversal);
+        assert_eq!(delivered.len(), 3, "{name}");
+        let mut updater = session.updater(&four, &[0]).expect("updater");
+        for (address, values, mask) in delivered.iter().rev().step_by(2) {
+            updater
+                .write_at(
+                    address,
+                    &[PatchValues::Visibilities {
+                        values: values.view(),
+                        written: Some(mask.view()),
+                    }],
+                )
+                .expect("any batch, in any order");
+        }
+        let report = updater.finish().expect("finish with a batch left out");
+        drop(session);
+        if name.ends_with(".ms") {
+            // Five of each batch's ten samples per time, four times, two
+            // batches; each cell covered partly, so read to merge.
+            assert_eq!(report.samples, 2 * 4 * 5, "{name}");
+            assert_eq!(report.units_read, 2 * 4 * 5, "{name}");
+        }
+        let after = batch_values(&path, &four);
+        for (index, (old, new)) in before.iter().zip(&after).enumerate() {
+            for ((s, c, p), value) in new.indexed_iter() {
+                let expected = if index != 1 && written(s, c) {
+                    model(old[[s, c, p]])
+                } else {
+                    old[[s, c, p]]
+                };
+                assert_eq!(*value, expected, "{name} batch {index} [{s}, {c}, {p}]");
+            }
+        }
+    }
+}
+
+/// A change whose check reads the batch's payload (a flag cleared, a
+/// weight written) is refused against an address on both stores, as an
+/// MSv4 store knows its padding only from the batch's weights; flags set by
+/// address are written.
+#[test]
+fn an_address_takes_no_change_its_payload_checks() {
+    let root = tempfile::tempdir().expect("root");
+    for name in ["ms_trial.ms", "ms_trial.ps.zarr"] {
+        let path = fixture(root.path(), name);
+        let session = open_update(
+            &path,
+            &OpenOptions::default(),
+            &[
+                UpdateTarget::new("base", WritableRole::Flags),
+                UpdateTarget::new("base", WritableRole::Weights),
+            ],
+        )
+        .expect("session");
+        let all = per_times(session.observation(), request(0..8, 0), 12);
+        let mut traversal = session.observation().bind_read(&all).expect("bind");
+        let mut buffers = BatchBuffers::default();
+        let Some(ReadEvent::Batch(batch)) = traversal.next(&mut buffers).expect("read") else {
+            panic!("{name}: a batch");
+        };
+        let address = batch.address();
+        let mask = Array3::from_elem(batch.shape(), true);
+        let weights = Array3::from_elem(batch.shape(), 1.0_f32);
+        drop(traversal);
+        let mut flags = session.updater(&all, &[0]).expect("flags");
+        let cleared = flags.write_at(
+            &address,
+            &[PatchValues::Flags {
+                set: None,
+                clear: Some(mask.view()),
+            }],
+        );
         assert!(
-            matches!(refused, Err(ObservationError::InvalidRequest { .. })),
-            "batch {delivered} after a skipped one: {refused:?}"
+            matches!(cleared, Err(ObservationError::InvalidRequest { .. })),
+            "{name}: {cleared:?}"
+        );
+        flags
+            .write_at(
+                &address,
+                &[PatchValues::Flags {
+                    set: Some(mask.view()),
+                    clear: None,
+                }],
+            )
+            .expect("flags set by address");
+        flags.finish().expect("finish");
+        let mut weighting = session.updater(&all, &[1]).expect("weights");
+        let weighted = weighting.write_at(
+            &address,
+            &[PatchValues::Weights {
+                values: weights.view(),
+                channels: WeightChannels::All,
+            }],
+        );
+        assert!(
+            matches!(weighted, Err(ObservationError::InvalidRequest { .. })),
+            "{name}: {weighted:?}"
         );
     }
-    assert_eq!(delivered, 3);
-    assert!(
-        matches!(
-            updater.finish(),
-            Err(ObservationError::InvalidRequest { .. })
-        ),
-        "the planned rows were not written"
-    );
 }
 
 /// A flag change that names no element (neither mask) keeps every flag:

@@ -334,6 +334,18 @@ impl Msv2Observation {
         main_rows * (size_of::<u32>() + size_of::<f64>()) + chunk * index::CHUNK_ROW_BYTES
     }
 
+    /// MAIN's rows when the observation opened.
+    pub(in crate::observation_io) fn main_rows(&self) -> usize {
+        self.ms.main_table().row_count()
+    }
+
+    /// The MeasurementSet's path.
+    pub(in crate::observation_io) fn path(&self) -> Result<&Path, ObservationError> {
+        self.ms
+            .path()
+            .ok_or_else(|| invalid("the MeasurementSet has no path to write back to"))
+    }
+
     /// Bytes the opening's index holds while the observation is open: each
     /// partition's grid, a MAIN row number per cell with its time and
     /// baseline tables.
