@@ -32,6 +32,7 @@ struct ApplyOptions {
     calibration_tables: Vec<ApplyCalibrationTableSpec>,
     apply_mode: ApplyMode,
     parang: bool,
+    flagbackup: bool,
     format: OutputFormat,
     output: Option<PathBuf>,
     overwrite: bool,
@@ -227,6 +228,7 @@ impl Command {
                 calibration_tables: options.calibration_tables,
                 apply_mode: options.apply_mode,
                 parang: options.parang,
+                flagbackup: options.flagbackup,
             }),
             Self::Summarize(options) => CalibrationTaskRequest::Summary(SummaryTaskRequest {
                 paths: options.paths,
@@ -401,6 +403,8 @@ fn run(request: RunRequest) -> Result<(), String> {
     let format = request.command.format();
     let output_path = request.command.output_path().map(Path::to_path_buf);
     let overwrite = request.command.overwrite();
+    // Checked before the task runs, so a refused report changes nothing (#931).
+    refuse_existing_output(output_path.as_deref(), overwrite)?;
     let result = request.command.into_task_request().execute()?;
     let rendered = match format {
         OutputFormat::Text => render_text_task_result(&result),
@@ -468,6 +472,7 @@ fn parse_apply_args(args: &[OsString], managed_output: bool) -> Result<CliAction
     let mut calwt = None;
     let mut apply_mode = ApplyMode::CalFlag;
     let mut parang = false;
+    let mut flagbackup = true;
     let mut format = OutputFormat::Text;
     let mut output = None;
     let mut overwrite = false;
@@ -489,6 +494,8 @@ fn parse_apply_args(args: &[OsString], managed_output: bool) -> Result<CliAction
                     .ok_or_else(|| "missing value for --ms".to_string())?;
                 measurement_set = Some(PathBuf::from(value));
             }
+            "--flagbackup" => flagbackup = true,
+            "--no-flagbackup" => flagbackup = false,
             "--gaintables" => {
                 index += 1;
                 let value = args
@@ -577,6 +584,7 @@ fn parse_apply_args(args: &[OsString], managed_output: bool) -> Result<CliAction
             calibration_tables,
             apply_mode,
             parang,
+            flagbackup,
             format,
             output,
             overwrite,
@@ -2062,6 +2070,9 @@ fn render_apply_report_text(report: &ApplyExecutionReport) -> String {
     let _ = writeln!(out, "  updated_rows={}", report.updated_row_count);
     let _ = writeln!(out, "  flagged_rows={}", report.flagged_row_count);
     let _ = writeln!(out, "  flagged_samples={}", report.flagged_sample_count);
+    if let Some(version) = &report.flag_backup_version {
+        let _ = writeln!(out, "  flag_backup={version}");
+    }
     let _ = writeln!(out, "  timings:");
     let _ = writeln!(
         out,
@@ -2374,15 +2385,20 @@ fn render_value_stats_block(out: &mut String, stats: &crate::CalibrationValueSta
     );
 }
 
+fn refuse_existing_output(path: Option<&Path>, overwrite: bool) -> Result<(), String> {
+    match path {
+        Some(path) if path.exists() && !overwrite => Err(format!(
+            "refusing to overwrite existing output {}; pass --overwrite to replace it",
+            path.display()
+        )),
+        _ => Ok(()),
+    }
+}
+
 fn write_output(path: Option<&Path>, overwrite: bool, text: &str) -> Result<(), String> {
+    refuse_existing_output(path, overwrite)?;
     match path {
         Some(path) => {
-            if path.exists() && !overwrite {
-                return Err(format!(
-                    "refusing to overwrite existing output {}; pass --overwrite to replace it",
-                    path.display()
-                ));
-            }
             fs::write(path, text).map_err(|error| format!("write {}: {error}", path.display()))
         }
         None => {
@@ -2722,6 +2738,7 @@ mod tests {
             "--spw".into(),
             "1".into(),
             "--parang".into(),
+            "--no-flagbackup".into(),
         ])
         .expect("parse succeeds");
 
@@ -2740,8 +2757,28 @@ mod tests {
                 calibration_tables: vec![ApplyCalibrationTableSpec::new("phase.gcal")],
                 apply_mode: ApplyMode::Trial,
                 parang: true,
+                flagbackup: false,
             })
         );
+    }
+
+    #[test]
+    fn apply_backs_up_flags_by_default_as_casa_does() {
+        let action = parse_args(["apply".into(), "dataset.ms".into(), "phase.gcal".into()])
+            .expect("parse succeeds");
+        let CliAction::Run(request) = action else {
+            panic!("expected run action");
+        };
+        let CalibrationTaskRequest::ExecuteApply(parsed) = request.command.into_task_request()
+        else {
+            panic!("expected an apply request");
+        };
+        assert!(parsed.flagbackup);
+
+        // A JSON request that predates the field keeps CASA's default.
+        let json = r#"{"measurement_set": "dataset.ms", "calibration_tables": [], "apply_mode": "CalFlag"}"#;
+        let decoded: ExecuteApplyTaskRequest = serde_json::from_str(json).expect("decode");
+        assert!(decoded.flagbackup);
     }
 
     #[test]
@@ -3343,6 +3380,7 @@ mod tests {
             updated_row_count: 9,
             flagged_row_count: 2,
             flagged_sample_count: 5,
+            flag_backup_version: Some("applycal_1".to_string()),
             timings: ApplyExecutionTimings {
                 planning_ns: 1_500_000,
                 planning_selection_ns: 500_000,
@@ -3363,6 +3401,7 @@ mod tests {
         let apply_text = super::render_apply_report_text(&report);
         assert!(apply_text.contains("Calibration Apply Report: dataset.ms"));
         assert!(apply_text.contains("created_corrected_data_column=true"));
+        assert!(apply_text.contains("flag_backup=applycal_1"));
         assert!(apply_text.contains("1.500ms"));
         assert!(apply_text.contains("gainfield=4 Some(\"calibrator\")"));
     }

@@ -22,9 +22,11 @@ files, and the [generated parameter reference](reference/task-parameters.md)
 for every parameter and its CLI flag.
 
 Use a writable copy of the dataset when you intend to apply calibration,
-because `applycal` (and `calibrate --mode apply`) writes `CORRECTED_DATA`.
-That mutation is a declared safety rule, so the run needs
-`--confirm-mutation`.
+because `applycal` (and `calibrate --mode apply`) writes `CORRECTED_DATA` in
+place, as CASA's does. As in CASA, a `calflag` run first saves the flags to the
+next `applycal_N` flag version (`flagbackup`, default on), so
+`flagmanager` can restore them; `--no-flagbackup` skips it, and `calonly` and
+`trial` change no flags and save none.
 
 ## `ngc5921.ms` walkthrough
 
@@ -61,7 +63,7 @@ cd "$workdir"
 
    ```bash
    casars run applycal --ms ngc5921.ms \
-     --gaintables ngc5921.G0,ngc5921.B0 --field 0 --confirm-mutation
+     --gaintables ngc5921.G0,ngc5921.B0 --field 0
    ```
 
 4. Inspect the solutions and the corrected data with `calibrate --mode stats`
@@ -79,8 +81,15 @@ and `--save-params FILE` to keep a run's resolved profile for reuse with
 
 The same surfaces are generated CASA-named functions under `casars.tasks`
 (`casars.tasks.gaincal(...)`, `casars.tasks.applycal(...)`, and so on), and
-`casars.tasks.run("gaincal", ...)` accepts the same parameters. Runtime safety
-confirmations are keyword arguments such as `confirm_mutation=True`.
+`casars.tasks.run("gaincal", ...)` accepts the same parameters. CASA's
+parameters are the consent; there are no separate confirmations.
+
+`overwrite=True` replaces only the `-o` report today. A run that would write
+a calibration table or MeasurementSet that already exists is refused whatever
+`overwrite` says: gaincal, bandpass and gencal caltables, the fluxscale
+table, and the corrected-data export. Choose a new name, or remove the old
+product first. Bringing these in line with CASA, whose gaincal replaces an
+existing caltable, is [#945](https://github.com/bglenden/casa-rs/issues/945).
 
 ## Current limitations
 

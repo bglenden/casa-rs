@@ -108,11 +108,14 @@ def run(
     current-contract TOML profile by the Rust runtime; Python never projects
     values into provider flags.
 
-    Runtime-only authorization remains explicit through
-    ``confirm_overwrite`` and ``confirm_mutation`` and is never persisted in
-    the profile. ``save_last=False`` skips the automatic Last and Last
-    Successful updates, which the CLI otherwise owns. Captured stdout and
-    stderr are retained on the returned completion and on
+    A Python task call saves no Last or Last Successful profile: those record
+    command-line runs, and the call asks ``casars run`` for none. An existing
+    Last can still be the base source, and :meth:`TaskParameters.write_last`
+    still writes one explicitly. CASA's own parameters, such as
+    ``overwrite``, are the consent to replace or change data (#931).
+    ``save_last``, ``confirm_overwrite`` and ``confirm_mutation`` are
+    accepted and ignored until the task binaries are started directly.
+    Captured stdout and stderr are retained on the returned completion and on
     :class:`TaskExecutionError`.
     """
 
@@ -142,13 +145,8 @@ def run(
             str(profile_path),
             "--workspace",
             str(resolved_workspace),
+            "--no-save-last",
         ]
-        if not save_last:
-            command.append("--no-save-last")
-        if confirm_overwrite:
-            command.append("--confirm-overwrite")
-        if confirm_mutation:
-            command.append("--confirm-mutation")
 
         process_env = None
         if env is not None:

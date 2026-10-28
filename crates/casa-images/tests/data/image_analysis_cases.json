@@ -1,0 +1,363 @@
+{
+  "description": "Inputs and operations for casa-images' comparison with CASA 6.7.6's image analysis (#841 Phase 6a). tools/images/image_analysis_oracle.py builds each image in CASA, records its pixels, mask and world coordinates, runs each case and writes tests/data/image_analysis_casa.json; tests/image_analysis_casa.rs rebuilds the images from both files and compares. Angles: refval in rad, increments in arcsec, beams in arcsec and deg. Axes: 'flat' is [RA, Dec, Stokes I], as simutil.flatimage writes; 'cube' is [RA, Dec, Stokes I, Frequency], as tclean and tsdimaging write. Sources are Gaussians of peak 'peak' and dispersion 'sigma' pixels, or single pixels when sigma is 0.",
+  "images": {
+    "model_flat": {
+      "axes": "flat",
+      "shape": [31, 40, 1],
+      "frame": "B1950",
+      "refval_rad": [-2.908882086561496e-06, -0.6108628141296097],
+      "refpix": [15.0, 20.0],
+      "inc_arcsec": [-0.1, 0.1],
+      "unit": "Jy/pixel",
+      "sources": [
+        {"x": 9.0, "y": 25.0, "peak": 0.8, "sigma": 0.0},
+        {"x": 21.4, "y": 13.7, "peak": 0.35, "sigma": 2.2},
+        {"x": 14.0, "y": 31.0, "peak": 0.05, "sigma": 5.0}
+      ]
+    },
+    "clean_flat": {
+      "axes": "flat",
+      "shape": [24, 27, 1],
+      "frame": "B1950",
+      "refval_rad": [6.2831823982975, -0.6108628141296097],
+      "refpix": [12.0, 13.0],
+      "inc_arcsec": [-0.2, 0.2],
+      "unit": "Jy/beam",
+      "beam": {"major_arcsec": 0.9, "minor_arcsec": 0.7, "pa_deg": 35.0},
+      "sources": [
+        {"x": 12.0, "y": 13.0, "peak": 1.0, "sigma": 1.5}
+      ]
+    },
+    "sd_cube": {
+      "axes": "cube",
+      "shape": [21, 21, 1, 1],
+      "frame": "J2000",
+      "refval_rad": [5.235987755982989, -0.40142572795869574],
+      "refpix": [10.0, 10.0],
+      "inc_arcsec": [-2.0, 2.0],
+      "unit": "Jy/beam",
+      "beam": {"major_arcsec": 20.5, "minor_arcsec": 20.5, "pa_deg": 0.0},
+      "sources": [
+        {"x": 10.0, "y": 10.0, "peak": 3.0, "sigma": 4.0},
+        {"x": 6.3, "y": 14.2, "peak": 1.2, "sigma": 2.5}
+      ],
+      "mask_boxes": [
+        [0, 0, 2, 1],
+        [19, 17, 20, 20],
+        [8, 20, 9, 20]
+      ]
+    },
+    "edge_masked": {
+      "axes": "flat",
+      "shape": [18, 15, 1],
+      "frame": "J2000",
+      "refval_rad": [1.0, 0.5],
+      "refpix": [8.0, 7.0],
+      "inc_arcsec": [-0.5, 0.5],
+      "unit": "Jy/beam",
+      "beam": {"major_arcsec": 2.0, "minor_arcsec": 1.5, "pa_deg": 10.0},
+      "sources": [
+        {"x": 3.0, "y": 4.0, "peak": 2.0, "sigma": 3.0},
+        {"x": 13.0, "y": 11.0, "peak": -0.7, "sigma": 2.0}
+      ],
+      "mask_boxes": [
+        [0, 6, 0, 8],
+        [10, 0, 11, 1],
+        [5, 9, 6, 10],
+        [17, 14, 17, 14]
+      ]
+    },
+    "conv_in": {
+      "axes": "flat",
+      "shape": [33, 40, 1],
+      "frame": "J2000",
+      "refval_rad": [2.5, -0.3],
+      "refpix": [16.0, 20.0],
+      "inc_arcsec": [-0.25, 0.25],
+      "unit": "Jy/pixel",
+      "sources": [
+        {"x": 7.0, "y": 31.0, "peak": 1.0, "sigma": 0.0},
+        {"x": 24.0, "y": 9.0, "peak": 0.6, "sigma": 0.0},
+        {"x": 16.0, "y": 20.0, "peak": 0.2, "sigma": 0.0},
+        {"x": 30.0, "y": 36.0, "peak": 0.4, "sigma": 0.0}
+      ],
+      "mask_boxes": [
+        [0, 0, 3, 2],
+        [23, 8, 24, 9]
+      ]
+    },
+    "conv_oblong": {
+      "axes": "cube",
+      "shape": [36, 29, 1, 1],
+      "frame": "J2000",
+      "refval_rad": [4.0, 0.9],
+      "refpix": [18.0, 14.0],
+      "inc_arcsec": [-0.25, 0.25],
+      "unit": "Jy/pixel",
+      "sources": [
+        {"x": 9.0, "y": 8.0, "peak": 1.0, "sigma": 0.0},
+        {"x": 27.0, "y": 21.0, "peak": 0.5, "sigma": 1.2}
+      ]
+    },
+    "stats_even": {
+      "axes": "flat",
+      "shape": [12, 9, 1],
+      "frame": "J2000",
+      "refval_rad": [0.2, 0.1],
+      "refpix": [6.0, 4.0],
+      "inc_arcsec": [-1.0, 1.0],
+      "unit": "Jy/beam",
+      "beam": {"major_arcsec": 3.0, "minor_arcsec": 3.0, "pa_deg": 0.0},
+      "sources": [
+        {"x": 2.0, "y": 3.0, "peak": 1.0, "sigma": 2.0},
+        {"x": 9.0, "y": 6.0, "peak": -0.4, "sigma": 1.0},
+        {"x": 5.0, "y": 1.0, "peak": 0.3, "sigma": 0.0}
+      ],
+      "mask_boxes": [
+        [0, 0, 1, 0],
+        [7, 4, 8, 4]
+      ]
+    },
+    "int_cube": {
+      "axes": "cube",
+      "shape": [48, 48, 1, 1],
+      "frame": "J2000",
+      "refval_rad": [3.0, -0.5],
+      "refpix": [24.0, 24.0],
+      "inc_arcsec": [-0.25, 0.25],
+      "unit": "Jy/beam",
+      "beam": {"major_arcsec": 1.2, "minor_arcsec": 1.0, "pa_deg": 20.0},
+      "sources": [
+        {"x": 18.0, "y": 27.0, "peak": 0.9, "sigma": 2.0},
+        {"x": 30.0, "y": 20.0, "peak": 0.4, "sigma": 4.0}
+      ]
+    },
+    "sd_low": {
+      "axes": "cube",
+      "shape": [12, 12, 1, 1],
+      "frame": "J2000",
+      "refval_rad": [3.0, -0.5],
+      "refpix": [6.0, 6.0],
+      "inc_arcsec": [-1.5, 1.5],
+      "unit": "Jy/beam",
+      "beam": {"major_arcsec": 7.0, "minor_arcsec": 7.0, "pa_deg": 0.0},
+      "sources": [
+        {"x": 5.5, "y": 6.3, "peak": 2.5, "sigma": 2.5}
+      ]
+    },
+    "pb_cube": {
+      "axes": "cube",
+      "shape": [48, 48, 1, 1],
+      "frame": "J2000",
+      "refval_rad": [3.0, -0.5],
+      "refpix": [24.0, 24.0],
+      "inc_arcsec": [-0.25, 0.25],
+      "unit": "",
+      "sources": [
+        {"x": 24.0, "y": 24.0, "peak": 1.0, "sigma": 14.0}
+      ]
+    },
+    "conv_rotated": {
+      "axes": "flat",
+      "shape": [33, 40, 1],
+      "frame": "J2000",
+      "refval_rad": [2.5, -0.3],
+      "refpix": [16.0, 20.0],
+      "inc_arcsec": [-0.25, 0.25],
+      "pc": [[0.0, -1.0], [1.0, 0.0]],
+      "unit": "Jy/pixel",
+      "sources": [
+        {"x": 7.0, "y": 31.0, "peak": 1.0, "sigma": 0.0},
+        {"x": 16.0, "y": 20.0, "peak": 0.5, "sigma": 0.0},
+        {"x": 25.0, "y": 8.0, "peak": 0.3, "sigma": 1.5}
+      ]
+    },
+    "two_channels": {
+      "axes": "cube",
+      "shape": [18, 15, 1, 2],
+      "frame": "J2000",
+      "refval_rad": [1.0, 0.5],
+      "refpix": [8.0, 7.0],
+      "inc_arcsec": [-0.5, 0.5],
+      "unit": "Jy/beam",
+      "beam": {"major_arcsec": 2.0, "minor_arcsec": 1.5, "pa_deg": 10.0},
+      "sources": [
+        {"x": 3.0, "y": 4.0, "peak": 2.0, "sigma": 3.0},
+        {"x": 13.0, "y": 11.0, "peak": -0.7, "sigma": 2.0}
+      ],
+      "mask_boxes": [[5, 9, 6, 10]]
+    }
+  },
+  "cases": [
+    {
+      "name": "imregrid_simanalyze_recipe_cubic",
+      "op": "imregrid",
+      "input": "sd_cube",
+      "template": {
+        "from": "sd_cube",
+        "refpix": [30.0, 32.0],
+        "inc_scale": 0.25,
+        "shape": [60, 64, 1, 1]
+      },
+      "interpolation": "cubic",
+      "decimate": 0
+    },
+    {
+      "name": "imregrid_simanalyze_recipe_cubic_decimated",
+      "op": "imregrid",
+      "input": "sd_cube",
+      "template": {
+        "from": "sd_cube",
+        "refpix": [30.0, 32.0],
+        "inc_scale": 0.25,
+        "shape": [60, 64, 1, 1]
+      },
+      "interpolation": "cubic",
+      "decimate": 10
+    },
+    {
+      "name": "imregrid_simanalyze_recipe_linear",
+      "op": "imregrid",
+      "input": "sd_cube",
+      "template": {
+        "from": "sd_cube",
+        "refpix": [30.0, 32.0],
+        "inc_scale": 0.25,
+        "shape": [60, 64, 1, 1]
+      },
+      "interpolation": "linear",
+      "decimate": 0
+    },
+    {
+      "name": "imregrid_edges_nearest",
+      "op": "imregrid",
+      "input": "edge_masked",
+      "template": {
+        "from": "edge_masked",
+        "refpix": [14.37, 12.81],
+        "inc_scale": 0.8,
+        "shape": [30, 26, 1]
+      },
+      "interpolation": "nearest",
+      "decimate": 0
+    },
+    {
+      "name": "imregrid_edges_cubic",
+      "op": "imregrid",
+      "input": "edge_masked",
+      "template": {
+        "from": "edge_masked",
+        "refpix": [14.37, 12.81],
+        "inc_scale": 0.8,
+        "shape": [30, 26, 1]
+      },
+      "interpolation": "cubic",
+      "decimate": 0
+    },
+    {
+      "name": "imregrid_edges_linear",
+      "op": "imregrid",
+      "input": "edge_masked",
+      "template": {
+        "from": "edge_masked",
+        "refpix": [14.37, 12.81],
+        "inc_scale": 0.8,
+        "shape": [30, 26, 1]
+      },
+      "interpolation": "linear",
+      "decimate": 0
+    },
+    {
+      "name": "regrid_convimage",
+      "op": "ia_regrid",
+      "input": "model_flat",
+      "template": {"from": "clean_flat"},
+      "method": "linear",
+      "decimate": 0
+    },
+    {
+      "name": "regrid_jypixel_cubic",
+      "op": "ia_regrid",
+      "input": "model_flat",
+      "template": {"from": "clean_flat"},
+      "method": "cubic",
+      "decimate": 0
+    },
+    {
+      "name": "regrid_jypixel_shifted_cubic",
+      "op": "ia_regrid",
+      "input": "model_flat",
+      "template": {"from": "clean_flat", "refpix": [12.37, 13.61], "inc_scale": 0.9, "shape": [24, 27, 1]},
+      "method": "cubic",
+      "decimate": 0
+    },
+    {
+      "name": "regrid_jypixel_shifted_linear",
+      "op": "ia_regrid",
+      "input": "model_flat",
+      "template": {"from": "clean_flat", "refpix": [12.37, 13.61], "inc_scale": 0.9, "shape": [24, 27, 1]},
+      "method": "linear",
+      "decimate": 0
+    },
+    {
+      "name": "imregrid_two_channels_cubic",
+      "op": "imregrid",
+      "input": "two_channels",
+      "template": {"from": "two_channels", "refpix": [14.37, 12.81], "inc_scale": 0.8, "shape": [30, 26, 1, 2]},
+      "interpolation": "cubic",
+      "decimate": 0
+    },
+    {
+      "name": "imregrid_one_channel_moved",
+      "op": "imregrid",
+      "input": "sd_cube",
+      "template": {"from": "sd_cube", "refpix": [30.37, 32.81], "inc_scale": 0.25, "shape": [60, 64, 1, 1], "spectral_shift_hz": 3.0e6},
+      "interpolation": "linear",
+      "decimate": 0
+    },
+    {
+      "name": "imregrid_one_stokes_plane_relabelled",
+      "op": "imregrid",
+      "input": "sd_cube",
+      "template": {"from": "sd_cube", "refpix": [30.37, 32.81], "inc_scale": 0.25, "shape": [60, 64, 1, 1], "stokes": ["Q"]},
+      "interpolation": "linear",
+      "decimate": 0
+    },
+    {
+      "name": "convolve2d_points",
+      "op": "convolve2d",
+      "input": "conv_in",
+      "beam": {"major_arcsec": 1.6, "minor_arcsec": 0.9, "pa_deg": 35.0}
+    },
+    {
+      "name": "convolve2d_negative_pa",
+      "op": "convolve2d",
+      "input": "conv_in",
+      "beam": {"major_arcsec": 2.1, "minor_arcsec": 0.75, "pa_deg": -62.0}
+    },
+    {
+      "name": "convolve2d_oblong_cube",
+      "op": "convolve2d",
+      "input": "conv_oblong",
+      "beam": {"major_arcsec": 1.4, "minor_arcsec": 1.0, "pa_deg": 110.0}
+    },
+    {
+      "name": "convolve2d_convimage",
+      "op": "convolve2d",
+      "input": "model_flat",
+      "beam": {"major_arcsec": 0.9, "minor_arcsec": 0.7, "pa_deg": 35.0}
+    },
+    {
+      "name": "convolve2d_rotated",
+      "op": "convolve2d",
+      "input": "conv_rotated",
+      "beam": {"major_arcsec": 1.6, "minor_arcsec": 0.9, "pa_deg": 35.0}
+    },
+    {"name": "statistics_robust", "op": "statistics", "input": "stats_even"},
+    {"name": "statistics_robust_unmasked", "op": "statistics", "input": "int_cube"},
+    {"name": "impbcor_divide", "op": "impbcor", "input": "int_cube", "pb": "pb_cube", "mode": "divide", "cutoff": -1.0},
+    {"name": "impbcor_multiply", "op": "impbcor", "input": "int_cube", "pb": "pb_cube", "mode": "multiply", "cutoff": -1.0},
+    {"name": "immath_scale", "op": "immath", "input": "sd_cube", "expr": "IM0*0.4127"},
+    {"name": "feather_defaults", "op": "feather", "highres": "int_cube", "lowres": "sd_low"}
+  ]
+}

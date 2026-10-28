@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
@@ -41,7 +42,24 @@ class SurfaceAdapter(Protocol):
         ...
 
 
+def reset_outputs(plan: AdapterPlan) -> None:
+    """Remove the plan's declared outputs inside its directory (the pack), so
+    a rerun starts as a fresh pack does: split, like CASA's, refuses an
+    existing output (#931). They are the section's own products; anything
+    outside the pack, such as a worker's result file, is left to its writer."""
+
+    root = plan.cwd.resolve()
+    for output in plan.outputs:
+        if not output.resolve().is_relative_to(root) or output.resolve() == root:
+            continue
+        if output.is_dir() and not output.is_symlink():
+            shutil.rmtree(output)
+        elif output.exists() or output.is_symlink():
+            output.unlink()
+
+
 def execute_plan(plan: AdapterPlan) -> dict[str, Any]:
+    reset_outputs(plan)
     for output in plan.outputs:
         output.parent.mkdir(parents=True, exist_ok=True)
     result = run_command(

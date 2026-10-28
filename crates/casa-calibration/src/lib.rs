@@ -52,8 +52,8 @@ pub use corrected_export::{
     export_corrected_data,
 };
 pub use execute::{
-    ApplyExecutionError, ApplyExecutionReport, ApplyExecutionTimings, execute_apply,
-    execute_apply_from_path,
+    ApplyExecutionError, ApplyExecutionOptions, ApplyExecutionReport, ApplyExecutionTimings,
+    execute_apply, execute_apply_from_path, execute_apply_from_path_with_options,
 };
 pub use fluxscale::{
     FluxScaleError, FluxScaleFieldResult, FluxScaleReport, FluxScaleRequest, FluxScaleSpwResult,
