@@ -174,8 +174,10 @@ pub struct ImagingRequest {
     pub weighting: Weighting,
     /// Briggs robustness.
     pub robust: f64,
-    /// CASA's `uvtaper`, a Gaussian taper of the imaging weights
-    /// ([`uv_taper`]); `None` when it is empty or its first entry is.
+    /// CASA's `uvtaper`, a Gaussian taper of the imaging weights, read as
+    /// `VisImagingWeight::setFilter` reads it: an angle is the image-plane
+    /// FWHM and wavelengths are the uv-plane HWHM. `None` when it is empty
+    /// or its first entry is.
     #[serde(deserialize_with = "uv_taper")]
     pub uvtaper: Option<UvTaper>,
     /// The convolution-function set, with the parameters only it reads.
