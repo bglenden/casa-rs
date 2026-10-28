@@ -91,6 +91,37 @@ fn msexplore_decimated_payload_samples_rows_before_large_array_reads() {
 }
 
 #[test]
+fn a_value_msexplore_refuses_names_its_parameter() {
+    // Astra's #962 F5: `--avgchannel -1` printed only `invalid numeric
+    // value "-1"`; the old parser named the flag.
+    let temp = tempdir().expect("tempdir");
+    let ms_path = create_msexplore_fixture_ms(temp.path());
+    let ms = ms_path.to_str().expect("UTF-8 MS path");
+    let refused = Command::new(env!("CARGO_BIN_EXE_msexplore"))
+        .args([ms, "--avgchannel", "-1", "--no-save-last"])
+        .output()
+        .expect("run msexplore");
+    assert_eq!(refused.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(stderr.contains("parameter \"avgchannel\""), "{stderr}");
+
+    let request = temp.path().join("request.json");
+    let values = serde_json::json!({
+        "surface": "msexplore",
+        "values": {"vis": ms, "avgchannel": -1},
+    });
+    std::fs::write(&request, values.to_string()).expect("write request");
+    let replied = Command::new(env!("CARGO_BIN_EXE_msexplore"))
+        .args(["--json-run", request.to_str().expect("UTF-8 path")])
+        .output()
+        .expect("run msexplore");
+    assert_eq!(replied.status.code(), Some(2));
+    let reply: serde_json::Value = serde_json::from_slice(&replied.stdout).expect("reply");
+    assert_eq!(reply["kind"], "validation", "{reply}");
+    assert_eq!(reply["parameter"], "avgchannel", "{reply}");
+}
+
+#[test]
 fn msexplore_run_task_writes_summary_and_flag_preview_artifacts() {
     let temp = tempdir().expect("tempdir");
     let ms_path = create_msexplore_fixture_ms(temp.path());

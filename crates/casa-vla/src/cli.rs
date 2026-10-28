@@ -6,7 +6,7 @@
 //! imports.
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use casa_task_runtime::{TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess};
 
@@ -48,21 +48,11 @@ fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     Ok(TaskSuccess::new(&(), &ImportVlaTaskResult::Import(report))?.with_text(text))
 }
 
-/// The resolved run as [`ImportVlaOptions`]. Each `archivefiles` entry may
-/// itself list files separated by commas, as CASA's string form does.
+/// The resolved run as [`ImportVlaOptions`]. `archivefiles` arrives as the
+/// list of archive paths: a comma-separated string is split before its paths
+/// are normalized, on every route.
 fn options_from(task: &TaskInvocation<'_>) -> Result<ImportVlaOptions, TaskFailure> {
-    let archivefiles = task
-        .paths("archivefiles")?
-        .iter()
-        .flat_map(|path| {
-            path.to_string_lossy()
-                .split(',')
-                .map(str::trim)
-                .filter(|item| !item.is_empty())
-                .map(PathBuf::from)
-                .collect::<Vec<_>>()
-        })
-        .collect::<Vec<_>>();
+    let archivefiles = task.paths("archivefiles")?;
     let mut vis = task.paths("vis")?;
     if vis.len() > 1 {
         return Err(TaskFailure::validation("importvla writes one vis").at("vis"));

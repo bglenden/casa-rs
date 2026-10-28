@@ -586,7 +586,7 @@ where
                 }
             }
             Err(failure) => {
-                stderr.push(format!("Error: {}", failure.message));
+                stderr.push(format!("Error: {}", command_line_message(&failure)));
                 FrontEndOutput {
                     stdout: String::new(),
                     stderr,
@@ -839,6 +839,17 @@ fn save_sparse(session: &ParameterSession, path: &Path) -> Result<(), String> {
 }
 
 /// `reply` on stdout, with the exit status that agrees with it.
+/// `failure`'s message as a command line prints it: naming the parameter at
+/// fault when the message does not, as a reply's `parameter` field does.
+fn command_line_message(failure: &TaskFailure) -> String {
+    match &failure.parameter {
+        Some(name) if !failure.message.contains(name.as_str()) => {
+            format!("parameter {name:?}: {}", failure.message)
+        }
+        _ => failure.message.clone(),
+    }
+}
+
 fn reply_output(reply: &TaskReply) -> FrontEndOutput {
     match serde_json::to_string(reply) {
         Ok(text) => FrontEndOutput {

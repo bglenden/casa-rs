@@ -113,7 +113,8 @@ fn the_flagdata_binary_applies_explicit_rflag_thresholds() {
                 "surface": "flagdata",
                 "values": {
                     "vis": vis, "mode": "rflag", "flagbackup": false,
-                    "timedev": 1.0, "freqdev": 10.0,
+                    // A fractional and an integer threshold.
+                    "timedev": 1.0, "freqdev": 10,
                 },
             });
             std::fs::write(&request, values.to_string()).expect("write request");

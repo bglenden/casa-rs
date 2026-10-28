@@ -214,6 +214,18 @@ pub fn parse_parameter_cli_overrides(
                     if inline.is_some() { 1 } else { 2 },
                 )
             };
+            // A list without a fixed size gathers what each occurrence
+            // names, as `--archivefile a.exp --archivefile b.exp` names two
+            // archives; any other value takes its last occurrence.
+            let value = match (patch.values.remove(&binding.name), value) {
+                (Some(ParameterValue::Array(mut earlier)), ParameterValue::Array(more))
+                    if is_open_list_domain(&concept.value_domain) =>
+                {
+                    earlier.extend(more);
+                    checked_value(bundle, binding, &ParameterValue::Array(earlier))?
+                }
+                (_, value) => value,
+            };
             patch.unset.remove(&binding.name);
             patch.values.insert(binding.name.clone(), value);
             index += consumed;
@@ -332,6 +344,16 @@ fn is_bool_domain(domain: &ParameterType) -> bool {
     match domain {
         ParameterType::Bool => true,
         ParameterType::Optional { value, .. } => is_bool_domain(value),
+        _ => false,
+    }
+}
+
+/// Whether `domain` is a list with no fixed size, which a repeated flag
+/// extends.
+fn is_open_list_domain(domain: &ParameterType) -> bool {
+    match domain {
+        ParameterType::Array { max_items, .. } => max_items.is_none(),
+        ParameterType::Optional { value, .. } => is_open_list_domain(value),
         _ => false,
     }
 }

@@ -167,6 +167,69 @@ fn options_follow_the_command_line() {
 }
 
 #[test]
+fn repeated_archive_flags_name_every_archive() {
+    // Astra's #962 F1: a repeated --archivefile kept only its last archive.
+    let line = [
+        "--archivefile",
+        "a.exp",
+        "--archivefiles",
+        "b.exp,c.exp",
+        "--archivefile",
+        "d.exp",
+        "--vis",
+        "out.ms",
+    ];
+    let every = ["a.exp", "b.exp", "c.exp", "d.exp"];
+    let resolved = options(&line).expect("repeated archives");
+    assert_eq!(
+        resolved.archivefiles,
+        every.map(PathBuf::from).to_vec(),
+        "the callback's options"
+    );
+
+    // casars run sends the binary the same list.
+    let bundle = casa_provider_contracts::builtin_surface_bundle("importvla").unwrap();
+    let command_line = TaskCommandLine::parse(&bundle, &args(&line)).unwrap();
+    let session = ParameterRuntime::default()
+        .open_session(command_line.open_session_request(bundle))
+        .unwrap();
+    let invocation = casa_task_runtime::project_front_end_invocation(&session).unwrap();
+    let request: serde_json::Value =
+        serde_json::from_str(invocation.stdin.as_deref().unwrap()).unwrap();
+    assert_eq!(request["values"]["archivefiles"], serde_json::json!(every));
+}
+
+#[test]
+fn a_comma_separated_archive_string_names_the_same_archives_on_every_route() {
+    // Astra's #962 F2: a string given through --json-run or a profile was
+    // normalized as one path before it was split, so `a.exp,sub/..`
+    // collapsed and a.exp was lost.
+    let bundle = casa_provider_contracts::builtin_surface_bundle("importvla").unwrap();
+    let both = vec![PathBuf::from("a.exp"), PathBuf::from("b.exp")];
+    let from_command_line = options(&["--archivefiles", "a.exp,sub/../b.exp", "--vis", "out.ms"])
+        .expect("command line")
+        .archivefiles;
+    assert_eq!(from_command_line, both);
+    for value in [
+        casa_provider_contracts::ParameterValue::String("a.exp, sub/../b.exp".into()),
+        casa_provider_contracts::ParameterValue::Array(vec![
+            casa_provider_contracts::ParameterValue::String("a.exp".into()),
+            casa_provider_contracts::ParameterValue::String("sub/../b.exp".into()),
+        ]),
+    ] {
+        let mut session =
+            casa_task_runtime::ParameterSession::defaults(bundle.clone()).expect("session");
+        session
+            .set("archivefiles", value.clone())
+            .expect("set archivefiles");
+        let resolved = options_from(&TaskInvocation::new(&session, Path::new(".")))
+            .expect("options")
+            .archivefiles;
+        assert_eq!(resolved, both, "{value:?}");
+    }
+}
+
+#[test]
 fn refused_options_name_the_parameter() {
     assert!(
         options(&["--archivefiles", "a.xp1", "--bogus"])

@@ -8,7 +8,8 @@ use std::process::ExitCode;
 use casa_ms::selection::MsSelection;
 use casa_ms::{
     MsTransformError, MsTransformRequest, TransformDataColumn, ms_task_success, mstransform,
-    mstransform_task_schema_bundle, parse_numeric_id_selector, task_selection_text,
+    mstransform_task_schema_bundle, parse_numeric_id_selector, parse_spw_selector,
+    task_selection_text,
 };
 use casa_task_runtime::{
     CasaLoggingConfig, TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess,
@@ -34,8 +35,10 @@ fn main() -> ExitCode {
 /// Both surfaces run the one transform; CASA's tasks return None.
 fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let request = transform_request(task)?;
+    // The output the transform refuses before it starts is the argument's
+    // fault; anything else failed the transform.
     let report = mstransform(&request).map_err(|error| match error {
-        MsTransformError::OutputExists { .. } => {
+        MsTransformError::OutputExists { .. } | MsTransformError::SameInputOutput { .. } => {
             TaskFailure::validation(error.to_string()).at("outputvis")
         }
         other => TaskFailure::execution(other.to_string()),
@@ -51,10 +54,18 @@ fn transform_request(task: &TaskInvocation<'_>) -> Result<MsTransformRequest, Ta
         .ok_or_else(|| {
             TaskFailure::validation(format!("width must be at least 1, found {width}")).at("width")
         })?;
+    // The selector's syntax is checked here, before the transform prepares
+    // its output; the windows it names are checked against the input there.
+    let spw = task_selection_text(task, "spw")?;
+    if !spw.trim().is_empty() {
+        parse_spw_selector(&spw).map_err(|error| {
+            TaskFailure::validation(format!("invalid spw {spw:?}: {error}")).at("spw")
+        })?;
+    }
     Ok(MsTransformRequest {
         input_ms: task.path("vis")?,
         output_ms: task.path("outputvis")?,
-        spw: task_selection_text(task, "spw")?,
+        spw,
         width,
         data_column: data_column(&task.required_text("datacolumn")?)?,
         selection: selection(task)?,

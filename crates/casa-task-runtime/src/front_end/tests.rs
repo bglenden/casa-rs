@@ -134,6 +134,12 @@ fn a_command_line_records_last_and_promotes_it_only_after_success() {
 
     let refused = front_end.dispatch(&in_workspace(workspace.path(), &["refuse.image"]));
     assert_eq!(refused.code, 2);
+    // Astra's #962 F5: a command line names the parameter at fault, as the
+    // reply's `parameter` does, when the message does not.
+    assert_eq!(
+        refused.stderr,
+        ["Error: parameter \"imagename\": no such image"]
+    );
     assert!(
         last_files(workspace.path())
             .1
