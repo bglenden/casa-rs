@@ -14,6 +14,7 @@ fn main() -> ExitCode {
     image_task_front_end("imsubimage", &["imsubimage"], run).main(
         std::env::args_os().skip(1),
         casa_task_runtime::CasaLoggingConfig::from_env(),
+        std::env::set_current_dir,
         &mut std::io::stdout(),
         std::io::stderr(),
     )

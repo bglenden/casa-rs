@@ -275,11 +275,22 @@ request through `TaskInvocation`'s typed reads.
 
 The binary's `main` owns the process. It reads the logging configuration from
 the environment (`CasaLoggingConfig::from_env`) and passes it, with its
-arguments and its standard output and error, to `TaskFrontEnd::main`. The front
-end reads no environment variable (ADR-0016): it applies the logging flags,
-and for a run installs logging that writes to the stderr it was handed and to
-a log table only when one is named. An action that runs nothing installs no
-logging, so a bad `CASA_RS_LOG_*` setting refuses only a run.
+arguments, how the process enters a directory (`std::env::set_current_dir`)
+and its standard output and error, to `TaskFrontEnd::main`. The front end
+reads no environment variable and changes no process state itself
+(ADR-0016): it applies the logging flags, and for a run installs logging that
+writes to the stderr it was handed and to a log table only when one is named.
+An action that runs nothing installs no logging, so a bad `CASA_RS_LOG_*`
+setting refuses only a run.
+
+A command-line run enters its workspace (`--workspace`, the current directory
+otherwise) before the task starts, as `casars run` starts the binary there.
+Every relative path the run names then resolves in the workspace: inputs,
+products, and paths inside a parameter's text, such as `imstat`'s region file
+or the image in `immoments`' mask expression. The files the controls name
+(`--params`, `--save-params`, a log table) are read and written from where the
+command was run, before it enters. A `--json-run` runs where its caller
+started it.
 
 `--json-run SOURCE` takes a `TaskRunRequest`, `{"surface": ..., "values":
 {...}}` with the CASA-named values the caller set, and resolves it against the

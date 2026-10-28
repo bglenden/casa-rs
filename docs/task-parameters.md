@@ -189,7 +189,9 @@ image binaries and `imexplore` run on the shared task front end in
 `casa-task-runtime`, which gives each binary those same sources and controls,
 `--show`, `--template` (`--profile-template` on imregrid, whose `--template`
 is its template image), `--describe` and `--validate`, and a typed
-`--json-run` reply; the other binaries move onto it next
+`--json-run` reply. A run started from a front-end binary's command line
+enters its `--workspace` first, so its relative paths resolve there as they
+do under `casars run`; the other binaries move onto it next
 ([provider contracts](provider-contracts.md#the-shared-task-front-end-and-typed-replies)).
 
 ## Python contract

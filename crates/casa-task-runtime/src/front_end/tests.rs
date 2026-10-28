@@ -2,7 +2,7 @@
 
 use std::cell::RefCell;
 use std::ffi::OsString;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use casa_provider_contracts::{
     NoAdditionalProviderSchemas, ProviderCliMachineActions, ProviderCliProjection,
@@ -232,7 +232,18 @@ fn json_run_refuses_what_it_cannot_resolve_before_the_task_runs() {
         (
             json!({"surface": "imstat", "values": {"imagename": ["x.image"], "widht": 2}})
                 .to_string(),
-            None,
+            Some("widht"),
+        ),
+        // A value of the wrong type is named, though the session would
+        // have refused it unnamed.
+        (
+            json!({"surface": "imstat", "values": {"imagename": ["x.image"], "box": 5}})
+                .to_string(),
+            Some("box"),
+        ),
+        (
+            json!({"surface": "imstat", "values": {"imagename": 7}}).to_string(),
+            Some("imagename"),
         ),
         (
             json!({"surface": "imstat", "values": {"imagename": null}}).to_string(),
@@ -486,6 +497,83 @@ fn bad_logging() -> Result<CasaLoggingConfig, CasaLoggingError> {
     })
 }
 
+/// Enters no workspace: a test shares its process directory.
+fn stay(_: PathBuf) -> std::io::Result<()> {
+    Ok(())
+}
+
+thread_local! {
+    static ENTERED: RefCell<Vec<PathBuf>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Records the workspace a run enters.
+fn record_entry(workspace: PathBuf) -> std::io::Result<()> {
+    ENTERED.with_borrow_mut(|entered| entered.push(workspace));
+    Ok(())
+}
+
+fn refuse_entry(_: PathBuf) -> std::io::Result<()> {
+    Err(std::io::Error::other("permission denied"))
+}
+
+#[test]
+fn a_command_line_run_enters_its_absolute_workspace_before_the_task() {
+    // Astra's #956 P1: a binary started directly resolved a run's relative
+    // paths against the process directory, not its --workspace.
+    let calls = Calls::default();
+    let front_end = front_end(&calls);
+    let workspace = tempfile::tempdir().unwrap();
+    let entered = || ENTERED.with_borrow_mut(std::mem::take);
+
+    let ran = front_end.dispatch_entering(
+        &in_workspace(workspace.path(), &["x.image"]),
+        Some(record_entry),
+    );
+    assert_eq!(ran.code, 0, "{ran:?}");
+    assert_eq!(entered(), [std::path::absolute(workspace.path()).unwrap()]);
+    assert!(last_files(workspace.path()).1.is_some());
+
+    // Nothing but a command-line run enters a workspace.
+    let request = workspace.path().join("request.json");
+    std::fs::write(
+        &request,
+        r#"{"surface":"imstat","values":{"imagename":"x.image"}}"#,
+    )
+    .unwrap();
+    for line in [
+        args(&["--json-run", request.to_str().unwrap()]),
+        in_workspace(workspace.path(), &["--show", "x.image"]),
+        args(&["--template"]),
+    ] {
+        let output = front_end.dispatch_entering(&line, Some(record_entry));
+        assert_eq!(output.code, 0, "{line:?}: {output:?}");
+    }
+    assert!(entered().is_empty());
+
+    // A workspace it cannot enter refuses the run before the task or Last;
+    // the default workspace, the current directory, is named absolute.
+    let before = last_files(workspace.path());
+    for (line, named) in [
+        (
+            in_workspace(workspace.path(), &["other.image"]),
+            workspace.path().to_path_buf(),
+        ),
+        (args(&["other.image"]), std::env::current_dir().unwrap()),
+    ] {
+        let refused = front_end.dispatch_entering(&line, Some(refuse_entry));
+        assert_eq!(refused.code, 2, "{line:?}");
+        assert_eq!(
+            refused.stderr,
+            [format!(
+                "Error: cannot enter workspace {}: permission denied",
+                named.display()
+            )]
+        );
+    }
+    assert_eq!(last_files(workspace.path()), before);
+    assert_eq!(*calls.borrow(), ["imstat:x.image", "imstat:x.image"]);
+}
+
 #[test]
 fn main_writes_only_to_the_streams_its_binary_passes() {
     let calls = Calls::default();
@@ -494,6 +582,7 @@ fn main_writes_only_to_the_streams_its_binary_passes() {
     let code = front_end.main(
         args(&["--template", "x.image"]),
         quiet_logging(),
+        stay,
         &mut stdout,
         stderr.clone(),
     );
@@ -515,7 +604,7 @@ fn a_bad_logging_configuration_refuses_only_a_run() {
     let workspace = tempfile::tempdir().unwrap();
     let main = |line: Vec<OsString>| {
         let (mut stdout, stderr) = (Vec::new(), SharedBuffer::default());
-        let code = front_end.main(line, bad_logging(), &mut stdout, stderr.clone());
+        let code = front_end.main(line, bad_logging(), stay, &mut stdout, stderr.clone());
         (code, String::from_utf8(stdout).unwrap(), stderr.text())
     };
 
@@ -578,6 +667,7 @@ fn a_failed_run_logged_in_a_child_process() {
     let code = front_end.main(
         in_workspace(workspace.path(), &["fail.image", "--no-save-last"]),
         quiet_logging(),
+        stay,
         &mut stdout,
         stderr.clone(),
     );
