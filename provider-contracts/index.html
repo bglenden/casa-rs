@@ -1021,17 +1021,17 @@ canonical provider bundle, including the parameter catalog and applicable
 surface definition.</p>
 <p>Consumers project from the embedded canonical surface in-process. Providers
 expose no second schema-discovery action or cached presentation payload.</p>
-<p>One-shot provider binaries use <code>casa-task-runtime::TaskCliHost</code> for
-<code>--json-schema</code>, <code>--protocol-info</code>, and <code>--json-run &lt;SOURCE&gt;</code>. The host owns
-stdin/file ingestion, JSON decoding and encoding, and stable failure wording.
-Provider CLIs retain only their human argument projection and typed execution
-function.</p>
+<p>Every one-shot task binary answers <code>--json-schema</code>, <code>--protocol-info</code> and
+<code>--json-run &lt;SOURCE&gt;</code> through the shared task front end below, which owns
+stdin and file ingestion, JSON decoding and encoding, and the typed reply.
+A binary keeps only its typed execution callback.</p>
 <h2 id="the-shared-task-front-end-and-typed-replies">The shared task front end and typed replies<a class="headerlink" href="#the-shared-task-front-end-and-typed-replies" title="Permanent link">&para;</a></h2>
 <p><code>casa-task-runtime::TaskFrontEnd</code> is the one entry every task binary's <code>main</code>
-is to call. The image binaries, <code>imexplore</code>, and the MeasurementSet binaries
+calls (#931): the image binaries and <code>imexplore</code>; the MeasurementSet binaries
 (<code>msexplore</code> with <code>plotms</code>, <code>mstransform</code> with <code>split</code>, <code>flagdata</code>,
-<code>flagmanager</code> and <code>importvla</code>) run on it; the calibration family, the imager
-and simobserve move next (#931, PR 2d) and use <code>TaskCliHost</code> until then. A
+<code>flagmanager</code> and <code>importvla</code>); <code>calibrate</code>, which hosts <code>calibrate</code>,
+<code>applycal</code>, <code>gaincal</code>, <code>bandpass</code>, <code>fluxscale</code> and <code>gencal</code>;
+<code>casars-plotcal</code>; <code>casars-imager</code>; and <code>simobserve</code>. A
 surface's choices take their canonical names (<code>--preset amplitude_vs_time</code>),
 and every flag it declares, short ones such as msexplore's <code>-o</code> included,
 reaches its parameter. The front end is generic over the
@@ -1041,8 +1041,9 @@ non-executing <code>--show</code>, <code>--template</code> (also <code>--profile
 and <code>--validate</code>, and the machine actions. A spelling the surface declares is
 always its parameter, so imregrid's <code>--template</code> names its template image and
 <code>--profile-template</code> gives its profile. A family binary's first word names the
-surface it runs, such as <code>imexplore imstat</code> or <code>mstransform split</code>; the
-first hosted surface runs otherwise. The callback reads the resolved values
+surface it runs, such as <code>imexplore imstat</code>, <code>mstransform split</code> or
+<code>calibrate gaincal</code>; the first hosted surface runs otherwise, and a
+surface's <code>fixed_args</code> are that word. The callback reads the resolved values
 into the binary's typed request through <code>TaskInvocation</code>'s typed reads, and
 <code>TaskInvocation::is_set</code> tells a value the run sets from a default. What a
 command line prints is the callback's text (msexplore's summary in the
@@ -1074,20 +1075,29 @@ surface's contract inside the binary. It writes one <code>TaskReply</code> to st
   full <code>result</code>, from which products are projected;</li>
 <li><code>{"status": "failed", "surface", "kind", "message", "parameter"?}</code>, where
   <code>kind</code> is <code>validation</code> (refused before anything changed; Python
-  <code>ValueError</code>) or <code>execution</code> (Python <code>RuntimeError</code>).</li>
+  <code>ValueError</code>), <code>execution</code> (Python <code>RuntimeError</code>), or <code>interrupted</code>: the
+  task caught an interrupt, stopped at its next safe point and published
+  nothing, as <code>casars-imager</code> does on SIGINT.</li>
 </ul>
 <p>The exit status agrees with the reply: 0 for success, 2 for a validation
-failure and 1 for an execution failure. <code>classify_task_exit</code> reads a finished
-process from its exit status and stdout alone, never stderr, and keeps a launch
-failure, a signal and a malformed reply distinct from the task's own failures.
-A provider contract carries both schemas under <code>semantic.front_end</code> once its
-binary runs on the front end.</p>
+failure, 1 for an execution failure and 130 for an interrupted run.
+<code>classify_task_exit</code> reads a finished process from its exit status and stdout
+alone, never stderr, and keeps a launch failure, a signal and a malformed reply
+distinct from the task's own failures. A provider contract carries both
+schemas under <code>semantic.front_end</code>.</p>
+<p>A surface with a <code>managed_output</code> contract names the decoder that reads its
+provider result (<code>calibration-report-v1</code>, <code>imager-run-v1</code>,
+<code>simobserve-run-v1</code>): the reply's <code>result</code> is that result, from which the
+completion decoder projects products and the summary. Nothing is injected
+into the binary's arguments to ask for it.</p>
 <p>Last has one owner on each path: a command line run of a binary records Last
 before the callback and Last Successful only after success, unless
 <code>--no-save-last</code>; <code>--json-run</code> reads and writes neither. <code>casars run</code> owns Last
-for the runs it launches, and Python task calls save none. <code>casars run</code> starts
-a front-end binary with <code>--json-run -</code> and the values the user set, reads its
-reply, and prints the return value or the task's own error.</p>
+for the runs it launches, and Python task calls save none. Every run
+<code>casars run</code> launches is one invocation shape: the surface's <code>fixed_args</code>,
+then <code>--json-run -</code> with the values the user set. It reads the reply and
+prints the provider result where the surface declares a decoder, the return
+value otherwise, or the task's own error.</p>
 <h2 id="shared-versioned-component-schemas">Shared Versioned Component Schemas<a class="headerlink" href="#shared-versioned-component-schemas" title="Permanent link">&para;</a></h2>
 <p>Protocol-independent basic types have versioned shared schemas, reused across
 task and object surfaces rather than redefined per provider. Component

@@ -262,7 +262,7 @@
 <a href=#262 id=262 data-nosnippet>262</a>    </span><span class="kw">fn </span>simobserve_has_casas_parameters_in_casas_order_for_the_current_contract_only() {
 <a href=#263 id=263 data-nosnippet>263</a>        <span class="kw">let </span>catalog = builtin_surface_catalog().expect(<span class="string">"valid built-in parameter catalog"</span>);
 <a href=#264 id=264 data-nosnippet>264</a>        <span class="kw">let </span>surface = catalog.surface(<span class="string">"simobserve"</span>).unwrap();
-<a href=#265 id=265 data-nosnippet>265</a>        <span class="macro">assert_eq!</span>(surface.contract_version(), <span class="number">6</span>);
+<a href=#265 id=265 data-nosnippet>265</a>        <span class="macro">assert_eq!</span>(surface.contract_version(), <span class="number">7</span>);
 <a href=#266 id=266 data-nosnippet>266</a>        <span class="kw">let </span>names: Vec&lt;<span class="kw-2">&amp;</span>str&gt; = surface
 <a href=#267 id=267 data-nosnippet>267</a>            .bindings()
 <a href=#268 id=268 data-nosnippet>268</a>            .iter()
@@ -328,7 +328,7 @@
 <a href=#328 id=328 data-nosnippet>328</a>    </span><span class="kw">fn </span>imager_wide_field_controls_share_one_catalog_owned_surface() {
 <a href=#329 id=329 data-nosnippet>329</a>        <span class="kw">let </span>catalog = builtin_surface_catalog().unwrap();
 <a href=#330 id=330 data-nosnippet>330</a>        <span class="kw">let </span>surface = catalog.surface(<span class="string">"imager"</span>).unwrap();
-<a href=#331 id=331 data-nosnippet>331</a>        <span class="macro">assert_eq!</span>(surface.contract_version(), <span class="number">26</span>);
+<a href=#331 id=331 data-nosnippet>331</a>        <span class="macro">assert_eq!</span>(surface.contract_version(), <span class="number">27</span>);
 <a href=#332 id=332 data-nosnippet>332</a>        <span class="macro">assert_eq!</span>(surface.bindings().len(), <span class="number">81</span>);
 <a href=#333 id=333 data-nosnippet>333</a>        <span class="kw">for </span>binding <span class="kw">in </span>surface.bindings() {
 <a href=#334 id=334 data-nosnippet>334</a>            <span class="kw">let </span>concept = catalog

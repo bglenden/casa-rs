@@ -846,7 +846,7 @@ designed to paste cleanly into Markdown:</p>
 <span class="n">format</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span>
 <span class="n">surface</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"imager"</span>
 <span class="n">kind</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"task"</span>
-<span class="n">contract</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">26</span>
+<span class="n">contract</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">27</span>
 
 <span class="k">[parameters]</span>
 <span class="n">vis</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"data/target.ms"</span>
@@ -982,17 +982,15 @@ launcher is retired (#931).</p>
 <p>Direct provider binaries continue to expose their idiomatic execution
 transports (<code>--protocol-info</code>, <code>--json-schema</code>, <code>--json-run</code>); source selection
 and profile lifecycle are owned by <code>casars run</code> and <code>casars params</code>, and by a
-front-end binary's own command line. The
-image binaries, <code>imexplore</code> and the MeasurementSet binaries (<code>msexplore</code>,
-<code>mstransform</code>, <code>flagdata</code>, <code>flagmanager</code>, <code>importvla</code>) run on the shared task
+task binary's own command line. Every task binary runs on the shared task
 front end in <code>casa-task-runtime</code>, which gives each binary those same sources
 and controls,
 <code>--show</code>, <code>--template</code> (<code>--profile-template</code> on imregrid, whose <code>--template</code>
 is its template image), <code>--describe</code> and <code>--validate</code>, and a typed
-<code>--json-run</code> reply. A run started from a front-end binary's command line
-enters its <code>--workspace</code> first, so its relative paths resolve there as they
-do under <code>casars run</code>; the other binaries move onto it next
-(<a href="../provider-contracts/#the-shared-task-front-end-and-typed-replies">provider contracts</a>).</p>
+<code>--json-run</code> reply
+(<a href="../provider-contracts/#the-shared-task-front-end-and-typed-replies">provider contracts</a>).
+A run started from a task binary's command line enters its <code>--workspace</code>
+first, so its relative paths resolve there as they do under <code>casars run</code>.</p>
 <h2 id="python-contract">Python contract<a class="headerlink" href="#python-contract" title="Permanent link">&para;</a></h2>
 <p>The Python API exposes the same profile model:</p>
 <div class="codehilite"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">casars</span><span class="w"> </span><span class="kn">import</span> <span class="n">parameters</span><span class="p">,</span> <span class="n">tasks</span>

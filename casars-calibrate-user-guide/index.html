@@ -676,7 +676,10 @@ application catalog exposes it as these task surfaces:</p>
 </ul>
 <p>Every surface is a one-shot task. Run it with <code>casars run</code>, which resolves a
 parameter profile (Defaults, Last, Last Successful, or a TOML file), applies
-overrides, saves Last state, and launches the provider. See
+overrides, saves Last state, and launches the provider. The <code>calibrate</code>
+binary takes the same flags and sources itself, with the surface as its first
+word (<code>calibrate bandpass --ms ...</code>; <code>calibrate</code> alone is the general
+surface), and keeps its own Last. See
 <a href="../task-parameters/">Task Parameter Profiles</a> for sources and managed Last
 files, and the <a href="../reference/task-parameters/">generated parameter reference</a>
 for every parameter and its CLI flag.</p>
@@ -724,7 +727,12 @@ cp<span class="w"> </span>-R<span class="w"> </span><span class="s2">"</span><sp
 </ol>
 <p>The apply chain is the ordered <code>--gaintables</code> list. Per-table policy is given
 by the aligned <code>--gainfield</code>, <code>--interp</code>, <code>--spwmap</code>, and <code>--calwt</code> lists, or by
-a CASA callibrary file through <code>--callib</code>.</p>
+a CASA callibrary file through <code>--callib</code>. <code>--apply-mode trial</code> reports the
+apply plan without changing the MeasurementSet.</p>
+<p><code>gaincal</code> takes CASA's <code>minblperant</code> (default 4), and <code>bandpass</code> CASA's
+<code>degamp</code> and <code>degphase</code> for a <code>bpoly</code> solution (default 3). <code>bandpass</code>
+declares CASA's <code>minsnr</code>, which its solver does not apply yet, so a value
+other than the default is refused.</p>
 <p>Use <code>casars params template gaincal</code> to see every parameter with its default,
 and <code>--save-params FILE</code> to keep a run's resolved profile for reuse with
 <code>--params FILE</code>.</p>

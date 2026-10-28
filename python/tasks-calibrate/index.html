@@ -505,24 +505,6 @@
         
       
       
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Calibrate Tasks
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
       <a href="./" class="md-nav__link md-nav__link--active">
         
   
@@ -539,36 +521,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#public-entry-points" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Public entry points
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
       
     </li>
   
@@ -658,25 +610,6 @@
     
   
   
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#public-entry-points" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Public entry points
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
 </nav>
                   </div>
                 </div>
@@ -693,25 +626,29 @@
 
 
 <h1 id="calibrate-tasks">Calibrate Tasks<a class="headerlink" href="#calibrate-tasks" title="Permanent link">&para;</a></h1>
-<p><code>casars.tasks.calibrate</code> keeps the standalone <code>calibrate</code> binary, the <code>casars</code> application, and the Python wrapper on the same conceptual contract.</p>
-<p>The canonical unit is the calibration task request/result model in Rust. Python does not reconstruct flag lists. Every public wrapper:</p>
-<ol>
-<li>resolves a <code>calibrate</code> binary</li>
-<li>validates <code>--protocol-info</code></li>
-<li>sends one <code>CalibrationTaskRequest</code> through <code>--json-run -</code></li>
-<li>returns the canonical <code>CalibrationTaskResult</code> JSON envelope</li>
-</ol>
-<h2 id="public-entry-points">Public entry points<a class="headerlink" href="#public-entry-points" title="Permanent link">&para;</a></h2>
+<p>The calibration tasks are generated, CASA-named wrappers in <code>casars.tasks</code>:</p>
 <ul>
-<li><code>summary(...)</code></li>
-<li><code>stats(...)</code></li>
-<li><code>plan_apply(...)</code></li>
-<li><code>execute_apply(...)</code></li>
-<li><code>solve_gain(...)</code></li>
-<li><code>solve_bandpass(...)</code></li>
-<li><code>fluxscale(...)</code></li>
+<li><code>calibrate(mode=..., ...)</code>, the workflow surface: <code>apply</code> (the default),
+  <code>solve_gain</code>, <code>solve_bandpass</code>, <code>fluxscale</code>, <code>gencal</code>, <code>summary</code>, <code>stats</code>
+  and <code>export_corrected_data</code>;</li>
+<li><code>applycal</code>, <code>gaincal</code>, <code>bandpass</code>, <code>fluxscale</code> and <code>gencal</code>, the CASA-named
+  surfaces.</li>
 </ul>
-<p>The wrappers use normal Python arguments and a few stdlib dataclasses for reused nested values such as <code>Selection</code>, <code>SolveCombine</code>, and <code>CalibrationTableSpec</code>, but the subprocess protocol itself remains the Rust request/result schema.</p>
+<p>Each takes the surface's parameters as keyword arguments and returns a
+<code>TaskCompletion</code>. The call runs through <code>casars run</code>, which starts the
+<code>calibrate</code> binary with the surface as its first word (<code>calibrate gaincal</code>)
+and sends one <code>TaskRunRequest</code> on <code>--json-run -</code>: the values the call set,
+resolved inside the binary against the same contract as its own command line
+(#931). Python projects no flags and builds no Rust request. A refused value
+names its parameter; a failed run raises <code>TaskExecutionError</code> when
+<code>check=True</code>.</p>
+<p><code>gaintables</code> and <code>summary_paths</code> are lists of calibration-table paths: a list,
+or one comma-separated string. The per-table controls (<code>gainfield</code>, <code>interp</code>,
+<code>spwmap</code>, <code>calwt</code>) are <code>;</code>-separated strings aligned to <code>gaintables</code>, one
+value for every table or one per table.</p>
+<p>The <code>calibrate</code> binary takes the same parameters on its own command line. The
+developer subcommands it once had (<code>summary</code>, <code>plan-apply</code>, <code>solve-gain</code> and
+the rest) are the surfaces and modes above.</p>
 
 
 

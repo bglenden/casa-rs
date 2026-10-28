@@ -1297,9 +1297,9 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <ul>
 <li>Parameter catalog schema version: <code>1</code></li>
 <li>Parameter surface schema version: <code>1</code></li>
-<li>Concepts: 346</li>
+<li>Concepts: 349</li>
 <li>Surfaces: 27 (27 task, 0 session)</li>
-<li>Surface bindings: 529</li>
+<li>Surface bindings: 535</li>
 </ul>
 <table>
 <thead>
@@ -1324,9 +1324,9 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <tr>
 <td><a href="#surface-calibrate">Calibrate</a><br><code>calibrate</code></td>
 <td>task</td>
-<td style="text-align: right;">5</td>
+<td style="text-align: right;">6</td>
 <td><code>calibration</code></td>
-<td style="text-align: right;">50</td>
+<td style="text-align: right;">53</td>
 <td>apply, inspect, and solve CASA-style calibration workflows</td>
 </tr>
 <tr>
@@ -1340,7 +1340,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <tr>
 <td><a href="#surface-imager">Imager</a><br><code>imager</code></td>
 <td>task</td>
-<td style="text-align: right;">26</td>
+<td style="text-align: right;">27</td>
 <td><code>imager</code></td>
 <td style="text-align: right;">81</td>
 <td>Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet</td>
@@ -1348,7 +1348,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <tr>
 <td><a href="#surface-simobserve">SimObserve</a><br><code>simobserve</code></td>
 <td>task</td>
-<td style="text-align: right;">6</td>
+<td style="text-align: right;">7</td>
 <td><code>simobserve</code></td>
 <td style="text-align: right;">38</td>
 <td>Simulate an observation of a sky model: CASA's simobserve</td>
@@ -1404,7 +1404,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <tr>
 <td><a href="#surface-applycal">Applycal</a><br><code>applycal</code></td>
 <td>task</td>
-<td style="text-align: right;">4</td>
+<td style="text-align: right;">5</td>
 <td><code>calibration</code></td>
 <td style="text-align: right;">22</td>
 <td>Apply one or more calibration tables to a MeasurementSet.</td>
@@ -1412,23 +1412,23 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <tr>
 <td><a href="#surface-gaincal">Gaincal</a><br><code>gaincal</code></td>
 <td>task</td>
-<td style="text-align: right;">4</td>
+<td style="text-align: right;">5</td>
 <td><code>calibration</code></td>
-<td style="text-align: right;">28</td>
+<td style="text-align: right;">29</td>
 <td>Solve antenna gain calibration for a MeasurementSet.</td>
 </tr>
 <tr>
 <td><a href="#surface-bandpass">Bandpass</a><br><code>bandpass</code></td>
 <td>task</td>
-<td style="text-align: right;">4</td>
+<td style="text-align: right;">5</td>
 <td><code>calibration</code></td>
-<td style="text-align: right;">25</td>
+<td style="text-align: right;">27</td>
 <td>Solve bandpass calibration for a MeasurementSet.</td>
 </tr>
 <tr>
 <td><a href="#surface-fluxscale">Fluxscale</a><br><code>fluxscale</code></td>
 <td>task</td>
-<td style="text-align: right;">4</td>
+<td style="text-align: right;">5</td>
 <td><code>calibration</code></td>
 <td style="text-align: right;">10</td>
 <td>Scale gain solutions using reference calibrator fields.</td>
@@ -1436,7 +1436,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <tr>
 <td><a href="#surface-gencal">Gencal</a><br><code>gencal</code></td>
 <td>task</td>
-<td style="text-align: right;">4</td>
+<td style="text-align: right;">5</td>
 <td><code>calibration</code></td>
 <td style="text-align: right;">10</td>
 <td>Generate a calibration table such as antpos, gceff, or opac.</td>
@@ -2086,7 +2086,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <h2 id="calibrate-calibrate">Calibrate (<code>calibrate</code>)<a class="headerlink" href="#calibrate-calibrate" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Kind: <code>task</code></li>
-<li>Contract version: <code>5</code></li>
+<li>Contract version: <code>6</code></li>
 <li>Category: Calibration</li>
 <li>Provider family: <code>calibration</code></li>
 <li>Summary: apply, inspect, and solve CASA-style calibration workflows</li>
@@ -2129,19 +2129,19 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 </tr>
 <tr>
 <td><code>summary_paths</code></td>
-<td><code>parameter.summary_paths@r1</code></td>
-<td><code>string</code></td>
+<td><code>parameter.summary_paths@r2</code></td>
+<td><code>optional&lt;array&lt;path (calibration_table)&gt;&gt; (states: none)</code></td>
 <td><code>"none"</code>; required when mode="summary"</td>
 <td>Inspect</td>
-<td>Comma-separated calibration-table paths for summary mode</td>
+<td>Calibration-table paths for summary mode</td>
 </tr>
 <tr>
 <td><code>gaintables</code></td>
-<td><code>parameter.gaintables@r1</code></td>
-<td><code>string</code></td>
+<td><code>parameter.gaintables@r2</code></td>
+<td><code>optional&lt;array&lt;path (calibration_table)&gt;&gt; (states: none)</code></td>
 <td><code>"none"</code>; optional</td>
 <td>Input</td>
-<td>Comma-separated list of calibration-table paths to apply in order</td>
+<td>Calibration-table paths to apply in order</td>
 </tr>
 <tr>
 <td><code>table_path</code></td>
@@ -2503,6 +2503,30 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td>Apply</td>
 <td>Create a flagmanager backup before mutating flags.<br><em>Surface:</em> Apply mode only: saves the flags to the next applycal_N flag version before a calflag run; calonly and trial change no flags and save none.</td>
 </tr>
+<tr>
+<td><code>minblperant</code></td>
+<td><code>parameter.minblperant@r1</code></td>
+<td><code>integer</code></td>
+<td><code>4</code>; optional</td>
+<td>Solve Gain</td>
+<td>Minimum unflagged baselines an antenna needs to be solved for</td>
+</tr>
+<tr>
+<td><code>degamp</code></td>
+<td><code>parameter.degamp@r1</code></td>
+<td><code>integer</code></td>
+<td><code>3</code>; optional</td>
+<td>Solve Bandpass</td>
+<td>Polynomial degree of a BPOLY bandpass's amplitude</td>
+</tr>
+<tr>
+<td><code>degphase</code></td>
+<td><code>parameter.degphase@r1</code></td>
+<td><code>integer</code></td>
+<td><code>3</code>; optional</td>
+<td>Solve Bandpass</td>
+<td>Polynomial degree of a BPOLY bandpass's phase</td>
+</tr>
 </tbody>
 </table>
 <p><a id="surface-importvla"></a></p>
@@ -2628,7 +2652,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <h2 id="imager-imager">Imager (<code>imager</code>)<a class="headerlink" href="#imager-imager" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Kind: <code>task</code></li>
-<li>Contract version: <code>26</code></li>
+<li>Contract version: <code>27</code></li>
 <li>Category: Imaging</li>
 <li>Provider family: <code>imager</code></li>
 <li>Summary: Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet</li>
@@ -3299,7 +3323,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <h2 id="simobserve-simobserve">SimObserve (<code>simobserve</code>)<a class="headerlink" href="#simobserve-simobserve" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Kind: <code>task</code></li>
-<li>Contract version: <code>6</code></li>
+<li>Contract version: <code>7</code></li>
 <li>Category: Simulation</li>
 <li>Provider family: <code>simobserve</code></li>
 <li>Summary: Simulate an observation of a sky model: CASA's simobserve</li>
@@ -4092,7 +4116,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <h2 id="applycal-applycal">Applycal (<code>applycal</code>)<a class="headerlink" href="#applycal-applycal" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Kind: <code>task</code></li>
-<li>Contract version: <code>4</code></li>
+<li>Contract version: <code>5</code></li>
 <li>Category: Calibration</li>
 <li>Provider family: <code>calibration</code></li>
 <li>Summary: Apply one or more calibration tables to a MeasurementSet.</li>
@@ -4119,11 +4143,11 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 </tr>
 <tr>
 <td><code>gaintables</code></td>
-<td><code>parameter.gaintables@r1</code></td>
-<td><code>string</code></td>
+<td><code>parameter.gaintables@r2</code></td>
+<td><code>optional&lt;array&lt;path (calibration_table)&gt;&gt; (states: none)</code></td>
 <td><code>"none"</code>; optional</td>
 <td>Input</td>
-<td>Comma-separated list of calibration-table paths to apply in order</td>
+<td>Calibration-table paths to apply in order</td>
 </tr>
 <tr>
 <td><code>callib</code></td>
@@ -4291,7 +4315,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <h2 id="gaincal-gaincal">Gaincal (<code>gaincal</code>)<a class="headerlink" href="#gaincal-gaincal" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Kind: <code>task</code></li>
-<li>Contract version: <code>4</code></li>
+<li>Contract version: <code>5</code></li>
 <li>Category: Calibration</li>
 <li>Provider family: <code>calibration</code></li>
 <li>Summary: Solve antenna gain calibration for a MeasurementSet.</li>
@@ -4318,11 +4342,11 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 </tr>
 <tr>
 <td><code>gaintables</code></td>
-<td><code>parameter.gaintables@r1</code></td>
-<td><code>string</code></td>
+<td><code>parameter.gaintables@r2</code></td>
+<td><code>optional&lt;array&lt;path (calibration_table)&gt;&gt; (states: none)</code></td>
 <td><code>"none"</code>; optional</td>
 <td>Input</td>
-<td>Comma-separated list of calibration-table paths to apply in order</td>
+<td>Calibration-table paths to apply in order</td>
 </tr>
 <tr>
 <td><code>callib</code></td>
@@ -4532,13 +4556,21 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td>Selection</td>
 <td>Raw TaQL WHERE expression to AND with the structured selectors</td>
 </tr>
+<tr>
+<td><code>minblperant</code></td>
+<td><code>parameter.minblperant@r1</code></td>
+<td><code>integer</code></td>
+<td><code>4</code>; optional</td>
+<td>Solve Gain</td>
+<td>Minimum unflagged baselines an antenna needs to be solved for</td>
+</tr>
 </tbody>
 </table>
 <p><a id="surface-bandpass"></a></p>
 <h2 id="bandpass-bandpass">Bandpass (<code>bandpass</code>)<a class="headerlink" href="#bandpass-bandpass" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Kind: <code>task</code></li>
-<li>Contract version: <code>4</code></li>
+<li>Contract version: <code>5</code></li>
 <li>Category: Calibration</li>
 <li>Provider family: <code>calibration</code></li>
 <li>Summary: Solve bandpass calibration for a MeasurementSet.</li>
@@ -4565,11 +4597,11 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 </tr>
 <tr>
 <td><code>gaintables</code></td>
-<td><code>parameter.gaintables@r1</code></td>
-<td><code>string</code></td>
+<td><code>parameter.gaintables@r2</code></td>
+<td><code>optional&lt;array&lt;path (calibration_table)&gt;&gt; (states: none)</code></td>
 <td><code>"none"</code>; optional</td>
 <td>Input</td>
-<td>Comma-separated list of calibration-table paths to apply in order</td>
+<td>Calibration-table paths to apply in order</td>
 </tr>
 <tr>
 <td><code>callib</code></td>
@@ -4755,13 +4787,29 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td>Selection</td>
 <td>Raw TaQL WHERE expression to AND with the structured selectors</td>
 </tr>
+<tr>
+<td><code>degamp</code></td>
+<td><code>parameter.degamp@r1</code></td>
+<td><code>integer</code></td>
+<td><code>3</code>; optional</td>
+<td>Solve Bandpass</td>
+<td>Polynomial degree of a BPOLY bandpass's amplitude</td>
+</tr>
+<tr>
+<td><code>degphase</code></td>
+<td><code>parameter.degphase@r1</code></td>
+<td><code>integer</code></td>
+<td><code>3</code>; optional</td>
+<td>Solve Bandpass</td>
+<td>Polynomial degree of a BPOLY bandpass's phase</td>
+</tr>
 </tbody>
 </table>
 <p><a id="surface-fluxscale"></a></p>
 <h2 id="fluxscale-fluxscale">Fluxscale (<code>fluxscale</code>)<a class="headerlink" href="#fluxscale-fluxscale" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Kind: <code>task</code></li>
-<li>Contract version: <code>4</code></li>
+<li>Contract version: <code>5</code></li>
 <li>Category: Calibration</li>
 <li>Provider family: <code>calibration</code></li>
 <li>Summary: Scale gain solutions using reference calibrator fields.</li>
@@ -4864,7 +4912,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <h2 id="gencal-gencal">Gencal (<code>gencal</code>)<a class="headerlink" href="#gencal-gencal" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Kind: <code>task</code></li>
-<li>Contract version: <code>4</code></li>
+<li>Contract version: <code>5</code></li>
 <li>Category: Calibration</li>
 <li>Provider family: <code>calibration</code></li>
 <li>Summary: Generate a calibration table such as antpos, gceff, or opac.</li>
