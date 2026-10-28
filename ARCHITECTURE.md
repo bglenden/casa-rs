@@ -1,7 +1,7 @@
 # Architecture
 
 Truth class: current descriptive
-Last reality check: 2026-10-27
+Last reality check: 2026-10-28
 Verification: just docs-check
 
 ## System purpose
@@ -50,7 +50,8 @@ owner's decision.
 `casa-imaging-model` owns the science, reconstruction, and product schemas and
 commitments introduced by ADR-0009, over the definitional crates alone, and
 the row geometry of observation batches, which reads the observation
-boundary (`casa-observation`; imaging port decision 1, #932).
+boundary (`casa-observation`; ADR-0016 decision 10, amended 2026-10-28, and
+imaging port decision 1, #932).
 `casa-imaging-operator` owns the measurement operator A and its adjoint
 (plan section 5.3): the kernel sets (`Spheroidal`, `WPlanes`, `AwCatalog`,
 `MosaicPb`), the `GridBackend` contract and its CPU implementation, the

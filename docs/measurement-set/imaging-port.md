@@ -201,9 +201,8 @@ Two consequences:
   pointing sampled at the integration, that can pick a different sample
   than the MSv2 did. Step 3b measured it, and the owner decided
   (2026-10-28, #946) that the MSv4 route's choice stands, with no
-  intervals recovered. The
-  converter reports `INTERVAL`, `TARGET`, `NAME` and `TRACKING` as a table
-  loss. Today's covering rule is casa-rs's, not casacore's (#948); step 3b
+  intervals recovered. The converter reports `INTERVAL`, `TARGET`, `NAME`
+  and `TRACKING` as a table loss. Today's covering rule is casa-rs's, not casacore's (#948); step 3b
   settles which the batch route keeps.
   *Measured in step 3b* (the batch geometry of an MSv2 against its MSv4
   conversion, `geometry_law::compare_stores`): on ALMA CAS-7841, whose
@@ -213,7 +212,8 @@ Two consequences:
   relative; on the EVLA `mawproject` pair under AW projection with
   `usepointing`, not at all. The native AW workloads need the EVLA surface
   from `~/.casa/data`, which the Mac mini lacks. The batch route keeps
-  today's covering rule (the boundary's bracket, #948 open).
+  today's covering rule (the boundary's bracket, #948), and the owner kept
+  the boundary's tie rule for the cutover (2026-10-28, #946).
 - **AW pointing epochs.** Today's epochs follow MAIN order, which interleaves
   windows; batches are partition-major. Refresh decisions carry state across
   consecutive epochs, so the order can change which epochs refresh. CASA's
