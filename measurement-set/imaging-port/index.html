@@ -778,7 +778,7 @@
 
 
 <h1 id="imaging-on-the-shared-observation-batches-m2-packet-c">Imaging on the shared observation batches (M2 packet c)<a class="headerlink" href="#imaging-on-the-shared-observation-batches-m2-packet-c" title="Permanent link">&para;</a></h1>
-<p>Status: accepted by the owner on 2026-10-27 (section 3); no code changes yet
+<p>Status: accepted by the owner on 2026-10-27 (section 3); steps 1–3 landed, step 4 in progress (#932)
 Truth class: accepted design
 Date: 2026-10-27
 Repository baseline: <code>84824df</code>
@@ -869,6 +869,127 @@ on MSv4.</p>
 <p>The producer thread, two block slots, the worker team, the chunk planner and
 admission stay as they are. One copy (store to batch buffers) plus the pack
 replaces the two copies of today.</p>
+<p><em>As landed in step 4</em> (#932): <code>ObservationSource</code>
+(<code>casa-imaging-application/src/imaging/observation_source/</code>) is the batch
+route, chosen per run by <code>ImagingRequest::source_route</code>, a run option that
+no imager parameter names. It sees only <code>&amp;dyn Observation</code>.
+- <strong>Selection.</strong> Compile still resolves the request against the
+  MeasurementSet and walks MAIN (2.4 is not done). <code>compile::partitions</code>
+  maps that selection to the partitions of the same MeasurementSet's MSv2
+  adapter: a partition is read when its data description is selected and,
+  under an intent selection, its <code>OBS_MODE</code> is a selected state's. The
+  adapter keys partitions by the whole <code>OBS_MODE</code> string, so a partition
+  holds the rows of every state with its mode (two modes listing the same
+  intents in another order are two partitions), and rows without a state
+  share the empty mode. An intent selection is therefore refused unless
+  the partitions it reads hold the selected states' rows alone: no state
+  that MAIN's rows hold and the selection leaves out has a selected
+  state's mode (<code>intent='0'</code> is refused once rows hold a second state of
+  state 0's mode, and images as today while none does). Fields go in the
+  request. The UV distance is tested per sample, on stored UVW and in
+  wavelengths of the window's <code>REF_FREQUENCY</code>, by the rule today's route
+  now shares (<code>UvSelection::holds</code>). This module is the batch route's
+  only store-specific code; it goes when compile resolves the selection
+  against the catalogue.
+- <strong>Opening.</strong> The MSv2 adapter refuses at opening what its grid cannot
+  hold: two rows of one time and baseline in a partition, two fields or
+  two scans at one time of a partition, and a partition's rows with
+  several <code>PROCESSOR_ID</code>s (XRADIO's rule). Today's route images such
+  MeasurementSets; the batch route does not, until the adapter does.
+  Opening asks a grant for what its index will hold before allocating it
+  (<code>Msv2Observation::open_granted</code>): its chunk of key columns, each
+  partition's distinct times, baselines and processors as the first pass
+  finds them (at most one row's keys beyond what was granted), then the
+  scans and the grids. The batch route admits each increase into the
+  opening's reservation, so an index beyond what the policy leaves free
+  is refused, as an admission, before it is allocated, also when runs
+  share a process. Times that differ by baseline (baseline-dependent
+  averaging, jittered <code>TIME</code>) make a cell per time and baseline, which
+  this refuses before allocating.
+- <strong>Delivery.</strong> Each wave binds one request per partition in turn, and a
+  batch holds whole times. Padding (every flag set and every weight not
+  finite) and the samples the UV selection excludes are dropped. Samples
+  the store flags, <code>FLAG_ROW</code> included, are kept and given geometry, and a
+  sample whose every routed cell is flagged carries the row flag. A
+  non-finite input fails as today, naming the spectral window, time,
+  baseline, channel and correlation. One divergence: under
+  <code>FiniteValuePolicy::RejectAll</code> today's route fails on a stored row whose
+  every flag is set and no weight is finite, which the batch route reads
+  as padding and drops.
+- <strong>Pointing.</strong> When geometry reads pointing, each partition's samples are
+  queried over the span of its selected times (time centroids included
+  when geometry reads them). An antenna's pointing is a property of the
+  antenna and the time, so partitions asking for the same antennas over
+  the same span in the same time system (origin and scale) share an
+  answer (the contract of <code>Observation::pointing</code>). The source keeps the
+  answers across partitions and passes, so a store whose query reads a
+  whole table (the MSv2 adapter scans <code>POINTING</code>) reads it once a distinct
+  query. The charge is the most any query of the observation can hold
+  (<code>Msv2Observation::pointing_bytes</code>: every <code>POINTING</code> row as a
+  candidate, a scan block of at most every row, and the series), the
+  bound today's route charges. A new query may hold what the answers kept
+  leave of it; when the store refuses that (<code>OverBudget</code>), the answers go
+  and it is asked again with all of it, under which no query is refused
+  for its size and <code>POINTING</code> is read in one block of up to 65,536 rows.
+- <strong>Restricted waves.</strong> A partition's channel window is bound before its
+  batches are read, from the range of output-frame conversion factors its
+  selected (field, time)s span. It holds every channel today's per-block
+  windows hold; the extra channels reach no plane of the wave. Both the
+  factors and the pointing spans come from one payload-free survey: at the
+  first traversal when geometry reads pointing, and with the factors at
+  the first restricted wave. The survey reads in buffers of its own, one
+  channel and no payload a batch. Under linear interpolation the native
+  channel width is taken from a row's first two delivered channels, so a
+  gapped selection's fine grid can depend on the window delivered, on
+  either route (#964).
+- <strong>Batches and admission.</strong> Each partition's times per batch are sized as
+  today's rows per block: at least one time of each partition and at most
+  all its selected times (as today's blocks hold at most the selected
+  rows), and growth up to the bootstrap budget or the source's share of a
+  quarter of free memory. The charge holds the largest batch with its
+  decode scratch, its geometry over the widest native span a batch
+  delivers, the parallactic cache at every selected (time, field), the
+  pointing charge when geometry reads pointing, the survey's batch and
+  conversions, and the passes' blocks. Opening is admitted before the
+  MeasurementSet opens, from MAIN's row count
+  (<code>Msv2Observation::opening_bytes</code>: a cell and eight bytes of time tables
+  a row, and a chunk of key columns), and raised by what it asks for
+  beyond; once open the charge becomes the index
+  (<code>Msv2Observation::index_bytes</code>).
+  Counting laws:
+  - the whole run's
+    (<code>the_observation_batch_route_stays_within_its_admission</code>, with a
+    101-channel window imaged whole and gapped, <code>0:0~1;100</code>), whose slack
+    hides the source's charge;
+  - the source's own (<code>tests/batch_source_memory.rs</code>, through
+    <code>source_law</code>), which reads the source alone on an opened, admitted
+    route and fails when the batches' charge is dropped;
+  - each smaller term's owner's: geometry and the parallactic cache
+    (<code>batch_geometry_memory</code>), a traversal's batch envelope (the adapters'
+    laws), and the opening and pointing bounds (<code>casa-ms</code>
+    <code>msv2_opening_memory</code>, which also refuses a jittered-time opening
+    before its grids); the pointing answers kept by unit tests of the
+    source's cache.</p>
+<p>Neither route charges the tiles the table layer stages while a tiled
+  column is read (up to 8 a column, #965); the source's law allows
+  exactly those.
+- <strong>Refused</strong> until a later step: writing a model or corrected column
+  (step 5); a field with <code>EPHEMERIS_ID</code> (#942); an ephemeris-table phase
+  centre (batch geometry follows a body Measures names, and a table
+  directory named like a body would be followed as the body); <code>FLOAT_DATA</code>;
+  several MeasurementSets; and a <code>WEIGHT_SPECTRUM</code> that only some selected
+  rows define (the MSv2 adapter takes the column from its first cell,
+  today's route from every selected row).
+- <strong>Evidence.</strong> The route law (<code>casa_imaging_application::route_law</code>)
+  images every T1 run on both routes and compares every product: all 200
+  are bit-identical, the image runs with <code>usepointing</code> (AW over two
+  windows, the mosaic gridder) among them. On T1.5 (the refim and kernels
+  harnesses, the AW pair with <code>usepointing</code>, and CAS-7841 under the mosaic
+  gridder with <code>usepointing</code>), 53 runs and 442 products agree to a
+  normalized RMS of 1.3e-10 at most, again after each review's fixes.
+  Receipts: NAS <code>casa-rs/issue-932/step4/</code>, <code>step4/review-fixes/</code>,
+  <code>step4/review-fixes-2/</code> and <code>step4/review-fixes-3/</code> (the last at the
+  head).</p>
 <h3 id="22-geometry">2.2 Geometry<a class="headerlink" href="#22-geometry" title="Permanent link">&para;</a></h3>
 <p>Row geometry moves from <code>casa-ms</code> into imaging (<code>casa-imaging-model</code>, compiled
 once, applied per batch), keyed by what a batch carries:</p>
