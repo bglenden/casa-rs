@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use casa_coordinates::{CoordinateModel, ProjectionType, StokesType};
 use casa_images::{GaussianBeam, PagedImage};
 use casa_imaging_application::geometry_law::compare_geometry;
+use casa_imaging_application::route_law;
 use casa_imaging_application::{Cancel, HostResources, ImagingRequest, RunContext};
 use casa_ms::{
     MeasurementSet, SyntheticAnalyticComponent, SyntheticAnalyticSpectrum, SyntheticAntenna,
@@ -370,8 +371,9 @@ impl Observation {
             unreachable!("parameters are an object");
         };
         let (parameters, request) = resolve_request(&ImagingParameters(parameters))?;
-        let result = run(parameters, &request)?;
+        let result = run(parameters.clone(), &request)?;
         assert_geometry_law(name, &request);
+        assert_route_law(name, parameters, &request, &result.artifacts);
         let products = Products::read(&image_name, &result.artifacts);
         Ok((result.run, products))
     }
@@ -512,6 +514,50 @@ fn assert_geometry_law(name: &str, request: &ImagingRequest) {
         comparison.holds(),
         "{name}: batch geometry departs from today's: {comparison:?}"
     );
+}
+
+/// Imaging port step 4's route law (#932): the run imaged again on the
+/// observation-batch route gives every product of `reported` to a
+/// normalized RMS of [`route_law::TOLERANCE`]. A run that writes a column
+/// back is not run there: the batch route writes nothing yet (step 5).
+fn assert_route_law(
+    name: &str,
+    mut parameters: ImagingParameters,
+    request: &ImagingRequest,
+    reported: &[ImagerArtifact],
+) {
+    if !route_law::applies_to(request) {
+        eprintln!("{name}: route law not run, the run writes visibilities back");
+        return;
+    }
+    let batches = route_law::on_batches(request);
+    parameters.0.insert(
+        "imagename".to_string(),
+        json!(batches.imagename.display().to_string()),
+    );
+    let result = run(parameters, &batches)
+        .unwrap_or_else(|error| panic!("{name}: the observation-batch route: {error}"));
+    let prefix = request.imagename.display().to_string();
+    let batch_prefix = batches.imagename.display().to_string();
+    assert_eq!(
+        result.artifacts.len(),
+        reported.len(),
+        "{name}: the routes report different products"
+    );
+    for artifact in reported {
+        let suffix = artifact
+            .path
+            .strip_prefix(&prefix)
+            .unwrap_or_else(|| panic!("{} outside {prefix}", artifact.path));
+        let other = format!("{batch_prefix}{suffix}");
+        let nrms = route_law::image_nrms(Path::new(&artifact.path), Path::new(&other))
+            .unwrap_or_else(|error| panic!("{name}{suffix}: {error}"));
+        eprintln!("{name}{suffix}: route law NRMS {nrms:.3e}");
+        assert!(
+            nrms <= route_law::TOLERANCE,
+            "{name}{suffix}: the observation-batch route departs from today's by NRMS {nrms:.3e}"
+        );
+    }
 }
 
 fn angle_difference_rad(actual: f64, expected: f64) -> f64 {

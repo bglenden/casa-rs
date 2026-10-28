@@ -9,6 +9,7 @@ use casa_imaging_deconvolution::{
     ImageDomainReconstructionMaskPlans, MajorCycleCompletion, ReconstructionMaskSet,
 };
 use casa_imaging_model::CompiledProblem;
+use casa_imaging_model::GeometryPlan;
 use casa_imaging_products::{
     ContinuumProductInputs, FacetSumWeights, MinorCycleImageResponse, PlannedContinuumGeneration,
     ProductStoragePlan, ProductsError, PublishedContinuumGeneration, produce_continuum_members,
@@ -18,18 +19,23 @@ use casa_imaging_runtime::{
     Admission, Admitted, Cancelled, Demand, Reservation, RunSummary, SourceAccessError, admit,
     finalize_source_access, free_memory, run_phase,
 };
+use casa_ms::observation_io::{Msv2Observation, OpenOptions};
 use casa_ms::{ResolvedSelectedObservationAccess, SelectedObservationResolutionRequest};
+use casa_observation::ObservationError;
 
+use crate::compile::resolve_partitions;
 use crate::imaging::{self, ImagingError};
 use crate::{
     ApplicationDispatchError, ApplicationError, ApplicationNative, ApplicationPublication,
-    ApplicationRuntime, AwCatalogDeployment, ImagingOutcome, visibility_write_selection,
+    ApplicationRuntime, AwCatalogDeployment, ImagingOutcome, SourceRoute,
+    visibility_write_selection,
 };
 
 /// What the native run needs besides the compiled problem and its runtime.
 pub(crate) struct NativeInput {
     pub(crate) observation: SelectedObservationResolutionRequest,
     pub(crate) initial_access: ResolvedSelectedObservationAccess,
+    pub(crate) source_route: SourceRoute,
     pub(crate) write_model_column: bool,
     pub(crate) write_corrected_data: bool,
     pub(crate) masks: ImageDomainReconstructionMaskPlans,
@@ -118,12 +124,156 @@ pub(crate) struct NativeRun {
     publication: ApplicationPublication,
     aw_catalog: Option<AwCatalogDeployment>,
     visibility_write: Option<imaging::VisibilityWriteTarget>,
-    access: ResolvedSelectedObservationAccess,
+    access: NativeSource,
     /// The source's charge, held while it is open.
     source: Reservation,
     masks: ImageDomainReconstructionMaskPlans,
     start_model: Option<crate::compile::StartModel>,
     image_response: Option<MinorCycleImageResponse>,
+}
+
+/// What a prepared run reads its visibilities from ([`SourceRoute`]).
+pub(crate) enum NativeSource {
+    /// The selected MAIN rows, through their admitted access.
+    SelectedRows(ResolvedSelectedObservationAccess),
+    /// The observation's batches.
+    ObservationBatches(Box<imaging::BatchRoute>),
+}
+
+/// The batch route of `problem` on the MeasurementSet `observation` names:
+/// the observation opened, the selection resolved to its partitions, the
+/// geometry compiled and its batches admitted
+/// ([`imaging::admit_batches`]). A run that writes visibilities back is
+/// refused: the batch route writes through update sessions in step 5 of
+/// #932.
+pub(crate) fn batch_route(
+    problem: &CompiledProblem,
+    observation: &SelectedObservationResolutionRequest,
+    writes: bool,
+    runtime: &ApplicationRuntime,
+) -> Result<Admitted<imaging::BatchRoute>, NativeError> {
+    if writes {
+        return Err(NativeError::Other(
+            "the observation-batch route writes no model or corrected column yet (#932 step 5)"
+                .into(),
+        ));
+    }
+    // Batch geometry follows a moving centre Measures names; a table named
+    // like a body (`Mars`) would be followed as the body.
+    if observation
+        .ephemeris()
+        .is_some_and(casa_ms::SelectedObservationEphemeris::is_table)
+    {
+        return Err(NativeError::Other(
+            "the observation-batch route does not follow an ephemeris table yet (#932)".into(),
+        ));
+    }
+    let Admitted {
+        value: opened,
+        reservation: mut opening,
+    } = open_observation(observation, runtime)?;
+    let selection = resolve_partitions(problem, &opened)
+        .map_err(|error| NativeError::Other(Box::new(error)))?;
+    let plan = GeometryPlan::compile(problem, opened.catalogue(), observation.measures_provider())
+        .map_err(|error| NativeError::Other(Box::new(error)))?;
+    let pointing_budget = if plan.reads_pointing() {
+        opened
+            .pointing_bytes()
+            .map_err(|error| NativeError::Other(Box::new(error)))?
+    } else {
+        0
+    };
+    let Admitted {
+        value: batching,
+        reservation,
+    } = imaging::admit_batches(
+        (problem, &opened, &selection, &plan),
+        imaging::row_samples(problem)?,
+        pointing_budget,
+        (&runtime.host, &runtime.resource_policy),
+    )?;
+    opening.join(reservation);
+    Ok(Admitted {
+        value: imaging::BatchRoute {
+            observation: Box::new(opened),
+            selection,
+            plan,
+            batching,
+            pointing_budget,
+        },
+        reservation: opening,
+    })
+}
+
+/// The MeasurementSet `observation` names, opened, with the charge of its
+/// index while it is open ([`Msv2Observation::index_bytes`]). What opening
+/// usually holds is admitted before it opens, from MAIN's row count
+/// ([`Msv2Observation::opening_bytes`]), and each increase it asks for
+/// beyond ([`Msv2Observation::open_granted`]) is admitted before it is
+/// allocated: one that does not fit refuses the opening, as an admission.
+/// The charge is then trimmed to the index, or raised to it.
+fn open_observation(
+    observation: &SelectedObservationResolutionRequest,
+    runtime: &ApplicationRuntime,
+) -> Result<Admitted<Msv2Observation>, NativeError> {
+    let main_rows = usize::try_from(observation.selection().rows().source_row_count())
+        .map_err(|_| NativeError::Other("MAIN holds more rows than this host addresses".into()))?;
+    let (host, policy) = (&runtime.host, &runtime.resource_policy);
+    let mut reservation = admit(
+        host,
+        policy,
+        &Demand {
+            phase: "observation opening",
+            memory: Msv2Observation::opening_bytes(main_rows) as u64,
+        },
+    )?;
+    let mut refusal = None;
+    let opened = Msv2Observation::open_granted(
+        observation.locator(),
+        &OpenOptions::default(),
+        &mut |total| {
+            let total = total as u64;
+            if total > reservation.memory() {
+                let demand = Demand {
+                    phase: "observation opening",
+                    memory: total - reservation.memory(),
+                };
+                match admit(host, policy, &demand) {
+                    Ok(more) => reservation.join(more),
+                    Err(admission) => {
+                        refusal = Some(admission);
+                        return Err(ObservationError::OverBudget {
+                            what: "the MSv2 opening index",
+                            required: total as usize,
+                            budget: reservation.memory() as usize,
+                        });
+                    }
+                }
+            }
+            Ok(())
+        },
+    );
+    let opened = opened.map_err(|error| match refusal.take() {
+        Some(admission) => NativeError::Admission(admission),
+        None => NativeError::Other(Box::new(error)),
+    })?;
+    let index = opened.index_bytes() as u64;
+    if index <= reservation.memory() {
+        reservation.retain(index);
+    } else {
+        reservation.join(admit(
+            &runtime.host,
+            &runtime.resource_policy,
+            &Demand {
+                phase: "observation index",
+                memory: index - reservation.memory(),
+            },
+        )?);
+    }
+    Ok(Admitted {
+        value: opened,
+        reservation,
+    })
 }
 
 /// The end of a run's preparation: check the products against `problem`,
@@ -153,16 +303,31 @@ pub(crate) fn prepare(
             })
         })
         .transpose()?;
-    let Admitted {
-        value: access,
-        reservation: source,
-    } = finalize_source_access(
-        problem,
-        input.initial_access,
-        imaging::row_samples(problem)?,
-        &runtime.host,
-        &runtime.resource_policy,
-    )?;
+    let (access, source) = match input.source_route {
+        SourceRoute::SelectedRows => {
+            let Admitted { value, reservation } = finalize_source_access(
+                problem,
+                input.initial_access,
+                imaging::row_samples(problem)?,
+                &runtime.host,
+                &runtime.resource_policy,
+            )?;
+            (NativeSource::SelectedRows(value), reservation)
+        }
+        SourceRoute::ObservationBatches => {
+            drop(input.initial_access);
+            let Admitted { value, reservation } = batch_route(
+                problem,
+                &input.observation,
+                visibility_write.is_some(),
+                &runtime,
+            )?;
+            (
+                NativeSource::ObservationBatches(Box::new(value)),
+                reservation,
+            )
+        }
+    };
     Ok(NativeRun {
         runtime,
         publication,
@@ -197,10 +362,19 @@ pub(crate) fn run(
         image_response,
     } = run;
     let teams = OnceCell::new();
+    // The run's source borrows the batch route, which is released with the
+    // source's charge once the run has finished with it.
+    let mut route = None;
+    let source_input = match access {
+        NativeSource::SelectedRows(access) => imaging::SourceInput::SelectedRows(access),
+        NativeSource::ObservationBatches(owned) => {
+            imaging::SourceInput::ObservationBatches(route.insert(owned))
+        }
+    };
     let outcome = imaging::run(
         imaging::ImagingInputs {
             problem,
-            access,
+            source: source_input,
             masks,
             start_model,
             image_response,
@@ -217,6 +391,7 @@ pub(crate) fn run(
         },
         summary,
     )?;
+    drop(route);
     drop(source);
     let team = teams
         .get()

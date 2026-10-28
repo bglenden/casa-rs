@@ -437,7 +437,8 @@ fn a_native_cache_reused_across_an_spw_selection_change_gives_a_fresh_caches_pro
 /// pointing and its AW pointing pixel come from the POINTING table (one
 /// row an integration, as the simulator writes for a stated field), over
 /// two windows whose epochs the batches visit window by window. The batch
-/// geometry equals the selected rows'.
+/// geometry equals the selected rows', and so do the products of the
+/// batch route (step 4), whose two partitions share one pointing query.
 #[test]
 fn aw_pointing_geometry_of_batches_is_the_selected_rows() {
     let setup = Setup {
@@ -449,5 +450,6 @@ fn aw_pointing_geometry_of_batches_is_the_selected_rows() {
     std::fs::write(&surface, surface_text()).expect("write the EVLA surface");
     let mut controls = cached_clean("0,1", &observation.scratch("cf"), &surface);
     controls["usepointing"] = json!(true);
-    observation.assert_geometry("aw-pointing", controls);
+    observation.assert_geometry("aw-pointing", controls.clone());
+    observation.image("aw-pointing-image", controls);
 }

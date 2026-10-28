@@ -50,7 +50,6 @@ use super::ImagingError;
 use super::charts::ChartStitch;
 use super::cycle::pass_domains;
 use super::measurement::{DomainOperator, density_shape};
-use super::source::MeasurementSetSource;
 
 /// The workers a run chose and, when fewer than its policy's, why.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -358,7 +357,7 @@ fn weights_bytes(
 pub(super) fn weighting(
     problem: &CompiledProblem,
     main: &DomainOperator,
-    source: &mut MeasurementSetSource<'_>,
+    source: &mut dyn BoundedSource,
     team: &WorkerTeam,
     cancel: &Cancel,
     (host, policy): (&HostResources, &ResourcePolicy),

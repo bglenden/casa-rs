@@ -19,7 +19,7 @@ use casa_ms::{
 };
 use num_complex::Complex32;
 
-use super::continuum::{flag_unimaged_channels, subtract_continuum};
+use super::continuum::{ContinuumRow, flag_unimaged_channels, subtract_continuum};
 
 /// Seconds per day, for row times in MJD days.
 const SECONDS_PER_DAY: f64 = 86_400.0;
@@ -55,7 +55,7 @@ pub(crate) type PlaneBounds = Box<dyn Fn(PlaneRange) -> [f64; 2] + Send + Sync>;
 /// [`super::measurement::domain_operator`] lists the dishes in; a row
 /// without response classes (every problem without an instrument model)
 /// is on the first dish.
-fn antenna_types(
+pub(super) fn antenna_types(
     responses: Option<SelectedAntennaResponses>,
     classes: &[AntennaResponseClass],
 ) -> [u8; 2] {
@@ -76,7 +76,7 @@ fn antenna_types(
 /// on the image plane (`SimplePBConvFunc::findConvFunction` takes the
 /// buffer's first `direction1`; under tclean `usepointing=False` the
 /// selection evaluates it as the field's phase-tracking centre).
-fn pointing_offset(
+pub(super) fn pointing_offset(
     direction: DirectionCoordinateSpec,
     aw_pixel: Option<[f64; 2]>,
     pointing: SkyDirection,
@@ -205,6 +205,23 @@ impl<'a> MeasurementSetSource<'a> {
         out.reset(self.domains, &channel_indices, &correlation_indices);
         let channels = channel_indices.len();
         let correlations = correlation_indices.len();
+        // Every row of a block has one data description, so the continuum
+        // transform's view of its channels is formed once a block.
+        let continuum = self.problem.visibility_transform().map(|_| {
+            (
+                first
+                    .channels
+                    .iter()
+                    .map(|channel| channel.frequency_centre_hz)
+                    .collect::<Vec<_>>(),
+                first
+                    .correlations
+                    .iter()
+                    .map(|product| product.correlation_type().contributes_to_stokes_i())
+                    .collect::<Vec<_>>(),
+                matches!(first.visibility, SelectedNumericVisibility::Float32(_)),
+            )
+        });
         // Every policy rejects a non-finite input in an unflagged sample;
         // `RejectAll` also one in a flagged sample.
         let reject_flagged = matches!(
@@ -276,10 +293,22 @@ impl<'a> MeasurementSetSource<'a> {
                     if nonfinite_uvw && (reject_flagged || imaged) {
                         return Err(nonfinite_input("uvw", numeric.row.physical_row, None));
                     }
-                    match rule {
-                        Some(rule) if unread => flag_unimaged_channels(rule, &numeric, flags),
-                        Some(rule) => subtract_continuum(rule, &numeric, values, weights, flags),
-                        None => Ok(()),
+                    let (Some(rule), Some((frequencies_hz, parallel, real))) =
+                        (rule, continuum.as_ref())
+                    else {
+                        return Ok(());
+                    };
+                    let row = ContinuumRow {
+                        channels: &channel_indices,
+                        frequencies_hz,
+                        parallel,
+                        real: *real,
+                        row_flag: numeric.row.row_flag,
+                    };
+                    if unread {
+                        flag_unimaged_channels(rule, &row, flags)
+                    } else {
+                        subtract_continuum(rule, &row, values, weights, flags)
                     }
                 },
             )?;

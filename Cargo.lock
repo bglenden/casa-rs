@@ -316,6 +316,7 @@ dependencies = [
  "casa-ms",
  "casa-observation",
  "casa-provider-contracts",
+ "casa-tables",
  "casa-task-runtime",
  "casa-test-support",
  "casa-types",
@@ -437,6 +438,21 @@ dependencies = [
  "tempfile",
  "thiserror",
  "tracing",
+]
+
+[[package]]
+name = "casa-imaging-singledish"
+version = "0.27.0"
+dependencies = [
+ "base64",
+ "casa-imaging-operator",
+ "casa-imaging-runtime",
+ "casa-numerics",
+ "flate2",
+ "libm",
+ "ndarray",
+ "serde_json",
+ "thiserror",
 ]
 
 [[package]]
@@ -571,6 +587,7 @@ dependencies = [
  "casa-imaging-model",
  "casa-imaging-operator",
  "casa-imaging-runtime",
+ "casa-imaging-singledish",
  "casa-lattices",
  "casa-ms",
  "casa-numerics",

@@ -34,6 +34,36 @@ pub(super) const NO_ROW: u32 = u32::MAX;
 /// about 15 MiB of columns and row numbers.
 pub(super) const ROWS_PER_CHUNK: usize = 1 << 18;
 
+/// Bytes a chunk of key columns ([`KeyColumns`]) holds per row: a row
+/// number, a time and ten integer keys.
+pub(super) const CHUNK_ROW_BYTES: usize =
+    size_of::<usize>() + size_of::<f64>() + 10 * size_of::<i32>();
+
+/// At most the bytes a node of a B-tree of `entry`-byte entries holds:
+/// room for 11 entries, the 12 edges of an internal node, and its header.
+const fn node_bytes(entry: usize) -> usize {
+    11 * entry + 12 * size_of::<usize>() + 16
+}
+
+/// At most the bytes a B-tree holds an entry of `entry` bytes besides its
+/// root ([`node_bytes`]): a node but the root holds at least 5 entries.
+const fn entry_bytes(entry: usize) -> usize {
+    node_bytes(entry).div_ceil(5)
+}
+
+/// The step the opening asks its grant for beyond what it needs, so that
+/// a growing first pass asks it rarely.
+const GRANT_STEP: usize = 1 << 20;
+
+/// What the opening asks to hold ([`Index::build`]'s `grant`): the bytes
+/// the index will hold in all, in totals that only grow.
+pub(super) type OpeningGrant<'a> = dyn FnMut(usize) -> Result<(), ObservationError> + 'a;
+
+/// Bytes a grid holds a time while its rows are placed ([`Placing`]): the
+/// time, its field and its scan.
+const PLACING_TIME_BYTES: usize =
+    size_of::<f64>() + size_of::<Option<FieldId>>() + size_of::<Option<ScanId>>();
+
 /// One chunk of MAIN's key columns, refilled for every chunk.
 #[derive(Default)]
 struct KeyColumns {
@@ -235,43 +265,112 @@ struct Gathered {
     rows: usize,
 }
 
+impl Gathered {
+    /// At most the bytes a new partition's sets hold for their roots.
+    const ROOTS: usize = node_bytes(size_of::<u64>())
+        + node_bytes(size_of::<OrderedBaseline>())
+        + node_bytes(size_of::<i32>());
+
+    /// The bytes the partition's grid holds while its rows are placed: a
+    /// cell a time and baseline, each time's and baseline's tables, and its
+    /// place among the grids and their keys.
+    fn grid_bytes(&self) -> usize {
+        let (times, baselines) = (self.times.len(), self.baselines.len());
+        times
+            .saturating_mul(baselines)
+            .saturating_mul(size_of::<u32>())
+            .saturating_add(times * PLACING_TIME_BYTES)
+            .saturating_add(baselines * size_of::<OrderedBaseline>())
+            .saturating_add(size_of::<Placing>() + size_of::<RowKey>())
+    }
+}
+
 /// What the first pass learns of all of MAIN.
 #[derive(Default)]
 struct Survey {
     partitions: BTreeMap<RowKey, Gathered>,
+    /// At most the bytes its sets and maps hold: each tree's root when it
+    /// is made, and [`entry_bytes`] an entry.
+    bytes: usize,
     /// Each `SCAN_NUMBER`'s `STATE_ID`s.
     scan_states: BTreeMap<i32, BTreeSet<i32>>,
 }
 
 impl Survey {
-    /// Gather the rows of `columns`, MAIN rows from `first`.
+    /// Gather the rows of `columns`, MAIN rows from `first`, asking
+    /// `ensure` for `base` and what the survey holds after each row that
+    /// added a key: at most one row's keys beyond what was granted are
+    /// held before it answers.
     fn gather(
         &mut self,
         keys: &Keys<'_>,
-        columns: &KeyColumns,
-        first: usize,
+        (columns, first): (&KeyColumns, usize),
+        base: usize,
+        ensure: &mut dyn FnMut(usize) -> Result<(), ObservationError>,
     ) -> Result<(), ObservationError> {
+        const PARTITION: usize = size_of::<(RowKey, Gathered)>();
+        const SCAN: usize = size_of::<(i32, BTreeSet<i32>)>();
         let mut last_scan = None;
         for i in 0..columns.time.len() {
             let row = first + i;
             let (key, _) = keys.of(columns, i, row)?;
-            let partition = self.partitions.entry(key).or_default();
+            let mut added = 0;
+            let first_partition = self.partitions.is_empty();
+            let partition = self.partitions.entry(key).or_insert_with(|| {
+                added += entry_bytes(PARTITION) + Gathered::ROOTS;
+                if first_partition {
+                    added += node_bytes(PARTITION);
+                }
+                Gathered::default()
+            });
             let time = columns.time[i].to_bits();
             if partition.last_time != Some(time) {
-                partition.times.insert(time);
+                added += usize::from(partition.times.insert(time)) * entry_bytes(8);
                 partition.last_time = Some(time);
             }
-            partition.baselines.insert(columns.baseline(i, row)?);
-            partition.processors.insert(columns.processor[i]);
+            added += usize::from(partition.baselines.insert(columns.baseline(i, row)?))
+                * entry_bytes(size_of::<OrderedBaseline>());
+            added += usize::from(partition.processors.insert(columns.processor[i]))
+                * entry_bytes(size_of::<i32>());
             partition.rows += 1;
             let scan = (columns.scan_number[i], columns.state[i]);
             if last_scan != Some(scan) {
-                self.scan_states.entry(scan.0).or_default().insert(scan.1);
+                let first_scan = self.scan_states.is_empty();
+                let states = self.scan_states.entry(scan.0).or_insert_with(|| {
+                    added += entry_bytes(SCAN) + node_bytes(size_of::<i32>());
+                    if first_scan {
+                        added += node_bytes(SCAN);
+                    }
+                    BTreeSet::new()
+                });
+                added += usize::from(states.insert(scan.1)) * entry_bytes(size_of::<i32>());
                 last_scan = Some(scan);
+            }
+            if added > 0 {
+                self.bytes += added;
+                ensure(base + self.bytes)?;
             }
         }
         Ok(())
     }
+}
+
+/// The bytes the scans and their tables hold: each entry with its name
+/// and intents, the scan identifiers by number, and the states MAIN holds.
+fn scans_bytes(scans: &[ScanEntry], numbers: usize, states: usize) -> usize {
+    let entries: usize = scans
+        .iter()
+        .map(|scan| {
+            size_of::<ScanEntry>()
+                + scan.name.capacity()
+                + scan.intents.capacity() * size_of::<String>()
+                + scan.intents.iter().map(String::capacity).sum::<usize>()
+        })
+        .sum();
+    let numbers =
+        node_bytes(size_of::<(i32, ScanId)>()) + numbers * entry_bytes(size_of::<(i32, ScanId)>());
+    let states = node_bytes(size_of::<i32>()) + states * entry_bytes(size_of::<i32>());
+    entries + numbers + states
 }
 
 /// One partition's grid while the second pass places its rows.
@@ -397,6 +496,9 @@ pub(super) struct Index {
     pub(super) partitions: Vec<(PartitionKey, Grid)>,
     /// The scans, by ascending `SCAN_NUMBER`.
     pub(super) scans: Vec<ScanEntry>,
+    /// The `STATE_ID`s MAIN's rows hold, -1 and those beyond `STATE`
+    /// included.
+    pub(super) states: BTreeSet<i32>,
 }
 
 impl Index {
@@ -411,13 +513,20 @@ impl Index {
     /// When a row's field is not in `FIELD` or an antenna is negative, two
     /// rows share a (time, baseline) cell, a time holds rows of two fields
     /// or two scans, a partition's rows have several `PROCESSOR_ID`s, or
-    /// MAIN has too many rows to number in 32 bits.
+    /// MAIN has too many rows to number in 32 bits; whatever `grant`
+    /// returns when it refuses.
+    ///
+    /// Before it allocates them, the build asks `grant` for the bytes the
+    /// index will hold in all, in totals that only grow: its chunk of key
+    /// columns, the first pass's sets and maps (in steps, as keys come),
+    /// then the scans and the grids. A refusal stops it with nothing more
+    /// allocated.
     pub(super) fn build(
         main: &Table,
         scheme: PartitionScheme,
-        state_modes: &[String],
-        field_ephemeris: &[Option<i32>],
+        (state_modes, field_ephemeris): (&[String], &[Option<i32>]),
         rows_per_chunk: usize,
+        grant: &mut OpeningGrant<'_>,
     ) -> Result<Self, ObservationError> {
         let rows = main.row_count();
         if rows >= NO_ROW as usize {
@@ -427,14 +536,33 @@ impl Index {
             .step_by(rows_per_chunk)
             .map(|start| start..start.saturating_add(rows_per_chunk).min(rows))
             .collect();
+        let chunk_bytes = rows_per_chunk.min(rows) * CHUNK_ROW_BYTES;
+        let mut granted = 0;
+        let mut ensure = |needed: usize| -> Result<(), ObservationError> {
+            if needed > granted {
+                let step = needed.max(granted + granted / 2).max(granted + GRANT_STEP);
+                if grant(step).is_err() {
+                    grant(needed)?;
+                    granted = needed;
+                } else {
+                    granted = step;
+                }
+            }
+            Ok(())
+        };
+        ensure(chunk_bytes)?;
         let keys = Keys::new(scheme, state_modes, field_ephemeris);
         let mut columns = KeyColumns::default();
         let mut survey = Survey::default();
         for chunk in &chunks {
             columns.read(main, chunk.clone())?;
-            survey.gather(&keys, &columns, chunk.start)?;
+            survey.gather(&keys, (&columns, chunk.start), chunk_bytes, &mut ensure)?;
         }
+        let states: BTreeSet<i32> = survey.scan_states.values().flatten().copied().collect();
         let (scans, scan_ids) = catalogue::scans(survey.scan_states, state_modes);
+        let scans_bytes = scans_bytes(&scans, scan_ids.len(), states.len());
+        let grids: usize = survey.partitions.values().map(Gathered::grid_bytes).sum();
+        ensure(chunk_bytes + survey.bytes + scans_bytes + grids)?;
         let order: Vec<RowKey> = survey.partitions.keys().copied().collect();
         let mut grids = survey
             .partitions
@@ -469,6 +597,7 @@ impl Index {
                 .map(|(key, grid)| (keys.partition_key(key), grid.finish()))
                 .collect(),
             scans,
+            states,
         })
     }
 }
@@ -543,7 +672,14 @@ mod tests {
             },
         ] {
             let build = |rows_per_chunk| {
-                Index::build(main, scheme, &modes, &ephemerides, rows_per_chunk).expect("index")
+                Index::build(
+                    main,
+                    scheme,
+                    (&modes, &ephemerides),
+                    rows_per_chunk,
+                    &mut |_| Ok(()),
+                )
+                .expect("index")
             };
             let whole = build(usize::MAX);
             assert!(!whole.partitions.is_empty() && !whole.scans.is_empty());

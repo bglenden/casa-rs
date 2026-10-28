@@ -225,6 +225,19 @@ impl Frames {
         angles + buckets * (size_of::<(ParallacticKey, Box<[f64]>)>() + 1) + 32
     }
 
+    /// At most the bytes [`Self::parallactic_bytes`] reports once the cache
+    /// holds `keys` (time, field) entries: the bound admission charges
+    /// before any batch is read. The table holds at most twice the buckets
+    /// its entries need, since it doubles as it grows.
+    pub(super) fn parallactic_bound(&self, keys: usize) -> usize {
+        if keys == 0 {
+            return 0;
+        }
+        let angles = keys * self.antennas.len() * size_of::<f64>();
+        let buckets = 2 * ((keys * 8).div_ceil(7) + 1);
+        angles + buckets * (size_of::<(ParallacticKey, Box<[f64]>)>() + 1) + 32
+    }
+
     /// CASA's aperture class of each antenna
     /// ([`AntennaResponseClass::casa_alma_aca`]) when every observation is
     /// an ALMA or ACA one; `None` throughout for another telescope.

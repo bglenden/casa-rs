@@ -13,6 +13,16 @@ pub struct RowAddress {
     pub data_description: i32,
 }
 
+impl RowAddress {
+    /// The address of a row no MeasurementSet row holds: what a source
+    /// that writes nothing back gives (the observation-batch route until
+    /// it writes through an update session, step 5 of #932).
+    pub const UNADDRESSED: Self = Self {
+        physical_row: u64::MAX,
+        data_description: -1,
+    };
+}
+
 /// A row's baseline in the frame of one image domain: CASA rotates each
 /// mapper's uvw to its own phase centre (`FTMachine::rotateUVW`).
 #[derive(Clone, Copy, Debug, PartialEq)]

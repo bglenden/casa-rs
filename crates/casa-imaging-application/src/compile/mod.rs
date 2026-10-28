@@ -17,6 +17,7 @@ mod error;
 mod instrument;
 mod native_aw;
 mod outliers;
+mod partitions;
 mod selection;
 mod specification;
 mod spectral;
@@ -54,6 +55,7 @@ use crate::{
 use direction::{Centre, ImageSpectralCoordinate};
 use domains::PreparedImageDomain;
 pub use error::{OutlierProblem, PrepareError};
+pub(crate) use partitions::resolve_partitions;
 use selection::{Survey, WindowChannels};
 use specification::SpecificationInputs;
 use spectral::{FrameContext, PreparedSpectralAxis};

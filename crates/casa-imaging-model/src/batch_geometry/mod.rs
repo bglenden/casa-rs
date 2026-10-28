@@ -40,6 +40,7 @@ mod pointing;
 mod projection;
 
 use std::fmt;
+use std::mem::size_of;
 use std::sync::Arc;
 
 use casa_observation::{AntennaId, Catalogue, FieldId, PointingSeries, VisibilityBatch};
@@ -54,7 +55,9 @@ use self::pointing::{TimeContext, TimeDirections};
 use self::projection::Chart;
 use crate::aw_pointing::{AwPointingEpochs, AwPointingError, AwPointingGrouping};
 use crate::compiled_problem::{CompiledProblem, InstrumentModel};
-use crate::geometry::{DirectionFrame, PhaseCentreLaw, PointingCentreLaw, SkyDirection};
+use crate::geometry::{
+    DirectionFrame, PhaseCentreLaw, PointingCentreLaw, PointingTimeSampling, SkyDirection,
+};
 use crate::pointing_law::PointingLawError;
 use crate::selected_observation_sample::{
     AntennaResponseClass, SelectedAntennaResponses, SelectedPointingDirections,
@@ -242,6 +245,28 @@ impl BatchGeometry {
     }
 }
 
+impl BatchGeometry {
+    /// Bytes the buffers hold, from their capacities: at most
+    /// [`GeometryPlan::geometry_bytes`] of the largest batch applied.
+    #[must_use]
+    pub fn capacity_bytes(&self) -> usize {
+        self.projections.capacity() * size_of::<ChartProjection>()
+            + self.pointing.capacity() * size_of::<SelectedPointingDirections>()
+            + self.parallactic.capacity() * size_of::<[f64; 2]>()
+            + self.aw_pixels.capacity() * size_of::<[f64; 2]>()
+            + self.responses.capacity() * size_of::<Option<SelectedAntennaResponses>>()
+            + self.frequencies_hz.capacity() * size_of::<f64>()
+    }
+}
+
+/// `buffer` emptied and filled with `len` copies of `value`, growing to
+/// exactly `len` when it must grow.
+fn refill<T: Clone>(buffer: &mut Vec<T>, len: usize, value: T) {
+    buffer.clear();
+    buffer.reserve_exact(len);
+    buffer.resize(len, value);
+}
+
 impl GeometryPlan {
     /// The geometry of `problem` on the observation `catalogue` describes,
     /// converting with `measures`.
@@ -332,6 +357,17 @@ impl GeometryPlan {
         matches!(self.pointing, PointingCentreLaw::Observation(_))
     }
 
+    /// Whether [`Self::apply`] needs the batch's time centroids: the
+    /// pointing law samples each row's pointing at its time centroid.
+    #[must_use]
+    pub fn reads_time_centroids(&self) -> bool {
+        matches!(
+            &self.pointing,
+            PointingCentreLaw::Observation(law)
+                if law.time_sampling() == PointingTimeSampling::VisibilityTimeCentroid
+        )
+    }
+
     /// At most the bytes the plan has come to hold beyond its compiled
     /// state: the parallactic angles of every (time, time scale, field) a
     /// batch with rows has asked for, one per antenna, kept for the
@@ -344,6 +380,79 @@ impl GeometryPlan {
     #[must_use]
     pub fn cached_bytes(&self) -> usize {
         self.frames.parallactic_bytes()
+    }
+
+    /// At most what [`Self::cached_bytes`] reports once a traversal has
+    /// read rows at `keys` distinct (time, field) pairs, known before any
+    /// batch is read: the source's admission charges it. Zero when the
+    /// problem needs no parallactic angle.
+    #[must_use]
+    pub fn cache_bound(&self, keys: usize) -> usize {
+        if self.parallactic {
+            self.frames.parallactic_bound(keys)
+        } else {
+            0
+        }
+    }
+
+    /// The bytes a [`BatchGeometry`] holds for a batch of `samples` samples
+    /// over `times` times of `channels` channels
+    /// ([`BatchGeometry::capacity_bytes`] after [`Self::apply`] on the
+    /// largest such batch).
+    #[must_use]
+    pub fn geometry_bytes(&self, samples: usize, times: usize, channels: usize) -> usize {
+        let charts = self.charts.len();
+        let mut per_sample =
+            charts * size_of::<ChartProjection>() + size_of::<SelectedPointingDirections>();
+        if self.parallactic {
+            per_sample += size_of::<[f64; 2]>();
+        }
+        if self.aw.is_some() {
+            per_sample += charts * size_of::<[f64; 2]>();
+        }
+        if !matches!(self.responses, Responses::None) {
+            per_sample += size_of::<Option<SelectedAntennaResponses>>();
+        }
+        samples * per_sample + times * channels * size_of::<f64>()
+    }
+
+    /// CASA's aperture classes of the observation's antennas, sorted and
+    /// without repeats: the dishes a heterogeneous mosaic's kernel set
+    /// keys on (`HetArrayConvFunc::findAntennaSizes`), as the
+    /// selected-observation route lists them.
+    #[must_use]
+    pub fn aperture_classes(&self) -> Vec<AntennaResponseClass> {
+        let mut classes = self
+            .frames
+            .alma_aca_classes(&self.catalogue)
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>();
+        classes.sort_unstable();
+        classes.dedup();
+        classes
+    }
+
+    /// The factor that takes a frequency in `frame`, observed towards
+    /// field `field` at `time_mjd_s` on `scale`, to the output frame:
+    /// [`Self::apply`] gives each channel its native frequency times this
+    /// factor, to rounding. A source sizes a wave's channel window from it
+    /// without reading a batch.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::apply`]'s frequency conversion: a conversion into or out
+    /// of the rest frame, or a failed one.
+    pub fn frequency_factor(
+        &self,
+        frame: FrequencyRef,
+        field: FieldId,
+        time_mjd_s: f64,
+        scale: EpochRef,
+    ) -> Result<f64, BatchGeometryError> {
+        Ok(self
+            .frequency_conversion(time_mjd_s, scale, self.frames.field(field), frame)?
+            .convert_hz(1.0))
     }
 
     /// The geometry of `batch`'s row samples (`rows`, one flag a sample)
@@ -440,8 +549,12 @@ impl GeometryPlan {
                     out,
                 )?;
             }
-            let conversion =
-                self.frequency_conversion(time_mjd_s, scale, field_direction, batch)?;
+            let conversion = self.frequency_conversion(
+                time_mjd_s,
+                scale,
+                field_direction,
+                batch.frequency.reference(),
+            )?;
             let channels = out.channels;
             for (slot, frequency) in out.frequencies_hz[time * channels..(time + 1) * channels]
                 .iter_mut()
@@ -454,37 +567,45 @@ impl GeometryPlan {
     }
 
     /// Size `out` for `batch`, every sample without geometry.
+    /// Each buffer is reserved exactly, so it holds what the largest batch
+    /// needs and no more ([`Self::geometry_bytes`]).
     fn reset(&self, batch: &VisibilityBatch<'_>, out: &mut BatchGeometry) {
         let samples = batch.samples();
         out.charts = self.charts.len();
         out.channels = batch.channel_count();
-        out.projections.clear();
-        out.projections
-            .resize(samples * out.charts, ChartProjection::ABSENT);
+        refill(
+            &mut out.projections,
+            samples * out.charts,
+            ChartProjection::ABSENT,
+        );
         let nowhere = SkyDirection::new(DirectionFrame::J2000, f64::NAN, f64::NAN);
-        out.pointing.clear();
-        out.pointing.resize(
+        refill(
+            &mut out.pointing,
             samples,
             SelectedPointingDirections {
                 antenna1: nowhere,
                 antenna2: nowhere,
             },
         );
-        out.parallactic.clear();
-        if self.parallactic {
-            out.parallactic.resize(samples, [f64::NAN; 2]);
-        }
-        out.aw_pixels.clear();
-        if self.aw.is_some() {
-            out.aw_pixels.resize(samples * out.charts, [f64::NAN; 2]);
-        }
-        out.responses.clear();
-        if !matches!(self.responses, Responses::None) {
-            out.responses.resize(samples, None);
-        }
-        out.frequencies_hz.clear();
-        out.frequencies_hz
-            .resize(batch.times() * out.channels, f64::NAN);
+        let parallactic = if self.parallactic { samples } else { 0 };
+        refill(&mut out.parallactic, parallactic, [f64::NAN; 2]);
+        let aw = if self.aw.is_some() {
+            samples * out.charts
+        } else {
+            0
+        };
+        refill(&mut out.aw_pixels, aw, [f64::NAN; 2]);
+        let responses = if matches!(self.responses, Responses::None) {
+            0
+        } else {
+            samples
+        };
+        refill(&mut out.responses, responses, None);
+        refill(
+            &mut out.frequencies_hz,
+            batch.times() * out.channels,
+            f64::NAN,
+        );
     }
 
     /// Whether the charts' targets move with time: a moving phase centre,
@@ -635,18 +756,17 @@ impl GeometryPlan {
         })
     }
 
-    /// The conversion of `batch`'s channel frequencies at `time_mjd_s` from
-    /// its partition's frame to the output frame, in the observatory's
-    /// frame towards the field (CASA's visibility iterator converts towards
-    /// the field's own direction, whatever the imaging phase centre).
+    /// The conversion of frequencies in `source` at `time_mjd_s` to the
+    /// output frame, in the observatory's frame towards the field (CASA's
+    /// visibility iterator converts towards the field's own direction,
+    /// whatever the imaging phase centre).
     fn frequency_conversion(
         &self,
         time_mjd_s: f64,
         scale: EpochRef,
         field: &MDirection,
-        batch: &VisibilityBatch<'_>,
+        source: FrequencyRef,
     ) -> Result<PreparedFrequencyConversion, BatchGeometryError> {
-        let source = batch.frequency.reference();
         if source == self.output_frame {
             return Ok(PreparedFrequencyConversion::new(
                 source, source, None, None,

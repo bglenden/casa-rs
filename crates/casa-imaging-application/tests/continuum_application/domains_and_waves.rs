@@ -51,7 +51,8 @@ fn read_product(base: &Path, suffix: &str) -> (Vec<usize>, ArrayD<f32>) {
 }
 
 /// A dirty cube imaged in waves equals the cube imaged in one resident
-/// pass, both when its waves read restricted channel windows and under
+/// pass, both when its waves read restricted channel windows, of all the
+/// channels or of a selection with a gap (`0:1~10;20~30`), and under
 /// continuum subtraction, whose interior waves reach none of the fit-only
 /// channels (0 and 31) and so read whole rows for the fit. (Residual waves
 /// with a model are pinned by the runtime's pass laws.)
@@ -60,26 +61,26 @@ fn dirty_cubes_in_waves_equal_the_resident_cube() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = thirty_two_channel_multi_row_measurement_set(root.path());
-    for (label, continuum) in [("windowed", false), ("continuum", true)] {
-        let cube = |name: &str, memory: u64| {
+    for (label, overrides) in [
+        ("windowed", json!({ "imsize": 128 })),
+        ("gapped", json!({ "imsize": 128, "spw": "0:1~10;20~30" })),
+        (
+            "continuum",
+            json!({ "imsize": 128, "fitspw": "0:0;31", "fitorder": 1 }),
+        ),
+    ] {
+        let cube = |name: &str, memory: u64, route: SourceRoute| {
             let image_name = root.path().join(format!("{label}-{name}"));
-            let imaging = line_cube(
-                &measurement_set,
-                &image_name,
-                if continuum {
-                    json!({ "imsize": 128, "fitspw": "0:0;31", "fitorder": 1 })
-                } else {
-                    json!({ "imsize": 128 })
-                },
-            );
+            let mut imaging = line_cube(&measurement_set, &image_name, overrides.clone());
+            imaging.source_route = route;
             let outcome =
                 casa_imaging_application::execute(&imaging, context_with(memory_policy(memory)))
                     .unwrap_or_else(|error| panic!("{label} {name}: {error:?}"));
             (image_name, outcome.planes_per_wave)
         };
-        let (resident, resident_waves) = cube("resident", 4 << 30);
+        let (resident, resident_waves) = cube("resident", 4 << 30, SourceRoute::SelectedRows);
         assert_eq!(resident_waves, None, "{label}: every plane fits 4 GiB");
-        let (waved, waves) = cube("waved", WAVED_MEMORY_BYTES);
+        let (waved, waves) = cube("waved", WAVED_MEMORY_BYTES, SourceRoute::SelectedRows);
         assert!(
             waves.is_some_and(|planes| planes < 30),
             "{label}: the capped cube runs in waves: {waves:?}"
@@ -89,6 +90,29 @@ fn dirty_cubes_in_waves_equal_the_resident_cube() {
                 read_product(&waved, suffix),
                 read_product(&resident, suffix),
                 "{label} {suffix}"
+            );
+        }
+        // The observation-batch route (#932 step 4) binds each wave's
+        // channels per partition, from the conversion factors its times
+        // span: its waves give the resident cube too.
+        let (batches, batch_waves) = cube(
+            "batches",
+            WAVED_MEMORY_BYTES,
+            SourceRoute::ObservationBatches,
+        );
+        assert!(
+            batch_waves.is_some_and(|planes| planes < 30),
+            "{label}: the capped cube runs in waves on batches: {batch_waves:?}"
+        );
+        for suffix in DIRTY_PRODUCT_SUFFIXES {
+            let nrms = route_law::image_nrms(
+                &PathBuf::from(format!("{}{suffix}", resident.display())),
+                &PathBuf::from(format!("{}{suffix}", batches.display())),
+            )
+            .expect("both cubes");
+            assert!(
+                nrms <= route_law::TOLERANCE,
+                "{label} {suffix}: the batch route's waves differ by NRMS {nrms:.3e}"
             );
         }
     }

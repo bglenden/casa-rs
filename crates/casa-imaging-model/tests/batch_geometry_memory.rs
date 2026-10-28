@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! The counting law of batch geometry's parallactic angle cache: what a
 //! plan keeps across batches stays within the bytes it reports
-//! ([`GeometryPlan::cached_bytes`]), and another partition over the same
-//! times adds nothing. This binary's global allocator counts the live
+//! ([`GeometryPlan::cached_bytes`]), which stay within the bound charged
+//! before any batch is read ([`GeometryPlan::cache_bound`]), and another
+//! partition over the same times adds nothing. The per-batch buffers stay
+//! within [`GeometryPlan::geometry_bytes`]. This binary's global allocator counts the live
 //! heap; it holds this one law, so the law runs in a process of its own.
 
 use std::alloc::{GlobalAlloc, Layout, System};
@@ -129,5 +131,17 @@ fn the_parallactic_cache_holds_at_most_what_it_charges() {
         (live() - before).unsigned_abs() as usize <= charged,
         "after the second partition the cache holds {} B against {charged} B charged",
         live() - before
+    );
+    let bound = plan.cache_bound(TIMES);
+    assert!(
+        charged <= bound,
+        "the cache reports {charged} B over its a-priori bound {bound} B"
+    );
+    let batch = &batches[0];
+    let buffers = plan.geometry_bytes(batch.samples(), batch.times(), batch.channel_count());
+    assert!(
+        geometry.capacity_bytes() <= buffers,
+        "the geometry buffers hold {} B over the {buffers} B their batch charges",
+        geometry.capacity_bytes()
     );
 }

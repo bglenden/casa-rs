@@ -365,7 +365,8 @@ impl ModelOperator {
                 return Ok(());
             };
             let images = vec![model.read_plane(plane)?];
-            let factor = beam.map(|(pattern, centre)| pattern.power_plane(model, plane, centre));
+            let factor =
+                beam.map(|(pattern, centre)| beam::power_plane(pattern, model, plane, centre));
             self.operator
                 .fill_model_plane(&ModelPlane { images }, factor.as_ref(), target)?;
             Ok::<_, PredictError>(())

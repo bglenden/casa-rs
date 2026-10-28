@@ -15,16 +15,16 @@ pub use cursor::Msv2Cursor;
 #[cfg(feature = "msv4")]
 pub(crate) use pointing::{POLYNOMIAL_TERMS, scan_rows};
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::sync::Arc;
 
 use casa_observation::{
-    AccessRequest, AntennaId, BoundCursor, Catalogue, DataGroupEntry, Estimate, FieldSelection,
-    GroupKey, Grouping, NaturalBlocks, Observation, ObservationError, ObservationId,
-    OrderedBaseline, PartitionEntry, PartitionEstimate, PartitionId, PointingRequest,
-    PointingSeries, Receptors, ResolvedRequest, Roles, TimeBaselineGrid, Traversal, WeightRequest,
-    WeightRule, WeightSource, times_per_batch,
+    AccessRequest, AntennaId, BoundCursor, Catalogue, DataGroupEntry, Estimate, FieldId,
+    FieldSelection, GroupKey, Grouping, NaturalBlocks, Observation, ObservationError,
+    ObservationId, OrderedBaseline, PartitionEntry, PartitionEstimate, PartitionId,
+    PointingRequest, PointingSeries, Receptors, ResolvedRequest, Roles, ScanId, TimeBaselineGrid,
+    Traversal, WeightRequest, WeightRule, WeightSource, times_per_batch,
 };
 use casa_tables::{RequiredScalarColumnDestination, RequiredScalarColumnValuesMut};
 use casa_types::measures::{EpochRef, MjdHighPrec};
@@ -51,6 +51,9 @@ fn invalid(reason: impl Into<String>) -> ObservationError {
 #[derive(Debug)]
 struct Partition {
     grid: Grid,
+    /// The `STATE::OBS_MODE` its rows share; empty for rows without a
+    /// state.
+    obs_mode: String,
     /// Its `DATA_DESCRIPTION` row.
     data_description_id: u32,
     /// The `SPECTRAL_WINDOW` row of its data description.
@@ -82,6 +85,10 @@ pub struct Msv2Observation {
     ms: MeasurementSet,
     catalogue: Arc<Catalogue>,
     partitions: Vec<Partition>,
+    /// Each `STATE` row's `OBS_MODE`.
+    state_modes: Vec<String>,
+    /// The `STATE_ID`s MAIN's rows hold.
+    main_states: BTreeSet<i32>,
     spectral_weights: bool,
     /// Whether MAIN has `SIGMA_SPECTRUM`.
     spectral_sigmas: bool,
@@ -117,13 +124,34 @@ impl Msv2Observation {
         path: impl AsRef<Path>,
         options: &OpenOptions,
     ) -> Result<Self, ObservationError> {
+        Self::open_granted(path, options, &mut |_| Ok(()))
+    }
+
+    /// [`Self::open_with`], asking `grant` for the bytes the opening's index
+    /// will hold before it allocates them: its chunk of MAIN's key columns,
+    /// each partition's distinct times, baselines and processors as the
+    /// first pass finds them (at most one row's beyond what was granted),
+    /// then the scans and the grids. The totals asked for only grow, a few
+    /// at a time; a caller that admits memory admits each increase. An
+    /// error from `grant` refuses the opening with nothing more allocated.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::open`], and whatever `grant` returns.
+    #[cfg(unix)]
+    pub fn open_granted(
+        path: impl AsRef<Path>,
+        options: &OpenOptions,
+        grant: &mut dyn FnMut(usize) -> Result<(), ObservationError>,
+    ) -> Result<Self, ObservationError> {
         let ms = MeasurementSet::open_retained_read(path).map_err(storage)?;
-        Self::from_measurement_set(ms, options)
+        Self::from_measurement_set(ms, options, grant)
     }
 
     fn from_measurement_set(
         ms: MeasurementSet,
         options: &OpenOptions,
+        grant: &mut dyn FnMut(usize) -> Result<(), ObservationError>,
     ) -> Result<Self, ObservationError> {
         let antennas = catalogue::read_antennas(&ms)?;
         let feeds = catalogue::read_feeds(&ms)?;
@@ -151,9 +179,9 @@ impl Msv2Observation {
         let index = Index::build(
             main,
             options.partition_scheme,
-            &modes,
-            &ephemerides,
+            (&modes, &ephemerides),
             ROWS_PER_CHUNK,
+            grant,
         )?;
         let groups = data_groups(main, spectral_weights, uvw_frame);
         let mut partitions = Vec::new();
@@ -208,6 +236,7 @@ impl Msv2Observation {
             });
             partitions.push(Partition {
                 grid,
+                obs_mode: key.obs_mode,
                 data_description_id,
                 spectral_window_id: setup.spectral_window_id,
             });
@@ -221,6 +250,8 @@ impl Msv2Observation {
                 partitions: entries,
             }),
             partitions,
+            state_modes: modes,
+            main_states: index.states,
             spectral_weights,
             spectral_sigmas,
             options: options.clone(),
@@ -259,6 +290,66 @@ impl Msv2Observation {
     #[must_use]
     pub fn data_description_id(&self, id: PartitionId) -> u32 {
         self.partitions[id.0 as usize].data_description_id
+    }
+
+    /// The `STATE::OBS_MODE` the rows of partition `id` share: partitions
+    /// are keyed by the whole string, so two modes listing the same intents
+    /// in another order are two partitions. Empty for the rows without a
+    /// state.
+    #[must_use]
+    pub fn obs_mode(&self, id: PartitionId) -> &str {
+        &self.partitions[id.0 as usize].obs_mode
+    }
+
+    /// The `OBS_MODE` a row of `STATE_ID` `state` is partitioned by: its
+    /// `STATE` row's, or empty for -1 or a state beyond `STATE`.
+    #[must_use]
+    pub fn state_mode(&self, state: i32) -> &str {
+        usize::try_from(state)
+            .ok()
+            .and_then(|row| self.state_modes.get(row))
+            .map_or("", String::as_str)
+    }
+
+    /// The `STATE_ID`s MAIN's rows hold, -1 and those beyond `STATE`
+    /// included.
+    #[must_use]
+    pub fn main_states(&self) -> &BTreeSet<i32> {
+        &self.main_states
+    }
+
+    /// The bytes opening a MeasurementSet of `main_rows` MAIN rows holds
+    /// when its grids are full and its times hold a few rows each: a cell
+    /// and eight bytes of time tables per row, and one chunk of key
+    /// columns. Padding cells, which only opening finds, and times of one
+    /// or two rows hold more, which [`Self::open_granted`] asks for before
+    /// it allocates them.
+    #[must_use]
+    pub const fn opening_bytes(main_rows: usize) -> usize {
+        let chunk = if main_rows < index::ROWS_PER_CHUNK {
+            main_rows
+        } else {
+            index::ROWS_PER_CHUNK
+        };
+        main_rows * (size_of::<u32>() + size_of::<f64>()) + chunk * index::CHUNK_ROW_BYTES
+    }
+
+    /// Bytes the opening's index holds while the observation is open: each
+    /// partition's grid, a MAIN row number per cell with its time and
+    /// baseline tables.
+    #[must_use]
+    pub fn index_bytes(&self) -> usize {
+        self.partitions
+            .iter()
+            .map(|partition| {
+                let grid = &partition.grid;
+                grid.cells.capacity() * size_of::<u32>()
+                    + grid.times_s.capacity() * size_of::<f64>()
+                    + grid.field_per_time.capacity() * size_of::<FieldId>()
+                    + grid.scan_per_time.capacity() * size_of::<ScanId>()
+                    + grid.baselines.capacity() * size_of::<OrderedBaseline>()
+            })
+            .sum()
     }
 
     /// The MAIN row partition `id` holds at `time_s` (MAIN `TIME`, seconds
