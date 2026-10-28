@@ -138,6 +138,7 @@
    "casa-imaging-operator",
    "casa-imaging-runtime",
    "casa-imaging-singledish",
+   "casa-lattices",
    "casa-ms",
    "casa-numerics",
    "casa-tables"
@@ -231,7 +232,6 @@
    ],
    "exclude_roots": [
     "crates/casa-ms/src/bin",
-    "crates/casa-ms/src/msexplore/cli.rs",
     "crates/casa-tables/src/bin",
     "crates/casa-images/src/bin"
    ],
@@ -274,7 +274,6 @@
    ],
    "exclude_roots": [
     "crates/casa-ms/src/bin",
-    "crates/casa-ms/src/msexplore/cli.rs",
     "crates/casa-tables/src/bin",
     "crates/casa-images/src/bin"
    ],

@@ -145,6 +145,20 @@ fn normalize_domain(
         } => {
             let source = match value {
                 ParameterValue::Array(values) => values.clone(),
+                // A path list given as one string is comma-separated, as on
+                // the command line; it is split before any path is
+                // normalized, so `a.exp,sub/../b.exp` names two archives.
+                ParameterValue::String(text)
+                    if *allow_scalar
+                        && matches!(**element, ParameterType::Path { .. })
+                        && text.contains(',') =>
+                {
+                    text.split(',')
+                        .map(str::trim)
+                        .filter(|item| !item.is_empty())
+                        .map(|item| ParameterValue::String(item.to_string()))
+                        .collect()
+                }
                 _ if *allow_scalar => {
                     let repeat = match max_items {
                         Some(max) if *max == *min_items && *min_items > 1 => *min_items,
@@ -674,6 +688,48 @@ mod tests {
         assert_eq!(
             normalize_value(&ParameterValue::Integer(512), &concept).unwrap(),
             ParameterValue::Array(vec![ParameterValue::Integer(512); 2])
+        );
+    }
+
+    #[test]
+    fn a_path_list_string_is_split_before_its_paths_are_normalized() {
+        // Astra's #962 F2: `a.exp,sub/../b.exp` was normalized as one path,
+        // which collapsed to b.exp, before importvla split it.
+        let concept = concept(
+            ParameterType::Array {
+                element: Box::new(ParameterType::Path {
+                    resource_kind: None,
+                }),
+                min_items: 1,
+                max_items: None,
+                allow_scalar: true,
+            },
+            NormalizationRule::Path,
+        );
+        let paths = |items: &[&str]| {
+            ParameterValue::Array(
+                items
+                    .iter()
+                    .map(|item| ParameterValue::String((*item).into()))
+                    .collect(),
+            )
+        };
+        let both = paths(&["a.exp", "b.exp"]);
+        for given in [
+            ParameterValue::String("a.exp,sub/../b.exp".into()),
+            ParameterValue::String(" a.exp , ,sub/../b.exp".into()),
+            paths(&["a.exp", "sub/../b.exp"]),
+        ] {
+            assert_eq!(
+                normalize_value(&given, &concept).unwrap(),
+                both,
+                "{given:?}"
+            );
+        }
+        // A string without a comma is one path.
+        assert_eq!(
+            normalize_value(&ParameterValue::String("sub/../a.exp".into()), &concept).unwrap(),
+            paths(&["a.exp"])
         );
     }
 

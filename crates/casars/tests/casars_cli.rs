@@ -2,7 +2,8 @@
 
 //! The `casars` binary end to end: help, the removed interactive commands,
 //! parameter templates, and a real `casars run imstat` through the
-//! `imexplore` provider binary, including the Last state it records.
+//! `imexplore` provider binary, including the Last state it records; and
+//! `imexplore` started directly, in its `--workspace`.
 
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
@@ -160,6 +161,34 @@ fn last_files(workspace: &Path) -> (Option<String>, Option<String>) {
         std::fs::read_to_string(state.join("last.toml")).ok(),
         std::fs::read_to_string(state.join("last-successful.toml")).ok(),
     )
+}
+
+#[test]
+fn imexplore_reads_a_region_file_in_its_workspace() {
+    // Astra's #956 P1: started directly, `imstat --region box.crtf` read the
+    // region file from the directory the command was run in.
+    let root = tempfile::tempdir().unwrap();
+    let workspace = root.path().join("workspace");
+    let elsewhere = root.path().join("elsewhere");
+    std::fs::create_dir(&workspace).unwrap();
+    std::fs::create_dir(&elsewhere).unwrap();
+    write_image(&workspace.join("ramp.image"));
+    std::fs::write(
+        workspace.join("box.crtf"),
+        "#CRTFv0\nbox[[0pix,0pix],[1pix,1pix]]\n",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_imexplore"))
+        .args(["imstat", "ramp.image", "--region", "box.crtf"])
+        .args(["--workspace", "../workspace"])
+        .current_dir(&elsewhere)
+        .output()
+        .expect("run imexplore");
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert!(stdout(&output).contains("npts: 4"), "{}", stdout(&output));
+    assert!(last_files(&workspace).1.unwrap().contains("box.crtf"));
+    assert_eq!(std::fs::read_dir(&elsewhere).unwrap().count(), 0);
 }
 
 #[test]

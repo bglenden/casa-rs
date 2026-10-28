@@ -98,6 +98,49 @@ fn rflag_uses_explicit_thresholds_to_flag_time_and_spectral_outliers() {
 }
 
 #[test]
+fn the_flagdata_binary_applies_explicit_rflag_thresholds() {
+    // Astra's #962 P2: on the front end, every explicit timedev or freqdev
+    // was refused as not text, on the command line and on --json-run alike.
+    let flagdata_bin = env!("CARGO_BIN_EXE_flagdata");
+    for route in ["command line", "--json-run"] {
+        let temp = tempdir().expect("tempdir");
+        let ms_path = create_msexplore_fixture_ms(temp.path());
+        seed_constant_data_with_outliers(&ms_path, &[(0, 0, 5, 100.0), (3, 1, 7, 120.0)]);
+        let vis = ms_path.to_str().expect("UTF-8 MS path");
+        let output = if route == "--json-run" {
+            let request = temp.path().join("request.json");
+            let values = serde_json::json!({
+                "surface": "flagdata",
+                "values": {
+                    "vis": vis, "mode": "rflag", "flagbackup": false,
+                    // A fractional and an integer threshold.
+                    "timedev": 1.0, "freqdev": 10,
+                },
+            });
+            std::fs::write(&request, values.to_string()).expect("write request");
+            Command::new(flagdata_bin)
+                .args(["--json-run", request.to_str().expect("UTF-8 path")])
+                .output()
+        } else {
+            Command::new(flagdata_bin)
+                .args(["--vis", vis, "--mode", "rflag", "--no-flagbackup"])
+                .args(["--timedev", "1.0", "--freqdev", "10", "--no-save-last"])
+                .output()
+        }
+        .expect("run flagdata");
+        assert!(
+            output.status.success(),
+            "{route}: {}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let ms = MeasurementSet::open(&ms_path).expect("open MS");
+        assert_flag(&ms, 0, 0, 5);
+        assert_flag(&ms, 3, 1, 7);
+    }
+}
+
+#[test]
 fn flagmanager_save_and_restore_round_trips_main_flags() {
     let temp = tempdir().expect("tempdir");
     let ms_path = create_msexplore_fixture_ms(temp.path());

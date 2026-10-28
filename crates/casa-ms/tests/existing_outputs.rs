@@ -293,6 +293,57 @@ fn read_only_modes_leave_the_measurement_set_unchanged() {
 }
 
 #[test]
+fn transform_refusals_are_validation_at_the_parameter_at_fault() {
+    // Astra's #962 F4: the same input and output, and an spw selector the
+    // transform could not parse, failed as execution failures, unnamed.
+    let temp = tempfile::tempdir().unwrap();
+    let ms = create_msexplore_fixture_ms(temp.path());
+    let ms_arg = ms.to_str().unwrap();
+    let before = snapshot(&ms);
+    let out = temp.path().join("out.ms");
+    let out_arg = out.to_str().unwrap();
+    let request = temp.path().join("request.json");
+    let binary = env!("CARGO_BIN_EXE_mstransform");
+
+    for surface in ["mstransform", "split"] {
+        for (values, parameter) in [
+            (
+                serde_json::json!({"vis": ms_arg, "outputvis": ms_arg}),
+                "outputvis",
+            ),
+            (
+                serde_json::json!({"vis": ms_arg, "outputvis": out_arg, "spw": "0:bogus"}),
+                "spw",
+            ),
+        ] {
+            let mut line = vec![surface.to_string(), "--no-save-last".to_string()];
+            for (name, value) in values.as_object().unwrap() {
+                line.extend([format!("--{name}"), value.as_str().unwrap().to_string()]);
+            }
+            let refused = Command::new(binary).args(&line).output().unwrap();
+            assert_eq!(refused.status.code(), Some(2), "{line:?}");
+            let stderr = String::from_utf8_lossy(&refused.stderr);
+            assert!(stderr.contains(parameter), "{line:?}: {stderr}");
+
+            let run = serde_json::json!({"surface": surface, "values": values});
+            std::fs::write(&request, run.to_string()).unwrap();
+            let replied = run_json(binary, &request);
+            assert_eq!(replied.status.code(), Some(2), "{run}");
+            let reply: serde_json::Value = serde_json::from_slice(&replied.stdout).unwrap();
+            assert_eq!(reply["kind"], "validation", "{reply}");
+            assert_eq!(reply["parameter"], parameter, "{reply}");
+
+            assert_eq!(snapshot(&ms), before, "{surface} {parameter}");
+            assert!(!out.exists(), "{surface} {parameter}");
+        }
+    }
+}
+
+fn run_json(binary: &str, request: &Path) -> Output {
+    run(binary, &["--json-run", request.to_str().unwrap()])
+}
+
+#[test]
 fn refused_arguments_change_nothing() {
     let temp = tempfile::tempdir().unwrap();
     let ms = create_msexplore_fixture_ms(temp.path());

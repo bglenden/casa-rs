@@ -1,312 +1,198 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! `flagdata` - native CASA-style MeasurementSet flagging.
+//! `flagdata` - native CASA-style MeasurementSet flagging, on the shared task
+//! front end.
 
-use std::ffi::OsString;
-use std::path::PathBuf;
-use std::process;
+use std::process::ExitCode;
 
-use casa_ms::presentation::UiCommandSchema;
 use casa_ms::selection::MsSelection;
 use casa_ms::{
-    FlagDataAction, FlagDataColumn, FlagDataMode, FlagDataReport, FlagDataRequest,
-    FlagDataTaskRequest, QuackMode, flagdata_path, flagdata_task_schema_bundle,
-    parse_numeric_id_selector,
+    FlagDataAction, FlagDataColumn, FlagDataMode, FlagDataRequest, QuackMode, flagdata_path,
+    flagdata_task_schema_bundle, ms_task_success, parse_numeric_id_selector, task_selection_text,
+};
+use casa_task_runtime::{
+    CasaLoggingConfig, TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess,
 };
 
-fn main() {
-    if let Err(error) = run() {
-        eprintln!("Error: {error}");
-        process::exit(1);
+fn main() -> ExitCode {
+    TaskFrontEnd::new(
+        "flagdata",
+        flagdata_task_schema_bundle(),
+        &["flagdata"],
+        run,
+    )
+    .expect("the flagdata contract carries its surface")
+    .main(
+        std::env::args_os().skip(1),
+        CasaLoggingConfig::from_env(),
+        std::env::set_current_dir,
+        &mut std::io::stdout(),
+        std::io::stderr(),
+    )
+}
+
+fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
+    let request = flagdata_request(task)?;
+    let summary = request.mode == FlagDataMode::Summary;
+    let report = flagdata_path(task.path("vis")?, &request)
+        .map_err(|error| TaskFailure::execution(error.to_string()))?;
+    // CASA's summary mode returns the summary; the other modes return None.
+    if summary {
+        ms_task_success(&report, &report)
+    } else {
+        ms_task_success(&(), &report)
     }
 }
 
-fn run() -> Result<(), String> {
-    let (logging_guard, args) =
-        casa_logging::init_global_from_env_and_args(std::env::args_os().skip(1))
-            .map_err(|error| format!("failed to initialize logging: {error}"))?;
-    tracing::info!("flagdata started");
-    let result = run_with_args(args);
-    if result.is_ok() {
-        tracing::info!("flagdata completed");
-    } else if let Err(error) = &result {
-        tracing::error!(casa.priority = "SEVERE", error = %error, "flagdata failed");
-    }
-    logging_guard
-        .flush()
-        .map_err(|error| format!("failed to flush logging: {error}"))?;
-    result
-}
-
-fn run_with_args(args: Vec<OsString>) -> Result<(), String> {
-    if args.iter().any(|arg| arg == "--help" || arg == "-h") {
-        println!(
-            "{}\n\n{}",
-            command_schema("flagdata").render_help(),
-            casa_task_runtime::task_cli_machine_help("FlagDataTaskRequest")
-        );
-        return Ok(());
-    }
-    let host =
-        casa_task_runtime::TaskCliHost::new(flagdata_task_schema_bundle(), execute_task_request);
-    if let Some(output) = host.dispatch(&args).map_err(|error| error.to_string())? {
-        println!("{output}");
-        return Ok(());
-    }
-    let args = os_args_to_strings(args)?;
-    let (vis, request) = parse_args(&args)?;
-    let report = flagdata_path(vis, &request).map_err(|error| error.to_string())?;
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?
-    );
-    Ok(())
-}
-
-fn execute_task_request(request: FlagDataTaskRequest) -> Result<FlagDataReport, String> {
+/// The resolved run as a [`FlagDataRequest`]; the parameters the surface
+/// does not carry keep their defaults.
+fn flagdata_request(task: &TaskInvocation<'_>) -> Result<FlagDataRequest, TaskFailure> {
     let mut selection = MsSelection::new();
-    if !request.field.is_empty() {
-        selection = selection.field(
-            &parse_numeric_id_selector(&request.field, "field")
-                .map_err(|error| error.to_string())?,
-        );
+    let spw = task_selection_text(task, "spw")?;
+    if !spw.is_empty() {
+        selection = selection
+            .spw_selector(&spw)
+            .map_err(|error| TaskFailure::validation(error.to_string()).at("spw"))?;
     }
-    if !request.scan.is_empty() {
-        selection = selection.scan(
-            &parse_numeric_id_selector(&request.scan, "scan").map_err(|error| error.to_string())?,
-        );
-    }
-    if !request.antenna.is_empty() {
-        selection = apply_antenna_selection(selection, &request.antenna)?;
-    }
-    let spw = (!request.spw.is_empty()).then_some(request.spw);
-    let domain_request = FlagDataRequest {
-        selection,
-        spw,
-        mode: parse_mode(&request.mode)?,
-        action: parse_action(&request.action)?,
-        data_column: parse_data_column(&request.datacolumn)?,
-        flagbackup: request.flagbackup,
-        clipzeros: request.clipzeros,
-        quackinterval: request.quackinterval,
-        quackmode: parse_quackmode(&request.quackmode)?,
-        timecutoff: request.timecutoff,
-        freqcutoff: request.freqcutoff,
-        timedevscale: request.timedevscale,
-        freqdevscale: request.freqdevscale,
-        spectralmax: request.spectralmax,
-        spectralmin: request.spectralmin,
-        timedev: request.timedev,
-        freqdev: request.freqdev,
-        extendflags: request.extendflags,
-        extendpols: request.extendpols,
-        growtime: request.growtime,
-        growfreq: request.growfreq,
-    };
-    flagdata_path(request.vis, &domain_request).map_err(|error| error.to_string())
-}
-
-fn os_args_to_strings(args: Vec<OsString>) -> Result<Vec<String>, String> {
-    args.into_iter()
-        .map(|arg| {
-            arg.into_string()
-                .map_err(|_| "non-UTF-8 command-line argument".to_string())
-        })
-        .collect()
-}
-
-fn parse_args(args: &[String]) -> Result<(PathBuf, FlagDataRequest), String> {
-    let mut vis = None;
-    let mut request = FlagDataRequest::default();
-    let mut selection = MsSelection::new();
-    let mut index = 0usize;
-    while index < args.len() {
-        match args[index].as_str() {
-            "--vis" | "--ms" => {
-                index += 1;
-                vis = Some(PathBuf::from(args.get(index).ok_or_else(usage)?));
-            }
-            "--mode" => {
-                index += 1;
-                request.mode = parse_mode(args.get(index).ok_or_else(usage)?)?;
-            }
-            "--spw" => {
-                index += 1;
-                let spw = args.get(index).ok_or_else(usage)?.clone();
-                selection = selection
-                    .spw_selector(&spw)
-                    .map_err(|error| error.to_string())?;
-                request.spw = Some(spw);
-            }
-            "--field" => {
-                index += 1;
-                selection = selection.field(
-                    &parse_numeric_id_selector(args.get(index).ok_or_else(usage)?, "field")
-                        .map_err(|error| error.to_string())?,
-                );
-            }
-            "--scan" => {
-                index += 1;
-                selection = selection.scan(
-                    &parse_numeric_id_selector(args.get(index).ok_or_else(usage)?, "scan")
-                        .map_err(|error| error.to_string())?,
-                );
-            }
-            "--antenna" => {
-                index += 1;
-                let value = args.get(index).ok_or_else(usage)?;
-                selection = apply_antenna_selection(selection, value)?;
-            }
-            "--datacolumn" => {
-                index += 1;
-                request.data_column = parse_data_column(args.get(index).ok_or_else(usage)?)?;
-            }
-            "--action" => {
-                index += 1;
-                request.action = parse_action(args.get(index).ok_or_else(usage)?)?;
-            }
-            "--clipzeros" => request.clipzeros = true,
-            "--quackinterval" => {
-                index += 1;
-                request.quackinterval =
-                    parse_f64(args.get(index).ok_or_else(usage)?, "quackinterval")?;
-            }
-            "--quackmode" => {
-                index += 1;
-                request.quackmode = parse_quackmode(args.get(index).ok_or_else(usage)?)?;
-            }
-            "--timecutoff" => {
-                index += 1;
-                request.timecutoff = parse_f64(args.get(index).ok_or_else(usage)?, "timecutoff")?;
-            }
-            "--freqcutoff" => {
-                index += 1;
-                request.freqcutoff = parse_f64(args.get(index).ok_or_else(usage)?, "freqcutoff")?;
-            }
-            "--timedev" => {
-                index += 1;
-                request.timedev = Some(parse_f64(args.get(index).ok_or_else(usage)?, "timedev")?);
-            }
-            "--freqdev" => {
-                index += 1;
-                request.freqdev = Some(parse_f64(args.get(index).ok_or_else(usage)?, "freqdev")?);
-            }
-            "--timedevscale" => {
-                index += 1;
-                request.timedevscale =
-                    parse_f64(args.get(index).ok_or_else(usage)?, "timedevscale")?;
-            }
-            "--freqdevscale" => {
-                index += 1;
-                request.freqdevscale =
-                    parse_f64(args.get(index).ok_or_else(usage)?, "freqdevscale")?;
-            }
-            "--spectralmax" => {
-                index += 1;
-                request.spectralmax = parse_f64(args.get(index).ok_or_else(usage)?, "spectralmax")?;
-            }
-            "--spectralmin" => {
-                index += 1;
-                request.spectralmin = parse_f64(args.get(index).ok_or_else(usage)?, "spectralmin")?;
-            }
-            "--extendflags" => request.extendflags = true,
-            "--no-extendflags" | "--extendflags=false" => request.extendflags = false,
-            "--extendpols" => request.extendpols = true,
-            "--growtime" => {
-                index += 1;
-                request.growtime = parse_f64(args.get(index).ok_or_else(usage)?, "growtime")?;
-            }
-            "--growfreq" => {
-                index += 1;
-                request.growfreq = parse_f64(args.get(index).ok_or_else(usage)?, "growfreq")?;
-            }
-            "--flagbackup" => request.flagbackup = true,
-            "--no-flagbackup" | "--flagbackup=false" => request.flagbackup = false,
-            other => return Err(format!("unknown argument {other:?}\n{}", usage())),
+    for name in ["field", "scan"] {
+        let text = task_selection_text(task, name)?;
+        if text.is_empty() {
+            continue;
         }
-        index += 1;
+        let ids = parse_numeric_id_selector(&text, name)
+            .map_err(|error| TaskFailure::validation(error.to_string()).at(name))?;
+        selection = match name {
+            "field" => selection.field(&ids),
+            _ => selection.scan(&ids),
+        };
     }
-    request.selection = selection;
-    Ok((vis.ok_or_else(usage)?, request))
+    let antenna = task_selection_text(task, "antenna")?;
+    if !antenna.is_empty() {
+        selection = antenna_selection(selection, &antenna);
+    }
+    Ok(FlagDataRequest {
+        selection,
+        spw: (!spw.is_empty()).then_some(spw),
+        mode: choice(task, "mode", mode)?,
+        action: choice(task, "action", action)?,
+        data_column: choice(task, "datacolumn", data_column)?,
+        flagbackup: task.flag("flagbackup")?,
+        clipzeros: task.flag("clipzeros")?,
+        quackinterval: task.number("quackinterval")?,
+        quackmode: choice(task, "quackmode", quackmode)?,
+        timecutoff: task.number("timecutoff")?,
+        freqcutoff: task.number("freqcutoff")?,
+        timedev: task.optional_number("timedev")?,
+        freqdev: task.optional_number("freqdev")?,
+        extendflags: task.flag("extendflags")?,
+        extendpols: task.flag("extendpols")?,
+        ..FlagDataRequest::default()
+    })
 }
 
-fn apply_antenna_selection(selection: MsSelection, value: &str) -> Result<MsSelection, String> {
+/// Antenna ids when every item is one, names otherwise.
+fn antenna_selection(selection: MsSelection, value: &str) -> MsSelection {
     let parts = value
         .split(',')
         .map(str::trim)
         .filter(|part| !part.is_empty())
         .collect::<Vec<_>>();
-    if parts.iter().all(|part| part.parse::<i32>().is_ok()) {
-        Ok(selection.antenna(
-            &parts
-                .iter()
-                .map(|part| part.parse::<i32>().expect("checked int"))
-                .collect::<Vec<_>>(),
-        ))
-    } else {
-        Ok(selection.antenna_name(&parts))
+    match parts
+        .iter()
+        .map(|part| part.parse::<i32>())
+        .collect::<Result<Vec<_>, _>>()
+    {
+        Ok(ids) => selection.antenna(&ids),
+        Err(_) => selection.antenna_name(&parts),
     }
 }
 
-fn parse_mode(value: &str) -> Result<FlagDataMode, String> {
-    match value.to_ascii_lowercase().as_str() {
-        "manual" => Ok(FlagDataMode::Manual),
-        "clip" => Ok(FlagDataMode::Clip),
-        "quack" => Ok(FlagDataMode::Quack),
-        "tfcrop" => Ok(FlagDataMode::Tfcrop),
-        "rflag" => Ok(FlagDataMode::Rflag),
-        "extend" => Ok(FlagDataMode::Extend),
-        "summary" => Ok(FlagDataMode::Summary),
-        other => Err(format!("unsupported mode {other:?}")),
+/// Read `name` and parse it with `parse`, naming it when it is refused.
+fn choice<T>(
+    task: &TaskInvocation<'_>,
+    name: &str,
+    parse: fn(&str) -> Option<T>,
+) -> Result<T, TaskFailure> {
+    let text = task.required_text(name)?;
+    parse(&text.to_ascii_lowercase())
+        .ok_or_else(|| TaskFailure::validation(format!("unsupported {name} {text:?}")).at(name))
+}
+
+fn mode(value: &str) -> Option<FlagDataMode> {
+    Some(match value {
+        "manual" => FlagDataMode::Manual,
+        "clip" => FlagDataMode::Clip,
+        "quack" => FlagDataMode::Quack,
+        "tfcrop" => FlagDataMode::Tfcrop,
+        "rflag" => FlagDataMode::Rflag,
+        "extend" => FlagDataMode::Extend,
+        "summary" => FlagDataMode::Summary,
+        _ => return None,
+    })
+}
+
+fn action(value: &str) -> Option<FlagDataAction> {
+    match value {
+        "flag" | "apply" => Some(FlagDataAction::Flag),
+        "unflag" => Some(FlagDataAction::Unflag),
+        _ => None,
     }
 }
 
-fn parse_action(value: &str) -> Result<FlagDataAction, String> {
-    match value.to_ascii_lowercase().as_str() {
-        "flag" | "apply" => Ok(FlagDataAction::Flag),
-        "unflag" => Ok(FlagDataAction::Unflag),
-        other => Err(format!("unsupported action {other:?}")),
+fn data_column(value: &str) -> Option<FlagDataColumn> {
+    match value {
+        "data" => Some(FlagDataColumn::Data),
+        "corrected" | "corrected_data" => Some(FlagDataColumn::CorrectedData),
+        _ => None,
     }
 }
 
-fn parse_data_column(value: &str) -> Result<FlagDataColumn, String> {
-    match value.to_ascii_lowercase().as_str() {
-        "data" => Ok(FlagDataColumn::Data),
-        "corrected" | "corrected_data" => Ok(FlagDataColumn::CorrectedData),
-        other => Err(format!("unsupported datacolumn {other:?}")),
+fn quackmode(value: &str) -> Option<QuackMode> {
+    match value {
+        "beg" => Some(QuackMode::Beg),
+        "end" => Some(QuackMode::End),
+        _ => None,
     }
 }
 
-fn parse_quackmode(value: &str) -> Result<QuackMode, String> {
-    match value.to_ascii_lowercase().as_str() {
-        "beg" => Ok(QuackMode::Beg),
-        "end" => Ok(QuackMode::End),
-        other => Err(format!("unsupported quackmode {other:?}")),
-    }
-}
-
-fn parse_f64(value: &str, label: &str) -> Result<f64, String> {
-    value
-        .parse::<f64>()
-        .map_err(|error| format!("invalid {label} {value:?}: {error}"))
-}
-
-fn usage() -> String {
-    "usage: flagdata --vis <ms> --mode manual|clip|quack|tfcrop|rflag|extend|summary [--spw <selector>] [--field <ids>] [--scan <ids>] [--antenna <ids-or-names>] [--datacolumn data|corrected] [--no-flagbackup]".to_string()
-}
-
-fn command_schema(program_name: &str) -> UiCommandSchema {
-    let bundle = casa_provider_contracts::builtin_surface_bundle("flagdata")
-        .expect("built-in flagdata parameter surface must remain valid");
-    let mut schema: UiCommandSchema =
-        serde_json::from_value(casa_provider_contracts::project_ui_form(&bundle))
-            .expect("canonical flagdata UI projection must match UiCommandSchema");
-    schema.invocation_name = program_name.to_string();
-    schema.usage = format!("{program_name} [parameters]");
-    schema
-}
 #[cfg(test)]
 mod tests {
+    use std::ffi::OsString;
+
+    use casa_task_runtime::{ParameterRuntime, TaskCommandLine};
+
     use super::*;
+
+    /// The request a `flagdata` command line resolves to.
+    fn request_for(args: &[&str]) -> Result<FlagDataRequest, TaskFailure> {
+        let args = args.iter().map(OsString::from).collect::<Vec<_>>();
+        let bundle = casa_provider_contracts::builtin_surface_bundle("flagdata").unwrap();
+        let line = TaskCommandLine::parse(&bundle, &args).unwrap();
+        let session = ParameterRuntime::default()
+            .open_session(line.open_session_request(bundle))
+            .unwrap();
+        flagdata_request(&TaskInvocation::new(&session, std::path::Path::new(".")))
+    }
+
+    #[test]
+    fn rflag_thresholds_are_read_as_numbers() {
+        // Astra's #962 P2: every explicit threshold was refused as not text.
+        let request = request_for(&[
+            "--vis",
+            "in.ms",
+            "--mode",
+            "rflag",
+            "--timedev",
+            "1.0",
+            "--freqdev",
+            "10",
+        ])
+        .unwrap();
+        assert_eq!(request.mode, FlagDataMode::Rflag);
+        assert_eq!((request.timedev, request.freqdev), (Some(1.0), Some(10.0)));
+
+        let defaults = request_for(&["--vis", "in.ms", "--mode", "rflag"]).unwrap();
+        assert_eq!((defaults.timedev, defaults.freqdev), (None, None));
+    }
 
     #[test]
     fn provider_bundle_embeds_flagdata_parameter_contract() {

@@ -35,6 +35,7 @@ mod help;
 mod inspect;
 mod options;
 mod outcome;
+mod values;
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;
@@ -65,12 +66,18 @@ use crate::{
     render_documented_template, write_parameter_profile_atomic,
 };
 
+/// How a task binary's process enters a run's workspace, which its `main`
+/// hands [`TaskFrontEnd::main`]: the standard library's `set_current_dir`.
+/// The front end passes the workspace as an absolute path.
+pub type EnterWorkspace = fn(PathBuf) -> std::io::Result<()>;
+
 /// A task's success, as its execution callback returns it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TaskSuccess {
     value: Value,
     result: Value,
     text: Option<String>,
+    notes: Vec<String>,
 }
 
 impl TaskSuccess {
@@ -81,6 +88,7 @@ impl TaskSuccess {
             value: to_json(value)?,
             result: to_json(result)?,
             text: None,
+            notes: Vec::new(),
         })
     }
 
@@ -88,6 +96,14 @@ impl TaskSuccess {
     #[must_use]
     pub fn with_text(mut self, text: impl Into<String>) -> Self {
         self.text = Some(text.into());
+        self
+    }
+
+    /// A line a command line writes to stderr, apart from its output; a
+    /// `--json-run` reply carries the result instead.
+    #[must_use]
+    pub fn with_note(mut self, note: impl Into<String>) -> Self {
+        self.notes.push(note.into());
         self
     }
 }
@@ -136,7 +152,13 @@ pub struct TaskInvocation<'a> {
     workspace: &'a Path,
 }
 
-impl TaskInvocation<'_> {
+impl<'a> TaskInvocation<'a> {
+    /// A run of `session` in `workspace`, as the front end hands its
+    /// callback one; a binary's tests build one to drive the callback.
+    pub fn new(session: &'a ParameterSession, workspace: &'a Path) -> Self {
+        Self { session, workspace }
+    }
+
     /// The surface to run.
     pub fn surface(&self) -> &str {
         self.session.bundle().surface.id()
@@ -280,13 +302,23 @@ where
     ///
     /// The binary owns the process. Its `main` passes its arguments without
     /// the program name (`args_os().skip(1)`), the logging configuration it
-    /// reads from the environment ([`CasaLoggingConfig::from_env`]), and its
-    /// standard output and error, and returns the exit code. The front end
-    /// reads no environment variable and writes nowhere else (ADR-0016): a
-    /// run's log records go to `stderr`, interleaved with the front end's own
-    /// lines, and to a log table only when the configuration or a logging
-    /// flag names one. An action that runs nothing installs no logging, so a
-    /// configuration the environment gets wrong refuses only a run.
+    /// reads from the environment ([`CasaLoggingConfig::from_env`]), how the
+    /// process enters a run's workspace ([`EnterWorkspace`]), and
+    /// its standard output and error, and returns the exit code. The front
+    /// end reads no environment variable, changes no process state itself
+    /// and writes nowhere else (ADR-0016): a run's log records go to
+    /// `stderr`, interleaved with the front end's own lines, and to a log
+    /// table only when the configuration or a logging flag names one. An
+    /// action that runs nothing installs no logging, so a configuration the
+    /// environment gets wrong refuses only a run.
+    ///
+    /// A command-line run enters its workspace (`--workspace`, the current
+    /// directory otherwise) before the task starts, as `casars run` starts
+    /// the binary there, so every relative path the run names resolves in
+    /// it: inputs and products, and the paths inside a parameter's text,
+    /// such as a region file or an image in a mask expression. The files
+    /// the controls name (`--params`, `--save-params`, a log table) are read
+    /// from where the command was run, before it enters.
     ///
     /// A run installs the process's global `tracing` subscriber, so a process
     /// runs one.
@@ -296,12 +328,17 @@ where
         &self,
         args: impl IntoIterator<Item = OsString>,
         logging: Result<CasaLoggingConfig, CasaLoggingError>,
+        enter_workspace: EnterWorkspace,
         stdout: &mut dyn Write,
         stderr: W,
     ) -> ExitCode {
         let stderr = Arc::new(Mutex::new(stderr));
-        let (output, guard) =
-            self.dispatch_with_logging(args.into_iter().collect(), logging, &stderr);
+        let (output, guard) = self.dispatch_with_logging(
+            args.into_iter().collect(),
+            logging,
+            enter_workspace,
+            &stderr,
+        );
         let _ = stdout.write_all(output.stdout.as_bytes());
         let _ = stdout.flush();
         let write_lines = |lines: &[String]| {
@@ -324,6 +361,7 @@ where
         &self,
         args: Vec<OsString>,
         logging: Result<CasaLoggingConfig, CasaLoggingError>,
+        enter_workspace: EnterWorkspace,
         stderr: &Arc<Mutex<W>>,
     ) -> (FrontEndOutput, Option<CasaLoggingGuard>) {
         let stripped = match casa_logging::strip_cli_logging_args(args.clone()) {
@@ -334,14 +372,22 @@ where
             Ok(parsed) => parsed,
             Err(refused) => return (refused, None),
         };
+        let enter = Some(enter_workspace);
         if !matches!(action, Action::Run | Action::JsonRun(_)) {
-            return (self.perform(bundle, action, &rest), None);
+            return (self.perform(bundle, action, &rest, enter), None);
         }
         let installed = logging
             .and_then(|config| config.with_cli_args(args))
-            .and_then(|(_, config)| casa_logging::init_global_with_stderr(config, stderr.clone()));
+            .and_then(|(_, mut config)| {
+                // Named from where the command was run, before a run enters
+                // its workspace.
+                config.table_path = config
+                    .table_path
+                    .map(|path| std::path::absolute(&path).unwrap_or(path));
+                casa_logging::init_global_with_stderr(config, stderr.clone())
+            });
         match installed {
-            Ok(guard) => (self.perform(bundle, action, &rest), Some(guard)),
+            Ok(guard) => (self.perform(bundle, action, &rest, enter), Some(guard)),
             Err(error) => {
                 let message = format!("failed to initialize logging: {error}");
                 let refused = match action {
@@ -358,10 +404,22 @@ where
         }
     }
 
-    /// Handle one command line, without the program name.
+    /// Handle one command line, without the program name. It changes no
+    /// process state: a run gets its workspace but does not enter it, as
+    /// [`Self::main`]'s does.
     pub fn dispatch(&self, args: &[OsString]) -> FrontEndOutput {
+        self.dispatch_entering(args, None)
+    }
+
+    /// [`Self::dispatch`], entering a command-line run's workspace with
+    /// `enter` when there is one.
+    fn dispatch_entering(
+        &self,
+        args: &[OsString],
+        enter: Option<EnterWorkspace>,
+    ) -> FrontEndOutput {
         match self.parse(args) {
-            Ok((bundle, action, rest)) => self.perform(bundle, action, &rest),
+            Ok((bundle, action, rest)) => self.perform(bundle, action, &rest, enter),
             Err(refused) => refused,
         }
     }
@@ -388,6 +446,7 @@ where
         bundle: &SurfaceContractBundle,
         action: Action,
         rest: &[OsString],
+        enter: Option<EnterWorkspace>,
     ) -> FrontEndOutput {
         match action {
             Action::Help => {
@@ -417,7 +476,7 @@ where
                 )),
             },
             Action::Show => self.show(bundle, rest),
-            Action::Run => self.run_command_line(bundle, rest),
+            Action::Run => self.run_command_line(bundle, rest, enter),
         }
     }
 
@@ -459,6 +518,7 @@ where
         &self,
         bundle: &SurfaceContractBundle,
         args: &[OsString],
+        enter: Option<EnterWorkspace>,
     ) -> FrontEndOutput {
         let line = match TaskCommandLine::parse(bundle, args) {
             Ok(line) => line,
@@ -475,16 +535,30 @@ where
         {
             return FrontEndOutput::refused(error);
         }
+        // From here on the run is in its workspace, as under `casars run`.
+        let workspace = match std::path::absolute(&line.workspace) {
+            Ok(workspace) => workspace,
+            Err(error) => {
+                return FrontEndOutput::refused(format!(
+                    "workspace {}: {error}",
+                    line.workspace.display()
+                ));
+            }
+        };
+        if let Some(enter) = enter
+            && let Err(error) = enter(workspace.clone())
+        {
+            return FrontEndOutput::refused(format!(
+                "cannot enter workspace {}: {error}",
+                workspace.display()
+            ));
+        }
         let surface = bundle.surface.id();
         let last = TaskLastCoordinator::new();
         let attempt = format!("cli:{surface}");
-        if let Err(error) = last.before_execution(
-            &attempt,
-            &line.workspace,
-            surface,
-            !line.no_save_last,
-            &session,
-        ) {
+        if let Err(error) =
+            last.before_execution(&attempt, &workspace, surface, !line.no_save_last, &session)
+        {
             return FrontEndOutput::refused(format_session_error(error));
         }
         let mut stderr = last
@@ -492,13 +566,14 @@ where
             .into_iter()
             .map(|warning| format!("Warning: could not save Last for {surface}: {warning}"))
             .collect::<Vec<_>>();
-        let outcome = self.execute(&session, &line.workspace);
+        let outcome = self.execute(&session, &workspace);
         last.after_completion(&attempt, outcome.is_ok());
         stderr.extend(last.take_warnings().into_iter().map(|warning| {
             format!("Warning: could not save Last Successful for {surface}: {warning}")
         }));
         match outcome {
             Ok(success) => {
+                stderr.extend(success.notes);
                 let stdout = match success.text {
                     Some(text) => text,
                     None if success.value.is_null() => String::new(),
@@ -511,7 +586,7 @@ where
                 }
             }
             Err(failure) => {
-                stderr.push(format!("Error: {}", failure.message));
+                stderr.push(format!("Error: {}", command_line_message(&failure)));
                 FrontEndOutput {
                     stdout: String::new(),
                     stderr,
@@ -569,6 +644,22 @@ where
                     Some(name.clone()),
                 );
             };
+            // Checked here, so that a value the surface refuses is named.
+            let Some(binding) = bundle
+                .surface
+                .bindings()
+                .iter()
+                .find(|binding| binding.name == *name)
+            else {
+                return refuse(
+                    &request.surface,
+                    format!("unknown {} parameter {name:?}", request.surface),
+                    Some(name.clone()),
+                );
+            };
+            if let Err(error) = crate::cli::checked_value(bundle, binding, &value) {
+                return refuse(&request.surface, error, Some(name.clone()));
+            }
             overrides.values.insert(name.clone(), value);
         }
         let workspace = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
@@ -748,6 +839,17 @@ fn save_sparse(session: &ParameterSession, path: &Path) -> Result<(), String> {
 }
 
 /// `reply` on stdout, with the exit status that agrees with it.
+/// `failure`'s message as a command line prints it: naming the parameter at
+/// fault when the message does not, as a reply's `parameter` field does.
+fn command_line_message(failure: &TaskFailure) -> String {
+    match &failure.parameter {
+        Some(name) if !failure.message.contains(name.as_str()) => {
+            format!("parameter {name:?}: {}", failure.message)
+        }
+        _ => failure.message.clone(),
+    }
+}
+
 fn reply_output(reply: &TaskReply) -> FrontEndOutput {
     match serde_json::to_string(reply) {
         Ok(text) => FrontEndOutput {

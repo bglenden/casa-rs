@@ -260,24 +260,45 @@ function.
 ## The shared task front end and typed replies
 
 `casa-task-runtime::TaskFrontEnd` is the one entry every task binary's `main`
-is to call; the binaries move onto it by family (#931, PRs 2b–2d), and until
-then use `TaskCliHost`. The front end is generic over the binary's execution
-callback and owns the surface's declared flags, the base sources,
-`--workspace`, `--unset`, `--save-params`, `--no-save-last`, the
+is to call. The image binaries, `imexplore`, and the MeasurementSet binaries
+(`msexplore` with `plotms`, `mstransform` with `split`, `flagdata`,
+`flagmanager` and `importvla`) run on it; the calibration family, the imager
+and simobserve move next (#931, PR 2d) and use `TaskCliHost` until then. A
+surface's choices take their canonical names (`--preset amplitude_vs_time`),
+and every flag it declares, short ones such as msexplore's `-o` included,
+reaches its parameter. The front end is generic over the
+binary's execution callback and owns the surface's declared flags, the base
+sources, `--workspace`, `--unset`, `--save-params`, `--no-save-last`, the
 non-executing `--show`, `--template` (also `--profile-template`), `--describe`
 and `--validate`, and the machine actions. A spelling the surface declares is
 always its parameter, so imregrid's `--template` names its template image and
 `--profile-template` gives its profile. A family binary's first word names the
-surface it runs, such as `mstransform split`; the first hosted surface runs
-otherwise.
+surface it runs, such as `imexplore imstat` or `mstransform split`; the
+first hosted surface runs otherwise. The callback reads the resolved values
+into the binary's typed request through `TaskInvocation`'s typed reads, and
+`TaskInvocation::is_set` tells a value the run sets from a default. What a
+command line prints is the callback's text (msexplore's summary in the
+user's `format`), with notes such as msexplore's flag-edit line on stderr;
+`--json-run` carries the value and result instead.
 
 The binary's `main` owns the process. It reads the logging configuration from
 the environment (`CasaLoggingConfig::from_env`) and passes it, with its
-arguments and its standard output and error, to `TaskFrontEnd::main`. The front
-end reads no environment variable (ADR-0016): it applies the logging flags,
-and for a run installs logging that writes to the stderr it was handed and to
-a log table only when one is named. An action that runs nothing installs no
-logging, so a bad `CASA_RS_LOG_*` setting refuses only a run.
+arguments, how the process enters a directory (`std::env::set_current_dir`)
+and its standard output and error, to `TaskFrontEnd::main`. The front end
+reads no environment variable and changes no process state itself
+(ADR-0016): it applies the logging flags, and for a run installs logging that
+writes to the stderr it was handed and to a log table only when one is named.
+An action that runs nothing installs no logging, so a bad `CASA_RS_LOG_*`
+setting refuses only a run.
+
+A command-line run enters its workspace (`--workspace`, the current directory
+otherwise) before the task starts, as `casars run` starts the binary there.
+Every relative path the run names then resolves in the workspace: inputs,
+products, and paths inside a parameter's text, such as `imstat`'s region file
+or the image in `immoments`' mask expression. The files the controls name
+(`--params`, `--save-params`, a log table) are read and written from where the
+command was run, before it enters. A `--json-run` runs where its caller
+started it.
 
 `--json-run SOURCE` takes a `TaskRunRequest`, `{"surface": ..., "values":
 {...}}` with the CASA-named values the caller set, and resolves it against the
@@ -300,7 +321,9 @@ binary runs on the front end.
 Last has one owner on each path: a command line run of a binary records Last
 before the callback and Last Successful only after success, unless
 `--no-save-last`; `--json-run` reads and writes neither. `casars run` owns Last
-for the runs it launches, and Python task calls save none.
+for the runs it launches, and Python task calls save none. `casars run` starts
+a front-end binary with `--json-run -` and the values the user set, reads its
+reply, and prints the return value or the task's own error.
 
 ## Shared Versioned Component Schemas
 

@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: LGPL-3.0-or-later
-"""Black-box conformance corpus for every one-shot TaskCliHost binary."""
+"""Black-box conformance corpus for every one-shot task binary.
+
+A binary on the shared task front end (#931) answers `--json-run` with one
+typed reply on stdout whose exit status agrees with it, and offers the
+non-executing `--template` and `--describe`; the rest still use the older
+TaskCliHost, which reports failures on stderr with exit 1, until they move.
+"""
 
 from __future__ import annotations
 
@@ -13,25 +19,29 @@ from pathlib import Path
 
 # Keep this inventory explicit: a new hosted binary must make a visible choice
 # to join the common process contract. Browser-session JSONL hosts are excluded.
-HOSTED_TASKS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("calibrate", ()),
-    ("importvla", ()),
-    ("msexplore", ()),
-    ("simobserve", ()),
-    ("casars-imager", ()),
-    ("mstransform", ()),
-    ("flagdata", ()),
-    ("flagmanager", ()),
-    ("exportfits", ()),
-    ("feather", ()),
-    ("immath", ()),
-    ("immoments", ()),
-    ("impbcor", ()),
-    ("importfits", ()),
-    ("impv", ()),
-    ("imregrid", ()),
-    ("imsubimage", ()),
-    ("casars-plotcal", ()),
+# Each entry is (executable, prefix arguments, on the shared front end).
+HOSTED_TASKS: tuple[tuple[str, tuple[str, ...], bool], ...] = (
+    ("calibrate", (), False),
+    ("importvla", (), True),
+    ("msexplore", (), True),
+    ("msexplore", ("plotms",), True),
+    ("simobserve", (), False),
+    ("casars-imager", (), False),
+    ("mstransform", (), True),
+    ("mstransform", ("split",), True),
+    ("flagdata", (), True),
+    ("flagmanager", (), True),
+    ("exportfits", (), True),
+    ("feather", (), True),
+    ("immath", (), True),
+    ("immoments", (), True),
+    ("impbcor", (), True),
+    ("importfits", (), True),
+    ("impv", (), True),
+    ("imregrid", (), True),
+    ("imsubimage", (), True),
+    ("imexplore", ("imstat",), True),
+    ("casars-plotcal", (), False),
 )
 
 
@@ -50,6 +60,48 @@ def require(condition: bool, message: str) -> None:
         raise AssertionError(message)
 
 
+def refusal(executable: str, result: subprocess.CompletedProcess[str], case: str) -> dict:
+    """The validation reply a front-end binary gives for a refused request."""
+
+    require(result.returncode == 2, f"{executable}: {case} exit {result.returncode}")
+    reply = json.loads(result.stdout)
+    require(
+        reply["status"] == "failed" and reply["kind"] == "validation",
+        f"{executable}: {case} reply {reply!r}",
+    )
+    return reply
+
+
+def check_front_end(executable: str, base: list[str]) -> None:
+    """A front-end binary refuses a request it cannot read with a typed reply,
+    and describes its surface without running anything."""
+
+    reply = refusal(executable, run([*base, "--json-run", "-"], stdin="{"), "malformed")
+    require("failed to parse task request" in reply["message"], f"{executable}: {reply!r}")
+    reply = refusal(
+        executable,
+        run([*base, "--json-run", "/definitely/missing/casa-rs-task-request.json"]),
+        "missing-file",
+    )
+    require("failed to read JSON request" in reply["message"], f"{executable}: {reply!r}")
+    refusal(
+        executable,
+        run([*base, "--json-run", "-"], stdin='{"surface": "no-such-surface"}'),
+        "unknown-surface",
+    )
+
+    # imregrid's own --template names its template image; --profile-template
+    # reaches the profile on every surface.
+    spellings = ["--profile-template"] + ([] if executable == "imregrid" else ["--template"])
+    for spelling in spellings:
+        template = run([*base, spelling])
+        require(template.returncode == 0, f"{executable}: {spelling}: {template.stderr}")
+        require("[casars]" in template.stdout, f"{executable}: {spelling} is not a profile")
+    describe = run([*base, "--describe"])
+    require(describe.returncode == 0, f"{executable}: describe: {describe.stderr}")
+    require(describe.stdout.startswith("task "), f"{executable}: describe drift")
+
+
 def main() -> int:
     repo = Path(__file__).resolve().parents[1]
     target = Path(os.environ.get("CARGO_TARGET_DIR", repo / "target"))
@@ -65,7 +117,7 @@ def main() -> int:
         check=True,
     )
 
-    for executable, prefix in HOSTED_TASKS:
+    for executable, prefix, front_end in HOSTED_TASKS:
         binary = target / "debug" / executable
         require(binary.is_file(), f"{executable}: built binary is missing at {binary}")
         base = [str(binary), *prefix]
@@ -88,6 +140,10 @@ def main() -> int:
         require(help_result.returncode == 0, f"{executable}: help: {help_result.stderr}")
         for action in ("--protocol-info", "--json-schema", "--json-run <SOURCE>"):
             require(action in help_result.stdout, f"{executable}: help omits {action}")
+
+        if front_end:
+            check_front_end(executable, base)
+            continue
 
         malformed = run([*base, "--json-run", "-"], stdin="{")
         require(malformed.returncode == 1, f"{executable}: malformed exit {malformed.returncode}")

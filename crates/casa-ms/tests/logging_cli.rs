@@ -9,25 +9,42 @@ use casa_types::ScalarValue;
 mod common;
 
 #[test]
-fn mstransform_help_writes_casa_log_table_without_stderr_noise() {
+fn an_mstransform_run_writes_casa_log_table_without_stderr_noise() {
     let tempdir = tempfile::tempdir().expect("tempdir");
+    let ms_path = common::create_msexplore_fixture_ms(tempdir.path());
     let log_table = tempdir.path().join("mstransform.log");
-    let output = Command::new(env!("CARGO_BIN_EXE_mstransform"))
-        .arg("--log-table")
-        .arg(&log_table)
-        .arg("--log-stderr-priority")
-        .arg("off")
-        .arg("--help")
-        .output()
-        .expect("run mstransform --help");
+    let logged = |extra: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_mstransform"))
+            .arg("--log-table")
+            .arg(&log_table)
+            .arg("--log-stderr-priority")
+            .arg("off")
+            .args(extra)
+            .output()
+            .expect("run mstransform")
+    };
 
+    // An action that runs nothing installs no logging (#931).
+    let help = logged(&["--help"]);
+    assert!(help.status.success());
+    assert!(String::from_utf8_lossy(&help.stdout).contains("mstransform"));
+    assert!(!log_table.exists(), "--help wrote a log table");
+
+    let out = tempdir.path().join("out.ms");
+    let output = logged(&[
+        "--vis",
+        ms_path.to_str().unwrap(),
+        "--outputvis",
+        out.to_str().unwrap(),
+        "--datacolumn",
+        "data",
+        "--no-save-last",
+    ]);
     assert!(
         output.status.success(),
         "mstransform failed: stderr={}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("mstransform"));
     assert_eq!(String::from_utf8_lossy(&output.stderr), "");
 
     let table = Table::open(TableOptions::new(&log_table)).expect("open log table");
