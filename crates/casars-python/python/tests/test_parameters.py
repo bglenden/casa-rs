@@ -201,7 +201,9 @@ def test_imager_python_profiles_round_trip_exact_provider_requests(
     assert before == after
     assert before.protocol_name == "casa_imager_task"
     assert before.protocol_version == IMAGER_TASK_PROTOCOL_VERSION
-    request = json.loads(before.stdin or "null")["request"]
-    assert request["vis"] == [f"{name}.ms"]
+    request = json.loads(before.stdin or "null")
+    assert request["surface"] == "imager"
+    values = request["values"]
+    assert values["vis"] == [f"{name}.ms"]
     for parameter, value in overrides.items():
-        assert request[parameter] == value, parameter
+        assert values[parameter] == value, parameter

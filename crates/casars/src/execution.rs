@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Blocking execution of a task's provider process.
+//! Blocking execution of a task's binary.
 
 use std::ffi::OsString;
 use std::io::Write as _;
@@ -8,40 +8,26 @@ use std::process::{ExitStatus, Stdio};
 
 use crate::registry::ResolvedCommand;
 
-/// One provider invocation: the resolved command, its projected arguments
-/// and stdin payload, and the workspace it runs in.
+/// One task invocation: the resolved command, its arguments and stdin
+/// request, and the workspace it runs in.
 #[derive(Debug, Clone)]
 pub(crate) struct ExecutionPlan {
     pub command: ResolvedCommand,
     pub arguments: Vec<OsString>,
     pub stdin: Option<String>,
     pub working_directory: PathBuf,
-    /// Capture stdout, which holds a front-end binary's typed reply, instead
-    /// of passing it through.
-    pub capture_stdout: bool,
 }
 
-/// How a provider process ended.
+/// How a task process ended: its status and the typed reply on its stdout.
 #[derive(Debug, Clone)]
 pub(crate) struct ExecutionExit {
     pub status: ExitStatus,
-    /// The captured stdout, when the plan asked for it.
-    pub stdout: Option<String>,
+    pub stdout: String,
 }
 
-impl ExecutionExit {
-    pub fn success(&self) -> bool {
-        self.status.success()
-    }
-
-    pub fn code(&self) -> Option<i32> {
-        self.status.code()
-    }
-}
-
-/// Run the plan to completion. The child inherits this process's stderr, and
-/// its stdout unless the plan captures it, so its output and progress reach
-/// the caller unbuffered; a stdin payload is written and then closed.
+/// Run the plan to completion. The child inherits this process's stderr, so
+/// its log and progress reach the caller unbuffered; its stdout, which holds
+/// the reply, is captured; a stdin payload is written and then closed.
 pub(crate) fn run_process_blocking(plan: &ExecutionPlan) -> Result<ExecutionExit, String> {
     let mut child = plan
         .command
@@ -53,11 +39,7 @@ pub(crate) fn run_process_blocking(plan: &ExecutionPlan) -> Result<ExecutionExit
         } else {
             Stdio::null()
         })
-        .stdout(if plan.capture_stdout {
-            Stdio::piped()
-        } else {
-            Stdio::inherit()
-        })
+        .stdout(Stdio::piped())
         .spawn()
         .map_err(|error| format!("spawn subprocess: {error}"))?;
     if let Some(payload) = plan.stdin.as_deref() {
@@ -74,9 +56,7 @@ pub(crate) fn run_process_blocking(plan: &ExecutionPlan) -> Result<ExecutionExit
         .map_err(|error| format!("wait for subprocess: {error}"))?;
     Ok(ExecutionExit {
         status: output.status,
-        stdout: plan
-            .capture_stdout
-            .then(|| String::from_utf8_lossy(&output.stdout).into_owned()),
+        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
     })
 }
 
@@ -90,25 +70,22 @@ mod tests {
             arguments: vec!["-c".into(), script.into()],
             stdin: stdin.map(str::to_string),
             working_directory,
-            capture_stdout: false,
         }
     }
 
     #[test]
     fn run_reports_the_exit_code() {
         let exit = run_process_blocking(&sh("exit 3", None, PathBuf::from("."))).unwrap();
-        assert_eq!(exit.code(), Some(3));
-        assert!(!exit.success());
-        assert_eq!(exit.stdout, None);
+        assert_eq!(exit.status.code(), Some(3));
+        assert!(!exit.status.success());
+        assert_eq!(exit.stdout, "");
     }
 
     #[test]
-    fn a_captured_stdout_is_returned_not_passed_through() {
-        let mut plan = sh("printf reply", None, PathBuf::from("."));
-        plan.capture_stdout = true;
-        let exit = run_process_blocking(&plan).unwrap();
-        assert!(exit.success());
-        assert_eq!(exit.stdout.as_deref(), Some("reply"));
+    fn stdout_is_captured_not_passed_through() {
+        let exit = run_process_blocking(&sh("printf reply", None, PathBuf::from("."))).unwrap();
+        assert!(exit.status.success());
+        assert_eq!(exit.stdout, "reply");
     }
 
     #[test]
@@ -121,7 +98,7 @@ mod tests {
             workspace.path().to_path_buf(),
         ))
         .unwrap();
-        assert!(exit.success());
+        assert!(exit.status.success());
         let seen = std::fs::read_to_string(workspace.path().join("seen.txt")).unwrap();
         let mut lines = seen.lines();
         assert_eq!(

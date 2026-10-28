@@ -3,20 +3,20 @@
 
 //! The command-line and task surface of casa-rs's simulation tasks:
 //! `simobserve` (simulation Phase 5c, #841), with `simanalyze` and
-//! `simalma` to come.
+//! `simalma` to come, on the shared task front end (#931).
 //!
-//! As for the imager, both routes resolve the parameters through the
-//! provider-contracts catalog: command-line flags and the catalog-named JSON
-//! of `--json-run` become the same resolved values, CASA's parameters with
-//! CASA's defaults, and those values, and nothing else, make the
-//! [`SimobserveRequest`] the task runs. The host adds what CASA's task takes
-//! from its environment: CASA's data directories, where `alma/simmos` holds
-//! the antenna configurations, and the measures data.
+//! As for the imager, the front end resolves the parameters through the
+//! provider-contracts catalog: command-line flags and a `--json-run` request
+//! become the same resolved values, CASA's parameters with CASA's defaults,
+//! and those values, and nothing else, make the [`SimobserveRequest`] the
+//! task runs. The host adds what CASA's task takes from its environment:
+//! CASA's data directories, where `alma/simmos` holds the antenna
+//! configurations, and the measures data. A run's reply carries its
+//! [`SimobserveRunTaskResult`]; simobserve returns None, as CASA's does.
 
 mod schema;
 mod task_contract;
 
-use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -25,7 +25,7 @@ use casa_simulation::simobserve::{SimobserveParameters, SimobserveRequest, simob
 use casa_simulation::simutil::direction::Directions;
 use casa_simulation::{ExecutionControls, SessionResources, SimulatorOptions};
 use casa_task_runtime::{
-    parse_parameter_cli_overrides, resolve_active_values, resolve_plain_values,
+    TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess, resolve_plain_values,
 };
 use serde_json::{Map, Value};
 
@@ -144,22 +144,6 @@ pub fn resolve_request(
     parameters_from(resolved)
 }
 
-/// Resolve command-line flags over CASA's defaults.
-pub fn resolve_cli_request(
-    args: &[OsString],
-) -> Result<(SimobserveTaskParameters, SimobserveParameters), String> {
-    let bundle = simobserve_surface()?;
-    let overrides = parse_parameter_cli_overrides(&bundle, args)?;
-    let values = resolve_active_values(bundle, workspace()?, overrides)
-        .map_err(|error| format!("resolve simobserve parameters: {error}"))?;
-    parameters_from(
-        values
-            .into_iter()
-            .map(|(name, value)| (name, value.to_plain_json()))
-            .collect(),
-    )
-}
-
 /// CASA's data directories: the measures data's candidates, which hold
 /// `alma/simmos` in a CASA data tree.
 fn data_roots() -> Result<Vec<PathBuf>, String> {
@@ -233,79 +217,52 @@ fn artifact(stem: &str, path: &Path) -> SimobserveArtifact {
     }
 }
 
-/// Run the command line: a machine action (`--json-run`, `--json-schema`,
-/// `--protocol-info`), `--help`, or CASA's parameters as flags.
-/// `--managed-output` prints the run's result as JSON.
-pub fn run_with_cli_args(args: impl IntoIterator<Item = OsString>) -> Result<(), String> {
-    let (managed_output, args) = take_managed_output(args.into_iter().collect());
-    let host = casa_task_runtime::TaskCliHost::new(
+/// The front end of the `simobserve` binary, which hosts `simobserve`.
+pub fn task_front_end()
+-> TaskFrontEnd<impl Fn(&TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>> {
+    TaskFrontEnd::new(
+        "simobserve",
         simobserve_task_schema_bundle(),
-        |request: SimobserveTaskRequest| request.execute(),
+        &["simobserve"],
+        run_task,
+    )
+    .expect("the simobserve contract carries its surface")
+}
+
+/// Run one resolved simobserve request.
+fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
+    let (parameters, simulation) =
+        parameters_from(task.plain_values()).map_err(TaskFailure::validation)?;
+    let result = run(parameters, simulation).map_err(TaskFailure::execution)?;
+    let text = format!(
+        "Wrote {} products of {} in {}\n",
+        result.artifacts.len(),
+        result.run.stem,
+        result.run.directory
     );
-    if let Some(output) = host.dispatch(&args).map_err(|error| error.to_string())? {
-        if managed_output && args.iter().any(|argument| argument == "--json-run") {
-            let SimobserveTaskResult::Run(result) = serde_json::from_str(&output)
-                .map_err(|error| format!("decode the simobserve result: {error}"))?;
-            println!("{}", json(&result)?);
-        } else {
-            println!("{output}");
-        }
-        return Ok(());
-    }
-    if args
-        .iter()
-        .any(|arg| matches!(arg.to_str(), Some("-h" | "--help")))
-    {
-        println!("{}", schema::render_help("simobserve"));
-        return Ok(());
-    }
-    let (parameters, task) = resolve_cli_request(&args)?;
-    let result = run(parameters, task)?;
-    if managed_output {
-        println!("{}", json(&result)?);
-    } else {
-        println!(
-            "Wrote {} products of {} in {}",
-            result.artifacts.len(),
-            result.run.stem,
-            result.run.directory
-        );
-    }
-    Ok(())
-}
-
-fn json(result: &SimobserveRunTaskResult) -> Result<String, String> {
-    serde_json::to_string_pretty(result).map_err(|error| format!("serialize the result: {error}"))
-}
-
-/// Split `--managed-output [true|false]` from the other arguments.
-fn take_managed_output(raw: Vec<OsString>) -> (bool, Vec<OsString>) {
-    let mut managed = false;
-    let mut args = Vec::with_capacity(raw.len());
-    let mut raw = raw.into_iter().peekable();
-    while let Some(argument) = raw.next() {
-        if argument != "--managed-output" {
-            args.push(argument);
-            continue;
-        }
-        managed = match raw.peek().and_then(|value| value.to_str()) {
-            Some("true") => {
-                raw.next();
-                true
-            }
-            Some("false") => {
-                raw.next();
-                false
-            }
-            _ => true,
-        };
-    }
-    (managed, args)
+    Ok(TaskSuccess::new(&(), &result)?.with_text(text))
 }
 
 #[cfg(test)]
 mod tests {
+    use std::ffi::OsString;
+
+    use casa_task_runtime::{ParameterRuntime, TaskCommandLine};
+
     use super::*;
+
+    /// A command line as the front end resolves it, read into the task's
+    /// parameters.
+    fn resolve_cli_request(
+        args: &[OsString],
+    ) -> Result<(SimobserveTaskParameters, SimobserveParameters), String> {
+        let bundle = simobserve_surface()?;
+        let line = TaskCommandLine::parse(&bundle, args)?;
+        let session = ParameterRuntime::default()
+            .open_session(line.open_session_request(bundle))
+            .map_err(|error| error.to_string())?;
+        parameters_from(TaskInvocation::new(&session, Path::new(".")).plain_values())
+    }
 
     #[test]
     fn the_defaults_resolve_to_casas() {

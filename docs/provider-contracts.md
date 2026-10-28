@@ -251,19 +251,19 @@ surface definition.
 Consumers project from the embedded canonical surface in-process. Providers
 expose no second schema-discovery action or cached presentation payload.
 
-One-shot provider binaries use `casa-task-runtime::TaskCliHost` for
-`--json-schema`, `--protocol-info`, and `--json-run <SOURCE>`. The host owns
-stdin/file ingestion, JSON decoding and encoding, and stable failure wording.
-Provider CLIs retain only their human argument projection and typed execution
-function.
+Every one-shot task binary answers `--json-schema`, `--protocol-info` and
+`--json-run <SOURCE>` through the shared task front end below, which owns
+stdin and file ingestion, JSON decoding and encoding, and the typed reply.
+A binary keeps only its typed execution callback.
 
 ## The shared task front end and typed replies
 
 `casa-task-runtime::TaskFrontEnd` is the one entry every task binary's `main`
-is to call. The image binaries, `imexplore`, and the MeasurementSet binaries
+calls (#931): the image binaries and `imexplore`; the MeasurementSet binaries
 (`msexplore` with `plotms`, `mstransform` with `split`, `flagdata`,
-`flagmanager` and `importvla`) run on it; the calibration family, the imager
-and simobserve move next (#931, PR 2d) and use `TaskCliHost` until then. A
+`flagmanager` and `importvla`); `calibrate`, which hosts `calibrate`,
+`applycal`, `gaincal`, `bandpass`, `fluxscale` and `gencal`;
+`casars-plotcal`; `casars-imager`; and `simobserve`. A
 surface's choices take their canonical names (`--preset amplitude_vs_time`),
 and every flag it declares, short ones such as msexplore's `-o` included,
 reaches its parameter. The front end is generic over the
@@ -273,8 +273,9 @@ non-executing `--show`, `--template` (also `--profile-template`), `--describe`
 and `--validate`, and the machine actions. A spelling the surface declares is
 always its parameter, so imregrid's `--template` names its template image and
 `--profile-template` gives its profile. A family binary's first word names the
-surface it runs, such as `imexplore imstat` or `mstransform split`; the
-first hosted surface runs otherwise. The callback reads the resolved values
+surface it runs, such as `imexplore imstat`, `mstransform split` or
+`calibrate gaincal`; the first hosted surface runs otherwise, and a
+surface's `fixed_args` are that word. The callback reads the resolved values
 into the binary's typed request through `TaskInvocation`'s typed reads, and
 `TaskInvocation::is_set` tells a value the run sets from a default. What a
 command line prints is the callback's text (msexplore's summary in the
@@ -309,21 +310,31 @@ surface's contract inside the binary. It writes one `TaskReply` to stdout:
   full `result`, from which products are projected;
 - `{"status": "failed", "surface", "kind", "message", "parameter"?}`, where
   `kind` is `validation` (refused before anything changed; Python
-  `ValueError`) or `execution` (Python `RuntimeError`).
+  `ValueError`), `execution` (Python `RuntimeError`), or `interrupted`: the
+  task caught an interrupt, stopped at its next safe point and published
+  nothing, as `casars-imager` does on SIGINT.
 
 The exit status agrees with the reply: 0 for success, 2 for a validation
-failure and 1 for an execution failure. `classify_task_exit` reads a finished
-process from its exit status and stdout alone, never stderr, and keeps a launch
-failure, a signal and a malformed reply distinct from the task's own failures.
-A provider contract carries both schemas under `semantic.front_end` once its
-binary runs on the front end.
+failure, 1 for an execution failure and 130 for an interrupted run.
+`classify_task_exit` reads a finished process from its exit status and stdout
+alone, never stderr, and keeps a launch failure, a signal and a malformed reply
+distinct from the task's own failures. A provider contract carries both
+schemas under `semantic.front_end`.
+
+A surface with a `managed_output` contract names the decoder that reads its
+provider result (`calibration-report-v1`, `imager-run-v1`,
+`simobserve-run-v1`): the reply's `result` is that result, from which the
+completion decoder projects products and the summary. Nothing is injected
+into the binary's arguments to ask for it.
 
 Last has one owner on each path: a command line run of a binary records Last
 before the callback and Last Successful only after success, unless
 `--no-save-last`; `--json-run` reads and writes neither. `casars run` owns Last
-for the runs it launches, and Python task calls save none. `casars run` starts
-a front-end binary with `--json-run -` and the values the user set, reads its
-reply, and prints the return value or the task's own error.
+for the runs it launches, and Python task calls save none. Every run
+`casars run` launches is one invocation shape: the surface's `fixed_args`,
+then `--json-run -` with the values the user set. It reads the reply and
+prints the provider result where the surface declares a decoder, the return
+value otherwise, or the task's own error.
 
 ## Shared Versioned Component Schemas
 

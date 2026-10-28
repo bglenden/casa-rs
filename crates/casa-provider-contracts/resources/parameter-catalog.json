@@ -2105,6 +2105,60 @@
       "persistence_class": "profile"
     },
     {
+      "id": "parameter.degamp",
+      "semantic_revision": 1,
+      "casa_name": "degamp",
+      "value_domain": {
+        "kind": "integer"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [
+        {
+          "kind": "number_range",
+          "min": 0.0
+        }
+      ],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Polynomial degree of a BPOLY bandpass's amplitude",
+        "details": "Read only when bandtype is bpoly, as CASA's bandpass degamp.",
+        "examples": [
+          "3"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "parameter.degphase",
+      "semantic_revision": 1,
+      "casa_name": "degphase",
+      "value_domain": {
+        "kind": "integer"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [
+        {
+          "kind": "number_range",
+          "min": 0.0
+        }
+      ],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Polynomial degree of a BPOLY bandpass's phase",
+        "details": "Read only when bandtype is bpoly, as CASA's bandpass degphase.",
+        "examples": [
+          "3"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
       "id": "parameter.ddid",
       "semantic_revision": 1,
       "casa_name": "ddid",
@@ -3297,21 +3351,37 @@
     },
     {
       "id": "parameter.gaintables",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "gaintables",
       "value_domain": {
-        "kind": "string"
+        "kind": "optional",
+        "value": {
+          "kind": "array",
+          "element": {
+            "kind": "path",
+            "resource_kind": "calibration_table"
+          },
+          "min_items": 1,
+          "max_items": null,
+          "allow_scalar": true
+        },
+        "states": [
+          "none"
+        ]
       },
       "normalization": {
-        "kind": "trim"
+        "kind": "path"
       },
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {
-        "summary": "Comma-separated list of calibration-table paths to apply in order",
-        "details": null,
-        "examples": []
+        "summary": "Calibration-table paths to apply in order",
+        "details": "A list, or one comma-separated string; a repeated flag adds to it.",
+        "examples": [
+          "phase.gcal",
+          "[phase.gcal, bandpass.bcal]"
+        ]
       },
       "persistence_class": "profile"
     },
@@ -4392,6 +4462,33 @@
         "details": null,
         "examples": [
           "3.0"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "parameter.minblperant",
+      "semantic_revision": 1,
+      "casa_name": "minblperant",
+      "value_domain": {
+        "kind": "integer"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [
+        {
+          "kind": "number_range",
+          "min": 0.0
+        }
+      ],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Minimum unflagged baselines an antenna needs to be solved for",
+        "details": "An antenna with fewer unflagged baselines in a solution interval is flagged rather than solved, as CASA's gaincal minblperant.",
+        "examples": [
+          "4"
         ]
       },
       "persistence_class": "profile"
@@ -6566,21 +6663,37 @@
     },
     {
       "id": "parameter.summary_paths",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "summary_paths",
       "value_domain": {
-        "kind": "string"
+        "kind": "optional",
+        "value": {
+          "kind": "array",
+          "element": {
+            "kind": "path",
+            "resource_kind": "calibration_table"
+          },
+          "min_items": 1,
+          "max_items": null,
+          "allow_scalar": true
+        },
+        "states": [
+          "none"
+        ]
       },
       "normalization": {
-        "kind": "trim"
+        "kind": "path"
       },
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {
-        "summary": "Comma-separated calibration-table paths for summary mode",
-        "details": null,
-        "examples": []
+        "summary": "Calibration-table paths for summary mode",
+        "details": "A list, or one comma-separated string; a repeated flag adds to it.",
+        "examples": [
+          "phase.gcal",
+          "[phase.gcal, bandpass.bcal]"
+        ]
       },
       "persistence_class": "profile"
     },

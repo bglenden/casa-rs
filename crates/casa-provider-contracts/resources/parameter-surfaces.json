@@ -3513,7 +3513,7 @@
     {
       "kind": "task",
       "id": "calibrate",
-      "contract_version": 5,
+      "contract_version": 6,
       "display_name": "Calibrate",
       "category": "Calibration",
       "summary": "apply, inspect, and solve CASA-style calibration workflows",
@@ -3522,16 +3522,6 @@
         "invocation_name": "calibrate",
         "fixed_args": [],
         "managed_output": {
-          "inject_arguments": [
-            {
-              "flag": "--format",
-              "value": "json"
-            },
-            {
-              "flag": "--managed-output",
-              "value": "true"
-            }
-          ],
           "raw_stderr_available": true,
           "raw_stdout_available": true,
           "stdout_format": "json",
@@ -3838,7 +3828,7 @@
           "name": "summary_paths",
           "concept": {
             "id": "parameter.summary_paths",
-            "semantic_revision": 1
+            "semantic_revision": 2
           },
           "order": 3,
           "default": {
@@ -3906,7 +3896,7 @@
           "name": "gaintables",
           "concept": {
             "id": "parameter.gaintables",
-            "semantic_revision": 1
+            "semantic_revision": 2
           },
           "order": 4,
           "default": {
@@ -7162,6 +7152,195 @@
           },
           "aliases": [],
           "reviewed_homonym": null
+        },
+        {
+          "name": "minblperant",
+          "concept": {
+            "id": "parameter.minblperant",
+            "semantic_revision": 1
+          },
+          "order": 52,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "integer",
+              "value": 4
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--minblperant"
+              ],
+              "false_flags": [],
+              "metavar": "COUNT"
+            },
+            "provider": {
+              "field": "minblperant",
+              "adapter": "identity",
+              "emit_when": {
+                "kind": "any",
+                "predicates": [
+                  {
+                    "kind": "equals",
+                    "parameter": "mode",
+                    "value": {
+                      "kind": "string",
+                      "value": "solve_gain"
+                    }
+                  }
+                ]
+              }
+            },
+            "python": {
+              "name": "minblperant",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Minimum Baselines per Antenna",
+              "group": "Solve Gain",
+              "advanced": false,
+              "hidden": false
+            }
+          },
+          "aliases": [],
+          "reviewed_homonym": null
+        },
+        {
+          "name": "degamp",
+          "concept": {
+            "id": "parameter.degamp",
+            "semantic_revision": 1
+          },
+          "order": 53,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "integer",
+              "value": 3
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--degamp"
+              ],
+              "false_flags": [],
+              "metavar": "DEGREE"
+            },
+            "provider": {
+              "field": "degamp",
+              "adapter": "identity",
+              "emit_when": {
+                "kind": "any",
+                "predicates": [
+                  {
+                    "kind": "equals",
+                    "parameter": "mode",
+                    "value": {
+                      "kind": "string",
+                      "value": "solve_bandpass"
+                    }
+                  }
+                ]
+              }
+            },
+            "python": {
+              "name": "degamp",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "BPOLY Amplitude Degree",
+              "group": "Solve Bandpass",
+              "advanced": true,
+              "hidden": false
+            }
+          },
+          "aliases": [],
+          "reviewed_homonym": null
+        },
+        {
+          "name": "degphase",
+          "concept": {
+            "id": "parameter.degphase",
+            "semantic_revision": 1
+          },
+          "order": 54,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "integer",
+              "value": 3
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--degphase"
+              ],
+              "false_flags": [],
+              "metavar": "DEGREE"
+            },
+            "provider": {
+              "field": "degphase",
+              "adapter": "identity",
+              "emit_when": {
+                "kind": "any",
+                "predicates": [
+                  {
+                    "kind": "equals",
+                    "parameter": "mode",
+                    "value": {
+                      "kind": "string",
+                      "value": "solve_bandpass"
+                    }
+                  }
+                ]
+              }
+            },
+            "python": {
+              "name": "degphase",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "BPOLY Phase Degree",
+              "group": "Solve Bandpass",
+              "advanced": true,
+              "hidden": false
+            }
+          },
+          "aliases": [],
+          "reviewed_homonym": null
         }
       ],
       "migrations": [
@@ -7186,6 +7365,12 @@
         {
           "from_contract": 4,
           "to_contract": 5,
+          "steps": [],
+          "changed_defaults": []
+        },
+        {
+          "from_contract": 5,
+          "to_contract": 6,
           "steps": [],
           "changed_defaults": []
         }
@@ -7864,7 +8049,7 @@
     {
       "kind": "task",
       "id": "imager",
-      "contract_version": 26,
+      "contract_version": 27,
       "display_name": "Imager",
       "category": "Imaging",
       "summary": "Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet",
@@ -7873,12 +8058,6 @@
         "invocation_name": "casars-imager",
         "fixed_args": [],
         "managed_output": {
-          "inject_arguments": [
-            {
-              "flag": "--managed-output",
-              "value": "true"
-            }
-          ],
           "raw_stderr_available": true,
           "raw_stdout_available": true,
           "stdout_format": "json",
@@ -12115,7 +12294,7 @@
     {
       "kind": "task",
       "id": "simobserve",
-      "contract_version": 6,
+      "contract_version": 7,
       "display_name": "SimObserve",
       "category": "Simulation",
       "summary": "Simulate an observation of a sky model: CASA's simobserve",
@@ -12124,12 +12303,6 @@
         "invocation_name": "simobserve",
         "fixed_args": [],
         "managed_output": {
-          "inject_arguments": [
-            {
-              "flag": "--managed-output",
-              "value": "true"
-            }
-          ],
           "raw_stderr_available": true,
           "raw_stdout_available": true,
           "stdout_format": "json",
@@ -16395,7 +16568,7 @@
     {
       "kind": "task",
       "id": "applycal",
-      "contract_version": 4,
+      "contract_version": 5,
       "display_name": "Applycal",
       "category": "Calibration",
       "summary": "Apply one or more calibration tables to a MeasurementSet.",
@@ -16403,20 +16576,9 @@
       "execution": {
         "invocation_name": "calibrate",
         "fixed_args": [
-          "--mode",
-          "apply"
+          "applycal"
         ],
         "managed_output": {
-          "inject_arguments": [
-            {
-              "flag": "--format",
-              "value": "json"
-            },
-            {
-              "flag": "--managed-output",
-              "value": "true"
-            }
-          ],
           "raw_stderr_available": true,
           "raw_stdout_available": true,
           "stdout_format": "json",
@@ -16497,7 +16659,7 @@
           "name": "gaintables",
           "concept": {
             "id": "parameter.gaintables",
-            "semantic_revision": 1
+            "semantic_revision": 2
           },
           "order": 1,
           "default": {
@@ -17604,13 +17766,19 @@
           "to_contract": 4,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 4,
+          "to_contract": 5,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "gaincal",
-      "contract_version": 4,
+      "contract_version": 5,
       "display_name": "Gaincal",
       "category": "Calibration",
       "summary": "Solve antenna gain calibration for a MeasurementSet.",
@@ -17618,20 +17786,9 @@
       "execution": {
         "invocation_name": "calibrate",
         "fixed_args": [
-          "--mode",
-          "solve_gain"
+          "gaincal"
         ],
         "managed_output": {
-          "inject_arguments": [
-            {
-              "flag": "--format",
-              "value": "json"
-            },
-            {
-              "flag": "--managed-output",
-              "value": "true"
-            }
-          ],
           "raw_stderr_available": true,
           "raw_stdout_available": true,
           "stdout_format": "json",
@@ -17712,7 +17869,7 @@
           "name": "gaintables",
           "concept": {
             "id": "parameter.gaintables",
-            "semantic_revision": 1
+            "semantic_revision": 2
           },
           "order": 1,
           "default": {
@@ -19089,6 +19246,56 @@
           },
           "aliases": [],
           "reviewed_homonym": null
+        },
+        {
+          "name": "minblperant",
+          "concept": {
+            "id": "parameter.minblperant",
+            "semantic_revision": 1
+          },
+          "order": 28,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "integer",
+              "value": 4
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--minblperant"
+              ],
+              "false_flags": [],
+              "metavar": "COUNT"
+            },
+            "provider": {
+              "field": "minblperant",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "minblperant",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Minimum Baselines per Antenna",
+              "group": "Solve Gain",
+              "advanced": false,
+              "hidden": false
+            }
+          },
+          "aliases": [],
+          "reviewed_homonym": null
         }
       ],
       "migrations": [
@@ -19109,13 +19316,19 @@
           "to_contract": 4,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 4,
+          "to_contract": 5,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "bandpass",
-      "contract_version": 4,
+      "contract_version": 5,
       "display_name": "Bandpass",
       "category": "Calibration",
       "summary": "Solve bandpass calibration for a MeasurementSet.",
@@ -19123,20 +19336,9 @@
       "execution": {
         "invocation_name": "calibrate",
         "fixed_args": [
-          "--mode",
-          "solve_bandpass"
+          "bandpass"
         ],
         "managed_output": {
-          "inject_arguments": [
-            {
-              "flag": "--format",
-              "value": "json"
-            },
-            {
-              "flag": "--managed-output",
-              "value": "true"
-            }
-          ],
           "raw_stderr_available": true,
           "raw_stdout_available": true,
           "stdout_format": "json",
@@ -19217,7 +19419,7 @@
           "name": "gaintables",
           "concept": {
             "id": "parameter.gaintables",
-            "semantic_revision": 1
+            "semantic_revision": 2
           },
           "order": 1,
           "default": {
@@ -20444,6 +20646,106 @@
           },
           "aliases": [],
           "reviewed_homonym": null
+        },
+        {
+          "name": "degamp",
+          "concept": {
+            "id": "parameter.degamp",
+            "semantic_revision": 1
+          },
+          "order": 25,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "integer",
+              "value": 3
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--degamp"
+              ],
+              "false_flags": [],
+              "metavar": "DEGREE"
+            },
+            "provider": {
+              "field": "degamp",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "degamp",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "BPOLY Amplitude Degree",
+              "group": "Solve Bandpass",
+              "advanced": true,
+              "hidden": false
+            }
+          },
+          "aliases": [],
+          "reviewed_homonym": null
+        },
+        {
+          "name": "degphase",
+          "concept": {
+            "id": "parameter.degphase",
+            "semantic_revision": 1
+          },
+          "order": 26,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "integer",
+              "value": 3
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--degphase"
+              ],
+              "false_flags": [],
+              "metavar": "DEGREE"
+            },
+            "provider": {
+              "field": "degphase",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "degphase",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "BPOLY Phase Degree",
+              "group": "Solve Bandpass",
+              "advanced": true,
+              "hidden": false
+            }
+          },
+          "aliases": [],
+          "reviewed_homonym": null
         }
       ],
       "migrations": [
@@ -20464,13 +20766,19 @@
           "to_contract": 4,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 4,
+          "to_contract": 5,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "fluxscale",
-      "contract_version": 4,
+      "contract_version": 5,
       "display_name": "Fluxscale",
       "category": "Calibration",
       "summary": "Scale gain solutions using reference calibrator fields.",
@@ -20478,20 +20786,9 @@
       "execution": {
         "invocation_name": "calibrate",
         "fixed_args": [
-          "--mode",
           "fluxscale"
         ],
         "managed_output": {
-          "inject_arguments": [
-            {
-              "flag": "--format",
-              "value": "json"
-            },
-            {
-              "flag": "--managed-output",
-              "value": "true"
-            }
-          ],
           "raw_stderr_available": true,
           "raw_stdout_available": true,
           "stdout_format": "json",
@@ -21026,13 +21323,19 @@
           "to_contract": 4,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 4,
+          "to_contract": 5,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "gencal",
-      "contract_version": 4,
+      "contract_version": 5,
       "display_name": "Gencal",
       "category": "Calibration",
       "summary": "Generate a calibration table such as antpos, gceff, or opac.",
@@ -21040,20 +21343,9 @@
       "execution": {
         "invocation_name": "calibrate",
         "fixed_args": [
-          "--mode",
           "gencal"
         ],
         "managed_output": {
-          "inject_arguments": [
-            {
-              "flag": "--format",
-              "value": "json"
-            },
-            {
-              "flag": "--managed-output",
-              "value": "true"
-            }
-          ],
           "raw_stderr_available": true,
           "raw_stdout_available": true,
           "stdout_format": "json",
@@ -21590,6 +21882,12 @@
         {
           "from_contract": 3,
           "to_contract": 4,
+          "steps": [],
+          "changed_defaults": []
+        },
+        {
+          "from_contract": 4,
+          "to_contract": 5,
           "steps": [],
           "changed_defaults": []
         }

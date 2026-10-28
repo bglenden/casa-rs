@@ -1,25 +1,26 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! `casars-plotcal` - native calibration-table and corrected-data plots.
+//! `casars-plotcal` - native calibration-table and corrected-data plots, on
+//! the shared task front end.
 //!
-//! Projects the canonical `plotcal` parameter surface onto
+//! Reads the canonical `plotcal` parameter surface into
 //! [`casa_calibration::build_calibration_plot_payload`].
 
 use std::collections::BTreeMap;
-use std::env;
-use std::ffi::OsString;
 use std::path::PathBuf;
+use std::process::ExitCode;
 
 use casa_calibration::{
     CalibrationPlotPreset, CalibrationPlotRequest, build_calibration_plot_payload,
 };
 use casa_ms::MsSelection;
-use casa_ms::presentation::UiCommandSchema;
 use casa_provider_contracts::{
-    DefaultSpec, NoAdditionalProviderSchemas, ParameterType, Predicate, ProviderCliMachineActions,
-    ProviderCliProjection, ProviderProjectionMetadata, ProviderProtocolDescriptor,
-    ProviderSurfaceKind, SurfaceContractBundle, TaskOperationDescriptor, TaskProviderContract,
-    TaskProviderSchemas, TaskSemanticContract, builtin_surface_bundle, merged_components,
-    project_ui_form,
+    NoAdditionalProviderSchemas, ProviderCliMachineActions, ProviderCliProjection,
+    ProviderProjectionMetadata, ProviderProtocolDescriptor, ProviderSurfaceKind,
+    SurfaceContractBundle, TaskOperationDescriptor, TaskProviderContract, TaskProviderSchemas,
+    TaskSemanticContract, builtin_surface_bundle, merged_components,
+};
+use casa_task_runtime::{
+    CasaLoggingConfig, TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess,
 };
 use schemars::{JsonSchema, schema_for};
 use serde::{Deserialize, Serialize};
@@ -27,39 +28,24 @@ use serde_json::{Value as JsonValue, json};
 
 const SURFACE_ID: &str = "plotcal";
 
-fn main() {
-    if let Err(error) = run(env::args_os().skip(1).collect()) {
-        eprintln!("Error: {error}");
-        std::process::exit(1);
-    }
+fn main() -> ExitCode {
+    TaskFrontEnd::new(
+        "casars-plotcal",
+        plotcal_task_schema_bundle(&plotcal_surface()),
+        &[SURFACE_ID],
+        run,
+    )
+    .expect("the plotcal contract carries its surface")
+    .main(
+        std::env::args_os().skip(1),
+        CasaLoggingConfig::from_env(),
+        std::env::set_current_dir,
+        &mut std::io::stdout(),
+        std::io::stderr(),
+    )
 }
 
-fn run(args: Vec<OsString>) -> Result<(), String> {
-    let bundle = plotcal_surface()?;
-
-    if has_flag(&args, "-h") || has_flag(&args, "--help") {
-        print!(
-            "{}\n\n{}\n",
-            command_schema(&bundle).render_help().trim_end(),
-            casa_task_runtime::task_cli_machine_help("PlotcalTaskRequest")
-        );
-        return Ok(());
-    }
-    let host = casa_task_runtime::TaskCliHost::new(plotcal_task_schema_bundle(&bundle), execute);
-    if let Some(output) = host.dispatch(&args).map_err(|error| error.to_string())? {
-        print!("{output}");
-        return Ok(());
-    }
-
-    let values = parse_values(&bundle, &args)?;
-    let result = execute(PlotcalTaskRequest { values })?;
-    print!(
-        "{}",
-        serde_json::to_string_pretty(&result.output).map_err(|error| error.to_string())?
-    );
-    Ok(())
-}
-
+/// The domain request: the plotcal parameters by name.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 struct PlotcalTaskRequest {
     values: BTreeMap<String, String>,
@@ -116,187 +102,55 @@ fn plotcal_task_schema_bundle(bundle: &SurfaceContractBundle) -> TaskProviderCon
     }
 }
 
-fn execute(request: PlotcalTaskRequest) -> Result<PlotcalTaskResult, String> {
-    Ok(PlotcalTaskResult {
-        task: SURFACE_ID.to_string(),
-        output: run_plotcal(request.values)?,
-    })
+fn plotcal_surface() -> SurfaceContractBundle {
+    builtin_surface_bundle(SURFACE_ID).expect("the built-in plotcal surface stays valid")
 }
 
-fn plotcal_surface() -> Result<SurfaceContractBundle, String> {
-    builtin_surface_bundle(SURFACE_ID)
-        .map_err(|error| format!("load {SURFACE_ID} parameter surface: {error}"))
-}
-
-fn has_flag(args: &[OsString], flag: &str) -> bool {
-    args.iter().any(|arg| arg == flag)
-}
-
-fn command_schema(bundle: &SurfaceContractBundle) -> UiCommandSchema {
-    let mut schema: UiCommandSchema = serde_json::from_value(project_ui_form(bundle))
-        .expect("canonical plotcal UI projection must match UiCommandSchema");
-    schema.usage = format!("{} [parameters]", schema.invocation_name);
-    schema
-}
-
-fn parse_values(
-    bundle: &SurfaceContractBundle,
-    args: &[OsString],
-) -> Result<BTreeMap<String, String>, String> {
-    let mut values = BTreeMap::new();
-    let mut positionals = bundle
-        .surface
-        .bindings()
-        .iter()
-        .filter_map(|binding| {
-            binding
-                .projections
-                .cli
-                .as_ref()
-                .and_then(|projection| projection.positional)
-                .map(|position| (position, binding))
-        })
-        .collect::<BTreeMap<_, _>>();
-    let mut positional_index = 0usize;
-    let mut index = 0usize;
-    while index < args.len() {
-        let raw = args[index]
-            .to_str()
-            .ok_or_else(|| format!("argument {index} is not valid UTF-8"))?;
-        if matches!(raw, "--json-schema" | "--protocol-info" | "-h" | "--help") {
-            index += 1;
-            continue;
-        }
-        if raw.starts_with("--") {
-            let binding = bundle
-                .surface
-                .bindings()
-                .iter()
-                .find(|binding| {
-                    binding.projections.cli.as_ref().is_some_and(|projection| {
-                        projection.flags.iter().any(|flag| flag == raw)
-                            || projection.false_flags.iter().any(|flag| flag == raw)
-                    })
-                })
-                .ok_or_else(|| format!("{} does not accept option {raw}", bundle.surface.id()))?;
-            let projection = binding
-                .projections
-                .cli
-                .as_ref()
-                .expect("matched CLI projection");
-            let name = binding
-                .projections
-                .python
-                .as_ref()
-                .map_or(binding.name.as_str(), |projection| projection.name.as_str());
-            if is_bool_domain(
-                &bundle
-                    .catalog
-                    .concept(&binding.concept)
-                    .expect("validated plotcal concept")
-                    .value_domain,
-            ) {
-                let enabled = !projection.false_flags.iter().any(|flag| flag == raw);
-                values.insert(name.to_string(), enabled.to_string());
-                index += 1;
-                continue;
-            }
-            let value = args
-                .get(index + 1)
-                .and_then(|value| value.to_str())
-                .ok_or_else(|| format!("{raw} requires a value"))?;
-            values.insert(name.to_string(), value.to_string());
-            index += 2;
-            continue;
-        }
-        let binding = positionals
-            .remove(&positional_index)
-            .ok_or_else(|| format!("unexpected positional argument {raw:?}"))?;
-        let name = binding
-            .projections
-            .python
-            .as_ref()
-            .map_or(binding.name.as_str(), |projection| projection.name.as_str());
-        values.insert(name.to_string(), raw.to_string());
-        positional_index += 1;
-        index += 1;
+/// Run one resolved plotcal request; it returns None, and its result
+/// carries the plot's description.
+fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
+    let preset = parse_plotcal_preset(&task.required_text("preset")?)
+        .map_err(|error| TaskFailure::validation(error).at("preset"))?;
+    let mut vis = task.paths("vis")?;
+    if vis.len() > 1 {
+        return Err(TaskFailure::validation("plotcal reads one MeasurementSet").at("vis"));
     }
-
-    for binding in bundle.surface.bindings() {
-        if matches!(binding.default, DefaultSpec::Required)
-            && matches!(binding.required_when, Predicate::Always)
-        {
-            let name = binding
-                .projections
-                .python
-                .as_ref()
-                .map_or(binding.name.as_str(), |projection| projection.name.as_str());
-            if values.get(name).is_none_or(|value| value.trim().is_empty()) {
-                return Err(format!(
-                    "{} requires --{}",
-                    bundle.surface.id(),
-                    binding.name.replace('_', "-")
-                ));
-            }
-        }
-    }
-    Ok(values)
-}
-
-fn is_bool_domain(domain: &ParameterType) -> bool {
-    match domain {
-        ParameterType::Bool => true,
-        ParameterType::Optional { value, .. } => is_bool_domain(value),
-        _ => false,
-    }
-}
-
-fn run_plotcal(values: BTreeMap<String, String>) -> Result<JsonValue, String> {
-    let preset = values
-        .get("preset")
-        .map(String::as_str)
-        .unwrap_or("gain_phase_vs_time");
-    let preset = parse_plotcal_preset(preset)?;
+    let text = |name: &str| task.text(name);
     let request = CalibrationPlotRequest {
-        measurement_set_path: optional_path(&values, "vis"),
-        calibration_table_path: optional_path(&values, "caltable"),
+        measurement_set_path: vis.pop(),
+        calibration_table_path: text("caltable")?.map(PathBuf::from),
         selection: MsSelection {
             selectdata: true,
-            field: optional_string(&values, "field"),
-            spw: optional_string(&values, "spw"),
-            timerange: optional_string(&values, "timerange"),
-            uvrange: optional_string(&values, "uvrange"),
-            antenna: optional_string(&values, "antenna"),
-            scan: optional_string(&values, "scan"),
-            correlation: optional_string(&values, "correlation"),
-            observation: optional_string(&values, "observation"),
-            array: optional_string(&values, "array"),
-            intent: optional_string(&values, "intent"),
-            feed: optional_string(&values, "feed"),
+            field: text("field")?,
+            spw: text("spw")?,
+            timerange: text("timerange")?,
+            uvrange: text("uvrange")?,
+            antenna: text("antenna")?,
+            scan: text("scan")?,
+            correlation: text("correlation")?,
+            observation: text("observation")?,
+            array: text("array")?,
+            intent: text("intent")?,
+            feed: text("feed")?,
             data_description: None,
             state: None,
-            msselect: optional_string(&values, "msselect"),
+            msselect: text("msselect")?,
         },
     };
     let payload = build_calibration_plot_payload(&request, preset)
-        .map_err(|error| format!("plotcal failed: {error}"))?;
-    Ok(json!({
+        .map_err(|error| TaskFailure::execution(format!("plotcal failed: {error}")))?;
+    let output = json!({
         "task": "plotcal",
         "preset": format!("{preset:?}"),
         "payload_debug": format!("{payload:#?}"),
-    }))
-}
-
-fn optional_path(values: &BTreeMap<String, String>, key: &str) -> Option<PathBuf> {
-    optional_string(values, key).map(PathBuf::from)
-}
-
-fn optional_string(values: &BTreeMap<String, String>, key: &str) -> Option<String> {
-    values
-        .get(key)
-        .map(|value| value.trim())
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
+    });
+    let rendered = serde_json::to_string_pretty(&output)
+        .map_err(|error| TaskFailure::execution(error.to_string()))?;
+    let result = PlotcalTaskResult {
+        task: SURFACE_ID.to_string(),
+        output,
+    };
+    Ok(TaskSuccess::new(&(), &result)?.with_text(rendered))
 }
 
 fn parse_plotcal_preset(value: &str) -> Result<CalibrationPlotPreset, String> {
@@ -325,7 +179,7 @@ mod tests {
 
     #[test]
     fn schema_bundle_embeds_the_plotcal_parameter_contract() {
-        let contract = plotcal_surface().expect("plotcal surface");
+        let contract = plotcal_surface();
         assert_eq!(
             contract.surface.execution().invocation_name,
             "casars-plotcal"
@@ -349,5 +203,29 @@ mod tests {
         surfaces[0]
             .validate()
             .expect("embedded plotcal parameter surface");
+    }
+
+    #[test]
+    fn every_preset_the_surface_offers_is_read() {
+        let bundle = plotcal_surface();
+        let preset = bundle
+            .surface
+            .bindings()
+            .iter()
+            .find(|binding| binding.name == "preset")
+            .expect("preset");
+        let values = preset
+            .refinements
+            .iter()
+            .find_map(|refinement| match refinement {
+                casa_provider_contracts::NarrowingConstraint::AllowedValues { values } => {
+                    Some(values)
+                }
+                _ => None,
+            })
+            .expect("plotcal narrows the presets to its own");
+        for value in values {
+            parse_plotcal_preset(value).unwrap_or_else(|error| panic!("{error}"));
+        }
     }
 }

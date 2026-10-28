@@ -24,8 +24,8 @@ pub use provider::{
     ProviderProtocolDescriptor, TaskProviderContract, TaskProviderSchemas,
 };
 pub use reply::{
-    EXIT_EXECUTION_FAILED, EXIT_SUCCEEDED, EXIT_VALIDATION_FAILED, TaskFailureKind,
-    TaskFrontEndSchemas, TaskReply, TaskRunRequest,
+    EXIT_EXECUTION_FAILED, EXIT_INTERRUPTED, EXIT_SUCCEEDED, EXIT_VALIDATION_FAILED,
+    TaskFailureKind, TaskFrontEndSchemas, TaskReply, TaskRunRequest,
 };
 pub use semantic::{
     ObjectConstructorDescriptor, ObjectMethodDescriptor, ObjectPropertyDescriptor,

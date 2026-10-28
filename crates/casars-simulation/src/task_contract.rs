@@ -2,14 +2,11 @@
 //! simobserve's task contract over the shared provider envelope: CASA's
 //! catalog-named parameters of one run in, its report and products out.
 
-use std::collections::BTreeMap;
-
 use casa_provider_contracts::{
-    NoAdditionalProviderSchemas, ParameterValue, ProviderCliMachineActions, ProviderCliProjection,
-    ProviderInvocation, ProviderInvocationAdaptation, ProviderProjectionMetadata,
-    ProviderProtocolDescriptor, ProviderSurfaceKind, RunProductKind, TaskOperationDescriptor,
-    TaskProviderContract, TaskProviderSchemas, TaskSemanticContract, builtin_surface_bundle,
-    merged_components,
+    NoAdditionalProviderSchemas, ProviderCliMachineActions, ProviderCliProjection,
+    ProviderProjectionMetadata, ProviderProtocolDescriptor, ProviderSurfaceKind, RunProductKind,
+    TaskOperationDescriptor, TaskProviderContract, TaskProviderSchemas, TaskSemanticContract,
+    builtin_surface_bundle, merged_components,
 };
 use schemars::{JsonSchema, schema_for};
 use serde::{Deserialize, Serialize};
@@ -71,76 +68,20 @@ pub fn simobserve_task_schema_bundle() -> TaskProviderContract {
     }
 }
 
-/// Project one resolved parameter set into simobserve's invocation: the
-/// parameters, as JSON on stdin, run with `--json-run -`.
-pub fn simobserve_provider_invocation(
-    values: &BTreeMap<String, ParameterValue>,
-    direct_args: Vec<String>,
-) -> Result<ProviderInvocationAdaptation, String> {
-    let mut args = managed_output_args(direct_args)?;
-    args.extend(["--json-run".to_string(), "-".to_string()]);
-    let request = SimobserveTaskRequest::Run(SimobserveTaskParameters(
-        values
-            .iter()
-            .map(|(name, value)| (name.clone(), value.to_plain_json()))
-            .collect(),
-    ));
-    let mut stdin = serde_json::to_string(&request)
-        .map_err(|error| format!("serialize the simobserve request: {error}"))?;
-    stdin.push('\n');
-    Ok(ProviderInvocationAdaptation {
-        invocation: ProviderInvocation {
-            args,
-            stdin: Some(stdin),
-        },
-        consumed_parameters: values.keys().cloned().collect(),
-    })
-}
-
-/// The `--managed-output <bool>` pair of the direct arguments; the task's
-/// own parameters travel on stdin.
-fn managed_output_args(args: Vec<String>) -> Result<Vec<String>, String> {
-    let mut managed = Vec::new();
-    let mut args = args.into_iter();
-    while let Some(argument) = args.next() {
-        if argument != "--managed-output" {
-            continue;
-        }
-        let value = args
-            .next()
-            .ok_or_else(|| "--managed-output requires its projected boolean value".to_string())?;
-        if !matches!(value.as_str(), "true" | "false") {
-            return Err(format!(
-                "--managed-output expects true or false, found {value:?}"
-            ));
-        }
-        managed.extend([argument, value]);
-    }
-    Ok(managed)
-}
-
 /// Catalog-named simobserve parameters as plain JSON: sparse in a request,
 /// every parameter once resolved (the run's request echo).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(transparent)]
 pub struct SimobserveTaskParameters(pub serde_json::Map<String, serde_json::Value>);
 
-/// simobserve's request envelope.
+/// simobserve's domain request: CASA's catalog-named parameters of one run.
+/// The binary takes a front-end `TaskRunRequest` of the same parameters.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", content = "request", rename_all = "snake_case")]
 pub enum SimobserveTaskRequest {
     /// Simulate one observation; the parameters are resolved over CASA's
     /// defaults exactly as the command line's are.
     Run(SimobserveTaskParameters),
-}
-
-impl SimobserveTaskRequest {
-    /// Resolve and run the request.
-    pub fn execute(&self) -> Result<SimobserveTaskResult, String> {
-        let Self::Run(parameters) = self;
-        let (parameters, task) = crate::resolve_request(parameters)?;
-        crate::run(parameters, task).map(SimobserveTaskResult::Run)
-    }
 }
 
 /// simobserve's result envelope.
@@ -197,38 +138,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn resolved_values_travel_on_stdin_with_the_managed_output_flag() {
-        let values = BTreeMap::from([
-            ("project".to_string(), ParameterValue::String("p".into())),
-            ("overwrite".to_string(), ParameterValue::Bool(true)),
-        ]);
-        let adaptation = simobserve_provider_invocation(
-            &values,
-            vec![
-                "--project".into(),
-                "p".into(),
-                "--managed-output".into(),
-                "true".into(),
-            ],
-        )
-        .expect("an invocation");
-        assert_eq!(
-            adaptation.invocation.args,
-            ["--managed-output", "true", "--json-run", "-"]
-        );
-        let request: serde_json::Value =
-            serde_json::from_str(adaptation.invocation.stdin.as_deref().expect("stdin"))
-                .expect("JSON");
-        assert_eq!(request["kind"], "run");
-        assert_eq!(request["request"]["project"], "p");
-        assert_eq!(request["request"]["overwrite"], true);
-        assert_eq!(adaptation.consumed_parameters.len(), 2);
-    }
-
-    #[test]
-    fn the_schema_bundle_carries_the_contract_6_surface() {
+    fn the_schema_bundle_carries_the_contract_7_surface() {
         let bundle = simobserve_task_schema_bundle();
         assert_eq!(bundle.protocol.protocol_name, SIMOBSERVE_TASK_PROTOCOL_NAME);
-        assert_eq!(bundle.parameter_surfaces[0].surface.contract_version(), 6);
+        assert_eq!(bundle.parameter_surfaces[0].surface.contract_version(), 7);
     }
 }

@@ -14,23 +14,24 @@ use crate::{
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", content = "report", rename_all = "snake_case")]
 pub enum CalibrationTaskResult {
-    /// `calibrate execute_apply`
+    /// `applycal`, or `calibrate` in `apply` mode.
     Apply(ApplyExecutionReport),
-    /// `calibrate export-corrected`
+    /// `calibrate` in `export_corrected_data` mode.
     ExportCorrectedData(ExportCorrectedDataReport),
-    /// `calibrate summary`
+    /// `calibrate` in `summary` mode.
     Summary(Vec<CalibrationTableSummary>),
-    /// `calibrate plan-apply`
+    /// An apply plan, from the [`crate::CalibrationTaskRequest::PlanApply`]
+    /// request.
     PlanApply(ApplyPlan),
-    /// `calibrate stats`
+    /// `calibrate` in `stats` mode.
     Stats(CalibrationStatsReport),
-    /// `calibrate solve-gain`
+    /// `gaincal`, or `calibrate` in `solve_gain` mode.
     SolveGain(GainSolveReport),
-    /// `calibrate solve-bandpass`
+    /// `bandpass`, or `calibrate` in `solve_bandpass` mode.
     SolveBandpass(BandpassSolveReport),
-    /// `calibrate fluxscale`
+    /// `fluxscale`, or `calibrate` in `fluxscale` mode.
     FluxScale(FluxScaleReport),
-    /// `calibrate gencal`
+    /// `gencal`, or `calibrate` in `gencal` mode.
     Gencal(GencalReport),
 }
 

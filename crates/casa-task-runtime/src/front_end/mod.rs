@@ -138,6 +138,16 @@ impl TaskFailure {
         }
     }
 
+    /// The task caught an interrupt and stopped, publishing nothing; the
+    /// process exits 130, a shell's status for an interrupted command.
+    pub fn interrupted(message: impl Into<String>) -> Self {
+        Self {
+            kind: TaskFailureKind::Interrupted,
+            message: message.into(),
+            parameter: None,
+        }
+    }
+
     /// Name the parameter at fault.
     #[must_use]
     pub fn at(mut self, parameter: impl Into<String>) -> Self {
@@ -707,6 +717,11 @@ where
         let outcome = (self.execute)(&TaskInvocation { session, workspace });
         match &outcome {
             Ok(_) => tracing::info!(task = surface, "{surface} completed"),
+            Err(failure) if failure.kind == TaskFailureKind::Interrupted => tracing::warn!(
+                task = surface,
+                reason = %failure.message,
+                "{surface} interrupted"
+            ),
             Err(failure) => tracing::error!(
                 casa.priority = "SEVERE",
                 task = surface,
