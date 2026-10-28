@@ -50,7 +50,9 @@ is no `split` command: they are CASA names that are also system commands
 (`split` is a coreutil) or generic words. Run split as `mstransform split`;
 Python starts all of them from the suite's `bin/`. A link in `~/.local/bin`
 that points into the install root but no longer resolves, such as one to a
-command a newer suite does not have, is removed.
+command a newer suite does not have, is removed. A file of your own, or a
+link elsewhere, already at one of these names is left in place, and the
+installer says so.
 
 ## Install a release candidate side by side
 

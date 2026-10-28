@@ -12,11 +12,13 @@ import os
 from pathlib import Path
 import signal
 import sys
+import time
 
 import pytest
 
 from casars import parameters, tasks
 from casars.parameters import TaskParameters
+from casars.tasks import _runner
 
 FAKE_TASK = """#!/usr/bin/env python3
 import json
@@ -44,6 +46,10 @@ def answer(status, exit_code, **fields):
 
 def interrupted(*_):
     Path(os.environ["FAKE_TASK_LOG"] + ".interrupted").write_text("", encoding="utf-8")
+    # A task can log much more than a pipe holds while it shuts down.
+    for _ in range(int(os.environ.get("FAKE_TASK_SHUTDOWN_LINES", "0"))):
+        print("x" * 1000, file=sys.stderr)
+    Path(os.environ["FAKE_TASK_LOG"] + ".cleaned").write_text("", encoding="utf-8")
     answer("failed", 130, kind="interrupted", message="stopped at a major cycle")
 
 
@@ -178,6 +184,59 @@ def test_a_profile_runs_as_the_wrappers_values(
     assert values["solint"] == "60s"
 
 
+@pytest.mark.parametrize("surface", ["msexplore", "plotms"])
+def test_a_request_carries_only_the_values_set(
+    tmp_path: Path, fake, monkeypatch: pytest.MonkeyPatch, surface: str
+) -> None:
+    # Astra's #974 P3: every resolved value went as if set, so msexplore
+    # refused a page_spec beside datacolumn, color_by and the layout
+    # controls the caller never set.
+    log = fake("CASARS_MSEXPLORE_BIN")
+    monkeypatch.chdir(tmp_path)
+    wrapper = getattr(tasks, surface)
+
+    def sent() -> dict:
+        return recorded(log)["request"]["values"]
+
+    wrapper(vis="input.ms", page_spec="page.json")
+    assert sorted(sent()) == ["page_spec", "vis"]
+
+    draft = TaskParameters.defaults(surface, workspace=tmp_path)
+    draft.set_many({"vis": "input.ms", "page_spec": "page.json"})
+    assert sorted(draft) == ["page_spec", "vis"]
+    assert draft["datacolumn"] == "data"
+    path = draft.save(tmp_path / f"{surface}.toml")
+    loaded = parameters.load(path)
+    assert sorted(loaded) == ["page_spec", "vis"]
+
+    wrapper(**loaded)
+    assert sorted(sent()) == ["page_spec", "vis"]
+    tasks.run(surface, loaded)
+    assert sorted(sent()) == ["page_spec", "vis"]
+    # A value the caller sets goes, even when it is the default.
+    wrapper(**loaded, datacolumn="data")
+    assert sorted(sent()) == ["datacolumn", "page_spec", "vis"]
+
+
+def test_a_relative_override_names_a_file_where_the_caller_is(
+    tmp_path: Path, fake, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Astra's #974 P1: the override was started as given, from the task's
+    # own workspace, where `bin/flagmanager` named another file or none.
+    fake()
+    (tmp_path / "bin").mkdir()
+    (tmp_path / "fake-task").rename(tmp_path / "bin" / "flagmanager")
+    workspace = tmp_path / "elsewhere"
+    workspace.mkdir()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("CASARS_FLAGMANAGER_BIN", "bin/flagmanager")
+
+    completion = tasks.run("flagmanager", workspace=workspace, vis="input.ms")
+
+    assert completion.successful, completion.describe()
+    assert completion.command[0] == str(tmp_path / "bin" / "flagmanager")
+
+
 def test_the_log_streams_while_the_task_runs(
     tmp_path: Path, fake, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -240,6 +299,46 @@ def test_a_task_that_does_not_succeed_raises_with_its_outcome(
         assert "ended by signal 9" in str(failure.value)
 
 
+def interrupt_once_started(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ctrl-C, Python's own SIGINT, once the task has logged its first line.
+
+    The task then waits for a reply that never comes, so only the interrupt
+    ends it.
+    """
+
+    monkeypatch.setenv("FAKE_TASK_WAIT_FOR", str(tmp_path / "never"))
+
+    class Terminal:
+        sent = False
+
+        def write(self, text: str) -> int:
+            if not self.sent:
+                self.sent = True
+                os.kill(os.getpid(), signal.SIGINT)
+            return len(text)
+
+        def flush(self) -> None:
+            pass
+
+    monkeypatch.setattr(sys, "stderr", Terminal())
+
+
+def test_an_interrupted_task_finishes_its_shutdown_however_much_it_logs(
+    tmp_path: Path, fake, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Astra's #974 P2: the log stopped draining at the interrupt, so a task
+    # that logged more than a pipe holds while it stopped blocked in the
+    # write and was killed at the end of the grace period.
+    log = fake("CASARS_FLAGMANAGER_BIN")
+    monkeypatch.setenv("FAKE_TASK_SHUTDOWN_LINES", "1500")
+    interrupt_once_started(tmp_path, monkeypatch)
+    started = time.monotonic()
+    with pytest.raises(KeyboardInterrupt):
+        tasks.run("flagmanager", workspace=tmp_path, vis="other.ms")
+    assert Path(str(log) + ".cleaned").exists()
+    assert time.monotonic() - started < _runner._INTERRUPT_GRACE_SECONDS
+
+
 @pytest.mark.parametrize("outcome", ["success", "failure", "interruption"])
 def test_a_python_task_call_leaves_existing_last_files_untouched(
     tmp_path: Path, fake, monkeypatch: pytest.MonkeyPatch, outcome: str
@@ -253,19 +352,7 @@ def test_a_python_task_call_leaves_existing_last_files_untouched(
     if outcome == "failure":
         monkeypatch.setenv("FAKE_TASK_REPLY", "failed")
     if outcome == "interruption":
-        # Ctrl-C once the task has started: Python's own SIGINT.
-        go = tmp_path / "go"
-        monkeypatch.setenv("FAKE_TASK_WAIT_FOR", str(go))
-
-        class Terminal:
-            def write(self, text: str) -> int:
-                os.kill(os.getpid(), signal.SIGINT)
-                return len(text)
-
-            def flush(self) -> None:
-                pass
-
-        monkeypatch.setattr(sys, "stderr", Terminal())
+        interrupt_once_started(tmp_path, monkeypatch)
 
     def call() -> tasks.TaskCompletion:
         return tasks.run("flagmanager", workspace=tmp_path, vis="other.ms")

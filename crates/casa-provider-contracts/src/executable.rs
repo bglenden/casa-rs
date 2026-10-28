@@ -40,17 +40,22 @@ const BUILD_WORKSPACE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
 /// process environment, or a test its own. `installed_suite` is the root of
 /// the installed suite the caller belongs to, when it belongs to one: from
 /// Python, [`installed_suite_root`] of `sys.prefix`. The search order is the
-/// module's. The error says which step applied and what it lacked.
+/// module's. The path found is absolute: a relative override or suite root
+/// names a file in the caller's working directory, wherever the task then
+/// runs. The error says which step applied and what it lacked.
 pub fn resolve_task_executable(
     launch: &ApplicationLaunchDescriptor,
     environment: &dyn Fn(&str) -> Option<OsString>,
     installed_suite: Option<&Path>,
 ) -> Result<PathBuf, String> {
+    let caller =
+        std::env::current_dir().map_err(|error| format!("read the working directory: {error}"))?;
     resolve_in(
         launch,
         environment,
         installed_suite,
         development_workspace(Path::new(BUILD_WORKSPACE)).as_deref(),
+        &caller,
     )
 }
 
@@ -63,16 +68,18 @@ pub fn installed_suite_root(prefix: &Path) -> Option<PathBuf> {
         .then(|| root.to_path_buf())
 }
 
-/// [`resolve_task_executable`] with the development checkout given.
+/// [`resolve_task_executable`] with the development checkout and the
+/// caller's working directory given.
 fn resolve_in(
     launch: &ApplicationLaunchDescriptor,
     environment: &dyn Fn(&str) -> Option<OsString>,
     installed_suite: Option<&Path>,
     development: Option<&Path>,
+    caller: &Path,
 ) -> Result<PathBuf, String> {
     let name = format!("{}{}", launch.executable, std::env::consts::EXE_SUFFIX);
     if let Some(path) = environment(&launch.override_env).filter(|path| !path.is_empty()) {
-        let path = PathBuf::from(path);
+        let path = caller.join(path);
         return if path.is_file() {
             Ok(path)
         } else {
@@ -85,8 +92,8 @@ fn resolve_in(
     }
     let suite = environment(SUITE_ROOT_ENV)
         .filter(|root| !root.is_empty())
-        .map(|root| (PathBuf::from(root), SUITE_ROOT_ENV))
-        .or_else(|| installed_suite.map(|root| (root.to_path_buf(), "the installed suite")));
+        .map(|root| (caller.join(root), SUITE_ROOT_ENV))
+        .or_else(|| installed_suite.map(|root| (caller.join(root), "the installed suite")));
     if let Some((root, source)) = suite {
         let path = root.join("bin").join(&name);
         return if path.is_file() {

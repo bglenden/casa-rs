@@ -195,11 +195,14 @@ fn one_profile_resolves_alike_through_the_runtime_and_the_binding() {
         direct.states()["imsize"].value
     );
     assert_eq!(snapshot.diagnostics.len(), direct.diagnostics().len());
+    // Python projects the values set explicitly, as its `provider_invocation`
+    // does: the profile's, never the defaults (#974).
     let invocation = provider_invocation(
         "imager",
         snapshot
             .states
             .iter()
+            .filter(|(_, state)| state.explicit)
             .filter_map(|(name, state)| state.value.clone().map(|value| (name.clone(), value)))
             .collect(),
     )

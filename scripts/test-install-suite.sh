@@ -85,8 +85,11 @@ work="$tmp_root/work"
 mkdir -p "$work" "$bin_dir"
 tar -xzf crates/casa-ms/tests/fixtures/mssel_test_small.ms.tgz -C "$work"
 cp scripts/install-suite.sh "$tmp_root/install-suite.sh"
-# A link an older suite left for the retired casars launcher.
+# A link an older suite left for the retired casars launcher, and a user's
+# own command with a suite command's name, which the installer must keep.
 ln -s "$install_root/current/bin/casars" "$bin_dir/casars"
+printf '#!/bin/sh\necho my imregrid\n' > "$bin_dir/imregrid"
+chmod +x "$bin_dir/imregrid"
 
 echo "==> Installing suite bundle into temporary root"
 "$tmp_root/install-suite.sh" \
@@ -125,6 +128,13 @@ for binary in "${suite_binaries[@]}"; do
           exit 1
         }
       done
+      ;;
+    imregrid)
+      [[ "$("$bin_dir/imregrid")" == "my imregrid" ]] || {
+        echo "test-install-suite.sh: the installer replaced a user's own imregrid" >&2
+        exit 1
+      }
+      "$bin_dir/$binary-stable" --protocol-info >/dev/null
       ;;
     *)
       "$bin_dir/$binary" --protocol-info >/dev/null

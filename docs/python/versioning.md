@@ -134,6 +134,7 @@ are system commands or generic words: `feather`, `immath` and `impv` stay
 off `PATH`, as `split` would (it is a coreutil; `mstransform split` runs
 CASA's split). Python still starts them from the suite's `bin/`. A dangling
 link into the install root, such as one to a command a newer suite no longer
-has, is removed. That lets Python and the task executables behave as one
+has, is removed. A file of the user's, or a link elsewhere, at one of these
+names is left in place, with a warning. That lets Python and the task executables behave as one
 installed suite while keeping `~/.local/bin` as the only `PATH` entry users
 generally need.

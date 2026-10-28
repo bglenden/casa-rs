@@ -223,12 +223,14 @@ def _execute(task: str, resolved: SurfaceParameters, workspace: Path) -> TaskCom
 def _communicate(process: subprocess.Popen[str], request: str) -> tuple[str, str]:
     """Send ``request``, pass the log on as it arrives, and collect the reply.
 
-    stdin and stdout have their own threads, so that no pipe fills while
-    another is waited on. Anything that stops the wait, an interrupt above
-    all, is passed to the task first.
+    Each pipe has its own thread, so none fills while another is waited on,
+    and the log keeps draining while an interrupted task shuts down. The main
+    thread only waits for the task; anything that stops the wait, an
+    interrupt above all, is passed to the task first.
     """
 
     reply: list[str] = []
+    log: list[str] = []
 
     def send() -> None:
         try:
@@ -242,19 +244,25 @@ def _communicate(process: subprocess.Popen[str], request: str) -> tuple[str, str
         assert process.stdout is not None
         reply.append(process.stdout.read())
 
-    threads = [threading.Thread(target=send), threading.Thread(target=collect)]
-    for thread in threads:
-        thread.daemon = True
-        thread.start()
-    log: list[str] = []
-    try:
+    def relay() -> None:
         assert process.stderr is not None
         for line in process.stderr:
             log.append(line)
             terminal = sys.stderr
-            if terminal is not None:
+            if terminal is None:
+                continue
+            # A terminal that fails to write must not stop the drain.
+            try:
                 terminal.write(line)
                 terminal.flush()
+            except Exception:
+                pass
+
+    threads = [threading.Thread(target=target) for target in (send, collect, relay)]
+    for thread in threads:
+        thread.daemon = True
+        thread.start()
+    try:
         process.wait()
     except BaseException:
         _stop(process)
@@ -266,7 +274,11 @@ def _communicate(process: subprocess.Popen[str], request: str) -> tuple[str, str
 
 
 def _stop(process: subprocess.Popen[str]) -> None:
-    """Interrupt a running task as Ctrl-C would, and kill it if it stays."""
+    """Interrupt a running task as Ctrl-C would, and kill it if it stays.
+
+    The task has the grace period to stop, its log still draining; a second
+    interrupt in that time kills it at once.
+    """
 
     if process.poll() is not None:
         return
@@ -276,6 +288,10 @@ def _stop(process: subprocess.Popen[str]) -> None:
     except subprocess.TimeoutExpired:
         process.kill()
         process.wait()
+    except BaseException:
+        process.kill()
+        process.wait()
+        raise
 
 
 def _task_executable(task: str) -> str:
