@@ -207,6 +207,19 @@ def test_table_reads_and_writes(tmp_path: Path) -> None:
     table.set_column_keywords("gain", {"unit": "arb", "stage": "python"})
     assert table.column_keywords("gain") == {"unit": "arb", "stage": "python"}
 
+    # A 2-D keyword array reads back, from disk, with element (i, j) where it
+    # was, whatever numpy's memory order (#952).
+    matrix = np.arange(6, dtype=np.float64).reshape(2, 3)
+    table.set_column_keywords(
+        "spectrum",
+        {"c_order": matrix, "f_order": np.asfortranarray(matrix), "strided": matrix[:, ::2]},
+    )
+    reopened = Table.open(fixture_root / "python_fixture.table")
+    stored = reopened.column_keywords("spectrum")
+    np.testing.assert_array_equal(stored["c_order"], matrix)
+    np.testing.assert_array_equal(stored["f_order"], matrix)
+    np.testing.assert_array_equal(stored["strided"], matrix[:, ::2])
+
 
 def _create_fixtures(tmp_path: Path) -> Path:
     fixture_root = tmp_path / "fixtures"
