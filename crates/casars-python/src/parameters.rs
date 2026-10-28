@@ -17,8 +17,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use casa_provider_contracts::{
-    ParameterValue, ProviderInvocationAdaptation, SurfaceContractBundle, builtin_surface_bundle,
-    builtin_surface_catalog,
+    ParameterValue, SurfaceContractBundle, builtin_surface_bundle, builtin_surface_catalog,
 };
 use casa_task_runtime::{
     BaseSource, DiagnosticCode, ManagedProfileKind, ManagedStateStore, OpenSessionRequest,
@@ -334,8 +333,8 @@ pub(crate) struct InvocationView {
     pub(crate) stdin: Option<String>,
 }
 
-/// Project one complete task invocation, through the imager's and
-/// simobserve's request adapters where the surface uses them.
+/// Project one complete task invocation: the task binary's `--json-run -`
+/// with the values set.
 pub(crate) fn provider_invocation(
     surface_id: &str,
     values: BTreeMap<String, ParameterValue>,
@@ -344,12 +343,8 @@ pub(crate) fn provider_invocation(
     session
         .render_sparse()
         .map_err(|error| parameter_error("validate provider invocation parameters", error))?;
-    let invocation = project_provider_invocation(&session, |family, values, direct| match family {
-        "imager" => casars_imager::imager_provider_invocation(values, direct.args),
-        "simobserve" => casars_simulation::simobserve_provider_invocation(values, direct.args),
-        _ => Ok(ProviderInvocationAdaptation::direct(direct)),
-    })
-    .map_err(|error| parameter_error("project provider invocation", error))?;
+    let invocation = project_provider_invocation(&session)
+        .map_err(|error| parameter_error("project provider invocation", error))?;
     let descriptor = match session.bundle().surface.provider_family() {
         "imager" => Some(casars_imager::imager_protocol_descriptor()),
         "simobserve" => Some(casars_simulation::simobserve_protocol_descriptor()),

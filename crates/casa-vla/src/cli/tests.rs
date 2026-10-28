@@ -193,7 +193,7 @@ fn repeated_archive_flags_name_every_archive() {
     let session = ParameterRuntime::default()
         .open_session(command_line.open_session_request(bundle))
         .unwrap();
-    let invocation = casa_task_runtime::project_front_end_invocation(&session).unwrap();
+    let invocation = casa_task_runtime::project_provider_invocation(&session).unwrap();
     let request: serde_json::Value =
         serde_json::from_str(invocation.stdin.as_deref().unwrap()).unwrap();
     assert_eq!(request["values"]["archivefiles"], serde_json::json!(every));

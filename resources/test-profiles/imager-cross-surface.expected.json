@@ -8,8 +8,8 @@
     "vis": ["VLASS.multi-spw.ms"]
   },
   "request": {
-    "kind": "run",
-    "request": {
+    "surface": "imager",
+    "values": {
       "aw_cf_source": "casa-import",
       "backend": "auto",
       "cell": ["0.6arcsec", "0.6arcsec"],
