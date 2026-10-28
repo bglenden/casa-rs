@@ -249,8 +249,16 @@ fn reconstruction_controls(
 
 /// The weighting: a cube's density per output channel under
 /// `perchanweightdensity`, the whole selection's otherwise (CASA disables
-/// cube density for continuum requests).
+/// cube density for continuum requests), and `uvtaper`'s Gaussian.
 fn weighting(request: &ImagingRequest) -> WeightingContract {
+    let contract = density_weighting(request);
+    match request.uvtaper {
+        Some(taper) => contract.with_uv_taper(taper),
+        None => contract,
+    }
+}
+
+fn density_weighting(request: &ImagingRequest) -> WeightingContract {
     let density = if request.specmode != SpecMode::Mfs && request.perchanweightdensity {
         WeightDensityScope::PerOutputChannel
     } else {

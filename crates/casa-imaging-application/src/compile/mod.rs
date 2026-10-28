@@ -21,6 +21,9 @@ mod partitions;
 mod selection;
 mod specification;
 mod spectral;
+mod start_model;
+
+pub(crate) use start_model::StartModel;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -64,6 +67,8 @@ pub(crate) struct Prepared {
     pub(crate) geometry: GeometryInput,
     pub(crate) model_lifecycle: ModelLifecycleRequirements,
     pub(crate) masks: ImageDomainReconstructionMaskPlans,
+    /// The main domain's start model ([`StartModel`]).
+    pub(crate) start_model: Option<StartModel>,
     /// A direction-dependent gridder's residual units, which bind every
     /// solver.
     pub(crate) minor_cycle_image_response: Option<MinorCycleImageResponse>,
@@ -195,6 +200,18 @@ pub(crate) fn prepare(
         _ => spectral.output_channels,
     };
     let model_samples = domains::model_samples(&domains, reconstruction_planes, &request.stokes)?;
+    let start_model = request
+        .startmodel
+        .as_deref()
+        .map(|path| {
+            StartModel::prepare(
+                path,
+                &domains[0],
+                request.stokes.len(),
+                reconstruction_planes,
+            )
+        })
+        .transpose()?;
     let geometry = geometry(request, &domains, &centre, &spectral);
     let observation = observation_request(
         request,
@@ -213,6 +230,7 @@ pub(crate) fn prepare(
             NumericPrecision::F64,
         ),
         masks: domains::mask_plans(&domains)?,
+        start_model,
         minor_cycle_image_response: match &request.gridder {
             Gridder::Mosaic { .. } | Gridder::Awproject(_) => Some(MinorCycleImageResponse::new(
                 specification::normalization(request),

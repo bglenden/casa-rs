@@ -10,16 +10,16 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 
 - Parameter catalog schema version: `1`
 - Parameter surface schema version: `1`
-- Concepts: 349
+- Concepts: 351
 - Surfaces: 26 (26 task, 0 session)
-- Surface bindings: 520
+- Surface bindings: 522
 
 | Surface | Kind | Contract | Provider family | Parameters | Summary |
 |---|---|---:|---|---:|---|
 | [MSExplore](#surface-msexplore)<br><code>msexplore</code> | task | 7 | <code>msexplore</code> | 66 | explore and export common MeasurementSet plotms-style plots |
 | [Calibrate](#surface-calibrate)<br><code>calibrate</code> | task | 6 | <code>calibration</code> | 53 | apply, inspect, and solve CASA-style calibration workflows |
 | [ImportVLA](#surface-importvla)<br><code>importvla</code> | task | 4 | <code>importvla</code> | 12 | scan or import old VLA export archives from disk |
-| [Imager](#surface-imager)<br><code>imager</code> | task | 27 | <code>imager</code> | 81 | Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet |
+| [Imager](#surface-imager)<br><code>imager</code> | task | 28 | <code>imager</code> | 83 | Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet |
 | [SimObserve](#surface-simobserve)<br><code>simobserve</code> | task | 7 | <code>simobserve</code> | 38 | Simulate an observation of a sky model: CASA's simobserve |
 | [Image Header](#surface-imhead)<br><code>imhead</code> | task | 4 | <code>image_analysis</code> | 4 | Inspect or update CASA image header metadata. |
 | [Image Statistics](#surface-imstat)<br><code>imstat</code> | task | 3 | <code>image_analysis</code> | 4 | Compute CASA image statistics over optional pixel, region, and channel selections. |
@@ -218,7 +218,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## Imager (<code>imager</code>)
 
 - Kind: `task`
-- Contract version: `27`
+- Contract version: `28`
 - Category: Imaging
 - Provider family: `imager`
 - Summary: Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet
@@ -227,8 +227,8 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 |---|---|---|---|---|---|
 | <code>vis</code> | <code>data.input.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | no default; required | Context | Input MeasurementSet path or paths.<br><em>Surface:</em> Canonical vis maps to provider field ms. |
 | <code>imagename</code> | <code>image.output.imagename@r1</code> | <code>path (image)</code> | no default; required | Products | Output CASA image prefix |
-| <code>imsize</code> | <code>image.geometry.imsize@r1</code> | <code>optional&lt;array&lt;integer&gt;&gt; (states: auto)</code> | <code>512</code>; optional | Stage Parameters | Image dimensions in pixels |
-| <code>cell</code> | <code>image.geometry.cell@r1</code> | <code>array&lt;quantity&lt;angle&gt; (canonical arcsec)&gt;; unit dimension: angle</code> | <code>"1.0arcsec"</code>; optional | Stage Parameters | Image cell size in arcseconds<br><em>Surface:</em> Canonical cell maps to provider field cell_arcsec. |
+| <code>imsize</code> | <code>image.geometry.imsize@r2</code> | <code>optional&lt;array&lt;integer&gt;&gt; (states: auto)</code> | <code>512</code>; optional | Stage Parameters | Image dimensions in pixels |
+| <code>cell</code> | <code>image.geometry.cell@r2</code> | <code>array&lt;quantity&lt;angle&gt; (canonical arcsec)&gt;; unit dimension: angle</code> | <code>"1.0arcsec"</code>; optional | Stage Parameters | Image cell size in arcseconds<br><em>Surface:</em> Canonical cell maps to provider field cell_arcsec. |
 | <code>datacolumn</code> | <code>parameter.datacolumn@r1</code> | <code>string</code> | <code>"none"</code>; optional | Context | Visibility data column used by the surface. |
 | <code>savemodel</code> | <code>parameter.savemodel@r1</code> | <code>choice (2 values)</code> | <code>"none"</code>; optional | Products | Write the predicted final model into the MeasurementSet |
 | <code>outlierfile</code> | <code>parameter.outlierfile@r1</code> | <code>path (image)</code> | <code>"none"</code>; optional | Products | CASA outlier-field definitions for supported MFS/Hogbom image sets |
@@ -306,6 +306,8 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>stage_timing</code> | <code>parameter.stage_timing@r1</code> | <code>bool</code> | <code>false</code>; optional | Stages | Log one timing event per imaging phase |
 | <code>metal_stage_timing</code> | <code>parameter.metal_stage_timing@r1</code> | <code>bool</code> | <code>false</code>; optional | Stages | Log the Metal backend's timing for each gridding owner, prediction batch and wave |
 | <code>science_trace</code> | <code>parameter.science_trace@r1</code> | <code>bool</code> | <code>false</code>; optional | Stages | Log the clean controller's science quantities at each cycle |
+| <code>uvtaper</code> | <code>parameter.uvtaper@r2</code> | <code>array&lt;string&gt;</code> | <code>[""]</code>; optional | Stages | Gaussian taper of the imaging weights: [bmaj], [bmaj, bmin] or [bmaj, bmin, bpa]; [''] is none. |
+| <code>startmodel</code> | <code>parameter.startmodel@r2</code> | <code>path (image)</code> | <code>"none"</code>; optional | Stage Parameters | CASA image in Jy/pixel that the model starts from |
 
 <a id="surface-simobserve"></a>
 

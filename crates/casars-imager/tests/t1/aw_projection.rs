@@ -33,10 +33,7 @@ const FREQUENCY_HZ: f64 = 1.5e9;
 /// a 41″ synthesised beam, so a 10″ cell images six 28′ primary beams in
 /// 1024 cells and the 25 m aperture spans 25 uv cells of the catalog.
 const CONFIGURATION_SHRINK: f64 = 35.0;
-const GEOMETRY: Geometry = Geometry {
-    image_size: 1024,
-    cell_arcsec: 10.0,
-};
+const GEOMETRY: Geometry = Geometry::square(1024, 10.0);
 const CENTRE: Component = Component {
     offset_px: [0, 0],
     flux_jy: 1.0,
@@ -301,10 +298,7 @@ fn aw_projection_generates_its_catalog_and_recovers_the_sky() {
 
 /// The two-window track's geometry: the same 10″ cell over three primary
 /// beams, half the side of [`GEOMETRY`].
-const TWO_WINDOW_GEOMETRY: Geometry = Geometry {
-    image_size: 512,
-    cell_arcsec: 10.0,
-};
+const TWO_WINDOW_GEOMETRY: Geometry = Geometry::square(512, 10.0);
 
 /// [`setup`] observing two L-band windows, 1.4 and 1.6 GHz, on the
 /// smaller [`TWO_WINDOW_GEOMETRY`].

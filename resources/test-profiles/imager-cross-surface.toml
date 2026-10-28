@@ -2,7 +2,7 @@
 format = 1
 surface = "imager"
 kind = "task"
-contract = 27
+contract = 28
 
 [parameters]
 vis = ["VLASS.multi-spw.ms"]

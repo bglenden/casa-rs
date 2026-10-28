@@ -162,9 +162,40 @@ fn aw_projection_runs_on_the_cpu_pass() {
         products: fixture.products.clone(),
         ..ProblemFixture::standard().with_primary_beam(InstrumentModel::CasaEvlaWidebandAwV1)
     };
+    let square_cells = fixture.image.1;
+    let non_square = ProblemFixture {
+        image: ([512, 256], square_cells),
+        measurement_equation: fixture.measurement_equation,
+        products: fixture.products.clone(),
+        ..ProblemFixture::standard().with_primary_beam(InstrumentModel::CasaEvlaWidebandAwV1)
+    };
+    let unequal_cells = ProblemFixture {
+        image: ([512, 512], [square_cells[0], 0.75 * square_cells[1]]),
+        measurement_equation: fixture.measurement_equation,
+        products: fixture.products.clone(),
+        ..ProblemFixture::standard().with_primary_beam(InstrumentModel::CasaEvlaWidebandAwV1)
+    };
     on_cpu(&fixture.compile()).expect("AW projection runs with its catalog and weight image");
     // An AW cube's per-plane weights wait for a CASA comparison (#719).
     assert_exactly_unsupported(on_cpu(&cube.compile()), [Unsupported::CubeAwProjection]);
+    // Its convolution functions are laid out on one axis (#841 Phase 6b).
+    for problem in [non_square, unequal_cells] {
+        assert_exactly_unsupported(
+            on_cpu(&problem.compile()),
+            [Unsupported::NonSquareAwProjection],
+        );
+    }
+}
+
+/// #841 Phase 6b: the standard gridder images a non-square image of
+/// non-square cells.
+#[test]
+fn the_standard_gridder_images_any_shape_and_cell() {
+    let fixture = ProblemFixture {
+        image: ([512, 256], [4.848_136_811_095_36e-6, 3.6e-6]),
+        ..ProblemFixture::standard()
+    };
+    on_cpu(&fixture.compile()).expect("a non-square standard image");
 }
 
 #[test]
@@ -371,6 +402,8 @@ struct ProblemFixture {
     products: Vec<ProductKind>,
     outlier: bool,
     model_column_write: ModelColumnWrite,
+    /// The main domain's pixels and cell (radians), x then y.
+    image: ([usize; 2], [f64; 2]),
 }
 
 impl ProblemFixture {
@@ -394,6 +427,7 @@ impl ProblemFixture {
             products: vec![ProductKind::Psf],
             outlier: false,
             model_column_write: ModelColumnWrite::Disabled,
+            image: ([512, 512], [4.848_136_811_095_36e-6; 2]),
         }
     }
 
@@ -413,11 +447,12 @@ impl ProblemFixture {
     fn request(self) -> ProblemInput {
         let iteration_budget =
             usize::from(!matches!(self.algorithm, ReconstructionAlgorithm::Dirty));
+        let ([nx, ny], [cell_x, cell_y]) = self.image;
         let direction = DirectionCoordinateSpec::new(
             Projection::Sin,
             SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
-            [255.0, 255.0],
-            [-4.848_136_811_095_36e-6, 4.848_136_811_095_36e-6],
+            [(nx / 2) as f64 - 1.0, (ny / 2) as f64 - 1.0],
+            [-cell_x, cell_y],
             [[1.0, 0.0], [0.0, 1.0]],
             [180.0, 0.0],
         );
@@ -442,7 +477,7 @@ impl ProblemFixture {
         ]);
         let mut domains = vec![ImageDomainSpec::new(
             ImageDomainRole::Main,
-            ImageShape::new(512, 512),
+            ImageShape::new(nx, ny),
             direction,
             self.facets,
             axes.clone(),

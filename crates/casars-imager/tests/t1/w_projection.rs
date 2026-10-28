@@ -17,10 +17,7 @@ use super::fixture::{
 /// 150 MHz: the w term in turns scales with wavelength.
 const FREQUENCY_HZ: f64 = 150.0e6;
 /// 3″ cells, four per 11.5″ synthesised beam of the 36 km array at 2 m.
-const GEOMETRY: Geometry = Geometry {
-    image_size: 1024,
-    cell_arcsec: 3.0,
-};
+const GEOMETRY: Geometry = Geometry::square(1024, 3.0);
 /// Dishes shrunk to 6 m so the primary beam (20° FWHM at 2 m) is flat over
 /// the field and the standard gridder's errors are the w term alone.
 const DISH_DIAMETER_M: f64 = 6.0;

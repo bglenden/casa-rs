@@ -357,6 +357,22 @@ fn positions(
     grid
 }
 
+/// Whether an image of `coordinates` and `shape` can be regridded onto
+/// `template`: [`regrid`]'s check of the axes, without reading pixels.
+///
+/// # Errors
+///
+/// What [`regrid`] refuses before it reads the input: axes other than the
+/// direction that differ where they have more than one pixel, or another
+/// direction frame.
+pub fn check_regrid(
+    coordinates: &CoordinateSystem,
+    shape: &[usize],
+    template: &RegridTemplate,
+) -> Result<(), ImageError> {
+    plan_axes(coordinates, shape, template).map(drop)
+}
+
 /// Regrid `input`'s direction axes onto `template` by `method`.
 ///
 /// # Errors
