@@ -146,6 +146,12 @@ no imager parameter names. It sees only `&dyn Observation`.
   several MeasurementSets; and a `WEIGHT_SPECTRUM` that only some selected
   rows define (the MSv2 adapter takes the column from its first cell,
   today's route from every selected row).
+- **Evidence.** The route law (`casa_imaging_application::route_law`)
+  images every T1 run on both routes and compares every product: all 182
+  are bit-identical. On T1.5 (the refim and kernels harnesses, the AW pair
+  with `usepointing`, and CAS-7841 under the mosaic gridder with
+  `usepointing`), 53 runs and 442 products agree to a normalized RMS of
+  1.3e-10 at most. Receipts: NAS `casa-rs/issue-932/step4/`.
 
 ### 2.2 Geometry
 
