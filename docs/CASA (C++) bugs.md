@@ -2262,3 +2262,20 @@ are all image expressions over `<project>/<project>.<configuration>`, so a
 project whose path contains "pa" gets a fidelity labelled deg, and
 difference and fidelity images whose Stokes plane is a position angle. casa-rs
 computes those images directly and keeps the Stokes axis.
+
+## `tclean` reads a `uvtaper` with no unit as radians
+
+- Date noted: 2026-10-28
+- Status: CASA bug; casa-rs refuses the value (#841 Phase 6b)
+- Affected code: casatools `synthesisimager_cmpt.cc` (`setweighting`) and
+  `msvis/MSVis/VisImagingWeight.cc` (`setFilter`)
+
+`tclean`'s documentation gives `uvtaper=['300.0']` as a taper in
+wavelengths ("default units are lambda in aperture plane"). `setFilter` takes
+the uv-plane path only when the unit contains "lambda", and otherwise treats
+the value as an image-plane angle, here 300 radians. The filter is then
+`exp(-π²θ²/(4 ln 2) u²)`, zero for every baseline, so every imaging weight is
+zero and the image is empty with a beam of 1e-6 arcsec (CASA 6.7.6 on
+`refim_point.ms`). casa-rs refuses a `uvtaper` entry without a unit and asks
+for an angle or for wavelengths
+(`casa_imaging_application::ImagingRequest::uvtaper`).

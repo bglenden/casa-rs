@@ -2097,6 +2097,11 @@
       "fingerprint": "bf8aa535f753853c41976769ae2e6d9161bb5a773d9573a555227f387255e704"
     },
     {
+      "id": "parameter.uvtaper",
+      "semantic_revision": 2,
+      "fingerprint": "e8a944e34b8346ed9d00ee634a3e4c42aa91c88fcd508333a960afe272517816"
+    },
+    {
       "id": "parameter.veldef",
       "semantic_revision": 1,
       "fingerprint": "d15910a1ff79f5986753c827ed1ab9032cb1e0d129308f9c50ef8a0eec5aa167"
@@ -2786,7 +2791,7 @@
     {
       "id": "imager",
       "contract_version": 27,
-      "fingerprint": "c8e3b3d761b26050a1ba251587fdc3840fd7e48f4c0e4d55afe577390b6d44fa"
+      "fingerprint": "f945829dfb1493ce3e32f90c077bf46c7cea33f171d9172112f5a55c65a8073c"
     },
     {
       "id": "imcollapse",

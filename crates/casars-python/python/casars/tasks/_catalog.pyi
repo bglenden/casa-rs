@@ -274,6 +274,7 @@ def imager(
     stage_timing: bool = ...,
     metal_stage_timing: bool = ...,
     science_trace: bool = ...,
+    uvtaper: str | list[str] | tuple[str, ...] = ...,
     parameters: TaskParameters | None = ...,
     profile: StrPath | None = ... ,
     base_source: Literal["defaults", "last", "last_successful"] = ... ,

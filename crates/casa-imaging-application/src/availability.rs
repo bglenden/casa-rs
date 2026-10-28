@@ -274,6 +274,7 @@ const fn supports_capability(capability: RequiredCapability) -> bool {
             | RequiredCapability::UniformWeighting
             | RequiredCapability::BriggsWeighting
             | RequiredCapability::BriggsBandwidthTaperWeighting
+            | RequiredCapability::UvTaper
             | RequiredCapability::UnitResponseNormalization
             | RequiredCapability::FlatNoiseNormalization
             | RequiredCapability::FlatSkyNormalization
@@ -313,6 +314,7 @@ mod tests {
             RequiredCapability::Polarization(PolarizationCoordinate::StokesQ),
             RequiredCapability::Polarization(PolarizationCoordinate::CircularRl),
             RequiredCapability::FacetedGeometry,
+            RequiredCapability::UvTaper,
         ] {
             assert!(supports_capability(capability), "{capability:?}");
         }

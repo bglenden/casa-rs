@@ -329,7 +329,7 @@ mod tests {
         let catalog = builtin_surface_catalog().unwrap();
         let surface = catalog.surface("imager").unwrap();
         assert_eq!(surface.contract_version(), 27);
-        assert_eq!(surface.bindings().len(), 81);
+        assert_eq!(surface.bindings().len(), 82);
         for binding in surface.bindings() {
             let concept = catalog
                 .catalog

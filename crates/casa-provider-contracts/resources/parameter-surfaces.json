@@ -12100,6 +12100,61 @@
           },
           "aliases": [],
           "reviewed_homonym": null
+        },
+        {
+          "name": "uvtaper",
+          "concept": {
+            "id": "parameter.uvtaper",
+            "semantic_revision": 2
+          },
+          "order": 107,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "array",
+              "value": [
+                {
+                  "kind": "string",
+                  "value": ""
+                }
+              ]
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--uvtaper"
+              ],
+              "false_flags": [],
+              "metavar": "BMAJ[,BMIN[,BPA]]"
+            },
+            "provider": {
+              "field": "uvtaper",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "uvtaper",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "UV Taper",
+              "group": "Stages",
+              "advanced": true,
+              "hidden": false
+            }
+          },
+          "aliases": [],
+          "reviewed_homonym": null
         }
       ],
       "migrations": []

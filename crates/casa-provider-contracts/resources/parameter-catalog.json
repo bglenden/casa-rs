@@ -6943,6 +6943,35 @@
       "persistence_class": "profile"
     },
     {
+      "id": "parameter.uvtaper",
+      "semantic_revision": 2,
+      "casa_name": "uvtaper",
+      "value_domain": {
+        "kind": "array",
+        "element": {
+          "kind": "string"
+        },
+        "min_items": 0,
+        "max_items": 3,
+        "allow_scalar": true
+      },
+      "normalization": {
+        "kind": "trim"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Gaussian taper of the imaging weights: [bmaj], [bmaj, bmin] or [bmaj, bmin, bpa]; [''] is none.",
+        "details": "As angles, bmaj and bmin are the taper's FWHM in the image plane; in wavelengths (lambda, klambda) its HWHM in the uv plane. bpa is the position angle, 0deg by default; bmin defaults to bmaj. A value with no unit is refused.",
+        "examples": [
+          "['10arcsec']",
+          "['5klambda', '3klambda', '45deg']"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
       "id": "parameter.veldef",
       "semantic_revision": 1,
       "casa_name": "veldef",

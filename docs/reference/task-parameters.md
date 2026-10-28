@@ -10,16 +10,16 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 
 - Parameter catalog schema version: `1`
 - Parameter surface schema version: `1`
-- Concepts: 346
+- Concepts: 347
 - Surfaces: 27 (27 task, 0 session)
-- Surface bindings: 529
+- Surface bindings: 530
 
 | Surface | Kind | Contract | Provider family | Parameters | Summary |
 |---|---|---:|---|---:|---|
 | [MSExplore](#surface-msexplore)<br><code>msexplore</code> | task | 7 | <code>msexplore</code> | 66 | explore and export common MeasurementSet plotms-style plots |
 | [Calibrate](#surface-calibrate)<br><code>calibrate</code> | task | 5 | <code>calibration</code> | 50 | apply, inspect, and solve CASA-style calibration workflows |
 | [ImportVLA](#surface-importvla)<br><code>importvla</code> | task | 4 | <code>importvla</code> | 12 | scan or import old VLA export archives from disk |
-| [Imager](#surface-imager)<br><code>imager</code> | task | 27 | <code>imager</code> | 81 | Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet |
+| [Imager](#surface-imager)<br><code>imager</code> | task | 27 | <code>imager</code> | 82 | Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet |
 | [SimObserve](#surface-simobserve)<br><code>simobserve</code> | task | 6 | <code>simobserve</code> | 38 | Simulate an observation of a sky model: CASA's simobserve |
 | [Image Header](#surface-imhead)<br><code>imhead</code> | task | 4 | <code>image_analysis</code> | 4 | Inspect or update CASA image header metadata. |
 | [Image Statistics](#surface-imstat)<br><code>imstat</code> | task | 3 | <code>image_analysis</code> | 4 | Compute CASA image statistics over optional pixel, region, and channel selections. |
@@ -304,6 +304,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>stage_timing</code> | <code>parameter.stage_timing@r1</code> | <code>bool</code> | <code>false</code>; optional | Stages | Log one timing event per imaging phase |
 | <code>metal_stage_timing</code> | <code>parameter.metal_stage_timing@r1</code> | <code>bool</code> | <code>false</code>; optional | Stages | Log the Metal backend's timing for each gridding owner, prediction batch and wave |
 | <code>science_trace</code> | <code>parameter.science_trace@r1</code> | <code>bool</code> | <code>false</code>; optional | Stages | Log the clean controller's science quantities at each cycle |
+| <code>uvtaper</code> | <code>parameter.uvtaper@r2</code> | <code>array&lt;string&gt;</code> | <code>[""]</code>; optional | Stages | Gaussian taper of the imaging weights: [bmaj], [bmaj, bmin] or [bmaj, bmin, bpa]; [''] is none. |
 
 <a id="surface-simobserve"></a>
 

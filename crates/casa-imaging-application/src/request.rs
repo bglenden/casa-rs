@@ -14,11 +14,13 @@ use std::{fmt, num::NonZeroUsize, path::PathBuf, str::FromStr};
 
 use casa_imaging_model::{
     HogbomIterationAccounting, PolarizationCoordinate, ProductNormalization, RestoringBeamPolicy,
+    UvTaper,
 };
 use casa_imaging_operator::GridPrecision;
 use casa_imaging_runtime::{Diagnostics, ResourcePolicy};
 use casa_ms::CubeInterpolation;
 use casa_types::measures::{doppler::DopplerRef, frequency::FrequencyRef};
+use casa_types::quanta::{Quantity, Unit};
 use serde::{Deserialize, Deserializer, de::Error as _};
 use serde_json::Value;
 
@@ -168,6 +170,10 @@ pub struct ImagingRequest {
     pub weighting: Weighting,
     /// Briggs robustness.
     pub robust: f64,
+    /// CASA's `uvtaper`, a Gaussian taper of the imaging weights
+    /// ([`uv_taper`]); `None` when it is empty or its first entry is.
+    #[serde(deserialize_with = "uv_taper")]
+    pub uvtaper: Option<UvTaper>,
     /// The convolution-function set, with the parameters only it reads.
     #[serde(flatten)]
     pub gridder: Gridder,
@@ -675,6 +681,85 @@ fn cell_pair_arcsec<'de, D: Deserializer<'de>>(deserializer: D) -> Result<[f64; 
     Ok([arcsec(&x)?, arcsec(&y)?])
 }
 
+/// CASA's `uvtaper` (`synthesisimager::setweighting`, then
+/// `VisImagingWeight::setFilter`): `[bmaj]`, `[bmaj, bmin]` or
+/// `[bmaj, bmin, bpa]`, with `bmin = bmaj` and `bpa = 0` when not given,
+/// and no taper when the list or its first entry is empty. In wavelengths
+/// (`lambda`, `klambda`, …) the axes are the taper's uv-plane HWHM; as
+/// angles they are its image-plane FWHM θ, whose uv-plane HWHM is
+/// 2 ln 2 / (π θ). CASA reads an axis with no unit as radians and tapers
+/// every weight to zero; casa-rs refuses it (`docs/CASA (C++) bugs.md`).
+fn uv_taper<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<UvTaper>, D::Error> {
+    let entries = match Value::deserialize(deserializer)? {
+        Value::Array(items) => items,
+        value => vec![value],
+    };
+    let texts = entries
+        .iter()
+        .map(|entry| {
+            entry
+                .as_str()
+                .map(str::trim)
+                .ok_or_else(|| unexpected(entry, "a quantity"))
+        })
+        .collect::<Result<Vec<_>, D::Error>>()?;
+    let taper = match texts.as_slice() {
+        [] | ["", ..] => return Ok(None),
+        [bmaj] => uv_taper_axes(bmaj, bmaj, None),
+        [bmaj, bmin] => uv_taper_axes(bmaj, bmin, None),
+        [bmaj, bmin, bpa] => uv_taper_axes(bmaj, bmin, Some(bpa)),
+        _ => Err("uvtaper takes at most [bmaj, bmin, bpa]".to_string()),
+    };
+    taper.map(Some).map_err(D::Error::custom)
+}
+
+/// One `uvtaper` axis: its uv-plane HWHM in wavelengths, and whether it was
+/// given as an angle.
+fn uv_taper_axis(text: &str) -> Result<(f64, bool), String> {
+    let refused = || {
+        format!(
+            "uvtaper {text:?}: give an angle (the image-plane FWHM) or wavelengths (the uv-plane \
+             HWHM, lambda or klambda)"
+        )
+    };
+    let quantity: Quantity = text.parse().map_err(|_| refused())?;
+    let unit = |name: &str| Unit::from_str(name).expect("a casacore unit");
+    let hwhm = if let Ok(wavelengths) = quantity.get_value_in(&unit("lambda")) {
+        (wavelengths, false)
+    } else if let Ok(fwhm) = quantity.get_value_in(&unit("rad")) {
+        (
+            2.0 * std::f64::consts::LN_2 / (std::f64::consts::PI * fwhm),
+            true,
+        )
+    } else {
+        return Err(refused());
+    };
+    if quantity.unit().name().is_empty() || !(hwhm.0.is_finite() && hwhm.0 > 0.0) {
+        return Err(refused());
+    }
+    Ok(hwhm)
+}
+
+fn uv_taper_axes(bmaj: &str, bmin: &str, bpa: Option<&str>) -> Result<UvTaper, String> {
+    let (major, major_angle) = uv_taper_axis(bmaj)?;
+    let (minor, minor_angle) = uv_taper_axis(bmin)?;
+    if major_angle != minor_angle {
+        return Err(format!(
+            "uvtaper {bmaj:?}, {bmin:?}: give both axes as angles or both in wavelengths"
+        ));
+    }
+    let position_angle_rad = match bpa {
+        None => 0.0,
+        Some(text) => text
+            .parse::<Quantity>()
+            .ok()
+            .filter(|angle| !angle.unit().name().is_empty())
+            .and_then(|angle| angle.get_value_in(&Unit::from_str("rad").ok()?).ok())
+            .ok_or_else(|| format!("uvtaper position angle {text:?} needs an angle unit"))?,
+    };
+    Ok(UvTaper::new(major, minor, position_angle_rad))
+}
+
 fn threshold_jy<'de, D: Deserializer<'de>>(deserializer: D) -> Result<f64, D::Error> {
     quantity(&Value::deserialize(deserializer)?, "Jy").map_err(D::Error::custom)
 }
@@ -986,6 +1071,58 @@ pub(crate) mod tests {
         assert_eq!((pairs.imsize, pairs.cell), ([120, 80], [8.0, 6.0]));
         pairs.validate().expect("a non-square image");
         assert!(resolved(json!({ "imsize": [64, 32, 16] })).is_err());
+    }
+
+    /// `uvtaper` as `VisImagingWeight::setFilter` reads it: an angle is the
+    /// image-plane FWHM θ, whose uv-plane HWHM is 2 ln 2 / (π θ), and
+    /// wavelengths are the uv-plane HWHM. CASA's
+    /// `π² θ² / (4 ln 2) = ln 2 / HWHM²`.
+    #[test]
+    fn uvtaper_takes_casas_forms_and_refuses_an_axis_without_a_unit() {
+        use std::f64::consts::{LN_2, PI};
+        let parsed = |value: Value| {
+            serde_json::from_value::<ImagingRequest>(Value::Object(
+                resolved(json!({ "uvtaper": value })).expect("catalog values"),
+            ))
+            .map(|request| request.uvtaper)
+        };
+        let close = |actual: f64, expected: f64| {
+            assert!(
+                (actual - expected).abs() <= 1.0e-12 * expected,
+                "{actual} against {expected}"
+            );
+        };
+        assert_eq!(request(json!({})).uvtaper, None);
+        assert_eq!(parsed(json!([])).expect("an empty taper"), None);
+        let arcsec = PI / (180.0 * 3600.0);
+        let circular = parsed(json!(["10arcsec"]))
+            .expect("parsed")
+            .expect("a taper");
+        close(circular.major_lambda(), 2.0 * LN_2 / (PI * 10.0 * arcsec));
+        close(circular.minor_lambda(), circular.major_lambda());
+        assert_eq!(circular.position_angle_rad(), 0.0);
+        let rbmaj = PI * PI * (10.0 * arcsec).powi(2) / (4.0 * LN_2);
+        close(LN_2 / circular.major_lambda().powi(2), rbmaj);
+        let uv = parsed(json!(["5klambda", "3klambda", "45deg"]))
+            .expect("parsed")
+            .expect("a taper");
+        close(uv.major_lambda(), 5000.0);
+        close(uv.minor_lambda(), 3000.0);
+        close(uv.position_angle_rad(), PI / 4.0);
+        let two = parsed(json!(["80arcsec", "40arcsec"]))
+            .expect("parsed")
+            .expect("a taper");
+        close(two.minor_lambda(), 2.0 * two.major_lambda());
+        // CASA reads a bare number as radians and tapers every weight to
+        // zero; mixed axes and a unitless angle are refused too.
+        for value in [
+            json!(["500.0"]),
+            json!(["10arcsec", "3klambda"]),
+            json!(["10arcsec", "5arcsec", "30"]),
+            json!(["1Jy"]),
+        ] {
+            assert!(parsed(value.clone()).is_err(), "{value}");
+        }
     }
 
     #[test]
