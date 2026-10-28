@@ -172,8 +172,7 @@ file a task runs; Python reaches it through `casars._core`. The first step
 that applies decides:
 
 1. the task's override variable (`override_env`, `CASARS_<APP>_BIN`, such as
-   `CASARS_IMAGER_BIN` or `CASARS_CALIBRATE_BIN`; impbcor's is
-   `CASA_RS_IMPBCOR_BIN`);
+   `CASARS_IMAGER_BIN` or `CASARS_CALIBRATE_BIN`);
 2. a suite root, `CASARS_SUITE_ROOT` or else the installed suite the Python
    package belongs to (the installer's environment is `<suite>/python`,
    beside `<suite>/bin` and `bundle-manifest.json`), whose `bin/` holds the

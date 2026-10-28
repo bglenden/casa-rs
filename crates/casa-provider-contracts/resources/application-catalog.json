@@ -333,7 +333,7 @@
       "launch": {
         "executable": "impbcor",
         "cargo_package": "casa-images",
-        "override_env": "CASA_RS_IMPBCOR_BIN"
+        "override_env": "CASARS_IMPBCOR_BIN"
       },
       "shell_kind": "workflow",
       "interaction": "one_shot",

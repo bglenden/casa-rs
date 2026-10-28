@@ -100,6 +100,13 @@ impl ApplicationCatalog {
                     application.id
                 ));
             }
+            let override_env = &application.launch.override_env;
+            if !(override_env.starts_with("CASARS_") && override_env.ends_with("_BIN")) {
+                errors.push(format!(
+                    "application {:?} override {override_env:?} is not named CASARS_<APP>_BIN",
+                    application.id
+                ));
+            }
             let launch_owner = (
                 application.launch.cargo_package.as_str(),
                 application.launch.override_env.as_str(),
@@ -201,6 +208,21 @@ mod tests {
             errors
                 .iter()
                 .any(|error| error.contains("\"casars\" has no canonical surface")),
+            "{errors:?}"
+        );
+    }
+
+    #[test]
+    fn every_override_is_named_for_the_resolver() {
+        let mut catalog = builtin_application_catalog().unwrap().clone();
+        let impbcor = catalog.application("impbcor").unwrap();
+        assert_eq!(impbcor.launch.override_env, "CASARS_IMPBCOR_BIN");
+        catalog.applications[0].launch.override_env = "CASA_RS_MSEXPLORE_BIN".to_string();
+        let errors = catalog.validate().unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains("is not named CASARS_<APP>_BIN")),
             "{errors:?}"
         );
     }

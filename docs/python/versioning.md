@@ -39,8 +39,7 @@ canonical application catalog, with its surface's fixed arguments and
 finds that executable. The first step that applies decides:
 
 1. the task's catalog override variable, `CASARS_<APP>_BIN` (for example
-   `CASARS_IMAGER_BIN` or `CASARS_CALIBRATE_BIN`; impbcor's is
-   `CASA_RS_IMPBCOR_BIN`), names the file;
+   `CASARS_IMAGER_BIN` or `CASARS_CALIBRATE_BIN`), names the file;
 2. a suite root holds it at `<root>/bin/<executable>`: `CASARS_SUITE_ROOT`,
    or else the installed suite the Python package belongs to (the
    installer's environment is `<suite>/python`, beside `<suite>/bin` and
