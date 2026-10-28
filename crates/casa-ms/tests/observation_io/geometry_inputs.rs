@@ -784,25 +784,48 @@ fn receptors_are_each_partitions_own() {
     let overridden = open(&v2, &OpenOptions::default()).expect("override");
     assert_eq!(angles(overridden.as_ref()), [vec![], vec![0.25, 0.25]]);
 
-    // Antenna 0's window-0 receptors change 10 s later: the later row is
-    // the one read, and a conversion carries it and reports the change.
+    // Antenna 0's window-0 receptors change 10 s later: the later row,
+    // last in the table, is the one read; a conversion refuses the change
+    // until columns are accepted, then carries that row and reports it.
     let v2 = variant("varying");
     edit_feed(&v2, None, &[(0, 0, 0.5, 10.0)]);
     let varying = open(&v2, &OpenOptions::default()).expect("varying");
     let last = [vec![0.5, 0.5, 0.0, 0.0, 0.0, 0.0], vec![]];
     assert_eq!(angles(varying.as_ref()), last);
     let v4 = root.path().join("varying.ps.zarr");
+    let refused = casa_ms::observation_io::convert::to_msv4(&v2, &v4, &conversion());
+    assert!(
+        matches!(&refused, Err(ObservationError::InvalidRequest { reason }) if reason.contains("FEED")),
+        "{refused:?}"
+    );
     let mut accepting = conversion();
     accepting.accept.push(LossKind::Columns);
     let report = casa_ms::observation_io::convert::to_msv4(&v2, &v4, &accepting).expect("to msv4");
     assert!(
         report.losses.iter().any(|loss| matches!(
             loss,
-            Loss::Column(column) if column.starts_with("FEED receptors that vary in time")
+            Loss::Column(column) if column.starts_with("FEED receptors' time dependence")
         )),
         "{:?}",
         report.losses
     );
     let converted = open(&v4, &OpenOptions::default()).expect("msv4");
     assert_eq!(angles(converted.as_ref()), last);
+
+    // Table order, not time, decides: a row 10 s earlier but last in the
+    // table is still the one read, as casacore's MSIter reads it.
+    let v2 = variant("earlier");
+    edit_feed(&v2, None, &[(0, 0, 0.5, -10.0)]);
+    let earlier = open(&v2, &OpenOptions::default()).expect("earlier");
+    assert_eq!(angles(earlier.as_ref()), last);
+
+    // Rows for every window are not read beside window rows, so their
+    // changing in time is no loss.
+    let v2 = variant("unread");
+    edit_feed(&v2, None, &[(0, -1, 0.5, 0.0), (0, -1, 0.75, 10.0)]);
+    let unread = open(&v2, &OpenOptions::default()).expect("unread");
+    assert_eq!(angles(unread.as_ref()), [vec![0.0; 6], vec![]]);
+    let v4 = root.path().join("unread.ps.zarr");
+    casa_ms::observation_io::convert::to_msv4(&v2, &v4, &conversion())
+        .expect("no FEED loss to accept");
 }

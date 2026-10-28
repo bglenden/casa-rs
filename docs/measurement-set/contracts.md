@@ -100,9 +100,8 @@ casa-rs's, not casacore's: `MSPointingColumns::pointingIndex` covers with
 the first row in table order, gives a row of `INTERVAL` 0 half the gap to
 the antenna's next row and a negative interval every time (#948). The
 cutover keeps the boundary's tie rule (owner decision on #946, 2026-10-28).
-MSv4
-reads `POINTING_BEAM`, whose samples state no interval, so nothing covers
-and a consumer's law chooses between the samples either side; XRADIO keeps
+MSv4 reads `POINTING_BEAM`, whose samples state no interval, so nothing
+covers and a consumer's law chooses between the samples either side; XRADIO keeps
 one polynomial term and defines no origin for more, so more are refused.
 
 An **observing session** carries the telescope, project and observers, and

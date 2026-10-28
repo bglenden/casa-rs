@@ -229,9 +229,12 @@ fn msv2(
         ));
     }
     main_keys(main, losses)?;
-    if crate::observation_io::msv2::catalogue::read_feeds(&ms)?.vary_in_time() {
+    if crate::observation_io::msv2::catalogue::read_feeds(&ms)?
+        .varying()
+        .is_some()
+    {
         losses.push(Loss::Column(
-            "FEED receptors that vary in time (the last row of each antenna, feed and window \
+            "FEED receptors' time dependence (the last row of each antenna, feed and window \
              is kept)"
                 .to_string(),
         ));
