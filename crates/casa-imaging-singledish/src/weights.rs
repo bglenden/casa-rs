@@ -82,6 +82,10 @@ fn combined(w0: f32, w1: f32) -> f32 {
 /// plane (`ia.statistics` of the weight image where it is positive), or
 /// `None` when no weight is positive (CASA then sets no mask). The median
 /// of an even count is the mean of the middle two.
+///
+/// One departure (`docs/CASA (C++) bugs.md`): CASA writes the threshold into
+/// its mask expression with `%f`, six decimal places, so a threshold under
+/// 5e-7 masks nothing. This is the threshold itself.
 #[must_use]
 pub fn weight_mask_threshold(weights: &[f32], minweight: f64) -> Option<f64> {
     let mut positive: Vec<f32> = weights.iter().copied().filter(|&w| w > 0.0).collect();

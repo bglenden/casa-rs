@@ -62,7 +62,7 @@ fn grid(
     let mut grid = TotalPowerGrid::new(shape, kernel(), flags, Reservation::none()).expect("grid");
     let team = WorkerTeam::new(workers).expect("team");
     grid.grid(&spectra.block(), &team).expect("gridded");
-    grid.finish()
+    grid.finish().value
 }
 
 /// `ggridsd` written out, after `setSpectralFlag` merges the flags as
@@ -85,7 +85,8 @@ fn reference(shape: GridShape, spectra: &Spectra, flags: FlagMerge) -> (Vec<f32>
                 continue;
             };
             let w = spectra.weights[[spectrum, channel]];
-            if w <= 0.0 {
+            // `weight > 0`, which a NaN is not.
+            if w.is_nan() || w <= 0.0 {
                 continue;
             }
             let any = (0..correlations).any(|c| spectra.flags[[spectrum, channel, c]]);
@@ -152,6 +153,7 @@ fn the_grids_are_ggridsds_in_its_order() {
     spectra.row_flags[5] = true;
     spectra.weights[[9, 2]] = 0.0;
     spectra.weights[[10, 0]] = -1.0;
+    spectra.weights[[11, 1]] = f32::NAN;
     // Data channel 2 grids into image channel 0 too; image channel 2 takes
     // none; the second hand of each spectrum is not imaged.
     spectra.channel_map = vec![Some(0), Some(1), Some(0)];
@@ -179,6 +181,59 @@ fn the_grids_are_ggridsds_in_its_order() {
         weights.push(weight);
     }
     assert_ne!(weights[0], weights[1]);
+}
+
+/// Two spectra at one pointing, both of value 2: the first of `weights[0]`,
+/// the second of `weights[1]`.
+fn collocated(weights: [f32; 2]) -> Spectra {
+    let mut spectra = Spectra::new(vec![Some([10.3, 9.6]); 2], 1);
+    spectra.values.fill(2.0);
+    for (spectrum, weight) in weights.into_iter().enumerate() {
+        spectra.weights[[spectrum, 0]] = weight;
+    }
+    spectra
+}
+
+#[test]
+fn a_nan_weight_is_skipped_as_ggridsd_skips_it() {
+    // CASA keeps the first spectrum's value and weight; summing the NaN
+    // would leave no positive weight and an empty image.
+    let gridded = grid(
+        shape(1),
+        &collocated([1.0, f32::NAN]),
+        (1, FlagMerge::AnyCorrelation),
+    );
+    let mut alone = Spectra::new(vec![Some([10.3, 9.6])], 1);
+    alone.values.fill(2.0);
+    alone.weights.fill(1.0);
+    assert_eq!(
+        gridded,
+        grid(shape(1), &alone, (1, FlagMerge::AnyCorrelation))
+    );
+    assert!(gridded.weight.iter().all(|w| w.is_finite()));
+    assert!(gridded.image.iter().any(|&v| (v - 2.0).abs() < 1.0e-6));
+}
+
+#[test]
+fn a_nan_hand_weight_leaves_its_spectrum_ungridded() {
+    // `pickWeights` combines the hands' weights; a NaN hand makes a NaN.
+    let mut hands = Array3::from_elem((2, 1, 2), 1.0_f32);
+    hands[[1, 0, 0]] = f32::NAN;
+    let weights = crate::weights_from_spectra(hands.view()).expect("weights");
+    assert_eq!(weights[[0, 0]], 2.0);
+    assert!(weights[[1, 0]].is_nan());
+    let gridded = grid(
+        shape(1),
+        &collocated([weights[[0, 0]], weights[[1, 0]]]),
+        (1, FlagMerge::AnyCorrelation),
+    );
+    let mut alone = Spectra::new(vec![Some([10.3, 9.6])], 1);
+    alone.values.fill(2.0);
+    alone.weights.fill(2.0);
+    assert_eq!(
+        gridded,
+        grid(shape(1), &alone, (1, FlagMerge::AnyCorrelation))
+    );
 }
 
 #[test]

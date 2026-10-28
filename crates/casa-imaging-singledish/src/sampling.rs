@@ -202,22 +202,19 @@ pub(crate) fn median(mut values: Vec<f64>) -> f64 {
 
 /// The sampling `tsdimaging` gives the theoretical beam (`set_beam_size`),
 /// from a raster's intervals in arcsec: both when they differ by more than
-/// 1%, else one; the valid one alone when the other is not (along the
-/// scan below 2.2 mas, across it below 1 mas, or not finite); `None` when
-/// neither is valid, and CASA sets no beam.
-///
-/// One departure (`docs/CASA (C++) bugs.md`): CASA sets no beam when only
-/// the along-scan interval is invalid, though its log says it uses the
-/// other; casa-rs uses the other.
+/// 1%, else one; the along-scan one alone when the across-scan one is
+/// invalid (below 1 mas, or not finite). `None`, and CASA sets no beam,
+/// when the along-scan interval is invalid (below 2.2 mas, or not finite),
+/// whatever the other: CASA logs that it uses the across-scan interval, but
+/// marks the sampling invalid.
 #[must_use]
 pub fn beam_sampling(interval_arcsec: [f64; 2]) -> Option<Vec<f64>> {
     let [along, across] = interval_arcsec;
     let along_valid = along.is_finite() && along.abs() >= 2.2e-3;
     let across_valid = across.is_finite() && across.abs() >= 1.0e-3;
     match (along_valid, across_valid) {
-        (false, false) => None,
+        (false, _) => None,
         (true, false) => Some(vec![along]),
-        (false, true) => Some(vec![across]),
         (true, true) if (along - across).abs() <= 0.01 * along.abs() => Some(vec![along]),
         (true, true) => Some(vec![along, across]),
     }

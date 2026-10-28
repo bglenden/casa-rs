@@ -11,7 +11,15 @@
 //! - CASA's images, masks and weight images;
 //! - CASA's raster sampling and beams.
 //!
-//! The tests grid the rows with the crate and compare.
+//! The tests grid the rows with the crate and compare. One map has its
+//! weights scaled by 1e-7, for `minweight`'s threshold, which CASA writes
+//! with six decimal places (`docs/CASA (C++) bugs.md`).
+//!
+//! A row's pixel is the oracle's: the nearest POINTING row in time, through
+//! the image's coordinate system. That is `SDGrid::getXYPos` only for a map
+//! like this one, whose POINTING table is in the image's frame and covers
+//! every row's time. Interpolation, other frames, an empty POINTING table
+//! and moving sources belong to reading the MeasurementSet (#938 part 2).
 
 use std::f64::consts::PI;
 use std::io::Read;
@@ -207,7 +215,7 @@ fn grid(rows: &Rows, table: KernelTable) -> TotalPowerImage {
     .expect("grid");
     grid.grid(&block, &WorkerTeam::new(2).expect("team"))
         .expect("gridded");
-    grid.finish()
+    grid.finish().value
 }
 
 /// The largest difference relative to the largest magnitude.
@@ -227,11 +235,26 @@ fn cases() -> impl Iterator<Item = &'static Value> {
     record()["cases"].as_array().expect("cases").iter()
 }
 
+/// The cases whose images the record holds (the gapped map's are the map's).
+fn imaged_cases() -> impl Iterator<Item = &'static Value> {
+    cases().filter(|case| case["image"].get("pixels").is_some())
+}
+
+fn case(name: &str) -> &'static Value {
+    cases().find(|case| case["name"] == name).expect("case")
+}
+
+/// `minweight`'s threshold as `do_weight_mask` writes it into its mask
+/// expression, with `%f`: six decimal places.
+fn written(threshold: f64) -> f64 {
+    format!("{threshold:.6}").parse().expect("a number")
+}
+
 #[test]
 fn images_and_weights_match_casas() {
-    let rows = Rows::of("map");
-    for case in cases().filter(|case| case["ms"] == "map") {
+    for case in imaged_cases() {
         let name = case["name"].as_str().expect("name");
+        let rows = Rows::of(case["ms"].as_str().expect("ms"));
         let (_, table) = kernel(&case["params"]);
         let gridded = grid(&rows, table);
         let weight = largest_difference(
@@ -242,9 +265,10 @@ fn images_and_weights_match_casas() {
             gridded.image.as_slice_memory_order().expect("image"),
             &floats(&case["image"]["pixels"]),
         );
-        // The masks from casa-rs's own weights.
+        // CASA's masks from casa-rs's own weights, at the threshold CASA
+        // writes.
         let ours = gridded.weight.as_slice_memory_order().expect("weight");
-        let threshold = weight_mask_threshold(ours, 0.1).expect("weights");
+        let threshold = written(weight_mask_threshold(ours, 0.1).expect("weights"));
         let differ = ours
             .iter()
             .zip(booleans(&case["image"]["mask"]))
@@ -263,16 +287,45 @@ fn images_and_weights_match_casas() {
 
 #[test]
 fn masks_follow_the_median_weight() {
-    for case in cases().filter(|case| case["ms"] == "map") {
+    for case in imaged_cases() {
         let name = case["name"].as_str().expect("name");
         let weight = floats(&case["weight"]["pixels"]);
         let threshold = weight_mask_threshold(&weight, 0.1).expect("weights");
-        let mask: Vec<bool> = weight.iter().map(|&w| f64::from(w) > threshold).collect();
+        let mask = |threshold: f64| -> Vec<bool> {
+            weight.iter().map(|&w| f64::from(w) > threshold).collect()
+        };
         let casa = booleans(&case["image"]["mask"]);
-        let differ = mask.iter().zip(&casa).filter(|(a, b)| a != b).count();
-        eprintln!("{name}: threshold {threshold:e}, {differ} mask differences");
-        assert_eq!(differ, 0, "{name}");
+        let differ = |mask: Vec<bool>| mask.iter().zip(&casa).filter(|(a, b)| a != b).count();
+        // CASA masks at the threshold it writes; casa-rs at the threshold.
+        let (as_written, exact) = (differ(mask(written(threshold))), differ(mask(threshold)));
+        eprintln!("{name}: threshold {threshold:e}, {exact} pixels CASA leaves unmasked");
+        assert_eq!(as_written, 0, "{name}");
+        if case["ms"] == "small" {
+            assert_eq!(written(threshold), 0.0, "{name}: CASA writes 0");
+            assert!(exact > 0, "{name}: the threshold masks what CASA keeps");
+        } else {
+            assert_eq!(exact, 0, "{name}");
+        }
     }
+}
+
+#[test]
+fn small_weights_change_only_the_mask() {
+    // The image is Σ w v / Σ w, whatever the weights' scale.
+    let small = case("sf_small_weights");
+    assert_eq!(small["params"], case("sf6")["params"]);
+    let image = largest_difference(
+        &floats(&small["image"]["pixels"]),
+        &floats(&case("sf6")["image"]["pixels"]),
+    );
+    assert!(image <= 2.0e-6, "image {image:e}");
+    let scale = number(&record()["small_weights"]) as f32;
+    let weight: Vec<f32> = floats(&case("sf6")["weight"]["pixels"])
+        .iter()
+        .map(|w| w * scale)
+        .collect();
+    let weight = largest_difference(&floats(&small["weight"]["pixels"]), &weight);
+    assert!(weight <= 2.0e-6, "weight {weight:e}");
 }
 
 #[test]

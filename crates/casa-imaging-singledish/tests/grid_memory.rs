@@ -132,7 +132,7 @@ fn measure(function: GridFunction, shape: GridShape, spectra: usize, workers: us
     .and_then(|mut grid| {
         grid.grid(&block, &team)?;
         grid.grid(&block, &team)?;
-        Ok(grid.finish())
+        Ok(grid.finish().value)
     });
     MEASURING.store(false, Ordering::Relaxed);
     let image = image.expect("gridded");

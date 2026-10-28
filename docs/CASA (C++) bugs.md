@@ -2265,30 +2265,22 @@ casa-rs scales the rows' longitude steps as it scales the along-scan ones
 `simobserve` scans one, is unaffected: CASA and casa-rs agree on the
 oracle's maps to 1e-15.
 
-## `tsdimaging` sets no beam when only the along-scan interval is invalid
+## `tsdimaging` writes the weight mask's threshold to six decimal places
 
 - Date noted: 2026-10-28
 - Status: CASA bug; casa-rs does not follow it (#938 part 1, #841 Phase 6c)
-- Affected code: `casatasks/src/private/task_tsdimaging.py` (`set_beam_size`)
+- Affected code: `casatasks/src/private/task_tsdimaging.py` (CASA 6.7.6,
+  `do_weight_mask`: `ia.calcmask("'%s'>%f" % (weightimage, weight_threshold))`)
 
-When the sampling along the scan is below 2.2 mas or not finite,
-`set_beam_size` logs "Using the value of orthogonal direction" and takes the
-interval across the scan, but it also marks the sampling invalid. That
-mark is then never cleared, so no beam is set, whatever the other interval
-is. When only the interval across the scan is invalid (a map with no row
-gaps), it uses the along-scan one and sets the beam.
-
-An image without a beam cannot be read in Jy/beam, and `simanalyze` and
-`simalma` cannot scale its total power. The interval across the scan is a
-real sampling of the map, and a map whose along-scan steps are below 2.2 mas
-(for example one that dwells several integrations at each position) is not
-smeared along the scan by them. The beam from the one valid interval is
-therefore the better estimate of the image's resolution. casa-rs does what
-the log says: either valid interval alone gives the beam
-(`casa_imaging_singledish::beam_sampling`), and only two invalid intervals
-give none. `simobserve`'s maps, the multi-array regression's among them,
-have no row gaps, so they take the other path, and CASA and casa-rs both
-set the beam from the along-scan interval.
+`minweight` masks the pixels whose weight is at most `minweight` times the
+median positive weight. The threshold goes into the mask expression through
+`%f`, which keeps six decimal places. A threshold under 5e-7 is written 0,
+so every pixel with a positive weight stays unmasked, and one of 1.4e-6 is
+written 0.000001, masking less than asked. Weights have no fixed scale, so
+a MeasurementSet whose weights are all small loses its `minweight` mask
+entirely. casa-rs compares with
+the threshold itself (`casa_imaging_singledish::weight_mask_threshold`;
+`tools/singledish/tsdimaging_oracle.py`, case `sf_small_weights`).
 
 ## `SDGrid` grids nothing with an `SF` kernel of no support
 

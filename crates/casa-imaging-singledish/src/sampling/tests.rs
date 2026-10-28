@@ -133,7 +133,9 @@ fn the_beam_takes_the_valid_intervals() {
     assert_eq!(beam_sampling([10.0, 10.05]), Some(vec![10.0]));
     assert_eq!(beam_sampling([10.0, 0.0]), Some(vec![10.0]));
     assert_eq!(beam_sampling([10.0, f64::NAN]), Some(vec![10.0]));
-    // CASA sets no beam here, though it logs that it uses the other.
-    assert_eq!(beam_sampling([1.0e-3, 12.0]), Some(vec![12.0]));
+    // CASA sets no beam when the along-scan interval is invalid, though it
+    // logs that it uses the other.
+    assert_eq!(beam_sampling([1.0e-3, 12.0]), None);
+    assert_eq!(beam_sampling([f64::NAN, 12.0]), None);
     assert_eq!(beam_sampling([0.0, 0.0]), None);
 }

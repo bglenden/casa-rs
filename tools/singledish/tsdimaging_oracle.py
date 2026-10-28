@@ -21,8 +21,10 @@ matters:
 
 A copy, `gapped.ms`, has time gaps between the map's rows, so that CASA's
 raster-sampling estimate finds rows and measures the interval across them.
+Another, `small.ms`, has every weight scaled by 1e-7, so that `minweight`'s
+threshold is below 5e-7 and `do_weight_mask` writes it as 0.
 
-For each case of `CASES` it runs `tsdimaging` on one of the two and records:
+For each case of `CASES` it runs `tsdimaging` on one of the three and records:
 - the image, its mask and its weight image, flattened in Fortran order as
   little-endian float32 in base64;
 - the restoring beam and the brightness unit.
@@ -32,6 +34,13 @@ The record also holds, for each MeasurementSet row:
 - its values from the column the gridder reads;
 - its pointing, the POINTING row of its antenna nearest in time, in J2000;
 - that pointing's pixel on the images, from the image's coordinate system.
+
+That pixel is not `SDGrid::getXYPos` in general. It is the same here: the
+map's POINTING table is in J2000, the image's frame, and covers every row's
+time. `getXYPos` also interpolates between POINTING rows, converts other
+frames at each row's epoch and position, falls back when POINTING is empty,
+and follows moving sources. Those belong to reading the MeasurementSet
+(#938 part 2) and are tested there.
 
 It also holds:
 - the sampling `im.pointingsampling(pattern='raster')` estimates, as
@@ -61,8 +70,9 @@ CENTRE = "J2000 18h00m00.0s -23d00m00.0s"
 CELL_ARCSEC = 3.0
 IMSIZE = [40, 40]
 
-# The cases: tsdimaging's gridder parameters, on `ms` (the map) or
-# `gapped` (the map with time gaps between its rows).
+# The cases: tsdimaging's gridder parameters, on `ms`: the map, `gapped`
+# (the map with time gaps between its rows) or `small` (the map with its
+# weights scaled by 1e-7).
 CASES = [
     {"name": "box", "ms": "map", "params": {"gridfunction": "BOX"}},
     {"name": "sf", "ms": "map", "params": {"gridfunction": "SF"}},
@@ -81,7 +91,10 @@ CASES = [
     },
     {"name": "pb", "ms": "map", "params": {"gridfunction": "PB"}},
     {"name": "sf_gapped", "ms": "gapped", "params": {"gridfunction": "SF", "convsupport": 6}},
+    {"name": "sf_small_weights", "ms": "small", "params": {"gridfunction": "SF", "convsupport": 6}},
 ]
+# Weights of `small.ms` relative to the map's.
+SMALL_WEIGHTS = 1.0e-7
 
 # The direct TheoreticalBeam setups: kernel, its parameters, cells and
 # samplings in arcsec, the antenna's diameter and blockage in m.
@@ -227,6 +240,20 @@ def make_gapped(path: str) -> str:
     return gapped
 
 
+def make_small(path: str) -> str:
+    """A copy of the map with every weight scaled by `SMALL_WEIGHTS`."""
+    small = os.path.join(os.path.dirname(path), "small.ms")
+    shutil.rmtree(small, ignore_errors=True)
+    shutil.copytree(path, small)
+    tb = table()
+    tb.open(small, nomodify=False)
+    for column in ("WEIGHT", "WEIGHT_SPECTRUM"):
+        if column in tb.colnames() and tb.iscelldefined(column, 0):
+            tb.putcol(column, tb.getcol(column) * SMALL_WEIGHTS)
+    tb.close()
+    return small
+
+
 def pointings(path: str):
     """Each MAIN row's pointing: the nearest-in-time POINTING row of its
     antenna, its J2000 direction in rad."""
@@ -365,13 +392,20 @@ def main() -> None:
     os.makedirs(work)
     maps = {"map": make_map(work)}
     maps["gapped"] = make_gapped(maps["map"])
-    record = {"cell_arcsec": CELL_ARCSEC, "imsize": IMSIZE, "phasecenter": CENTRE, "cases": []}
+    maps["small"] = make_small(maps["map"])
+    record = {
+        "cell_arcsec": CELL_ARCSEC,
+        "imsize": IMSIZE,
+        "phasecenter": CENTRE,
+        "small_weights": SMALL_WEIGHTS,
+        "cases": [],
+    }
     for case in CASES:
         outfile = os.path.join(work, case["name"])
         tsdimaging(infiles=[maps[case["ms"]]], outfile=outfile, overwrite=True, imsize=IMSIZE,
                    cell=f"{CELL_ARCSEC}arcsec", phasecenter=CENTRE, **case["params"])
         # The gapped map's images are the map's: only its beam differs.
-        pixels = case["ms"] == "map"
+        pixels = case["ms"] != "gapped"
         record["cases"].append({
             "name": case["name"],
             "ms": case["ms"],

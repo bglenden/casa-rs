@@ -23,10 +23,12 @@
 //! Total-power data are real, so the grids are real where CASA's data grid
 //! is complex. The image channels are gridded in parallel on the worker
 //! team, each summing its pixels in CASA's order (spectrum, then data
-//! channel, then correlation), so a channel's sums are CASA's.
+//! channel, then correlation), so a channel's sums are CASA's. The image
+//! and weight [`TotalPowerGrid::finish`] makes are those grids, so they keep
+//! the grids' share of the admission until they drop.
 
-use casa_imaging_runtime::Reservation;
 use casa_imaging_runtime::pass::WorkerTeam;
+use casa_imaging_runtime::{Admitted, Reservation};
 use ndarray::{ArrayD, ArrayView2, ArrayView3, IxDyn, ShapeBuilder};
 
 use crate::SingleDishError;
@@ -137,6 +139,14 @@ pub struct TotalPowerImage {
     pub weight: ArrayD<f32>,
 }
 
+impl TotalPowerImage {
+    /// Bytes the image and weight of `shape` hold.
+    #[must_use]
+    pub const fn bytes(shape: GridShape) -> u64 {
+        (2 * shape.pixels() * size_of::<f32>()) as u64
+    }
+}
+
 /// The data and weight grids of an image being gridded.
 #[derive(Debug)]
 pub struct TotalPowerGrid {
@@ -158,10 +168,10 @@ impl TotalPowerGrid {
     /// pass's per-channel bookkeeping.
     #[must_use]
     pub fn bytes(shape: GridShape, kernel: &KernelTable, data_channels: usize) -> u64 {
-        let grids = 2 * shape.pixels() * size_of::<f32>();
         let pass = shape.channels
             * (size_of::<ChannelGrids<'_>>() + size_of::<Result<(), SingleDishError>>());
-        (grids + Taps::bytes(kernel) + Sources::bytes(shape.channels, data_channels) + pass) as u64
+        TotalPowerImage::bytes(shape)
+            + (Taps::bytes(kernel) + Sources::bytes(shape.channels, data_channels) + pass) as u64
             + kernel.bytes()
     }
 
@@ -247,22 +257,32 @@ impl TotalPowerGrid {
     /// `SIImageStore::divideResidualByWeightSD`), and the weight grid
     /// (`SDGrid::getWeightImage`). `tsdimaging`'s `minweight` then masks
     /// the image ([`crate::weight_mask_threshold`]).
+    ///
+    /// The image and weight are the grids, so they keep the grids'
+    /// [`TotalPowerImage::bytes`] of the admission; the kernel's and the
+    /// passes' bytes are released. A grid formed without an admission
+    /// ([`Reservation::none`]) hands nothing on.
     #[must_use]
-    pub fn finish(self) -> TotalPowerImage {
+    pub fn finish(self) -> Admitted<TotalPowerImage> {
         let Self {
             shape,
             mut data,
             weight,
+            _reservation: mut reservation,
             ..
         } = self;
+        reservation.retain(reservation.memory().min(TotalPowerImage::bytes(shape)));
         for (value, &weight) in data.iter_mut().zip(&weight) {
             *value = if weight > 0.0 { *value / weight } else { 0.0 };
         }
         let dims = IxDyn(&[shape.nx, shape.ny, shape.planes, shape.channels]).f();
         let array = |values| ArrayD::from_shape_vec(dims.clone(), values).expect("grid shape");
-        TotalPowerImage {
-            image: array(data),
-            weight: array(weight),
+        Admitted {
+            value: TotalPowerImage {
+                image: array(data),
+                weight: array(weight),
+            },
+            reservation,
         }
     }
 }
@@ -409,7 +429,8 @@ impl ChannelGrids<'_> {
             }
             for &channel in self.sources {
                 let weight = block.weights[[spectrum, channel]];
-                if weight <= 0.0 {
+                // `ggridsd` grids where `weight > 0`, which a NaN is not.
+                if weight.is_nan() || weight <= 0.0 {
                     continue;
                 }
                 let merged = || {
