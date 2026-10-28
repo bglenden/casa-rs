@@ -8,7 +8,9 @@ the joint continuum-plus-line decision of 0011
 Superseded by:
 
 Amended: 2026-10-25, on owner direction: every imaging crate may depend on the
-definitional crates (decision 10).
+definitional crates (decision 10). 2026-10-28, on owner approval: the model
+may also depend on `casa-observation` (decision 10; imaging port decision 1,
+#932).
 
 Amended: 2026-10-28, on owner direction of 2026-10-27 (#938): single-dish
 image-plane gridding is its own operator family (decision 13).
@@ -89,7 +91,10 @@ normative design; this ADR records the decisions that supersede earlier ADRs.
     file, network, process or environment I/O, start no threads, use no
     device, and depend on no workspace crate but one another. They are
     `casa-values`, `casa-types` and `casa-coordinates`; beyond them the model
-    has no workspace dependencies. The policy names the definitional crates
+    depends only on `casa-observation`, the observation boundary, whose
+    catalogue, batches and pointing samples its batch geometry reads
+    (amended 2026-10-28 on owner approval; imaging port decision 1 of
+    2026-10-27, #932). The policy names the definitional crates
     and lists each crate's other workspace dependencies exactly. Adding a
     crate to the definitional set widens what every layer may use, so it is
     the owner's decision, recorded on its pull request; the checks above

@@ -260,7 +260,8 @@ struct CatalogRow {
     source_ref: DirectionRef,
 }
 
-const SCALAR_SCAN_BYTES_PER_ROW: usize = size_of::<usize>() + 5 * size_of::<Option<ScalarValue>>();
+pub(crate) const SCALAR_SCAN_BYTES_PER_ROW: usize =
+    size_of::<usize>() + 5 * size_of::<Option<ScalarValue>>();
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct SelectedPointingCatalogMeasurements {
@@ -306,6 +307,75 @@ impl PreparedSelectedPointingCatalog {
     #[must_use]
     pub(crate) const fn measurements(&self) -> SelectedPointingCatalogMeasurements {
         self.measurements
+    }
+
+    /// The rows as the observation boundary's pointing series: per antenna
+    /// (an antenna's catalogue id is its `ANTENNA` row), in the catalog's
+    /// (time, row) order, with their intervals and polynomial origins, and
+    /// coefficients padded with zeros to the most terms any row has.
+    ///
+    /// # Errors
+    ///
+    /// [`casa_observation::ObservationError::Unsupported`] when the rows'
+    /// directions are in several frames.
+    pub(crate) fn series(
+        &self,
+    ) -> Result<casa_observation::PointingSeries, casa_observation::ObservationError> {
+        let frame = self
+            .rows
+            .first()
+            .map_or(DirectionRef::J2000, |row| row.source_ref);
+        if self.rows.iter().any(|row| row.source_ref != frame) {
+            return Err(casa_observation::ObservationError::Unsupported {
+                what: "MSv2 POINTING directions in several frames",
+            });
+        }
+        let terms = self
+            .rows
+            .iter()
+            .map(|row| row.metadata.polynomial_terms)
+            .max()
+            .unwrap_or(1);
+        let mut series = casa_observation::PointingSeries {
+            terms,
+            ..casa_observation::PointingSeries::empty(frame)
+        };
+        for rows in self
+            .rows
+            .chunk_by(|left, right| left.metadata.antenna_id == right.metadata.antenna_id)
+        {
+            let mut coefficients = Vec::with_capacity(rows.len() * 2 * terms);
+            for row in rows {
+                let own = row.metadata.polynomial_terms;
+                for axis in 0..2 {
+                    let start = row.coefficient_offset + axis * own;
+                    coefficients.extend_from_slice(&self.coefficients[start..start + own]);
+                    coefficients.extend(std::iter::repeat_n(0.0, terms - own));
+                }
+            }
+            let antenna = casa_observation::AntennaId(
+                u32::try_from(rows[0].metadata.antenna_id).expect("ANTENNA_ID is non-negative"),
+            );
+            series.antennas.insert(
+                antenna,
+                casa_observation::AntennaPointing::new(
+                    rows.iter()
+                        .map(|row| row.metadata.time_mjd_seconds)
+                        .collect(),
+                    Some(
+                        rows.iter()
+                            .map(|row| row.metadata.interval_seconds)
+                            .collect(),
+                    ),
+                    rows.iter()
+                        .map(|row| row.metadata.time_origin_mjd_seconds)
+                        .collect(),
+                    terms,
+                    coefficients,
+                )?,
+            );
+        }
+        Ok(series)
     }
 
     pub(crate) fn direction_brackets(
@@ -895,9 +965,11 @@ fn array_heap_bytes(value: &ArrayValue) -> Option<usize> {
 
 fn ensure_budget(required: usize, available: usize) -> MsResult<()> {
     if required > available {
-        return Err(MsError::InvalidInput(format!(
-            "POINTING catalog requires {required} bytes but the planner supplied {available} bytes"
-        )));
+        return Err(MsError::OverBudget {
+            what: "POINTING catalog",
+            required,
+            available,
+        });
     }
     Ok(())
 }
@@ -911,6 +983,40 @@ fn elapsed_nanos(started: Instant) -> u64 {
 }
 
 /// Conservative catalog construction peak for content planning.
+/// An upper bound on the bytes preparing a catalog of `rows` retained
+/// `POINTING` rows for `antennas` antennas (two nearest rows each) holds at
+/// any one time, scanning `scan_rows` rows at a time with polynomials of at
+/// most `maximum_polynomial_terms` terms, and the series made from it: the
+/// sum of every budget check [`MeasurementSet::prepare_selected_pointing_catalog`]
+/// makes, so a budget of at least this is never refused. `None` on
+/// overflow.
+#[cfg(feature = "msv4")]
+pub(crate) fn catalog_peak_bytes(
+    rows: usize,
+    antennas: usize,
+    scan_rows: usize,
+    maximum_polynomial_terms: usize,
+) -> Option<usize> {
+    let rows = rows.checked_add(antennas.checked_mul(2)?)?;
+    let coefficients = 2 * maximum_polynomial_terms * size_of::<f64>();
+    // Metadata, row index, direction cell and its heap, catalog row and its
+    // coefficients, and the series' time, interval, origin and coefficients.
+    let per_row = size_of::<CandidateMetadata>()
+        + size_of::<usize>()
+        + size_of::<Option<ArrayValue>>()
+        + coefficients
+        + 4 * size_of::<usize>()
+        + size_of::<CatalogRow>()
+        + coefficients
+        + 3 * size_of::<f64>()
+        + coefficients;
+    catalog_upper_bound_bytes(rows, maximum_polynomial_terms)
+        .ok()?
+        .checked_add(rows.checked_mul(per_row)?)?
+        .checked_add(scan_rows.checked_mul(SCALAR_SCAN_BYTES_PER_ROW)?)?
+        .checked_add(antennas.checked_mul(size_of::<[Option<CandidateMetadata>; 2]>())?)
+}
+
 pub(crate) fn selected_pointing_preparation_peak_bytes(
     selected_rows: usize,
     scan_rows: usize,
@@ -926,6 +1032,77 @@ pub(crate) fn selected_pointing_preparation_peak_bytes(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A catalog of `R` retained rows for `A` antennas (each with its nearest
+    /// rows either side) prepared with exactly `catalog_peak_bytes(R, A, S,
+    /// terms)` is never refused, whatever the scan block `S`.
+    #[cfg(feature = "msv4")]
+    #[test]
+    fn catalog_peak_bytes_bounds_every_budget_check() {
+        use casa_types::{RecordField, RecordValue, Value};
+
+        let mut builder = SelectedPointingQueryDomain::builder();
+        builder.observe_row(0, 1, 0.0, 0.0).unwrap();
+        builder.observe_row(0, 1, 100.0, 100.0).unwrap();
+        let domain = builder.finish().unwrap().unwrap();
+        let terms = 4;
+        let mut ms = MeasurementSet::create_memory(crate::MeasurementSetBuilder::new()).unwrap();
+        // Each antenna: two rows before the times, twenty within, two after.
+        let times: Vec<f64> = [-10.0, -5.0]
+            .into_iter()
+            .chain((0..20).map(f64::from))
+            .chain([150.0, 200.0])
+            .collect();
+        for antenna in 0..2 {
+            for time in &times {
+                let mut record = RecordValue::new(
+                    crate::schema::pointing::REQUIRED_COLUMNS
+                        .iter()
+                        .map(|column| {
+                            RecordField::new(
+                                column.name,
+                                crate::test_helpers::default_value_for_def(column),
+                            )
+                        })
+                        .collect(),
+                );
+                record.upsert("ANTENNA_ID", Value::Scalar(ScalarValue::Int32(antenna)));
+                record.upsert("TIME", Value::Scalar(ScalarValue::Float64(*time)));
+                record.upsert("TIME_ORIGIN", Value::Scalar(ScalarValue::Float64(*time)));
+                record.upsert("INTERVAL", Value::Scalar(ScalarValue::Float64(1.0)));
+                record.upsert(
+                    "NUM_POLY",
+                    Value::Scalar(ScalarValue::Int32(terms as i32 - 1)),
+                );
+                record.upsert(
+                    "DIRECTION",
+                    Value::Array(ArrayValue::Float64(ndarray::ArrayD::zeros(vec![2, terms]))),
+                );
+                ms.pointing_mut()
+                    .unwrap()
+                    .table_mut()
+                    .add_row(record)
+                    .unwrap();
+            }
+        }
+        for scan_rows in [1, 7, 64] {
+            let budget = catalog_peak_bytes(40, 2, scan_rows, terms).unwrap();
+            let catalog = ms
+                .prepare_selected_pointing_catalog(
+                    PointingDirectionColumn::Direction,
+                    &domain,
+                    PointingTimeSampling::VisibilityTime,
+                    PointingReadPlan::new(scan_rows, terms, budget).unwrap(),
+                )
+                .unwrap_or_else(|error| panic!("scan {scan_rows}: {error}"));
+            assert_eq!(
+                catalog.measurements().retained_rows(),
+                44,
+                "within and nearest"
+            );
+            assert!(catalog.measurements().construction_peak_bytes() <= budget);
+        }
+    }
 
     #[test]
     fn catalog_requirements_bound_prechecks_and_actual_construction() {

@@ -7,11 +7,13 @@
 //! the data groups with their units and UVW frame) lives here once; a batch
 //! links to it by [`PartitionId`] and copies none of it.
 
+use std::collections::BTreeMap;
+
 use casa_types::Correlation;
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::frequency::FrequencyRef;
 use casa_types::measures::position::MPosition;
-use casa_types::measures::{EpochRef, MjdHighPrec};
+use casa_types::measures::{EpochRef, MEpoch, MjdHighPrec};
 use casa_types::quanta::Quantity;
 
 use crate::ObservationError;
@@ -97,10 +99,37 @@ pub struct AntennaEntry {
     pub mount: String,
     /// Dish diameter.
     pub dish_diameter: Quantity,
-    /// Receptor polarization types in receptor order (`X`, `Y`).
-    pub receptors: Vec<String>,
+}
+
+impl AntennaEntry {
+    /// Whether the antenna has an alt-az mount ([`alt_az_mount`]).
+    #[must_use]
+    pub fn alt_az(&self) -> bool {
+        alt_az_mount(&self.mount)
+    }
+}
+
+/// Whether the mount type `mount` is alt-az: it starts with `alt-az`,
+/// whatever the case (MSv2 `ANTENNA::MOUNT` holds `ALT-AZ`, `alt-az` or
+/// `ALT-AZ+ROTATOR`). Only an alt-az mount turns the sky by the parallactic
+/// angle.
+#[must_use]
+pub fn alt_az_mount(mount: &str) -> bool {
+    mount
+        .as_bytes()
+        .get(.."alt-az".len())
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case(b"alt-az"))
+}
+
+/// An antenna's receptors in one partition's spectral window: MSv2 `FEED`
+/// rows of the window (or of every window) and the partition's feed, MSv4
+/// the dataset's `antenna_xds`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Receptors {
+    /// Polarization types in receptor order (`X`, `Y`).
+    pub types: Vec<String>,
     /// Receptor angles, in the same order.
-    pub receptor_angles: Vec<Quantity>,
+    pub angles: Vec<Quantity>,
 }
 
 /// One field of the catalogue.
@@ -109,8 +138,15 @@ pub struct FieldEntry {
     /// Field name as stored. XRADIO appends the MSv2 field number
     /// (`trial_0`); the catalogue keeps what the store holds.
     pub name: String,
-    /// The phase-tracking centre.
+    /// The phase-tracking centre, in its stored frame. Fields of one
+    /// opening share the frame of their data groups' UVW
+    /// ([`DataGroupEntry::uvw_frame`]).
     pub phase_centre: MDirection,
+    /// The epoch at which [`Self::phase_centre`] is stated, which a frame
+    /// that moves with time (apparent, topocentric) needs to be converted:
+    /// MSv2 `FIELD.TIME`. `None` when the store states none, as MSv4, whose
+    /// phase centres are in celestial frames.
+    pub reference_epoch: Option<MEpoch>,
     /// The source observed, when the store names one.
     pub source_name: Option<String>,
 }
@@ -257,6 +293,10 @@ pub struct PartitionEntry {
     pub time_origin: MjdHighPrec,
     /// The partition's data groups.
     pub data_groups: Vec<DataGroupEntry>,
+    /// The receptors of each antenna the baselines name, in this
+    /// partition's spectral window; an antenna the store states none for
+    /// is absent.
+    pub receptors: BTreeMap<AntennaId, Receptors>,
 }
 
 impl PartitionEntry {
@@ -542,6 +582,7 @@ mod tests {
             time_scale: EpochRef::UTC,
             time_origin: MjdHighPrec::new(0.0, 0.0),
             data_groups: Vec::new(),
+            receptors: BTreeMap::new(),
         }
     }
 
@@ -549,6 +590,7 @@ mod tests {
         FieldEntry {
             name: format!("f{longitude}"),
             phase_centre: MDirection::from_angles(longitude, 0.0, DirectionRef::J2000),
+            reference_epoch: None,
             source_name: None,
         }
     }
@@ -689,8 +731,6 @@ mod tests {
             position: MPosition::new_itrf(x, 0.0, 0.0),
             mount: "ALT-AZ".to_string(),
             dish_diameter: Quantity::new(25.0, "m").expect("quantity"),
-            receptors: vec!["X".to_string(), "Y".to_string()],
-            receptor_angles: Vec::new(),
         }
     }
 

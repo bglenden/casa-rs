@@ -2,15 +2,20 @@
 #![warn(missing_docs)]
 //! Logical, backend-independent imaging problem compilation.
 
+mod aw_pointing;
+mod batch_geometry;
 mod compiled_problem;
+mod frame_refs;
 mod geometry;
 mod measurement_equation;
 mod model_state;
 mod native_aw;
 mod observation;
+mod pointing_law;
 mod product_list;
 mod selected_observation_sample;
 mod transaction;
+mod uvw_projection;
 mod visibility_transform;
 
 pub use compiled_problem::{
@@ -90,6 +95,14 @@ pub use transaction::{
     ObservationTransactionRequirements, ObservationWriteSet, SelectedVisibilityWriteAccess,
 };
 
+pub use aw_pointing::{
+    AwChartPixels, AwPointingEpochs, AwPointingError, AwPointingGrouping, aw_grouped_pixels,
+};
+pub use batch_geometry::{
+    BatchGeometry, BatchGeometryError, ChartProjection, GeometryPlan, GeometryTraversal,
+};
+pub use pointing_law::{PointingLawError, PointingSample, PointingSamples};
+pub use uvw_projection::GridFtProjection;
 pub use visibility_transform::{
     ContinuumChannelRole, ContinuumChannelUse, ContinuumCovariancePolicy, ContinuumFitRule,
     ContinuumTransformContractError, SequentialContinuumTransform,

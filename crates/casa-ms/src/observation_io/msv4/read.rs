@@ -11,7 +11,7 @@ use casa_observation::{
     AccessRequest, AntennaEntry, AntennaId, BoundCursor, Catalogue, Correlation, DataGroupEntry,
     Estimate, FieldEntry, FieldId, FieldSelection, GroupKey, Grouping, Observation,
     ObservationEntry, ObservationError, ObservationId, OrderedBaseline, PartitionEntry,
-    PartitionId, ScanEntry, ScanId, TimeBaselineGrid, Traversal, UvwFrame,
+    PartitionId, Receptors, ScanEntry, ScanId, TimeBaselineGrid, Traversal, UvwFrame,
 };
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::position::MPosition;
@@ -21,9 +21,9 @@ use zarrs::group::Group;
 
 use super::cursor::Msv4Cursor;
 use super::metadata::{
-    DataGroupRecord, SCHEMA_VERSION, data_groups, direction_frame, frequency_frame, invalid,
-    numbers, open_array, require_layout, require_units, storage, strings, text, time_reference,
-    visibility_units,
+    DataGroupRecord, SCHEMA_VERSION, data_groups, direction_frame, frequency_frame, has_node,
+    invalid, numbers, open_array, require_layout, require_units, storage, strings, text,
+    time_reference, visibility_units,
 };
 use crate::observation_io::OpenOptions;
 use crate::observation_io::msv2::{metres, radians};
@@ -66,6 +66,8 @@ pub(super) struct Dataset {
     /// Catalogue scan at each time, when `scan_name` is present.
     pub(super) scans: Option<Vec<ScanId>>,
     pub(super) groups: Vec<GroupArrays>,
+    /// The dataset's `antenna_xds` names, each with its catalogue id.
+    pub(super) antennas: Vec<(String, AntennaId)>,
 }
 
 /// An opened MSv4 processing set (XRADIO `VisibilityXds` schema 4.0.1 on
@@ -85,6 +87,7 @@ pub(super) struct Dataset {
 /// data type and dimensions, and every unit and frame, against the profile
 /// and refuses others rather than reinterpreting or rescaling them.
 pub struct Msv4Observation {
+    pub(super) store: Arc<FilesystemStore>,
     pub(super) catalogue: Arc<Catalogue>,
     pub(super) datasets: Vec<Dataset>,
     pub(super) options: CodecOptions,
@@ -127,15 +130,22 @@ impl Msv4Observation {
             .collect::<Vec<_>>();
         names.sort();
         let mut observation = Self {
+            store: store.clone(),
             catalogue: Arc::new(Catalogue::default()),
             datasets: Vec::new(),
             options: super::codec_options(),
             open: options.clone(),
         };
-        let (antennas, per_dataset) = dataset_antennas(&store, &names)?;
+        let (antennas, per_dataset, receptors) = dataset_antennas(&store, &names)?;
         observation.catalogue_mut().antennas = antennas;
-        for (name, antennas) in names.iter().zip(&per_dataset) {
-            observation.add_dataset(&store, path.as_ref(), &format!("/{name}"), antennas)?;
+        for ((name, antennas), receptors) in names.iter().zip(&per_dataset).zip(receptors) {
+            observation.add_dataset(
+                &store,
+                path.as_ref(),
+                &format!("/{name}"),
+                antennas,
+                receptors,
+            )?;
         }
         if observation.datasets.is_empty() {
             return Err(invalid("the processing set has no visibility datasets"));
@@ -173,6 +183,7 @@ impl Msv4Observation {
         root: &Path,
         path: &str,
         antennas: &[(String, AntennaId)],
+        receptors: BTreeMap<AntennaId, Receptors>,
     ) -> Result<(), ObservationError> {
         let group = visibility_group(store, path)?;
         let attributes = group.attributes();
@@ -294,6 +305,7 @@ impl Msv4Observation {
             time_scale,
             time_origin,
             data_groups: entries,
+            receptors,
             ..partition
         });
         self.datasets.push(Dataset {
@@ -305,6 +317,7 @@ impl Msv4Observation {
             exposure,
             scans,
             groups,
+            antennas: antennas.to_vec(),
         });
         Ok(())
     }
@@ -425,6 +438,7 @@ impl Msv4Observation {
             time_scale: casa_types::measures::EpochRef::UTC,
             time_origin: casa_types::measures::MjdHighPrec::new(0.0, 0.0),
             data_groups: Vec::new(),
+            receptors: BTreeMap::new(),
         })
     }
 
@@ -507,6 +521,8 @@ impl Msv4Observation {
                     centres[2 * row + 1],
                     frame,
                 ),
+                // MSv4 phase centres are in celestial frames (fk5, icrs).
+                reference_epoch: None,
                 // XRADIO's placeholder for an absent source is none.
                 source_name: sources
                     .get(row)
@@ -624,6 +640,9 @@ fn visibility_group(
 /// `antenna_xds`.
 type DatasetAntennas = Vec<Vec<(String, AntennaId)>>;
 
+/// Each dataset's antennas' receptors, from its `antenna_xds`.
+type DatasetReceptors = Vec<BTreeMap<AntennaId, Receptors>>;
+
 /// The catalogue's antennas and each of the datasets `names`' antennas,
 /// reading each `antenna_xds` once. An antenna is one name and station
 /// (one with two positions is refused, not merged); the catalogue orders
@@ -634,10 +653,11 @@ type DatasetAntennas = Vec<Vec<(String, AntennaId)>>;
 fn dataset_antennas(
     store: &Arc<FilesystemStore>,
     names: &[String],
-) -> Result<(Vec<AntennaEntry>, DatasetAntennas), ObservationError> {
+) -> Result<(Vec<AntennaEntry>, DatasetAntennas, DatasetReceptors), ObservationError> {
     let mut known: HashMap<(String, String), usize> = HashMap::new();
     let mut first: Vec<AntennaEntry> = Vec::new();
     let mut lists: Vec<Vec<(String, usize)>> = Vec::with_capacity(names.len());
+    let mut receptors: Vec<Vec<(usize, Receptors)>> = Vec::with_capacity(names.len());
     // A dataset's group is opened once, by `add_dataset` (an XRADIO
     // dataset's metadata is consolidated there, so a second open costs
     // about what its antennas do). An error here is reported as opening
@@ -654,7 +674,8 @@ fn dataset_antennas(
         let read = read_antennas(store, &format!("{path}/antenna_xds"))
             .map_err(|error| refused(error, index))?;
         let mut list = Vec::new();
-        for antenna in read {
+        let mut held = Vec::new();
+        for (antenna, own) in read {
             let label = antenna.name.clone();
             let next = first.len();
             let rank = *known
@@ -671,8 +692,12 @@ fn dataset_antennas(
                 ));
             }
             list.push((label, rank));
+            if !own.types.is_empty() {
+                held.push((rank, own));
+            }
         }
         lists.push(list);
+        receptors.push(held);
     }
     let ranks = lists
         .iter()
@@ -696,7 +721,15 @@ fn dataset_antennas(
                 .collect()
         })
         .collect();
-    Ok((antennas, per_dataset))
+    let receptors = receptors
+        .into_iter()
+        .map(|held| {
+            held.into_iter()
+                .map(|(rank, own)| (id[rank], own))
+                .collect()
+        })
+        .collect();
+    Ok((antennas, per_dataset, receptors))
 }
 
 /// The baselines of the dataset at `path`, resolved by name through its
@@ -789,15 +822,20 @@ fn merge_orders<T, K: Eq + std::hash::Hash>(lists: Vec<Vec<T>>, key: impl Fn(&T)
     merged
 }
 
-/// The antennas of the `antenna_xds` at `path`.
+/// The antennas of the `antenna_xds` at `path`, with their receptors.
 fn read_antennas(
     store: &Arc<FilesystemStore>,
     path: &str,
-) -> Result<Vec<AntennaEntry>, ObservationError> {
+) -> Result<Vec<(AntennaEntry, Receptors)>, ObservationError> {
     let names = strings(store, &format!("{path}/antenna_name"))?;
     let stations = strings(store, &format!("{path}/station_name"))?;
     let mounts = strings(store, &format!("{path}/mount"))?;
-    let types = strings(store, &format!("{path}/polarization_type"))?;
+    // XRADIO writes no receptor variables for a window FEED states none for.
+    let types = if has_node(store, &format!("{path}/polarization_type"))? {
+        strings(store, &format!("{path}/polarization_type"))?
+    } else {
+        Vec::new()
+    };
     let (positions, attributes) = numbers::<f64>(store, &format!("{path}/ANTENNA_POSITION"))?;
     require_units(&attributes, "m", "ANTENNA_POSITION")?;
     if text(&attributes, "frame", "ANTENNA_POSITION")? != "ITRS" {
@@ -807,8 +845,14 @@ fn read_antennas(
     }
     let (diameters, attributes) = numbers::<f64>(store, &format!("{path}/ANTENNA_DISH_DIAMETER"))?;
     require_units(&attributes, "m", "ANTENNA_DISH_DIAMETER")?;
-    let (angles, attributes) = numbers::<f64>(store, &format!("{path}/ANTENNA_RECEPTOR_ANGLE"))?;
-    require_units(&attributes, "rad", "ANTENNA_RECEPTOR_ANGLE")?;
+    let angles = if types.is_empty() {
+        Vec::new()
+    } else {
+        let (angles, attributes) =
+            numbers::<f64>(store, &format!("{path}/ANTENNA_RECEPTOR_ANGLE"))?;
+        require_units(&attributes, "rad", "ANTENNA_RECEPTOR_ANGLE")?;
+        angles
+    };
     let count = names.len();
     let receptors = types.len() / count.max(1);
     if [stations.len(), mounts.len(), diameters.len()] != [count; 3]
@@ -821,21 +865,27 @@ fn read_antennas(
         )));
     }
     Ok((0..count)
-        .map(|index| AntennaEntry {
-            name: names[index].clone(),
-            station: stations[index].clone(),
-            position: MPosition::new_itrf(
-                positions[3 * index],
-                positions[3 * index + 1],
-                positions[3 * index + 2],
-            ),
-            mount: mounts[index].clone(),
-            dish_diameter: metres(diameters[index]),
-            receptors: types[receptors * index..receptors * (index + 1)].to_vec(),
-            receptor_angles: angles[receptors * index..receptors * (index + 1)]
-                .iter()
-                .map(|angle| radians(*angle))
-                .collect(),
+        .map(|index| {
+            (
+                AntennaEntry {
+                    name: names[index].clone(),
+                    station: stations[index].clone(),
+                    position: MPosition::new_itrf(
+                        positions[3 * index],
+                        positions[3 * index + 1],
+                        positions[3 * index + 2],
+                    ),
+                    mount: mounts[index].clone(),
+                    dish_diameter: metres(diameters[index]),
+                },
+                Receptors {
+                    types: types[receptors * index..receptors * (index + 1)].to_vec(),
+                    angles: angles[receptors * index..receptors * (index + 1)]
+                        .iter()
+                        .map(|angle| radians(*angle))
+                        .collect(),
+                },
+            )
         })
         .collect())
 }
@@ -859,6 +909,13 @@ impl Observation for Msv4Observation {
         data_group: &str,
     ) -> Result<TimeBaselineGrid, ObservationError> {
         Msv4Observation::grid(self, id, data_group)
+    }
+
+    fn pointing(
+        &self,
+        request: &casa_observation::PointingRequest,
+    ) -> Result<casa_observation::PointingSeries, ObservationError> {
+        self.read_pointing(request)
     }
 
     fn group_keys(

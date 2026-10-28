@@ -73,7 +73,9 @@
  ],
  "native_package_workspace_dependencies": {
   "casa-observation": [],
-  "casa-imaging-model": [],
+  "casa-imaging-model": [
+   "casa-observation"
+  ],
   "casa-imaging-operator": [
    "casa-fft",
    "casa-images",
@@ -118,7 +120,8 @@
    "casa-imaging-operator",
    "casa-imaging-products",
    "casa-imaging-runtime",
-   "casa-ms"
+   "casa-ms",
+   "casa-observation"
   ],
   "casa-simulation-synthesis": [
    "casa-fft",

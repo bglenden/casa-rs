@@ -8,7 +8,7 @@
 //!
 //! Cf. C++ `DerivedMC::MSCalEngine`.
 
-use casa_imaging_model::AntennaResponseClass;
+use casa_imaging_model::{AntennaResponseClass, GridFtProjection};
 use casa_tables::Table;
 use casa_tables::table_measures::{MeasRefDesc, TableMeasDesc};
 use casa_types::measures::MeasuresProvider;
@@ -66,7 +66,7 @@ pub struct MsCalEngine {
     azel_cache: RwLock<HashMap<GeometryCacheKey, (f64, f64)>>,
     hadec_cache: RwLock<HashMap<GeometryCacheKey, (f64, f64)>>,
     parallactic_angle_cache: RwLock<HashMap<GeometryCacheKey, f64>>,
-    mosaic_uvw_cache: RwLock<HashMap<MosaicUvwCacheKey, CasaGirarUvwTransform>>,
+    mosaic_uvw_cache: RwLock<HashMap<MosaicUvwCacheKey, GridFtProjection>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -89,14 +89,6 @@ impl MosaicUvwCacheKey {
             target_cosine_bits: target_direction.cosines().map(f64::to_bits),
         }
     }
-}
-
-fn epoch_from_mjd_seconds(mjd_seconds: f64, refer: EpochRef) -> MEpoch {
-    // Casacore's Quantity conversion scales seconds by the precomputed
-    // seconds-to-days factor. Multiplication and division differ by several
-    // f64 ULPs at MeasurementSet epoch magnitudes, which is observable in
-    // exact frequency-coordinate metadata.
-    MEpoch::from_mjd(mjd_seconds * (1.0 / 86_400.0), refer)
 }
 
 impl GeometryCacheKey {
@@ -185,14 +177,14 @@ impl MsCalEngine {
             let pos = ant.position(row)?;
             antenna_positions.push(MPosition::new_itrf(pos[0], pos[1], pos[2]));
             let mount = ant.mount(row)?;
-            antenna_mount_alt_az.push(mount.to_ascii_lowercase().starts_with("alt-az"));
+            antenna_mount_alt_az.push(casa_observation::alt_az_mount(&mount));
         }
 
         let observatory_position =
             resolve_observatory_position(ms, &antenna_positions, measures.as_ref());
         let antenna_response_classes = casa_alma_aca_response_classes(ms)?;
         let antenna_response_family_envelope =
-            casa_alma_aca_family_envelope(&antenna_response_classes);
+            AntennaResponseClass::family_envelope(&antenna_response_classes);
         let field = ms.field()?;
         let n_field = field.row_count();
         let mut field_directions = Vec::with_capacity(n_field);
@@ -258,19 +250,14 @@ impl MsCalEngine {
             antenna_positions.push(MPosition::new_itrf(position[0], position[1], position[2]));
             drop(position);
             let mount = selected_string_value(antenna.table(), row, "MOUNT")?;
-            antenna_mount_alt_az.push(
-                mount
-                    .as_bytes()
-                    .get(.."alt-az".len())
-                    .is_some_and(|prefix| prefix.eq_ignore_ascii_case(b"alt-az")),
-            );
+            antenna_mount_alt_az.push(casa_observation::alt_az_mount(&mount));
         }
 
         let observatory_position =
             resolve_observatory_position_selected(ms, &antenna_positions, measures.as_ref());
         let antenna_response_classes = casa_alma_aca_response_classes(ms)?;
         let antenna_response_family_envelope =
-            casa_alma_aca_family_envelope(&antenna_response_classes);
+            AntennaResponseClass::family_envelope(&antenna_response_classes);
         let field = ms.field()?;
         let mut field_directions = Vec::with_capacity(field.row_count());
         let mut field_phase_offsets = Vec::with_capacity(field.row_count());
@@ -370,7 +357,7 @@ impl MsCalEngine {
 
     /// Build a MeasFrame for the given time and antenna.
     fn make_frame(&self, time_mjd_sec: f64, antenna_id: usize) -> MsResult<MeasFrame> {
-        let epoch = epoch_from_mjd_seconds(time_mjd_sec, self.time_reference);
+        let epoch = MEpoch::from_mjd_seconds(time_mjd_sec, self.time_reference);
         let position = self
             .antenna_positions
             .get(antenna_id)
@@ -393,7 +380,7 @@ impl MsCalEngine {
         time_mjd_sec: f64,
         position: MPosition,
     ) -> MsResult<MeasFrame> {
-        let epoch = epoch_from_mjd_seconds(time_mjd_sec, self.time_reference);
+        let epoch = MEpoch::from_mjd_seconds(time_mjd_sec, self.time_reference);
         let frame = MeasFrame::new().with_epoch(epoch).with_position(position);
         Ok(match &self.measures {
             Some(measures) => frame.with_measures(Arc::clone(measures)),
@@ -701,13 +688,7 @@ impl MsCalEngine {
             return Ok(0.0);
         }
         let frame = self.make_frame(time_mjd_sec, antenna_id)?;
-        let source_azel = self
-            .field_dir(field_id)?
-            .convert_to(DirectionRef::AZEL, &frame)?;
-        let pole_azel =
-            MDirection::from_angles(0.0, std::f64::consts::FRAC_PI_2, DirectionRef::HADEC)
-                .convert_to(DirectionRef::AZEL, &frame)?;
-        let value = spherical_position_angle(&source_azel, &pole_azel);
+        let value = self.field_dir(field_id)?.parallactic_angle(&frame)?;
         store_geometry_value(&self.parallactic_angle_cache, key, value);
         Ok(value)
     }
@@ -734,13 +715,7 @@ impl MsCalEngine {
     ) -> MsResult<f64> {
         let frame =
             self.make_frame_with_position(time_mjd_sec, self.observatory_position.clone())?;
-        let source_azel = self
-            .field_dir(field_id)?
-            .convert_to(DirectionRef::AZEL, &frame)?;
-        let pole_azel =
-            MDirection::from_angles(0.0, std::f64::consts::FRAC_PI_2, DirectionRef::HADEC)
-                .convert_to(DirectionRef::AZEL, &frame)?;
-        Ok(spherical_position_angle(&source_azel, &pole_azel))
+        Ok(self.field_dir(field_id)?.parallactic_angle(&frame)?)
     }
 
     /// Compute azimuth and elevation (radians) for a given time, field, and antenna.
@@ -782,7 +757,7 @@ impl MsCalEngine {
     /// Cf. C++ `MSCalEngine::getLAST`.
     pub fn last(&self, time_mjd_sec: f64, antenna_id: usize) -> MsResult<f64> {
         let frame = self.make_frame(time_mjd_sec, antenna_id)?;
-        let epoch = epoch_from_mjd_seconds(time_mjd_sec, EpochRef::UTC);
+        let epoch = MEpoch::from_mjd_seconds(time_mjd_sec, EpochRef::UTC);
         let last_epoch = epoch.convert_to(EpochRef::LAST, &frame)?;
         // LAST is stored as fraction of a day; convert to radians (1 day = 2π)
         let last_days = last_epoch.value().as_mjd();
@@ -795,7 +770,7 @@ impl MsCalEngine {
     pub fn last_observatory(&self, time_mjd_sec: f64) -> MsResult<f64> {
         let frame =
             self.make_frame_with_position(time_mjd_sec, self.observatory_position.clone())?;
-        let epoch = epoch_from_mjd_seconds(time_mjd_sec, EpochRef::UTC);
+        let epoch = MEpoch::from_mjd_seconds(time_mjd_sec, EpochRef::UTC);
         let last_epoch = epoch.convert_to(EpochRef::LAST, &frame)?;
         let last_days = last_epoch.value().as_mjd();
         let frac = last_days - last_days.floor();
@@ -871,7 +846,7 @@ impl MsCalEngine {
         let (sin_dec, cos_dec) = dec.sin_cos();
 
         // Rotate baseline from ITRF to equatorial using GMST, then to UVW using RA/Dec.
-        let epoch = epoch_from_mjd_seconds(time_mjd_sec, EpochRef::UTC);
+        let epoch = MEpoch::from_mjd_seconds(time_mjd_sec, EpochRef::UTC);
         let gmst_epoch = epoch.convert_to(EpochRef::GMST1, &frame)?;
         let gmst_frac = gmst_epoch.value().as_mjd();
         let gmst_rad = (gmst_frac - gmst_frac.floor()) * 2.0 * std::f64::consts::PI;
@@ -1015,13 +990,7 @@ impl MsCalEngine {
             target_direction_rad[1],
             DirectionRef::J2000,
         );
-        let transform = CasaUvwMachine::new(&target, source);
-        let casa_input = [-raw_uvw_m[0], -raw_uvw_m[1], raw_uvw_m[2]];
-        let (casa_output, casa_dphase_m) = transform.convert_uvw(casa_input);
-        Ok((
-            [-casa_output[0], -casa_output[1], casa_output[2]],
-            -casa_dphase_m,
-        ))
+        Ok(GridFtProjection::between_directions(source, &target).apply(raw_uvw_m))
     }
 
     pub(crate) fn reproject_raw_uvw_for_gridft_between_j2000_directions(
@@ -1030,12 +999,9 @@ impl MsCalEngine {
         source_direction_rad: [f64; 2],
         target_direction_rad: [f64; 2],
     ) -> MsResult<([f64; 3], f64)> {
-        gridft_projection_between_j2000_directions(
-            raw_uvw_m,
-            source_direction_rad,
-            target_direction_rad,
-            false,
-        )
+        let [source, target] = [source_direction_rad, target_direction_rad]
+            .map(|[ra, dec]| MDirection::from_angles(ra, dec, DirectionRef::J2000));
+        Ok(GridFtProjection::between_directions(&source, &target).apply(raw_uvw_m))
     }
 
     /// Reproject raw MS UVW coordinates for one CASA faceted `GridFT` chart.
@@ -1059,13 +1025,7 @@ impl MsCalEngine {
             target_direction_rad[1],
             DirectionRef::J2000,
         );
-        let transform = CasaUvwMachine::new(&target, source);
-        let casa_input = [-raw_uvw_m[0], -raw_uvw_m[1], raw_uvw_m[2]];
-        let (casa_output, casa_dphase_m) = transform.convert_uvw_projected(casa_input);
-        Ok((
-            [-casa_output[0], -casa_output[1], casa_output[2]],
-            -casa_dphase_m,
-        ))
+        Ok(GridFtProjection::faceted_between_directions(source, &target).apply(raw_uvw_m))
     }
 
     pub(crate) fn reproject_raw_uvw_for_faceted_gridft_between_j2000_directions(
@@ -1074,12 +1034,9 @@ impl MsCalEngine {
         source_direction_rad: [f64; 2],
         target_direction_rad: [f64; 2],
     ) -> MsResult<([f64; 3], f64)> {
-        gridft_projection_between_j2000_directions(
-            raw_uvw_m,
-            source_direction_rad,
-            target_direction_rad,
-            true,
-        )
+        let [source, target] = [source_direction_rad, target_direction_rad]
+            .map(|[ra, dec]| MDirection::from_angles(ra, dec, DirectionRef::J2000));
+        Ok(GridFtProjection::faceted_between_directions(&source, &target).apply(raw_uvw_m))
     }
 
     /// Reproject raw MS UVW coordinates to an explicit fixed J2000 direction
@@ -1109,14 +1066,17 @@ impl MsCalEngine {
             transform
         } else {
             let source_direction = self.field_dir(source_field_id)?;
-            let transform = CasaGirarUvwTransform::new(source_direction, target_direction);
+            let transform =
+                GridFtProjection::mosaic_between_directions(source_direction, target_direction);
             self.mosaic_uvw_cache
                 .write()
                 .expect("MS mosaic UVW cache poisoned")
                 .insert(key, transform);
             transform
         };
-        Ok(transform.apply(raw_uvw_m))
+        // The projection gives the gridder's `−dphase`; this returns CASA's.
+        let (uvw_m, phase_shift_m) = transform.apply(raw_uvw_m);
+        Ok((uvw_m, -phase_shift_m))
     }
 
     /// The observatory position used by this engine.
@@ -1149,7 +1109,7 @@ fn casa_alma_aca_response_classes(
         observation.row_count() > 0
             && (0..observation.row_count()).all(|row| {
                 selected_string_value(observation.table(), row, "TELESCOPE_NAME")
-                    .is_ok_and(|name| matches!(name.trim(), "ALMA" | "ACA"))
+                    .is_ok_and(|name| AntennaResponseClass::casa_alma_aca_telescope(&name))
             })
     });
     if !supported_observation {
@@ -1157,30 +1117,11 @@ fn casa_alma_aca_response_classes(
     }
     (0..antenna.row_count())
         .map(|row| {
-            selected_f64_value(antenna.table(), row, "DISH_DIAMETER").map(|diameter| {
-                if (diameter - 12.0).abs() < 0.5 {
-                    Some(AntennaResponseClass::CasaAlma12m)
-                } else if (diameter - 7.0).abs() < 1.0 {
-                    Some(AntennaResponseClass::CasaAca7m)
-                } else {
-                    None
-                }
-            })
+            selected_f64_value(antenna.table(), row, "DISH_DIAMETER")
+                .map(AntennaResponseClass::casa_alma_aca)
         })
         .collect::<MsResult<Vec<_>>>()
         .map(Vec::into_boxed_slice)
-}
-
-fn casa_alma_aca_family_envelope(
-    classes: &[Option<AntennaResponseClass>],
-) -> Option<AntennaResponseClass> {
-    if classes.contains(&Some(AntennaResponseClass::CasaAlma12m)) {
-        Some(AntennaResponseClass::CasaAlma12m)
-    } else if classes.contains(&Some(AntennaResponseClass::CasaAca7m)) {
-        Some(AntennaResponseClass::CasaAca7m)
-    } else {
-        None
-    }
 }
 
 fn uvw_rotation_matrix(
@@ -1239,199 +1180,6 @@ fn uvw_phase_rotation_vector(
     )
 }
 
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct CasaUvwMachine {
-    uvrot: [[f64; 3]; 3],
-    input_plane_projection: [[f64; 3]; 3],
-    phrot: [f64; 3],
-}
-
-impl CasaUvwMachine {
-    /// Construct the fixed-J2000 subset of casacore `UVWMachine`.
-    ///
-    /// Both directions already use the shared J2000 reference, so the
-    /// reference-frame axis conversion is the identity. The explicit-output
-    /// constructor nevertheless executes the rotation even for two identical
-    /// directions; CASA's AW gridders depend on the resulting f64 roundoff.
-    pub(crate) fn new(output_direction: &MDirection, input_direction: &MDirection) -> Self {
-        let [input_ra, input_dec] = casa_mvdirection_angles(input_direction);
-        let [output_ra, output_dec] = casa_mvdirection_angles(output_direction);
-        let rot1 = casa_euler_rotation(&[
-            (-(std::f64::consts::FRAC_PI_2 - input_ra), Axis::Z),
-            (input_dec - std::f64::consts::FRAC_PI_2, Axis::X),
-        ]);
-        let rot3 = casa_euler_rotation(&[
-            (std::f64::consts::FRAC_PI_2 - output_dec, Axis::X),
-            (-(output_ra - std::f64::consts::FRAC_PI_2), Axis::Z),
-        ]);
-        let uvrot = mat3_transpose(casa_mat3_mul(casa_mat3_mul(rot3, identity3()), rot1));
-        // casacore UVWMachine's `project=true` path reprojects the rotated UV
-        // plane onto the input-direction reference plane. Preserve its
-        // literal Euler construction and sparse matrix assignment so faceted
-        // GridFT follows the same arithmetic boundary.
-        let projection_rotation = casa_euler_rotation(&[
-            (-(std::f64::consts::FRAC_PI_2 - output_dec), Axis::X),
-            (output_ra - input_ra, Axis::Z),
-            (std::f64::consts::FRAC_PI_2 - input_dec, Axis::X),
-        ]);
-        let denominator = projection_rotation[2][2];
-        let mut input_plane_projection = identity3();
-        input_plane_projection[0][0] = projection_rotation[1][1] / denominator;
-        input_plane_projection[1][1] = projection_rotation[0][0] / denominator;
-        input_plane_projection[0][1] = projection_rotation[1][0] / denominator;
-        input_plane_projection[1][0] = projection_rotation[0][1] / denominator;
-        let output_cosines = output_direction.cosines();
-        let input_cosines = input_direction.cosines();
-        let phrot = casa_mat3_mul_vec3(
-            rot3,
-            [
-                output_cosines[0] - input_cosines[0],
-                output_cosines[1] - input_cosines[1],
-                output_cosines[2] - input_cosines[2],
-            ],
-        );
-        Self {
-            uvrot,
-            input_plane_projection,
-            phrot,
-        }
-    }
-
-    pub(crate) fn convert_uvw(self, uvw_m: [f64; 3]) -> ([f64; 3], f64) {
-        let converted = casa_row_vec3_mul_mat3(uvw_m, self.uvrot);
-        let phase_shift_m = casa_dot3(self.phrot, converted);
-        (converted, phase_shift_m)
-    }
-
-    fn convert_uvw_projected(self, uvw_m: [f64; 3]) -> ([f64; 3], f64) {
-        let rotated = casa_row_vec3_mul_mat3(uvw_m, self.uvrot);
-        let phase_shift_m = casa_dot3(self.phrot, rotated);
-        (
-            casa_row_vec3_mul_mat3(rotated, self.input_plane_projection),
-            phase_shift_m,
-        )
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct CasaGirarUvwTransform {
-    frame_machine: CasaUvwMachine,
-    phase_machine: CasaUvwMachine,
-}
-
-impl CasaGirarUvwTransform {
-    pub(crate) fn new(source_direction: &MDirection, image_direction: &MDirection) -> Self {
-        Self {
-            // `FTMachine::girarUVW()` first executes an explicit-output
-            // UVWMachine for the correlator direction -> in-field direction
-            // conversion. These are both J2000 here, but CASA does not collapse
-            // this explicit-output machine to a no-op.
-            frame_machine: CasaUvwMachine::new(source_direction, source_direction),
-            phase_machine: CasaUvwMachine::new(image_direction, source_direction),
-        }
-    }
-
-    /// A row's raw `UVW` reprojected, and CASA's `dphase` in metres.
-    pub(crate) fn apply(self, raw_uvw_m: [f64; 3]) -> ([f64; 3], f64) {
-        // `AWProjectFT::put()` enters `girarUVW()` through `negateUV(vb)`.
-        // Keep CASA's native sign convention inside this one shared boundary.
-        let casa_input_uvw_m = [-raw_uvw_m[0], -raw_uvw_m[1], raw_uvw_m[2]];
-        let (intermediate, mut phase_shift_m) = self.frame_machine.convert_uvw(casa_input_uvw_m);
-        let rot = self.phase_machine.uvrot;
-        let casa_output_uvw_m = [
-            intermediate[0] * rot[0][0] + intermediate[1] * rot[1][0],
-            intermediate[1] * rot[1][1] + intermediate[0] * rot[0][1],
-            intermediate[0] * rot[0][2] + intermediate[1] * rot[1][2] + intermediate[2] * rot[2][2],
-        ];
-        // CASA's shipped synthesis library evaluates these girarUVW row
-        // expressions with contraction disabled. Keep the source order;
-        // explicit mul_add matches row zero but diverges on later VLASS rows.
-        let phase_delta_m = self.phase_machine.phrot[0] * casa_output_uvw_m[0]
-            + self.phase_machine.phrot[1] * casa_output_uvw_m[1];
-        phase_shift_m += phase_delta_m;
-        (
-            [
-                -casa_output_uvw_m[0],
-                -casa_output_uvw_m[1],
-                casa_output_uvw_m[2],
-            ],
-            phase_shift_m,
-        )
-    }
-}
-
-fn casa_mvdirection_angles(direction: &MDirection) -> [f64; 2] {
-    let cosines = direction.cosines();
-    [cosines[1].atan2(cosines[0]), cosines[2].asin()]
-}
-
-fn casa_euler_rotation(operations: &[(f64, Axis)]) -> [[f64; 3]; 3] {
-    let mut matrix = identity3();
-    for &(angle, axis) in operations {
-        if angle * axis.number() == 0.0 {
-            continue;
-        }
-        let mut rotation = identity3();
-        let (i, j) = axis.indices();
-        let cosine = angle.cos();
-        let sine = angle.sin();
-        rotation[i][i] = cosine;
-        rotation[j][j] = cosine;
-        rotation[j][i] = sine;
-        rotation[i][j] = -sine;
-        matrix = casa_mat3_mul(matrix, rotation);
-    }
-    matrix
-}
-
-fn casa_mat3_mul(left: [[f64; 3]; 3], right: [[f64; 3]; 3]) -> [[f64; 3]; 3] {
-    let mut output = identity3();
-    for row in 0..3 {
-        let source = left[row];
-        for column in 0..3 {
-            let mut value = source[0] * right[0][column];
-            // casacore RotMatrix::operator*= materializes every multiply and
-            // addition as a separate statement. These construction-time
-            // cancellations are observably different from explicit fused
-            // multiply-add arithmetic.
-            value += source[1] * right[1][column];
-            value += source[2] * right[2][column];
-            output[row][column] = value;
-        }
-    }
-    output
-}
-
-fn casa_row_vec3_mul_mat3(vector: [f64; 3], matrix: [[f64; 3]; 3]) -> [f64; 3] {
-    let mut output = [0.0; 3];
-    for column in 0..3 {
-        output[column] = vector[0] * matrix[0][column];
-        output[column] += vector[1] * matrix[1][column];
-        output[column] += vector[2] * matrix[2][column];
-    }
-    output
-}
-
-fn casa_mat3_mul_vec3(matrix: [[f64; 3]; 3], vector: [f64; 3]) -> [f64; 3] {
-    let mut output = [0.0; 3];
-    for row in 0..3 {
-        // casacore's RotMatrix * MVPosition loop accumulates these as three
-        // distinct operations in its prebuilt library.
-        output[row] += matrix[row][0] * vector[0];
-        output[row] += matrix[row][1] * vector[1];
-        output[row] += matrix[row][2] * vector[2];
-    }
-    output
-}
-
-fn casa_dot3(left: [f64; 3], right: [f64; 3]) -> f64 {
-    let mut result = 0.0;
-    for axis in 0..3 {
-        result += left[axis] * right[axis];
-    }
-    result
-}
-
 fn dot3(left: [f64; 3], right: [f64; 3]) -> f64 {
     left[0] * right[0] + left[1] * right[1] + left[2] * right[2]
 }
@@ -1458,35 +1206,6 @@ fn shift_direction_true_angle(
         y.atan2(x).rem_euclid(std::f64::consts::TAU),
         z.atan2(x.hypot(y)),
         DirectionRef::J2000,
-    ))
-}
-
-pub(crate) fn gridft_projection_between_j2000_directions(
-    raw_uvw_m: [f64; 3],
-    source_direction_rad: [f64; 2],
-    target_direction_rad: [f64; 2],
-    projected: bool,
-) -> MsResult<([f64; 3], f64)> {
-    let source = MDirection::from_angles(
-        source_direction_rad[0],
-        source_direction_rad[1],
-        DirectionRef::J2000,
-    );
-    let target = MDirection::from_angles(
-        target_direction_rad[0],
-        target_direction_rad[1],
-        DirectionRef::J2000,
-    );
-    let transform = CasaUvwMachine::new(&target, &source);
-    let casa_input = [-raw_uvw_m[0], -raw_uvw_m[1], raw_uvw_m[2]];
-    let (casa_output, casa_dphase_m) = if projected {
-        transform.convert_uvw_projected(casa_input)
-    } else {
-        transform.convert_uvw(casa_input)
-    };
-    Ok((
-        [-casa_output[0], -casa_output[1], casa_output[2]],
-        -casa_dphase_m,
     ))
 }
 
@@ -1518,22 +1237,6 @@ fn mat3_transpose(matrix: [[f64; 3]; 3]) -> [[f64; 3]; 3] {
 enum Axis {
     X,
     Z,
-}
-
-impl Axis {
-    fn number(self) -> f64 {
-        match self {
-            Self::X => 1.0,
-            Self::Z => 3.0,
-        }
-    }
-
-    fn indices(self) -> (usize, usize) {
-        match self {
-            Self::X => (1, 2),
-            Self::Z => (0, 1),
-        }
-    }
 }
 
 fn euler_rotation(operations: &[(f64, Axis)]) -> [[f64; 3]; 3] {
@@ -1759,22 +1462,11 @@ fn resolve_observatory_position_selected(
     antenna_positions: &[MPosition],
     measures: &dyn MeasuresProvider,
 ) -> MPosition {
-    ms.observation()
-        .ok()
-        .and_then(|observation| {
-            (0..observation.row_count()).find_map(|row| {
-                selected_string_value(observation.table(), row, "TELESCOPE_NAME").ok()
-            })
-        })
-        .and_then(|name| {
-            known_observatory_position(&name).or_else(|| {
-                MPosition::from_observatory_name(&name, measures)
-                    .ok()
-                    .flatten()
-            })
-        })
-        .or_else(|| antenna_positions.first().cloned())
-        .unwrap_or_else(|| MPosition::new_itrf(0.0, 0.0, 0.0))
+    let telescope = ms.observation().ok().and_then(|observation| {
+        (0..observation.row_count())
+            .find_map(|row| selected_string_value(observation.table(), row, "TELESCOPE_NAME").ok())
+    });
+    MPosition::casa_array_reference(telescope.as_deref(), antenna_positions.first(), measures)
 }
 
 fn resolve_field_phase_direction_selected(
@@ -1885,34 +1577,10 @@ fn resolve_observatory_position(
     antenna_positions: &[MPosition],
     measures: &dyn MeasuresProvider,
 ) -> MPosition {
-    ms.observation()
-        .ok()
-        .and_then(|observation| {
-            (0..observation.row_count())
-                .find_map(|row| observation.string(row, "TELESCOPE_NAME").ok())
-        })
-        .and_then(|name| {
-            known_observatory_position(&name).or_else(|| {
-                MPosition::from_observatory_name(&name, measures)
-                    .ok()
-                    .flatten()
-            })
-        })
-        .or_else(|| antenna_positions.first().cloned())
-        .unwrap_or_else(|| MPosition::new_itrf(0.0, 0.0, 0.0))
-}
-
-fn known_observatory_position(name: &str) -> Option<MPosition> {
-    // Some casacore geodetic tables predate the EVLA row even though current
-    // CASA resolves that telescope name. Preserve the current CASA
-    // MeasTable::Observatory("EVLA") ITRF position as a bounded fallback.
-    name.trim().eq_ignore_ascii_case("EVLA").then(|| {
-        MPosition::new_itrf(
-            -1_601_156.673_287_362,
-            -5_041_988.986_065_895,
-            3_554_879.236_820_509_7,
-        )
-    })
+    let telescope = ms.observation().ok().and_then(|observation| {
+        (0..observation.row_count()).find_map(|row| observation.string(row, "TELESCOPE_NAME").ok())
+    });
+    MPosition::casa_array_reference(telescope.as_deref(), antenna_positions.first(), measures)
 }
 
 fn resolve_field_phase_direction_j2000_with_observatory(
@@ -2030,16 +1698,6 @@ fn resolve_reference_string(
     }
 }
 
-fn spherical_position_angle(origin: &MDirection, target: &MDirection) -> f64 {
-    let (origin_lon, origin_lat) = origin.as_angles();
-    let (target_lon, target_lat) = target.as_angles();
-    let delta_lon = target_lon - origin_lon;
-    let y = delta_lon.sin() * target_lat.cos();
-    let x =
-        origin_lat.cos() * target_lat.sin() - origin_lat.sin() * target_lat.cos() * delta_lon.cos();
-    y.atan2(x)
-}
-
 pub(crate) const fn polarization_operator_angle(physical_parallactic_angle_rad: f64) -> f64 {
     // CASA's visibility polarization operator rotates by the negative of the
     // physical MSCalEngine parallactic angle (issue519-polarization-oracle.v2).
@@ -2081,19 +1739,20 @@ mod tests {
 
     #[test]
     fn mjd_seconds_scaling_matches_casacore_quantity_rounding() {
-        let epoch = epoch_from_mjd_seconds(5_060_832_843.375, EpochRef::UTC);
+        let epoch = MEpoch::from_mjd_seconds(5_060_832_843.375, EpochRef::UTC);
         assert_eq!(epoch.value().day(), 58_574.0);
         assert_eq!(epoch.value().frac(), 0.454_205_729_161_913_04);
     }
 
     #[test]
     fn evla_observatory_fallback_matches_current_casa_position() {
-        let position = known_observatory_position(" EVLA ").expect("known EVLA position");
+        let measures = casa_test_support::deterministic_measures_provider();
+        let position =
+            MPosition::casa_observatory(" EVLA ", measures.as_ref()).expect("known EVLA position");
         let (longitude_rad, latitude_rad, radius_m) = position.as_spherical();
         assert!((longitude_rad - -1.878_288_434_411_257_6).abs() < 1.0e-15);
         assert!((latitude_rad - 0.591_675_343_072_337_6).abs() < 1.0e-15);
         assert!((radius_m - 6_373_580.000_000_001).abs() < 1.0e-6);
-        assert!(known_observatory_position("VLA").is_none());
     }
 
     fn add_vla_antenna(ms: &mut MeasurementSet) {
@@ -2563,35 +2222,6 @@ mod tests {
             3.545_602_179_904_207_7,
             0.293_215_314_333_100_33,
             DirectionRef::J2000,
-        );
-        let prepared = CasaGirarUvwTransform::new(&source_direction, &image_direction);
-        let expected_rotation_bits = [
-            [4_607_182_418_800_017_408, 0, 0],
-            [0, 4_607_182_418_800_017_408, 4_363_988_038_922_010_624],
-            [0, 4_363_988_038_922_010_624, 4_607_182_418_800_017_409],
-        ];
-        assert_eq!(
-            prepared
-                .frame_machine
-                .uvrot
-                .map(|row| row.map(f64::to_bits)),
-            expected_rotation_bits
-        );
-        assert_eq!(
-            prepared
-                .phase_machine
-                .uvrot
-                .map(|row| row.map(f64::to_bits)),
-            expected_rotation_bits
-        );
-        assert_eq!(prepared.frame_machine.phrot.map(f64::to_bits), [0, 0, 0]);
-        assert_eq!(
-            prepared.phase_machine.phrot.map(f64::to_bits),
-            [
-                4_379_056_720_170_678_802,
-                13_570_113_653_343_543_584,
-                13_578_075_827_820_232_864,
-            ]
         );
         let engine = MsCalEngine::from_parts(
             vec![MPosition::new_itrf(VLA_X, VLA_Y, VLA_Z)],

@@ -411,7 +411,7 @@ impl Default for PredictOptions {
 pub struct PredictRow<'a> {
     /// Baseline coordinates in metres towards the model's tangent point, in
     /// GridFT's convention: the row's `UVW` rotated by
-    /// [`casa_ms::derived::GridFtProjection`].
+    /// [`casa_imaging_model::GridFtProjection`].
     pub uvw_m: [f64; 3],
     /// GridFT's phase shift in metres (`−dphase`), from the same rotation.
     pub phase_shift_m: f64,

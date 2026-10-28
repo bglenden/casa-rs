@@ -42,8 +42,8 @@
 //! casa-rs evaluates J2000 components in a circular or linear basis.
 
 use casa_components::{ComponentList, Polarisation, ShapeTransform, SkyComponent};
+use casa_imaging_model::GridFtProjection;
 use casa_imaging_runtime::Reservation;
-use casa_ms::derived::GridFtProjection;
 use casa_types::measures::direction::DirectionRef;
 use num_complex::{Complex32, Complex64};
 

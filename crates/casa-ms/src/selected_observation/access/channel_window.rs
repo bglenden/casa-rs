@@ -8,8 +8,8 @@ use casa_imaging_model::CompiledProblem;
 
 use super::super::spectral_evaluation::prepare_row_frequency_conversion;
 use super::{BoundObservationSource, BoundObservationSourceError, SelectedCoordinates};
-use crate::spectral_selection::PreparedFrequencyFrameConversion;
 use crate::{SelectedObservationRow, VisibilityChannelReadRange};
+use casa_types::measures::PreparedFrequencyConversion;
 
 pub(super) fn selected_channel_window(
     source: &BoundObservationSource,
@@ -32,7 +32,7 @@ pub(super) fn selected_channel_window(
         .frame;
     let mut admitted_first: Option<usize> = None;
     let mut admitted_last: Option<usize> = None;
-    let mut cached_conversion: Option<((i32, u64), PreparedFrequencyFrameConversion)> = None;
+    let mut cached_conversion: Option<((i32, u64), PreparedFrequencyConversion)> = None;
     for row in rows.iter().copied() {
         let normalized_time = row.time_mjd_seconds / 86_400.0 * 86_400.0;
         let context_key = (row.field_id, normalized_time.to_bits());
