@@ -78,6 +78,13 @@ pub struct OpenOptions {
     pub group_closure: GroupClosure,
     /// How an MSv2 is partitioned; see [`PartitionScheme`].
     pub partition_scheme: PartitionScheme,
+    /// The most bytes opening an MSv2 may hold for its index while it is
+    /// built: a chunk of MAIN's key columns, each partition's distinct
+    /// times, baselines and processors, then its grid. An opening that
+    /// would need more is refused ([`ObservationError::OverBudget`]) before
+    /// it allocates them, at most one key beyond. `None` bounds nothing. An
+    /// MSv4 store ignores it.
+    pub opening_budget_bytes: Option<usize>,
 }
 
 /// Open the observation at `path`, choosing its adapter from the store:

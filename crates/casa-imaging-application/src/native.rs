@@ -21,6 +21,7 @@ use casa_imaging_runtime::{
 };
 use casa_ms::observation_io::{Msv2Observation, OpenOptions};
 use casa_ms::{ResolvedSelectedObservationAccess, SelectedObservationResolutionRequest};
+use casa_observation::ObservationError;
 
 use crate::compile::resolve_partitions;
 use crate::imaging::{self, ImagingError};
@@ -204,9 +205,12 @@ pub(crate) fn batch_route(
 
 /// The MeasurementSet `observation` names, opened, with the charge of its
 /// index while it is open ([`Msv2Observation::index_bytes`]). What opening
-/// holds is admitted before it opens, from MAIN's row count
-/// ([`Msv2Observation::opening_bytes`]); the charge is then trimmed to the
-/// index, or raised by its grids' padding.
+/// usually holds is admitted before it opens, from MAIN's row count
+/// ([`Msv2Observation::opening_bytes`]), and opening may hold at most that
+/// and what the policy leaves free besides
+/// ([`OpenOptions::opening_budget_bytes`]): more is refused, as an
+/// admission, before it is allocated. The charge is then trimmed to the
+/// index, or raised to it.
 fn open_observation(
     observation: &SelectedObservationResolutionRequest,
     runtime: &ApplicationRuntime,
@@ -221,8 +225,26 @@ fn open_observation(
             memory: Msv2Observation::opening_bytes(main_rows) as u64,
         },
     )?;
-    let opened = Msv2Observation::open_with(observation.locator(), &OpenOptions::default())
-        .map_err(|error| NativeError::Other(Box::new(error)))?;
+    let options = OpenOptions {
+        opening_budget_bytes: usize::try_from(
+            reservation.memory() + free_memory(&runtime.host, &runtime.resource_policy),
+        )
+        .ok(),
+        ..OpenOptions::default()
+    };
+    let opened =
+        Msv2Observation::open_with(observation.locator(), &options).map_err(
+            |error| match error {
+                ObservationError::OverBudget {
+                    required, budget, ..
+                } => NativeError::Admission(Admission {
+                    phase: "observation opening",
+                    required: required as u64,
+                    available: budget as u64,
+                }),
+                error => NativeError::Other(Box::new(error)),
+            },
+        )?;
     let index = opened.index_bytes() as u64;
     if index <= reservation.memory() {
         reservation.retain(index);

@@ -6,8 +6,13 @@
 //! charge without the passes' blocks includes the opening's index, which
 //! the reading does not allocate: a few bytes a sample. A whole run's law
 //! (`admission_memory.rs`) cannot see this charge beside the rest of the
-//! run's. This binary's global allocator counts the live heap; it holds
-//! this one law, so the law runs in a process of its own.
+//! run's. This law sees the batches, the source's largest term; each
+//! smaller term is held to its bound by its owner's law: the geometry and
+//! the parallactic cache by `casa-imaging-model`'s `batch_geometry_memory`,
+//! a traversal's batches (the survey's among them) by the adapters' laws,
+//! and the pointing and opening bounds by `casa-ms`'s
+//! `msv2_opening_memory`. This binary's global allocator counts the live
+//! heap; it holds this one law, so the law runs in a process of its own.
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::path::Path;

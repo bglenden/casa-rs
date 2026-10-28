@@ -152,9 +152,9 @@ fn selections_that_empty_data_descriptions_image_the_remaining_rows() {
         "{error}"
     );
 
-    // The MSv2 adapter partitions rows by their state's intents, so a
-    // selection of one of two states listing the same intents is refused
-    // on the batch route: their rows share partitions.
+    // The MSv2 adapter partitions rows by their state's OBS_MODE. A second
+    // state of state 0's mode that no row holds leaves state 0's partition
+    // its own: `intent='0'` images alike on both routes.
     let mut ms = MeasurementSet::open(&path).unwrap();
     ms.subtable_mut(SubtableId::State)
         .unwrap()
@@ -165,14 +165,26 @@ fn selections_that_empty_data_descriptions_image_the_remaining_rows() {
         .unwrap();
     ms.save().unwrap();
     drop(ms);
+    image("unused-state", json!({ "intent": "0" })).expect("state 0 alone");
+    // Once rows hold it, the two states' rows share the partition, and the
+    // batch route refuses a selection of one of them.
+    let mut ms = MeasurementSet::open(&path).unwrap();
+    for row in (0..ms.row_count()).step_by(8) {
+        ms.main_table_mut()
+            .row_accessor_mut()
+            .set_cell(row, "STATE_ID", int(2))
+            .unwrap();
+    }
+    ms.save().unwrap();
+    drop(ms);
     let error = image_on(
-        "shared-intents",
+        "shared-mode",
         &json!({ "intent": "0" }),
         SourceRoute::ObservationBatches,
     )
     .err()
-    .expect("a state sharing its intents with an unselected one");
-    assert!(error.to_string().contains("same intents"), "{error}");
+    .expect("a state sharing its OBS_MODE with an unselected one");
+    assert!(error.to_string().contains("sharing an OBS_MODE"), "{error}");
 }
 
 /// The observation-batch route (#932, step 4) refuses what it does not

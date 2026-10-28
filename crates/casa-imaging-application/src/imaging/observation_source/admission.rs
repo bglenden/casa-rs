@@ -90,17 +90,17 @@ fn estimate(
 ///
 /// As the selected-observation route does for its rows, the batches hold
 /// at least one time of each partition and at most all its selected times,
-/// and grow beyond one time by at most
-/// the bootstrap budget ([`bootstrap_source_budget`]) or the source's share
-/// of a quarter of what `policy` leaves free on `host`, shared with the
-/// passes' per-row storage in proportion to their bytes per sample. A row
-/// of [`row_layout`] produces at most `row` samples. The charge holds the
-/// largest batch's buffers, its geometry, the plan's parallactic cache at
-/// every selected (time, field), one pointing query of `pointing_budget`
-/// bytes when the geometry reads pointing (the source holds one partition's
-/// at a time, and drops it before it reads the next), the survey's buffers
-/// and conversions, and the passes' blocks; the run keeps it while the
-/// source is open. What opening the store holds is the caller's to charge.
+/// and grow beyond one time by at most the bootstrap budget
+/// ([`bootstrap_source_budget`]) or the source's share of a quarter of what
+/// `policy` leaves free on `host`, shared with the passes' per-row storage
+/// in proportion to their bytes per sample. A row of [`row_layout`]
+/// produces at most `row` samples. The charge holds the largest batch's
+/// buffers, its geometry, the plan's parallactic cache at every selected
+/// (time, field), the pointing answers the source keeps within
+/// `pointing_budget` bytes when the geometry reads pointing, the survey's
+/// buffers and conversions, and the passes' blocks; the run keeps it while
+/// the source is open. What opening the store holds is the caller's to
+/// charge.
 ///
 /// # Errors
 ///

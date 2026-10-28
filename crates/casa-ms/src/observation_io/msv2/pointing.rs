@@ -31,8 +31,8 @@ impl Msv2Observation {
     /// The most bytes a pointing query of this observation holds while it
     /// is read and once it is answered, whatever its antennas and times:
     /// every `POINTING` row taken as a candidate at four polynomial terms
-    /// (the production source's bound), with one scan block, and the
-    /// series it gives. A [`PointingRequest`] with this budget is never
+    /// (the production source's bound), with one scan block of at most
+    /// every row, and the series it gives. A [`PointingRequest`] with this budget is never
     /// refused for its size. Zero without a `POINTING` table.
     ///
     /// # Errors
@@ -53,7 +53,10 @@ impl Msv2Observation {
             .ms
             .selected_pointing_catalog_requirements(&domain, POLYNOMIAL_TERMS)
             .map_err(storage)?;
-        let scan = SCAN_ROWS.saturating_mul(scan_bytes_per_row);
+        // A scan block holds at most the table's rows.
+        let scan = SCAN_ROWS
+            .min(catalog.source_rows_scanned())
+            .saturating_mul(scan_bytes_per_row);
         // The series holds a time, an interval, an origin and two
         // coefficients a term for each retained row, at most the catalog.
         Ok(catalog

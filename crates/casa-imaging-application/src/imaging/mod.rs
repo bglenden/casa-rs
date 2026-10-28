@@ -18,6 +18,7 @@ pub(crate) use cycle::{ImagingInputs, SourceInput, plane_bounds, run};
 pub(crate) use measurement::{metal_kernel_set, row_samples, standard_kernel_set};
 pub(crate) use observation_source::{
     BatchRoute, ObservationSource, PartitionSelection, SelectedPartition, admit_batches,
+    pointing_direction,
 };
 pub(crate) use visibility_write::VisibilityWriteTarget;
 

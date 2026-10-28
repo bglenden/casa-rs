@@ -293,19 +293,29 @@ impl PointingSeries {
         })
     }
 
-    /// The bytes the samples hold.
+    /// At most the bytes the series holds on the heap: every antenna's
+    /// samples, by their capacities, and the map's nodes. A B-tree node has
+    /// room for 11 entries and, but for the root, holds at least 5, so the
+    /// nodes number at most one more than a fifth of the entries; each is
+    /// counted with its edges.
     #[must_use]
     pub fn held_bytes(&self) -> usize {
-        self.antennas
+        const NODE_ENTRIES: usize = 11;
+        let node = NODE_ENTRIES * size_of::<(AntennaId, AntennaPointing)>()
+            + (NODE_ENTRIES + 1) * size_of::<usize>()
+            + 2 * size_of::<usize>();
+        let samples: usize = self
+            .antennas
             .values()
             .map(|series| {
-                (series.times_s.len()
-                    + series.intervals_s.as_ref().map_or(0, Vec::len)
-                    + series.origins_s.len()
-                    + series.coefficients.len())
+                (series.times_s.capacity()
+                    + series.intervals_s.as_ref().map_or(0, Vec::capacity)
+                    + series.origins_s.capacity()
+                    + series.coefficients.capacity())
                     * size_of::<f64>()
             })
-            .sum()
+            .sum();
+        samples + (self.antennas.len() / 5 + 1) * node
     }
 }
 

@@ -41,6 +41,7 @@ use casa_observation::{AccessRequest, BatchBuffers, Observation, ReadEvent, Trav
 pub(crate) use admission::{Batching, admit_batches};
 use pack::{Layout, PackScratch, Packer, select_samples};
 use pointing::PointingCache;
+pub(crate) use pointing::pointing_direction;
 pub(crate) use selection::{PartitionSelection, SelectedPartition};
 use survey::{PartitionSurvey, survey};
 use window::wave_window;
@@ -55,8 +56,9 @@ pub(crate) struct BatchRoute {
     pub(crate) selection: PartitionSelection,
     pub(crate) plan: GeometryPlan,
     pub(crate) batching: Batching,
-    /// The budget of a pointing query, under which the store never refuses
-    /// one for its size; zero when geometry reads no pointing.
+    /// The bytes the pointing answers the source keeps may hold, under
+    /// which the store refuses no query for its size; zero when geometry
+    /// reads no pointing.
     pub(crate) pointing_budget: usize,
 }
 

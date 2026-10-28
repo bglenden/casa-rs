@@ -18,15 +18,15 @@ use std::sync::Arc;
 
 use casa_imaging_model::{
     BatchGeometry, CompiledProblem, GeometryPlan, GeometryTraversal, PointingCentreLaw,
-    PointingDirectionColumn, SelectedAntennaResponses, SelectedPointingDirections, SkyDirection,
+    SelectedAntennaResponses, SelectedPointingDirections, SkyDirection,
 };
 use casa_imaging_runtime::{Admitted, finalize_source_access, row_layout};
 use casa_ms::SelectedObservationNumericGeometry;
 use casa_ms::observation_io::{Msv2Observation, OpenOptions};
 use casa_observation::{
     AccessRequest, AntennaEntry, AntennaId, BatchBuffers, Catalogue, CorrelationRequest,
-    FieldSelection, Grouping, Observation, PartitionId, PointingDirection, PointingRequest,
-    ReadEvent, Roles, TimeSelection, VisibilityBatch, WeightRequest,
+    FieldSelection, Grouping, Observation, PartitionId, PointingRequest, ReadEvent, Roles,
+    TimeSelection, VisibilityBatch, WeightRequest,
 };
 use casa_types::measures::{MeasuresProvider, MjdHighPrec};
 
@@ -533,14 +533,7 @@ fn pointing_request(
         let high = offsets.iter().copied().fold(*span.end(), f64::max);
         span = low..=high;
     }
-    let direction = match problem.geometry().centres().pointing() {
-        PointingCentreLaw::Observation(law)
-            if law.direction_column() == PointingDirectionColumn::Target =>
-        {
-            PointingDirection::Target
-        }
-        _ => PointingDirection::Beam,
-    };
+    let direction = crate::imaging::pointing_direction(problem);
     PointingRequest {
         partition,
         direction,

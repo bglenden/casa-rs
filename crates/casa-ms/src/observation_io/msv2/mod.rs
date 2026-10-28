@@ -15,7 +15,7 @@ pub use cursor::Msv2Cursor;
 #[cfg(feature = "msv4")]
 pub(crate) use pointing::{POLYNOMIAL_TERMS, scan_rows};
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -51,6 +51,9 @@ fn invalid(reason: impl Into<String>) -> ObservationError {
 #[derive(Debug)]
 struct Partition {
     grid: Grid,
+    /// The `STATE::OBS_MODE` its rows share; empty for rows without a
+    /// state.
+    obs_mode: String,
     /// Its `DATA_DESCRIPTION` row.
     data_description_id: u32,
     /// The `SPECTRAL_WINDOW` row of its data description.
@@ -82,6 +85,10 @@ pub struct Msv2Observation {
     ms: MeasurementSet,
     catalogue: Arc<Catalogue>,
     partitions: Vec<Partition>,
+    /// Each `STATE` row's `OBS_MODE`.
+    state_modes: Vec<String>,
+    /// The `STATE_ID`s MAIN's rows hold.
+    main_states: BTreeSet<i32>,
     spectral_weights: bool,
     /// Whether MAIN has `SIGMA_SPECTRUM`.
     spectral_sigmas: bool,
@@ -154,6 +161,7 @@ impl Msv2Observation {
             &modes,
             &ephemerides,
             ROWS_PER_CHUNK,
+            options.opening_budget_bytes,
         )?;
         let groups = data_groups(main, spectral_weights, uvw_frame);
         let mut partitions = Vec::new();
@@ -208,6 +216,7 @@ impl Msv2Observation {
             });
             partitions.push(Partition {
                 grid,
+                obs_mode: key.obs_mode,
                 data_description_id,
                 spectral_window_id: setup.spectral_window_id,
             });
@@ -221,6 +230,8 @@ impl Msv2Observation {
                 partitions: entries,
             }),
             partitions,
+            state_modes: modes,
+            main_states: index.states,
             spectral_weights,
             spectral_sigmas,
             options: options.clone(),
@@ -261,19 +272,40 @@ impl Msv2Observation {
         self.partitions[id.0 as usize].data_description_id
     }
 
-    /// The intents a `STATE::OBS_MODE` lists, as the catalogue gives a
-    /// partition's ([`PartitionEntry::intents`]): split at commas, trimmed,
-    /// sorted and deduplicated.
+    /// The `STATE::OBS_MODE` the rows of partition `id` share: partitions
+    /// are keyed by the whole string, so two modes listing the same intents
+    /// in another order are two partitions. Empty for the rows without a
+    /// state.
     #[must_use]
-    pub fn mode_intents(mode: &str) -> Vec<String> {
-        catalogue::intents(mode)
+    pub fn obs_mode(&self, id: PartitionId) -> &str {
+        &self.partitions[id.0 as usize].obs_mode
     }
 
-    /// At most the bytes opening a MeasurementSet of `main_rows` MAIN rows
-    /// holds besides its grids' padding: one cell per row, each row's time
-    /// while the first pass gathers its partition's times, and one chunk of
-    /// key columns. A grid's padding cells, which only opening finds, add
-    /// four bytes each ([`Self::index_bytes`] once open).
+    /// The `OBS_MODE` a row of `STATE_ID` `state` is partitioned by: its
+    /// `STATE` row's, or empty for -1 or a state beyond `STATE`.
+    #[must_use]
+    pub fn state_mode(&self, state: i32) -> &str {
+        usize::try_from(state)
+            .ok()
+            .and_then(|row| self.state_modes.get(row))
+            .map_or("", String::as_str)
+    }
+
+    /// The `STATE_ID`s MAIN's rows hold, -1 and those beyond `STATE`
+    /// included.
+    #[must_use]
+    pub fn main_states(&self) -> &BTreeSet<i32> {
+        &self.main_states
+    }
+
+    /// The bytes opening a MeasurementSet of `main_rows` MAIN rows holds
+    /// when its grids are full and its times hold a few rows each: a cell
+    /// and eight bytes of time tables per row, and one chunk of key
+    /// columns. Padding cells, which only opening finds, and times of one
+    /// or two rows hold more; [`OpenOptions::opening_budget_bytes`] bounds
+    /// what opening may hold beyond, before it is allocated.
+    ///
+    /// [`OpenOptions::opening_budget_bytes`]: super::OpenOptions::opening_budget_bytes
     #[must_use]
     pub const fn opening_bytes(main_rows: usize) -> usize {
         let chunk = if main_rows < index::ROWS_PER_CHUNK {

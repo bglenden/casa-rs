@@ -115,6 +115,7 @@ fn read(
         .map_err(|error| ApplicationDispatchError::Native(error.to_string().into()))?;
     Ok((blocks, block.capacity_bytes()))
 }
+
 /// The planes of `problem`'s basis a wave divides: a cube's channels, or
 /// one.
 fn planes(problem: &CompiledProblem) -> u32 {
