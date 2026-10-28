@@ -102,6 +102,7 @@ mod catalogue;
 mod creation;
 mod cursor;
 mod grouping;
+mod pointing;
 mod pool;
 mod request;
 mod selection;
@@ -115,12 +116,16 @@ pub use casa_types::measures::{EpochView, FrequencyView, MUvw, UvwView};
 pub use catalogue::{
     AntennaEntry, AntennaId, Binding, BindingTolerance, Catalogue, DataGroupEntry, FieldEntry,
     FieldId, ObservationEntry, ObservationId, OrderedBaseline, PartitionEntry, PartitionId,
-    ScanEntry, ScanId, UvwFrame, VisibilityUnits,
+    Receptors, ScanEntry, ScanId, UvwFrame, VisibilityUnits,
 };
 pub use creation::TimeBaselineGrid;
 pub use cursor::{BoundCursor, Observation, OwnedEvent, Step, Traversal, VisibilityCursor};
 pub use grouping::{
     FragmentPosition, GroupCompletion, GroupFragment, GroupKey, ReadEvent, WorkToken,
+};
+pub use pointing::{
+    AntennaPointing, PointingBracket, PointingCandidate, PointingDirection, PointingRequest,
+    PointingSeries,
 };
 pub use pool::{BufferPool, FilledBatch};
 pub use request::{

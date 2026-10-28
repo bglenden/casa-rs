@@ -6,19 +6,20 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use casa_observation::{
-    AntennaEntry, Correlation, FieldEntry, ObservationEntry, ObservationError, ScanEntry, ScanId,
-    UvwFrame, VisibilityUnits,
+    AntennaEntry, Correlation, FieldEntry, ObservationEntry, ObservationError, Receptors,
+    ScanEntry, ScanId, UvwFrame, VisibilityUnits,
 };
 use casa_tables::Table;
-use casa_types::measures::EpochRef;
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::frequency::FrequencyRef;
 use casa_types::measures::position::MPosition;
+use casa_types::measures::{EpochRef, MEpoch};
 use casa_types::quanta::Quantity;
 use casa_types::{ArrayValue, ScalarValue, Value};
 
 use super::{invalid, storage};
 use crate::columns::direction_columns::DirectionColumn;
+use crate::derived::engine::resolve_direction_reference_selected;
 use crate::{MeasurementSet, SubtableId};
 
 /// A column's `MEASINFO` record, if it has one.
@@ -125,28 +126,51 @@ pub(super) struct Fields {
     pub(super) uvw_frame: UvwFrame,
 }
 
+/// Each `FIELD` row's `PHASE_DIR` frame: fixed for the column, or
+/// variable per row (`VarRefCol`, integer or string codes, as ALMA's
+/// `PhaseDir_Ref`).
+pub(crate) fn phase_frames(table: &Table) -> Result<Vec<DirectionRef>, ObservationError> {
+    require_units(table, "PHASE_DIR", "rad")?;
+    (0..table.row_count())
+        .map(|row| {
+            resolve_direction_reference_selected(table, "FIELD", "PHASE_DIR", row).map_err(storage)
+        })
+        .collect()
+}
+
 /// The fields, their ephemerides, and the UVW convention.
 pub(super) fn fields_and_uvw(ms: &MeasurementSet) -> Result<Fields, ObservationError> {
     let field = ms.field().map_err(storage)?;
     let field_table = ms
         .subtable(SubtableId::Field)
         .ok_or_else(|| invalid("no FIELD subtable"))?;
-    require_units(field_table, "PHASE_DIR", "rad")?;
-    let phase_frame = measure_reference(field_table, "PHASE_DIR")?
-        .map(|name| {
-            name.parse::<DirectionRef>()
-                .map_err(|_| invalid(format!("unknown PHASE_DIR reference {name}")))
-        })
-        .transpose()?
-        .unwrap_or(DirectionRef::J2000);
+    // The fields share one frame: a data group has one UVW frame, and MSv4
+    // one phase-centre frame. Without fields it is J2000, the definition's
+    // default.
+    let frames = phase_frames(field_table)?;
+    let phase_frame = frames.first().copied().unwrap_or(DirectionRef::J2000);
+    if frames.iter().any(|frame| *frame != phase_frame) {
+        return Err(ObservationError::Unsupported {
+            what: "MSv2 fields whose phase centres are in different frames",
+        });
+    }
+    require_units(field_table, "TIME", "s")?;
+    let epoch_scale = match measure_reference(field_table, "TIME")? {
+        Some(name) => name
+            .parse::<EpochRef>()
+            .map_err(|_| invalid(format!("unknown FIELD TIME reference {name}")))?,
+        None => EpochRef::UTC,
+    };
     let phase_dir = DirectionColumn::phase_dir(field_table);
     let fields = (0..field.row_count())
         .map(|row| {
             let (longitude, latitude) = phase_dir.get_direction(row).map_err(storage)?.as_angles();
             let source = field.source_id(row).map_err(storage)?;
+            let time_s = field.time(row).map_err(storage)?;
             Ok(FieldEntry {
                 name: field.name(row).map_err(storage)?,
-                phase_centre: MDirection::from_angles(longitude, latitude, phase_frame),
+                phase_centre: MDirection::from_angles(longitude, latitude, frames[row]),
+                reference_epoch: Some(MEpoch::from_mjd(time_s / 86_400.0, epoch_scale)),
                 source_name: source_name(ms, source)?,
             })
         })
@@ -254,7 +278,7 @@ pub(super) fn intents(mode: &str) -> Vec<String> {
     set.into_iter().collect()
 }
 
-/// Every `ANTENNA` row, with its first `FEED` row's receptors.
+/// Every `ANTENNA` row.
 pub(super) fn read_antennas(ms: &MeasurementSet) -> Result<Vec<AntennaEntry>, ObservationError> {
     let antenna = ms.antenna().map_err(storage)?;
     let antenna_table = ms
@@ -270,17 +294,42 @@ pub(super) fn read_antennas(ms: &MeasurementSet) -> Result<Vec<AntennaEntry>, Ob
             });
         }
     }
+    (0..antenna.row_count())
+        .map(|row| {
+            let [x, y, z] = antenna.position(row).map_err(storage)?;
+            Ok(AntennaEntry {
+                name: antenna.name(row).map_err(storage)?,
+                station: antenna.station(row).map_err(storage)?,
+                position: MPosition::new_itrf(x, y, z),
+                mount: antenna.mount(row).map_err(storage)?,
+                dish_diameter: metres(antenna.dish_diameter(row).map_err(storage)?),
+            })
+        })
+        .collect()
+}
+
+/// Every `FEED` row's receptors, by (antenna, feed, spectral window), the
+/// window -1 standing for every window, in table order.
+pub(crate) struct Feeds {
+    rows: BTreeMap<(i32, i32, i32), Vec<Receptors>>,
+    /// Some row names a window: casacore's `MSIter` then reads only each
+    /// window's own rows, and XRADIO's converter likewise.
+    window_dependent: bool,
+}
+
+/// The `FEED` rows.
+pub(crate) fn read_feeds(ms: &MeasurementSet) -> Result<Feeds, ObservationError> {
     let feed = ms.feed().map_err(storage)?;
     if let Some(feed_table) = ms.subtable(SubtableId::Feed) {
         require_units(feed_table, "RECEPTOR_ANGLE", "rad")?;
     }
-    let mut receptors = vec![(Vec::new(), Vec::new()); antenna.row_count()];
-    for row in (0..feed.row_count()).rev() {
-        let id = usize::try_from(feed.i32(row, "ANTENNA_ID").map_err(storage)?)
-            .map_err(|_| invalid("negative FEED ANTENNA_ID"))?;
-        let Some(slot) = receptors.get_mut(id) else {
-            continue;
-        };
+    let mut rows = BTreeMap::<(i32, i32, i32), Vec<Receptors>>::new();
+    for row in 0..feed.row_count() {
+        let key = (
+            feed.i32(row, "ANTENNA_ID").map_err(storage)?,
+            feed.i32(row, "FEED_ID").map_err(storage)?,
+            feed.i32(row, "SPECTRAL_WINDOW_ID").map_err(storage)?,
+        );
         let types = match feed.array(row, "POLARIZATION_TYPE").map_err(storage)? {
             ArrayValue::String(types) => types.iter().cloned().collect(),
             _ => return Err(invalid("FEED POLARIZATION_TYPE is not a string array")),
@@ -289,23 +338,45 @@ pub(super) fn read_antennas(ms: &MeasurementSet) -> Result<Vec<AntennaEntry>, Ob
             ArrayValue::Float64(angles) => angles.iter().map(|angle| radians(*angle)).collect(),
             _ => return Err(invalid("FEED RECEPTOR_ANGLE is not a Float64 array")),
         };
-        *slot = (types, angles);
+        rows.entry(key)
+            .or_default()
+            .push(Receptors { types, angles });
     }
-    (0..antenna.row_count())
-        .zip(receptors)
-        .map(|(row, (receptors, receptor_angles))| {
-            let [x, y, z] = antenna.position(row).map_err(storage)?;
-            Ok(AntennaEntry {
-                name: antenna.name(row).map_err(storage)?,
-                station: antenna.station(row).map_err(storage)?,
-                position: MPosition::new_itrf(x, y, z),
-                mount: antenna.mount(row).map_err(storage)?,
-                dish_diameter: metres(antenna.dish_diameter(row).map_err(storage)?),
-                receptors,
-                receptor_angles,
-            })
-        })
-        .collect()
+    let window_dependent = rows.keys().any(|(_, _, window)| *window != -1);
+    Ok(Feeds {
+        rows,
+        window_dependent,
+    })
+}
+
+impl Feeds {
+    /// Antenna `antenna`'s receptors through feed `feed` in spectral window
+    /// `window`, as casacore's `MSIter::setFeedInfo` and XRADIO's converter
+    /// select them: the window's own rows when any row names a window, else
+    /// the rows for every window (-1). A partition's receptors are one set
+    /// (MSv4 holds no time dependence), so where rows of one antenna, feed
+    /// and window differ, `FEED` stating receptors per time, the last row
+    /// in table order is taken, as casacore's `MSIter` takes it (with a
+    /// warning); XRADIO's converter refuses such rows, and a conversion
+    /// reports them as a loss ([`Self::varying`]). `None` without a row.
+    pub(super) fn receptors(&self, antenna: i32, feed: i32, window: i32) -> Option<&Receptors> {
+        let window = if self.window_dependent { window } else { -1 };
+        self.rows
+            .get(&(antenna, feed, window))
+            .and_then(|rows| rows.last())
+    }
+
+    /// The first (antenna, feed, window) whose rows differ, among the rows
+    /// [`Self::receptors`] reads: `FEED` states receptors that vary in
+    /// time, of which it keeps the last. Rows for every window (-1) beside
+    /// window rows are never read, and do not count.
+    pub(crate) fn varying(&self) -> Option<(i32, i32, i32)> {
+        self.rows
+            .iter()
+            .filter(|((_, _, window), _)| !self.window_dependent || *window != -1)
+            .find(|(_, rows)| rows.iter().any(|row| row != &rows[0]))
+            .map(|(key, _)| *key)
+    }
 }
 
 pub(crate) fn metres(value: f64) -> Quantity {

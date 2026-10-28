@@ -10,6 +10,7 @@
 
 mod cursor;
 mod metadata;
+mod pointing;
 mod read;
 pub(super) mod store;
 pub(super) mod update;
@@ -17,6 +18,7 @@ mod window;
 mod write;
 
 pub use cursor::Msv4Cursor;
+pub(crate) use pointing::POINTING_FRAMES;
 pub use read::Msv4Observation;
 
 /// XRADIO's name for an absent source, which the writer writes for a field
