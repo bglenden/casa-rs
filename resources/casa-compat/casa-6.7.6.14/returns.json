@@ -1,0 +1,2243 @@
+{
+  "casa_version": "6.7.6.14",
+  "cases": {
+    "exportfits": {
+      "returns": {
+        "type": "None"
+      }
+    },
+    "feather": {
+      "returns": {
+        "type": "None"
+      }
+    },
+    "imhead summary": {
+      "returns": {
+        "type": "dict",
+        "items": [
+          [
+            "axisnames",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "<U15",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "axisunits",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "<U2",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "defaultmask",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "hasmask",
+            "str",
+            {
+              "type": "bool"
+            }
+          ],
+          [
+            "imagetype",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "incr",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "float64",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "masks",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "<U5",
+              "shape": [
+                0
+              ]
+            }
+          ],
+          [
+            "messages",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "<U5",
+              "shape": [
+                0
+              ]
+            }
+          ],
+          [
+            "ndim",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "refpix",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "float64",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "refval",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "float64",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "restoringbeam",
+            "str",
+            {
+              "type": "dict",
+              "items": [
+                [
+                  "major",
+                  "str",
+                  {
+                    "type": "dict",
+                    "items": [
+                      [
+                        "unit",
+                        "str",
+                        {
+                          "type": "str"
+                        }
+                      ],
+                      [
+                        "value",
+                        "str",
+                        {
+                          "type": "float"
+                        }
+                      ]
+                    ]
+                  }
+                ],
+                [
+                  "minor",
+                  "str",
+                  {
+                    "type": "dict",
+                    "items": [
+                      [
+                        "unit",
+                        "str",
+                        {
+                          "type": "str"
+                        }
+                      ],
+                      [
+                        "value",
+                        "str",
+                        {
+                          "type": "float"
+                        }
+                      ]
+                    ]
+                  }
+                ],
+                [
+                  "positionangle",
+                  "str",
+                  {
+                    "type": "dict",
+                    "items": [
+                      [
+                        "unit",
+                        "str",
+                        {
+                          "type": "str"
+                        }
+                      ],
+                      [
+                        "value",
+                        "str",
+                        {
+                          "type": "float"
+                        }
+                      ]
+                    ]
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            "shape",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "int64",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "tileshape",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "int64",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "unit",
+            "str",
+            {
+              "type": "str"
+            }
+          ]
+        ]
+      }
+    },
+    "imhead list": {
+      "returns": {
+        "type": "dict",
+        "items": [
+          [
+            "beammajor",
+            "str",
+            {
+              "type": "dict",
+              "items": [
+                [
+                  "unit",
+                  "str",
+                  {
+                    "type": "str"
+                  }
+                ],
+                [
+                  "value",
+                  "str",
+                  {
+                    "type": "float"
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            "beamminor",
+            "str",
+            {
+              "type": "dict",
+              "items": [
+                [
+                  "unit",
+                  "str",
+                  {
+                    "type": "str"
+                  }
+                ],
+                [
+                  "value",
+                  "str",
+                  {
+                    "type": "float"
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            "beampa",
+            "str",
+            {
+              "type": "dict",
+              "items": [
+                [
+                  "unit",
+                  "str",
+                  {
+                    "type": "str"
+                  }
+                ],
+                [
+                  "value",
+                  "str",
+                  {
+                    "type": "float"
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            "bunit",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "cdelt1",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "cdelt2",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "cdelt3",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "cdelt4",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "crpix1",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "crpix2",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "crpix3",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "crpix4",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "crval1",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "crval2",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "crval3",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "crval4",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "ctype1",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "ctype2",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "ctype3",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "ctype4",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "cunit1",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "cunit2",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "cunit3",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "cunit4",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "datamax",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "datamin",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "date-obs",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "equinox",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "imtype",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "masks",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "<U5",
+              "shape": [
+                0
+              ]
+            }
+          ],
+          [
+            "maxpixpos",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "int64",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "maxpos",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "minpixpos",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "int64",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "minpos",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "object",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "observer",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "projection",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "reffreqtype",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "restfreq",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "float64",
+              "shape": [
+                1
+              ]
+            }
+          ],
+          [
+            "shape",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "int64",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "telescope",
+            "str",
+            {
+              "type": "str"
+            }
+          ]
+        ]
+      }
+    },
+    "imhead get crval1": {
+      "returns": {
+        "type": "dict",
+        "items": [
+          [
+            "unit",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "value",
+            "str",
+            {
+              "type": "float"
+            }
+          ]
+        ]
+      }
+    },
+    "imhead get bunit": {
+      "returns": {
+        "type": "str"
+      }
+    },
+    "imhead get beammajor": {
+      "returns": {
+        "type": "dict",
+        "items": [
+          [
+            "unit",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "value",
+            "str",
+            {
+              "type": "float"
+            }
+          ]
+        ]
+      }
+    },
+    "imhead put": {
+      "returns": {
+        "type": "None"
+      }
+    },
+    "imhead add": {
+      "returns": {
+        "type": "None"
+      }
+    },
+    "imhead del": {
+      "returns": {
+        "type": "None"
+      }
+    },
+    "imhead history": {
+      "returns": {
+        "type": "None"
+      }
+    },
+    "immath": {
+      "returns": {
+        "type": "bool"
+      }
+    },
+    "immoments": {
+      "returns": {
+        "type": "None"
+      }
+    },
+    "impbcor": {
+      "returns": {
+        "type": "None"
+      }
+    },
+    "importfits": {
+      "returns": {
+        "type": "None"
+      }
+    },
+    "impv": {
+      "returns": {
+        "type": "None"
+      }
+    },
+    "imregrid get": {
+      "returns": {
+        "type": "dict",
+        "items": [
+          [
+            "csys",
+            "str",
+            {
+              "type": "dict",
+              "items": [
+                [
+                  "direction0",
+                  "str",
+                  {
+                    "type": "dict",
+                    "items": [
+                      [
+                        "axes",
+                        "str",
+                        {
+                          "type": "ndarray",
+                          "dtype": "<U15",
+                          "shape": [
+                            2
+                          ]
+                        }
+                      ],
+                      [
+                        "cdelt",
+                        "str",
+                        {
+                          "type": "ndarray",
+                          "dtype": "float64",
+                          "shape": [
+                            2
+                          ]
+                        }
+                      ],
+                      [
+                        "conversionSystem",
+                        "str",
+                        {
+                          "type": "str"
+                        }
+                      ],
+                      [
+                        "crpix",
+                        "str",
+                        {
+                          "type": "ndarray",
+                          "dtype": "float64",
+                          "shape": [
+                            2
+                          ]
+                        }
+                      ],
+                      [
+                        "crval",
+                        "str",
+                        {
+                          "type": "ndarray",
+                          "dtype": "float64",
+                          "shape": [
+                            2
+                          ]
+                        }
+                      ],
+                      [
+                        "latpole",
+                        "str",
+                        {
+                          "type": "float"
+                        }
+                      ],
+                      [
+                        "longpole",
+                        "str",
+                        {
+                          "type": "float"
+                        }
+                      ],
+                      [
+                        "pc",
+                        "str",
+                        {
+                          "type": "ndarray",
+                          "dtype": "float64",
+                          "shape": [
+                            2,
+                            2
+                          ]
+                        }
+                      ],
+                      [
+                        "projection",
+                        "str",
+                        {
+                          "type": "str"
+                        }
+                      ],
+                      [
+                        "projection_parameters",
+                        "str",
+                        {
+                          "type": "ndarray",
+                          "dtype": "float64",
+                          "shape": [
+                            2
+                          ]
+                        }
+                      ],
+                      [
+                        "system",
+                        "str",
+                        {
+                          "type": "str"
+                        }
+                      ],
+                      [
+                        "units",
+                        "str",
+                        {
+                          "type": "ndarray",
+                          "dtype": "<U1",
+                          "shape": [
+                            2
+                          ]
+                        }
+                      ]
+                    ]
+                  }
+                ],
+                [
+                  "obsdate",
+                  "str",
+                  {
+                    "type": "dict",
+                    "items": [
+                      [
+                        "m0",
+                        "str",
+                        {
+                          "type": "dict",
+                          "items": [
+                            [
+                              "unit",
+                              "str",
+                              {
+                                "type": "str"
+                              }
+                            ],
+                            [
+                              "value",
+                              "str",
+                              {
+                                "type": "float"
+                              }
+                            ]
+                          ]
+                        }
+                      ],
+                      [
+                        "refer",
+                        "str",
+                        {
+                          "type": "str"
+                        }
+                      ],
+                      [
+                        "type",
+                        "str",
+                        {
+                          "type": "str"
+                        }
+                      ]
+                    ]
+                  }
+                ],
+                [
+                  "observer",
+                  "str",
+                  {
+                    "type": "str"
+                  }
+                ],
+                [
+                  "pixelmap0",
+                  "str",
+                  {
+                    "type": "ndarray",
+                    "dtype": "int64",
+                    "shape": [
+                      2
+                    ]
+                  }
+                ],
+                [
+                  "pixelmap1",
+                  "str",
+                  {
+                    "type": "ndarray",
+                    "dtype": "int64",
+                    "shape": [
+                      1
+                    ]
+                  }
+                ],
+                [
+                  "pixelmap2",
+                  "str",
+                  {
+                    "type": "ndarray",
+                    "dtype": "int64",
+                    "shape": [
+                      1
+                    ]
+                  }
+                ],
+                [
+                  "pixelreplace0",
+                  "str",
+                  {
+                    "type": "ndarray",
+                    "dtype": "float64",
+                    "shape": [
+                      2
+                    ]
+                  }
+                ],
+                [
+                  "pixelreplace1",
+                  "str",
+                  {
+                    "type": "ndarray",
+                    "dtype": "float64",
+                    "shape": [
+                      1
+                    ]
+                  }
+                ],
+                [
+                  "pixelreplace2",
+                  "str",
+                  {
+                    "type": "ndarray",
+                    "dtype": "float64",
+                    "shape": [
+                      1
+                    ]
+                  }
+                ],
+                [
+                  "pointingcenter",
+                  "str",
+                  {
+                    "type": "dict",
+                    "items": [
+                      [
+                        "initial",
+                        "str",
+                        {
+                          "type": "bool"
+                        }
+                      ],
+                      [
+                        "value",
+                        "str",
+                        {
+                          "type": "ndarray",
+                          "dtype": "float64",
+                          "shape": [
+                            2
+                          ]
+                        }
+                      ]
+                    ]
+                  }
+                ],
+                [
+                  "spectral2",
+                  "str",
+                  {
+                    "type": "dict",
+                    "items": [
+                      [
+                        "conversion",
+                        "str",
+                        {
+                          "type": "dict",
+                          "items": [
+                            [
+                              "direction",
+                              "str",
+                              {
+                                "type": "dict",
+                                "items": [
+                                  [
+                                    "m0",
+                                    "str",
+                                    {
+                                      "type": "dict",
+                                      "items": [
+                                        [
+                                          "unit",
+                                          "str",
+                                          {
+                                            "type": "str"
+                                          }
+                                        ],
+                                        [
+                                          "value",
+                                          "str",
+                                          {
+                                            "type": "float"
+                                          }
+                                        ]
+                                      ]
+                                    }
+                                  ],
+                                  [
+                                    "m1",
+                                    "str",
+                                    {
+                                      "type": "dict",
+                                      "items": [
+                                        [
+                                          "unit",
+                                          "str",
+                                          {
+                                            "type": "str"
+                                          }
+                                        ],
+                                        [
+                                          "value",
+                                          "str",
+                                          {
+                                            "type": "float"
+                                          }
+                                        ]
+                                      ]
+                                    }
+                                  ],
+                                  [
+                                    "refer",
+                                    "str",
+                                    {
+                                      "type": "str"
+                                    }
+                                  ],
+                                  [
+                                    "type",
+                                    "str",
+                                    {
+                                      "type": "str"
+                                    }
+                                  ]
+                                ]
+                              }
+                            ],
+                            [
+                              "epoch",
+                              "str",
+                              {
+                                "type": "dict",
+                                "items": [
+                                  [
+                                    "m0",
+                                    "str",
+                                    {
+                                      "type": "dict",
+                                      "items": [
+                                        [
+                                          "unit",
+                                          "str",
+                                          {
+                                            "type": "str"
+                                          }
+                                        ],
+                                        [
+                                          "value",
+                                          "str",
+                                          {
+                                            "type": "float"
+                                          }
+                                        ]
+                                      ]
+                                    }
+                                  ],
+                                  [
+                                    "refer",
+                                    "str",
+                                    {
+                                      "type": "str"
+                                    }
+                                  ],
+                                  [
+                                    "type",
+                                    "str",
+                                    {
+                                      "type": "str"
+                                    }
+                                  ]
+                                ]
+                              }
+                            ],
+                            [
+                              "position",
+                              "str",
+                              {
+                                "type": "dict",
+                                "items": [
+                                  [
+                                    "m0",
+                                    "str",
+                                    {
+                                      "type": "dict",
+                                      "items": [
+                                        [
+                                          "unit",
+                                          "str",
+                                          {
+                                            "type": "str"
+                                          }
+                                        ],
+                                        [
+                                          "value",
+                                          "str",
+                                          {
+                                            "type": "float"
+                                          }
+                                        ]
+                                      ]
+                                    }
+                                  ],
+                                  [
+                                    "m1",
+                                    "str",
+                                    {
+                                      "type": "dict",
+                                      "items": [
+                                        [
+                                          "unit",
+                                          "str",
+                                          {
+                                            "type": "str"
+                                          }
+                                        ],
+                                        [
+                                          "value",
+                                          "str",
+                                          {
+                                            "type": "float"
+                                          }
+                                        ]
+                                      ]
+                                    }
+                                  ],
+                                  [
+                                    "m2",
+                                    "str",
+                                    {
+                                      "type": "dict",
+                                      "items": [
+                                        [
+                                          "unit",
+                                          "str",
+                                          {
+                                            "type": "str"
+                                          }
+                                        ],
+                                        [
+                                          "value",
+                                          "str",
+                                          {
+                                            "type": "float"
+                                          }
+                                        ]
+                                      ]
+                                    }
+                                  ],
+                                  [
+                                    "refer",
+                                    "str",
+                                    {
+                                      "type": "str"
+                                    }
+                                  ],
+                                  [
+                                    "type",
+                                    "str",
+                                    {
+                                      "type": "str"
+                                    }
+                                  ]
+                                ]
+                              }
+                            ],
+                            [
+                              "system",
+                              "str",
+                              {
+                                "type": "str"
+                              }
+                            ]
+                          ]
+                        }
+                      ],
+                      [
+                        "formatUnit",
+                        "str",
+                        {
+                          "type": "str"
+                        }
+                      ],
+                      [
+                        "name",
+                        "str",
+                        {
+                          "type": "str"
+                        }
+                      ],
+                      [
+                        "nativeType",
+                        "str",
+                        {
+                          "type": "int"
+                        }
+                      ],
+                      [
+                        "restfreq",
+                        "str",
+                        {
+                          "type": "float"
+                        }
+                      ],
+                      [
+                        "restfreqs",
+                        "str",
+                        {
+                          "type": "ndarray",
+                          "dtype": "float64",
+                          "shape": [
+                            1
+                          ]
+                        }
+                      ],
+                      [
+                        "system",
+                        "str",
+                        {
+                          "type": "str"
+                        }
+                      ],
+                      [
+                        "unit",
+                        "str",
+                        {
+                          "type": "str"
+                        }
+                      ],
+                      [
+                        "velType",
+                        "str",
+                        {
+                          "type": "int"
+                        }
+                      ],
+                      [
+                        "velUnit",
+                        "str",
+                        {
+                          "type": "str"
+                        }
+                      ],
+                      [
+                        "version",
+                        "str",
+                        {
+                          "type": "int"
+                        }
+                      ],
+                      [
+                        "waveUnit",
+                        "str",
+                        {
+                          "type": "str"
+                        }
+                      ],
+                      [
+                        "wcs",
+                        "str",
+                        {
+                          "type": "dict",
+                          "items": [
+                            [
+                              "cdelt",
+                              "str",
+                              {
+                                "type": "float"
+                              }
+                            ],
+                            [
+                              "crpix",
+                              "str",
+                              {
+                                "type": "float"
+                              }
+                            ],
+                            [
+                              "crval",
+                              "str",
+                              {
+                                "type": "float"
+                              }
+                            ],
+                            [
+                              "ctype",
+                              "str",
+                              {
+                                "type": "str"
+                              }
+                            ],
+                            [
+                              "pc",
+                              "str",
+                              {
+                                "type": "float"
+                              }
+                            ]
+                          ]
+                        }
+                      ]
+                    ]
+                  }
+                ],
+                [
+                  "stokes1",
+                  "str",
+                  {
+                    "type": "dict",
+                    "items": [
+                      [
+                        "axes",
+                        "str",
+                        {
+                          "type": "ndarray",
+                          "dtype": "<U6",
+                          "shape": [
+                            1
+                          ]
+                        }
+                      ],
+                      [
+                        "cdelt",
+                        "str",
+                        {
+                          "type": "ndarray",
+                          "dtype": "float64",
+                          "shape": [
+                            1
+                          ]
+                        }
+                      ],
+                      [
+                        "crpix",
+                        "str",
+                        {
+                          "type": "ndarray",
+                          "dtype": "float64",
+                          "shape": [
+                            1
+                          ]
+                        }
+                      ],
+                      [
+                        "crval",
+                        "str",
+                        {
+                          "type": "ndarray",
+                          "dtype": "float64",
+                          "shape": [
+                            1
+                          ]
+                        }
+                      ],
+                      [
+                        "pc",
+                        "str",
+                        {
+                          "type": "ndarray",
+                          "dtype": "float64",
+                          "shape": [
+                            1,
+                            1
+                          ]
+                        }
+                      ],
+                      [
+                        "stokes",
+                        "str",
+                        {
+                          "type": "ndarray",
+                          "dtype": "<U1",
+                          "shape": [
+                            1
+                          ]
+                        }
+                      ]
+                    ]
+                  }
+                ],
+                [
+                  "telescope",
+                  "str",
+                  {
+                    "type": "str"
+                  }
+                ],
+                [
+                  "telescopeposition",
+                  "str",
+                  {
+                    "type": "dict",
+                    "items": [
+                      [
+                        "m0",
+                        "str",
+                        {
+                          "type": "dict",
+                          "items": [
+                            [
+                              "unit",
+                              "str",
+                              {
+                                "type": "str"
+                              }
+                            ],
+                            [
+                              "value",
+                              "str",
+                              {
+                                "type": "float"
+                              }
+                            ]
+                          ]
+                        }
+                      ],
+                      [
+                        "m1",
+                        "str",
+                        {
+                          "type": "dict",
+                          "items": [
+                            [
+                              "unit",
+                              "str",
+                              {
+                                "type": "str"
+                              }
+                            ],
+                            [
+                              "value",
+                              "str",
+                              {
+                                "type": "float"
+                              }
+                            ]
+                          ]
+                        }
+                      ],
+                      [
+                        "m2",
+                        "str",
+                        {
+                          "type": "dict",
+                          "items": [
+                            [
+                              "unit",
+                              "str",
+                              {
+                                "type": "str"
+                              }
+                            ],
+                            [
+                              "value",
+                              "str",
+                              {
+                                "type": "float"
+                              }
+                            ]
+                          ]
+                        }
+                      ],
+                      [
+                        "refer",
+                        "str",
+                        {
+                          "type": "str"
+                        }
+                      ],
+                      [
+                        "type",
+                        "str",
+                        {
+                          "type": "str"
+                        }
+                      ]
+                    ]
+                  }
+                ],
+                [
+                  "worldmap0",
+                  "str",
+                  {
+                    "type": "ndarray",
+                    "dtype": "int64",
+                    "shape": [
+                      2
+                    ]
+                  }
+                ],
+                [
+                  "worldmap1",
+                  "str",
+                  {
+                    "type": "ndarray",
+                    "dtype": "int64",
+                    "shape": [
+                      1
+                    ]
+                  }
+                ],
+                [
+                  "worldmap2",
+                  "str",
+                  {
+                    "type": "ndarray",
+                    "dtype": "int64",
+                    "shape": [
+                      1
+                    ]
+                  }
+                ],
+                [
+                  "worldreplace0",
+                  "str",
+                  {
+                    "type": "ndarray",
+                    "dtype": "float64",
+                    "shape": [
+                      2
+                    ]
+                  }
+                ],
+                [
+                  "worldreplace1",
+                  "str",
+                  {
+                    "type": "ndarray",
+                    "dtype": "float64",
+                    "shape": [
+                      1
+                    ]
+                  }
+                ],
+                [
+                  "worldreplace2",
+                  "str",
+                  {
+                    "type": "ndarray",
+                    "dtype": "float64",
+                    "shape": [
+                      1
+                    ]
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            "shap",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "int64",
+              "shape": [
+                4
+              ]
+            }
+          ]
+        ]
+      }
+    },
+    "imregrid template": {
+      "returns": {
+        "type": "None"
+      }
+    },
+    "imstat": {
+      "returns": {
+        "type": "dict",
+        "items": [
+          [
+            "blc",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "int64",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "blcf",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "flux",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "float64",
+              "shape": [
+                1
+              ]
+            }
+          ],
+          [
+            "max",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "float64",
+              "shape": [
+                1
+              ]
+            }
+          ],
+          [
+            "maxpos",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "int64",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "maxposf",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "mean",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "float64",
+              "shape": [
+                1
+              ]
+            }
+          ],
+          [
+            "medabsdevmed",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "float64",
+              "shape": [
+                1
+              ]
+            }
+          ],
+          [
+            "median",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "float64",
+              "shape": [
+                1
+              ]
+            }
+          ],
+          [
+            "min",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "float64",
+              "shape": [
+                1
+              ]
+            }
+          ],
+          [
+            "minpos",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "int64",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "minposf",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "npts",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "float64",
+              "shape": [
+                1
+              ]
+            }
+          ],
+          [
+            "q1",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "float64",
+              "shape": [
+                1
+              ]
+            }
+          ],
+          [
+            "q3",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "float64",
+              "shape": [
+                1
+              ]
+            }
+          ],
+          [
+            "quartile",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "float64",
+              "shape": [
+                1
+              ]
+            }
+          ],
+          [
+            "rms",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "float64",
+              "shape": [
+                1
+              ]
+            }
+          ],
+          [
+            "sigma",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "float64",
+              "shape": [
+                1
+              ]
+            }
+          ],
+          [
+            "sum",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "float64",
+              "shape": [
+                1
+              ]
+            }
+          ],
+          [
+            "sumsq",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "float64",
+              "shape": [
+                1
+              ]
+            }
+          ],
+          [
+            "trc",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "int64",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "trcf",
+            "str",
+            {
+              "type": "str"
+            }
+          ]
+        ]
+      }
+    },
+    "imstat axes": {
+      "returns": {
+        "type": "dict",
+        "items": [
+          [
+            "blc",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "int64",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "blcf",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "flux",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "float64",
+              "shape": [
+                8
+              ]
+            }
+          ],
+          [
+            "max",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "float64",
+              "shape": [
+                8
+              ]
+            }
+          ],
+          [
+            "mean",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "float64",
+              "shape": [
+                8
+              ]
+            }
+          ],
+          [
+            "medabsdevmed",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "float64",
+              "shape": [
+                8
+              ]
+            }
+          ],
+          [
+            "median",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "float64",
+              "shape": [
+                8
+              ]
+            }
+          ],
+          [
+            "min",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "float64",
+              "shape": [
+                8
+              ]
+            }
+          ],
+          [
+            "npts",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "float64",
+              "shape": [
+                8
+              ]
+            }
+          ],
+          [
+            "q1",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "float64",
+              "shape": [
+                8
+              ]
+            }
+          ],
+          [
+            "q3",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "float64",
+              "shape": [
+                8
+              ]
+            }
+          ],
+          [
+            "quartile",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "float64",
+              "shape": [
+                8
+              ]
+            }
+          ],
+          [
+            "rms",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "float64",
+              "shape": [
+                8
+              ]
+            }
+          ],
+          [
+            "sigma",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "float64",
+              "shape": [
+                8
+              ]
+            }
+          ],
+          [
+            "sum",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "float64",
+              "shape": [
+                8
+              ]
+            }
+          ],
+          [
+            "sumsq",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "float64",
+              "shape": [
+                8
+              ]
+            }
+          ],
+          [
+            "trc",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "int64",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "trcf",
+            "str",
+            {
+              "type": "str"
+            }
+          ]
+        ]
+      }
+    },
+    "imstat no beam": {
+      "returns": {
+        "type": "dict",
+        "items": [
+          [
+            "blc",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "int64",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "blcf",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "max",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "float64",
+              "shape": [
+                1
+              ]
+            }
+          ],
+          [
+            "maxpos",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "int64",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "maxposf",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "mean",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "float64",
+              "shape": [
+                1
+              ]
+            }
+          ],
+          [
+            "medabsdevmed",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "float64",
+              "shape": [
+                1
+              ]
+            }
+          ],
+          [
+            "median",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "float64",
+              "shape": [
+                1
+              ]
+            }
+          ],
+          [
+            "min",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "float64",
+              "shape": [
+                1
+              ]
+            }
+          ],
+          [
+            "minpos",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "int64",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "minposf",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "npts",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "float64",
+              "shape": [
+                1
+              ]
+            }
+          ],
+          [
+            "q1",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "float64",
+              "shape": [
+                1
+              ]
+            }
+          ],
+          [
+            "q3",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "float64",
+              "shape": [
+                1
+              ]
+            }
+          ],
+          [
+            "quartile",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "float64",
+              "shape": [
+                1
+              ]
+            }
+          ],
+          [
+            "rms",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "float64",
+              "shape": [
+                1
+              ]
+            }
+          ],
+          [
+            "sigma",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "float64",
+              "shape": [
+                1
+              ]
+            }
+          ],
+          [
+            "sum",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "float64",
+              "shape": [
+                1
+              ]
+            }
+          ],
+          [
+            "sumsq",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "float64",
+              "shape": [
+                1
+              ]
+            }
+          ],
+          [
+            "trc",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "int64",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "trcf",
+            "str",
+            {
+              "type": "str"
+            }
+          ]
+        ]
+      }
+    },
+    "imsubimage": {
+      "returns": {
+        "type": "None"
+      }
+    }
+  }
+}

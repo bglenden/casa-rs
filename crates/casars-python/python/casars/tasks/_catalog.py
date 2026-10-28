@@ -7,10 +7,10 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from os import PathLike
-from typing import Literal, TypeAlias
+from typing import Any, Literal, TypeAlias
 
 from ..parameters import ParameterData
-from ._runner import TaskCompletion, _run
+from ._runner import TaskCompletion, _call_casa, _run
 
 StrPath: TypeAlias = str | PathLike[str]
 _UNSET = object()
@@ -257,48 +257,52 @@ def imager(
     return _run("imager", _explicit(locals(), ('vis', 'imagename', 'imsize', 'cell', 'datacolumn', 'savemodel', 'outlierfile', 'field', 'phasecenter_field', 'ddid', 'phasecenter', 'spw', 'channel_start', 'channel_count', 'stokes', 'specmode', 'start', 'width', 'outframe', 'veltype', 'interpolation', 'restfreq', 'restoringbeam', 'perchanweightdensity', 'dirty_only', 'niter', 'threshold', 'nmajor', 'gain', 'nsigma', 'psfcutoff', 'minor_cycle_length', 'cyclefactor', 'deconvolver', 'minpsffraction', 'maxpsffraction', 'nterms', 'hogbom_iteration_mode', 'scales', 'smallscalebias', 'usemask', 'sidelobethreshold', 'noisethreshold', 'lownoisethreshold', 'negativethreshold', 'minbeamfrac', 'growiterations', 'mask_box', 'weighting', 'mask_image', 'robust', 'wprojplanes', 'usepointing', 'write_pb', 'pbcor', 'pblimit', 'gridder', 'facets', 'parallel', 'uvrange', 'intent', 'cfcache', 'cf_resident_mb', 'pointingoffsetsigdev', 'normtype', 'fitspw', 'fitorder', 'save_continuum_residual', 'aw_cf_source', 'native_cf_cache', 'evla_surface', 'native_cf_policy', 'native_cf_working_size', 'native_cf_oversampling', 'native_cf_cache_bytes', 'native_cf_maximum_cells', 'backend', 'gridprecision', 'stage_timing', 'metal_stage_timing', 'science_trace')))
 
 def simobserve(
-    *,
-    project: str | object = _UNSET,
-    skymodel: StrPath | object = _UNSET,
-    inbright: str | object = _UNSET,
-    indirection: str | object = _UNSET,
-    incell: str | object = _UNSET,
-    incenter: str | object = _UNSET,
-    inwidth: str | object = _UNSET,
-    complist: StrPath | object = _UNSET,
-    compwidth: str | object = _UNSET,
-    comp_nchan: int | object = _UNSET,
-    setpointings: bool | object = _UNSET,
-    ptgfile: StrPath | object = _UNSET,
-    integration: str | object = _UNSET,
-    direction: str | list[str] | tuple[str, ...] | object = _UNSET,
-    mapsize: str | list[str] | tuple[str, ...] | object = _UNSET,
-    maptype: Literal['ALMA', 'ALMA-OT', 'ALMA2012', 'alma', 'hex', 'hexagonal', 'square'] | object = _UNSET,
-    pointingspacing: str | object = _UNSET,
-    caldirection: str | object = _UNSET,
-    calflux: str | object = _UNSET,
-    obsmode: Literal['', 'int', 'sd'] | object = _UNSET,
-    refdate: str | object = _UNSET,
-    hourangle: str | object = _UNSET,
-    totaltime: str | object = _UNSET,
-    antennalist: str | object = _UNSET,
-    sdantlist: str | object = _UNSET,
-    sdant: int | object = _UNSET,
-    outframe: str | object = _UNSET,
-    thermalnoise: Literal['', 'tsys-atm', 'tsys-manual'] | object = _UNSET,
-    user_pwv: float | object = _UNSET,
-    t_ground: float | object = _UNSET,
-    t_sky: float | object = _UNSET,
-    tau0: float | object = _UNSET,
-    seed: int | object = _UNSET,
-    leakage: float | object = _UNSET,
-    correlator: Literal['', 'ACA', 'ACASpec', 'BLC', 'BLC_4x4bit'] | object = _UNSET,
-    graphics: Literal['', 'both', 'file', 'none', 'screen'] | object = _UNSET,
-    verbose: bool | object = _UNSET,
-    overwrite: bool | object = _UNSET,
-) -> TaskCompletion:
-    """Simulate an observation of a sky model: CASA's simobserve"""
-    return _run("simobserve", _explicit(locals(), ('project', 'skymodel', 'inbright', 'indirection', 'incell', 'incenter', 'inwidth', 'complist', 'compwidth', 'comp_nchan', 'setpointings', 'ptgfile', 'integration', 'direction', 'mapsize', 'maptype', 'pointingspacing', 'caldirection', 'calflux', 'obsmode', 'refdate', 'hourangle', 'totaltime', 'antennalist', 'sdantlist', 'sdant', 'outframe', 'thermalnoise', 'user_pwv', 't_ground', 't_sky', 'tau0', 'seed', 'leakage', 'correlator', 'graphics', 'verbose', 'overwrite')))
+    project: str = 'sim',
+    skymodel: StrPath = '',
+    inbright: str = '',
+    indirection: str = '',
+    incell: str = '',
+    incenter: str = '',
+    inwidth: str = '',
+    complist: StrPath = '',
+    compwidth: str = '"8GHz"',
+    comp_nchan: int = 1,
+    setpointings: bool = True,
+    ptgfile: StrPath = '$project.ptg.txt',
+    integration: str = '10s',
+    direction: str | list[str] | tuple[str, ...] = [],
+    mapsize: str | list[str] | tuple[str, ...] = ['', ''],
+    maptype: Literal['ALMA', 'ALMA-OT', 'ALMA2012', 'alma', 'hex', 'hexagonal', 'square'] = 'hexagonal',
+    pointingspacing: str = '',
+    caldirection: str = '',
+    calflux: str = '1Jy',
+    obsmode: Literal['', 'int', 'sd'] = 'int',
+    refdate: str = '2014/01/01',
+    hourangle: str = 'transit',
+    totaltime: str = '7200s',
+    antennalist: str = '',
+    sdantlist: str = 'aca.tp.cfg',
+    sdant: int = 0,
+    outframe: str = 'LSRK',
+    thermalnoise: Literal['', 'tsys-atm', 'tsys-manual'] = 'tsys-atm',
+    user_pwv: float = 0.5,
+    t_ground: float = 270.0,
+    t_sky: float = 260.0,
+    tau0: float = 0.1,
+    seed: int = 11111,
+    leakage: float = 0.0,
+    correlator: Literal['', 'ACA', 'ACASpec', 'BLC', 'BLC_4x4bit'] = '',
+    graphics: Literal['', 'both', 'file', 'none', 'screen'] = 'both',
+    verbose: bool = False,
+    overwrite: bool = True,
+) -> Any:
+    """Simulate an observation of a sky model: CASA's simobserve
+
+    CASA's ``simobserve``: its parameters, defaults and return value.
+    ``docs/reference/casa-compatibility.md`` lists the parameters casa-rs
+    accepts only at their defaults.
+    """
+    return _call_casa(simobserve, locals())
 
 def imhead(
     *,

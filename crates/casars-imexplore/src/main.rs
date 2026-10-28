@@ -9,9 +9,10 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use casa_images::{
-    ImageHeaderSummary, ImageStatisticsSummary, image_task_front_end, imhead, imhead_put, imstat,
+    ImageHeaderSummary, ImageStatisticsSummary, image_task_front_end, imhead, imhead_list_record,
+    imhead_put, imhead_summary_record, imstat, imstat_record,
 };
-use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
+use casa_task_runtime::{CasaValue, TaskFailure, TaskInvocation, TaskSuccess};
 
 fn main() -> ExitCode {
     image_task_front_end("imexplore", &["imhead", "imstat"], run).main(
@@ -30,8 +31,8 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     }
 }
 
-/// CASA's `imhead` returns its header record, as `imstat` returns its
-/// statistics record; both are the reply's value.
+/// CASA's `imhead` returns its header record for `summary` and `list`, and
+/// `None` for `put`; `imstat` returns its statistics record.
 fn run_imhead(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let path = task.path("imagename")?;
     let mode = task.required_text("mode")?.to_ascii_lowercase();
@@ -54,8 +55,14 @@ fn run_imhead(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
             .at("mode"));
         }
     };
+    let value = match mode.as_str() {
+        "summary" => imhead_summary_record(&summary),
+        "list" => imhead_list_record(&summary),
+        // CASA's put returns None.
+        _ => CasaValue::None,
+    };
     let text = header_text(&summary);
-    Ok(TaskSuccess::new(&summary, &summary)?.with_text(text))
+    Ok(TaskSuccess::new(value, &summary)?.with_text(text))
 }
 
 fn run_imstat(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
@@ -69,7 +76,7 @@ fn run_imstat(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     )
     .map_err(|error| image_error("imstat", &path, error))?;
     let text = statistics_text(&summary);
-    Ok(TaskSuccess::new(&summary, &summary)?.with_text(text))
+    Ok(TaskSuccess::new(imstat_record(&summary), &summary)?.with_text(text))
 }
 
 fn image_error(operation: &str, path: &Path, error: impl Display) -> TaskFailure {

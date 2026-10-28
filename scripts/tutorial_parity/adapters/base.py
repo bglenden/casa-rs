@@ -98,4 +98,34 @@ def reply_value(stdout: str) -> tuple[str, str | None]:
     if not isinstance(reply, dict) or reply.get("status") != "succeeded":
         message = reply.get("message") if isinstance(reply, dict) else None
         return "", f"the task failed: {message or reply!r}"
-    return json.dumps(reply.get("value"), indent=2) + "\n", None
+    try:
+        value = plain_value(reply.get("value"))
+    except (KeyError, TypeError, ValueError) as error:
+        return "", f"the task's return value is not a typed value: {error}"
+    return json.dumps(value, indent=2) + "\n", None
+
+
+def plain_value(value: Any) -> Any:
+    """A reply's typed return value as plain JSON, as the task binary's
+    command line prints it: arrays nested in their shape from column-major
+    data, dictionary keys as strings (#931)."""
+
+    kind = value["kind"]
+    if kind == "none":
+        return None
+    if kind in ("bool", "int", "float", "string"):
+        return value["value"]
+    if kind == "list":
+        return [plain_value(item) for item in value["items"]]
+    if kind == "dict":
+        return {str(entry["key"]): plain_value(entry["value"]) for entry in value["entries"]}
+    if kind.endswith("_array"):
+        return _nest(value["shape"], value["data"], 0, 1)
+    raise ValueError(f"unknown value kind {kind!r}")
+
+
+def _nest(shape: list[int], data: list[Any], offset: int, stride: int) -> Any:
+    if not shape:
+        return data[offset] if offset < len(data) else None
+    count, rest = shape[0], shape[1:]
+    return [_nest(rest, data, offset + index * stride, stride * count) for index in range(count)]

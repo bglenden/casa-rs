@@ -8,8 +8,8 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use casa_provider_contracts::{
-    RunProductKind, RunProductRole, builtin_application_catalog, builtin_surface_bundle,
-    installed_suite_root, resolve_task_executable,
+    CasaValue, RunProductKind, RunProductRole, builtin_application_catalog,
+    builtin_surface_bundle, installed_suite_root, resolve_task_executable,
 };
 use casa_task_runtime::{
     TaskExit, TaskOutcome, TaskOutputValue, classify_task_exit, decode_task_completion,
@@ -17,8 +17,8 @@ use casa_task_runtime::{
 use pyo3::exceptions::PyFileNotFoundError;
 use pyo3::prelude::*;
 use serde::Serialize;
-use serde_json::Value;
 
+use crate::convert::reply_value::reply_value;
 use crate::parameters::{reason_error, to_python};
 
 /// One application-catalog entry: its identity and how to launch it.
@@ -167,8 +167,10 @@ pub(crate) fn executable(
 #[serde(tag = "status", rename_all = "snake_case")]
 pub(crate) enum OutcomeView {
     /// The task succeeded: CASA's return value and the declared products.
+    /// The value reaches Python as CASA's own types, apart from this view.
     Succeeded {
-        value: Value,
+        #[serde(skip)]
+        value: CasaValue,
         completion: CompletionView,
     },
     /// The task refused its parameters before it changed anything.
@@ -289,7 +291,11 @@ pub(crate) fn task_outcome<'py>(
     let outcome = py
         .detach(|| outcome(surface_id, returncode, stdout, &workspace, values))
         .map_err(|reason| reason_error(py, reason))?;
-    to_python(py, &outcome)
+    let view = to_python(py, &outcome)?;
+    if let OutcomeView::Succeeded { value, .. } = &outcome {
+        view.set_item("value", reply_value(py, value)?)?;
+    }
+    Ok(view)
 }
 
 #[cfg(test)]

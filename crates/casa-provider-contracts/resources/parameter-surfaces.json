@@ -12294,11 +12294,12 @@
     {
       "kind": "task",
       "id": "simobserve",
-      "contract_version": 7,
+      "contract_version": 8,
       "display_name": "SimObserve",
       "category": "Simulation",
       "summary": "Simulate an observation of a sky model: CASA's simobserve",
       "provider_family": "simobserve",
+      "casa_task": "simobserve",
       "execution": {
         "invocation_name": "simobserve",
         "fixed_args": [],

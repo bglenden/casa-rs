@@ -71,7 +71,7 @@ fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         }
         None => rendered,
     };
-    Ok(TaskSuccess::new(&(), &result)?.with_text(text))
+    Ok(TaskSuccess::new(casa_task_runtime::CasaValue::None, &result)?.with_text(text))
 }
 
 fn refuse_existing_report(path: &Path, overwrite: bool) -> Result<(), TaskFailure> {

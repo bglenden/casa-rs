@@ -7,10 +7,10 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from os import PathLike
-from typing import Literal, TypeAlias
+from typing import Any, Literal, TypeAlias
 
 from ..parameters import ParameterData
-from ._runner import TaskCompletion, _run
+from ._runner import TaskCompletion, _call_casa, _run
 
 StrPath: TypeAlias = str | PathLike[str]
 
@@ -248,7 +248,6 @@ def imager(
     ...
 
 def simobserve(
-    *,
     project: str = ...,
     skymodel: StrPath = ...,
     inbright: str = ...,
@@ -287,7 +286,7 @@ def simobserve(
     graphics: Literal['', 'both', 'file', 'none', 'screen'] = ...,
     verbose: bool = ...,
     overwrite: bool = ...,
-) -> TaskCompletion:
+) -> Any:
     ...
 
 def imhead(

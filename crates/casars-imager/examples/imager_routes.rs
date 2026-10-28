@@ -57,7 +57,7 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     }
     let text = serde_json::to_string(&today)
         .map_err(|error| TaskFailure::execution(format!("serialize the run: {error}")))?;
-    Ok(TaskSuccess::new(&(), &today)?.with_text(text + "\n"))
+    Ok(TaskSuccess::new(casa_task_runtime::CasaValue::None, &today)?.with_text(text + "\n"))
 }
 
 /// Image `request`, resolved as `parameters`, on both routes and compare

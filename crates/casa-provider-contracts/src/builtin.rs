@@ -264,7 +264,8 @@ mod tests {
     fn simobserve_has_casas_parameters_in_casas_order_for_the_current_contract_only() {
         let catalog = builtin_surface_catalog().expect("valid built-in parameter catalog");
         let surface = catalog.surface("simobserve").unwrap();
-        assert_eq!(surface.contract_version(), 7);
+        assert_eq!(surface.contract_version(), 8);
+        assert_eq!(surface.casa_task(), Some("simobserve"));
         let names: Vec<&str> = surface
             .bindings()
             .iter()

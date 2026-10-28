@@ -358,7 +358,7 @@ def _fake_task(path: Path, result: Any) -> Path:
         "#!/usr/bin/env python3\n"
         "import json, sys\n"
         "surface = json.load(sys.stdin)['surface']\n"
-        "print(json.dumps({'status': 'succeeded', 'surface': surface, 'value': None,\n"
+        "print(json.dumps({'status': 'succeeded', 'surface': surface, 'value': {'kind': 'none'},\n"
         f"                  'result': {result!r}}}))\n",
         encoding="utf-8",
     )

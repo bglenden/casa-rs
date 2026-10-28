@@ -3683,8 +3683,8 @@
    "message": "reason='parse parameter profile: profile parse error: TOML parse error at line 1, column 8\\n  |\\n1 | not = [valid\\n  |        ^\\ninvalid array\\nexpected `]`\\n'"
   },
   "set wrong type": {
-   "error": "ValueError",
-   "message": "reason='resolve parameter session: invalid parameter type: value Integer(3) does not match Path { resource_kind: Some(Image) }'"
+   "error": "TypeError",
+   "message": "invalid value for imagename: invalid parameter type: value Integer(3) does not match Path { resource_kind: Some(Image) }"
   },
   "set unknown parameter": {
    "error": "ValueError",
@@ -3703,8 +3703,8 @@
    "message": "parameter table keys must be strings"
   },
   "set table value": {
-   "error": "ValueError",
-   "message": "reason='resolve parameter session: invalid parameter type: value Table({\"a\": Integer(1)}) does not match Path { resource_kind: Some(Image) }'"
+   "error": "TypeError",
+   "message": "invalid value for imagename: invalid parameter type: value Table({\"a\": Integer(1)}) does not match Path { resource_kind: Some(Image) }"
   },
   "reset unknown parameter": {
    "error": "KeyError",

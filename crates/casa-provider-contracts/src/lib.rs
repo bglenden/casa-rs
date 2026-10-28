@@ -7,6 +7,7 @@
 
 mod application;
 mod builtin;
+mod casa_value;
 mod components;
 mod executable;
 mod parameters;
@@ -15,6 +16,9 @@ mod provider;
 mod reply;
 mod semantic;
 
+pub use casa_value::{
+    CasaEntry, CasaFloat, CasaKey, CasaValue, ComplexDtype, FloatDtype, IntDtype,
+};
 pub use components::{ProviderComponentSchemas, merged_components};
 pub use parameters::*;
 pub use projection::{

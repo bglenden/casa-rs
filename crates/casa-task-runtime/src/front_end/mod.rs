@@ -45,7 +45,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use casa_logging::{CasaLoggingConfig, CasaLoggingError, CasaLoggingGuard};
 use casa_provider_contracts::{
-    EXIT_EXECUTION_FAILED, EXIT_SUCCEEDED, EXIT_VALIDATION_FAILED, ParameterValue,
+    CasaValue, EXIT_EXECUTION_FAILED, EXIT_SUCCEEDED, EXIT_VALIDATION_FAILED, ParameterValue,
     SurfaceContractBundle, TaskFailureKind, TaskFrontEndSchemas, TaskProviderContract, TaskReply,
     TaskRunRequest,
 };
@@ -73,18 +73,23 @@ pub type EnterWorkspace = fn(PathBuf) -> std::io::Result<()>;
 /// A task's success, as its execution callback returns it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TaskSuccess {
-    value: Value,
+    value: CasaValue,
     result: Value,
     text: Option<String>,
     notes: Vec<String>,
 }
 
 impl TaskSuccess {
-    /// A success returning CASA's `value` (`&()` where CASA returns `None`)
-    /// and the provider's full `result`.
-    pub fn new(value: &impl Serialize, result: &impl Serialize) -> Result<Self, TaskFailure> {
+    /// A success returning CASA's `value` ([`CasaValue::None`] where CASA
+    /// returns `None`) and the provider's full `result`.
+    pub fn new(value: CasaValue, result: &impl Serialize) -> Result<Self, TaskFailure> {
+        if !value.is_consistent() {
+            return Err(TaskFailure::execution(
+                "the task's return value holds an array whose data does not fill its shape",
+            ));
+        }
         Ok(Self {
-            value: to_json(value)?,
+            value,
             result: to_json(result)?,
             text: None,
             notes: Vec::new(),
@@ -584,8 +589,8 @@ where
                 stderr.extend(success.notes);
                 let stdout = match success.text {
                     Some(text) => text,
-                    None if success.value.is_null() => String::new(),
-                    None => format!("{:#}\n", success.value),
+                    None if success.value == CasaValue::None => String::new(),
+                    None => format!("{:#}\n", success.value.to_plain_json()),
                 };
                 FrontEndOutput {
                     stdout,

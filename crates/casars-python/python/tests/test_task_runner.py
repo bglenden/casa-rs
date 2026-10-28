@@ -14,6 +14,7 @@ import signal
 import sys
 import time
 
+import numpy
 import pytest
 
 from casars import parameters, tasks
@@ -66,7 +67,14 @@ if "FAKE_TASK_WAIT_FOR" in os.environ:
 print(f"{surface} completed", file=sys.stderr, flush=True)
 if reply == "succeeded":
     result = json.loads(os.environ.get("FAKE_TASK_RESULT", "{}"))
-    answer("succeeded", 0, value={"npts": [12.0]}, result=result)
+    value = {"kind": "dict", "entries": [
+        {"key": "npts", "value": {"kind": "float_array", "dtype": "float64", "shape": [1], "data": [12.0]}},
+        {"key": "blc", "value": {"kind": "int_array", "dtype": "int64", "shape": [2, 2], "data": [0, 1, 2, 3]}},
+        {"key": "min", "value": {"kind": "float_array", "dtype": "float32", "shape": [1], "data": ["nan"]}},
+        {"key": "axes", "value": {"kind": "str_array", "shape": [2], "data": ["Right Ascension", "Declination"]}},
+        {"key": 3, "value": {"kind": "bool", "value": True}},
+    ]}
+    answer("succeeded", 0, value=value, result=result)
 if reply == "refused":
     answer("failed", 2, kind="validation", message="no such image", parameter="vis")
 if reply == "failed":
@@ -119,7 +127,15 @@ def test_a_task_runs_its_executable_with_the_values_set(
     assert values["comment"] == "from generic runner"
     assert completion.successful
     assert completion.status == "succeeded"
-    assert completion.value == {"npts": [12.0]}
+    # The task's return value arrives as CASA's types: NumPy arrays of its
+    # dtypes and shapes (column-major data on the wire), integer keys kept.
+    value = completion.value
+    assert list(value) == ["npts", "blc", "min", "axes", 3]
+    assert value["npts"].dtype == numpy.float64 and value["npts"].tolist() == [12.0]
+    assert value["blc"].dtype == numpy.int64 and value["blc"].tolist() == [[0, 2], [1, 3]]
+    assert value["min"].dtype == numpy.float32 and numpy.isnan(value["min"][0])
+    assert value["axes"].tolist() == ["Right Ascension", "Declination"]
+    assert value[3] is True
     assert completion.returncode == 0
     assert completion.workspace == tmp_path
     assert completion.result is not None
@@ -266,12 +282,19 @@ def test_the_log_streams_while_the_task_runs(
 
 
 @pytest.mark.parametrize(
-    ("reply", "status", "message", "parameter"),
+    ("reply", "status", "message", "parameter", "error"),
     [
-        ("refused", "refused", "no such image", "vis"),
-        ("failed", "failed", "cannot read the table", None),
-        ("signalled", "signalled", None, None),
-        ("malformed", "malformed_reply", "the task's reply is not valid", None),
+        # A refusal is a ValueError, any other failure a RuntimeError (#931).
+        ("refused", "refused", "no such image", "vis", tasks.TaskParameterError),
+        ("failed", "failed", "cannot read the table", None, tasks.TaskExecutionError),
+        ("signalled", "signalled", None, None, tasks.TaskExecutionError),
+        (
+            "malformed",
+            "malformed_reply",
+            "the task's reply is not valid",
+            None,
+            tasks.TaskExecutionError,
+        ),
     ],
 )
 def test_a_task_that_does_not_succeed_raises_with_its_outcome(
@@ -282,11 +305,13 @@ def test_a_task_that_does_not_succeed_raises_with_its_outcome(
     status: str,
     message: str | None,
     parameter: str | None,
+    error: type[Exception],
 ) -> None:
     fake("CASARS_FLAGMANAGER_BIN")
     monkeypatch.setenv("FAKE_TASK_REPLY", reply)
-    with pytest.raises(tasks.TaskExecutionError) as failure:
+    with pytest.raises(error) as failure:
         tasks.run("flagmanager", workspace=tmp_path, vis="failed.ms")
+    assert isinstance(failure.value, ValueError if reply == "refused" else RuntimeError)
     completion = failure.value.completion
     assert completion.status == status
     assert not completion.successful

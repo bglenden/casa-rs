@@ -5,6 +5,7 @@
 //! hosts and a callback that reads the resolved run into its typed request.
 //! The front end owns the command line, `--json-run`, Last and logging.
 
+use casa_provider_contracts::CasaValue;
 use casa_task_runtime::{TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess};
 
 use crate::{ImageAnalysisTaskResult, ImageError, image_analysis_task_schema_bundle};
@@ -34,7 +35,7 @@ pub fn image_task_success(
     let result = result.map_err(|error| TaskFailure::execution(error.to_string()))?;
     let text = serde_json::to_string_pretty(&result)
         .map_err(|error| TaskFailure::execution(format!("serialize the result: {error}")))?;
-    Ok(TaskSuccess::new(&(), &result)?.with_text(text + "\n"))
+    Ok(TaskSuccess::new(CasaValue::None, &result)?.with_text(text + "\n"))
 }
 
 /// Read `name`, a CASA boolean held as text (`"true"`, `"false"`, `"T"`,

@@ -8,6 +8,11 @@ use casa_types::quanta::{Quantity, Unit};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+#[path = "casa_signature.rs"]
+mod casa_signature;
+
+pub use casa_signature::{UnimplementedParameter, python_repr};
+
 /// Current schema version for the catalog and surface-definition model.
 pub const PARAMETER_CATALOG_SCHEMA_VERSION: u32 = 1;
 
@@ -667,6 +672,10 @@ pub struct PythonParameterProjection {
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub type_hint: Option<String>,
+    /// A casa-rs-only control on a surface that mimics a CASA task: it
+    /// follows CASA's parameters as a keyword-only argument (#931).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub keyword_only: bool,
 }
 
 /// Presentation hints; they do not define meaning or defaults.
@@ -719,6 +728,9 @@ pub struct SurfaceParameterBinding {
     pub aliases: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reviewed_homonym: Option<ReviewedHomonym>,
+    /// Set for a CASA parameter casa-rs accepts only at its default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unimplemented: Option<UnimplementedParameter>,
 }
 
 /// Profile kind pinned in the TOML header.
@@ -912,6 +924,10 @@ pub struct TaskDefinition {
     pub category: String,
     pub summary: String,
     pub provider_family: String,
+    /// The CASA task this surface mimics, whose signature it presents
+    /// (#931); `None` for a surface not yet CASA-exact or a casa-rs task.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub casa_task: Option<String>,
     #[serde(default)]
     pub execution: SurfaceExecutionProjection,
     pub bindings: Vec<SurfaceParameterBinding>,
@@ -947,6 +963,11 @@ impl SurfaceDefinition {
 
     pub fn provider_family(&self) -> &str {
         &self.task().provider_family
+    }
+
+    /// The CASA task the surface mimics, when it presents CASA's signature.
+    pub fn casa_task(&self) -> Option<&str> {
+        self.task().casa_task.as_deref()
     }
 
     pub fn bindings(&self) -> &[SurfaceParameterBinding] {
@@ -1170,6 +1191,7 @@ fn validate_one_surface(bundle: &SurfaceContractBundle, errors: &mut Vec<Contrac
     }
 
     validate_overwrite_defaults(bundle, errors);
+    casa_signature::validate_casa_signature(surface, errors);
 
     for binding in surface.bindings() {
         if !names.insert(binding.name.clone()) {
@@ -2187,6 +2209,7 @@ mod tests {
             },
             aliases: Vec::new(),
             reviewed_homonym: None,
+            unimplemented: None,
         }
     }
 
@@ -2203,6 +2226,7 @@ mod tests {
                 category: "Test".to_string(),
                 summary: "Example".to_string(),
                 provider_family: "test".to_string(),
+                casa_task: None,
                 execution: SurfaceExecutionProjection::default(),
                 bindings: vec![binding],
                 migrations: Vec::new(),
@@ -2832,6 +2856,7 @@ mod tests {
                 category: "Test".to_string(),
                 summary: "Cycle".to_string(),
                 provider_family: "test".to_string(),
+                casa_task: None,
                 execution: SurfaceExecutionProjection::default(),
                 bindings: vec![first_binding, second_binding],
                 migrations: Vec::new(),

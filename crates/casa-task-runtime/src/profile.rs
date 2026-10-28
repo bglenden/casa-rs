@@ -9,6 +9,7 @@ use casa_provider_contracts::{
 use thiserror::Error;
 
 use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticLevel, SourceLocation};
+use crate::overrides::normalize_overrides;
 use crate::normalize::{
     NormalizationError, normalize_quantity_unit, normalize_value, semantic_eq, validate_value,
 };
@@ -292,22 +293,7 @@ pub(crate) fn resolve_with_overrides(
     bundle: &SurfaceContractBundle,
     overrides: &BTreeMap<String, ParameterValue>,
 ) -> Result<BTreeMap<String, ParameterValue>, ProfileError> {
-    let mut normalized = BTreeMap::new();
-    for (name, value) in overrides {
-        let binding = bundle
-            .surface
-            .bindings()
-            .iter()
-            .find(|binding| &binding.name == name)
-            .ok_or_else(|| ProfileError::Contract(format!("unknown parameter {name:?}")))?;
-        let concept = bundle
-            .catalog
-            .concept(&binding.concept)
-            .ok_or_else(|| ProfileError::Contract(format!("missing concept for {name}")))?;
-        let value = normalize_value(value, concept)?;
-        validate_value(&value, concept, &binding.refinements)?;
-        normalized.insert(name.clone(), value);
-    }
+    let normalized = normalize_overrides(bundle, overrides)?;
     let values = resolve_values(bundle, &normalized)?;
     validate_activity_and_required(bundle, &values, &normalized)?;
     Ok(values)
@@ -318,22 +304,7 @@ pub(crate) fn resolve_draft_with_overrides(
     bundle: &SurfaceContractBundle,
     overrides: &BTreeMap<String, ParameterValue>,
 ) -> Result<(BTreeMap<String, ParameterValue>, Vec<Diagnostic>), ProfileError> {
-    let mut normalized = BTreeMap::new();
-    for (name, value) in overrides {
-        let binding = bundle
-            .surface
-            .bindings()
-            .iter()
-            .find(|binding| &binding.name == name)
-            .ok_or_else(|| ProfileError::Contract(format!("unknown parameter {name:?}")))?;
-        let concept = bundle
-            .catalog
-            .concept(&binding.concept)
-            .ok_or_else(|| ProfileError::Contract(format!("missing concept for {name}")))?;
-        let value = normalize_value(value, concept)?;
-        validate_value(&value, concept, &binding.refinements)?;
-        normalized.insert(name.clone(), value);
-    }
+    let normalized = normalize_overrides(bundle, overrides)?;
     let values = resolve_values(bundle, &normalized)?;
     match validate_activity_and_required(bundle, &values, &normalized) {
         Ok(()) => Ok((values, Vec::new())),
@@ -501,6 +472,7 @@ fn validate_activity_and_required(
                 .for_parameter(binding.name.clone()),
             );
         }
+        diagnostics.extend(crate::unimplemented::refusal(bundle, binding, values));
     }
     if diagnostics.is_empty() {
         Ok(())
@@ -665,22 +637,7 @@ pub fn render_sparse_profile(
     bundle: &SurfaceContractBundle,
     values: &BTreeMap<String, ParameterValue>,
 ) -> Result<String, ProfileError> {
-    let mut normalized = BTreeMap::new();
-    for (name, value) in values {
-        let binding = bundle
-            .surface
-            .bindings()
-            .iter()
-            .find(|binding| &binding.name == name)
-            .ok_or_else(|| ProfileError::Contract(format!("unknown parameter {name:?}")))?;
-        let concept = bundle
-            .catalog
-            .concept(&binding.concept)
-            .ok_or_else(|| ProfileError::Contract(format!("missing concept for {name}")))?;
-        let value = normalize_value(value, concept)?;
-        validate_value(&value, concept, &binding.refinements)?;
-        normalized.insert(name.clone(), value);
-    }
+    let normalized = normalize_overrides(bundle, values)?;
     let candidate = resolve_values(bundle, &normalized)?;
     let mut sparse = BTreeMap::new();
     for binding in bundle.surface.bindings() {
@@ -1050,6 +1007,7 @@ mod tests {
                 category: "Imaging".into(),
                 summary: "Image".into(),
                 provider_family: "imager".into(),
+                casa_task: None,
                 execution: SurfaceExecutionProjection::default(),
                 bindings,
                 migrations: Vec::new(),
@@ -1094,6 +1052,7 @@ mod tests {
             },
             aliases: Vec::new(),
             reviewed_homonym: None,
+            unimplemented: None,
         }
     }
 

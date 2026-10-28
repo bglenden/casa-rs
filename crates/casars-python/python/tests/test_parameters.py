@@ -48,9 +48,14 @@ def test_task_parameters_mutate_reset_save_reload_and_track_origins(
     assert values.is_dirty
     assert values.diagnostics == ()
 
-    with pytest.raises(ValueError):
+    # A value of the wrong type raises TypeError, a refused value ValueError
+    # (#931); either leaves the parameter as it was.
+    with pytest.raises(TypeError, match="invalid value for vis"):
         values["vis"] = 12
     assert values["vis"] == ["example.ms"]
+    with pytest.raises(ValueError, match="mode"):
+        values["mode"] = "frobnicate"
+    assert values["mode"] == "list"
 
     profile = tmp_path / "flagmanager.toml"
     assert values.save(profile) == profile

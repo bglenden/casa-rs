@@ -27,7 +27,10 @@ values = request["values"]
 if values.get("mode") == "fail":
     print(json.dumps({{"status": "failed", "surface": "imhead", "kind": "validation", "message": "bad mode"}}))
     sys.exit(2)
-print(json.dumps({{"status": "succeeded", "surface": request["surface"], "value": values, "result": {{}}}}))
+value = {{"kind": "dict", "entries": [
+    {{"key": key, "value": {{"kind": "string", "value": text}}}} for key, text in values.items()
+] + [{{"key": "shape", "value": {{"kind": "int_array", "dtype": "int64", "shape": [2, 2], "data": [1, 2, 3, 4]}}}}]}}
+print(json.dumps({{"status": "succeeded", "surface": request["surface"], "value": value, "result": {{}}}}))
 """
 
 
@@ -161,9 +164,11 @@ class ExecutionTests(unittest.TestCase):
                 request,
                 {"surface": "imhead", "values": {"imagename": "twhya_cont.image", "mode": "summary"}},
             )
+            # The typed value is captured as plain JSON; arrays are nested
+            # from their column-major data.
             self.assertEqual(
                 json.loads(capture.read_text(encoding="utf-8")),
-                {"imagename": "twhya_cont.image", "mode": "summary"},
+                {"imagename": "twhya_cont.image", "mode": "summary", "shape": [[1, 3], [2, 4]]},
             )
 
     def test_a_refused_return_value_section_fails_and_captures_nothing(self) -> None:

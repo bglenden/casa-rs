@@ -81,8 +81,10 @@ def test_a_real_refusal_names_its_parameter(
     flagmanager: str, small_ms: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.chdir(small_ms.parent)
-    with pytest.raises(tasks.TaskExecutionError) as failure:
+    # A refusal is a ValueError (#931).
+    with pytest.raises(tasks.TaskParameterError) as failure:
         tasks.flagmanager(vis=small_ms.name, mode="restore")
+    assert isinstance(failure.value, ValueError)
     completion = failure.value.completion
     assert completion.status == "refused", completion.describe()
     assert completion.parameter == "versionname"

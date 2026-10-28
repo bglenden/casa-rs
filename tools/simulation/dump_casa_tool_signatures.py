@@ -13,14 +13,10 @@ compare each casa-rs class with the checked-in output in
 `crates/casars-python/python/tests/data/casa_<tool>_signatures.json`.
 
 For `simutil` only the methods casa-rs declares are recorded (`--methods`):
-the rest of the helper belongs to simulation Phase 5.
-
-`--task simobserve` records a task's call signature instead
-(`casa_simobserve_task_signature.json`), which casa-rs's catalog surface
-reproduces (Phase 5c).
+the rest of the helper belongs to simulation Phase 5. Task signatures are in
+the CASA task inventory (`tools/casa-compat/dump_casa_task_inventory.py`).
 
     python3 -I dump_casa_tool_signatures.py --tool measures --out casa_measures_signatures.json
-    python3 -I dump_casa_tool_signatures.py --task simobserve --out casa_simobserve_task_signature.json
 """
 
 from __future__ import annotations
@@ -37,7 +33,6 @@ TOOLS = ("simulator", "measures", "quanta", "componentlist", "simutil")
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tool", choices=TOOLS, default="simulator", help="the class to dump")
-    parser.add_argument("--task", choices=("simobserve",), help="dump a task's signature instead")
     parser.add_argument("--methods", nargs="*", help="record only these methods")
     parser.add_argument("--out", required=True, help="JSON file to write")
     return parser.parse_args()
@@ -62,26 +57,8 @@ def tool_class(name: str) -> type:
     return getattr(casatools, name)
 
 
-def dump_task(name: str, out: str) -> None:
-    """The task's call signature, CASA's parameters in order with their
-    defaults, as `casatasks.<name>` takes them."""
-    import casatasks
-
-    record = {
-        "casa_version": casatools.version_string(),
-        "task": name,
-        "parameters": describe(type(getattr(casatasks, name)).__call__),
-    }
-    with open(out, "w", encoding="utf-8") as handle:
-        json.dump(record, handle, indent=2, sort_keys=True)
-        handle.write("\n")
-
-
 def main() -> None:
     args = parse_args()
-    if args.task:
-        dump_task(args.task, args.out)
-        return
     tool = tool_class(args.tool)
     methods = {
         name: describe(member)

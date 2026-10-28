@@ -3274,6 +3274,11 @@
       "fingerprint": "3b3212c266c61c95611a30f9961a7b360f603364613357117279de2a4210ef23"
     },
     {
+      "id": "simobserve",
+      "contract_version": 8,
+      "fingerprint": "a2f484f1052dc12cd22647d3b9df197e48b060822549dde19193d8d2be46140d"
+    },
+    {
       "id": "split",
       "contract_version": 1,
       "fingerprint": "0943dfdb4e4f4044731b314f8db6346e7294c208258852de4e0711c967b165e2"

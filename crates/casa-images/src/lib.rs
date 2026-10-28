@@ -61,6 +61,7 @@
 
 pub mod analysis;
 pub mod beam;
+mod casa_return;
 pub mod convolve2d;
 pub mod error;
 pub mod expr_file;
@@ -91,6 +92,7 @@ pub use analysis::{
     parse_image_channel_selection, run_image_analysis_task,
 };
 pub use beam::{GaussianBeam, ImageBeamSet};
+pub use casa_return::{imhead_list_record, imhead_summary_record, imstat_record};
 pub use casa_lattices::{ScratchSpace, TempStoragePlan, TempStoragePolicy};
 pub use convolve2d::{Convolved, convolve2d};
 pub use error::ImageError;
