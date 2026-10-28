@@ -105,9 +105,9 @@ fn coordinates_of(spec: &Value) -> CoordinateSystem {
         [refpix[0], refpix[1]],
     );
     if let Some(pc) = spec["pc"].as_array() {
-        // The coordsys tool's `setlineartransform` reads the Python rows as
-        // casacore's columns: element [i][j] is casa-rs's pc[[j, i]], as the
-        // world-coordinate check below confirms.
+        // `setlineartransform` takes casacore's matrix, the transpose of the
+        // FITS PC matrix casa-rs holds: element [i][j] is casa-rs's
+        // pc[[j, i]], as the world-coordinate check below confirms.
         let pc: Vec<Vec<f64>> = pc.iter().map(numbers).collect();
         direction =
             direction.with_pc_matrix(ndarray::array![[pc[0][0], pc[1][0]], [pc[0][1], pc[1][1]]]);

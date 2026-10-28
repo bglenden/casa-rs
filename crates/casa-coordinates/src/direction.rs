@@ -22,8 +22,7 @@ use std::str::FromStr;
 use casa_types::measures::direction::DirectionRef;
 use casa_types::quanta::{Quantity, Unit};
 use casa_types::{ArrayD, ArrayValue, RecordValue, ScalarValue, Value};
-use ndarray::Array2;
-use ndarray::IxDyn;
+use ndarray::{Array2, IxDyn, ShapeBuilder};
 
 use crate::coordinate::{Coordinate, CoordinateType};
 use crate::error::CoordinateError;
@@ -337,10 +336,13 @@ impl DirectionCoordinate {
                     pc_flat.len()
                 )));
             }
-            let pc = Array2::from_shape_vec((2, 2), pc_flat).map_err(|err| {
+            // casacore's matrix is the transpose of the FITS PC matrix this
+            // coordinate holds (`LinearXform`: `pc[i*n+j] = pcIn(j,i)`), so
+            // its elements in row order are the PC's in column order.
+            let pc = Array2::from_shape_vec((2, 2).f(), pc_flat).map_err(|err| {
                 CoordinateError::InvalidRecord(format!("invalid direction pc matrix: {err}"))
             })?;
-            coord = coord.with_pc_matrix(pc);
+            coord = coord.with_pc_matrix(pc.as_standard_layout().into_owned());
         }
         if let Some(longpole) = get_optional_f64(rec, "longpole") {
             let longpole = if is_casa_style {
@@ -715,10 +717,11 @@ impl DirectionCoordinate {
             "cdelt",
             Value::Array(ArrayValue::from_f64_vec(self.cdelt.to_vec())),
         );
+        // casacore's matrix, the PC's transpose (see `from_record`).
         rec.upsert(
             "pc",
             Value::Array(ArrayValue::Float64(
-                ArrayD::from_shape_vec(IxDyn(&[2, 2]), self.pc.iter().copied().collect())
+                ArrayD::from_shape_vec(IxDyn(&[2, 2]).f(), self.pc.iter().copied().collect())
                     .expect("2x2 direction pc matrix"),
             )),
         );
@@ -983,6 +986,62 @@ mod tests {
         assert_eq!(restored.projection().parameters(), &[0.25, -0.5]);
         assert!((restored.longpole() - 0.25).abs() < TOL);
         assert!((restored.latpole() - 1.2).abs() < TOL);
+    }
+
+    /// A rotated image CASA 6.7.6 made (`coordsys.setlineartransform` with
+    /// casacore's matrix [[1 - 1.25e-9, 5e-5], [-5e-5, 1 - 1.25e-9]]) reads
+    /// to CASA's own world coordinates (`coordsys.toworld`).
+    #[test]
+    fn a_casacore_record_reads_to_casas_world_coordinates() {
+        let arcsec = PI / 648_000.0;
+        let mut record = DirectionCoordinate::new(
+            DirectionRef::J2000,
+            Projection::new(ProjectionType::SIN),
+            [0.6, -0.4],
+            [-0.2 * arcsec, 0.2 * arcsec],
+            [16.0, 17.0],
+        )
+        .to_record();
+        let (c, s) = (0.999_999_998_75, 5e-5);
+        // casacore's matrix [[c, s], [-s, c]], column by column.
+        let matrix = ArrayD::from_shape_vec(IxDyn(&[2, 2]).f(), vec![c, -s, s, c]).unwrap();
+        record.upsert("pc", Value::Array(ArrayValue::Float64(matrix)));
+        let coord = DirectionCoordinate::from_record(&record).unwrap();
+        assert_eq!(coord.pc_matrix(), &ndarray::array![[c, -s], [s, c]]);
+        for (pixel, casa) in [
+            (
+                [0.0, 0.0],
+                [0.600_016_842_882_085_7, -0.400_016_484_389_964_9],
+            ),
+            (
+                [32.0, 0.0],
+                [0.599_983_155_328_274, -0.400_016_482_838_550_3],
+            ),
+            (
+                [0.0, 34.0],
+                [0.600_016_844_436_951_4, -0.399_983_517_059_678_9],
+            ),
+            (
+                [10.5, 3.25],
+                [0.600_005_789_316_842, -0.400_013_332_636_851_1],
+            ),
+        ] {
+            let world = coord.to_world(&pixel).unwrap();
+            for (ours, casa) in world.iter().zip(casa) {
+                assert!(
+                    (ours - casa).abs() < 1e-13,
+                    "{pixel:?}: {world:?} against CASA's {casa}"
+                );
+            }
+        }
+        let written = coord.to_record();
+        let Some(Value::Array(ArrayValue::Float64(matrix))) = written.get("pc") else {
+            panic!("a pc matrix");
+        };
+        assert_eq!(
+            matrix.iter().copied().collect::<Vec<_>>(),
+            vec![c, s, -s, c]
+        );
     }
 
     #[test]
