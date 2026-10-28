@@ -13,84 +13,86 @@
 <a href=#13 id=13 data-nosnippet>13</a>//! | `itrf2loc`, `baselineLengths`, `approxBeam` | [`baselines::itrf_to_local`], [`baselines::baseline_lengths`], [`baselines::approximate_beam`] |
 <a href=#14 id=14 data-nosnippet>14</a>//! | `dir_s2m` | [`direction::direction_measure`] |
 <a href=#15 id=15 data-nosnippet>15</a>//! | `modifymodel`, `flatimage`, `ia.modify`, the component-only model | [`skymodel`] |
-<a href=#16 id=16 data-nosnippet>16</a>//!
-<a href=#17 id=17 data-nosnippet>17</a>//! **CASA's numbers to the last bit.** Pointing lists are compared with
-<a href=#18 id=18 data-nosnippet>18</a>//! CASA's as strings, so the arithmetic follows CASA's: every `qa` call goes
-<a href=#19 id=19 data-nosnippet>19</a>//! through casacore's `Quantum` arithmetic
-<a href=#20 id=20 data-nosnippet>20</a>//! ([`casa_types::quanta::casacore`]), which converts units as casacore
-<a href=#21 id=21 data-nosnippet>21</a>//! rounds and names them as casacore names them, and numbers that CASA
-<a href=#22 id=22 data-nosnippet>22</a>//! writes into strings and reads back (`str(x)+"arcsec"`,
-<a href=#23 id=23 data-nosnippet>23</a>//! `'%17.12fdeg' % x`) are written and read back the same way. The tests
-<a href=#24 id=24 data-nosnippet>24</a>//! compare a grid of CASA's outputs
-<a href=#25 id=25 data-nosnippet>25</a>//! (`tests/data/simutil_casa.json`, from `tools/simulation/simutil_oracle.py`).
-<a href=#26 id=26 data-nosnippet>26</a>//!
-<a href=#27 id=27 data-nosnippet>27</a>//! **Where casa-rs differs.** CASA raises Python exceptions where these
-<a href=#28 id=28 data-nosnippet>28</a>//! functions refuse an input; casa-rs returns [`SimutilError`]. It also
-<a href=#29 id=29 data-nosnippet>29</a>//! departs from CASA in a few places, each recorded in
-<a href=#30 id=30 data-nosnippet>30</a>//! `docs/CASA (C++) bugs.md`:
-<a href=#31 id=31 data-nosnippet>31</a>//! - `calc_pointings2`'s ALMA tiling takes its default beam from
-<a href=#32 id=32 data-nosnippet>32</a>//!   `spacing × pbcoeff × √3`, but CASA's `pbcoeff` is undefined there
-<a href=#33 id=33 data-nosnippet>33</a>//!   (`NameError`); casa-rs uses `simobserve`'s 1.13.
-<a href=#34 id=34 data-nosnippet>34</a>//! - `noisetemp`'s receiver lookup reads `f0[z]` before testing `z`, so
-<a href=#35 id=35 data-nosnippet>35</a>//!   above an unknown telescope's last tabulated frequency CASA raises
-<a href=#36 id=36 data-nosnippet>36</a>//!   `IndexError`; casa-rs keeps the last temperature. At a frequency equal
-<a href=#37 id=37 data-nosnippet>37</a>//!   to the first entry of the table, CASA's `t0[z-1]` with `z = 0` reads the
-<a href=#38 id=38 data-nosnippet>38</a>//!   last temperature (230 K for ALMA at 35 GHz); casa-rs reads the first.
-<a href=#39 id=39 data-nosnippet>39</a>//! - `direction_splitter` reads its second and third fields whatever the
-<a href=#40 id=40 data-nosnippet>40</a>//!   field count, so a direction without an epoch raises `IndexError` in
-<a href=#41 id=41 data-nosnippet>41</a>//!   CASA; casa-rs refuses it with a message.
-<a href=#42 id=42 data-nosnippet>42</a>//!
-<a href=#43 id=43 data-nosnippet>43</a>//! Where CASA has no answer, casa-rs refuses: `calc_pointings2` lays out
-<a href=#44 id=44 data-nosnippet>44</a>//! no map of more than [`pointings::MOST_POINTINGS`] pointings, where CASA
-<a href=#45 id=45 data-nosnippet>45</a>//! runs for hours or out of memory (a spacing tiny beside the map).
-<a href=#46 id=46 data-nosnippet>46</a>
-<a href=#47 id=47 data-nosnippet>47</a></span><span class="kw">pub mod </span>baselines;
-<a href=#48 id=48 data-nosnippet>48</a><span class="kw">pub mod </span>direction;
-<a href=#49 id=49 data-nosnippet>49</a><span class="kw">pub mod </span>pointings;
-<a href=#50 id=50 data-nosnippet>50</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>qa;
-<a href=#51 id=51 data-nosnippet>51</a><span class="kw">pub mod </span>receivers;
-<a href=#52 id=52 data-nosnippet>52</a><span class="kw">pub mod </span>skymodel;
-<a href=#53 id=53 data-nosnippet>53</a>
-<a href=#54 id=54 data-nosnippet>54</a><span class="kw">pub use </span>qa::python_float;
+<a href=#16 id=16 data-nosnippet>16</a>//! | `cellsize`, `statim`, `ismstp`, `convimage`, `simanalyze`'s fidelity | [`analysis`] |
+<a href=#17 id=17 data-nosnippet>17</a>//!
+<a href=#18 id=18 data-nosnippet>18</a>//! **CASA's numbers to the last bit.** Pointing lists are compared with
+<a href=#19 id=19 data-nosnippet>19</a>//! CASA's as strings, so the arithmetic follows CASA's: every `qa` call goes
+<a href=#20 id=20 data-nosnippet>20</a>//! through casacore's `Quantum` arithmetic
+<a href=#21 id=21 data-nosnippet>21</a>//! ([`casa_types::quanta::casacore`]), which converts units as casacore
+<a href=#22 id=22 data-nosnippet>22</a>//! rounds and names them as casacore names them, and numbers that CASA
+<a href=#23 id=23 data-nosnippet>23</a>//! writes into strings and reads back (`str(x)+"arcsec"`,
+<a href=#24 id=24 data-nosnippet>24</a>//! `'%17.12fdeg' % x`) are written and read back the same way. The tests
+<a href=#25 id=25 data-nosnippet>25</a>//! compare a grid of CASA's outputs
+<a href=#26 id=26 data-nosnippet>26</a>//! (`tests/data/simutil_casa.json`, from `tools/simulation/simutil_oracle.py`).
+<a href=#27 id=27 data-nosnippet>27</a>//!
+<a href=#28 id=28 data-nosnippet>28</a>//! **Where casa-rs differs.** CASA raises Python exceptions where these
+<a href=#29 id=29 data-nosnippet>29</a>//! functions refuse an input; casa-rs returns [`SimutilError`]. It also
+<a href=#30 id=30 data-nosnippet>30</a>//! departs from CASA in a few places, each recorded in
+<a href=#31 id=31 data-nosnippet>31</a>//! `docs/CASA (C++) bugs.md`:
+<a href=#32 id=32 data-nosnippet>32</a>//! - `calc_pointings2`'s ALMA tiling takes its default beam from
+<a href=#33 id=33 data-nosnippet>33</a>//!   `spacing × pbcoeff × √3`, but CASA's `pbcoeff` is undefined there
+<a href=#34 id=34 data-nosnippet>34</a>//!   (`NameError`); casa-rs uses `simobserve`'s 1.13.
+<a href=#35 id=35 data-nosnippet>35</a>//! - `noisetemp`'s receiver lookup reads `f0[z]` before testing `z`, so
+<a href=#36 id=36 data-nosnippet>36</a>//!   above an unknown telescope's last tabulated frequency CASA raises
+<a href=#37 id=37 data-nosnippet>37</a>//!   `IndexError`; casa-rs keeps the last temperature. At a frequency equal
+<a href=#38 id=38 data-nosnippet>38</a>//!   to the first entry of the table, CASA's `t0[z-1]` with `z = 0` reads the
+<a href=#39 id=39 data-nosnippet>39</a>//!   last temperature (230 K for ALMA at 35 GHz); casa-rs reads the first.
+<a href=#40 id=40 data-nosnippet>40</a>//! - `direction_splitter` reads its second and third fields whatever the
+<a href=#41 id=41 data-nosnippet>41</a>//!   field count, so a direction without an epoch raises `IndexError` in
+<a href=#42 id=42 data-nosnippet>42</a>//!   CASA; casa-rs refuses it with a message.
+<a href=#43 id=43 data-nosnippet>43</a>//!
+<a href=#44 id=44 data-nosnippet>44</a>//! Where CASA has no answer, casa-rs refuses: `calc_pointings2` lays out
+<a href=#45 id=45 data-nosnippet>45</a>//! no map of more than [`pointings::MOST_POINTINGS`] pointings, where CASA
+<a href=#46 id=46 data-nosnippet>46</a>//! runs for hours or out of memory (a spacing tiny beside the map).
+<a href=#47 id=47 data-nosnippet>47</a>
+<a href=#48 id=48 data-nosnippet>48</a></span><span class="kw">pub mod </span>analysis;
+<a href=#49 id=49 data-nosnippet>49</a><span class="kw">pub mod </span>baselines;
+<a href=#50 id=50 data-nosnippet>50</a><span class="kw">pub mod </span>direction;
+<a href=#51 id=51 data-nosnippet>51</a><span class="kw">pub mod </span>pointings;
+<a href=#52 id=52 data-nosnippet>52</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>qa;
+<a href=#53 id=53 data-nosnippet>53</a><span class="kw">pub mod </span>receivers;
+<a href=#54 id=54 data-nosnippet>54</a><span class="kw">pub mod </span>skymodel;
 <a href=#55 id=55 data-nosnippet>55</a>
-<a href=#56 id=56 data-nosnippet>56</a><span class="kw">use </span>thiserror::Error;
+<a href=#56 id=56 data-nosnippet>56</a><span class="kw">pub use </span>qa::python_float;
 <a href=#57 id=57 data-nosnippet>57</a>
-<a href=#58 id=58 data-nosnippet>58</a><span class="doccomment">/// An input a `simutil` helper refuses. Where CASA raises its own message,
-<a href=#59 id=59 data-nosnippet>59</a>/// the message is CASA's.
-<a href=#60 id=60 data-nosnippet>60</a></span><span class="attr">#[derive(Debug, Clone, PartialEq, Error)]
-<a href=#61 id=61 data-nosnippet>61</a></span><span class="kw">pub enum </span>SimutilError {
-<a href=#62 id=62 data-nosnippet>62</a>    <span class="doccomment">/// A value that is not a quantity casacore can read.
-<a href=#63 id=63 data-nosnippet>63</a>    </span><span class="attr">#[error(<span class="string">"can't interpret '{0}' as a CASA quantity"</span>)]
-<a href=#64 id=64 data-nosnippet>64</a>    </span>Quantity(String),
-<a href=#65 id=65 data-nosnippet>65</a>    <span class="doccomment">/// A direction `direction_splitter` cannot split.
-<a href=#66 id=66 data-nosnippet>66</a>    </span><span class="attr">#[error(<span class="string">"can't interpret '{0}' as a direction"</span>)]
-<a href=#67 id=67 data-nosnippet>67</a>    </span>Direction(String),
-<a href=#68 id=68 data-nosnippet>68</a>    <span class="doccomment">/// A quantity of the wrong kind for its use, or casacore's arithmetic
-<a href=#69 id=69 data-nosnippet>69</a>    /// refusing it.
-<a href=#70 id=70 data-nosnippet>70</a>    </span><span class="attr">#[error(<span class="string">"{0}"</span>)]
-<a href=#71 id=71 data-nosnippet>71</a>    </span>Arithmetic(String),
-<a href=#72 id=72 data-nosnippet>72</a>    <span class="doccomment">/// A pointing file with no pointings in it.
-<a href=#73 id=73 data-nosnippet>73</a>    </span><span class="attr">#[error(<span class="string">"No valid lines found in pointing file"</span>)]
-<a href=#74 id=74 data-nosnippet>74</a>    </span>NoPointings,
-<a href=#75 id=75 data-nosnippet>75</a>    <span class="doccomment">/// Fewer pointing times than pointings.
-<a href=#76 id=76 data-nosnippet>76</a>    </span><span class="attr">#[error(<span class="string">"{times} pointing times for {pointings} pointings"</span>)]
-<a href=#77 id=77 data-nosnippet>77</a>    </span>Times {
-<a href=#78 id=78 data-nosnippet>78</a>        <span class="doccomment">/// The number of pointings.
-<a href=#79 id=79 data-nosnippet>79</a>        </span>pointings: usize,
-<a href=#80 id=80 data-nosnippet>80</a>        <span class="doccomment">/// The number of times.
-<a href=#81 id=81 data-nosnippet>81</a>        </span>times: usize,
-<a href=#82 id=82 data-nosnippet>82</a>    },
-<a href=#83 id=83 data-nosnippet>83</a>    <span class="doccomment">/// A frequency that is not positive and finite.
-<a href=#84 id=84 data-nosnippet>84</a>    </span><span class="attr">#[error(<span class="string">"frequency {0} GHz is not positive"</span>)]
-<a href=#85 id=85 data-nosnippet>85</a>    </span>Frequency(f64),
-<a href=#86 id=86 data-nosnippet>86</a>    <span class="doccomment">/// A map of more pointings than casa-rs lays out.
-<a href=#87 id=87 data-nosnippet>87</a>    </span><span class="attr">#[error(<span class="string">"the map would have more than {} pointings"</span>, pointings::MOST_POINTINGS)]
-<a href=#88 id=88 data-nosnippet>88</a>    </span>TooManyPointings,
-<a href=#89 id=89 data-nosnippet>89</a>}
-<a href=#90 id=90 data-nosnippet>90</a>
-<a href=#91 id=91 data-nosnippet>91</a><span class="kw">impl </span>From&lt;casa_types::quanta::casacore::QuantumError&gt; <span class="kw">for </span>SimutilError {
-<a href=#92 id=92 data-nosnippet>92</a>    <span class="kw">fn </span>from(error: casa_types::quanta::casacore::QuantumError) -&gt; <span class="self">Self </span>{
-<a href=#93 id=93 data-nosnippet>93</a>        <span class="self">Self</span>::Arithmetic(error.<span class="number">0</span>)
-<a href=#94 id=94 data-nosnippet>94</a>    }
-<a href=#95 id=95 data-nosnippet>95</a>}
+<a href=#58 id=58 data-nosnippet>58</a><span class="kw">use </span>thiserror::Error;
+<a href=#59 id=59 data-nosnippet>59</a>
+<a href=#60 id=60 data-nosnippet>60</a><span class="doccomment">/// An input a `simutil` helper refuses. Where CASA raises its own message,
+<a href=#61 id=61 data-nosnippet>61</a>/// the message is CASA's.
+<a href=#62 id=62 data-nosnippet>62</a></span><span class="attr">#[derive(Debug, Clone, PartialEq, Error)]
+<a href=#63 id=63 data-nosnippet>63</a></span><span class="kw">pub enum </span>SimutilError {
+<a href=#64 id=64 data-nosnippet>64</a>    <span class="doccomment">/// A value that is not a quantity casacore can read.
+<a href=#65 id=65 data-nosnippet>65</a>    </span><span class="attr">#[error(<span class="string">"can't interpret '{0}' as a CASA quantity"</span>)]
+<a href=#66 id=66 data-nosnippet>66</a>    </span>Quantity(String),
+<a href=#67 id=67 data-nosnippet>67</a>    <span class="doccomment">/// A direction `direction_splitter` cannot split.
+<a href=#68 id=68 data-nosnippet>68</a>    </span><span class="attr">#[error(<span class="string">"can't interpret '{0}' as a direction"</span>)]
+<a href=#69 id=69 data-nosnippet>69</a>    </span>Direction(String),
+<a href=#70 id=70 data-nosnippet>70</a>    <span class="doccomment">/// A quantity of the wrong kind for its use, or casacore's arithmetic
+<a href=#71 id=71 data-nosnippet>71</a>    /// refusing it.
+<a href=#72 id=72 data-nosnippet>72</a>    </span><span class="attr">#[error(<span class="string">"{0}"</span>)]
+<a href=#73 id=73 data-nosnippet>73</a>    </span>Arithmetic(String),
+<a href=#74 id=74 data-nosnippet>74</a>    <span class="doccomment">/// A pointing file with no pointings in it.
+<a href=#75 id=75 data-nosnippet>75</a>    </span><span class="attr">#[error(<span class="string">"No valid lines found in pointing file"</span>)]
+<a href=#76 id=76 data-nosnippet>76</a>    </span>NoPointings,
+<a href=#77 id=77 data-nosnippet>77</a>    <span class="doccomment">/// Fewer pointing times than pointings.
+<a href=#78 id=78 data-nosnippet>78</a>    </span><span class="attr">#[error(<span class="string">"{times} pointing times for {pointings} pointings"</span>)]
+<a href=#79 id=79 data-nosnippet>79</a>    </span>Times {
+<a href=#80 id=80 data-nosnippet>80</a>        <span class="doccomment">/// The number of pointings.
+<a href=#81 id=81 data-nosnippet>81</a>        </span>pointings: usize,
+<a href=#82 id=82 data-nosnippet>82</a>        <span class="doccomment">/// The number of times.
+<a href=#83 id=83 data-nosnippet>83</a>        </span>times: usize,
+<a href=#84 id=84 data-nosnippet>84</a>    },
+<a href=#85 id=85 data-nosnippet>85</a>    <span class="doccomment">/// A frequency that is not positive and finite.
+<a href=#86 id=86 data-nosnippet>86</a>    </span><span class="attr">#[error(<span class="string">"frequency {0} GHz is not positive"</span>)]
+<a href=#87 id=87 data-nosnippet>87</a>    </span>Frequency(f64),
+<a href=#88 id=88 data-nosnippet>88</a>    <span class="doccomment">/// A map of more pointings than casa-rs lays out.
+<a href=#89 id=89 data-nosnippet>89</a>    </span><span class="attr">#[error(<span class="string">"the map would have more than {} pointings"</span>, pointings::MOST_POINTINGS)]
+<a href=#90 id=90 data-nosnippet>90</a>    </span>TooManyPointings,
+<a href=#91 id=91 data-nosnippet>91</a>}
+<a href=#92 id=92 data-nosnippet>92</a>
+<a href=#93 id=93 data-nosnippet>93</a><span class="kw">impl </span>From&lt;casa_types::quanta::casacore::QuantumError&gt; <span class="kw">for </span>SimutilError {
+<a href=#94 id=94 data-nosnippet>94</a>    <span class="kw">fn </span>from(error: casa_types::quanta::casacore::QuantumError) -&gt; <span class="self">Self </span>{
+<a href=#95 id=95 data-nosnippet>95</a>        <span class="self">Self</span>::Arithmetic(error.<span class="number">0</span>)
+<a href=#96 id=96 data-nosnippet>96</a>    }
+<a href=#97 id=97 data-nosnippet>97</a>}
 </code></pre></div></section></main></body></html>

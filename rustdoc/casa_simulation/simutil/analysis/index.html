@@ -1,0 +1,55 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="The `simutil` analysis that `simanalyze` and `simalma` run on a simulated image (simulation Phase 6f, #841): CASA 6.7.6’s `simutil.py` and the analysis section of `task_simanalyze.py`, ported as their specification (ADR-0018)."><title>casa_simulation::simutil::analysis - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-0c87338a.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="casa_simulation" data-themes="" data-resource-suffix="" data-rustdoc-version="1.99.1 (58cf8f9c3 2026-10-13)" data-channel="1.99.1" data-search-js="search-cf4fc35e.js" data-stringdex-js="stringdex-b5109af9.js" data-settings-js="settings-170eb4bf.js" ><script src="../../../static.files/storage-41dd4d93.js"></script><script defer src="../sidebar-items.js"></script><script defer src="../../../static.files/main-417ebf0a.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-9f56287d.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc mod"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><rustdoc-topbar><h2><a href="#">Module analysis</a></h2></rustdoc-topbar><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../../../casa_simulation/index.html">casa_<wbr>simulation</a><span class="version">0.27.0</span></h2></div><div class="sidebar-elems"><section id="rustdoc-toc"><h2 class="location"><a href="#">Module analysis</a></h2><h3><a href="#structs">Module Items</a></h3><ul class="block"><li><a href="#structs" title="Structs">Structs</a></li><li><a href="#enums" title="Enums">Enums</a></li><li><a href="#functions" title="Functions">Functions</a></li></ul></section><div id="rustdoc-modnav"><h2><a href="../index.html">In casa_<wbr>simulation::<wbr>simutil</a></h2></div></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><div class="width-limiter"><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><div class="rustdoc-breadcrumbs"><a href="../../index.html">casa_simulation</a>::<wbr><a href="../index.html">simutil</a></div><h1>Module <span>analysis</span>&nbsp;<button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../../src/casa_simulation/simutil/analysis.rs.html#2-295">Source</a> </span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>The <code>simutil</code> analysis that <code>simanalyze</code> and <code>simalma</code> run on a simulated
+image (simulation Phase 6f, #841): CASA 6.7.6’s <code>simutil.py</code> and the
+analysis section of <code>task_simanalyze.py</code>, ported as their specification
+(ADR-0018).</p>
+<div><table><thead><tr><th>CASA</th><th>casa-rs</th></tr></thead><tbody>
+<tr><td><code>cellsize</code></td><td><a href="fn.cell_size.html" title="fn casa_simulation::simutil::analysis::cell_size"><code>cell_size</code></a></td></tr>
+<tr><td><code>statim(plot=False)</code></td><td><a href="fn.statim.html" title="fn casa_simulation::simutil::analysis::statim"><code>statim</code></a></td></tr>
+<tr><td><code>ismstp</code></td><td><a href="fn.is_total_power.html" title="fn casa_simulation::simutil::analysis::is_total_power"><code>is_total_power</code></a></td></tr>
+<tr><td><code>convimage</code></td><td><a href="fn.convimage.html" title="fn casa_simulation::simutil::analysis::convimage"><code>convimage()</code></a></td></tr>
+<tr><td><code>simanalyze</code>’s difference, fidelity and scalar fidelity</td><td><a href="fn.fidelity.html" title="fn casa_simulation::simutil::analysis::fidelity"><code>fidelity()</code></a></td></tr>
+<tr><td><code>flatimage</code></td><td><a href="../skymodel/fn.flat_image.html" title="fn casa_simulation::simutil::skymodel::flat_image"><code>flat_image</code></a></td></tr>
+</tbody></table>
+</div>
+<p><code>simanalyze</code> compares the image it made with the sky model it simulated:</p>
+<ul>
+<li>both are flattened to one Stokes I plane (<code>.flat</code>, the channel mean of a
+cube);</li>
+<li><a href="fn.convimage.html" title="fn casa_simulation::simutil::analysis::convimage"><code>convimage()</code></a> regrids the model’s flat onto the image’s flat and
+convolves it with the image’s restoring beam, giving the model as the
+telescope would see it at full sensitivity;</li>
+<li><a href="fn.fidelity.html" title="fn casa_simulation::simutil::analysis::fidelity"><code>fidelity()</code></a> subtracts the image from that and divides the convolved
+model by the difference, floored at the difference’s median absolute
+deviation over √2.</li>
+</ul>
+<p><strong>Where casa-rs differs</strong>, each recorded in <code>docs/CASA (C++) bugs.md</code>:</p>
+<ul>
+<li><code>simanalyze</code> writes the fidelity’s floor into its image expression with
+<code>%f</code>, six decimal places: a floor under 5e-7 becomes 0, and one of
+7.07e-6 becomes 7e-6. casa-rs uses the floor itself.</li>
+<li>CASA’s fidelity image carries the convolved model’s Jy/beam; casa-rs
+gives the ratio no unit.</li>
+<li>CASA computes the difference and fidelity with image expressions,
+whose evaluator labels any expression containing “pa” as a position
+angle (unit deg, Stokes axis <code>Pangle</code>), so a project whose path
+contains “pa” gets them so labelled. casa-rs computes them directly and
+keeps the Stokes axis.</li>
+<li><code>statim</code> multiplies the statistics of a Jy/beam image without a
+restoring beam by the pixel area in square arcseconds, and still reports
+them as Jy/beam. casa-rs reports the image’s own values.</li>
+<li><code>ismstp</code> tests <code>uvw.all() == 0</code>, which is true when any UVW value is
+zero; casa-rs tests what was meant, that all are.</li>
+</ul>
+<p>The plotting parts of <code>statim</code> (the display range from the cumulative
+histogram, and the figure) go with the graphics (Phase 6i).</p>
+</div></details><h2 id="structs" class="section-header">Structs<a href="#structs" class="anchor">§</a></h2><dl class="item-table"><dt><a class="struct" href="struct.ConvolvedModel.html" title="struct casa_simulation::simutil::analysis::ConvolvedModel">Convolved<wbr>Model</a></dt><dd>What <a href="fn.convimage.html" title="fn casa_simulation::simutil::analysis::convimage"><code>convimage()</code></a> wrote.</dd><dt><a class="struct" href="struct.Fidelity.html" title="struct casa_simulation::simutil::analysis::Fidelity">Fidelity</a></dt><dd>What <a href="fn.fidelity.html" title="fn casa_simulation::simutil::analysis::fidelity"><code>fidelity()</code></a> wrote and measured.</dd><dt><a class="struct" href="struct.ImageStatistics.html" title="struct casa_simulation::simutil::analysis::ImageStatistics">Image<wbr>Statistics</a></dt><dd>What <code>simutil.statim</code> returns: the image’s extremes, the rms of its
+lower-left corner, and its brightness unit.</dd></dl><h2 id="enums" class="section-header">Enums<a href="#enums" class="anchor">§</a></h2><dl class="item-table"><dt><a class="enum" href="enum.AnalysisError.html" title="enum casa_simulation::simutil::analysis::AnalysisError">Analysis<wbr>Error</a></dt><dd>What the analysis functions refuse.</dd></dl><h2 id="functions" class="section-header">Functions<a href="#functions" class="anchor">§</a></h2><dl class="item-table"><dt><a class="fn" href="fn.cell_size.html" title="fn casa_simulation::simutil::analysis::cell_size">cell_<wbr>size</a></dt><dd><code>simutil.cellsize</code>: the image’s cell on the sky in radians, each
+direction increment’s magnitude scaled by the magnitude of its diagonal
+element of the coordinate’s linear transform.</dd><dt><a class="fn" href="fn.convimage.html" title="fn casa_simulation::simutil::analysis::convimage">convimage</a></dt><dd><code>simutil.convimage(modelflat, outflat)</code>: regrid the flat sky model onto
+the flat image’s coordinates and shape, and convolve it with the image’s
+restoring beam.</dd><dt><a class="fn" href="fn.fidelity.html" title="fn casa_simulation::simutil::analysis::fidelity">fidelity</a></dt><dd><code>simanalyze</code>’s analysis of <code>image_root.image</code> against the sky model:
+with <code>convolved</code> the <a href="fn.convimage.html" title="fn casa_simulation::simutil::analysis::convimage"><code>convimage</code></a> output and
+<code>out_flat</code> the image’s flat, write</dd><dt><a class="fn" href="fn.is_total_power.html" title="fn casa_simulation::simutil::analysis::is_total_power">is_<wbr>total_<wbr>power</a></dt><dd><code>simutil.ismstp</code>: the MeasurementSet is total power when its first
+antenna is named <code>…TP…</code>, when it has one antenna, or when every UVW
+value is zero. CASA tests <code>uvw.all() == 0</code>, true when any value is zero;
+casa-rs tests what was meant.</dd><dt><a class="fn" href="fn.statim.html" title="fn casa_simulation::simutil::analysis::statim">statim</a></dt><dd><code>simutil.statim(image, plot=False)</code>.</dd></dl></section></div></main></body></html>

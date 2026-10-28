@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["SimutilError"],"fn":["python_float"],"mod":["baselines","direction","pointings","receivers","skymodel"]};
+window.SIDEBAR_ITEMS = {"enum":["SimutilError"],"fn":["python_float"],"mod":["analysis","baselines","direction","pointings","receivers","skymodel"]};

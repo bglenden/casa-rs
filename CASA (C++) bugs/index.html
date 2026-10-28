@@ -1818,6 +1818,50 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#simanalyze-writes-the-fidelitys-floor-to-six-decimal-places" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        simanalyze writes the fidelity's floor to six decimal places
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#simanalyzes-fidelity-image-is-labelled-jybeam" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        simanalyze's fidelity image is labelled Jy/beam
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#statim-scales-a-jybeam-image-without-a-beam-by-the-pixel-area" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        statim scales a Jy/beam image without a beam by the pixel area
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#image-expressions-containing-pa-are-labelled-as-position-angles" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Image expressions containing "pa" are labelled as position angles
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -3869,6 +3913,68 @@ stops instead, with "Failed to set conversion layer state".</p>
 <p>casa-rs treats that channel as it treats the others: it is not regridded,
 and the output keeps the input's (<code>casa_images::regrid</code>). Converting the
 frame of an axis that is never regridded serves no purpose.</p>
+<h2 id="simanalyze-writes-the-fidelitys-floor-to-six-decimal-places"><code>simanalyze</code> writes the fidelity's floor to six decimal places<a class="headerlink" href="#simanalyze-writes-the-fidelitys-floor-to-six-decimal-places" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-10-27</li>
+<li>Status: CASA bug; casa-rs does not follow it (#841 Phase 6f)</li>
+<li>Affected code: <code>casatasks/src/private/task_simanalyze.py</code> (CASA 6.7.6,
+  <code>"max(abs('%s'), %f)" % (difference, maxdiff/pl.sqrt(2.0))</code>)</li>
+</ul>
+<p>The fidelity image divides the convolved model by the difference, floored at
+the difference's median absolute deviation over √2. The floor goes into the
+image expression through <code>%f</code>, which keeps six decimal places. A floor of
+5.19e-7 Jy/beam is written 0.000001, nearly twice its value, and one under
+5e-7 is written 0, so a pixel where the difference is zero divides by zero.
+Simulations of faint sources have differences that small
+(<code>tools/simulation/simanalyze_analysis_oracle.py</code>, case <code>faint</code>). casa-rs
+uses the floor itself (<code>casa_simulation::simutil::analysis::fidelity</code>).</p>
+<h2 id="simanalyzes-fidelity-image-is-labelled-jybeam"><code>simanalyze</code>'s fidelity image is labelled Jy/beam<a class="headerlink" href="#simanalyzes-fidelity-image-is-labelled-jybeam" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-10-27</li>
+<li>Status: CASA artefact; casa-rs departs (#841 Phase 6f)</li>
+<li>Affected code: <code>casatasks/src/private/task_simanalyze.py</code> (CASA 6.7.6,
+  <code>ia.imagecalc(fidelityim, "abs('%s') / '%s'" % (convolved, absdiff))</code>)</li>
+</ul>
+<p>The fidelity is the ratio of two images in Jy/beam. CASA's image expression
+copies its unit from the first image it names, so the fidelity is labelled
+Jy/beam. casa-rs writes it without a unit.</p>
+<h2 id="statim-scales-a-jybeam-image-without-a-beam-by-the-pixel-area"><code>statim</code> scales a Jy/beam image without a beam by the pixel area<a class="headerlink" href="#statim-scales-a-jybeam-image-without-a-beam-by-the-pixel-area" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-10-28</li>
+<li>Status: CASA bug; casa-rs does not follow it (#841 Phase 6f)</li>
+<li>Affected code: <code>casatasks/src/private/simutil.py</code> (CASA 6.7.6, <code>statim</code>:
+  <code>toJyarcsec=1.</code> when <code>ia.restoringbeam()</code> is empty, then
+  <code>toJypix=toJyarcsec*pixarea</code>)</li>
+</ul>
+<p><code>statim</code> multiplies an image's minimum, maximum and corner rms by a
+flux-per-pixel factor. For Jy/pixel, and for Jy/beam with a restoring beam,
+the factor is 1, so the statistics stay in the image's unit. For Jy/beam
+without a beam it treats the image as Jy per square arcsecond, and the factor
+becomes the pixel area in square arcseconds: 0.04 for 0.2″ pixels. It still
+reports the unit as Jy/beam, so the numbers are in no unit at all. Without a
+beam, Jy/beam cannot be converted to anything. casa-rs reports the image's
+own values in its own unit (<code>casa_simulation::simutil::analysis::statim</code>;
+<code>tools/simulation/simanalyze_analysis_oracle.py</code>, image <code>beamless.flat</code>).
+<code>simanalyze</code>'s reported statistics of its image do not meet this case: it
+reads the image's beam first, and fails without one.</p>
+<h2 id="image-expressions-containing-pa-are-labelled-as-position-angles">Image expressions containing "pa" are labelled as position angles<a class="headerlink" href="#image-expressions-containing-pa-are-labelled-as-position-angles" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-10-27</li>
+<li>Status: CASA bug; casa-rs does not follow it (#841 Phase 6f)</li>
+<li>Affected code: casatools
+  <code>imageanalysis/ImageAnalysis/ImageExprCalculator.tcc</code>
+  (<code>_expr.contains(casacore::Regex("pa\\(*"))</code>)</li>
+</ul>
+<p><code>ImageExprCalculator</code> looks for the <code>pa()</code> function with the regular
+expression <code>pa\(*</code>, which matches "pa" followed by any number of
+parentheses, so any "pa" at all. An expression whose image paths contain
+"pa" (a project named <code>pancake</code>, or a path through <code>scratchpad</code>) has its
+output's unit set to deg and its Stokes axis replaced by <code>Pangle</code>.
+<code>simanalyze</code>'s difference, absolute difference, fidelity and absolute model
+are all image expressions over <code>&lt;project&gt;/&lt;project&gt;.&lt;configuration&gt;</code>, so a
+project whose path contains "pa" gets a fidelity labelled deg, and
+difference and fidelity images whose Stokes plane is a position angle. casa-rs
+computes those images directly and keeps the Stokes axis.</p>
 
 
 

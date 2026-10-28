@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["AnalysisError"],"fn":["cell_size","convimage","fidelity","is_total_power","statim"],"struct":["ConvolvedModel","Fidelity","ImageStatistics"]};
