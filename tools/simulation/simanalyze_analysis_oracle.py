@@ -96,7 +96,8 @@ INPUTS = {
     # A model covering only part of the image.
     "small_model.flat": (flat([20, 18, 1], [-0.1, 0.1], [10.0, 9.0], "Jy/pixel",
                               [{"x": 9.0, "y": 8.0, "sigma": 3.0, "peak": 2.0}]), 0.0),
-    # A faint pair, whose difference's MAD/sqrt(2) CASA writes as 0.000000.
+    # A faint pair, whose difference's MAD/sqrt(2), about 5.2e-7, CASA writes
+    # as 0.000001.
     "faint_model.flat": (flat([64, 64, 1], [-0.1, 0.1], [32.0, 32.0], "Jy/pixel",
                               scaled(MODEL_SOURCES, 1e-6)), 0.0),
     "faint.flat": (flat([33, 35, 1], [-0.2, 0.2], [16.3, 17.6], "Jy/beam", scaled(IMAGE_SOURCES, 1e-6),
@@ -133,7 +134,10 @@ CONVIMAGE = [
     ("rotated", "model.flat", "rotated.flat"),
     ("beamless", "model.flat", "beamless.flat"),
 ]
-STATIM = ["image.flat", "offset.flat", "stats.flat", "masked_corner.flat", "kelvin.flat", "model.flat"]
+# statim also of a Jy/beam image without a beam, whose statistics CASA scales
+# by the pixel area, and of the rotated image, which its cellsize refuses.
+STATIM = ["image.flat", "offset.flat", "stats.flat", "masked_corner.flat", "kelvin.flat", "model.flat",
+          "beamless.flat", "rotated.flat"]
 CELLSIZE = ["image.flat", "model.flat", "tilted.flat", "rotated.flat"]
 FLATIMAGE = ["cube.image"]
 

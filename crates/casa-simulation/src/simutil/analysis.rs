@@ -34,6 +34,9 @@
 //!   angle (unit deg, Stokes axis `Pangle`), so a project whose path
 //!   contains "pa" gets them so labelled. casa-rs computes them directly and
 //!   keeps the Stokes axis.
+//! - `statim` multiplies the statistics of a Jy/beam image without a
+//!   restoring beam by the pixel area in square arcseconds, and still reports
+//!   them as Jy/beam. casa-rs reports the image's own values.
 //! - `ismstp` tests `uvw.all() == 0`, which is true when any UVW value is
 //!   zero; casa-rs tests what was meant, that all are.
 //!
@@ -134,17 +137,22 @@ pub struct ImageStatistics {
 
 /// `simutil.statim(image, plot=False)`.
 ///
-/// CASA scales the statistics by a flux-per-pixel factor that is 1 for
-/// every unit (Jy/beam, Jy/pixel and the units it does not know), so the
-/// values are the image's own. The corner is CASA's `rg.box([0, 0],
+/// Like CASA, it first takes the image's [`cell_size`], so it refuses an
+/// image whose direction axes are rotated. The values are the image's own.
+/// CASA scales them by a flux-per-pixel factor, which is 1 for Jy/pixel, for
+/// Jy/beam with a restoring beam and for the units it does not know. For
+/// Jy/beam without a beam the factor is the pixel area in square arcseconds,
+/// while CASA still reports the unit as Jy/beam; casa-rs does not scale them
+/// (`docs/CASA (C++) bugs.md`). The corner is CASA's `rg.box([0, 0],
 /// [nx/4, ny/4])`: pixels 0 to `nx/4` rounded half up, inclusive, on the
 /// image's first two axes.
 ///
 /// # Errors
 ///
-/// An image that cannot be read.
+/// An image that cannot be read, or that [`cell_size`] refuses.
 pub fn statim(image: &Path) -> Result<ImageStatistics, AnalysisError> {
     let image = PagedImage::<f32>::open(image)?;
+    cell_size(image.coordinates())?;
     let shape = image.shape().to_vec();
     let pixels = image.get()?;
     let mask = image.default_mask()?;

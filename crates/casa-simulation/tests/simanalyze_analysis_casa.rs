@@ -430,8 +430,18 @@ fn difference_and_fidelity_of_casa_rss_convolved_model_match_casa() {
 fn statim_matches_casa() {
     let fixture = Fixture::load();
     for (name, casa) in fixture.record["statim"].as_object().unwrap() {
-        let ours = statim(&fixture.input(name)).unwrap();
+        let ours = statim(&fixture.input(name));
+        if let Some(error) = casa["error"].as_str() {
+            let Err(AnalysisError::Analysis(ours)) = ours else {
+                panic!("{name}: casa-rs accepted what CASA refused: {ours:?}");
+            };
+            assert_eq!(format!("Exception: {ours}"), error, "{name}");
+            continue;
+        }
+        let ours = ours.unwrap();
+        let scale = casa_statim_scale(&fixture.input(name));
         for (key, value) in [("min", ours.min), ("max", ours.max), ("rms", ours.rms)] {
+            let value = value * scale;
             let theirs = casa[key].as_f64().unwrap();
             assert!(
                 (value - theirs).abs() <= 1e-6 * theirs.abs().max(1e-30),
@@ -440,6 +450,18 @@ fn statim_matches_casa() {
         }
         assert_eq!(ours.unit, casa["unit"], "{name}: unit");
     }
+}
+
+/// The factor CASA's `statim` scales an image's statistics by and casa-rs
+/// does not: the pixel area in square arcseconds for a Jy/beam image without
+/// a restoring beam, and 1 otherwise (`docs/CASA (C++) bugs.md`).
+fn casa_statim_scale(path: &Path) -> f64 {
+    let image = PagedImage::<f32>::open(path).unwrap();
+    if image.units() != "Jy/beam" || !image.image_info().unwrap().beam_set.is_empty() {
+        return 1.0;
+    }
+    let [x, y] = cell_size(image.coordinates()).unwrap();
+    x * y / (ARCSEC * ARCSEC)
 }
 
 #[test]

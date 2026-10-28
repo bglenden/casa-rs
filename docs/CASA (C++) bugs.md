@@ -2224,6 +2224,26 @@ The fidelity is the ratio of two images in Jy/beam. CASA's image expression
 copies its unit from the first image it names, so the fidelity is labelled
 Jy/beam. casa-rs writes it without a unit.
 
+## `statim` scales a Jy/beam image without a beam by the pixel area
+
+- Date noted: 2026-10-28
+- Status: CASA bug; casa-rs does not follow it (#841 Phase 6f)
+- Affected code: `casatasks/src/private/simutil.py` (CASA 6.7.6, `statim`:
+  `toJyarcsec=1.` when `ia.restoringbeam()` is empty, then
+  `toJypix=toJyarcsec*pixarea`)
+
+`statim` multiplies an image's minimum, maximum and corner rms by a
+flux-per-pixel factor. For Jy/pixel, and for Jy/beam with a restoring beam,
+the factor is 1, so the statistics stay in the image's unit. For Jy/beam
+without a beam it treats the image as Jy per square arcsecond, and the factor
+becomes the pixel area in square arcseconds: 0.04 for 0.2″ pixels. It still
+reports the unit as Jy/beam, so the numbers are in no unit at all. Without a
+beam, Jy/beam cannot be converted to anything. casa-rs reports the image's
+own values in its own unit (`casa_simulation::simutil::analysis::statim`;
+`tools/simulation/simanalyze_analysis_oracle.py`, image `beamless.flat`).
+`simanalyze`'s reported statistics of its image do not meet this case: it
+reads the image's beam first, and fails without one.
+
 ## Image expressions containing "pa" are labelled as position angles
 
 - Date noted: 2026-10-27
