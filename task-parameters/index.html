@@ -964,6 +964,14 @@ casars params describe &lt;parameter-or-surface&gt;
 commented defaults are not active overrides. Overrides use the generated CLI
 flag spellings listed in the generated parameter reference, or the parameter's
 own name, such as <code>--vis</code> or <code>--threshold</code>.</p>
+<p>A list's command-line form is comma-separated (<code>--archivefiles a.exp,b.exp</code>).
+A flag repeated for a list without a fixed size adds to it, so
+<code>--archivefile a.exp --archivefile b.exp</code> names both archives; any other
+repeated flag takes its last value. A path list given as one string, on the
+command line, in a profile or in a <code>--json-run</code> request, is split at its
+commas before each path is normalized, so every route names the same paths.
+A refused value names its parameter, on the command line as in a reply's
+<code>parameter</code>.</p>
 <p>There are no run-time confirmations. CASA's own parameters are the consent:
 <code>overwrite=true</code> replaces a product, and a task that changes data in place
 does so, as in CASA. Where CASA guards a change, casa-rs does too, for example
@@ -975,8 +983,10 @@ launcher is retired (#931).</p>
 transports (<code>--protocol-info</code>, <code>--json-schema</code>, <code>--json-run</code>); source selection
 and profile lifecycle are owned by <code>casars run</code> and <code>casars params</code>, and by a
 front-end binary's own command line. The
-image binaries and <code>imexplore</code> run on the shared task front end in
-<code>casa-task-runtime</code>, which gives each binary those same sources and controls,
+image binaries, <code>imexplore</code> and the MeasurementSet binaries (<code>msexplore</code>,
+<code>mstransform</code>, <code>flagdata</code>, <code>flagmanager</code>, <code>importvla</code>) run on the shared task
+front end in <code>casa-task-runtime</code>, which gives each binary those same sources
+and controls,
 <code>--show</code>, <code>--template</code> (<code>--profile-template</code> on imregrid, whose <code>--template</code>
 is its template image), <code>--describe</code> and <code>--validate</code>, and a typed
 <code>--json-run</code> reply. A run started from a front-end binary's command line

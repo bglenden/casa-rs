@@ -1028,18 +1028,26 @@ Provider CLIs retain only their human argument projection and typed execution
 function.</p>
 <h2 id="the-shared-task-front-end-and-typed-replies">The shared task front end and typed replies<a class="headerlink" href="#the-shared-task-front-end-and-typed-replies" title="Permanent link">&para;</a></h2>
 <p><code>casa-task-runtime::TaskFrontEnd</code> is the one entry every task binary's <code>main</code>
-is to call. The image binaries and <code>imexplore</code> run on it; the MeasurementSet
-and calibration families, the imager and simobserve move next (#931, PRs 2c
-and 2d) and use <code>TaskCliHost</code> until then. The front end is generic over the
+is to call. The image binaries, <code>imexplore</code>, and the MeasurementSet binaries
+(<code>msexplore</code> with <code>plotms</code>, <code>mstransform</code> with <code>split</code>, <code>flagdata</code>,
+<code>flagmanager</code> and <code>importvla</code>) run on it; the calibration family, the imager
+and simobserve move next (#931, PR 2d) and use <code>TaskCliHost</code> until then. A
+surface's choices take their canonical names (<code>--preset amplitude_vs_time</code>),
+and every flag it declares, short ones such as msexplore's <code>-o</code> included,
+reaches its parameter. The front end is generic over the
 binary's execution callback and owns the surface's declared flags, the base
 sources, <code>--workspace</code>, <code>--unset</code>, <code>--save-params</code>, <code>--no-save-last</code>, the
 non-executing <code>--show</code>, <code>--template</code> (also <code>--profile-template</code>), <code>--describe</code>
 and <code>--validate</code>, and the machine actions. A spelling the surface declares is
 always its parameter, so imregrid's <code>--template</code> names its template image and
 <code>--profile-template</code> gives its profile. A family binary's first word names the
-surface it runs, such as <code>imexplore imstat</code>; the first hosted surface runs
-otherwise. The callback reads the resolved values into the binary's typed
-request through <code>TaskInvocation</code>'s typed reads.</p>
+surface it runs, such as <code>imexplore imstat</code> or <code>mstransform split</code>; the
+first hosted surface runs otherwise. The callback reads the resolved values
+into the binary's typed request through <code>TaskInvocation</code>'s typed reads, and
+<code>TaskInvocation::is_set</code> tells a value the run sets from a default. What a
+command line prints is the callback's text (msexplore's summary in the
+user's <code>format</code>), with notes such as msexplore's flag-edit line on stderr;
+<code>--json-run</code> carries the value and result instead.</p>
 <p>The binary's <code>main</code> owns the process. It reads the logging configuration from
 the environment (<code>CasaLoggingConfig::from_env</code>) and passes it, with its
 arguments, how the process enters a directory (<code>std::env::set_current_dir</code>)
