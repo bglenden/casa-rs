@@ -32,22 +32,34 @@ is never overwritten without an explicit save.
 ## Task-runner compatibility
 
 Python has one task transport: every generated `casars.tasks.<task>` callable
-delegates to `casars run`, which resolves the provider through the canonical
-application catalog and `casa-task-runtime`. An explicit `binary=` argument
-selects the exact `casars` runner file. Otherwise `CASARS_LAUNCH_MODE` selects
-exactly one policy:
+and `casars.tasks.run` start the task's own executable, named by the
+canonical application catalog, with its surface's fixed arguments and
+`--json-run -`. One Rust resolver
+(`casa_provider_contracts::resolve_task_executable`, through `casars._core`)
+finds that executable. The first step that applies decides:
 
-- `installed_suite` (the default) uses the catalog entry's override variable,
-  or the single path `<CASARS_SUITE_ROOT>/bin/<executable>`. Without an explicit
-  suite root, `~/.local/opt/casa-rs/current` is the root.
-- `development_workspace` uses the single path
-  `<CASARS_DEVELOPMENT_WORKSPACE>/target/debug/<executable>`.
+1. the task's catalog override variable, `CASARS_<APP>_BIN` (for example
+   `CASARS_IMAGER_BIN` or `CASARS_CALIBRATE_BIN`; impbcor's is
+   `CASA_RS_IMPBCOR_BIN`), names the file;
+2. a suite root holds it at `<root>/bin/<executable>`: `CASARS_SUITE_ROOT`,
+   or else the installed suite the Python package belongs to (the
+   installer's environment is `<suite>/python`, beside `<suite>/bin` and
+   `bundle-manifest.json`);
+3. a development checkout: the newest `debug` or `release` build of the
+   executable under the workspace the package was built from, in
+   `$CARGO_TARGET_DIR` or `target/`.
 
-A missing runner is an error in the selected mode. Python does not inspect the
-current directory, package ancestors, neighboring build profiles, or `PATH`,
-and it never switches launch modes automatically. The runner validates the
-provider contract and invocation before execution; Python does not maintain a
-second protocol descriptor, provider schema, or compatibility handshake.
+A step that applies but lacks the file raises `TaskBinaryNotFoundError`
+naming what it lacked; it never falls through to a later step, so an
+installed suite never runs a checkout's build. A missing development build is
+reported with the `cargo build -p <package> --bin <executable>` that makes
+it. Python does not search the current directory or `PATH`, and nothing runs
+through `cargo`. A wheel installed outside a suite, such as one from PyPI,
+runs tasks only with `CASARS_SUITE_ROOT` or the task's override set; its
+in-process `casars.data`, `casars.tools` and `casars.simutil` need no
+executables. The executable validates the provider contract and request
+before execution; Python does not maintain a second protocol descriptor,
+provider schema, or compatibility handshake.
 
 Release tags also build and publish Python package artifacts separately from the
 Rust binaries:
@@ -59,8 +71,8 @@ Rust binaries:
 That means Python package compatibility has two layers:
 
 1. package-version compatibility with the published wheel or sdist
-2. runtime contract compatibility with the resolved `casars` suite and its
-   catalog-owned providers
+2. runtime contract compatibility with the resolved suite and its
+   catalog-owned task executables
 
 The `casars.data` surface has its own narrower stability boundary in v1:
 
@@ -96,22 +108,33 @@ The installer-managed suite install layout behind steps 4-6 is:
 ```text
 ~/.local/opt/casa-rs/<version>/
   bin/
-    casars
     calibrate
+    casars-imager
+    imexplore
+    mstransform
+    ...                 (every task executable of the catalog)
   python/
     ...
   wheels/
     ...
+  bundle-manifest.json
 ~/.local/opt/casa-rs/stable -> ~/.local/opt/casa-rs/<stable-version>
 ~/.local/opt/casa-rs/rc -> ~/.local/opt/casa-rs/<rc-version>
 ~/.local/opt/casa-rs/current -> ~/.local/opt/casa-rs/<version>
 ~/.local/bin/
-  casars -> ~/.local/opt/casa-rs/current/bin/casars
   calibrate -> ~/.local/opt/casa-rs/current/bin/calibrate
-  casars-stable -> ~/.local/opt/casa-rs/stable/bin/casars
   calibrate-stable -> ~/.local/opt/casa-rs/stable/bin/calibrate
-  casars-rc -> ~/.local/opt/casa-rs/rc/bin/casars
   calibrate-rc -> ~/.local/opt/casa-rs/rc/bin/calibrate
+  ...                   (the same links for each executable in bin/,
+                         except feather, immath and impv)
 ```
 
-That lets Python, `casars`, and standalone executables behave as one installed suite while keeping `~/.local/bin` as the only `PATH` entry users generally need.
+Each executable in the suite's `bin/` gets `<command>-<channel>` and, for
+the active suite, `<command>` in `~/.local/bin`, except the CASA names that
+are system commands or generic words: `feather`, `immath` and `impv` stay
+off `PATH`, as `split` would (it is a coreutil; `mstransform split` runs
+CASA's split). Python still starts them from the suite's `bin/`. A dangling
+link into the install root, such as one to a command a newer suite no longer
+has, is removed. That lets Python and the task executables behave as one
+installed suite while keeping `~/.local/bin` as the only `PATH` entry users
+generally need.

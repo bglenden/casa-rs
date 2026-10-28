@@ -231,23 +231,46 @@ p.update(
 )
 p.save("profiles/target-imaging.toml")
 
-result = tasks.run(
-    "imager",
-    parameters=p,
-    workspace="project",
-)
+result = p.run()                          # in the draft's workspace
+result = tasks.run("imager", p, niter=0)  # the draft, with one more value
 ```
 
 Companion constructors are `parameters.last(...)`,
 `parameters.last_successful(...)`, and `parameters.load(path, ...)`.
 `TaskParameters` supports mapping-style updates, `reset(name)`, `reload()`,
-`save(path)`, `provider_invocation()`, and `run()`. The invocation exposes the
-provider protocol name/version and the exact canonical request stdin.
-`tasks.run()` accepts every catalog task and routes through `casars run`;
-a request the catalog refuses, such as a parameter its gridder does not read,
-raises `ValueError` before launch, and the provider reports what the installed
-build cannot run when it runs. Successful completions retain the same provider
-invocation while result projection remains Rust-owned. Catalog-generated
+`save(path)`, `provider_invocation()`, and `run(**values)`. As a mapping, a
+draft holds the parameters that have a value, so a loaded profile runs
+through a CASA-named wrapper, in the current directory, as
+`tasks.gaincal(**parameters.load(path))`. The
+invocation exposes the provider protocol name/version, the arguments (the
+surface's fixed arguments, then `--json-run -`), and the exact canonical
+request stdin.
+
+`tasks.run(task, parameters=None, /, *, workspace=None, **values)` accepts
+every catalog task. It starts from the draft, or Defaults, sets `values`,
+and runs in `workspace`: the draft's, or the current directory. The
+CASA-named wrappers take CASA's parameters only and run in the current
+directory. Each call starts the task's own executable, found by the resolver
+([Install](install.md)), with `--json-run -`, and passes its log lines to
+`sys.stderr` as they arrive. The log reaches stderr at the logging
+configuration's threshold, WARN by default;
+`CASA_RS_LOG_STDERR_PRIORITY=INFO` also shows a task's INFO lines, such as
+its start and completion. Ctrl-C (`KeyboardInterrupt`) is passed to the task
+as SIGINT; the task has ten seconds to stop before it is killed, and the
+`KeyboardInterrupt` is then raised again.
+
+A request the catalog refuses, such as a parameter its gridder does not read,
+raises `ValueError` before anything starts. A task that does not succeed
+raises `casars.tasks.TaskExecutionError`, a `RuntimeError` whose
+`.completion.status` is `refused`, `failed`, `interrupted`, `signalled` or
+`malformed_reply`, with its `message` and the `parameter` it names.
+`TaskBinaryNotFoundError`, a `FileNotFoundError`, says what the resolver
+lacked; `TaskInvocationError` means the executable could not be started, and
+`TaskResultError` that a success's result was malformed. A success returns a
+`TaskCompletion` with the `command` run, its `workspace`, `returncode`,
+`stdout` (the reply), `stderr` (the log), the `provider_invocation`, CASA's
+return `value` from the reply, and the declared products (`result`,
+`products`); result projection remains Rust-owned. Catalog-generated
 CASA-named keyword wrappers and type stubs are available directly under
 `casars.tasks` without copying defaults into Python signatures; there is no
 second provider-specific task API.
