@@ -9,13 +9,15 @@ use casa_imaging_application::{
     RestoringBeamPolicy, SpecMode, Weighting,
 };
 use casa_ms::CubeInterpolation;
-use casa_provider_contracts::{ParameterValue, PersistenceClass, builtin_surface_bundle};
+use casa_provider_contracts::{
+    ParameterValue, PersistenceClass, TaskRunRequest, builtin_surface_bundle,
+};
 use casa_task_runtime::{
     BaseSource, DiagnosticCode, ParameterSession, ProfileError, parse_profile,
     project_provider_invocation, render_sparse_profile, resolve_profile,
 };
 use casa_types::measures::{doppler::DopplerRef, frequency::FrequencyRef};
-use casars_imager::{ImagerTaskRequest, imager_provider_invocation, resolve_request};
+use casars_imager::{ImagingParameters, resolve_request};
 
 const VLASS_SINGLE: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -236,18 +238,15 @@ fn request_from_profile(name: &str, source: &str) -> Result<ImagingRequest, Box<
         BaseSource::File(PathBuf::from(format!("{name}.toml"))),
         &profile,
     )?;
-    let invocation = project_provider_invocation(&session, |family, values, direct| {
-        assert_eq!(family, "imager");
-        imager_provider_invocation(values, direct.args)
-    })?;
-    let request: ImagerTaskRequest = serde_json::from_str(
+    let invocation = project_provider_invocation(&session)?;
+    let request: TaskRunRequest = serde_json::from_str(
         invocation
             .stdin
             .as_deref()
-            .ok_or("missing canonical provider request")?,
+            .ok_or("missing canonical task request")?,
     )?;
-    let ImagerTaskRequest::Run(parameters) = request;
-    Ok(resolve_request(&parameters)?.1)
+    assert_eq!(request.surface, "imager");
+    Ok(resolve_request(&ImagingParameters(request.values))?.1)
 }
 
 fn profile_source(contract: u32, extra: &str) -> String {

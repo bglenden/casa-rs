@@ -23,6 +23,10 @@ pub const EXIT_EXECUTION_FAILED: i32 = 1;
 /// Exit status of a task whose parameters were refused before it changed
 /// anything ([`TaskFailureKind::Validation`]).
 pub const EXIT_VALIDATION_FAILED: i32 = 2;
+/// Exit status of a task that stopped because it was interrupted
+/// ([`TaskFailureKind::Interrupted`]): 128 + SIGINT, the shell's status for an
+/// interrupted command.
+pub const EXIT_INTERRUPTED: i32 = 130;
 
 /// One `--json-run` request: the surface to run and the CASA-named values the
 /// caller set.
@@ -50,6 +54,10 @@ pub enum TaskFailureKind {
     Validation,
     /// The task started and failed. Python raises `RuntimeError`.
     Execution,
+    /// The task caught an interrupt (SIGINT), stopped at its next safe point
+    /// and published nothing. A task that handles no interrupt is ended by
+    /// the signal instead, and writes no reply.
+    Interrupted,
 }
 
 impl TaskFailureKind {
@@ -58,6 +66,7 @@ impl TaskFailureKind {
         match self {
             Self::Validation => EXIT_VALIDATION_FAILED,
             Self::Execution => EXIT_EXECUTION_FAILED,
+            Self::Interrupted => EXIT_INTERRUPTED,
         }
     }
 }
@@ -173,6 +182,14 @@ mod tests {
                 .unwrap()
                 .contains("parameter")
         );
+        let interrupted: TaskReply = serde_json::from_value(json!({
+            "status": "failed",
+            "surface": "imager",
+            "kind": "interrupted",
+            "message": "interrupted; nothing was published",
+        }))
+        .unwrap();
+        assert_eq!(interrupted.exit_code(), EXIT_INTERRUPTED);
     }
 
     #[test]

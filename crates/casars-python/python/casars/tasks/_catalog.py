@@ -123,8 +123,8 @@ def calibrate(
     mode: Literal['apply', 'export_corrected_data', 'fluxscale', 'gencal', 'solve_bandpass', 'solve_gain', 'stats', 'summary'] | object = _UNSET,
     vis: StrPath | list[StrPath] | tuple[StrPath, ...] | object = _UNSET,
     outputvis: StrPath | object = _UNSET,
-    summary_paths: str | object = _UNSET,
-    gaintables: str | object = _UNSET,
+    summary_paths: StrPath | list[StrPath] | tuple[StrPath, ...] | Literal['none'] | object = _UNSET,
+    gaintables: StrPath | list[StrPath] | tuple[StrPath, ...] | Literal['none'] | object = _UNSET,
     table_path: StrPath | object = _UNSET,
     callib: StrPath | object = _UNSET,
     gainfield: str | object = _UNSET,
@@ -170,6 +170,9 @@ def calibrate(
     parameter: str | object = _UNSET,
     gaincurve_table: StrPath | object = _UNSET,
     flagbackup: bool | object = _UNSET,
+    minblperant: int | object = _UNSET,
+    degamp: int | object = _UNSET,
+    degphase: int | object = _UNSET,
     parameters: TaskParameters | None = None,
     profile: StrPath | None = None,
     base_source: Literal["defaults", "last", "last_successful"] = "defaults",
@@ -183,7 +186,7 @@ def calibrate(
     confirm_mutation: bool = False,
 ) -> TaskCompletion:
     """apply, inspect, and solve CASA-style calibration workflows"""
-    overrides = _explicit(locals(), ('mode', 'vis', 'outputvis', 'summary_paths', 'gaintables', 'table_path', 'callib', 'gainfield', 'interp', 'spwmap', 'apply_mode', 'calwt', 'output', 'overwrite', 'parang', 'format', 'stats_axis', 'stats_datacolumn', 'use_flags', 'out_table', 'refant', 'gain_type', 'solve_mode', 'solint', 'gain_combine', 'gain_model_source', 'smodel', 'min_snr', 'bandpass_combine', 'bandtype', 'solnorm', 'fluxscale_input', 'reference_fields', 'transfer_fields', 'refspwmap', 'gainthreshold', 'incremental', 'selectdata', 'field', 'spw', 'antenna', 'scan', 'observation', 'array', 'timerange', 'msselect', 'caltype', 'parameter', 'gaincurve_table', 'flagbackup'))
+    overrides = _explicit(locals(), ('mode', 'vis', 'outputvis', 'summary_paths', 'gaintables', 'table_path', 'callib', 'gainfield', 'interp', 'spwmap', 'apply_mode', 'calwt', 'output', 'overwrite', 'parang', 'format', 'stats_axis', 'stats_datacolumn', 'use_flags', 'out_table', 'refant', 'gain_type', 'solve_mode', 'solint', 'gain_combine', 'gain_model_source', 'smodel', 'min_snr', 'bandpass_combine', 'bandtype', 'solnorm', 'fluxscale_input', 'reference_fields', 'transfer_fields', 'refspwmap', 'gainthreshold', 'incremental', 'selectdata', 'field', 'spw', 'antenna', 'scan', 'observation', 'array', 'timerange', 'msselect', 'caltype', 'parameter', 'gaincurve_table', 'flagbackup', 'minblperant', 'degamp', 'degphase'))
     return _run(
         "calibrate",
         parameters=parameters,
@@ -665,7 +668,7 @@ def split(
 def applycal(
     *,
     vis: StrPath | list[StrPath] | tuple[StrPath, ...] | object = _UNSET,
-    gaintables: str | object = _UNSET,
+    gaintables: StrPath | list[StrPath] | tuple[StrPath, ...] | Literal['none'] | object = _UNSET,
     callib: StrPath | object = _UNSET,
     gainfield: str | object = _UNSET,
     interp: str | object = _UNSET,
@@ -719,7 +722,7 @@ def applycal(
 def gaincal(
     *,
     vis: StrPath | list[StrPath] | tuple[StrPath, ...] | object = _UNSET,
-    gaintables: str | object = _UNSET,
+    gaintables: StrPath | list[StrPath] | tuple[StrPath, ...] | Literal['none'] | object = _UNSET,
     callib: StrPath | object = _UNSET,
     gainfield: str | object = _UNSET,
     interp: str | object = _UNSET,
@@ -746,6 +749,7 @@ def gaincal(
     array: str | object = _UNSET,
     timerange: str | object = _UNSET,
     msselect: str | object = _UNSET,
+    minblperant: int | object = _UNSET,
     parameters: TaskParameters | None = None,
     profile: StrPath | None = None,
     base_source: Literal["defaults", "last", "last_successful"] = "defaults",
@@ -759,7 +763,7 @@ def gaincal(
     confirm_mutation: bool = False,
 ) -> TaskCompletion:
     """Solve antenna gain calibration for a MeasurementSet."""
-    overrides = _explicit(locals(), ('vis', 'gaintables', 'callib', 'gainfield', 'interp', 'spwmap', 'output', 'overwrite', 'format', 'out_table', 'refant', 'gain_type', 'solve_mode', 'solint', 'gain_combine', 'gain_model_source', 'smodel', 'min_snr', 'solnorm', 'selectdata', 'field', 'spw', 'antenna', 'scan', 'observation', 'array', 'timerange', 'msselect'))
+    overrides = _explicit(locals(), ('vis', 'gaintables', 'callib', 'gainfield', 'interp', 'spwmap', 'output', 'overwrite', 'format', 'out_table', 'refant', 'gain_type', 'solve_mode', 'solint', 'gain_combine', 'gain_model_source', 'smodel', 'min_snr', 'solnorm', 'selectdata', 'field', 'spw', 'antenna', 'scan', 'observation', 'array', 'timerange', 'msselect', 'minblperant'))
     return _run(
         "gaincal",
         parameters=parameters,
@@ -779,7 +783,7 @@ def gaincal(
 def bandpass(
     *,
     vis: StrPath | list[StrPath] | tuple[StrPath, ...] | object = _UNSET,
-    gaintables: str | object = _UNSET,
+    gaintables: StrPath | list[StrPath] | tuple[StrPath, ...] | Literal['none'] | object = _UNSET,
     callib: StrPath | object = _UNSET,
     gainfield: str | object = _UNSET,
     interp: str | object = _UNSET,
@@ -803,6 +807,8 @@ def bandpass(
     array: str | object = _UNSET,
     timerange: str | object = _UNSET,
     msselect: str | object = _UNSET,
+    degamp: int | object = _UNSET,
+    degphase: int | object = _UNSET,
     parameters: TaskParameters | None = None,
     profile: StrPath | None = None,
     base_source: Literal["defaults", "last", "last_successful"] = "defaults",
@@ -816,7 +822,7 @@ def bandpass(
     confirm_mutation: bool = False,
 ) -> TaskCompletion:
     """Solve bandpass calibration for a MeasurementSet."""
-    overrides = _explicit(locals(), ('vis', 'gaintables', 'callib', 'gainfield', 'interp', 'spwmap', 'output', 'overwrite', 'format', 'out_table', 'refant', 'smodel', 'min_snr', 'bandpass_combine', 'bandtype', 'solnorm', 'selectdata', 'field', 'spw', 'antenna', 'scan', 'observation', 'array', 'timerange', 'msselect'))
+    overrides = _explicit(locals(), ('vis', 'gaintables', 'callib', 'gainfield', 'interp', 'spwmap', 'output', 'overwrite', 'format', 'out_table', 'refant', 'smodel', 'min_snr', 'bandpass_combine', 'bandtype', 'solnorm', 'selectdata', 'field', 'spw', 'antenna', 'scan', 'observation', 'array', 'timerange', 'msselect', 'degamp', 'degphase'))
     return _run(
         "bandpass",
         parameters=parameters,

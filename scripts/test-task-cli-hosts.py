@@ -2,10 +2,9 @@
 # SPDX-License-Identifier: LGPL-3.0-or-later
 """Black-box conformance corpus for every one-shot task binary.
 
-A binary on the shared task front end (#931) answers `--json-run` with one
-typed reply on stdout whose exit status agrees with it, and offers the
-non-executing `--template` and `--describe`; the rest still use the older
-TaskCliHost, which reports failures on stderr with exit 1, until they move.
+Every task binary runs on the shared task front end (#931): it answers
+`--json-run` with one typed reply on stdout whose exit status agrees with it,
+and offers the non-executing `--template` and `--describe`.
 """
 
 from __future__ import annotations
@@ -19,29 +18,30 @@ from pathlib import Path
 
 # Keep this inventory explicit: a new hosted binary must make a visible choice
 # to join the common process contract. Browser-session JSONL hosts are excluded.
-# Each entry is (executable, prefix arguments, on the shared front end).
-HOSTED_TASKS: tuple[tuple[str, tuple[str, ...], bool], ...] = (
-    ("calibrate", (), False),
-    ("importvla", (), True),
-    ("msexplore", (), True),
-    ("msexplore", ("plotms",), True),
-    ("simobserve", (), False),
-    ("casars-imager", (), False),
-    ("mstransform", (), True),
-    ("mstransform", ("split",), True),
-    ("flagdata", (), True),
-    ("flagmanager", (), True),
-    ("exportfits", (), True),
-    ("feather", (), True),
-    ("immath", (), True),
-    ("immoments", (), True),
-    ("impbcor", (), True),
-    ("importfits", (), True),
-    ("impv", (), True),
-    ("imregrid", (), True),
-    ("imsubimage", (), True),
-    ("imexplore", ("imstat",), True),
-    ("casars-plotcal", (), False),
+# Each entry is (executable, prefix arguments naming a hosted surface).
+HOSTED_TASKS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("calibrate", ()),
+    ("calibrate", ("gaincal",)),
+    ("importvla", ()),
+    ("msexplore", ()),
+    ("msexplore", ("plotms",)),
+    ("simobserve", ()),
+    ("casars-imager", ()),
+    ("mstransform", ()),
+    ("mstransform", ("split",)),
+    ("flagdata", ()),
+    ("flagmanager", ()),
+    ("exportfits", ()),
+    ("feather", ()),
+    ("immath", ()),
+    ("immoments", ()),
+    ("impbcor", ()),
+    ("importfits", ()),
+    ("impv", ()),
+    ("imregrid", ()),
+    ("imsubimage", ()),
+    ("imexplore", ("imstat",)),
+    ("casars-plotcal", ()),
 )
 
 
@@ -117,7 +117,7 @@ def main() -> int:
         check=True,
     )
 
-    for executable, prefix, front_end in HOSTED_TASKS:
+    for executable, prefix in HOSTED_TASKS:
         binary = target / "debug" / executable
         require(binary.is_file(), f"{executable}: built binary is missing at {binary}")
         base = [str(binary), *prefix]
@@ -141,25 +141,7 @@ def main() -> int:
         for action in ("--protocol-info", "--json-schema", "--json-run <SOURCE>"):
             require(action in help_result.stdout, f"{executable}: help omits {action}")
 
-        if front_end:
-            check_front_end(executable, base)
-            continue
-
-        malformed = run([*base, "--json-run", "-"], stdin="{")
-        require(malformed.returncode == 1, f"{executable}: malformed exit {malformed.returncode}")
-        require(
-            "failed to parse task request" in malformed.stderr,
-            f"{executable}: malformed diagnostic drift: {malformed.stderr!r}",
-        )
-
-        missing = run(
-            [*base, "--json-run", "/definitely/missing/casa-rs-task-request.json"]
-        )
-        require(missing.returncode == 1, f"{executable}: missing-file exit {missing.returncode}")
-        require(
-            "failed to read JSON request" in missing.stderr,
-            f"{executable}: missing-file diagnostic drift: {missing.stderr!r}",
-        )
+        check_front_end(executable, base)
 
     print(f"task CLI host conformance passed for {len(HOSTED_TASKS)} binaries")
     return 0

@@ -764,21 +764,13 @@ pub enum ManagedResultDecoder {
     SimobserveRunV1,
 }
 
-/// One argument injected to select a provider's managed result representation.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct ManagedOutputArgument {
-    pub flag: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub value: Option<String>,
-}
-
-/// Typed contract for a provider's structured task result.
+/// Typed contract for a provider's structured task result: the result a
+/// front-end binary's reply carries, and the decoder that reads its
+/// products and summary.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ManagedOutputContract {
     pub decoder: ManagedResultDecoder,
     pub stdout_format: ManagedOutputFormat,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub inject_arguments: Vec<ManagedOutputArgument>,
     pub raw_stdout_available: bool,
     pub raw_stderr_available: bool,
 }
@@ -873,30 +865,6 @@ pub struct ProviderInvocation {
     pub args: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stdin: Option<String>,
-}
-
-impl ProviderInvocation {
-    pub fn direct(args: Vec<String>) -> Self {
-        Self { args, stdin: None }
-    }
-}
-
-/// Provider-owned adaptation result used to prove that active parameters with
-/// no direct CLI spelling were consumed rather than silently dropped.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct ProviderInvocationAdaptation {
-    pub invocation: ProviderInvocation,
-    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
-    pub consumed_parameters: BTreeSet<String>,
-}
-
-impl ProviderInvocationAdaptation {
-    pub fn direct(invocation: ProviderInvocation) -> Self {
-        Self {
-            invocation,
-            consumed_parameters: BTreeSet::new(),
-        }
-    }
 }
 
 /// Migration of explicit sparse overrides only.

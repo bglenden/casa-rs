@@ -73,10 +73,6 @@ pub fn project_ui_form(bundle: &SurfaceContractBundle) -> JsonValue {
         "managed_output": surface.execution().managed_output.as_ref().map(|managed| json!({
             "renderer": managed.decoder,
             "stdout_format": managed.stdout_format,
-            "inject_arguments": managed.inject_arguments.iter().map(|argument| json!({
-                "flag": argument.flag,
-                "value": argument.value.clone().unwrap_or_default()
-            })).collect::<Vec<_>>(),
             "raw_stdout_available": managed.raw_stdout_available,
             "raw_stderr_available": managed.raw_stderr_available
         }))
@@ -221,9 +217,11 @@ mod tests {
             "calibration-report-v1"
         );
         assert_eq!(projected["managed_output"]["stdout_format"], "json");
-        assert_eq!(
-            projected["managed_output"]["inject_arguments"][0],
-            json!({"flag": "--format", "value": "json"})
+        // A front-end binary's reply carries the result; nothing is injected.
+        assert!(
+            projected["managed_output"]
+                .get("inject_arguments")
+                .is_none()
         );
     }
 }

@@ -112,6 +112,14 @@
                  "kind": {
                   "str": null
                  }
+                },
+                "dict[path](kind,resource_kind)": {
+                 "kind": {
+                  "str": null
+                 },
+                 "resource_kind": {
+                  "str": null
+                 }
                 }
                }
               },
@@ -119,7 +127,8 @@
                "int": null
               },
               "max_items": {
-               "int": null
+               "int": null,
+               "null": null
               },
               "allow_scalar": {
                "bool": null
@@ -929,6 +938,14 @@
                  "kind": {
                   "str": null
                  }
+                },
+                "dict[path](kind,resource_kind)": {
+                 "kind": {
+                  "str": null
+                 },
+                 "resource_kind": {
+                  "str": null
+                 }
                 }
                }
               },
@@ -936,7 +953,8 @@
                "int": null
               },
               "max_items": {
-               "int": null
+               "int": null,
+               "null": null
               },
               "allow_scalar": {
                "bool": null

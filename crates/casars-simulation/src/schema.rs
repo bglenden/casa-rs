@@ -15,18 +15,9 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
     schema
 }
 
-/// `--help`: the parameter surface followed by the shared task-host actions.
-pub(crate) fn render_help(program_name: &str) -> String {
-    format!(
-        "{}\n\n{}",
-        command_schema(program_name).render_help(),
-        casa_task_runtime::task_cli_machine_help("SimobserveTaskRequest")
-    )
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{command_schema, render_help};
+    use super::command_schema;
 
     #[test]
     fn the_schema_is_casas_simobserve() {
@@ -51,8 +42,5 @@ mod tests {
                 binding.name
             );
         }
-        let help = render_help("simobserve");
-        assert!(help.contains("--antennalist"), "{help}");
-        assert!(help.contains("--json-run"), "{help}");
     }
 }

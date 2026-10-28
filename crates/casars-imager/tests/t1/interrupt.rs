@@ -58,8 +58,8 @@ fn an_interrupted_cube_clean_exits_130_and_leaves_nothing_behind() {
     let directory = image_name.parent().expect("run directory").to_path_buf();
     let geometry = observation.geometry();
     let request = json!({
-        "kind": "run",
-        "request": {
+        "surface": "imager",
+        "values": {
             "vis": observation.measurement_set(),
             "imagename": image_name,
             "imsize": geometry.image_size,
@@ -80,8 +80,8 @@ fn an_interrupted_cube_clean_exits_130_and_leaves_nothing_behind() {
         .arg("--json-run")
         .arg(&request_path)
         .current_dir(&directory)
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
         .spawn()
         .expect("start casars-imager");
     // The paged cube state appears once the imaging weights are formed; the
@@ -116,6 +116,17 @@ fn an_interrupted_cube_clean_exits_130_and_leaves_nothing_behind() {
     assert!(
         stopped < Duration::from_secs(10),
         "stopped after {stopped:?}"
+    );
+    // The typed reply says so, in agreement with the exit status.
+    let mut reply = String::new();
+    std::io::Read::read_to_string(&mut child.stdout.take().expect("stdout"), &mut reply)
+        .expect("reply");
+    assert!(
+        matches!(
+            casa_task_runtime::classify_task_exit(status.into(), &reply),
+            casa_task_runtime::TaskOutcome::Interrupted { .. }
+        ),
+        "{reply}"
     );
     assert_eq!(
         written(&directory, "interrupted"),

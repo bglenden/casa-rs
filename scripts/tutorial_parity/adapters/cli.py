@@ -62,6 +62,11 @@ TASK_FLAG_NAMES = {
 
 OMIT_FOR_CLI = {"json"}
 
+# The imager declares no `overwrite`, as the Python projection drops it.
+OMIT_FOR_TASK: dict[str, frozenset[str]] = {
+    "imager": frozenset({"overwrite"}),
+}
+
 
 def returns_value(operation: Operation) -> bool:
     """Whether the section compares the task's return value, as JSON: the
@@ -98,8 +103,9 @@ def build_operation_argv(
         if key not in parameters:
             raise ValueError(f"{task}: missing positional parameter {key}")
         argv.append(str(parameters[key]))
+    omitted = OMIT_FOR_CLI | OMIT_FOR_TASK.get(task, frozenset())
     for key, value in parameters.items():
-        if key in positional or key in OMIT_FOR_CLI:
+        if key in positional or key in omitted:
             continue
         flag_name = TASK_FLAG_NAMES.get(task, {}).get(
             key, FLAG_NAMES.get(key, key.replace("_", "-"))

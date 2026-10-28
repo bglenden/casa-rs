@@ -262,7 +262,7 @@ mod tests {
     fn simobserve_has_casas_parameters_in_casas_order_for_the_current_contract_only() {
         let catalog = builtin_surface_catalog().expect("valid built-in parameter catalog");
         let surface = catalog.surface("simobserve").unwrap();
-        assert_eq!(surface.contract_version(), 6);
+        assert_eq!(surface.contract_version(), 7);
         let names: Vec<&str> = surface
             .bindings()
             .iter()
@@ -328,7 +328,7 @@ mod tests {
     fn imager_wide_field_controls_share_one_catalog_owned_surface() {
         let catalog = builtin_surface_catalog().unwrap();
         let surface = catalog.surface("imager").unwrap();
-        assert_eq!(surface.contract_version(), 27);
+        assert_eq!(surface.contract_version(), 28);
         assert_eq!(surface.bindings().len(), 83);
         for binding in surface.bindings() {
             let concept = catalog

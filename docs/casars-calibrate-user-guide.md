@@ -16,7 +16,10 @@ application catalog exposes it as these task surfaces:
 
 Every surface is a one-shot task. Run it with `casars run`, which resolves a
 parameter profile (Defaults, Last, Last Successful, or a TOML file), applies
-overrides, saves Last state, and launches the provider. See
+overrides, saves Last state, and launches the provider. The `calibrate`
+binary takes the same flags and sources itself, with the surface as its first
+word (`calibrate bandpass --ms ...`; `calibrate` alone is the general
+surface), and keeps its own Last. See
 [Task Parameter Profiles](task-parameters.md) for sources and managed Last
 files, and the [generated parameter reference](reference/task-parameters.md)
 for every parameter and its CLI flag.
@@ -71,7 +74,13 @@ cd "$workdir"
 
 The apply chain is the ordered `--gaintables` list. Per-table policy is given
 by the aligned `--gainfield`, `--interp`, `--spwmap`, and `--calwt` lists, or by
-a CASA callibrary file through `--callib`.
+a CASA callibrary file through `--callib`. `--apply-mode trial` reports the
+apply plan without changing the MeasurementSet.
+
+`gaincal` takes CASA's `minblperant` (default 4), and `bandpass` CASA's
+`degamp` and `degphase` for a `bpoly` solution (default 3). `bandpass`
+declares CASA's `minsnr`, which its solver does not apply yet, so a value
+other than the default is refused.
 
 Use `casars params template gaincal` to see every parameter with its default,
 and `--save-params FILE` to keep a run's resolved profile for reuse with

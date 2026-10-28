@@ -72,9 +72,11 @@ impl TaskInvocation<'_> {
         self.text(name)?.ok_or_else(|| missing(name))
     }
 
-    /// `name` as paths: one path, or a list of them.
+    /// `name` as paths: one path, or a list of them; none when it is unset,
+    /// inactive, or holds the explicit absence its provider adapter omits
+    /// (`"none"`).
     pub fn paths(&self, name: &str) -> Result<Vec<PathBuf>, TaskFailure> {
-        match self.value(name) {
+        match self.present(name) {
             None => Ok(Vec::new()),
             Some(ParameterValue::String(path)) => Ok(vec![PathBuf::from(path)]),
             Some(ParameterValue::Array(items)) => items

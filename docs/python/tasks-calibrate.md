@@ -1,22 +1,27 @@
 # Calibrate Tasks
 
-`casars.tasks.calibrate` keeps the standalone `calibrate` binary, the `casars` application, and the Python wrapper on the same conceptual contract.
+The calibration tasks are generated, CASA-named wrappers in `casars.tasks`:
 
-The canonical unit is the calibration task request/result model in Rust. Python does not reconstruct flag lists. Every public wrapper:
+- `calibrate(mode=..., ...)`, the workflow surface: `apply` (the default),
+  `solve_gain`, `solve_bandpass`, `fluxscale`, `gencal`, `summary`, `stats`
+  and `export_corrected_data`;
+- `applycal`, `gaincal`, `bandpass`, `fluxscale` and `gencal`, the CASA-named
+  surfaces.
 
-1. resolves a `calibrate` binary
-2. validates `--protocol-info`
-3. sends one `CalibrationTaskRequest` through `--json-run -`
-4. returns the canonical `CalibrationTaskResult` JSON envelope
+Each takes the surface's parameters as keyword arguments and returns a
+`TaskCompletion`. The call runs through `casars run`, which starts the
+`calibrate` binary with the surface as its first word (`calibrate gaincal`)
+and sends one `TaskRunRequest` on `--json-run -`: the values the call set,
+resolved inside the binary against the same contract as its own command line
+(#931). Python projects no flags and builds no Rust request. A refused value
+names its parameter; a failed run raises `TaskExecutionError` when
+`check=True`.
 
-## Public entry points
+`gaintables` and `summary_paths` are lists of calibration-table paths: a list,
+or one comma-separated string. The per-table controls (`gainfield`, `interp`,
+`spwmap`, `calwt`) are `;`-separated strings aligned to `gaintables`, one
+value for every table or one per table.
 
-- `summary(...)`
-- `stats(...)`
-- `plan_apply(...)`
-- `execute_apply(...)`
-- `solve_gain(...)`
-- `solve_bandpass(...)`
-- `fluxscale(...)`
-
-The wrappers use normal Python arguments and a few stdlib dataclasses for reused nested values such as `Selection`, `SolveCombine`, and `CalibrationTableSpec`, but the subprocess protocol itself remains the Rust request/result schema.
+The `calibrate` binary takes the same parameters on its own command line. The
+developer subcommands it once had (`summary`, `plan-apply`, `solve-gain` and
+the rest) are the surfaces and modes above.

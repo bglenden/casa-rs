@@ -118,17 +118,14 @@ fn simobserve_invocation_carries_casas_parameters() {
     let invocation =
         provider_invocation("simobserve", values(&[("antennalist", text("vla.a.cfg"))]))
             .expect("simobserve invocation");
-    assert_eq!(
-        invocation.args,
-        ["--managed-output", "true", "--json-run", "-"]
-    );
+    assert_eq!(invocation.args, ["--json-run", "-"]);
     let request: serde_json::Value =
         serde_json::from_str(invocation.stdin.as_deref().expect("stdin JSON")).unwrap();
-    assert_eq!(request["kind"], "run");
-    assert_eq!(request["request"]["antennalist"], "vla.a.cfg");
-    assert_eq!(request["request"]["project"], "sim");
-    assert_eq!(request["request"]["thermalnoise"], "tsys-atm");
-    assert_eq!(request["request"]["mapsize"], serde_json::json!(["", ""]));
+    // The values set, which the binary resolves over CASA's defaults.
+    assert_eq!(
+        request,
+        serde_json::json!({"surface": "simobserve", "values": {"antennalist": "vla.a.cfg"}})
+    );
 }
 
 #[test]
@@ -142,10 +139,7 @@ fn imager_invocation_carries_the_imager_parameters() {
         ]),
     )
     .expect("imager invocation");
-    assert_eq!(
-        invocation.args,
-        ["--managed-output", "true", "--json-run", "-"]
-    );
+    assert_eq!(invocation.args, ["--json-run", "-"]);
     assert_eq!(
         invocation.protocol_name.as_deref(),
         Some("casa_imager_task")
@@ -156,10 +150,10 @@ fn imager_invocation_carries_the_imager_parameters() {
     );
     let request: serde_json::Value =
         serde_json::from_str(invocation.stdin.as_deref().expect("stdin JSON")).unwrap();
-    assert_eq!(request["kind"], "run");
-    assert_eq!(request["request"]["vis"], serde_json::json!(["input.ms"]));
-    assert_eq!(request["request"]["imagename"], "products/image");
-    assert_eq!(request["request"]["parallel"], false);
+    assert_eq!(request["surface"], "imager");
+    assert_eq!(request["values"]["vis"], serde_json::json!(["input.ms"]));
+    assert_eq!(request["values"]["imagename"], "products/image");
+    assert_eq!(request["values"]["parallel"], false);
 }
 
 #[test]

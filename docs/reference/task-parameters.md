@@ -10,28 +10,28 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 
 - Parameter catalog schema version: `1`
 - Parameter surface schema version: `1`
-- Concepts: 348
+- Concepts: 351
 - Surfaces: 27 (27 task, 0 session)
-- Surface bindings: 531
+- Surface bindings: 537
 
 | Surface | Kind | Contract | Provider family | Parameters | Summary |
 |---|---|---:|---|---:|---|
 | [MSExplore](#surface-msexplore)<br><code>msexplore</code> | task | 7 | <code>msexplore</code> | 66 | explore and export common MeasurementSet plotms-style plots |
-| [Calibrate](#surface-calibrate)<br><code>calibrate</code> | task | 5 | <code>calibration</code> | 50 | apply, inspect, and solve CASA-style calibration workflows |
+| [Calibrate](#surface-calibrate)<br><code>calibrate</code> | task | 6 | <code>calibration</code> | 53 | apply, inspect, and solve CASA-style calibration workflows |
 | [ImportVLA](#surface-importvla)<br><code>importvla</code> | task | 4 | <code>importvla</code> | 12 | scan or import old VLA export archives from disk |
-| [Imager](#surface-imager)<br><code>imager</code> | task | 27 | <code>imager</code> | 83 | Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet |
-| [SimObserve](#surface-simobserve)<br><code>simobserve</code> | task | 6 | <code>simobserve</code> | 38 | Simulate an observation of a sky model: CASA's simobserve |
+| [Imager](#surface-imager)<br><code>imager</code> | task | 28 | <code>imager</code> | 83 | Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet |
+| [SimObserve](#surface-simobserve)<br><code>simobserve</code> | task | 7 | <code>simobserve</code> | 38 | Simulate an observation of a sky model: CASA's simobserve |
 | [Image Header](#surface-imhead)<br><code>imhead</code> | task | 4 | <code>image_analysis</code> | 4 | Inspect or update CASA image header metadata. |
 | [Image Statistics](#surface-imstat)<br><code>imstat</code> | task | 3 | <code>image_analysis</code> | 4 | Compute CASA image statistics over optional pixel, region, and channel selections. |
 | [Image Moments](#surface-immoments)<br><code>immoments</code> | task | 4 | <code>image_analysis</code> | 7 | Create CASA-style image moment maps |
 | [Export FITS](#surface-exportfits)<br><code>exportfits</code> | task | 4 | <code>image_analysis</code> | 4 | Export CASA images to FITS |
 | [MSTransform](#surface-mstransform)<br><code>mstransform</code> | task | 4 | <code>mstransform</code> | 11 | Materialize a selected MeasurementSet into a new output MS. |
 | [Split](#surface-split)<br><code>split</code> | task | 4 | <code>mstransform</code> | 11 | Create a selected MeasurementSet subset, equivalent to CASA split. |
-| [Applycal](#surface-applycal)<br><code>applycal</code> | task | 4 | <code>calibration</code> | 22 | Apply one or more calibration tables to a MeasurementSet. |
-| [Gaincal](#surface-gaincal)<br><code>gaincal</code> | task | 4 | <code>calibration</code> | 28 | Solve antenna gain calibration for a MeasurementSet. |
-| [Bandpass](#surface-bandpass)<br><code>bandpass</code> | task | 4 | <code>calibration</code> | 25 | Solve bandpass calibration for a MeasurementSet. |
-| [Fluxscale](#surface-fluxscale)<br><code>fluxscale</code> | task | 4 | <code>calibration</code> | 10 | Scale gain solutions using reference calibrator fields. |
-| [Gencal](#surface-gencal)<br><code>gencal</code> | task | 4 | <code>calibration</code> | 10 | Generate a calibration table such as antpos, gceff, or opac. |
+| [Applycal](#surface-applycal)<br><code>applycal</code> | task | 5 | <code>calibration</code> | 22 | Apply one or more calibration tables to a MeasurementSet. |
+| [Gaincal](#surface-gaincal)<br><code>gaincal</code> | task | 5 | <code>calibration</code> | 29 | Solve antenna gain calibration for a MeasurementSet. |
+| [Bandpass](#surface-bandpass)<br><code>bandpass</code> | task | 5 | <code>calibration</code> | 27 | Solve bandpass calibration for a MeasurementSet. |
+| [Fluxscale](#surface-fluxscale)<br><code>fluxscale</code> | task | 5 | <code>calibration</code> | 10 | Scale gain solutions using reference calibrator fields. |
+| [Gencal](#surface-gencal)<br><code>gencal</code> | task | 5 | <code>calibration</code> | 10 | Generate a calibration table such as antpos, gceff, or opac. |
 | [PlotMS](#surface-plotms)<br><code>plotms</code> | task | 7 | <code>msexplore</code> | 66 | Plot MeasurementSet visibility data with CASA plotms-style selections and axes. |
 | [PlotCal](#surface-plotcal)<br><code>plotcal</code> | task | 4 | <code>plotcal</code> | 15 | Plot calibration tables and corrected-data diagnostics. |
 | [Flag Data](#surface-flagdata)<br><code>flagdata</code> | task | 4 | <code>flagdata</code> | 18 | Run native CASA-style MeasurementSet flagging. |
@@ -128,7 +128,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## Calibrate (<code>calibrate</code>)
 
 - Kind: `task`
-- Contract version: `5`
+- Contract version: `6`
 - Category: Calibration
 - Provider family: `calibration`
 - Summary: apply, inspect, and solve CASA-style calibration workflows
@@ -138,8 +138,8 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>mode</code> | <code>calibrate.mode@r2</code> | <code>choice (8 values)</code> | <code>"apply"</code>; optional | Workflow | Calibration workflow to run from the launcher form |
 | <code>vis</code> | <code>data.input.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | <code>[]</code>; required when (mode="apply" or mode="export_corrected_data" or mode="solve_bandpass" or mode="solve_gain" or mode="gencal") | Input | Input MeasurementSet path or paths.<br><em>Surface:</em> Canonical vis maps to provider field measurement_set. This surface uses the MeasurementSet as calibration workflow input. |
 | <code>outputvis</code> | <code>parameter.outputvis@r1</code> | <code>path (measurement_set)</code> | <code>"none"</code>; required when (mode="export_corrected_data") | Input | Output MeasurementSet path for corrected-data export or continuum subtraction<br><em>Surface:</em> Canonical outputvis maps to provider field output_measurement_set. |
-| <code>summary_paths</code> | <code>parameter.summary_paths@r1</code> | <code>string</code> | <code>"none"</code>; required when mode="summary" | Inspect | Comma-separated calibration-table paths for summary mode |
-| <code>gaintables</code> | <code>parameter.gaintables@r1</code> | <code>string</code> | <code>"none"</code>; optional | Input | Comma-separated list of calibration-table paths to apply in order |
+| <code>summary_paths</code> | <code>parameter.summary_paths@r2</code> | <code>optional&lt;array&lt;path (calibration_table)&gt;&gt; (states: none)</code> | <code>"none"</code>; required when mode="summary" | Inspect | Calibration-table paths for summary mode |
+| <code>gaintables</code> | <code>parameter.gaintables@r2</code> | <code>optional&lt;array&lt;path (calibration_table)&gt;&gt; (states: none)</code> | <code>"none"</code>; optional | Input | Calibration-table paths to apply in order |
 | <code>table_path</code> | <code>parameter.table_path@r1</code> | <code>path (calibration_table)</code> | <code>"none"</code>; required when mode="stats" | Inspect | Calibration-table path for stats mode |
 | <code>callib</code> | <code>parameter.callib@r1</code> | <code>path (calibration_table)</code> | <code>"none"</code>; optional | Input | CASA callibrary file describing the calibration-table chain |
 | <code>gainfield</code> | <code>parameter.gainfield@r1</code> | <code>string</code> | <code>"none"</code>; optional | Apply | Semicolon-separated gainfield overrides aligned to --gaintables (single value applies to all) |
@@ -185,6 +185,9 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>parameter</code> | <code>parameter.parameter@r1</code> | <code>string</code> | <code>"none"</code>; optional | Gencal | Numeric parameter list for the selected generated calibration type. |
 | <code>gaincurve_table</code> | <code>parameter.gaincurve_table@r1</code> | <code>path (calibration_table)</code> | <code>"none"</code>; optional | Gencal | Optional gaincurve input table for gceff. |
 | <code>flagbackup</code> | <code>parameter.flagbackup@r1</code> | <code>bool</code> | <code>true</code>; optional | Apply | Create a flagmanager backup before mutating flags.<br><em>Surface:</em> Apply mode only: saves the flags to the next applycal_N flag version before a calflag run; calonly and trial change no flags and save none. |
+| <code>minblperant</code> | <code>parameter.minblperant@r1</code> | <code>integer</code> | <code>4</code>; optional | Solve Gain | Minimum unflagged baselines an antenna needs to be solved for |
+| <code>degamp</code> | <code>parameter.degamp@r1</code> | <code>integer</code> | <code>3</code>; optional | Solve Bandpass | Polynomial degree of a BPOLY bandpass's amplitude |
+| <code>degphase</code> | <code>parameter.degphase@r1</code> | <code>integer</code> | <code>3</code>; optional | Solve Bandpass | Polynomial degree of a BPOLY bandpass's phase |
 
 <a id="surface-importvla"></a>
 
@@ -216,7 +219,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## Imager (<code>imager</code>)
 
 - Kind: `task`
-- Contract version: `27`
+- Contract version: `28`
 - Category: Imaging
 - Provider family: `imager`
 - Summary: Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet
@@ -312,7 +315,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## SimObserve (<code>simobserve</code>)
 
 - Kind: `task`
-- Contract version: `6`
+- Contract version: `7`
 - Category: Simulation
 - Provider family: `simobserve`
 - Summary: Simulate an observation of a sky model: CASA's simobserve
@@ -482,7 +485,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## Applycal (<code>applycal</code>)
 
 - Kind: `task`
-- Contract version: `4`
+- Contract version: `5`
 - Category: Calibration
 - Provider family: `calibration`
 - Summary: Apply one or more calibration tables to a MeasurementSet.
@@ -490,7 +493,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
 |---|---|---|---|---|---|
 | <code>vis</code> | <code>data.input.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | no default; required | Input | Input MeasurementSet path or paths.<br><em>Surface:</em> Canonical vis maps to provider field measurement_set. This surface uses the MeasurementSet as calibration workflow input. |
-| <code>gaintables</code> | <code>parameter.gaintables@r1</code> | <code>string</code> | <code>"none"</code>; optional | Input | Comma-separated list of calibration-table paths to apply in order |
+| <code>gaintables</code> | <code>parameter.gaintables@r2</code> | <code>optional&lt;array&lt;path (calibration_table)&gt;&gt; (states: none)</code> | <code>"none"</code>; optional | Input | Calibration-table paths to apply in order |
 | <code>callib</code> | <code>parameter.callib@r1</code> | <code>path (calibration_table)</code> | <code>"none"</code>; optional | Input | CASA callibrary file describing the calibration-table chain |
 | <code>gainfield</code> | <code>parameter.gainfield@r1</code> | <code>string</code> | <code>"none"</code>; optional | Apply | Semicolon-separated gainfield overrides aligned to --gaintables (single value applies to all) |
 | <code>interp</code> | <code>parameter.interp@r1</code> | <code>string</code> | <code>"none"</code>; optional | Apply | Semicolon-separated interpolation modes aligned to --gaintables: linear, nearest, nearest,linear |
@@ -517,7 +520,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## Gaincal (<code>gaincal</code>)
 
 - Kind: `task`
-- Contract version: `4`
+- Contract version: `5`
 - Category: Calibration
 - Provider family: `calibration`
 - Summary: Solve antenna gain calibration for a MeasurementSet.
@@ -525,7 +528,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
 |---|---|---|---|---|---|
 | <code>vis</code> | <code>data.input.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | no default; required | Input | Input MeasurementSet path or paths.<br><em>Surface:</em> Canonical vis maps to provider field measurement_set. This surface uses the MeasurementSet as calibration workflow input. |
-| <code>gaintables</code> | <code>parameter.gaintables@r1</code> | <code>string</code> | <code>"none"</code>; optional | Input | Comma-separated list of calibration-table paths to apply in order |
+| <code>gaintables</code> | <code>parameter.gaintables@r2</code> | <code>optional&lt;array&lt;path (calibration_table)&gt;&gt; (states: none)</code> | <code>"none"</code>; optional | Input | Calibration-table paths to apply in order |
 | <code>callib</code> | <code>parameter.callib@r1</code> | <code>path (calibration_table)</code> | <code>"none"</code>; optional | Input | CASA callibrary file describing the calibration-table chain |
 | <code>gainfield</code> | <code>parameter.gainfield@r1</code> | <code>string</code> | <code>"none"</code>; optional | Apply | Semicolon-separated gainfield overrides aligned to --gaintables (single value applies to all) |
 | <code>interp</code> | <code>parameter.interp@r1</code> | <code>string</code> | <code>"none"</code>; optional | Apply | Semicolon-separated interpolation modes aligned to --gaintables: linear, nearest, nearest,linear |
@@ -552,13 +555,14 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>array</code> | <code>ms.selection.array@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Comma-separated ARRAY_ID integers |
 | <code>timerange</code> | <code>ms.selection.timerange@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Inclusive TIME range in MJD seconds |
 | <code>msselect</code> | <code>ms.selection.msselect@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Raw TaQL WHERE expression to AND with the structured selectors |
+| <code>minblperant</code> | <code>parameter.minblperant@r1</code> | <code>integer</code> | <code>4</code>; optional | Solve Gain | Minimum unflagged baselines an antenna needs to be solved for |
 
 <a id="surface-bandpass"></a>
 
 ## Bandpass (<code>bandpass</code>)
 
 - Kind: `task`
-- Contract version: `4`
+- Contract version: `5`
 - Category: Calibration
 - Provider family: `calibration`
 - Summary: Solve bandpass calibration for a MeasurementSet.
@@ -566,7 +570,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
 |---|---|---|---|---|---|
 | <code>vis</code> | <code>data.input.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | no default; required | Input | Input MeasurementSet path or paths.<br><em>Surface:</em> Canonical vis maps to provider field measurement_set. This surface uses the MeasurementSet as calibration workflow input. |
-| <code>gaintables</code> | <code>parameter.gaintables@r1</code> | <code>string</code> | <code>"none"</code>; optional | Input | Comma-separated list of calibration-table paths to apply in order |
+| <code>gaintables</code> | <code>parameter.gaintables@r2</code> | <code>optional&lt;array&lt;path (calibration_table)&gt;&gt; (states: none)</code> | <code>"none"</code>; optional | Input | Calibration-table paths to apply in order |
 | <code>callib</code> | <code>parameter.callib@r1</code> | <code>path (calibration_table)</code> | <code>"none"</code>; optional | Input | CASA callibrary file describing the calibration-table chain |
 | <code>gainfield</code> | <code>parameter.gainfield@r1</code> | <code>string</code> | <code>"none"</code>; optional | Apply | Semicolon-separated gainfield overrides aligned to --gaintables (single value applies to all) |
 | <code>interp</code> | <code>parameter.interp@r1</code> | <code>string</code> | <code>"none"</code>; optional | Apply | Semicolon-separated interpolation modes aligned to --gaintables: linear, nearest, nearest,linear |
@@ -590,13 +594,15 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>array</code> | <code>ms.selection.array@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Comma-separated ARRAY_ID integers |
 | <code>timerange</code> | <code>ms.selection.timerange@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Inclusive TIME range in MJD seconds |
 | <code>msselect</code> | <code>ms.selection.msselect@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Raw TaQL WHERE expression to AND with the structured selectors |
+| <code>degamp</code> | <code>parameter.degamp@r1</code> | <code>integer</code> | <code>3</code>; optional | Solve Bandpass | Polynomial degree of a BPOLY bandpass's amplitude |
+| <code>degphase</code> | <code>parameter.degphase@r1</code> | <code>integer</code> | <code>3</code>; optional | Solve Bandpass | Polynomial degree of a BPOLY bandpass's phase |
 
 <a id="surface-fluxscale"></a>
 
 ## Fluxscale (<code>fluxscale</code>)
 
 - Kind: `task`
-- Contract version: `4`
+- Contract version: `5`
 - Category: Calibration
 - Provider family: `calibration`
 - Summary: Scale gain solutions using reference calibrator fields.
@@ -619,7 +625,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## Gencal (<code>gencal</code>)
 
 - Kind: `task`
-- Contract version: `4`
+- Contract version: `5`
 - Category: Calibration
 - Provider family: `calibration`
 - Summary: Generate a calibration table such as antpos, gceff, or opac.

@@ -46,7 +46,7 @@ pub use bandpass::{
     BandpassType,
 };
 pub use callib::{CallibError, load_apply_specs_from_callib, save_apply_specs_to_callib};
-pub use cli::{command_schema, run_env};
+pub use cli::{CALIBRATION_SURFACES, task_front_end};
 pub use corrected_export::{
     ExportCorrectedDataError, ExportCorrectedDataReport, ExportCorrectedDataRequest,
     export_corrected_data,

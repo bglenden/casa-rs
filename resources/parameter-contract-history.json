@@ -622,6 +622,16 @@
       "fingerprint": "5c82687f159dcff4b7129ad3af82727d565b239ec97f182ae597133d04b8302f"
     },
     {
+      "id": "parameter.degamp",
+      "semantic_revision": 1,
+      "fingerprint": "e469333bef9ddbe2a3dadcb08f2d37fa802bc1efcc2a5fb994a837a85ee56ab3"
+    },
+    {
+      "id": "parameter.degphase",
+      "semantic_revision": 1,
+      "fingerprint": "05720fc61f6ad8d324f052cf91e5e872a7659e17056959c618caf3403c48801a"
+    },
+    {
       "id": "parameter.direction",
       "semantic_revision": 1,
       "fingerprint": "0b78d77c1f4f7c0735c290d5196e54950254a72605b3fb9daff22fba967fce0f"
@@ -925,6 +935,11 @@
       "id": "parameter.gaintables",
       "semantic_revision": 1,
       "fingerprint": "4c3b9e27730d042088fa42fb041ced4656d98e074740e2a43c16edec6dd450e1"
+    },
+    {
+      "id": "parameter.gaintables",
+      "semantic_revision": 2,
+      "fingerprint": "988f089eeaa80f749dee17e0ce86dffa86128ad3004d6619444a5678f8e4de44"
     },
     {
       "id": "parameter.gainthreshold",
@@ -1270,6 +1285,11 @@
       "id": "parameter.minbeamfrac",
       "semantic_revision": 1,
       "fingerprint": "62e9437cd3d0f51c0e7ad6ec47f6110da5d4656fa6dcd7361562a6f89ef83fb3"
+    },
+    {
+      "id": "parameter.minblperant",
+      "semantic_revision": 1,
+      "fingerprint": "bebdde67b566c43f3eb21ad1d26fe85992b91e8a27e7dc0245e0d9916053a585"
     },
     {
       "id": "parameter.minor_cycle_length",
@@ -1992,6 +2012,11 @@
       "fingerprint": "fd6ffe111495059a6fa398f05ef87ba5c1a877fbf9a47d68e1de73f2a5c5bbca"
     },
     {
+      "id": "parameter.summary_paths",
+      "semantic_revision": 2,
+      "fingerprint": "06e27b2085c78ccf81aa7366a7e5dfc4f0b67b4770c933ec84c4ebe61c05e71a"
+    },
+    {
       "id": "parameter.symbol_size",
       "semantic_revision": 1,
       "fingerprint": "fc140ea00f910f91515ee2cb8f77d0b68f1ac7703cead2017162b0a74aab0b8e"
@@ -2404,6 +2429,11 @@
       "fingerprint": "44f5751fc01e9fe740ad2f79419f95ebed54d34ecd3d668e2c96efcec8277ce3"
     },
     {
+      "id": "applycal",
+      "contract_version": 5,
+      "fingerprint": "8ea04c45952724f4fb7173693dbbfb4d858faf243b10fb30805ed12f8f72014c"
+    },
+    {
       "id": "bandpass",
       "contract_version": 1,
       "fingerprint": "32e706780607d535fba5d6e430bea0e6e191554796bc60d9cb250acc41ff28b5"
@@ -2422,6 +2452,11 @@
       "id": "bandpass",
       "contract_version": 4,
       "fingerprint": "118871695378f414c26e633854df3dcd29edcdaff4c190757f42efb9063be596"
+    },
+    {
+      "id": "bandpass",
+      "contract_version": 5,
+      "fingerprint": "29fe47fb57e4b263b2c331a181c9dbf3d203e80fa4084b4a27c2c1ffe70798aa"
     },
     {
       "id": "calibrate",
@@ -2447,6 +2482,11 @@
       "id": "calibrate",
       "contract_version": 5,
       "fingerprint": "e9baf094e5dd72fede02fc1182275acc056f3d8e0ead049e0fe8971ab08766a5"
+    },
+    {
+      "id": "calibrate",
+      "contract_version": 6,
+      "fingerprint": "6c3140d092135a8a74618471870efaeaaaddf5bc92b47d03eacee5d38b4924d4"
     },
     {
       "id": "clearcal",
@@ -2594,6 +2634,11 @@
       "fingerprint": "259769027bf9398008ccaf4913669dd77413b3a6f83eb645f0b387e1bba4cb66"
     },
     {
+      "id": "fluxscale",
+      "contract_version": 5,
+      "fingerprint": "7af7ecaebd6ac0721b68a10478ba8ec9aee5d23e21efe54f2bf71c4a2b74ba3b"
+    },
+    {
       "id": "ft",
       "contract_version": 1,
       "fingerprint": "9684895bb362df6d0375ae7e4d54e077bf0efc22d5ae21db34476903909a7f2e"
@@ -2629,6 +2674,11 @@
       "fingerprint": "0ec4a1581daa068f9eae30042a2418d9e3365d8caa6462d991129e76a4db1cf5"
     },
     {
+      "id": "gaincal",
+      "contract_version": 5,
+      "fingerprint": "3ad06ec3dffd401da0debc23f32653c213d4e97c4c69e98eb730137e09f4be79"
+    },
+    {
       "id": "gencal",
       "contract_version": 1,
       "fingerprint": "a77ef8bb565b7257ff3a0c0484e72e730fe0f2f431a111bb3d789241d2d2b29b"
@@ -2647,6 +2697,11 @@
       "id": "gencal",
       "contract_version": 4,
       "fingerprint": "a3194ef07687c1f420849ef04940612627aac5254b74ee3290f3755e3635b65a"
+    },
+    {
+      "id": "gencal",
+      "contract_version": 5,
+      "fingerprint": "aea62df233c7ca176daf2d02034b9e6452a01722f8b791721ff7132ace5c553f"
     },
     {
       "id": "hanningsmooth",
@@ -2796,7 +2851,12 @@
     {
       "id": "imager",
       "contract_version": 27,
-      "fingerprint": "a14ae3399761ea6315dc3837c9b8e153cc93c3969349b1b203ac3d3c6c7caeba"
+      "fingerprint": "bd2e394dfd3bda8aa8cb2e2141d3083f022abe518fb4a7624857854ba803d91b"
+    },
+    {
+      "id": "imager",
+      "contract_version": 28,
+      "fingerprint": "d39b49d4838aeb4f4b9a7b5cd0a2a3645b6ce32113f6a0a1003b7a489b81257f"
     },
     {
       "id": "imcollapse",
@@ -3222,6 +3282,11 @@
       "id": "simobserve",
       "contract_version": 6,
       "fingerprint": "835c6905d7f4be2dd60fa19ee281306ea05700fb26f1fa492bdd84ee5fdb011a"
+    },
+    {
+      "id": "simobserve",
+      "contract_version": 7,
+      "fingerprint": "3b3212c266c61c95611a30f9961a7b360f603364613357117279de2a4210ef23"
     },
     {
       "id": "split",

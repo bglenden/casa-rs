@@ -266,21 +266,10 @@ pub struct UiManagedOutputSchema {
     pub renderer: String,
     /// Expected stdout encoding for the structured renderer.
     pub stdout_format: String,
-    /// Arguments the launcher should inject when it wants structured output.
-    pub inject_arguments: Vec<UiInjectedArgument>,
     /// Whether raw stdout inspection should remain available.
     pub raw_stdout_available: bool,
     /// Whether raw stderr inspection should remain available.
     pub raw_stderr_available: bool,
-}
-
-/// One launcher-managed argument injection for structured output.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct UiInjectedArgument {
-    /// Flag name to inject into the subprocess argv.
-    pub flag: String,
-    /// Value paired with the injected flag.
-    pub value: String,
 }
 
 fn write_help_section(out: &mut String, arguments: &[&UiArgumentSchema]) {

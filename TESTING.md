@@ -356,12 +356,14 @@ volume needs at least 110 GiB free. Image writes must reach at least 60% and
 reads at least 50% of the equivalent raw-file path on the same volume and run.
 
 `just quick` includes `scripts/test-task-cli-hosts.py`, which builds and runs
-every one-shot binary hosted by `casa-task-runtime::TaskCliHost`. The explicit
-inventory proves common protocol/schema discovery, generated help, malformed
-stdin, missing request sources, diagnostics, and exit classification at the
-process boundary. Runtime unit tests inject execution and serialization
-failures, while repository provider-conformance tests mutate protocol versions,
-actions, surface IDs, and schemas through the shared envelope validator.
+every one-shot task binary, each on the shared task front end
+(`casa-task-runtime::TaskFrontEnd`). The explicit inventory proves common
+protocol/schema discovery, generated help, the typed refusals of a malformed
+request, a missing request source and an unknown surface, `--template`,
+`--profile-template` and `--describe`, and exit classification at the process
+boundary. Runtime unit tests drive the front end's replies and exit statuses,
+while repository provider-conformance tests mutate protocol versions, actions,
+surface IDs, and schemas through the shared envelope validator.
 
 ## Evidence source and turnaround
 
