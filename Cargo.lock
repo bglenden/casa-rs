@@ -571,6 +571,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]
@@ -717,29 +718,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "casars"
-version = "0.27.0"
-dependencies = [
- "casa-calibration",
- "casa-coordinates",
- "casa-images",
- "casa-logging",
- "casa-ms",
- "casa-provider-contracts",
- "casa-task-runtime",
- "casa-vla",
- "casars-imager",
- "casars-simulation",
- "ndarray",
- "schemars",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror",
- "tracing",
-]
-
-[[package]]
 name = "casars-imager"
 version = "0.27.0"
 dependencies = [
@@ -766,9 +744,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "casars-imexplore"
+version = "0.27.0"
+dependencies = [
+ "casa-coordinates",
+ "casa-images",
+ "casa-task-runtime",
+ "ndarray",
+ "tempfile",
+]
+
+[[package]]
 name = "casars-python"
 version = "0.27.0"
 dependencies = [
+ "casa-calibration",
  "casa-components",
  "casa-coordinates",
  "casa-images",
@@ -778,6 +768,7 @@ dependencies = [
  "casa-tables",
  "casa-task-runtime",
  "casa-types",
+ "casa-vla",
  "casars-imager",
  "casars-simulation",
  "ndarray",

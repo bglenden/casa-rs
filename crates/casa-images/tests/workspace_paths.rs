@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 //! An image task binary run directly resolves every relative path its run
-//! names in its `--workspace`, as under `casars run` (#931): inputs,
+//! names in its `--workspace`, as a Python call does (#931): inputs,
 //! products, and the image a mask expression names, whatever directory the
 //! command was run from.
 

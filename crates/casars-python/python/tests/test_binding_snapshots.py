@@ -14,6 +14,7 @@ Regenerate the fixture only for an intended change, and review its diff:
 
 from __future__ import annotations
 
+import contextlib
 import copy
 import json
 import math
@@ -23,7 +24,7 @@ import re
 import sys
 import tarfile
 import tempfile
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 
 import numpy as np
 import pytest
@@ -350,14 +351,34 @@ def _plot_snapshot(ms_path: Path) -> dict[str, Any]:
     return _normalize(outcomes, {str(ms_path): "<ms>"})
 
 
-def _fake_casars(path: Path, stdout: str) -> Path:
+def _fake_task(path: Path, result: Any) -> Path:
+    """A task executable that succeeds with the provider ``result``."""
+
     path.write_text(
         "#!/usr/bin/env python3\n"
-        f"print({stdout!r})\n",
+        "import json, sys\n"
+        "surface = json.load(sys.stdin)['surface']\n"
+        "print(json.dumps({'status': 'succeeded', 'surface': surface, 'value': None,\n"
+        f"                  'result': {result!r}}}))\n",
         encoding="utf-8",
     )
     path.chmod(0o755)
     return path
+
+
+@contextlib.contextmanager
+def _task_override(variable: str, path: Path) -> Iterator[None]:
+    """Run tasks with ``variable``, a catalog override, naming ``path``."""
+
+    previous = os.environ.get(variable)
+    os.environ[variable] = str(path)
+    try:
+        yield
+    finally:
+        if previous is None:
+            del os.environ[variable]
+        else:
+            os.environ[variable] = previous
 
 
 def _record(value: Any) -> dict[str, Any]:
@@ -381,10 +402,9 @@ def _record(value: Any) -> dict[str, Any]:
 
 def _completion_snapshot(root: Path) -> dict[str, Any]:
     (root / "out.ms").mkdir()
-    binary = _fake_casars(root / "casars", json.dumps({"kind": "split", "report": {}}))
-    completion = tasks.run(
-        "split", workspace=root, binary=binary, vis="in.ms", outputvis="out.ms"
-    )
+    binary = _fake_task(root / "mstransform", {"kind": "split", "report": {}})
+    with _task_override("CASARS_MSTRANSFORM_BIN", binary):
+        completion = tasks.run("split", workspace=root, vis="in.ms", outputvis="out.ms")
     result = completion.result
     assert result == result
     assert completion.products == tuple(result.products)
@@ -404,7 +424,12 @@ def _error_snapshot(root: Path) -> dict[str, Any]:
     )
     bad_profile = root / "bad.toml"
     bad_profile.write_text("not = [valid", encoding="utf-8")
-    malformed = _fake_casars(root / "malformed-casars", "runner stdout")
+    malformed = _fake_task(root / "malformed-imager", "runner stdout")
+
+    def malformed_imager() -> Any:
+        with _task_override("CASARS_IMAGER_BIN", malformed):
+            return tasks.run("imager", workspace=root, vis="input.ms", imagename="dirty")
+
     cases: dict[str, Callable[[], Any]] = {
         "definition unknown surface": lambda: parameters.definition("nope"),
         "contract_bundle unknown surface": lambda: parameters.contract_bundle("nope"),
@@ -426,9 +451,7 @@ def _error_snapshot(root: Path) -> dict[str, Any]:
         "plot unknown preset with a quote": lambda: data.measurement_set_plot(
             "missing.ms", preset="it's"
         ),
-        "malformed successful task result": lambda: tasks.imager(
-            vis="input.ms", imagename="dirty", workspace=root, binary=malformed
-        ),
+        "malformed successful task result": malformed_imager,
     }
     snapshot = {
         name: _outcome(call, lambda result: type(result).__name__) for name, call in cases.items()

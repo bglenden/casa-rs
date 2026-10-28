@@ -286,11 +286,13 @@ class SurfaceParameters(MutableMapping[str, ParameterData]):
     def __delitem__(self, name: str) -> None:
         self.reset(name)
 
+    # The mapping holds the parameters that have a value, so that a loaded
+    # profile runs as `tasks.gaincal(**parameters.load(path))`.
     def __iter__(self) -> Iterator[str]:
-        return iter(self._snapshot["states"])
+        return iter(self._resolved_values())
 
     def __len__(self) -> int:
-        return len(self._snapshot["states"])
+        return len(self._resolved_values())
 
     def set_many(self, values: Mapping[str, ParameterData]) -> None:
         """Apply several mutations atomically."""
@@ -435,13 +437,14 @@ class TaskParameters(SurfaceParameters):
     expected_kind = "task"
 
     def run(self, **options: Any) -> Any:
-        """Run this draft through the canonical catalog-driven task runner."""
+        """Run this draft: :func:`casars.tasks.run` with it as the base.
 
-        if {"parameters", "profile"} & options.keys():
-            raise TypeError("TaskParameters.run supplies its own parameters draft")
+        ``options`` are CASA-named values to set on top, and ``workspace``.
+        """
+
         from .tasks import run
 
-        return run(self.surface, parameters=self, **options)
+        return run(self.surface, self, **options)
 
 
 def defaults(surface: str, *, workspace: StrPath | None = None) -> SurfaceParameters:

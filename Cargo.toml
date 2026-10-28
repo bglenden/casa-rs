@@ -3,8 +3,8 @@ resolver = "2"
 members = [
     "crates/casa-provider-contracts",
     "crates/casa-task-runtime",
-    "crates/casars",
     "crates/casars-imager",
+    "crates/casars-imexplore",
     "crates/casars-simulation",
     "crates/casars-python",
     "crates/casa-types",

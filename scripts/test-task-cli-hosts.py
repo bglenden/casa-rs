@@ -41,7 +41,6 @@ HOSTED_TASKS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("imregrid", ()),
     ("imsubimage", ()),
     ("imexplore", ("imstat",)),
-    ("casars-plotcal", ()),
 )
 
 
@@ -104,6 +103,18 @@ def check_front_end(executable: str, base: list[str]) -> None:
 
 def main() -> int:
     repo = Path(__file__).resolve().parents[1]
+    catalog = json.loads(
+        (repo / "crates/casa-provider-contracts/resources/application-catalog.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    executables = {entry["launch"]["executable"] for entry in catalog["applications"]}
+    hosted = {executable for executable, _ in HOSTED_TASKS}
+    require(
+        executables == hosted,
+        f"HOSTED_TASKS must cover every catalog executable: missing "
+        f"{sorted(executables - hosted)}, extra {sorted(hosted - executables)}",
+    )
     target = Path(os.environ.get("CARGO_TARGET_DIR", repo / "target"))
     if not target.is_absolute():
         target = repo / target

@@ -3,12 +3,12 @@
 This document defines the contract model between functionality providers and
 their consumers:
 
-- the headless `casars` task host (`casars run`, `casars params`)
 - the Python package `casars`
-- standalone task binaries
+- the task executables of the application catalog, run directly from the
+  command line
 
-ADR-0017 makes these the product surfaces; casa-rs has no terminal UI, native
-GUI, or interactive browser sessions.
+ADR-0017 makes these the product surfaces; casa-rs has no separate launcher,
+terminal UI, native GUI, or interactive browser sessions.
 
 The goal is to keep one source of truth for each provider surface while still
 allowing different transports.
@@ -154,23 +154,39 @@ metadata errors, and semantic/flattened schema drift.
 
 `casa-provider-contracts` also owns the single `ApplicationCatalog`. Every
 parameter surface has exactly one task-application entry that references the
-surface by stable ID; the `casars` task host is the one application without a
-surface. Display name, category, and protocol family are projected from the
+surface by stable ID, and every application is a task: the catalog's 26
+entries are its 26 task surfaces. Display name, category, and protocol family are projected from the
 referenced surface rather than copied into another inventory. Each application
 adds only executable/package identity, its explicit override variable,
 interaction and presentation metadata, and packaging visibility. (ADR-0017
 keeps the older presentation fields, such as `shell_kind` and `interaction`,
-until the CASA-shaped Python work reshapes them.) Several surfaces may share one executable: `imhead` and
-`imstat` run `imexplore`, and `gaincal`, `bandpass`, `applycal`, `fluxscale`,
-and `gencal` run `calibrate` with a fixed mode.
+until the CASA-shaped Python work reshapes them.) Several surfaces may share one executable, a family whose first word names the surface:
+`imhead` and `imstat` run `imexplore`; `plotms` runs `msexplore`; `split`
+runs `mstransform`; and `gaincal`, `bandpass`, `applycal`, `fluxscale`, and
+`gencal` run `calibrate`, whose own `calibrate` surface is its default.
 
-The supported launch modes are `installed_suite` and
-`development_workspace`. A process selects one mode at composition/startup.
-Installed resolution uses only the installed-suite configuration; development
-resolution uses only the declared workspace and Cargo package. A missing
-executable is an error in that mode and never triggers a search of the current
-directory, neighboring targets, or another mode. The CLI, Python, packaging
-scripts, and suite inventory all project from this catalog.
+`casa_provider_contracts::resolve_task_executable` is the one search for the
+file a task runs; Python reaches it through `casars._core`. The first step
+that applies decides:
+
+1. the task's override variable (`override_env`, `CASARS_<APP>_BIN`, such as
+   `CASARS_IMAGER_BIN` or `CASARS_CALIBRATE_BIN`; impbcor's is
+   `CASA_RS_IMPBCOR_BIN`);
+2. a suite root, `CASARS_SUITE_ROOT` or else the installed suite the Python
+   package belongs to (the installer's environment is `<suite>/python`,
+   beside `<suite>/bin` and `bundle-manifest.json`), whose `bin/` holds the
+   executable;
+3. a development checkout: the newest `debug` or `release` build of the
+   executable under the workspace the package was built from, in
+   `$CARGO_TARGET_DIR` or `target/`.
+
+A step that applies but lacks the file is an error naming what it lacked, and
+never falls through to a later step, so an installed suite never runs a
+checkout's build. A missing development build is reported with the
+`cargo build -p <package> --bin <executable>` that makes it. Nothing is run
+through `cargo`, `PATH` is not searched, and the caller's own path
+(`current_exe`) is not consulted. Python, packaging scripts, and the suite
+inventory all project from this catalog.
 
 ## Parameter Catalog and Surface Definitions
 
@@ -263,7 +279,7 @@ calls (#931): the image binaries and `imexplore`; the MeasurementSet binaries
 (`msexplore` with `plotms`, `mstransform` with `split`, `flagdata`,
 `flagmanager` and `importvla`); `calibrate`, which hosts `calibrate`,
 `applycal`, `gaincal`, `bandpass`, `fluxscale` and `gencal`;
-`casars-plotcal`; `casars-imager`; and `simobserve`. A
+`casars-imager`; and `simobserve`. A
 surface's choices take their canonical names (`--preset amplitude_vs_time`),
 and every flag it declares, short ones such as msexplore's `-o` included,
 reaches its parameter. The front end is generic over the
@@ -293,7 +309,8 @@ An action that runs nothing installs no logging, so a bad `CASA_RS_LOG_*`
 setting refuses only a run.
 
 A command-line run enters its workspace (`--workspace`, the current directory
-otherwise) before the task starts, as `casars run` starts the binary there.
+otherwise) before the task starts, as a Python task call starts the
+executable in its workspace.
 Every relative path the run names then resolves in the workspace: inputs,
 products, and paths inside a parameter's text, such as `imstat`'s region file
 or the image in `immoments`' mask expression. The files the controls name
@@ -309,10 +326,9 @@ surface's contract inside the binary. It writes one `TaskReply` to stdout:
   what CASA's task returns (`null` for `None`), kept ahead of the provider's
   full `result`, from which products are projected;
 - `{"status": "failed", "surface", "kind", "message", "parameter"?}`, where
-  `kind` is `validation` (refused before anything changed; Python
-  `ValueError`), `execution` (Python `RuntimeError`), or `interrupted`: the
-  task caught an interrupt, stopped at its next safe point and published
-  nothing, as `casars-imager` does on SIGINT.
+  `kind` is `validation` (refused before anything changed), `execution`, or
+  `interrupted`: the task caught an interrupt, stopped at its next safe point
+  and published nothing, as `casars-imager` does on SIGINT.
 
 The exit status agrees with the reply: 0 for success, 2 for a validation
 failure, 1 for an execution failure and 130 for an interrupted run.
@@ -329,12 +345,16 @@ into the binary's arguments to ask for it.
 
 Last has one owner on each path: a command line run of a binary records Last
 before the callback and Last Successful only after success, unless
-`--no-save-last`; `--json-run` reads and writes neither. `casars run` owns Last
-for the runs it launches, and Python task calls save none. Every run
-`casars run` launches is one invocation shape: the surface's `fixed_args`,
-then `--json-run -` with the values the user set. It reads the reply and
-prints the provider result where the surface declares a decoder, the return
-value otherwise, or the task's own error.
+`--no-save-last`; `--json-run` reads and writes neither, so Python task calls
+save none. Every Python task call is one invocation shape: the executable the
+resolver names, the surface's `fixed_args`, then `--json-run -` with the
+values the call set on stdin. Python passes the task's log lines to
+`sys.stderr` as they arrive and classifies the reply through `casars._core`.
+A success returns a `TaskCompletion` carrying the reply's `value` and the
+products the decoder projects; anything else raises `TaskExecutionError`,
+whose completion's `status` is `refused` (a `validation` reply), `failed`,
+`interrupted`, `signalled` or `malformed_reply`. A value the contract refuses
+when Python resolves the call raises `ValueError` before anything starts.
 
 ## Shared Versioned Component Schemas
 
@@ -388,18 +408,21 @@ metadata such as flag names and positional rules.
 
 CLI flags are not the source of truth.
 
-`casars run` and `casars params` also project the common Defaults, Last, Last
-Successful, explicit profile, reset, save, and no-save source operations.
-Invocation starts from Defaults unless a source is explicit.
+Each task executable's command line, through the shared task front end, also
+projects the common Defaults, Last, Last Successful, explicit profile, reset
+(`--unset`), save (`--save-params`), and no-save (`--no-save-last`) source
+operations, and the non-executing `--show`, `--template`, `--describe` and
+`--validate`. Invocation starts from Defaults unless a source is explicit.
 
 ### Python
 
 Python stays ergonomic and typed, but its wrappers and docs are checked against
 the canonical schema bundle so signatures and enums cannot drift.
 
-For task surfaces, generated Python callables invoke the canonical `casars run`
-transport; Python does not host a second provider protocol engine. For object
-surfaces, Python binds directly in-process.
+For task surfaces, generated Python callables start the task's executable
+with the canonical `--json-run -` transport; Python does not host a second
+provider protocol engine. For object surfaces, Python binds directly
+in-process.
 
 `casars.parameters` exposes the common typed task profile, while generated
 task-specific wrappers delegate through the same runtime. Python must not keep
@@ -417,10 +440,9 @@ a second default or migration implementation.
 - `casars.tools.measures`: object surface
 - `casars.tools.quanta`: object surface
 
-All 27 catalog surfaces have task definitions; the
+All 26 catalog surfaces have task definitions; the
 [generated parameter reference](reference/task-parameters.md) lists them. The
-`casars` task host and the five object surfaces are not parameter-profile
-surfaces.
+five object surfaces are not parameter-profile surfaces.
 
 ## Implementation Guidance
 
@@ -436,4 +458,4 @@ surfaces.
   projections cannot drift from the canonical schema bundle.
 
 This preserves one source of truth while supporting direct Rust APIs, the
-Python package, the `casars` task host, and standalone binaries.
+Python package, and the task executables.

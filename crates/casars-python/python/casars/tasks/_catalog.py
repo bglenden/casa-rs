@@ -9,8 +9,8 @@ from collections.abc import Mapping
 from os import PathLike
 from typing import Literal, TypeAlias
 
-from ..parameters import ParameterData, TaskParameters
-from ._runner import TaskCompletion, run as _run
+from ..parameters import ParameterData
+from ._runner import TaskCompletion, _run
 
 StrPath: TypeAlias = str | PathLike[str]
 _UNSET = object()
@@ -88,35 +88,9 @@ def msexplore(
     flag_selected: bool | object = _UNSET,
     flag_apply: bool | object = _UNSET,
     flag_output: StrPath | object = _UNSET,
-    parameters: TaskParameters | None = None,
-    profile: StrPath | None = None,
-    base_source: Literal["defaults", "last", "last_successful"] = "defaults",
-    workspace: StrPath | None = None,
-    save_last: bool = True,
-    binary: StrPath | None = None,
-    check: bool = True,
-    timeout: float | None = None,
-    env: Mapping[str, str] | None = None,
-    confirm_overwrite: bool = False,
-    confirm_mutation: bool = False,
 ) -> TaskCompletion:
     """explore and export common MeasurementSet plotms-style plots"""
-    overrides = _explicit(locals(), ('vis', 'format', 'output', 'overwrite', 'selectdata', 'field', 'spw', 'timerange', 'uvrange', 'antenna', 'scan', 'correlation', 'observation', 'array', 'intent', 'feed', 'msselect', 'page_spec', 'preset', 'x_axis', 'y_axis', 'y_axis2', 'datacolumn', 'color_by', 'avgchannel', 'avgtime', 'avgscan', 'avgfield', 'avgbaseline', 'avgantenna', 'avgspw', 'scalar', 'freqframe', 'restfreq', 'veldef', 'iteraxis', 'gridrows', 'gridcols', 'xselfscale', 'yselfscale', 'xsharedaxis', 'ysharedaxis', 'title', 'xlabel', 'ylabel', 'symbol_size', 'showlegend', 'legendposition', 'showmajorgrid', 'showminorgrid', 'headeritems', 'max_points', 'plot_output', 'plot_format', 'flag_action', 'flag_xmin', 'flag_xmax', 'flag_ymin', 'flag_ymax', 'flag_plotindex', 'flag_panel', 'flag_extcorr', 'flag_extchannel', 'flag_selected', 'flag_apply', 'flag_output'))
-    return _run(
-        "msexplore",
-        parameters=parameters,
-        profile=profile,
-        base_source=base_source,
-        overrides=overrides,
-        workspace=workspace,
-        save_last=save_last,
-        binary=binary,
-        check=check,
-        timeout=timeout,
-        env=env,
-        confirm_overwrite=confirm_overwrite,
-        confirm_mutation=confirm_mutation,
-    )
+    return _run("msexplore", _explicit(locals(), ('vis', 'format', 'output', 'overwrite', 'selectdata', 'field', 'spw', 'timerange', 'uvrange', 'antenna', 'scan', 'correlation', 'observation', 'array', 'intent', 'feed', 'msselect', 'page_spec', 'preset', 'x_axis', 'y_axis', 'y_axis2', 'datacolumn', 'color_by', 'avgchannel', 'avgtime', 'avgscan', 'avgfield', 'avgbaseline', 'avgantenna', 'avgspw', 'scalar', 'freqframe', 'restfreq', 'veldef', 'iteraxis', 'gridrows', 'gridcols', 'xselfscale', 'yselfscale', 'xsharedaxis', 'ysharedaxis', 'title', 'xlabel', 'ylabel', 'symbol_size', 'showlegend', 'legendposition', 'showmajorgrid', 'showminorgrid', 'headeritems', 'max_points', 'plot_output', 'plot_format', 'flag_action', 'flag_xmin', 'flag_xmax', 'flag_ymin', 'flag_ymax', 'flag_plotindex', 'flag_panel', 'flag_extcorr', 'flag_extchannel', 'flag_selected', 'flag_apply', 'flag_output')))
 
 def calibrate(
     *,
@@ -173,35 +147,9 @@ def calibrate(
     minblperant: int | object = _UNSET,
     degamp: int | object = _UNSET,
     degphase: int | object = _UNSET,
-    parameters: TaskParameters | None = None,
-    profile: StrPath | None = None,
-    base_source: Literal["defaults", "last", "last_successful"] = "defaults",
-    workspace: StrPath | None = None,
-    save_last: bool = True,
-    binary: StrPath | None = None,
-    check: bool = True,
-    timeout: float | None = None,
-    env: Mapping[str, str] | None = None,
-    confirm_overwrite: bool = False,
-    confirm_mutation: bool = False,
 ) -> TaskCompletion:
     """apply, inspect, and solve CASA-style calibration workflows"""
-    overrides = _explicit(locals(), ('mode', 'vis', 'outputvis', 'summary_paths', 'gaintables', 'table_path', 'callib', 'gainfield', 'interp', 'spwmap', 'apply_mode', 'calwt', 'output', 'overwrite', 'parang', 'format', 'stats_axis', 'stats_datacolumn', 'use_flags', 'out_table', 'refant', 'gain_type', 'solve_mode', 'solint', 'gain_combine', 'gain_model_source', 'smodel', 'min_snr', 'bandpass_combine', 'bandtype', 'solnorm', 'fluxscale_input', 'reference_fields', 'transfer_fields', 'refspwmap', 'gainthreshold', 'incremental', 'selectdata', 'field', 'spw', 'antenna', 'scan', 'observation', 'array', 'timerange', 'msselect', 'caltype', 'parameter', 'gaincurve_table', 'flagbackup', 'minblperant', 'degamp', 'degphase'))
-    return _run(
-        "calibrate",
-        parameters=parameters,
-        profile=profile,
-        base_source=base_source,
-        overrides=overrides,
-        workspace=workspace,
-        save_last=save_last,
-        binary=binary,
-        check=check,
-        timeout=timeout,
-        env=env,
-        confirm_overwrite=confirm_overwrite,
-        confirm_mutation=confirm_mutation,
-    )
+    return _run("calibrate", _explicit(locals(), ('mode', 'vis', 'outputvis', 'summary_paths', 'gaintables', 'table_path', 'callib', 'gainfield', 'interp', 'spwmap', 'apply_mode', 'calwt', 'output', 'overwrite', 'parang', 'format', 'stats_axis', 'stats_datacolumn', 'use_flags', 'out_table', 'refant', 'gain_type', 'solve_mode', 'solint', 'gain_combine', 'gain_model_source', 'smodel', 'min_snr', 'bandpass_combine', 'bandtype', 'solnorm', 'fluxscale_input', 'reference_fields', 'transfer_fields', 'refspwmap', 'gainthreshold', 'incremental', 'selectdata', 'field', 'spw', 'antenna', 'scan', 'observation', 'array', 'timerange', 'msselect', 'caltype', 'parameter', 'gaincurve_table', 'flagbackup', 'minblperant', 'degamp', 'degphase')))
 
 def importvla(
     *,
@@ -217,35 +165,9 @@ def importvla(
     antnamescheme: Literal['new', 'old'] | object = _UNSET,
     keepblanks: bool | object = _UNSET,
     evlabands: bool | object = _UNSET,
-    parameters: TaskParameters | None = None,
-    profile: StrPath | None = None,
-    base_source: Literal["defaults", "last", "last_successful"] = "defaults",
-    workspace: StrPath | None = None,
-    save_last: bool = True,
-    binary: StrPath | None = None,
-    check: bool = True,
-    timeout: float | None = None,
-    env: Mapping[str, str] | None = None,
-    confirm_overwrite: bool = False,
-    confirm_mutation: bool = False,
 ) -> TaskCompletion:
     """scan or import old VLA export archives from disk"""
-    overrides = _explicit(locals(), ('archivefiles', 'vis', 'bandname', 'frequencytol', 'project', 'starttime', 'stoptime', 'applytsys', 'autocorr', 'antnamescheme', 'keepblanks', 'evlabands'))
-    return _run(
-        "importvla",
-        parameters=parameters,
-        profile=profile,
-        base_source=base_source,
-        overrides=overrides,
-        workspace=workspace,
-        save_last=save_last,
-        binary=binary,
-        check=check,
-        timeout=timeout,
-        env=env,
-        confirm_overwrite=confirm_overwrite,
-        confirm_mutation=confirm_mutation,
-    )
+    return _run("importvla", _explicit(locals(), ('archivefiles', 'vis', 'bandname', 'frequencytol', 'project', 'starttime', 'stoptime', 'applytsys', 'autocorr', 'antnamescheme', 'keepblanks', 'evlabands')))
 
 def imager(
     *,
@@ -330,35 +252,9 @@ def imager(
     stage_timing: bool | object = _UNSET,
     metal_stage_timing: bool | object = _UNSET,
     science_trace: bool | object = _UNSET,
-    parameters: TaskParameters | None = None,
-    profile: StrPath | None = None,
-    base_source: Literal["defaults", "last", "last_successful"] = "defaults",
-    workspace: StrPath | None = None,
-    save_last: bool = True,
-    binary: StrPath | None = None,
-    check: bool = True,
-    timeout: float | None = None,
-    env: Mapping[str, str] | None = None,
-    confirm_overwrite: bool = False,
-    confirm_mutation: bool = False,
 ) -> TaskCompletion:
     """Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet"""
-    overrides = _explicit(locals(), ('vis', 'imagename', 'imsize', 'cell', 'datacolumn', 'savemodel', 'outlierfile', 'field', 'phasecenter_field', 'ddid', 'phasecenter', 'spw', 'channel_start', 'channel_count', 'stokes', 'specmode', 'start', 'width', 'outframe', 'veltype', 'interpolation', 'restfreq', 'restoringbeam', 'perchanweightdensity', 'dirty_only', 'niter', 'threshold', 'nmajor', 'gain', 'nsigma', 'psfcutoff', 'minor_cycle_length', 'cyclefactor', 'deconvolver', 'minpsffraction', 'maxpsffraction', 'nterms', 'hogbom_iteration_mode', 'scales', 'smallscalebias', 'usemask', 'sidelobethreshold', 'noisethreshold', 'lownoisethreshold', 'negativethreshold', 'minbeamfrac', 'growiterations', 'mask_box', 'weighting', 'mask_image', 'robust', 'wprojplanes', 'usepointing', 'write_pb', 'pbcor', 'pblimit', 'gridder', 'facets', 'parallel', 'uvrange', 'intent', 'cfcache', 'cf_resident_mb', 'pointingoffsetsigdev', 'normtype', 'fitspw', 'fitorder', 'save_continuum_residual', 'aw_cf_source', 'native_cf_cache', 'evla_surface', 'native_cf_policy', 'native_cf_working_size', 'native_cf_oversampling', 'native_cf_cache_bytes', 'native_cf_maximum_cells', 'backend', 'gridprecision', 'stage_timing', 'metal_stage_timing', 'science_trace'))
-    return _run(
-        "imager",
-        parameters=parameters,
-        profile=profile,
-        base_source=base_source,
-        overrides=overrides,
-        workspace=workspace,
-        save_last=save_last,
-        binary=binary,
-        check=check,
-        timeout=timeout,
-        env=env,
-        confirm_overwrite=confirm_overwrite,
-        confirm_mutation=confirm_mutation,
-    )
+    return _run("imager", _explicit(locals(), ('vis', 'imagename', 'imsize', 'cell', 'datacolumn', 'savemodel', 'outlierfile', 'field', 'phasecenter_field', 'ddid', 'phasecenter', 'spw', 'channel_start', 'channel_count', 'stokes', 'specmode', 'start', 'width', 'outframe', 'veltype', 'interpolation', 'restfreq', 'restoringbeam', 'perchanweightdensity', 'dirty_only', 'niter', 'threshold', 'nmajor', 'gain', 'nsigma', 'psfcutoff', 'minor_cycle_length', 'cyclefactor', 'deconvolver', 'minpsffraction', 'maxpsffraction', 'nterms', 'hogbom_iteration_mode', 'scales', 'smallscalebias', 'usemask', 'sidelobethreshold', 'noisethreshold', 'lownoisethreshold', 'negativethreshold', 'minbeamfrac', 'growiterations', 'mask_box', 'weighting', 'mask_image', 'robust', 'wprojplanes', 'usepointing', 'write_pb', 'pbcor', 'pblimit', 'gridder', 'facets', 'parallel', 'uvrange', 'intent', 'cfcache', 'cf_resident_mb', 'pointingoffsetsigdev', 'normtype', 'fitspw', 'fitorder', 'save_continuum_residual', 'aw_cf_source', 'native_cf_cache', 'evla_surface', 'native_cf_policy', 'native_cf_working_size', 'native_cf_oversampling', 'native_cf_cache_bytes', 'native_cf_maximum_cells', 'backend', 'gridprecision', 'stage_timing', 'metal_stage_timing', 'science_trace')))
 
 def simobserve(
     *,
@@ -400,35 +296,9 @@ def simobserve(
     graphics: Literal['', 'both', 'file', 'none', 'screen'] | object = _UNSET,
     verbose: bool | object = _UNSET,
     overwrite: bool | object = _UNSET,
-    parameters: TaskParameters | None = None,
-    profile: StrPath | None = None,
-    base_source: Literal["defaults", "last", "last_successful"] = "defaults",
-    workspace: StrPath | None = None,
-    save_last: bool = True,
-    binary: StrPath | None = None,
-    check: bool = True,
-    timeout: float | None = None,
-    env: Mapping[str, str] | None = None,
-    confirm_overwrite: bool = False,
-    confirm_mutation: bool = False,
 ) -> TaskCompletion:
     """Simulate an observation of a sky model: CASA's simobserve"""
-    overrides = _explicit(locals(), ('project', 'skymodel', 'inbright', 'indirection', 'incell', 'incenter', 'inwidth', 'complist', 'compwidth', 'comp_nchan', 'setpointings', 'ptgfile', 'integration', 'direction', 'mapsize', 'maptype', 'pointingspacing', 'caldirection', 'calflux', 'obsmode', 'refdate', 'hourangle', 'totaltime', 'antennalist', 'sdantlist', 'sdant', 'outframe', 'thermalnoise', 'user_pwv', 't_ground', 't_sky', 'tau0', 'seed', 'leakage', 'correlator', 'graphics', 'verbose', 'overwrite'))
-    return _run(
-        "simobserve",
-        parameters=parameters,
-        profile=profile,
-        base_source=base_source,
-        overrides=overrides,
-        workspace=workspace,
-        save_last=save_last,
-        binary=binary,
-        check=check,
-        timeout=timeout,
-        env=env,
-        confirm_overwrite=confirm_overwrite,
-        confirm_mutation=confirm_mutation,
-    )
+    return _run("simobserve", _explicit(locals(), ('project', 'skymodel', 'inbright', 'indirection', 'incell', 'incenter', 'inwidth', 'complist', 'compwidth', 'comp_nchan', 'setpointings', 'ptgfile', 'integration', 'direction', 'mapsize', 'maptype', 'pointingspacing', 'caldirection', 'calflux', 'obsmode', 'refdate', 'hourangle', 'totaltime', 'antennalist', 'sdantlist', 'sdant', 'outframe', 'thermalnoise', 'user_pwv', 't_ground', 't_sky', 'tau0', 'seed', 'leakage', 'correlator', 'graphics', 'verbose', 'overwrite')))
 
 def imhead(
     *,
@@ -436,35 +306,9 @@ def imhead(
     mode: Literal['list', 'put', 'summary'] | object = _UNSET,
     hdkey: str | object = _UNSET,
     hdvalue: str | object = _UNSET,
-    parameters: TaskParameters | None = None,
-    profile: StrPath | None = None,
-    base_source: Literal["defaults", "last", "last_successful"] = "defaults",
-    workspace: StrPath | None = None,
-    save_last: bool = True,
-    binary: StrPath | None = None,
-    check: bool = True,
-    timeout: float | None = None,
-    env: Mapping[str, str] | None = None,
-    confirm_overwrite: bool = False,
-    confirm_mutation: bool = False,
 ) -> TaskCompletion:
     """Inspect or update CASA image header metadata."""
-    overrides = _explicit(locals(), ('imagename', 'mode', 'hdkey', 'hdvalue'))
-    return _run(
-        "imhead",
-        parameters=parameters,
-        profile=profile,
-        base_source=base_source,
-        overrides=overrides,
-        workspace=workspace,
-        save_last=save_last,
-        binary=binary,
-        check=check,
-        timeout=timeout,
-        env=env,
-        confirm_overwrite=confirm_overwrite,
-        confirm_mutation=confirm_mutation,
-    )
+    return _run("imhead", _explicit(locals(), ('imagename', 'mode', 'hdkey', 'hdvalue')))
 
 def imstat(
     *,
@@ -472,35 +316,9 @@ def imstat(
     box: str | object = _UNSET,
     region: str | object = _UNSET,
     chans: str | object = _UNSET,
-    parameters: TaskParameters | None = None,
-    profile: StrPath | None = None,
-    base_source: Literal["defaults", "last", "last_successful"] = "defaults",
-    workspace: StrPath | None = None,
-    save_last: bool = True,
-    binary: StrPath | None = None,
-    check: bool = True,
-    timeout: float | None = None,
-    env: Mapping[str, str] | None = None,
-    confirm_overwrite: bool = False,
-    confirm_mutation: bool = False,
 ) -> TaskCompletion:
     """Compute CASA image statistics over optional pixel, region, and channel selections."""
-    overrides = _explicit(locals(), ('imagename', 'box', 'region', 'chans'))
-    return _run(
-        "imstat",
-        parameters=parameters,
-        profile=profile,
-        base_source=base_source,
-        overrides=overrides,
-        workspace=workspace,
-        save_last=save_last,
-        binary=binary,
-        check=check,
-        timeout=timeout,
-        env=env,
-        confirm_overwrite=confirm_overwrite,
-        confirm_mutation=confirm_mutation,
-    )
+    return _run("imstat", _explicit(locals(), ('imagename', 'box', 'region', 'chans')))
 
 def immoments(
     *,
@@ -511,35 +329,9 @@ def immoments(
     includepix: str | object = _UNSET,
     mask: str | object = _UNSET,
     overwrite: bool | object = _UNSET,
-    parameters: TaskParameters | None = None,
-    profile: StrPath | None = None,
-    base_source: Literal["defaults", "last", "last_successful"] = "defaults",
-    workspace: StrPath | None = None,
-    save_last: bool = True,
-    binary: StrPath | None = None,
-    check: bool = True,
-    timeout: float | None = None,
-    env: Mapping[str, str] | None = None,
-    confirm_overwrite: bool = False,
-    confirm_mutation: bool = False,
 ) -> TaskCompletion:
     """Create CASA-style image moment maps"""
-    overrides = _explicit(locals(), ('imagename', 'outfile', 'moments', 'chans', 'includepix', 'mask', 'overwrite'))
-    return _run(
-        "immoments",
-        parameters=parameters,
-        profile=profile,
-        base_source=base_source,
-        overrides=overrides,
-        workspace=workspace,
-        save_last=save_last,
-        binary=binary,
-        check=check,
-        timeout=timeout,
-        env=env,
-        confirm_overwrite=confirm_overwrite,
-        confirm_mutation=confirm_mutation,
-    )
+    return _run("immoments", _explicit(locals(), ('imagename', 'outfile', 'moments', 'chans', 'includepix', 'mask', 'overwrite')))
 
 def exportfits(
     *,
@@ -547,35 +339,9 @@ def exportfits(
     fitsimage: StrPath | object = _UNSET,
     velocity: bool | object = _UNSET,
     overwrite: bool | object = _UNSET,
-    parameters: TaskParameters | None = None,
-    profile: StrPath | None = None,
-    base_source: Literal["defaults", "last", "last_successful"] = "defaults",
-    workspace: StrPath | None = None,
-    save_last: bool = True,
-    binary: StrPath | None = None,
-    check: bool = True,
-    timeout: float | None = None,
-    env: Mapping[str, str] | None = None,
-    confirm_overwrite: bool = False,
-    confirm_mutation: bool = False,
 ) -> TaskCompletion:
     """Export CASA images to FITS"""
-    overrides = _explicit(locals(), ('imagename', 'fitsimage', 'velocity', 'overwrite'))
-    return _run(
-        "exportfits",
-        parameters=parameters,
-        profile=profile,
-        base_source=base_source,
-        overrides=overrides,
-        workspace=workspace,
-        save_last=save_last,
-        binary=binary,
-        check=check,
-        timeout=timeout,
-        env=env,
-        confirm_overwrite=confirm_overwrite,
-        confirm_mutation=confirm_mutation,
-    )
+    return _run("exportfits", _explicit(locals(), ('imagename', 'fitsimage', 'velocity', 'overwrite')))
 
 def mstransform(
     *,
@@ -590,35 +356,9 @@ def mstransform(
     msselect: str | object = _UNSET,
     datacolumn: str | object = _UNSET,
     keepflags: bool | object = _UNSET,
-    parameters: TaskParameters | None = None,
-    profile: StrPath | None = None,
-    base_source: Literal["defaults", "last", "last_successful"] = "defaults",
-    workspace: StrPath | None = None,
-    save_last: bool = True,
-    binary: StrPath | None = None,
-    check: bool = True,
-    timeout: float | None = None,
-    env: Mapping[str, str] | None = None,
-    confirm_overwrite: bool = False,
-    confirm_mutation: bool = False,
 ) -> TaskCompletion:
     """Materialize a selected MeasurementSet into a new output MS."""
-    overrides = _explicit(locals(), ('vis', 'outputvis', 'spw', 'width', 'field', 'scan', 'antenna', 'timerange', 'msselect', 'datacolumn', 'keepflags'))
-    return _run(
-        "mstransform",
-        parameters=parameters,
-        profile=profile,
-        base_source=base_source,
-        overrides=overrides,
-        workspace=workspace,
-        save_last=save_last,
-        binary=binary,
-        check=check,
-        timeout=timeout,
-        env=env,
-        confirm_overwrite=confirm_overwrite,
-        confirm_mutation=confirm_mutation,
-    )
+    return _run("mstransform", _explicit(locals(), ('vis', 'outputvis', 'spw', 'width', 'field', 'scan', 'antenna', 'timerange', 'msselect', 'datacolumn', 'keepflags')))
 
 def split(
     *,
@@ -633,35 +373,9 @@ def split(
     msselect: str | object = _UNSET,
     datacolumn: str | object = _UNSET,
     keepflags: bool | object = _UNSET,
-    parameters: TaskParameters | None = None,
-    profile: StrPath | None = None,
-    base_source: Literal["defaults", "last", "last_successful"] = "defaults",
-    workspace: StrPath | None = None,
-    save_last: bool = True,
-    binary: StrPath | None = None,
-    check: bool = True,
-    timeout: float | None = None,
-    env: Mapping[str, str] | None = None,
-    confirm_overwrite: bool = False,
-    confirm_mutation: bool = False,
 ) -> TaskCompletion:
     """Create a selected MeasurementSet subset, equivalent to CASA split."""
-    overrides = _explicit(locals(), ('vis', 'outputvis', 'spw', 'width', 'field', 'scan', 'antenna', 'timerange', 'msselect', 'datacolumn', 'keepflags'))
-    return _run(
-        "split",
-        parameters=parameters,
-        profile=profile,
-        base_source=base_source,
-        overrides=overrides,
-        workspace=workspace,
-        save_last=save_last,
-        binary=binary,
-        check=check,
-        timeout=timeout,
-        env=env,
-        confirm_overwrite=confirm_overwrite,
-        confirm_mutation=confirm_mutation,
-    )
+    return _run("split", _explicit(locals(), ('vis', 'outputvis', 'spw', 'width', 'field', 'scan', 'antenna', 'timerange', 'msselect', 'datacolumn', 'keepflags')))
 
 def applycal(
     *,
@@ -687,35 +401,9 @@ def applycal(
     timerange: str | object = _UNSET,
     msselect: str | object = _UNSET,
     flagbackup: bool | object = _UNSET,
-    parameters: TaskParameters | None = None,
-    profile: StrPath | None = None,
-    base_source: Literal["defaults", "last", "last_successful"] = "defaults",
-    workspace: StrPath | None = None,
-    save_last: bool = True,
-    binary: StrPath | None = None,
-    check: bool = True,
-    timeout: float | None = None,
-    env: Mapping[str, str] | None = None,
-    confirm_overwrite: bool = False,
-    confirm_mutation: bool = False,
 ) -> TaskCompletion:
     """Apply one or more calibration tables to a MeasurementSet."""
-    overrides = _explicit(locals(), ('vis', 'gaintables', 'callib', 'gainfield', 'interp', 'spwmap', 'apply_mode', 'calwt', 'output', 'overwrite', 'parang', 'format', 'selectdata', 'field', 'spw', 'antenna', 'scan', 'observation', 'array', 'timerange', 'msselect', 'flagbackup'))
-    return _run(
-        "applycal",
-        parameters=parameters,
-        profile=profile,
-        base_source=base_source,
-        overrides=overrides,
-        workspace=workspace,
-        save_last=save_last,
-        binary=binary,
-        check=check,
-        timeout=timeout,
-        env=env,
-        confirm_overwrite=confirm_overwrite,
-        confirm_mutation=confirm_mutation,
-    )
+    return _run("applycal", _explicit(locals(), ('vis', 'gaintables', 'callib', 'gainfield', 'interp', 'spwmap', 'apply_mode', 'calwt', 'output', 'overwrite', 'parang', 'format', 'selectdata', 'field', 'spw', 'antenna', 'scan', 'observation', 'array', 'timerange', 'msselect', 'flagbackup')))
 
 def gaincal(
     *,
@@ -748,35 +436,9 @@ def gaincal(
     timerange: str | object = _UNSET,
     msselect: str | object = _UNSET,
     minblperant: int | object = _UNSET,
-    parameters: TaskParameters | None = None,
-    profile: StrPath | None = None,
-    base_source: Literal["defaults", "last", "last_successful"] = "defaults",
-    workspace: StrPath | None = None,
-    save_last: bool = True,
-    binary: StrPath | None = None,
-    check: bool = True,
-    timeout: float | None = None,
-    env: Mapping[str, str] | None = None,
-    confirm_overwrite: bool = False,
-    confirm_mutation: bool = False,
 ) -> TaskCompletion:
     """Solve antenna gain calibration for a MeasurementSet."""
-    overrides = _explicit(locals(), ('vis', 'gaintables', 'callib', 'gainfield', 'interp', 'spwmap', 'output', 'overwrite', 'format', 'out_table', 'refant', 'gain_type', 'solve_mode', 'solint', 'gain_combine', 'gain_model_source', 'smodel', 'min_snr', 'solnorm', 'selectdata', 'field', 'spw', 'antenna', 'scan', 'observation', 'array', 'timerange', 'msselect', 'minblperant'))
-    return _run(
-        "gaincal",
-        parameters=parameters,
-        profile=profile,
-        base_source=base_source,
-        overrides=overrides,
-        workspace=workspace,
-        save_last=save_last,
-        binary=binary,
-        check=check,
-        timeout=timeout,
-        env=env,
-        confirm_overwrite=confirm_overwrite,
-        confirm_mutation=confirm_mutation,
-    )
+    return _run("gaincal", _explicit(locals(), ('vis', 'gaintables', 'callib', 'gainfield', 'interp', 'spwmap', 'output', 'overwrite', 'format', 'out_table', 'refant', 'gain_type', 'solve_mode', 'solint', 'gain_combine', 'gain_model_source', 'smodel', 'min_snr', 'solnorm', 'selectdata', 'field', 'spw', 'antenna', 'scan', 'observation', 'array', 'timerange', 'msselect', 'minblperant')))
 
 def bandpass(
     *,
@@ -807,35 +469,9 @@ def bandpass(
     msselect: str | object = _UNSET,
     degamp: int | object = _UNSET,
     degphase: int | object = _UNSET,
-    parameters: TaskParameters | None = None,
-    profile: StrPath | None = None,
-    base_source: Literal["defaults", "last", "last_successful"] = "defaults",
-    workspace: StrPath | None = None,
-    save_last: bool = True,
-    binary: StrPath | None = None,
-    check: bool = True,
-    timeout: float | None = None,
-    env: Mapping[str, str] | None = None,
-    confirm_overwrite: bool = False,
-    confirm_mutation: bool = False,
 ) -> TaskCompletion:
     """Solve bandpass calibration for a MeasurementSet."""
-    overrides = _explicit(locals(), ('vis', 'gaintables', 'callib', 'gainfield', 'interp', 'spwmap', 'output', 'overwrite', 'format', 'out_table', 'refant', 'smodel', 'min_snr', 'bandpass_combine', 'bandtype', 'solnorm', 'selectdata', 'field', 'spw', 'antenna', 'scan', 'observation', 'array', 'timerange', 'msselect', 'degamp', 'degphase'))
-    return _run(
-        "bandpass",
-        parameters=parameters,
-        profile=profile,
-        base_source=base_source,
-        overrides=overrides,
-        workspace=workspace,
-        save_last=save_last,
-        binary=binary,
-        check=check,
-        timeout=timeout,
-        env=env,
-        confirm_overwrite=confirm_overwrite,
-        confirm_mutation=confirm_mutation,
-    )
+    return _run("bandpass", _explicit(locals(), ('vis', 'gaintables', 'callib', 'gainfield', 'interp', 'spwmap', 'output', 'overwrite', 'format', 'out_table', 'refant', 'smodel', 'min_snr', 'bandpass_combine', 'bandtype', 'solnorm', 'selectdata', 'field', 'spw', 'antenna', 'scan', 'observation', 'array', 'timerange', 'msselect', 'degamp', 'degphase')))
 
 def fluxscale(
     *,
@@ -849,35 +485,9 @@ def fluxscale(
     refspwmap: str | object = _UNSET,
     gainthreshold: float | Literal['none'] | object = _UNSET,
     incremental: bool | object = _UNSET,
-    parameters: TaskParameters | None = None,
-    profile: StrPath | None = None,
-    base_source: Literal["defaults", "last", "last_successful"] = "defaults",
-    workspace: StrPath | None = None,
-    save_last: bool = True,
-    binary: StrPath | None = None,
-    check: bool = True,
-    timeout: float | None = None,
-    env: Mapping[str, str] | None = None,
-    confirm_overwrite: bool = False,
-    confirm_mutation: bool = False,
 ) -> TaskCompletion:
     """Scale gain solutions using reference calibrator fields."""
-    overrides = _explicit(locals(), ('output', 'overwrite', 'format', 'out_table', 'fluxscale_input', 'reference_fields', 'transfer_fields', 'refspwmap', 'gainthreshold', 'incremental'))
-    return _run(
-        "fluxscale",
-        parameters=parameters,
-        profile=profile,
-        base_source=base_source,
-        overrides=overrides,
-        workspace=workspace,
-        save_last=save_last,
-        binary=binary,
-        check=check,
-        timeout=timeout,
-        env=env,
-        confirm_overwrite=confirm_overwrite,
-        confirm_mutation=confirm_mutation,
-    )
+    return _run("fluxscale", _explicit(locals(), ('output', 'overwrite', 'format', 'out_table', 'fluxscale_input', 'reference_fields', 'transfer_fields', 'refspwmap', 'gainthreshold', 'incremental')))
 
 def gencal(
     *,
@@ -891,35 +501,9 @@ def gencal(
     gaincurve_table: StrPath | object = _UNSET,
     spw: str | object = _UNSET,
     antenna: str | object = _UNSET,
-    parameters: TaskParameters | None = None,
-    profile: StrPath | None = None,
-    base_source: Literal["defaults", "last", "last_successful"] = "defaults",
-    workspace: StrPath | None = None,
-    save_last: bool = True,
-    binary: StrPath | None = None,
-    check: bool = True,
-    timeout: float | None = None,
-    env: Mapping[str, str] | None = None,
-    confirm_overwrite: bool = False,
-    confirm_mutation: bool = False,
 ) -> TaskCompletion:
     """Generate a calibration table such as antpos, gceff, or opac."""
-    overrides = _explicit(locals(), ('vis', 'output', 'overwrite', 'format', 'out_table', 'caltype', 'parameter', 'gaincurve_table', 'spw', 'antenna'))
-    return _run(
-        "gencal",
-        parameters=parameters,
-        profile=profile,
-        base_source=base_source,
-        overrides=overrides,
-        workspace=workspace,
-        save_last=save_last,
-        binary=binary,
-        check=check,
-        timeout=timeout,
-        env=env,
-        confirm_overwrite=confirm_overwrite,
-        confirm_mutation=confirm_mutation,
-    )
+    return _run("gencal", _explicit(locals(), ('vis', 'output', 'overwrite', 'format', 'out_table', 'caltype', 'parameter', 'gaincurve_table', 'spw', 'antenna')))
 
 def plotms(
     *,
@@ -989,82 +573,9 @@ def plotms(
     flag_selected: bool | object = _UNSET,
     flag_apply: bool | object = _UNSET,
     flag_output: StrPath | object = _UNSET,
-    parameters: TaskParameters | None = None,
-    profile: StrPath | None = None,
-    base_source: Literal["defaults", "last", "last_successful"] = "defaults",
-    workspace: StrPath | None = None,
-    save_last: bool = True,
-    binary: StrPath | None = None,
-    check: bool = True,
-    timeout: float | None = None,
-    env: Mapping[str, str] | None = None,
-    confirm_overwrite: bool = False,
-    confirm_mutation: bool = False,
 ) -> TaskCompletion:
     """Plot MeasurementSet visibility data with CASA plotms-style selections and axes."""
-    overrides = _explicit(locals(), ('vis', 'format', 'output', 'overwrite', 'selectdata', 'field', 'spw', 'timerange', 'uvrange', 'antenna', 'scan', 'correlation', 'observation', 'array', 'intent', 'feed', 'msselect', 'page_spec', 'preset', 'x_axis', 'y_axis', 'y_axis2', 'datacolumn', 'color_by', 'avgchannel', 'avgtime', 'avgscan', 'avgfield', 'avgbaseline', 'avgantenna', 'avgspw', 'scalar', 'freqframe', 'restfreq', 'veldef', 'iteraxis', 'gridrows', 'gridcols', 'xselfscale', 'yselfscale', 'xsharedaxis', 'ysharedaxis', 'title', 'xlabel', 'ylabel', 'symbol_size', 'showlegend', 'legendposition', 'showmajorgrid', 'showminorgrid', 'headeritems', 'max_points', 'plot_output', 'plot_format', 'flag_action', 'flag_xmin', 'flag_xmax', 'flag_ymin', 'flag_ymax', 'flag_plotindex', 'flag_panel', 'flag_extcorr', 'flag_extchannel', 'flag_selected', 'flag_apply', 'flag_output'))
-    return _run(
-        "plotms",
-        parameters=parameters,
-        profile=profile,
-        base_source=base_source,
-        overrides=overrides,
-        workspace=workspace,
-        save_last=save_last,
-        binary=binary,
-        check=check,
-        timeout=timeout,
-        env=env,
-        confirm_overwrite=confirm_overwrite,
-        confirm_mutation=confirm_mutation,
-    )
-
-def plotcal(
-    *,
-    caltable: StrPath | object = _UNSET,
-    vis: StrPath | list[StrPath] | tuple[StrPath, ...] | object = _UNSET,
-    preset: Literal['bandpass_amplitude_vs_frequency', 'bandpass_phase_vs_frequency', 'corrected_amplitude_vs_frequency', 'corrected_amplitude_vs_time', 'corrected_phase_vs_frequency', 'corrected_phase_vs_time', 'gain_amplitude_vs_time', 'gain_phase_vs_time'] | object = _UNSET,
-    field: str | object = _UNSET,
-    spw: str | object = _UNSET,
-    timerange: str | object = _UNSET,
-    uvrange: str | object = _UNSET,
-    antenna: str | object = _UNSET,
-    scan: str | object = _UNSET,
-    correlation: str | object = _UNSET,
-    observation: str | object = _UNSET,
-    array: str | object = _UNSET,
-    intent: str | object = _UNSET,
-    feed: str | object = _UNSET,
-    msselect: str | object = _UNSET,
-    parameters: TaskParameters | None = None,
-    profile: StrPath | None = None,
-    base_source: Literal["defaults", "last", "last_successful"] = "defaults",
-    workspace: StrPath | None = None,
-    save_last: bool = True,
-    binary: StrPath | None = None,
-    check: bool = True,
-    timeout: float | None = None,
-    env: Mapping[str, str] | None = None,
-    confirm_overwrite: bool = False,
-    confirm_mutation: bool = False,
-) -> TaskCompletion:
-    """Plot calibration tables and corrected-data diagnostics."""
-    overrides = _explicit(locals(), ('caltable', 'vis', 'preset', 'field', 'spw', 'timerange', 'uvrange', 'antenna', 'scan', 'correlation', 'observation', 'array', 'intent', 'feed', 'msselect'))
-    return _run(
-        "plotcal",
-        parameters=parameters,
-        profile=profile,
-        base_source=base_source,
-        overrides=overrides,
-        workspace=workspace,
-        save_last=save_last,
-        binary=binary,
-        check=check,
-        timeout=timeout,
-        env=env,
-        confirm_overwrite=confirm_overwrite,
-        confirm_mutation=confirm_mutation,
-    )
+    return _run("plotms", _explicit(locals(), ('vis', 'format', 'output', 'overwrite', 'selectdata', 'field', 'spw', 'timerange', 'uvrange', 'antenna', 'scan', 'correlation', 'observation', 'array', 'intent', 'feed', 'msselect', 'page_spec', 'preset', 'x_axis', 'y_axis', 'y_axis2', 'datacolumn', 'color_by', 'avgchannel', 'avgtime', 'avgscan', 'avgfield', 'avgbaseline', 'avgantenna', 'avgspw', 'scalar', 'freqframe', 'restfreq', 'veldef', 'iteraxis', 'gridrows', 'gridcols', 'xselfscale', 'yselfscale', 'xsharedaxis', 'ysharedaxis', 'title', 'xlabel', 'ylabel', 'symbol_size', 'showlegend', 'legendposition', 'showmajorgrid', 'showminorgrid', 'headeritems', 'max_points', 'plot_output', 'plot_format', 'flag_action', 'flag_xmin', 'flag_xmax', 'flag_ymin', 'flag_ymax', 'flag_plotindex', 'flag_panel', 'flag_extcorr', 'flag_extchannel', 'flag_selected', 'flag_apply', 'flag_output')))
 
 def flagdata(
     *,
@@ -1086,35 +597,9 @@ def flagdata(
     freqdev: float | Literal['none'] | object = _UNSET,
     extendflags: bool | object = _UNSET,
     extendpols: bool | object = _UNSET,
-    parameters: TaskParameters | None = None,
-    profile: StrPath | None = None,
-    base_source: Literal["defaults", "last", "last_successful"] = "defaults",
-    workspace: StrPath | None = None,
-    save_last: bool = True,
-    binary: StrPath | None = None,
-    check: bool = True,
-    timeout: float | None = None,
-    env: Mapping[str, str] | None = None,
-    confirm_overwrite: bool = False,
-    confirm_mutation: bool = False,
 ) -> TaskCompletion:
     """Run native CASA-style MeasurementSet flagging."""
-    overrides = _explicit(locals(), ('vis', 'mode', 'spw', 'field', 'scan', 'antenna', 'datacolumn', 'action', 'flagbackup', 'clipzeros', 'quackinterval', 'quackmode', 'timecutoff', 'freqcutoff', 'timedev', 'freqdev', 'extendflags', 'extendpols'))
-    return _run(
-        "flagdata",
-        parameters=parameters,
-        profile=profile,
-        base_source=base_source,
-        overrides=overrides,
-        workspace=workspace,
-        save_last=save_last,
-        binary=binary,
-        check=check,
-        timeout=timeout,
-        env=env,
-        confirm_overwrite=confirm_overwrite,
-        confirm_mutation=confirm_mutation,
-    )
+    return _run("flagdata", _explicit(locals(), ('vis', 'mode', 'spw', 'field', 'scan', 'antenna', 'datacolumn', 'action', 'flagbackup', 'clipzeros', 'quackinterval', 'quackmode', 'timecutoff', 'freqcutoff', 'timedev', 'freqdev', 'extendflags', 'extendpols')))
 
 def flagmanager(
     *,
@@ -1124,35 +609,9 @@ def flagmanager(
     oldname: str | object = _UNSET,
     comment: str | object = _UNSET,
     merge: Literal['and', 'or', 'replace'] | object = _UNSET,
-    parameters: TaskParameters | None = None,
-    profile: StrPath | None = None,
-    base_source: Literal["defaults", "last", "last_successful"] = "defaults",
-    workspace: StrPath | None = None,
-    save_last: bool = True,
-    binary: StrPath | None = None,
-    check: bool = True,
-    timeout: float | None = None,
-    env: Mapping[str, str] | None = None,
-    confirm_overwrite: bool = False,
-    confirm_mutation: bool = False,
 ) -> TaskCompletion:
     """Manage MeasurementSet flag-version snapshots."""
-    overrides = _explicit(locals(), ('vis', 'mode', 'versionname', 'oldname', 'comment', 'merge'))
-    return _run(
-        "flagmanager",
-        parameters=parameters,
-        profile=profile,
-        base_source=base_source,
-        overrides=overrides,
-        workspace=workspace,
-        save_last=save_last,
-        binary=binary,
-        check=check,
-        timeout=timeout,
-        env=env,
-        confirm_overwrite=confirm_overwrite,
-        confirm_mutation=confirm_mutation,
-    )
+    return _run("flagmanager", _explicit(locals(), ('vis', 'mode', 'versionname', 'oldname', 'comment', 'merge')))
 
 def impbcor(
     *,
@@ -1168,35 +627,9 @@ def impbcor(
     mode: Literal['divide', 'multiply'] | object = _UNSET,
     overwrite: bool | object = _UNSET,
     stretch: str | object = _UNSET,
-    parameters: TaskParameters | None = None,
-    profile: StrPath | None = None,
-    base_source: Literal["defaults", "last", "last_successful"] = "defaults",
-    workspace: StrPath | None = None,
-    save_last: bool = True,
-    binary: StrPath | None = None,
-    check: bool = True,
-    timeout: float | None = None,
-    env: Mapping[str, str] | None = None,
-    confirm_overwrite: bool = False,
-    confirm_mutation: bool = False,
 ) -> TaskCompletion:
     """Apply primary-beam correction to a CASA image"""
-    overrides = _explicit(locals(), ('imagename', 'pbimage', 'outfile', 'cutoff', 'box', 'region', 'chans', 'stokes', 'mask', 'mode', 'overwrite', 'stretch'))
-    return _run(
-        "impbcor",
-        parameters=parameters,
-        profile=profile,
-        base_source=base_source,
-        overrides=overrides,
-        workspace=workspace,
-        save_last=save_last,
-        binary=binary,
-        check=check,
-        timeout=timeout,
-        env=env,
-        confirm_overwrite=confirm_overwrite,
-        confirm_mutation=confirm_mutation,
-    )
+    return _run("impbcor", _explicit(locals(), ('imagename', 'pbimage', 'outfile', 'cutoff', 'box', 'region', 'chans', 'stokes', 'mask', 'mode', 'overwrite', 'stretch')))
 
 def impv(
     *,
@@ -1207,35 +640,9 @@ def impv(
     width: int | object = _UNSET,
     chans: str | object = _UNSET,
     overwrite: bool | object = _UNSET,
-    parameters: TaskParameters | None = None,
-    profile: StrPath | None = None,
-    base_source: Literal["defaults", "last", "last_successful"] = "defaults",
-    workspace: StrPath | None = None,
-    save_last: bool = True,
-    binary: StrPath | None = None,
-    check: bool = True,
-    timeout: float | None = None,
-    env: Mapping[str, str] | None = None,
-    confirm_overwrite: bool = False,
-    confirm_mutation: bool = False,
 ) -> TaskCompletion:
     """Extract a CASA-style position-velocity image"""
-    overrides = _explicit(locals(), ('imagename', 'outfile', 'start', 'end', 'width', 'chans', 'overwrite'))
-    return _run(
-        "impv",
-        parameters=parameters,
-        profile=profile,
-        base_source=base_source,
-        overrides=overrides,
-        workspace=workspace,
-        save_last=save_last,
-        binary=binary,
-        check=check,
-        timeout=timeout,
-        env=env,
-        confirm_overwrite=confirm_overwrite,
-        confirm_mutation=confirm_mutation,
-    )
+    return _run("impv", _explicit(locals(), ('imagename', 'outfile', 'start', 'end', 'width', 'chans', 'overwrite')))
 
 def imsubimage(
     *,
@@ -1244,35 +651,9 @@ def imsubimage(
     box: str | object = _UNSET,
     chans: str | object = _UNSET,
     overwrite: bool | object = _UNSET,
-    parameters: TaskParameters | None = None,
-    profile: StrPath | None = None,
-    base_source: Literal["defaults", "last", "last_successful"] = "defaults",
-    workspace: StrPath | None = None,
-    save_last: bool = True,
-    binary: StrPath | None = None,
-    check: bool = True,
-    timeout: float | None = None,
-    env: Mapping[str, str] | None = None,
-    confirm_overwrite: bool = False,
-    confirm_mutation: bool = False,
 ) -> TaskCompletion:
     """Extract a CASA-style image section"""
-    overrides = _explicit(locals(), ('imagename', 'outfile', 'box', 'chans', 'overwrite'))
-    return _run(
-        "imsubimage",
-        parameters=parameters,
-        profile=profile,
-        base_source=base_source,
-        overrides=overrides,
-        workspace=workspace,
-        save_last=save_last,
-        binary=binary,
-        check=check,
-        timeout=timeout,
-        env=env,
-        confirm_overwrite=confirm_overwrite,
-        confirm_mutation=confirm_mutation,
-    )
+    return _run("imsubimage", _explicit(locals(), ('imagename', 'outfile', 'box', 'chans', 'overwrite')))
 
 def immath(
     *,
@@ -1280,35 +661,9 @@ def immath(
     expr: str | object = _UNSET,
     outfile: StrPath | object = _UNSET,
     overwrite: bool | object = _UNSET,
-    parameters: TaskParameters | None = None,
-    profile: StrPath | None = None,
-    base_source: Literal["defaults", "last", "last_successful"] = "defaults",
-    workspace: StrPath | None = None,
-    save_last: bool = True,
-    binary: StrPath | None = None,
-    check: bool = True,
-    timeout: float | None = None,
-    env: Mapping[str, str] | None = None,
-    confirm_overwrite: bool = False,
-    confirm_mutation: bool = False,
 ) -> TaskCompletion:
     """Evaluate tutorial image arithmetic expressions"""
-    overrides = _explicit(locals(), ('imagename', 'expr', 'outfile', 'overwrite'))
-    return _run(
-        "immath",
-        parameters=parameters,
-        profile=profile,
-        base_source=base_source,
-        overrides=overrides,
-        workspace=workspace,
-        save_last=save_last,
-        binary=binary,
-        check=check,
-        timeout=timeout,
-        env=env,
-        confirm_overwrite=confirm_overwrite,
-        confirm_mutation=confirm_mutation,
-    )
+    return _run("immath", _explicit(locals(), ('imagename', 'expr', 'outfile', 'overwrite')))
 
 def imregrid(
     *,
@@ -1317,35 +672,9 @@ def imregrid(
     output: StrPath | object = _UNSET,
     interpolation: Literal['linear', 'nearest'] | object = _UNSET,
     overwrite: bool | object = _UNSET,
-    parameters: TaskParameters | None = None,
-    profile: StrPath | None = None,
-    base_source: Literal["defaults", "last", "last_successful"] = "defaults",
-    workspace: StrPath | None = None,
-    save_last: bool = True,
-    binary: StrPath | None = None,
-    check: bool = True,
-    timeout: float | None = None,
-    env: Mapping[str, str] | None = None,
-    confirm_overwrite: bool = False,
-    confirm_mutation: bool = False,
 ) -> TaskCompletion:
     """Regrid a CASA image onto a template image"""
-    overrides = _explicit(locals(), ('imagename', 'template', 'output', 'interpolation', 'overwrite'))
-    return _run(
-        "imregrid",
-        parameters=parameters,
-        profile=profile,
-        base_source=base_source,
-        overrides=overrides,
-        workspace=workspace,
-        save_last=save_last,
-        binary=binary,
-        check=check,
-        timeout=timeout,
-        env=env,
-        confirm_overwrite=confirm_overwrite,
-        confirm_mutation=confirm_mutation,
-    )
+    return _run("imregrid", _explicit(locals(), ('imagename', 'template', 'output', 'interpolation', 'overwrite')))
 
 def feather(
     *,
@@ -1354,71 +683,19 @@ def feather(
     lowres: StrPath | object = _UNSET,
     sdfactor: float | object = _UNSET,
     overwrite: bool | object = _UNSET,
-    parameters: TaskParameters | None = None,
-    profile: StrPath | None = None,
-    base_source: Literal["defaults", "last", "last_successful"] = "defaults",
-    workspace: StrPath | None = None,
-    save_last: bool = True,
-    binary: StrPath | None = None,
-    check: bool = True,
-    timeout: float | None = None,
-    env: Mapping[str, str] | None = None,
-    confirm_overwrite: bool = False,
-    confirm_mutation: bool = False,
 ) -> TaskCompletion:
     """Combine high-resolution and low-resolution images in the Fourier domain"""
-    overrides = _explicit(locals(), ('imagename', 'highres', 'lowres', 'sdfactor', 'overwrite'))
-    return _run(
-        "feather",
-        parameters=parameters,
-        profile=profile,
-        base_source=base_source,
-        overrides=overrides,
-        workspace=workspace,
-        save_last=save_last,
-        binary=binary,
-        check=check,
-        timeout=timeout,
-        env=env,
-        confirm_overwrite=confirm_overwrite,
-        confirm_mutation=confirm_mutation,
-    )
+    return _run("feather", _explicit(locals(), ('imagename', 'highres', 'lowres', 'sdfactor', 'overwrite')))
 
 def importfits(
     *,
     fitsimage: StrPath | object = _UNSET,
     imagename: StrPath | object = _UNSET,
     overwrite: bool | object = _UNSET,
-    parameters: TaskParameters | None = None,
-    profile: StrPath | None = None,
-    base_source: Literal["defaults", "last", "last_successful"] = "defaults",
-    workspace: StrPath | None = None,
-    save_last: bool = True,
-    binary: StrPath | None = None,
-    check: bool = True,
-    timeout: float | None = None,
-    env: Mapping[str, str] | None = None,
-    confirm_overwrite: bool = False,
-    confirm_mutation: bool = False,
 ) -> TaskCompletion:
     """Import a FITS primary image into a CASA image"""
-    overrides = _explicit(locals(), ('fitsimage', 'imagename', 'overwrite'))
-    return _run(
-        "importfits",
-        parameters=parameters,
-        profile=profile,
-        base_source=base_source,
-        overrides=overrides,
-        workspace=workspace,
-        save_last=save_last,
-        binary=binary,
-        check=check,
-        timeout=timeout,
-        env=env,
-        confirm_overwrite=confirm_overwrite,
-        confirm_mutation=confirm_mutation,
-    )
+    return _run("importfits", _explicit(locals(), ('fitsimage', 'imagename', 'overwrite')))
 
-TASK_SURFACES = ('msexplore', 'calibrate', 'importvla', 'imager', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'gencal', 'plotms', 'plotcal', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits')
+TASK_SURFACES = ('msexplore', 'calibrate', 'importvla', 'imager', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits')
 
-__all__ = ['TASK_SURFACES', 'msexplore', 'calibrate', 'importvla', 'imager', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'gencal', 'plotms', 'plotcal', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits']
+__all__ = ['TASK_SURFACES', 'msexplore', 'calibrate', 'importvla', 'imager', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits']

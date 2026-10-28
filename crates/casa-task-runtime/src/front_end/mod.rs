@@ -23,8 +23,7 @@
 //! Last has one owner on each path. A command line records Last before the
 //! callback runs and Last Successful only after it succeeds, unless
 //! `--no-save-last` is given. `--json-run` neither reads nor writes Last: it
-//! is the path a caller that owns its own lifecycle (`casars run`, Python)
-//! uses. It resolves a [`TaskRunRequest`]'s values against the named
+//! is the path Python's task calls use, which save no Last. It resolves a [`TaskRunRequest`]'s values against the named
 //! surface's contract and writes one [`TaskReply`] to stdout, whose exit
 //! status agrees with it; [`classify_task_exit`] reads it back.
 //!
@@ -323,9 +322,8 @@ where
     /// environment gets wrong refuses only a run.
     ///
     /// A command-line run enters its workspace (`--workspace`, the current
-    /// directory otherwise) before the task starts, as `casars run` starts
-    /// the binary there, so every relative path the run names resolves in
-    /// it: inputs and products, and the paths inside a parameter's text,
+    /// directory otherwise) before the task starts, as Python starts the
+    /// binary there, so every relative path the run names resolves in it: inputs and products, and the paths inside a parameter's text,
     /// such as a region file or an image in a mask expression. The files
     /// the controls name (`--params`, `--save-params`, a log table) are read
     /// from where the command was run, before it enters.
@@ -545,7 +543,7 @@ where
         {
             return FrontEndOutput::refused(error);
         }
-        // From here on the run is in its workspace, as under `casars run`.
+        // From here on the run is in its workspace, as a Python call's is.
         let workspace = match std::path::absolute(&line.workspace) {
             Ok(workspace) => workspace,
             Err(error) => {

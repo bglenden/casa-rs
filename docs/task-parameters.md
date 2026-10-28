@@ -2,12 +2,13 @@
 
 Truth class: normative user contract
 Status: implemented
-Verification: `just docs-check`; `casars params --help`
+Verification: `just docs-check`; `<executable> --help` (for example
+`imexplore --help`)
 
 `casa-rs` uses one parameter model for its one-shot tasks. A profile can be
-loaded by the `casars` command line or manipulated from Python without changing
-the parameter names or their meaning. Every parameter surface is a task
-(ADR-0017).
+loaded by a task executable's command line or manipulated from Python without
+changing the parameter names or their meaning. Every parameter surface is a
+task (ADR-0017).
 
 This guide describes the implemented interface from ADR-0006, with current-only
 surface evolution defined by ADR-0012. Provider JSON requests, results, and
@@ -130,10 +131,10 @@ successful result. Cancellation or failure leaves Last successful unchanged.
 
 A Python task call saves neither file; reading an existing Last
 (`parameters.last(...)`) and writing one explicitly
-(`TaskParameters.write_last()`) remain available. A provider binary's
-`--json-run` reads and writes no Last either. Each run therefore has exactly
-one owner of Last: `casars run` for the runs it launches, the task front end
-for a binary's own command line.
+(`TaskParameters.write_last()`) remain available. A task executable's
+`--json-run`, the path Python's calls take, reads and writes no Last either.
+Last therefore has one owner: the task front end, for a command-line run of a
+task executable.
 
 `casa-task-runtime::ParameterRuntime` owns source resolution and managed Last
 persistence; the CLI and Python projections call that boundary rather than
@@ -146,32 +147,49 @@ Automatic Last updates never overwrite an explicit profile file.
 
 ## CLI contract
 
-The task host is `casars`. Run with no arguments or `--help` it prints usage.
+Each task runs from its own executable, which the application catalog names
+(`calibrate`, `imexplore`, `casars-imager`, `simobserve`, ...). Every task
+executable runs on the shared task front end in `casa-task-runtime`, so all
+take the same command line; `--help` prints it with the surface's
+parameters.
 
 ```text
-casars run <task>
-  [--defaults | --last | --last-successful | --params FILE]
-  [task overrides]
-  [--unset NAME]
-  [--workspace DIR]
-  [--save-params FILE]
-  [--no-save-last]
+<executable> [SURFACE] [SOURCE] [OVERRIDES] [CONTROLS]
+<executable> [SURFACE] --show [SOURCE] [OVERRIDES] [--save-params FILE]
+<executable> [SURFACE] --template | --profile-template | --describe [NAME] | --validate FILE
+<executable> --json-run <SOURCE> | --json-schema | --protocol-info
 ```
 
-The parameter utilities are:
+- `SURFACE` is the first word of a family executable, which hosts several
+  surfaces: `calibrate` (`calibrate`, `applycal`, `gaincal`, `bandpass`,
+  `fluxscale`, `gencal`), `imexplore` (`imhead`, `imstat`), `msexplore`
+  (`msexplore`, `plotms`) and `mstransform` (`mstransform`, `split`). Without
+  it the first hosted surface runs. Other executables host one surface.
+- `SOURCE` is exactly one of `--defaults` (the default), `--last`,
+  `--last-successful` or `--params FILE`.
+- `OVERRIDES` are the flags the surface declares, or `--unset NAME`, which
+  removes an override.
+- `CONTROLS` are `--workspace DIR` (where relative paths resolve and Last and
+  Last Successful live), `--save-params FILE` (also write the run's resolved
+  sparse profile) and `--no-save-last`.
+
+For example:
 
 ```text
-casars params validate <file>
-casars params show <surface> [source options] [overrides]
-casars params save <surface> <file> [source options] [overrides]
-casars params template <surface>
-casars params describe <parameter-or-surface>
+calibrate gaincal --ms ngc5921.ms --out ngc5921.G0 --refant VA15 --solint inf
+imexplore imstat --last --show --save-params imstat.toml
 ```
 
-`template` writes a documented example with defaults and units in comments;
-commented defaults are not active overrides. Overrides use the generated CLI
-flag spellings listed in the generated parameter reference, or the parameter's
-own name, such as `--vis` or `--threshold`.
+The non-executing actions resolve the same sources and overrides and run
+nothing: `--show` prints the resolved parameters, and with
+`--save-params FILE` saves them as a sparse profile; `--template` writes a
+documented example with defaults and units in comments, whose commented
+defaults are not active overrides; `--describe [NAME]` describes the surface
+or one parameter; `--validate FILE` checks a profile against the surface.
+Overrides use the generated CLI flag spellings listed in the generated
+parameter reference, or the parameter's own name, such as `--vis` or
+`--threshold`; some surfaces declare their own spellings, such as
+calibrate's `--ms` and `--out`.
 
 A list's command-line form is comma-separated (`--archivefiles a.exp,b.exp`).
 A flag repeated for a list without a fixed size adds to it, so
@@ -186,22 +204,16 @@ There are no run-time confirmations. CASA's own parameters are the consent:
 `overwrite=true` replaces a product, and a task that changes data in place
 does so, as in CASA. Where CASA guards a change, casa-rs does too, for example
 `applycal` and `flagdata` saving the flags to a new flag version first
-(`flagbackup`, default on). `casars run` still accepts the retired
-`--confirm-overwrite` and `--confirm-mutation` and ignores them until the
-launcher is retired (#931).
+(`flagbackup`, default on). No task takes a confirmation flag.
 
-Direct provider binaries continue to expose their idiomatic execution
-transports (`--protocol-info`, `--json-schema`, `--json-run`); source selection
-and profile lifecycle are owned by `casars run` and `casars params`, and by a
-task binary's own command line. Every task binary runs on the shared task
-front end in `casa-task-runtime`, which gives each binary those same sources
-and controls,
-`--show`, `--template` (`--profile-template` on imregrid, whose `--template`
-is its template image), `--describe` and `--validate`, and a typed
-`--json-run` reply
+The machine actions (`--protocol-info`, `--json-schema`, `--json-run`) are
+the same on every task executable; `--json-run` gives a typed reply
 ([provider contracts](provider-contracts.md#the-shared-task-front-end-and-typed-replies)).
-A run started from a task binary's command line enters its `--workspace`
-first, so its relative paths resolve there as they do under `casars run`.
+A spelling the surface declares is always its parameter: imregrid's
+`--template` is its template image, so there `--profile-template` writes the
+profile. A run started from a task's command line enters its `--workspace`
+first, so its relative paths resolve there, as they do for a Python call in
+its workspace.
 
 ## Python contract
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import importlib.util
+import inspect
 from pathlib import Path
 from typing import Any
 
@@ -16,16 +17,29 @@ def test_catalog_generates_one_wrapper_for_every_task() -> None:
     surfaces = parameters.catalog()["surfaces"]
     assert {surface["kind"] for surface in surfaces} == {"task"}
     task_ids = tuple(surface["id"] for surface in surfaces)
-    assert len(task_ids) == 27
+    assert len(task_ids) == 26
     assert tasks.TASK_SURFACES == task_ids
     assert all(callable(getattr(tasks, name)) for name in tasks.TASK_SURFACES)
+    assert not hasattr(tasks, "plotcal")
+
+
+def test_a_wrapper_takes_casas_parameters_and_no_runner_plumbing() -> None:
+    # #931: the runner's arguments left the CASA-named signatures; a task
+    # runs in the current directory, and a profile is passed as values.
+    for name in tasks.TASK_SURFACES:
+        signature = inspect.signature(getattr(tasks, name))
+        bindings = parameters.definition(name)["bindings"]
+        assert list(signature.parameters) == [
+            binding["name"]
+            for binding in sorted(bindings, key=lambda binding: binding["order"])
+        ], name
 
 
 def test_generated_task_wrapper_forwards_only_explicit_casa_names(monkeypatch) -> None:
     captured: dict[str, Any] = {}
 
-    def fake_run(task: str, **options: Any) -> object:
-        captured.update(task=task, **options)
+    def fake_run(task: str, values: dict[str, Any]) -> object:
+        captured.update(task=task, overrides=values)
         return object()
 
     monkeypatch.setattr(_catalog, "_run", fake_run)
@@ -33,9 +47,6 @@ def test_generated_task_wrapper_forwards_only_explicit_casa_names(monkeypatch) -
         vis="target.ms",
         imagename="target",
         imsize=1024,
-        profile="imager.toml",
-        base_source="defaults",
-        save_last=False,
     )
 
     assert captured["task"] == "imager"
@@ -44,17 +55,13 @@ def test_generated_task_wrapper_forwards_only_explicit_casa_names(monkeypatch) -
         "imagename": "target",
         "imsize": 1024,
     }
-    assert captured["profile"] == "imager.toml"
-    assert captured["base_source"] == "defaults"
-    assert captured["save_last"] is False
-    assert "notebook" not in captured
 
 
 def test_importvla_wrapper_preserves_the_archive_path_list(monkeypatch) -> None:
     captured: dict[str, Any] = {}
 
-    def fake_run(task: str, **options: Any) -> object:
-        captured.update(task=task, **options)
+    def fake_run(task: str, values: dict[str, Any]) -> object:
+        captured.update(task=task, overrides=values)
         return object()
 
     monkeypatch.setattr(_catalog, "_run", fake_run)
@@ -68,8 +75,8 @@ def test_importvla_wrapper_preserves_the_archive_path_list(monkeypatch) -> None:
 def test_generated_imager_wrapper_preserves_vlass_awproject_controls(monkeypatch) -> None:
     captured: dict[str, Any] = {}
 
-    def fake_run(task: str, **options: Any) -> object:
-        captured.update(task=task, **options)
+    def fake_run(task: str, values: dict[str, Any]) -> object:
+        captured.update(task=task, overrides=values)
         return object()
 
     monkeypatch.setattr(_catalog, "_run", fake_run)
@@ -109,8 +116,8 @@ def test_generated_imager_wrapper_preserves_vlass_awproject_controls(monkeypatch
 def test_generated_imager_wrapper_preserves_explicit_native_evla_source(monkeypatch) -> None:
     captured: dict[str, Any] = {}
 
-    def fake_run(task: str, **options: Any) -> object:
-        captured.update(task=task, **options)
+    def fake_run(task: str, values: dict[str, Any]) -> object:
+        captured.update(task=task, overrides=values)
         return object()
 
     monkeypatch.setattr(_catalog, "_run", fake_run)
