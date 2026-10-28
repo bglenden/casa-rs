@@ -16,7 +16,6 @@ const APPLICATION_CATALOG_JSON: &str = include_str!(concat!(
 #[serde(rename_all = "snake_case")]
 pub enum ApplicationKind {
     Task,
-    Launcher,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -24,21 +23,12 @@ pub enum ApplicationKind {
 pub enum ApplicationShellKind {
     Inspect,
     Workflow,
-    Launcher,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ApplicationInteraction {
     OneShot,
-    Launcher,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ApplicationLaunchMode {
-    InstalledSuite,
-    DevelopmentWorkspace,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -63,24 +53,13 @@ pub struct ApplicationDefinition {
 }
 
 impl ApplicationDefinition {
-    pub fn surface_bundle(&self) -> Result<Option<SurfaceContractBundle>, String> {
-        match self.kind {
-            ApplicationKind::Task => builtin_surface_bundle(&self.id).map(Some),
-            ApplicationKind::Launcher => Ok(None),
-        }
+    /// The surface this application runs.
+    pub fn surface_bundle(&self) -> Result<SurfaceContractBundle, String> {
+        builtin_surface_bundle(&self.id)
     }
 
-    pub fn protocol_family(&self) -> Result<Option<String>, String> {
-        Ok(self
-            .surface_bundle()?
-            .map(|bundle| bundle.surface.provider_family().to_string()))
-    }
-
-    pub const fn supported_launch_modes(&self) -> [ApplicationLaunchMode; 2] {
-        [
-            ApplicationLaunchMode::InstalledSuite,
-            ApplicationLaunchMode::DevelopmentWorkspace,
-        ]
+    pub fn protocol_family(&self) -> Result<String, String> {
+        Ok(self.surface_bundle()?.surface.provider_family().to_string())
     }
 }
 
@@ -108,7 +87,6 @@ impl ApplicationCatalog {
         let mut ids = BTreeSet::new();
         let mut task_ids = BTreeSet::new();
         let mut executable_owners = BTreeMap::new();
-        let mut launcher_count = 0;
         for application in &self.applications {
             if !ids.insert(application.id.as_str()) {
                 errors.push(format!("duplicate application ID {:?}", application.id));
@@ -119,6 +97,13 @@ impl ApplicationCatalog {
             {
                 errors.push(format!(
                     "application {:?} has an incomplete launch descriptor",
+                    application.id
+                ));
+            }
+            let override_env = &application.launch.override_env;
+            if !(override_env.starts_with("CASARS_") && override_env.ends_with("_BIN")) {
+                errors.push(format!(
+                    "application {:?} override {override_env:?} is not named CASARS_<APP>_BIN",
                     application.id
                 ));
             }
@@ -135,39 +120,13 @@ impl ApplicationCatalog {
                     application.launch.executable
                 ));
             }
-            match application.kind {
-                ApplicationKind::Task => {
-                    task_ids.insert(application.id.as_str());
-                    if let Err(error) = builtin_surface_bundle(&application.id) {
-                        errors.push(format!(
-                            "task application {:?} has no canonical surface: {error}",
-                            application.id
-                        ));
-                    }
-                    if application.interaction == ApplicationInteraction::Launcher {
-                        errors.push(format!(
-                            "task application {:?} uses launcher interaction",
-                            application.id
-                        ));
-                    }
-                }
-                ApplicationKind::Launcher => {
-                    launcher_count += 1;
-                    if application.interaction != ApplicationInteraction::Launcher
-                        || application.shell_kind != ApplicationShellKind::Launcher
-                    {
-                        errors.push(format!(
-                            "launcher application {:?} has task presentation metadata",
-                            application.id
-                        ));
-                    }
-                }
+            task_ids.insert(application.id.as_str());
+            if let Err(error) = builtin_surface_bundle(&application.id) {
+                errors.push(format!(
+                    "task application {:?} has no canonical surface: {error}",
+                    application.id
+                ));
             }
-        }
-        if launcher_count != 1 {
-            errors.push(format!(
-                "application catalog must contain exactly one launcher, found {launcher_count}"
-            ));
         }
         if let Ok(surfaces) = builtin_surface_catalog() {
             let surface_ids = surfaces
@@ -212,20 +171,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn builtin_catalog_covers_every_surface_and_one_launcher() {
+    fn builtin_catalog_covers_every_surface_with_one_task_each() {
         let catalog = builtin_application_catalog().expect("valid application catalog");
-        assert_eq!(catalog.applications.len(), 28);
-        assert_eq!(
-            catalog
-                .applications
-                .iter()
-                .filter(|application| application.kind == ApplicationKind::Task)
-                .count(),
-            27
-        );
-        let launcher = catalog.application("casars").expect("launcher entry");
-        assert_eq!(launcher.kind, ApplicationKind::Launcher);
-        assert!(launcher.surface_bundle().unwrap().is_none());
+        assert_eq!(catalog.applications.len(), 26);
+        for application in &catalog.applications {
+            assert_eq!(application.kind, ApplicationKind::Task);
+            assert_eq!(
+                application.surface_bundle().unwrap().surface.id(),
+                application.id
+            );
+        }
+        // The launcher is retired (#931): Python starts each task directly.
+        assert!(catalog.application("casars").is_none());
     }
 
     #[test]
@@ -234,36 +191,39 @@ mod tests {
             .unwrap()
             .application("imager")
             .unwrap();
-        let surface = application.surface_bundle().unwrap().unwrap();
+        let surface = application.surface_bundle().unwrap();
         assert_eq!(surface.surface.display_name(), "Imager");
         assert_eq!(surface.surface.category(), "Imaging");
-        assert_eq!(
-            application.protocol_family().unwrap().as_deref(),
-            Some("imager")
-        );
-        assert_eq!(
-            application.supported_launch_modes(),
-            [
-                ApplicationLaunchMode::InstalledSuite,
-                ApplicationLaunchMode::DevelopmentWorkspace,
-            ]
-        );
+        assert_eq!(application.protocol_family().unwrap(), "imager");
     }
 
     #[test]
-    fn validation_rejects_a_task_with_launcher_interaction() {
+    fn validation_rejects_an_application_without_a_surface() {
         let mut catalog = builtin_application_catalog().unwrap().clone();
-        let imstat = catalog
-            .applications
-            .iter_mut()
-            .find(|application| application.id == "imstat")
-            .unwrap();
-        imstat.interaction = ApplicationInteraction::Launcher;
+        let mut casars = catalog.applications[0].clone();
+        casars.id = "casars".to_string();
+        catalog.applications.push(casars);
         let errors = catalog.validate().unwrap_err();
         assert!(
             errors
                 .iter()
-                .any(|error| error.contains("uses launcher interaction"))
+                .any(|error| error.contains("\"casars\" has no canonical surface")),
+            "{errors:?}"
+        );
+    }
+
+    #[test]
+    fn every_override_is_named_for_the_resolver() {
+        let mut catalog = builtin_application_catalog().unwrap().clone();
+        let impbcor = catalog.application("impbcor").unwrap();
+        assert_eq!(impbcor.launch.override_env, "CASARS_IMPBCOR_BIN");
+        catalog.applications[0].launch.override_env = "CASA_RS_MSEXPLORE_BIN".to_string();
+        let errors = catalog.validate().unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains("is not named CASARS_<APP>_BIN")),
+            "{errors:?}"
         );
     }
 
@@ -292,9 +252,7 @@ mod tests {
             suite,
             BTreeSet::from([
                 "calibrate",
-                "casars",
                 "casars-imager",
-                "casars-plotcal",
                 "importvla",
                 "exportfits",
                 "feather",

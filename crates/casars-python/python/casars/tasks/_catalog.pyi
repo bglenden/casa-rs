@@ -9,8 +9,8 @@ from collections.abc import Mapping
 from os import PathLike
 from typing import Literal, TypeAlias
 
-from ..parameters import ParameterData, TaskParameters
-from ._runner import TaskCompletion, run as _run
+from ..parameters import ParameterData
+from ._runner import TaskCompletion, _run
 
 StrPath: TypeAlias = str | PathLike[str]
 
@@ -83,17 +83,6 @@ def msexplore(
     flag_selected: bool = ...,
     flag_apply: bool = ...,
     flag_output: StrPath = ...,
-    parameters: TaskParameters | None = ...,
-    profile: StrPath | None = ... ,
-    base_source: Literal["defaults", "last", "last_successful"] = ... ,
-    workspace: StrPath | None = ... ,
-    save_last: bool = ... ,
-    binary: StrPath | None = ... ,
-    check: bool = ... ,
-    timeout: float | None = ... ,
-    env: Mapping[str, str] | None = ... ,
-    confirm_overwrite: bool = ... ,
-    confirm_mutation: bool = ... ,
 ) -> TaskCompletion:
     ...
 
@@ -152,17 +141,6 @@ def calibrate(
     minblperant: int = ...,
     degamp: int = ...,
     degphase: int = ...,
-    parameters: TaskParameters | None = ...,
-    profile: StrPath | None = ... ,
-    base_source: Literal["defaults", "last", "last_successful"] = ... ,
-    workspace: StrPath | None = ... ,
-    save_last: bool = ... ,
-    binary: StrPath | None = ... ,
-    check: bool = ... ,
-    timeout: float | None = ... ,
-    env: Mapping[str, str] | None = ... ,
-    confirm_overwrite: bool = ... ,
-    confirm_mutation: bool = ... ,
 ) -> TaskCompletion:
     ...
 
@@ -180,17 +158,6 @@ def importvla(
     antnamescheme: Literal['new', 'old'] = ...,
     keepblanks: bool = ...,
     evlabands: bool = ...,
-    parameters: TaskParameters | None = ...,
-    profile: StrPath | None = ... ,
-    base_source: Literal["defaults", "last", "last_successful"] = ... ,
-    workspace: StrPath | None = ... ,
-    save_last: bool = ... ,
-    binary: StrPath | None = ... ,
-    check: bool = ... ,
-    timeout: float | None = ... ,
-    env: Mapping[str, str] | None = ... ,
-    confirm_overwrite: bool = ... ,
-    confirm_mutation: bool = ... ,
 ) -> TaskCompletion:
     ...
 
@@ -279,17 +246,6 @@ def imager(
     science_trace: bool = ...,
     uvtaper: str | list[str] | tuple[str, ...] = ...,
     startmodel: StrPath = ...,
-    parameters: TaskParameters | None = ...,
-    profile: StrPath | None = ... ,
-    base_source: Literal["defaults", "last", "last_successful"] = ... ,
-    workspace: StrPath | None = ... ,
-    save_last: bool = ... ,
-    binary: StrPath | None = ... ,
-    check: bool = ... ,
-    timeout: float | None = ... ,
-    env: Mapping[str, str] | None = ... ,
-    confirm_overwrite: bool = ... ,
-    confirm_mutation: bool = ... ,
 ) -> TaskCompletion:
     ...
 
@@ -333,17 +289,6 @@ def simobserve(
     graphics: Literal['', 'both', 'file', 'none', 'screen'] = ...,
     verbose: bool = ...,
     overwrite: bool = ...,
-    parameters: TaskParameters | None = ...,
-    profile: StrPath | None = ... ,
-    base_source: Literal["defaults", "last", "last_successful"] = ... ,
-    workspace: StrPath | None = ... ,
-    save_last: bool = ... ,
-    binary: StrPath | None = ... ,
-    check: bool = ... ,
-    timeout: float | None = ... ,
-    env: Mapping[str, str] | None = ... ,
-    confirm_overwrite: bool = ... ,
-    confirm_mutation: bool = ... ,
 ) -> TaskCompletion:
     ...
 
@@ -353,17 +298,6 @@ def imhead(
     mode: Literal['list', 'put', 'summary'] = ...,
     hdkey: str = ...,
     hdvalue: str = ...,
-    parameters: TaskParameters | None = ...,
-    profile: StrPath | None = ... ,
-    base_source: Literal["defaults", "last", "last_successful"] = ... ,
-    workspace: StrPath | None = ... ,
-    save_last: bool = ... ,
-    binary: StrPath | None = ... ,
-    check: bool = ... ,
-    timeout: float | None = ... ,
-    env: Mapping[str, str] | None = ... ,
-    confirm_overwrite: bool = ... ,
-    confirm_mutation: bool = ... ,
 ) -> TaskCompletion:
     ...
 
@@ -373,17 +307,6 @@ def imstat(
     box: str = ...,
     region: str = ...,
     chans: str = ...,
-    parameters: TaskParameters | None = ...,
-    profile: StrPath | None = ... ,
-    base_source: Literal["defaults", "last", "last_successful"] = ... ,
-    workspace: StrPath | None = ... ,
-    save_last: bool = ... ,
-    binary: StrPath | None = ... ,
-    check: bool = ... ,
-    timeout: float | None = ... ,
-    env: Mapping[str, str] | None = ... ,
-    confirm_overwrite: bool = ... ,
-    confirm_mutation: bool = ... ,
 ) -> TaskCompletion:
     ...
 
@@ -396,17 +319,6 @@ def immoments(
     includepix: str = ...,
     mask: str = ...,
     overwrite: bool = ...,
-    parameters: TaskParameters | None = ...,
-    profile: StrPath | None = ... ,
-    base_source: Literal["defaults", "last", "last_successful"] = ... ,
-    workspace: StrPath | None = ... ,
-    save_last: bool = ... ,
-    binary: StrPath | None = ... ,
-    check: bool = ... ,
-    timeout: float | None = ... ,
-    env: Mapping[str, str] | None = ... ,
-    confirm_overwrite: bool = ... ,
-    confirm_mutation: bool = ... ,
 ) -> TaskCompletion:
     ...
 
@@ -416,17 +328,6 @@ def exportfits(
     fitsimage: StrPath = ...,
     velocity: bool = ...,
     overwrite: bool = ...,
-    parameters: TaskParameters | None = ...,
-    profile: StrPath | None = ... ,
-    base_source: Literal["defaults", "last", "last_successful"] = ... ,
-    workspace: StrPath | None = ... ,
-    save_last: bool = ... ,
-    binary: StrPath | None = ... ,
-    check: bool = ... ,
-    timeout: float | None = ... ,
-    env: Mapping[str, str] | None = ... ,
-    confirm_overwrite: bool = ... ,
-    confirm_mutation: bool = ... ,
 ) -> TaskCompletion:
     ...
 
@@ -443,17 +344,6 @@ def mstransform(
     msselect: str = ...,
     datacolumn: str = ...,
     keepflags: bool = ...,
-    parameters: TaskParameters | None = ...,
-    profile: StrPath | None = ... ,
-    base_source: Literal["defaults", "last", "last_successful"] = ... ,
-    workspace: StrPath | None = ... ,
-    save_last: bool = ... ,
-    binary: StrPath | None = ... ,
-    check: bool = ... ,
-    timeout: float | None = ... ,
-    env: Mapping[str, str] | None = ... ,
-    confirm_overwrite: bool = ... ,
-    confirm_mutation: bool = ... ,
 ) -> TaskCompletion:
     ...
 
@@ -470,17 +360,6 @@ def split(
     msselect: str = ...,
     datacolumn: str = ...,
     keepflags: bool = ...,
-    parameters: TaskParameters | None = ...,
-    profile: StrPath | None = ... ,
-    base_source: Literal["defaults", "last", "last_successful"] = ... ,
-    workspace: StrPath | None = ... ,
-    save_last: bool = ... ,
-    binary: StrPath | None = ... ,
-    check: bool = ... ,
-    timeout: float | None = ... ,
-    env: Mapping[str, str] | None = ... ,
-    confirm_overwrite: bool = ... ,
-    confirm_mutation: bool = ... ,
 ) -> TaskCompletion:
     ...
 
@@ -508,17 +387,6 @@ def applycal(
     timerange: str = ...,
     msselect: str = ...,
     flagbackup: bool = ...,
-    parameters: TaskParameters | None = ...,
-    profile: StrPath | None = ... ,
-    base_source: Literal["defaults", "last", "last_successful"] = ... ,
-    workspace: StrPath | None = ... ,
-    save_last: bool = ... ,
-    binary: StrPath | None = ... ,
-    check: bool = ... ,
-    timeout: float | None = ... ,
-    env: Mapping[str, str] | None = ... ,
-    confirm_overwrite: bool = ... ,
-    confirm_mutation: bool = ... ,
 ) -> TaskCompletion:
     ...
 
@@ -553,17 +421,6 @@ def gaincal(
     timerange: str = ...,
     msselect: str = ...,
     minblperant: int = ...,
-    parameters: TaskParameters | None = ...,
-    profile: StrPath | None = ... ,
-    base_source: Literal["defaults", "last", "last_successful"] = ... ,
-    workspace: StrPath | None = ... ,
-    save_last: bool = ... ,
-    binary: StrPath | None = ... ,
-    check: bool = ... ,
-    timeout: float | None = ... ,
-    env: Mapping[str, str] | None = ... ,
-    confirm_overwrite: bool = ... ,
-    confirm_mutation: bool = ... ,
 ) -> TaskCompletion:
     ...
 
@@ -596,17 +453,6 @@ def bandpass(
     msselect: str = ...,
     degamp: int = ...,
     degphase: int = ...,
-    parameters: TaskParameters | None = ...,
-    profile: StrPath | None = ... ,
-    base_source: Literal["defaults", "last", "last_successful"] = ... ,
-    workspace: StrPath | None = ... ,
-    save_last: bool = ... ,
-    binary: StrPath | None = ... ,
-    check: bool = ... ,
-    timeout: float | None = ... ,
-    env: Mapping[str, str] | None = ... ,
-    confirm_overwrite: bool = ... ,
-    confirm_mutation: bool = ... ,
 ) -> TaskCompletion:
     ...
 
@@ -622,17 +468,6 @@ def fluxscale(
     refspwmap: str = ...,
     gainthreshold: float | Literal['none'] = ...,
     incremental: bool = ...,
-    parameters: TaskParameters | None = ...,
-    profile: StrPath | None = ... ,
-    base_source: Literal["defaults", "last", "last_successful"] = ... ,
-    workspace: StrPath | None = ... ,
-    save_last: bool = ... ,
-    binary: StrPath | None = ... ,
-    check: bool = ... ,
-    timeout: float | None = ... ,
-    env: Mapping[str, str] | None = ... ,
-    confirm_overwrite: bool = ... ,
-    confirm_mutation: bool = ... ,
 ) -> TaskCompletion:
     ...
 
@@ -648,17 +483,6 @@ def gencal(
     gaincurve_table: StrPath = ...,
     spw: str = ...,
     antenna: str = ...,
-    parameters: TaskParameters | None = ...,
-    profile: StrPath | None = ... ,
-    base_source: Literal["defaults", "last", "last_successful"] = ... ,
-    workspace: StrPath | None = ... ,
-    save_last: bool = ... ,
-    binary: StrPath | None = ... ,
-    check: bool = ... ,
-    timeout: float | None = ... ,
-    env: Mapping[str, str] | None = ... ,
-    confirm_overwrite: bool = ... ,
-    confirm_mutation: bool = ... ,
 ) -> TaskCompletion:
     ...
 
@@ -730,48 +554,6 @@ def plotms(
     flag_selected: bool = ...,
     flag_apply: bool = ...,
     flag_output: StrPath = ...,
-    parameters: TaskParameters | None = ...,
-    profile: StrPath | None = ... ,
-    base_source: Literal["defaults", "last", "last_successful"] = ... ,
-    workspace: StrPath | None = ... ,
-    save_last: bool = ... ,
-    binary: StrPath | None = ... ,
-    check: bool = ... ,
-    timeout: float | None = ... ,
-    env: Mapping[str, str] | None = ... ,
-    confirm_overwrite: bool = ... ,
-    confirm_mutation: bool = ... ,
-) -> TaskCompletion:
-    ...
-
-def plotcal(
-    *,
-    caltable: StrPath = ...,
-    vis: StrPath | list[StrPath] | tuple[StrPath, ...] = ...,
-    preset: Literal['bandpass_amplitude_vs_frequency', 'bandpass_phase_vs_frequency', 'corrected_amplitude_vs_frequency', 'corrected_amplitude_vs_time', 'corrected_phase_vs_frequency', 'corrected_phase_vs_time', 'gain_amplitude_vs_time', 'gain_phase_vs_time'] = ...,
-    field: str = ...,
-    spw: str = ...,
-    timerange: str = ...,
-    uvrange: str = ...,
-    antenna: str = ...,
-    scan: str = ...,
-    correlation: str = ...,
-    observation: str = ...,
-    array: str = ...,
-    intent: str = ...,
-    feed: str = ...,
-    msselect: str = ...,
-    parameters: TaskParameters | None = ...,
-    profile: StrPath | None = ... ,
-    base_source: Literal["defaults", "last", "last_successful"] = ... ,
-    workspace: StrPath | None = ... ,
-    save_last: bool = ... ,
-    binary: StrPath | None = ... ,
-    check: bool = ... ,
-    timeout: float | None = ... ,
-    env: Mapping[str, str] | None = ... ,
-    confirm_overwrite: bool = ... ,
-    confirm_mutation: bool = ... ,
 ) -> TaskCompletion:
     ...
 
@@ -795,17 +577,6 @@ def flagdata(
     freqdev: float | Literal['none'] = ...,
     extendflags: bool = ...,
     extendpols: bool = ...,
-    parameters: TaskParameters | None = ...,
-    profile: StrPath | None = ... ,
-    base_source: Literal["defaults", "last", "last_successful"] = ... ,
-    workspace: StrPath | None = ... ,
-    save_last: bool = ... ,
-    binary: StrPath | None = ... ,
-    check: bool = ... ,
-    timeout: float | None = ... ,
-    env: Mapping[str, str] | None = ... ,
-    confirm_overwrite: bool = ... ,
-    confirm_mutation: bool = ... ,
 ) -> TaskCompletion:
     ...
 
@@ -817,17 +588,6 @@ def flagmanager(
     oldname: str = ...,
     comment: str = ...,
     merge: Literal['and', 'or', 'replace'] = ...,
-    parameters: TaskParameters | None = ...,
-    profile: StrPath | None = ... ,
-    base_source: Literal["defaults", "last", "last_successful"] = ... ,
-    workspace: StrPath | None = ... ,
-    save_last: bool = ... ,
-    binary: StrPath | None = ... ,
-    check: bool = ... ,
-    timeout: float | None = ... ,
-    env: Mapping[str, str] | None = ... ,
-    confirm_overwrite: bool = ... ,
-    confirm_mutation: bool = ... ,
 ) -> TaskCompletion:
     ...
 
@@ -845,17 +605,6 @@ def impbcor(
     mode: Literal['divide', 'multiply'] = ...,
     overwrite: bool = ...,
     stretch: str = ...,
-    parameters: TaskParameters | None = ...,
-    profile: StrPath | None = ... ,
-    base_source: Literal["defaults", "last", "last_successful"] = ... ,
-    workspace: StrPath | None = ... ,
-    save_last: bool = ... ,
-    binary: StrPath | None = ... ,
-    check: bool = ... ,
-    timeout: float | None = ... ,
-    env: Mapping[str, str] | None = ... ,
-    confirm_overwrite: bool = ... ,
-    confirm_mutation: bool = ... ,
 ) -> TaskCompletion:
     ...
 
@@ -868,17 +617,6 @@ def impv(
     width: int = ...,
     chans: str = ...,
     overwrite: bool = ...,
-    parameters: TaskParameters | None = ...,
-    profile: StrPath | None = ... ,
-    base_source: Literal["defaults", "last", "last_successful"] = ... ,
-    workspace: StrPath | None = ... ,
-    save_last: bool = ... ,
-    binary: StrPath | None = ... ,
-    check: bool = ... ,
-    timeout: float | None = ... ,
-    env: Mapping[str, str] | None = ... ,
-    confirm_overwrite: bool = ... ,
-    confirm_mutation: bool = ... ,
 ) -> TaskCompletion:
     ...
 
@@ -889,17 +627,6 @@ def imsubimage(
     box: str = ...,
     chans: str = ...,
     overwrite: bool = ...,
-    parameters: TaskParameters | None = ...,
-    profile: StrPath | None = ... ,
-    base_source: Literal["defaults", "last", "last_successful"] = ... ,
-    workspace: StrPath | None = ... ,
-    save_last: bool = ... ,
-    binary: StrPath | None = ... ,
-    check: bool = ... ,
-    timeout: float | None = ... ,
-    env: Mapping[str, str] | None = ... ,
-    confirm_overwrite: bool = ... ,
-    confirm_mutation: bool = ... ,
 ) -> TaskCompletion:
     ...
 
@@ -909,17 +636,6 @@ def immath(
     expr: str = ...,
     outfile: StrPath = ...,
     overwrite: bool = ...,
-    parameters: TaskParameters | None = ...,
-    profile: StrPath | None = ... ,
-    base_source: Literal["defaults", "last", "last_successful"] = ... ,
-    workspace: StrPath | None = ... ,
-    save_last: bool = ... ,
-    binary: StrPath | None = ... ,
-    check: bool = ... ,
-    timeout: float | None = ... ,
-    env: Mapping[str, str] | None = ... ,
-    confirm_overwrite: bool = ... ,
-    confirm_mutation: bool = ... ,
 ) -> TaskCompletion:
     ...
 
@@ -930,17 +646,6 @@ def imregrid(
     output: StrPath = ...,
     interpolation: Literal['linear', 'nearest'] = ...,
     overwrite: bool = ...,
-    parameters: TaskParameters | None = ...,
-    profile: StrPath | None = ... ,
-    base_source: Literal["defaults", "last", "last_successful"] = ... ,
-    workspace: StrPath | None = ... ,
-    save_last: bool = ... ,
-    binary: StrPath | None = ... ,
-    check: bool = ... ,
-    timeout: float | None = ... ,
-    env: Mapping[str, str] | None = ... ,
-    confirm_overwrite: bool = ... ,
-    confirm_mutation: bool = ... ,
 ) -> TaskCompletion:
     ...
 
@@ -951,17 +656,6 @@ def feather(
     lowres: StrPath = ...,
     sdfactor: float = ...,
     overwrite: bool = ...,
-    parameters: TaskParameters | None = ...,
-    profile: StrPath | None = ... ,
-    base_source: Literal["defaults", "last", "last_successful"] = ... ,
-    workspace: StrPath | None = ... ,
-    save_last: bool = ... ,
-    binary: StrPath | None = ... ,
-    check: bool = ... ,
-    timeout: float | None = ... ,
-    env: Mapping[str, str] | None = ... ,
-    confirm_overwrite: bool = ... ,
-    confirm_mutation: bool = ... ,
 ) -> TaskCompletion:
     ...
 
@@ -970,20 +664,9 @@ def importfits(
     fitsimage: StrPath = ...,
     imagename: StrPath = ...,
     overwrite: bool = ...,
-    parameters: TaskParameters | None = ...,
-    profile: StrPath | None = ... ,
-    base_source: Literal["defaults", "last", "last_successful"] = ... ,
-    workspace: StrPath | None = ... ,
-    save_last: bool = ... ,
-    binary: StrPath | None = ... ,
-    check: bool = ... ,
-    timeout: float | None = ... ,
-    env: Mapping[str, str] | None = ... ,
-    confirm_overwrite: bool = ... ,
-    confirm_mutation: bool = ... ,
 ) -> TaskCompletion:
     ...
 
-TASK_SURFACES = ('msexplore', 'calibrate', 'importvla', 'imager', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'gencal', 'plotms', 'plotcal', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits')
+TASK_SURFACES = ('msexplore', 'calibrate', 'importvla', 'imager', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits')
 
-__all__ = ['TASK_SURFACES', 'msexplore', 'calibrate', 'importvla', 'imager', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'gencal', 'plotms', 'plotcal', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits']
+__all__ = ['TASK_SURFACES', 'msexplore', 'calibrate', 'importvla', 'imager', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits']

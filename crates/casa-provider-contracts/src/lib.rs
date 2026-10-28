@@ -8,6 +8,7 @@
 mod application;
 mod builtin;
 mod components;
+mod executable;
 mod parameters;
 mod projection;
 mod provider;
@@ -37,7 +38,7 @@ pub use semantic::{
 mod tests;
 pub use application::{
     ApplicationCatalog, ApplicationDefinition, ApplicationInteraction, ApplicationKind,
-    ApplicationLaunchDescriptor, ApplicationLaunchMode, ApplicationShellKind,
-    builtin_application_catalog,
+    ApplicationLaunchDescriptor, ApplicationShellKind, builtin_application_catalog,
 };
 pub use builtin::{builtin_surface_bundle, builtin_surface_catalog};
+pub use executable::{SUITE_ROOT_ENV, installed_suite_root, resolve_task_executable};

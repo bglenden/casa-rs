@@ -1,0 +1,25 @@
+[package]
+name = "casars-imexplore"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "imexplore: the imhead and imstat task provider for CASA images"
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "imexplore"
+path = "src/main.rs"
+
+[dependencies]
+casa-images = { path = "../casa-images" }
+casa-task-runtime = { path = "../casa-task-runtime" }
+
+[dev-dependencies]
+casa-coordinates = { path = "../casa-coordinates" }
+ndarray.workspace = true
+tempfile = "3"

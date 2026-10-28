@@ -85,7 +85,7 @@ mod tests {
     #[test]
     fn builtins_cover_exact_current_configurable_catalog() {
         let catalog = builtin_surface_catalog().expect("valid built-in parameter catalog");
-        assert_eq!(catalog.surfaces.len(), 27);
+        assert_eq!(catalog.surfaces.len(), 26);
         assert!(
             catalog
                 .surfaces
@@ -102,6 +102,8 @@ mod tests {
         assert!(!ids.contains("imexplore"));
         assert!(!ids.contains("tablebrowser"));
         assert!(!ids.contains("casars"));
+        // CASA 6 has no plotcal; casa-rs retired its own (#931).
+        assert!(!ids.contains("plotcal"));
     }
 
     #[test]

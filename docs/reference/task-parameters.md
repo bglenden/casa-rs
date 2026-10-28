@@ -11,8 +11,8 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 - Parameter catalog schema version: `1`
 - Parameter surface schema version: `1`
 - Concepts: 351
-- Surfaces: 27 (27 task, 0 session)
-- Surface bindings: 537
+- Surfaces: 26 (26 task, 0 session)
+- Surface bindings: 522
 
 | Surface | Kind | Contract | Provider family | Parameters | Summary |
 |---|---|---:|---|---:|---|
@@ -33,7 +33,6 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | [Fluxscale](#surface-fluxscale)<br><code>fluxscale</code> | task | 5 | <code>calibration</code> | 10 | Scale gain solutions using reference calibrator fields. |
 | [Gencal](#surface-gencal)<br><code>gencal</code> | task | 5 | <code>calibration</code> | 10 | Generate a calibration table such as antpos, gceff, or opac. |
 | [PlotMS](#surface-plotms)<br><code>plotms</code> | task | 7 | <code>msexplore</code> | 66 | Plot MeasurementSet visibility data with CASA plotms-style selections and axes. |
-| [PlotCal](#surface-plotcal)<br><code>plotcal</code> | task | 4 | <code>plotcal</code> | 15 | Plot calibration tables and corrected-data diagnostics. |
 | [Flag Data](#surface-flagdata)<br><code>flagdata</code> | task | 4 | <code>flagdata</code> | 18 | Run native CASA-style MeasurementSet flagging. |
 | [Flag Manager](#surface-flagmanager)<br><code>flagmanager</code> | task | 4 | <code>flagmanager</code> | 6 | Manage MeasurementSet flag-version snapshots. |
 | [Primary Beam Correction](#surface-impbcor)<br><code>impbcor</code> | task | 4 | <code>image_analysis</code> | 12 | Apply primary-beam correction to a CASA image |
@@ -721,34 +720,6 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>flag_selected</code> | <code>parameter.flag_selected@r1</code> | <code>bool</code> | <code>false</code>; optional | Flag Editing | Apply the flag action to every FLAG sample in the selected MAIN rows |
 | <code>flag_apply</code> | <code>parameter.flag_apply@r1</code> | <code>bool</code> | <code>false</code>; optional | Flag Editing | Apply the staged flag edit to MAIN FLAG / FLAG_ROW; omit for preview-only |
 | <code>flag_output</code> | <code>parameter.flag_output@r1</code> | <code>path (any)</code> | <code>"none"</code>; optional | Flag Editing | Write the staged flag-edit preview JSON to PATH |
-
-<a id="surface-plotcal"></a>
-
-## PlotCal (<code>plotcal</code>)
-
-- Kind: `task`
-- Contract version: `4`
-- Category: Plotting
-- Provider family: `plotcal`
-- Summary: Plot calibration tables and corrected-data diagnostics.
-
-| Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
-|---|---|---|---|---|---|
-| <code>caltable</code> | <code>parameter.caltable@r1</code> | <code>path (calibration_table)</code> | <code>"none"</code>; optional | Input | Input calibration table. |
-| <code>vis</code> | <code>data.input.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | <code>[]</code>; optional | Input | Input MeasurementSet path or paths. |
-| <code>preset</code> | <code>parameter.preset@r1</code> | <code>choice (8 values; surface-narrowed)</code> | <code>"gain_phase_vs_time"</code>; optional | Plot | Use a named common plot preset |
-| <code>field</code> | <code>ms.selection.field@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | CASA field selector. |
-| <code>spw</code> | <code>ms.selection.spw@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Comma-separated SPECTRAL_WINDOW_ID integers |
-| <code>timerange</code> | <code>ms.selection.timerange@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Inclusive TIME range in MJD seconds |
-| <code>uvrange</code> | <code>ms.selection.uvrange@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | UV range selector. |
-| <code>antenna</code> | <code>ms.selection.antenna@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Comma-separated antenna ids matched against ANTENNA1/ANTENNA2 |
-| <code>scan</code> | <code>ms.selection.scan@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Comma-separated scan numbers |
-| <code>correlation</code> | <code>ms.selection.correlation@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Correlation selector. |
-| <code>observation</code> | <code>ms.selection.observation@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Comma-separated OBSERVATION_ID integers |
-| <code>array</code> | <code>ms.selection.array@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Comma-separated ARRAY_ID integers |
-| <code>intent</code> | <code>ms.selection.intent@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Intent selector. |
-| <code>feed</code> | <code>ms.selection.feed@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Feed selector. |
-| <code>msselect</code> | <code>ms.selection.msselect@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Raw TaQL WHERE expression to AND with the structured selectors |
 
 <a id="surface-flagdata"></a>
 

@@ -1,15 +1,23 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Task launch metadata and results for `casars.tasks`: the application
-//! catalog's launch entries, and a successful task's declared products.
+//! Task launches for `casars.tasks`: the application catalog's launch
+//! entries, the executable a task runs, and how a finished task process
+//! ended, with a successful task's declared products.
 
-use std::path::Path;
+use std::collections::HashMap;
+use std::ffi::OsString;
+use std::path::{Path, PathBuf};
 
 use casa_provider_contracts::{
     RunProductKind, RunProductRole, builtin_application_catalog, builtin_surface_bundle,
+    installed_suite_root, resolve_task_executable,
 };
-use casa_task_runtime::{TaskOutputValue, decode_task_completion};
+use casa_task_runtime::{
+    TaskExit, TaskOutcome, TaskOutputValue, classify_task_exit, decode_task_completion,
+};
+use pyo3::exceptions::PyFileNotFoundError;
 use pyo3::prelude::*;
 use serde::Serialize;
+use serde_json::Value;
 
 use crate::parameters::{reason_error, to_python};
 
@@ -34,7 +42,7 @@ pub(crate) fn applications() -> Result<Vec<ApplicationView>, String> {
         .applications
         .iter()
         .map(|application| {
-            let surface = application
+            let bundle = application
                 .surface_bundle()
                 .map_err(|reason| format!("resolve application {}: {reason}", application.id))?;
             let kind = serde_json::to_value(application.kind)
@@ -50,14 +58,8 @@ pub(crate) fn applications() -> Result<Vec<ApplicationView>, String> {
             Ok(ApplicationView {
                 id: application.id.clone(),
                 kind,
-                display_name: surface
-                    .as_ref()
-                    .map_or("CASA-RS", |bundle| bundle.surface.display_name())
-                    .to_string(),
-                category: surface
-                    .as_ref()
-                    .map_or("Launcher", |bundle| bundle.surface.category())
-                    .to_string(),
+                display_name: bundle.surface.display_name().to_string(),
+                category: bundle.surface.category().to_string(),
                 executable: application.launch.executable.clone(),
                 cargo_package: application.launch.cargo_package.clone(),
                 override_env: application.launch.override_env.clone(),
@@ -141,6 +143,117 @@ pub(crate) fn completion(
     })
 }
 
+/// The executable that runs `surface_id`: its catalog launch entry,
+/// resolved against `environment` and the installed suite whose Python
+/// environment is `prefix`, if it is one.
+pub(crate) fn executable(
+    surface_id: &str,
+    environment: &HashMap<String, String>,
+    prefix: &Path,
+) -> Result<PathBuf, String> {
+    let application = builtin_application_catalog()?
+        .application(surface_id)
+        .ok_or_else(|| format!("no task {surface_id:?} in the application catalog"))?;
+    resolve_task_executable(
+        &application.launch,
+        &|name| environment.get(name).map(OsString::from),
+        installed_suite_root(prefix).as_deref(),
+    )
+}
+
+/// How one task process ended, as Python reports it. The statuses are
+/// [`TaskOutcome`]'s, less a launch failure, which Python sees itself.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub(crate) enum OutcomeView {
+    /// The task succeeded: CASA's return value and the declared products.
+    Succeeded {
+        value: Value,
+        completion: CompletionView,
+    },
+    /// The task refused its parameters before it changed anything.
+    Refused {
+        message: String,
+        parameter: Option<String>,
+    },
+    /// The task started and failed.
+    Failed {
+        message: String,
+        parameter: Option<String>,
+    },
+    /// The task caught an interrupt and stopped.
+    Interrupted { message: String },
+    /// A signal ended the task process.
+    Signalled { signal: i32 },
+    /// The process's reply is missing, invalid, or disagrees with its exit.
+    MalformedReply {
+        exit_code: Option<i32>,
+        reason: String,
+    },
+}
+
+/// Classify the process that ran `surface_id` from its return code (as
+/// Python's `subprocess` gives it: negative for a signal) and its stdout
+/// reply, and decode a success's products. `values` are the task's
+/// parameters as display text. A success whose result the contract's
+/// decoder refuses is an error.
+pub(crate) fn outcome(
+    surface_id: &str,
+    returncode: i32,
+    stdout: &str,
+    workspace: &Path,
+    values: Vec<(String, String)>,
+) -> Result<OutcomeView, String> {
+    let exit = if returncode < 0 {
+        TaskExit {
+            code: None,
+            signal: Some(-returncode),
+        }
+    } else {
+        TaskExit {
+            code: Some(returncode),
+            signal: None,
+        }
+    };
+    let mismatch = |surface: String| OutcomeView::MalformedReply {
+        exit_code: exit.code,
+        reason: format!("the task replied for {surface:?}, not {surface_id:?}"),
+    };
+    Ok(match classify_task_exit(exit, stdout) {
+        TaskOutcome::Succeeded { surface, .. }
+        | TaskOutcome::Refused { surface, .. }
+        | TaskOutcome::Failed { surface, .. }
+        | TaskOutcome::Interrupted { surface, .. }
+            if surface != surface_id =>
+        {
+            mismatch(surface)
+        }
+        TaskOutcome::Succeeded { value, result, .. } => {
+            let result = serde_json::to_string(&result)
+                .map_err(|error| format!("serialize the {surface_id} result: {error}"))?;
+            OutcomeView::Succeeded {
+                value,
+                completion: completion(surface_id, &result, workspace, values)?,
+            }
+        }
+        TaskOutcome::Refused {
+            message, parameter, ..
+        } => OutcomeView::Refused { message, parameter },
+        TaskOutcome::Failed {
+            message, parameter, ..
+        } => OutcomeView::Failed { message, parameter },
+        TaskOutcome::Interrupted { message, .. } => OutcomeView::Interrupted { message },
+        TaskOutcome::Signalled { signal } => OutcomeView::Signalled { signal },
+        TaskOutcome::MalformedReply { exit_code, reason } => {
+            OutcomeView::MalformedReply { exit_code, reason }
+        }
+        TaskOutcome::LaunchFailed { message } => OutcomeView::MalformedReply {
+            exit_code: exit.code,
+            reason: message,
+        },
+    })
+}
+
 /// The application catalog's launch entries.
 #[pyfunction]
 pub(crate) fn application_catalog(py: Python<'_>) -> PyResult<Bound<'_, PyAny>> {
@@ -148,19 +261,35 @@ pub(crate) fn application_catalog(py: Python<'_>) -> PyResult<Bound<'_, PyAny>> 
     to_python(py, &applications)
 }
 
-/// A successful task's products. Releases the GIL while it checks them.
+/// The executable that runs `surface_id`, found in `environ` (Python's
+/// `os.environ`) and the suite of Python environment `prefix`
+/// (`sys.prefix`). Raises `FileNotFoundError` naming what is missing.
 #[pyfunction]
-pub(crate) fn task_completion<'py>(
+pub(crate) fn task_executable(
+    py: Python<'_>,
+    surface_id: &str,
+    environ: HashMap<String, String>,
+    prefix: PathBuf,
+) -> PyResult<PathBuf> {
+    py.detach(|| executable(surface_id, &environ, &prefix))
+        .map_err(PyFileNotFoundError::new_err)
+}
+
+/// How a task process ended, with a success's products. Releases the GIL
+/// while it checks them.
+#[pyfunction]
+pub(crate) fn task_outcome<'py>(
     py: Python<'py>,
     surface_id: &str,
+    returncode: i32,
     stdout: &str,
-    workspace: std::path::PathBuf,
+    workspace: PathBuf,
     values: Vec<(String, String)>,
 ) -> PyResult<Bound<'py, PyAny>> {
-    let completion = py
-        .detach(|| completion(surface_id, stdout, &workspace, values))
+    let outcome = py
+        .detach(|| outcome(surface_id, returncode, stdout, &workspace, values))
         .map_err(|reason| reason_error(py, reason))?;
-    to_python(py, &completion)
+    to_python(py, &outcome)
 }
 
 #[cfg(test)]

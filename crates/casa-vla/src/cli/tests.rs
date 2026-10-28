@@ -187,7 +187,7 @@ fn repeated_archive_flags_name_every_archive() {
         "the callback's options"
     );
 
-    // casars run sends the binary the same list.
+    // Python sends the binary the same list.
     let bundle = casa_provider_contracts::builtin_surface_bundle("importvla").unwrap();
     let command_line = TaskCommandLine::parse(&bundle, &args(&line)).unwrap();
     let session = ParameterRuntime::default()

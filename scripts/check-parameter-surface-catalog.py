@@ -53,11 +53,15 @@ def main() -> int:
         for entry in entries
         if isinstance(entry, dict) and entry.get("kind") == "task"
     }
-    launcher_ids = {
-        entry["id"]
+    # Every application is a task: Python starts each one directly, and the
+    # casars launcher is retired (#931).
+    others = sorted(
+        str(entry.get("id"))
         for entry in entries
-        if isinstance(entry, dict) and entry.get("kind") == "launcher"
-    }
+        if isinstance(entry, dict) and entry.get("kind") != "task"
+    )
+    if others:
+        fail(f"applications that are not tasks: {others}")
     surface_ids = {
         surface["id"] for surface in definitions if isinstance(surface, dict)
     }
@@ -66,9 +70,6 @@ def main() -> int:
             f"task/surface mismatch: missing={sorted(surface_ids - task_ids)}, "
             f"extra={sorted(task_ids - surface_ids)}"
         )
-    if launcher_ids != {"casars"}:
-        fail(f"expected only the casars launcher, found {sorted(launcher_ids)}")
-
     for entry in entries:
         if not isinstance(entry, dict):
             fail("application entries must be objects")
@@ -79,10 +80,7 @@ def main() -> int:
         ):
             fail(f"application {entry.get('id')!r} has an incomplete launch descriptor")
 
-    print(
-        f"parameter-surface-catalog: {len(task_ids)} task applications and "
-        f"{len(launcher_ids)} launcher validated"
-    )
+    print(f"parameter-surface-catalog: {len(task_ids)} task applications validated")
     return 0
 
 

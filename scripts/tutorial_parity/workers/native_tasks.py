@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -11,16 +12,14 @@ from typing import Any
 
 
 TASKS = {"imhead", "imstat", "immoments", "exportfits", "msexplore", "imager", "split", "impbcor"}
-BINARY_BY_TASK = {
-    "imhead": "casars",
-    "imstat": "casars",
-    "immoments": "casars",
-    "exportfits": "casars",
-    "msexplore": "casars",
-    "imager": "casars",
-    "split": "casars",
-    "impbcor": "casars",
-}
+
+
+def use_binaries(binary_dir: Path) -> None:
+    """Start each task from ``binary_dir``, through its catalog override."""
+    from casars.parameters import _native
+
+    for application in _native().application_catalog():
+        os.environ[application["override_env"]] = str(binary_dir / application["executable"])
 
 
 def python_parameters(task: str, raw: dict[str, Any]) -> dict[str, Any]:
@@ -77,13 +76,13 @@ def main() -> int:
         raise ValueError("unsupported native worker request")
     from casars import tasks
 
+    use_binaries(binary_dir)
     results = []
     for operation in operations:
         task = operation["task"]
         if task not in TASKS:
             raise ValueError(f"unsupported native Python task: {task}")
         parameters = python_parameters(task, operation["parameters"])
-        parameters["binary"] = str(binary_dir / BINARY_BY_TASK[task])
         started = time.perf_counter()
         result = getattr(tasks, task)(**parameters)
         capture = operation.get("capture")

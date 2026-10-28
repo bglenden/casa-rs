@@ -1,7 +1,7 @@
 # Testing Strategy
 
 Truth class: normative
-Last reality check: 2026-10-21
+Last reality check: 2026-10-28
 Verification: just verify
 
 ## Test categories
@@ -247,15 +247,23 @@ existing no-cache I/O path and does not require this Linux-specific setup.
 - Smoke/release gate: `just smoke`
 - Blocking C++ interop release gate: `just release-cpp-interop`
 - Informational release performance suite: `just release-perf`
-- Release-only install gate: `scripts/test-install-suite.sh`
+- Suite install gate: `scripts/test-install-suite.sh [--hide-checkout]`
+  builds the release executables and wheel, installs the suite into a
+  temporary root, and checks its commands on `PATH`, a task run from its
+  command and from the suite's Python, and the executable Python chose.
+  `--hide-checkout` moves the checkout aside while the installed suite is
+  checked, so nothing it runs can reach the checkout; CI's `suite_install`
+  job passes it
 - Heavy parity suites: `scripts/test-slow.sh`
 - Release/tag-only CI-like coverage: `scripts/run-coverage.sh --ci-like`
 - GitHub Actions reproduction: `scripts/ci-local.sh pr` for pull-request jobs or `scripts/ci-local.sh tag` for version-tag jobs
 - GitHub PR CI: lint/test, Python package (editable checkout, built wheel and
-  sdist), performance-tool tests, and strict docs (rustdoc
+  sdist), performance-tool tests, the suite install
+  (`scripts/test-install-suite.sh --hide-checkout`), and strict docs (rustdoc
   built twice, public and with `--document-private-items`, with broken and
   private intra-doc links denied in both, then MkDocs). The required checks
-  are `lint_test`, `python_package` and `docs`
+  are `lint_test`, `python_package` and `docs`; the suite install is
+  informational and does not block merge (ADR-0004, #975)
 - GitHub tag CI: lint/test, editable Python package and performance-tool checks plus smoke,
   suite-install, and CI-like coverage
 - Main-branch pushes run the rustdoc and MkDocs deployment workflow
@@ -390,8 +398,17 @@ affected gate.
   `python/tests/test_binding_snapshots.py` pins what the binding returns to
   Python (the parameter catalog's dictionary shapes, plot data, task
   completions and errors); regenerate its fixture only for an intended
-  change. The `casars` task host's end-to-end behaviour is covered by
-  `cargo test -p casars --test casars_cli`.
+  change. `test_task_runner.py` fakes each task executable through its
+  catalog override variable (`CASARS_<APP>_BIN`) and checks what a task call
+  starts, streams, raises and leaves in Last. `test_task_end_to_end.py` runs a
+  real executable that the resolver finds in the development checkout's
+  build: the script builds `flagmanager` first and sets
+  `CASARS_REQUIRE_TASK_BINARIES=1`, so a missing executable fails rather than
+  skips. `cargo test -p casars-python` includes the repository
+  provider-conformance tests (`tests/provider_contract_conformance.rs`).
+  A task's own command line, the Last it records and its agreement with
+  `--json-run` are covered by the front end's tests in `casa-task-runtime`
+  and `cargo test -p casars-imexplore --test imexplore_cli`.
   `scripts/test-python-package.sh` runs the `casars.tools` tests against the
   bundled measures snapshot unless `CASA_RS_MEASURESPATH` names a runtime;
   run directly, those tests skip when no runtime is installed.

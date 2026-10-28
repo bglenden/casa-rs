@@ -36,6 +36,12 @@ if [[ -z "${CASA_RS_MEASURESPATH:-}" ]]; then
   export CASA_RS_MEASURESPATH="$measures_root"
 fi
 
+# The end-to-end tests start a real task executable, which a development
+# checkout's resolver finds in this build (#931); they must not skip here.
+echo "==> Building the task executable the end-to-end tests run"
+cargo build -q -p casa-ms --bin flagmanager
+export CASARS_REQUIRE_TASK_BINARIES=1
+
 editable_venv="$tmp_root/editable-venv"
 
 echo "==> Installing editable casars package and running Python tests"

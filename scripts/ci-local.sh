@@ -13,7 +13,8 @@ Commands:
   lint_test       Run the lint_test job commands in the container
   python_package  Run the python_package job commands in the container
   smoke           Run the smoke tag job commands in the container
-  suite_install   Run the suite_install tag job commands in the container
+  suite_install   Run the suite_install job commands in the container (the
+                  checkout stays in place; CI moves it aside)
   coverage        Run the coverage tag job commands in the container
   pr              Run the pull request CI jobs locally
   tag             Run the version-tag CI jobs locally
@@ -121,7 +122,7 @@ case "$command" in
     '
     ;;
   pr)
-    run_host_sequence lint_test python_package
+    run_host_sequence lint_test python_package suite_install
     ;;
   tag)
     run_host_sequence lint_test python_package smoke suite_install coverage

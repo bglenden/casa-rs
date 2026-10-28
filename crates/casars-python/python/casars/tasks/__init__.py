@@ -19,7 +19,6 @@ from ._catalog import (
     fluxscale,
     gencal,
     plotms,
-    plotcal,
     flagdata,
     flagmanager,
     impbcor,
@@ -31,8 +30,7 @@ from ._catalog import (
     importfits,
 )
 from ._runner import (
-    CasarsBinaryNotFoundError,
-    TaskBaseSource,
+    TaskBinaryNotFoundError,
     TaskCompletion,
     TaskExecutionError,
     TaskInvocationError,
@@ -40,4 +38,4 @@ from ._runner import (
     run,
 )
 
-__all__ = ['CasarsBinaryNotFoundError', 'TaskBaseSource', 'TaskCompletion', 'TaskExecutionError', 'TaskInvocationError', 'TaskResultError', 'TASK_SURFACES', 'run', 'msexplore', 'calibrate', 'importvla', 'imager', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'gencal', 'plotms', 'plotcal', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits']
+__all__ = ['TaskBinaryNotFoundError', 'TaskCompletion', 'TaskExecutionError', 'TaskInvocationError', 'TaskResultError', 'TASK_SURFACES', 'run', 'msexplore', 'calibrate', 'importvla', 'imager', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits']
