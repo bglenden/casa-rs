@@ -102,8 +102,8 @@ def calibrate(
     mode: Literal['apply', 'export_corrected_data', 'fluxscale', 'gencal', 'solve_bandpass', 'solve_gain', 'stats', 'summary'] = ...,
     vis: StrPath | list[StrPath] | tuple[StrPath, ...] = ...,
     outputvis: StrPath = ...,
-    summary_paths: str = ...,
-    gaintables: str = ...,
+    summary_paths: StrPath | list[StrPath] | tuple[StrPath, ...] | Literal['none'] = ...,
+    gaintables: StrPath | list[StrPath] | tuple[StrPath, ...] | Literal['none'] = ...,
     table_path: StrPath = ...,
     callib: StrPath = ...,
     gainfield: str = ...,
@@ -485,7 +485,7 @@ def split(
 def applycal(
     *,
     vis: StrPath | list[StrPath] | tuple[StrPath, ...] = ...,
-    gaintables: str = ...,
+    gaintables: StrPath | list[StrPath] | tuple[StrPath, ...] | Literal['none'] = ...,
     callib: StrPath = ...,
     gainfield: str = ...,
     interp: str = ...,
@@ -523,7 +523,7 @@ def applycal(
 def gaincal(
     *,
     vis: StrPath | list[StrPath] | tuple[StrPath, ...] = ...,
-    gaintables: str = ...,
+    gaintables: StrPath | list[StrPath] | tuple[StrPath, ...] | Literal['none'] = ...,
     callib: StrPath = ...,
     gainfield: str = ...,
     interp: str = ...,
@@ -568,7 +568,7 @@ def gaincal(
 def bandpass(
     *,
     vis: StrPath | list[StrPath] | tuple[StrPath, ...] = ...,
-    gaintables: str = ...,
+    gaintables: StrPath | list[StrPath] | tuple[StrPath, ...] | Literal['none'] = ...,
     callib: StrPath = ...,
     gainfield: str = ...,
     interp: str = ...,

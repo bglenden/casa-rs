@@ -111,7 +111,7 @@ fn apply(task: &TaskInvocation<'_>) -> Result<ExecuteApplyTaskRequest, TaskFailu
 }
 
 fn summary(task: &TaskInvocation<'_>) -> Result<SummaryTaskRequest, TaskFailure> {
-    let paths = parse_path_list(&task.required_text("summary_paths")?);
+    let paths = task.paths("summary_paths")?;
     if paths.is_empty() {
         return Err(TaskFailure::validation(
             "summary requires at least one calibration-table path",
@@ -251,7 +251,7 @@ fn calibration_tables(
     task: &TaskInvocation<'_>,
     chain: Chain,
 ) -> Result<Vec<ApplyCalibrationTableSpec>, TaskFailure> {
-    let tables = parse_path_list(&task.text("gaintables")?.unwrap_or_default());
+    let tables = task.paths("gaintables")?;
     let callib = task.text("callib")?.map(PathBuf::from);
     let gainfield = task.text("gainfield")?;
     let interp = task.text("interp")?;
@@ -268,7 +268,6 @@ fn calibration_tables(
         }
         Chain::Solve => build_solver_specs(callib, tables, lists),
     }
-    .map_err(TaskFailure::validation)
 }
 
 /// `name`'s flag, or false on a surface that does not declare it, as
@@ -463,13 +462,6 @@ fn parse_refant_selector(value: &str) -> RefAntSelector {
     }
 }
 
-pub(super) fn parse_path_list(value: &str) -> Vec<PathBuf> {
-    parse_string_list(value)
-        .into_iter()
-        .map(PathBuf::from)
-        .collect()
-}
-
 fn parse_string_list(value: &str) -> Vec<String> {
     value
         .split(',')
@@ -560,12 +552,17 @@ impl ChainLists<'_> {
     }
 }
 
+/// A chain refusal at the parameter `name`.
+fn refused(name: &'static str) -> impl Fn(String) -> TaskFailure {
+    move |message| TaskFailure::validation(message).at(name)
+}
+
 /// One spec per table in `paths`, with the aligned chain lists.
 fn build_calibration_table_specs(
     paths: Vec<PathBuf>,
     lists: ChainLists<'_>,
     calwt: Option<&str>,
-) -> Result<Vec<ApplyCalibrationTableSpec>, String> {
+) -> Result<Vec<ApplyCalibrationTableSpec>, TaskFailure> {
     let segments = |list: Option<&str>| list.map(parse_semicolon_segments).unwrap_or_default();
     let gainfield = segments(lists.gainfield)
         .iter()
@@ -574,20 +571,25 @@ fn build_calibration_table_specs(
     let interp = segments(lists.interp)
         .iter()
         .map(|segment| parse_interp_value(segment))
-        .collect::<Result<_, _>>()?;
+        .collect::<Result<_, _>>()
+        .map_err(refused("interp"))?;
     let spwmap = segments(lists.spwmap)
         .iter()
         .map(|segment| parse_spwmap_value(segment))
-        .collect::<Result<_, _>>()?;
+        .collect::<Result<_, _>>()
+        .map_err(refused("spwmap"))?;
     let calwt = match calwt {
-        Some(raw) => parse_bool_list("calwt", raw)?,
+        Some(raw) => parse_bool_list("calwt", raw).map_err(refused("calwt"))?,
         None => Vec::new(),
     };
     let len = paths.len();
-    let gainfield = expand_aligned_values("gainfield", gainfield, len, None)?;
-    let interp = expand_aligned_values("interp", interp, len, ApplyInterpolationMode::Linear)?;
-    let spwmap = expand_aligned_values("spwmap", spwmap, len, Vec::new())?;
-    let calwt = expand_aligned_values("calwt", calwt, len, false)?;
+    let gainfield =
+        expand_aligned_values("gainfield", gainfield, len, None).map_err(refused("gainfield"))?;
+    let interp = expand_aligned_values("interp", interp, len, ApplyInterpolationMode::Linear)
+        .map_err(refused("interp"))?;
+    let spwmap =
+        expand_aligned_values("spwmap", spwmap, len, Vec::new()).map_err(refused("spwmap"))?;
+    let calwt = expand_aligned_values("calwt", calwt, len, false).map_err(refused("calwt"))?;
     Ok(paths
         .into_iter()
         .zip(gainfield)
@@ -611,18 +613,21 @@ fn build_apply_specs(
     tables: Vec<PathBuf>,
     lists: ChainLists<'_>,
     calwt: Option<&str>,
-) -> Result<Vec<ApplyCalibrationTableSpec>, String> {
+) -> Result<Vec<ApplyCalibrationTableSpec>, TaskFailure> {
     match (callib, tables.is_empty()) {
-        (Some(_), false) => Err("set either callib or gaintables, not both".to_string()),
+        (Some(_), false) => Err(refused("callib")(
+            "set either callib or gaintables, not both".to_string(),
+        )),
         (Some(callib), true) => {
             if !lists.is_empty() || calwt.is_some() {
-                return Err("gainfield, interp, spwmap and calwt cannot be combined with callib; set per-table chain controls inside the callibrary file".to_string());
+                return Err(refused("callib")("gainfield, interp, spwmap and calwt cannot be combined with callib; set per-table chain controls inside the callibrary file".to_string()));
             }
-            load_apply_specs_from_callib(&callib).map_err(|error| error.to_string())
+            load_apply_specs_from_callib(&callib)
+                .map_err(|error| refused("callib")(error.to_string()))
         }
-        (None, true) => {
-            Err("apply requires calibration input; set callib or gaintables".to_string())
-        }
+        (None, true) => Err(refused("gaintables")(
+            "apply requires calibration input; set callib or gaintables".to_string(),
+        )),
         (None, false) => build_calibration_table_specs(tables, lists, calwt),
     }
 }
@@ -633,14 +638,17 @@ fn build_solver_specs(
     callib: Option<PathBuf>,
     tables: Vec<PathBuf>,
     lists: ChainLists<'_>,
-) -> Result<Vec<ApplyCalibrationTableSpec>, String> {
+) -> Result<Vec<ApplyCalibrationTableSpec>, TaskFailure> {
     match (callib, tables.is_empty()) {
-        (Some(_), false) => Err("set either callib or gaintables, not both".to_string()),
+        (Some(_), false) => Err(refused("callib")(
+            "set either callib or gaintables, not both".to_string(),
+        )),
         (Some(callib), true) => {
             if !lists.is_empty() {
-                return Err("gainfield, interp and spwmap cannot be combined with callib; set per-table chain controls inside the callibrary file".to_string());
+                return Err(refused("callib")("gainfield, interp and spwmap cannot be combined with callib; set per-table chain controls inside the callibrary file".to_string()));
             }
-            load_apply_specs_from_callib(&callib).map_err(|error| error.to_string())
+            load_apply_specs_from_callib(&callib)
+                .map_err(|error| refused("callib")(error.to_string()))
         }
         (None, true) => Ok(Vec::new()),
         (None, false) => build_calibration_table_specs(tables, lists, Some("true")),

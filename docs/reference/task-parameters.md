@@ -138,8 +138,8 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>mode</code> | <code>calibrate.mode@r2</code> | <code>choice (8 values)</code> | <code>"apply"</code>; optional | Workflow | Calibration workflow to run from the launcher form |
 | <code>vis</code> | <code>data.input.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | <code>[]</code>; required when (mode="apply" or mode="export_corrected_data" or mode="solve_bandpass" or mode="solve_gain" or mode="gencal") | Input | Input MeasurementSet path or paths.<br><em>Surface:</em> Canonical vis maps to provider field measurement_set. This surface uses the MeasurementSet as calibration workflow input. |
 | <code>outputvis</code> | <code>parameter.outputvis@r1</code> | <code>path (measurement_set)</code> | <code>"none"</code>; required when (mode="export_corrected_data") | Input | Output MeasurementSet path for corrected-data export or continuum subtraction<br><em>Surface:</em> Canonical outputvis maps to provider field output_measurement_set. |
-| <code>summary_paths</code> | <code>parameter.summary_paths@r1</code> | <code>string</code> | <code>"none"</code>; required when mode="summary" | Inspect | Comma-separated calibration-table paths for summary mode |
-| <code>gaintables</code> | <code>parameter.gaintables@r1</code> | <code>string</code> | <code>"none"</code>; optional | Input | Comma-separated list of calibration-table paths to apply in order |
+| <code>summary_paths</code> | <code>parameter.summary_paths@r2</code> | <code>optional&lt;array&lt;path (calibration_table)&gt;&gt; (states: none)</code> | <code>"none"</code>; required when mode="summary" | Inspect | Calibration-table paths for summary mode |
+| <code>gaintables</code> | <code>parameter.gaintables@r2</code> | <code>optional&lt;array&lt;path (calibration_table)&gt;&gt; (states: none)</code> | <code>"none"</code>; optional | Input | Calibration-table paths to apply in order |
 | <code>table_path</code> | <code>parameter.table_path@r1</code> | <code>path (calibration_table)</code> | <code>"none"</code>; required when mode="stats" | Inspect | Calibration-table path for stats mode |
 | <code>callib</code> | <code>parameter.callib@r1</code> | <code>path (calibration_table)</code> | <code>"none"</code>; optional | Input | CASA callibrary file describing the calibration-table chain |
 | <code>gainfield</code> | <code>parameter.gainfield@r1</code> | <code>string</code> | <code>"none"</code>; optional | Apply | Semicolon-separated gainfield overrides aligned to --gaintables (single value applies to all) |
@@ -491,7 +491,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
 |---|---|---|---|---|---|
 | <code>vis</code> | <code>data.input.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | no default; required | Input | Input MeasurementSet path or paths.<br><em>Surface:</em> Canonical vis maps to provider field measurement_set. This surface uses the MeasurementSet as calibration workflow input. |
-| <code>gaintables</code> | <code>parameter.gaintables@r1</code> | <code>string</code> | <code>"none"</code>; optional | Input | Comma-separated list of calibration-table paths to apply in order |
+| <code>gaintables</code> | <code>parameter.gaintables@r2</code> | <code>optional&lt;array&lt;path (calibration_table)&gt;&gt; (states: none)</code> | <code>"none"</code>; optional | Input | Calibration-table paths to apply in order |
 | <code>callib</code> | <code>parameter.callib@r1</code> | <code>path (calibration_table)</code> | <code>"none"</code>; optional | Input | CASA callibrary file describing the calibration-table chain |
 | <code>gainfield</code> | <code>parameter.gainfield@r1</code> | <code>string</code> | <code>"none"</code>; optional | Apply | Semicolon-separated gainfield overrides aligned to --gaintables (single value applies to all) |
 | <code>interp</code> | <code>parameter.interp@r1</code> | <code>string</code> | <code>"none"</code>; optional | Apply | Semicolon-separated interpolation modes aligned to --gaintables: linear, nearest, nearest,linear |
@@ -526,7 +526,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
 |---|---|---|---|---|---|
 | <code>vis</code> | <code>data.input.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | no default; required | Input | Input MeasurementSet path or paths.<br><em>Surface:</em> Canonical vis maps to provider field measurement_set. This surface uses the MeasurementSet as calibration workflow input. |
-| <code>gaintables</code> | <code>parameter.gaintables@r1</code> | <code>string</code> | <code>"none"</code>; optional | Input | Comma-separated list of calibration-table paths to apply in order |
+| <code>gaintables</code> | <code>parameter.gaintables@r2</code> | <code>optional&lt;array&lt;path (calibration_table)&gt;&gt; (states: none)</code> | <code>"none"</code>; optional | Input | Calibration-table paths to apply in order |
 | <code>callib</code> | <code>parameter.callib@r1</code> | <code>path (calibration_table)</code> | <code>"none"</code>; optional | Input | CASA callibrary file describing the calibration-table chain |
 | <code>gainfield</code> | <code>parameter.gainfield@r1</code> | <code>string</code> | <code>"none"</code>; optional | Apply | Semicolon-separated gainfield overrides aligned to --gaintables (single value applies to all) |
 | <code>interp</code> | <code>parameter.interp@r1</code> | <code>string</code> | <code>"none"</code>; optional | Apply | Semicolon-separated interpolation modes aligned to --gaintables: linear, nearest, nearest,linear |
@@ -568,7 +568,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
 |---|---|---|---|---|---|
 | <code>vis</code> | <code>data.input.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | no default; required | Input | Input MeasurementSet path or paths.<br><em>Surface:</em> Canonical vis maps to provider field measurement_set. This surface uses the MeasurementSet as calibration workflow input. |
-| <code>gaintables</code> | <code>parameter.gaintables@r1</code> | <code>string</code> | <code>"none"</code>; optional | Input | Comma-separated list of calibration-table paths to apply in order |
+| <code>gaintables</code> | <code>parameter.gaintables@r2</code> | <code>optional&lt;array&lt;path (calibration_table)&gt;&gt; (states: none)</code> | <code>"none"</code>; optional | Input | Calibration-table paths to apply in order |
 | <code>callib</code> | <code>parameter.callib@r1</code> | <code>path (calibration_table)</code> | <code>"none"</code>; optional | Input | CASA callibrary file describing the calibration-table chain |
 | <code>gainfield</code> | <code>parameter.gainfield@r1</code> | <code>string</code> | <code>"none"</code>; optional | Apply | Semicolon-separated gainfield overrides aligned to --gaintables (single value applies to all) |
 | <code>interp</code> | <code>parameter.interp@r1</code> | <code>string</code> | <code>"none"</code>; optional | Apply | Semicolon-separated interpolation modes aligned to --gaintables: linear, nearest, nearest,linear |

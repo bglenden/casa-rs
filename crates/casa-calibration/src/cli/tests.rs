@@ -150,6 +150,104 @@ fn aligned_chain_lists_reach_each_table() {
             .contains("expected one value or one per table"),
         "{misaligned:?}"
     );
+    assert_eq!(misaligned.parameter.as_deref(), Some("gainfield"));
+}
+
+#[test]
+fn repeated_table_flags_name_every_table_in_order() {
+    // Astra's #967 P1: a repeated --gaintables kept only its last table, so
+    // an apply could run without the phase calibration.
+    let repeated = [
+        "--gaintables",
+        "phase.gcal",
+        "--gaintables",
+        "bandpass.bcal",
+    ];
+    let listed = ["--gaintables", "phase.gcal,bandpass.bcal"];
+    let chain = |surface: &str, mode: &[&str], tables: &[&str]| {
+        let mut args = vec!["--ms", "dataset.ms"];
+        args.extend(mode);
+        args.extend(tables);
+        args.extend(["--gainfield", "nearest;0"]);
+        match request(surface, &args).expect("a request") {
+            CalibrationTaskRequest::ExecuteApply(apply) => apply.calibration_tables,
+            CalibrationTaskRequest::SolveGain(solve) => solve.prior_calibration_tables,
+            other => panic!("{surface}: {other:?}"),
+        }
+    };
+    for (surface, mode) in [
+        ("applycal", &[][..]),
+        ("calibrate", &[][..]),
+        ("gaincal", &["--refant", "0", "--out", "gain.gcal"][..]),
+        (
+            "calibrate",
+            &[
+                "--mode",
+                "solve_gain",
+                "--refant",
+                "0",
+                "--out",
+                "gain.gcal",
+            ][..],
+        ),
+    ] {
+        let tables = chain(surface, mode, &repeated);
+        assert_eq!(tables, chain(surface, mode, &listed), "{surface} {mode:?}");
+        let paths = tables
+            .iter()
+            .map(|table| table.path.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(paths, ["phase.gcal", "bandpass.bcal"].map(PathBuf::from));
+        assert_eq!(tables[0].gainfield, Some(GainFieldSelector::Nearest));
+        assert_eq!(tables[1].gainfield, Some(GainFieldSelector::FieldId(0)));
+    }
+
+    let summary = |paths: &[&str]| {
+        let mut args = vec!["--mode", "summary"];
+        args.extend(paths);
+        request("calibrate", &args).expect("summary")
+    };
+    assert_eq!(
+        summary(&["--summary-paths", "a.gcal", "--summary-paths", "b.gcal"]),
+        summary(&["--summary-paths", "a.gcal,b.gcal"])
+    );
+}
+
+#[test]
+fn a_table_list_reads_alike_from_a_list_or_one_string() {
+    // A profile or --json-run request may hold the tables as a list or as
+    // one comma-separated string.
+    let both = vec![PathBuf::from("phase.gcal"), PathBuf::from("bandpass.bcal")];
+    for value in [
+        casa_provider_contracts::ParameterValue::String("phase.gcal, bandpass.bcal".into()),
+        casa_provider_contracts::ParameterValue::Array(vec![
+            casa_provider_contracts::ParameterValue::String("phase.gcal".into()),
+            casa_provider_contracts::ParameterValue::String("sub/../bandpass.bcal".into()),
+        ]),
+    ] {
+        let mut session = casa_task_runtime::ParameterSession::defaults(
+            builtin_surface_bundle("applycal").unwrap(),
+        )
+        .unwrap();
+        session
+            .set(
+                "vis",
+                casa_provider_contracts::ParameterValue::String("dataset.ms".into()),
+            )
+            .unwrap();
+        session.set("gaintables", value.clone()).unwrap();
+        let CalibrationTaskRequest::ExecuteApply(apply) =
+            read::task_request(&TaskInvocation::new(&session, Path::new("."))).unwrap()
+        else {
+            panic!("an apply");
+        };
+        let paths = apply
+            .calibration_tables
+            .iter()
+            .map(|table| table.path.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(paths, both, "{value:?}");
+    }
 }
 
 fn request_with_gainfield(gainfield: &str) -> Result<CalibrationTaskRequest, TaskFailure> {
@@ -635,10 +733,6 @@ fn value_parsers_cover_their_edges() {
     assert_eq!(
         read::parse_gain_solve_interval("0s").unwrap(),
         GainSolveInterval::Seconds(0.0)
-    );
-    assert_eq!(
-        read::parse_path_list(" a.gcal, ,b.gcal "),
-        [PathBuf::from("a.gcal"), PathBuf::from("b.gcal")]
     );
 }
 

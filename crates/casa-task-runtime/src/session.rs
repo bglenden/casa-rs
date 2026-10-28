@@ -499,7 +499,11 @@ mod tests {
             .unwrap();
         assert!(session.states()["summary_paths"].active);
         let profile = session.render_sparse().unwrap();
-        assert!(profile.contains("summary_paths = \"future-stage.cal\""));
+        // A path list, so the one path is kept as a one-element list.
+        assert!(
+            profile.contains("summary_paths = [\"future-stage.cal\"]"),
+            "{profile}"
+        );
     }
 
     #[test]

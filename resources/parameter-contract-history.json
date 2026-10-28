@@ -937,6 +937,11 @@
       "fingerprint": "4c3b9e27730d042088fa42fb041ced4656d98e074740e2a43c16edec6dd450e1"
     },
     {
+      "id": "parameter.gaintables",
+      "semantic_revision": 2,
+      "fingerprint": "988f089eeaa80f749dee17e0ce86dffa86128ad3004d6619444a5678f8e4de44"
+    },
+    {
       "id": "parameter.gainthreshold",
       "semantic_revision": 1,
       "fingerprint": "ce2078f0d8fd5b7490fbfe4e2d72118241f9257ca034db9dcc5919b234c46aa1"
@@ -2002,6 +2007,11 @@
       "fingerprint": "fd6ffe111495059a6fa398f05ef87ba5c1a877fbf9a47d68e1de73f2a5c5bbca"
     },
     {
+      "id": "parameter.summary_paths",
+      "semantic_revision": 2,
+      "fingerprint": "06e27b2085c78ccf81aa7366a7e5dfc4f0b67b4770c933ec84c4ebe61c05e71a"
+    },
+    {
       "id": "parameter.symbol_size",
       "semantic_revision": 1,
       "fingerprint": "fc140ea00f910f91515ee2cb8f77d0b68f1ac7703cead2017162b0a74aab0b8e"
@@ -2411,7 +2421,7 @@
     {
       "id": "applycal",
       "contract_version": 5,
-      "fingerprint": "71499fd63a5bd3770954f6b135dced22a258a7059617e60cef0e7bd3a33c15b7"
+      "fingerprint": "8ea04c45952724f4fb7173693dbbfb4d858faf243b10fb30805ed12f8f72014c"
     },
     {
       "id": "bandpass",
@@ -2436,7 +2446,7 @@
     {
       "id": "bandpass",
       "contract_version": 5,
-      "fingerprint": "2063ebfc2f9dac2a83be443d5e9565788191626b2e65bae5c043f206ae88fdc1"
+      "fingerprint": "29fe47fb57e4b263b2c331a181c9dbf3d203e80fa4084b4a27c2c1ffe70798aa"
     },
     {
       "id": "calibrate",
@@ -2466,7 +2476,7 @@
     {
       "id": "calibrate",
       "contract_version": 6,
-      "fingerprint": "c0a0bc55272d761513fb20ff09c607e304fdee84966fb194ff8e5d4678f3a4a9"
+      "fingerprint": "6c3140d092135a8a74618471870efaeaaaddf5bc92b47d03eacee5d38b4924d4"
     },
     {
       "id": "clearcal",
@@ -2656,7 +2666,7 @@
     {
       "id": "gaincal",
       "contract_version": 5,
-      "fingerprint": "7fd5ec5fc7606cdaa41c9e4e1b6712aef776aac62d0ccb2e39a9654d8dab5e82"
+      "fingerprint": "3ad06ec3dffd401da0debc23f32653c213d4e97c4c69e98eb730137e09f4be79"
     },
     {
       "id": "gencal",

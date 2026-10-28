@@ -35,12 +35,21 @@ fn workspace() -> Result<PathBuf, String> {
     std::env::current_dir().map_err(|error| format!("the working directory: {error}"))
 }
 
-/// The request `resolved`, every active imager parameter, makes.
+/// The request `resolved`, every active imager parameter, makes. A value the
+/// catalog accepts but the request's own read refuses (`scales = "0,x"`)
+/// is refused at its parameter.
 fn request_from(
     resolved: Map<String, Value>,
-) -> Result<(ImagingParameters, ImagingRequest), String> {
-    let request = serde_json::from_value(Value::Object(resolved.clone()))
-        .map_err(|error| format!("imager parameters: {error}"))?;
+) -> Result<(ImagingParameters, ImagingRequest), TaskFailure> {
+    let request = serde_path_to_error::deserialize(Value::Object(resolved.clone())).map_err(
+        |error: serde_path_to_error::Error<serde_json::Error>| match error.path().iter().next() {
+            Some(serde_path_to_error::Segment::Map { key }) => {
+                TaskFailure::validation(format!("imager parameter {key:?}: {}", error.inner()))
+                    .at(key.clone())
+            }
+            _ => TaskFailure::validation(format!("imager parameters: {}", error.inner())),
+        },
+    )?;
     Ok((ImagingParameters(resolved), request))
 }
 
@@ -51,7 +60,7 @@ pub fn resolve_request(
 ) -> Result<(ImagingParameters, ImagingRequest), String> {
     let resolved = resolve_plain_values(imager_surface()?, workspace()?, &parameters.0)
         .map_err(|error| format!("resolve imager parameters: {error}"))?;
-    request_from(resolved)
+    request_from(resolved).map_err(|failure| failure.message)
 }
 
 /// Run `request`, resolved as `parameters`: the run summary, with the
@@ -99,7 +108,7 @@ pub fn task_front_end()
 pub fn task_request(
     task: &TaskInvocation<'_>,
 ) -> Result<(ImagingParameters, ImagingRequest), TaskFailure> {
-    request_from(task.plain_values()).map_err(TaskFailure::validation)
+    request_from(task.plain_values())
 }
 
 /// Run `task`, one resolved imager request, as the `casars-imager` binary

@@ -3828,7 +3828,7 @@
           "name": "summary_paths",
           "concept": {
             "id": "parameter.summary_paths",
-            "semantic_revision": 1
+            "semantic_revision": 2
           },
           "order": 3,
           "default": {
@@ -3896,7 +3896,7 @@
           "name": "gaintables",
           "concept": {
             "id": "parameter.gaintables",
-            "semantic_revision": 1
+            "semantic_revision": 2
           },
           "order": 4,
           "default": {
@@ -16659,7 +16659,7 @@
           "name": "gaintables",
           "concept": {
             "id": "parameter.gaintables",
-            "semantic_revision": 1
+            "semantic_revision": 2
           },
           "order": 1,
           "default": {
@@ -17869,7 +17869,7 @@
           "name": "gaintables",
           "concept": {
             "id": "parameter.gaintables",
-            "semantic_revision": 1
+            "semantic_revision": 2
           },
           "order": 1,
           "default": {
@@ -19419,7 +19419,7 @@
           "name": "gaintables",
           "concept": {
             "id": "parameter.gaintables",
-            "semantic_revision": 1
+            "semantic_revision": 2
           },
           "order": 1,
           "default": {

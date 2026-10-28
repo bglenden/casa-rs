@@ -154,3 +154,56 @@ fn command_line_and_json_runs_resolve_one_request_and_write_the_same_products() 
         );
     }
 }
+
+#[test]
+fn a_value_the_request_refuses_names_its_parameter_on_both_routes() {
+    // Astra's #967 P3: `scales` passed the catalog's string type, then its
+    // numeric list failed the request's own read without naming it.
+    let directory = tempfile::tempdir().expect("run directory");
+    let run = |args: &[&str], stdin: Option<&str>| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_casars-imager"));
+        command
+            .args(args)
+            .current_dir(directory.path())
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+        let mut child = command.spawn().expect("start casars-imager");
+        if let Some(stdin) = stdin {
+            use std::io::Write as _;
+            child
+                .stdin
+                .take()
+                .expect("stdin")
+                .write_all(stdin.as_bytes())
+                .expect("write the request");
+        }
+        child.wait_with_output().expect("casars-imager output")
+    };
+
+    let refused = run(
+        &[
+            "--vis",
+            "input.ms",
+            "--imagename",
+            "out",
+            "--scales",
+            "0,banana",
+            "--no-save-last",
+        ],
+        None,
+    );
+    assert_eq!(refused.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(stderr.contains("parameter \"scales\""), "{stderr}");
+
+    let request = json!({
+        "surface": "imager",
+        "values": {"vis": "input.ms", "imagename": "out", "scales": "0,banana"},
+    });
+    let replied = run(&["--json-run", "-"], Some(&request.to_string()));
+    assert_eq!(replied.status.code(), Some(2));
+    let reply: serde_json::Value = serde_json::from_slice(&replied.stdout).expect("reply");
+    assert_eq!(reply["kind"], "validation", "{reply}");
+    assert_eq!(reply["parameter"], "scales", "{reply}");
+}
