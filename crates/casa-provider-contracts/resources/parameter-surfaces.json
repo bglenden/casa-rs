@@ -7864,7 +7864,7 @@
     {
       "kind": "task",
       "id": "imager",
-      "contract_version": 26,
+      "contract_version": 27,
       "display_name": "Imager",
       "category": "Imaging",
       "summary": "Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet",
@@ -8023,11 +8023,7 @@
           "active_when": {
             "kind": "always"
           },
-          "refinements": [
-            {
-              "kind": "square_pair"
-            }
-          ],
+          "refinements": [],
           "context_role": null,
           "surface_note": null,
           "projections": {
@@ -8077,11 +8073,7 @@
           "active_when": {
             "kind": "always"
           },
-          "refinements": [
-            {
-              "kind": "square_pair"
-            }
-          ],
+          "refinements": [],
           "context_role": null,
           "surface_note": "Canonical cell maps to provider field cell_arcsec.",
           "projections": {

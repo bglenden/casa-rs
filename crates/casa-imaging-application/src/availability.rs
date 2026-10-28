@@ -44,6 +44,9 @@ pub enum Unsupported {
     /// cube does, but its per-plane weights have no CASA comparison yet
     /// (#719).
     CubeAwProjection,
+    /// AW projection grids a square image of square cells: its native
+    /// convolution functions and their cache are laid out on one axis.
+    NonSquareAwProjection,
 }
 
 impl fmt::Display for Unsupported {
@@ -76,6 +79,10 @@ impl fmt::Display for Unsupported {
             Self::CubeAwProjection => formatter.write_str(
                 "AW projection images specmode mfs; a cube waits for its per-plane weight check \
                  (#719)",
+            ),
+            Self::NonSquareAwProjection => formatter.write_str(
+                "AW projection images a square imsize of square cells; the standard, W and \
+                 mosaic gridders image any other",
             ),
         }
     }
@@ -207,6 +214,17 @@ pub fn check(
         .contains(&RequiredCapability::AwProjection)
     {
         unsupported.push(Unsupported::CubeAwProjection);
+    }
+    if problem
+        .required_capabilities()
+        .contains(&RequiredCapability::AwProjection)
+        && problem.geometry().domains().iter().any(|domain| {
+            let [nx, ny] = domain.shape().pixels();
+            let [dx, dy] = domain.direction().increment_rad();
+            nx != ny || dx.abs() != dy.abs()
+        })
+    {
+        unsupported.push(Unsupported::NonSquareAwProjection);
     }
     if backend == BackendChoice::Metal {
         if !host.metal {

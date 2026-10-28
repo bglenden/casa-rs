@@ -602,8 +602,6 @@ pub enum NarrowingConstraint {
     SelectorCapabilities {
         capabilities: Vec<String>,
     },
-    /// Two-axis value must use the same value on both axes.
-    SquarePair,
 }
 
 /// Surface-specific role for project context and suggestions.
@@ -1821,16 +1819,6 @@ fn validate_refinement_value(
                 }
                 _ => false,
             },
-            NarrowingConstraint::SquarePair => match value {
-                ParameterValue::Array(values) if values.len() == 2 => values[0] == values[1],
-                // A scalar accepted by an allow-scalar pair domain normalizes to
-                // the same value on both axes and is therefore square.
-                ParameterValue::Bool(_)
-                | ParameterValue::Integer(_)
-                | ParameterValue::Float(_)
-                | ParameterValue::String(_) => true,
-                _ => false,
-            },
         };
         if !valid {
             errors.push(
@@ -1907,7 +1895,6 @@ fn validate_refinements(
                     _ => false,
                 }
             }
-            NarrowingConstraint::SquarePair => domain_is_two_axis_pair(&concept.value_domain),
         };
         if !narrowing {
             errors.push(
@@ -1926,18 +1913,6 @@ fn domain_is_numeric(domain: &ParameterType) -> bool {
         ParameterType::Integer | ParameterType::Float | ParameterType::Quantity { .. } => true,
         ParameterType::Array { element, .. } => domain_is_numeric(element),
         ParameterType::Optional { value, .. } => domain_is_numeric(value),
-        _ => false,
-    }
-}
-
-fn domain_is_two_axis_pair(domain: &ParameterType) -> bool {
-    match domain {
-        ParameterType::Array {
-            min_items: 2,
-            max_items: Some(2),
-            ..
-        } => true,
-        ParameterType::Optional { value, .. } => domain_is_two_axis_pair(value),
         _ => false,
     }
 }

@@ -827,7 +827,7 @@ fn facets_and_mosaic_cubes_stay_within_their_admission() {
         &root.path().join("mosaic-cube"),
         json!({ "gridder": "mosaic", "deconvolver": "hogbom", "channel_count": 8 }),
     );
-    mosaic.imsize = 1024;
+    mosaic.imsize = [1024; 2];
     check(&mut breaches, "mosaic cube 8 × 1024²", &mosaic, 2, AMPLE);
     assert!(breaches.is_empty(), "{breaches:#?}");
 }

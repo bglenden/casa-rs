@@ -32,12 +32,14 @@ pub struct ImagingRequest {
     /// the working directory, as CASA's is.
     #[serde(deserialize_with = "absolute")]
     pub imagename: PathBuf,
-    /// Image side in pixels; images are square.
-    #[serde(deserialize_with = "square")]
-    pub imsize: usize,
-    /// Cell side in arcseconds.
-    #[serde(deserialize_with = "cell_arcsec")]
-    pub cell: f64,
+    /// Image size in pixels along x and y; one value sizes both, as CASA's
+    /// `imsize` does.
+    #[serde(deserialize_with = "pixel_pair")]
+    pub imsize: [usize; 2],
+    /// Cell along x and y in arcseconds; one value sizes both, as CASA's
+    /// `cell` does.
+    #[serde(deserialize_with = "cell_pair_arcsec")]
+    pub cell: [f64; 2],
     /// The visibility column imaged; `None` takes `CORRECTED_DATA` when it
     /// exists and `DATA` otherwise.
     #[serde(deserialize_with = "optional")]
@@ -413,7 +415,7 @@ impl ImagingRequest {
                 "name one image centre, not two",
             );
         }
-        if self.imsize == 0 || self.cell <= 0.0 {
+        if self.imsize.contains(&0) || self.cell.iter().any(|cell| *cell <= 0.0) {
             return invalid("imsize, cell", "the image must have positive extent");
         }
         if self.psfcutoff <= 0.0 || self.pblimit == 0.0 || self.pblimit.abs() >= 1.0 {
@@ -636,24 +638,24 @@ fn absolute<'de, D: Deserializer<'de>>(deserializer: D) -> Result<PathBuf, D::Er
     std::path::absolute(PathBuf::deserialize(deserializer)?).map_err(D::Error::custom)
 }
 
-/// Both axes of a square pair, or one value for both.
-fn square_pair(value: Value) -> Result<Value, String> {
-    match value {
-        Value::Array(items) => match <[Value; 2]>::try_from(items) {
-            Ok([first, second]) if first == second => Ok(first),
-            Ok(_) => Err("the image must be square".to_string()),
-            Err(items) => Err(format!("expected two axes, found {}", items.len())),
-        },
-        value => Ok(value),
+/// The x and y values of a pair, or one value for both.
+fn pair<'de, D: Deserializer<'de>>(deserializer: D) -> Result<[Value; 2], D::Error> {
+    match Value::deserialize(deserializer)? {
+        Value::Array(items) => <[Value; 2]>::try_from(items)
+            .map_err(|items| D::Error::custom(format!("expected two axes, found {}", items.len()))),
+        value => Ok([value.clone(), value]),
     }
 }
 
-fn square<'de, D: Deserializer<'de>>(deserializer: D) -> Result<usize, D::Error> {
-    let value = square_pair(Value::deserialize(deserializer)?).map_err(D::Error::custom)?;
-    value
-        .as_u64()
-        .and_then(|side| usize::try_from(side).ok())
-        .ok_or_else(|| unexpected(&value, "a pixel count"))
+fn pixel_pair<'de, D: Deserializer<'de>>(deserializer: D) -> Result<[usize; 2], D::Error> {
+    let side = |value: &Value| {
+        value
+            .as_u64()
+            .and_then(|side| usize::try_from(side).ok())
+            .ok_or_else(|| unexpected(value, "a pixel count"))
+    };
+    let [x, y] = pair(deserializer)?;
+    Ok([side(&x)?, side(&y)?])
 }
 
 /// A quantity `"<number><unit>"` in the catalog's canonical unit, as a number.
@@ -667,9 +669,10 @@ fn quantity(value: &Value, unit: &str) -> Result<f64, String> {
         .ok_or_else(|| format!("expected a quantity in {unit}, found {text:?}"))
 }
 
-fn cell_arcsec<'de, D: Deserializer<'de>>(deserializer: D) -> Result<f64, D::Error> {
-    let value = square_pair(Value::deserialize(deserializer)?).map_err(D::Error::custom)?;
-    quantity(&value, "arcsec").map_err(D::Error::custom)
+fn cell_pair_arcsec<'de, D: Deserializer<'de>>(deserializer: D) -> Result<[f64; 2], D::Error> {
+    let [x, y] = pair(deserializer)?;
+    let arcsec = |value: &Value| quantity(value, "arcsec").map_err(D::Error::custom);
+    Ok([arcsec(&x)?, arcsec(&y)?])
 }
 
 fn threshold_jy<'de, D: Deserializer<'de>>(deserializer: D) -> Result<f64, D::Error> {
@@ -971,6 +974,18 @@ pub(crate) mod tests {
                 memory: u64::MAX,
             }
         );
+    }
+
+    /// CASA's `imsize` and `cell` take one value for both axes or one per
+    /// axis, x first.
+    #[test]
+    fn imsize_and_cell_take_one_value_or_one_per_axis() {
+        let square = request(json!({ "imsize": 64, "cell": "2arcsec" }));
+        assert_eq!((square.imsize, square.cell), ([64, 64], [2.0, 2.0]));
+        let pairs = request(json!({ "imsize": [120, 80], "cell": ["8arcsec", "6arcsec"] }));
+        assert_eq!((pairs.imsize, pairs.cell), ([120, 80], [8.0, 6.0]));
+        pairs.validate().expect("a non-square image");
+        assert!(resolved(json!({ "imsize": [64, 32, 16] })).is_err());
     }
 
     #[test]

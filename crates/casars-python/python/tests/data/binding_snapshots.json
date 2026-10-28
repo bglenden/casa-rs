@@ -296,14 +296,6 @@
              "values": {
               "list": {}
              }
-            },
-            "dict[square_pair](kind,values)": {
-             "kind": {
-              "str": null
-             },
-             "values": {
-              "list": {}
-             }
             }
            }
           },
@@ -497,14 +489,6 @@
           }
          },
          "dict[length](kind,values)": {
-          "kind": {
-           "str": null
-          },
-          "values": {
-           "list": {}
-          }
-         },
-         "dict[square_pair](kind,values)": {
           "kind": {
            "str": null
           },
@@ -706,14 +690,6 @@
             }
            },
            "dict[length](kind,values)": {
-            "kind": {
-             "str": null
-            },
-            "values": {
-             "list": {}
-            }
-           },
-           "dict[square_pair](kind,values)": {
             "kind": {
              "str": null
             },

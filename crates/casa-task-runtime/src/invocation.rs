@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use casa_provider_contracts::{
-    ManagedOutputArgument, NarrowingConstraint, ParameterValue, Predicate, ProviderInvocation,
+    ManagedOutputArgument, ParameterValue, Predicate, ProviderInvocation,
     ProviderInvocationAdaptation, SurfaceContractBundle, TaskRunRequest, ValueAdapter,
 };
 use thiserror::Error;
@@ -328,16 +328,6 @@ pub fn project_parameter_value(
                 ParameterValue::Array(values) => values,
                 value => return scalar_string(value),
             };
-            if binding
-                .refinements
-                .iter()
-                .any(|refinement| matches!(refinement, NarrowingConstraint::SquarePair))
-            {
-                return values
-                    .first()
-                    .ok_or_else(|| "pair is empty".to_string())
-                    .and_then(scalar_string);
-            }
             values
                 .iter()
                 .map(scalar_string)

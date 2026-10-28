@@ -469,11 +469,11 @@ pub enum OutlierProblem {
         /// Its value.
         value: String,
     },
-    /// `imsize` is not a positive square scalar or pair.
-    #[error("outlier imsize must be a positive square scalar or pair")]
+    /// `imsize` is not one positive size or a positive x, y pair.
+    #[error("outlier imsize must be one positive size or a positive pair")]
     ImageSize,
-    /// `cell` is not one positive arcsec value or an equal pair.
-    #[error("outlier cell must be one positive arcsec value or an equal pair")]
+    /// `cell` is not one positive arcsec value or a positive x, y pair.
+    #[error("outlier cell must be one positive arcsec value or a positive pair")]
     Cell,
     /// A `cell` value is not a number.
     #[error("invalid outlier cell {text:?}")]

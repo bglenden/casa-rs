@@ -99,7 +99,7 @@ fn t61_vlass_controls_reach_the_request_and_the_real_snapshot() -> Result<(), Bo
     )?;
     let (_, request) = casars_imager::resolve_request(&parameters)?;
     request.validate()?;
-    assert_eq!(request.imsize, 12_150);
+    assert_eq!(request.imsize, [12_150; 2]);
     assert_eq!(request.spw.as_deref(), Some(FIXTURE_SPW_SELECTOR));
     assert!(!request.parallel);
     let Gridder::Awproject(AwProjection {

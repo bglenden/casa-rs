@@ -323,7 +323,6 @@ impl From<&NarrowingConstraint> for ConstraintView {
             NarrowingConstraint::Length { .. } => "length",
             NarrowingConstraint::AllowedValues { .. } => "allowed_values",
             NarrowingConstraint::SelectorCapabilities { .. } => "selector_capabilities",
-            NarrowingConstraint::SquarePair => "square_pair",
         };
         let values = match value {
             NarrowingConstraint::AllowedValues { values }

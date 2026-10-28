@@ -484,15 +484,6 @@ fn validate_refinements(
                 validate_selector_capabilities(*grammar, value, capabilities)
                     .map_err(NormalizationError::Constraint)?;
             }
-            NarrowingConstraint::SquarePair => match value {
-                ParameterValue::Array(values)
-                    if values.len() == 2 && values_semantically_equal(&values[0], &values[1]) => {}
-                _ => {
-                    return Err(NormalizationError::Constraint(
-                        "two-axis value must be square/equal".into(),
-                    ));
-                }
-            },
         }
     }
     Ok(())
@@ -675,7 +666,7 @@ mod tests {
     }
 
     #[test]
-    fn scalar_imsize_normalizes_to_square_pair() {
+    fn a_scalar_pair_value_normalizes_to_both_axes() {
         let concept = concept(
             ParameterType::Array {
                 element: Box::new(ParameterType::Integer),
