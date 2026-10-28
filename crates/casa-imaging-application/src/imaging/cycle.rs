@@ -700,20 +700,27 @@ impl<'a> Run<'a> {
             kept_weights: None,
             row_work: None,
         };
-        if run.visibility_write.is_some() {
-            // The pass that writes must hold every plane, and is refused now
-            // rather than after the cycles that precede it.
-            let (modes, with_model) = write_pass(problem, initial, run.start_model.is_some());
-            if run
-                .admit_pass(modes, with_model, run.visibility_write_bytes, true)?
-                .value
-                .residency
-                != Residency::All
-            {
-                return Err(ImagingError::Pass(PassError::VisibilityWriteWaves));
-            }
-        }
+        run.refuse_a_waved_write()?;
         Ok(run)
+    }
+
+    /// The pass that writes visibilities must hold every plane: a run whose
+    /// write would take waves is refused as it opens, rather than after the
+    /// cycles that precede it.
+    fn refuse_a_waved_write(&self) -> Result<(), ImagingError> {
+        if self.visibility_write.is_none() {
+            return Ok(());
+        }
+        let (modes, with_model) = write_pass(
+            self.problem,
+            self.initial_modes(),
+            self.start_model.is_some(),
+        );
+        let plan = self.admit_pass(modes, with_model, self.visibility_write_bytes, true)?;
+        if plan.value.residency != Residency::All {
+            return Err(ImagingError::Pass(PassError::VisibilityWriteWaves));
+        }
+        Ok(())
     }
 
     /// The initial major cycle: data and PSF, from the start model when there
