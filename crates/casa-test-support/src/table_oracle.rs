@@ -62,6 +62,22 @@ impl TableOracle {
         })
     }
 
+    /// Read, in C++ casacore, the Double array table keyword `keyword` of
+    /// the table at `path`, and return its shape and its elements in
+    /// casacore's storage order (the first axis fastest, as
+    /// `Array::tovector` gives them).
+    pub fn keyword_double_array(
+        path: &std::path::Path,
+        keyword: &str,
+    ) -> Result<(Vec<usize>, Vec<f64>), OracleError> {
+        table_operation!("table.keyword_double_array", {
+            cpp_keyword_double_array(path, keyword).map_err(|message| OracleError::CppFailure {
+                operation: "table.keyword_double_array",
+                message,
+            })
+        })
+    }
+
     /// Open the table at `path` in C++ casacore with `UserLocking`, take,
     /// release and retake an explicit read lock, and return `(rows,
     /// columns)` as the locked table reports them.

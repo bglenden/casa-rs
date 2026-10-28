@@ -769,6 +769,51 @@ pub(crate) fn cpp_keyword_table_name(
         .map_err(|error| error.to_string())
 }
 
+/// Read the Double array table keyword `keyword` of the table at `path` in
+/// C++ casacore: its shape, and its elements in casacore's storage order
+/// (the first axis fastest).
+#[cfg(has_casacore_cpp)]
+pub(crate) fn cpp_keyword_double_array(
+    path: &std::path::Path,
+    keyword: &str,
+) -> Result<(Vec<usize>, Vec<f64>), String> {
+    const MAX_NDIM: usize = 8;
+    const MAX_VALUES: usize = 1 << 16;
+    let c_path =
+        CasacoreOracleRuntime::c_path("table path", path).map_err(|error| error.to_string())?;
+    let c_keyword = CasacoreOracleRuntime::c_string("keyword name", keyword)
+        .map_err(|error| error.to_string())?;
+    let mut shape = [0_i64; MAX_NDIM];
+    let mut values = vec![0.0_f64; MAX_VALUES];
+    let (mut ndim, mut count) = (0_i32, 0_i64);
+    let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+    let rc = unsafe {
+        cpp_table_keyword_double_array(
+            c_path.as_ptr(),
+            c_keyword.as_ptr(),
+            shape.as_mut_ptr(),
+            MAX_NDIM as i32,
+            &mut ndim,
+            values.as_mut_ptr(),
+            MAX_VALUES as i64,
+            &mut count,
+            &mut error,
+        )
+    };
+    unsafe {
+        CasacoreOracleRuntime::cpp_status(
+            "table.keyword_double_array",
+            rc,
+            error,
+            cpp_table_free_error,
+        )
+    }
+    .map_err(|error| error.to_string())?;
+    values.truncate(count as usize);
+    let shape = shape[..ndim as usize].iter().map(|&d| d as usize).collect();
+    Ok((shape, values))
+}
+
 /// A C++ casacore `Table` and its `ScalarColumn<Int>` "id", opened with
 /// `UserLocking` and held open; closed with [`cpp_held_reader_close`].
 #[cfg(has_casacore_cpp)]
