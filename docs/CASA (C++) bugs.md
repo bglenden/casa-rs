@@ -2239,6 +2239,12 @@ theoretical_beam_arcsec`), so the beam describes the image the gridder
 makes. `BOX` at its default support, which both describe alike, agrees with
 CASA to 2e-8.
 
+The cost falls downstream. `simanalyze` and `simalma` grid total power with
+`SF` of support 6 and scale its flux by this beam's area. A beam 6e-4 wider
+is an area about 1.2e-3 larger, so their scaled total-power and feathered
+products differ from CASA's by about that factor, at the edge of the 1e-3
+acceptance. Phases 6g and 6h measure it.
+
 ## `getPointingSamplingRaster` measures the row spacing in raw longitude
 
 - Date noted: 2026-10-28
@@ -2272,9 +2278,17 @@ mark is then never cleared, so no beam is set, whatever the other interval
 is. When only the interval across the scan is invalid (a map with no row
 gaps), it uses the along-scan one and sets the beam.
 
-casa-rs does what the log says: either valid interval alone gives the beam
+An image without a beam cannot be read in Jy/beam, and `simanalyze` and
+`simalma` cannot scale its total power. The interval across the scan is a
+real sampling of the map, and a map whose along-scan steps are below 2.2 mas
+(for example one that dwells several integrations at each position) is not
+smeared along the scan by them. The beam from the one valid interval is
+therefore the better estimate of the image's resolution. casa-rs does what
+the log says: either valid interval alone gives the beam
 (`casa_imaging_singledish::beam_sampling`), and only two invalid intervals
-give none.
+give none. `simobserve`'s maps, the multi-array regression's among them,
+have no row gaps, so they take the other path, and CASA and casa-rs both
+set the beam from the along-scan interval.
 
 ## `SDGrid` grids nothing with an `SF` kernel of no support
 
