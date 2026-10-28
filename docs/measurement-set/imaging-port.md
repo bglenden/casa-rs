@@ -493,7 +493,10 @@ updaters write back, and the MeasurementSet is opened and indexed once.
   so the MSv2 observation reads what it needs from it (each data group's
   tile shape) once, when it opens, and an estimate reads no file the saves
   rewrite. The multi-partition write test found the read that did: about
-  one run in fifteen tore it. That test also found that the pass runtime
+  one run in fifteen tore it. Writing `table.dat` by rename would make a
+  torn read impossible (#983). Each save also clears every cached tile of
+  MAIN, not only the written column's (#984), which step 6's timing
+  weighs. That test also found that the pass runtime
   dropped a source's failure when its producer stopped first. The stream
   now reads everything the producer sent (`pass_laws`
   `a_source_failing_midway_fails_the_pass`).

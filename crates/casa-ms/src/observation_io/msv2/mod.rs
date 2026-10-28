@@ -189,14 +189,16 @@ impl Msv2Observation {
             grant,
         )?;
         let groups = data_groups(main, spectral_weights, uvw_frame);
+        // A shape is a hint for an estimate's natural blocks: a header that
+        // cannot be read leaves its group the hint's fallback, as a column
+        // without tiles has, and refuses nothing until the group is read.
         let tile_shapes = groups
             .iter()
             .map(|group| {
-                main.array_column_tile_shape(&group.visibilities)
-                    .map(|shape| (group.visibilities.clone(), shape))
-                    .map_err(table_error)
+                let shape = main.array_column_tile_shape(&group.visibilities);
+                (group.visibilities.clone(), shape.ok().flatten())
             })
-            .collect::<Result<Vec<_>, _>>()?;
+            .collect();
         let mut partitions = Vec::new();
         let mut entries = Vec::new();
         for (key, grid) in index.partitions {
