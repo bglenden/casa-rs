@@ -30,8 +30,8 @@ pub(crate) fn scan_rows(budget: usize) -> usize {
 impl Msv2Observation {
     /// The most bytes a pointing query of this observation holds while it
     /// is read and once it is answered, whatever its antennas and times:
-    /// every `POINTING` row taken as a candidate at [`POLYNOMIAL_TERMS`]
-    /// terms (the production source's bound), with one scan block, and the
+    /// every `POINTING` row taken as a candidate at four polynomial terms
+    /// (the production source's bound), with one scan block, and the
     /// series it gives. A [`PointingRequest`] with this budget is never
     /// refused for its size. Zero without a `POINTING` table.
     ///
