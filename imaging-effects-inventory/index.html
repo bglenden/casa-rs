@@ -745,8 +745,8 @@ Capabilities not yet transferred to that composition are
 <tr>
 <td>CASA <code>startmodel</code></td>
 <td>seed <code>imagename.model</code> from one or more model images before deconvolution/model prediction</td>
-<td>none</td>
-<td>not available: the imager catalog has no <code>startmodel</code> since IF-7 (#656, owner decision), and it returns only with a ticket. #219 had implemented one existing single-plane startmodel image for non-mosaic, single-term MFS on the displaced route. CASA source seams are <code>task_deconvolve.py::check_starmodel_model_collisions</code>, <code>SynthesisParamsImage</code> startmodel parsing/validation in <code>SynthesisUtilMethods.cc</code>, and <code>SynthesisImager::createIMStore</code> calling <code>SIImageStore::setModelImage</code></td>
+<td>catalog parameter <code>startmodel</code>; <code>compile::start_model</code> checks it, and the initial pass seeds the model's first generation from it (<code>ModelLifecycle::initial_from_start_model</code>)</td>
+<td>returned with #841 Phase 6b, after IF-7 had removed it (#656, owner decision). One Jy/pixel image for the main field, MFS or cube, any gridder: masked pixels zero, regridded linearly onto the image's grid with its flux kept, its Stokes and spectral axes the image's; the first major cycle subtracts its prediction and the restored image includes it, as <code>SIImageStore::setModelImageOne</code> and <code>regridToModelImage</code> do. Refused: a unit other than Jy/pixel (as CASA), <code>mtmfs</code> (one image per Taylor term) and an outlier file. CASA 6.7.6 on <code>refim_point.ms</code> agrees to NRMS 4e-6 (residual)</td>
 </tr>
 <tr>
 <td>CASA <code>outlierfile</code></td>

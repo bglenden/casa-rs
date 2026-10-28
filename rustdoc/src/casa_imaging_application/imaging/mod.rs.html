@@ -74,5 +74,12 @@
 <a href=#74 id=74 data-nosnippet>74</a>    <span class="doccomment">/// The paged cube state could not be created.
 <a href=#75 id=75 data-nosnippet>75</a>    </span><span class="attr">#[error(<span class="string">"cube state: {0}"</span>)]
 <a href=#76 id=76 data-nosnippet>76</a>    </span>CubeState(<span class="attr">#[from] </span>std::io::Error),
-<a href=#77 id=77 data-nosnippet>77</a>}
+<a href=#77 id=77 data-nosnippet>77</a>    <span class="doccomment">/// The start model could not be read or regridded.
+<a href=#78 id=78 data-nosnippet>78</a>    </span><span class="attr">#[error(<span class="string">"startmodel: {0}"</span>)]
+<a href=#79 id=79 data-nosnippet>79</a>    </span>StartModel(<span class="attr">#[source] </span>casa_images::ImageError),
+<a href=#80 id=80 data-nosnippet>80</a>    <span class="doccomment">/// A start model in flat-noise units could not be made physical with
+<a href=#81 id=81 data-nosnippet>81</a>    /// the initial pass's weights.
+<a href=#82 id=82 data-nosnippet>82</a>    </span><span class="attr">#[error(<span class="string">"startmodel units: {0}"</span>)]
+<a href=#83 id=83 data-nosnippet>83</a>    </span>StartModelUnits(<span class="attr">#[source] </span>casa_imaging_products::ProductsError),
+<a href=#84 id=84 data-nosnippet>84</a>}
 </code></pre></div></section></main></body></html>

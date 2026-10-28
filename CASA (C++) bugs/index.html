@@ -1906,6 +1906,28 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#tclean-reads-a-uvtaper-with-no-unit-as-radians" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        tclean reads a uvtaper with no unit as radians
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tclean-seeds-a-stokes-i-image-from-a-stokes-q-start-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        tclean seeds a Stokes I image from a Stokes Q start model
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -4109,6 +4131,43 @@ are all image expressions over <code>&lt;project&gt;/&lt;project&gt;.&lt;configu
 project whose path contains "pa" gets a fidelity labelled deg, and
 difference and fidelity images whose Stokes plane is a position angle. casa-rs
 computes those images directly and keeps the Stokes axis.</p>
+<h2 id="tclean-reads-a-uvtaper-with-no-unit-as-radians"><code>tclean</code> reads a <code>uvtaper</code> with no unit as radians<a class="headerlink" href="#tclean-reads-a-uvtaper-with-no-unit-as-radians" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-10-28</li>
+<li>Status: CASA bug; casa-rs refuses the value (#841 Phase 6b)</li>
+<li>Affected code: casatools <code>synthesisimager_cmpt.cc</code> (<code>setweighting</code>) and
+  <code>msvis/MSVis/VisImagingWeight.cc</code> (<code>setFilter</code>)</li>
+</ul>
+<p><code>tclean</code>'s documentation gives <code>uvtaper=['300.0']</code> as a taper in
+wavelengths ("default units are lambda in aperture plane"). <code>setFilter</code> takes
+the uv-plane path only when the unit contains "lambda", and otherwise treats
+the value as an image-plane angle, here 300 radians. The filter is then
+<code>exp(-π²θ²/(4 ln 2) u²)</code>, which underflows to zero on every baseline of
+<code>refim_point.ms</code>. Every imaging weight is zero there, and the image is empty
+with a beam of 1e-6 arcsec (CASA 6.7.6). A unitless value is always an angle
+in radians to CASA, never the documented wavelengths. Whether it empties the
+image depends on the value and the baselines, and a small enough one does
+not. casa-rs refuses a <code>uvtaper</code> entry without a unit and asks for an angle
+or for wavelengths (<code>casa_imaging_application::ImagingRequest::uvtaper</code>).</p>
+<h2 id="tclean-seeds-a-stokes-i-image-from-a-stokes-q-start-model"><code>tclean</code> seeds a Stokes I image from a Stokes Q start model<a class="headerlink" href="#tclean-seeds-a-stokes-i-image-from-a-stokes-q-start-model" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-10-28</li>
+<li>Status: CASA bug; casa-rs refuses the start model (#841 Phase 6b, #970
+  review)</li>
+<li>Affected code: casatools <code>synthesis/ImagerObjects/SIImageStore.cc</code>
+  (<code>setModelImageOne</code>, <code>regridToModelImage</code>) and casacore
+  <code>images/Images/ImageRegrid.tcc</code></li>
+</ul>
+<p><code>regridToModelImage</code> regrids a start model on its direction and spectral
+axes only. <code>ImageRegrid</code> copies the Stokes axis without comparing its
+coordinate, so a one-plane Stokes Q model seeds the model of a Stokes I run.
+Its pixels are then predicted, subtracted and restored as Stokes I. casa-rs
+requires the start model's Stokes to be the image's, plane for plane, a
+single plane included (<code>casa_imaging_application</code>'s <code>StartModel</code>).</p>
+<p>A degenerate spectral axis is replicated the same way: an MFS start model of
+one plane seeds the MFS plane at whatever frequency it is stated. That is
+physically sound for a continuum model, and casa-rs keeps it. A cube's start
+model must have the cube's spectral axis.</p>
 
 
 

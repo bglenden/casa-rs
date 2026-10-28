@@ -330,8 +330,8 @@
 <a href=#330 id=330 data-nosnippet>330</a>    </span><span class="kw">fn </span>imager_wide_field_controls_share_one_catalog_owned_surface() {
 <a href=#331 id=331 data-nosnippet>331</a>        <span class="kw">let </span>catalog = builtin_surface_catalog().unwrap();
 <a href=#332 id=332 data-nosnippet>332</a>        <span class="kw">let </span>surface = catalog.surface(<span class="string">"imager"</span>).unwrap();
-<a href=#333 id=333 data-nosnippet>333</a>        <span class="macro">assert_eq!</span>(surface.contract_version(), <span class="number">27</span>);
-<a href=#334 id=334 data-nosnippet>334</a>        <span class="macro">assert_eq!</span>(surface.bindings().len(), <span class="number">81</span>);
+<a href=#333 id=333 data-nosnippet>333</a>        <span class="macro">assert_eq!</span>(surface.contract_version(), <span class="number">28</span>);
+<a href=#334 id=334 data-nosnippet>334</a>        <span class="macro">assert_eq!</span>(surface.bindings().len(), <span class="number">83</span>);
 <a href=#335 id=335 data-nosnippet>335</a>        <span class="kw">for </span>binding <span class="kw">in </span>surface.bindings() {
 <a href=#336 id=336 data-nosnippet>336</a>            <span class="kw">let </span>concept = catalog
 <a href=#337 id=337 data-nosnippet>337</a>                .catalog

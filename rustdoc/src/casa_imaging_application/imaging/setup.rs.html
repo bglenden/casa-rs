@@ -119,470 +119,496 @@
 <a href=#119 id=119 data-nosnippet>119</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) modes: ModeSet,
 <a href=#120 id=120 data-nosnippet>120</a>    <span class="doccomment">/// What the initial pass also holds: the model.
 <a href=#121 id=121 data-nosnippet>121</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) model_bytes: u64,
-<a href=#122 id=122 data-nosnippet>122</a>    <span class="doccomment">/// The modes and model of the pass that writes visibilities, and what
-<a href=#123 id=123 data-nosnippet>123</a>    /// the write holds; it holds every plane.
-<a href=#124 id=124 data-nosnippet>124</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) write: <span class="prelude-ty">Option</span>&lt;(ModeSet, bool, u64)&gt;,
-<a href=#125 id=125 data-nosnippet>125</a>    <span class="kw">pub</span>(<span class="kw">super</span>) spill_directory: <span class="kw-2">&amp;</span><span class="lifetime">'r </span>Path,
-<a href=#126 id=126 data-nosnippet>126</a>    <span class="doccomment">/// Whether the cube state keeps a weight image per plane.
-<a href=#127 id=127 data-nosnippet>127</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) weight_image: bool,
-<a href=#128 id=128 data-nosnippet>128</a>    <span class="doccomment">/// What a minor cycle holds on a team of so many workers.
-<a href=#129 id=129 data-nosnippet>129</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) minor: <span class="kw-2">&amp;</span><span class="lifetime">'r </span><span class="kw">dyn </span>Fn(usize) -&gt; u64,
-<a href=#130 id=130 data-nosnippet>130</a>    <span class="doccomment">/// What a refresh pass holds beside its own wave; `None` for a run
-<a href=#131 id=131 data-nosnippet>131</a>    /// that does not clean.
-<a href=#132 id=132 data-nosnippet>132</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) refresh: <span class="prelude-ty">Option</span>&lt;RefreshDemand&gt;,
-<a href=#133 id=133 data-nosnippet>133</a>    <span class="doccomment">/// The imaging weights the passes keep across passes, when the run
-<a href=#134 id=134 data-nosnippet>134</a>    /// keeps them (`Run::keep_weights`).
-<a href=#135 id=135 data-nosnippet>135</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) kept_weights: u64,
-<a href=#136 id=136 data-nosnippet>136</a>    <span class="doccomment">/// The memory the policy leaves free before the setup's charges.
-<a href=#137 id=137 data-nosnippet>137</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) free: u64,
-<a href=#138 id=138 data-nosnippet>138</a>}
-<a href=#139 id=139 data-nosnippet>139</a>
-<a href=#140 id=140 data-nosnippet>140</a><span class="doccomment">/// What the run holds beside a refresh pass's own wave, from the layout
-<a href=#141 id=141 data-nosnippet>141</a>/// the first pass forms (#763 review): the minor cycle's masks, a cached
-<a href=#142 id=142 data-nosnippet>142</a>/// Clark refresh, the model terms the minor cycle hands the pass, and the
-<a href=#143 id=143 data-nosnippet>143</a>/// record of every minor cycle before it, which the run keeps.
-<a href=#144 id=144 data-nosnippet>144</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>RefreshDemand {
-<a href=#145 id=145 data-nosnippet>145</a>    <span class="doccomment">/// The latest masks and the ones an automatic mask evolves from.
-<a href=#146 id=146 data-nosnippet>146</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) masks: u64,
-<a href=#147 id=147 data-nosnippet>147</a>    <span class="doccomment">/// The Clark refresh a single-plane Clark run caches.
-<a href=#148 id=148 data-nosnippet>148</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) cached: u64,
-<a href=#149 id=149 data-nosnippet>149</a>    <span class="doccomment">/// The minor cycle's model terms, which its solve admits while it still
-<a href=#150 id=150 data-nosnippet>150</a>    /// holds its own charge and the refresh pass holds until the model
-<a href=#151 id=151 data-nosnippet>151</a>    /// takes them (#778 review).
-<a href=#152 id=152 data-nosnippet>152</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) results: u64,
-<a href=#153 id=153 data-nosnippet>153</a>    <span class="doccomment">/// The records of the cycles up to the last refresh `nmajor` allows,
-<a href=#154 id=154 data-nosnippet>154</a>    /// or the first when it allows any number.
-<a href=#155 id=155 data-nosnippet>155</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) records: u64,
-<a href=#156 id=156 data-nosnippet>156</a>}
-<a href=#157 id=157 data-nosnippet>157</a>
-<a href=#158 id=158 data-nosnippet>158</a><span class="kw">impl </span>SetupDemand&lt;<span class="lifetime">'_</span>&gt; {
-<a href=#159 id=159 data-nosnippet>159</a>    <span class="doccomment">/// The bytes the run holds at most on `cores`: the kernel sets and the
-<a href=#160 id=160 data-nosnippet>160</a>    /// cube state throughout, beside the imaging-weights pass or, after it,
-<a href=#161 id=161 data-nosnippet>161</a>    /// its density grid with the region row-work pass, and then with the
-<a href=#162 id=162 data-nosnippet>162</a>    /// work and imaging weights it keeps, the first major-cycle pass beside
-<a href=#163 id=163 data-nosnippet>163</a>    /// the model, and after it a minor cycle or a refresh pass beside the
-<a href=#164 id=164 data-nosnippet>164</a>    /// normal state and model and [`RefreshDemand`]
-<a href=#165 id=165 data-nosnippet>165</a>    /// ([`StageCharges::largest`]).
-<a href=#166 id=166 data-nosnippet>166</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>bytes(<span class="kw-2">&amp;</span><span class="self">self</span>, cores: CoreAllocation) -&gt; <span class="prelude-ty">Result</span>&lt;u64, ImagingError&gt; {
-<a href=#167 id=167 data-nosnippet>167</a>        <span class="kw">let </span>streaming = cores.streaming_workers;
-<a href=#168 id=168 data-nosnippet>168</a>        <span class="kw">let </span>kernels = <span class="self">self
-<a href=#169 id=169 data-nosnippet>169</a>            </span>.domains
-<a href=#170 id=170 data-nosnippet>170</a>            .iter()
-<a href=#171 id=171 data-nosnippet>171</a>            .map(|domain| domain.pending_kernel_bytes(streaming))
-<a href=#172 id=172 data-nosnippet>172</a>            .sum::&lt;u64&gt;();
-<a href=#173 id=173 data-nosnippet>173</a>        <span class="kw">let </span>(weighing, weights) =
-<a href=#174 id=174 data-nosnippet>174</a>            weights_bytes(<span class="self">self</span>.problem, <span class="kw-2">&amp;</span><span class="self">self</span>.domains[<span class="number">0</span>], <span class="self">self</span>.block, streaming)<span class="question-mark">?</span>;
-<a href=#175 id=175 data-nosnippet>175</a>        <span class="kw">let </span>cube = <span class="kw">if </span><span class="macro">matches!</span>(
-<a href=#176 id=176 data-nosnippet>176</a>            <span class="self">self</span>.problem.reconstruction().basis(),
-<a href=#177 id=177 data-nosnippet>177</a>            ReconstructionBasis::ChannelLocal { .. }
-<a href=#178 id=178 data-nosnippet>178</a>        ) {
-<a href=#179 id=179 data-nosnippet>179</a>            cube_cache_bytes(
-<a href=#180 id=180 data-nosnippet>180</a>                <span class="self">self</span>.problem,
-<a href=#181 id=181 data-nosnippet>181</a>                <span class="self">self</span>.spill_directory,
-<a href=#182 id=182 data-nosnippet>182</a>                (cores.workers, <span class="self">self</span>.weight_image),
-<a href=#183 id=183 data-nosnippet>183</a>                <span class="self">self</span>.free.saturating_sub(kernels + weights),
-<a href=#184 id=184 data-nosnippet>184</a>            )<span class="question-mark">? </span><span class="kw">as </span>u64
-<a href=#185 id=185 data-nosnippet>185</a>        } <span class="kw">else </span>{
-<a href=#186 id=186 data-nosnippet>186</a>            <span class="number">0
-<a href=#187 id=187 data-nosnippet>187</a>        </span>};
-<a href=#188 id=188 data-nosnippet>188</a>        <span class="comment">// The first pass cuts its strips from the row work measured before
-<a href=#189 id=189 data-nosnippet>189</a>        // it; no cut holds more than the widest strips (#736).
-<a href=#190 id=190 data-nosnippet>190</a>        </span><span class="kw">let </span>domains = pass_domains(<span class="self">self</span>.domains, streaming, <span class="prelude-val">None</span>)
-<a href=#191 id=191 data-nosnippet>191</a>            .into_iter()
-<a href=#192 id=192 data-nosnippet>192</a>            .map(|domain| <span class="kw">match </span>domain.partition {
-<a href=#193 id=193 data-nosnippet>193</a>                Partition::Regions { <span class="kw-2">ref </span>regions, .. } =&gt; PassDomain {
-<a href=#194 id=194 data-nosnippet>194</a>                    partition: Partition::regions_widest(domain.operator, regions.len()),
-<a href=#195 id=195 data-nosnippet>195</a>                    ..domain
-<a href=#196 id=196 data-nosnippet>196</a>                },
-<a href=#197 id=197 data-nosnippet>197</a>                Partition::Planes { .. } =&gt; domain,
-<a href=#198 id=198 data-nosnippet>198</a>            })
-<a href=#199 id=199 data-nosnippet>199</a>            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-<a href=#200 id=200 data-nosnippet>200</a>        <span class="kw">let </span>(measuring, measured) = <span class="kw">if </span>needs_row_work(<span class="kw-2">&amp;</span>domains) {
-<a href=#201 id=201 data-nosnippet>201</a>            <span class="kw">let </span>rows = domains
-<a href=#202 id=202 data-nosnippet>202</a>                .iter()
-<a href=#203 id=203 data-nosnippet>203</a>                .filter(|domain| domain.partition.splits_rows())
-<a href=#204 id=204 data-nosnippet>204</a>                .map(|domain| domain.operator.geometry().grid_shape()[<span class="number">1</span>])
-<a href=#205 id=205 data-nosnippet>205</a>                .sum::&lt;usize&gt;();
-<a href=#206 id=206 data-nosnippet>206</a>            (
-<a href=#207 id=207 data-nosnippet>207</a>                row_work_pass_bytes(<span class="kw-2">&amp;</span>domains, streaming, <span class="self">self</span>.weight_image),
-<a href=#208 id=208 data-nosnippet>208</a>                MeasuredRowWork::kept_bytes(rows, domains.len()),
-<a href=#209 id=209 data-nosnippet>209</a>            )
-<a href=#210 id=210 data-nosnippet>210</a>        } <span class="kw">else </span>{
-<a href=#211 id=211 data-nosnippet>211</a>            (<span class="number">0</span>, <span class="number">0</span>)
-<a href=#212 id=212 data-nosnippet>212</a>        };
-<a href=#213 id=213 data-nosnippet>213</a>        <span class="kw">let </span>wave = |modes: ModeSet, with_model| WaveDemand {
-<a href=#214 id=214 data-nosnippet>214</a>            domains: <span class="kw-2">&amp;</span>domains,
-<a href=#215 id=215 data-nosnippet>215</a>            modes,
-<a href=#216 id=216 data-nosnippet>216</a>            with_model,
-<a href=#217 id=217 data-nosnippet>217</a>            native_spacing_hz: <span class="self">self</span>.native_spacing_hz,
-<a href=#218 id=218 data-nosnippet>218</a>            workers: streaming,
-<a href=#219 id=219 data-nosnippet>219</a>            backend: <span class="self">self</span>.backend,
-<a href=#220 id=220 data-nosnippet>220</a>            block: <span class="self">self</span>.block,
-<a href=#221 id=221 data-nosnippet>221</a>            chunk_placements: CHUNK_PLACEMENTS,
-<a href=#222 id=222 data-nosnippet>222</a>            chunk_sets: <span class="number">1</span>,
-<a href=#223 id=223 data-nosnippet>223</a>        };
-<a href=#224 id=224 data-nosnippet>224</a>        <span class="kw">let </span>refreshing = wave(ModeSet::DATA, <span class="bool-val">true</span>);
-<a href=#225 id=225 data-nosnippet>225</a>        <span class="kw">let </span><span class="kw-2">mut </span>first = wave(<span class="self">self</span>.modes, <span class="bool-val">false</span>).bytes(<span class="number">1</span>) + <span class="self">self</span>.stitch.pass_bytes(<span class="bool-val">true</span>);
-<a href=#226 id=226 data-nosnippet>226</a>        <span class="kw">let </span><span class="kw-2">mut </span>refresh = refreshing.bytes(<span class="number">1</span>) + <span class="self">self</span>.stitch.pass_bytes(<span class="bool-val">false</span>);
-<a href=#227 id=227 data-nosnippet>227</a>        <span class="comment">// A run that cleans writes on its last refresh, or on a prediction
-<a href=#228 id=228 data-nosnippet>228</a>        // after it; one that does not, on its first pass (`write_pass`). The
-<a href=#229 id=229 data-nosnippet>229</a>        // pass that writes holds every plane (#778 review).
-<a href=#230 id=230 data-nosnippet>230</a>        </span><span class="kw">if let </span><span class="prelude-val">Some</span>((modes, with_model, written)) = <span class="self">self</span>.write {
-<a href=#231 id=231 data-nosnippet>231</a>            <span class="kw">let </span>demand = wave(modes, with_model);
-<a href=#232 id=232 data-nosnippet>232</a>            <span class="kw">let </span>writing =
-<a href=#233 id=233 data-nosnippet>233</a>                demand.bytes(demand.planes()) + <span class="self">self</span>.stitch.pass_bytes(modes.psf) + written;
-<a href=#234 id=234 data-nosnippet>234</a>            <span class="kw">if </span><span class="self">self</span>.refresh.is_some() {
-<a href=#235 id=235 data-nosnippet>235</a>                refresh = refresh.max(writing);
-<a href=#236 id=236 data-nosnippet>236</a>            } <span class="kw">else </span>{
-<a href=#237 id=237 data-nosnippet>237</a>                first = first.max(writing);
-<a href=#238 id=238 data-nosnippet>238</a>            }
-<a href=#239 id=239 data-nosnippet>239</a>        }
-<a href=#240 id=240 data-nosnippet>240</a>        <span class="kw">let </span>stages = StageCharges {
-<a href=#241 id=241 data-nosnippet>241</a>            weighing,
-<a href=#242 id=242 data-nosnippet>242</a>            weights,
-<a href=#243 id=243 data-nosnippet>243</a>            measuring,
-<a href=#244 id=244 data-nosnippet>244</a>            kept: weights + measured + <span class="self">self</span>.kept_weights,
-<a href=#245 id=245 data-nosnippet>245</a>            first_pass: first + <span class="self">self</span>.model_bytes,
-<a href=#246 id=246 data-nosnippet>246</a>            minor: (<span class="self">self</span>.minor)(cores.workers),
-<a href=#247 id=247 data-nosnippet>247</a>            after: <span class="self">self</span>.refresh.as_ref().map(|demand| AfterFirstPass {
-<a href=#248 id=248 data-nosnippet>248</a>                normal: refreshing.resident_normal_bytes(),
-<a href=#249 id=249 data-nosnippet>249</a>                model: <span class="self">self</span>.model_bytes,
-<a href=#250 id=250 data-nosnippet>250</a>                cached: demand.cached,
-<a href=#251 id=251 data-nosnippet>251</a>                records: demand.records,
-<a href=#252 id=252 data-nosnippet>252</a>                results: demand.results,
-<a href=#253 id=253 data-nosnippet>253</a>                refresh_pass: demand.masks + refresh,
-<a href=#254 id=254 data-nosnippet>254</a>            }),
-<a href=#255 id=255 data-nosnippet>255</a>        };
-<a href=#256 id=256 data-nosnippet>256</a>        <span class="prelude-val">Ok</span>(kernels + cube + stages.largest())
-<a href=#257 id=257 data-nosnippet>257</a>    }
-<a href=#258 id=258 data-nosnippet>258</a>}
-<a href=#259 id=259 data-nosnippet>259</a>
-<a href=#260 id=260 data-nosnippet>260</a><span class="doccomment">/// The charges of a run's sequential stages beside its kernels and cube
-<a href=#261 id=261 data-nosnippet>261</a>/// state ([`Self::largest`]).
-<a href=#262 id=262 data-nosnippet>262</a></span><span class="attr">#[derive(Clone, Copy, Debug)]
-<a href=#263 id=263 data-nosnippet>263</a></span><span class="kw">struct </span>StageCharges {
-<a href=#264 id=264 data-nosnippet>264</a>    <span class="doccomment">/// The imaging-weights pass.
-<a href=#265 id=265 data-nosnippet>265</a>    </span>weighing: u64,
-<a href=#266 id=266 data-nosnippet>266</a>    <span class="doccomment">/// The density grid the weights keep.
-<a href=#267 id=267 data-nosnippet>267</a>    </span>weights: u64,
-<a href=#268 id=268 data-nosnippet>268</a>    <span class="doccomment">/// The region row-work pass.
-<a href=#269 id=269 data-nosnippet>269</a>    </span>measuring: u64,
-<a href=#270 id=270 data-nosnippet>270</a>    <span class="doccomment">/// What the run keeps from the first pass on: the density grid, the
-<a href=#271 id=271 data-nosnippet>271</a>    /// row work and the imaging weights.
-<a href=#272 id=272 data-nosnippet>272</a>    </span>kept: u64,
-<a href=#273 id=273 data-nosnippet>273</a>    <span class="doccomment">/// The first major-cycle pass, its stitched images and the model.
-<a href=#274 id=274 data-nosnippet>274</a>    </span>first_pass: u64,
-<a href=#275 id=275 data-nosnippet>275</a>    <span class="doccomment">/// A minor cycle: its masks and the larger of its two halves.
-<a href=#276 id=276 data-nosnippet>276</a>    </span>minor: u64,
-<a href=#277 id=277 data-nosnippet>277</a>    <span class="doccomment">/// What follows the first pass in a run that cleans; `None` otherwise.
-<a href=#278 id=278 data-nosnippet>278</a>    </span>after: <span class="prelude-ty">Option</span>&lt;AfterFirstPass&gt;,
-<a href=#279 id=279 data-nosnippet>279</a>}
-<a href=#280 id=280 data-nosnippet>280</a>
-<a href=#281 id=281 data-nosnippet>281</a><span class="doccomment">/// What a cleaning run holds after its first pass besides
-<a href=#282 id=282 data-nosnippet>282</a>/// [`StageCharges::kept`] and either a minor cycle or a refresh pass.
-<a href=#283 id=283 data-nosnippet>283</a></span><span class="attr">#[derive(Clone, Copy, Debug)]
-<a href=#284 id=284 data-nosnippet>284</a></span><span class="kw">struct </span>AfterFirstPass {
-<a href=#285 id=285 data-nosnippet>285</a>    <span class="doccomment">/// The resident normal state.
-<a href=#286 id=286 data-nosnippet>286</a>    </span>normal: u64,
-<a href=#287 id=287 data-nosnippet>287</a>    <span class="doccomment">/// The model.
-<a href=#288 id=288 data-nosnippet>288</a>    </span>model: u64,
-<a href=#289 id=289 data-nosnippet>289</a>    <span class="doccomment">/// A cached Clark refresh.
-<a href=#290 id=290 data-nosnippet>290</a>    </span>cached: u64,
-<a href=#291 id=291 data-nosnippet>291</a>    <span class="doccomment">/// The records of the cycles up to the last refresh `nmajor` allows.
-<a href=#292 id=292 data-nosnippet>292</a>    </span>records: u64,
-<a href=#293 id=293 data-nosnippet>293</a>    <span class="doccomment">/// The minor cycle's model terms, which its solve and then the refresh
-<a href=#294 id=294 data-nosnippet>294</a>    /// pass hold.
-<a href=#295 id=295 data-nosnippet>295</a>    </span>results: u64,
-<a href=#296 id=296 data-nosnippet>296</a>    <span class="doccomment">/// A refresh pass, or the one that writes visibilities, with the masks.
-<a href=#297 id=297 data-nosnippet>297</a>    </span>refresh_pass: u64,
-<a href=#298 id=298 data-nosnippet>298</a>}
-<a href=#299 id=299 data-nosnippet>299</a>
-<a href=#300 id=300 data-nosnippet>300</a><span class="kw">impl </span>StageCharges {
-<a href=#301 id=301 data-nosnippet>301</a>    <span class="doccomment">/// The largest stage, which is what the run holds at most: the
-<a href=#302 id=302 data-nosnippet>302</a>    /// imaging-weights pass; the density grid beside the row-work pass; the
-<a href=#303 id=303 data-nosnippet>303</a>    /// first pass beside what it keeps; and after it, a minor cycle or a
-<a href=#304 id=304 data-nosnippet>304</a>    /// refresh pass beside the kept charges, the normal state and model, a
-<a href=#305 id=305 data-nosnippet>305</a>    /// cached refresh, the records and the minor cycle's model terms.
-<a href=#306 id=306 data-nosnippet>306</a>    ///
-<a href=#307 id=307 data-nosnippet>307</a>    /// A minor cycle is charged once, after the first pass. It never runs
-<a href=#308 id=308 data-nosnippet>308</a>    /// during one: its masks are admitted and its work begins once the
-<a href=#309 id=309 data-nosnippet>309</a>    /// pass's wave is released. #763 charged it on top of the first pass
-<a href=#310 id=310 data-nosnippet>310</a>    /// too, which put B3 on one worker where its phases admit three.
-<a href=#311 id=311 data-nosnippet>311</a>    </span><span class="kw">fn </span>largest(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; u64 {
-<a href=#312 id=312 data-nosnippet>312</a>        <span class="kw">let </span>after = <span class="self">self</span>.after.map_or(<span class="number">0</span>, |after| {
-<a href=#313 id=313 data-nosnippet>313</a>            <span class="self">self</span>.kept
-<a href=#314 id=314 data-nosnippet>314</a>                + after.normal
-<a href=#315 id=315 data-nosnippet>315</a>                + after.model
-<a href=#316 id=316 data-nosnippet>316</a>                + after.cached
-<a href=#317 id=317 data-nosnippet>317</a>                + after.records
-<a href=#318 id=318 data-nosnippet>318</a>                + after.results
-<a href=#319 id=319 data-nosnippet>319</a>                + after.refresh_pass.max(<span class="self">self</span>.minor)
-<a href=#320 id=320 data-nosnippet>320</a>        });
-<a href=#321 id=321 data-nosnippet>321</a>        <span class="self">self</span>.weighing
-<a href=#322 id=322 data-nosnippet>322</a>            .max(<span class="self">self</span>.weights + <span class="self">self</span>.measuring)
-<a href=#323 id=323 data-nosnippet>323</a>            .max(<span class="self">self</span>.kept + <span class="self">self</span>.first_pass)
-<a href=#324 id=324 data-nosnippet>324</a>            .max(after)
-<a href=#325 id=325 data-nosnippet>325</a>    }
-<a href=#326 id=326 data-nosnippet>326</a>}
-<a href=#327 id=327 data-nosnippet>327</a>
-<a href=#328 id=328 data-nosnippet>328</a><span class="doccomment">/// The imaging weights' density pass on `workers` and the density grid it
-<a href=#329 id=329 data-nosnippet>329</a>/// keeps, in bytes; none for natural weighting.
-<a href=#330 id=330 data-nosnippet>330</a></span><span class="kw">fn </span>weights_bytes(
-<a href=#331 id=331 data-nosnippet>331</a>    problem: <span class="kw-2">&amp;</span>CompiledProblem,
-<a href=#332 id=332 data-nosnippet>332</a>    main: <span class="kw-2">&amp;</span>DomainOperator,
-<a href=#333 id=333 data-nosnippet>333</a>    block: BlockShape,
-<a href=#334 id=334 data-nosnippet>334</a>    workers: usize,
-<a href=#335 id=335 data-nosnippet>335</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(u64, u64), ImagingError&gt; {
-<a href=#336 id=336 data-nosnippet>336</a>    <span class="kw">if </span><span class="macro">matches!</span>(problem.weighting().scheme(), WeightingScheme::Natural) {
-<a href=#337 id=337 data-nosnippet>337</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>((<span class="number">0</span>, <span class="number">0</span>));
-<a href=#338 id=338 data-nosnippet>338</a>    }
-<a href=#339 id=339 data-nosnippet>339</a>    <span class="kw">let </span>shape = density_shape(problem, <span class="kw-2">&amp;</span>problem.geometry().domains()[<span class="number">0</span>])<span class="question-mark">?</span>;
-<a href=#340 id=340 data-nosnippet>340</a>    <span class="prelude-val">Ok</span>((
-<a href=#341 id=341 data-nosnippet>341</a>        density_pass_bytes(<span class="kw-2">&amp;</span>main.resampler, <span class="kw-2">&amp;</span>shape, block, workers),
-<a href=#342 id=342 data-nosnippet>342</a>        shape.bytes(),
-<a href=#343 id=343 data-nosnippet>343</a>    ))
-<a href=#344 id=344 data-nosnippet>344</a>}
-<a href=#345 id=345 data-nosnippet>345</a>
-<a href=#346 id=346 data-nosnippet>346</a><span class="doccomment">/// CASA's imaging weights for the run: the input weights (natural) or the
-<a href=#347 id=347 data-nosnippet>347</a>/// density weights of one traversal on the main domain's cells, which every
-<a href=#348 id=348 data-nosnippet>348</a>/// domain shares (`SynthesisImagerVi2::weight`), with the charge of the
-<a href=#349 id=349 data-nosnippet>349</a>/// density grid the weights keep. The density pass is admitted under the
-<a href=#350 id=350 data-nosnippet>350</a>/// run's `(host, policy)` before it allocates.
-<a href=#351 id=351 data-nosnippet>351</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>weighting(
-<a href=#352 id=352 data-nosnippet>352</a>    problem: <span class="kw-2">&amp;</span>CompiledProblem,
-<a href=#353 id=353 data-nosnippet>353</a>    main: <span class="kw-2">&amp;</span>DomainOperator,
-<a href=#354 id=354 data-nosnippet>354</a>    source: <span class="kw-2">&amp;mut </span><span class="kw">dyn </span>BoundedSource,
-<a href=#355 id=355 data-nosnippet>355</a>    team: <span class="kw-2">&amp;</span>WorkerTeam,
-<a href=#356 id=356 data-nosnippet>356</a>    cancel: <span class="kw-2">&amp;</span>Cancel,
-<a href=#357 id=357 data-nosnippet>357</a>    (host, policy): (<span class="kw-2">&amp;</span>HostResources, <span class="kw-2">&amp;</span>ResourcePolicy),
-<a href=#358 id=358 data-nosnippet>358</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(WeightingGeneration, Reservation), ImagingError&gt; {
-<a href=#359 id=359 data-nosnippet>359</a>    <span class="kw">let </span>contract = problem.weighting();
-<a href=#360 id=360 data-nosnippet>360</a>    <span class="kw">let </span>taper = contract.uv_taper();
-<a href=#361 id=361 data-nosnippet>361</a>    <span class="kw">let </span>(robust, bandwidth) = <span class="kw">match </span>contract.scheme() {
-<a href=#362 id=362 data-nosnippet>362</a>        WeightingScheme::Natural =&gt; {
-<a href=#363 id=363 data-nosnippet>363</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>((WeightingGeneration::Natural { taper }, Reservation::none()));
-<a href=#364 id=364 data-nosnippet>364</a>        }
-<a href=#365 id=365 data-nosnippet>365</a>        WeightingScheme::Uniform =&gt; (<span class="prelude-val">None</span>, <span class="prelude-val">None</span>),
-<a href=#366 id=366 data-nosnippet>366</a>        WeightingScheme::Briggs { robust } =&gt; (<span class="prelude-val">Some</span>(robust), <span class="prelude-val">None</span>),
-<a href=#367 id=367 data-nosnippet>367</a>        WeightingScheme::BriggsBandwidthTaper { robust } =&gt; {
-<a href=#368 id=368 data-nosnippet>368</a>            <span class="kw">let </span>spectral = problem.geometry().spectral();
-<a href=#369 id=369 data-nosnippet>369</a>            <span class="kw">let </span>last = spectral.output_channels().saturating_sub(<span class="number">1</span>);
-<a href=#370 id=370 data-nosnippet>370</a>            <span class="kw">let </span>(<span class="prelude-val">Some</span>(first_hz), <span class="prelude-val">Some</span>(last_hz)) = (
-<a href=#371 id=371 data-nosnippet>371</a>                spectral.channel_centre_hz(<span class="number">0</span>),
-<a href=#372 id=372 data-nosnippet>372</a>                spectral.channel_centre_hz(last),
-<a href=#373 id=373 data-nosnippet>373</a>            ) <span class="kw">else </span>{
-<a href=#374 id=374 data-nosnippet>374</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(ImagingError::Unsupported {
-<a href=#375 id=375 data-nosnippet>375</a>                    reason: <span class="string">"the image spectral axis has no channels"</span>,
-<a href=#376 id=376 data-nosnippet>376</a>                });
-<a href=#377 id=377 data-nosnippet>377</a>            };
-<a href=#378 id=378 data-nosnippet>378</a>            (
-<a href=#379 id=379 data-nosnippet>379</a>                <span class="prelude-val">Some</span>(robust),
-<a href=#380 id=380 data-nosnippet>380</a>                <span class="prelude-val">Some</span>(BandwidthTaper::from_frequency_range(first_hz, last_hz)<span class="question-mark">?</span>),
-<a href=#381 id=381 data-nosnippet>381</a>            )
-<a href=#382 id=382 data-nosnippet>382</a>        }
-<a href=#383 id=383 data-nosnippet>383</a>    };
-<a href=#384 id=384 data-nosnippet>384</a>    <span class="kw">let </span>shape = density_shape(problem, <span class="kw-2">&amp;</span>problem.geometry().domains()[<span class="number">0</span>])<span class="question-mark">?</span>;
-<a href=#385 id=385 data-nosnippet>385</a>    <span class="kw">let </span>(pass, grid) = weights_bytes(problem, main, source.maximum_block(), team.workers())<span class="question-mark">?</span>;
-<a href=#386 id=386 data-nosnippet>386</a>    <span class="kw">let </span><span class="kw-2">mut </span>weights = admit(
-<a href=#387 id=387 data-nosnippet>387</a>        host,
-<a href=#388 id=388 data-nosnippet>388</a>        policy,
-<a href=#389 id=389 data-nosnippet>389</a>        <span class="kw-2">&amp;</span>Demand {
-<a href=#390 id=390 data-nosnippet>390</a>            phase: <span class="string">"imaging weights"</span>,
-<a href=#391 id=391 data-nosnippet>391</a>            memory: pass,
-<a href=#392 id=392 data-nosnippet>392</a>        },
-<a href=#393 id=393 data-nosnippet>393</a>    )<span class="question-mark">?</span>;
-<a href=#394 id=394 data-nosnippet>394</a>    <span class="kw">let </span>grid_values =
-<a href=#395 id=395 data-nosnippet>395</a>        run_density_pass(<span class="kw-2">&amp;</span>main.operator, <span class="kw-2">&amp;</span>main.resampler, shape, source, team, cancel)<span class="question-mark">?</span>;
-<a href=#396 id=396 data-nosnippet>396</a>    weights.retain(grid);
-<a href=#397 id=397 data-nosnippet>397</a>    <span class="kw">let </span>weighting = WeightingGeneration::density(grid_values, robust, bandwidth, taper)<span class="question-mark">?</span>;
-<a href=#398 id=398 data-nosnippet>398</a>    <span class="prelude-val">Ok</span>((weighting, weights))
-<a href=#399 id=399 data-nosnippet>399</a>}
-<a href=#400 id=400 data-nosnippet>400</a>
-<a href=#401 id=401 data-nosnippet>401</a><span class="doccomment">/// The cache of the paged cube state on `workers`: as large as the whole
-<a href=#402 id=402 data-nosnippet>402</a>/// cube when a quarter of `free` allows, and at least what the workers'
-<a href=#403 id=403 data-nosnippet>403</a>/// planes need. With a weight image (a mosaic cube) each plane keeps its own
-<a href=#404 id=404 data-nosnippet>404</a>/// beside the PSF.
-<a href=#405 id=405 data-nosnippet>405</a></span><span class="kw">fn </span>cube_cache_bytes(
-<a href=#406 id=406 data-nosnippet>406</a>    problem: <span class="kw-2">&amp;</span>CompiledProblem,
-<a href=#407 id=407 data-nosnippet>407</a>    directory: <span class="kw-2">&amp;</span>Path,
-<a href=#408 id=408 data-nosnippet>408</a>    (workers, weight_image): (usize, bool),
-<a href=#409 id=409 data-nosnippet>409</a>    free: u64,
-<a href=#410 id=410 data-nosnippet>410</a>) -&gt; <span class="prelude-ty">Result</span>&lt;usize, ImagingError&gt; {
-<a href=#411 id=411 data-nosnippet>411</a>    <span class="kw">let </span>target = problem.model_lifecycle().target();
-<a href=#412 id=412 data-nosnippet>412</a>    <span class="kw">let </span>domains = target
-<a href=#413 id=413 data-nosnippet>413</a>        .domains()
-<a href=#414 id=414 data-nosnippet>414</a>        .iter()
-<a href=#415 id=415 data-nosnippet>415</a>        .map(|domain| domain.pixels())
-<a href=#416 id=416 data-nosnippet>416</a>        .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-<a href=#417 id=417 data-nosnippet>417</a>    <span class="kw">let </span>planes = target.coefficients() * target.polarizations();
-<a href=#418 id=418 data-nosnippet>418</a>    <span class="kw">let </span>(minimum, full) =
-<a href=#419 id=419 data-nosnippet>419</a>        CubeState::cache_limits(directory, <span class="kw-2">&amp;</span>domains, planes, weight_image, workers)<span class="question-mark">?</span>;
-<a href=#420 id=420 data-nosnippet>420</a>    <span class="kw">let </span>quarter = usize::try_from(free / <span class="number">4</span>).unwrap_or(usize::MAX);
-<a href=#421 id=421 data-nosnippet>421</a>    <span class="prelude-val">Ok</span>(full.min(minimum.max(quarter)))
-<a href=#422 id=422 data-nosnippet>422</a>}
-<a href=#423 id=423 data-nosnippet>423</a>
-<a href=#424 id=424 data-nosnippet>424</a><span class="doccomment">/// The paged cube state of a channel-local run, its cache admitted as
-<a href=#425 id=425 data-nosnippet>425</a>/// [`cube_cache_bytes`] sizes it from what the policy leaves free; the state
-<a href=#426 id=426 data-nosnippet>426</a>/// holds the cache's reservation for as long as its storage lives.
-<a href=#427 id=427 data-nosnippet>427</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>cube_state(
-<a href=#428 id=428 data-nosnippet>428</a>    problem: <span class="kw-2">&amp;</span>CompiledProblem,
-<a href=#429 id=429 data-nosnippet>429</a>    directory: <span class="kw-2">&amp;</span>Path,
-<a href=#430 id=430 data-nosnippet>430</a>    (workers, weight_image): (usize, bool),
-<a href=#431 id=431 data-nosnippet>431</a>    host: <span class="kw-2">&amp;</span>HostResources,
-<a href=#432 id=432 data-nosnippet>432</a>    policy: <span class="kw-2">&amp;</span>ResourcePolicy,
-<a href=#433 id=433 data-nosnippet>433</a>) -&gt; <span class="prelude-ty">Result</span>&lt;CubeState, ImagingError&gt; {
-<a href=#434 id=434 data-nosnippet>434</a>    <span class="kw">let </span>cache = cube_cache_bytes(
-<a href=#435 id=435 data-nosnippet>435</a>        problem,
-<a href=#436 id=436 data-nosnippet>436</a>        directory,
-<a href=#437 id=437 data-nosnippet>437</a>        (workers, weight_image),
-<a href=#438 id=438 data-nosnippet>438</a>        free_memory(host, policy),
-<a href=#439 id=439 data-nosnippet>439</a>    )<span class="question-mark">?</span>;
-<a href=#440 id=440 data-nosnippet>440</a>    <span class="kw">let </span>reservation = admit(
-<a href=#441 id=441 data-nosnippet>441</a>        host,
-<a href=#442 id=442 data-nosnippet>442</a>        policy,
-<a href=#443 id=443 data-nosnippet>443</a>        <span class="kw-2">&amp;</span>Demand {
-<a href=#444 id=444 data-nosnippet>444</a>            phase: <span class="string">"paged cube state"</span>,
-<a href=#445 id=445 data-nosnippet>445</a>            memory: cache <span class="kw">as </span>u64,
-<a href=#446 id=446 data-nosnippet>446</a>        },
-<a href=#447 id=447 data-nosnippet>447</a>    )<span class="question-mark">?</span>;
-<a href=#448 id=448 data-nosnippet>448</a>    <span class="kw">let </span>target = problem.model_lifecycle().target();
-<a href=#449 id=449 data-nosnippet>449</a>    <span class="kw">let </span>domains = target
-<a href=#450 id=450 data-nosnippet>450</a>        .domains()
-<a href=#451 id=451 data-nosnippet>451</a>        .iter()
-<a href=#452 id=452 data-nosnippet>452</a>        .map(|domain| domain.pixels())
-<a href=#453 id=453 data-nosnippet>453</a>        .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-<a href=#454 id=454 data-nosnippet>454</a>    <span class="prelude-val">Ok</span>(CubeState::new(
-<a href=#455 id=455 data-nosnippet>455</a>        directory,
-<a href=#456 id=456 data-nosnippet>456</a>        <span class="kw-2">&amp;</span>domains,
-<a href=#457 id=457 data-nosnippet>457</a>        target.coefficients() * target.polarizations(),
-<a href=#458 id=458 data-nosnippet>458</a>        weight_image,
-<a href=#459 id=459 data-nosnippet>459</a>        reservation,
-<a href=#460 id=460 data-nosnippet>460</a>    )<span class="question-mark">?</span>)
-<a href=#461 id=461 data-nosnippet>461</a>}
-<a href=#462 id=462 data-nosnippet>462</a>
-<a href=#463 id=463 data-nosnippet>463</a><span class="attr">#[cfg(test)]
-<a href=#464 id=464 data-nosnippet>464</a></span><span class="kw">mod </span>tests {
-<a href=#465 id=465 data-nosnippet>465</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
-<a href=#466 id=466 data-nosnippet>466</a>
-<a href=#467 id=467 data-nosnippet>467</a>    <span class="kw">const </span>POLICY: CoreAllocation = CoreAllocation {
-<a href=#468 id=468 data-nosnippet>468</a>        workers: <span class="number">4</span>,
-<a href=#469 id=469 data-nosnippet>469</a>        streaming_workers: <span class="number">3</span>,
-<a href=#470 id=470 data-nosnippet>470</a>    };
-<a href=#471 id=471 data-nosnippet>471</a>
-<a href=#472 id=472 data-nosnippet>472</a>    <span class="doccomment">/// A demand of `per_worker` bytes for each streaming and computing
-<a href=#473 id=473 data-nosnippet>473</a>    /// worker beside 100 fixed bytes.
-<a href=#474 id=474 data-nosnippet>474</a>    </span><span class="kw">fn </span>demand(per_worker: u64) -&gt; <span class="kw">impl </span>FnMut(CoreAllocation) -&gt; <span class="prelude-ty">Result</span>&lt;u64, ()&gt; {
-<a href=#475 id=475 data-nosnippet>475</a>        <span class="kw">move </span>|cores: CoreAllocation| {
-<a href=#476 id=476 data-nosnippet>476</a>            <span class="prelude-val">Ok</span>(<span class="number">100 </span>+ per_worker * (cores.workers + cores.streaming_workers) <span class="kw">as </span>u64)
-<a href=#477 id=477 data-nosnippet>477</a>        }
-<a href=#478 id=478 data-nosnippet>478</a>    }
-<a href=#479 id=479 data-nosnippet>479</a>
-<a href=#480 id=480 data-nosnippet>480</a>    <span class="doccomment">/// The policy's workers when they fit; otherwise the most that fit,
-<a href=#481 id=481 data-nosnippet>481</a>    /// with a reason naming both counts; one when none does.
-<a href=#482 id=482 data-nosnippet>482</a>    </span><span class="attr">#[test]
-<a href=#483 id=483 data-nosnippet>483</a>    </span><span class="kw">fn </span>the_most_workers_whose_demand_fits_are_chosen() {
-<a href=#484 id=484 data-nosnippet>484</a>        <span class="kw">let </span>fits = fit_workers(POLICY, <span class="number">170</span>, demand(<span class="number">10</span>)).unwrap();
-<a href=#485 id=485 data-nosnippet>485</a>        <span class="macro">assert_eq!</span>((fits.cores, fits.reason), (POLICY, <span class="prelude-val">None</span>));
-<a href=#486 id=486 data-nosnippet>486</a>
-<a href=#487 id=487 data-nosnippet>487</a>        <span class="kw">let </span>two = fit_workers(POLICY, <span class="number">140</span>, demand(<span class="number">10</span>)).unwrap();
-<a href=#488 id=488 data-nosnippet>488</a>        <span class="macro">assert_eq!</span>(two.cores, POLICY.at_most(<span class="number">2</span>));
-<a href=#489 id=489 data-nosnippet>489</a>        <span class="macro">assert_eq!</span>(two.policy, POLICY);
-<a href=#490 id=490 data-nosnippet>490</a>        <span class="macro">assert_eq!</span>(
-<a href=#491 id=491 data-nosnippet>491</a>            two.reason.as_deref(),
-<a href=#492 id=492 data-nosnippet>492</a>            <span class="prelude-val">Some</span>(<span class="string">"4 workers need 0.00 GB, 2 fit 0.00 GB free"</span>)
-<a href=#493 id=493 data-nosnippet>493</a>        );
-<a href=#494 id=494 data-nosnippet>494</a>
-<a href=#495 id=495 data-nosnippet>495</a>        <span class="kw">let </span>none = fit_workers(POLICY, <span class="number">110</span>, demand(<span class="number">10</span>)).unwrap();
-<a href=#496 id=496 data-nosnippet>496</a>        <span class="macro">assert_eq!</span>(none.cores, POLICY.at_most(<span class="number">1</span>));
-<a href=#497 id=497 data-nosnippet>497</a>        <span class="macro">assert!</span>(none.reason.unwrap().contains(<span class="string">"no fewer fit"</span>));
-<a href=#498 id=498 data-nosnippet>498</a>
-<a href=#499 id=499 data-nosnippet>499</a>        <span class="kw">let </span>one = CoreAllocation {
-<a href=#500 id=500 data-nosnippet>500</a>            workers: <span class="number">1</span>,
-<a href=#501 id=501 data-nosnippet>501</a>            streaming_workers: <span class="number">1</span>,
-<a href=#502 id=502 data-nosnippet>502</a>        };
-<a href=#503 id=503 data-nosnippet>503</a>        <span class="kw">let </span>alone = fit_workers(one, <span class="number">0</span>, demand(<span class="number">10</span>)).unwrap();
-<a href=#504 id=504 data-nosnippet>504</a>        <span class="macro">assert_eq!</span>((alone.cores, alone.reason), (one, <span class="prelude-val">None</span>));
-<a href=#505 id=505 data-nosnippet>505</a>    }
-<a href=#506 id=506 data-nosnippet>506</a>
-<a href=#507 id=507 data-nosnippet>507</a>    <span class="doccomment">/// The counts are tried from the policy's down, and the first that
-<a href=#508 id=508 data-nosnippet>508</a>    /// fits is taken.
-<a href=#509 id=509 data-nosnippet>509</a>    </span><span class="attr">#[test]
-<a href=#510 id=510 data-nosnippet>510</a>    </span><span class="kw">fn </span>counts_are_tried_from_the_policys_down() {
-<a href=#511 id=511 data-nosnippet>511</a>        <span class="kw">let </span><span class="kw-2">mut </span>tried = Vec::new();
-<a href=#512 id=512 data-nosnippet>512</a>        <span class="kw">let </span>choice = fit_workers(POLICY, <span class="number">140</span>, |cores: CoreAllocation| {
-<a href=#513 id=513 data-nosnippet>513</a>            tried.push(cores.workers);
-<a href=#514 id=514 data-nosnippet>514</a>            demand(<span class="number">10</span>)(cores)
-<a href=#515 id=515 data-nosnippet>515</a>        })
-<a href=#516 id=516 data-nosnippet>516</a>        .unwrap();
-<a href=#517 id=517 data-nosnippet>517</a>        <span class="macro">assert_eq!</span>(choice.cores.workers, <span class="number">2</span>);
-<a href=#518 id=518 data-nosnippet>518</a>        <span class="macro">assert_eq!</span>(tried, [<span class="number">4</span>, <span class="number">3</span>, <span class="number">2</span>]);
-<a href=#519 id=519 data-nosnippet>519</a>    }
+<a href=#122 id=122 data-nosnippet>122</a>    <span class="doccomment">/// With a start model, what seeding the model holds beside the pass
+<a href=#123 id=123 data-nosnippet>123</a>    /// that seeds it (`StartModel::seeding_bytes`, with its conversion when
+<a href=#124 id=124 data-nosnippet>124</a>    /// the run reseeds); the pass then grids its residual, with the model.
+<a href=#125 id=125 data-nosnippet>125</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) start_model: <span class="prelude-ty">Option</span>&lt;u64&gt;,
+<a href=#126 id=126 data-nosnippet>126</a>    <span class="doccomment">/// Whether the start model is made physical with the initial pass's
+<a href=#127 id=127 data-nosnippet>127</a>    /// weights and seeds a refresh of its residual (`cycle::seeding`): the
+<a href=#128 id=128 data-nosnippet>128</a>    /// initial pass then has no model, and the refresh pass seeds.
+<a href=#129 id=129 data-nosnippet>129</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) reseeds: bool,
+<a href=#130 id=130 data-nosnippet>130</a>    <span class="doccomment">/// The modes and model of the pass that writes visibilities, and what
+<a href=#131 id=131 data-nosnippet>131</a>    /// the write holds; it holds every plane.
+<a href=#132 id=132 data-nosnippet>132</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) write: <span class="prelude-ty">Option</span>&lt;(ModeSet, bool, u64)&gt;,
+<a href=#133 id=133 data-nosnippet>133</a>    <span class="kw">pub</span>(<span class="kw">super</span>) spill_directory: <span class="kw-2">&amp;</span><span class="lifetime">'r </span>Path,
+<a href=#134 id=134 data-nosnippet>134</a>    <span class="doccomment">/// Whether the cube state keeps a weight image per plane.
+<a href=#135 id=135 data-nosnippet>135</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) weight_image: bool,
+<a href=#136 id=136 data-nosnippet>136</a>    <span class="doccomment">/// What a minor cycle holds on a team of so many workers.
+<a href=#137 id=137 data-nosnippet>137</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) minor: <span class="kw-2">&amp;</span><span class="lifetime">'r </span><span class="kw">dyn </span>Fn(usize) -&gt; u64,
+<a href=#138 id=138 data-nosnippet>138</a>    <span class="doccomment">/// What a refresh pass holds beside its own wave; `None` for a run
+<a href=#139 id=139 data-nosnippet>139</a>    /// that does not clean.
+<a href=#140 id=140 data-nosnippet>140</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) refresh: <span class="prelude-ty">Option</span>&lt;RefreshDemand&gt;,
+<a href=#141 id=141 data-nosnippet>141</a>    <span class="doccomment">/// The imaging weights the passes keep across passes, when the run
+<a href=#142 id=142 data-nosnippet>142</a>    /// keeps them (`Run::keep_weights`).
+<a href=#143 id=143 data-nosnippet>143</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) kept_weights: u64,
+<a href=#144 id=144 data-nosnippet>144</a>    <span class="doccomment">/// The memory the policy leaves free before the setup's charges.
+<a href=#145 id=145 data-nosnippet>145</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) free: u64,
+<a href=#146 id=146 data-nosnippet>146</a>}
+<a href=#147 id=147 data-nosnippet>147</a>
+<a href=#148 id=148 data-nosnippet>148</a><span class="doccomment">/// What the run holds beside a refresh pass's own wave, from the layout
+<a href=#149 id=149 data-nosnippet>149</a>/// the first pass forms (#763 review): the minor cycle's masks, a cached
+<a href=#150 id=150 data-nosnippet>150</a>/// Clark refresh, the model terms the minor cycle hands the pass, and the
+<a href=#151 id=151 data-nosnippet>151</a>/// record of every minor cycle before it, which the run keeps.
+<a href=#152 id=152 data-nosnippet>152</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>RefreshDemand {
+<a href=#153 id=153 data-nosnippet>153</a>    <span class="doccomment">/// The latest masks and the ones an automatic mask evolves from.
+<a href=#154 id=154 data-nosnippet>154</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) masks: u64,
+<a href=#155 id=155 data-nosnippet>155</a>    <span class="doccomment">/// The Clark refresh a single-plane Clark run caches.
+<a href=#156 id=156 data-nosnippet>156</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) cached: u64,
+<a href=#157 id=157 data-nosnippet>157</a>    <span class="doccomment">/// The minor cycle's model terms, which its solve admits while it still
+<a href=#158 id=158 data-nosnippet>158</a>    /// holds its own charge and the refresh pass holds until the model
+<a href=#159 id=159 data-nosnippet>159</a>    /// takes them (#778 review).
+<a href=#160 id=160 data-nosnippet>160</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) results: u64,
+<a href=#161 id=161 data-nosnippet>161</a>    <span class="doccomment">/// The records of the cycles up to the last refresh `nmajor` allows,
+<a href=#162 id=162 data-nosnippet>162</a>    /// or the first when it allows any number.
+<a href=#163 id=163 data-nosnippet>163</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) records: u64,
+<a href=#164 id=164 data-nosnippet>164</a>}
+<a href=#165 id=165 data-nosnippet>165</a>
+<a href=#166 id=166 data-nosnippet>166</a><span class="kw">impl </span>SetupDemand&lt;<span class="lifetime">'_</span>&gt; {
+<a href=#167 id=167 data-nosnippet>167</a>    <span class="doccomment">/// The bytes the run holds at most on `cores`: the kernel sets and the
+<a href=#168 id=168 data-nosnippet>168</a>    /// cube state throughout, beside the imaging-weights pass or, after it,
+<a href=#169 id=169 data-nosnippet>169</a>    /// its density grid with the region row-work pass, and then with the
+<a href=#170 id=170 data-nosnippet>170</a>    /// work and imaging weights it keeps, the first major-cycle pass beside
+<a href=#171 id=171 data-nosnippet>171</a>    /// the model, and after it a minor cycle or a refresh pass beside the
+<a href=#172 id=172 data-nosnippet>172</a>    /// normal state and model and [`RefreshDemand`]
+<a href=#173 id=173 data-nosnippet>173</a>    /// ([`StageCharges::largest`]).
+<a href=#174 id=174 data-nosnippet>174</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>bytes(<span class="kw-2">&amp;</span><span class="self">self</span>, cores: CoreAllocation) -&gt; <span class="prelude-ty">Result</span>&lt;u64, ImagingError&gt; {
+<a href=#175 id=175 data-nosnippet>175</a>        <span class="kw">let </span>streaming = cores.streaming_workers;
+<a href=#176 id=176 data-nosnippet>176</a>        <span class="kw">let </span>kernels = <span class="self">self
+<a href=#177 id=177 data-nosnippet>177</a>            </span>.domains
+<a href=#178 id=178 data-nosnippet>178</a>            .iter()
+<a href=#179 id=179 data-nosnippet>179</a>            .map(|domain| domain.pending_kernel_bytes(streaming))
+<a href=#180 id=180 data-nosnippet>180</a>            .sum::&lt;u64&gt;();
+<a href=#181 id=181 data-nosnippet>181</a>        <span class="kw">let </span>(weighing, weights) =
+<a href=#182 id=182 data-nosnippet>182</a>            weights_bytes(<span class="self">self</span>.problem, <span class="kw-2">&amp;</span><span class="self">self</span>.domains[<span class="number">0</span>], <span class="self">self</span>.block, streaming)<span class="question-mark">?</span>;
+<a href=#183 id=183 data-nosnippet>183</a>        <span class="kw">let </span>cube = <span class="kw">if </span><span class="macro">matches!</span>(
+<a href=#184 id=184 data-nosnippet>184</a>            <span class="self">self</span>.problem.reconstruction().basis(),
+<a href=#185 id=185 data-nosnippet>185</a>            ReconstructionBasis::ChannelLocal { .. }
+<a href=#186 id=186 data-nosnippet>186</a>        ) {
+<a href=#187 id=187 data-nosnippet>187</a>            cube_cache_bytes(
+<a href=#188 id=188 data-nosnippet>188</a>                <span class="self">self</span>.problem,
+<a href=#189 id=189 data-nosnippet>189</a>                <span class="self">self</span>.spill_directory,
+<a href=#190 id=190 data-nosnippet>190</a>                (cores.workers, <span class="self">self</span>.weight_image),
+<a href=#191 id=191 data-nosnippet>191</a>                <span class="self">self</span>.free.saturating_sub(kernels + weights),
+<a href=#192 id=192 data-nosnippet>192</a>            )<span class="question-mark">? </span><span class="kw">as </span>u64
+<a href=#193 id=193 data-nosnippet>193</a>        } <span class="kw">else </span>{
+<a href=#194 id=194 data-nosnippet>194</a>            <span class="number">0
+<a href=#195 id=195 data-nosnippet>195</a>        </span>};
+<a href=#196 id=196 data-nosnippet>196</a>        <span class="comment">// The first pass cuts its strips from the row work measured before
+<a href=#197 id=197 data-nosnippet>197</a>        // it; no cut holds more than the widest strips (#736).
+<a href=#198 id=198 data-nosnippet>198</a>        </span><span class="kw">let </span>domains = pass_domains(<span class="self">self</span>.domains, streaming, <span class="prelude-val">None</span>)
+<a href=#199 id=199 data-nosnippet>199</a>            .into_iter()
+<a href=#200 id=200 data-nosnippet>200</a>            .map(|domain| <span class="kw">match </span>domain.partition {
+<a href=#201 id=201 data-nosnippet>201</a>                Partition::Regions { <span class="kw-2">ref </span>regions, .. } =&gt; PassDomain {
+<a href=#202 id=202 data-nosnippet>202</a>                    partition: Partition::regions_widest(domain.operator, regions.len()),
+<a href=#203 id=203 data-nosnippet>203</a>                    ..domain
+<a href=#204 id=204 data-nosnippet>204</a>                },
+<a href=#205 id=205 data-nosnippet>205</a>                Partition::Planes { .. } =&gt; domain,
+<a href=#206 id=206 data-nosnippet>206</a>            })
+<a href=#207 id=207 data-nosnippet>207</a>            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#208 id=208 data-nosnippet>208</a>        <span class="kw">let </span>(measuring, measured) = <span class="kw">if </span>needs_row_work(<span class="kw-2">&amp;</span>domains) {
+<a href=#209 id=209 data-nosnippet>209</a>            <span class="kw">let </span>rows = domains
+<a href=#210 id=210 data-nosnippet>210</a>                .iter()
+<a href=#211 id=211 data-nosnippet>211</a>                .filter(|domain| domain.partition.splits_rows())
+<a href=#212 id=212 data-nosnippet>212</a>                .map(|domain| domain.operator.geometry().grid_shape()[<span class="number">1</span>])
+<a href=#213 id=213 data-nosnippet>213</a>                .sum::&lt;usize&gt;();
+<a href=#214 id=214 data-nosnippet>214</a>            (
+<a href=#215 id=215 data-nosnippet>215</a>                row_work_pass_bytes(<span class="kw-2">&amp;</span>domains, streaming, <span class="self">self</span>.weight_image),
+<a href=#216 id=216 data-nosnippet>216</a>                MeasuredRowWork::kept_bytes(rows, domains.len()),
+<a href=#217 id=217 data-nosnippet>217</a>            )
+<a href=#218 id=218 data-nosnippet>218</a>        } <span class="kw">else </span>{
+<a href=#219 id=219 data-nosnippet>219</a>            (<span class="number">0</span>, <span class="number">0</span>)
+<a href=#220 id=220 data-nosnippet>220</a>        };
+<a href=#221 id=221 data-nosnippet>221</a>        <span class="kw">let </span>wave = |modes: ModeSet, with_model| WaveDemand {
+<a href=#222 id=222 data-nosnippet>222</a>            domains: <span class="kw-2">&amp;</span>domains,
+<a href=#223 id=223 data-nosnippet>223</a>            modes,
+<a href=#224 id=224 data-nosnippet>224</a>            with_model,
+<a href=#225 id=225 data-nosnippet>225</a>            native_spacing_hz: <span class="self">self</span>.native_spacing_hz,
+<a href=#226 id=226 data-nosnippet>226</a>            workers: streaming,
+<a href=#227 id=227 data-nosnippet>227</a>            backend: <span class="self">self</span>.backend,
+<a href=#228 id=228 data-nosnippet>228</a>            block: <span class="self">self</span>.block,
+<a href=#229 id=229 data-nosnippet>229</a>            chunk_placements: CHUNK_PLACEMENTS,
+<a href=#230 id=230 data-nosnippet>230</a>            chunk_sets: <span class="number">1</span>,
+<a href=#231 id=231 data-nosnippet>231</a>        };
+<a href=#232 id=232 data-nosnippet>232</a>        <span class="kw">let </span>refreshing = wave(ModeSet::DATA, <span class="bool-val">true</span>);
+<a href=#233 id=233 data-nosnippet>233</a>        <span class="comment">// The pass that seeds holds the seeding beside its wave: the initial
+<a href=#234 id=234 data-nosnippet>234</a>        // pass, or the refresh after it when the run reseeds.
+<a href=#235 id=235 data-nosnippet>235</a>        </span><span class="kw">let </span>seeding = <span class="self">self</span>.start_model.unwrap_or(<span class="number">0</span>);
+<a href=#236 id=236 data-nosnippet>236</a>        <span class="kw">let </span>(first_seeding, refresh_seeding) = <span class="kw">if </span><span class="self">self</span>.reseeds {
+<a href=#237 id=237 data-nosnippet>237</a>            (<span class="number">0</span>, seeding)
+<a href=#238 id=238 data-nosnippet>238</a>        } <span class="kw">else </span>{
+<a href=#239 id=239 data-nosnippet>239</a>            (seeding, <span class="number">0</span>)
+<a href=#240 id=240 data-nosnippet>240</a>        };
+<a href=#241 id=241 data-nosnippet>241</a>        <span class="kw">let </span><span class="kw-2">mut </span>first = wave(<span class="self">self</span>.modes, <span class="self">self</span>.start_model.is_some() &amp;&amp; !<span class="self">self</span>.reseeds).bytes(<span class="number">1</span>)
+<a href=#242 id=242 data-nosnippet>242</a>            + <span class="self">self</span>.stitch.pass_bytes(<span class="bool-val">true</span>)
+<a href=#243 id=243 data-nosnippet>243</a>            + first_seeding;
+<a href=#244 id=244 data-nosnippet>244</a>        <span class="kw">let </span><span class="kw-2">mut </span>refresh = refreshing.bytes(<span class="number">1</span>) + <span class="self">self</span>.stitch.pass_bytes(<span class="bool-val">false</span>) + refresh_seeding;
+<a href=#245 id=245 data-nosnippet>245</a>        <span class="comment">// A run that cleans writes on its last refresh, or on a prediction
+<a href=#246 id=246 data-nosnippet>246</a>        // after it; one that does not, on its first major cycle
+<a href=#247 id=247 data-nosnippet>247</a>        // (`write_pass`), beside the seeding (#970 review). The pass that
+<a href=#248 id=248 data-nosnippet>248</a>        // writes holds every plane (#778 review).
+<a href=#249 id=249 data-nosnippet>249</a>        </span><span class="kw">if let </span><span class="prelude-val">Some</span>((modes, with_model, written)) = <span class="self">self</span>.write {
+<a href=#250 id=250 data-nosnippet>250</a>            <span class="kw">let </span>demand = wave(modes, with_model);
+<a href=#251 id=251 data-nosnippet>251</a>            <span class="kw">let </span>writing =
+<a href=#252 id=252 data-nosnippet>252</a>                demand.bytes(demand.planes()) + <span class="self">self</span>.stitch.pass_bytes(modes.psf) + written;
+<a href=#253 id=253 data-nosnippet>253</a>            <span class="kw">let </span>cleans = <span class="self">self
+<a href=#254 id=254 data-nosnippet>254</a>                </span>.problem
+<a href=#255 id=255 data-nosnippet>255</a>                .reconstruction()
+<a href=#256 id=256 data-nosnippet>256</a>                .controls()
+<a href=#257 id=257 data-nosnippet>257</a>                .max_minor_iterations()
+<a href=#258 id=258 data-nosnippet>258</a>                &gt; <span class="number">0</span>;
+<a href=#259 id=259 data-nosnippet>259</a>            <span class="kw">let </span>beside = <span class="kw">if </span>cleans { <span class="number">0 </span>} <span class="kw">else </span>{ seeding };
+<a href=#260 id=260 data-nosnippet>260</a>            <span class="kw">if </span><span class="self">self</span>.refresh.is_some() {
+<a href=#261 id=261 data-nosnippet>261</a>                refresh = refresh.max(writing + <span class="kw">if </span><span class="self">self</span>.reseeds { beside } <span class="kw">else </span>{ <span class="number">0 </span>});
+<a href=#262 id=262 data-nosnippet>262</a>            } <span class="kw">else </span>{
+<a href=#263 id=263 data-nosnippet>263</a>                first = first.max(writing + beside);
+<a href=#264 id=264 data-nosnippet>264</a>            }
+<a href=#265 id=265 data-nosnippet>265</a>        }
+<a href=#266 id=266 data-nosnippet>266</a>        <span class="kw">let </span>stages = StageCharges {
+<a href=#267 id=267 data-nosnippet>267</a>            weighing,
+<a href=#268 id=268 data-nosnippet>268</a>            weights,
+<a href=#269 id=269 data-nosnippet>269</a>            measuring,
+<a href=#270 id=270 data-nosnippet>270</a>            kept: weights + measured + <span class="self">self</span>.kept_weights,
+<a href=#271 id=271 data-nosnippet>271</a>            first_pass: first + <span class="self">self</span>.model_bytes,
+<a href=#272 id=272 data-nosnippet>272</a>            minor: (<span class="self">self</span>.minor)(cores.workers),
+<a href=#273 id=273 data-nosnippet>273</a>            after: <span class="self">self</span>.refresh.as_ref().map(|demand| AfterFirstPass {
+<a href=#274 id=274 data-nosnippet>274</a>                normal: refreshing.resident_normal_bytes(),
+<a href=#275 id=275 data-nosnippet>275</a>                model: <span class="self">self</span>.model_bytes,
+<a href=#276 id=276 data-nosnippet>276</a>                cached: demand.cached,
+<a href=#277 id=277 data-nosnippet>277</a>                records: demand.records,
+<a href=#278 id=278 data-nosnippet>278</a>                results: demand.results,
+<a href=#279 id=279 data-nosnippet>279</a>                refresh_pass: demand.masks + refresh,
+<a href=#280 id=280 data-nosnippet>280</a>            }),
+<a href=#281 id=281 data-nosnippet>281</a>        };
+<a href=#282 id=282 data-nosnippet>282</a>        <span class="prelude-val">Ok</span>(kernels + cube + stages.largest())
+<a href=#283 id=283 data-nosnippet>283</a>    }
+<a href=#284 id=284 data-nosnippet>284</a>}
+<a href=#285 id=285 data-nosnippet>285</a>
+<a href=#286 id=286 data-nosnippet>286</a><span class="doccomment">/// The charges of a run's sequential stages beside its kernels and cube
+<a href=#287 id=287 data-nosnippet>287</a>/// state ([`Self::largest`]).
+<a href=#288 id=288 data-nosnippet>288</a></span><span class="attr">#[derive(Clone, Copy, Debug)]
+<a href=#289 id=289 data-nosnippet>289</a></span><span class="kw">struct </span>StageCharges {
+<a href=#290 id=290 data-nosnippet>290</a>    <span class="doccomment">/// The imaging-weights pass.
+<a href=#291 id=291 data-nosnippet>291</a>    </span>weighing: u64,
+<a href=#292 id=292 data-nosnippet>292</a>    <span class="doccomment">/// The density grid the weights keep.
+<a href=#293 id=293 data-nosnippet>293</a>    </span>weights: u64,
+<a href=#294 id=294 data-nosnippet>294</a>    <span class="doccomment">/// The region row-work pass.
+<a href=#295 id=295 data-nosnippet>295</a>    </span>measuring: u64,
+<a href=#296 id=296 data-nosnippet>296</a>    <span class="doccomment">/// What the run keeps from the first pass on: the density grid, the
+<a href=#297 id=297 data-nosnippet>297</a>    /// row work and the imaging weights.
+<a href=#298 id=298 data-nosnippet>298</a>    </span>kept: u64,
+<a href=#299 id=299 data-nosnippet>299</a>    <span class="doccomment">/// The first major-cycle pass, its stitched images and the model.
+<a href=#300 id=300 data-nosnippet>300</a>    </span>first_pass: u64,
+<a href=#301 id=301 data-nosnippet>301</a>    <span class="doccomment">/// A minor cycle: its masks and the larger of its two halves.
+<a href=#302 id=302 data-nosnippet>302</a>    </span>minor: u64,
+<a href=#303 id=303 data-nosnippet>303</a>    <span class="doccomment">/// What follows the first pass in a run that cleans; `None` otherwise.
+<a href=#304 id=304 data-nosnippet>304</a>    </span>after: <span class="prelude-ty">Option</span>&lt;AfterFirstPass&gt;,
+<a href=#305 id=305 data-nosnippet>305</a>}
+<a href=#306 id=306 data-nosnippet>306</a>
+<a href=#307 id=307 data-nosnippet>307</a><span class="doccomment">/// What a cleaning run holds after its first pass besides
+<a href=#308 id=308 data-nosnippet>308</a>/// [`StageCharges::kept`] and either a minor cycle or a refresh pass.
+<a href=#309 id=309 data-nosnippet>309</a></span><span class="attr">#[derive(Clone, Copy, Debug)]
+<a href=#310 id=310 data-nosnippet>310</a></span><span class="kw">struct </span>AfterFirstPass {
+<a href=#311 id=311 data-nosnippet>311</a>    <span class="doccomment">/// The resident normal state.
+<a href=#312 id=312 data-nosnippet>312</a>    </span>normal: u64,
+<a href=#313 id=313 data-nosnippet>313</a>    <span class="doccomment">/// The model.
+<a href=#314 id=314 data-nosnippet>314</a>    </span>model: u64,
+<a href=#315 id=315 data-nosnippet>315</a>    <span class="doccomment">/// A cached Clark refresh.
+<a href=#316 id=316 data-nosnippet>316</a>    </span>cached: u64,
+<a href=#317 id=317 data-nosnippet>317</a>    <span class="doccomment">/// The records of the cycles up to the last refresh `nmajor` allows.
+<a href=#318 id=318 data-nosnippet>318</a>    </span>records: u64,
+<a href=#319 id=319 data-nosnippet>319</a>    <span class="doccomment">/// The minor cycle's model terms, which its solve and then the refresh
+<a href=#320 id=320 data-nosnippet>320</a>    /// pass hold.
+<a href=#321 id=321 data-nosnippet>321</a>    </span>results: u64,
+<a href=#322 id=322 data-nosnippet>322</a>    <span class="doccomment">/// A refresh pass, or the one that writes visibilities, with the masks.
+<a href=#323 id=323 data-nosnippet>323</a>    </span>refresh_pass: u64,
+<a href=#324 id=324 data-nosnippet>324</a>}
+<a href=#325 id=325 data-nosnippet>325</a>
+<a href=#326 id=326 data-nosnippet>326</a><span class="kw">impl </span>StageCharges {
+<a href=#327 id=327 data-nosnippet>327</a>    <span class="doccomment">/// The largest stage, which is what the run holds at most: the
+<a href=#328 id=328 data-nosnippet>328</a>    /// imaging-weights pass; the density grid beside the row-work pass; the
+<a href=#329 id=329 data-nosnippet>329</a>    /// first pass beside what it keeps; and after it, a minor cycle or a
+<a href=#330 id=330 data-nosnippet>330</a>    /// refresh pass beside the kept charges, the normal state and model, a
+<a href=#331 id=331 data-nosnippet>331</a>    /// cached refresh, the records and the minor cycle's model terms.
+<a href=#332 id=332 data-nosnippet>332</a>    ///
+<a href=#333 id=333 data-nosnippet>333</a>    /// A minor cycle is charged once, after the first pass. It never runs
+<a href=#334 id=334 data-nosnippet>334</a>    /// during one: its masks are admitted and its work begins once the
+<a href=#335 id=335 data-nosnippet>335</a>    /// pass's wave is released. #763 charged it on top of the first pass
+<a href=#336 id=336 data-nosnippet>336</a>    /// too, which put B3 on one worker where its phases admit three.
+<a href=#337 id=337 data-nosnippet>337</a>    </span><span class="kw">fn </span>largest(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; u64 {
+<a href=#338 id=338 data-nosnippet>338</a>        <span class="kw">let </span>after = <span class="self">self</span>.after.map_or(<span class="number">0</span>, |after| {
+<a href=#339 id=339 data-nosnippet>339</a>            <span class="self">self</span>.kept
+<a href=#340 id=340 data-nosnippet>340</a>                + after.normal
+<a href=#341 id=341 data-nosnippet>341</a>                + after.model
+<a href=#342 id=342 data-nosnippet>342</a>                + after.cached
+<a href=#343 id=343 data-nosnippet>343</a>                + after.records
+<a href=#344 id=344 data-nosnippet>344</a>                + after.results
+<a href=#345 id=345 data-nosnippet>345</a>                + after.refresh_pass.max(<span class="self">self</span>.minor)
+<a href=#346 id=346 data-nosnippet>346</a>        });
+<a href=#347 id=347 data-nosnippet>347</a>        <span class="self">self</span>.weighing
+<a href=#348 id=348 data-nosnippet>348</a>            .max(<span class="self">self</span>.weights + <span class="self">self</span>.measuring)
+<a href=#349 id=349 data-nosnippet>349</a>            .max(<span class="self">self</span>.kept + <span class="self">self</span>.first_pass)
+<a href=#350 id=350 data-nosnippet>350</a>            .max(after)
+<a href=#351 id=351 data-nosnippet>351</a>    }
+<a href=#352 id=352 data-nosnippet>352</a>}
+<a href=#353 id=353 data-nosnippet>353</a>
+<a href=#354 id=354 data-nosnippet>354</a><span class="doccomment">/// The imaging weights' density pass on `workers` and the density grid it
+<a href=#355 id=355 data-nosnippet>355</a>/// keeps, in bytes; none for natural weighting.
+<a href=#356 id=356 data-nosnippet>356</a></span><span class="kw">fn </span>weights_bytes(
+<a href=#357 id=357 data-nosnippet>357</a>    problem: <span class="kw-2">&amp;</span>CompiledProblem,
+<a href=#358 id=358 data-nosnippet>358</a>    main: <span class="kw-2">&amp;</span>DomainOperator,
+<a href=#359 id=359 data-nosnippet>359</a>    block: BlockShape,
+<a href=#360 id=360 data-nosnippet>360</a>    workers: usize,
+<a href=#361 id=361 data-nosnippet>361</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(u64, u64), ImagingError&gt; {
+<a href=#362 id=362 data-nosnippet>362</a>    <span class="kw">if </span><span class="macro">matches!</span>(problem.weighting().scheme(), WeightingScheme::Natural) {
+<a href=#363 id=363 data-nosnippet>363</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>((<span class="number">0</span>, <span class="number">0</span>));
+<a href=#364 id=364 data-nosnippet>364</a>    }
+<a href=#365 id=365 data-nosnippet>365</a>    <span class="kw">let </span>shape = density_shape(problem, <span class="kw-2">&amp;</span>problem.geometry().domains()[<span class="number">0</span>])<span class="question-mark">?</span>;
+<a href=#366 id=366 data-nosnippet>366</a>    <span class="prelude-val">Ok</span>((
+<a href=#367 id=367 data-nosnippet>367</a>        density_pass_bytes(<span class="kw-2">&amp;</span>main.resampler, <span class="kw-2">&amp;</span>shape, block, workers),
+<a href=#368 id=368 data-nosnippet>368</a>        shape.bytes(),
+<a href=#369 id=369 data-nosnippet>369</a>    ))
+<a href=#370 id=370 data-nosnippet>370</a>}
+<a href=#371 id=371 data-nosnippet>371</a>
+<a href=#372 id=372 data-nosnippet>372</a><span class="doccomment">/// CASA's imaging weights for the run: the input weights (natural) or the
+<a href=#373 id=373 data-nosnippet>373</a>/// density weights of one traversal on the main domain's cells, which every
+<a href=#374 id=374 data-nosnippet>374</a>/// domain shares (`SynthesisImagerVi2::weight`), with the charge of the
+<a href=#375 id=375 data-nosnippet>375</a>/// density grid the weights keep. The density pass is admitted under the
+<a href=#376 id=376 data-nosnippet>376</a>/// run's `(host, policy)` before it allocates.
+<a href=#377 id=377 data-nosnippet>377</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>weighting(
+<a href=#378 id=378 data-nosnippet>378</a>    problem: <span class="kw-2">&amp;</span>CompiledProblem,
+<a href=#379 id=379 data-nosnippet>379</a>    main: <span class="kw-2">&amp;</span>DomainOperator,
+<a href=#380 id=380 data-nosnippet>380</a>    source: <span class="kw-2">&amp;mut </span><span class="kw">dyn </span>BoundedSource,
+<a href=#381 id=381 data-nosnippet>381</a>    team: <span class="kw-2">&amp;</span>WorkerTeam,
+<a href=#382 id=382 data-nosnippet>382</a>    cancel: <span class="kw-2">&amp;</span>Cancel,
+<a href=#383 id=383 data-nosnippet>383</a>    (host, policy): (<span class="kw-2">&amp;</span>HostResources, <span class="kw-2">&amp;</span>ResourcePolicy),
+<a href=#384 id=384 data-nosnippet>384</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(WeightingGeneration, Reservation), ImagingError&gt; {
+<a href=#385 id=385 data-nosnippet>385</a>    <span class="kw">let </span>contract = problem.weighting();
+<a href=#386 id=386 data-nosnippet>386</a>    <span class="kw">let </span>taper = contract.uv_taper();
+<a href=#387 id=387 data-nosnippet>387</a>    <span class="kw">let </span>(robust, bandwidth) = <span class="kw">match </span>contract.scheme() {
+<a href=#388 id=388 data-nosnippet>388</a>        WeightingScheme::Natural =&gt; {
+<a href=#389 id=389 data-nosnippet>389</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>((WeightingGeneration::Natural { taper }, Reservation::none()));
+<a href=#390 id=390 data-nosnippet>390</a>        }
+<a href=#391 id=391 data-nosnippet>391</a>        WeightingScheme::Uniform =&gt; (<span class="prelude-val">None</span>, <span class="prelude-val">None</span>),
+<a href=#392 id=392 data-nosnippet>392</a>        WeightingScheme::Briggs { robust } =&gt; (<span class="prelude-val">Some</span>(robust), <span class="prelude-val">None</span>),
+<a href=#393 id=393 data-nosnippet>393</a>        WeightingScheme::BriggsBandwidthTaper { robust } =&gt; {
+<a href=#394 id=394 data-nosnippet>394</a>            <span class="kw">let </span>spectral = problem.geometry().spectral();
+<a href=#395 id=395 data-nosnippet>395</a>            <span class="kw">let </span>last = spectral.output_channels().saturating_sub(<span class="number">1</span>);
+<a href=#396 id=396 data-nosnippet>396</a>            <span class="kw">let </span>(<span class="prelude-val">Some</span>(first_hz), <span class="prelude-val">Some</span>(last_hz)) = (
+<a href=#397 id=397 data-nosnippet>397</a>                spectral.channel_centre_hz(<span class="number">0</span>),
+<a href=#398 id=398 data-nosnippet>398</a>                spectral.channel_centre_hz(last),
+<a href=#399 id=399 data-nosnippet>399</a>            ) <span class="kw">else </span>{
+<a href=#400 id=400 data-nosnippet>400</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(ImagingError::Unsupported {
+<a href=#401 id=401 data-nosnippet>401</a>                    reason: <span class="string">"the image spectral axis has no channels"</span>,
+<a href=#402 id=402 data-nosnippet>402</a>                });
+<a href=#403 id=403 data-nosnippet>403</a>            };
+<a href=#404 id=404 data-nosnippet>404</a>            (
+<a href=#405 id=405 data-nosnippet>405</a>                <span class="prelude-val">Some</span>(robust),
+<a href=#406 id=406 data-nosnippet>406</a>                <span class="prelude-val">Some</span>(BandwidthTaper::from_frequency_range(first_hz, last_hz)<span class="question-mark">?</span>),
+<a href=#407 id=407 data-nosnippet>407</a>            )
+<a href=#408 id=408 data-nosnippet>408</a>        }
+<a href=#409 id=409 data-nosnippet>409</a>    };
+<a href=#410 id=410 data-nosnippet>410</a>    <span class="kw">let </span>shape = density_shape(problem, <span class="kw-2">&amp;</span>problem.geometry().domains()[<span class="number">0</span>])<span class="question-mark">?</span>;
+<a href=#411 id=411 data-nosnippet>411</a>    <span class="kw">let </span>(pass, grid) = weights_bytes(problem, main, source.maximum_block(), team.workers())<span class="question-mark">?</span>;
+<a href=#412 id=412 data-nosnippet>412</a>    <span class="kw">let </span><span class="kw-2">mut </span>weights = admit(
+<a href=#413 id=413 data-nosnippet>413</a>        host,
+<a href=#414 id=414 data-nosnippet>414</a>        policy,
+<a href=#415 id=415 data-nosnippet>415</a>        <span class="kw-2">&amp;</span>Demand {
+<a href=#416 id=416 data-nosnippet>416</a>            phase: <span class="string">"imaging weights"</span>,
+<a href=#417 id=417 data-nosnippet>417</a>            memory: pass,
+<a href=#418 id=418 data-nosnippet>418</a>        },
+<a href=#419 id=419 data-nosnippet>419</a>    )<span class="question-mark">?</span>;
+<a href=#420 id=420 data-nosnippet>420</a>    <span class="kw">let </span>grid_values =
+<a href=#421 id=421 data-nosnippet>421</a>        run_density_pass(<span class="kw-2">&amp;</span>main.operator, <span class="kw-2">&amp;</span>main.resampler, shape, source, team, cancel)<span class="question-mark">?</span>;
+<a href=#422 id=422 data-nosnippet>422</a>    weights.retain(grid);
+<a href=#423 id=423 data-nosnippet>423</a>    <span class="kw">let </span>weighting = WeightingGeneration::density(grid_values, robust, bandwidth, taper)<span class="question-mark">?</span>;
+<a href=#424 id=424 data-nosnippet>424</a>    <span class="prelude-val">Ok</span>((weighting, weights))
+<a href=#425 id=425 data-nosnippet>425</a>}
+<a href=#426 id=426 data-nosnippet>426</a>
+<a href=#427 id=427 data-nosnippet>427</a><span class="doccomment">/// The cache of the paged cube state on `workers`: as large as the whole
+<a href=#428 id=428 data-nosnippet>428</a>/// cube when a quarter of `free` allows, and at least what the workers'
+<a href=#429 id=429 data-nosnippet>429</a>/// planes need. With a weight image (a mosaic cube) each plane keeps its own
+<a href=#430 id=430 data-nosnippet>430</a>/// beside the PSF.
+<a href=#431 id=431 data-nosnippet>431</a></span><span class="kw">fn </span>cube_cache_bytes(
+<a href=#432 id=432 data-nosnippet>432</a>    problem: <span class="kw-2">&amp;</span>CompiledProblem,
+<a href=#433 id=433 data-nosnippet>433</a>    directory: <span class="kw-2">&amp;</span>Path,
+<a href=#434 id=434 data-nosnippet>434</a>    (workers, weight_image): (usize, bool),
+<a href=#435 id=435 data-nosnippet>435</a>    free: u64,
+<a href=#436 id=436 data-nosnippet>436</a>) -&gt; <span class="prelude-ty">Result</span>&lt;usize, ImagingError&gt; {
+<a href=#437 id=437 data-nosnippet>437</a>    <span class="kw">let </span>target = problem.model_lifecycle().target();
+<a href=#438 id=438 data-nosnippet>438</a>    <span class="kw">let </span>domains = target
+<a href=#439 id=439 data-nosnippet>439</a>        .domains()
+<a href=#440 id=440 data-nosnippet>440</a>        .iter()
+<a href=#441 id=441 data-nosnippet>441</a>        .map(|domain| domain.pixels())
+<a href=#442 id=442 data-nosnippet>442</a>        .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#443 id=443 data-nosnippet>443</a>    <span class="kw">let </span>planes = target.coefficients() * target.polarizations();
+<a href=#444 id=444 data-nosnippet>444</a>    <span class="kw">let </span>(minimum, full) =
+<a href=#445 id=445 data-nosnippet>445</a>        CubeState::cache_limits(directory, <span class="kw-2">&amp;</span>domains, planes, weight_image, workers)<span class="question-mark">?</span>;
+<a href=#446 id=446 data-nosnippet>446</a>    <span class="kw">let </span>quarter = usize::try_from(free / <span class="number">4</span>).unwrap_or(usize::MAX);
+<a href=#447 id=447 data-nosnippet>447</a>    <span class="prelude-val">Ok</span>(full.min(minimum.max(quarter)))
+<a href=#448 id=448 data-nosnippet>448</a>}
+<a href=#449 id=449 data-nosnippet>449</a>
+<a href=#450 id=450 data-nosnippet>450</a><span class="doccomment">/// The paged cube state of a channel-local run, its cache admitted as
+<a href=#451 id=451 data-nosnippet>451</a>/// [`cube_cache_bytes`] sizes it from what the policy leaves free; the state
+<a href=#452 id=452 data-nosnippet>452</a>/// holds the cache's reservation for as long as its storage lives.
+<a href=#453 id=453 data-nosnippet>453</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>cube_state(
+<a href=#454 id=454 data-nosnippet>454</a>    problem: <span class="kw-2">&amp;</span>CompiledProblem,
+<a href=#455 id=455 data-nosnippet>455</a>    directory: <span class="kw-2">&amp;</span>Path,
+<a href=#456 id=456 data-nosnippet>456</a>    (workers, weight_image): (usize, bool),
+<a href=#457 id=457 data-nosnippet>457</a>    host: <span class="kw-2">&amp;</span>HostResources,
+<a href=#458 id=458 data-nosnippet>458</a>    policy: <span class="kw-2">&amp;</span>ResourcePolicy,
+<a href=#459 id=459 data-nosnippet>459</a>) -&gt; <span class="prelude-ty">Result</span>&lt;CubeState, ImagingError&gt; {
+<a href=#460 id=460 data-nosnippet>460</a>    <span class="kw">let </span>cache = cube_cache_bytes(
+<a href=#461 id=461 data-nosnippet>461</a>        problem,
+<a href=#462 id=462 data-nosnippet>462</a>        directory,
+<a href=#463 id=463 data-nosnippet>463</a>        (workers, weight_image),
+<a href=#464 id=464 data-nosnippet>464</a>        free_memory(host, policy),
+<a href=#465 id=465 data-nosnippet>465</a>    )<span class="question-mark">?</span>;
+<a href=#466 id=466 data-nosnippet>466</a>    <span class="kw">let </span>reservation = admit(
+<a href=#467 id=467 data-nosnippet>467</a>        host,
+<a href=#468 id=468 data-nosnippet>468</a>        policy,
+<a href=#469 id=469 data-nosnippet>469</a>        <span class="kw-2">&amp;</span>Demand {
+<a href=#470 id=470 data-nosnippet>470</a>            phase: <span class="string">"paged cube state"</span>,
+<a href=#471 id=471 data-nosnippet>471</a>            memory: cache <span class="kw">as </span>u64,
+<a href=#472 id=472 data-nosnippet>472</a>        },
+<a href=#473 id=473 data-nosnippet>473</a>    )<span class="question-mark">?</span>;
+<a href=#474 id=474 data-nosnippet>474</a>    <span class="kw">let </span>target = problem.model_lifecycle().target();
+<a href=#475 id=475 data-nosnippet>475</a>    <span class="kw">let </span>domains = target
+<a href=#476 id=476 data-nosnippet>476</a>        .domains()
+<a href=#477 id=477 data-nosnippet>477</a>        .iter()
+<a href=#478 id=478 data-nosnippet>478</a>        .map(|domain| domain.pixels())
+<a href=#479 id=479 data-nosnippet>479</a>        .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#480 id=480 data-nosnippet>480</a>    <span class="prelude-val">Ok</span>(CubeState::new(
+<a href=#481 id=481 data-nosnippet>481</a>        directory,
+<a href=#482 id=482 data-nosnippet>482</a>        <span class="kw-2">&amp;</span>domains,
+<a href=#483 id=483 data-nosnippet>483</a>        target.coefficients() * target.polarizations(),
+<a href=#484 id=484 data-nosnippet>484</a>        weight_image,
+<a href=#485 id=485 data-nosnippet>485</a>        reservation,
+<a href=#486 id=486 data-nosnippet>486</a>    )<span class="question-mark">?</span>)
+<a href=#487 id=487 data-nosnippet>487</a>}
+<a href=#488 id=488 data-nosnippet>488</a>
+<a href=#489 id=489 data-nosnippet>489</a><span class="attr">#[cfg(test)]
+<a href=#490 id=490 data-nosnippet>490</a></span><span class="kw">mod </span>tests {
+<a href=#491 id=491 data-nosnippet>491</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+<a href=#492 id=492 data-nosnippet>492</a>
+<a href=#493 id=493 data-nosnippet>493</a>    <span class="kw">const </span>POLICY: CoreAllocation = CoreAllocation {
+<a href=#494 id=494 data-nosnippet>494</a>        workers: <span class="number">4</span>,
+<a href=#495 id=495 data-nosnippet>495</a>        streaming_workers: <span class="number">3</span>,
+<a href=#496 id=496 data-nosnippet>496</a>    };
+<a href=#497 id=497 data-nosnippet>497</a>
+<a href=#498 id=498 data-nosnippet>498</a>    <span class="doccomment">/// A demand of `per_worker` bytes for each streaming and computing
+<a href=#499 id=499 data-nosnippet>499</a>    /// worker beside 100 fixed bytes.
+<a href=#500 id=500 data-nosnippet>500</a>    </span><span class="kw">fn </span>demand(per_worker: u64) -&gt; <span class="kw">impl </span>FnMut(CoreAllocation) -&gt; <span class="prelude-ty">Result</span>&lt;u64, ()&gt; {
+<a href=#501 id=501 data-nosnippet>501</a>        <span class="kw">move </span>|cores: CoreAllocation| {
+<a href=#502 id=502 data-nosnippet>502</a>            <span class="prelude-val">Ok</span>(<span class="number">100 </span>+ per_worker * (cores.workers + cores.streaming_workers) <span class="kw">as </span>u64)
+<a href=#503 id=503 data-nosnippet>503</a>        }
+<a href=#504 id=504 data-nosnippet>504</a>    }
+<a href=#505 id=505 data-nosnippet>505</a>
+<a href=#506 id=506 data-nosnippet>506</a>    <span class="doccomment">/// The policy's workers when they fit; otherwise the most that fit,
+<a href=#507 id=507 data-nosnippet>507</a>    /// with a reason naming both counts; one when none does.
+<a href=#508 id=508 data-nosnippet>508</a>    </span><span class="attr">#[test]
+<a href=#509 id=509 data-nosnippet>509</a>    </span><span class="kw">fn </span>the_most_workers_whose_demand_fits_are_chosen() {
+<a href=#510 id=510 data-nosnippet>510</a>        <span class="kw">let </span>fits = fit_workers(POLICY, <span class="number">170</span>, demand(<span class="number">10</span>)).unwrap();
+<a href=#511 id=511 data-nosnippet>511</a>        <span class="macro">assert_eq!</span>((fits.cores, fits.reason), (POLICY, <span class="prelude-val">None</span>));
+<a href=#512 id=512 data-nosnippet>512</a>
+<a href=#513 id=513 data-nosnippet>513</a>        <span class="kw">let </span>two = fit_workers(POLICY, <span class="number">140</span>, demand(<span class="number">10</span>)).unwrap();
+<a href=#514 id=514 data-nosnippet>514</a>        <span class="macro">assert_eq!</span>(two.cores, POLICY.at_most(<span class="number">2</span>));
+<a href=#515 id=515 data-nosnippet>515</a>        <span class="macro">assert_eq!</span>(two.policy, POLICY);
+<a href=#516 id=516 data-nosnippet>516</a>        <span class="macro">assert_eq!</span>(
+<a href=#517 id=517 data-nosnippet>517</a>            two.reason.as_deref(),
+<a href=#518 id=518 data-nosnippet>518</a>            <span class="prelude-val">Some</span>(<span class="string">"4 workers need 0.00 GB, 2 fit 0.00 GB free"</span>)
+<a href=#519 id=519 data-nosnippet>519</a>        );
 <a href=#520 id=520 data-nosnippet>520</a>
-<a href=#521 id=521 data-nosnippet>521</a>    <span class="doccomment">/// A minor cycle is charged once, after the first pass, beside what the
-<a href=#522 id=522 data-nosnippet>522</a>    /// run keeps then, never on top of the first pass: B3's charges on four
-<a href=#523 id=523 data-nosnippet>523</a>    /// workers (MB, rounded), whose minor cycle (3,897) is two thirds of its
-<a href=#524 id=524 data-nosnippet>524</a>    /// first pass (5,952), come to the larger stage, not their sum. B3's
-<a href=#525 id=525 data-nosnippet>525</a>    /// normal state is 4096² cells of two residual terms and three PSF
-<a href=#526 id=526 data-nosnippet>526</a>    /// moments (104 bytes a cell), its record a 4096² mask support, and its
-<a href=#527 id=527 data-nosnippet>527</a>    /// model terms those of 2,001 components of its largest scale's 729
-<a href=#528 id=528 data-nosnippet>528</a>    /// cells on each of two terms, 168 bytes an entry (#778 review); with its
-<a href=#529 id=529 data-nosnippet>529</a>    /// kernels it demands the 8.05 GB its run logs. The minor cycle and the
-<a href=#530 id=530 data-nosnippet>530</a>    /// terms each decide the stage after the first pass; a run that does not
-<a href=#531 id=531 data-nosnippet>531</a>    /// clean charges neither, and a refresh pass larger than the minor cycle
-<a href=#532 id=532 data-nosnippet>532</a>    /// is charged in its place, beside the terms.
-<a href=#533 id=533 data-nosnippet>533</a>    </span><span class="attr">#[test]
-<a href=#534 id=534 data-nosnippet>534</a>    </span><span class="kw">fn </span>a_minor_cycle_is_charged_once_after_the_first_pass() {
-<a href=#535 id=535 data-nosnippet>535</a>        <span class="kw">let </span>after = AfterFirstPass {
-<a href=#536 id=536 data-nosnippet>536</a>            normal: <span class="number">1_745</span>,
-<a href=#537 id=537 data-nosnippet>537</a>            model: <span class="number">537</span>,
-<a href=#538 id=538 data-nosnippet>538</a>            cached: <span class="number">0</span>,
-<a href=#539 id=539 data-nosnippet>539</a>            records: <span class="number">17</span>,
-<a href=#540 id=540 data-nosnippet>540</a>            results: <span class="number">490</span>,
-<a href=#541 id=541 data-nosnippet>541</a>            refresh_pass: <span class="number">2_000</span>,
-<a href=#542 id=542 data-nosnippet>542</a>        };
-<a href=#543 id=543 data-nosnippet>543</a>        <span class="kw">let </span>b3 = StageCharges {
-<a href=#544 id=544 data-nosnippet>544</a>            weighing: <span class="number">161</span>,
-<a href=#545 id=545 data-nosnippet>545</a>            weights: <span class="number">134</span>,
-<a href=#546 id=546 data-nosnippet>546</a>            measuring: <span class="number">0</span>,
-<a href=#547 id=547 data-nosnippet>547</a>            kept: <span class="number">176</span>,
-<a href=#548 id=548 data-nosnippet>548</a>            first_pass: <span class="number">5_952</span>,
-<a href=#549 id=549 data-nosnippet>549</a>            minor: <span class="number">3_897</span>,
-<a href=#550 id=550 data-nosnippet>550</a>            after: <span class="prelude-val">Some</span>(after),
-<a href=#551 id=551 data-nosnippet>551</a>        };
-<a href=#552 id=552 data-nosnippet>552</a>        <span class="kw">let </span>following = <span class="number">176 </span>+ <span class="number">1_745 </span>+ <span class="number">537 </span>+ <span class="number">17 </span>+ <span class="number">490 </span>+ <span class="number">3_897</span>;
-<a href=#553 id=553 data-nosnippet>553</a>        <span class="macro">assert!</span>(following &gt; <span class="number">176 </span>+ <span class="number">5_952</span>, <span class="string">"B3's stage after the first pass"</span>);
-<a href=#554 id=554 data-nosnippet>554</a>        <span class="macro">assert_eq!</span>(b3.largest(), following);
-<a href=#555 id=555 data-nosnippet>555</a>        <span class="macro">assert!</span>(
-<a href=#556 id=556 data-nosnippet>556</a>            b3.largest() &lt; <span class="number">176 </span>+ <span class="number">5_952 </span>+ <span class="number">3_897</span>,
-<a href=#557 id=557 data-nosnippet>557</a>            <span class="string">"not the pass and the minor cycle"
-<a href=#558 id=558 data-nosnippet>558</a>        </span>);
-<a href=#559 id=559 data-nosnippet>559</a>        <span class="comment">// Whatever the first pass, the minor cycle and its terms count.
-<a href=#560 id=560 data-nosnippet>560</a>        </span><span class="kw">let </span>alone = StageCharges {
-<a href=#561 id=561 data-nosnippet>561</a>            first_pass: <span class="number">1</span>,
-<a href=#562 id=562 data-nosnippet>562</a>            ..b3
-<a href=#563 id=563 data-nosnippet>563</a>        };
-<a href=#564 id=564 data-nosnippet>564</a>        <span class="macro">assert_eq!</span>(alone.largest(), following);
-<a href=#565 id=565 data-nosnippet>565</a>        <span class="kw">let </span>larger = StageCharges {
-<a href=#566 id=566 data-nosnippet>566</a>            minor: <span class="number">3_997</span>,
-<a href=#567 id=567 data-nosnippet>567</a>            ..alone
+<a href=#521 id=521 data-nosnippet>521</a>        <span class="kw">let </span>none = fit_workers(POLICY, <span class="number">110</span>, demand(<span class="number">10</span>)).unwrap();
+<a href=#522 id=522 data-nosnippet>522</a>        <span class="macro">assert_eq!</span>(none.cores, POLICY.at_most(<span class="number">1</span>));
+<a href=#523 id=523 data-nosnippet>523</a>        <span class="macro">assert!</span>(none.reason.unwrap().contains(<span class="string">"no fewer fit"</span>));
+<a href=#524 id=524 data-nosnippet>524</a>
+<a href=#525 id=525 data-nosnippet>525</a>        <span class="kw">let </span>one = CoreAllocation {
+<a href=#526 id=526 data-nosnippet>526</a>            workers: <span class="number">1</span>,
+<a href=#527 id=527 data-nosnippet>527</a>            streaming_workers: <span class="number">1</span>,
+<a href=#528 id=528 data-nosnippet>528</a>        };
+<a href=#529 id=529 data-nosnippet>529</a>        <span class="kw">let </span>alone = fit_workers(one, <span class="number">0</span>, demand(<span class="number">10</span>)).unwrap();
+<a href=#530 id=530 data-nosnippet>530</a>        <span class="macro">assert_eq!</span>((alone.cores, alone.reason), (one, <span class="prelude-val">None</span>));
+<a href=#531 id=531 data-nosnippet>531</a>    }
+<a href=#532 id=532 data-nosnippet>532</a>
+<a href=#533 id=533 data-nosnippet>533</a>    <span class="doccomment">/// The counts are tried from the policy's down, and the first that
+<a href=#534 id=534 data-nosnippet>534</a>    /// fits is taken.
+<a href=#535 id=535 data-nosnippet>535</a>    </span><span class="attr">#[test]
+<a href=#536 id=536 data-nosnippet>536</a>    </span><span class="kw">fn </span>counts_are_tried_from_the_policys_down() {
+<a href=#537 id=537 data-nosnippet>537</a>        <span class="kw">let </span><span class="kw-2">mut </span>tried = Vec::new();
+<a href=#538 id=538 data-nosnippet>538</a>        <span class="kw">let </span>choice = fit_workers(POLICY, <span class="number">140</span>, |cores: CoreAllocation| {
+<a href=#539 id=539 data-nosnippet>539</a>            tried.push(cores.workers);
+<a href=#540 id=540 data-nosnippet>540</a>            demand(<span class="number">10</span>)(cores)
+<a href=#541 id=541 data-nosnippet>541</a>        })
+<a href=#542 id=542 data-nosnippet>542</a>        .unwrap();
+<a href=#543 id=543 data-nosnippet>543</a>        <span class="macro">assert_eq!</span>(choice.cores.workers, <span class="number">2</span>);
+<a href=#544 id=544 data-nosnippet>544</a>        <span class="macro">assert_eq!</span>(tried, [<span class="number">4</span>, <span class="number">3</span>, <span class="number">2</span>]);
+<a href=#545 id=545 data-nosnippet>545</a>    }
+<a href=#546 id=546 data-nosnippet>546</a>
+<a href=#547 id=547 data-nosnippet>547</a>    <span class="doccomment">/// A minor cycle is charged once, after the first pass, beside what the
+<a href=#548 id=548 data-nosnippet>548</a>    /// run keeps then, never on top of the first pass: B3's charges on four
+<a href=#549 id=549 data-nosnippet>549</a>    /// workers (MB, rounded), whose minor cycle (3,897) is two thirds of its
+<a href=#550 id=550 data-nosnippet>550</a>    /// first pass (5,952), come to the larger stage, not their sum. B3's
+<a href=#551 id=551 data-nosnippet>551</a>    /// normal state is 4096² cells of two residual terms and three PSF
+<a href=#552 id=552 data-nosnippet>552</a>    /// moments (104 bytes a cell), its record a 4096² mask support, and its
+<a href=#553 id=553 data-nosnippet>553</a>    /// model terms those of 2,001 components of its largest scale's 729
+<a href=#554 id=554 data-nosnippet>554</a>    /// cells on each of two terms, 168 bytes an entry (#778 review); with its
+<a href=#555 id=555 data-nosnippet>555</a>    /// kernels it demands the 8.05 GB its run logs. The minor cycle and the
+<a href=#556 id=556 data-nosnippet>556</a>    /// terms each decide the stage after the first pass; a run that does not
+<a href=#557 id=557 data-nosnippet>557</a>    /// clean charges neither, and a refresh pass larger than the minor cycle
+<a href=#558 id=558 data-nosnippet>558</a>    /// is charged in its place, beside the terms.
+<a href=#559 id=559 data-nosnippet>559</a>    </span><span class="attr">#[test]
+<a href=#560 id=560 data-nosnippet>560</a>    </span><span class="kw">fn </span>a_minor_cycle_is_charged_once_after_the_first_pass() {
+<a href=#561 id=561 data-nosnippet>561</a>        <span class="kw">let </span>after = AfterFirstPass {
+<a href=#562 id=562 data-nosnippet>562</a>            normal: <span class="number">1_745</span>,
+<a href=#563 id=563 data-nosnippet>563</a>            model: <span class="number">537</span>,
+<a href=#564 id=564 data-nosnippet>564</a>            cached: <span class="number">0</span>,
+<a href=#565 id=565 data-nosnippet>565</a>            records: <span class="number">17</span>,
+<a href=#566 id=566 data-nosnippet>566</a>            results: <span class="number">490</span>,
+<a href=#567 id=567 data-nosnippet>567</a>            refresh_pass: <span class="number">2_000</span>,
 <a href=#568 id=568 data-nosnippet>568</a>        };
-<a href=#569 id=569 data-nosnippet>569</a>        <span class="macro">assert_eq!</span>(larger.largest(), following + <span class="number">100</span>);
-<a href=#570 id=570 data-nosnippet>570</a>        <span class="kw">let </span>termless = StageCharges {
-<a href=#571 id=571 data-nosnippet>571</a>            after: <span class="prelude-val">Some</span>(AfterFirstPass {
-<a href=#572 id=572 data-nosnippet>572</a>                results: <span class="number">0</span>,
-<a href=#573 id=573 data-nosnippet>573</a>                ..after
-<a href=#574 id=574 data-nosnippet>574</a>            }),
-<a href=#575 id=575 data-nosnippet>575</a>            ..alone
-<a href=#576 id=576 data-nosnippet>576</a>        };
-<a href=#577 id=577 data-nosnippet>577</a>        <span class="macro">assert_eq!</span>(termless.largest(), following - <span class="number">490</span>);
-<a href=#578 id=578 data-nosnippet>578</a>        <span class="kw">let </span>dirty = StageCharges { after: <span class="prelude-val">None</span>, ..b3 };
-<a href=#579 id=579 data-nosnippet>579</a>        <span class="macro">assert_eq!</span>(dirty.largest(), <span class="number">176 </span>+ <span class="number">5_952</span>);
-<a href=#580 id=580 data-nosnippet>580</a>        <span class="kw">let </span>refreshing = StageCharges {
-<a href=#581 id=581 data-nosnippet>581</a>            minor: <span class="number">1</span>,
-<a href=#582 id=582 data-nosnippet>582</a>            first_pass: <span class="number">1</span>,
-<a href=#583 id=583 data-nosnippet>583</a>            ..b3
-<a href=#584 id=584 data-nosnippet>584</a>        };
-<a href=#585 id=585 data-nosnippet>585</a>        <span class="macro">assert_eq!</span>(refreshing.largest(), <span class="number">176 </span>+ <span class="number">1_745 </span>+ <span class="number">537 </span>+ <span class="number">17 </span>+ <span class="number">490 </span>+ <span class="number">2_000</span>);
-<a href=#586 id=586 data-nosnippet>586</a>    }
-<a href=#587 id=587 data-nosnippet>587</a>}
+<a href=#569 id=569 data-nosnippet>569</a>        <span class="kw">let </span>b3 = StageCharges {
+<a href=#570 id=570 data-nosnippet>570</a>            weighing: <span class="number">161</span>,
+<a href=#571 id=571 data-nosnippet>571</a>            weights: <span class="number">134</span>,
+<a href=#572 id=572 data-nosnippet>572</a>            measuring: <span class="number">0</span>,
+<a href=#573 id=573 data-nosnippet>573</a>            kept: <span class="number">176</span>,
+<a href=#574 id=574 data-nosnippet>574</a>            first_pass: <span class="number">5_952</span>,
+<a href=#575 id=575 data-nosnippet>575</a>            minor: <span class="number">3_897</span>,
+<a href=#576 id=576 data-nosnippet>576</a>            after: <span class="prelude-val">Some</span>(after),
+<a href=#577 id=577 data-nosnippet>577</a>        };
+<a href=#578 id=578 data-nosnippet>578</a>        <span class="kw">let </span>following = <span class="number">176 </span>+ <span class="number">1_745 </span>+ <span class="number">537 </span>+ <span class="number">17 </span>+ <span class="number">490 </span>+ <span class="number">3_897</span>;
+<a href=#579 id=579 data-nosnippet>579</a>        <span class="macro">assert!</span>(following &gt; <span class="number">176 </span>+ <span class="number">5_952</span>, <span class="string">"B3's stage after the first pass"</span>);
+<a href=#580 id=580 data-nosnippet>580</a>        <span class="macro">assert_eq!</span>(b3.largest(), following);
+<a href=#581 id=581 data-nosnippet>581</a>        <span class="macro">assert!</span>(
+<a href=#582 id=582 data-nosnippet>582</a>            b3.largest() &lt; <span class="number">176 </span>+ <span class="number">5_952 </span>+ <span class="number">3_897</span>,
+<a href=#583 id=583 data-nosnippet>583</a>            <span class="string">"not the pass and the minor cycle"
+<a href=#584 id=584 data-nosnippet>584</a>        </span>);
+<a href=#585 id=585 data-nosnippet>585</a>        <span class="comment">// Whatever the first pass, the minor cycle and its terms count.
+<a href=#586 id=586 data-nosnippet>586</a>        </span><span class="kw">let </span>alone = StageCharges {
+<a href=#587 id=587 data-nosnippet>587</a>            first_pass: <span class="number">1</span>,
+<a href=#588 id=588 data-nosnippet>588</a>            ..b3
+<a href=#589 id=589 data-nosnippet>589</a>        };
+<a href=#590 id=590 data-nosnippet>590</a>        <span class="macro">assert_eq!</span>(alone.largest(), following);
+<a href=#591 id=591 data-nosnippet>591</a>        <span class="kw">let </span>larger = StageCharges {
+<a href=#592 id=592 data-nosnippet>592</a>            minor: <span class="number">3_997</span>,
+<a href=#593 id=593 data-nosnippet>593</a>            ..alone
+<a href=#594 id=594 data-nosnippet>594</a>        };
+<a href=#595 id=595 data-nosnippet>595</a>        <span class="macro">assert_eq!</span>(larger.largest(), following + <span class="number">100</span>);
+<a href=#596 id=596 data-nosnippet>596</a>        <span class="kw">let </span>termless = StageCharges {
+<a href=#597 id=597 data-nosnippet>597</a>            after: <span class="prelude-val">Some</span>(AfterFirstPass {
+<a href=#598 id=598 data-nosnippet>598</a>                results: <span class="number">0</span>,
+<a href=#599 id=599 data-nosnippet>599</a>                ..after
+<a href=#600 id=600 data-nosnippet>600</a>            }),
+<a href=#601 id=601 data-nosnippet>601</a>            ..alone
+<a href=#602 id=602 data-nosnippet>602</a>        };
+<a href=#603 id=603 data-nosnippet>603</a>        <span class="macro">assert_eq!</span>(termless.largest(), following - <span class="number">490</span>);
+<a href=#604 id=604 data-nosnippet>604</a>        <span class="kw">let </span>dirty = StageCharges { after: <span class="prelude-val">None</span>, ..b3 };
+<a href=#605 id=605 data-nosnippet>605</a>        <span class="macro">assert_eq!</span>(dirty.largest(), <span class="number">176 </span>+ <span class="number">5_952</span>);
+<a href=#606 id=606 data-nosnippet>606</a>        <span class="kw">let </span>refreshing = StageCharges {
+<a href=#607 id=607 data-nosnippet>607</a>            minor: <span class="number">1</span>,
+<a href=#608 id=608 data-nosnippet>608</a>            first_pass: <span class="number">1</span>,
+<a href=#609 id=609 data-nosnippet>609</a>            ..b3
+<a href=#610 id=610 data-nosnippet>610</a>        };
+<a href=#611 id=611 data-nosnippet>611</a>        <span class="macro">assert_eq!</span>(refreshing.largest(), <span class="number">176 </span>+ <span class="number">1_745 </span>+ <span class="number">537 </span>+ <span class="number">17 </span>+ <span class="number">490 </span>+ <span class="number">2_000</span>);
+<a href=#612 id=612 data-nosnippet>612</a>    }
+<a href=#613 id=613 data-nosnippet>613</a>}
 </code></pre></div></section></main></body></html>
