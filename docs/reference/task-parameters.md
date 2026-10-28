@@ -228,8 +228,8 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 |---|---|---|---|---|---|
 | <code>vis</code> | <code>data.input.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | no default; required | Context | Input MeasurementSet path or paths.<br><em>Surface:</em> Canonical vis maps to provider field ms. |
 | <code>imagename</code> | <code>image.output.imagename@r1</code> | <code>path (image)</code> | no default; required | Products | Output CASA image prefix |
-| <code>imsize</code> | <code>image.geometry.imsize@r1</code> | <code>optional&lt;array&lt;integer&gt;&gt; (states: auto)</code> | <code>512</code>; optional | Stage Parameters | Image dimensions in pixels |
-| <code>cell</code> | <code>image.geometry.cell@r1</code> | <code>array&lt;quantity&lt;angle&gt; (canonical arcsec)&gt;; unit dimension: angle</code> | <code>"1.0arcsec"</code>; optional | Stage Parameters | Image cell size in arcseconds<br><em>Surface:</em> Canonical cell maps to provider field cell_arcsec. |
+| <code>imsize</code> | <code>image.geometry.imsize@r2</code> | <code>optional&lt;array&lt;integer&gt;&gt; (states: auto)</code> | <code>512</code>; optional | Stage Parameters | Image dimensions in pixels |
+| <code>cell</code> | <code>image.geometry.cell@r2</code> | <code>array&lt;quantity&lt;angle&gt; (canonical arcsec)&gt;; unit dimension: angle</code> | <code>"1.0arcsec"</code>; optional | Stage Parameters | Image cell size in arcseconds<br><em>Surface:</em> Canonical cell maps to provider field cell_arcsec. |
 | <code>datacolumn</code> | <code>parameter.datacolumn@r1</code> | <code>string</code> | <code>"none"</code>; optional | Context | Visibility data column used by the surface. |
 | <code>savemodel</code> | <code>parameter.savemodel@r1</code> | <code>choice (2 values)</code> | <code>"none"</code>; optional | Products | Write the predicted final model into the MeasurementSet |
 | <code>outlierfile</code> | <code>parameter.outlierfile@r1</code> | <code>path (image)</code> | <code>"none"</code>; optional | Products | CASA outlier-field definitions for supported MFS/Hogbom image sets |

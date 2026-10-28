@@ -9,7 +9,15 @@
 //!   `ImageRegrid` with `Interpolate2D::LINEAR`). CASA copies a start model
 //!   already on that grid; casa-rs regrids it too, which changes it only by
 //!   rounding;
-//! - its Stokes and spectral axes are the image's.
+//! - its direction frame is the image's: casa-rs does not convert frames;
+//! - its Stokes are the image's, plane for plane, however many there are.
+//!   CASA's regrid leaves the Stokes axis alone, so it seeds a Stokes I
+//!   image from a Stokes Q start model; casa-rs refuses that (`docs/CASA
+//!   (C++) bugs.md`);
+//! - a cube's start model has the image's spectral axis. An MFS image's has
+//!   one plane, at any frequency: CASA's regrid replicates a degenerate
+//!   spectral axis, and an MFS model holds one plane whatever frequency it
+//!   is stated at.
 //!
 //! It is the model's first generation, so the first major cycle subtracts
 //! its prediction and the restored image includes it. Compile reads its
@@ -18,6 +26,7 @@
 
 use std::path::{Path, PathBuf};
 
+use casa_coordinates::{CoordinateModel, CoordinateSystem, StokesType};
 use casa_images::{
     AnyPagedImage, ImageError, ImageInterface, ImagePixel, RegridMethod, RegridTemplate, TempImage,
     TempStoragePolicy, check_regrid, regrid,
@@ -78,6 +87,16 @@ impl StartModel {
                 "{error}; its Stokes and spectral axes must be the image's"
             ))
         })?;
+        // `check_regrid` keeps the input's coordinate on an axis of one
+        // pixel in both images, which a regrid's caller sees; the model
+        // keeps only the pixels, so a single Stokes plane is checked here.
+        let (ours, theirs) = (stokes(&coordinates), stokes(&template.coordinates));
+        if ours != theirs {
+            return Err(refuse(format!(
+                "its Stokes are {ours:?} and the image's {theirs:?}; a start model seeds the \
+                 image's own Stokes planes"
+            )));
+        }
         Ok(Self {
             path: path.to_path_buf(),
             input_shape: shape,
@@ -126,10 +145,19 @@ impl StartModel {
     }
 }
 
+/// The Stokes of `coordinates`' Stokes coordinate, in plane order; `None`
+/// without one.
+fn stokes(coordinates: &CoordinateSystem) -> Option<Vec<StokesType>> {
+    (0..coordinates.n_coordinates()).find_map(|index| match coordinates.coordinate(index) {
+        CoordinateModel::Stokes(stokes) => Some(stokes.stokes().to_vec()),
+        _ => None,
+    })
+}
+
 /// The unit, coordinates and shape [`StartModel::prepare`] reads.
 fn header<T: ImagePixel>(
     image: &casa_images::PagedImage<T>,
-) -> (String, casa_coordinates::CoordinateSystem, Vec<usize>) {
+) -> (String, CoordinateSystem, Vec<usize>) {
     (
         image.units().to_string(),
         image.coordinates().clone(),

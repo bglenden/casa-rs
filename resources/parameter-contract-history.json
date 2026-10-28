@@ -107,9 +107,19 @@
       "fingerprint": "56df2b0860599c0e9ef0bc63ef989af5478e3f6900a287d24f28fc855df8f06f"
     },
     {
+      "id": "image.geometry.cell",
+      "semantic_revision": 2,
+      "fingerprint": "d3caaa38ee463aec082c3292265e46131971d99f3a7f252d8eec926f7ca5893c"
+    },
+    {
       "id": "image.geometry.imsize",
       "semantic_revision": 1,
       "fingerprint": "be5abd61fe0d353813f2668ad2cbb26b47f490b40f2ad026d3141475dc5db5f7"
+    },
+    {
+      "id": "image.geometry.imsize",
+      "semantic_revision": 2,
+      "fingerprint": "18f6a3d71555c1ef40a41e1eb28b9f25b356f794bd7ba0fc6c21f0e5c974ce63"
     },
     {
       "id": "image.input.imagename",
@@ -2856,7 +2866,7 @@
     {
       "id": "imager",
       "contract_version": 28,
-      "fingerprint": "d39b49d4838aeb4f4b9a7b5cd0a2a3645b6ce32113f6a0a1003b7a489b81257f"
+      "fingerprint": "6e4ab5745076298cd039ae7df0ecea19b7b55a01b353da254fdb51f67fbea1ce"
     },
     {
       "id": "imcollapse",

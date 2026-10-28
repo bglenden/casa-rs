@@ -8186,7 +8186,7 @@
           "name": "imsize",
           "concept": {
             "id": "image.geometry.imsize",
-            "semantic_revision": 1
+            "semantic_revision": 2
           },
           "order": 2,
           "default": {
@@ -8236,7 +8236,7 @@
           "name": "cell",
           "concept": {
             "id": "image.geometry.cell",
-            "semantic_revision": 1
+            "semantic_revision": 2
           },
           "order": 3,
           "default": {

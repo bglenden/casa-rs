@@ -2372,8 +2372,31 @@ computes those images directly and keeps the Stokes axis.
 wavelengths ("default units are lambda in aperture plane"). `setFilter` takes
 the uv-plane path only when the unit contains "lambda", and otherwise treats
 the value as an image-plane angle, here 300 radians. The filter is then
-`exp(-π²θ²/(4 ln 2) u²)`, zero for every baseline, so every imaging weight is
-zero and the image is empty with a beam of 1e-6 arcsec (CASA 6.7.6 on
-`refim_point.ms`). casa-rs refuses a `uvtaper` entry without a unit and asks
-for an angle or for wavelengths
-(`casa_imaging_application::ImagingRequest::uvtaper`).
+`exp(-π²θ²/(4 ln 2) u²)`, which underflows to zero on every baseline of
+`refim_point.ms`. Every imaging weight is zero there, and the image is empty
+with a beam of 1e-6 arcsec (CASA 6.7.6). A unitless value is always an angle
+in radians to CASA, never the documented wavelengths. Whether it empties the
+image depends on the value and the baselines, and a small enough one does
+not. casa-rs refuses a `uvtaper` entry without a unit and asks for an angle
+or for wavelengths (`casa_imaging_application::ImagingRequest::uvtaper`).
+
+## `tclean` seeds a Stokes I image from a Stokes Q start model
+
+- Date noted: 2026-10-28
+- Status: CASA bug; casa-rs refuses the start model (#841 Phase 6b, #970
+  review)
+- Affected code: casatools `synthesis/ImagerObjects/SIImageStore.cc`
+  (`setModelImageOne`, `regridToModelImage`) and casacore
+  `images/Images/ImageRegrid.tcc`
+
+`regridToModelImage` regrids a start model on its direction and spectral
+axes only. `ImageRegrid` copies the Stokes axis without comparing its
+coordinate, so a one-plane Stokes Q model seeds the model of a Stokes I run.
+Its pixels are then predicted, subtracted and restored as Stokes I. casa-rs
+requires the start model's Stokes to be the image's, plane for plane, a
+single plane included (`casa_imaging_application`'s `StartModel`).
+
+A degenerate spectral axis is replicated the same way: an MFS start model of
+one plane seeds the MFS plane at whatever frequency it is stated. That is
+physically sound for a continuum model, and casa-rs keeps it. A cube's start
+model must have the cube's spectral axis.

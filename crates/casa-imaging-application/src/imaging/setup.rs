@@ -240,7 +240,8 @@ impl SetupDemand<'_> {
             if self.refresh.is_some() {
                 refresh = refresh.max(writing);
             } else {
-                first = first.max(writing);
+                // The initial pass writes, and seeds beside it (#970 review).
+                first = first.max(writing + self.start_model.unwrap_or(0));
             }
         }
         let stages = StageCharges {

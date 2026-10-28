@@ -686,11 +686,17 @@ fn absolute<'de, D: Deserializer<'de>>(deserializer: D) -> Result<PathBuf, D::Er
     std::path::absolute(PathBuf::deserialize(deserializer)?).map_err(D::Error::custom)
 }
 
-/// The x and y values of a pair, or one value for both.
+/// The x and y values of a pair, or one value for both, given alone or as a
+/// one-element list (CASA's `SynthesisParamsImage::fromRecord`).
 fn pair<'de, D: Deserializer<'de>>(deserializer: D) -> Result<[Value; 2], D::Error> {
     match Value::deserialize(deserializer)? {
-        Value::Array(items) => <[Value; 2]>::try_from(items)
-            .map_err(|items| D::Error::custom(format!("expected two axes, found {}", items.len()))),
+        Value::Array(mut items) if items.len() == 1 => {
+            let value = items.remove(0);
+            Ok([value.clone(), value])
+        }
+        Value::Array(items) => <[Value; 2]>::try_from(items).map_err(|items| {
+            D::Error::custom(format!("expected one or two axes, found {}", items.len()))
+        }),
         value => Ok([value.clone(), value]),
     }
 }
@@ -1109,6 +1115,9 @@ pub(crate) mod tests {
     fn imsize_and_cell_take_one_value_or_one_per_axis() {
         let square = request(json!({ "imsize": 64, "cell": "2arcsec" }));
         assert_eq!((square.imsize, square.cell), ([64, 64], [2.0, 2.0]));
+        // CASA's one-element lists are one value for both axes (#970 review).
+        let listed = request(json!({ "imsize": [120], "cell": ["8arcsec"] }));
+        assert_eq!((listed.imsize, listed.cell), ([120, 120], [8.0, 8.0]));
         let pairs = request(json!({ "imsize": [120, 80], "cell": ["8arcsec", "6arcsec"] }));
         assert_eq!((pairs.imsize, pairs.cell), ([120, 80], [8.0, 6.0]));
         pairs.validate().expect("a non-square image");

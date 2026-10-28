@@ -965,6 +965,41 @@ fn a_start_model_stays_within_its_admission() {
     assert!(breaches.is_empty(), "{breaches:#?}");
 }
 
+/// #970 review (Astra, finding 2): a seeded cube's initial pass plans its
+/// waves in what seeding leaves. It took the largest wave that fitted and
+/// only then admitted the seeding beside it, so a cube whose one wave and
+/// seeding fitted was refused until every plane did. Just above what it
+/// needs, a cube seeded from a cleaned cube's model runs in waves and holds
+/// no more than it was admitted.
+#[test]
+fn a_seeded_cube_runs_in_waves_within_its_admission() {
+    if !alone("a_seeded_cube_runs_in_waves_within_its_admission") {
+        return;
+    }
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = observation(root.path(), CUBE_CHANNELS);
+    warm(&measurement_set, root.path());
+    let mut breaches = Vec::new();
+    drop(check(
+        &mut breaches,
+        "the cube whose model seeds the next",
+        &cube(&measurement_set, &root.path().join("start"), json!({})),
+        4,
+        AMPLE,
+    ));
+    let seeded = cube(
+        &measurement_set,
+        &root.path().join("seeded"),
+        json!({ "startmodel": root.path().join("start.model") }),
+    );
+    let waves = just_above(&mut breaches, "seeded cube", &seeded);
+    assert!(
+        waves.is_some_and(|planes| (planes as usize) < CUBE_CHANNELS),
+        "the seeded cube runs in waves just above what it needs: {waves:?}"
+    );
+    assert!(breaches.is_empty(), "{breaches:#?}");
+}
+
 /// The shapes IF-10's closeout rows added stay within their admission
 /// (#722): a 2048² image in 2×2 facets, whose pass also holds the stitched
 /// full-size residual and PSF, and an eight-channel mosaic cube, whose paged

@@ -716,7 +716,18 @@ impl<'a> Run<'a> {
             self.initial_modes(),
             self.start_model.is_some(),
         );
-        let plan = self.admit_pass(modes, with_model, self.visibility_write_bytes, true)?;
+        // Without a minor cycle the initial pass writes, and seeds beside it.
+        let seeding = if writes_initially(self.problem) {
+            self.seeding_bytes()
+        } else {
+            0
+        };
+        let plan = self.admit_pass(
+            modes,
+            with_model,
+            self.visibility_write_bytes + seeding,
+            true,
+        )?;
         if plan.value.residency != Residency::All {
             return Err(ImagingError::Pass(PassError::VisibilityWriteWaves));
         }
@@ -728,18 +739,25 @@ impl<'a> Run<'a> {
     /// visibilities when it is also final.
     fn initial(&mut self, last: bool) -> Result<Major, ImagingError> {
         self.measure_row_work()?;
-        // The model is admitted with the pass, before it is allocated.
+        // The model, and a start model's seeding beside it, are admitted
+        // with the pass before either is allocated, so the pass plans its
+        // waves and chunks in what seeding leaves (#970 review).
+        let seeding = self.seeding_bytes();
         let Admitted {
             value: plan,
-            reservation: pass,
+            reservation: mut pass,
         } = self.admit_pass(
             self.initial_modes(),
             self.start_model.is_some(),
-            self.lifecycle.resident_bytes() + self.write_bytes(last),
+            self.lifecycle.resident_bytes() + self.write_bytes(last) + seeding,
             self.writes(last),
         )?;
         let generation = match &self.start_model {
-            Some(start) => self.seed(start)?,
+            Some(start) => {
+                // Released once the generation holds the samples.
+                let _seeding = pass.split(seeding);
+                self.seed(start)?
+            }
             None => self.lifecycle.initial_empty()?,
         };
         let model = self.lifecycle.prepare_final_model(generation, [])?;
@@ -749,19 +767,19 @@ impl<'a> Run<'a> {
         Ok(major)
     }
 
-    /// The initial generation from `start`: read and regridded under its
-    /// own admission, which is released once the generation holds it.
+    /// The initial generation from `start`, read and regridded within the
+    /// initial pass's admission ([`Self::seeding_bytes`]).
     fn seed(&self, start: &StartModel) -> Result<ModelGeneration, ImagingError> {
-        let _seeding = admit(
-            &self.host,
-            &self.policy,
-            &Demand {
-                phase: "start model",
-                memory: start.seeding_bytes(),
-            },
-        )?;
         let samples = start.main_samples().map_err(ImagingError::StartModel)?;
         Ok(self.lifecycle.initial_from_start_model(&samples)?)
+    }
+
+    /// What seeding the model from the start model holds besides the model
+    /// ([`StartModel::seeding_bytes`]); 0 without one.
+    fn seeding_bytes(&self) -> u64 {
+        self.start_model
+            .as_ref()
+            .map_or(0, StartModel::seeding_bytes)
     }
 
     /// The major cycle after a minor cycle: the residual of the model updated
@@ -1240,11 +1258,17 @@ const fn initial_modes(weight_image: bool) -> ModeSet {
 /// model when it was `seeded` from a start model, and a residual refresh
 /// otherwise.
 fn write_pass(problem: &CompiledProblem, initial: ModeSet, seeded: bool) -> (ModeSet, bool) {
-    if problem.reconstruction().controls().max_minor_iterations() > 0 {
-        (ModeSet::DATA, true)
-    } else {
+    if writes_initially(problem) {
         (initial, seeded)
+    } else {
+        (ModeSet::DATA, true)
     }
+}
+
+/// Whether the initial pass is the one that writes visibilities: a run
+/// without cleaning ([`write_pass`]).
+fn writes_initially(problem: &CompiledProblem) -> bool {
+    problem.reconstruction().controls().max_minor_iterations() == 0
 }
 
 /// The output-frame frequency envelope of a plane range of a channel-local
