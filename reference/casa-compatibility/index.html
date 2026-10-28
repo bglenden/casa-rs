@@ -1,0 +1,2014 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Rust and Python APIs for CASA-compatible data and tasks">
+      
+      
+      
+      
+        <link rel="prev" href="../task-parameters/">
+      
+      
+        <link rel="next" href="../../rust-api/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
+    
+    
+      
+        <title>CASA Compatibility - casa-rs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.57a0d79d.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#casa-rs-and-casa-67614-tasks" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="casa-rs" class="md-header__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            casa-rs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              CASA Compatibility
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="casa-rs" class="md-nav__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    casa-rs
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Task Parameters
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Task Parameters
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../task-parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../task-parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Generated Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CASA Compatibility
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CASA Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#summary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Summary
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tasks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tasks
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Tasks">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#applycal" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        applycal
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#bandpass" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        bandpass
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#exportfits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        exportfits
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#feather" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        feather
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#flagdata" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        flagdata
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#flagmanager" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        flagmanager
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fluxscale" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        fluxscale
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#gaincal" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        gaincal
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#gencal" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        gencal
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#imager-casas-tclean" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        imager (CASA's tclean)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#imhead" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        imhead
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#immath" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        immath
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#immoments" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        immoments
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#impbcor" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        impbcor
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#importfits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        importfits
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#importvla" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        importvla
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#impv" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        impv
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#imregrid" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        imregrid
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#imstat" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        imstat
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#imsubimage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        imsubimage
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#mstransform" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        mstransform
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#plotms" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        plotms
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#simobserve" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        simobserve
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#split" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        split
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../rust-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rust API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Python
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/tasks-calibrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Calibrate Tasks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/versioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#summary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Summary
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tasks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tasks
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Tasks">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#applycal" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        applycal
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#bandpass" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        bandpass
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#exportfits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        exportfits
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#feather" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        feather
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#flagdata" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        flagdata
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#flagmanager" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        flagmanager
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fluxscale" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        fluxscale
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#gaincal" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        gaincal
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#gencal" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        gencal
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#imager-casas-tclean" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        imager (CASA's tclean)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#imhead" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        imhead
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#immath" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        immath
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#immoments" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        immoments
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#impbcor" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        impbcor
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#importfits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        importfits
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#importvla" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        importvla
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#impv" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        impv
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#imregrid" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        imregrid
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#imstat" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        imstat
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#imsubimage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        imsubimage
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#mstransform" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        mstransform
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#plotms" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        plotms
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#simobserve" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        simobserve
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#split" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        split
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="casa-rs-and-casa-67614-tasks">casa-rs and CASA 6.7.6.14 tasks<a class="headerlink" href="#casa-rs-and-casa-67614-tasks" title="Permanent link">&para;</a></h1>
+<p>Truth class: generated reference
+Generated by: <code>scripts/check-casa-inventory.py --write</code>
+Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <code>tools/casa-compat/dump_casa_task_inventory.py</code>), <code>crates/casa-provider-contracts/resources/parameter-surfaces.json</code></p>
+<blockquote>
+<p>Do not edit this file by hand. Regenerate it after changing the inventory or a surface.</p>
+</blockquote>
+<p>Each casa-rs task that mimics a CASA task (#931) against that task as CASA 6.7.6.14 defines it: the CASA parameters casa-rs does not take yet, the parameters casa-rs takes that CASA does not (casa-rs names for CASA concepts, or casa-rs-only controls), whether the shared parameters keep CASA's order, and the defaults that differ. <code>calibrate</code> and <code>msexplore</code> are casa-rs tasks with no CASA counterpart.</p>
+<p>The CASA parameters casa-rs lacks are tracked by family: images in #977, MeasurementSet and flagging in #978, calibration in #979 and <code>tclean</code> in #980.</p>
+<h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Surface</th>
+<th>CASA task</th>
+<th style="text-align: right;">CASA parameters</th>
+<th style="text-align: right;">Shared</th>
+<th style="text-align: right;">CASA's casa-rs lacks</th>
+<th style="text-align: right;">casa-rs's CASA lacks</th>
+<th style="text-align: right;">Defaults differ</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>applycal</td>
+<td>applycal</td>
+<td style="text-align: right;">21</td>
+<td style="text-align: right;">16</td>
+<td style="text-align: right;">5</td>
+<td style="text-align: right;">6</td>
+<td style="text-align: right;">13</td>
+</tr>
+<tr>
+<td>bandpass</td>
+<td>bandpass</td>
+<td style="text-align: right;">35</td>
+<td style="text-align: right;">19</td>
+<td style="text-align: right;">16</td>
+<td style="text-align: right;">8</td>
+<td style="text-align: right;">15</td>
+</tr>
+<tr>
+<td>exportfits</td>
+<td>exportfits</td>
+<td style="text-align: right;">12</td>
+<td style="text-align: right;">4</td>
+<td style="text-align: right;">8</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">2</td>
+</tr>
+<tr>
+<td>feather</td>
+<td>feather</td>
+<td style="text-align: right;">6</td>
+<td style="text-align: right;">4</td>
+<td style="text-align: right;">2</td>
+<td style="text-align: right;">1</td>
+<td style="text-align: right;">3</td>
+</tr>
+<tr>
+<td>flagdata</td>
+<td>flagdata</td>
+<td style="text-align: right;">76</td>
+<td style="text-align: right;">18</td>
+<td style="text-align: right;">58</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">13</td>
+</tr>
+<tr>
+<td>flagmanager</td>
+<td>flagmanager</td>
+<td style="text-align: right;">6</td>
+<td style="text-align: right;">6</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">4</td>
+</tr>
+<tr>
+<td>fluxscale</td>
+<td>fluxscale</td>
+<td style="text-align: right;">15</td>
+<td style="text-align: right;">3</td>
+<td style="text-align: right;">12</td>
+<td style="text-align: right;">7</td>
+<td style="text-align: right;">2</td>
+</tr>
+<tr>
+<td>gaincal</td>
+<td>gaincal</td>
+<td style="text-align: right;">38</td>
+<td style="text-align: right;">18</td>
+<td style="text-align: right;">20</td>
+<td style="text-align: right;">11</td>
+<td style="text-align: right;">14</td>
+</tr>
+<tr>
+<td>gencal</td>
+<td>gencal</td>
+<td style="text-align: right;">14</td>
+<td style="text-align: right;">5</td>
+<td style="text-align: right;">9</td>
+<td style="text-align: right;">5</td>
+<td style="text-align: right;">5</td>
+</tr>
+<tr>
+<td>imager</td>
+<td>tclean</td>
+<td style="text-align: right;">92</td>
+<td style="text-align: right;">54</td>
+<td style="text-align: right;">38</td>
+<td style="text-align: right;">27</td>
+<td style="text-align: right;">23</td>
+</tr>
+<tr>
+<td>imhead</td>
+<td>imhead</td>
+<td style="text-align: right;">5</td>
+<td style="text-align: right;">4</td>
+<td style="text-align: right;">1</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">3</td>
+</tr>
+<tr>
+<td>immath</td>
+<td>immath</td>
+<td style="text-align: right;">15</td>
+<td style="text-align: right;">3</td>
+<td style="text-align: right;">12</td>
+<td style="text-align: right;">1</td>
+<td style="text-align: right;">3</td>
+</tr>
+<tr>
+<td>immoments</td>
+<td>immoments</td>
+<td style="text-align: right;">12</td>
+<td style="text-align: right;">6</td>
+<td style="text-align: right;">6</td>
+<td style="text-align: right;">1</td>
+<td style="text-align: right;">6</td>
+</tr>
+<tr>
+<td>impbcor</td>
+<td>impbcor</td>
+<td style="text-align: right;">12</td>
+<td style="text-align: right;">12</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">9</td>
+</tr>
+<tr>
+<td>importfits</td>
+<td>importfits</td>
+<td style="text-align: right;">9</td>
+<td style="text-align: right;">3</td>
+<td style="text-align: right;">6</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">2</td>
+</tr>
+<tr>
+<td>importvla</td>
+<td>importvla</td>
+<td style="text-align: right;">12</td>
+<td style="text-align: right;">12</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">6</td>
+</tr>
+<tr>
+<td>impv</td>
+<td>impv</td>
+<td style="text-align: right;">16</td>
+<td style="text-align: right;">7</td>
+<td style="text-align: right;">9</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">5</td>
+</tr>
+<tr>
+<td>imregrid</td>
+<td>imregrid</td>
+<td style="text-align: right;">10</td>
+<td style="text-align: right;">5</td>
+<td style="text-align: right;">5</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">3</td>
+</tr>
+<tr>
+<td>imstat</td>
+<td>imstat</td>
+<td style="text-align: right;">20</td>
+<td style="text-align: right;">4</td>
+<td style="text-align: right;">16</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">4</td>
+</tr>
+<tr>
+<td>imsubimage</td>
+<td>imsubimage</td>
+<td style="text-align: right;">12</td>
+<td style="text-align: right;">5</td>
+<td style="text-align: right;">7</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">4</td>
+</tr>
+<tr>
+<td>mstransform</td>
+<td>mstransform</td>
+<td style="text-align: right;">55</td>
+<td style="text-align: right;">10</td>
+<td style="text-align: right;">45</td>
+<td style="text-align: right;">1</td>
+<td style="text-align: right;">8</td>
+</tr>
+<tr>
+<td>plotms</td>
+<td>plotms</td>
+<td style="text-align: right;">102</td>
+<td style="text-align: right;">pending</td>
+<td style="text-align: right;"></td>
+<td style="text-align: right;"></td>
+<td style="text-align: right;"></td>
+</tr>
+<tr>
+<td>simobserve</td>
+<td>simobserve</td>
+<td style="text-align: right;">38</td>
+<td style="text-align: right;">38</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+</tr>
+<tr>
+<td>split</td>
+<td>split</td>
+<td style="text-align: right;">19</td>
+<td style="text-align: right;">10</td>
+<td style="text-align: right;">9</td>
+<td style="text-align: right;">1</td>
+<td style="text-align: right;">8</td>
+</tr>
+</tbody>
+</table>
+<h2 id="tasks">Tasks<a class="headerlink" href="#tasks" title="Permanent link">&para;</a></h2>
+<h3 id="applycal">applycal<a class="headerlink" href="#applycal" title="Permanent link">&para;</a></h3>
+<ul>
+<li>CASA source: <code>casatasks/applycal.py</code>, 21 parameters</li>
+<li>Implementation: <code>casatasks/private/task_applycal.py</code>, <code>applycal</code> (line 13): 2 return statements, 1 raise statements</li>
+<li>returns at line 53: <code>ret</code></li>
+<li>returns at line 55: <code>None</code></li>
+<li>Called with its defaults in an empty directory, CASA raises <code>AssertionError</code>: the vis parameter must be a path that exists ('' does not exist)</li>
+<li>CASA parameters casa-rs lacks: <code>intent</code>, <code>uvrange</code>, <code>docallib</code>, <code>gaintable</code>, <code>applymode</code></li>
+<li>casa-rs parameters CASA lacks: <code>gaintables</code>, <code>apply_mode</code>, <code>output</code>, <code>overwrite</code>, <code>format</code>, <code>array</code></li>
+<li>Shared parameters: 16, in CASA's order: no</li>
+<li>Defaults that differ (CASA, casa-rs):</li>
+<li><code>vis</code>: <code>''</code>, <code>required</code></li>
+<li><code>field</code>: <code>''</code>, <code>none</code></li>
+<li><code>spw</code>: <code>''</code>, <code>none</code></li>
+<li><code>timerange</code>: <code>''</code>, <code>none</code></li>
+<li><code>antenna</code>: <code>''</code>, <code>none</code></li>
+<li><code>scan</code>: <code>''</code>, <code>none</code></li>
+<li><code>observation</code>: <code>''</code>, <code>none</code></li>
+<li><code>msselect</code>: <code>''</code>, <code>none</code></li>
+<li><code>callib</code>: <code>''</code>, <code>none</code></li>
+<li><code>gainfield</code>: <code>[]</code>, <code>none</code></li>
+<li><code>interp</code>: <code>[]</code>, <code>none</code></li>
+<li><code>spwmap</code>: <code>[]</code>, <code>none</code></li>
+<li><code>calwt</code>: <code>[True]</code>, <code>none</code></li>
+</ul>
+<h3 id="bandpass">bandpass<a class="headerlink" href="#bandpass" title="Permanent link">&para;</a></h3>
+<ul>
+<li>CASA source: <code>casatasks/bandpass.py</code>, 35 parameters</li>
+<li>Implementation: <code>casatasks/private/task_bandpass.py</code>, <code>bandpass</code> (line 8): 1 return statements, 1 raise statements</li>
+<li>returns at line 139: <code>results_dict</code></li>
+<li>Called with its defaults in an empty directory, CASA raises <code>AssertionError</code>: the vis parameter must be a path that exists ('' does not exist)</li>
+<li>CASA parameters casa-rs lacks: <code>caltable</code>, <code>intent</code>, <code>uvrange</code>, <code>solint</code>, <code>combine</code>, <code>minblperant</code>, <code>minsnr</code>, <code>corrdepflags</code>, <code>append</code>, <code>fillgaps</code>, <code>visnorm</code>, <code>maskcenter</code>, <code>maskedge</code>, <code>docallib</code>, <code>gaintable</code>, <code>parang</code></li>
+<li>casa-rs parameters CASA lacks: <code>gaintables</code>, <code>output</code>, <code>overwrite</code>, <code>format</code>, <code>out_table</code>, <code>min_snr</code>, <code>bandpass_combine</code>, <code>array</code></li>
+<li>Shared parameters: 19, in CASA's order: no</li>
+<li>Defaults that differ (CASA, casa-rs):</li>
+<li><code>vis</code>: <code>''</code>, <code>required</code></li>
+<li><code>field</code>: <code>''</code>, <code>none</code></li>
+<li><code>spw</code>: <code>''</code>, <code>none</code></li>
+<li><code>timerange</code>: <code>''</code>, <code>none</code></li>
+<li><code>antenna</code>: <code>''</code>, <code>none</code></li>
+<li><code>scan</code>: <code>''</code>, <code>none</code></li>
+<li><code>observation</code>: <code>''</code>, <code>none</code></li>
+<li><code>msselect</code>: <code>''</code>, <code>none</code></li>
+<li><code>refant</code>: <code>''</code>, <code>required</code></li>
+<li><code>bandtype</code>: <code>'B'</code>, <code>b</code></li>
+<li><code>smodel</code>: <code>[]</code>, <code>1,0,0,0</code></li>
+<li><code>callib</code>: <code>''</code>, <code>none</code></li>
+<li><code>gainfield</code>: <code>[]</code>, <code>none</code></li>
+<li><code>interp</code>: <code>[]</code>, <code>none</code></li>
+<li><code>spwmap</code>: <code>[]</code>, <code>none</code></li>
+</ul>
+<h3 id="exportfits">exportfits<a class="headerlink" href="#exportfits" title="Permanent link">&para;</a></h3>
+<ul>
+<li>CASA source: <code>casatasks/exportfits.py</code>, 12 parameters</li>
+<li>Implementation: <code>casatasks/private/task_exportfits.py</code>, <code>exportfits</code> (line 6): 0 return statements, 0 raise statements</li>
+<li>Called with its defaults in an empty directory, CASA raises <code>AssertionError</code>: the imagename parameter must be a path that exists ('' does not exist)</li>
+<li>CASA parameters casa-rs lacks: <code>optical</code>, <code>bitpix</code>, <code>minpix</code>, <code>maxpix</code>, <code>dropstokes</code>, <code>stokeslast</code>, <code>history</code>, <code>dropdeg</code></li>
+<li>casa-rs parameters CASA lacks: none</li>
+<li>Shared parameters: 4, in CASA's order: yes</li>
+<li>Defaults that differ (CASA, casa-rs):</li>
+<li><code>imagename</code>: <code>''</code>, <code>required</code></li>
+<li><code>fitsimage</code>: <code>''</code>, <code>required</code></li>
+</ul>
+<h3 id="feather">feather<a class="headerlink" href="#feather" title="Permanent link">&para;</a></h3>
+<ul>
+<li>CASA source: <code>casatasks/feather.py</code>, 6 parameters</li>
+<li>Implementation: <code>casatasks/private/task_feather.py</code>, <code>feather</code> (line 6): 0 return statements, 0 raise statements</li>
+<li>Called with its defaults in an empty directory, CASA raises <code>AssertionError</code>: the lowres parameter must be a path that exists ('' does not exist)</li>
+<li>CASA parameters casa-rs lacks: <code>effdishdiam</code>, <code>lowpassfiltersd</code></li>
+<li>casa-rs parameters CASA lacks: <code>overwrite</code></li>
+<li>Shared parameters: 4, in CASA's order: yes</li>
+<li>Defaults that differ (CASA, casa-rs):</li>
+<li><code>imagename</code>: <code>''</code>, <code>required</code></li>
+<li><code>highres</code>: <code>''</code>, <code>required</code></li>
+<li><code>lowres</code>: <code>''</code>, <code>required</code></li>
+</ul>
+<h3 id="flagdata">flagdata<a class="headerlink" href="#flagdata" title="Permanent link">&para;</a></h3>
+<ul>
+<li>CASA source: <code>casatasks/flagdata.py</code>, 76 parameters</li>
+<li>Implementation: <code>casatasks/private/task_flagdata.py</code>, <code>flagdata</code> (line 66): 6 return statements, 7 raise statements</li>
+<li>returns at line 263: <code>retVar</code></li>
+<li>returns at line 269: <code>retVar</code></li>
+<li>returns at line 274: <code>retVar</code></li>
+<li>returns at line 598: <code>summary_stats</code></li>
+<li>returns at line 611: <code>summary_stats</code></li>
+<li>returns at line 800: <code>summary_stats_list</code></li>
+<li>Called with its defaults in an empty directory, CASA raises <code>AssertionError</code>: the vis parameter must be a path that exists ('' does not exist)</li>
+<li>CASA parameters casa-rs lacks: <code>autocorr</code>, <code>inpfile</code>, <code>reason</code>, <code>tbuff</code>, <code>uvrange</code>, <code>timerange</code>, <code>correlation</code>, <code>intent</code>, <code>array</code>, <code>observation</code>, <code>feed</code>, <code>clipminmax</code>, <code>clipoutside</code>, <code>channelavg</code>, <code>chanbin</code>, <code>timeavg</code>, <code>timebin</code>, <code>quackincrement</code>, <code>tolerance</code>, <code>addantenna</code>, <code>lowerlimit</code>, <code>upperlimit</code>, <code>ntime</code>, <code>combinescans</code>, <code>timefit</code>, <code>freqfit</code>, <code>maxnpieces</code>, <code>flagdimension</code>, <code>usewindowstats</code>, <code>halfwin</code>, <code>winsize</code>, <code>timedevscale</code>, <code>freqdevscale</code>, <code>spectralmax</code>, <code>spectralmin</code>, <code>antint_ref_antenna</code>, <code>minchanfrac</code>, <code>verbose</code>, <code>growtime</code>, <code>growfreq</code>, <code>growaround</code>, <code>flagneartime</code>, <code>flagnearfreq</code>, <code>minrel</code>, <code>maxrel</code>, <code>minabs</code>, <code>maxabs</code>, <code>spwchan</code>, <code>spwcorr</code>, <code>basecnt</code>, <code>fieldcnt</code>, <code>name</code>, <code>display</code>, <code>savepars</code>, <code>cmdreason</code>, <code>outfile</code>, <code>overwrite</code>, <code>writeflags</code></li>
+<li>casa-rs parameters CASA lacks: none</li>
+<li>Shared parameters: 18, in CASA's order: no</li>
+<li>Defaults that differ (CASA, casa-rs):</li>
+<li><code>vis</code>: <code>''</code>, <code>required</code></li>
+<li><code>mode</code>: <code>'manual'</code>, <code>summary</code></li>
+<li><code>spw</code>: <code>''</code>, <code>none</code></li>
+<li><code>field</code>: <code>''</code>, <code>none</code></li>
+<li><code>antenna</code>: <code>''</code>, <code>none</code></li>
+<li><code>scan</code>: <code>''</code>, <code>none</code></li>
+<li><code>datacolumn</code>: <code>'DATA'</code>, <code>data</code></li>
+<li><code>quackinterval</code>: <code>1.0</code>, <code>0.0</code></li>
+<li><code>extendflags</code>: <code>True</code>, <code>false</code></li>
+<li><code>timedev</code>: <code>''</code>, <code>none</code></li>
+<li><code>freqdev</code>: <code>''</code>, <code>none</code></li>
+<li><code>extendpols</code>: <code>True</code>, <code>false</code></li>
+<li><code>action</code>: <code>'apply'</code>, <code>flag</code></li>
+</ul>
+<h3 id="flagmanager">flagmanager<a class="headerlink" href="#flagmanager" title="Permanent link">&para;</a></h3>
+<ul>
+<li>CASA source: <code>casatasks/flagmanager.py</code>, 6 parameters</li>
+<li>Implementation: <code>casatasks/private/task_flagmanager.py</code>, <code>flagmanager</code> (line 8): 1 return statements, 9 raise statements</li>
+<li>returns at line 49: <code>fversionsdict</code></li>
+<li>Called with its defaults in an empty directory, CASA raises <code>AssertionError</code>: the vis parameter must be a path that exists ('' does not exist)</li>
+<li>CASA parameters casa-rs lacks: none</li>
+<li>casa-rs parameters CASA lacks: none</li>
+<li>Shared parameters: 6, in CASA's order: yes</li>
+<li>Defaults that differ (CASA, casa-rs):</li>
+<li><code>vis</code>: <code>''</code>, <code>required</code></li>
+<li><code>versionname</code>: <code>''</code>, <code>none</code></li>
+<li><code>oldname</code>: <code>''</code>, <code>none</code></li>
+<li><code>comment</code>: <code>''</code>, <code>none</code></li>
+</ul>
+<h3 id="fluxscale">fluxscale<a class="headerlink" href="#fluxscale" title="Permanent link">&para;</a></h3>
+<ul>
+<li>CASA source: <code>casatasks/fluxscale.py</code>, 15 parameters</li>
+<li>Implementation: <code>casatasks/private/task_fluxscale.py</code>, <code>fluxscale</code> (line 95): 1 return statements, 2 raise statements</li>
+<li>returns at line 211: <code>output</code></li>
+<li>Called with its defaults in an empty directory, CASA raises <code>AssertionError</code>: the vis parameter must be a path that exists ('' does not exist)</li>
+<li>CASA parameters casa-rs lacks: <code>vis</code>, <code>caltable</code>, <code>fluxtable</code>, <code>reference</code>, <code>transfer</code>, <code>listfile</code>, <code>append</code>, <code>antenna</code>, <code>timerange</code>, <code>scan</code>, <code>fitorder</code>, <code>display</code></li>
+<li>casa-rs parameters CASA lacks: <code>output</code>, <code>overwrite</code>, <code>format</code>, <code>out_table</code>, <code>fluxscale_input</code>, <code>reference_fields</code>, <code>transfer_fields</code></li>
+<li>Shared parameters: 3, in CASA's order: yes</li>
+<li>Defaults that differ (CASA, casa-rs):</li>
+<li><code>refspwmap</code>: <code>[-1]</code>, <code>none</code></li>
+<li><code>gainthreshold</code>: <code>-1.0</code>, <code>none</code></li>
+</ul>
+<h3 id="gaincal">gaincal<a class="headerlink" href="#gaincal" title="Permanent link">&para;</a></h3>
+<ul>
+<li>CASA source: <code>casatasks/gaincal.py</code>, 38 parameters</li>
+<li>Implementation: <code>casatasks/private/task_gaincal.py</code>, <code>gaincal</code> (line 8): 1 return statements, 1 raise statements</li>
+<li>returns at line 164: <code>results_dict</code></li>
+<li>Called with its defaults in an empty directory, CASA raises <code>AssertionError</code>: the vis parameter must be a path that exists ('' does not exist)</li>
+<li>CASA parameters casa-rs lacks: <code>caltable</code>, <code>intent</code>, <code>uvrange</code>, <code>combine</code>, <code>preavg</code>, <code>refantmode</code>, <code>minsnr</code>, <code>normtype</code>, <code>gaintype</code>, <code>calmode</code>, <code>solmode</code>, <code>rmsthresh</code>, <code>corrdepflags</code>, <code>append</code>, <code>splinetime</code>, <code>npointaver</code>, <code>phasewrap</code>, <code>docallib</code>, <code>gaintable</code>, <code>parang</code></li>
+<li>casa-rs parameters CASA lacks: <code>gaintables</code>, <code>output</code>, <code>overwrite</code>, <code>format</code>, <code>out_table</code>, <code>gain_type</code>, <code>solve_mode</code>, <code>gain_combine</code>, <code>gain_model_source</code>, <code>min_snr</code>, <code>array</code></li>
+<li>Shared parameters: 18, in CASA's order: no</li>
+<li>Defaults that differ (CASA, casa-rs):</li>
+<li><code>vis</code>: <code>''</code>, <code>required</code></li>
+<li><code>field</code>: <code>''</code>, <code>none</code></li>
+<li><code>spw</code>: <code>''</code>, <code>none</code></li>
+<li><code>timerange</code>: <code>''</code>, <code>none</code></li>
+<li><code>antenna</code>: <code>''</code>, <code>none</code></li>
+<li><code>scan</code>: <code>''</code>, <code>none</code></li>
+<li><code>observation</code>: <code>''</code>, <code>none</code></li>
+<li><code>msselect</code>: <code>''</code>, <code>none</code></li>
+<li><code>refant</code>: <code>''</code>, <code>required</code></li>
+<li><code>smodel</code>: <code>[]</code>, <code>1,0,0,0</code></li>
+<li><code>callib</code>: <code>''</code>, <code>none</code></li>
+<li><code>gainfield</code>: <code>[]</code>, <code>none</code></li>
+<li><code>interp</code>: <code>[]</code>, <code>none</code></li>
+<li><code>spwmap</code>: <code>[]</code>, <code>none</code></li>
+</ul>
+<h3 id="gencal">gencal<a class="headerlink" href="#gencal" title="Permanent link">&para;</a></h3>
+<ul>
+<li>CASA source: <code>casatasks/gencal.py</code>, 14 parameters</li>
+<li>Implementation: <code>casatasks/private/task_gencal.py</code>, <code>gencal</code> (line 14): 0 return statements, 4 raise statements</li>
+<li>Called with its defaults in an empty directory, CASA raises <code>AssertionError</code>: the vis parameter must be a path that exists ('' does not exist)</li>
+<li>CASA parameters casa-rs lacks: <code>caltable</code>, <code>infile</code>, <code>endpoint</code>, <code>timeout</code>, <code>retry</code>, <code>retry_wait_time</code>, <code>ant_pos_time_limit</code>, <code>pol</code>, <code>uniform</code></li>
+<li>casa-rs parameters CASA lacks: <code>output</code>, <code>overwrite</code>, <code>format</code>, <code>out_table</code>, <code>gaincurve_table</code></li>
+<li>Shared parameters: 5, in CASA's order: no</li>
+<li>Defaults that differ (CASA, casa-rs):</li>
+<li><code>vis</code>: <code>''</code>, <code>required</code></li>
+<li><code>caltype</code>: <code>''</code>, <code>required</code></li>
+<li><code>spw</code>: <code>''</code>, <code>none</code></li>
+<li><code>antenna</code>: <code>''</code>, <code>none</code></li>
+<li><code>parameter</code>: <code>[]</code>, <code>none</code></li>
+</ul>
+<h3 id="imager-casas-tclean">imager (CASA's tclean)<a class="headerlink" href="#imager-casas-tclean" title="Permanent link">&para;</a></h3>
+<ul>
+<li>CASA source: <code>casatasks/tclean.py</code>, 92 parameters</li>
+<li>Implementation: <code>casatasks/private/task_tclean.py</code>, <code>tclean</code> (line 44): 11 return statements, 1 raise statements</li>
+<li>returns at line 193: <code>None</code></li>
+<li>returns at line 211: <code>None</code></li>
+<li>returns at line 231: <code>None</code></li>
+<li>returns at line 239: <code>None</code></li>
+<li>returns at line 254: <code>None</code></li>
+<li>returns at line 263: <code>None</code></li>
+<li>returns at line 272: <code>None</code></li>
+<li>returns at line 380: <code>False</code></li>
+<li>returns at line 391: <code>False</code></li>
+<li>returns at line 434: <code>None</code></li>
+<li>returns at line 706: <code>retrec</code></li>
+<li>Called with its defaults in an empty directory, CASA raises <code>AssertionError</code>: all elements of the vis vector parameter must be a path that exists (at least one element of "['']" does not exist)</li>
+<li>CASA parameters casa-rs lacks: <code>selectdata</code>, <code>timerange</code>, <code>antenna</code>, <code>scan</code>, <code>observation</code>, <code>projection</code>, <code>startmodel</code>, <code>reffreq</code>, <code>nchan</code>, <code>psfphasecenter</code>, <code>vptable</code>, <code>mosweight</code>, <code>aterm</code>, <code>psterm</code>, <code>wbawp</code>, <code>conjbeams</code>, <code>computepastep</code>, <code>rotatepastep</code>, <code>fusedthreshold</code>, <code>largestscale</code>, <code>restoration</code>, <code>noise</code>, <code>npixels</code>, <code>uvtaper</code>, <code>cycleniter</code>, <code>interactive</code>, <code>fullsummary</code>, <code>mask</code>, <code>pbmask</code>, <code>smoothfactor</code>, <code>cutthreshold</code>, <code>dogrowprune</code>, <code>minpercentchange</code>, <code>verbose</code>, <code>fastnoise</code>, <code>restart</code>, <code>calcres</code>, <code>calcpsf</code></li>
+<li>casa-rs parameters CASA lacks: <code>phasecenter_field</code>, <code>ddid</code>, <code>channel_start</code>, <code>channel_count</code>, <code>dirty_only</code>, <code>minor_cycle_length</code>, <code>hogbom_iteration_mode</code>, <code>mask_box</code>, <code>mask_image</code>, <code>write_pb</code>, <code>cf_resident_mb</code>, <code>fitspw</code>, <code>fitorder</code>, <code>save_continuum_residual</code>, <code>aw_cf_source</code>, <code>native_cf_cache</code>, <code>evla_surface</code>, <code>native_cf_policy</code>, <code>native_cf_working_size</code>, <code>native_cf_oversampling</code>, <code>native_cf_cache_bytes</code>, <code>native_cf_maximum_cells</code>, <code>backend</code>, <code>gridprecision</code>, <code>stage_timing</code>, <code>metal_stage_timing</code>, <code>science_trace</code></li>
+<li>Shared parameters: 54, in CASA's order: no</li>
+<li>Defaults that differ (CASA, casa-rs):</li>
+<li><code>vis</code>: <code>''</code>, <code>required</code></li>
+<li><code>field</code>: <code>''</code>, <code>none</code></li>
+<li><code>spw</code>: <code>''</code>, <code>none</code></li>
+<li><code>uvrange</code>: <code>''</code>, <code>none</code></li>
+<li><code>intent</code>: <code>''</code>, <code>none</code></li>
+<li><code>datacolumn</code>: <code>'corrected'</code>, <code>none</code></li>
+<li><code>imagename</code>: <code>''</code>, <code>required</code></li>
+<li><code>imsize</code>: <code>[100]</code>, <code>512</code></li>
+<li><code>cell</code>: <code>[]</code>, <code>1.0arcsec</code></li>
+<li><code>phasecenter</code>: <code>''</code>, <code>none</code></li>
+<li><code>start</code>: <code>''</code>, <code>none</code></li>
+<li><code>width</code>: <code>''</code>, <code>none</code></li>
+<li><code>veltype</code>: <code>'radio'</code>, <code>RADIO</code></li>
+<li><code>restfreq</code>: <code>[]</code>, <code>none</code></li>
+<li><code>perchanweightdensity</code>: <code>True</code>, <code>conditional (fallback False)</code></li>
+<li><code>wprojplanes</code>: <code>1</code>, <code>none</code></li>
+<li><code>cfcache</code>: <code>''</code>, <code>none</code></li>
+<li><code>pointingoffsetsigdev</code>: <code>[]</code>, <code>0</code></li>
+<li><code>scales</code>: <code>[]</code>, <code>none</code></li>
+<li><code>nterms</code>: <code>2</code>, <code>1</code></li>
+<li><code>restoringbeam</code>: <code>[]</code>, <code>none</code></li>
+<li><code>outlierfile</code>: <code>''</code>, <code>none</code></li>
+<li><code>threshold</code>: <code>0.0</code>, <code>0.0Jy</code></li>
+</ul>
+<h3 id="imhead">imhead<a class="headerlink" href="#imhead" title="Permanent link">&para;</a></h3>
+<ul>
+<li>CASA source: <code>casatasks/imhead.py</code>, 5 parameters</li>
+<li>Implementation: <code>casatasks/private/task_imhead.py</code>, <code>imhead</code> (line 98): 5 return statements, 1 raise statements</li>
+<li>returns at line 107: <code>None</code></li>
+<li>returns at line 109: <code>myia.summary(verbose=verbose)</code></li>
+<li>returns at line 126: <code>myimd.get(hdkey)</code></li>
+<li>returns at line 128: <code>myimd.list(True)</code></li>
+<li>returns at line 144: <code>None</code></li>
+<li>Called with its defaults in an empty directory, CASA raises <code>AssertionError</code>: the imagename parameter must be a path that exists ('' does not exist)</li>
+<li>CASA parameters casa-rs lacks: <code>verbose</code></li>
+<li>casa-rs parameters CASA lacks: none</li>
+<li>Shared parameters: 4, in CASA's order: yes</li>
+<li>Defaults that differ (CASA, casa-rs):</li>
+<li><code>imagename</code>: <code>''</code>, <code>required</code></li>
+<li><code>hdkey</code>: <code>''</code>, <code>none</code></li>
+<li><code>hdvalue</code>: <code>''</code>, <code>none</code></li>
+</ul>
+<h3 id="immath">immath<a class="headerlink" href="#immath" title="Permanent link">&para;</a></h3>
+<ul>
+<li>CASA source: <code>casatasks/immath.py</code>, 15 parameters</li>
+<li>Implementation: <code>casatasks/private/task_immath.py</code>, <code>immath</code> (line 174): 3 return statements, 2 raise statements</li>
+<li>returns at line 207: <code>True</code></li>
+<li>returns at line 213: <code>True</code></li>
+<li>returns at line 254: <code>True</code></li>
+<li>Called with its defaults in an empty directory, CASA raises <code>Exception</code>: Image data set not found - please verify</li>
+<li>CASA parameters casa-rs lacks: <code>mode</code>, <code>varnames</code>, <code>sigma</code>, <code>polithresh</code>, <code>mask</code>, <code>region</code>, <code>box</code>, <code>chans</code>, <code>stokes</code>, <code>stretch</code>, <code>imagemd</code>, <code>prec</code></li>
+<li>casa-rs parameters CASA lacks: <code>overwrite</code></li>
+<li>Shared parameters: 3, in CASA's order: no</li>
+<li>Defaults that differ (CASA, casa-rs):</li>
+<li><code>imagename</code>: <code>''</code>, <code>required</code></li>
+<li><code>outfile</code>: <code>'immath_results.im'</code>, <code>required</code></li>
+<li><code>expr</code>: <code>'IM0'</code>, <code>required</code></li>
+</ul>
+<h3 id="immoments">immoments<a class="headerlink" href="#immoments" title="Permanent link">&para;</a></h3>
+<ul>
+<li>CASA source: <code>casatasks/immoments.py</code>, 12 parameters</li>
+<li>Implementation: <code>casatasks/private/task_immoments.py</code>, <code>immoments</code> (line 95): 0 return statements, 3 raise statements</li>
+<li>Called with its defaults in an empty directory, CASA raises <code>AssertionError</code>: the imagename parameter must be a path that exists ('' does not exist)</li>
+<li>CASA parameters casa-rs lacks: <code>axis</code>, <code>region</code>, <code>box</code>, <code>stokes</code>, <code>excludepix</code>, <code>stretch</code></li>
+<li>casa-rs parameters CASA lacks: <code>overwrite</code></li>
+<li>Shared parameters: 6, in CASA's order: no</li>
+<li>Defaults that differ (CASA, casa-rs):</li>
+<li><code>imagename</code>: <code>''</code>, <code>required</code></li>
+<li><code>moments</code>: <code>[0]</code>, <code>0</code></li>
+<li><code>chans</code>: <code>''</code>, <code>none</code></li>
+<li><code>mask</code>: <code>''</code>, <code>none</code></li>
+<li><code>includepix</code>: <code>-1</code>, <code>none</code></li>
+<li><code>outfile</code>: <code>''</code>, <code>required</code></li>
+</ul>
+<h3 id="impbcor">impbcor<a class="headerlink" href="#impbcor" title="Permanent link">&para;</a></h3>
+<ul>
+<li>CASA source: <code>casatasks/impbcor.py</code>, 12 parameters</li>
+<li>Implementation: <code>casatasks/private/task_impbcor.py</code>, <code>impbcor</code> (line 70): 0 return statements, 2 raise statements</li>
+<li>Called with its defaults in an empty directory, CASA raises <code>AssertionError</code>: the imagename parameter must be a path that exists ('' does not exist)</li>
+<li>CASA parameters casa-rs lacks: none</li>
+<li>casa-rs parameters CASA lacks: none</li>
+<li>Shared parameters: 12, in CASA's order: no</li>
+<li>Defaults that differ (CASA, casa-rs):</li>
+<li><code>imagename</code>: <code>''</code>, <code>required</code></li>
+<li><code>pbimage</code>: <code>[]</code>, <code>required</code></li>
+<li><code>outfile</code>: <code>''</code>, <code>required</code></li>
+<li><code>box</code>: <code>''</code>, <code>none</code></li>
+<li><code>region</code>: <code>''</code>, <code>none</code></li>
+<li><code>chans</code>: <code>''</code>, <code>none</code></li>
+<li><code>stokes</code>: <code>''</code>, <code>none</code></li>
+<li><code>mask</code>: <code>''</code>, <code>none</code></li>
+<li><code>stretch</code>: <code>False</code>, <code>false</code></li>
+</ul>
+<h3 id="importfits">importfits<a class="headerlink" href="#importfits" title="Permanent link">&para;</a></h3>
+<ul>
+<li>CASA source: <code>casatasks/importfits.py</code>, 9 parameters</li>
+<li>Implementation: <code>casatasks/private/task_importfits.py</code>, <code>importfits</code> (line 11): 0 return statements, 11 raise statements</li>
+<li>Called with its defaults in an empty directory, CASA raises <code>AssertionError</code>: the fitsimage parameter must be a path that exists ('' does not exist)</li>
+<li>CASA parameters casa-rs lacks: <code>whichrep</code>, <code>whichhdu</code>, <code>zeroblanks</code>, <code>defaultaxes</code>, <code>defaultaxesvalues</code>, <code>beam</code></li>
+<li>casa-rs parameters CASA lacks: none</li>
+<li>Shared parameters: 3, in CASA's order: yes</li>
+<li>Defaults that differ (CASA, casa-rs):</li>
+<li><code>fitsimage</code>: <code>''</code>, <code>required</code></li>
+<li><code>imagename</code>: <code>''</code>, <code>required</code></li>
+</ul>
+<h3 id="importvla">importvla<a class="headerlink" href="#importvla" title="Permanent link">&para;</a></h3>
+<ul>
+<li>CASA source: <code>casatasks/importvla.py</code>, 12 parameters</li>
+<li>Implementation: <code>casatasks/private/task_importvla.py</code>, <code>importvla</code> (line 10): 0 return statements, 7 raise statements</li>
+<li>Called with its defaults in an empty directory, CASA raises <code>RuntimeError</code>: *** Error importing [] to : Need valid visibility file name (bad name or already exists)</li>
+<li>CASA parameters casa-rs lacks: none</li>
+<li>casa-rs parameters CASA lacks: none</li>
+<li>Shared parameters: 12, in CASA's order: yes</li>
+<li>Defaults that differ (CASA, casa-rs):</li>
+<li><code>archivefiles</code>: <code>[]</code>, <code>required</code></li>
+<li><code>vis</code>: <code>''</code>, <code>[]</code></li>
+<li><code>bandname</code>: <code>''</code>, <code>none</code></li>
+<li><code>project</code>: <code>''</code>, <code>none</code></li>
+<li><code>starttime</code>: <code>''</code>, <code>none</code></li>
+<li><code>stoptime</code>: <code>''</code>, <code>none</code></li>
+</ul>
+<h3 id="impv">impv<a class="headerlink" href="#impv" title="Permanent link">&para;</a></h3>
+<ul>
+<li>CASA source: <code>casatasks/impv.py</code>, 16 parameters</li>
+<li>Implementation: <code>casatasks/private/task_impv.py</code>, <code>impv</code> (line 7): 0 return statements, 5 raise statements</li>
+<li>Called with its defaults in an empty directory, CASA raises <code>AssertionError</code>: the imagename parameter must be a path that exists ('' does not exist)</li>
+<li>CASA parameters casa-rs lacks: <code>mode</code>, <code>center</code>, <code>length</code>, <code>pa</code>, <code>unit</code>, <code>region</code>, <code>stokes</code>, <code>mask</code>, <code>stretch</code></li>
+<li>casa-rs parameters CASA lacks: none</li>
+<li>Shared parameters: 7, in CASA's order: no</li>
+<li>Defaults that differ (CASA, casa-rs):</li>
+<li><code>imagename</code>: <code>''</code>, <code>required</code></li>
+<li><code>outfile</code>: <code>''</code>, <code>required</code></li>
+<li><code>start</code>: <code>''</code>, <code>required</code></li>
+<li><code>end</code>: <code>''</code>, <code>required</code></li>
+<li><code>chans</code>: <code>''</code>, <code>none</code></li>
+</ul>
+<h3 id="imregrid">imregrid<a class="headerlink" href="#imregrid" title="Permanent link">&para;</a></h3>
+<ul>
+<li>CASA source: <code>casatasks/imregrid.py</code>, 10 parameters</li>
+<li>Implementation: <code>casatasks/private/task_imregrid.py</code>, <code>imregrid</code> (line 10): 3 return statements, 2 raise statements</li>
+<li>returns at line 36: <code>{'csys': csys.torecord(), 'shap': shape}</code></li>
+<li>returns at line 60: <code>None</code></li>
+<li>returns at line 140: <code>None</code></li>
+<li>Called with its defaults in an empty directory, CASA raises <code>AssertionError</code>: the imagename parameter must be a path that exists ('' does not exist)</li>
+<li>CASA parameters casa-rs lacks: <code>asvelocity</code>, <code>axes</code>, <code>shape</code>, <code>decimate</code>, <code>replicate</code></li>
+<li>casa-rs parameters CASA lacks: none</li>
+<li>Shared parameters: 5, in CASA's order: yes</li>
+<li>Defaults that differ (CASA, casa-rs):</li>
+<li><code>imagename</code>: <code>''</code>, <code>required</code></li>
+<li><code>template</code>: <code>'get'</code>, <code>required</code></li>
+<li><code>output</code>: <code>''</code>, <code>required</code></li>
+</ul>
+<h3 id="imstat">imstat<a class="headerlink" href="#imstat" title="Permanent link">&para;</a></h3>
+<ul>
+<li>CASA source: <code>casatasks/imstat.py</code>, 20 parameters</li>
+<li>Implementation: <code>casatasks/private/task_imstat.py</code>, <code>imstat</code> (line 7): 1 return statements, 0 raise statements</li>
+<li>returns at line 26: <code>_myia.statistics(axes=axes, region=reg, list=listit, verbose=verbose, robust=True, mask=mask, stretch=stretch, logfile=logfile, append=append, algorithm=algorithm, fence=fence, center=center, lside=lside, zscore=zscore, maxiter=maxiter, clmethod=clmethod, niter=niter)</code></li>
+<li>Called with its defaults in an empty directory, CASA raises <code>AssertionError</code>: the imagename parameter must be a path that exists ('' does not exist)</li>
+<li>CASA parameters casa-rs lacks: <code>axes</code>, <code>stokes</code>, <code>listit</code>, <code>verbose</code>, <code>mask</code>, <code>stretch</code>, <code>logfile</code>, <code>append</code>, <code>algorithm</code>, <code>fence</code>, <code>center</code>, <code>lside</code>, <code>zscore</code>, <code>maxiter</code>, <code>clmethod</code>, <code>niter</code></li>
+<li>casa-rs parameters CASA lacks: none</li>
+<li>Shared parameters: 4, in CASA's order: no</li>
+<li>Defaults that differ (CASA, casa-rs):</li>
+<li><code>imagename</code>: <code>''</code>, <code>required</code></li>
+<li><code>region</code>: <code>''</code>, <code>none</code></li>
+<li><code>box</code>: <code>''</code>, <code>none</code></li>
+<li><code>chans</code>: <code>''</code>, <code>none</code></li>
+</ul>
+<h3 id="imsubimage">imsubimage<a class="headerlink" href="#imsubimage" title="Permanent link">&para;</a></h3>
+<ul>
+<li>CASA source: <code>casatasks/imsubimage.py</code>, 12 parameters</li>
+<li>Implementation: <code>casatasks/private/task_imsubimage.py</code>, <code>imsubimage</code> (line 9): 0 return statements, 2 raise statements</li>
+<li>Called with its defaults in an empty directory, CASA raises <code>AssertionError</code>: the imagename parameter must be a path that exists ('' does not exist)</li>
+<li>CASA parameters casa-rs lacks: <code>region</code>, <code>stokes</code>, <code>mask</code>, <code>dropdeg</code>, <code>verbose</code>, <code>stretch</code>, <code>keepaxes</code></li>
+<li>casa-rs parameters CASA lacks: none</li>
+<li>Shared parameters: 5, in CASA's order: yes</li>
+<li>Defaults that differ (CASA, casa-rs):</li>
+<li><code>imagename</code>: <code>''</code>, <code>required</code></li>
+<li><code>outfile</code>: <code>''</code>, <code>required</code></li>
+<li><code>box</code>: <code>''</code>, <code>none</code></li>
+<li><code>chans</code>: <code>''</code>, <code>none</code></li>
+</ul>
+<h3 id="mstransform">mstransform<a class="headerlink" href="#mstransform" title="Permanent link">&para;</a></h3>
+<ul>
+<li>CASA source: <code>casatasks/mstransform.py</code>, 55 parameters</li>
+<li>Implementation: <code>casatasks/private/task_mstransform.py</code>, <code>mstransform</code> (line 17): 3 return statements, 5 raise statements</li>
+<li>returns at line 135: <code>False</code></li>
+<li>returns at line 137: <code>True</code></li>
+<li>returns at line 150: <code>None</code></li>
+<li>Called with its defaults in an empty directory, CASA raises <code>AssertionError</code>: the vis parameter must be a path that exists ('' does not exist)</li>
+<li>CASA parameters casa-rs lacks: <code>createmms</code>, <code>separationaxis</code>, <code>numsubms</code>, <code>tileshape</code>, <code>correlation</code>, <code>intent</code>, <code>array</code>, <code>uvrange</code>, <code>observation</code>, <code>feed</code>, <code>realmodelcol</code>, <code>usewtspectrum</code>, <code>combinespws</code>, <code>chanaverage</code>, <code>chanbin</code>, <code>hanning</code>, <code>regridms</code>, <code>mode</code>, <code>nchan</code>, <code>start</code>, <code>nspw</code>, <code>interpolation</code>, <code>phasecenter</code>, <code>restfreq</code>, <code>outframe</code>, <code>veltype</code>, <code>preaverage</code>, <code>timeaverage</code>, <code>timebin</code>, <code>timespan</code>, <code>maxuvwdistance</code>, <code>docallib</code>, <code>callib</code>, <code>douvcontsub</code>, <code>fitspw</code>, <code>fitorder</code>, <code>want_cont</code>, <code>denoising_lib</code>, <code>nthreads</code>, <code>niter</code>, <code>disableparallel</code>, <code>ddistart</code>, <code>taql</code>, <code>monolithic_processing</code>, <code>reindex</code></li>
+<li>casa-rs parameters CASA lacks: <code>msselect</code></li>
+<li>Shared parameters: 10, in CASA's order: no</li>
+<li>Defaults that differ (CASA, casa-rs):</li>
+<li><code>vis</code>: <code>''</code>, <code>required</code></li>
+<li><code>outputvis</code>: <code>''</code>, <code>required</code></li>
+<li><code>field</code>: <code>''</code>, <code>none</code></li>
+<li><code>spw</code>: <code>''</code>, <code>none</code></li>
+<li><code>scan</code>: <code>''</code>, <code>none</code></li>
+<li><code>antenna</code>: <code>''</code>, <code>none</code></li>
+<li><code>timerange</code>: <code>''</code>, <code>none</code></li>
+<li><code>datacolumn</code>: <code>'corrected'</code>, <code>DATA</code></li>
+</ul>
+<h3 id="plotms">plotms<a class="headerlink" href="#plotms" title="Permanent link">&para;</a></h3>
+<ul>
+<li>CASA source: <code>casaplotms/plotms.py</code>, 102 parameters</li>
+<li>Implementation: <code>casaplotms/private/task_plotms.py</code>, <code>plotms</code> (line 36): 0 return statements, 27 raise statements</li>
+<li>Called with its defaults in an empty directory, CASA raises <code>RuntimeError</code>: ERROR: DISPLAY environment variable is not set! Cannot run plotms.</li>
+<li>casa-rs: plotms waits for its own decision (#931): CASA's is the casaplotms GUI</li>
+</ul>
+<h3 id="simobserve">simobserve<a class="headerlink" href="#simobserve" title="Permanent link">&para;</a></h3>
+<ul>
+<li>CASA source: <code>casatasks/simobserve.py</code>, 38 parameters</li>
+<li>Implementation: <code>casatasks/private/task_simobserve.py</code>, <code>simobserve</code> (line 12): 0 return statements, 26 raise statements</li>
+<li>Called with its defaults in an empty directory, CASA raises <code>Exception</code>: The name of antenna list (antennalist/sdantlist) is not specified</li>
+<li>CASA parameters casa-rs lacks: none</li>
+<li>casa-rs parameters CASA lacks: none</li>
+<li>Shared parameters: 38, in CASA's order: yes</li>
+<li>Defaults that differ: none</li>
+</ul>
+<h3 id="split">split<a class="headerlink" href="#split" title="Permanent link">&para;</a></h3>
+<ul>
+<li>CASA source: <code>casatasks/split.py</code>, 19 parameters</li>
+<li>Implementation: <code>casatasks/private/task_split.py</code>, <code>split</code> (line 21): 1 return statements, 1 raise statements</li>
+<li>returns at line 63: <code>None</code></li>
+<li>Called with its defaults in an empty directory, CASA raises <code>AssertionError</code>: the vis parameter must be a path that exists ('' does not exist)</li>
+<li>CASA parameters casa-rs lacks: <code>keepmms</code>, <code>correlation</code>, <code>intent</code>, <code>array</code>, <code>uvrange</code>, <code>observation</code>, <code>feed</code>, <code>timebin</code>, <code>combine</code></li>
+<li>casa-rs parameters CASA lacks: <code>msselect</code></li>
+<li>Shared parameters: 10, in CASA's order: no</li>
+<li>Defaults that differ (CASA, casa-rs):</li>
+<li><code>vis</code>: <code>''</code>, <code>required</code></li>
+<li><code>outputvis</code>: <code>''</code>, <code>required</code></li>
+<li><code>field</code>: <code>''</code>, <code>none</code></li>
+<li><code>spw</code>: <code>''</code>, <code>none</code></li>
+<li><code>scan</code>: <code>''</code>, <code>none</code></li>
+<li><code>antenna</code>: <code>''</code>, <code>none</code></li>
+<li><code>timerange</code>: <code>''</code>, <code>none</code></li>
+<li><code>datacolumn</code>: <code>'corrected'</code>, <code>DATA</code></li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.c21346df.min.js"></script>
+      
+    
+  </body>
+</html>
